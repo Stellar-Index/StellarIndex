@@ -816,6 +816,29 @@ against.
   happen". That row describes a reachable, expected state now, and both
   are rewritten. Writing a limitation into a runbook makes it
   survivable; it does not make the page work.
+- **The total-ingestion-loss SEV-1 sent a RESOLVED while ingestion was
+  still completely down** (wave-D ALERT-01).
+  `stellarindex_ingestion_all_sources_stopped` matched on
+  `sum(rate(stellarindex_source_events_total[5m])) == 0`. When the
+  indexer *process dies* the series stops: for a few minutes its last
+  samples are still inside the range window and `rate()` is 0, so the
+  page fires correctly — then the samples age out, the series vanishes,
+  and `sum(rate())` over nothing is the empty vector rather than zero.
+  The alert stopped matching and Alertmanager resolved a P1 that was
+  still fully in progress, which reads to a responder as "it fixed
+  itself". It also never fired at all when the indexer was already down
+  as Prometheus started, or when Prometheus restarted mid-outage.
+
+  An `absent_over_time` branch now takes over at exactly the point
+  `rate()` gives up — both use a 5m window — so the page persists until
+  events resume. This adds no new paging scenario: the rate branch
+  already fired after 3m of silence, so any restart longer than
+  `for: 3m` pages today. What changes is that the page no longer lies
+  about recovery.
+
+  The existing test could not have caught it — its fixture is a flat
+  counter, which is a stalled source with a *live* process, not a dead
+  one. A truncated-series case now covers the process actually dying.
 
 - **A percent-encoded slash forged the SSE exemption, so 13 routes could
   be asked to run with no request deadline at all** (wave-D
