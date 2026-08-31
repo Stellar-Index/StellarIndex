@@ -1123,6 +1123,25 @@ against.
   bytes of an unrecognised body, which would let a proxy inject
   arbitrary text into an error string that lands in customer logs.
 
+- **The ClickHouse lake's only self-healer was installed by nothing**
+  (wave-D LID-1). `ch-live-catchup` fills holes in the Tier-1 lake, and
+  both the script and its systemd units already existed and were
+  covered by the ops-credential test — but no task in `configs/ansible`
+  ever installed them, so on a playbook-provisioned host the healer was
+  simply absent. That is not cosmetic: `resolveTip` clamps to the
+  contiguous watermark, so a single unhealed gap stalls the CH-fed
+  projector permanently rather than degrading. It is reachable wherever
+  the lake is live — the testnet and futurenet inventories set
+  `run_clickhouse: true`, and the config template defaults both the live
+  sink and the projector source to true.
+
+  The role now installs the script and both units and enables the timer,
+  behind `ch_live_catchup_enabled` (default true, and only where the
+  ClickHouse tasks run at all). Units are copied verbatim from
+  `deploy/systemd/` rather than templated: they carry no host-specific
+  values, and copying keeps the checked-in file the thing that actually
+  runs.
+
 ### Reviewed, no change
 
 - **CV-2** (oracle reconcile netting). The finding reads an unwired
