@@ -15,6 +15,38 @@ against.
 
 ## [Unreleased]
 
+### Fixed
+
+- **The explorer's entire application shell crashed on the home page**
+  — `TypeError: Cannot read properties of undefined (reading
+  'toUpperCase')`, surfaced as "Stellar Index hit an unexpected error"
+  on every route.
+
+  A Soroban contract asset has no `code`; the handler field carries
+  `json:"code,omitempty"`, so the key is omitted entirely for those
+  rows. But the OpenAPI spec marked `code` **required**, so every
+  generated type declared `code: string` — non-optional — and
+  `coin.code.toUpperCase()` type-checked cleanly while receiving
+  `undefined` at runtime. The spec and the generated types agreed with
+  each other and both disagreed with the server: the same class as the
+  `display_decimals` gap (F-SDK-04).
+
+  It stayed latent because `/v1/assets` silently ignored `order_by`, so
+  the home page got the top ten by ALL-TIME observation count —
+  classic-only in practice, every row carrying a code. Once the ranking
+  was corrected to the trailing-24h volume its caption always claimed,
+  four Soroban contracts entered the top ten and the page threw inside
+  the root layout, escaping to `global-error`.
+
+  `code` is now optional in the spec, which turns this class into a
+  compile error rather than a runtime crash — it immediately surfaced
+  **nine** unguarded dereferences, including on the asset detail page
+  and in the search modal, all fixed. Code-less assets now render a
+  truncated contract id instead of a blank cell. A regression test
+  renders the exact production row shape and is proven red against the
+  pre-fix component with the identical error.
+
+
 ### Added
 
 - **An apply path for the r1 ansible config.** `deploy-binary.yml`

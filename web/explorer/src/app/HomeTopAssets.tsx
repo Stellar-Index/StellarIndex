@@ -156,7 +156,7 @@ function Row({
         >
           <AssetIcon image={coin.image} code={coin.code} />
           <span className="text-ink group-hover:text-brand-600 font-medium">
-            {coin.code}
+            {assetLabel(coin)}
           </span>
           {verified && (
             <span
@@ -349,7 +349,7 @@ function ChangePct({ raw }: { raw: string | null | undefined }) {
 // the moment the listing carries them. Plain <img loading="lazy">
 // (not next/image) — remote SEP-1 hosts can't be enumerated into a
 // next/image domain allowlist under static export.
-function AssetIcon({ image, code }: { image?: string | null; code: string }) {
+function AssetIcon({ image, code }: { image?: string | null; code?: string | null }) {
   const [broken, setBroken] = useState(false);
   // SEC-10: host-validated, https-only — scheme-only validation let a
   // hostile issuer's SEP-1 image URL point every viewer's browser at an
@@ -380,11 +380,32 @@ function AssetIcon({ image, code }: { image?: string | null; code: string }) {
   );
 }
 
+// assetLabel is what the row shows when there is no `code`. A Soroban
+// contract asset has none, and rendering `{coin.code}` gave a blank
+// cell — a row with an icon, a price and no identity at all. Fall back
+// to a truncated contract id, which is what the asset detail page and
+// the /assets listing already show for these.
+function assetLabel(coin: { code?: string | null; asset_id?: string | null }): string {
+  if (coin.code) return coin.code;
+  const id = coin.asset_id ?? '';
+  return id.length > 12 ? `${id.slice(0, 4)}…${id.slice(-4)}` : id || '—';
+}
+
 // iconForCode returns a single-glyph stand-in for the asset's
 // row icon. Mirrors the unified currencies listing's iconFor so
 // home + listing render the same visual treatment for the same
 // codes.
-function iconForCode(code: string): string {
+function iconForCode(code?: string | null): string {
+  // A Soroban contract asset has NO `code` — the field is null on the
+  // wire. Before the /v1/assets ranking was corrected the home page
+  // showed the top ten by ALL-TIME observation count, which is
+  // classic-only in practice, so every row happened to have a code and
+  // this was never exercised. Ranking by 24h volume (the ranking the
+  // caption always claimed) surfaces Soroban contracts immediately —
+  // four of them in the current top ten — and `undefined.toUpperCase()`
+  // threw inside the root render, so the WHOLE SHELL fell over to
+  // global-error, not just this row.
+  if (!code) return '◎';
   const c = code.toUpperCase();
   const map: Record<string, string> = {
     XLM: '✦',
