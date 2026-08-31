@@ -106,6 +106,37 @@ against.
   in-session branches don't spam the issue), and closing issue #282 —
   that one is a live, unfixed P1 gap on main, and closing it would hide
   a real defect.
+- **The projector's replay-window read ran on the un-timeout'd root
+  context** (wave-D RD-08). Every other `p.store` call in the package
+  runs under `cycleCtx`; this one passed `Run`'s ctx straight through,
+  so a query blocked behind a lock wait parked the watcher goroutine
+  with `stellarindex_projector_replay_window_active` holding whatever
+  it last published — a stale `1` keeps suppressing the lag ticket for
+  a source nobody is replaying, and the suppression's whole
+  justification is that it stays narrow. Not unbounded even before
+  (`OpenBackground` SETs `statement_timeout` on every connection, 30m
+  by default), but 30 minutes of a wrongly-suppressing gauge is not a
+  bound worth relying on when a local one costs two lines. Bounded by
+  `PerSourceTimeout` (60s) — deliberately NOT a budget matched to the
+  refresh interval, which would trip on ordinary DB slowness, zero the
+  gauge mid-replay and re-arm `projector_lag_high` for the whole
+  catch-up, reinstating the ticket storm #325 removed.
+
+### Reviewed, no change
+
+- **RD-09** (replay-window upper bound on a widened dirty row). The
+  arithmetic reproduces, but the scenario is a *recorded, ratified
+  decision* — `docs/operations/runbooks/projector-replay.md` documents
+  it with its operator remedy. Every proposed remedy is worse than the
+  gap: narrowing the range union, or refusing to record while a window
+  is pending, trades a tighter alert suppression for a data-integrity
+  regression on the verifier path — that union is what closed the
+  2026-07-31 carried-claim invalidation gap (19,366 over-projected
+  cctp rows), and compute-completeness's forced re-reconcile floor, the
+  table's primary consumer, depends on it. What was genuinely wrong was
+  a code comment: it glossed the bound as the pre-rewind position
+  unconditionally, which holds only for an un-widened row. Corrected,
+  along with a note on why the union must not be narrowed.
 
 
 - **`/v1/assets` accepted `order_by` and never read it, so the home
