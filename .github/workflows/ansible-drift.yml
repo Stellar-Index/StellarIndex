@@ -69,7 +69,17 @@ name: ansible-drift
 on:
   schedule:
     - cron: "17 6 * * 1" # Mondays 06:17 UTC
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      apply:
+        description: >-
+          APPLY the playbook for real (drops --check). Default false =
+          dry-run only. Applying RESTARTS stellarindex-indexer,
+          -aggregator and -api. Run the dry-run first and read its
+          changed-task list; this input is deliberately not the default.
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -196,8 +206,10 @@ jobs:
           # Actions secret.
           printf '%s' "$VAULT_FILE_B64" | base64 -d > configs/ansible/inventory/r1.secrets.yml
 
-      - name: Dry-run the playbook against r1
+      - name: Run the playbook against r1 (dry-run unless apply=true)
         working-directory: configs/ansible
+        env:
+          APPLY: ${{ inputs.apply }}
         run: |
           # pipefail so an ansible failure (invalid vault password, unreachable
           # host, task error) fails THIS step loudly. Without it, `... | tee`
@@ -206,10 +218,31 @@ jobs:
           # next step (observed 2026-07-17: a stale ANSIBLE_VAULT_PASSWORD
           # secret produced exactly that misleading failure).
           set -o pipefail
-          ansible-playbook -i inventory/r1.yml playbooks/archival-node.yml \
-            --check --diff | tee /tmp/drift.out
+          # APPLY MODE is opt-in per run. The scheduled Monday run and every
+          # default dispatch stay --check, so this workflow keeps being a
+          # detector; only an explicit apply=true mutates r1.
+          #
+          # This exists because the config-apply gate in deploy.yml is a
+          # forcing function with nowhere to force TO: deploy-binary.yml
+          # swaps binaries only, and the full render needed the vault, which
+          # lives in these secrets and nowhere a person could reach it from
+          # a laptop. So config lagged binaries and features shipped dead —
+          # exactly what that gate exists to prevent (2026-08-25 declared-peg
+          # and rules.d incidents). The same credentials that prove drift can
+          # correct it.
+          if [ "${APPLY:-false}" = "true" ]; then
+            echo "::warning::APPLY MODE — this run MUTATES r1 and restarts the indexer, aggregator and api."
+            ansible-playbook -i inventory/r1.yml playbooks/archival-node.yml \
+              --diff | tee /tmp/drift.out
+          else
+            ansible-playbook -i inventory/r1.yml playbooks/archival-node.yml \
+              --check --diff | tee /tmp/drift.out
+          fi
 
       - name: Fail on drift
+        # An APPLY run is expected to report changed>0 — that is the point.
+        # Only the detector arm renders a verdict.
+        if: inputs.apply != true
         # OBS-drift (audit-2026-07-23): the verdict used to be
         # `[ "${CHANGED:-999}" -gt 13 ]` — thirteen UNNAMED changed
         # tasks passed as "codified = live", justified by a one-line

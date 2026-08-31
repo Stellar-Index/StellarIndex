@@ -15,6 +15,25 @@ against.
 
 ## [Unreleased]
 
+### Added
+
+- **An apply path for the r1 ansible config.** `deploy-binary.yml`
+  swaps binaries only, so the config-apply gate in `deploy.yml` was a
+  forcing function with nowhere to force *to*: the full render needs
+  the ansible vault, which lives in Actions secrets and nowhere a
+  person can reach from a laptop. Config therefore lagged binaries and
+  features shipped dead — exactly what that gate exists to prevent
+  (the 2026-08-25 declared-peg and `rules.d` incidents). The same
+  credentials that already prove drift every Monday can now correct
+  it: `ansible-drift.yml` takes an `apply` input that drops `--check`.
+
+  Deliberately opt-in per run. The scheduled run and every default
+  dispatch stay `--check`, so the workflow remains a detector; only an
+  explicit `apply=true` mutates r1, and the drift verdict is skipped
+  only on that arm (an apply is *expected* to report `changed>0`). The
+  input's description states plainly that applying restarts the
+  indexer, aggregator and api.
+
 ### Fixed
 
 - **The actions SHA-pinning lint matched `uses:` as a substring**, so
