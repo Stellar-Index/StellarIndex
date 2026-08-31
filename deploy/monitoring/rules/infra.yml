@@ -240,3 +240,47 @@ groups:
             Enterprise NVMe spec'd to 70 °C. Above this it throttles IO →
             catchup slows, Postgres WAL flush stalls. Check chassis airflow
             + ambient temperature.
+
+      # ── Catch-all: any systemd unit sitting in `failed` ───────────
+      #
+      # Most of this host's ~20 oneshot timers are named in NO alert
+      # rule. directory-sync is the one that made this urgent: it is the
+      # SOLE writer of account_directory, which the scam-pricing gate
+      # reads on every aggregated price serve. It is Type=oneshot with
+      # no OnFailure and no metric, so if it stops, the table freezes at
+      # its last good snapshot, a newly-flagged scam issuer is never
+      # learned, and the gate keeps serving — reproducing the incident
+      # the gate was built to stop, with the gate present, correct, and
+      # reading stale input (wave-D LID-6).
+      #
+      # Naming every unit individually is how that gap arose, so this is
+      # the inverse: everything is covered unless a unit has its OWN
+      # alert with better triage. The exclusion list lives at
+      # scripts/ci/unit-failed-dedicated.baseline, and its self-test
+      # asserts each entry really is named in a rule file — an exclusion
+      # cannot be used to silence a unit nothing else watches.
+      #
+      # Ticket, not page: a failed oneshot is rarely customer-impacting
+      # within minutes, and the units whose failure IS urgent already
+      # have dedicated alerts at their own severities. `for: 15m` rides
+      # out a unit that is failed-then-restarted by its own timer.
+      - alert: stellarindex_systemd_unit_failed
+        expr: |
+          node_systemd_unit_state{state="failed",name!~"verify-archive-tier-a\\.service|verify-archive-tier-b\\.service|ch-supply\\.service|pgbackrest-backup\\.service|ch-schema-snapshot\\.service"} == 1
+        for: 15m
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: infra
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/systemd-unit-failed.md
+          summary: "systemd unit {{ $labels.name }} is in failed state"
+          description: |
+            {{ $labels.name }} has been in `failed` for 15m+. Most of this
+            host's oneshot timers write data something else reads and then
+            trusts — a failed sync leaves a CONSUMER reading a frozen
+            table rather than erroring, so the symptom usually appears
+            somewhere else entirely.
+
+            `systemctl status {{ $labels.name }}` then
+            `journalctl -u {{ $labels.name }} --since -24h` for the cause.

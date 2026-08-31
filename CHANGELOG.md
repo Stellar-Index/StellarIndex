@@ -556,6 +556,29 @@ against.
   preview, so explicit `-dry-run` is now exempt — flagging those would
   train responders to ignore the check.
 
+- **~20 systemd oneshot timers had no failure alert, including the sole
+  writer of the table the scam-pricing gate reads** (wave-D LID-6).
+  `directory-sync` populates `account_directory`, which the gate
+  consults on every aggregated price serve. It is `Type=oneshot` with no
+  `OnFailure` and emits no metric — so if it stopped, the table froze at
+  its last good snapshot, a newly-flagged scam issuer was never learned,
+  and the gate kept serving. That reproduces the incident the gate was
+  built to stop, with the gate present, correct, and reading stale
+  input.
+
+  Naming units individually is how the gap opened, so
+  `stellarindex_systemd_unit_failed` inverts it: every unit is covered
+  unless it has a dedicated alert with better triage. The five
+  exclusions live in `scripts/ci/unit-failed-dedicated.baseline`, and a
+  self-test asserts each is genuinely named in a rule file — an
+  exclusion cannot become a silent suppression, and an empty baseline
+  fails rather than passing vacuously.
+
+  The runbook leads with the property that makes these failures hard to
+  spot: these units write data something else *reads and then trusts*,
+  so a failed sync surfaces as a consumer serving stale data
+  confidently, elsewhere, possibly days later — not as an error.
+
 ### Changed
 
 - **Corrected the `/v1/price/batch` fan-out comment** (wave-D
