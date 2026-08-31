@@ -328,3 +328,95 @@ func TestReplayWindow_ReadErrorFailsOpen(t *testing.T) {
 		t.Fatalf("replay_window_active = %v, want 0 (a dirty-window read error must disarm the suppression, not keep silencing lag)", got)
 	}
 }
+
+// TestReplayWindow_ReadCarriesItsOwnDeadline pins wave-D RD-08.
+//
+// Every other p.store call in this package runs under cycleCtx; this one
+// passed Run's ctx straight through, so a blocked read parked the watcher
+// goroutine with the gauge holding whatever it last published. A stale 1
+// keeps suppressing the lag ticket for a source nobody is replaying —
+// and the suppression's whole justification is that it stays narrow.
+//
+// Not unbounded even pre-fix (OpenBackground SETs statement_timeout on
+// every connection, 30m by default), but 30 minutes of a wrong
+// suppressing gauge is not a bound worth relying on when a local one
+// costs two lines.
+func TestReplayWindow_ReadCarriesItsOwnDeadline(t *testing.T) {
+	const source = "replay-window-deadline"
+	p, store, _ := newReplayHarness(t, source, 61_602_786, nil)
+
+	before := time.Now()
+	p.refreshReplayWindows(context.Background()) // parent has NO deadline
+
+	store.mu.Lock()
+	seen, hadDL, dl := store.dirtySeen, store.dirtyHadDL, store.dirtyDeadline
+	store.mu.Unlock()
+
+	if !seen {
+		t.Fatal("ProjectionDirtyWindows was never called")
+	}
+	if !hadDL {
+		t.Fatal("the dirty-window read ran with NO deadline on a parent that " +
+			"has none — a query stuck behind a lock wait parks the watcher and " +
+			"leaves the replay-window gauge latched at its last value (RD-08)")
+	}
+	// Bounded by PerSourceTimeout, and not by something far tighter: a
+	// budget that trips on ordinary DB slowness would zero the gauge
+	// mid-replay and re-arm lag_high for the whole catch-up, reinstating
+	// the ticket storm #325 removed. `before` is read a hair before the
+	// deadline is computed, so the upper check carries scheduling slack;
+	// the lower check is the one with teeth.
+	budget := dl.Sub(before)
+	if budget <= PerSourceTimeout/2 {
+		t.Errorf("read deadline is only %v from call time — that is far "+
+			"tighter than PerSourceTimeout (%v), and a budget that trips on "+
+			"ordinary DB slowness zeroes the gauge mid-replay and re-arms "+
+			"lag_high for the whole catch-up", budget, PerSourceTimeout)
+	}
+	if budget > PerSourceTimeout+time.Second {
+		t.Errorf("read deadline is %v from call time, want ~%v", budget, PerSourceTimeout)
+	}
+}
+
+// TestReplayWindow_BlockedReadFailsOpen — when the read is cut short, the
+// gauge must fall to 0 (alert ARMED), never latch at a suppressing 1.
+// Same asymmetry as TestReplayWindow_ReadErrorFailsOpen, reached via an
+// interrupted query rather than an error return.
+func TestReplayWindow_BlockedReadFailsOpen(t *testing.T) {
+	const source = "replay-window-blocked"
+	win := map[string]timescale.ProjectionDirtyWindow{
+		source: {
+			Source: source, From: 61_602_787, To: 64_177_283,
+			Reason: timescale.ProjectorReplayReason(64_177_283, 61_602_787),
+		},
+	}
+	p, store, src := newReplayHarness(t, source, 61_602_786, win)
+
+	runCycleThenRefresh(p, src)
+	if got := replayWindowGauge(t, source); got != 1 {
+		t.Fatalf("precondition: replay_window_active = %v, want 1", got)
+	}
+
+	// The read now blocks until its ctx is done.
+	store.mu.Lock()
+	store.dirtyBlock = make(chan struct{})
+	store.mu.Unlock()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+
+	done := make(chan struct{})
+	go func() { defer close(done); p.refreshReplayWindows(ctx) }()
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("refreshReplayWindows did not return after its read was cut " +
+			"short — the watcher goroutine is parked")
+	}
+
+	if got := replayWindowGauge(t, source); got != 0 {
+		t.Fatalf("replay_window_active = %v, want 0 — an interrupted "+
+			"dirty-window read must disarm the suppression, not keep "+
+			"silencing lag on a stale sample", got)
+	}
+}

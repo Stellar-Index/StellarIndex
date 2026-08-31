@@ -40,9 +40,33 @@ type fakeStore struct {
 	// replay-window watcher reads (see replay_window_test.go).
 	dirtyWindows map[string]timescale.ProjectionDirtyWindow
 	dirtyErr     error
+
+	// dirtyBlock, when non-nil, makes ProjectionDirtyWindows block until
+	// EITHER the channel is closed or the caller's ctx is done —
+	// standing in for a query stuck behind a lock wait. dirtyDeadline
+	// records whether the ctx it was handed carried one, and when
+	// (wave-D RD-08: this read used to run on the un-timeout'd root ctx).
+	dirtyBlock    chan struct{}
+	dirtyDeadline time.Time
+	dirtyHadDL    bool
+	dirtySeen     bool
 }
 
-func (f *fakeStore) ProjectionDirtyWindows(_ context.Context) (map[string]timescale.ProjectionDirtyWindow, error) {
+func (f *fakeStore) ProjectionDirtyWindows(ctx context.Context) (map[string]timescale.ProjectionDirtyWindow, error) {
+	f.mu.Lock()
+	dl, hadDL := ctx.Deadline()
+	f.dirtyDeadline, f.dirtyHadDL, f.dirtySeen = dl, hadDL, true
+	block := f.dirtyBlock
+	f.mu.Unlock()
+
+	if block != nil {
+		select {
+		case <-block:
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
+
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.dirtyErr != nil {
