@@ -41,6 +41,27 @@ against.
   the baseline step below the deploy would have kept it green while
   making the gate permanently vacuous (the "live" version would be the
   version just deployed).
+- **A withholding guard I deleted let the MSP-07 regression back in.**
+  The review sweep replaced `TestPriceServingSeamsAreGated`'s weak
+  two-entry subject list with a derived one — correctly — but removed
+  `TestWithholdingGatesAreSpelledOnlyAtTheChokepoint` in the same
+  change, while that commit's own message said *"the MSP-07 half (drift
+  WITHIN a seam) was always real"*. `main.go` went on citing the
+  deleted test by name.
+
+  The two guards answer different questions. The surviving one asks
+  "does every serving seam consult the gates at all" — a method with two
+  arms satisfies it as soon as ONE arm calls `priceWithheld()`. The
+  deleted one asks "is the withholding decision spelled in exactly one
+  place", which is the only way to catch a single arm drifting.
+
+  Verified: reverting the last-trade arm to `!r.substance.Allowed(…)` —
+  the literal MSP-07 code, which drops the scam gate — **passed CI**
+  before this restore and fails by file and line after it. That
+  regression matters because an operator setting
+  `disable_substance_gate=true` to diagnose a coverage complaint would
+  silently publish a directory-flagged issuer's last trade as its price,
+  reversing an owner-level trust decision they never touched.
 
 
 - **The SDK's spec-coverage table was bound to nothing** (wave-D
