@@ -1,6 +1,6 @@
 ---
 title: v1 launch plan — THE single source of truth
-last_verified: 2026-08-28
+last_verified: 2026-08-31
 status: active
 severity: P1
 ---
@@ -311,9 +311,9 @@ operator/decision bucket with a reason**. Landed on `origin/main`:
   merged-diff-regression dimensions (default-reject verified).
 
 **Still the operator's to run / decide (not code):** the ordered r1-ops
-sequence (migrations→143 before the binary, replays, SLA-probe key mint+rotate,
-restore-drill run, the r1 `sac_wrappers` populate, the dfees sample read, the
-W3.2 perf run) and the launch decisions (D1 freeze-paging, D2 HA, W6.2 security
+sequence (migrations before the binary, replays, the SLA-probe key ROTATION
+(rotation only — the mint is void, see W4.5), restore-drill run, the r1
+`sac_wrappers` populate, the dfees sample read, the W3.2 perf run) and the launch decisions (D1 freeze-paging, D2 HA, W6.2 security
 review, W6.5/6.6/6.7, and a **new failed-tx participant** product call — a
 failed *classic* op naming a victim still lands a public participant row, since
 the account-history reader UNION has no tx-success filter; recommended default
@@ -565,29 +565,56 @@ it runs anonymous, hits the 60/min anon tier, and reports `verdict: fail` at
 count (~45,000 per 30s burst vs the ~430 the config assumes) is a SYMPTOM:
 429s return instantly so the probe spins. The 10k/min limit matches the
 intended ~8,600/min design.
-*Approach:* put the key in a mode-restricted EnvironmentFile, not the
-world-readable 0644 `/etc/default/sla-probe`. **[V] CONFIG LANDED — `50d84d27`
-(audit-2026-08-14):** `10-observability.yml:115-129` now provisions a
-`/etc/default/sla-probe.secret` EnvironmentFile at mode **0640** (group
-`stellarindex`, `no_log`, sourced from vault var `stellarindex_probe_api_key`)
-— 0640 not 0600 because the probe runs *as* the `stellarindex` user, not root.
-**Still r1-ops:** mint the Partner/Operator-tier key, set
-`stellarindex_probe_api_key` in the r1 vault, and **rotate** the key whose
-plaintext was exposed in a session transcript on 2026-08-15 (= r1-ops #2,
-overlaps W6.3).
+*Approach at the time:* put the key in a mode-restricted EnvironmentFile,
+not the world-readable 0644 `/etc/default/sla-probe`. That landed
+(`50d84d27`, audit-2026-08-14) as a 0640 `/etc/default/sla-probe.secret`
+sourced from vault var `stellarindex_probe_api_key`.
+
+**CLOSED 2026-08-24 — the Go probe stack was RETIRED, not fixed**
+(`634d4be6`, #135). Both stacks targeted the local API and wrote the SAME
+textfile (`sla_probe.prom`), so last-writer-wins had the keyless Go stack's
+401/429 runs stomping the wrapper's passing verdicts and holding
+`stellarindex_sla_probe_unit_failed` red. One owner per metric file: the
+Healthchecks wrapper stack (`stellarindex-sla-probe.*`) survives and
+already has its key; `10-observability.yml` now REMOVES the Go stack's
+units, `/etc/default/sla-probe` and `/etc/default/sla-probe.secret`
+wherever it was previously applied, and `deploy/systemd/sla-probe.*` no
+longer exists in the repo.
+
+**No r1-ops action remains here.** This paragraph previously ended "Still
+r1-ops: mint the Partner/Operator-tier key, set `stellarindex_probe_api_key`
+in the r1 vault" — an operator working that instruction would mint a live
+operator-tier credential that NOTHING reads (the surviving stack reads
+`/etc/default/stellarindex-healthchecks`) and whose file the next
+`--tags observability` apply deletes outright. Credential sprawl on the
+exact surface W6.3 exists to shrink. Corrected 2026-08-31, wave-D PS-02.
+
+The **key rotation** for the plaintext exposed in a 2026-08-15 session
+transcript is a genuine and separate item — it is r1-ops #2 / W6.3, and it
+concerns the key in `/etc/default/stellarindex-healthchecks`, not a new
+mint.
 
 **W4.6 — [V] Template the untemplated. DONE — `50d84d27` + AAI-1/AAI-2
 (`8221092c`), merged `dd7b995b` (audit-2026-08-14).** `sla-probe.service`/`.timer`
 had NO install in the repo (the live file is a Jun 12 pre-rename artifact
 carrying `RATESENGINE_PROBE_API_KEY` in comments and a `User=ratesengine`
-drop-in) yet `10-observability.yml` *enabled* `sla-probe.timer`.
-`10-observability.yml:97-107` now **installs** `deploy/systemd/sla-probe.{service,timer}`
-into `/etc/systemd/system` *before* the `:131` enable; AAI-1/AAI-2 fixed the
-sibling archival-node drop-in copy + the notify-a-real-handler bug. **Still
-r1-ops:** remove the stale hand-installed `/etc/systemd/system/sla-probe.service`
-(pre-rename `User=ratesengine` artifact) on live r1. **Residual (keep open):**
-confirm the "audit every `systemd:` enable task for the same shape" sweep is
-exhaustive role-wide — the fix templated the known offenders, not proven every one.
+drop-in) yet `10-observability.yml` *enabled* `sla-probe.timer`. That was
+first fixed by templating the units; AAI-1/AAI-2 fixed the sibling
+archival-node drop-in copy + the notify-a-real-handler bug.
+
+**Superseded 2026-08-24 (`634d4be6`, #135):** the Go stack was retired
+outright rather than kept templated, so `10-observability.yml` no longer
+installs those units — it removes them, including the stale hand-installed
+`/etc/systemd/system/sla-probe.service` this entry used to list as **still
+r1-ops**. The role does that removal itself, so there is no operator step:
+the apply is the fix. (This entry previously cited
+`10-observability.yml:97-107` as INSTALLING the units; the same file now
+removes them. Corrected 2026-08-31, wave-D PS-02.)
+
+**Residual (keep open):** confirm the "audit every `systemd:` enable task
+for the same shape" sweep is exhaustive role-wide — the fix templated the
+known offenders, not proven every one. That residual is unaffected by the
+retirement.
 
 **W4.7 — [V] Remove dead units:** `lec-repair.service` /
 `lec-repair-v2.service` both exec `/tmp/lec-repair.sh`.
@@ -670,9 +697,15 @@ lives in the same file as the probe's API key, so wire them in one edit.
 anything remaining.
 
 **W6.3** Rotate session-exposed credentials: `ratesengine-admin`, MinIO, and
-the SLA-probe key from W4.5. *(The SLA-probe key's secure home is now in code —
-`50d84d27`, the 0640 vault-sourced EnvironmentFile; the three rotations remain
-r1-ops. The SLA-probe rotation == r1-ops #2 "mint `STELLARINDEX_PROBE_API_KEY`".)*
+the SLA-probe key. *(The three rotations remain r1-ops. The SLA-probe key to
+rotate is the one in `/etc/default/stellarindex-healthchecks`, read by the
+surviving Healthchecks wrapper stack — `kid_abcae429583012b8`, whose plaintext
+was exposed in a 2026-08-15 session transcript. This item previously said the
+rotation "== r1-ops #2 mint `STELLARINDEX_PROBE_API_KEY`", pointing at the
+0640 EnvironmentFile of the Go stack that was RETIRED on 2026-08-24
+(`634d4be6`, #135) — that file is now DELETED by the same role, so a mint
+there produces a credential with no consumer. Rotate; do not mint. Corrected
+2026-08-31, wave-D PS-02.)*
 
 **W6.4 — [OP] launch-flip toggle, not a defect.** Re-arm the deploy approval
 gate at the production flip: `gh variable delete DEPLOY_APPROVAL_RELAXED` + r1
@@ -928,9 +961,12 @@ emitters; Phoenix pool→stake map; Blend V1 backstop schema).
 1. **W4.1** (restore-drill) — code DONE (BDR-03, `dd7b995b`); now just the one
    **r1-ops** run of the drill for a current verdict (unblocks W6.6).
 2. **D1** — one decision, unblocks W6.7 and stops the pager crying wolf.
-3. **W6.1 + W4.5** — one file, closes the paging gate and the SLA verdict.
-   (W4.5's secure key-home + W4.6's install are now in code (`50d84d27`); this
-   step is now the r1-ops key-mint + `HEALTHCHECKS_URL_*` wiring in one edit.)
+3. **W6.1** — one file, closes the paging gate: the `HEALTHCHECKS_URL_*`
+   wiring. (W4.5/W4.6 are CLOSED — the Go sla-probe stack was retired
+   2026-08-24, `634d4be6`/#135, so there is no key to mint. This step used to
+   read "r1-ops key-mint + `HEALTHCHECKS_URL_*` wiring"; the mint half would
+   have created an operator-tier credential nothing reads. Corrected
+   2026-08-31, wave-D PS-02.)
 4. ~~**W1** — server → UI → protocols~~ ✅ DONE 2026-08-16 (#73/#74/#76/#75).
 5. **W4.2–W4.7** — unit sweep + template the pattern.
 6. **W2** — the alias registry.
@@ -3660,15 +3696,30 @@ post-replay before concluding anything is intrinsically slow.
 ### 2.8 Launch execution
 Refreshed launch-day sequence (the old checklist's CalVer/public-flip steps
 are obsolete — repo has been public since 2026-07-03):
-1. **Apply DB migrations THROUGH 0143 before the binary swap** [V, audit-2026-08-14]:
-   run `stellarindex-migrate up` (0142 = int4→bigint `derive_generation`; 0143 =
-   `sessions.token_hash`) and confirm `schema_migrations.version = 143` and not
-   dirty. THEN tag the launch release (SemVer) and deploy via the re-armed gate.
-   The new binary carries `ExpectedSchemaVersion = 143`; REC-06's critical
-   readiness check (`internal/api/v1/server.go:126`) fail-closes `/readyz` with a
-   503 backend-drain if it starts against a ≤142 or dirty schema — so the ordering
-   is enforced fail-closed, but the migration MUST actually be run first or the
+1. **Apply DB migrations to HEAD before the binary swap** [V, audit-2026-08-14]:
+   run `stellarindex-migrate up` and confirm `schema_migrations.version` equals
+   the highest number under `migrations/`, and that the row is not dirty. THEN
+   tag the launch release (SemVer) and deploy via the re-armed gate.
+
+   **Deliberately version-agnostic.** This step named `0143` and
+   `schema_migrations.version = 143` until 2026-08-31 (wave-D PS-01), by which
+   point head was `0150` — and re-pinning it to 150 just reproduces the defect
+   at 0151. The head number lives in exactly two places that CI keeps in
+   agreement, and neither is this document: the highest file under
+   `migrations/`, and `v1.ExpectedSchemaVersion`, which
+   `TestExpectedSchemaVersionMatchesMigrationsHead` fails CI over. Read the
+   number there.
+
+   The new binary carries `ExpectedSchemaVersion` = that same head; REC-06's
+   critical readiness check fail-closes `/readyz` with a 503 backend-drain if it
+   starts against a LOWER or dirty schema — the comparison is a FLOOR
+   (`applied >= expected`, deliberately not `==`), so a schema ahead of the
+   binary is fine and only a schema behind it drains. The ordering is therefore
+   enforced fail-closed, but the migration MUST actually be run first or the
    deploy will drain instead of serve.
+
+   Note this gate is belt-and-braces: `configs/ansible/playbooks/deploy-binary.yml`
+   already runs `stellarindex-migrate up` automatically before any binary swap.
 2. Confirm `auth_mode=apikey_optional`; external SLA-probe smoke with a
    `sip_` key; outside-internet `make smoke` 13/13.
 3. Status page + API docs + SLA/error-budget page current; F-0100
