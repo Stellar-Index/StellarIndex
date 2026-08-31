@@ -230,27 +230,42 @@ function parseDec(s: string | null | undefined): number | null {
 }
 
 // rankTopAssets injects native XLM (absent from /v1/assets) into the listed
-// rows and re-ranks the union by trailing-24h volume, returning the top 10.
-// Native is deduped by asset_id (belt-and-suspenders — the listing never
-// returns it). Rows with no volume sort last.
+// rows, returning the top 10. Native is deduped by asset_id
+// (belt-and-suspenders — the listing never returns it).
+//
+// The LISTED rows keep the order the API returned. They did not used to:
+// this function re-sorted the whole union by raw volume_24h_usd, which
+// was load-bearing while the server ignored order_by and handed back an
+// observation-count ordering (wave-D RD-02). Now that order_by is
+// honoured, re-sorting would actively undo server policy — the API ranks
+// on a concentration-ADJUSTED volume so wash / operational assets don't
+// sit atop the directory, while volume_24h_usd in the payload is the RAW
+// figure. Sorting the page by the raw column promotes exactly the assets
+// the server demoted.
+//
+// So native is SPLICED into the server's order instead, at the first row
+// whose ranking value it exceeds. Native is XLM: never wash-flagged, so
+// its raw volume and its adjusted volume agree and the comparison is
+// sound for this one row.
 function rankTopAssets(
   native: Coin | null | undefined,
   listed: Coin[] | undefined,
   pricing: boolean,
 ): Coin[] {
   const rows = [...(listed ?? [])];
-  if (native && !rows.some((c) => c.asset_id === native.asset_id)) {
-    rows.push(native);
+  if (!native || rows.some((c) => c.asset_id === native.asset_id)) {
+    return rows.slice(0, 10);
   }
-  // #328: the re-rank has to use the SAME measure the request asked the
-  // API to order by. Re-sorting by USD volume on a net that has none put
-  // every row at 0 and left the order to sort stability — a "top assets
-  // by activity" grid whose ranking was arbitrary.
-  rows.sort((a, b) =>
-    pricing
-      ? (parseDec(b.volume_24h_usd) ?? 0) - (parseDec(a.volume_24h_usd) ?? 0)
-      : (b.observation_count ?? 0) - (a.observation_count ?? 0),
-  );
+  // #328: compare on the SAME measure the request asked the API to order
+  // by. On a net with no aggregator every volume is null, so comparing
+  // USD volume put every row at 0 and left the order to sort stability —
+  // a "top assets by activity" grid whose ranking was arbitrary.
+  const rankOf = (c: Coin) =>
+    pricing ? (parseDec(c.volume_24h_usd) ?? 0) : (c.observation_count ?? 0);
+
+  const nativeRank = rankOf(native);
+  const at = rows.findIndex((c) => rankOf(c) < nativeRank);
+  rows.splice(at === -1 ? rows.length : at, 0, native);
   return rows.slice(0, 10);
 }
 
