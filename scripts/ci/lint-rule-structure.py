@@ -114,8 +114,19 @@ for d in DIRS:
 # pressure to shrink a baseline by writing more fixtures — the exact
 # mechanism that produced the false green. Checking fixtures against the
 # emitter's DECLARED labels attacks the defect directly.
+# `(?!Name:\s*")` is load-bearing: without it the non-greedy gap scans PAST
+# a label-less declaration (prometheus.NewGauge / NewCounter, which take no
+# []string) until it finds the NEXT metric's label slice, and attributes
+# that slice to the wrong metric. 19 metrics in internal/obs/metrics.go
+# were affected, so the fixture-realism check below ran against fabricated
+# "declared" sets and its error message named labels the emitter does not
+# have. Worked example: stellarindex_anomaly_freeze_active is a bare
+# NewGauge with ZERO labels, yet the old pattern credited it with {op} —
+# so a fixture writing anomaly_freeze_active{op="…"}, a series production
+# can never emit, passed the realism check. Refusing to cross another
+# `Name:` keeps every match inside one declaration.
 DECL_RE = re.compile(
-    r'Name:\s*"(stellarindex_[a-z0-9_]+)"(.*?)\[\]string\{([^}]*)\}',
+    r'Name:\s*"(stellarindex_[a-z0-9_]+)"((?:(?!Name:\s*").)*?)\[\]string\{([^}]*)\}',
     re.S,
 )
 # Labels attached by the SCRAPE, not by the emitter. A fixture must be
