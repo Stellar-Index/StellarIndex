@@ -82,6 +82,7 @@ func registerAppMetrics() {
 
 		PriceStalenessSeconds,
 		OracleLastUpdateUnix,
+		OracleStreamRowsUnparsedTotal,
 		OracleResolutionSeconds,
 
 		AggregatorTicksTotal,
@@ -2089,6 +2090,31 @@ var MEVDetectDurationSeconds = prometheus.NewHistogramVec(
 		Buckets: []float64{0.01, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30},
 	},
 	[]string{"outcome"},
+)
+
+// OracleStreamRowsUnparsedTotal counts oracle_updates rows dropped by
+// LatestOracleStreams because their stored asset or quote text would not
+// parse as a canonical asset.
+//
+// The read used to `continue` on a parse failure with no log, metric or
+// error, so such a row simply vanished from /v1/oracle/streams and the
+// explorer's /oracles page with zero signal (wave-D SI-OC-04).
+//
+// That matters most exactly when it is most likely: the documented
+// remediation for a mislabelled oracle row is an operator-run raw SQL
+// UPDATE against that same column, which carries no CHECK constraint. A
+// typo there would silently delete the row from the served surface
+// rather than erroring — the operator would see the row disappear and
+// reasonably conclude the relabel worked.
+//
+// `field` distinguishes asset from quote so the fix is obvious without
+// a query.
+var OracleStreamRowsUnparsedTotal = prometheus.NewCounterVec(
+	prometheus.CounterOpts{
+		Name: "stellarindex_oracle_stream_rows_unparsed_total",
+		Help: "oracle_updates rows dropped from the served stream because their stored canonical asset/quote text would not parse, per source and field.",
+	},
+	[]string{"source", "field"},
 )
 
 // TradeInsertsTotal — per-source counter, broken out by whether the

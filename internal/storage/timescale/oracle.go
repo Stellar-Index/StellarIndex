@@ -7,6 +7,7 @@ import (
 	"fmt"
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/obs"
 )
 
 // InsertOracleUpdate writes one oracle observation. Idempotent on
@@ -417,13 +418,28 @@ func (s *Store) LatestOracleStreams(ctx context.Context) ([]canonical.OracleUpda
 			return nil, fmt.Errorf("timescale: LatestOracleStreams scan: %w", err)
 		}
 		u.Decimals = uint8(decimals)
+		// A parse failure still drops the row — there is nothing sane to
+		// serve for an asset we cannot name — but it is no longer SILENT.
+		// This used to `continue` with no log, metric or error, so a row
+		// whose stored canonical text the running binary could not parse
+		// vanished from /v1/oracle/streams and the explorer's /oracles
+		// page with zero signal (wave-D SI-OC-04).
+		//
+		// The likeliest cause is also the worst time for silence: the
+		// documented remediation for a mislabelled oracle row is an
+		// operator-run raw SQL UPDATE against this very column, which has
+		// no CHECK constraint. A typo would have deleted the row from the
+		// served surface rather than erroring, and the operator would see
+		// it disappear and reasonably conclude the relabel worked.
 		a, err := canonical.ParseAsset(assetStr)
 		if err != nil {
+			obs.OracleStreamRowsUnparsedTotal.WithLabelValues(u.Source, "asset").Inc()
 			continue
 		}
 		u.Asset = a
 		qa, err := canonical.ParseAsset(quoteStr)
 		if err != nil {
+			obs.OracleStreamRowsUnparsedTotal.WithLabelValues(u.Source, "quote").Inc()
 			continue
 		}
 		u.Quote = qa
