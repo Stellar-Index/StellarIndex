@@ -442,6 +442,21 @@ against.
   through any shipped client: the explorer clamps `limit` to
   {50,100,200,500} and a `catalogue:` cursor is only emitted below
   limit 11.
+- **`/v1/assets` declared `limit` twice** (wave-D KP-5) — an inline
+  parameter with no default, alongside `$ref: Limit` which defaults to
+  100. Generators pick one arbitrarily, so the rendered reference, the
+  Postman collection and the explorer's generated types could each
+  disagree about the same field. The inline copy is removed and its one
+  unique fact (page 1 fills from the classic stream when the catalogue
+  is shorter than the limit) folded into the operation description; all
+  three spec-derived artifacts are regenerated.
+
+  Spectral *does* flag this, as `operation-parameters` at severity
+  **warn** — CI simply runs the action at its default
+  `--fail-severity=error`, so it never failed the build. `lint-docs` now
+  enforces resolved-parameter uniqueness as a hard gate, which avoids
+  re-tuning Spectral's global severity floor and lighting up unrelated
+  warnings.
 
 ### Changed
 
