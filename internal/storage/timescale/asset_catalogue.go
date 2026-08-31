@@ -2457,6 +2457,18 @@ func ValidateAssetsCursor(cursor string, order AssetsOrder) error {
 	if !isDigitString(tier) {
 		return fmt.Errorf("non-numeric rank-tier prefix")
 	}
+	// The tier is bound to a `$n::int` placeholder, so it must fit int32.
+	// isDigitString alone accepted "2147483648", which then went through
+	// atoiOrZero (plain int, 64-bit here) into an int4 bind and errored at
+	// the database instead of at the boundary (wave-D KP-2).
+	//
+	// Bounded by the type rather than by a hard `> 2` reject: the tier
+	// cardinality is order-dependent (listingRankTierExpr emits a
+	// different set per order), so pinning a literal maximum here would
+	// add a fourth site to the three-call-site lockstep contract.
+	if _, err := strconv.ParseInt(tier, 10, 32); err != nil {
+		return fmt.Errorf("rank-tier prefix out of range")
+	}
 	if order == AssetsOrderVolume24hUSDDesc {
 		// Volume prefix may be empty (last row had a null vol_usd)
 		// or a Postgres-style numeric: digits with at most one '.'.
@@ -2470,6 +2482,16 @@ func ValidateAssetsCursor(cursor string, order AssetsOrder) error {
 	}
 	if !isDigitString(prefix) {
 		return fmt.Errorf("non-numeric observation_count prefix")
+	}
+	// Must fit the int64 the keyset predicate binds. An over-int64 run of
+	// digits passed this check, then parseAssetCursor's ParseInt failed
+	// and degenerated the whole cursor to (0, 0, "") — which matches no
+	// rows under the default order, so the client received a silent 200
+	// with an empty page that is indistinguishable from
+	// end-of-pagination (wave-D KP-2). A malformed cursor must 400, not
+	// quietly claim the walk is over.
+	if _, err := strconv.ParseInt(prefix, 10, 64); err != nil {
+		return fmt.Errorf("observation_count prefix out of range")
 	}
 	return nil
 }
@@ -2487,22 +2509,31 @@ func isDigitString(s string) bool {
 	return true
 }
 
-// isNumericPrefix returns true for a non-empty digit string with
-// at most one '.' separator. Negative volumes don't exist in our
-// data, so we don't accept a leading '-'.
+// isNumericPrefix returns true for a digit string with at most one '.'
+// separator. Negative volumes don't exist in our data, so we don't
+// accept a leading '-'.
+//
+// At least ONE digit is required. Without that check the loop accepted
+// "." — a lone dot sets dot=true, the loop ends, and it returned true —
+// so a cursor whose volume prefix is "." passed validation and reached
+// the keyset predicate as a $n::numeric bind, which Postgres rejects
+// (wave-D KP-2). The empty prefix is still valid and is handled by the
+// caller: it encodes "the last row had a NULL vol_usd".
 func isNumericPrefix(s string) bool {
 	dot := false
+	digit := false
 	for j := 0; j < len(s); j++ {
 		c := s[j]
 		switch {
 		case c >= '0' && c <= '9':
+			digit = true
 		case c == '.' && !dot:
 			dot = true
 		default:
 			return false
 		}
 	}
-	return true
+	return digit
 }
 
 // parseAssetCursor decodes a `<tier>:<obs_count>:<asset_id>` cursor.

@@ -411,6 +411,37 @@ against.
   would have caught none of this wave's unfireable alerts, and it
   creates pressure to shrink a baseline by writing more fixtures — the
   mechanism that produced the false greens in the first place.
+- **Three ways a malformed `/v1/assets` cursor got past validation**
+  (wave-D KP-2), one of which failed silently. `isNumericPrefix`
+  required no digit, so a volume prefix of `.` validated and was bound
+  as `$n::numeric` for Postgres to reject; the rank tier was checked
+  only for being digits, so `2147483648` reached an `int4` placeholder;
+  and an over-`int64` observation-count prefix passed, then made
+  `parseAssetCursor` degenerate the whole cursor to `(0, 0, "")` — which
+  matches no rows, so the client got a **200 with an empty page,
+  indistinguishable from end-of-pagination**. All three are now rejected
+  at the boundary with a 400. `markets.go` carried a hand-copied
+  duplicate of the same digit-less loop and now shares the helper.
+
+- **A page whose rows were all folded away stopped pagination dead**
+  (wave-D KP-3). The next-cursor was emitted only when
+  `hasMore && len(out) > 0`, but `out` shrinks *after* the query —
+  `suppressCatalogueTwins` drops rows and `foldAliasTwins` collapses
+  them. A page that folded to empty therefore emitted no cursor while
+  more rows remained, and the walk ended early. The cursor is built from
+  the raw last row, which exists whenever `hasMore` is true, so it is
+  now emitted on `hasMore` alone.
+
+### Changed
+
+- **`/v1/assets` now rejects a malformed catalogue cursor instead of
+  silently serving page 1** (wave-D KP-4). `catalogue:abc`,
+  `catalogue:-7` and an `Atoi`-overflow were swallowed and treated as
+  "no cursor", while every sibling paginated surface 400s on the same
+  input. This is a wire-behaviour change (200 → 400), though unreachable
+  through any shipped client: the explorer clamps `limit` to
+  {50,100,200,500} and a `catalogue:` cursor is only emitted below
+  limit 11.
 
 ### Changed
 
