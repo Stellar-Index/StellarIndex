@@ -115,6 +115,38 @@ run
 expect_present '.prom header-only metric is dead' 'stellarindex_fixture_promheader_total'
 expect_absent '.prom bare metric line is live' 'stellarindex_fixture_promline_total'
 
+# 5. An emitter that lives as an INLINE ansible `content:` block must
+#    count as live. Several textfile-collector probes (timescale-jobs,
+#    galexie-catchup, stellar-stack-version, binary-version) are written
+#    that way, and because is_emitted() only grepped *.go/*.sh/*.prom,
+#    every one of their REAL, SCRAPED metrics had to be parked in
+#    KNOWN_INERT with a comment reading "NOT inert: the probe timer runs
+#    every minute on r1". That made KNOWN_INERT mean two different
+#    things — "no producer" and "producer invisible to this lint" —
+#    which is the confusion the gate exists to prevent.
+mkdir -p "$ROOT/configs/ansible/roles/archival-node/tasks"
+cat > "$ROOT/deploy/monitoring/rules/ansible-fixture.yml" <<'YML'
+groups:
+  - name: ansiblefixture
+    rules:
+      - alert: AnsibleInlineEmitted
+        expr: stellarindex_fixture_ansible_inline_total > 0
+      - alert: AnsibleCommentOnly
+        expr: stellarindex_fixture_ansible_comment_total > 0
+YML
+cat > "$ROOT/configs/ansible/roles/archival-node/tasks/probe.yml" <<'YML'
+- name: fixture probe
+  ansible.builtin.copy:
+    dest: /usr/local/sbin/fixture-probe.sh
+    content: |
+      #!/bin/sh
+      # stellarindex_fixture_ansible_comment_total is only mentioned here
+      echo "stellarindex_fixture_ansible_inline_total 1" > /tmp/f.prom
+YML
+run
+expect_absent 'ansible inline content: block counts as an emitter' 'stellarindex_fixture_ansible_inline_total'
+expect_present 'a metric named only in an ansible COMMENT stays dead' 'stellarindex_fixture_ansible_comment_total'
+
 echo "----"
 echo "lint-metric-refs-test: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]
