@@ -163,12 +163,25 @@ type TradeRow struct {
 	Price       string    `json:"price"` // quote/base as decimal
 	// BaseDecimals / QuoteDecimals are the smallest-unit scale for each
 	// side's amount: divide base_amount by 10^base_decimals (and quote by
-	// 10^quote_decimals) to get whole-asset units. 7 for native/classic/
-	// fiat; the token contract's declared decimals() for Soroban tokens
-	// (resolved once per pair per request, so a market pairing a 6-decimal
-	// Soroban token no longer mis-scales at a hardcoded 7). Populated on
-	// /v1/history; omitted on /v1/observations, whose rows don't carry a
-	// per-side scale. Never 0 in practice — omitempty drops the unset case.
+	// 10^quote_decimals) to get whole-asset units.
+	//
+	// The scale is a property of the ROW'S SOURCE, not of the asset, and
+	// a single page MIXES BOTH:
+	//
+	//   on-chain rows (sdex, soroswap, aquarius, phoenix, comet) carry
+	//     the asset's own scale — 7 for native/classic, the token
+	//     contract's declared decimals() for Soroban tokens;
+	//   CEX rows (binance, kraken, bitstamp, coinbase) carry 8
+	//     REGARDLESS of the pair — the external normalisation scale, not
+	//     anything about the asset.
+	//
+	// Never substitute a constant. A reader that assumed 7 per-asset
+	// mis-scaled real rows in production once already, and the error is
+	// PAYLOAD-UNDETECTABLE: `price` is quote/base and therefore
+	// scale-invariant, so nothing in the response looks wrong.
+	//
+	// Populated on /v1/history; omitted (0) on /v1/observations, whose
+	// rows carry no per-side scale.
 	BaseDecimals  int `json:"base_decimals,omitempty"`
 	QuoteDecimals int `json:"quote_decimals,omitempty"`
 	// RoutedVia is the router/aggregator whose same-tx invocation

@@ -4592,7 +4592,12 @@ func prewarmLight(
 	// sdex soroswap]`). Mirror the handler's behaviour explicitly.
 	dexSources := v1.DexSourceNames()
 	for _, lim := range []int{5, 25, 100, 200} {
-		// /v1/markets default order — alphabetical (MarketsOrderPair).
+		// Alphabetical (MarketsOrderPair). NOT the /v1/markets default —
+		// that switched to volume-desc on 2026-05-10 (this comment said
+		// "default order" until wave-D F-SDK-02). Still worth prewarming:
+		// it is the stable-keyset order a full-catalogue walker should
+		// pass explicitly, and the volume-desc default is prewarmed just
+		// below.
 		if _, _, err := markets.DistinctPairsExt(mkCtx, "", lim, timescale.MarketsOrderPair); err != nil {
 			logger.Debug("prewarm markets failed", "limit", lim, "order", "pair", "err", err)
 		}
