@@ -17,6 +17,43 @@ against.
 
 ### Fixed
 
+- **`/v1/assets` accepted `order_by` and never read it, so the home
+  page's headline ranking was computed over the wrong ten assets**
+  (wave-D RD-02). The explorer requested
+  `?limit=10&order_by=volume_24h_usd_desc` under the caption "Ranked by
+  trailing-24h trading volume across every venue we ingest"; the
+  handler built `ListAssetsOptions` with no `Order`, so it was served
+  the top ten by **all-time observation count** and re-sorted just
+  those ten client-side. An asset that traded $2M in the last 24h but
+  has a modest lifetime count could not enter the candidate set at all,
+  while a dormant high-lifetime-count asset held a slot and rendered as
+  a dash. `order_by=TOTAL_GARBAGE` returned 200.
+
+  This was missing WIRING, not a missing feature: the storage layer has
+  supported `AssetsOrderVolume24hUSDDesc` the whole time — its own
+  `ORDER BY` branch, keyset cursor args, cursor predicate and rank-tier
+  expression, and the unified path already passes it. The handler now
+  parses `order_by`, threads it into the query **and both cursor
+  calls** (the two orders encode different keyset keys, so encoding
+  under the wrong one skips or repeats rows rather than erroring), and
+  400s on an unrecognised value the way `/v1/markets` always has.
+
+  Combining `order_by` with `asset_class` now 400s rather than being
+  silently ignored: those listings rank on their own fixed scheme with
+  a cursor encoding that scheme's keys. Of the explorer's four callers
+  only the home page sends `order_by`, and it sends no `asset_class`.
+
+  The explorer's client-side re-sort is removed in the same change —
+  with the server ordering correctly it stopped being a no-op and
+  became actively wrong, because the API ranks on a concentration-
+  ADJUSTED volume (so wash / operational assets don't sit atop the
+  directory) while the payload's `volume_24h_usd` is the RAW figure.
+  Re-sorting the page by the raw column promotes exactly the assets the
+  server demoted. Native XLM, which `/v1/assets` does not return, is
+  now spliced into the server's order instead of triggering a re-rank
+  of everything.
+
+
 - **`pkg/client` SDK: `Retry-After` no longer yields a NEGATIVE
   back-off.** `parseRetryAfter` multiplied the header's delta-seconds
   into a `time.Duration` (int64 NANOSECONDS) with no range check, so

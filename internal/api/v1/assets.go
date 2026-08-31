@@ -501,6 +501,64 @@ type assetListFilters struct {
 	issuer string // G-strkey, CRC-checked
 }
 
+// assetsOrderParam is the parsed `order_by` for /v1/assets: the store
+// order to use, plus whether the client actually asked for one.
+//
+// `explicit` matters because the paths whose ordering is fixed by
+// design must be able to REJECT an order they cannot honour, while
+// still serving the (far more common) request that omitted the
+// parameter entirely.
+type assetsOrderParam struct {
+	order    timescale.AssetsOrder
+	explicit bool
+	raw      string
+}
+
+// parseAssetsOrder extracts + validates `order_by` for /v1/assets,
+// writing a problem+json 400 and returning ok=false on an unrecognised
+// value — the same fail-loud shape /v1/markets has always had
+// (markets.go). Until 2026-08-31 this parameter was not read at ALL:
+// the handler built ListAssetsOptions without an Order, so every
+// request got the observation-count ordering and even
+// `order_by=TOTAL_GARBAGE` returned 200 (wave-D RD-02).
+//
+// That was not a missing feature. The storage layer has supported
+// AssetsOrderVolume24hUSDDesc the whole time — its own ORDER BY
+// branch, keyset cursor args, cursor predicate and rank-tier
+// expression all handle it, and the unified path passes it. Only the
+// wire-to-store wiring was absent, so the explorer's home page asked
+// for a volume ranking, was silently given the top-10 by ALL-TIME
+// observation count, and re-sorted just those ten client-side under
+// the caption "Ranked by trailing-24h trading volume across every
+// venue we ingest". An asset that traded $2M in 24h but has a modest
+// lifetime count could not appear at all, while a dormant
+// high-lifetime-count asset held a slot and rendered as a dash.
+func parseAssetsOrder(w http.ResponseWriter, r *http.Request) (assetsOrderParam, bool) {
+	raw := r.URL.Query().Get("order_by")
+	switch raw {
+	case "":
+		return assetsOrderParam{order: timescale.AssetsOrderObservationCountDesc}, true
+	case "observation_count_desc":
+		return assetsOrderParam{
+			order:    timescale.AssetsOrderObservationCountDesc,
+			explicit: true,
+			raw:      raw,
+		}, true
+	case "volume_24h_usd_desc":
+		return assetsOrderParam{
+			order:    timescale.AssetsOrderVolume24hUSDDesc,
+			explicit: true,
+			raw:      raw,
+		}, true
+	default:
+		writeProblem(w, r,
+			"https://api.stellarindex.io/errors/invalid-order",
+			"Invalid order_by", http.StatusBadRequest,
+			"order_by must be 'observation_count_desc' or 'volume_24h_usd_desc'")
+		return assetsOrderParam{}, false
+	}
+}
+
 // parseAssetListFilters extracts + validates the type / code / issuer
 // query filters for /v1/assets. It returns ok=false — after writing a
 // problem+json 400 — when any value is malformed, so garbage input
@@ -630,7 +688,37 @@ func (s *Server) handleAssetList(w http.ResponseWriter, r *http.Request) {
 	//   - "all" / ""    → catalogue rows (all 3 classes, market-cap
 	//                   ordered) THEN classic_assets via volume-desc.
 	//                   See handleAssetListUnified.
+	// order_by. Validated here so an unrecognised value 400s on EVERY
+	// path rather than only the one that reads it (wave-D RD-02, which
+	// existed because no path read it).
+	orderBy, ok := parseAssetsOrder(w, r)
+	if !ok {
+		return
+	}
+
 	assetClass := normaliseAssetClass(r.URL.Query().Get("asset_class"))
+
+	// The catalogue and unified listings rank on their own fixed
+	// schemes — the catalogue by market cap, the unified path by phase
+	// (catalogue market-cap first, then classic volume-desc), each with
+	// a keyset cursor encoding THAT scheme's keys. They cannot honour a
+	// caller-chosen order without a different cursor.
+	//
+	// So say so, rather than accept the parameter and quietly ignore it.
+	// Silently ignoring is precisely the defect being fixed here: it
+	// gave the flagship home page a ranking that was not the ranking it
+	// advertised, and nothing about the 200 response revealed it.
+	if orderBy.explicit && assetClass != "" {
+		writeProblem(w, r,
+			"https://api.stellarindex.io/errors/invalid-order",
+			"Invalid order_by", http.StatusBadRequest,
+			"order_by is not supported together with asset_class — the "+
+				"asset_class listings rank on their own fixed scheme "+
+				"(catalogue by market cap, then classic by 24h volume). "+
+				"Request order_by without asset_class.")
+		return
+	}
+
 	if assetClass == "fiat" || assetClass == "stablecoin" || assetClass == "crypto" {
 		s.handleAssetListFromCatalogue(w, r, assetClass, limit, cursor)
 		return
@@ -654,7 +742,7 @@ func (s *Server) handleAssetList(w http.ResponseWriter, r *http.Request) {
 	// (R-018 finish — assets-unification endgame). Falls through to
 	// the lean AssetReader path when no AssetsReader is configured.
 	if s.assetsReader != nil {
-		s.handleAssetListFromAssets(w, r, filters, cursor, limit)
+		s.handleAssetListFromAssets(w, r, filters, cursor, limit, orderBy.order)
 		return
 	}
 
@@ -713,14 +801,22 @@ func (s *Server) handleAssetList(w http.ResponseWriter, r *http.Request) {
 //     `classic` / `any` / omitted are a no-op. (Native XLM, Soroban,
 //     and fiat rows live on the catalogue / unified paths.)
 //
-// The default order is observation_count_desc; cursor passes through
-// unchanged.
+// The default order is observation_count_desc; `order` selects it or
+// volume_24h_usd_desc, and the SAME order is threaded through the
+// cursor validate + encode below. That threading is load-bearing, not
+// tidiness: the two orders have different keyset shapes
+// (`<rank_tier>:<observation_count>:<asset_id>` vs
+// `<rank_tier>:<vol_or_blank>:<asset_id>`), so validating or encoding
+// under the wrong one either rejects a good cursor or emits keys the
+// next page's predicate reads positionally as something else — which
+// skips or repeats rows rather than erroring.
 func (s *Server) handleAssetListFromAssets(
 	w http.ResponseWriter,
 	r *http.Request,
 	filters assetListFilters,
 	cursor string,
 	limit int,
+	order timescale.AssetsOrder,
 ) {
 	// AGT-06: this path's cursor is the raw
 	// `<rank_tier>:<observation_count>:<asset_id>` shape
@@ -729,7 +825,7 @@ func (s *Server) handleAssetListFromAssets(
 	// the keyset predicate's degenerate (0, "") case, which matches no rows
 	// and looks like a quiet end-of-pagination rather than the client error
 	// it actually is.
-	if err := timescale.ValidateAssetsCursor(cursor, timescale.AssetsOrderObservationCountDesc); err != nil {
+	if err := timescale.ValidateAssetsCursor(cursor, order); err != nil {
 		writeProblem(w, r,
 			"https://api.stellarindex.io/errors/invalid-cursor",
 			"Invalid cursor", http.StatusBadRequest, err.Error())
@@ -750,6 +846,7 @@ func (s *Server) handleAssetListFromAssets(
 		Issuer: filters.issuer,
 		Code:   filters.code,
 		Cursor: cursor,
+		Order:  order,
 	}
 	rows, err := s.assetsReader.ListAssetsExt(r.Context(), opts)
 	if err != nil {
@@ -798,7 +895,7 @@ func (s *Server) handleAssetListFromAssets(
 		// observation count. Encoding fewer keys than the ORDER BY ranks on
 		// skips or repeats rows across pages.
 		env.Pagination = &Pagination{
-			Next: timescale.EncodeAssetsCursor(rows[len(rows)-1], timescale.AssetsOrderObservationCountDesc),
+			Next: timescale.EncodeAssetsCursor(rows[len(rows)-1], order),
 		}
 	}
 	writeEnvelope(w, env)
