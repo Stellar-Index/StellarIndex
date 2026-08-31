@@ -312,7 +312,32 @@ Stellar Index moves no *user* money, but **served prices/amounts/supply/market-c
   - **Run (or read the last green) `ansible-drift.yml` — a live `--check --diff` of the archival-node playbook against r1 — as a first-class recon step, and treat a red/uncredentialed run as NOT-EXAMINED, never a pass.** It is the only mechanism that compares codified-vs-live config, and it is exactly the "gate dead on a missing prerequisite" class: its own header documents that absent vault/inventory secrets make it die with "Invalid vault password" *before* PLAY RECAP — a missing-credential signal, not a drift verdict. As of audit-2026-08-14 it was **flapping red** (scheduled runs failed 2026-08-03 and 2026-08-10; only a manual dispatch went green), so real drift can sit behind an ignored run — the recurring "CI fails a lot but nobody picks it up."
   - **DRIFT'S STRUCTURAL BLIND SPOT — the "enable a unit you don't install" trap.** `ansible-drift` only reconciles resources the playbook *declares*; a systemd unit the playbook `enable`s but never `copy`/`template`s into `/etc/systemd/system/` is invisible to drift AND errors on a clean/DR rebuild (the `enable` task has no unit file to act on) — it only "works" on the live box via a hand-installed pre-rename artifact. Confirmed live on the Go `sla-probe.service`/`.timer` (enabled at `10-observability.yml`, installed by nothing; the repo carries `deploy/systemd/sla-probe.*` only as a reference copy the role never installs — unlike the main services, which install from role `templates/systemd/*.j2`) and previously on census-rollup. **Standing recon check:** for every `systemd`/`enable` task, grep that a matching `copy`/`template` into `/etc/systemd/system/` exists in the same role; a bare enable of an un-installed unit is a finding (INF/CID) — and a bare-metal DR rebuild of the playbook is the only thing that surfaces it, so the recon should run a check-mode play against a throwaway host, not just diff against the already-hand-patched r1.
 - **Backup / DR as *executed* rather than *designed*** — audit-2026-07-18 flagged the design gap; nobody has verified a restore. `restore-drill.timer` ships disabled, exactly one manual drill has ever run (2026-07-03), and the ClickHouse lake (8.6 TiB) has **no backup mechanism of any kind**.
-- **`pkg/client`** — the public hand-written SDK. Reflection-test-guarded against the OpenAPI spec, but its own behaviour (retries, pagination, error mapping) has not been adversarially audited.
+- ~~**`pkg/client`** — the public hand-written SDK … its own behaviour
+  (retries, pagination, error mapping) has not been adversarially
+  audited.~~ **CORRECTED 2026-08-31 (wave-D F-SDK-10).** This entry was
+  stale in three ways and would have sent the next wave at ground
+  already worked:
+  - It **was** adversarially audited, by the cold audit of 2026-08-04.
+  - It is not untested: **156 tests, 78.6% statement coverage** (`go
+    test ./pkg/client/ -cover`).
+  - "Retries" is not a gap because **there is no retry layer** —
+    `Client.do` issues one request; `APIError.RetryAfter` reports the
+    server's hint and the CALLER decides. An audit looking for retry
+    bugs will find no code.
+
+  Where the SDK is genuinely weak, and where a next wave should look
+  instead: **artifact reconciliation** — the spec-vs-SDK contract test
+  reconciles two DERIVED artifacts, so when a field exists only on the
+  server they agree with each other about being wrong (F-SDK-04, fixed
+  by comparing the handler STRUCT to the spec); and the
+  **release/versioning path** (F-SDK-05 — the documented `pkg/*` tag
+  mechanism was inert). Both were found by reading what the guards
+  DON'T check, not by re-testing behaviour.
+
+  General lesson worth carrying: this entry is itself an instance of
+  the class it now warns about — a recon document asserting a coverage
+  state that nothing binds to the tree. Prefer running the measurement
+  (`-cover`, `git log` on the package) over trusting the register.
 - **Cross-wave regression** — no wave has re-derived a PRIOR wave's fixes as its primary goal. §9's re-verification set exists for this; it has never been run as a dedicated pass, and RFC-12 shows a documented sweep can still contain holes.
 - **The remediation diffs themselves** — see RFC-6/§9: 743 files of largely agent-written change have never been audited as a surface.
 
