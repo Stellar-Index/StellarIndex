@@ -350,6 +350,39 @@ against.
   serves (a dormant asset's last N closed buckets becoming an empty
   array), which is an owner decision rather than a query-shape fix.
 
+- **A TimescaleDB counter built to make silent CAGG starvation
+  alertable had no alert** (wave-D ALERT-12), and the lint that should
+  have noticed could not see its emitter (ALERT-07's class).
+
+  `stellarindex_timescale_job_failures_total` exists because r1 once
+  failed 37–69% of every CAGG refresh run with `failed to start job` —
+  background-worker starvation — and nothing surfaced it: the jobs got a
+  slot on a later tick, so `last_run_status` read `Success`, the caggs
+  were never stale, and both existing alerts stayed correctly quiet. The
+  only evidence was this counter, which no rule referenced. Now
+  `stellarindex_timescale_job_failures_climbing` (informational, >10
+  failures in 6h sustained 30m) with a runbook that branches on the
+  actual `err_message`, since `failed to start job` means starvation
+  rather than a broken job body.
+
+  Adding it exposed the lint problem. `lint-metric-refs` rejected the
+  rule as referencing a metric "nothing emits" — but marking it
+  `KNOWN_INERT` would have been false: it is emitted and scraped every
+  60s. `is_emitted()` grepped only `*.go/*.sh/*.prom`, and several
+  textfile probes live as inline ansible `content:` blocks, so their
+  real metrics had all been parked in `KNOWN_INERT` with comments
+  reading "NOT inert: the probe timer runs every minute on r1". That
+  made the list mean two incompatible things — "no producer exists" and
+  "the producer is invisible to this lint" — which is the confusion the
+  gate exists to prevent.
+
+  The lint now scans ansible `tasks/`/`handlers/` YAML, scoped so a rule
+  file cannot satisfy its own reference, with comment-stripping intact
+  so a metric named only in a comment still counts as dead. Its own
+  stale-inert check then flagged **7** metrics wrongly listed as inert,
+  including the galexie-catchup and stellar-stack-version probes; all
+  seven are removed. `KNOWN_INERT` means "no producer" again.
+
 ### Changed
 
 - **Corrected the `/v1/price/batch` fan-out comment** (wave-D

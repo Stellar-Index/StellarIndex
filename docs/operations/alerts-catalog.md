@@ -99,6 +99,7 @@ signal lands.
 | `stellarindex_timescale_connections_saturated` | `pg_stat_activity_count / pg_settings_max_connections * 100` | > 80 % for > 5 min | P2 | [pg-conns-saturated](runbooks/pg-conns-saturated.md) |
 | `stellarindex_timescale_lock_table_pressure` | `sum by (instance)(pg_locks_count) / on (instance)(pg_settings_max_locks_per_transaction * pg_settings_max_connections)` | > 70 % for > 5 min | P3 | [pg-conns-saturated](runbooks/pg-conns-saturated.md) |
 | `stellarindex_timescale_cagg_stale` | `time() - stellarindex_cagg_last_refresh_unix` per CAGG | > 5× its refresh interval | P2 | [cagg-stale](runbooks/cagg-stale.md) |
+| `stellarindex_timescale_job_failures_climbing` | `increase(stellarindex_timescale_job_failures_total[6h])` per job | > 10 failures in 6h, 30m | P3 | [timescale-job-failures-climbing](runbooks/timescale-job-failures-climbing.md) |
 | `stellarindex_timescale_compression_lag` | `stellarindex_uncompressed_chunks_older_than_7d` | > 0 for > 24 h | P3 | [compression-lag](runbooks/compression-lag.md) |
 | `stellarindex_timescale_backup_failed` | `min by (stanza)(pgbackrest_backup_since_last_completion_seconds{stanza!~"all-stanzas.*"})` | > 25 h for 5 min | P2 | [backup-failed](runbooks/backup-failed.md) |
 | `stellarindex_timescale_backup_none_24h` | same | > 24 h for 5 min | **P1** | [backup-failed](runbooks/backup-failed.md) |

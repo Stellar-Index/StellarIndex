@@ -368,6 +368,50 @@ groups:
             overdue. API reads from this CAGG will return stale data until it
             refreshes; check timescaledb job-scheduler health.
 
+      - alert: stellarindex_timescale_job_failures_climbing
+        # Producer: timescale-jobs-probe.timer (every 60s), same probe as
+        # the two alerts above.
+        #
+        # This counter was added BECAUSE nothing surfaced the failure it
+        # measures: r1 was silently failing 37-69% of every CAGG refresh
+        # run with "failed to start job" (background-worker starvation).
+        # The jobs got a slot on a later tick, so last_run_status read
+        # Success and the caggs were never stale — _cagg_stale and
+        # _compression_lag both stayed quiet, and the only evidence was
+        # this counter. Which no rule referenced, so the evidence was
+        # collected and never acted on (wave-D ALERT-12).
+        #
+        # Informational, not ticket: TimescaleDB retries a failed job on
+        # the next tick, so isolated failures are normal operation and
+        # the CAGG-staleness ticket above is the real customer-impact
+        # signal. What this catches is the SHAPE that hid the incident —
+        # failures accumulating steadily while everything downstream
+        # looks healthy.
+        #
+        # increase() over 6h rather than a rate threshold: the counter is
+        # per-job cumulative and jobs run on minute-scale intervals, so a
+        # meaningful burst is "more than a handful in a long window", not
+        # a per-second rate.
+        expr: increase(stellarindex_timescale_job_failures_total[6h]) > 10
+        for: 30m
+        labels:
+          severity: informational
+          team: stellarindex
+          component: storage
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/timescale-job-failures-climbing.md
+          summary: "TimescaleDB job {{ $labels.proc }} failing repeatedly ({{ $labels.hypertable }})"
+          description: |
+            Job {{ $labels.job_id }} ({{ $labels.proc }} on
+            {{ $labels.hypertable }}) has accumulated more than 10 failed runs
+            in 6 hours. TimescaleDB retries on the next tick, so the caggs may
+            look fresh and no staleness ticket will fire — that is exactly how
+            the 2026 background-worker starvation stayed invisible.
+
+            Check max_parallel_workers / timescaledb.max_background_workers
+            headroom first; "failed to start job" in the job_errors view means
+            starvation, not a broken job body.
+
       - alert: stellarindex_timescale_compression_lag
         # Producer: timescale-jobs-probe.timer (every 60s).
         expr: stellarindex_uncompressed_chunks_older_than_7d > 0
