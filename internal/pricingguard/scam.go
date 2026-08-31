@@ -14,9 +14,38 @@
 // withholds the AGGREGATED price claim — the same posture and the same
 // `errors/price-withheld` problem type as the substance gate — while the
 // raw trade surfaces (/v1/ohlc, /v1/observations, /v1/history) stay
-// visible. Consumed at the price-reader seam so every reader-backed
-// surface (/v1/price, /v1/price/batch, /v1/twap, /v1/vwap, the SEP-40
-// oracle price paths, the asset headline, …) is covered by ONE gate.
+// visible.
+//
+// WHERE IT IS CONSUMED, precisely. This comment used to say the gate
+// sat "at the price-reader seam so every reader-backed surface
+// (/v1/price, /v1/price/batch, /v1/twap, /v1/vwap, …) is covered by ONE
+// gate". That was never true of /v1/twap and /v1/vwap: they do not go
+// through the price reader at all — they compute from raw trades via
+// their own fetch — so for as long as the claim stood they served a
+// flagged issuer's aggregated price at 200 (wave-D MSP-02/EXR-04,
+// reproduced live). PR #182's merged body repeated the same claim.
+//
+// The gate is now consumed at SIX sites, and the honest way to state
+// the invariant is per-surface rather than "one seam":
+//
+//   - the price-reader seam — /v1/price, /v1/price/batch, and the
+//     asset headline, via cmd/stellarindex-api's priceWithheld
+//     chokepoint;
+//   - the SEP-40 oracle price paths, same chokepoint;
+//   - /v1/price/tip, in computeTip (the reader seam covers only the
+//     middle branch of that function);
+//   - /v1/vwap and /v1/twap, in their handlers.
+//
+// The handlers are the correct site for the last two, NOT their shared
+// tradesInRangeWithStablecoinFallback: that helper is also the fetch
+// behind the single-bar /v1/ohlc, which this very paragraph promises
+// stays visible.
+//
+// A new price-claim surface must add its own call. There is no seam
+// that covers them all, and asserting one in a comment is how this gap
+// survived — cmd/stellarindex-api's TestPriceServingSeamsAreGated
+// enumerates the reader-backed ones so a new ungated seam fails CI,
+// but it cannot see a handler that computes its own price.
 //
 // It DELIBERATELY overturns the directory's historical "display-only,
 // tags never gate pricing" invariant (asset_directory_tags.go).
