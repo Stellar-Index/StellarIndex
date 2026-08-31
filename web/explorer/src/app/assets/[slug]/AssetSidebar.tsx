@@ -12,7 +12,10 @@ import { SidebarAssetIcon } from './SidebarAssetIcon';
 // the sidebar renders. Keeps this component decoupled from page.tsx's
 // internal interfaces.
 export interface SidebarCoin {
-  code: string;
+  // Optional: a Soroban contract asset has no `code` (the API omits the
+  // field). Required here until 2026-08-31, which only type-checked
+  // because the OpenAPI spec wrongly marked `code` required.
+  code?: string;
   // SEP-1 icon URL (served by the API since v0.7.2; https-only,
   // sanitized server-side). Letter glyph stays the fallback.
   image?: string | null;

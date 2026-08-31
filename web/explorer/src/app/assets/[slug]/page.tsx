@@ -261,6 +261,19 @@ let coinsCachePromise: Promise<BuildCoinsCache | null> | null = null;
 // every per-page render — the previous per-slug fetches during export
 // burst r1's anon-tier rate limit and baked "Asset not found" for the
 // unlucky slugs (XLM hit this in production).
+// assetSymbol is the display identity for an asset that may have NO
+// `code`. A Soroban contract asset has none — the API omits the field
+// (`json:"code,omitempty"`) — and the OpenAPI spec wrongly marked it
+// required until 2026-08-31, so every generated type declared
+// `code: string` and every consumer here dereferenced it unchecked.
+// With the spec corrected these became compile errors instead of the
+// runtime crash that took the explorer's shell down.
+function assetSymbol(coin: { code?: string; asset_id?: string }): string {
+  if (coin.code) return coin.code;
+  const id = coin.asset_id ?? '';
+  return id.length > 12 ? `${id.slice(0, 4)}…${id.slice(-4)}` : id || 'Asset';
+}
+
 function getBuildCoinsCache(): Promise<BuildCoinsCache | null> {
   if (coinsCachePromise) return coinsCachePromise;
   coinsCachePromise = (async () => {
@@ -808,7 +821,7 @@ export default async function AssetDetailPage({ params }: { params: Params }) {
   const faqLD = {
     '@context': 'https://schema.org',
     '@type': 'FAQPage',
-    mainEntity: assetFaqFor(coin.code, !!coin.issuer).map((entry) => ({
+    mainEntity: assetFaqFor(assetSymbol(coin), !!coin.issuer).map((entry) => ({
       '@type': 'Question',
       name: entry.q,
       acceptedAnswer: {
@@ -823,7 +836,7 @@ export default async function AssetDetailPage({ params }: { params: Params }) {
     name: `${coin.code} price & market data — Stellar Index`,
     description: `Aggregated price (VWAP), market cap, supply, and trading data for ${coin.code}${coin.issuer ? ` (issuer ${coin.issuer})` : ''} on Stellar, computed by Stellar Index.`,
     url: `${CURRENT_NETWORK.explorerUrl}/assets/${coin.slug}`,
-    keywords: [coin.code, `${coin.code} price`, 'Stellar', 'asset', 'VWAP'],
+    keywords: [assetSymbol(coin), `${assetSymbol(coin)} price`, 'Stellar', 'asset', 'VWAP'],
     variableMeasured: [
       'price (USD)',
       'market cap',
@@ -858,7 +871,7 @@ export default async function AssetDetailPage({ params }: { params: Params }) {
       />
       <header className="space-y-3">
         <Breadcrumbs
-          items={[{ label: 'Assets', href: '/assets' }, { label: coin.code }]}
+          items={[{ label: 'Assets', href: '/assets' }, { label: assetSymbol(coin) }]}
         />
         <div className="flex flex-wrap items-baseline gap-4">
           <h1 className="text-h1 text-ink font-semibold">{coin.code}</h1>
@@ -1022,7 +1035,7 @@ export default async function AssetDetailPage({ params }: { params: Params }) {
                 />
               }
               liquidity={
-                <LiquidityTabPanel assetID={coin.asset_id} code={coin.code} />
+                <LiquidityTabPanel assetID={coin.asset_id} code={assetSymbol(coin)} />
               }
             />
           </Suspense>
@@ -1071,7 +1084,7 @@ function OverviewBody({
               {priceNum != null ? `$${formatPriceSmall(priceNum)}` : '—'}
             </span>
             {(() => {
-              const peg = peggedTo(coin.code);
+              const peg = peggedTo(assetSymbol(coin));
               if (peg) {
                 return <PeggedBadge currency={peg} />;
               }
@@ -1340,8 +1353,8 @@ function OverviewBody({
         </Panel>
       )}
 
-      <AssetAbout symbol={coin.code} />
-      <AssetFAQ symbol={coin.code} hasIssuer={!!coin.issuer} />
+      <AssetAbout symbol={assetSymbol(coin)} />
+      <AssetFAQ symbol={assetSymbol(coin)} hasIssuer={!!coin.issuer} />
     </div>
   );
 }

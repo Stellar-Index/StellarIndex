@@ -757,7 +757,13 @@ function lookupAssetID(coins: Coin[], code: string): string | null {
 function coinResult(c: Coin, verified: boolean): Result {
   return {
     type: 'coin',
-    label: c.code,
+    // A Soroban asset has no `code`; a truncated contract id beats an
+    // empty label in the results list.
+    label:
+      c.code ||
+      ((c.asset_id ?? '').length > 12
+        ? `${(c.asset_id ?? '').slice(0, 4)}…${(c.asset_id ?? '').slice(-4)}`
+        : (c.asset_id ?? 'Asset')),
     hint: c.slug,
     href: `/assets/${c.slug}`,
     verified,
