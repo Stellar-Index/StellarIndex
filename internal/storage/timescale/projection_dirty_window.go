@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 )
 
 // ProjectionDirtyWindow is one source's pending re-reconcile obligation
@@ -29,6 +30,10 @@ type ProjectionDirtyWindow struct {
 	// reconcile; only the below-cursor range needs the forced re-check.
 	To     uint32
 	Reason string
+	// UpdatedAt is the row's last-write time, carried so a clear can
+	// prove it is deleting the SAME row it read. See
+	// [Store.ClearProjectionDirtyWindow].
+	UpdatedAt time.Time
 }
 
 // Reason is PROVENANCE, not prose. Two tools write this table and they are
@@ -118,7 +123,7 @@ func (s *Store) RecordProjectionDirtyWindow(ctx context.Context, w ProjectionDir
 // projection claims over ranges a replay has rewritten.
 func (s *Store) ProjectionDirtyWindows(ctx context.Context) (map[string]ProjectionDirtyWindow, error) {
 	const q = `
-        SELECT source, from_ledger, to_ledger, reason
+        SELECT source, from_ledger, to_ledger, reason, updated_at
         FROM projection_dirty_windows`
 	rows, err := s.db.QueryContext(ctx, q)
 	if err != nil {
@@ -130,7 +135,7 @@ func (s *Store) ProjectionDirtyWindows(ctx context.Context) (map[string]Projecti
 	for rows.Next() {
 		var w ProjectionDirtyWindow
 		var from, to int64
-		if err := rows.Scan(&w.Source, &from, &to, &w.Reason); err != nil {
+		if err := rows.Scan(&w.Source, &from, &to, &w.Reason, &w.UpdatedAt); err != nil {
 			return nil, fmt.Errorf("timescale: ProjectionDirtyWindows scan: %w", err)
 		}
 		w.From = uint32(from) //nolint:gosec // ledger seq, bounded by the network head
@@ -143,6 +148,14 @@ func (s *Store) ProjectionDirtyWindows(ctx context.Context) (map[string]Projecti
 	return out, nil
 }
 
+// clearProjectionDirtyWindowQuery is package-level so its predicate can
+// be asserted without a database — the guard it carries is the whole
+// point of [Store.ClearProjectionDirtyWindow].
+const clearProjectionDirtyWindowQuery = `
+        DELETE FROM projection_dirty_windows
+        WHERE source = $1 AND from_ledger >= $2 AND to_ledger <= $3
+          AND updated_at = $4`
+
 // ClearProjectionDirtyWindow deletes a source's dirty window, but ONLY if
 // the stored row is still within the [from, to] range the caller verified —
 // the guard makes the clear race-safe against a concurrent replay: if
@@ -150,11 +163,23 @@ func (s *Store) ProjectionDirtyWindows(ctx context.Context) (map[string]Projecti
 // the widened row no longer satisfies the bounds and survives, so the next
 // run still sees the new obligation. Clearing unconditionally would let a
 // clean verdict over the OLD window erase evidence of the NEW rewind.
-func (s *Store) ClearProjectionDirtyWindow(ctx context.Context, source string, from, to uint32) error {
-	const q = `
-        DELETE FROM projection_dirty_windows
-        WHERE source = $1 AND from_ledger >= $2 AND to_ledger <= $3`
-	if _, err := s.db.ExecContext(ctx, q, source, int64(from), int64(to)); err != nil {
+func (s *Store) ClearProjectionDirtyWindow(ctx context.Context, source string, from, to uint32, updatedAt time.Time) error {
+	// `updated_at = $4` is the load-bearing conjunct, not the bounds.
+	//
+	// The bounds alone catch a WIDENED window — a concurrent replay that
+	// grew the range leaves a row outside [from,to], which survives. They
+	// do NOT catch a SUBSET RE-RECORD: a replay that re-records the same
+	// or a narrower range leaves both bounds satisfying the predicate, so
+	// the delete removes evidence of a rewind this run never verified,
+	// and the next verdict carries a clean claim over it (wave-D CV-6).
+	//
+	// Comparing the row's last-write time makes this optimistic
+	// concurrency: the clear succeeds only if the row is byte-for-byte
+	// the one whose obligation this run actually discharged. Any
+	// re-record — wider, narrower or identical — bumps updated_at and the
+	// delete matches nothing, leaving the window pending for the next
+	// run. Fail-closed, costing at most one extra reconcile.
+	if _, err := s.db.ExecContext(ctx, clearProjectionDirtyWindowQuery, source, int64(from), int64(to), updatedAt); err != nil {
 		return fmt.Errorf("timescale: ClearProjectionDirtyWindow (%s): %w", source, err)
 	}
 	return nil
