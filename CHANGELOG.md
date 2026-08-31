@@ -523,6 +523,27 @@ against.
   the bare-suffix case is not inferable at all — `mapped: false` already
   means the denomination is unknown by design, and that is the contract.
 
+- **`ch-rebuild -write` leaves the completeness verdict carrying a stale
+  clean claim over the range it just rewrote** (wave-D CV-1).
+  `projector-replay` records a projection dirty window so the next
+  `compute-completeness` re-reconciles the rewound range; `ch-rebuild`
+  records nothing, so the nightly verdict keeps its prior clean claim.
+
+  It now says so, loudly, at the point of use — an operator running
+  `-write` is told to note the window and re-check the affected sources'
+  reconcile before trusting the next `/v1/coverage` verdict.
+
+  The automatic record is deliberately **not** implemented yet, and the
+  reason is measured rather than cautious: one source's dirty window
+  (aquarius) already blew the reconcile pass's 120-minute deadline and
+  needed a bespoke prefilter, against a 180-minute service timeout.
+  Recording windows for the eight sources the rebuild script drives over
+  ~12.9M ledgers would force the next nightly to re-reconcile all of
+  them un-prefiltered — a likely timeout that takes out **every**
+  source's verdict, which is worse than the stale claim it fixes. That
+  needs a bounded per-window re-reconcile and a re-measured pass
+  wall-clock, neither of which can be established without the real lake.
+
 ### Changed
 
 - **`/v1/assets` now rejects a malformed catalogue cursor instead of
