@@ -205,6 +205,53 @@ expect "unresolvable version fails closed" 1 "does not resolve to a commit"
 runGate v0.2.0 false vNOPE
 expect "unresolvable host baseline fails closed" 1 "does not resolve to a commit"
 
+# ─── The CALLER must pass the baseline ──────────────────────────────
+#
+# Every case above exercises the SCRIPT, which has always handled a 3rd
+# argument correctly. The defect was that .github/workflows/deploy.yml
+# called it with TWO — so the gate diffed against "the previous release
+# tag by ancestry" instead of the host's live version. That is only the
+# same thing when the fleet is exactly one release behind, and
+# deployed-versions.md states plainly that a tag cut does not imply the
+# fleet moved to it.
+#
+# Measured on real tags: the 2-arg form reports "no config-surface
+# changes between v0.47.1 and v0.47.2 — the binary deploy is complete"
+# and exits 0, while the 3-arg form against a real host baseline of
+# v0.45.0 finds THIRTEEN changed config surfaces and exits 1 (wave-D
+# LID-5).
+#
+# A script-level test cannot catch a caller-level omission, so check the
+# caller.
+check_caller() {
+  local desc="$1" cond="$2"
+  if [[ "$cond" == "ok" ]]; then
+    printf 'ok: %s\n' "$desc"; pass=$((pass + 1))
+  else
+    printf 'FAIL: %s\n' "$desc"; fail=$((fail + 1))
+  fi
+}
+
+# The cases above run inside a throwaway fixture repo, so resolve the
+# workflow from THIS script's own location, not the working directory.
+WF="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)/.github/workflows/deploy.yml"
+if [[ ! -f "$WF" ]]; then
+  check_caller "deploy workflow present" "no"
+else
+  call=$(grep -hE 'config-apply-gate\.sh' "$WF" | grep -vE '^\s*#' | head -1)
+  argc=$(printf '%s' "$call" | sed -E 's|.*config-apply-gate\.sh||' | grep -o '"\$[A-Z_]*"' | wc -l | tr -d ' ')
+  if [[ -n "$call" && "$argc" -ge 3 ]]; then
+    check_caller "deploy.yml passes the host baseline as the 3rd argument" "ok"
+  else
+    check_caller "deploy.yml passes the host baseline as the 3rd argument (got $argc args — without it a catch-up or skip-ahead deploy gets a false 'the binary deploy is complete')" "no"
+  fi
+  if grep -q 'id: baseline' "$WF" && grep -q 'deployed-versions' "$WF"; then
+    check_caller "deploy.yml reads the host's live version before the playbook runs" "ok"
+  else
+    check_caller "deploy.yml reads the host's live version before the playbook runs (else the 3rd argument is always empty)" "no"
+  fi
+fi
+
 echo
 echo "config-apply-gate-test: $pass passed, $fail failed"
 [[ "$fail" -eq 0 ]]
