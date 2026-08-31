@@ -432,6 +432,35 @@ against.
   the raw last row, which exists whenever `hasMore` is true, so it is
   now emitted on `hasMore` alone.
 
+- **The config-apply gate diffed against the wrong baseline, so a
+  catch-up deploy was told "the binary deploy is complete"** (wave-D
+  LID-5). `deploy.yml` called `config-apply-gate.sh` with two arguments,
+  omitting the host's live version — so the gate fell back to "the
+  previous release tag by ancestry", which is only correct when the
+  fleet is exactly one release behind. `deployed-versions.md` states
+  plainly that a tag cut does not imply the fleet moved to it, and 8 of
+  23 adjacent tag hops over v0.40.0..v0.49.0 have an empty
+  config-surface diff — so the green branch is reachable.
+
+  Measured on real tags: the two-argument form reports *"no
+  config-surface changes between v0.47.1 and v0.47.2 — the binary deploy
+  is complete"* and exits 0, while the three-argument form against a
+  real host baseline of v0.45.0 finds **13 changed config surfaces** and
+  exits 1.
+
+  The workflow now reads the host's deployed-versions sidecar *before*
+  the playbook runs — afterwards it reports the version being deployed,
+  which would make the baseline trivially equal and the gate vacuous —
+  and takes the lowest version across the managed binaries, since config
+  is unapplied if any binary predates it. Best-effort: an unreachable
+  sidecar falls back to the documented ancestry default with its
+  existing warning, because failing the deploy there would trade a
+  weaker gate for an outage risk.
+
+  The script and its self-test were always correct; only the caller was
+  wrong. So the new guards check the *caller* — a script-level test
+  cannot catch a caller-level omission.
+
 ### Changed
 
 - **`/v1/assets` now rejects a malformed catalogue cursor instead of
