@@ -1980,11 +1980,19 @@ func (s *Server) serveCatalogueUnifiedPage(w http.ResponseWriter, r *http.Reques
 	// ~30-row in-process slice.
 	rows = filterCatalogueRowsByQuery(rows, r.URL.Query().Get("q"))
 
-	offset := 0
-	if innerCursor != "" {
-		if n, err := strconv.Atoi(innerCursor); err == nil && n > 0 {
-			offset = n
-		}
+	// parseOffsetCursor, not a silent Atoi. The old form swallowed every
+	// malformed inner cursor — `catalogue:abc`, `catalogue:-7`, an
+	// Atoi-overflow — and silently served page 1 as though no cursor had
+	// been given, while every sibling paginated surface 400s on exactly
+	// that input (wave-D KP-4).
+	//
+	// This IS a wire-behaviour change (200 → 400 on those inputs), not a
+	// no-op, and it is in the CHANGELOG as one. It is unreachable through
+	// any shipped client: the explorer clamps `limit` to {50,100,200,500}
+	// and a `catalogue:` cursor is only emitted when limit < 11.
+	offset, ok := parseOffsetCursor(w, r, innerCursor)
+	if !ok {
+		return
 	}
 	if offset >= len(rows) {
 		// Catalogue done → transition to classic.
@@ -2128,7 +2136,21 @@ func (s *Server) fetchClassicUnifiedRows(w http.ResponseWriter, r *http.Request,
 	s.fillIssuerDirectoryTags(r.Context(), out)
 	s.attachSparkline7dIfRequested(r, out)
 	nextInner := ""
-	if hasMore && len(out) > 0 {
+	// `hasMore` alone, NOT `hasMore && len(out) > 0`.
+	//
+	// `out` shrinks after the query: suppressCatalogueTwins drops rows and
+	// foldAliasTwins collapses them. A page whose rows are ALL folded away
+	// therefore emitted no cursor while `hasMore` was true — the walk
+	// stopped dead at a page that merely happened to be empty after
+	// folding, and the client saw end-of-pagination with rows still
+	// unserved (wave-D KP-3).
+	//
+	// The cursor is built from the RAW last row (see below), which exists
+	// whenever hasMore is true, so an empty `out` is not an obstacle to
+	// emitting one. Pages can legitimately come back short — that is
+	// inherent to post-query folding and is not fixed by a top-up refetch,
+	// which would be a much heavier change for a cosmetic gain.
+	if hasMore {
 		// Volume24hUSDDesc cursor shape:
 		// <rank_tier>:<sort_vol_or_blank>:<asset_id>. Every field is a key
 		// the ORDER BY ranks on — the leading rank tier (#356: flagged /
