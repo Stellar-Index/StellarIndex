@@ -15,8 +15,37 @@ against.
 
 ## [Unreleased]
 
+### Added
+
+- **An apply path for the r1 ansible config.** `deploy-binary.yml`
+  swaps binaries only, so the config-apply gate in `deploy.yml` was a
+  forcing function with nowhere to force *to*: the full render needs
+  the ansible vault, which lives in Actions secrets and nowhere a
+  person can reach from a laptop. Config therefore lagged binaries and
+  features shipped dead — exactly what that gate exists to prevent
+  (the 2026-08-25 declared-peg and `rules.d` incidents). The same
+  credentials that already prove drift every Monday can now correct
+  it: `ansible-drift.yml` takes an `apply` input that drops `--check`.
+
+  Deliberately opt-in per run. The scheduled run and every default
+  dispatch stay `--check`, so the workflow remains a detector; only an
+  explicit `apply=true` mutates r1, and the drift verdict is skipped
+  only on that arm (an apply is *expected* to report `changed>0`). The
+  input's description states plainly that applying restarts the
+  indexer, aggregator and api.
+
 ### Fixed
 
+- **`prices_1m` both-directions reads no longer degrade to a full chunk
+  walk.** The two stored market orientations were folded into one
+  `(A AND B) OR (B AND A)` disjunction, which the planner cannot drive
+  from `prices_1m_pair_bucket_idx`; with `ORDER BY bucket DESC LIMIT n`
+  a pair holding **no rows** walked every chunk to exhaustion. Measured
+  on r1 (34 chunks, `native/fiat:USD`): 10682.994 ms → 3.610 ms. The
+  user-visible symptom was `/v1/price/batch` at 8–14 s for a single
+  asset while `/v1/price` served it in 13 ms. A regression from the
+  2026-08-31 both-directions correctness fix, whose behaviour is
+  preserved. ([#441](https://github.com/Stellar-Index/StellarIndex/pull/441))
 - **RedStone's USDT0 feed was arriving unmapped**, recorded as
   `raw:USDT0` and standing the `stellarindex_ingestion_oracle_unknown_symbols`
   ticket up — the only active alert on the status page. The raw capture
@@ -36,7 +65,6 @@ against.
   reason rather than silently bumped.
 
 
-### Fixed
 
 - **The explorer's entire application shell crashed on the home page**
   — `TypeError: Cannot read properties of undefined (reading
@@ -68,26 +96,6 @@ against.
   pre-fix component with the identical error.
 
 
-### Added
-
-- **An apply path for the r1 ansible config.** `deploy-binary.yml`
-  swaps binaries only, so the config-apply gate in `deploy.yml` was a
-  forcing function with nowhere to force *to*: the full render needs
-  the ansible vault, which lives in Actions secrets and nowhere a
-  person can reach from a laptop. Config therefore lagged binaries and
-  features shipped dead — exactly what that gate exists to prevent
-  (the 2026-08-25 declared-peg and `rules.d` incidents). The same
-  credentials that already prove drift every Monday can now correct
-  it: `ansible-drift.yml` takes an `apply` input that drops `--check`.
-
-  Deliberately opt-in per run. The scheduled run and every default
-  dispatch stay `--check`, so the workflow remains a detector; only an
-  explicit `apply=true` mutates r1, and the drift verdict is skipped
-  only on that arm (an apply is *expected* to report `changed>0`). The
-  input's description states plainly that applying restarts the
-  indexer, aggregator and api.
-
-### Fixed
 
 - **The actions SHA-pinning lint matched `uses:` as a substring**, so
   ordinary prose in a workflow tripped it: an error message reading
@@ -116,7 +124,6 @@ against.
   key-shaped token in the captured stderr is redacted.
 
 
-### Fixed
 
 - **`release.yml` failed the whole release when the CHANGELOG section
   exceeded GitHub's release-body limit.** GitHub caps a release body at
@@ -130,7 +137,6 @@ against.
   `CHANGELOG.md` — the notes are a convenience copy, the CHANGELOG is
   the record, and a release that publishes with a pointer beats one
   that does not publish at all.
-
 
 ## [v0.51.0] — 2026-08-31
 
