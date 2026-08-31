@@ -175,23 +175,40 @@ groups:
             and Postgres. Reclaim space NOW (drop stale snapshots, move
             pgBackRest off-box) or ingestion will halt.
 
-      # ── INERT (F-1329) — NO PRODUCER ──────────────────────────────
-      # The two NVMe alerts below reference metrics that NOTHING on r1
-      # emits. `node_disk_io_errors_total` and `node_nvme_temperature_celsius`
-      # are NOT node_exporter metrics (the diskstats collector has no
-      # io-errors series, and node_exporter has no NVMe-thermal collector).
-      # SMART/NVMe health needs a `smartctl_exporter` or a textfile-collector
-      # script writing into /var/lib/node_exporter/textfile_collector — NEITHER
-      # is deployed today (configs/ansible confirms only sla-probe +
-      # supply-snapshot write textfiles). These rules therefore never have a
-      # series to evaluate; they are kept (so the alert + runbook survive for
-      # when a SMART exporter lands) but are INERT and DO NOT page.
+      # ── INERT — WRONG SERIES NAME, not "no producer" ──────────────
+      # The two NVMe alerts below are inert because they name series
+      # nothing emits: `node_disk_io_errors_total` and
+      # `node_nvme_temperature_celsius` are not node_exporter metrics
+      # (the diskstats collector has no io-errors series, and
+      # node_exporter has no NVMe-thermal collector).
       #
-      # TRACKED in scripts/ci/lint-metric-refs.sh's KNOWN_INERT list. To
-      # un-inert: deploy smartctl_exporter (real metrics
-      # `smartctl_device_media_errors_total`, `smartctl_device_temperature{...}`)
-      # or a textfile script, then repoint the two exprs below at the real
-      # series + drop the entries from KNOWN_INERT.
+      # This block USED TO justify that with "NEITHER a smartctl_exporter
+      # nor a textfile-collector script is deployed today (configs/ansible
+      # confirms only sla-probe + supply-snapshot write textfiles)". That
+      # is FALSE and has been for some time (wave-D ALERT-09):
+      # configs/ansible/roles/archival-node/tasks/10-observability.yml
+      # installs a drop-in piping the packaged
+      # `/usr/share/prometheus-node-exporter-collectors/nvme_metrics.py`
+      # into the SCRAPED textfile dir as `nvme.prom`, and three LIVE
+      # alerts already read its output — stellarindex_nvme_wear_high,
+      # _spare_low and _media_errors in storage.yml, all on bare
+      # `nvme_*` series.
+      #
+      # So the thermal alert is very likely one metric-name edit from
+      # working: the sibling series follow the `nvme_<field>` convention
+      # (`nvme_percentage_used_ratio`, `nvme_available_spare_ratio`), and
+      # the temperature field would be `nvme_temperature_celsius`.
+      #
+      # NOT repointed here, deliberately. Confirming the series exists
+      # needs one read on r1 —
+      #   curl -s localhost:9100/metrics | grep '^nvme_temperature'
+      # — and this change is repo-only. Repointing an expr at a series
+      # that may not exist would swap an alert that is honestly inert for
+      # one that LOOKS live and still cannot fire, which is strictly
+      # worse. Operator: run the grep, then either repoint both trees or
+      # replace this paragraph with the observed absence.
+      #
+      # TRACKED in scripts/ci/lint-metric-refs.sh's KNOWN_INERT list.
       - alert: stellarindex_nvme_smart_warn
         # INERT: node_disk_io_errors_total has no producer (see block above).
         expr: increase(node_disk_io_errors_total[1h]) > 0
