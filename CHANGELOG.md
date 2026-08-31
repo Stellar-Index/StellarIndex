@@ -17,6 +17,51 @@ against.
 
 ### Fixed
 
+- **Five guards that did not check what they claimed** — all mine, all
+  found by an adversarial review of the 2026-08-31 merge range, each
+  fix proven by mutation.
+
+  - **`lint-rule-structure.py`'s metric-label regex crossed declaration
+    boundaries.** A non-greedy gap scanned past a label-less
+    `NewGauge`/`NewCounter` until it found the NEXT metric's
+    `[]string{…}` and credited it to the wrong metric — 19 metrics
+    affected. So the new fixture-realism check ran against fabricated
+    "declared" sets and its error message named labels the emitter does
+    not have: `stellarindex_anomaly_freeze_active` is a bare `NewGauge`
+    with zero labels, yet the lint credited it with `{op}` and passed a
+    fixture writing a series production can never emit.
+  - **`lint-unit-failed-baseline-test.sh` was executed by nothing.** I
+    wrote it, its commit trailer claimed `verify.sh` ran it, and it was
+    wired into neither `verify.sh` nor CI — and `check-verify-parity.sh`
+    only enforces CI→verify, so a script in *neither* is invisible. Now
+    wired to both. Its check was also one-directional: it walked
+    baseline→regex only, so a unit added to the exclusion regex with no
+    baseline entry was silently exempted from the catch-all **and** had
+    no dedicated alert. The reverse direction now fires.
+  - **`lint-deploy-systemd-authority.sh` asked two independent
+    questions.** "Is `- <unit>` a list item anywhere in tasks/" AND "does
+    `deploy/systemd/{{ item }}` appear anywhere in tasks/" — the second
+    being a repo-wide constant satisfied by one unrelated task. So
+    classification collapsed to the first, and adding a unit to an
+    `ansible.builtin.systemd` **enable** loop (installing nothing) passed
+    as authoritative — the exact "enable a unit you don't install"
+    footgun the lint's own header describes. Both facts are now required
+    of the SAME task, via a parser rather than greps.
+  - **The orphan-branches footer never rendered when it was the only
+    thing to report.** The header promised dispositioned branches are
+    "still COUNTED, in a footer line", but the issue step was gated on
+    the orphan count alone — so in the header's own worked example (the
+    17 landed `fix/issue-*` branches clearing the grace with no other
+    orphan) the close step fired instead and the count appeared only in
+    a job log.
+  - **The CS-017 freshness test re-implemented the rule instead of
+    calling it.** Deleting the `> r.freshnessWindow()` term left the
+    suite green while `/v1/price` resumed serving months-old buckets
+    with `stale=false`. The rule is extracted to
+    `storePriceReader.bucketIsStale` and the test now calls it;
+    deleting the term fails the suite.
+
+
 - **Every R1 deploy was failing its config-apply gate and skipping the
   post-deploy smoke test.** `deploy.yml` read the host's version
   sidecars with `cat …/deployed-versions/stellarindex-*`, but those

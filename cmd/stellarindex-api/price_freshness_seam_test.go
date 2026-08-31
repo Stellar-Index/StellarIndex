@@ -109,11 +109,15 @@ func TestStorePriceReaderStalenessBoundary(t *testing.T) {
 	now := time.Date(2026, 8, 31, 12, 0, 0, 0, time.UTC)
 	r := storePriceReader{now: func() time.Time { return now }}
 
-	// stale mirrors LatestPrice's expression. bucketStart is the CAGG
-	// row's `bucket` column; the +1m is the close.
-	stale := func(bucketStart time.Time, lowConfidence bool) bool {
-		return lowConfidence || r.clock().Sub(bucketStart.Add(time.Minute)) > r.freshnessWindow()
-	}
+	// Calls the REAL rule. This block used to re-implement the expression
+	// locally, which certified nothing: deleting the
+	// `> r.freshnessWindow()` term from LatestPrice left this test green
+	// while /v1/price resumed serving months-old buckets with
+	// stale=false — the CS-017 bug itself (wave-D PFR-04, caught by an
+	// adversarial review). The rule now lives in storePriceReader.
+	// bucketIsStale so a unit test can reach it; LatestPrice calls the
+	// same method.
+	stale := r.bucketIsStale
 
 	for _, tc := range []struct {
 		name          string

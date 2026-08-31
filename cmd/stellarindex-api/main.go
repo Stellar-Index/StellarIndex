@@ -3495,6 +3495,25 @@ func (r storePriceReader) freshnessWindow() time.Duration {
 	return defaultVWAPFreshness
 }
 
+// bucketIsStale is the CS-017 staleness rule: a closed 1m bucket is
+// stale once its CLOSE (bucket start + 1 minute) is older than the
+// freshness window, or whenever the read was low-confidence.
+//
+// Extracted so a test can exercise the REAL rule. It previously lived
+// inline in LatestPrice, and the test that certified it re-implemented
+// the expression locally — so deleting the `> r.freshnessWindow()` term
+// left the suite green while /v1/price resumed serving months-old
+// buckets with stale=false, which IS the CS-017 bug (wave-D PFR-04).
+// LatestPrice needs a live *timescale.Store, so calling it from a unit
+// test is not possible; calling this is.
+//
+// Measured from the CLOSE, not the bucket start: a 1-minute CAGG bucket
+// is not closed until its minute elapses, so measuring from the start
+// would report every bucket a minute older than it is.
+func (r storePriceReader) bucketIsStale(bucket time.Time, lowConfidence bool) bool {
+	return lowConfidence || r.clock().Sub(bucket.Add(time.Minute)) > r.freshnessWindow()
+}
+
 func (r storePriceReader) clock() time.Time {
 	if r.now != nil {
 		return r.now()
@@ -3553,7 +3572,7 @@ func (r storePriceReader) LatestPrice(ctx context.Context, asset, quote canonica
 		// baseline, so the guard fails OPEN (accepts any value, even a lone
 		// manipulated/fat-finger print). lowConfidence marks that unvalidated
 		// case; serve the value but as stale, never as a confident price.
-		stale := lowConfidence || r.clock().Sub(served.Bucket.Add(time.Minute)) > r.freshnessWindow()
+		stale := r.bucketIsStale(served.Bucket, lowConfidence)
 		return v1.VWAP1mToSnapshot(asset.String(), quote.String(), served.VWAP, served.Bucket),
 			served.Sources, stale, nil
 	}
