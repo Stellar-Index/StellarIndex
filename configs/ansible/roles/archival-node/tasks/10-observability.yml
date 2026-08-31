@@ -732,15 +732,29 @@
 
       for path in "$BIN_DIR"/stellarindex-*; do
         [ -f "$path" ] || continue
-        [ -x "$path" ] || continue
         name="$(basename "$path")"
-        # The deploy playbook parks previous builds beside the live one
-        # as `<name>.prev-<ver>` / `<name>.rolledback-<ver>`; globbing
-        # those in would manufacture permanent fake skew.
+        # Skip parked builds BEFORE the executable test, so a
+        # non-executable .prev- artifact cannot be mistaken for a
+        # broken live binary.
         case "$name" in
           *.prev-*|*.rolledback-*|*.bak|*.tmp) continue ;;
         esac
-
+        if [ ! -x "$path" ]; then
+          # A PRESENT but non-executable managed binary is a degraded
+          # run, not a skip. `[ -x ] || continue` silently dropped it,
+          # so a chmod-644 stellarindex-ops scored skew=0 AND
+          # probe_success=1 — while the alert description named "not
+          # executable" as a cause it covers (wave-D LID-2).
+          while IFS= read -r m; do
+            m="${m#"${m%%[![:space:]]*}"}"
+            if [ "$m" = "$name" ]; then
+              echo "managed binary not executable: $path" >&2
+              overall_ok=0
+              break
+            fi
+          done <<< "$MANAGED"
+          continue
+        fi
         ver="$(probe_version "$path")" || ver=""
 
         # Managed? Compare whole lines so a prefix like
