@@ -782,6 +782,27 @@ against.
   flood the unattributed bucket. The exclusion's justification is also a
   structural truth about the dispatcher this function builds, not the
   stale deployment observation the finding assumes.
+- **Two migration headers cite a different migration than the file they
+  are in** (wave-D CV-7). `0125_projection_dirty_windows.up.sql` opens
+  with `0124 up` and `0096_create_blend_emitter_events.up.sql` with
+  `0095 up` — both real but unrelated migrations, so a reader following
+  the reference lands somewhere else. A Go comment describing the
+  dirty-window table cited `migration 0124` for the same reason; that
+  one is corrected.
+
+  The two migration headers are **not**, and cannot be: applied
+  migrations are immutable, and even a comment-only edit changes the
+  checksum. Immutability is the stronger rule — a migration whose bytes
+  can change is one whose applied-ness cannot be proven — so the drift
+  is recorded rather than fixed, and a new lint stops the set growing by
+  failing any *new* migration whose header cites the wrong number,
+  before it ships and freezes.
+
+  A third citation, in `freeze_events.go`, says 0124 and is **correct**
+  (0124 really is `freeze_reason_other`) — a blanket find-and-replace
+  would have broken it. The check is therefore deliberately narrow: a
+  file disagreeing with its own filename, not whether every `migration
+  NNNN` mention in the tree points at the right subject.
 
 ### Changed
 

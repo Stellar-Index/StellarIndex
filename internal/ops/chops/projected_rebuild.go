@@ -215,7 +215,7 @@ func projectedRebuild(args []string) error { //nolint:gocognit,gocyclo,funlen //
 
 	// A -write run rewrites served rows below the live watermark — the same
 	// carried-claim invalidation projector-replay has (2026-07-31; migration
-	// 0124): compute-completeness would otherwise keep carrying a prior clean
+	// 0125): compute-completeness would otherwise keep carrying a prior clean
 	// projection claim over the range this rebuild just changed. Record the
 	// dirty window BEFORE writing anything and refuse to run without it —
 	// the fail-closed order (a crash after the record leaves a spurious

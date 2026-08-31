@@ -210,6 +210,46 @@ PY
   fi
 fi
 
+# Migration self-citation. A migration's own header comment should cite
+# its OWN number. 0125_projection_dirty_windows.up.sql opens with
+# "0124 up", and 0096_create_blend_emitter_events.up.sql with "0095 up"
+# — both real but DIFFERENT migrations, so a reader following the
+# reference lands on an unrelated change (wave-D CV-7).
+#
+# THOSE TWO CANNOT BE CORRECTED. Applied migrations are immutable
+# (lint-migration-immutability, rule 9) and even a comment-only edit
+# changes the checksum. Immutability is the stronger rule — a migration
+# whose bytes can change is a migration whose applied-ness cannot be
+# proven — so the drift is RECORDED here instead of being fixed, and
+# this check exists to stop the SET growing.
+#
+# Deliberately narrow: it checks the mechanical half — a file
+# disagreeing with its own filename — not "does every `migration NNNN`
+# mention in the tree point at the right subject", which needs judgement
+# about what each migration is FOR. internal/storage/timescale/
+# freeze_events.go cites 0124 and is CORRECT (0124 really is
+# freeze_reason_other); a blanket find-and-replace would have broken it.
+echo "Checking migration self-citation..."
+# Pre-existing drift, frozen by immutability. Adding to this list is not
+# an option for a NEW migration — fix the header before it ships.
+MIGRATION_CITATION_KNOWN="0125_projection_dirty_windows.up.sql 0096_create_blend_emitter_events.up.sql"
+for mig in migrations/[0-9][0-9][0-9][0-9]_*.up.sql; do
+  [ -f "$mig" ] || continue
+  base=$(basename "$mig")
+  case " $MIGRATION_CITATION_KNOWN " in *" $base "*) continue ;; esac
+  num=$(printf '%s' "$base" | cut -c1-4)
+  first=$(head -1 "$mig")
+  # Strip ADR-NNNN / CS-NNN / F-NNNN ids first: they are four digits but
+  # are not migration numbers. The first draft flagged
+  # 0048_source_coverage_snapshots.up.sql, whose header opens "ADR-0031:",
+  # and a lint that flags correct files gets disabled.
+  cited=$(printf '%s' "$first" | sed -E 's/(ADR|CS|F)-[0-9]+//g' \
+          | grep -oE '\b[0-9]{4}\b' | head -1 || true)
+  if [ -n "$cited" ] && [ "$cited" != "$num" ]; then
+    err "$mig: header cites migration $cited but this file IS $num — a reader following that reference lands on a different migration. Fix it BEFORE the migration ships; once applied it is immutable and cannot be corrected."
+  fi
+done
+
 # ─── 3. Every Prometheus metric must be documented in metrics reference ─────
 
 echo "Checking metrics registry..."
