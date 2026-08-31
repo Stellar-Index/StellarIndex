@@ -415,7 +415,8 @@ type MarketVolumeBucket struct {
 // Query params:
 //   - cursor   (optional): opaque, from a prior response's pagination.next.
 //   - limit    (optional): integer 1-500, default 100.
-//   - order_by (optional): "pair" (default) or "volume_24h_usd_desc".
+//   - order_by (optional): "pair" or "volume_24h_usd_desc" (DEFAULT,
+//     switched 2026-05-10 — see the `case ""` arm below).
 //     The latter surfaces high-USD-volume pairs first so clients
 //     don't paginate alphabetically through ~5K dust pairs to find
 //     the ones with real activity.

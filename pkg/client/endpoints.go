@@ -523,8 +523,22 @@ const (
 type MarketsOptions struct {
 	Cursor string
 	Limit  int // 0 → server default (typically 100); max 500
-	// OrderBy controls sort + cursor scheme. Empty → server default
-	// (alphabetic by `<base>|<quote>`).
+	// OrderBy controls sort + cursor scheme. Empty → the server default,
+	// which is VOLUME-DESC, not alphabetic — it was switched on
+	// 2026-05-10 because the alphabetical default surfaced spam tokens
+	// (`0-…`, `0TAX-…`) at the top of the listing.
+	//
+	// This godoc said "alphabetic" until wave-D F-SDK-02. That is worth
+	// knowing if you walk the full catalogue: volume-desc ranks on a
+	// MUTABLE key, so a pair whose 24h volume changes mid-walk can be
+	// seen twice or missed. For a complete enumeration pass
+	// [MarketsOrderPair] explicitly — its keyset is the immutable
+	// `base|quote` with a strict `>`, so the walk is stable.
+	//
+	// The SDK deliberately does NOT send order_by=pair for you: that
+	// would silently flip every existing caller from top-by-volume to
+	// alphabetically-first spam tokens, and make this SDK disagree with
+	// an equivalent curl and with the OpenAPI default.
 	OrderBy MarketsOrderBy
 }
 
