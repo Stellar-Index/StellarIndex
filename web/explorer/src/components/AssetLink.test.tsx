@@ -54,6 +54,24 @@ describe('assetSlug', () => {
     ).toBeNull();
   });
 
+  it('refuses to link a canonical RWA asset', () => {
+    // ADR-0028 rwa: ids have no /assets page: the API 400s on the bare
+    // code and 404s on the prefixed id, so BOTH spellings are dead.
+    // Returning null renders a plain label instead of promising a page
+    // that does not exist (wave-D SI-OC-02).
+    //
+    // Stripping the prefix the way fiat:/crypto: do would produce
+    // /assets/XAU and /assets/BENJI — which the API rejects — swapping
+    // one dead link for another while destroying the namespace signal.
+    for (const id of ['rwa:XAU', 'rwa:BENJI', 'rwa:USDY', 'rwa:XAUm']) {
+      if (assetSlug(id) !== null) {
+        throw new Error(
+          `assetSlug(${id}) returned ${assetSlug(id)} — an rwa: asset must not be linked`,
+        );
+      }
+    }
+  });
+
   it('returns null for absent input', () => {
     expect(assetSlug(null)).toBeNull();
     expect(assetSlug(undefined)).toBeNull();

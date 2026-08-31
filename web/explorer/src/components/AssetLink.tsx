@@ -49,6 +49,18 @@ export function assetSlug(canonical: string | undefined | null): string | null {
   // it by definition; without this branch the classic split below would
   // link to /assets/raw%3A<symbol> (static-export 404).
   if (isRawOracleAsset(canonical)) return null;
+  // Canonical RWA namespace (`rwa:XAU`, `rwa:BENJI`, …) — ADR-0028.
+  // There is no /assets page for one: the API 400s on the bare code and
+  // 404s on the prefixed id, so BOTH spellings are dead. Returning null
+  // renders a plain label instead of a link that goes nowhere
+  // (wave-D SI-OC-02).
+  //
+  // Deliberately not "strip the prefix like fiat:/crypto:". That would
+  // produce /assets/XAU, /assets/BENJI, … which the API rejects — it
+  // swaps one dead link for another AND destroys the namespace signal
+  // the label carries. Real per-asset RWA pages are a separate piece of
+  // work (#352); this only stops promising one that does not exist.
+  if (canonical.startsWith('rwa:')) return null;
   // Raw SAC contract id — only linkable once resolved to a classic
   // asset (handled in AssetLink via the wrapper map); not here.
   if (/^C[A-Za-z0-9]{55}$/.test(canonical)) return null;
