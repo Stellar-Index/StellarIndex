@@ -196,6 +196,31 @@ against.
   window and compute it yourself" surface *opposite* `/v1/price`. That
   is an owner decision, not something to smuggle in with a scam fix.
 
+- **A withheld price verdict reached on the stablecoin-proxy leg was
+  swallowed, so the API said "no price data"** (wave-D MSP-06). The
+  direct fiat read misses for the dominant on-chain shape (trades are
+  quoted in issuer stablecoins, not `fiat:USD`), the handler enters
+  `priceFallback`, the proxy loop's `LatestPrice(asset, <peg>)` returns
+  `ErrPriceWithheld` — and the loop's bare `continue`, written to skip
+  an INACTIVE peg, discarded that verdict along with the miss. The
+  response was `errors/price-not-found`.
+
+  Those are different answers. "No price data" tells a customer to look
+  nowhere; the withheld problem names `/v1/observations`, `/v1/ohlc` and
+  `/v1/history`, where the data IS available — that guidance is the
+  whole reason the distinct problem type exists. Same swallow affected
+  `/v1/oracle/lastprice` and `/v1/oracle/x_last_price`.
+
+  Withheld is now **sticky, not terminal**: a later peg that can serve
+  still wins (a real price beats a 404), and the verdict surfaces only
+  when nothing serves. The batch path keeps dropping it, deliberately —
+  that envelope has no per-row problem shape.
+
+  The two existing withheld tests were left untouched. They are
+  load-bearing — mutation testing confirms deleting the direct-read
+  short-circuit fails both — and the finding's suggestion to rewrite
+  them would have deleted live coverage.
+
 ### Reviewed, no change
 
 - **MSP-03** (four more surfaces bypass both gates: `/v1/markets` and

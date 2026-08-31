@@ -169,6 +169,31 @@ func writePriceWithheldProblem(w http.ResponseWriter, r *http.Request, asset, qu
 			" — read the raw market via /v1/observations, /v1/ohlc or /v1/history and apply your own judgement")
 }
 
+// writeNoPriceProblem emits the correct 404 for an exhausted price
+// lookup: WITHHELD when some leg reached a withholding verdict, plain
+// not-found otherwise.
+//
+// The distinction is the point, not a nicety. Until 2026-08-31 the
+// stablecoin-proxy leg's withheld verdict was swallowed by the same
+// bare `continue` that skips an inactive peg, so this path always said
+// "no price data" — "we have none" — when the truth could be "we have
+// one and decline to publish it" (wave-D MSP-06). The withheld body
+// names /v1/observations, /v1/ohlc and /v1/history, where the data IS
+// available; a not-found tells the customer to look nowhere.
+//
+// Extracted rather than inlined so handlePrice stays under the
+// gocognit ceiling.
+func writeNoPriceProblem(w http.ResponseWriter, r *http.Request, asset, quote canonical.Asset, withheld bool) {
+	if withheld {
+		writePriceWithheldProblem(w, r, asset, quote)
+		return
+	}
+	writeProblem(w, r,
+		"https://api.stellarindex.io/errors/price-not-found",
+		"No price data for pair", http.StatusNotFound,
+		"no trades or oracle observations for "+asset.String()+" / "+quote.String())
+}
+
 // defaultPriceQuote is the implicit `quote` used by /v1/price when
 // the client omits the query param. Parsed once at package init
 // so a regression that removes USD from the fiat allow-list
@@ -514,7 +539,8 @@ func (s *Server) handlePrice(w http.ResponseWriter, r *http.Request) {
 	if errors.Is(err, ErrPriceNotFound) {
 		var ok bool
 		viaFallback = true
-		snapshot, sources, triangulated, ok = s.priceFallback(r.Context(), asset, quote)
+		var withheld bool
+		snapshot, sources, triangulated, ok, withheld = s.priceFallback(r.Context(), asset, quote)
 		// F-1254 (audit-2026-05-12): when the closed-bucket VWAP read
 		// returned ErrPriceNotFound and we degraded to one of the
 		// priceFallback chain (last-trade / stablecoin proxy /
@@ -529,10 +555,7 @@ func (s *Server) handlePrice(w http.ResponseWriter, r *http.Request) {
 		// the chain itself is the staleness signal.
 		stale = ok
 		if !ok {
-			writeProblem(w, r,
-				"https://api.stellarindex.io/errors/price-not-found",
-				"No price data for pair", http.StatusNotFound,
-				"no trades or oracle observations for "+asset.String()+" / "+quote.String())
+			writeNoPriceProblem(w, r, asset, quote, withheld)
 			return
 		}
 		err = nil
@@ -890,17 +913,21 @@ func (s *Server) normalizeRawRatioString(value string, base, quote canonical.Ass
 // Returns ok=false when every layer misses; the caller turns that
 // into a 404. Extracted from handlePrice to keep that handler
 // under the gocognit cap.
-func (s *Server) priceFallback(ctx context.Context, asset, quote canonical.Asset) (PriceSnapshot, []string, bool, bool) {
+func (s *Server) priceFallback(ctx context.Context, asset, quote canonical.Asset) (PriceSnapshot, []string, bool, bool, bool) {
 	if snap, srcs, triangulated, ok := s.tryRedisVWAPFallback(ctx, asset, quote); ok {
-		return snap, srcs, triangulated, true
+		return snap, srcs, triangulated, true, false
 	}
-	if snap, srcs, ok := s.tryStablecoinFiatProxy(ctx, asset, quote); ok {
-		return snap, srcs, true, true
+	snap, srcs, ok, withheld := s.tryStablecoinFiatProxy(ctx, asset, quote)
+	if ok {
+		return snap, srcs, true, true, false
 	}
 	if snap, srcs, ok := s.tryFiatCrossRate(asset, quote); ok {
-		return snap, srcs, true, true
+		return snap, srcs, true, true, false
 	}
-	return PriceSnapshot{}, nil, false, false
+	// Nothing served. `withheld` distinguishes "we have no price" from
+	// "we have one and decline to publish it" — the caller emits
+	// errors/price-withheld rather than errors/price-not-found (MSP-06).
+	return PriceSnapshot{}, nil, false, false, withheld
 }
 
 // proxyPairGate is OPTIONALLY implemented by the wired [PriceReader] to
@@ -942,7 +969,24 @@ type proxyPairGate interface {
 // Sets flags.triangulated=true on the returned snapshot — the served
 // price is the X/<peg> VWAP rounded by the implicit assumption peg ≈ $1.
 // SingleSource is whatever the underlying X/<peg> lookup carried.
-func (s *Server) tryStablecoinFiatProxy(ctx context.Context, asset, quote canonical.Asset) (PriceSnapshot, []string, bool) {
+//
+// The third return is `withheld`: a peg leg whose read came back
+// ErrPriceWithheld means we HAVE a price for this asset and are
+// declining to publish it. That verdict used to be swallowed by the
+// same bare `continue` that skips an inactive peg, so the caller
+// reported errors/price-not-found — "we have no price" — when the truth
+// was "we have one and are withholding it" (wave-D MSP-06). The two are
+// different answers to the customer: the withheld problem body names
+// the raw surfaces (/v1/observations, /v1/ohlc, /v1/history) where the
+// data IS available, and a not-found tells them to look nowhere.
+//
+// Withheld is sticky across the peg loop and does NOT stop it: a later
+// peg may still yield a servable price, which is strictly better than a
+// 404, and only if NO peg serves does the withheld verdict surface.
+func (s *Server) tryStablecoinFiatProxy(ctx context.Context, asset, quote canonical.Asset) (PriceSnapshot, []string, bool, bool) {
+	// withheld is sticky across the peg loop — see the doc above.
+	var withheld bool
+
 	// Self-peg: the asset IS a `crypto:<STABLE>` ticker priced in the
 	// very fiat it tracks (crypto:USDC/fiat:USD, crypto:EURC/fiat:EUR,
 	// …). The aggregator treats these tickers as that fiat
@@ -963,13 +1007,13 @@ func (s *Server) tryStablecoinFiatProxy(ctx context.Context, asset, quote canoni
 			PriceType:  "peg",
 			ObservedAt: time.Now().UTC(),
 		}
-		return snap, nil, true
+		return snap, nil, true, withheld
 	}
 	if quote.Type != canonical.AssetFiat || quote.Code != "USD" {
-		return PriceSnapshot{}, nil, false
+		return PriceSnapshot{}, nil, false, withheld
 	}
 	if len(s.usdPeggedClassics) == 0 || s.prices == nil {
-		return PriceSnapshot{}, nil, false
+		return PriceSnapshot{}, nil, false, withheld
 	}
 	// Empty-proxy-pair gate (2026-07-06 empty-alias latency incident,
 	// proxy layer). Each peg lookup below is a LatestPrice(asset, <peg>),
@@ -1008,7 +1052,7 @@ func (s *Server) tryStablecoinFiatProxy(ctx context.Context, asset, quote canoni
 				PriceType:  "peg",
 				ObservedAt: time.Now().UTC(),
 			}
-			return snap, nil, true
+			return snap, nil, true, withheld
 		}
 		if gate != nil {
 			exists, gerr := gate.RecentClosedVWAP1mExists(ctx, asset, peg)
@@ -1022,6 +1066,14 @@ func (s *Server) tryStablecoinFiatProxy(ctx context.Context, asset, quote canoni
 		}
 		snap, srcs, _, err := s.prices.LatestPrice(ctx, asset, peg)
 		if err != nil {
+			// A WITHHELD verdict is not a miss — it means this asset HAS
+			// a price on the peg leg that policy declines to publish.
+			// Record it and keep going (a later peg may still serve, which
+			// beats a 404); if none does, the caller reports withheld
+			// rather than not-found (MSP-06).
+			if errors.Is(err, ErrPriceWithheld) {
+				withheld = true
+			}
 			// ErrPriceNotFound is the common case (peg not active for
 			// this asset); any other error gets the same treatment as
 			// the chart fallback — silent skip, try the next peg.
@@ -1041,9 +1093,9 @@ func (s *Server) tryStablecoinFiatProxy(ctx context.Context, asset, quote canoni
 		// Rewrite the snapshot's Quote field so the wire response
 		// reflects what the user asked for, not the proxy peg.
 		snap.Quote = quote.String()
-		return snap, srcs, true
+		return snap, srcs, true, withheld
 	}
-	return PriceSnapshot{}, nil, false
+	return PriceSnapshot{}, nil, false, withheld
 }
 
 // tryFiatCrossRate synthesises a fiat-vs-fiat price by cross-rating
@@ -1523,7 +1575,11 @@ func (s *Server) resolveBatchRow(ctx context.Context, r *http.Request, raw strin
 		// asymmetry caused asset_ids that returned 200 on
 		// /v1/price (e.g. USDT-G…) to be silently dropped from the
 		// batch envelope. R-005 in docs/review-2026-05-10.md.
-		if fs, fsrc, ftri, ok := s.priceFallback(ctx, asset, quote); ok {
+		// The batch envelope has no per-row problem shape — a row either
+		// carries a price or is omitted — so a withheld verdict is
+		// dropped here deliberately rather than reported (MSP-06 covers
+		// the single-asset and oracle surfaces, which DO have one).
+		if fs, fsrc, ftri, ok, _ := s.priceFallback(ctx, asset, quote); ok {
 			// F-1254: priceFallback responses are by definition below
 			// the closed-bucket VWAP contract (last-trade / proxy /
 			// triangulation). Mark stale so callers can tell the
