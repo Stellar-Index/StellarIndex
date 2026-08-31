@@ -245,10 +245,39 @@ else
   else
     check_caller "deploy.yml passes the host baseline as the 3rd argument (got $argc args — without it a catch-up or skip-ahead deploy gets a false 'the binary deploy is complete')" "no"
   fi
-  if grep -q 'id: baseline' "$WF" && grep -q 'deployed-versions' "$WF"; then
-    check_caller "deploy.yml reads the host's live version before the playbook runs" "ok"
+  # ORDERING, not mere presence. The check below used to be two
+  # independent greps for `id: baseline` and `deployed-versions`, and its
+  # message asserted the baseline is read BEFORE the playbook — which
+  # nothing verified. Moving the baseline step below the deploy step
+  # would have kept this green while making the gate permanently
+  # vacuous: the "live" version would be the version just deployed, so
+  # the diff range collapses to nothing and every config change passes.
+  bl_line=$(grep -n 'id: baseline' "$WF" | head -1 | cut -d: -f1)
+  pb_line=$(grep -nE 'name:.*(Run deploy playbook|deploy playbook)' "$WF" | head -1 | cut -d: -f1)
+  if [[ -n "$bl_line" && -n "$pb_line" && "$bl_line" -lt "$pb_line" ]] \
+     && grep -q 'deployed-versions' "$WF"; then
+    check_caller "deploy.yml reads the host's live version BEFORE the playbook runs (baseline@L$bl_line < playbook@L$pb_line)" "ok"
   else
-    check_caller "deploy.yml reads the host's live version before the playbook runs (else the 3rd argument is always empty)" "no"
+    check_caller "deploy.yml reads the host's live version before the playbook runs (baseline@L${bl_line:-none} playbook@L${pb_line:-none} — if the baseline is read AFTER the deploy it equals the version just deployed and the gate is vacuous)" "no"
+  fi
+
+  # The sidecars carry NO trailing newline (ansible copy `content:`), so
+  # the read must supply one per file. `cat` mashes six versions into a
+  # single token that a `^`-only anchor matches, which failed the gate
+  # closed on every deploy and skipped the post-deploy smoke step.
+  if grep -qE 'awk 1 /var/lib/stellarindex/deployed-versions' "$WF"; then
+    check_caller "deploy.yml reads the sidecars newline-safely (awk 1, not cat)" "ok"
+  else
+    check_caller "deploy.yml reads the sidecars newline-safely (found a bare 'cat' over deployed-versions/* — the files have no trailing newline, so N binaries concatenate into one garbage token)" "no"
+  fi
+
+  # And the version regex must be anchored at BOTH ends, so a mashed or
+  # otherwise malformed sidecar is rejected rather than passed through
+  # as if it were a version.
+  if grep -qE "grep -E '\^v\[0-9\]\+\\\.\[0-9\]\+\\\.\[0-9\]\+\(-\[0-9A-Za-z\.\]\+\)\?\\\$'" "$WF"; then
+    check_caller "deploy.yml's version filter is end-anchored" "ok"
+  else
+    check_caller "deploy.yml's version filter is end-anchored (a '^'-only anchor matches a concatenation like v0.1.0v0.2.0)" "no"
   fi
 fi
 
