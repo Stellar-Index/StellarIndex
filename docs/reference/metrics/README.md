@@ -1047,6 +1047,24 @@ mitigation path.
 
 ## Oracle layer (indexer binary, reflector + future sources)
 
+### `stellarindex_oracle_stream_rows_unparsed_total`
+
+Counter, labels `source`, `field` (`asset` | `quote`).
+
+`oracle_updates` rows dropped from the served stream because their
+stored canonical text would not parse.
+
+**When to look at this:** it should be flat at zero forever. Any increase
+means rows are silently absent from `/v1/oracle/streams` and the
+explorer `/oracles` page — they are not being served and no error is
+returned to anyone. Check it after ANY hand-written relabel of
+`oracle_updates.asset` / `.quote`: that column has no `CHECK`
+constraint, so a typo drops the row from the served surface rather than
+erroring, which looks from the outside exactly like a successful
+relabel.
+
+`field` tells you which column to inspect without a query.
+
 ### `stellarindex_oracle_last_update_unix`
 
 Gauge, labels `source`, `asset`.
