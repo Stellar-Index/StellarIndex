@@ -17,6 +17,18 @@ against.
 
 ### Fixed
 
+- **The actions SHA-pinning lint matched `uses:` as a substring**, so
+  ordinary prose in a workflow tripped it: an error message reading
+  "Usual ca**uses: sshd** not listening…" was parsed as a tag-pinned
+  third-party action named `sshd` and hard-failed the PR that
+  introduced it. The match is now anchored to a YAML key boundary
+  (line start, whitespace, or list dash). Verified in both directions —
+  a genuinely tag-pinned action is still caught, and prose containing
+  "causes:" no longer fails. The capture index moved with the added
+  group, which would otherwise have made the lint report the wrong
+  token.
+
+
 - **A failed test-net deploy named neither hop.** Reaching a NAT-only
   test-net VM goes through a ProxyJump, and BOTH hops must have their
   host key pinned in the one `known_hosts` file the workflow writes.

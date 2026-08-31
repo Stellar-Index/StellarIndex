@@ -610,7 +610,7 @@ jobs:
           if "${probe[@]}" -v "${DEPLOY_USER}@${HOST}" true 2>/tmp/path.err; then
             echo "full path OK — ansible should connect"
           else
-            echo "::error::the jump hop succeeded but the VM '${HOST}' did not. The deploy key reaches the jump host; the failure is the SECOND hop. Usual causes: sshd not listening on the VM, the deploy public key absent from ITS authorized_keys, the VM's host key changed since the pin was captured, or the inventory address no longer matching the VM's NAT address. Verbatim ssh diagnostics below (key material redacted)."
+            echo "::error::the jump hop succeeded but the VM '${HOST}' did not. The deploy key reaches the jump host; the failure is the SECOND hop. Check, in order: is sshd listening on the VM; is the deploy public key in ITS authorized_keys; has the VM's host key changed since the pin was captured; does the inventory address still match the VM's NAT address. Verbatim ssh diagnostics below (key material redacted)."
             sed -e 's/[A-Za-z0-9+/=]\{40,\}/<redacted>/g' /tmp/path.err \
               | grep -viE 'identity file|will attempt key|offering|send_pubkey_test' \
               | tail -18 >&2

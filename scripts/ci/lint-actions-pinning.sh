@@ -59,10 +59,15 @@ done < <(find .github/workflows -name '*.yml' -type f | sort)
 
 for f in "${WORKFLOWS[@]}"; do
   while IFS= read -r line; do
-    if ! [[ "$line" =~ uses:[[:space:]]+([^[:space:]]+) ]]; then
+    # Anchor on a YAML key boundary. An unanchored `uses:` also matches
+    # the tail of ordinary prose — "Usual causes: sshd ..." inside an
+    # error message parsed as the action `sshd` and hard-failed the PR
+    # that introduced it. A `uses:` key is always at the start of a line
+    # or a list item.
+    if ! [[ "$line" =~ (^|[[:space:]]|-)uses:[[:space:]]+([^[:space:]]+) ]]; then
       continue
     fi
-    ref="${BASH_REMATCH[1]}"
+    ref="${BASH_REMATCH[2]}"
     # Strip leading dash/whitespace already gone via the regex.
     # actions/* and github/* are first-party-ish — only count
     # third-party namespaces.
@@ -87,10 +92,11 @@ done
 # appear in the diff against `main`.
 if [[ -n "${PR_DIFF:-}" ]] && git rev-parse --verify origin/main >/dev/null 2>&1; then
   while IFS= read -r line; do
-    if ! [[ "$line" =~ ^\+.*uses:[[:space:]]+([^[:space:]]+) ]]; then
+    # Same anchoring as the scan above; see the note there.
+    if ! [[ "$line" =~ ^\+[[:space:]]*(-[[:space:]]*)?uses:[[:space:]]+([^[:space:]]+) ]]; then
       continue
     fi
-    ref="${BASH_REMATCH[1]}"
+    ref="${BASH_REMATCH[2]}"
     short="${ref%@*}"
     if [[ "$short" == actions/* || "$short" == github/* ]]; then
       continue
