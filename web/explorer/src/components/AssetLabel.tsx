@@ -62,6 +62,18 @@ export function AssetLabel({
       </span>
     );
   }
+  // Canonical RWA namespace (ADR-0028) — render the bare code, keep the
+  // full id in the tooltip so the namespace stays discoverable. Same
+  // shape as the unmapped-oracle branch above, and for the same reason:
+  // the prefix carries meaning a bare "XAU" loses, but showing
+  // "rwa:XAU" inline in a dense cell is noise (wave-D SI-OC-02).
+  if (canonical.startsWith('rwa:')) {
+    return (
+      <span className="font-mono text-xs" title={`${canonical} — tokenised real-world asset`}>
+        {canonical.slice(4)}
+      </span>
+    );
+  }
   // Numeric form ("0", "1", …) is the legacy markets-table native render.
   if (/^\d+$/.test(canonical)) {
     return <span className="font-medium">XLM-native</span>;
