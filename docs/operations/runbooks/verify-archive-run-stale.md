@@ -26,10 +26,16 @@ severity: P2
   on each preceding night — the ticket-level alert that should
   have caught this earlier.
 
-> **NOTE:** the expr measures the timer's last *trigger* — updated on
-> every firing regardless of how the service exits. "Every run failed
-> but the timer still fires" does NOT trip this alert — only
-> `_unit_failed` catches that.
+> **NOTE (changed 2026-08-30):** the expr now measures the last CLEAN
+> COMPLETION, via `stellarindex_verify_archive_last_success_unix` — a
+> gauge the verify-archive binary writes to its node_exporter textfile
+> and advances only on a clean exit.
+>
+> It previously measured the timer's last *trigger*, updated on every
+> firing regardless of how the service exited, so "every run failed but
+> the timer still fires" did NOT trip this page — the exact scenario the
+> alert description names. `_unit_failed` (ticket) was the only signal
+> for it. Both now catch it, from different directions.
 
 ## Quick diagnosis (≤ 5 min)
 
@@ -52,7 +58,7 @@ Three branches:
 | State | Cause | Action |
 | ----- | ----- | ------ |
 | `inactive (dead)` and last-trigger > 36h ago | Timer disabled (operator forgot after a maintenance window) | Re-enable: `systemctl enable --now verify-archive-tier-a.timer` |
-| `active (waiting)` and last-trigger fresh, yet this alert fired | Shouldn't happen — the expr keys on last TRIGGER, not last clean finish; re-check which alert fired | Failing runs are [`verify-archive-unit-failed.md`](verify-archive-unit-failed.md) territory |
+| `active (waiting)` and last-trigger fresh, yet this alert fired | EXPECTED since 2026-08-30: the timer is firing but every run is FAILING, so the last-success gauge has not advanced. This is the case the alert was blind to before | `journalctl -u verify-archive-tier-a.service` for the failure; [`verify-archive-unit-failed.md`](verify-archive-unit-failed.md) should also be firing |
 | `active (running)` for hours | Current run is hung — or is the (expected) ~13.8h full pass | Watch per-chunk progress in the journal; see the hung-run bullet below |
 
 ## Mitigation (≤ 15 min)
@@ -154,6 +160,16 @@ its stdout goes to the systemd journal and is rotated by
 `journald`'s own retention.
 
 ## Changelog
+
+- 2026-08-30 — the expr no longer keys on the timer's last trigger. It
+  reads `stellarindex_verify_archive_last_success_unix`, written by the
+  verify-archive binary and advanced only on a clean exit, so a job that
+  fails every night can no longer look fresh (wave-D ALERT-10). The
+  Symptoms NOTE and state-table branch 2 are rewritten accordingly —
+  branch 2 is now a REACHABLE, expected state rather than a
+  "shouldn't happen". Requires the binary carrying the new gauge to be
+  deployed before the page is trustworthy; until then the series is
+  absent and the alert cannot fire.
 
 - 2026-08-28 — re-verified against HEAD. Unreachable state-table
   branch 2 replaced — the expr keys on the timer's last TRIGGER

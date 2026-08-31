@@ -755,6 +755,29 @@ against.
   The seed guard derives its subject set from the emitter source, so a
   new outcome added without a matching seed fails on the day it is
   written.
+- **The verify-archive staleness page measured when the timer last
+  *fired*, not when verification last *succeeded*** (wave-D ALERT-10).
+  `stellarindex_verify_archive_run_stale` is a `severity: page`
+  guarding R1's role as integrity leader (ADR-0016) — the nightly
+  chain verification R2/R3 trust. It read
+  `node_systemd_timer_last_trigger_seconds`, which systemd updates on
+  every firing regardless of how the triggered service exits. So a job
+  that failed every single night kept the gauge perfectly fresh, and
+  the page was defeated by exactly the scenario its own description
+  names: *"either the timer isn't enabled or every recent attempt
+  failed."* The Tier B ticket had the same defect.
+
+  Both now read `stellarindex_verify_archive_last_success_unix`, a new
+  per-tier gauge the verify-archive binary writes into its existing
+  node_exporter textfile and advances **only** on a clean exit; a
+  failed run carries the prior value forward. A host that has never
+  completed a run emits an explicit `0` rather than no series at all.
+
+  The runbook had already documented the limitation as a known caveat
+  — a NOTE under Symptoms and a state-table row marked "Shouldn't
+  happen". That row describes a reachable, expected state now, and both
+  are rewritten. Writing a limitation into a runbook makes it
+  survivable; it does not make the page work.
 
 - **A percent-encoded slash forged the SSE exemption, so 13 routes could
   be asked to run with no request deadline at all** (wave-D

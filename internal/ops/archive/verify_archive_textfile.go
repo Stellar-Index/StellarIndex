@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
 	dto "github.com/prometheus/client_model/go"
@@ -78,6 +79,23 @@ const (
 
 	verifyArchiveMismatchHelp = "Chain breaks, sequence gaps, and checkpoint mismatches found by verify-archive, cumulative per reason across runs on this host."
 
+	// verifyArchiveLastSuccessMetric is the unix time of the last run
+	// that COMPLETED CLEANLY on this host, per tier.
+	//
+	// The staleness page used to read node_systemd_timer_last_trigger_
+	// seconds, which is when the TIMER last fired — independent of the
+	// triggered service's exit status. A job that failed every single
+	// night therefore kept that gauge perfectly fresh, and the page for
+	// "the archive has not been verified" was defeated by exactly the
+	// scenario it names (wave-D ALERT-10).
+	//
+	// Only a clean exit advances this. A failed run carries the prior
+	// value forward, so the gauge answers "when did verification last
+	// SUCCEED", which is the question the alert asks.
+	verifyArchiveLastSuccessMetric = "stellarindex_verify_archive_last_success_unix"
+
+	verifyArchiveLastSuccessHelp = "Unix time of the last verify-archive run that completed cleanly on this host, per tier. Zero when no run has ever succeeded."
+
 	// maxPriorTextfileBytes bounds the read-back of our own
 	// previous output. The file is a few hundred bytes; anything
 	// vastly larger is not ours and we would rather start from a
@@ -137,10 +155,18 @@ func collectVerifyArchiveMismatches() map[string]uint64 {
 // different tier starts a fresh zero baseline instead of
 // transplanting another tier's total onto the new series (which
 // would read as a jump and false-page).
-func writeVerifyArchiveTextfile(path, tier string, runTotals map[string]uint64) error {
+func writeVerifyArchiveTextfile(path, tier string, runTotals map[string]uint64, succeeded bool, now time.Time) error {
 	totals := readPriorVerifyArchiveTextfile(path, tier)
 	for reason, n := range runTotals {
 		totals[reason] += n
+	}
+
+	// Carry the prior success timestamp forward; only a clean run
+	// advances it. This is the whole point of the metric — see
+	// verifyArchiveLastSuccessMetric.
+	lastSuccess := readPriorVerifyArchiveLastSuccess(path, tier)
+	if succeeded {
+		lastSuccess = now.Unix()
 	}
 
 	tmp := path + ".tmp"
@@ -148,7 +174,7 @@ func writeVerifyArchiveTextfile(path, tier string, runTotals map[string]uint64) 
 	if err != nil {
 		return fmt.Errorf("create textfile %q: %w", tmp, err)
 	}
-	if err := renderVerifyArchiveTextfile(f, tier, totals); err != nil {
+	if err := renderVerifyArchiveTextfile(f, tier, totals, lastSuccess); err != nil {
 		_ = f.Close()
 		_ = os.Remove(tmp)
 		return err
@@ -168,7 +194,7 @@ func writeVerifyArchiveTextfile(path, tier string, runTotals map[string]uint64) 
 // exposition format. Every reason in verifyArchiveMismatchReasons is
 // emitted, including the ones absent from totals — that is the
 // zero-seeding described in the file header, not padding.
-func renderVerifyArchiveTextfile(w io.Writer, tier string, totals map[string]uint64) error {
+func renderVerifyArchiveTextfile(w io.Writer, tier string, totals map[string]uint64, lastSuccess int64) error {
 	if _, err := fmt.Fprintf(w, "# HELP %s %s\n# TYPE %s counter\n",
 		verifyArchiveMismatchMetric, verifyArchiveMismatchHelp, verifyArchiveMismatchMetric); err != nil {
 		return err
@@ -187,6 +213,17 @@ func renderVerifyArchiveTextfile(w io.Writer, tier string, totals map[string]uin
 			return err
 		}
 	}
+	// Emitted on EVERY write, including failed runs (carrying the prior
+	// value), so the series exists before the first success and a host
+	// that has never verified reads 0 rather than vanishing.
+	if _, err := fmt.Fprintf(w, "# HELP %s %s\n# TYPE %s gauge\n",
+		verifyArchiveLastSuccessMetric, verifyArchiveLastSuccessHelp, verifyArchiveLastSuccessMetric); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintf(w, "%s{tier=%q} %d\n",
+		verifyArchiveLastSuccessMetric, tier, lastSuccess); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -200,6 +237,39 @@ func renderVerifyArchiveTextfile(w io.Writer, tier string, totals map[string]uin
 // parse its own last output would recreate the blind spot this file
 // removes. To Prometheus that degradation is an ordinary counter
 // reset.
+// readPriorVerifyArchiveLastSuccess recovers the last clean-completion
+// timestamp this writer previously recorded for tier. Best-effort for
+// the same reason as the counter reader: a missing or malformed file
+// degrades to "never succeeded" (0), which makes the staleness alert
+// fire rather than go quiet — the safe direction for a signal whose
+// whole job is to notice absence.
+func readPriorVerifyArchiveLastSuccess(path, tier string) int64 {
+	f, err := os.Open(path) //nolint:gosec // operator-supplied path, the same one we write
+	if err != nil {
+		return 0
+	}
+	defer func() { _ = f.Close() }()
+
+	want := fmt.Sprintf("%s{tier=%q}", verifyArchiveLastSuccessMetric, tier)
+	sc := bufio.NewScanner(io.LimitReader(f, maxPriorTextfileBytes))
+	for sc.Scan() {
+		line := strings.TrimSpace(sc.Text())
+		if !strings.HasPrefix(line, want) {
+			continue
+		}
+		fields := strings.Fields(line)
+		if len(fields) != 2 {
+			continue
+		}
+		v, err := strconv.ParseInt(fields[1], 10, 64)
+		if err != nil || v < 0 {
+			continue
+		}
+		return v
+	}
+	return 0
+}
+
 func readPriorVerifyArchiveTextfile(path, tier string) map[string]uint64 {
 	totals := map[string]uint64{}
 	f, err := os.Open(path) //nolint:gosec // operator-supplied path, the same one we write

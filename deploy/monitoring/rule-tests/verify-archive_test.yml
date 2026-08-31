@@ -1,0 +1,70 @@
+# verify-archive staleness — the timer-vs-service confusion (wave-D
+# ALERT-10).
+#
+# These alerts used to read node_systemd_timer_last_trigger_seconds:
+# when the TIMER last FIRED, independent of the triggered service's exit
+# status. A nightly job that failed every single night kept that gauge
+# perfectly fresh, so the R1 integrity-leader PAGE was defeated by
+# exactly the scenario its own description names ("every recent attempt
+# failed").
+#
+# They now read stellarindex_verify_archive_last_success_unix, which the
+# verify-archive binary advances ONLY on a clean exit.
+#
+# The firing cases below hold last_success FIXED while time advances —
+# which is precisely what a job failing every night looks like on the
+# new signal, and what was indistinguishable from health on the old one.
+
+rule_files:
+- ../rules/verify-archive.yml
+evaluation_interval: 1m
+tests:
+- interval: 1m
+  name: tier A failing every night no longer looks fresh
+  input_series:
+  - series: stellarindex_verify_archive_last_success_unix{job="node",instance="r1:9100",tier="chain"}
+    values: 60+0x3000
+  alert_rule_test:
+  - eval_time: 40h
+    alertname: stellarindex_verify_archive_run_stale
+    exp_alerts:
+    - exp_labels:
+        job: node
+        instance: r1:9100
+        tier: chain
+        severity: page
+        team: stellarindex
+        component: archive
+      exp_annotations:
+        runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/verify-archive-run-stale.md
+        summary: (R1 integrity-leader) verify-archive Tier A hasn't run cleanly in 1d 15h 59m 0s
+        description: "R1 is the integrity leader per ADR-0016 — its nightly chain-link\nverification is what R2/R3 trust. 36h without a clean run means\neither the timer isn't enabled or every recent attempt failed.\nEscalate immediately; the cross-region trust property degrades\nwith each missed cycle. Diagnosis:\n  - `systemctl status verify-archive-tier-a.timer` — is it active?\n  - `journalctl -u verify-archive-tier-a.service` — what's failing?\n  - check `archive_files_missing` — a gap upstream blocks verify.\n"
+- interval: 1m
+  name: tier A verified within the window is quiet
+  input_series:
+  - series: stellarindex_verify_archive_last_success_unix{job="node",instance="r1:9100",tier="chain"}
+    values: 0+60x3000
+  alert_rule_test:
+  - eval_time: 40h
+    alertname: stellarindex_verify_archive_run_stale
+    exp_alerts: []
+- interval: 1m
+  name: tier B failing every night no longer looks fresh
+  input_series:
+  - series: stellarindex_verify_archive_last_success_unix{job="node",instance="r1:9100",tier="checkpoint"}
+    values: 60+0x3000
+  alert_rule_test:
+  - eval_time: 40h
+    alertname: stellarindex_verify_archive_tier_b_run_stale
+    exp_alerts:
+    - exp_labels:
+        job: node
+        instance: r1:9100
+        tier: checkpoint
+        severity: ticket
+        team: stellarindex
+        component: archive
+      exp_annotations:
+        runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/verify-archive-tier-b.md
+        summary: verify-archive Tier B checkpoint anchor hasn't run cleanly in 1d 15h 59m 0s
+        description: "The Tier B checkpoint-anchor timer hasn't fired cleanly in 36h+\n(24h cadence + 12h cushion) — either the timer isn't enabled or\nevery recent attempt failed. The single-source-corruption anchor\ncheck is not running. Lower urgency than the Tier A chain staleness\npage (Tier B is defence-in-depth), but investigate. Diagnosis:\n  - `systemctl status verify-archive-tier-b.timer` — is it active?\n  - `journalctl -u verify-archive-tier-b.service` — what's failing?\n  - is the /srv/history-archive mirror synced to the checked range?\n\nRunbook: docs/operations/runbooks/verify-archive-tier-b.md\n"
