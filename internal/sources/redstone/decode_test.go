@@ -586,13 +586,21 @@ func TestDecode_RWAandQuoteCurrency(t *testing.T) {
 	}
 }
 
-func TestFeedRegistry_Has30Feeds(t *testing.T) {
-	// The registry must cover exactly the 30 known mainnet feeds:
+func TestFeedRegistry_Has31Feeds(t *testing.T) {
+	// The registry must cover exactly the 31 known mainnet feeds:
 	// 19 captured 2026-05-22 (ADR-0028) + 11 from the 2026-07-24
-	// relayer expansion. A drift here means a feed was added/removed
-	// without updating the docs + this registry in lock-step.
-	if len(feedRegistry) != 30 {
-		t.Errorf("feedRegistry has %d feeds, want 30 (ADR-0028 + 2026-07-24 expansion)", len(feedRegistry))
+	// relayer expansion + USDT0, observed live on 2026-08-31. A drift
+	// here means a feed was added/removed without updating the docs +
+	// this registry in lock-step.
+	//
+	// USDT0 was arriving unmapped and being recorded as `raw:USDT0`,
+	// which is the designed fail-safe (capture totality — an unknown
+	// symbol is stored verbatim, never dropped) and which tickets
+	// stellarindex_ingestion_oracle_unknown_symbols so the allow-list
+	// owner sees the gap. Mapping it promotes the existing rows in
+	// place on replay; no capture is lost either way.
+	if len(feedRegistry) != 31 {
+		t.Errorf("feedRegistry has %d feeds, want 31 (ADR-0028 + 2026-07-24 expansion + USDT0)", len(feedRegistry))
 	}
 	for feedID, entry := range feedRegistry {
 		if err := entry.Base.Validate(); err != nil {
@@ -936,5 +944,41 @@ func TestDecode_EmptyOnWireBatch_IsRecognizedNoOp(t *testing.T) {
 	}
 	if len(updates) != 0 {
 		t.Fatalf("expected 0 updates from an empty batch, got %d", len(updates))
+	}
+}
+
+// TestFeedRegistry_USDT0MapsToItsOwnAsset pins the 2026-08-31 fix for
+// stellarindex_ingestion_oracle_unknown_symbols.
+//
+// RedStone's Stellar adapter publishes USDT0 — the omnichain USDT
+// representation. It was absent from the registry, so the decoder
+// recorded it verbatim as `raw:USDT0` (capture totality: an unmapped
+// symbol is stored, never dropped) and the alert ticketed the gap.
+//
+// It maps to `crypto:USDT0`, NOT to `crypto:USDT`. They are different
+// tokens with different issuance and different peg risk, and collapsing
+// them in the decoder is precisely the eager normalisation the
+// stablecoin rule forbids — whether USDT0 should proxy to fiat:USD is
+// an aggregator decision, taken at VWAP time, not here.
+func TestFeedRegistry_USDT0MapsToItsOwnAsset(t *testing.T) {
+	entry, ok := feedRegistry["USDT0"]
+	if !ok {
+		t.Fatal("USDT0 is absent from feedRegistry — it will be recorded as " +
+			"raw:USDT0 and keep ticketing stellarindex_ingestion_oracle_unknown_symbols")
+	}
+	if got := entry.Base.String(); got != "crypto:USDT0" {
+		t.Errorf("USDT0 base = %q, want crypto:USDT0", got)
+	}
+	if got := entry.Quote.String(); got != "fiat:USD" {
+		t.Errorf("USDT0 quote = %q, want fiat:USD", got)
+	}
+	// Distinct from USDT: a join keyed on one must never pick up the other.
+	usdt, ok := feedRegistry["USDT"]
+	if ok && usdt.Base.Equal(entry.Base) {
+		t.Error("USDT0 and USDT resolve to the SAME canonical asset — they are " +
+			"different tokens; conflating them hides a divergence between the two pegs")
+	}
+	if entry.Invert {
+		t.Error("USDT0 is published in USD directly; Invert must be false")
 	}
 }

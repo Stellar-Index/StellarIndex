@@ -84,6 +84,7 @@ var feedRegistry = map[string]feedEntry{
 	"BTC":       {Base: mustCrypto("BTC"), Quote: quoteUSD},
 	"ETH":       {Base: mustCrypto("ETH"), Quote: quoteUSD},
 	"USDC":      {Base: mustCrypto("USDC"), Quote: quoteUSD},
+	"USDT0":     {Base: mustCrypto("USDT0"), Quote: quoteUSD},
 	"XLM":       {Base: mustCrypto("XLM"), Quote: quoteUSD},
 	"PYUSD":     {Base: mustCrypto("PYUSD"), Quote: quoteUSD},
 	"EUROC/EUR": {Base: mustCrypto("EUROC"), Quote: quoteEUR}, // EUR-denominated — note the suffix
