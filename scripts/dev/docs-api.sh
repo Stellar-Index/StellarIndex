@@ -81,14 +81,15 @@ cat > "$OUT_DIR/index.html" <<EOF
         justify-content: space-between;
         gap: 16px;
         padding: 8px 16px;
-        background: #0f172a;
-        color: #e2e8f0;
+        /* Explorer canvas (globals.css --color-canvas), not slate-navy. */
+        background: #0a0b0d;
+        color: #f4f6fa;
         font-size: 13px;
-        border-bottom: 1px solid #1e293b;
+        border-bottom: 1px solid #1e2227;
       }
       .re-topbar a { color: #94a3b8; text-decoration: none; transition: color 0.1s; }
-      .re-topbar a:hover { color: #38bdf8; }
-      .re-topbar .re-brand { font-weight: 600; color: #e2e8f0; display: flex; align-items: center; gap: 8px; }
+      .re-topbar a:hover { color: #4fd1b5; }
+      .re-topbar .re-brand { font-weight: 600; color: #f4f6fa; display: flex; align-items: center; gap: 8px; }
       .re-topbar .re-brand svg { width: 18px; height: 18px; }
       .re-topbar .re-links { display: flex; gap: 16px; align-items: center; }
       .re-topbar .re-pulse {
@@ -100,11 +101,14 @@ cat > "$OUT_DIR/index.html" <<EOF
   <body>
     <header class="re-topbar">
       <a class="re-brand" href="https://stellarindex.io">
-        <svg viewBox="0 0 32 32" fill="none">
-          <rect width="32" height="32" rx="6" fill="#0ea5e9"/>
-          <path d="M 6 22 L 11 19 L 14 21 L 19 13 L 23 17 L 27 9" stroke="white" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+        <!-- The official Stellar mark, matching the explorer sidebar and the
+             favicon. Was a light-blue rounded square with a chart line — the
+             pre-2026-08-24 placeholder — so docs.stellarindex.io carried a
+             different logo from every other surface. -->
+        <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+          <path d="M12.003 1.716c-1.37 0-2.7.27-3.948.78A10.18 10.18 0 0 0 2.66 7.901a10.136 10.136 0 0 0-.797 3.954c0 .258.01.516.027.775a1.942 1.942 0 0 1-1.055 1.88L0 14.934v1.902l2.463-1.26.072-.032v.005l.77-.39.758-.385.066-.039 14.807-7.56 1.666-.847 3.392-1.732V2.694L17.792 5.86 3.744 13.025l-.104.055-.017-.115a8.286 8.286 0 0 1-.071-1.105c0-2.255.88-4.377 2.474-5.977a8.462 8.462 0 0 1 2.71-1.82 8.513 8.513 0 0 1 3.2-.654h.067a8.41 8.41 0 0 1 4.09 1.055l1.628-.83.126-.066a10.11 10.11 0 0 0-5.845-1.853zM24 7.143 5.047 16.808l-1.666.847L0 19.382v1.902l3.282-1.671 2.91-1.485 14.058-7.153.105-.055.016.115c.05.369.072.743.072 1.11 0 2.255-.88 4.383-2.475 5.978a8.461 8.461 0 0 1-2.71 1.82 8.305 8.305 0 0 1-3.2.654h-.06c-1.441 0-2.86-.369-4.102-1.061l-.066.033-1.683.857c.594.418 1.232.776 1.903 1.062a10.11 10.11 0 0 0 3.947.797 10.09 10.09 0 0 0 7.17-2.975 10.136 10.136 0 0 0 2.969-7.18c0-.259-.005-.523-.027-.781a1.942 1.942 0 0 1 1.055-1.88L24 9.044z"/>
         </svg>
-        Stellar Index
+        Stellar<span style="font-weight:300">Index</span>
       </a>
       <nav class="re-links">
         <a href="https://stellarindex.io">Explorer</a>

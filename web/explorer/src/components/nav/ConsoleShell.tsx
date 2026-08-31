@@ -2,8 +2,9 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { Menu, TrendingUp, X } from 'lucide-react';
+import { Menu, X } from 'lucide-react';
 import { useCallback, useState, type ReactNode } from 'react';
+import { StellarMark } from '@/components/StellarMark';
 
 import { useDialog } from '@/lib/useDialog';
 
@@ -46,10 +47,16 @@ export function ConsoleShell({ children }: { children: ReactNode }) {
             href="/"
             className="text-ink flex items-center gap-2 text-sm font-semibold tracking-tight"
           >
-            <span className="bg-brand-600 flex h-6 w-6 items-center justify-center rounded-md text-white">
-              <TrendingUp className="h-3.5 w-3.5" />
+            {/* Must match the desktop sidebar's brand exactly (Sidebar.tsx):
+                the official Stellar mark plus the two-weight wordmark. This
+                was a generic TrendingUp glyph on a brand-colour square — the
+                pre-2026-08-24 placeholder — so the mobile header showed a
+                different logo from every other surface. */}
+            <StellarMark className="h-5 w-5 shrink-0 text-ink" />
+            <span className="truncate">
+              Stellar
+              <span className="font-light">Index</span>
             </span>
-            Stellar Index
           </Link>
           <button
             type="button"
