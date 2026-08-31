@@ -7557,6 +7557,31 @@ export interface operations {
                  */
                 limit?: components["parameters"]["Limit"];
                 /**
+                 * @description Ranking for the listing. One of:
+                 *     - `observation_count_desc` — all-time observation count,
+                 *       descending. The default when omitted.
+                 *     - `volume_24h_usd_desc` — trailing-24h USD volume,
+                 *       descending. Ranks on a concentration-ADJUSTED volume so
+                 *       wash / operational assets don't sit atop the directory;
+                 *       the raw `volume_24h_usd` stays the visible payload value.
+                 *
+                 *     A directory-flagged issuer's asset sorts below every
+                 *     unflagged one under either ranking.
+                 *
+                 *     Out-of-range values return 400. `order_by` cannot be
+                 *     combined with `asset_class`: those listings rank on their
+                 *     own fixed scheme (catalogue by market cap, then classic by
+                 *     24h volume) with a cursor encoding that scheme's keys, so
+                 *     supplying both returns 400 rather than silently ignoring
+                 *     the requested order.
+                 *
+                 *     Note the cursor is order-specific — the two rankings encode
+                 *     different keyset keys. Keep `order_by` constant while
+                 *     walking a cursor, and do not carry a cursor from one
+                 *     ranking to the other.
+                 */
+                order_by?: "observation_count_desc" | "volume_24h_usd_desc";
+                /**
                  * @description Major dispatch for the listing. One of:
                  *     - `fiat` — fiat currencies from the verified-currency catalogue.
                  *     - `stablecoin` — fiat-pegged stablecoins from the catalogue.
