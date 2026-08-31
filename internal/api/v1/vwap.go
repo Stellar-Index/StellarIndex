@@ -77,6 +77,39 @@ func (s *Server) handleVWAP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Scam-issuer gate (wave-D MSP-02). /v1/vwap and /v1/twap served a
+	// flagged issuer's aggregated price at 200 while /v1/price,
+	// /v1/price/tip, /v1/price/batch, the SEP-40 oracle and the asset
+	// headline all withheld it — reproduced live against a directory-
+	// flagged issuer, 200 with a price on both. Worse, pricingguard's own
+	// package doc (scam.go) and PR #182's merged body BOTH asserted these
+	// two endpoints were covered by the reader-seam gate. They never
+	// were: the ScamGate is consumed at exactly four sites, none of them
+	// here, and no middleware does asset-level withholding.
+	//
+	// Keyed on the BASE so it covers every quote, including the
+	// XLM-triangulated headline — same shape as computeTip.
+	//
+	// SCAM ONLY, deliberately not the substance gate. The scam gate is
+	// targeted (flagged issuers) and directly implements the 2026-08-25
+	// decision. The substance gate would newly 404 every THIN pair here,
+	// which is both a breaking change for existing clients and arguably
+	// wrong on principle: VWAPResult's own doc and ADR-0015 position
+	// /v1/vwap as the "narrow the window and compute it yourself" surface
+	// OPPOSITE /v1/price. That is an owner decision, not something to
+	// smuggle in with a scam fix.
+	//
+	// The gate goes in the HANDLER, not in the shared
+	// tradesInRangeWithStablecoinFallback: that helper is also the fetch
+	// behind the single-bar /v1/ohlc, and scam.go, substance.go, the
+	// config docs and the withheld problem's own guidance text all
+	// promise /v1/ohlc stays visible. Gating there would make our own
+	// error message's escape-hatch advice a lie.
+	if s.scam != nil && s.scam.Withheld(r.Context(), base, "vwap") {
+		writePriceWithheldProblem(w, r, base, quote)
+		return
+	}
+
 	// dex-nonstandard-decimals: /v1/vwap computes entirely from raw
 	// trades at query time (no CAGG involved), so — unlike /v1/price and
 	// /v1/ohlc's multi-bar series mode — it no longer needs the decline

@@ -165,6 +165,49 @@ against.
   third instance immediately — one that neither the finding nor its
   skeptic had spotted — and it fails loudly if its own subject set ever
   comes back empty.
+- **`/v1/vwap` and `/v1/twap` served a scam-flagged issuer's aggregated
+  price, and the guard's own docs said they didn't** (wave-D
+  MSP-02/EXR-04). Every other price surface withheld it —
+  `/v1/price`, `/v1/price/tip`, `/v1/price/batch`, the SEP-40 oracle,
+  the asset headline — while these two returned 200 with a number.
+  Reproduced live against a directory-flagged issuer before the fix.
+
+  The gap was *documented as fixed*: `pricingguard/scam.go` claimed the
+  gate sat "at the price-reader seam so every reader-backed surface
+  (…, `/v1/twap`, `/v1/vwap`, …) is covered by ONE gate", and PR #182's
+  merged body repeated it verbatim. Neither endpoint goes through the
+  price reader at all — both compute from raw trades via their own
+  fetch — so the claim was never true, and no test contradicted it. The
+  doc now states the six real call sites and says plainly that no
+  single seam covers them all.
+
+  Gated in the two HANDLERS, deliberately not in the shared
+  `tradesInRangeWithStablecoinFallback`: that helper is also the fetch
+  behind the single-bar `/v1/ohlc`, which the guard's own docs, the
+  config reference, and the withheld problem's own guidance text all
+  promise stays visible — gating there would make our error message's
+  escape-hatch advice a lie.
+
+  **Scam gate only, not the substance gate.** The scam gate is targeted
+  (flagged issuers) and directly implements the 2026-08-25 decision.
+  Applying the substance gate here would newly 404 every *thin* pair —
+  a breaking change, and arguably wrong on principle, since ADR-0015
+  and `VWAPResult`'s own doc position `/v1/vwap` as the "narrow the
+  window and compute it yourself" surface *opposite* `/v1/price`. That
+  is an owner decision, not something to smuggle in with a scam fix.
+
+### Reviewed, no change
+
+- **MSP-03** (four more surfaces bypass both gates: `/v1/markets` and
+  `/v1/pools` `last_price`, `/v1/chart?price_type=market_cap`, and
+  windowed `/v1/price`). Two of the four are an open OWNER decision,
+  not a broken guard: `last_price` is documented as the raw
+  quote-per-base ratio — the same data class as deliberately-ungated
+  `/v1/ohlc` — and issue #366 states the unresolved scope question
+  verbatim. The windowed tier is additionally unreachable in the
+  shipped config, whose aggregate pair set is all `crypto:`/`fiat:`,
+  for which the scam gate returns false immediately. The root cause is
+  already recorded in #366 and #182.
 
 ### Reviewed, no change
 
