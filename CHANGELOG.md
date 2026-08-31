@@ -563,6 +563,30 @@ against.
   source's verdict, which is worse than the stale claim it fixes. That
   needs a bounded per-window re-reconcile and a re-measured pass
   wall-clock, neither of which can be established without the real lake.
+- **A completeness dirty window could be cleared on evidence that
+  predates the rewrite it certifies** (wave-D CV-6). The clear's bounds
+  (`from_ledger >= $2 AND to_ledger <= $3`) correctly protect a
+  *widened* window — a concurrent replay that grew the range leaves a row
+  outside the bounds, which survives — but not a **subset re-record**: a
+  replay re-recording the same or a narrower range leaves both bounds
+  satisfied, so the delete erased evidence of a rewind the run never
+  verified and the next verdict carried a clean claim over it.
+
+  The guard was already provisioned: migration 0125 declares
+  `updated_at` and the upsert maintains it. Comparing it makes the clear
+  optimistic concurrency — it succeeds only if the row is the one whose
+  obligation this run discharged. Any re-record, wider or narrower or
+  identical, bumps the timestamp, the delete matches nothing, and the
+  window stays pending. Fail-closed, costing at most one extra
+  reconcile.
+
+  The bounds are kept: they and the timestamp cover different races, and
+  a test asserts both survive. Two alternatives were rejected on the
+  finding's own analysis — tightening the DELETE to equality changes
+  nothing (a subset re-record leaves both bounds identical), and gating
+  on the live cursor would make windows recorded at or above it
+  permanently unclearable, which is the stale-window treadmill this repo
+  already suffered.
 
 ### Changed
 
