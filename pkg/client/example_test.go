@@ -1265,7 +1265,8 @@ func ExampleClient_Pair() {
 // `/v1/price` provides via the closed-bucket VWAP) for lower
 // latency — most callers driving live UIs want this. The
 // `?window_seconds=` knob picks how recent a sample to consider
-// "fresh" (clamped to [1, 60]); it defaults to 5 s.
+// "fresh"; it defaults to 5 s, and a value outside [1, 60] is
+// rejected with a 400 rather than reduced to the maximum.
 //
 // The response's `price_type` reflects which path produced the
 // snapshot: "vwap" when the rolling window had trades, or

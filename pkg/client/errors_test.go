@@ -282,3 +282,49 @@ func TestAPIError_ErrorsAs(t *testing.T) {
 		t.Errorf("Status=%d, want 404", apiErr.Status)
 	}
 }
+
+// TestParseRetryAfterOverflow pins the wave-D F-SDK-06 guard.
+//
+// time.Duration is int64 NANOSECONDS, so a delta-seconds Retry-After
+// above ~292 years wraps. Before the guard, a hostile or misconfigured
+// header of 9223372037 seconds produced a NEGATIVE duration — and a
+// caller sleeping on it retries immediately, the exact opposite of the
+// back-off the header asks for.
+//
+// 0 is the field's documented absent/unparseable sentinel, which
+// RetryAfterDuration already understands. Deliberately NOT a clamp:
+// APIError.RetryAfter is a REPORTING field on a SemVer-stable surface,
+// so clamping would make it lie about what the wire said and would
+// truncate legitimate long hints (the monthly-quota denial advertises
+// "Reset on the 1st UTC"). Picking a ceiling is the caller's back-off
+// policy.
+func TestParseRetryAfterOverflow(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name   string
+		header string
+		want   time.Duration
+	}{
+		{"ordinary", "30", 30 * time.Second},
+		{"large but representable", "1000000", 1000000 * time.Second},
+		{"one past the representable maximum", "9223372037", 0},
+		{"int64 max", "9223372036854775807", 0},
+		{"negative", "-5", 0},
+		{"zero", "0", 0},
+		{"empty", "", 0},
+		{"garbage", "soon", 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got := parseRetryAfter(tc.header)
+			if got != tc.want {
+				t.Errorf("parseRetryAfter(%q) = %v, want %v", tc.header, got, tc.want)
+			}
+			if got < 0 {
+				t.Errorf("parseRetryAfter(%q) returned a NEGATIVE duration (%v) — "+
+					"a caller sleeping on it retries immediately, which is the "+
+					"opposite of backing off", tc.header, got)
+			}
+		})
+	}
+}

@@ -1,24 +1,56 @@
 ---
 title: SemVer policy for Stellar Index
-last_verified: 2026-07-09
+last_verified: 2026-08-31
 status: ratified
 ---
 
 # SemVer policy
 
-The Stellar Index ships **two version dimensions**, each governed by
-SemVer (`vX.Y.Z`) but with independent tag namespaces and
-independent semantics.
+The Stellar Index ships **two version dimensions**, but on **ONE
+tag clock** — the root `vX.Y.Z` tag. There is no second tag
+namespace.
 
 | Surface | Tag form | Bump rules |
 |---|---|---|
-| **`pkg/*` Go modules** (e.g. `pkg/client`) | `pkg/<name>/vX.Y.Z` | Standard Go-module SemVer (API surface) |
+| **`pkg/*` packages** (e.g. `pkg/client`) | none of its own — ships inside the root `vX.Y.Z` | A break in a `pkg/*` API bumps the ROOT minor (pre-v1.0) / major (post-v1.0) |
 | **Binary releases** (`stellarindex-api`, `stellarindex-indexer`, …) | `vX.Y.Z` (root tag) | Operator-impact SemVer (config / wire / behaviour) |
 
-The two clocks tick independently. A binary release `v0.4.0` may
-contain `pkg/client v0.2.1` while bundling unchanged versions of
-any other `pkg/*` modules. The `CHANGELOG.md` entry for that
-release lists the new `pkg/*` versions it contains.
+**Why there is only one clock.** Per ADR-0005 this repo is a SINGLE
+Go module: `find . -name go.mod` returns exactly one file, at the
+root. `pkg/client` is a *package* of `github.com/Stellar-Index/StellarIndex`,
+not a module of its own — so a `pkg/client/vX.Y.Z` git tag would
+version nothing. The Go module proxy agrees: the root module lists
+its full tag history while `.../pkg/client/@v/list` returns "no
+matching versions", and `go get …/pkg/client@v0.2.0` fails with
+`invalid version: unknown revision pkg/client/v0.2.0`. This
+document described that tag mechanism until 2026-08-31 (wave-D
+F-SDK-09, tracked in #361); it never worked, and no `pkg/*` tag has
+ever existed on the remote.
+
+Consumers therefore pin the SDK on the root clock, which is what
+every install surface (README, the explorer's SDK page, llms.txt)
+already tells them to do:
+
+```sh
+go get github.com/Stellar-Index/StellarIndex/pkg/client          # latest root tag
+go get github.com/Stellar-Index/StellarIndex@v0.50.0             # explicit pin
+```
+
+A pin is a hash-immutable `require` on the root module, so an SDK
+break ships behind a boundary consumers can hold. What the single
+clock does NOT give them is a *signpost*: a root minor bump means
+"something changed", not "the SDK broke". That is why the
+CHANGELOG rule below is the load-bearing part of this policy — it
+is the only place an SDK break is announced.
+
+**Do NOT "fix" this by adding `pkg/client/go.mod`.** ADR-0005
+rejected the multi-module monorepo explicitly and its revisit
+triggers are unmet. Worse, the split is a live break: the moment
+`pkg/client/go.mod` lands under a root tag, that directory leaves
+the root module's package set, and every consumer currently pinned
+on `github.com/Stellar-Index/StellarIndex vX.Y.Z` loses the package
+on their next `go get -u`. That is strictly worse than the
+signposting gap it would close.
 
 ## SemVer rules for `pkg/*`
 
@@ -68,13 +100,14 @@ Any of the following is **patch**-only:
 
 ### Pre-v1.0 (`v0.x`) policy
 
-`pkg/client` is currently `v0.2.0` (2026-07-09: `Client.Asset()` return
-type changed `Envelope[AssetDetail]` -> `Envelope[AssetLookup]`,
-ADR-0042 LC-040 — the first breaking change to actually get a
-`pkg/client/vX.Y.Z` tag cut per the mechanics below; no tag was cut
-for the earlier Unit-D wire-collapse break, 9442d311, 2026-06-16,
-which is why this note previously undercounted at `v0.1.0`). Until we
-tag `v1.0.0`:
+`pkg/client` has taken two breaking changes so far — the Unit-D
+wire collapse (9442d311, 2026-06-16) and `Client.Asset()`'s return
+type going `Envelope[AssetDetail]` -> `Envelope[AssetLookup]`
+(edb9057c, 2026-07-09, ADR-0042 LC-040). Neither carries a
+`pkg/client` version of its own, because as established above there
+is no `pkg/*` clock to carry one; both shipped inside the root tag
+current at the time, announced in `CHANGELOG.md`. Until the root
+module tags `v1.0.0`:
 
 - Breaking changes are allowed but MUST be called out in `CHANGELOG.md` under the version where they land
 - Each breaking change should bump the *minor* version (`v0.1 → v0.2`), not the major — Go modules treat `v0.x` as inherently unstable per the spec
@@ -104,16 +137,25 @@ func (c *Client) PriceLive(ctx context.Context, asset string) (*Envelope[PriceSn
 
 ### Tagging mechanics
 
-Go modules take version info from git tags of the form
-`pkg/<name>/v<major>.<minor>.<patch>`:
+**There are none for `pkg/*`.** A `pkg/*` change rides the next
+root `vX.Y.Z` tag like any other change; do not cut a
+`pkg/<name>/vX.Y.Z` tag, it would version nothing (see "Why there
+is only one clock" above). What a breaking `pkg/*` change DOES
+require is a CHANGELOG entry that says so in the body — that entry
+is the consumer's only notice.
 
-```sh
-# Bump pkg/client to v0.2.0
-git tag pkg/client/v0.2.0
-git push origin pkg/client/v0.2.0
-```
+Two related invariants, so nobody re-derives them the hard way:
 
-Pre-tag manual checks (the
+- `pkg/client/client.go`'s `userAgent` constant stays **hand-bumped**.
+  Wiring it to `internal/version.Version` would report an empty
+  version to every SDK consumer — the ldflags that populate it only
+  fire on binary builds, never on a downstream `go build`.
+- `pkg/client` imports nothing from this repo. Keep it that way; it
+  is what makes the package safe to consume, and it is the
+  precondition for any future module split should ADR-0005's
+  revisit triggers ever be met.
+
+Pre-tag manual checks for the root tag (the
 [release runbook](../operations/release-process.md) §"Pre-flight"
 captures the same set for the binary clock):
 
@@ -203,7 +245,9 @@ Every release note (under `## [<version>]` in CHANGELOG.md) MUST
 include:
 
 1. **Stellar protocol version** the release was tested against (e.g. `Tested against pubnet protocol 23`)
-2. **`pkg/*` versions** included (e.g. `Includes pkg/client v0.4.2`)
+2. **Any breaking `pkg/*` API change** in the release, called out
+   in prose (there is no `pkg/*` version number to cite — see
+   "Why there is only one clock"). If none, omit the item.
 3. **Migration notes** for any change that affects operators (config schema additions, DB migrations, runbook changes). If none, write "None."
 4. **The standard Added/Changed/Deprecated/Removed/Fixed/Security sections**
 5. **Operator action required: yes/no** on the first line — operators reading at-a-glance need to know whether the upgrade is "restart and done" or "edit config first"

@@ -1,6 +1,6 @@
 ---
 title: Release process — cutting a Stellar Index binary release
-last_verified: 2026-07-10
+last_verified: 2026-08-31
 status: living doc
 ---
 
@@ -50,10 +50,15 @@ mid-release wastes a tag and forces a `.N+1` cut.
    that has no entries has been deleted, and that the order matches
    user-relevance (operator-visible at the top, internal refactors
    at the bottom).
-4. **`pkg/*` version bumps are tagged.** If this release ships a new
-   `pkg/client` version, that module's tag (`pkg/client/vX.Y.Z`)
-   already exists on `main` from an earlier landed PR — **do not**
-   bump `pkg/*` versions in the same commit as a CalVer release.
+4. **Breaking `pkg/*` changes are called out in the CHANGELOG.**
+   `pkg/*` has no tag clock of its own — this repo is a single Go
+   module (ADR-0005), so `pkg/client` ships inside the root
+   `vX.Y.Z` you are about to cut and a `pkg/client/vX.Y.Z` tag
+   would version nothing. Do not cut one. The CHANGELOG body is
+   the consumer's ONLY notice that the SDK surface moved, so
+   confirm any break in this range is named there. See
+   [semver-policy.md](../architecture/semver-policy.md)
+   "Why there is only one clock".
 5. **Build dry-run is clean.** `make build` completes for every
    checked-in binary without errors. If the release will deploy
    the showcase site (`web/explorer/`) alongside the binaries —
