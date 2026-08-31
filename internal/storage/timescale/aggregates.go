@@ -769,16 +769,42 @@ type Vwap1mRow struct {
 
 // RecentClosedVWAP1mForPair returns up to `limit` most-recent CLOSED
 // 1-minute buckets from the prices_1m CAGG for the given pair,
-// newest first. Same closed-bucket guard as
-// [LatestClosedVWAP1mForPair] (ADR-0015).
+// newest first, each COMBINED across both stored market directions
+// so every row expresses the price of Base in Quote. Same
+// closed-bucket guard as [LatestClosedVWAP1mForPair] (ADR-0015), and
+// the same [combineDirVWAP] math that reader serves.
 //
 // Returns an empty slice + nil error when the pair has no closed
 // buckets in scope. The caller (typically the SEP-40 prices
 // endpoint) distinguishes "no observations" from "asset unknown"
 // by combining this with an asset-existence check.
 //
-// recentClosedVWAP1mForPairQuery is the single-direction, newest-first
-// closed-bucket read behind the SEP-40 prices() passthrough.
+// recentClosedVWAP1mForPairQuery is the newest-first closed-bucket
+// read behind the SEP-40 prices() passthrough.
+//
+// It reads BOTH stored orientations. The decoder keeps each trade in
+// the venue's observed ordering (see [dirVWAP]), so the same market
+// lands in the CAGG as both (A,B) and (B,A) rows. This query filtered
+// `base_asset = $1 AND quote_asset = $2` alone until 2026-08-31
+// (wave-D UNAUTH-DOS-9, first reported unactioned as R-076), which
+// silently dropped every minute the market traded only in the flipped
+// orientation — so /v1/oracle/prices returned a sparse series with
+// unexplained gaps, and for a predominantly-flipped pair returned
+// `200 []` for an asset /v1/oracle/lastprice priced without
+// difficulty. Two endpoints on the same declared SEP-40 surface
+// disagreed about whether the asset had any history at all.
+//
+// `LIMIT $3` is a ROW cap ([bucketRowCap]) — a bucket holds at most
+// two rows, so it still bounds the walk to the requested number of
+// buckets; [scanCombinedVwap1mRows] trims any partial tail.
+//
+// Deliberately still NOT given the literal `bucket >=` lower bound or
+// the 14-day existence gate its [RecentClosedVWAP1mCombined] sibling
+// carries. Those would change what this documented public endpoint
+// SERVES (a dormant asset's last N closed buckets becoming an empty
+// array) — an owner decision, and out of scope for a correctness fix.
+// Folding the two directions is not that: it makes the endpoint
+// report the buckets it always claimed to.
 //
 // `bucket <= now() - INTERVAL '1 minute'`, NOT `bucket + INTERVAL
 // '1 minute' <= now()`. The two are semantically identical, but the
@@ -798,10 +824,11 @@ type Vwap1mRow struct {
 // endpoint SERVES (a dormant asset's last N closed buckets becoming an
 // empty array), which is an owner decision, not a query-shape fix.
 const recentClosedVWAP1mForPairQuery = `
-        SELECT bucket, base_asset, quote_asset, vwap::text, trade_count, sources
+        SELECT bucket, base_asset, vwap::text, COALESCE(volume, 0)::text,
+               COALESCE(trade_count, 0), sources
           FROM prices_1m
-         WHERE base_asset = $1
-           AND quote_asset = $2
+         WHERE ((base_asset = $1 AND quote_asset = $2)
+             OR (base_asset = $2 AND quote_asset = $1))
            AND bucket <= now() - INTERVAL '1 minute'
          ORDER BY bucket DESC
          LIMIT $3
@@ -811,30 +838,14 @@ const recentClosedVWAP1mForPairQuery = `
 // assumes a sane bound and doesn't second-guess.
 func (s *Store) RecentClosedVWAP1mForPair(ctx context.Context, p canonical.Pair, limit int) ([]Vwap1mRow, error) {
 	rows, err := s.db.QueryContext(ctx, recentClosedVWAP1mForPairQuery,
-		p.Base.String(), p.Quote.String(), limit,
+		p.Base.String(), p.Quote.String(), bucketRowCap(limit),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("timescale: RecentClosedVWAP1mForPair: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
 
-	out := make([]Vwap1mRow, 0, limit)
-	for rows.Next() {
-		var row Vwap1mRow
-		if err := rows.Scan(
-			&row.Bucket, &row.BaseAsset, &row.QuoteAsset,
-			&row.VWAP, &row.TradeCount,
-			(*stringArray)(&row.Sources),
-		); err != nil {
-			return nil, fmt.Errorf("timescale: RecentClosedVWAP1mForPair scan: %w", err)
-		}
-		normalizeVwapSources(&row)
-		out = append(out, row)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("timescale: RecentClosedVWAP1mForPair rows: %w", err)
-	}
-	return out, nil
+	return scanCombinedVwap1mRows(rows, p, limit, "RecentClosedVWAP1mForPair")
 }
 
 // recentClosedVWAP1mCombinedTemplate is the newest-first, both-directions,
@@ -974,46 +985,68 @@ func scanCombinedVwap1mRows(rows *sql.Rows, p canonical.Pair, limit int, what st
 	return out, nil
 }
 
+// closedVWAP1mAtOrBeforeQuery is the both-directions anchor read
+// behind /v1/assets/{id}'s change_24h_pct.
+//
+// It reads BOTH stored orientations for the same reason
+// [recentClosedVWAP1mForPairQuery] does — the CAGG holds the same
+// market as both (A,B) and (B,A) rows. This query filtered
+// `base_asset = $1 AND quote_asset = $2` alone until 2026-08-31
+// (wave-D UNAUTH-DOS-9, the second reader the finding itself missed).
+// Single-orientation reading understated the anchor in two distinct
+// ways: for a bucket holding both directions it returned ONE leg's
+// VWAP as if it were the bucket's, ignoring the other leg's volume —
+// a wrong number, silently — and for a bucket holding only the
+// flipped leg it matched nothing, so change_24h_pct simply vanished
+// from the response.
+//
+// `LIMIT 2` is the row cap for ONE bucket (a bucket holds at most two
+// rows). When the newest qualifying bucket has a single row, the
+// second row belongs to an older bucket; [scanCombinedVwap1mRows]
+// groups by bucket and the limit=1 trim discards it.
+const closedVWAP1mAtOrBeforeQuery = `
+        SELECT bucket, base_asset, vwap::text, COALESCE(volume, 0)::text,
+               COALESCE(trade_count, 0), sources
+          FROM prices_1m
+         WHERE ((base_asset = $1 AND quote_asset = $2)
+             OR (base_asset = $2 AND quote_asset = $1))
+           AND bucket + INTERVAL '1 minute' <= $3
+         ORDER BY bucket DESC
+         LIMIT 2
+    `
+
 // ClosedVWAP1mAtOrBefore returns the most-recent CLOSED 1-minute
 // bucket from the prices_1m CAGG for the given pair whose end
-// timestamp (`bucket + 1 minute`) is at or before t. Used by
-// /v1/assets/{id}'s change_24h_pct path to anchor the
-// 24-hours-ago comparison price.
+// timestamp (`bucket + 1 minute`) is at or before t, COMBINED across
+// both stored market directions so the VWAP expresses the price of
+// Base in Quote. Used by /v1/assets/{id}'s change_24h_pct path to
+// anchor the 24-hours-ago comparison price.
 //
 // Same closed-bucket guard as [LatestClosedVWAP1mForPair]
 // (ADR-0015) — the open bucket is excluded. Returns
 // [sql.ErrNoRows] when no closed bucket exists at-or-before t
 // (e.g. the pair was first traded < 24h ago, or the prices_1m
-// retention horizon (30 d) elided the row).
+// retention horizon (30 d) elided the row), and also when the
+// bucket's VWAP will not parse as a positive rational — an
+// unusable anchor is reported as absent rather than propagated into
+// a percentage.
 func (s *Store) ClosedVWAP1mAtOrBefore(ctx context.Context, p canonical.Pair, t time.Time) (Vwap1mRow, error) {
-	const q = `
-        SELECT bucket, base_asset, quote_asset, vwap::text, trade_count, sources
-          FROM prices_1m
-         WHERE base_asset = $1
-           AND quote_asset = $2
-           AND bucket + INTERVAL '1 minute' <= $3
-         ORDER BY bucket DESC
-         LIMIT 1
-    `
-	var row Vwap1mRow
-	err := s.db.QueryRowContext(ctx, q,
+	rows, err := s.db.QueryContext(ctx, closedVWAP1mAtOrBeforeQuery,
 		p.Base.String(), p.Quote.String(), t,
-	).Scan(
-		&row.Bucket,
-		&row.BaseAsset,
-		&row.QuoteAsset,
-		&row.VWAP,
-		&row.TradeCount,
-		(*stringArray)(&row.Sources),
 	)
-	if errors.Is(err, sql.ErrNoRows) {
-		return Vwap1mRow{}, sql.ErrNoRows
-	}
 	if err != nil {
 		return Vwap1mRow{}, fmt.Errorf("timescale: ClosedVWAP1mAtOrBefore: %w", err)
 	}
-	normalizeVwapSources(&row)
-	return row, nil
+	defer func() { _ = rows.Close() }()
+
+	out, err := scanCombinedVwap1mRows(rows, p, 1, "ClosedVWAP1mAtOrBefore")
+	if err != nil {
+		return Vwap1mRow{}, err
+	}
+	if len(out) == 0 {
+		return Vwap1mRow{}, sql.ErrNoRows
+	}
+	return out[0], nil
 }
 
 // VWAPAtRow is the result of [Store.ClosedVWAPAtOrBefore]: the VWAP of

@@ -203,35 +203,62 @@ func nullFloat(n sql.NullFloat64) *float64 {
 	return &n.Float64
 }
 
-// TimedVWAPs1m is a thin adapter so [changesummary.PriceSource] is
-// satisfied by the existing TimedVWAPsForPair1m without dragging the
-// baseline package's TimedVWAP type into the changesummary public
-// surface. Returns oldest-first.
-func (s *Store) TimedVWAPs1mForChangeSummary(ctx context.Context, pair canonical.Pair, from, to time.Time) ([]ChangeSummaryPoint, error) {
-	const q = `
-		SELECT bucket + INTERVAL '1 minute', vwap::text
+// timedVWAPs1mForChangeSummaryQuery reads both stored orientations of
+// the pair over [from, to), oldest-first.
+//
+// Both directions for the same reason every other pair-bound CAGG read
+// does it (see [dirVWAP] and TestCAGGPairReadsFoldBothDirections): the
+// decoder does not normalise orientation, so the market lands in
+// prices_1m as both (A,B) and (B,A) rows. This query filtered one
+// orientation until 2026-08-31 — the third instance of that class, and
+// the one neither wave-D UNAUTH-DOS-9 nor its skeptic found; the class
+// guard did.
+//
+// Ordering is ASC here rather than DESC, which
+// [scanCombinedVwap1mRows] handles unchanged — it only requires that
+// rows of the same bucket be adjacent, which any bucket ordering
+// gives.
+const timedVWAPs1mForChangeSummaryQuery = `
+		SELECT bucket, base_asset, vwap::text, COALESCE(volume, 0)::text,
+		       COALESCE(trade_count, 0), sources
 		  FROM prices_1m
-		 WHERE base_asset = $1
-		   AND quote_asset = $2
+		 WHERE ((base_asset = $1 AND quote_asset = $2)
+		     OR (base_asset = $2 AND quote_asset = $1))
 		   AND bucket >= $3
 		   AND bucket <  $4
 		 ORDER BY bucket ASC
 	`
-	rows, err := s.db.QueryContext(ctx, q,
+
+// TimedVWAPs1m is a thin adapter so [changesummary.PriceSource] is
+// satisfied by the existing TimedVWAPsForPair1m without dragging the
+// baseline package's TimedVWAP type into the changesummary public
+// surface. Returns oldest-first, each point COMBINED across both
+// stored market directions so the value is the price of Base in Quote.
+//
+// `At` is the bucket END (`bucket + 1 minute`), which is what the
+// change-summary worker timestamps a closed bucket by; the addition is
+// done in Go rather than SQL so the query keeps the raw per-direction
+// shape the combine needs.
+func (s *Store) TimedVWAPs1mForChangeSummary(ctx context.Context, pair canonical.Pair, from, to time.Time) ([]ChangeSummaryPoint, error) {
+	rows, err := s.db.QueryContext(ctx, timedVWAPs1mForChangeSummaryQuery,
 		pair.Base.String(), pair.Quote.String(), from.UTC(), to.UTC())
 	if err != nil {
 		return nil, fmt.Errorf("timescale: TimedVWAPs1mForChangeSummary: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
-	out := make([]ChangeSummaryPoint, 0, 256)
-	for rows.Next() {
-		var p ChangeSummaryPoint
-		if err := rows.Scan(&p.At, &p.Value); err != nil {
-			return nil, fmt.Errorf("timescale: TimedVWAPs1mForChangeSummary scan: %w", err)
-		}
-		out = append(out, p)
+
+	folded, err := scanCombinedVwap1mRows(rows, pair, 0, "TimedVWAPs1mForChangeSummary")
+	if err != nil {
+		return nil, err
 	}
-	return out, rows.Err()
+	out := make([]ChangeSummaryPoint, 0, len(folded))
+	for _, r := range folded {
+		out = append(out, ChangeSummaryPoint{
+			At:    r.Bucket.Add(time.Minute),
+			Value: r.VWAP,
+		})
+	}
+	return out, nil
 }
 
 // ChangeSummaryPoint is the read-projection used by the changesummary
