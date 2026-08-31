@@ -15,6 +15,23 @@ against.
 
 ## [Unreleased]
 
+### Added
+
+- **Prices in ~130 local currencies, not 3.** A request for a fiat quote
+  we hold no market for is now answered by composing the asset's USD
+  price with the USD→CCY foreign-exchange rate
+  (`price(asset, CCY) = price(asset, USD) × rate_usd[CCY]`, ADR-0051).
+  Before this, `/v1/price?asset=native&quote=fiat:BRL` 404'd — only
+  USD, EUR and GBP resolved for a crypto asset, because those are the
+  only fiats any venue we ingest quotes directly — even though XLM/USD
+  and a fresh USD→BRL rate were both already on the box. Wallets can
+  now show a balance in the user's own currency. Derived values carry
+  `flags.triangulated = true` and credit both legs in `sources`; an
+  OBSERVED market always wins over a derived one; and a withheld USD
+  leg stays withheld rather than being laundered through the
+  conversion. Also on `/v1/price/batch` and `/v1/price/tip`.
+  ([#445](https://github.com/Stellar-Index/StellarIndex/pull/445))
+
 ## [v0.52.0] — 2026-08-31
 
 ### Added
