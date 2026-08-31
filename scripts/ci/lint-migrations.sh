@@ -1,12 +1,30 @@
 #!/usr/bin/env bash
-# Migration lint: money-column (ADR-0003) + file integrity (audit C4-7).
+# Migration lint: money-column (ADR-0003) + file integrity (audit C4-7)
+# + register completeness (wave-D PS-01).
 #
-# Two passes, both gating (exit non-zero on any violation):
+# Three passes, all gating (exit non-zero on any violation):
 #   1. money-column — monetary columns must be NUMERIC (ADR-0003).
 #   2. file integrity — every NNNN_*.up.sql has a matching NON-EMPTY
 #      *.down.sql (and no orphan downs), no duplicate NNNN prefixes, and
 #      no empty files. Numbering GAPS are a non-fatal WARNING (this repo
 #      legitimately skips numbers when a migration is squashed/removed).
+#   3. register completeness — every NNNN_*.up.sql has a row in
+#      migrations/README.md's register, and no row names a file that does
+#      not exist.
+#
+# ── register-completeness detail ──
+#
+# migrations/README.md mandates a register row per migration, and the
+# register had drifted: 0138-0143, 0145-0147, 0149 and 0150 were all
+# missing when this pass was added. The reader who pays for that is the
+# one the register exists for — someone bringing up a FRESH database
+# (docs/operations/archival-node-bringup.md), for whom the row is where
+# an "⚠ operator must re-materialize" warning lives. 0147 is exactly
+# that case: it leaves nine CAGGs empty, and the fact that r1 already ran
+# it in v0.40.0 does nothing for a new node.
+#
+# The register is prose, so this pass checks only PRESENCE, in both
+# directions. It cannot check that a row says anything true.
 #
 # ── money-column detail ──
 #
@@ -138,7 +156,45 @@ if [ -n "$gaps" ]; then
   echo "lint-migrations ⚠️  numbering gap(s) (non-fatal — squashed/removed migrations): ${gaps}" >&2
 fi
 
+# ── pass 3: register completeness ──────────────────────────────────
+REGISTER="migrations/README.md"
+if [ ! -f "$REGISTER" ]; then
+  echo "lint-migrations: $REGISTER is missing — the register cannot be checked." >&2
+  fail=1
+else
+  # `|| true` is load-bearing: under `set -euo pipefail` a no-match grep
+  # exits 1 and kills the script mid-assignment, so the vacuity check
+  # below would never run — the exact way a guard goes quietly missing.
+  register_rows="$(grep -oE '^\| (0[0-9]{3}) \|' "$REGISTER" 2>/dev/null | grep -oE '0[0-9]{3}' | sort -u || true)"
+  if [ -z "$register_rows" ]; then
+    echo "lint-migrations: no register rows found in $REGISTER — the row shape changed" >&2
+    echo "                 and this pass has gone vacuous. Fix the pattern, do not delete it." >&2
+    fail=1
+  fi
+  missing=""
+  for up in migrations/[0-9]*_*.up.sql; do
+    [ -e "$up" ] || continue
+    n="$(basename "$up" | cut -c1-4)"
+    printf '%s\n' "$register_rows" | grep -qx "$n" || missing="${missing}${n} "
+  done
+  if [ -n "$missing" ]; then
+    echo "lint-migrations: migration(s) with NO row in $REGISTER: ${missing}" >&2
+    echo "                 Add one per migration (see the register's own mandate). The row is" >&2
+    echo "                 where a fresh-database operator reads any '⚠ must re-materialize'" >&2
+    echo "                 warning — 0147 leaves nine CAGGs empty and only the register says so." >&2
+    fail=1
+  fi
+  orphans=""
+  for n in $register_rows; do
+    ls "migrations/${n}"_*.up.sql >/dev/null 2>&1 || orphans="${orphans}${n} "
+  done
+  if [ -n "$orphans" ]; then
+    echo "lint-migrations: register row(s) naming a migration that does not exist: ${orphans}" >&2
+    fail=1
+  fi
+fi
+
 if [ "$fail" -eq 0 ]; then
-  echo "✅ migration lint passed (money-column + pairing/numbering/non-empty)."
+  echo "✅ migration lint passed (money-column + pairing/numbering/non-empty + register)."
 fi
 exit "$fail"
