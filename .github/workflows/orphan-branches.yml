@@ -19,6 +19,30 @@ name: orphan-branches
 # scheduled run is inbox noise, see the 2026-08-24 freeze-ratchet note).
 # Branches with only a CLOSED (unmerged) PR are still listed, annotated,
 # because delete_branch_on_merge only removes merged ones.
+#
+# DISPOSITIONED BRANCHES ARE NOT ORPHANS (wave-D RD-04). This repo's
+# remediation flow is: a worktree fixer pushes `fix/issue-<N>`, then a
+# BATCH PR squashes the verified subset (#353, #364). Squash-merges
+# leave no ancestry, so a landed fix branch looks identical to a
+# forgotten one — no PR, stale against main. On the first tick where
+# they cleared the 24h grace, all 17 surviving `fix/issue-*` branches
+# would have been reported, every one of them already landed and its
+# issue closed. A 17-row table of non-problems on a tripwire's first
+# real fire is how a tripwire gets ignored forever.
+#
+# So a `fix/issue-<N>` branch whose issue N is CLOSED is treated as
+# DISPOSITIONED and kept out of the table. Closing the issue is a
+# human act that says the work was dealt with — landed, superseded, or
+# deliberately dropped — which is exactly what "not forgotten" means,
+# and it is the signal this workflow exists to look for the absence of.
+#
+# They are still COUNTED, in a footer line, because they are real
+# clutter someone should eventually delete — just not work anyone has
+# lost. Silence would trade one failure mode for another.
+#
+# The rule is deliberately narrow: it applies ONLY to the
+# `fix/issue-<N>` convention, where N unambiguously names an issue.
+# Every other branch is judged as before.
 
 on:
   schedule:
@@ -54,6 +78,7 @@ jobs:
           set -euo pipefail
           now="$(date -u +%s)"
           scanned=0
+          dispositioned=0
           rows=""
           while IFS=' ' read -r branch sha; do
             [ -n "$branch" ] || continue
@@ -73,15 +98,37 @@ jobs:
             author="${meta#* }"
             age=$(( now - $(date -u -d "$when" +%s) ))
             [ "$age" -gt "$MAX_AGE_SECONDS" ] || continue
+            # Dispositioned: `fix/issue-<N>` whose issue N is CLOSED.
+            # Counted in the footer, kept out of the table (see header).
+            # A lookup failure (deleted issue, API hiccup) falls through
+            # to REPORTING the branch — the tripwire's job is to err
+            # toward surfacing work, never toward hiding it.
+            case "$branch" in
+              fix/issue-[0-9]*)
+                issue_num="${branch#fix/issue-}"
+                case "$issue_num" in
+                  *[!0-9]*) ;;
+                  *)
+                    issue_state="$(gh issue view "$issue_num" --json state \
+                      --jq .state 2>/dev/null || echo UNKNOWN)"
+                    if [ "$issue_state" = "CLOSED" ]; then
+                      dispositioned=$((dispositioned + 1))
+                      continue
+                    fi
+                    ;;
+                esac
+                ;;
+            esac
             note=""
             [ -z "$prs" ] || note=" — only closed PR(s): ${prs// /, }"
             rows="${rows}| \`${branch}\` | ${when} | ${author} | ${sha:0:8}${note} |"$'\n'
           done < <(gh api "repos/${GH_REPO}/branches?per_page=100" --paginate \
             --jq '.[] | "\(.name) \(.commit.sha)"')
           count="$(printf '%s' "$rows" | grep -c '^|' || true)"
-          echo "scanned=${scanned} branches, orphans=${count}"
+          echo "scanned=${scanned} branches, orphans=${count}, dispositioned=${dispositioned}"
           {
             echo "count=${count}"
+            echo "dispositioned=${dispositioned}"
             echo "rows<<ROWS_EOF"
             printf '%s' "$rows"
             echo "ROWS_EOF"
@@ -94,13 +141,21 @@ jobs:
           GH_REPO: ${{ github.repository }}
           ROWS: ${{ steps.scan.outputs.rows }}
           COUNT: ${{ steps.scan.outputs.count }}
+          DISPOSITIONED: ${{ steps.scan.outputs.dispositioned }}
         run: |
           set -euo pipefail
           gh label create "$ISSUE_LABEL" --color D93F0B \
             --description "remote branches with no PR (AGENTS.md: No orphan work)" 2>/dev/null || true
 
-          body="$(printf '%s remote branch(es) have no open or merged PR and a last commit older than 24h. Per [AGENTS.md — No orphan work](%s/%s/blob/main/AGENTS.md#no-orphan-work--the-contract): open a (Draft) PR for it, or delete it (closing any prior PR with a comment saying why it was superseded).\n\n| Branch | Last commit | Author | SHA / note |\n| --- | --- | --- | --- |\n%s\n---\n_Auto-managed by the orphan-branches workflow (run %s). Body is rewritten on every run; closes automatically when no orphans remain._\n' \
-            "$COUNT" "${GITHUB_SERVER_URL:-https://github.com}" "$GH_REPO" "$ROWS" "${GITHUB_RUN_ID:-?}")"
+          # Dispositioned branches are clutter, not lost work — named as
+          # such so they stay deletable without diluting the table.
+          note=""
+          if [ "${DISPOSITIONED:-0}" != "0" ]; then
+            note="$(printf '\n%s further \140fix/issue-<N>\140 branch(es) were skipped: their issue is CLOSED, so the work was dispositioned (landed via a batch PR, superseded, or dropped). They are clutter rather than lost work and are safe to delete.\n' "$DISPOSITIONED")"
+          fi
+
+          body="$(printf '%s remote branch(es) have no open or merged PR and a last commit older than 24h. Per [AGENTS.md — No orphan work](%s/%s/blob/main/AGENTS.md#no-orphan-work--the-contract): open a (Draft) PR for it, or delete it (closing any prior PR with a comment saying why it was superseded).\n\n| Branch | Last commit | Author | SHA / note |\n| --- | --- | --- | --- |\n%s%s\n---\n_Auto-managed by the orphan-branches workflow (run %s). Body is rewritten on every run; closes automatically when no orphans remain._\n' \
+            "$COUNT" "${GITHUB_SERVER_URL:-https://github.com}" "$GH_REPO" "$ROWS" "$note" "${GITHUB_RUN_ID:-?}")"
 
           existing="$(gh issue list --label "$ISSUE_LABEL" --state open \
             --json number,title --jq "map(select(.title == \"${ISSUE_TITLE}\")) | .[0].number" || true)"

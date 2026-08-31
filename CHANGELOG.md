@@ -42,6 +42,31 @@ against.
   The component now honours the contract, and the available-route
   branch — the case no test covered, which is how the drift went
   unnoticed — is now covered.
+- **The orphan-branch tripwire was about to report 17 non-problems on
+  its first real fire** (wave-D RD-04). This repo's remediation flow is
+  a worktree fixer pushing `fix/issue-<N>`, then a BATCH PR squashing
+  the verified subset (#353, #364) — and a squash-merge leaves no
+  ancestry, so a landed fix branch is mechanically indistinguishable
+  from a forgotten one: no PR, stale against main. On the first tick
+  where they cleared the 24h grace, every one of the 17 surviving
+  `fix/issue-*` branches would have been listed, all already landed
+  with their issues closed. A 17-row table of non-problems on a
+  tripwire's first real fire is how a tripwire gets ignored forever.
+
+  A `fix/issue-<N>` branch whose issue N is CLOSED is now treated as
+  *dispositioned* and kept out of the table — closing the issue is a
+  human act saying the work was dealt with, which is exactly the signal
+  this workflow exists to detect the absence of. They are still counted
+  in a footer naming them as safe to delete, because they are real
+  clutter, just not lost work; silence would trade one failure mode for
+  another. The rule applies only to that naming convention, and any
+  lookup failure falls through to REPORTING the branch — the tripwire
+  errs toward surfacing work, never toward hiding it.
+
+  Deliberately not done: loosening the 24h grace (it exists so ordinary
+  in-session branches don't spam the issue), and closing issue #282 —
+  that one is a live, unfixed P1 gap on main, and closing it would hide
+  a real defect.
 
 
 - **`/v1/assets` accepted `order_by` and never read it, so the home
