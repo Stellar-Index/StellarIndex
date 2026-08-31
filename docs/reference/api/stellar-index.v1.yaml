@@ -403,7 +403,8 @@ paths:
         credits, Soroban tokens, and verified-catalogue currencies that
         have a Stellar on-chain issuance (USDC, EURC, AQUA, …). Cursor is
         opaque; `limit` is rejected with 400 when outside [1, 500] (NOT
-        clamped).
+        clamped). Page 1 fills from the classic stream when the catalogue
+        is shorter than the limit.
 
         NON-Stellar assets — fiat currencies (USD, EUR, …) and
         reference-only coins (BTC, ETH, …) that have no Stellar issuance
@@ -441,11 +442,6 @@ paths:
             Case-insensitive substring filter over code / asset id /
             slug / name, applied server-side across BOTH phases of the
             unified listing (catalogue + the ~191K classic long tail).
-        - name: limit
-          in: query
-          required: false
-          schema: { type: integer, minimum: 1, maximum: 500 }
-          description: Rows per page (default 100). Page 1 fills from the classic stream when the catalogue is shorter than the limit.
         - { $ref: "#/components/parameters/Cursor" }
         - { $ref: "#/components/parameters/Limit" }
         - name: asset_class

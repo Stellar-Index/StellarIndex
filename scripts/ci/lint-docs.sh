@@ -154,6 +154,62 @@ if [ -f openapi/stellar-index.v1.yaml ] && [ -f docs/reference/api/stellar-index
   fi
 fi
 
+# Resolved-parameter uniqueness. An operation that declares a parameter
+# INLINE and also $refs the shared component for the same (name, in)
+# pair ships a spec with two conflicting definitions of one parameter —
+# /v1/assets carried an inline `limit` with no default alongside
+# `$ref: Limit` which has default 100 (wave-D KP-5). Generators pick one
+# arbitrarily, so the rendered docs, the Postman collection and the
+# explorer's generated types can each disagree about the same field.
+#
+# Spectral DOES flag this (operation-parameters) — at severity WARN,
+# and CI runs the action at its default --fail-severity=error, so it
+# never failed the build. Enforcing it here makes it a hard gate without
+# re-tuning Spectral's global severity floor, which would light up
+# unrelated warnings.
+echo "Checking OpenAPI parameter uniqueness..."
+if [ -f openapi/stellar-index.v1.yaml ] && command -v python3 >/dev/null 2>&1; then
+  dup_out=$(python3 - <<'PY' 2>&1 || true
+import sys
+try:
+    import yaml
+except ImportError:
+    sys.exit(0)  # PyYAML absence is already fail-closed by lint-rule-structure
+spec = yaml.safe_load(open("openapi/stellar-index.v1.yaml", encoding="utf-8")) or {}
+comps = (spec.get("components") or {}).get("parameters") or {}
+bad = []
+for path, item in (spec.get("paths") or {}).items():
+    if not isinstance(item, dict):
+        continue
+    for method, op in item.items():
+        if not isinstance(op, dict) or "parameters" not in op:
+            continue
+        seen = {}
+        for prm in op["parameters"] or []:
+            if not isinstance(prm, dict):
+                continue
+            if "$ref" in prm:
+                key = prm["$ref"].rsplit("/", 1)[-1]
+                target = comps.get(key) or {}
+                ident = (target.get("name"), target.get("in"))
+            else:
+                ident = (prm.get("name"), prm.get("in"))
+            if ident == (None, None):
+                continue
+            if ident in seen:
+                bad.append(f"{method.upper()} {path}: parameter {ident[0]!r} (in: {ident[1]}) declared twice")
+            seen[ident] = True
+for b in bad:
+    print(b)
+PY
+)
+  if [ -n "$dup_out" ]; then
+    while IFS= read -r line; do
+      [ -n "$line" ] && err "OpenAPI: $line — an inline parameter and a \$ref to the shared component define the same field twice; keep the \$ref and fold any unique prose into the operation description"
+    done <<< "$dup_out"
+  fi
+fi
+
 # ─── 3. Every Prometheus metric must be documented in metrics reference ─────
 
 echo "Checking metrics registry..."
