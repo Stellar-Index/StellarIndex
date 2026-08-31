@@ -255,7 +255,7 @@ func (s *Server) observationsHaveTriangulatedPrice(ctx context.Context, pair can
 	if _, _, _, ok := s.tryRedisVWAPFallback(ctx, pair.Base, pair.Quote); ok {
 		return true
 	}
-	if _, _, ok := s.tryStablecoinFiatProxy(ctx, pair.Base, pair.Quote); ok {
+	if _, _, ok, _ := s.tryStablecoinFiatProxy(ctx, pair.Base, pair.Quote); ok {
 		return true
 	}
 	return false

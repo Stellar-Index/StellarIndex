@@ -229,7 +229,7 @@ func (s *Server) computeTip(ctx context.Context, asset, quote canonical.Asset, w
 	// /v1/price/tip?asset=native&quote=fiat:USD 404s out of the box on
 	// every fresh deployment because nothing on-chain ever quotes in
 	// fiat:USD — same exact failure mode as /v1/price had.
-	if proxySnap, proxySources, ok := s.tryStablecoinFiatProxy(ctx, asset, quote); ok {
+	if proxySnap, proxySources, ok, _ := s.tryStablecoinFiatProxy(ctx, asset, quote); ok {
 		return proxySnap, proxySources, nil
 	}
 	// Last-resort fiat-vs-fiat cross-rate via the forex snapshot.
