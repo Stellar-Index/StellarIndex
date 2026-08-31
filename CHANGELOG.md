@@ -15,6 +15,23 @@ against.
 
 ## [Unreleased]
 
+### Added
+
+- **Slow requests now log their query shape.** The access log recorded
+  `path` only, so a latency investigation could see "`/v1/assets` took
+  9.7 s" without knowing which of that route's many query plans ran —
+  measured on r1, `?limit=100` served in 82 ms while the same limit with
+  `order_by=volume_24h_usd_desc` took 1,523 ms, producing identical log
+  lines 18x apart. Requests at or above the 500 ms p99 SLA target now
+  carry a `query_shape` field. Values are **allow-listed, never raw**:
+  only plan-selecting parameters (limit, order_by, granularity, …) show
+  a value; everything else — cursors, `q`, anything identifying or
+  credential-bearing — is recorded as `name=<set>`, so the field cannot
+  become the query-string PII leak of #346. Control characters are
+  stripped and values length-bounded so an allow-listed parameter cannot
+  forge a log record or flood the journal.
+  ([#449](https://github.com/Stellar-Index/StellarIndex/pull/449))
+
 ## [v0.53.1] — 2026-09-01
 
 ### Fixed
