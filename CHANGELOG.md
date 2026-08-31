@@ -1273,6 +1273,32 @@ against.
   fix. The bound that matters is the rate limiter, and charging it per
   id rather than per request is the sound way to close the
   amplification.
+- **An unauthenticated client could leave unbounded price-tip compute
+  loops running** (wave-D UNAUTH-DOS-1). The SSE caps count
+  *connections*, but a `/v1/price/tip/stream` connection also mints a
+  **detached** producer: its context comes from `context.Background()`,
+  it outlives the request by design, and it survives the connection's
+  release for a 30-second linger. So opening and immediately aborting
+  streams in a loop left a growing set of compute loops, each polling
+  the database on its own ticker, with no connection left for the
+  connection cap to see. The Hub's topic reaper could not shed them
+  either — it evicts only subscriber-less topics, and a live producer
+  recreates its topic every window.
+
+  Cheap to drive, because the producer key includes a **client-chosen**
+  `window_seconds` in `[1,60]`: the key space is pairs × 60, so an
+  attacker needs no distinct assets at all. The regression test
+  enumerates exactly that, and pre-fix left 32 producers running from a
+  single pair.
+
+  Distinct producers are now capped (default 512, `SetMaxTipProducers`
+  to tune, negative to disable). Two deliberate properties: a pair that
+  **already** has a producer still admits new subscribers at the ceiling
+  — those cost nothing extra to serve, and refusing them would penalise
+  a popular pair's own audience — and a refused stream returns
+  `503 + Retry-After` rather than falling through to the legacy
+  per-connection loop, which is the unbounded compute the ceiling
+  exists to prevent.
 
 - **The `/assets` "#" column restarted at 1 on every cursor page**
   (wave-D EXR-06), so the 101st asset was labelled `#1` under a header
