@@ -281,7 +281,7 @@ export function OraclesView() {
                 <tr className="text-left text-[10px] uppercase tracking-wider text-ink-muted">
                   <Th>Oracle</Th>
                   <Th>Raw symbol</Th>
-                  <Th>Quote</Th>
+                  <Th>Quote (assumed)</Th>
                   <Th align="right">Latest price</Th>
                   <Th align="right">Updated</Th>
                 </tr>
@@ -319,7 +319,22 @@ export function OraclesView() {
                         </span>
                       </Td>
                       <Td>
-                        <AssetLink canonical={s.quote} />
+                        {/* NOT a link, and labelled "assumed", because for an
+                            unmapped row the quote is a DEFAULT rather than an
+                            observation. The decoders fall back to fiat:USD for
+                            any feed whose symbol carries no recognisable fiat
+                            suffix — so a hypothetical wstETH/ETH or a bare
+                            wBTC_FUNDAMENTAL would display "USD" beside a number
+                            that is not dollars (wave-D SI-OC-01). mapped=false
+                            already means the denomination is unknown by design;
+                            rendering the default as though it were a fact is the
+                            one place that contradiction reaches a reader. */}
+                        <span
+                          className="font-mono text-xs text-ink-muted"
+                          title={`${s.quote} is the decoder's DEFAULT for an unmapped symbol, not an observed denomination — this row's true quote is unknown`}
+                        >
+                          {s.quote}
+                        </span>
                       </Td>
                       <Td align="right">
                         <span className="font-mono tabular-nums text-ink-body">

@@ -60,6 +60,44 @@ groups:
             a bad ingest (wrong decimals, stale source contributing) rather
             than a real market move.
 
+      - alert: stellarindex_oracle_stream_rows_unparsed
+        # Deliberately NOT pre-seeded, unlike the divergence outcome
+        # counters. Seeding matters when a rule COMPARES two children of
+        # one metric (an absent `ok` child makes the comparison empty —
+        # wave-D ALERT-06) or DIVIDES by one (wave-D ALERT-04). This is a
+        # bare threshold on a single series: it goes from absent to
+        # present exactly when the bad thing happens, and increase()
+        # reports a positive delta for a counter that appears mid-window.
+        # Seeding it would add a permanent zero series for every oracle
+        # source for no gain.
+        expr: increase(stellarindex_oracle_stream_rows_unparsed_total[6h]) > 0
+        for: 10m
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: divergence
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/oracle-stream-rows-unparsed.md
+          summary: "Oracle rows dropped from the served stream — unparseable {{ $labels.field }} ({{ $labels.source }})"
+          description: |
+            LatestOracleStreams could not parse the stored canonical
+            `{{ $labels.field }}` text on one or more {{ $labels.source }}
+            oracle_updates rows, so those rows are ABSENT from
+            /v1/oracle/streams and the explorer's /oracles page.
+
+            The likeliest cause is a hand-written relabel: the documented
+            remediation for a mislabelled oracle row is an operator-run raw
+            SQL UPDATE against this column, which carries no CHECK
+            constraint. Before this alert existed, a typo there deleted the
+            row from the served surface silently — the operator would watch
+            it disappear and reasonably conclude the relabel had worked.
+
+            Find them:
+              SELECT DISTINCT source, asset, quote FROM oracle_updates
+               WHERE source = '{{ $labels.source }}'
+               ORDER BY 1,2,3;
+            and compare against internal/canonical's accepted forms.
+
       - alert: stellarindex_oracle_stale
         # `ignoring(asset) group_left()`, not a bare comparison. The two
         # metrics carry DIFFERENT label sets — last_update_unix is
