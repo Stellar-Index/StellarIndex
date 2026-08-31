@@ -522,6 +522,7 @@ jobs:
           # three and select by region below. A test-net secret must pin BOTH
           # the jump host key AND the VM key (the ProxyJump uses this one file).
           DEPLOY_JUMP: ${{ steps.region.outputs.jump }}
+          DEPLOY_USER: ${{ steps.region.outputs.user }}
           R1_KH: ${{ secrets.R1_SSH_KNOWN_HOSTS }}
           TESTNET_KH: ${{ secrets.TESTNET_SSH_KNOWN_HOSTS }}
           FUTURENET_KH: ${{ secrets.FUTURENET_SSH_KNOWN_HOSTS }}
@@ -594,6 +595,25 @@ jobs:
             echo "target host '${HOST}' IS pinned in known_hosts"
           else
             echo "::error::target host '${HOST}' is NOT pinned in ~/.ssh/known_hosts — set ${REGION^^}_SSH_KNOWN_HOSTS from a trusted capture."
+            exit 1
+          fi
+
+          # Full end-to-end probe. Pinning proves the KEY is on file; it does
+          # not prove the host answers. Probe the whole path ansible will use
+          # so the failure is attributed to a hop with the REAL ssh error,
+          # rather than ansible's "Connection closed by UNKNOWN port 65535"
+          # — which is emitted for a closed inner hop and names nothing.
+          echo "probing the full path to '${HOST}'..."
+          probe=(ssh -i ~/.ssh/id_deploy -o BatchMode=yes -o ConnectTimeout=20
+                 -o StrictHostKeyChecking=yes)
+          [ -n "${DEPLOY_JUMP:-}" ] && probe+=(-o "ProxyJump=${DEPLOY_JUMP}")
+          if "${probe[@]}" -v "${DEPLOY_USER}@${HOST}" true 2>/tmp/path.err; then
+            echo "full path OK — ansible should connect"
+          else
+            echo "::error::the jump hop succeeded but the VM '${HOST}' did not. The deploy key reaches the jump host; the failure is the SECOND hop. Usual causes: sshd not listening on the VM, the deploy public key absent from ITS authorized_keys, the VM's host key changed since the pin was captured, or the inventory address no longer matching the VM's NAT address. Verbatim ssh diagnostics below (key material redacted)."
+            sed -e 's/[A-Za-z0-9+/=]\{40,\}/<redacted>/g' /tmp/path.err \
+              | grep -viE 'identity file|will attempt key|offering|send_pubkey_test' \
+              | tail -18 >&2
             exit 1
           fi
 
