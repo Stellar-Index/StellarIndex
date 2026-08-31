@@ -924,10 +924,172 @@ func (s *Server) priceFallback(ctx context.Context, asset, quote canonical.Asset
 	if snap, srcs, ok := s.tryFiatCrossRate(asset, quote); ok {
 		return snap, srcs, true, true, false
 	}
+	// 4. USD-anchored cross for a NON-fiat asset quoted in a fiat we
+	//    have no market for (ADR-0051). Runs last so any directly
+	//    observed market — including the CEX-quoted EUR and GBP pairs —
+	//    always wins over a derived value.
+	if snap, srcs, ok, crossWithheld := s.tryUSDAnchoredFiatCross(ctx, asset, quote); ok {
+		return snap, srcs, true, true, false
+	} else if crossWithheld {
+		withheld = true
+	}
 	// Nothing served. `withheld` distinguishes "we have no price" from
 	// "we have one and decline to publish it" — the caller emits
 	// errors/price-withheld rather than errors/price-not-found (MSP-06).
 	return PriceSnapshot{}, nil, false, false, withheld
+}
+
+// tryUSDAnchoredFiatCross prices a NON-fiat asset in any fiat we carry
+// an FX rate for, by composing the asset's USD price with the USD→CCY
+// rate from the forex snapshot (ADR-0051):
+//
+//	price(asset, CCY) = price(asset, USD) × rate_usd[CCY]
+//
+// This is the local-currency path. Only three fiats are ever quoted
+// directly by the venues we ingest — USD, EUR and GBP — so without this
+// layer a wallet cannot show a Brazilian, Japanese or South African
+// user their balance in their own currency, even though both halves of
+// the answer are on the box and fresh. [tryFiatCrossRate] does not
+// cover it: that one requires BOTH sides to be fiat.
+//
+// Ordering matters and is asserted by
+// TestPriceDerivedFiatDoesNotShadowARealMarket. This runs LAST in
+// [Server.priceFallback], so an observed market always beats a derived
+// value. XLM/EUR is a real CEX print and stays one.
+//
+// Returns ok=false when:
+//   - asset is itself fiat (that is [tryFiatCrossRate]'s job),
+//   - quote is not fiat, or is fiat:USD (nothing to cross — the USD leg
+//     IS the answer, and crossing would loop),
+//   - the currencies reader isn't wired or hasn't warmed,
+//   - the quote currency carries no rate, or a non-positive one,
+//   - the asset has no USD price at all.
+//
+// The second return is `withheld`, and it is the load-bearing part of
+// this function. Every withholding decision — a directory-scam-flagged
+// issuer, the decimals guard — is made on the USD leg. Re-reading that
+// leg and multiplying by an FX rate would publish precisely the price
+// policy declined to publish, through a route nobody had gated. That is
+// the MSP-02 / MSP-06 class exactly: a fallback chain re-serving a
+// withheld market via a side door. So a withheld USD leg propagates and
+// serves NOTHING, and the caller reports errors/price-withheld.
+func (s *Server) tryUSDAnchoredFiatCross(
+	ctx context.Context, asset, quote canonical.Asset,
+) (PriceSnapshot, []string, bool, bool) {
+	if asset.Type == canonical.AssetFiat || quote.Type != canonical.AssetFiat {
+		return PriceSnapshot{}, nil, false, false
+	}
+	if quote.Code == "USD" {
+		return PriceSnapshot{}, nil, false, false
+	}
+	if s.currencies == nil {
+		return PriceSnapshot{}, nil, false, false
+	}
+	fx := s.currencies.Latest()
+	if fx == nil {
+		return PriceSnapshot{}, nil, false, false
+	}
+	var rate float64
+	for _, c := range fx.Currencies {
+		if c.Ticker == quote.Code {
+			rate = c.RateUSD
+			break
+		}
+	}
+	if rate <= 0 {
+		return PriceSnapshot{}, nil, false, false
+	}
+
+	usdSnap, usdSources, ok, withheld := s.resolveUSDLeg(ctx, asset)
+	if withheld {
+		return PriceSnapshot{}, nil, false, true
+	}
+	if !ok {
+		return PriceSnapshot{}, nil, false, false
+	}
+
+	// Exact rational arithmetic, never float64, on a served price
+	// (INV-1 / ADR-0003). The USD leg is already a decimal string; the
+	// rate is float64 from the in-memory feed, converted via its
+	// shortest round-trip decimal so the multiplication adds no rounding
+	// beyond the source rate's own precision — the same treatment
+	// [tryFiatCrossRate] gives it.
+	usdRat, okU := new(big.Rat).SetString(usdSnap.Price)
+	rateRat, okR := new(big.Rat).SetString(strconv.FormatFloat(rate, 'f', -1, 64))
+	if !okU || !okR {
+		return PriceSnapshot{}, nil, false, false
+	}
+
+	out := usdSnap
+	out.AssetID = asset.String()
+	out.Quote = quote.String()
+	out.Price = formatCrossRate(new(big.Rat).Mul(usdRat, rateRat))
+	// The USD leg's own observed_at is the honest timestamp: it is the
+	// market observation this price is derived FROM. The FX rate is a
+	// daily fix and is credited in sources, not by overwriting the
+	// market's timestamp with a coarser one.
+	return out, appendFXSource(usdSources), true, false
+}
+
+// resolveUSDLeg resolves asset/fiat:USD through the same layers
+// /v1/price itself uses, so the derived local-currency price rests on
+// exactly the number the USD endpoint would have served — never a
+// second, differently-derived one.
+//
+// Deliberately does NOT re-enter [Server.priceFallback]: that would
+// recurse back into [tryUSDAnchoredFiatCross]. The two layers it does
+// consult (Redis VWAP, stablecoin proxy) are the ones that can produce
+// a USD price; the fiat-cross layer cannot, since the asset is
+// non-fiat by this point.
+//
+// The bool returns are (ok, withheld) with the same meaning as
+// elsewhere in this file: a withheld USD leg must NOT be served, and
+// must not be reported as absent either.
+func (s *Server) resolveUSDLeg(
+	ctx context.Context, asset canonical.Asset,
+) (PriceSnapshot, []string, bool, bool) {
+	usd, err := canonical.NewFiatAsset("USD")
+	if err != nil {
+		return PriceSnapshot{}, nil, false, false
+	}
+	snap, sources, _, err := s.readPriceWithAliases(ctx, s.prices, asset, usd)
+	switch {
+	case errors.Is(err, ErrPriceWithheld):
+		return PriceSnapshot{}, nil, false, true
+	case err == nil:
+		return snap, sources, true, false
+	case !errors.Is(err, ErrPriceNotFound):
+		return PriceSnapshot{}, nil, false, false
+	}
+	if snap, srcs, _, ok := s.tryRedisVWAPFallback(ctx, asset, usd); ok {
+		return snap, srcs, true, false
+	}
+	snap, srcs, ok, withheld := s.tryStablecoinFiatProxy(ctx, asset, usd)
+	if ok {
+		return snap, srcs, true, false
+	}
+	return PriceSnapshot{}, nil, false, withheld
+}
+
+// fxSourceName credits the forex feed a derived cross-rate leans on.
+// Matches the label [tryFiatCrossRate] already uses, so one source name
+// covers every FX-derived value on the price surface.
+const fxSourceName = "massive"
+
+// appendFXSource adds the FX feed to the USD leg's own sources without
+// dropping them: a customer auditing a BRL price needs to see both the
+// venues that set the USD price AND the feed that converted it.
+func appendFXSource(sources []string) []string {
+	for _, s := range sources {
+		if s == fxSourceName {
+			return sources
+		}
+	}
+	out := make([]string, 0, len(sources)+1)
+	out = append(out, sources...)
+	out = append(out, fxSourceName)
+	sort.Strings(out)
+	return out
 }
 
 // proxyPairGate is OPTIONALLY implemented by the wired [PriceReader] to
