@@ -480,7 +480,7 @@ func (s *Server) lookupUSDPriceWithSources(ctx context.Context, asset canonical.
 	// Read-time stablecoin-fiat proxy fallback (matches the
 	// handler-side fix in #1217 / tryStablecoinFiatProxy). Already
 	// decimals-normalized inside tryStablecoinFiatProxy — do NOT re-apply.
-	if proxy, proxySources, ok := s.tryStablecoinFiatProxy(ctx, asset, defaultPriceQuote); ok && proxy.Price != "" {
+	if proxy, proxySources, ok, _ := s.tryStablecoinFiatProxy(ctx, asset, defaultPriceQuote); ok && proxy.Price != "" {
 		return proxy.Price, len(proxySources), true
 	}
 	return "", 0, false

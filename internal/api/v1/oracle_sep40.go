@@ -99,7 +99,16 @@ func (s *Server) handleOracleLastPrice(w http.ResponseWriter, r *http.Request) {
 		// via the same fallback. Caught by the 2026-05-08 prod audit.
 		var ok bool
 		viaFallback = true
-		snapshot, sources, _, ok = s.priceFallback(r.Context(), asset, defaultPriceQuote)
+		var withheld bool
+		snapshot, sources, _, ok, withheld = s.priceFallback(r.Context(), asset, defaultPriceQuote)
+		// MSP-06: a withheld verdict reached from the proxy leg must be
+		// reported as withheld, not as "no price data" — the two are
+		// different answers, and only the withheld problem names the raw
+		// surfaces where the data IS available.
+		if !ok && withheld {
+			writePriceWithheldProblem(w, r, asset, defaultPriceQuote)
+			return
+		}
 		// F-1339 (G2-02): every fallback degradation is below the
 		// surface's documented baseline contract, so flags.stale MUST
 		// be true — the chain itself is the staleness signal (F-1254).
@@ -376,7 +385,13 @@ func (s *Server) handleOracleXLastPrice(w http.ResponseWriter, r *http.Request) 
 		// /v1/oracle/lastprice — see that handler's comment.
 		var ok bool
 		viaFallback = true
-		snapshot, sources, _, ok = s.priceFallback(r.Context(), base, quote)
+		var withheld bool
+		snapshot, sources, _, ok, withheld = s.priceFallback(r.Context(), base, quote)
+		// MSP-06, as above.
+		if !ok && withheld {
+			writePriceWithheldProblem(w, r, base, quote)
+			return
+		}
 		// F-1339 (G2-02): fallback responses surface flags.stale=true
 		// — the chain itself is the staleness signal (F-1254). The
 		// SEP-40 surface used to force stale=false here.
