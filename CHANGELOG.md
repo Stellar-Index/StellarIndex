@@ -17,6 +17,44 @@ against.
 
 ### Fixed
 
+- **The SDK's spec-coverage table was bound to nothing** (wave-D
+  F-SDK-10). `TestSDKCoversSpec` reconciles `coveredOperations` against
+  the OpenAPI spec, so it catches an endpoint the SDK forgot — but it
+  cannot catch the table drifting from the SDK. Renaming or deleting a
+  `Client` method left the table naming the old identifier while the
+  reconciliation stayed green. A new guard binds it both ways: every
+  tabled `sdkMethod` must resolve on `*Client`, and every exported
+  `*Client` method must appear in the table or in an exemption set with
+  a stated reason. The second direction is the load-bearing one —
+  without it the table only ever describes the subset someone
+  remembered to add.
+
+  `docs/audit/recipe.md` also recorded `pkg/client` as never
+  adversarially audited with no behavioural coverage. It was audited on
+  2026-08-04 and has 156 tests at 78.6% statement coverage, and
+  "retries" cannot be a gap because there IS no retry layer. Corrected,
+  and pointed at where the SDK is actually weak. That entry was itself
+  an instance of the class it now warns about.
+
+### Reviewed, no change
+
+- **ALERT-05** (Alertmanager's inhibit rule keys on `component` alone,
+  so one page suppresses every ticket of that component). The mechanism
+  is real and was reproduced against the shipped config, but the harm
+  claim is not: suppressed tickets are re-delivered **~5 minutes**
+  after the page resolves, not at the next 24h `repeat_interval` —
+  inhibition is applied in the notify pipeline after the dispatcher
+  flush, so nothing is written to the nflog and the first post-unmute
+  flush notifies immediately. 14 of the 109 are informational alerts
+  routed to a receiver with no integrations, so they reach Discord
+  neither way; and every suppressed alert stays queryable with
+  `inhibitedBy`. It is also a duplicate of open audit finding OBS-02,
+  which records the same title, files and proposed fix. Left for that
+  finding's owner — an Alertmanager routing change is a production
+  paging decision — with the measured 5-minute number noted here,
+  because it materially lowers the severity OBS-02 was filed at.
+
+
 - **The R2/R3 deferral rationale rested on three false cache claims**
   (wave-D PS-07). `multi-region-ha.md` said `/v1/price`,
   `/v1/oracle/latest` and `/v1/ledgers/latest` "all return
