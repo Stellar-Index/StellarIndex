@@ -136,6 +136,64 @@ tests:
                 in > 10× its resolution. May be legitimate (oracle paused) or a
                 signal of oracle failure — check the oracle's own status page.
 
+
+  # ── multi-target: TWO indexer instances, one silent oracle each ────
+  # `on (source)` would discard job/instance from the match group, so
+  # two targets exporting the same {source} make the right side
+  # non-unique and the WHOLE RULE errors:
+  #
+  #   found duplicate series for the match group {source="reflector-dex"}
+  #   … many-to-many matching not allowed
+  #
+  # The prometheus job template builds stellarindex_indexer by looping
+  # its host group, so a second indexer host (R2, ADR-0004/ADR-0016)
+  # produces exactly this shape. `ignoring(asset)` keeps job/instance in
+  # the match, so each target pairs with its own resolution series.
+  - interval: 1m
+    name: two scrape targets each get their own alert, not a match error
+    input_series:
+      - series: 'stellarindex_oracle_last_update_unix{job="stellarindex_indexer",instance="r1:9101",source="reflector-dex",asset="XLM"}'
+        values: '0+0x60'
+      - series: 'stellarindex_oracle_resolution_seconds{job="stellarindex_indexer",instance="r1:9101",source="reflector-dex"}'
+        values: '300+0x60'
+      - series: 'stellarindex_oracle_last_update_unix{job="stellarindex_indexer",instance="r2:9101",source="reflector-dex",asset="XLM"}'
+        values: '0+0x60'
+      - series: 'stellarindex_oracle_resolution_seconds{job="stellarindex_indexer",instance="r2:9101",source="reflector-dex"}'
+        values: '300+0x60'
+    alert_rule_test:
+      - eval_time: 55m
+        alertname: stellarindex_oracle_stale
+        exp_alerts:
+          - exp_labels:
+              job: stellarindex_indexer
+              instance: r1:9101
+              source: reflector-dex
+              asset: XLM
+              severity: ticket
+              team: stellarindex
+              component: divergence
+            exp_annotations:
+              runbook_url: "https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/oracle-stale.md"
+              summary: "Oracle reflector-dex stale for XLM"
+              description: |
+                reflector-dex hasn't published a price for XLM
+                in > 10× its resolution. May be legitimate (oracle paused) or a
+                signal of oracle failure — check the oracle's own status page.
+          - exp_labels:
+              job: stellarindex_indexer
+              instance: r2:9101
+              source: reflector-dex
+              asset: XLM
+              severity: ticket
+              team: stellarindex
+              component: divergence
+            exp_annotations:
+              runbook_url: "https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/oracle-stale.md"
+              summary: "Oracle reflector-dex stale for XLM"
+              description: |
+                reflector-dex hasn't published a price for XLM
+                in > 10× its resolution. May be legitimate (oracle paused) or a
+                signal of oracle failure — check the oracle's own status page.
   # ══ stellarindex_oracle_stale ═════════════════════════════════════
   # ── firing: no publish for >10x the oracle's 300s resolution ──────
   - interval: 1m

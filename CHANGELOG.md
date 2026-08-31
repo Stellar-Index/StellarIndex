@@ -458,6 +458,50 @@ against.
   re-tuning Spectral's global severity floor and lighting up unrelated
   warnings.
 
+- **Follow-ups from the adversarial review of the wave-D merges**
+  (2026-08-31 sweep — the merges were self-reviewed, so this pass
+  existed to catch what that misses; it did).
+
+  `stellarindex_oracle_stale`'s join used `on (source)`, which discards
+  `job`/`instance` from the match. Two scrape targets exporting the same
+  `source` make the right side non-unique and the rule fails evaluation
+  outright — *"found duplicate series for the match group … many-to-many
+  matching not allowed"* — which is the pre-fix silence plus noise. The
+  prometheus job template builds `stellarindex_indexer` by looping its
+  host group, so a second indexer host (R2, ADR-0004/0016) produces
+  exactly that shape. Now `ignoring(asset) group_left()`, with a
+  two-target regression case.
+
+  The price-withholding seam guard advertised that "a new read seam
+  cannot forget it" while enumerating **two hard-coded seam names** — so
+  a brand-new ungated reader passed it silently, and the property it
+  claimed did not exist. It now derives its subject set by finding every
+  method that calls a closed-VWAP store read (a reader must call one to
+  serve a price at all), with two documented exemptions and a fatal on an
+  empty subject set. Two sibling guards carried the same overclaim: the
+  keyset-ordering test now enumerates the orderings, and the explorer
+  truncation guard's scope is corrected in its comment rather than
+  widened — proving that class repo-wide needs dataflow analysis, and a
+  widened regex flags correct code.
+
+  `withholdPriceSeriesWhenUnpriced` also nulls `ath` for declared-peg
+  assets, not only scam-flagged ones. That is intended — `GetAssetATH`
+  reads the asset's own USD-quoted market, which for a declared-peg
+  asset is the dust market the substance gate refused, while the
+  published headline comes from the peg — but it shipped unpinned and
+  undescribed. Now pinned by a test that says why.
+
+  The runbook write-gate lint matched flagset names with `[a-z0-9-]+`,
+  which cannot match a space, so **five two-word write-gated
+  subcommands** (`supply snapshot`, `supply seed-observations`,
+  `supply seed-sac-balances`, `supply seed-claimable-balances`,
+  `supply seed-sep41-genesis`) were silently absent from the gated set: a
+  runbook telling a responder to run one without `-write` produced no
+  finding, and the command reports `errors=0` having written nothing.
+  Widening it surfaced a false positive on a deliberate `-dry-run`
+  preview, so explicit `-dry-run` is now exempt — flagging those would
+  train responders to ignore the check.
+
 ### Changed
 
 - **Corrected the `/v1/price/batch` fan-out comment** (wave-D
