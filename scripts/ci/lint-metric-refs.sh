@@ -45,49 +45,40 @@ RULE_DIRS=(
 # (data-freshness.sh, galexie-archive-tip-lag.sh, …) that write .prom gauges.
 EMITTER_PATHS=(internal cmd scripts configs/healthchecks configs/ansible/roles/archival-node/files)
 
+# ANSIBLE_TASK_PATHS holds emitters that live as INLINE `content:` blocks
+# inside task YAML rather than as checked-in .sh files — the
+# textfile-collector probes (timescale-jobs, galexie-catchup,
+# stellar-stack-version, binary-version). They emit real, scraped series,
+# but the *.go/*.sh/*.prom grep above cannot see them, so every one of
+# their metrics had to be parked in KNOWN_INERT with a comment saying
+# "NOT inert: the probe timer runs every minute on r1".
+#
+# That workaround made KNOWN_INERT mean two different things — "no
+# producer exists" and "the producer is invisible to this lint" — which
+# is exactly the confusion this lint exists to prevent, and it is the
+# same is_emitted() blind spot that let a severity:page reference a
+# counter no scraped process increments (wave-D ALERT-07/ALERT-12).
+#
+# Scoped to task/handler YAML deliberately: pointing this at all of
+# configs/ would let a RULE file satisfy its own reference, which would
+# turn the lint into a tautology.
+ANSIBLE_TASK_PATHS=(
+  configs/ansible/roles/archival-node/tasks
+  configs/ansible/roles/archival-node/handlers
+)
+
 # Deliberately-inert references: kept in the rule files (with an INERT
 # comment) but no producer exists / not applicable on this host. Keep
 # this list in lockstep with the INERT comment blocks in the rule files.
 KNOWN_INERT=(
-  # galexie-archive.yml — emitted by the ansible-managed journal probe
-  # (galexie-catchup-probe.sh → node-exporter textfile collector),
-  # not Go code, so this lint can't see the emitter. NOT inert: the
-  # probe timer runs every minute on r1 (14-stellarindex-services /
-  # 10-observability, 2026-07-05 captive-core wedge).
-  stellarindex_galexie_catchup_refusals_5m
-  # stellar-stack-version.yml — emitted by the ansible-managed
-  # stellar-stack-version-probe.sh (node-exporter textfile collector),
-  # same shape as the galexie-catchup-probe entry above: the script is
-  # an inline `content:` block inside
-  # configs/ansible/roles/archival-node/tasks/10-observability.yml, a
-  # `.yml` file this lint's EMITTER_PATHS grep (*.go/*.sh/*.prom) can't
-  # see. NOT inert: the probe timer runs daily on r1 (2026-07-09,
-  # P27 core-freeze + galexie CAP-0071 crash-loop incidents).
-  stellarindex_stellar_stack_version_lag
-  # binary-version-skew.yml — emitted by the ansible-managed
-  # stellarindex-binary-version-probe.sh (node-exporter textfile
-  # collector), same shape as the stellar-stack entry above: the script
-  # is an inline `content:` block inside
-  # configs/ansible/roles/archival-node/tasks/10-observability.yml,
-  # which this lint's EMITTER_PATHS grep (*.go/*.sh/*.prom) cannot see.
-  # NOT inert: the probe timer runs every 30 min on r1. Built
-  # 2026-08-28 after stellarindex-ops was found two releases behind
-  # (v0.44.7 vs v0.46.1) — the F-1314 sla-probe class, recurring
-  # because that fix corrected one binary but not the blind spot.
-  stellarindex_binary_version_skew
-  stellarindex_binary_version_probe_success
-  # storage.yml — TimescaleDB job-scheduler state, emitted by the
-  # ansible-managed timescale-jobs-probe.sh (node-exporter textfile
-  # collector), same shape as the two entries above: the script is an
-  # inline `content:` block inside configs/ansible/roles/archival-node/
-  # tasks/10-observability.yml, which this lint's EMITTER_PATHS grep
-  # (*.go/*.sh/*.prom) cannot see. NOT inert: the probe timer runs every
-  # minute on r1. Built 2026-07-25 after finding every CAGG refresh
-  # policy failing 37–69% of its runs on background-worker starvation
-  # with nothing exporting the evidence.
-  stellarindex_cagg_last_refresh_unix
-  stellarindex_cagg_refresh_interval_seconds
-  stellarindex_uncompressed_chunks_older_than_7d
+  # NOTE: the ansible-managed textfile probes (timescale-jobs,
+  # galexie-catchup, stellar-stack-version, binary-version) USED to be
+  # parked here with comments reading "NOT inert: the probe timer runs
+  # every minute on r1". They emit real, scraped series; they were only
+  # listed because is_emitted() could not see an inline ansible
+  # `content:` block. That is fixed above (ANSIBLE_TASK_PATHS), so they
+  # are gone from this list — KNOWN_INERT means "no producer exists"
+  # again, and nothing else (wave-D ALERT-12).
   # stellar.yml — no archive-publish-error counter is wired to Prometheus.
   stellarindex_stellar_archive_publish_errors_total
   # stellar.yml — stellar-core / stellar-rpc metrics come from the
@@ -183,6 +174,14 @@ is_emitted() {
     [[ "$f" == "$self_rel" ]] && continue
     grep -qF -e "$tok" <(strip_comments "$f") && return 0
   done < <(grep -rlF --include="*.go" --include="*.sh" --include="*.prom" -e "$tok" "${EMITTER_PATHS[@]}" 2>/dev/null)
+
+  # Inline ansible probe scripts. `#` is the comment marker inside these
+  # embedded shell bodies too, so the same comment-stripping applies —
+  # a metric named only in a YAML comment must not count as emitted.
+  while IFS= read -r f; do
+    [[ "$f" == "$self_rel" ]] && continue
+    grep -qF -e "$tok" <(sed -E 's:#.*$::' "$f") && return 0
+  done < <(grep -rlF --include="*.yml" --include="*.yaml" -e "$tok" "${ANSIBLE_TASK_PATHS[@]}" 2>/dev/null)
   return 1
 }
 
