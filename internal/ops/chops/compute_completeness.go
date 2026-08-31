@@ -608,7 +608,7 @@ func computeCompleteness(args []string) error { //nolint:funlen,gocognit,gocyclo
 			// concurrent replay WIDENED the window between this run's read
 			// and now, the widened row survives and the next run re-checks
 			// the new ground.
-			if cerr := store.ClearProjectionDirtyWindow(ctx, src.name, dirtyWin.From, dirtyWin.To); cerr != nil {
+			if cerr := store.ClearProjectionDirtyWindow(ctx, src.name, dirtyWin.From, dirtyWin.To, dirtyWin.UpdatedAt); cerr != nil {
 				return fmt.Errorf("%s: clear replay-rewind dirty window: %w", src.name, cerr)
 			}
 		}
