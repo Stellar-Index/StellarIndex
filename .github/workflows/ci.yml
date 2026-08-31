@@ -537,6 +537,16 @@ jobs:
         # looked live. These fixtures pin that comment-only mentions do
         # NOT satisfy is_emitted while real Name:/bare-metric lines do.
         run: ./scripts/ci/lint-metric-refs-test.sh
+      - name: deploy/systemd authority
+        # deploy/systemd/ is MIXED authority: ansible installs
+        # config-assertions.{service,timer} straight out of it, while
+        # every other file is either a reference copy shadowed by a .j2
+        # in the role, or an ORPHAN that nothing installs at all.
+        # r1-deployment-state.md documents an operator convention of
+        # scp-ing units from this directory, so an undeclared orphan is
+        # a live footgun — it starts, and nothing reconciles it.
+        run: ./scripts/ci/lint-deploy-systemd-authority.sh
+
       - name: lint-ansible-tasks
         # 2026-08-28 audit (deploy-ansible-shell-1 / -secrets-9): a shell
         # task setting pipefail without `executable: /bin/bash` fails under

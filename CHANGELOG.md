@@ -522,6 +522,26 @@ against.
   substitutes one guess for another and contradicts the design doc, and
   the bare-suffix case is not inferable at all — `mapped: false` already
   means the denomination is unknown by design, and that is the contract.
+- **`deploy/systemd/` is mixed authority, and four units in it are
+  installed by nothing** (wave-D LID-7). Ansible copies
+  `config-assertions.{service,timer}` straight out of that directory, so
+  editing those changes production — while every other file is either a
+  reference copy shadowed by a `.j2` in the role (editing it changes
+  nothing, which is how several drifted) or an orphan that nothing
+  installs at all. `r1-deployment-state.md` documents an operator
+  convention of scp-ing units straight from here, which makes an
+  undeclared orphan a live footgun: it looks like a deployed unit, it
+  starts if copied, and nothing ever reconciles it.
+
+  A new lint classifies all 23 unit files as installed, templated, or a
+  declared orphan, and fails on anything else — so the three states stay
+  distinguishable instead of being folded into "files in a directory".
+  The four orphans are declared with reasons rather than deleted:
+  `ch-live-catchup.{service,timer}` are the ClickHouse lake's only
+  self-healer and their absence is a real gap (LID-1), while
+  `stellarindex-completeness.{service,timer}` are superseded — their
+  `ExecStart` target does not exist anywhere in the repo and the role
+  ships `compute-completeness` for the same job.
 
 ### Changed
 
