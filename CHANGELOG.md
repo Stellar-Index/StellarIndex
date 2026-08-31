@@ -15,6 +15,29 @@ against.
 
 ## [Unreleased]
 
+## [v0.51.0] — 2026-08-31
+
+Operator action required: **no** — restart and done, but see the two
+served-behaviour changes below before you deploy.
+
+Tested against pubnet protocol 23.
+
+Migration notes: none. No new migrations; schema head is unchanged at
+0150.
+
+Two changes alter what public endpoints SERVE, and are the reason to
+read this section rather than skim it:
+
+- `/v1/oracle/prices`, `/v1/assets/{id}`'s `change_24h_pct`, and the
+  change-summary worker now fold BOTH stored market directions. The
+  SEP-40 series will return **more** buckets than before, and some
+  previously-served values move to the volume-weighted union price.
+  That is the correct answer — the old readings were computed from one
+  leg of a two-sided market — but it is a visible change on a published
+  oracle surface.
+- `/v1/vwap` and `/v1/twap` now **withhold** (404 `price-withheld`) for
+  a directory-scam-flagged issuer, matching every other price surface.
+  Previously they served a price at 200.
 ### Fixed
 
 - **Five guards that did not check what they claimed** — all mine, all
@@ -221,563 +244,6 @@ against.
   short-circuit fails both — and the finding's suggestion to rewrite
   them would have deleted live coverage.
 
-### Reviewed, no change
-
-- **MSP-03** (four more surfaces bypass both gates: `/v1/markets` and
-  `/v1/pools` `last_price`, `/v1/chart?price_type=market_cap`, and
-  windowed `/v1/price`). Two of the four are an open OWNER decision,
-  not a broken guard: `last_price` is documented as the raw
-  quote-per-base ratio — the same data class as deliberately-ungated
-  `/v1/ohlc` — and issue #366 states the unresolved scope question
-  verbatim. The windowed tier is additionally unreachable in the
-  shipped config, whose aggregate pair set is all `crypto:`/`fiat:`,
-  for which the scam gate returns false immediately. The root cause is
-  already recorded in #366 and #182.
-
-### Reviewed, no change
-
-- **ALERT-05** (Alertmanager's inhibit rule keys on `component` alone,
-  so one page suppresses every ticket of that component). The mechanism
-  is real and was reproduced against the shipped config, but the harm
-  claim is not: suppressed tickets are re-delivered **~5 minutes**
-  after the page resolves, not at the next 24h `repeat_interval` —
-  inhibition is applied in the notify pipeline after the dispatcher
-  flush, so nothing is written to the nflog and the first post-unmute
-  flush notifies immediately. 14 of the 109 are informational alerts
-  routed to a receiver with no integrations, so they reach Discord
-  neither way; and every suppressed alert stays queryable with
-  `inhibitedBy`. It is also a duplicate of open audit finding OBS-02,
-  which records the same title, files and proposed fix. Left for that
-  finding's owner — an Alertmanager routing change is a production
-  paging decision — with the measured 5-minute number noted here,
-  because it materially lowers the severity OBS-02 was filed at.
-
-
-- **The R2/R3 deferral rationale rested on three false cache claims**
-  (wave-D PS-07). `multi-region-ha.md` said `/v1/price`,
-  `/v1/oracle/latest` and `/v1/ledgers/latest` "all return
-  `Cache-Control: no-store`". None is true at HEAD: `/v1/price` returns
-  `public, max-age=30, s-maxage=60` — the SAME switch case as
-  `/v1/assets`, which the entry contrasted it against — `/v1/oracle/`
-  returns `max-age=60, s-maxage=300`, and `/v1/ledgers/latest` is not a
-  route at all (`latest` binds `{seq}`, fails to parse, and 400s). The
-  policy is the original April 2026 one, four months older than the
-  text, so "the deployed binary was older" was never available as a
-  defence. The conclusion survives on the real numbers — a 30-60s edge
-  TTL is not a substitute for a regional origin, since a Singapore
-  consumer still pays full origin RTT on every miss — but the argument
-  now says so from facts, and the micro-cache experiment it proposes
-  reads as more attractive rather than less.
-
-### Added
-
-- **Tests for the CS-017 price-freshness seams** (wave-D PFR-04).
-  `storePriceReader`'s `now func() time.Time` and `vwapFreshness`
-  fields exist only to be injected by a test, and nothing did — so the
-  15-minute staleness rule had no enforcement beyond runtime. Now
-  pinned: the default window and why it is 15 minutes, the zero-value
-  sentinel (an explicit `0` must mean "unset", not "never stale"), the
-  injected clock, and the staleness boundary mirroring `LatestPrice`'s
-  real expression including its measure-from-CLOSE `+1m` and its
-  `lowConfidence` short-circuit.
-
-  PFR-04's *failure scenario* does not survive and was not acted on:
-  the dormant long tail cannot resume being served a months-old bucket,
-  because the substance gate runs twelve lines earlier, its window is
-  trailing-24h, and a dormant pair fails its first comparison — the
-  read returns `ErrPriceWithheld` and the staleness expression is never
-  evaluated. The end-to-end read also remains outside unit-test reach
-  (`storePriceReader.s` is a concrete `*timescale.Store` with no
-  injectable constructor); that belongs to the integration harness.
-
-### Reviewed, no change
-
-- **PS-03** (restore-drill's ClickHouse stage is opt-in via
-  `DRILL_CH_WINDOW`, so the scheduled monthly drill never measures lake
-  re-derive throughput). Real, but the opt-in IS the shipped documented
-  design, the gap is disclosed in three docs, and it is already tracked
-  by open issue **#343**. The finding's one increment over #343 — that
-  a metric alone could never populate, because the stage is gated — is
-  worth recording there, not re-filing.
-- **PS-04** (ADR-0043 §2.3's "tail insurance" rests on a premise the
-  repo's own analysis contradicts, and is unimplemented). The premise
-  really is wrong-as-written, but ADRs are immutable
-  (`docs/adr/README.md`) — superseded, not edited — and the corrected
-  assessment already lives in `off-site-backup-plan.md` with a drafted
-  amendment. Nothing to change without a superseding ADR, which is an
-  owner decision.
-- **PFR-01** (the supply-divergence alert is unarmed on r1 because
-  `[divergence.supply]` is never rendered). Confirmed end to end, and
-  already stated in the alert rule's own comment plus a registered open
-  finding. Arming it is an operator/config decision on a production
-  paging surface, not a repo fix.
-- **PFR-03** (a narrowed re-run can rewrite `tip_ledger` downward). The
-  mechanism reproduces, but the defect CS-083 closed was AUTONOMOUS —
-  a nightly chunk driver that no longer exists. The trigger now needs
-  two deliberate operator commands, the first of which must find a real
-  problem; the end state is detected and annotated on the serving path
-  (`coverageVerdictsStale`, and the scenario's regression is 17× that
-  bound), CI-linted, and pinned by a test using materially identical
-  numbers. It is a re-report of CS-090's accepted residual.
-- **PFR-05** (a blocked completeness write is a silent no-op). The
-  discarded `sql.Result` is real; every consequence drawn from it is
-  wrong for the shipped configuration. The trigger is unreachable on
-  the deployed path (the driver's tip comes from a strictly monotonic
-  cursor), the claimed "fresh green verdict" prints `complete=false` in
-  the only deployed mode, and the backstop claim fails on all three
-  counts — a 36h per-source staleness gauge alerts on exactly the
-  column a discarded write leaves unchanged, naming the source, ~2h
-  after the blocked run rather than a day later.
-
-
-- **The capacity register offered two levers that no longer exist**
-  (wave-D PS-05 / PS-06), on a document whose whole purpose is to be
-  read during a capacity crunch.
-
-  **Move D** (cold-tier enable + bulk LCM trim) was listed as an
-  unexecuted `~3.5 TB` option whose AWS dependency was "not yet
-  incurred". It executed on **2026-07-26** and reclaimed **1.07 TB** —
-  the estimate was ~3.5× high for a structural reason worth keeping:
-  early history is *sparse*, so trimming 78% of the partitions
-  reclaimed 22% of the estimate; the bytes live in the dense Soroban
-  era above the cutoff, which was kept. The dependency it was weighed
-  against is not just incurred but formally accepted (ADR-0043 §2), so
-  "adds an external dependency" no longer discriminates between the
-  remaining options. A planner would have added ~3.5 TB of
-  already-spent runway and ruled the option out on a criterion that no
-  longer applies. Move G's derived "~4 TB net" and the May-2026
-  recommendation table are corrected and annotated accordingly.
-
-  **Move E** (trades retention) read "Decision status: Lever
-  available" in a register that marks its dead levers explicitly.
-  Trades retention is **forbidden**: migration 0031 removed it, 0031's
-  own `.down.sql` names re-adding one as "the EXACT mechanism of the
-  recurring 'rogue retention on trades' data-loss drift", CLAUDE.md
-  carries it as a standing invariant, Ash re-signed it as launch
-  decision D5, and `test/integration/migrations_test.go` pins it.
-  Arming it would also trip the completeness verifier immediately —
-  migration 0116 treats a rising `MIN(ledger)` on a reconcile target
-  as loss, unconditionally, "because NO reconcile target has a
-  retention policy". Marked NOT A LEVER rather than deleted, so a
-  future reader sees why it was rejected instead of re-proposing it.
-
-  Also corrected: the `data/postgres` row still cited "ADR-0006
-  retention", which ADR-0006 itself records as superseded by 0031.
-
-
-- **The launch plan told an operator to mint a credential nothing
-  reads** (wave-D PS-02). W4.5, W4.6 and Recommended-order step 3 all
-  carried the Go `sla-probe` stack as live code with pending r1-ops
-  actions — "mint the Partner/Operator-tier key, set
-  `stellarindex_probe_api_key` in the r1 vault" — and cited
-  `10-observability.yml` line ranges as *installing* units that the same
-  file now *removes*. The whole stack was retired on 2026-08-24
-  (`634d4be6`, #135): both stacks wrote the same textfile, so the
-  keyless Go stack's 401/429 runs stomped the wrapper's passing
-  verdicts. An operator working the plan would have minted a live
-  operator-tier key with no consumer, whose file the next
-  `--tags observability` apply deletes — credential sprawl on the exact
-  surface W6.3 exists to shrink — then hunted a unit file ansible had
-  already removed. The genuine item, rotating the key exposed in a
-  2026-08-15 transcript, is preserved and now points at the file that
-  actually holds it.
-
-- **The launch-day migration gate named a version 7 behind HEAD**
-  (wave-D PS-01). §2.8 hardcoded `schema_migrations.version = 143` when
-  head was 0150. Made version-agnostic rather than re-pinned — "143 →
-  150" just reproduces the defect at 0151 — pointing instead at the two
-  places CI keeps in agreement (`migrations/` head and
-  `ExpectedSchemaVersion`, guarded by
-  `TestExpectedSchemaVersionMatchesMigrationsHead`). The gate's floor
-  semantics (`applied >= expected`, deliberately not `==`) are now
-  stated, since the old text's "≤142 or dirty" phrasing invited reading
-  a schema AHEAD of the binary as a failure.
-
-  `migrations/README.md`'s register was also missing rows for 0138-0143,
-  0145-0147, 0149 and 0150, against the file's own mandate. Backfilled,
-  and `lint-migrations.sh` gained a third pass that fails on a migration
-  with no row, a row naming no migration, or its own pattern going
-  vacuous. The reader this costs is the one the register exists for —
-  someone bringing up a fresh database, for whom the row is where an
-  "⚠ operator must re-materialize" warning lives. 0147 is exactly that:
-  it leaves nine CAGGs empty, and r1 having already run it does nothing
-  for a new node.
-
-
-- **`api.status_services` was validated case-insensitively and consumed
-  case-sensitively** (wave-D RD-05). Config validation lower-cased each
-  entry before checking it against `{indexer, aggregator}`, but
-  `statusServicesOr` only trimmed — and the heartbeat map is keyed by
-  Prometheus `job` labels with the `stellarindex-` prefix stripped,
-  which are always lower-case. So `status_services = ["Indexer"]`
-  booted clean and then reported `"status": "unknown"` on every
-  `/v1/status` request forever: `overall` never left degraded and the
-  explorer's status page stayed amber, while the operator debugging it
-  found a value that passed validation and matched the documented
-  vocabulary — the exact symptom the list was added (#328) to remove.
-  Both halves now apply the same transform.
-
-- **`NetworkUnavailable` promised to self-suppress and never did**
-  (wave-D RD-06). Its docstring said it "renders nothing when the route
-  IS available here" and pointed at an `available` helper "below" that
-  was never written; the component always rendered the empty state.
-  Nothing was visibly broken — all five callers guard with
-  `if (!routeAvailable(…))` first — but the next network-gated surface
-  written by following that comment would have shipped "Not available
-  on Mainnet" above its real content, on mainnet (`/exchanges` and
-  `/bridges` are both in `ROUTE_CAPABILITY` with no page-level gate).
-  The component now honours the contract, and the available-route
-  branch — the case no test covered, which is how the drift went
-  unnoticed — is now covered.
-- **The orphan-branch tripwire was about to report 17 non-problems on
-  its first real fire** (wave-D RD-04). This repo's remediation flow is
-  a worktree fixer pushing `fix/issue-<N>`, then a BATCH PR squashing
-  the verified subset (#353, #364) — and a squash-merge leaves no
-  ancestry, so a landed fix branch is mechanically indistinguishable
-  from a forgotten one: no PR, stale against main. On the first tick
-  where they cleared the 24h grace, every one of the 17 surviving
-  `fix/issue-*` branches would have been listed, all already landed
-  with their issues closed. A 17-row table of non-problems on a
-  tripwire's first real fire is how a tripwire gets ignored forever.
-
-  A `fix/issue-<N>` branch whose issue N is CLOSED is now treated as
-  *dispositioned* and kept out of the table — closing the issue is a
-  human act saying the work was dealt with, which is exactly the signal
-  this workflow exists to detect the absence of. They are still counted
-  in a footer naming them as safe to delete, because they are real
-  clutter, just not lost work; silence would trade one failure mode for
-  another. The rule applies only to that naming convention, and any
-  lookup failure falls through to REPORTING the branch — the tripwire
-  errs toward surfacing work, never toward hiding it.
-
-  Deliberately not done: loosening the 24h grace (it exists so ordinary
-  in-session branches don't spam the issue), and closing issue #282 —
-  that one is a live, unfixed P1 gap on main, and closing it would hide
-  a real defect.
-- **The projector's replay-window read ran on the un-timeout'd root
-  context** (wave-D RD-08). Every other `p.store` call in the package
-  runs under `cycleCtx`; this one passed `Run`'s ctx straight through,
-  so a query blocked behind a lock wait parked the watcher goroutine
-  with `stellarindex_projector_replay_window_active` holding whatever
-  it last published — a stale `1` keeps suppressing the lag ticket for
-  a source nobody is replaying, and the suppression's whole
-  justification is that it stays narrow. Not unbounded even before
-  (`OpenBackground` SETs `statement_timeout` on every connection, 30m
-  by default), but 30 minutes of a wrongly-suppressing gauge is not a
-  bound worth relying on when a local one costs two lines. Bounded by
-  `PerSourceTimeout` (60s) — deliberately NOT a budget matched to the
-  refresh interval, which would trip on ordinary DB slowness, zero the
-  gauge mid-replay and re-arm `projector_lag_high` for the whole
-  catch-up, reinstating the ticket storm #325 removed.
-
-### Reviewed, no change
-
-- **RD-09** (replay-window upper bound on a widened dirty row). The
-  arithmetic reproduces, but the scenario is a *recorded, ratified
-  decision* — `docs/operations/runbooks/projector-replay.md` documents
-  it with its operator remedy. Every proposed remedy is worse than the
-  gap: narrowing the range union, or refusing to record while a window
-  is pending, trades a tighter alert suppression for a data-integrity
-  regression on the verifier path — that union is what closed the
-  2026-07-31 carried-claim invalidation gap (19,366 over-projected
-  cctp rows), and compute-completeness's forced re-reconcile floor, the
-  table's primary consumer, depends on it. What was genuinely wrong was
-  a code comment: it glossed the bound as the pre-rewind position
-  unconditionally, which holds only for an un-widened row. Corrected,
-  along with a note on why the union must not be narrowed.
-
-
-- **`/v1/assets` accepted `order_by` and never read it, so the home
-  page's headline ranking was computed over the wrong ten assets**
-  (wave-D RD-02). The explorer requested
-  `?limit=10&order_by=volume_24h_usd_desc` under the caption "Ranked by
-  trailing-24h trading volume across every venue we ingest"; the
-  handler built `ListAssetsOptions` with no `Order`, so it was served
-  the top ten by **all-time observation count** and re-sorted just
-  those ten client-side. An asset that traded $2M in the last 24h but
-  has a modest lifetime count could not enter the candidate set at all,
-  while a dormant high-lifetime-count asset held a slot and rendered as
-  a dash. `order_by=TOTAL_GARBAGE` returned 200.
-
-  This was missing WIRING, not a missing feature: the storage layer has
-  supported `AssetsOrderVolume24hUSDDesc` the whole time — its own
-  `ORDER BY` branch, keyset cursor args, cursor predicate and rank-tier
-  expression, and the unified path already passes it. The handler now
-  parses `order_by`, threads it into the query **and both cursor
-  calls** (the two orders encode different keyset keys, so encoding
-  under the wrong one skips or repeats rows rather than erroring), and
-  400s on an unrecognised value the way `/v1/markets` always has.
-
-  Combining `order_by` with `asset_class` now 400s rather than being
-  silently ignored: those listings rank on their own fixed scheme with
-  a cursor encoding that scheme's keys. Of the explorer's four callers
-  only the home page sends `order_by`, and it sends no `asset_class`.
-
-  The explorer's client-side re-sort is removed in the same change —
-  with the server ordering correctly it stopped being a no-op and
-  became actively wrong, because the API ranks on a concentration-
-  ADJUSTED volume (so wash / operational assets don't sit atop the
-  directory) while the payload's `volume_24h_usd` is the RAW figure.
-  Re-sorting the page by the raw column promotes exactly the assets the
-  server demoted. Native XLM, which `/v1/assets` does not return, is
-  now spliced into the server's order instead of triggering a re-rank
-  of everything.
-
-
-- **`pkg/client` SDK: `Retry-After` no longer yields a NEGATIVE
-  back-off.** `parseRetryAfter` multiplied the header's delta-seconds
-  into a `time.Duration` (int64 NANOSECONDS) with no range check, so
-  any value above ~292 years wrapped — `Retry-After: 9223372036854775807`
-  produced `-1s`, and a caller sleeping on it retried IMMEDIATELY,
-  the exact opposite of the back-off requested. Out-of-range values
-  now return `0`, the field's already-documented absent/unparseable
-  sentinel. Deliberately not a clamp: `APIError.RetryAfter` is a
-  SemVer-stable *reporting* field, and clamping would make it
-  misreport the wire (wave-D F-SDK-06).
-- **`pkg/client` SDK: an oversized response body now errors instead
-  of surfacing as a bogus JSON decode failure.** The 16 MiB read cap
-  used `io.LimitReader` at exactly the limit, and `LimitReader`
-  returns `(n, nil)` AT its limit — so a truncated body was
-  indistinguishable from a complete one and got parsed, reporting a
-  confusing error about the payload rather than the truth. Now reads
-  `cap+1` and errors naming the cap (wave-D F-SDK-08).
-- **Docs: `pkg/client` query-parameter godoc said out-of-range
-  `limit` / `window_seconds` values are "clamped".** They are
-  REJECTED with a 400. Read in the `std::clamp` sense the old wording
-  told a caller their out-of-range value would be quietly honoured at
-  the boundary — on a pricing surface, the difference between a VWAP
-  over a window they never asked for and a loud error. The
-  genuinely-saturating ADR-0015 closed-bucket adjustment keeps the
-  word, and `docs/architecture/lexicon.md` now fixes both meanings so
-  the two do not re-blur. ADR-0018's copy of the old wording is left
-  alone — ADRs are immutable (wave-D F-SDK-09).
-- **Docs: the documented `pkg/*` SemVer release mechanism was
-  inert.** `semver-policy.md` and `release-process.md` instructed
-  cutting `pkg/client/vX.Y.Z` tags, but this repo is a single Go
-  module (ADR-0005), so such a tag versions nothing — the proxy has
-  no nested module and `go get …/pkg/client@v0.2.0` fails outright.
-  Both documents now state that `pkg/client` ships on the root clock,
-  that a `pkg/*` break bumps the root minor and MUST be named in the
-  CHANGELOG (the consumer's only notice), and why adding
-  `pkg/client/go.mod` would be a live break for everyone currently
-  pinned on the root module rather than a fix (wave-D F-SDK-05,
-  #361 item 8).
-
-### Added
-
-- **Composite-reference corroboration of the phase-2 freeze for
-  structurally single-venue targets** (product decision, Ash
-  2026-08-29; design doc §10.1 amendment). For an allow-listed target
-  (`[aggregate.composite_reference]`, default ON for
-  `crypto:XLM/fiat:GBP` + `crypto:XLM/fiat:EUR`) whose bucket is
-  single-venue, the aggregator rebuilds the target's triangulation
-  chain on the CURRENT bucket — this tick's crypto/USD leg publish
-  (≥ `min_leg_sources` real venues, default 2) × a fresh FX snap
-  (≤ `fx_max_age_hours`, default 76, FX source class only, never an
-  oracle) — and reads it against the fresh direct VWAP: agreement
-  within `tolerance_bps` (default 75) means the move is market-wide
-  and the 3-signal-AND fire is suppressed (`corroboration_basis=
-  composite`); disagreement or an unavailable reference freezes
-  exactly as before, the reason string naming why
-  (`corroboration_basis=venue composite_unavailable: leg_sources=1
-  composite_leg_sources={…}`). The same sample feeds the confidence
-  factor (`triangulation_checked`) and the mid-hold release lens, so
-  a corroborated genuine move can also release. Hard invariants: the
-  composite never enters VWAP and never raises `source_count` /
-  `effectiveSourceCount`; targets with ≥ 2 real venues are
-  byte-identical to before. New: `composite_meta.corroboration_basis`
-  + `composite_leg_sources`, gauges
-  `stellarindex_aggregator_composite_corroboration{pair,window,verdict}`
-  / `..._composite_reference_leg_sources{pair,window,leg}`, counter
-  `..._composite_freeze_suppressed_total`. Never a prior tick's sample
-  (the rejected 95da898d mechanism). Tests:
-  `TestCompositeReference_*` (manipulation control with the mechanism
-  ON, market-wide mirror, stale-FX / thin-leg / oracle-FX fail-closed,
-  multi-venue differential, exact-Rat tolerance boundary, refresh
-  order) plus the unchanged
-  `TestRouterFreeze_TwoRoutesSuppressSingleSourceFreeze` 3-tick control
-  (#246). Verifier advisories (same day): **A1** leg-dispersion guard —
-  every venue's own bucket VWAP on the crypto/USD leg must be within
-  `leg_dispersion_bps` (default = `tolerance_bps`) of the leg VWAP,
-  else `composite_unavailable: leg_dispersion=…` (two venues only count
-  as two when they agree; gauge
-  `stellarindex_aggregator_composite_reference_leg_dispersion_bps`);
-  **A2** the mid-hold release lens for a resolved reference uses a
-  dedicated `release_band_pct` (default 2.0), not the shared 5 %
-  cross-oracle band — a held +4 % venue-specific offset no longer
-  auto-releases (`TestCompositeReference_ReleaseBandHoldsVenueOffset`,
-  `…_LegDispersionCannotCorroborate`, `…_LegDispersionBoundary`,
-  `TestLegDispersion_MeasuresWorstVenue`). A3/A4: config-bound tests
-  (`TestValidate_CompositeReferenceBounds`) and the guard fails CLOSED
-  when a venue VWAP cannot be computed (`leg_dispersion=uncomputable`,
-  `TestCompositeReference_UncomputableDispersionFailsClosed`).
-
-- **Rolling ZFS snapshots of the ClickHouse lake + Postgres on r1
-  (decision 2026-08-29).** `scripts/ops/zfs-snapshot.sh` (installed by
-  the archival-node role, new tag `zfs-snapshots`, `zfs-snapshot.timer`
-  daily 01:45 UTC) takes `auto-YYYYMMDD-HHMM` snapshots of
-  `data/clickhouse` (3 d retention) and `data/postgres` (7 d) — the
-  minutes-scale answer to a logical fault (bad migration, `DROP`, bad
-  re-derive) alongside pgBackRest's hours-scale PITR. Hard min-free
-  guard (`zfs_snapshot_min_free_bytes`, default 2 TiB): below it the
-  job prunes its oldest `auto-*` snapshots (never a dataset's newest,
-  never any non-`auto-*` name) and, if still below, skips the snapshot
-  and reports `stellarindex_zfs_snapshot_guard_skipped=1`. Textfile
-  gauges (`stellarindex_zfs_pool_free_bytes`,
-  `stellarindex_zfs_snapshot_{latest_unix,count,used_bytes}`), alerts
-  in both rule trees (`zfs-snapshots.yml`: pool free < 2.5 TiB ticket
-  / < 1.5 TiB page, snapshot > 36 h stale) with promtool tests, runbook
-  `docs/operations/runbooks/zfs-snapshots.md` (honest crash-consistent
-  semantics for ClickHouse and Postgres, clone-and-copy / rollback
-  procedures, vs pgBackRest PITR), and
-  `scripts/ops/zfs-snapshot-now.sh <dataset> [--keep <label>]` for the
-  fresh-snapshot precondition of the ClickHouse destructive-DDL
-  runbook. The guard is fail-closed: unreadable `zpool` free space
-  (command failure / non-number) aborts the run before any destroy or
-  snapshot, exits non-zero and emits
-  `stellarindex_zfs_snapshot_pool_free_unreadable=1` (own ticket).
-  Invariants pinned red-first by `scripts/ci/zfs-snapshot-test.sh`
-  against a stubbed `zfs`, including the destroy choke point directly.
-- **No-orphan-work contract + daily `orphan-branches` tripwire.** On
-  2026-08-27 `fix/priceless-structural-unpriceable` was pushed with no
-  PR and no backlog line; on 2026-08-28 a different agent re-diagnosed
-  `stellarindex_assets_popular_priceless` from scratch and fixed it
-  differently (#254), and the orphan (plus a postmortem branch, now
-  #255) surfaced only via a manual branch audit. The contract is stated
-  once in AGENTS.md (push ⇒ PR same session; prior-art check via
-  `gh pr list --state all --search`, `git branch -r`, backlog + runbook
-  grep; PR names the alert and root cause vs symptom; supersede by
-  closing with a comment) and cross-referenced from CONTRIBUTING.md and
-  CLAUDE.md. The PR template gains **Alert / finding** and **Prior
-  art** fields. `.github/workflows/orphan-branches.yml` (daily +
-  `workflow_dispatch`, `contents:read` / `pull-requests:read` /
-  `issues:write`) lists every remote branch other than `main` /
-  `old-*` / `archive*` with no open-or-merged PR and a last commit
-  >24h old, and opens/updates a single "Orphan branches (no PR)" issue
-  (closes it when the list is empty).
-- **`stellarindex_ingest_gap_detector_silent` third clause (both rule
-  trees).** The alert's `absent_over_time(runs_total[15m])` clause is
-  satisfied by the `outcome="error"` counter, and a target that has never
-  once succeeded in a process life emits no `last_success_unix` stamp to
-  age — so a scan failing every cycle (the 2026-08-28 r1
-  `soroban_events` statement_timeout loop, found verifying #258) fired
-  nothing. The rule now also fires when the target's error counter is
-  present now and 8h ago with no last-success stamp seen in 8h. First
-  promtool unit tests for the alert
-  (`deploy/monitoring/rule-tests/ingestion_test.yml`): fresh stamp
-  silent, stale stamp fires, never-succeeded fires, stamp-within-8h
-  suppresses, aggregator-absent fires.
-- **Ops scripts honour a ClickHouse ops user
-  (`scripts/ops/ch-ops-user-test.sh`).** `ch-live-catchup.sh`,
-  `ch-supply-flows-seed.sh`, `d2-ordinal-reproject.sh`,
-  `d3-lecur-v2-rebuild.sh` and `ch-backfill-monitor.sh` ran
-  `clickhouse-client` as the default user with no way to supply
-  credentials. They now honour `STELLARINDEX_CLICKHOUSE_OPS_USER` /
-  `STELLARINDEX_CLICKHOUSE_OPS_PASSWORD` (e.g. from
-  `/etc/default/stellarindex-ops`), handed to the client through its
-  `CLICKHOUSE_USER` / `CLICKHOUSE_PASSWORD` environment — never argv,
-  which `ps` and the journal would show. The monitor resolves them on
-  the HOST side of its ssh (new `OPS_ENV`, default
-  `/etc/default/stellarindex-ops`) for the same reason. Unset ⇒
-  byte-identical invocations; the new stub-backed test pins both the
-  credential hand-off and the unchanged argv per script, and runs from
-  `scripts/dev/verify.sh`.
-- **AWS Public Blockchain dataset drift monitor** (audit 2026-08-29,
-  backup-restore-6). r1's galexie-archive was trimmed below ledger
-  49,984,000 on 2026-07-26, so the second raw-LCM archive ADR-0043
-  relies on is the third-party `aws-public-blockchain` pubnet dataset
-  — and nothing watched it. `.github/workflows/public-dataset-check.yml`
-  (weekly + dispatch, no credentials, `--no-sign-request`, first-party
-  actions only) now asserts contiguous 64,000-ledger coverage from
-  genesis to ≥ tip − 2 partitions, the `HEX--start-end` naming, an
-  unchanged `.config.json` manifest and the trimmed range
-  `[64000, 49983999]` fully present; drift opens/updates ONE "AWS
-  Public Blockchain dataset drift" issue (auto-closed when intact) and
-  never fails the scheduled run red. Decision core
-  `scripts/ci/check-public-dataset.sh`, fixture-tested in `ci`
-  (`check-public-dataset-test.sh`: gap inside/above the trimmed range,
-  misnamed partition, manifest change, stalled publication all RED).
-
-### Changed
-
-- **The two frozen planning inventories are retired, and
-  `verify-launch-ready` can no longer certify a retired document
-  (#321).** `docs/architecture/launch-readiness-backlog.md` had gained
-  zero rows since 2026-05-13 and contained none of the actual v1 gate
-  (W6.1 paging, W6.3 rotations, W4 backups, the W8 correctness
-  backlog, ToS/Privacy #237), yet every L1–L5 row still carried its
-  last-written ✅ — so the weekly `launch-readiness.yml` workflow
-  republished *"✓ Engineering surface ready"* over a document that had
-  stopped tracking reality, and got more confident the staler it got.
-  The doc is now formally superseded by `docs/operations/v1-launch-plan.md`
-  (frontmatter `status: superseded` + a banner mapping its still-open
-  rows: L4.14–L4.17 + L5.8 → W9 gated on D2, L5.6 → W6.2, L6.4 → §2.8,
-  L6.6/L6.7 → W6.7), `.github/workflows/launch-readiness.yml` is
-  deleted, and `scripts/ci/verify-launch-ready` now reads the
-  frontmatter and emits **no verdict at all** (new exit code 3) for any
-  document declaring itself superseded/retired — a retired doc's rows
-  are history, and neither a green nor a red computed from them means
-  anything. The prior 2026-07-24 staleness banner was itself wrong
-  twice over (it claimed the gate was unwired the day *after* it was
-  wired in `068ec709`, and named a "current source of truth" that was
-  superseded on 2026-07-27); both corrections are recorded in the new
-  banner. `docs/operations/open-fixes-inventory-2026-08-08.md` is
-  superseded on the same terms: 24 of its 35 rows were done and never
-  struck — rows 1 and 19 closed on the day it was compiled
-  (`d1cd18ac`, `a1c5c2e5`), rows 2 and 5 two days later (`f75ab4b2`,
-  `ef278218`) — and its genuinely-open threads are carried into the
-  launch plan's §5. The public company page's "roadmap that gets us to
-  v1" link now points at `v1-launch-plan.md` instead of the retired
-  backlog. Tests: `TestRealBacklog_IsRetired`,
-  `TestVerdictLine_RetiredDocNeverCertifiesReady`,
-  `TestSupersession_ReadsFrontmatterOnly`, and a company-page case
-  pinning the roadmap href (red-proof: the pre-fix binary run against
-  the now-retired doc still printed "✓ Engineering surface ready
-  (subset gate)" and exited 0).
-- **ADR-0043 §2 amended (2026-08-29):** "two independent raw-LCM
-  archives" now explicitly = our recent range + the AWS Public
-  Blockchain dataset; dependency accepted and monitored rather than
-  duplicated, with the one-time cross-region copy (≈ $80 + $3–4/mo)
-  recorded as the not-taken option. `off-site-backup-plan.md` status
-  carries the same note.
-- **Public status page shows backup freshness (Ash, 2026-08-29).** New
-  read-only `GET /v1/diagnostics/backups` (experimental) reports the
-  pgBackRest last full / diff / WAL-archive age, the per-repository
-  newest backup (repo 1 on-host, repo 2 encrypted S3 off-site), the
-  monthly restore drill's last run + pass/fail, and the ClickHouse
-  schema+state snapshot age — each with a `freshness` verdict
-  (`ok` / `stale` / `unknown`) against SLOs the API echoes in `slo`
-  (full ≤ 8 d, diff ≤ 36 h, WAL ≤ 15 m, off-site ≤ 8 d, drill ≤ 35 d,
-  snapshot ≤ 36 h). Source of truth is Prometheus — the same
-  pgbackrest_exporter / node_exporter textfile series the alert rules
-  read; the API never shells out to pgbackrest. Every timestamp is
-  nullable and an absent series is `null` + `unknown`, never a fresh
-  zero; `source_status` carries the document's trust tri-state and
-  `flags.stale` mirrors the roll-up. Cached 60 s, no secrets or paths;
-  503 where no `api.prometheus_url` is configured. The explorer
-  `/status` page mounts a **Backups** panel (`BackupsPanel.tsx`,
-  mainnet only) that renders green within SLO, red with the real age
-  past it, grey "no data" for absent sources, and a "verdicts not
-  trustworthy" marker when the API's Prometheus reads failed — ages
-  come from the API's `age_seconds`, never the browser clock. Reserved
-  nulls (documented in the spec): repo `retention`, drill
-  `restored_backup_ts` / `duration_s`, `zfs_snapshot_latest_ts`,
-  `replica_lag_s` — no producer exports them yet. Tests:
-  `internal/api/v1/diagnostics_backups_test.go`,
-  `web/explorer/src/app/status/BackupsPanel.test.tsx`.
-- **`stellarindex_backup_offsite_stale` (P3, both rule trees).** The
-  existing backup alerts read `pgbackrest_backup_since_last_completion_seconds`,
-  which the exporter computes ACROSS repos — a host whose on-host repo1
-  is fresh while every repo2 (S3) write fails stayed green and the one
-  copy that survives host loss aged out silently. The new rule fires
-  per UP exporter instance with no `pgbackrest_backup_info{repo_key="2"}`
-  series younger than 8 d (`x unless x offset 8d` — a new backup is a
-  new series), which also covers repo2 never written. promtool tests
-  in `deploy/monitoring/rule-tests/backup-offsite_test.yml` (red-proof:
-  widening `repo_key` to all repos makes the repo1-fresh/repo2-stale
-  case stop firing); runbook `runbooks/backup-offsite-stale.md`.
-
-### Fixed
 
 - **`stellarindex_oracle_stale` could never fire, for any oracle** —
   and its test passed anyway (wave-D ALERT-02). The rule compared
@@ -1296,6 +762,323 @@ against.
 
 ### Reviewed, no change
 
+- **MSP-03** (four more surfaces bypass both gates: `/v1/markets` and
+  `/v1/pools` `last_price`, `/v1/chart?price_type=market_cap`, and
+  windowed `/v1/price`). Two of the four are an open OWNER decision,
+  not a broken guard: `last_price` is documented as the raw
+  quote-per-base ratio — the same data class as deliberately-ungated
+  `/v1/ohlc` — and issue #366 states the unresolved scope question
+  verbatim. The windowed tier is additionally unreachable in the
+  shipped config, whose aggregate pair set is all `crypto:`/`fiat:`,
+  for which the scam gate returns false immediately. The root cause is
+  already recorded in #366 and #182.
+
+
+- **ALERT-05** (Alertmanager's inhibit rule keys on `component` alone,
+  so one page suppresses every ticket of that component). The mechanism
+  is real and was reproduced against the shipped config, but the harm
+  claim is not: suppressed tickets are re-delivered **~5 minutes**
+  after the page resolves, not at the next 24h `repeat_interval` —
+  inhibition is applied in the notify pipeline after the dispatcher
+  flush, so nothing is written to the nflog and the first post-unmute
+  flush notifies immediately. 14 of the 109 are informational alerts
+  routed to a receiver with no integrations, so they reach Discord
+  neither way; and every suppressed alert stays queryable with
+  `inhibitedBy`. It is also a duplicate of open audit finding OBS-02,
+  which records the same title, files and proposed fix. Left for that
+  finding's owner — an Alertmanager routing change is a production
+  paging decision — with the measured 5-minute number noted here,
+  because it materially lowers the severity OBS-02 was filed at.
+
+
+- **The R2/R3 deferral rationale rested on three false cache claims**
+  (wave-D PS-07). `multi-region-ha.md` said `/v1/price`,
+  `/v1/oracle/latest` and `/v1/ledgers/latest` "all return
+  `Cache-Control: no-store`". None is true at HEAD: `/v1/price` returns
+  `public, max-age=30, s-maxage=60` — the SAME switch case as
+  `/v1/assets`, which the entry contrasted it against — `/v1/oracle/`
+  returns `max-age=60, s-maxage=300`, and `/v1/ledgers/latest` is not a
+  route at all (`latest` binds `{seq}`, fails to parse, and 400s). The
+  policy is the original April 2026 one, four months older than the
+  text, so "the deployed binary was older" was never available as a
+  defence. The conclusion survives on the real numbers — a 30-60s edge
+  TTL is not a substitute for a regional origin, since a Singapore
+  consumer still pays full origin RTT on every miss — but the argument
+  now says so from facts, and the micro-cache experiment it proposes
+  reads as more attractive rather than less.
+
+
+- **PS-03** (restore-drill's ClickHouse stage is opt-in via
+  `DRILL_CH_WINDOW`, so the scheduled monthly drill never measures lake
+  re-derive throughput). Real, but the opt-in IS the shipped documented
+  design, the gap is disclosed in three docs, and it is already tracked
+  by open issue **#343**. The finding's one increment over #343 — that
+  a metric alone could never populate, because the stage is gated — is
+  worth recording there, not re-filing.
+- **PS-04** (ADR-0043 §2.3's "tail insurance" rests on a premise the
+  repo's own analysis contradicts, and is unimplemented). The premise
+  really is wrong-as-written, but ADRs are immutable
+  (`docs/adr/README.md`) — superseded, not edited — and the corrected
+  assessment already lives in `off-site-backup-plan.md` with a drafted
+  amendment. Nothing to change without a superseding ADR, which is an
+  owner decision.
+- **PFR-01** (the supply-divergence alert is unarmed on r1 because
+  `[divergence.supply]` is never rendered). Confirmed end to end, and
+  already stated in the alert rule's own comment plus a registered open
+  finding. Arming it is an operator/config decision on a production
+  paging surface, not a repo fix.
+- **PFR-03** (a narrowed re-run can rewrite `tip_ledger` downward). The
+  mechanism reproduces, but the defect CS-083 closed was AUTONOMOUS —
+  a nightly chunk driver that no longer exists. The trigger now needs
+  two deliberate operator commands, the first of which must find a real
+  problem; the end state is detected and annotated on the serving path
+  (`coverageVerdictsStale`, and the scenario's regression is 17× that
+  bound), CI-linted, and pinned by a test using materially identical
+  numbers. It is a re-report of CS-090's accepted residual.
+- **PFR-05** (a blocked completeness write is a silent no-op). The
+  discarded `sql.Result` is real; every consequence drawn from it is
+  wrong for the shipped configuration. The trigger is unreachable on
+  the deployed path (the driver's tip comes from a strictly monotonic
+  cursor), the claimed "fresh green verdict" prints `complete=false` in
+  the only deployed mode, and the backstop claim fails on all three
+  counts — a 36h per-source staleness gauge alerts on exactly the
+  column a discarded write leaves unchanged, naming the source, ~2h
+  after the blocked run rather than a day later.
+
+
+- **The capacity register offered two levers that no longer exist**
+  (wave-D PS-05 / PS-06), on a document whose whole purpose is to be
+  read during a capacity crunch.
+
+  **Move D** (cold-tier enable + bulk LCM trim) was listed as an
+  unexecuted `~3.5 TB` option whose AWS dependency was "not yet
+  incurred". It executed on **2026-07-26** and reclaimed **1.07 TB** —
+  the estimate was ~3.5× high for a structural reason worth keeping:
+  early history is *sparse*, so trimming 78% of the partitions
+  reclaimed 22% of the estimate; the bytes live in the dense Soroban
+  era above the cutoff, which was kept. The dependency it was weighed
+  against is not just incurred but formally accepted (ADR-0043 §2), so
+  "adds an external dependency" no longer discriminates between the
+  remaining options. A planner would have added ~3.5 TB of
+  already-spent runway and ruled the option out on a criterion that no
+  longer applies. Move G's derived "~4 TB net" and the May-2026
+  recommendation table are corrected and annotated accordingly.
+
+  **Move E** (trades retention) read "Decision status: Lever
+  available" in a register that marks its dead levers explicitly.
+  Trades retention is **forbidden**: migration 0031 removed it, 0031's
+  own `.down.sql` names re-adding one as "the EXACT mechanism of the
+  recurring 'rogue retention on trades' data-loss drift", CLAUDE.md
+  carries it as a standing invariant, Ash re-signed it as launch
+  decision D5, and `test/integration/migrations_test.go` pins it.
+  Arming it would also trip the completeness verifier immediately —
+  migration 0116 treats a rising `MIN(ledger)` on a reconcile target
+  as loss, unconditionally, "because NO reconcile target has a
+  retention policy". Marked NOT A LEVER rather than deleted, so a
+  future reader sees why it was rejected instead of re-proposing it.
+
+  Also corrected: the `data/postgres` row still cited "ADR-0006
+  retention", which ADR-0006 itself records as superseded by 0031.
+
+
+- **The launch plan told an operator to mint a credential nothing
+  reads** (wave-D PS-02). W4.5, W4.6 and Recommended-order step 3 all
+  carried the Go `sla-probe` stack as live code with pending r1-ops
+  actions — "mint the Partner/Operator-tier key, set
+  `stellarindex_probe_api_key` in the r1 vault" — and cited
+  `10-observability.yml` line ranges as *installing* units that the same
+  file now *removes*. The whole stack was retired on 2026-08-24
+  (`634d4be6`, #135): both stacks wrote the same textfile, so the
+  keyless Go stack's 401/429 runs stomped the wrapper's passing
+  verdicts. An operator working the plan would have minted a live
+  operator-tier key with no consumer, whose file the next
+  `--tags observability` apply deletes — credential sprawl on the exact
+  surface W6.3 exists to shrink — then hunted a unit file ansible had
+  already removed. The genuine item, rotating the key exposed in a
+  2026-08-15 transcript, is preserved and now points at the file that
+  actually holds it.
+
+- **The launch-day migration gate named a version 7 behind HEAD**
+  (wave-D PS-01). §2.8 hardcoded `schema_migrations.version = 143` when
+  head was 0150. Made version-agnostic rather than re-pinned — "143 →
+  150" just reproduces the defect at 0151 — pointing instead at the two
+  places CI keeps in agreement (`migrations/` head and
+  `ExpectedSchemaVersion`, guarded by
+  `TestExpectedSchemaVersionMatchesMigrationsHead`). The gate's floor
+  semantics (`applied >= expected`, deliberately not `==`) are now
+  stated, since the old text's "≤142 or dirty" phrasing invited reading
+  a schema AHEAD of the binary as a failure.
+
+  `migrations/README.md`'s register was also missing rows for 0138-0143,
+  0145-0147, 0149 and 0150, against the file's own mandate. Backfilled,
+  and `lint-migrations.sh` gained a third pass that fails on a migration
+  with no row, a row naming no migration, or its own pattern going
+  vacuous. The reader this costs is the one the register exists for —
+  someone bringing up a fresh database, for whom the row is where an
+  "⚠ operator must re-materialize" warning lives. 0147 is exactly that:
+  it leaves nine CAGGs empty, and r1 having already run it does nothing
+  for a new node.
+
+
+- **`api.status_services` was validated case-insensitively and consumed
+  case-sensitively** (wave-D RD-05). Config validation lower-cased each
+  entry before checking it against `{indexer, aggregator}`, but
+  `statusServicesOr` only trimmed — and the heartbeat map is keyed by
+  Prometheus `job` labels with the `stellarindex-` prefix stripped,
+  which are always lower-case. So `status_services = ["Indexer"]`
+  booted clean and then reported `"status": "unknown"` on every
+  `/v1/status` request forever: `overall` never left degraded and the
+  explorer's status page stayed amber, while the operator debugging it
+  found a value that passed validation and matched the documented
+  vocabulary — the exact symptom the list was added (#328) to remove.
+  Both halves now apply the same transform.
+
+- **`NetworkUnavailable` promised to self-suppress and never did**
+  (wave-D RD-06). Its docstring said it "renders nothing when the route
+  IS available here" and pointed at an `available` helper "below" that
+  was never written; the component always rendered the empty state.
+  Nothing was visibly broken — all five callers guard with
+  `if (!routeAvailable(…))` first — but the next network-gated surface
+  written by following that comment would have shipped "Not available
+  on Mainnet" above its real content, on mainnet (`/exchanges` and
+  `/bridges` are both in `ROUTE_CAPABILITY` with no page-level gate).
+  The component now honours the contract, and the available-route
+  branch — the case no test covered, which is how the drift went
+  unnoticed — is now covered.
+- **The orphan-branch tripwire was about to report 17 non-problems on
+  its first real fire** (wave-D RD-04). This repo's remediation flow is
+  a worktree fixer pushing `fix/issue-<N>`, then a BATCH PR squashing
+  the verified subset (#353, #364) — and a squash-merge leaves no
+  ancestry, so a landed fix branch is mechanically indistinguishable
+  from a forgotten one: no PR, stale against main. On the first tick
+  where they cleared the 24h grace, every one of the 17 surviving
+  `fix/issue-*` branches would have been listed, all already landed
+  with their issues closed. A 17-row table of non-problems on a
+  tripwire's first real fire is how a tripwire gets ignored forever.
+
+  A `fix/issue-<N>` branch whose issue N is CLOSED is now treated as
+  *dispositioned* and kept out of the table — closing the issue is a
+  human act saying the work was dealt with, which is exactly the signal
+  this workflow exists to detect the absence of. They are still counted
+  in a footer naming them as safe to delete, because they are real
+  clutter, just not lost work; silence would trade one failure mode for
+  another. The rule applies only to that naming convention, and any
+  lookup failure falls through to REPORTING the branch — the tripwire
+  errs toward surfacing work, never toward hiding it.
+
+  Deliberately not done: loosening the 24h grace (it exists so ordinary
+  in-session branches don't spam the issue), and closing issue #282 —
+  that one is a live, unfixed P1 gap on main, and closing it would hide
+  a real defect.
+- **The projector's replay-window read ran on the un-timeout'd root
+  context** (wave-D RD-08). Every other `p.store` call in the package
+  runs under `cycleCtx`; this one passed `Run`'s ctx straight through,
+  so a query blocked behind a lock wait parked the watcher goroutine
+  with `stellarindex_projector_replay_window_active` holding whatever
+  it last published — a stale `1` keeps suppressing the lag ticket for
+  a source nobody is replaying, and the suppression's whole
+  justification is that it stays narrow. Not unbounded even before
+  (`OpenBackground` SETs `statement_timeout` on every connection, 30m
+  by default), but 30 minutes of a wrongly-suppressing gauge is not a
+  bound worth relying on when a local one costs two lines. Bounded by
+  `PerSourceTimeout` (60s) — deliberately NOT a budget matched to the
+  refresh interval, which would trip on ordinary DB slowness, zero the
+  gauge mid-replay and re-arm `projector_lag_high` for the whole
+  catch-up, reinstating the ticket storm #325 removed.
+
+
+- **RD-09** (replay-window upper bound on a widened dirty row). The
+  arithmetic reproduces, but the scenario is a *recorded, ratified
+  decision* — `docs/operations/runbooks/projector-replay.md` documents
+  it with its operator remedy. Every proposed remedy is worse than the
+  gap: narrowing the range union, or refusing to record while a window
+  is pending, trades a tighter alert suppression for a data-integrity
+  regression on the verifier path — that union is what closed the
+  2026-07-31 carried-claim invalidation gap (19,366 over-projected
+  cctp rows), and compute-completeness's forced re-reconcile floor, the
+  table's primary consumer, depends on it. What was genuinely wrong was
+  a code comment: it glossed the bound as the pre-rewind position
+  unconditionally, which holds only for an un-widened row. Corrected,
+  along with a note on why the union must not be narrowed.
+
+
+- **`/v1/assets` accepted `order_by` and never read it, so the home
+  page's headline ranking was computed over the wrong ten assets**
+  (wave-D RD-02). The explorer requested
+  `?limit=10&order_by=volume_24h_usd_desc` under the caption "Ranked by
+  trailing-24h trading volume across every venue we ingest"; the
+  handler built `ListAssetsOptions` with no `Order`, so it was served
+  the top ten by **all-time observation count** and re-sorted just
+  those ten client-side. An asset that traded $2M in the last 24h but
+  has a modest lifetime count could not enter the candidate set at all,
+  while a dormant high-lifetime-count asset held a slot and rendered as
+  a dash. `order_by=TOTAL_GARBAGE` returned 200.
+
+  This was missing WIRING, not a missing feature: the storage layer has
+  supported `AssetsOrderVolume24hUSDDesc` the whole time — its own
+  `ORDER BY` branch, keyset cursor args, cursor predicate and rank-tier
+  expression, and the unified path already passes it. The handler now
+  parses `order_by`, threads it into the query **and both cursor
+  calls** (the two orders encode different keyset keys, so encoding
+  under the wrong one skips or repeats rows rather than erroring), and
+  400s on an unrecognised value the way `/v1/markets` always has.
+
+  Combining `order_by` with `asset_class` now 400s rather than being
+  silently ignored: those listings rank on their own fixed scheme with
+  a cursor encoding that scheme's keys. Of the explorer's four callers
+  only the home page sends `order_by`, and it sends no `asset_class`.
+
+  The explorer's client-side re-sort is removed in the same change —
+  with the server ordering correctly it stopped being a no-op and
+  became actively wrong, because the API ranks on a concentration-
+  ADJUSTED volume (so wash / operational assets don't sit atop the
+  directory) while the payload's `volume_24h_usd` is the RAW figure.
+  Re-sorting the page by the raw column promotes exactly the assets the
+  server demoted. Native XLM, which `/v1/assets` does not return, is
+  now spliced into the server's order instead of triggering a re-rank
+  of everything.
+
+
+- **`pkg/client` SDK: `Retry-After` no longer yields a NEGATIVE
+  back-off.** `parseRetryAfter` multiplied the header's delta-seconds
+  into a `time.Duration` (int64 NANOSECONDS) with no range check, so
+  any value above ~292 years wrapped — `Retry-After: 9223372036854775807`
+  produced `-1s`, and a caller sleeping on it retried IMMEDIATELY,
+  the exact opposite of the back-off requested. Out-of-range values
+  now return `0`, the field's already-documented absent/unparseable
+  sentinel. Deliberately not a clamp: `APIError.RetryAfter` is a
+  SemVer-stable *reporting* field, and clamping would make it
+  misreport the wire (wave-D F-SDK-06).
+- **`pkg/client` SDK: an oversized response body now errors instead
+  of surfacing as a bogus JSON decode failure.** The 16 MiB read cap
+  used `io.LimitReader` at exactly the limit, and `LimitReader`
+  returns `(n, nil)` AT its limit — so a truncated body was
+  indistinguishable from a complete one and got parsed, reporting a
+  confusing error about the payload rather than the truth. Now reads
+  `cap+1` and errors naming the cap (wave-D F-SDK-08).
+- **Docs: `pkg/client` query-parameter godoc said out-of-range
+  `limit` / `window_seconds` values are "clamped".** They are
+  REJECTED with a 400. Read in the `std::clamp` sense the old wording
+  told a caller their out-of-range value would be quietly honoured at
+  the boundary — on a pricing surface, the difference between a VWAP
+  over a window they never asked for and a loud error. The
+  genuinely-saturating ADR-0015 closed-bucket adjustment keeps the
+  word, and `docs/architecture/lexicon.md` now fixes both meanings so
+  the two do not re-blur. ADR-0018's copy of the old wording is left
+  alone — ADRs are immutable (wave-D F-SDK-09).
+- **Docs: the documented `pkg/*` SemVer release mechanism was
+  inert.** `semver-policy.md` and `release-process.md` instructed
+  cutting `pkg/client/vX.Y.Z` tags, but this repo is a single Go
+  module (ADR-0005), so such a tag versions nothing — the proxy has
+  no nested module and `go get …/pkg/client@v0.2.0` fails outright.
+  Both documents now state that `pkg/client` ships on the root clock,
+  that a `pkg/*` break bumps the root minor and MUST be named in the
+  CHANGELOG (the consumer's only notice), and why adding
+  `pkg/client/go.mod` would be a live break for everyone currently
+  pinned on the root module rather than a fix (wave-D F-SDK-05,
+  #361 item 8).
+
+
 - **CV-2** (oracle reconcile netting). The finding reads an unwired
   `vintageBoundary` field as a live hole; the history is the reverse.
   It shipped and changed behaviour, then was retired because its only
@@ -1339,7 +1122,240 @@ against.
   file disagreeing with its own filename, not whether every `migration
   NNNN` mention in the tree points at the right subject.
 
+### Added
+
+- **Tests for the CS-017 price-freshness seams** (wave-D PFR-04).
+  `storePriceReader`'s `now func() time.Time` and `vwapFreshness`
+  fields exist only to be injected by a test, and nothing did — so the
+  15-minute staleness rule had no enforcement beyond runtime. Now
+  pinned: the default window and why it is 15 minutes, the zero-value
+  sentinel (an explicit `0` must mean "unset", not "never stale"), the
+  injected clock, and the staleness boundary mirroring `LatestPrice`'s
+  real expression including its measure-from-CLOSE `+1m` and its
+  `lowConfidence` short-circuit.
+
+  PFR-04's *failure scenario* does not survive and was not acted on:
+  the dormant long tail cannot resume being served a months-old bucket,
+  because the substance gate runs twelve lines earlier, its window is
+  trailing-24h, and a dormant pair fails its first comparison — the
+  read returns `ErrPriceWithheld` and the staleness expression is never
+  evaluated. The end-to-end read also remains outside unit-test reach
+  (`storePriceReader.s` is a concrete `*timescale.Store` with no
+  injectable constructor); that belongs to the integration harness.
+
+
+- **Composite-reference corroboration of the phase-2 freeze for
+  structurally single-venue targets** (product decision, Ash
+  2026-08-29; design doc §10.1 amendment). For an allow-listed target
+  (`[aggregate.composite_reference]`, default ON for
+  `crypto:XLM/fiat:GBP` + `crypto:XLM/fiat:EUR`) whose bucket is
+  single-venue, the aggregator rebuilds the target's triangulation
+  chain on the CURRENT bucket — this tick's crypto/USD leg publish
+  (≥ `min_leg_sources` real venues, default 2) × a fresh FX snap
+  (≤ `fx_max_age_hours`, default 76, FX source class only, never an
+  oracle) — and reads it against the fresh direct VWAP: agreement
+  within `tolerance_bps` (default 75) means the move is market-wide
+  and the 3-signal-AND fire is suppressed (`corroboration_basis=
+  composite`); disagreement or an unavailable reference freezes
+  exactly as before, the reason string naming why
+  (`corroboration_basis=venue composite_unavailable: leg_sources=1
+  composite_leg_sources={…}`). The same sample feeds the confidence
+  factor (`triangulation_checked`) and the mid-hold release lens, so
+  a corroborated genuine move can also release. Hard invariants: the
+  composite never enters VWAP and never raises `source_count` /
+  `effectiveSourceCount`; targets with ≥ 2 real venues are
+  byte-identical to before. New: `composite_meta.corroboration_basis`
+  + `composite_leg_sources`, gauges
+  `stellarindex_aggregator_composite_corroboration{pair,window,verdict}`
+  / `..._composite_reference_leg_sources{pair,window,leg}`, counter
+  `..._composite_freeze_suppressed_total`. Never a prior tick's sample
+  (the rejected 95da898d mechanism). Tests:
+  `TestCompositeReference_*` (manipulation control with the mechanism
+  ON, market-wide mirror, stale-FX / thin-leg / oracle-FX fail-closed,
+  multi-venue differential, exact-Rat tolerance boundary, refresh
+  order) plus the unchanged
+  `TestRouterFreeze_TwoRoutesSuppressSingleSourceFreeze` 3-tick control
+  (#246). Verifier advisories (same day): **A1** leg-dispersion guard —
+  every venue's own bucket VWAP on the crypto/USD leg must be within
+  `leg_dispersion_bps` (default = `tolerance_bps`) of the leg VWAP,
+  else `composite_unavailable: leg_dispersion=…` (two venues only count
+  as two when they agree; gauge
+  `stellarindex_aggregator_composite_reference_leg_dispersion_bps`);
+  **A2** the mid-hold release lens for a resolved reference uses a
+  dedicated `release_band_pct` (default 2.0), not the shared 5 %
+  cross-oracle band — a held +4 % venue-specific offset no longer
+  auto-releases (`TestCompositeReference_ReleaseBandHoldsVenueOffset`,
+  `…_LegDispersionCannotCorroborate`, `…_LegDispersionBoundary`,
+  `TestLegDispersion_MeasuresWorstVenue`). A3/A4: config-bound tests
+  (`TestValidate_CompositeReferenceBounds`) and the guard fails CLOSED
+  when a venue VWAP cannot be computed (`leg_dispersion=uncomputable`,
+  `TestCompositeReference_UncomputableDispersionFailsClosed`).
+
+- **Rolling ZFS snapshots of the ClickHouse lake + Postgres on r1
+  (decision 2026-08-29).** `scripts/ops/zfs-snapshot.sh` (installed by
+  the archival-node role, new tag `zfs-snapshots`, `zfs-snapshot.timer`
+  daily 01:45 UTC) takes `auto-YYYYMMDD-HHMM` snapshots of
+  `data/clickhouse` (3 d retention) and `data/postgres` (7 d) — the
+  minutes-scale answer to a logical fault (bad migration, `DROP`, bad
+  re-derive) alongside pgBackRest's hours-scale PITR. Hard min-free
+  guard (`zfs_snapshot_min_free_bytes`, default 2 TiB): below it the
+  job prunes its oldest `auto-*` snapshots (never a dataset's newest,
+  never any non-`auto-*` name) and, if still below, skips the snapshot
+  and reports `stellarindex_zfs_snapshot_guard_skipped=1`. Textfile
+  gauges (`stellarindex_zfs_pool_free_bytes`,
+  `stellarindex_zfs_snapshot_{latest_unix,count,used_bytes}`), alerts
+  in both rule trees (`zfs-snapshots.yml`: pool free < 2.5 TiB ticket
+  / < 1.5 TiB page, snapshot > 36 h stale) with promtool tests, runbook
+  `docs/operations/runbooks/zfs-snapshots.md` (honest crash-consistent
+  semantics for ClickHouse and Postgres, clone-and-copy / rollback
+  procedures, vs pgBackRest PITR), and
+  `scripts/ops/zfs-snapshot-now.sh <dataset> [--keep <label>]` for the
+  fresh-snapshot precondition of the ClickHouse destructive-DDL
+  runbook. The guard is fail-closed: unreadable `zpool` free space
+  (command failure / non-number) aborts the run before any destroy or
+  snapshot, exits non-zero and emits
+  `stellarindex_zfs_snapshot_pool_free_unreadable=1` (own ticket).
+  Invariants pinned red-first by `scripts/ci/zfs-snapshot-test.sh`
+  against a stubbed `zfs`, including the destroy choke point directly.
+- **No-orphan-work contract + daily `orphan-branches` tripwire.** On
+  2026-08-27 `fix/priceless-structural-unpriceable` was pushed with no
+  PR and no backlog line; on 2026-08-28 a different agent re-diagnosed
+  `stellarindex_assets_popular_priceless` from scratch and fixed it
+  differently (#254), and the orphan (plus a postmortem branch, now
+  #255) surfaced only via a manual branch audit. The contract is stated
+  once in AGENTS.md (push ⇒ PR same session; prior-art check via
+  `gh pr list --state all --search`, `git branch -r`, backlog + runbook
+  grep; PR names the alert and root cause vs symptom; supersede by
+  closing with a comment) and cross-referenced from CONTRIBUTING.md and
+  CLAUDE.md. The PR template gains **Alert / finding** and **Prior
+  art** fields. `.github/workflows/orphan-branches.yml` (daily +
+  `workflow_dispatch`, `contents:read` / `pull-requests:read` /
+  `issues:write`) lists every remote branch other than `main` /
+  `old-*` / `archive*` with no open-or-merged PR and a last commit
+  >24h old, and opens/updates a single "Orphan branches (no PR)" issue
+  (closes it when the list is empty).
+- **`stellarindex_ingest_gap_detector_silent` third clause (both rule
+  trees).** The alert's `absent_over_time(runs_total[15m])` clause is
+  satisfied by the `outcome="error"` counter, and a target that has never
+  once succeeded in a process life emits no `last_success_unix` stamp to
+  age — so a scan failing every cycle (the 2026-08-28 r1
+  `soroban_events` statement_timeout loop, found verifying #258) fired
+  nothing. The rule now also fires when the target's error counter is
+  present now and 8h ago with no last-success stamp seen in 8h. First
+  promtool unit tests for the alert
+  (`deploy/monitoring/rule-tests/ingestion_test.yml`): fresh stamp
+  silent, stale stamp fires, never-succeeded fires, stamp-within-8h
+  suppresses, aggregator-absent fires.
+- **Ops scripts honour a ClickHouse ops user
+  (`scripts/ops/ch-ops-user-test.sh`).** `ch-live-catchup.sh`,
+  `ch-supply-flows-seed.sh`, `d2-ordinal-reproject.sh`,
+  `d3-lecur-v2-rebuild.sh` and `ch-backfill-monitor.sh` ran
+  `clickhouse-client` as the default user with no way to supply
+  credentials. They now honour `STELLARINDEX_CLICKHOUSE_OPS_USER` /
+  `STELLARINDEX_CLICKHOUSE_OPS_PASSWORD` (e.g. from
+  `/etc/default/stellarindex-ops`), handed to the client through its
+  `CLICKHOUSE_USER` / `CLICKHOUSE_PASSWORD` environment — never argv,
+  which `ps` and the journal would show. The monitor resolves them on
+  the HOST side of its ssh (new `OPS_ENV`, default
+  `/etc/default/stellarindex-ops`) for the same reason. Unset ⇒
+  byte-identical invocations; the new stub-backed test pins both the
+  credential hand-off and the unchanged argv per script, and runs from
+  `scripts/dev/verify.sh`.
+- **AWS Public Blockchain dataset drift monitor** (audit 2026-08-29,
+  backup-restore-6). r1's galexie-archive was trimmed below ledger
+  49,984,000 on 2026-07-26, so the second raw-LCM archive ADR-0043
+  relies on is the third-party `aws-public-blockchain` pubnet dataset
+  — and nothing watched it. `.github/workflows/public-dataset-check.yml`
+  (weekly + dispatch, no credentials, `--no-sign-request`, first-party
+  actions only) now asserts contiguous 64,000-ledger coverage from
+  genesis to ≥ tip − 2 partitions, the `HEX--start-end` naming, an
+  unchanged `.config.json` manifest and the trimmed range
+  `[64000, 49983999]` fully present; drift opens/updates ONE "AWS
+  Public Blockchain dataset drift" issue (auto-closed when intact) and
+  never fails the scheduled run red. Decision core
+  `scripts/ci/check-public-dataset.sh`, fixture-tested in `ci`
+  (`check-public-dataset-test.sh`: gap inside/above the trimmed range,
+  misnamed partition, manifest change, stalled publication all RED).
+
 ### Changed
+
+- **The two frozen planning inventories are retired, and
+  `verify-launch-ready` can no longer certify a retired document
+  (#321).** `docs/architecture/launch-readiness-backlog.md` had gained
+  zero rows since 2026-05-13 and contained none of the actual v1 gate
+  (W6.1 paging, W6.3 rotations, W4 backups, the W8 correctness
+  backlog, ToS/Privacy #237), yet every L1–L5 row still carried its
+  last-written ✅ — so the weekly `launch-readiness.yml` workflow
+  republished *"✓ Engineering surface ready"* over a document that had
+  stopped tracking reality, and got more confident the staler it got.
+  The doc is now formally superseded by `docs/operations/v1-launch-plan.md`
+  (frontmatter `status: superseded` + a banner mapping its still-open
+  rows: L4.14–L4.17 + L5.8 → W9 gated on D2, L5.6 → W6.2, L6.4 → §2.8,
+  L6.6/L6.7 → W6.7), `.github/workflows/launch-readiness.yml` is
+  deleted, and `scripts/ci/verify-launch-ready` now reads the
+  frontmatter and emits **no verdict at all** (new exit code 3) for any
+  document declaring itself superseded/retired — a retired doc's rows
+  are history, and neither a green nor a red computed from them means
+  anything. The prior 2026-07-24 staleness banner was itself wrong
+  twice over (it claimed the gate was unwired the day *after* it was
+  wired in `068ec709`, and named a "current source of truth" that was
+  superseded on 2026-07-27); both corrections are recorded in the new
+  banner. `docs/operations/open-fixes-inventory-2026-08-08.md` is
+  superseded on the same terms: 24 of its 35 rows were done and never
+  struck — rows 1 and 19 closed on the day it was compiled
+  (`d1cd18ac`, `a1c5c2e5`), rows 2 and 5 two days later (`f75ab4b2`,
+  `ef278218`) — and its genuinely-open threads are carried into the
+  launch plan's §5. The public company page's "roadmap that gets us to
+  v1" link now points at `v1-launch-plan.md` instead of the retired
+  backlog. Tests: `TestRealBacklog_IsRetired`,
+  `TestVerdictLine_RetiredDocNeverCertifiesReady`,
+  `TestSupersession_ReadsFrontmatterOnly`, and a company-page case
+  pinning the roadmap href (red-proof: the pre-fix binary run against
+  the now-retired doc still printed "✓ Engineering surface ready
+  (subset gate)" and exited 0).
+- **ADR-0043 §2 amended (2026-08-29):** "two independent raw-LCM
+  archives" now explicitly = our recent range + the AWS Public
+  Blockchain dataset; dependency accepted and monitored rather than
+  duplicated, with the one-time cross-region copy (≈ $80 + $3–4/mo)
+  recorded as the not-taken option. `off-site-backup-plan.md` status
+  carries the same note.
+- **Public status page shows backup freshness (Ash, 2026-08-29).** New
+  read-only `GET /v1/diagnostics/backups` (experimental) reports the
+  pgBackRest last full / diff / WAL-archive age, the per-repository
+  newest backup (repo 1 on-host, repo 2 encrypted S3 off-site), the
+  monthly restore drill's last run + pass/fail, and the ClickHouse
+  schema+state snapshot age — each with a `freshness` verdict
+  (`ok` / `stale` / `unknown`) against SLOs the API echoes in `slo`
+  (full ≤ 8 d, diff ≤ 36 h, WAL ≤ 15 m, off-site ≤ 8 d, drill ≤ 35 d,
+  snapshot ≤ 36 h). Source of truth is Prometheus — the same
+  pgbackrest_exporter / node_exporter textfile series the alert rules
+  read; the API never shells out to pgbackrest. Every timestamp is
+  nullable and an absent series is `null` + `unknown`, never a fresh
+  zero; `source_status` carries the document's trust tri-state and
+  `flags.stale` mirrors the roll-up. Cached 60 s, no secrets or paths;
+  503 where no `api.prometheus_url` is configured. The explorer
+  `/status` page mounts a **Backups** panel (`BackupsPanel.tsx`,
+  mainnet only) that renders green within SLO, red with the real age
+  past it, grey "no data" for absent sources, and a "verdicts not
+  trustworthy" marker when the API's Prometheus reads failed — ages
+  come from the API's `age_seconds`, never the browser clock. Reserved
+  nulls (documented in the spec): repo `retention`, drill
+  `restored_backup_ts` / `duration_s`, `zfs_snapshot_latest_ts`,
+  `replica_lag_s` — no producer exports them yet. Tests:
+  `internal/api/v1/diagnostics_backups_test.go`,
+  `web/explorer/src/app/status/BackupsPanel.test.tsx`.
+- **`stellarindex_backup_offsite_stale` (P3, both rule trees).** The
+  existing backup alerts read `pgbackrest_backup_since_last_completion_seconds`,
+  which the exporter computes ACROSS repos — a host whose on-host repo1
+  is fresh while every repo2 (S3) write fails stayed green and the one
+  copy that survives host loss aged out silently. The new rule fires
+  per UP exporter instance with no `pgbackrest_backup_info{repo_key="2"}`
+  series younger than 8 d (`x unless x offset 8d` — a new backup is a
+  new series), which also covers repo2 never written. promtool tests
+  in `deploy/monitoring/rule-tests/backup-offsite_test.yml` (red-proof:
+  widening `repo_key` to all repos makes the repo1-fresh/repo2-stale
+  case stop firing); runbook `runbooks/backup-offsite-stale.md`.
+
 
 - **`/v1/assets` now rejects a malformed catalogue cursor instead of
   silently serving page 1** (wave-D KP-4). `catalogue:abc`,
@@ -1432,7 +1448,6 @@ against.
   so a failed sync surfaces as a consumer serving stale data
   confidently, elsewhere, possibly days later — not as an error.
 
-### Changed
 
 - **Corrected the `/v1/price/batch` fan-out comment** (wave-D
   UNAUTH-DOS-2). It claimed 16-wide parallelism stays "well inside the
