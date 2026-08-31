@@ -11773,7 +11773,18 @@ components:
             keeps the badge. The detail path stamps the richer
             `unverified_warning` body instead. Omitted (false) for the
             verified asset and codes no verified currency claims.
-      required: [kind, asset_id, type, code, decimals, sep1_status]
+      # `code` is NOT required: a Soroban contract asset has none, and the
+      # handler's field carries `json:"code,omitempty"`, so the key is
+      # OMITTED entirely for those rows. Marking it required made every
+      # generated type declare `code: string` — non-optional — so a
+      # consumer doing `coin.code.toUpperCase()` type-checked cleanly and
+      # threw at runtime the moment a Soroban asset appeared in a list.
+      # That is exactly what happened on the explorer home page once
+      # /v1/assets started honouring `order_by=volume_24h_usd_desc`
+      # (2026-08-31): four Soroban contracts entered the top ten and the
+      # whole app shell fell over. The spec and the generated types agreed
+      # with each other and both disagreed with the server.
+      required: [kind, asset_id, type, decimals, sep1_status]
 
     UnverifiedWarning:
       type: object
