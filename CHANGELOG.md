@@ -128,6 +128,44 @@ against.
   and pointed at where the SDK is actually weak. That entry was itself
   an instance of the class it now warns about.
 
+- **Three price reads served ONE of the two stored market directions**
+  (wave-D UNAUTH-DOS-9). The decoder files each trade in the venue's
+  observed base/quote ordering and deliberately does not normalise, so
+  a two-sided market lands in the CAGGs as BOTH `(A,B)` and `(B,A)`
+  rows — as `dirVWAP`'s own doc says, "every serving read has to fold
+  the two together itself". Three did not:
+
+  - `RecentClosedVWAP1mForPair` (**`/v1/oracle/prices`**) dropped every
+    minute the market traded only the other way. The SEP-40 series went
+    silently sparse, and for a predominantly-flipped pair the endpoint
+    returned `200 []` for an asset `/v1/oracle/lastprice` priced
+    without difficulty — two endpoints on the same declared SEP-40
+    surface disagreeing about whether the asset had any history.
+  - `ClosedVWAP1mAtOrBefore` (**`/v1/assets/{id}` `change_24h_pct`**)
+    understated the 24-hours-ago anchor two ways: for a two-sided
+    bucket it returned one leg's VWAP as if it were the bucket's,
+    ignoring the other leg's volume; for a flipped-only bucket it
+    matched nothing and the percentage vanished.
+  - `TimedVWAPs1mForChangeSummary` (**the change-summary worker**), the
+    same defect in the aggregator's series read.
+
+  All three now read both orientations and fold them with the exact
+  volume-weighted union `combineDirVWAP` already serves — the
+  inversion stays in Go, never in SQL, where `1.0/vwap` would round
+  the flipped leg before it was weighted (ADR-0003).
+
+  This is the same bug for the **third** time: `LatestClosedVWAP1mForPair`
+  was fixed for it in audit-2026-07-23 (MNY-06), and that fixer
+  reported `RecentClosedVWAP1mForPair` as R-076 — recorded in the
+  audit's remediation state and never dispositioned. Each earlier fix
+  shipped a test pinning that one function's query, and none could see
+  the next reader. The new guard is written against the CLASS instead:
+  it parses every string literal in the package and fails on any
+  pair-bound CAGG read that filters a single orientation. It found the
+  third instance immediately — one that neither the finding nor its
+  skeptic had spotted — and it fails loudly if its own subject set ever
+  comes back empty.
+
 ### Reviewed, no change
 
 - **ALERT-05** (Alertmanager's inhibit rule keys on `component` alone,
