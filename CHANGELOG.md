@@ -628,6 +628,59 @@ against.
   dead link swapped for another, plus the loss of the namespace signal.
   Real per-asset RWA pages are separate work.
 
+- **A server response field shipped invisible to every consumer, and
+  two reconciliation gates could not see it** (wave-D F-SDK-04). F-1321
+  moved the issuer's SEP-1 rounding hint off `decimals` — where it
+  inflated `market_cap_usd` by up to 10^(7−display_decimals)× and was an
+  issuer-controlled manipulation vector — onto a new `display_decimals`
+  field. That field never entered the OpenAPI spec, so `pkg/client` and
+  the explorer's generated types both dropped it: **the remediation's
+  entire replacement surface was unreachable from the published
+  product**. A wallet had no way to obtain the issuer's stated
+  preference.
+
+  It is now documented in the spec, carried by the SDK, and present in
+  the generated explorer types.
+
+  Neither existing gate could have caught it. `lint-docs` compares
+  handlers to the spec at *route* granularity, never fields; the SDK's
+  contract test compares the SDK to the spec bidirectionally — which is
+  useful, but reconciles two *derived* artifacts, so when a field exists
+  only on the server they agree with each other about being wrong. A new
+  test compares the **handler struct** — the source of truth — to the
+  spec, fails on any undocumented response field, and fails loudly if
+  its own subject set comes back empty.
+
+- **Three SDK docs taught things the server does not do** (wave-D
+  F-SDK-01/02/03).
+
+  `TradeRow.BaseDecimals`/`QuoteDecimals` were documented as a property
+  of the *asset* ("7 for native/classic/fiat"). They are a property of
+  the row's **source**, and a single page mixes both: on-chain rows
+  carry the asset's own scale, while CEX rows carry **8 regardless of
+  the pair**. That error is payload-undetectable — `price` is
+  quote/base and therefore scale-invariant, so nothing in the response
+  looks wrong — and a reader assuming a constant mis-scaled real rows in
+  production once already. Corrected in the SDK, the handler, and the
+  OpenAPI description, since an SDK-only edit would leave the
+  machine-readable contract still teaching it.
+
+  `MarketsOptions.OrderBy` named the wrong server default: it said
+  alphabetic, but the default switched to volume-desc in May because
+  alphabetic surfaced spam tokens at the top. Corrected in all three
+  places the claim lived, and the godoc now says why a full-catalogue
+  walker should pass `pair` explicitly — volume-desc ranks on a
+  *mutable* key, so a pair whose volume changes mid-walk can be seen
+  twice or missed.
+
+  The SDK deliberately does **not** start sending `order_by=pair`: that
+  would silently flip every existing caller from top-by-volume to
+  alphabetically-first spam tokens, and make the SDK disagree with an
+  equivalent curl. Converting a wrong comment into wrong behaviour is
+  not a fix. Likewise rejected: widening `parseAPIError` to keep 256
+  bytes of an unrecognised body, which would let a proxy inject
+  arbitrary text into an error string that lands in customer logs.
+
 ### Reviewed, no change
 
 - **CV-2** (oracle reconcile netting). The finding reads an unwired

@@ -11513,6 +11513,7 @@ components:
             as the primary key for any holding.
         home_domain:  { type: [string, "null"] }
         decimals:     { type: integer, description: "On-chain smallest-unit scale. 7 for classic + native (stroops, protocol-fixed). For Soroban tokens this is the contract's real decimals() read from its captured instance metadata; 7 when the metadata isn't derivable from the lake." }
+        display_decimals:  { type: integer, description: "Issuer's SEP-1 `display_decimals` rounding hint (USDC declares 2) — a UI preference for how many fractional digits to SHOW, never a unit scale and never an input to amount math. Omitted when the issuer's SEP-1 overlay declares none. Distinct from `decimals` deliberately: F-1321 found that setting the unit scale from this issuer-controlled hint inflated market_cap_usd by up to 10^(7-display_decimals)×, so the two are now separate fields with separate meanings — divide by 10^`decimals`, round for display to `display_decimals`." }
         sep1_status:
           type: string
           enum: [not_applicable, not_fetched, verified, no_match, unreachable]
@@ -12217,11 +12218,25 @@ components:
           type: integer
           description: |
             Smallest-unit scale for `base_amount`: divide by
-            10^base_decimals for whole-asset units. 7 for
-            native/classic/fiat; the token contract's declared
-            `decimals()` for Soroban tokens. Present on /v1/history
-            (resolved once per pair per request); omitted on
-            /v1/observations, whose rows carry no per-side scale.
+            10^base_decimals for whole-asset units.
+
+            The scale is a property of the ROW'S SOURCE, not of the
+            asset, and a single page MIXES BOTH. On-chain rows (sdex,
+            soroswap, aquarius, phoenix, comet) carry the asset's own
+            scale — 7 for native/classic, the token contract's declared
+            `decimals()` for Soroban tokens. CEX rows (binance, kraken,
+            bitstamp, coinbase) carry 8 REGARDLESS of the pair: that is
+            the external normalisation scale, not anything about the
+            asset.
+
+            Never substitute a constant. The error is
+            payload-undetectable — `price` is quote/base and therefore
+            scale-invariant, so nothing in the response looks wrong —
+            and a reader assuming 7 per-asset mis-scaled real rows in
+            production once already.
+
+            Present on /v1/history; omitted on /v1/observations, whose
+            rows carry no per-side scale.
         quote_decimals:
           type: integer
           description: |
