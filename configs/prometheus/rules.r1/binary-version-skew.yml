@@ -91,13 +91,30 @@ groups:
           summary: "Binary version-skew probe degraded — at least one binary would not report a version"
           description: |
             stellarindex-binary-version-probe.sh ran but at least one
-            stellarindex-* binary did not answer `-version` (missing,
-            not executable, wrong architecture, or timed out).
+            MANAGED stellarindex-* binary that IS PRESENT did not answer
+            `-version` — non-executable, wrong architecture, or timed
+            out.
 
             That binary is EXCLUDED from the skew calculation, so
             stellarindex_binary_version_skew is understated while this
             is firing — a binary that cannot run is a worse problem
             than one at the wrong version.
+
+            NOT covered: an ENTIRELY ABSENT binary. The probe globs the
+            install dir, so a file that is not there is never visited —
+            an absent release binary yields skew=0 AND probe_success=1,
+            i.e. it reads as perfectly healthy. This description used to
+            claim "missing" as a cause; it was never true (wave-D
+            LID-2).
+
+            Detecting absence needs a HOST-DERIVED expected set (from
+            the installed systemd units, or an ansible-templated set
+            keyed on run_aggregator/region) — deliberately not a
+            hardcoded count of six, which would pin this alert
+            permanently red on testnet and futurenet, where fewer
+            binaries are installed by design. A permanently-firing alert
+            is the same as no alert. Until then, absence is caught by
+            the unit that fails to start, not by this probe.
 
             Compare stellarindex_binary_version_binaries_total against
             the number of stellarindex-* files in /usr/local/bin to see

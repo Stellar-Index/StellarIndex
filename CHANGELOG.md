@@ -460,6 +460,31 @@ against.
   The script and its self-test were always correct; only the caller was
   wrong. So the new guards check the *caller* — a script-level test
   cannot catch a caller-level omission.
+- **The binary version-skew probe scored an absent binary as perfectly
+  healthy, and its alert claimed to cover that** (wave-D LID-2). The
+  probe globs the install directory, so a file that is not there is
+  never visited: an entirely absent release binary yielded `skew=0`
+  *and* `probe_success=1`. A present-but-non-executable one was skipped
+  just as silently by `[ -x "$path" ] || continue` — while the alert
+  description named "missing, not executable" among the causes it
+  covers. Two of its four named causes were false.
+
+  The non-executable half is fixed: a present, managed, non-executable
+  binary now marks the run degraded. The parked-build skip
+  (`.prev-`/`.rolledback-`) moved above the executable test, so a
+  non-executable parked artifact cannot be mistaken for a broken live
+  binary.
+
+  Absence is deliberately *not* fixed here. The obvious approach —
+  asserting all six managed binaries are present — would pin the alert
+  permanently red on testnet and futurenet, where fewer are installed by
+  design, and the probe's own comment already warns that "a
+  permanently-firing alert is the same as no alert". Detecting absence
+  needs a host-derived expected set, not a hardcoded count. The
+  description now states plainly what the probe cannot see and why the
+  naive fix is wrong: an alert that overstates its coverage is worse
+  than one with a documented gap, because the first makes you stop
+  looking.
 
 ### Changed
 
