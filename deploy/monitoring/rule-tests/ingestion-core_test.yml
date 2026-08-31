@@ -206,6 +206,41 @@ tests:
                 or shared storage (Timescale) before restarting the indexer.
                 Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/all-ingestion-down.md
 
+  # ── firing: the indexer PROCESS DIED, so the series VANISHES ──────
+  # The case above uses a flat counter — a source that stalled while the
+  # process kept scraping. That is not what a dead indexer looks like:
+  # the series STOPS, and once the last samples age out of the range
+  # window, sum(rate(...)) is the EMPTY vector rather than zero.
+  #
+  # Pre-fix that made the SEV-1 fire at ~t+3m and then RESOLVE at ~t+5m
+  # while ingestion was still completely down — a resolved P1 reads as
+  # "it fixed itself" (wave-D ALERT-01). This case evaluates well past
+  # the handover point, where only the absent_over_time branch can be
+  # true.
+  - interval: 1m
+    name: a DEAD indexer keeps paging after its series ages out
+    input_series:
+      - series: 'stellarindex_source_events_total{job="stellarindex_indexer",instance="r1:9100",source="binance"}'
+        values: '5000+0x3'
+      - series: 'stellarindex_source_events_total{job="stellarindex_indexer",instance="r1:9100",source="sdex"}'
+        values: '9000+0x3'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: stellarindex_ingestion_all_sources_stopped
+        exp_alerts:
+          - exp_labels:
+              severity: page
+              team: stellarindex
+              component: ingestion
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/all-ingestion-down.md
+              summary: "All ingestion sources have stopped (SEV-1)"
+              description: |
+                No events from any source in the last 3 minutes. API data will go
+                stale within 60 s. This is a P1 — check shared upstream (Galexie/MinIO lake)
+                or shared storage (Timescale) before restarting the indexer.
+                Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/all-ingestion-down.md
+
   # ── guard: ONE living source keeps the fleet-wide sum non-zero ────
   - interval: 1m
     name: a single living source suppresses the total-outage page
