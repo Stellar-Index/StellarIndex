@@ -17,6 +17,27 @@ against.
 
 ### Fixed
 
+- **RedStone's USDT0 feed was arriving unmapped**, recorded as
+  `raw:USDT0` and standing the `stellarindex_ingestion_oracle_unknown_symbols`
+  ticket up — the only active alert on the status page. The raw capture
+  is the designed fail-safe, not the bug: an unrecognised symbol is
+  stored verbatim rather than dropped, precisely so the allow-list owner
+  can see the gap and close it.
+
+  USDT0 is now mapped as **its own asset**, deliberately not folded into
+  `USDT`. They are different tokens with separate issuance and separate
+  peg risk, and collapsing them in a decoder is exactly the eager
+  normalisation the stablecoin rule forbids. Whether USDT0 should ALSO
+  proxy to `fiat:USD` when a price is computed is an aggregator-policy
+  decision and is left alone here.
+
+  Mapping promotes the existing `raw:USDT0` rows in place on replay, so
+  nothing captured is lost. The feed-count guard was updated with its
+  reason rather than silently bumped.
+
+
+### Fixed
+
 - **The explorer's entire application shell crashed on the home page**
   — `TypeError: Cannot read properties of undefined (reading
   'toUpperCase')`, surfaced as "Stellar Index hit an unexpected error"

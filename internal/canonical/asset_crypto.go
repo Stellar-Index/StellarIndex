@@ -34,6 +34,16 @@ var knownCryptoCodes = map[string]struct{}{
 	// stablecoins → fiat at VWAP time per the "stablecoin-as-fiat is
 	// aggregator policy" rule in CLAUDE.md.
 	"DAI": {}, "PYUSD": {}, "USDP": {},
+	// USDT0 — the omnichain USDT representation, published by RedStone's
+	// Stellar adapter. A DISTINCT asset from `USDT`, deliberately: it is
+	// a different token with its own issuance and its own peg risk, and
+	// collapsing the two here would be exactly the eager normalisation
+	// the stablecoin rule above rejects. Whether it should ALSO proxy to
+	// fiat:USD at VWAP time is an aggregator-policy decision, taken in
+	// internal/aggregate/stablecoin.go, not here (2026-08-31: recorded
+	// as crypto only; it was arriving as `raw:USDT0` and ticketing
+	// stellarindex_ingestion_oracle_unknown_symbols).
+	"USDT0": {},
 	// Euro-pegged stablecoins. Same reasoning — keep as crypto here,
 	// let the aggregator decide to map them to fiat:EUR.
 	"EURC": {}, "EUROC": {}, "EUROB": {},
