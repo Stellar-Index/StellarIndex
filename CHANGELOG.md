@@ -15,6 +15,8 @@ against.
 
 ## [Unreleased]
 
+## [v0.53.1] — 2026-09-01
+
 ### Fixed
 
 - **`/v1/issuers` cold-filled on every cache expiry.** It had no prewarm
