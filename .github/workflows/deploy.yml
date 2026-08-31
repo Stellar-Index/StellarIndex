@@ -573,6 +573,53 @@ jobs:
           # the install stays so the deploy runner matches the role's pins.
           ansible-galaxy collection install -r configs/ansible/requirements.yml
 
+      - name: Capture the host's live version (config-apply baseline)
+        # Read BEFORE the playbook runs, because afterwards the sidecar
+        # reports the version we are deploying — which would make the
+        # baseline trivially equal to VERSION and the gate vacuous.
+        #
+        # The config-apply gate compares config surfaces between the
+        # host's LIVE version and the deploying tag. Without this it
+        # defaulted to "the previous release tag by ancestry", which is
+        # only the same thing when the fleet is exactly one release
+        # behind. It often is not: `docs/operations/deployed-versions.md`
+        # states plainly that "a git tag / release cut does not imply the
+        # fleet moved to it", and 8 of 23 adjacent tag hops over
+        # v0.40.0..v0.49.0 have an EMPTY config-surface diff. So a
+        # catch-up or skip-ahead deploy could get a green
+        # "no config-surface changes … the binary deploy is complete"
+        # while config from every skipped release stayed unapplied
+        # (wave-D LID-5).
+        #
+        # Best-effort by design: an unreachable sidecar leaves the output
+        # empty and the gate falls back to its documented ancestry
+        # default with its existing warning. Failing the deploy here
+        # would trade a weaker gate for an outage risk, which is the
+        # wrong direction — the gate is non-destructive by construction.
+        id: baseline
+        env:
+          DEPLOY_HOST: ${{ steps.region.outputs.host }}
+          DEPLOY_USER: ${{ steps.region.outputs.user }}
+          DEPLOY_JUMP: ${{ steps.region.outputs.jump }}
+        run: |
+          set -uo pipefail
+          proxy=""
+          [ -n "${DEPLOY_JUMP:-}" ] && proxy="-o ProxyJump=${DEPLOY_JUMP}"
+          # Lowest version across the managed binaries: config from a
+          # release is unapplied if ANY binary predates it, so the
+          # oldest is the honest baseline.
+          live=$(ssh -i ~/.ssh/id_deploy -o BatchMode=yes -o ConnectTimeout=15 \
+                   ${proxy} "${DEPLOY_USER}@${DEPLOY_HOST}" \
+                   "cat /var/lib/stellarindex/deployed-versions/stellarindex-* 2>/dev/null" \
+                 | tr -d '\r' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+' | sort -V | head -1 || true)
+          if [ -n "$live" ]; then
+            echo "host live version (lowest across binaries): $live"
+            echo "live=$live" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning::could not read the host's deployed-versions sidecar; the config-apply gate will fall back to the previous release tag by ancestry, which is only correct if the fleet is exactly one release behind."
+            echo "live=" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Run deploy playbook
         # F-1298 (wave 126): inputs through `env:`. Note that
         # `ansible-playbook -e "key=$VAR"` STILL needs care —
@@ -634,8 +681,9 @@ jobs:
         env:
           VERSION: ${{ inputs.version }}
           CONFIG_ACK: ${{ inputs.config_acknowledged }}
+          BASELINE: ${{ steps.baseline.outputs.live }}
         run: |
-          bash scripts/ci/config-apply-gate.sh "$VERSION" "$CONFIG_ACK"
+          bash scripts/ci/config-apply-gate.sh "$VERSION" "$CONFIG_ACK" "$BASELINE"
 
       - name: Served-path smoke
         # Runs AFTER the config-apply gate, i.e. after every deploy
