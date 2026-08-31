@@ -801,7 +801,7 @@ tests:
     input_series:
       - series: 'stellarindex_dex_trade_unit_ratio_total{job="stellarindex_indexer",instance="r1:9100",source="phoenix"}'
         values: '0+2x60'
-      - series: 'stellarindex_trade_inserts_total{job="stellarindex_indexer",instance="r1:9100",source="phoenix",usd_populated="true"}'
+      - series: 'stellarindex_trade_inserts_total{job="stellarindex_indexer",instance="r1:9100",source="phoenix",usd_volume_populated="yes"}'
         values: '0+3x60'
     alert_rule_test:
       - eval_time: 45m
@@ -838,7 +838,7 @@ tests:
     input_series:
       - series: 'stellarindex_dex_trade_unit_ratio_total{job="stellarindex_indexer",instance="r1:9100",source="sdex"}'
         values: '0+2x60'
-      - series: 'stellarindex_trade_inserts_total{job="stellarindex_indexer",instance="r1:9100",source="sdex",usd_populated="true"}'
+      - series: 'stellarindex_trade_inserts_total{job="stellarindex_indexer",instance="r1:9100",source="sdex",usd_volume_populated="yes"}'
         values: '0+100x60'
     alert_rule_test:
       - eval_time: 45m
@@ -851,7 +851,7 @@ tests:
     input_series:
       - series: 'stellarindex_dex_trade_unit_ratio_total{job="stellarindex_indexer",instance="r1:9100",source="comet"}'
         values: '0+0.5x60'
-      - series: 'stellarindex_trade_inserts_total{job="stellarindex_indexer",instance="r1:9100",source="comet",usd_populated="true"}'
+      - series: 'stellarindex_trade_inserts_total{job="stellarindex_indexer",instance="r1:9100",source="comet",usd_volume_populated="yes"}'
         values: '0+0.5x60'
     alert_rule_test:
       - eval_time: 45m
