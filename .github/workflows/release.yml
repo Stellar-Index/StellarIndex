@@ -353,8 +353,38 @@ jobs:
               git log --oneline -20 >> "$NOTES"
             fi
           fi
+          # GitHub caps a release body at 125,000 characters and returns
+          # HTTP 422 "body is too long" over it — AFTER every binary has
+          # been built, so the whole release fails at the last step with
+          # nothing published. v0.51.0 hit this: its CHANGELOG section
+          # was 1.59 MB, because v0.49.0 and v0.50.0 shipped without
+          # their own sections and the next promotion absorbed
+          # everything back to v0.48.0.
+          #
+          # Truncate at a LINE boundary under the cap and point at the
+          # CHANGELOG for the rest. The notes are a convenience copy;
+          # CHANGELOG.md is the record, and a release that publishes
+          # with a pointer beats one that does not publish at all.
+          LIMIT=120000
+          if [ "$(wc -c < "$NOTES")" -gt "$LIMIT" ]; then
+            CL_URL="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/blob/${TAG}/CHANGELOG.md"
+            TRUNC=/tmp/release-notes-trunc.md
+            # Reserve room for the footer, then cut on a line boundary.
+            head -c "$((LIMIT - 400))" "$NOTES" | sed '$d' > "$TRUNC"
+            {
+              echo ""
+              echo "---"
+              echo ""
+              echo "**These notes are truncated.** The full section for \`${TAG}\` exceeded"
+              echo "GitHub's 125,000-character release-body limit."
+              echo ""
+              echo "Read the complete entry in [CHANGELOG.md](${CL_URL})."
+            } >> "$TRUNC"
+            mv "$TRUNC" "$NOTES"
+            echo "::warning::Release notes truncated to ${LIMIT} chars; full text is in CHANGELOG.md"
+          fi
           echo "notes_file=$NOTES" >> "$GITHUB_OUTPUT"
-          echo "----- release notes preview -----"
+          echo "----- release notes preview ($(wc -c < "$NOTES") chars) -----"
           head -40 "$NOTES"
 
       - name: Create GitHub Release
