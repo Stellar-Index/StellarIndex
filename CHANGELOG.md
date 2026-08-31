@@ -15,6 +15,8 @@ against.
 
 ## [Unreleased]
 
+## [v0.52.0] — 2026-08-31
+
 ### Added
 
 - **An apply path for the r1 ansible config.** `deploy-binary.yml`
