@@ -70,12 +70,30 @@ This section records WHY, so the next session does not re-litigate it from memor
 
 **What the evidence said (all measured on r1, 2026-08-29):**
 
-1. **A CDN cannot replace regional origins for the product surface.** The hot API
-   endpoints are deliberately uncacheable — `/v1/price`, `/v1/oracle/latest` and
-   `/v1/ledgers/latest` all return `Cache-Control: no-store`, while `/v1/assets`
-   (`max-age=30, s-maxage=60`) and `/v1/markets` (`max-age=60, s-maxage=300`) are
-   edge-cacheable. So a Singapore API consumer pays the full origin RTT (~170 ms,
-   typical) on every call to the endpoints that define the product.
+1. **A CDN cannot replace regional origins for the product surface** — but NOT
+   for the reason this entry originally gave. It claimed `/v1/price`,
+   `/v1/oracle/latest` and `/v1/ledgers/latest` "all return `Cache-Control:
+   no-store`". All three are wrong at HEAD (corrected 2026-08-31, wave-D PS-07):
+
+   | Endpoint | Actual `Cache-Control` |
+   |---|---|
+   | `/v1/price` | `public, max-age=30, s-maxage=60` — the SAME switch case as `/v1/assets`, which this entry contrasts it against |
+   | `/v1/oracle/latest` | `public, max-age=60, s-maxage=300` (the `/v1/oracle/` prefix arm) |
+   | `/v1/ledgers/latest` | **not a route.** `latest` binds `{seq}`, fails `parseLedgerSeq`, and 400s. The nearest real endpoint is `/v1/ledger/tip`, which the handler sets to `public, max-age=2` |
+
+   The policy is the ORIGINAL April 2026 one (`33b9f567`), four months older than
+   this text, so "the deployed binary was older" is not available as a defence.
+   The same table appears correctly in `docs/reference/api-design.md`, and this
+   section contradicted itself — it named `/v1/assets` as `max-age=30,
+   s-maxage=60` while `/v1/price` sits in that identical case.
+
+   **The conclusion survives the correction, on the real numbers.** A 30-60 s
+   edge TTL on a price surface is not a substitute for a regional origin: a
+   Singapore consumer still pays full origin RTT (~170 ms, typical) on every
+   MISS, and at 30 s freshness a low-traffic pair misses far more often than it
+   hits. What changes is the *shape* of the argument — the hot path is
+   thinly-cacheable rather than uncacheable, which makes the micro-cache
+   experiment below more attractive, not less.
 2. **The explorer does not justify a box.** Ash: *"people can wait 200 ms for
    explorer results."* Deep explorer pages are lake-backed and proxy to R1 anyway
    (§0b); Cloudflare caching covers the immutable ones far more cheaply.
@@ -89,7 +107,7 @@ This section records WHY, so the next session does not re-litigate it from memor
 **Sequence when this resumes (post-v1.0), cheapest-first:**
 
 1. Cloudflare in front (WAF + caching) — covers the explorer and the cacheable API.
-2. **Micro-cache test on the no-store hot path.** We serve CLOSED buckets (ADR-0015),
+2. **Micro-cache test on the thinly-cached hot path.** We serve CLOSED buckets (ADR-0015),
    so a 1-5 s `s-maxage` on `/v1/price` and `/v1/oracle/latest` may be inside the
    contract rather than a staleness risk. If it holds, much of the API becomes
    edge-servable and R3's case weakens sharply. Test before buying hardware.

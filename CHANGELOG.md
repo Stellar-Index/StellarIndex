@@ -17,6 +17,83 @@ against.
 
 ### Fixed
 
+- **The R2/R3 deferral rationale rested on three false cache claims**
+  (wave-D PS-07). `multi-region-ha.md` said `/v1/price`,
+  `/v1/oracle/latest` and `/v1/ledgers/latest` "all return
+  `Cache-Control: no-store`". None is true at HEAD: `/v1/price` returns
+  `public, max-age=30, s-maxage=60` — the SAME switch case as
+  `/v1/assets`, which the entry contrasted it against — `/v1/oracle/`
+  returns `max-age=60, s-maxage=300`, and `/v1/ledgers/latest` is not a
+  route at all (`latest` binds `{seq}`, fails to parse, and 400s). The
+  policy is the original April 2026 one, four months older than the
+  text, so "the deployed binary was older" was never available as a
+  defence. The conclusion survives on the real numbers — a 30-60s edge
+  TTL is not a substitute for a regional origin, since a Singapore
+  consumer still pays full origin RTT on every miss — but the argument
+  now says so from facts, and the micro-cache experiment it proposes
+  reads as more attractive rather than less.
+
+### Added
+
+- **Tests for the CS-017 price-freshness seams** (wave-D PFR-04).
+  `storePriceReader`'s `now func() time.Time` and `vwapFreshness`
+  fields exist only to be injected by a test, and nothing did — so the
+  15-minute staleness rule had no enforcement beyond runtime. Now
+  pinned: the default window and why it is 15 minutes, the zero-value
+  sentinel (an explicit `0` must mean "unset", not "never stale"), the
+  injected clock, and the staleness boundary mirroring `LatestPrice`'s
+  real expression including its measure-from-CLOSE `+1m` and its
+  `lowConfidence` short-circuit.
+
+  PFR-04's *failure scenario* does not survive and was not acted on:
+  the dormant long tail cannot resume being served a months-old bucket,
+  because the substance gate runs twelve lines earlier, its window is
+  trailing-24h, and a dormant pair fails its first comparison — the
+  read returns `ErrPriceWithheld` and the staleness expression is never
+  evaluated. The end-to-end read also remains outside unit-test reach
+  (`storePriceReader.s` is a concrete `*timescale.Store` with no
+  injectable constructor); that belongs to the integration harness.
+
+### Reviewed, no change
+
+- **PS-03** (restore-drill's ClickHouse stage is opt-in via
+  `DRILL_CH_WINDOW`, so the scheduled monthly drill never measures lake
+  re-derive throughput). Real, but the opt-in IS the shipped documented
+  design, the gap is disclosed in three docs, and it is already tracked
+  by open issue **#343**. The finding's one increment over #343 — that
+  a metric alone could never populate, because the stage is gated — is
+  worth recording there, not re-filing.
+- **PS-04** (ADR-0043 §2.3's "tail insurance" rests on a premise the
+  repo's own analysis contradicts, and is unimplemented). The premise
+  really is wrong-as-written, but ADRs are immutable
+  (`docs/adr/README.md`) — superseded, not edited — and the corrected
+  assessment already lives in `off-site-backup-plan.md` with a drafted
+  amendment. Nothing to change without a superseding ADR, which is an
+  owner decision.
+- **PFR-01** (the supply-divergence alert is unarmed on r1 because
+  `[divergence.supply]` is never rendered). Confirmed end to end, and
+  already stated in the alert rule's own comment plus a registered open
+  finding. Arming it is an operator/config decision on a production
+  paging surface, not a repo fix.
+- **PFR-03** (a narrowed re-run can rewrite `tip_ledger` downward). The
+  mechanism reproduces, but the defect CS-083 closed was AUTONOMOUS —
+  a nightly chunk driver that no longer exists. The trigger now needs
+  two deliberate operator commands, the first of which must find a real
+  problem; the end state is detected and annotated on the serving path
+  (`coverageVerdictsStale`, and the scenario's regression is 17× that
+  bound), CI-linted, and pinned by a test using materially identical
+  numbers. It is a re-report of CS-090's accepted residual.
+- **PFR-05** (a blocked completeness write is a silent no-op). The
+  discarded `sql.Result` is real; every consequence drawn from it is
+  wrong for the shipped configuration. The trigger is unreachable on
+  the deployed path (the driver's tip comes from a strictly monotonic
+  cursor), the claimed "fresh green verdict" prints `complete=false` in
+  the only deployed mode, and the backstop claim fails on all three
+  counts — a 36h per-source staleness gauge alerts on exactly the
+  column a discarded write leaves unchanged, naming the source, ~2h
+  after the blocked run rather than a day later.
+
+
 - **The capacity register offered two levers that no longer exist**
   (wave-D PS-05 / PS-06), on a document whose whole purpose is to be
   read during a capacity crunch.
