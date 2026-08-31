@@ -823,14 +823,28 @@ type Vwap1mRow struct {
 // gate its neighbours use: both would change what a documented public
 // endpoint SERVES (a dormant asset's last N closed buckets becoming an
 // empty array), which is an owner decision, not a query-shape fix.
+// Both directions are a UNION ALL of two index-drivable branches rather
+// than an OR disjunction — see [closedVWAP1mAtOrBeforeQuery] for the
+// measurement and the reason.
 const recentClosedVWAP1mForPairQuery = `
-        SELECT bucket, base_asset, vwap::text, COALESCE(volume, 0)::text,
-               COALESCE(trade_count, 0), sources
-          FROM prices_1m
-         WHERE ((base_asset = $1 AND quote_asset = $2)
-             OR (base_asset = $2 AND quote_asset = $1))
-           AND bucket <= now() - INTERVAL '1 minute'
-         ORDER BY bucket DESC
+        SELECT * FROM (
+            (SELECT bucket, base_asset, vwap::text, COALESCE(volume, 0)::text,
+                    COALESCE(trade_count, 0), sources
+               FROM prices_1m
+              WHERE base_asset = $1 AND quote_asset = $2
+                AND bucket <= now() - INTERVAL '1 minute'
+              ORDER BY bucket DESC
+              LIMIT $3)
+            UNION ALL
+            (SELECT bucket, base_asset, vwap::text, COALESCE(volume, 0)::text,
+                    COALESCE(trade_count, 0), sources
+               FROM prices_1m
+              WHERE base_asset = $2 AND quote_asset = $1
+                AND bucket <= now() - INTERVAL '1 minute'
+              ORDER BY bucket DESC
+              LIMIT $3)
+        ) AS both_directions
+         ORDER BY bucket DESC, base_asset
          LIMIT $3
     `
 
@@ -860,15 +874,32 @@ func (s *Store) RecentClosedVWAP1mForPair(ctx context.Context, p canonical.Pair,
 // most two rows, so it still bounds the walk to the requested number of
 // buckets while keeping the plan a plain index-ordered scan (no CTE, no
 // GROUP BY, no source unnest).
+// `%[1]s` is injected into BOTH branches: the lower bound must prune
+// chunks on each one independently, since after the split neither branch
+// can inherit a predicate from the other. Both directions are a UNION
+// ALL rather than an OR disjunction — see [closedVWAP1mAtOrBeforeQuery]
+// for the measurement and the reason.
 const recentClosedVWAP1mCombinedTemplate = `
-        SELECT bucket, base_asset, vwap::text, COALESCE(volume, 0)::text,
-               COALESCE(trade_count, 0), sources
-          FROM prices_1m
-         WHERE ((base_asset = $1 AND quote_asset = $2)
-             OR (base_asset = $2 AND quote_asset = $1))
-           AND bucket <= now() - INTERVAL '1 minute'
-           %[1]s
-         ORDER BY bucket DESC
+        SELECT * FROM (
+            (SELECT bucket, base_asset, vwap::text, COALESCE(volume, 0)::text,
+                    COALESCE(trade_count, 0), sources
+               FROM prices_1m
+              WHERE base_asset = $1 AND quote_asset = $2
+                AND bucket <= now() - INTERVAL '1 minute'
+                %[1]s
+              ORDER BY bucket DESC
+              LIMIT $3)
+            UNION ALL
+            (SELECT bucket, base_asset, vwap::text, COALESCE(volume, 0)::text,
+                    COALESCE(trade_count, 0), sources
+               FROM prices_1m
+              WHERE base_asset = $2 AND quote_asset = $1
+                AND bucket <= now() - INTERVAL '1 minute'
+                %[1]s
+              ORDER BY bucket DESC
+              LIMIT $3)
+        ) AS both_directions
+         ORDER BY bucket DESC, base_asset
          LIMIT $3
     `
 
@@ -1004,14 +1035,35 @@ func scanCombinedVwap1mRows(rows *sql.Rows, p canonical.Pair, limit int, what st
 // rows). When the newest qualifying bucket has a single row, the
 // second row belongs to an older bucket; [scanCombinedVwap1mRows]
 // groups by bucket and the limit=1 trim discards it.
+// Shape: a UNION ALL of two single-direction branches, NOT one
+// `(A AND B) OR (B AND A)` disjunction. Each branch is an exact prefix
+// match on prices_1m_pair_bucket_idx (base_asset, quote_asset, bucket
+// DESC), so it walks the index newest-first and stops at its LIMIT. The
+// OR form cannot drive that index — the planner falls back to the plain
+// bucket index with the pair as a post-index filter, and for a pair with
+// NO rows the LIMIT never fills, so it walks every chunk to exhaustion.
+// Measured on r1 with prices_1m at 34 chunks: 10682.994 ms (OR) vs
+// 3.610 ms (UNION ALL) for native/fiat:USD. Guarded by
+// TestBothDirectionReadersUseUnionNotOr.
 const closedVWAP1mAtOrBeforeQuery = `
-        SELECT bucket, base_asset, vwap::text, COALESCE(volume, 0)::text,
-               COALESCE(trade_count, 0), sources
-          FROM prices_1m
-         WHERE ((base_asset = $1 AND quote_asset = $2)
-             OR (base_asset = $2 AND quote_asset = $1))
-           AND bucket + INTERVAL '1 minute' <= $3
-         ORDER BY bucket DESC
+        SELECT * FROM (
+            (SELECT bucket, base_asset, vwap::text, COALESCE(volume, 0)::text,
+                    COALESCE(trade_count, 0), sources
+               FROM prices_1m
+              WHERE base_asset = $1 AND quote_asset = $2
+                AND bucket <= $3 - INTERVAL '1 minute'
+              ORDER BY bucket DESC
+              LIMIT 2)
+            UNION ALL
+            (SELECT bucket, base_asset, vwap::text, COALESCE(volume, 0)::text,
+                    COALESCE(trade_count, 0), sources
+               FROM prices_1m
+              WHERE base_asset = $2 AND quote_asset = $1
+                AND bucket <= $3 - INTERVAL '1 minute'
+              ORDER BY bucket DESC
+              LIMIT 2)
+        ) AS both_directions
+         ORDER BY bucket DESC, base_asset
          LIMIT 2
     `
 
