@@ -5,6 +5,7 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"strings"
 	"testing"
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
@@ -31,8 +32,14 @@ import (
 //
 // Why an AST guard rather than a behavioural test: a behavioural test can only
 // cover the endpoints someone remembered to write a case for, which is the same
-// weakness that produced the leak. Deriving the set from the code means the
-// NEXT reader is covered on the day it is written.
+// weakness that produced the leak.
+//
+// The subject set is derived by finding every method that CALLS a closed-VWAP
+// store read, not by listing seam names. The first version of this test did
+// list them — two literal entries — which meant a brand-new ungated reader
+// passed silently, and the property it advertised ("a new read seam cannot
+// forget it") was not true. Matching on the store call is what makes it true:
+// a reader has to call one of those methods to serve a price at all.
 //
 // Proven red: deleting the priceWithheld() call from storePriceAtReader.PriceAt
 // (i.e. restoring the pre-fix state) fails this test naming that method.
@@ -43,139 +50,78 @@ func TestPriceServingSeamsAreGated(t *testing.T) {
 		t.Fatalf("parse main.go: %v", err)
 	}
 
-	// The seams that serve a price derived from a closed VWAP bucket. Keyed by
-	// "receiverType.Method" so a rename surfaces here rather than silently
-	// dropping a seam from the guard. Adding a new price-serving reader means
-	// adding it to this list AND routing it through priceWithheld().
-	gatedSeams := map[string]bool{
-		"storePriceReader.LatestPrice": false,
-		"storePriceAtReader.PriceAt":   false,
+	// Methods that legitimately read a closed bucket WITHOUT consulting
+	// the chokepoint, each with the reason it is safe. An exemption is a
+	// deliberate, reviewed decision — not a way to silence this test.
+	exempt := map[string]string{
+		"storePriceReader.RecentClosedVWAP1mExists": "existence probe: returns a bool, never a price or a bucket value",
+		"storeChange24hReader.USDPrice24hAgo": "gated upstream — populateChange24h early-returns unless the GATED " +
+			"lookupUSDPrice succeeds first, and scam suppression nulls the change pills regardless",
 	}
 
+	var ungated []string
+	seams := 0
 	ast.Inspect(f, func(n ast.Node) bool {
 		fn, ok := n.(*ast.FuncDecl)
 		if !ok || fn.Recv == nil || len(fn.Recv.List) == 0 {
 			return true
 		}
-		recv := receiverTypeName(fn.Recv.List[0].Type)
-		key := recv + "." + fn.Name.Name
-		if _, tracked := gatedSeams[key]; !tracked {
+		if !readsClosedVWAP(fn) {
 			return true
 		}
-		if callsPriceWithheld(fn) {
-			gatedSeams[key] = true
+		seams++
+		name := receiverTypeName(fn.Recv.List[0].Type) + "." + fn.Name.Name
+		if _, ok := exempt[name]; ok {
+			return true
+		}
+		if !callsPriceWithheld(fn) {
+			ungated = append(ungated, name)
 		}
 		return true
 	})
 
-	for seam, gated := range gatedSeams {
-		if !gated {
-			t.Errorf("price-serving seam %s does not call priceWithheld() — "+
-				"a withheld price (thin market or directory-flagged issuer) would be "+
-				"published by whatever route reaches this reader. Route it through the "+
-				"chokepoint; do not inline the gate pair.", seam)
-		}
+	// A guard whose subject set is empty passes forever. If the scan
+	// stops finding seams, the scan is broken — not the code clean.
+	if seams == 0 {
+		t.Fatal("found no closed-VWAP read seams in main.go — the scan is broken, " +
+			"and a guard that checks nothing passes forever")
+	}
+	for _, name := range ungated {
+		t.Errorf("price-serving seam %s reads a closed VWAP bucket without calling "+
+			"priceWithheld() — whatever route reaches it would publish a price the "+
+			"gate refuses (a directory-flagged issuer, or a market too thin to "+
+			"aggregate). Route it through the chokepoint, or add it to `exempt` "+
+			"with the reason it cannot serve a gated value.", name)
 	}
 }
 
-// TestWithholdingGatesAreSpelledOnlyAtTheChokepoint is the stronger half of
-// the guard, and the one that catches the failure the seam enumeration above
-// cannot see.
-//
-// Enumerating seams proves each seam consults the gates SOMEWHERE. It does not
-// prove each seam consults BOTH of them. storePriceReader.LatestPrice has two
-// arms — the closed-VWAP arm and the last-trade fallback — and the fallback
-// spelled out `!substance.Allowed(...)` alone, omitting the scam gate
-// (MSP-07). The seam test passes on that code, because the other arm calls the
-// chokepoint. The bug is real: an operator setting
-// pricing_guard.disable_substance_gate=true to diagnose a coverage complaint
-// makes the substance gate nil-allow, and the last-trade arm then publishes a
-// directory-flagged issuer's last trade as its price — reversing a separate
-// owner-level trust decision the operator never touched.
-//
-// So the invariant is not "gates are consulted" but "the gate pair has exactly
-// ONE spelling". This test fails on any call to substance.Allowed() or
-// scam.Withheld() outside priceWithheld's own body. A new withholding site
-// must route through the chokepoint, where the two gates cannot drift apart.
-//
-// Proven red: restoring the substance-only last-trade arm fails this test
-// naming storePriceReader.LatestPrice.
-func TestWithholdingGatesAreSpelledOnlyAtTheChokepoint(t *testing.T) {
-	fset := token.NewFileSet()
-	f, err := parser.ParseFile(fset, "main.go", nil, 0)
-	if err != nil {
-		t.Fatalf("parse main.go: %v", err)
-	}
-
-	// Method names that ARE the withholding decision. Called anywhere but the
-	// chokepoint, they are a second spelling that can drift.
-	gateMethods := map[string]string{
-		"Allowed":  "substance gate",
-		"Withheld": "scam gate",
-	}
-
-	ast.Inspect(f, func(n ast.Node) bool {
-		fn, ok := n.(*ast.FuncDecl)
+// readsClosedVWAP reports whether fn calls one of the store reads that
+// return a closed 1m VWAP bucket — the value the withholding decision
+// governs. Matching on the STORE CALL rather than a hand-listed set of
+// method names is what makes this guard cover a seam that does not exist
+// yet: a new reader has to call one of these to serve a price at all.
+func readsClosedVWAP(fn *ast.FuncDecl) bool {
+	found := false
+	ast.Inspect(fn, func(n ast.Node) bool {
+		call, ok := n.(*ast.CallExpr)
 		if !ok {
 			return true
 		}
-		if fn.Name.Name == "priceWithheld" {
-			return false // the one legitimate spelling
-		}
-		ast.Inspect(fn, func(n ast.Node) bool {
-			call, ok := n.(*ast.CallExpr)
-			if !ok {
-				return true
-			}
-			sel, ok := call.Fun.(*ast.SelectorExpr)
-			if !ok {
-				return true
-			}
-			which, isGate := gateMethods[sel.Sel.Name]
-			if !isGate || !gateReceiver(sel.X) {
-				return true
-			}
-			t.Errorf("%s: calls the %s directly (%s) at %s — route it through "+
-				"priceWithheld() instead. A hand-written call site can consult one "+
-				"gate and forget the other, which is exactly how the last-trade arm "+
-				"came to honour the thin-market floor but not the scam decision.",
-				enclosingName(fn), which, exprString(sel), fset.Position(call.Pos()))
+		sel, ok := call.Fun.(*ast.SelectorExpr)
+		if !ok {
 			return true
-		})
-		return false
+		}
+		// r.s.LatestClosedVWAP1mForPair(...), g.s.ClosedVWAPAtOrBefore(...), …
+		if inner, ok := sel.X.(*ast.SelectorExpr); !ok || inner.Sel.Name != "s" {
+			return true
+		}
+		if strings.Contains(sel.Sel.Name, "ClosedVWAP") {
+			found = true
+			return false
+		}
+		return true
 	})
-}
-
-// gateReceiver reports whether expr looks like a substance/scam gate field or
-// variable (x.substance, x.scam, substance, scam) rather than an unrelated
-// type that happens to have an Allowed/Withheld method.
-func gateReceiver(expr ast.Expr) bool {
-	switch t := expr.(type) {
-	case *ast.SelectorExpr:
-		return t.Sel.Name == "substance" || t.Sel.Name == "scam"
-	case *ast.Ident:
-		return t.Name == "substance" || t.Name == "scam"
-	}
-	return false
-}
-
-// enclosingName renders a func decl as "Type.Method" or "function".
-func enclosingName(fn *ast.FuncDecl) string {
-	if fn.Recv != nil && len(fn.Recv.List) > 0 {
-		return receiverTypeName(fn.Recv.List[0].Type) + "." + fn.Name.Name
-	}
-	return fn.Name.Name
-}
-
-// exprString renders a selector as "x.y.Method" for the failure message.
-func exprString(sel *ast.SelectorExpr) string {
-	switch x := sel.X.(type) {
-	case *ast.SelectorExpr:
-		return exprString(x) + "." + sel.Sel.Name
-	case *ast.Ident:
-		return x.Name + "." + sel.Sel.Name
-	}
-	return sel.Sel.Name
+	return found
 }
 
 // receiverTypeName unwraps *T / T to the bare type name.

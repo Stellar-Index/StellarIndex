@@ -110,6 +110,22 @@ describe('trust-surface guards', () => {
     // slug is usually computed a few lines above the <Link>. Display
     // helpers are unaffected: shortAssetText is a deliberately short
     // LABEL and is not routed through here.
+    // SCOPE, stated honestly: this covers the slug-RESOLUTION helpers —
+    // the files that decide what an /assets/ link points AT — and not
+    // every file in the tree.
+    //
+    // An earlier version of this comment claimed the broader property.
+    // It does not hold, and cannot with a regex: the defect shape is
+    // "a truncated value is returned from a resolver, then used as an
+    // href several call-frames away", so proving it repo-wide needs
+    // dataflow analysis, not text matching. Widening the file filter
+    // instead just flags co-occurrence — it reports
+    // markets/[pair]/page.tsx, which is CORRECT code (it truncates for
+    // the label and hrefs the full canonical id, the AM-09 decision).
+    //
+    // A guard that flags correct code gets disabled, so this stays
+    // narrow and truthful. The seven other truncation sites were
+    // checked by hand and are label-only.
     const truncation = /\.slice\(\s*0\s*,\s*(dashIx|i|idx|dash)\s*\)/;
     const offenders = sourceFiles()
       .filter(([path]) => /AssetLink|assetSlug/.test(path))

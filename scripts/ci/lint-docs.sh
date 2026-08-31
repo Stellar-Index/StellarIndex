@@ -519,7 +519,19 @@ if [ -d docs/operations/runbooks ] && [ -d internal/ops ]; then
   for gf in $(grep -rlE 'opsutil\.RegisterWriteGate\(|Bool\("write"' \
                 --include='*.go' internal/ops cmd/stellarindex-ops 2>/dev/null || true); do
     case "$gf" in *_test.go) continue ;; esac
-    (grep -ohE 'flag\.NewFlagSet\("[a-z0-9-]+"' "$gf" 2>/dev/null || true) | \
+    # `[a-z0-9 -]+`, WITH a space. Five write-gated subcommands declare
+    # two-word flagsets — "supply snapshot", "supply seed-observations",
+    # "supply seed-sac-balances", "supply seed-claimable-balances",
+    # "supply seed-sep41-genesis" — and the old `[a-z0-9-]+` could not
+    # match a space, so every one of them was silently absent from the
+    # gated set. A runbook telling a responder to run
+    # `run-heavy-job.sh … stellarindex-ops supply snapshot -asset native`
+    # without -write produced NO finding, while the identical omission on
+    # a one-word subcommand was caught. That is exactly the failure this
+    # check exists to stop: the command reports "complete … errors=0",
+    # is success-shaped, and has written nothing (review sweep
+    # 2026-08-31).
+    (grep -ohE 'flag\.NewFlagSet\("[a-z0-9 -]+"' "$gf" 2>/dev/null || true) | \
       sed -E 's|.*"(.*)"|\1|'
   done | sort -u > "$gated"
 
@@ -534,9 +546,18 @@ if [ -d docs/operations/runbooks ] && [ -d internal/ops ]; then
       [ -z "$sub" ] && continue
       # `|| true`: a no-match grep exits 1, which under set -e +
       # pipefail would abort the whole lint instead of meaning "clean".
+      #
+      # An EXPLICIT -dry-run is exempt. The forgotten-flag failure this
+      # section exists to catch is a command that looks like it writes
+      # and does not; a command that says -dry-run is a deliberate
+      # preview, and several runbooks correctly show the dry run
+      # immediately before the -write run (see
+      # supply-cross-check-divergence.md §Mitigation). Flagging those
+      # would train responders to ignore this check.
       offenders=$(printf '%s\n' "$joined" | \
         grep -E "run-heavy-job\.sh.*stellarindex-ops[[:space:]]+${sub}([[:space:]]|\$)" | \
-        grep -vE '(^|[[:space:]])-{1,2}write([[:space:]]|$)' || true)
+        grep -vE '(^|[[:space:]])-{1,2}write([[:space:]]|$)' | \
+        grep -vE '(^|[[:space:]])-{1,2}dry-run([[:space:]]|$)' || true)
       [ -z "$offenders" ] && continue
       printf '%s\n' "$offenders" | while IFS= read -r bad; do
         [ -z "$bad" ] && continue

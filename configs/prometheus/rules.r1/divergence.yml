@@ -61,17 +61,35 @@ groups:
             than a real market move.
 
       - alert: stellarindex_oracle_stale
-        # `on (source) group_left()`, not a bare comparison. The two
+        # `ignoring(asset) group_left()`, not a bare comparison. The two
         # metrics carry DIFFERENT label sets — last_update_unix is
         # {source, asset}, resolution_seconds is {source} — and a
         # vector-to-vector op with no on()/ignoring() requires them to be
         # IDENTICAL. Without the join this alert matched nothing in
         # production and could never fire, for any oracle, ever
         # (wave-D ALERT-02). group_left keeps the per-asset cardinality
-        # of the left side, so one silent asset still tickets.
+        # of the left side, so one silent asset still tickets.        #
+        # IGNORING, not `on (source)`. `on` discards every label outside
+        # the match group, including job/instance — so two scrape targets
+        # exporting the same {source} make the right side non-unique and
+        # the whole rule fails evaluation:
+        #
+        #   found duplicate series for the match group {source="…"} on the
+        #   right hand-side of the operation — many-to-many matching not
+        #   allowed
+        #
+        # That is not hypothetical: the prometheus job template builds
+        # stellarindex_indexer by looping its host group, so a second
+        # indexer host (R2, ADR-0004/ADR-0016) produces exactly that
+        # shape. The rule would then not merely fail to fire — it would
+        # error, which is the pre-fix silence plus noise.
+        #
+        # `ignoring(asset)` keeps job/instance in the match, so each
+        # target pairs with its own resolution series and a multi-host
+        # Prometheus yields one correct alert per instance.
         expr: |
           (time() - stellarindex_oracle_last_update_unix)
-            > on (source) group_left() (10 * stellarindex_oracle_resolution_seconds)
+            > ignoring(asset) group_left() (10 * stellarindex_oracle_resolution_seconds)
         for: 2m
         labels:
           severity: ticket
