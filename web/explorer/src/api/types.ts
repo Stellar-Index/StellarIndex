@@ -219,7 +219,8 @@ export interface paths {
          *     credits, Soroban tokens, and verified-catalogue currencies that
          *     have a Stellar on-chain issuance (USDC, EURC, AQUA, …). Cursor is
          *     opaque; `limit` is rejected with 400 when outside [1, 500] (NOT
-         *     clamped).
+         *     clamped). Page 1 fills from the classic stream when the catalogue
+         *     is shorter than the limit.
          *
          *     NON-Stellar assets — fiat currencies (USD, EUR, …) and
          *     reference-only coins (BTC, ETH, …) that have no Stellar issuance
@@ -7514,12 +7515,6 @@ export interface operations {
                 /** @description Case-insensitive substring filter over code / asset id / slug / name, applied server-side across BOTH phases of the unified listing (catalogue + the ~191K classic long tail). */
                 q?: string;
                 /**
-                 * @description Maximum rows per page (1-500, default 100). Values above
-                 *     the cap return 400 rather than being silently clamped.
-                 *     Page onward with `cursor` where the endpoint supports it.
-                 */
-                limit?: components["parameters"]["Limit"];
-                /**
                  * @description Opaque pagination token echoed from a prior response's
                  *     `pagination.next`. Pass it verbatim — it is a base64url-encoded
                  *     blob whose internal shape is an implementation detail and
@@ -7531,6 +7526,12 @@ export interface operations {
                  *     means "start from the beginning".
                  */
                 cursor?: components["parameters"]["Cursor"];
+                /**
+                 * @description Maximum rows per page (1-500, default 100). Values above
+                 *     the cap return 400 rather than being silently clamped.
+                 *     Page onward with `cursor` where the endpoint supports it.
+                 */
+                limit?: components["parameters"]["Limit"];
                 /**
                  * @description Major dispatch for the listing. One of:
                  *     - `fiat` — fiat currencies from the verified-currency catalogue.
