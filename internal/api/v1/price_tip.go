@@ -239,6 +239,21 @@ func (s *Server) computeTip(ctx context.Context, asset, quote canonical.Asset, w
 	if fxSnap, fxSources, ok := s.tryFiatCrossRate(asset, quote); ok {
 		return fxSnap, fxSources, nil
 	}
+	// USD-anchored cross for a non-fiat asset in a fiat we have no
+	// market for (ADR-0051) — the local-currency path. Present here for
+	// the same reason the two branches above are: a wallet polling the
+	// tip for a BRL-denominated balance must get the same answer
+	// /v1/price gives it, not a 404 that only this surface returns.
+	// Last, so an observed market still wins.
+	if fxSnap, fxSources, ok, withheld := s.tryUSDAnchoredFiatCross(ctx, asset, quote); ok {
+		return fxSnap, fxSources, nil
+	} else if withheld {
+		// The USD leg is withheld, so the derived price is too. This
+		// surface already distinguishes the two verdicts (see the
+		// ErrPriceWithheld arm above), so report it honestly rather than
+		// letting it fall through as "no data".
+		return PriceSnapshot{}, nil, ErrPriceWithheld
+	}
 	return PriceSnapshot{}, nil, ErrPriceNotFound
 }
 

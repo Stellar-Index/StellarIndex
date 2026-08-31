@@ -10922,9 +10922,21 @@ components:
         - `triangulated` — set when the served price was derived
           via cross-pair multiplication (e.g. XLM/EUR computed from
           XLM/USD × USD/EUR) rather than direct trade observation.
-          The aggregator's triangulation pass writes the implied
-          VWAP into the same Redis key with a `:provenance` marker;
-          `/v1/price` reads that marker and forwards the flag.
+          Two paths set it. The aggregator's triangulation pass
+          writes the implied VWAP into the same Redis key with a
+          `:provenance` marker, and `/v1/price` reads that marker
+          and forwards the flag. Separately, a request for a fiat
+          quote we hold no market for is answered by composing the
+          asset's USD price with the USD→CCY foreign-exchange rate
+          (ADR-0051) — the local-currency path, which is how the
+          ~130 currencies beyond USD/EUR/GBP resolve at all. An
+          OBSERVED market always wins over a derived value, so
+          `triangulated: false` on a fiat quote means real trades
+          backed it. Derived values credit both legs in `sources`
+          (the USD leg's venues plus the FX feed), and the FX leg is
+          a DAILY fix while `observed_at` reports the USD leg's own
+          (much fresher) timestamp — fine for display, not a
+          settlement rate. See docs/methodology/local-currency-pricing.md.
         - `divergence_warning` — anomaly check or cross-reference
           observed a meaningful divergence; treat with caution.
         - `frozen` — anomaly detection refused to publish the new
