@@ -17,6 +17,33 @@ against.
 
 ### Fixed
 
+- **`api.status_services` was validated case-insensitively and consumed
+  case-sensitively** (wave-D RD-05). Config validation lower-cased each
+  entry before checking it against `{indexer, aggregator}`, but
+  `statusServicesOr` only trimmed — and the heartbeat map is keyed by
+  Prometheus `job` labels with the `stellarindex-` prefix stripped,
+  which are always lower-case. So `status_services = ["Indexer"]`
+  booted clean and then reported `"status": "unknown"` on every
+  `/v1/status` request forever: `overall` never left degraded and the
+  explorer's status page stayed amber, while the operator debugging it
+  found a value that passed validation and matched the documented
+  vocabulary — the exact symptom the list was added (#328) to remove.
+  Both halves now apply the same transform.
+
+- **`NetworkUnavailable` promised to self-suppress and never did**
+  (wave-D RD-06). Its docstring said it "renders nothing when the route
+  IS available here" and pointed at an `available` helper "below" that
+  was never written; the component always rendered the empty state.
+  Nothing was visibly broken — all five callers guard with
+  `if (!routeAvailable(…))` first — but the next network-gated surface
+  written by following that comment would have shipped "Not available
+  on Mainnet" above its real content, on mainnet (`/exchanges` and
+  `/bridges` are both in `ROUTE_CAPABILITY` with no page-level gate).
+  The component now honours the contract, and the available-route
+  branch — the case no test covered, which is how the drift went
+  unnoticed — is now covered.
+
+
 - **`/v1/assets` accepted `order_by` and never read it, so the home
   page's headline ranking was computed over the wrong ten assets**
   (wave-D RD-02). The explorer requested
