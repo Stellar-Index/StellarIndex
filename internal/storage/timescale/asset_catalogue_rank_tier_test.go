@@ -186,7 +186,12 @@ func TestSplitAssetsCursor_LegacyTwoFieldCursorResumesInTierZero(t *testing.T) {
 // fails this test naming AssetsOrderObservationCountDesc.
 func TestAssetsCursorPredicate_MixedDirectionKeysetIsSpelledOut(t *testing.T) {
 	t.Parallel()
-	for _, order := range []AssetsOrder{AssetsOrderVolume24hUSDDesc, AssetsOrderObservationCountDesc} {
+	orders := allAssetsOrders()
+	if len(orders) == 0 {
+		t.Fatal("no AssetsOrder values found — the enumeration is broken, and a " +
+			"guard with an empty subject set passes forever")
+	}
+	for _, order := range orders {
 		orderBy := assetsOrderBy(order)
 		if !strings.HasSuffix(orderBy, "ca.asset_id ASC") {
 			// Not a mixed-direction tie-break — this invariant does not apply.
@@ -210,4 +215,27 @@ func TestAssetsCursorPredicate_MixedDirectionKeysetIsSpelledOut(t *testing.T) {
 				"must resume with `ca.asset_id > $n`; got %q", order, pred)
 		}
 	}
+}
+
+// allAssetsOrders enumerates every AssetsOrder the package defines.
+//
+// Derived by walking the values rather than listing them, because the
+// guard above advertises that a THIRD ordering added later is covered on
+// the day it is written — and a literal two-element slice would not have
+// been. AssetsOrder is a small int enum; walking upward until
+// assetsOrderBy stops producing a distinct ORDER BY finds them all
+// without depending on a name.
+func allAssetsOrders() []AssetsOrder {
+	var out []AssetsOrder
+	seen := map[string]bool{}
+	for i := 0; i < 64; i++ {
+		o := AssetsOrder(i)
+		ob := assetsOrderBy(o)
+		if ob == "" || seen[ob] {
+			continue
+		}
+		seen[ob] = true
+		out = append(out, o)
+	}
+	return out
 }

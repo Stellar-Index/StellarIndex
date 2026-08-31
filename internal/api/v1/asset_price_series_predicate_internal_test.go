@@ -86,6 +86,35 @@ func TestWithholdPriceSeries_DeclaredPegDropsHistory(t *testing.T) {
 	}
 }
 
+// A declared-peg asset also publishes no all-time high, and that is a
+// DELIBERATE wire change rather than a side effect — pinned here because
+// it shipped unpinned and undescribed, and a reviewer had to reproduce
+// it to find out whether it was intended (review sweep 2026-08-31).
+//
+// The reasoning is the same as for the series: GetAssetATH reads the
+// asset's own USD-QUOTED market, which for a declared-peg asset is the
+// dust market the substance gate refused. The published headline comes
+// from the PEG. So an `ath` beside it states a provenance the price does
+// not have — a dollar high drawn from a market the platform declined to
+// price from.
+func TestWithholdPriceSeries_DeclaredPegDropsATH(t *testing.T) {
+	usd := "0.65"
+	d := &AssetDetail{
+		PriceUSD:   &usd,
+		PriceBasis: priceBasisDeclaredPeg,
+		ATH:        &AssetATH{USD: "0.9100", At: "2025-11-02T00:00:00Z"},
+	}
+	withholdPriceSeriesWhenUnpriced(d)
+	if d.ATH != nil {
+		t.Errorf("declared-peg detail kept ath %+v — it is drawn from the same "+
+			"USD market the substance gate refused, while the headline price "+
+			"comes from the peg", d.ATH)
+	}
+	if d.PriceUSD == nil {
+		t.Error("the peg price must still survive")
+	}
+}
+
 // A scam-flagged issuer must publish no all-time-high dollar price
 // (MSP-05).
 func TestSuppressScamIssuerPricing_NullsATH(t *testing.T) {
