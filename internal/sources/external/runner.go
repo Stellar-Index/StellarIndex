@@ -50,14 +50,33 @@ const externalQuoteScale = 100_000_000
 // per-currency FX table — a real table would be false precision for
 // an order-of-magnitude dust threshold, and would rot.
 //
-// It is safe because $1 is an UPPER BOUND across the whole ADR-0010
-// fiat allow-list (canonical.knownFiatCodes): the richest codes on
-// it (GBP, CHF) are ≈ $1.3, so the floor is at most ~1.3× the
-// intended $0.001; the poorest (IDR, VND, KRW) are worth far less
-// than a dollar, which makes their floor far BELOW $0.001. Both
-// error directions are acceptable, and the second is the safe one —
-// over-stating the reference under-states the floor, so we keep
-// marginal prints rather than silently discard real ones.
+// $1 is NO LONGER an upper bound across the fiat allow-list. It was
+// when this was written (2026-07-26, 32 codes, GBP/CHF ≈ $1.3 the
+// richest); e17288bd widened canonical.knownFiatCodes to the full
+// massive feed (32 → 133), which brought in KWD ≈ $3.26, BHD ≈ $2.65,
+// OMR ≈ $2.60 and KYD ≈ $1.20 (wave-D SI-OC-05).
+//
+// For those codes the error runs the OTHER way, and the original
+// comment had the direction backwards. Under-stating the reference
+// OVER-states the floor: assuming $1 for a $3.26 KWD makes
+// dustFloorUnits yield 0.001 whole quote units ≈ $0.00326 notional —
+// about 3.3× STRICTER than the intended $0.001, which is the
+// size-biased-dropping direction C2-016 exists to prevent. The
+// poorest codes (IDR, VND, KRW) still float far below a dollar and
+// still get a floor well under $0.001, which is the harmless
+// direction.
+//
+// It stays one number anyway. A real FX table would be false
+// precision for an order-of-magnitude dust threshold and would rot —
+// and the exposure is bounded at compile time: every fiat quote leg a
+// streamer can see is hard-coded (kraken USD/EUR/GBP/AUD/CAD/CHF,
+// bitstamp + coinbase USD/EUR/GBP, binance EUR/GBP), all ≤ ~$1.35.
+// ExternalVenueConfig exposes only `enabled` and `poll_interval`, so
+// reaching a KWD leg takes a reviewed Go/YAML edit, a rebuild and a
+// redeploy — not a config change.
+//
+// Revisit if a venue-pair list ever becomes runtime-configurable, or
+// if a >$1.35 fiat leg is added to one of those hard-coded lists.
 const fiatQuoteUSDMicros = 1_000_000
 
 // cryptoQuoteUSDMicros is a coarse, order-of-magnitude USD value of
