@@ -226,7 +226,15 @@ func verifyArchive(args []string) (retErr error) { //nolint:funlen,gocognit,gocy
 	// cannot false-page. See verify_archive_textfile.go.
 	if *textfileOutput != "" {
 		defer func() {
-			if werr := writeVerifyArchiveTextfile(*textfileOutput, *tier, collectVerifyArchiveMismatches()); werr != nil {
+			// retErr is the run's verdict at exit. Only a clean run
+			// advances the last-success gauge; a failed one carries the
+			// prior value forward, so the staleness page measures when
+			// verification last SUCCEEDED rather than when the timer
+			// last fired (wave-D ALERT-10).
+			if werr := writeVerifyArchiveTextfile(
+				*textfileOutput, *tier, collectVerifyArchiveMismatches(),
+				retErr == nil, time.Now(),
+			); werr != nil {
 				fmt.Fprintf(os.Stderr, "verify-archive: write textfile %s: %v\n", *textfileOutput, werr)
 				// Never mask the verification error with the
 				// bookkeeping one — but a run that cannot publish its
