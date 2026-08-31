@@ -17,6 +17,23 @@ against.
 
 ### Fixed
 
+- **A failed test-net deploy named neither hop.** Reaching a NAT-only
+  test-net VM goes through a ProxyJump, and BOTH hops must have their
+  host key pinned in the one `known_hosts` file the workflow writes.
+  When the jump host's key is missing — or the deploy key isn't
+  authorised on it — ansible fails with `UNREACHABLE! ... "Connection
+  closed by UNKNOWN port 65535"`, which identifies neither hop and
+  gives an operator nothing to act on. Both test nets failed exactly
+  that way on 2026-08-31 (#434) while r1, which has no jump, deployed
+  cleanly. `deploy.yml` now preflights the SSH path before ansible
+  runs: it checks that the jump host and the target are each pinned,
+  probes the jump hop on its own, and reports which one is broken.
+  Host names and counts only — never key material, and any
+  key-shaped token in the captured stderr is redacted.
+
+
+### Fixed
+
 - **`release.yml` failed the whole release when the CHANGELOG section
   exceeded GitHub's release-body limit.** GitHub caps a release body at
   125,000 characters and returns HTTP 422 "body is too long" — *after*

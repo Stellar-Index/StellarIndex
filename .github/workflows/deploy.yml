@@ -521,6 +521,7 @@ jobs:
           # Secret names can't be built dynamically in ${{ }}, so pass all
           # three and select by region below. A test-net secret must pin BOTH
           # the jump host key AND the VM key (the ProxyJump uses this one file).
+          DEPLOY_JUMP: ${{ steps.region.outputs.jump }}
           R1_KH: ${{ secrets.R1_SSH_KNOWN_HOSTS }}
           TESTNET_KH: ${{ secrets.TESTNET_SSH_KNOWN_HOSTS }}
           FUTURENET_KH: ${{ secrets.FUTURENET_SSH_KNOWN_HOSTS }}
@@ -553,6 +554,48 @@ jobs:
           fi
           echo "$KNOWN_HOSTS_B64" | base64 -d > ~/.ssh/known_hosts
           chmod 644 ~/.ssh/known_hosts
+
+          # ── Preflight: prove the SSH path BEFORE ansible runs ──────────
+          #
+          # A NAT-only test-net VM is reached via ProxyJump through the KVM
+          # host, and BOTH hops must have their host key pinned in this one
+          # known_hosts file. When the jump host's key is missing (or the
+          # deploy key is not authorised on it), ansible fails with
+          #
+          #   UNREACHABLE! ... "Connection closed by UNKNOWN port 65535"
+          #
+          # which names neither hop and gives an operator nothing to act on.
+          # Both test nets failed exactly that way on 2026-08-31 (#434) while
+          # r1 — which has no jump — deployed fine.
+          #
+          # This step reports WHICH hop is broken. It prints host names and
+          # counts only; never key material, and never the private key.
+          hosts_in_kh=$(grep -cvE '^\s*(#|$)' ~/.ssh/known_hosts || echo 0)
+          echo "known_hosts entries: ${hosts_in_kh}"
+          if [ -n "${DEPLOY_JUMP:-}" ]; then
+            jump_host="${DEPLOY_JUMP#*@}"
+            if ssh-keygen -F "$jump_host" -f ~/.ssh/known_hosts >/dev/null 2>&1; then
+              echo "jump host '${jump_host}' IS pinned in known_hosts"
+            else
+              echo "::error::jump host '${jump_host}' is NOT pinned in ~/.ssh/known_hosts. ${REGION^^}_SSH_KNOWN_HOSTS must contain the host keys for BOTH the jump host AND the VM — the ProxyJump uses this single file. Capture both and re-set the secret; ansible would otherwise fail with an opaque 'Connection closed by UNKNOWN port 65535' naming neither hop."
+              exit 1
+            fi
+            echo "probing the jump hop (no command run on the VM)..."
+            if ssh -i ~/.ssh/id_deploy -o BatchMode=yes -o ConnectTimeout=15 \
+                 -o StrictHostKeyChecking=yes "${DEPLOY_JUMP}" true 2>/tmp/jump.err; then
+              echo "jump hop OK"
+            else
+              echo "::error::cannot SSH to the jump host '${DEPLOY_JUMP}' with the deploy key. This is the hop that fails, not the VM. Check that the deploy public key is in that host's authorized_keys and that it accepts the connection."
+              sed -e 's/[A-Za-z0-9+/=]\{40,\}/<redacted>/g' /tmp/jump.err | tail -5 >&2
+              exit 1
+            fi
+          fi
+          if ssh-keygen -F "$HOST" -f ~/.ssh/known_hosts >/dev/null 2>&1; then
+            echo "target host '${HOST}' IS pinned in known_hosts"
+          else
+            echo "::error::target host '${HOST}' is NOT pinned in ~/.ssh/known_hosts — set ${REGION^^}_SSH_KNOWN_HOSTS from a trusted capture."
+            exit 1
+          fi
 
       - name: Install Ansible
         # F-1299 (codex audit-2026-05-13): EXACT pins for both
