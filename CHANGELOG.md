@@ -15,6 +15,8 @@ against.
 
 ## [Unreleased]
 
+## [v0.53.0] — 2026-08-31
+
 ### Added
 
 - **Prices in ~130 local currencies, not 3.** A request for a fiat quote
