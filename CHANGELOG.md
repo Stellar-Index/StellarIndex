@@ -15,6 +15,22 @@ against.
 
 ## [Unreleased]
 
+### Fixed
+
+- **`release.yml` failed the whole release when the CHANGELOG section
+  exceeded GitHub's release-body limit.** GitHub caps a release body at
+  125,000 characters and returns HTTP 422 "body is too long" — *after*
+  every binary has been built, so the run fails at the final step with
+  nothing published. v0.51.0 hit exactly that: its section extracted to
+  137,450 characters, because v0.49.0 and v0.50.0 shipped without
+  CHANGELOG sections of their own and the next promotion absorbed
+  everything back to v0.48.0. The notes are now truncated at a line
+  boundary under the cap, with a link to the full section in
+  `CHANGELOG.md` — the notes are a convenience copy, the CHANGELOG is
+  the record, and a release that publishes with a pointer beats one
+  that does not publish at all.
+
+
 ## [v0.51.0] — 2026-08-31
 
 Operator action required: **no** — restart and done, but see the two
