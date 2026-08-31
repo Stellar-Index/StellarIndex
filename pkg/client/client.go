@@ -145,10 +145,29 @@ func (c *Client) doJSON(ctx context.Context, method, path string, query url.Valu
 
 	// Cap response read so a misbehaving server can't wedge the
 	// caller. 16 MiB is far above any single envelope we serve.
+	//
+	// Read maxResponseBytes+1 and error on `>`, rather than reading
+	// exactly the cap: LimitReader returns (n, nil) AT the limit, so a
+	// truncated body was previously indistinguishable from a complete
+	// one and got parsed as JSON — surfacing as a confusing decode error
+	// about the payload rather than the truth, which is that the
+	// response was too large (wave-D F-SDK-08). The +1 makes overshoot
+	// detectable; same idiom as internal/stellarrpc.
+	//
+	// The message deliberately offers NO escape hatch. maxResponseBytes
+	// is a function-local const applied to every request regardless of
+	// transport, so no Options.HTTPClient can raise or remove it —
+	// telling the caller otherwise would ship false remediation advice.
 	const maxResponseBytes = 16 << 20
-	bodyBytes, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes))
+	bodyBytes, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes+1))
 	if err != nil {
 		return fmt.Errorf("client: read response: %w", err)
+	}
+	if len(bodyBytes) > maxResponseBytes {
+		return fmt.Errorf(
+			"client: response body exceeds the %d-byte cap this SDK reads; "+
+				"narrow the query (a smaller limit, or a shorter time range)",
+			maxResponseBytes)
 	}
 
 	if resp.StatusCode >= 400 {
