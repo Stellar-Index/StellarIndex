@@ -31,7 +31,22 @@ func TestRealDecoder_fxVESAndXAUMappedNotRaw(t *testing.T) {
 	xauSv := xdr.ScVal{Type: xdr.ScValTypeScvSymbol, Sym: &xau}
 	bodyB64 := encodeUpdateBody(t,
 		[]xdr.ScVal{vesSv, xauSv},
-		// 1 VES ≈ 0.0000073 USD; 1 XAU ≈ 4,100 USD (14-decimal scale).
+		// Synthetic magnitudes at the 14-decimal scale, NOT the live
+		// feed's: the real 2026-04-23 capture decodes to VES ≈ 2.07e-3
+		// and XAU ≈ 4720.90, so this comment used to state values the
+		// repo's own fixtures contradict (wave-D SI-OC-05).
+		//
+		// The constants are left as they are on purpose. This test
+		// asserts round-trip identity of whatever it encodes, and
+		// sdkDecodeUpdateBody has no magnitude-dependent branch — the
+		// only price predicate on the whole path is Price.Sign() <= 0 —
+		// so a 7.3e-6 input exercises byte-identical code to a 2.07e-3
+		// one. Restating them would be churn that buys no coverage.
+		//
+		// Real-magnitude coverage is real_fixture_test.go, which runs
+		// the actual captures and pins zero raw rows on FX with rwa:XAU
+		// as the only non-fiat slot.
+		// Values below: 1 VES ≈ 7.3e-6 USD; 1 XAU ≈ 4,100 USD.
 		[]*big.Int{big.NewInt(730_000_000), big.NewInt(410_000_000_000_000_000)},
 	)
 	e := &events.Event{

@@ -588,6 +588,35 @@ against.
   permanently unclearable, which is the stale-window treadmill this repo
   already suffered.
 
+- **Two oracle-path comments asserted things the repo's own evidence
+  contradicts** (wave-D SI-OC-05). The external dust-floor constant's
+  docstring claimed `$1` is an upper bound across the fiat allow-list.
+  That was true when written (32 codes, GBP/CHF ≈ $1.3 the richest), but
+  the list was later widened to 133 and brought in KWD ≈ $3.26,
+  BHD ≈ $2.65 and OMR ≈ $2.60.
+
+  The direction of the resulting error was also stated backwards, and is
+  corrected: under-stating the reference *over*-states the floor, so a
+  $3.26 KWD leg gets a floor ~3.3× stricter than intended — the
+  size-biased-dropping direction the constant exists to prevent, not the
+  harmless one. The exposure is bounded at compile time (every fiat
+  quote leg a streamer can see is hard-coded, all ≤ ~$1.35), so the
+  single constant stays; a real FX table would be false precision for an
+  order-of-magnitude threshold and would rot.
+
+  A reflector test comment also stated magnitudes the repo's own
+  captures contradict (VES 7.3e-6 / XAU 4,100 against a real 2.07e-3 /
+  4720.90). The constants are left alone deliberately — the decode path
+  has no magnitude-dependent branch, so restating them buys no coverage
+  — and the comment now says so and points at the real-fixture test.
+
+  The behavioural half of the proposed remedy is rejected: returning
+  no-floor for an unvetted fiat resolves to 1e-8 whole units, which
+  *disables* the dust guard for that leg — strictly worse than a
+  too-strict floor. A third claim, that a `ParsePair` comment
+  misdescribes the accepted grammar, is refuted: the comment cites
+  `api-design.md` §3 specifically and is accurate about that document.
+
 ### Changed
 
 - **`/v1/assets` now rejects a malformed catalogue cursor instead of
