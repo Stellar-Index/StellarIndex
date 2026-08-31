@@ -15,6 +15,47 @@ against.
 
 ## [Unreleased]
 
+### Fixed
+
+- **`pkg/client` SDK: `Retry-After` no longer yields a NEGATIVE
+  back-off.** `parseRetryAfter` multiplied the header's delta-seconds
+  into a `time.Duration` (int64 NANOSECONDS) with no range check, so
+  any value above ~292 years wrapped — `Retry-After: 9223372036854775807`
+  produced `-1s`, and a caller sleeping on it retried IMMEDIATELY,
+  the exact opposite of the back-off requested. Out-of-range values
+  now return `0`, the field's already-documented absent/unparseable
+  sentinel. Deliberately not a clamp: `APIError.RetryAfter` is a
+  SemVer-stable *reporting* field, and clamping would make it
+  misreport the wire (wave-D F-SDK-06).
+- **`pkg/client` SDK: an oversized response body now errors instead
+  of surfacing as a bogus JSON decode failure.** The 16 MiB read cap
+  used `io.LimitReader` at exactly the limit, and `LimitReader`
+  returns `(n, nil)` AT its limit — so a truncated body was
+  indistinguishable from a complete one and got parsed, reporting a
+  confusing error about the payload rather than the truth. Now reads
+  `cap+1` and errors naming the cap (wave-D F-SDK-08).
+- **Docs: `pkg/client` query-parameter godoc said out-of-range
+  `limit` / `window_seconds` values are "clamped".** They are
+  REJECTED with a 400. Read in the `std::clamp` sense the old wording
+  told a caller their out-of-range value would be quietly honoured at
+  the boundary — on a pricing surface, the difference between a VWAP
+  over a window they never asked for and a loud error. The
+  genuinely-saturating ADR-0015 closed-bucket adjustment keeps the
+  word, and `docs/architecture/lexicon.md` now fixes both meanings so
+  the two do not re-blur. ADR-0018's copy of the old wording is left
+  alone — ADRs are immutable (wave-D F-SDK-09).
+- **Docs: the documented `pkg/*` SemVer release mechanism was
+  inert.** `semver-policy.md` and `release-process.md` instructed
+  cutting `pkg/client/vX.Y.Z` tags, but this repo is a single Go
+  module (ADR-0005), so such a tag versions nothing — the proxy has
+  no nested module and `go get …/pkg/client@v0.2.0` fails outright.
+  Both documents now state that `pkg/client` ships on the root clock,
+  that a `pkg/*` break bumps the root minor and MUST be named in the
+  CHANGELOG (the consumer's only notice), and why adding
+  `pkg/client/go.mod` would be a live break for everyone currently
+  pinned on the root module rather than a fix (wave-D F-SDK-05,
+  #361 item 8).
+
 ### Added
 
 - **Composite-reference corroboration of the phase-2 freeze for

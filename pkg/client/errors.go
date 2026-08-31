@@ -3,6 +3,7 @@ package client
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"net/http"
 	"strconv"
 	"strings"
@@ -151,6 +152,31 @@ func parseRetryAfter(v string) time.Duration {
 	}
 	if secs, err := strconv.Atoi(v); err == nil {
 		if secs <= 0 {
+			return 0
+		}
+		// Overflow guard. time.Duration is int64 NANOSECONDS, so any
+		// delta-seconds value above ~292 years wraps: a hostile or
+		// misconfigured Retry-After of 9223372037 seconds silently
+		// became a NEGATIVE duration, and a caller sleeping on it would
+		// retry immediately — the opposite of back-off (wave-D
+		// F-SDK-06).
+		//
+		// Returns 0, the field's documented absent/unparseable sentinel
+		// that RetryAfterDuration already understands. NOT a clamp:
+		// APIError.RetryAfter is a REPORTING field on a SemVer-stable
+		// surface (ADR-0005), so clamping would make it lie about what
+		// the wire said, and would truncate legitimate long hints — the
+		// monthly-quota denial already advertises "Reset on the 1st
+		// UTC". Choosing a ceiling is the CALLER's back-off policy; the
+		// SDK's job is to report the header or admit it cannot.
+		//
+		// Compared in int64 deliberately. Writing this as
+		// `int(math.MaxInt64/int64(time.Second))` is a compile-time
+		// constant conversion that overflows `int` on 32-bit, and
+		// pkg/client is stdlib-only and cross-compiles today — that form
+		// would take 386/arm consumers from "builds" to "does not
+		// compile", which is worse than the bug.
+		if int64(secs) > math.MaxInt64/int64(time.Second) {
 			return 0
 		}
 		return time.Duration(secs) * time.Second
