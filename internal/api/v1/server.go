@@ -1415,10 +1415,26 @@ var defaultStatusServices = []string{"indexer", "aggregator"}
 // copied so a caller's backing array can't be mutated through the
 // Server, and the result is never nil — a deployment that runs NO
 // background service still reports (and rolls up) its own "api" entry.
+// The names are lower-cased as well as trimmed, matching the transform
+// config validation already applies when it checks them against
+// {indexer, aggregator}.
+//
+// Both halves must apply the SAME transform or the config value passes
+// validation and then matches nothing. That is what happened until
+// 2026-08-31 (wave-D RD-05): validation lower-cased before its
+// allow-list check while this function only trimmed, and the heartbeat
+// map is keyed by Prometheus `job` labels stripped of the
+// `stellarindex-` prefix — always lower-case. So
+// `status_services = ["Indexer"]` booted clean, then reported
+// `"status": "unknown"` on every /v1/status request forever, pinning
+// `overall` at degraded and the explorer's status page at amber. The
+// operator debugging it finds a value that passed validation and
+// matches the documented vocabulary — the exact symptom #328 added
+// this list to remove.
 func statusServicesOr(names []string) []string {
 	out := make([]string, 0, len(names))
 	for _, n := range names {
-		if n = strings.TrimSpace(n); n != "" {
+		if n = strings.ToLower(strings.TrimSpace(n)); n != "" {
 			out = append(out, n)
 		}
 	}
