@@ -1,6 +1,6 @@
 ---
 title: Domain lexicon — one word per concept
-last_verified: 2026-07-09
+last_verified: 2026-08-31
 status: binding
 ---
 
@@ -52,6 +52,7 @@ today (with file:symbol pointers), and the migration rule.
 | A recorded per-source price point | **observation** (`/v1/price` … `Observations`, `divergence_observations`) | — |
 | An oracle push | **update** (`oracle_updates`) | — (event/trade/observation/update are four DISTINCT concepts, each with exactly one term — don't blur them) |
 | Asset issuer | **issuer** | **anchor** — restricted to the SEP-1/SEP-24 anchor sense (an anchor IS an issuer with services); not a general synonym. |
+| Restricting a caller-supplied value to a permitted range | **clamp** = SATURATE (the value is silently adjusted to the nearest permitted one and the request proceeds); **reject** = 400 (the request fails and nothing is served) | Say which one. The repo uses BOTH behaviours and they are not interchangeable: the ADR-0015 closed-bucket time adjustment genuinely saturates (`pkg/client/endpoints.go:348`), while every `limit` / `window_seconds` range is enforced by rejection (`internal/api/v1/price_tip.go`, `history.go`, `issuers.go` all return 400, and the OpenAPI `minimum`/`maximum` say so). Writing "clamps to [1, 60]" for the second kind tells a caller their out-of-range value will be quietly honoured at the boundary, when in fact the call fails — on a pricing surface that is the difference between a VWAP over a window they didn't ask for and a loud error. Corrected across `pkg/client` 2026-08-31 (wave-D F-SDK-09); `docs/adr/0018-api-consistency-surfaces.md:74` still reads "clamped 1-60 s" and is left alone — ADRs are immutable (`docs/adr/README.md`), superseded rather than edited. |
 
 ## Verb lexicon (already consistent — enforced at zero)
 

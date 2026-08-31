@@ -98,12 +98,13 @@ func (c *Client) PriceChanges(ctx context.Context, q PriceChangesQuery) (*Envelo
 
 // PriceTipQuery is the input for [Client.PriceTip]. Asset is
 // required; Quote defaults to "fiat:USD" server-side. WindowSeconds
-// is the rolling-window size; the server clamps to [1, 60] and
-// defaults to 5 when zero.
+// is the rolling-window size; it defaults to 5 when zero, and a
+// value outside [1, 60] is REJECTED with a 400 — not silently
+// reduced to 60. This SDK forwards whatever you set verbatim.
 type PriceTipQuery struct {
 	Asset         string
 	Quote         string // optional; server defaults to fiat:USD
-	WindowSeconds int    // optional; server clamps to [1, 60], default 5
+	WindowSeconds int    // optional; default 5; outside [1, 60] → 400
 }
 
 // PriceTip fetches the live "rolling-window" price per ADR-0018.
@@ -263,8 +264,9 @@ func (c *Client) HistorySinceInception(ctx context.Context, q HistoryQuery) (*En
 
 // HistoryRangeQuery is the input for [Client.History]. Both Base
 // and Quote are required. From + To are optional (server defaults
-// to `now-1h .. now`); Limit clamps to [1, 10000] server-side
-// (default 1000). Cursor paginates — pass the previous response's
+// to `now-1h .. now`); Limit defaults to 1000, and a value outside
+// [1, 10000] is REJECTED with a 400 rather than reduced to the
+// maximum. Cursor paginates — pass the previous response's
 // `Pagination.Next` to walk forward.
 //
 // Note: distinct from [HistoryQuery] (which targets the
@@ -276,7 +278,7 @@ type HistoryRangeQuery struct {
 	Quote  string
 	From   time.Time // optional
 	To     time.Time // optional
-	Limit  int       // optional; server defaults to 1000, max 10000
+	Limit  int       // optional; default 1000; outside [1, 10000] → 400
 	Cursor string    // optional; opaque from prior Pagination.Next
 }
 
@@ -692,8 +694,9 @@ func (c *Client) RevokeKey(ctx context.Context, keyID string) error {
 	return c.doJSON(ctx, http.MethodDelete, "/v1/account/keys/"+url.PathEscape(keyID), nil, nil, nil)
 }
 
-// IssuersOptions paginates the issuer directory. `Limit` is
-// server-side clamped to [1, 500] (default 100).
+// IssuersOptions paginates the issuer directory. `Limit` defaults
+// to 100; a value outside [1, 500] is REJECTED with a 400 rather
+// than reduced to the maximum.
 type IssuersOptions struct {
 	Limit int
 }
