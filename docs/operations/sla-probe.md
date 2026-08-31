@@ -75,6 +75,65 @@ entries to track additional asset/quote combinations the operator
 cares about — each repeats the per-endpoint probe across the
 chart, price, and oracle-latest surfaces for that pair.
 
+## Which number is the latency SLO
+
+**Read `stellarindex_sla_probe_latency_ms`, not a quantile over
+`http_request_duration_seconds`.** They measure different things and
+they disagree by orders of magnitude. Both are correct.
+
+The served histogram is the only view of *real customer traffic*, and
+its p50/p95 are meaningful. Its **p99 is not**, at current volume.
+Production runs around **0.08 rps** — roughly 24 requests in a
+5-minute window — so `histogram_quantile(0.99, …)` over that window is
+computed from well under a hundred samples. In practice it reports the
+single slowest request and calls it a percentile. One cold cache miss
+moves it by seconds.
+
+That is not a hypothetical. On 2026-09-01 the served p99 read 2,140 ms
+while the probe measured `/price` at **19 ms p95** and `/assets` at
+**13 ms p95** — both an order of magnitude inside the 200 ms target,
+verdict `pass`, availability 100%. The gap was entirely cold-cache
+first-hits landing in a nearly-empty sample window.
+
+| question | query |
+|---|---|
+| Are we meeting the latency SLA? | `stellarindex_sla_probe_latency_ms{quantile="0.95"}` |
+| Did the last probe run pass? | `stellarindex_sla_probe_unit_failed` (0 = pass) |
+| What do real users see, typically? | `histogram_quantile(0.5\|0.95, sum by (le) (rate(http_request_duration_seconds_bucket[5m])))` |
+| What was the slowest real request? | the served p99 — read it as a **max**, not a percentile |
+
+The probe fixes the sample-size problem by construction: it drives
+~150 samples per endpoint over 30s against a fixed basket, so its
+percentiles are computed from enough data to mean something. Its
+metrics live in their own namespace, so probe traffic never pollutes
+the customer-traffic histogram — keep it that way. Synthetic load
+emitted into `http_request_duration_seconds` would, at this traffic
+level, become 99%+ of the samples and the dashboard would then be
+describing the prober rather than the customers.
+
+### A zeroed probe file usually means a restart, not a broken probe
+
+If `sla_probe.prom` shows `0.000` for every latency, check
+`stellarindex_sla_probe_availability_pct` **first**:
+
+```sh
+grep -E "availability_pct|unit_failed" \
+  /var/lib/node_exporter/textfile_collector/sla_probe.prom
+stat -c %y /var/lib/node_exporter/textfile_collector/sla_probe.prom
+```
+
+Availability `0.000` with `unit_failed 1` means every request failed —
+so there were no successful samples to compute a latency from. The
+overwhelmingly common cause is that the run landed during a deploy
+while the API was restarting. Compare the file's mtime against the
+deploy window before investigating the probe itself. The values stay
+on the last run's result until the next tick (every 15 min), so a
+mid-deploy failure looks current for up to a quarter of an hour.
+
+The alert rules already tolerate this: `for: 30m` against a 15-minute
+cadence needs two consecutive bad runs, so a single deploy-window
+failure does not page.
+
 ## Reading the output
 
 Each run logs its JSON report to the systemd journal:

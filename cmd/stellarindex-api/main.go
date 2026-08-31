@@ -872,7 +872,7 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 	logger.Info("prewarm: verified canonical asset_ids extracted",
 		"count", len(verifiedAssetIDs))
 
-	go prewarmCaches(rootCtx, logger.With("component", "prewarm"), cachedSourcesStats, cachedMarketsReader, cachedAssetsReader, verifiedAssetIDs)
+	go prewarmCaches(rootCtx, logger.With("component", "prewarm"), cachedSourcesStats, cachedMarketsReader, cachedAssetsReader, cachedIssuersReader, verifiedAssetIDs)
 
 	// TLS cert expiry self-probe (F-0051, audit-2026-05-26). Public
 	// TLS is fronted by Caddy + Let's Encrypt with auto-renewal 30d
@@ -4508,6 +4508,7 @@ func prewarmCaches(
 	stats *v1.CachedSourcesStatsReader,
 	markets *v1.CachedMarketsReader,
 	assetsReader *v1.CachedAssetsReader,
+	issuers *v1.CachedIssuersReader,
 	verifiedAssetIDs []string,
 ) {
 	heavyCadence := 5 * time.Minute
@@ -4516,7 +4517,7 @@ func prewarmCaches(
 	// Fire both immediately on startup so the first user request
 	// after a binary restart hits a warm cache.
 	prewarmHeavy(ctx, logger, stats)
-	prewarmLight(ctx, logger, markets, assetsReader, verifiedAssetIDs)
+	prewarmLight(ctx, logger, markets, assetsReader, issuers, verifiedAssetIDs)
 
 	heavyTick := time.NewTicker(heavyCadence)
 	defer heavyTick.Stop()
@@ -4530,7 +4531,7 @@ func prewarmCaches(
 		case <-heavyTick.C:
 			prewarmHeavy(ctx, logger, stats)
 		case <-lightTick.C:
-			prewarmLight(ctx, logger, markets, assetsReader, verifiedAssetIDs)
+			prewarmLight(ctx, logger, markets, assetsReader, issuers, verifiedAssetIDs)
 		}
 	}
 }
@@ -4566,6 +4567,7 @@ func prewarmLight(
 	logger *slog.Logger,
 	markets *v1.CachedMarketsReader,
 	assetsReader *v1.CachedAssetsReader,
+	issuers *v1.CachedIssuersReader,
 	verifiedAssetIDs []string,
 ) {
 	// 5-min ceiling on the whole prewarm cycle. Pre-2026-05-14 this
@@ -4720,6 +4722,56 @@ func prewarmLight(
 	// GetNativeAssetRow above warms the single asset-catalogue-row SWR slot; this
 	// covers the SIX OTHER readers /v1/assets/native fans out to.
 	prewarmAssetDetail(assetsReaderCtx, logger, assetsReader, "native")
+
+	// /v1/issuers had NO prewarm at all, while CachedIssuersReader's TTL
+	// is 5 minutes — so the slot expired every 5 min and the next caller
+	// paid the full cold fill. Measured on r1 2026-09-01: 1.212s cold vs
+	// 0.129s warm. At production's ~0.08 rps most requests arrive AFTER
+	// the TTL has lapsed, so the cold path was close to the common case
+	// rather than a startup-only cost, and it showed up as recurring
+	// multi-second p99 spikes.
+	//
+	// The underlying query cannot be indexed out of the problem — the
+	// reader's own doc records why (two seq scans feeding a HashAggregate
+	// over 57k groups; ~196ms at the DB alone). Keeping the slot warm is
+	// the available fix.
+	//
+	// This runs on the 60s light cadence — 5x inside the 5-minute TTL, so
+	// a dropped cycle still cannot expose a cold slot.
+	prewarmIssuers(mkCtx, logger, issuers)
+}
+
+// prewarmIssuerLimits are the /v1/issuers limits worth keeping warm.
+//
+// The cache key is per-limit (newCacheKey("ListIssuers").int(limit)), so
+// warming a limit nobody requests is a phantom slot that costs a query
+// and helps no one — the /v1/pools lesson in [prewarmLight], where a
+// mismatched key left every user request paying 10-30s against a cache
+// that looked warm.
+//
+// These are the limits real callers actually send:
+//   - 1 and 100 — the explorer.
+//   - 5 — scripts/dev/r1-smoke.sh.
+//   - 100 — the sla-probe, the OpenAPI default, AND the value
+//     handleIssuersList falls back to when `limit` is omitted, which
+//     makes it the one that matters most.
+var prewarmIssuerLimits = []int{1, 5, 100}
+
+// prewarmIssuers keeps the /v1/issuers slots warm.
+//
+// Split out of [prewarmLight] so the limit set can be asserted without
+// standing up the markets/assets readers — the point of the guard is
+// that these limits track real callers, and that is exactly the kind of
+// thing that silently drifts when someone changes a caller.
+func prewarmIssuers(ctx context.Context, logger *slog.Logger, issuers *v1.CachedIssuersReader) {
+	if issuers == nil {
+		return
+	}
+	for _, lim := range prewarmIssuerLimits {
+		if _, err := issuers.ListIssuers(ctx, lim); err != nil {
+			logger.Debug("prewarm issuers failed", "limit", lim, "err", err)
+		}
+	}
 }
 
 // prewarmAssetDetail warms every SWR cache key the
