@@ -168,3 +168,103 @@ func TestPriceWithheldChokepointHonoursBothGates(t *testing.T) {
 		t.Error("nil gates must allow — a disabled [pricing_guard] must not withhold every price")
 	}
 }
+
+// TestWithholdingGatesAreSpelledOnlyAtTheChokepoint pins the SECOND
+// property of the MSP cluster: drift WITHIN a seam.
+//
+// TestPriceServingSeamsAreGated above answers "does every serving seam
+// consult the gates AT ALL". It cannot answer "does each seam consult
+// BOTH gates on EVERY branch", because a method with two arms satisfies
+// it as soon as ONE arm calls priceWithheld().
+//
+// That is exactly the MSP-07 shape. storePriceReader.LatestPrice has a
+// closed-VWAP arm and a last-trade arm; the last-trade arm originally
+// spelled out `!r.substance.Allowed(...)` and consulted the SCAM gate
+// not at all. An operator setting disable_substance_gate=true to
+// diagnose a coverage complaint would then silently publish a
+// directory-flagged issuer's last trade as its price — reversing an
+// owner-level trust decision they never touched.
+//
+// This guard existed, and I DELETED it in the review sweep that
+// rewrote its sibling — while that same commit's message said "the
+// MSP-07 half (drift WITHIN a seam) was always real". The coverage
+// half was genuinely weak and was rightly replaced; removing this half
+// alongside it was a regression, and the planted MSP-07 mutation
+// passed CI until this was restored. main.go still cited this test by
+// name the whole time.
+//
+// The rule: the gate METHODS (.Allowed / .Withheld on a gate receiver)
+// may be named in exactly one place — priceWithheld(). Every other
+// call site is a second spelling that can drift out of step.
+func TestWithholdingGatesAreSpelledOnlyAtTheChokepoint(t *testing.T) {
+	fset := token.NewFileSet()
+	f, err := parser.ParseFile(fset, "main.go", nil, 0)
+	if err != nil {
+		t.Fatalf("parse main.go: %v", err)
+	}
+
+	// Method names that ARE the withholding decision. Called anywhere but the
+	// chokepoint, they are a second spelling that can drift.
+	gateMethods := map[string]string{
+		"Allowed":  "substance gate",
+		"Withheld": "scam gate",
+	}
+
+	ast.Inspect(f, func(n ast.Node) bool {
+		fn, ok := n.(*ast.FuncDecl)
+		if !ok {
+			return true
+		}
+		if fn.Name.Name == "priceWithheld" {
+			return false // the one legitimate spelling
+		}
+		ast.Inspect(fn, func(n ast.Node) bool {
+			call, ok := n.(*ast.CallExpr)
+			if !ok {
+				return true
+			}
+			sel, ok := call.Fun.(*ast.SelectorExpr)
+			if !ok {
+				return true
+			}
+			which, isGate := gateMethods[sel.Sel.Name]
+			if !isGate || !gateReceiver(sel.X) {
+				return true
+			}
+			t.Errorf("%s: calls the %s directly (%s) at %s — route it through "+
+				"priceWithheld() instead. A hand-written call site can consult one "+
+				"gate and forget the other, which is exactly how the last-trade arm "+
+				"came to honour the thin-market floor but not the scam decision.",
+				enclosingName(fn), which, exprString(sel), fset.Position(call.Pos()))
+			return true
+		})
+		return false
+	})
+}
+
+func gateReceiver(expr ast.Expr) bool {
+	switch t := expr.(type) {
+	case *ast.SelectorExpr:
+		return t.Sel.Name == "substance" || t.Sel.Name == "scam"
+	case *ast.Ident:
+		return t.Name == "substance" || t.Name == "scam"
+	}
+	return false
+}
+
+func enclosingName(fn *ast.FuncDecl) string {
+	if fn.Recv != nil && len(fn.Recv.List) > 0 {
+		return receiverTypeName(fn.Recv.List[0].Type) + "." + fn.Name.Name
+	}
+	return fn.Name.Name
+}
+
+func exprString(sel *ast.SelectorExpr) string {
+	switch x := sel.X.(type) {
+	case *ast.SelectorExpr:
+		return exprString(x) + "." + sel.Sel.Name
+	case *ast.Ident:
+		return x.Name + "." + sel.Sel.Name
+	}
+	return sel.Sel.Name
+}
