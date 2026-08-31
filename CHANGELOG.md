@@ -17,6 +17,32 @@ against.
 
 ### Fixed
 
+- **Every R1 deploy was failing its config-apply gate and skipping the
+  post-deploy smoke test.** `deploy.yml` read the host's version
+  sidecars with `cat …/deployed-versions/stellarindex-*`, but those
+  files are written by `ansible.builtin.copy: content: "{{ version }}"`,
+  which writes **no trailing newline**. Six binaries therefore
+  concatenated into one token (`v0.46.1v0.44.7v0.28.1…`); the
+  `^`-anchored version filter matched it and `sort -V | head -1` passed
+  it straight through. The gate could not resolve that to a commit and
+  failed CLOSED — so the binaries deployed fine, the job went red, and
+  the `Served-path smoke` step (which has no `if:`) never ran.
+
+  Now reads with `awk 1`, which emits each record with a trailing
+  newline whether or not the file had one, and the version filter is
+  anchored at BOTH ends so any future malformed sidecar is rejected
+  rather than mistaken for a version.
+
+  The gate's self-test gained three checks, each proven to fail on its
+  own defect: the newline-safe read, the end-anchored filter, and — a
+  separate latent hole — that the baseline is read **before** the
+  playbook. That last one previously asserted the ordering in its
+  message while only grepping for two strings independently, so moving
+  the baseline step below the deploy would have kept it green while
+  making the gate permanently vacuous (the "live" version would be the
+  version just deployed).
+
+
 - **The SDK's spec-coverage table was bound to nothing** (wave-D
   F-SDK-10). `TestSDKCoversSpec` reconciles `coveredOperations` against
   the OpenAPI spec, so it catches an endpoint the SDK forgot — but it
