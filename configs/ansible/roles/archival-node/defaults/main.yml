@@ -80,6 +80,14 @@ run_promtail:        true
 # DDL). run_redis defaults true; `state: present` never upgrades r1's redis.
 run_redis:               true
 run_clickhouse:          false
+
+# ch-live-catchup: the Tier-1 lake's only self-healer. Defaults TRUE
+# because a lake without it degrades into a permanently stalled
+# projector (resolveTip clamps to the ContiguousWatermark), and the job
+# is seconds of work every 10 minutes over just the new gap. Only
+# installed where the ClickHouse tasks run at all, i.e. behind
+# run_clickhouse. Set false to opt a host out deliberately.
+ch_live_catchup_enabled: true
 clickhouse_apply_schema: false
 clickhouse_tcp_port:     9300   # 9000 is MinIO's
 

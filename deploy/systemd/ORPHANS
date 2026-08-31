@@ -10,16 +10,6 @@
 #
 # Format: <unit>  # <why it is kept, and what would retire it>
 
-# The ClickHouse Tier-1 lake's only self-healer. The SCRIPT is real and
-# tested (scripts/ops/ch-live-catchup.sh, covered by ch-ops-user-test),
-# but nothing in configs/ansible installs the script or these units — so
-# on a playbook-provisioned host the healer is simply absent, and an
-# unhealed hole permanently stalls the CH-fed projector (resolveTip
-# clamps to ContiguousWatermark). Tracked as wave-D LID-1; retire these
-# entries by wiring the role to install them, not by deleting the units.
-ch-live-catchup.service
-ch-live-catchup.timer
-
 # Superseded, not deployed. ExecStart is
 # /usr/local/bin/completeness-incremental.sh, which does not exist
 # anywhere in this repo — the role ships compute-completeness.{service,
