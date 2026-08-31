@@ -220,6 +220,19 @@ type AssetDetail struct {
 	// (always present on the wire). Stellar classic + native = 7;
 	// SEP-41 contracts publish their own value via `decimals()`.
 	Decimals int `json:"decimals"`
+	// DisplayDecimals is the issuer's SEP-1 `display_decimals` rounding
+	// hint (USDC declares 2) — how many fractional digits to SHOW.
+	//
+	// It is NOT a unit scale and must never enter amount math. Divide by
+	// 10^[AssetDetail.Decimals]; round the result for display to this.
+	// The two are separate fields because conflating them was a real
+	// money bug: F-1321 found that setting the unit scale from this
+	// issuer-controlled hint inflated market_cap_usd by up to
+	// 10^(7-display_decimals)× on verified classic assets, an
+	// issuer-controlled manipulation vector.
+	//
+	// nil when the issuer's SEP-1 overlay declares none.
+	DisplayDecimals *int `json:"display_decimals,omitempty"`
 
 	// Sep1Status is one of "not_applicable" / "not_fetched" /
 	// "verified" / "no_match" / "unreachable" — see the API design
@@ -465,10 +478,26 @@ type TradeRow struct {
 	Price       string    `json:"price"`
 	// BaseDecimals / QuoteDecimals are the smallest-unit scale for each
 	// side: divide BaseAmount by 10^BaseDecimals (QuoteAmount by
-	// 10^QuoteDecimals) for whole-asset units. 7 for native/classic/fiat;
-	// the token contract's declared decimals() for Soroban tokens.
-	// Populated by [Client.History]; omitted (zero) on the /v1/observations
-	// rows, which carry no per-side scale.
+	// 10^QuoteDecimals) for whole-asset units.
+	//
+	// The scale is a property of the row's SOURCE, not of the asset, and
+	// a single page MIXES BOTH:
+	//
+	//   - on-chain rows (sdex, soroswap, aquarius, phoenix, comet) carry
+	//     the asset's own scale — 7 for native/classic, the token
+	//     contract's declared decimals() for Soroban tokens;
+	//   - CEX rows (binance, kraken, bitstamp, coinbase) carry 8
+	//     REGARDLESS of the pair — the external normalisation scale, not
+	//     anything about the asset.
+	//
+	// Never substitute a constant. A reader that assumed 7 per-asset
+	// mis-scaled real rows in production once already, and the error is
+	// payload-undetectable: Price is quote/base and therefore
+	// scale-invariant, so nothing in the response looks wrong. This
+	// endpoint is used for regulatory export — read the field.
+	//
+	// Populated by [Client.History]; omitted (zero) on the
+	// /v1/observations rows, which carry no per-side scale.
 	BaseDecimals  int `json:"base_decimals,omitempty"`
 	QuoteDecimals int `json:"quote_decimals,omitempty"`
 	// RoutedVia is the router/aggregator whose same-transaction
