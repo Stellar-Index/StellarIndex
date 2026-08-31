@@ -608,10 +608,27 @@ jobs:
           # Lowest version across the managed binaries: config from a
           # release is unapplied if ANY binary predates it, so the
           # oldest is the honest baseline.
+          #
+          # `awk 1`, NOT `cat`. The sidecars are written by
+          # tasks/deploy-one-binary.yml with `ansible.builtin.copy:
+          # content: "{{ version }}"`, which writes NO trailing newline.
+          # `cat` over six of them therefore yields ONE mashed line
+          # (`v0.46.1v0.44.7v0.28.1…`), which the `^`-anchored grep below
+          # happily matched and `sort -V | head -1` passed through intact
+          # — so the gate received a garbage token, could not resolve it
+          # to a commit, and failed CLOSED on every deploy. The binaries
+          # deployed fine; the job just went red and SKIPPED the
+          # post-deploy smoke step. `awk 1` emits each record with a
+          # trailing newline whether or not the file had one.
+          #
+          # The regex is also anchored at BOTH ends now, so a future
+          # concatenation (or any other malformed sidecar) is rejected
+          # rather than silently treated as a version. The optional
+          # suffix keeps pre-release tags like v1.2.3-rc.1 valid.
           live=$(ssh -i ~/.ssh/id_deploy -o BatchMode=yes -o ConnectTimeout=15 \
                    ${proxy} "${DEPLOY_USER}@${DEPLOY_HOST}" \
-                   "cat /var/lib/stellarindex/deployed-versions/stellarindex-* 2>/dev/null" \
-                 | tr -d '\r' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+' | sort -V | head -1 || true)
+                   "awk 1 /var/lib/stellarindex/deployed-versions/stellarindex-* 2>/dev/null" \
+                 | tr -d '\r' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$' | sort -V | head -1 || true)
           if [ -n "$live" ]; then
             echo "host live version (lowest across binaries): $live"
             echo "live=$live" >> "$GITHUB_OUTPUT"
