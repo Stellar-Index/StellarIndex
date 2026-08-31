@@ -17,6 +17,41 @@ against.
 
 ### Fixed
 
+- **The capacity register offered two levers that no longer exist**
+  (wave-D PS-05 / PS-06), on a document whose whole purpose is to be
+  read during a capacity crunch.
+
+  **Move D** (cold-tier enable + bulk LCM trim) was listed as an
+  unexecuted `~3.5 TB` option whose AWS dependency was "not yet
+  incurred". It executed on **2026-07-26** and reclaimed **1.07 TB** —
+  the estimate was ~3.5× high for a structural reason worth keeping:
+  early history is *sparse*, so trimming 78% of the partitions
+  reclaimed 22% of the estimate; the bytes live in the dense Soroban
+  era above the cutoff, which was kept. The dependency it was weighed
+  against is not just incurred but formally accepted (ADR-0043 §2), so
+  "adds an external dependency" no longer discriminates between the
+  remaining options. A planner would have added ~3.5 TB of
+  already-spent runway and ruled the option out on a criterion that no
+  longer applies. Move G's derived "~4 TB net" and the May-2026
+  recommendation table are corrected and annotated accordingly.
+
+  **Move E** (trades retention) read "Decision status: Lever
+  available" in a register that marks its dead levers explicitly.
+  Trades retention is **forbidden**: migration 0031 removed it, 0031's
+  own `.down.sql` names re-adding one as "the EXACT mechanism of the
+  recurring 'rogue retention on trades' data-loss drift", CLAUDE.md
+  carries it as a standing invariant, Ash re-signed it as launch
+  decision D5, and `test/integration/migrations_test.go` pins it.
+  Arming it would also trip the completeness verifier immediately —
+  migration 0116 treats a rising `MIN(ledger)` on a reconcile target
+  as loss, unconditionally, "because NO reconcile target has a
+  retention policy". Marked NOT A LEVER rather than deleted, so a
+  future reader sees why it was rejected instead of re-proposing it.
+
+  Also corrected: the `data/postgres` row still cited "ADR-0006
+  retention", which ADR-0006 itself records as superseded by 0031.
+
+
 - **The launch plan told an operator to mint a credential nothing
   reads** (wave-D PS-02). W4.5, W4.6 and Recommended-order step 3 all
   carried the Go `sla-probe` stack as live code with pending r1-ops

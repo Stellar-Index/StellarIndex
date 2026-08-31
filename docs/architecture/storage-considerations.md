@@ -1,6 +1,6 @@
 ---
 title: Storage considerations — r1 knowledge base
-last_verified: 2026-08-29
+last_verified: 2026-08-31
 status: living document
 ---
 
@@ -117,7 +117,7 @@ pool (R1 is not hardware-upgradeable, see
 |---|---|---|---|---|
 | `data/archive` | `/srv/history-archive` | **6.95 TB** | Stellar history-archive (SDF format) | Mixed — see below |
 | `data/minio` | `/var/lib/minio` | 4.96 TB | MinIO buckets (galexie-archive + galexie-live) | LCM tiering candidate (ADR-0027) |
-| `data/postgres` | `/var/lib/postgresql` | 606 GB | TimescaleDB | Managed by ADR-0006 retention |
+| `data/postgres` | `/var/lib/postgresql` | 606 GB | TimescaleDB | Grows indefinitely — ADR-0006's retention was SUPERSEDED by migration 0031 (raw trades + all price aggregates retained forever); the ADR says so itself |
 | `data/galexie` | `/var/lib/galexie` | 7.83 GB | Galexie captive-core working dir | NA |
 | `data/os` | `/` | 645 KB | (rounding artefact) | NA |
 
@@ -251,8 +251,12 @@ quotes 13.85 TB usable.
 The corollary is the part that still matters: **there is no parity
 left to trade for space.** Going below raidz1 means a stripe with
 zero redundancy on the canonical archive — rejected. Capacity relief
-is software-only (Moves A/D/E, ADR-0027 cold tiering, ZSTD
-recompression) plus a second server.
+is software-only (Move A, ZSTD recompression, and Move F's compression
+policy) plus a second server. **NOT Move D** — executed 2026-07-26,
+already spent — and **NOT Move E**, which is forbidden (raw trades are
+kept forever; see its entry). This sentence named "Moves A/D/E" until
+2026-08-31, on the doc's own most recent edit, which is how both dead
+levers kept reading as live (wave-D PS-05/PS-06).
 
 **Historical blocker (kept for the trace):** OpenZFS 2.2.2 did not
 support raidz expansion; r1 has run 2.3.4 since 2026-05-21. Even
@@ -261,13 +265,41 @@ zero-parity window.
 
 ### Move D: ADR-0027 §3 + §4 (cold-tier enable + bulk LCM trim)
 
-**Reclaim:** TBD by `--older-than-ledger` choice. Pre-Soroban LCMs (~3.5 TB of MinIO galexie-archive) is plausible.
+**Status: EXECUTED 2026-07-26 — NO LONGER A LEVER.** Do not add its
+reclaim to any future runway estimate; the space is already spent and
+the dependency it was weighed against is already taken.
 
-**Touchpoints affected:** galexie-archive bucket reads fall back through TieredDataStore to aws-public-blockchain. Hot reads (above the trim cutoff) unchanged.
+**Actual reclaim: 1.07 TB, not the ~3.5 TB this entry used to
+estimate.** All 780 parity-verified partitions below ledger 49,984,000
+were deleted (996 → 216 partition dirs, 0 errors, genesis
+`FFFFFFFF--0-63999` intact). The estimate was ~3.5× too high for a
+structural reason worth keeping: **early history is sparse.** Most
+BYTES sit in the dense Soroban era ABOVE the cutoff, which was kept —
+so trimming 78% of the partitions reclaimed 22% of the estimate. Any
+future "trim old data" estimate on this archive should assume the same
+shape. Full execution record, including the 48h cold-availability soak
+and the ZFS snapshot that held the space until destroy:
+`docs/operations/production-readiness-master-plan-2026-07-18.md`.
 
-**Status:** Tool exists (`stellarindex-ops trim-galexie-archive`); §3 was prematurely enabled once and rolled back due to wrong-region cold endpoint config (see `feedback_cold_tier_premature_enable.md`). Needs to be done with §3+§4 together.
+**The steady-state dependency is taken and formally accepted.**
+ADR-0043 §2: `[64000, 49983999]` (~50M ledgers, ~2.3 TiB) is now
+reachable ONLY from `aws-public-blockchain`, and the ADR records
+"**Decision: accept the dependency; do not duplicate the public data
+into our own storage**" — its loss is a *time* exposure (re-export from
+a captive core replaying public history), not a *data* exposure. The
+trim tool deletes an object only after the matching AWS object HEADs
+OK.
 
-**Trade-off against operator stance:** Introduces a STEADY-STATE dependency on `aws-public-blockchain` for every read in the trimmed range. Operator preference: minimize external dependencies. Move A's external dependency (SDF for DR rebuild) is *contingent*; Move D's is *operational*.
+**Consequence for the tables below:** "adds an external dependency" no
+longer DISCRIMINATES between the remaining options — it is the status
+quo. Weigh what is left against today's posture, not the pre-trim one.
+
+*(Corrected 2026-08-31, wave-D PS-06. This entry read "Reclaim: TBD …
+~3.5 TB is plausible" and "Status: Tool exists … Needs to be done with
+§3+§4 together" for more than a month after execution, so a planner
+hitting the next capacity crunch — the situation this document exists
+for — would have added ~3.5 TB of already-spent runway and ruled the
+option out on a criterion that no longer applies.)*
 
 ### Move E: TimescaleDB trades retention (drop oldest raw chunks)
 
@@ -277,7 +309,31 @@ zero-parity window.
 
 **Mechanism:** TimescaleDB `add_retention_policy` on the trades hypertable. Rolls in chunk-by-chunk over weeks; small steady cost.
 
-**Decision status:** Lever available; modest reclaim. Mostly useful as a "preventive growth lid" once #38 lands and trades resumes its 1-2 GB/day growth. Not standalone enough to address the 93% pool.
+**Status: NOT A LEVER — trades retention is FORBIDDEN.** This entry
+read "Decision status: Lever available" until 2026-08-31 (wave-D
+PS-05), which in a register that marks its dead levers explicitly
+(Move B "REJECTED for now", Move C "NOT A LEVER") reads as
+deliberately live.
+
+Raw `trades` are kept **forever**. Migration 0031 removed the old
+90-day retention, and its own `.down.sql` names re-adding one as "the
+EXACT mechanism of the recurring 'rogue retention on trades' data-loss
+drift". CLAUDE.md carries it as a standing invariant: "If you see a
+`drop_after` retention policy on `trades`, it's drift — remove it."
+Ash signed it again as launch decision D5 (2026-08-29).
+
+Arming it would also fire the completeness verifier immediately, not
+quietly: migration 0116 + `compute_completeness.go`'s `detectFloorLoss`
+treat a rising `MIN(ledger)` on a reconcile target as LOSS rather than
+scope, and 0116 states the rule "is unconditional because NO reconcile
+target has a retention policy". `test/integration/migrations_test.go`
+pins it (`assertPolicyAbsent(… "trades", "policy_retention")`, failing
+with "invariant 8: raw history kept forever").
+
+Kept in the register rather than deleted, because the estimate and the
+touchpoint analysis stay useful for understanding the trades hypertable
+— and because a deleted entry invites re-proposal by someone who never
+sees why it was rejected.
 
 ### Move F: Re-enable trades job 1000 + tighter compression policy
 
@@ -291,7 +347,15 @@ zero-parity window.
 
 ### Move G: Decode-then-trim — ship classic-supply observers + run them + then Move D
 
-**Reclaim:** ~4 TB net (Move D's ~3.5 TB galexie-archive trim + a thinner /srv/history-archive trim).
+**Reclaim:** superseded — the galexie-archive half is SPENT. Move D
+executed 2026-07-26 and reclaimed 1.07 TB, not the ~3.5 TB this line
+was derived from, so the "~4 TB net" figure is doubly stale. What
+survives of Move G is its *mission* half, which never depended on the
+space: decoding pre-Soroban classic-asset issuance history into our own
+observer tables. That is still wanted, and it is now the ONLY way to
+own that history — the source LCMs below ledger 49,984,000 are already
+gone from local storage and are read from `aws-public-blockchain`.
+(Corrected 2026-08-31, wave-D PS-06.)
 
 **What it solves that Move A/D don't:** Capturing pre-Soroban classic-asset issuance history (mint/burn/clawback events for USDC, EURC, AQUA, etc. from ledger 0 → Soroban activation) into our own observer tables BEFORE deleting the source LCMs / history-archive. The granular-coverage mission says we want this regardless.
 
@@ -318,7 +382,20 @@ zero-parity window.
 
 ## Recommendation: Move A
 
-**Move A is the dominant choice this week**, evaluated against the operator's stated constraints:
+> **⚠ Historical — this comparison is dated (2026-05).** Both Move A
+> and Move D have since EXECUTED (Move D on 2026-07-26), and Move C is
+> marked NOT A LEVER. The table is kept because its *criteria* are the
+> useful part — they are how this operator weighs a capacity option —
+> but the Move D column no longer describes an available choice, and
+> its "✗ steady-state dep on aws-public-blockchain" row is now the
+> STATUS QUO rather than a cost to weigh: ADR-0043 §2 formally accepted
+> that dependency. A planner using this table today should re-run the
+> criteria against the options that actually remain (Move F, Move G's
+> mission half, ZSTD recompression, a second server), not read a
+> verdict off it. (Annotated 2026-08-31, wave-D PS-06.)
+
+**Move A was the dominant choice** in May 2026, evaluated against the
+operator's stated constraints:
 
 | Operator constraint | Move A | Move D | Move B | Move C |
 |---|---|---|---|---|
