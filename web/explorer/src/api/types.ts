@@ -1442,6 +1442,14 @@ export interface paths {
          *     `mapped` (false for `raw:` rows — reference-only,
          *     orientation-unknown, never compared or aggregated). The
          *     explorer's /oracles page opts in and badges them.
+         *
+         *     On an unmapped row the `quote` is ASSUMED, not observed. A
+         *     symbol we cannot map carries no reliable denomination, so the
+         *     decoders record a default (`fiat:USD` unless the symbol ends in
+         *     a recognised fiat suffix). Treat an unmapped row's `price` as a
+         *     bare number in an unknown unit and do NOT read its `quote` as a
+         *     denomination — that is what `mapped: false` means. Registering
+         *     the feed rewrites the row in place with the real quote.
          */
         get: operations["listOracleStreams"];
         put?: never;

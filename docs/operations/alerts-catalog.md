@@ -422,6 +422,7 @@ auto-unfreeze at all. Rules in
 | ---- | ------ | --------- | -------- | ------- |
 | `stellarindex_price_divergence_warning` | `abs(our_price - ref_price) / ref_price` per pair | > 5 % for > 2 min | P3 | [price-divergence](runbooks/price-divergence.md) |
 | `stellarindex_price_divergence_critical` | same | > 10 % for > 2 min | P2 | [price-divergence](runbooks/price-divergence.md) |
+| `stellarindex_oracle_stream_rows_unparsed` | `increase(stellarindex_oracle_stream_rows_unparsed_total[6h])` | > 0 for 10m | P3 | [oracle-stream-rows-unparsed](runbooks/oracle-stream-rows-unparsed.md) |
 | `stellarindex_oracle_stale` | `time() - stellarindex_oracle_last_update_unix` per source | > 10× its resolution | P2 | [oracle-stale](runbooks/oracle-stale.md) |
 | `stellarindex_divergence_refresh_error_dominant` | `rate(divergence_refresh_total{outcome="refresh_error"}[5m]) > rate(...{outcome="ok"}[5m])` | sustained 30 min | P3 | [divergence-refresh-error-dominant](runbooks/divergence-refresh-error-dominant.md) |
 | `stellarindex_divergence_no_reference` | `rate(divergence_refresh_total{outcome="no_reference"}[5m]) > rate(...{outcome="ok"}[5m])` | sustained 30 min | P3 | [divergence-no-reference](runbooks/divergence-no-reference.md) |

@@ -461,6 +461,43 @@ against.
   wrong. So the new guards check the *caller* — a script-level test
   cannot catch a caller-level omission.
 
+- **An oracle row whose stored asset/quote text would not parse vanished
+  from the served stream with no signal** (wave-D SI-OC-04).
+  `LatestOracleStreams` dropped it with a bare `continue` — no log, no
+  metric, no error — so it was simply absent from `/v1/oracle/streams`
+  and the explorer's `/oracles` page.
+
+  The silence mattered most exactly where it was most likely: the
+  documented remediation for a mislabelled oracle row is an
+  operator-run raw SQL `UPDATE` against that column, which has no
+  `CHECK` constraint. A typo therefore deleted the row from the served
+  surface rather than erroring — and the operator would watch it
+  disappear and reasonably conclude the relabel had worked. Now counted
+  by `stellarindex_oracle_stream_rows_unparsed_total{source,field}`,
+  with a ticket alert and a runbook whose diagnosis leads with the
+  operator-typo shapes (missing prefix, truncated strkey, `rwa:`/`raw:`
+  confusion).
+
+  Deliberately *not* pre-seeded, unlike the divergence outcome counters:
+  seeding matters when a rule compares two children of one metric or
+  divides by one, and this is a bare threshold on a single series that
+  appears exactly when the bad thing happens.
+
+- **The explorer showed an assumed oracle quote as though it were
+  observed** (wave-D SI-OC-01). An unmapped symbol carries no reliable
+  denomination, so the decoders record a default — `fiat:USD` unless the
+  symbol ends in a recognised fiat suffix. The unmapped panel rendered
+  that default as a linked quote beside the price, so a hypothetical
+  `wstETH/ETH` or bare `wBTC_FUNDAMENTAL` would display "USD" next to a
+  number that is not dollars. The column is now labelled *assumed*, is
+  no longer a link, and carries a hover saying it is a decoder default;
+  the OpenAPI description says the same for API consumers.
+
+  Only the presentational half is changed. Broadening the suffix rule
+  substitutes one guess for another and contradicts the design doc, and
+  the bare-suffix case is not inferable at all — `mapped: false` already
+  means the denomination is unknown by design, and that is the contract.
+
 ### Changed
 
 - **`/v1/assets` now rejects a malformed catalogue cursor instead of
