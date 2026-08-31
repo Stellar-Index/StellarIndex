@@ -1,0 +1,16 @@
+# Units EXCLUDED from stellarindex_systemd_unit_failed (the catch-all
+# failed-unit ticket), because each already has a dedicated alert whose
+# annotation carries triage that a generic ticket cannot.
+#
+# This file is an exclusion list, not a suppression list. The self-test
+# scripts/ci/lint-unit-failed-baseline-test.sh asserts that EVERY entry
+# here is genuinely named in a rule file — so an entry cannot be used to
+# silence a unit that nothing else watches, which is how a catch-all
+# quietly becomes decorative.
+#
+# Format: <unit name>  # <alert that owns it>
+verify-archive-tier-a.service  # stellarindex_verify_archive_unit_failed
+verify-archive-tier-b.service  # stellarindex_verify_archive_tier_b_unit_failed
+ch-supply.service              # stellarindex_ch_supply_gapfill_failed
+pgbackrest-backup.service      # stellarindex_pgbackrest_backup_unit_failed
+ch-schema-snapshot.service     # stellarindex_ch_schema_snapshot_unit_failed
