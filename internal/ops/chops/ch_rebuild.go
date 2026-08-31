@@ -254,6 +254,41 @@ func chRebuild(args []string) error { //nolint:gocognit,gocyclo,funlen // linear
 	mode := "DRY-RUN (count only)"
 	if *write {
 		mode = "WRITE"
+		// The ADR-0033 completeness verdict does NOT learn about this
+		// rewrite. projector-replay records a projection dirty window so
+		// the next compute-completeness re-reconciles the rewound range;
+		// ch-rebuild records nothing, so the nightly verdict CARRIES ITS
+		// PRIOR CLEAN CLAIM over the range this run just changed
+		// (wave-D CV-1).
+		//
+		// Bounded in practice, which is why this is a warning and not a
+		// refusal: the reconcile is COUNT-based and a correct ch-rebuild
+		// converges served→lake using the same decoders the reconcile's
+		// expected side uses, so a wrong verdict needs a SECOND
+		// independent defect (a partial write, pre-0057 key residue, a
+		// decoder blind spot) stacked on this operator action. The one
+		// documented production -write — the 2026-08-04 usd_volume
+		// restamp — was value-only and count-neutral.
+		//
+		// Recording the window automatically is the right fix and is NOT
+		// done here on purpose. ch-rebuild is multi-source, so it needs
+		// one window PER ENABLED CATALOGUE SOURCE (a single record, or
+		// one under a non-catalogue name, silently no-ops), and a
+		// measured hazard blocks the naive port: ONE source's dirty
+		// window (aquarius [51M,tip]) already blew the -pass 120-minute
+		// deadline and needed a bespoke identity-gated prefilter, while
+		// compute-completeness runs under TimeoutStartSec=180min.
+		// Recording windows for the 8 sources ch-rebuild-projected.sh
+		// drives over [50M,62.894M] would force the next nightly to
+		// re-reconcile ~12.9M ledgers across 8 un-prefiltered sources —
+		// a likely timeout that takes out EVERY source's verdict, which
+		// is worse than the stale claim it fixes. It needs a bounded
+		// per-window re-reconcile and a re-measured pass wall-clock
+		// first.
+		logger.Warn("ch-rebuild -write does NOT record a projection dirty window — " +
+			"the next completeness verdict will carry its prior clean claim over this range. " +
+			"Note the [from,to] window and source set on the change record, and re-check " +
+			"the affected sources' reconcile before trusting the next /v1/coverage verdict.")
 	}
 	// Buffer-pass range guard (2026-07-05): the event + sep41 passes
 	// buffer a whole invocation's decoded events in this process. A
