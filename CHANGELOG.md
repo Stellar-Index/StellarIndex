@@ -17,6 +17,45 @@ against.
 
 ### Fixed
 
+- **The launch plan told an operator to mint a credential nothing
+  reads** (wave-D PS-02). W4.5, W4.6 and Recommended-order step 3 all
+  carried the Go `sla-probe` stack as live code with pending r1-ops
+  actions — "mint the Partner/Operator-tier key, set
+  `stellarindex_probe_api_key` in the r1 vault" — and cited
+  `10-observability.yml` line ranges as *installing* units that the same
+  file now *removes*. The whole stack was retired on 2026-08-24
+  (`634d4be6`, #135): both stacks wrote the same textfile, so the
+  keyless Go stack's 401/429 runs stomped the wrapper's passing
+  verdicts. An operator working the plan would have minted a live
+  operator-tier key with no consumer, whose file the next
+  `--tags observability` apply deletes — credential sprawl on the exact
+  surface W6.3 exists to shrink — then hunted a unit file ansible had
+  already removed. The genuine item, rotating the key exposed in a
+  2026-08-15 transcript, is preserved and now points at the file that
+  actually holds it.
+
+- **The launch-day migration gate named a version 7 behind HEAD**
+  (wave-D PS-01). §2.8 hardcoded `schema_migrations.version = 143` when
+  head was 0150. Made version-agnostic rather than re-pinned — "143 →
+  150" just reproduces the defect at 0151 — pointing instead at the two
+  places CI keeps in agreement (`migrations/` head and
+  `ExpectedSchemaVersion`, guarded by
+  `TestExpectedSchemaVersionMatchesMigrationsHead`). The gate's floor
+  semantics (`applied >= expected`, deliberately not `==`) are now
+  stated, since the old text's "≤142 or dirty" phrasing invited reading
+  a schema AHEAD of the binary as a failure.
+
+  `migrations/README.md`'s register was also missing rows for 0138-0143,
+  0145-0147, 0149 and 0150, against the file's own mandate. Backfilled,
+  and `lint-migrations.sh` gained a third pass that fails on a migration
+  with no row, a row naming no migration, or its own pattern going
+  vacuous. The reader this costs is the one the register exists for —
+  someone bringing up a fresh database, for whom the row is where an
+  "⚠ operator must re-materialize" warning lives. 0147 is exactly that:
+  it leaves nine CAGGs empty, and r1 having already run it does nothing
+  for a new node.
+
+
 - **`api.status_services` was validated case-insensitively and consumed
   case-sensitively** (wave-D RD-05). Config validation lower-cased each
   entry before checking it against `{indexer, aggregator}`, but
