@@ -10,9 +10,12 @@ status: operational
 migrations, and health-checks. It does **NOT**:
 
 - render/apply the ansible `stellarindex.toml.j2` config,
-- sync the Prometheus rule files,
 - install/enable systemd units, or
 - apply ClickHouse schema.
+
+(Prometheus **rule files** used to be on this list. Since 2026-09-01 they
+are the one surface `deploy.yml` applies and verifies itself, in a step
+*outside* the binary playbook — see [below](#prometheus-rules--applied-automatically-no-operator-action).)
 
 So when a release's diff touches any of those surfaces, the feature they
 gate **ships dead and silent** unless an operator applies the config too.
@@ -57,17 +60,55 @@ binary, restart the affected service. **Verify:** grep the live config for
 the new key AND confirm the runtime behavior (e.g. the API serves the new
 field), not just that the process restarted.
 
-### Prometheus rules
+### Prometheus rules — APPLIED AUTOMATICALLY, no operator action
+
 Live dir is **`/etc/prometheus/rules.r1/`** (prometheus.yml globs
 `rules.r1/*.yml` — NOT `rules.d/`, which is unused). Source is the repo's
 `configs/prometheus/rules.r1/*.yml`.
+
+**Since 2026-09-01 this surface applies itself.** `deploy.yml`'s
+*Apply Prometheus rules (r1)* step runs
+[`configs/prometheus/apply-rules.sh`](../../configs/prometheus/apply-rules.sh)
+on every r1 deploy, and the config-apply gate no longer asks you to
+acknowledge it. The step runs **unconditionally**, not only when a release
+changed a rule file — the host's rule set becomes a function of the repo
+rather than of who remembered to run what.
+
+What it does that the old manual procedure did not:
+
+- **Reconciles deletions.** The manual `scp <changed>.yml` only ever added
+  files. A rule deleted from the repo stayed on the host and kept firing —
+  on 2026-09-01 `stellarindex_recognition_unattributed_jump` did exactly
+  that for hours after #465 removed it.
+- **Verifies by POLLING** `/api/v1/rules` until every expected alert is
+  loaded *and* its rule health is ok, restoring its backup and failing if
+  not. The old "verify: lists the new alert names" was a single sample;
+  Prometheus re-reads on SIGHUP asynchronously, so one sample inside that
+  window reports a good apply as a failure — and an operator who saw it
+  pass once had no evidence the rules were *evaluating*.
+- **Refuses an empty rule set**, so a path typo cannot silently delete
+  every alert (the same F-1357 guard the ansible prometheus role carries).
+- Keeps 5 timestamped backups at `/etc/prometheus/rules.r1.bak-*`.
+
+If the step fails, its surface stays in the config-apply gate and the gate
+goes red — the binaries are already live, so that is a signal to act, not a
+rollback. To apply by hand (or from a laptop for a hotfix):
+
 ```
-cp -a /etc/prometheus/rules.r1 /root/rules.r1.pre-<ver>        # backup
-scp configs/prometheus/rules.r1/<changed>.yml r1:/etc/prometheus/rules.r1/
-ssh r1 'promtool check rules /etc/prometheus/rules.r1/*.yml'   # MUST pass first
-ssh r1 'systemctl reload prometheus'                           # SIGHUP, zero-drop
+scp configs/prometheus/apply-rules.sh r1:/tmp/
+scp -r configs/prometheus/rules.r1 r1:/tmp/rules.r1.incoming
+ssh r1 'bash /tmp/apply-rules.sh /tmp/rules.r1.incoming'
 ```
-**Verify:** `curl -s localhost:9090/api/v1/rules` lists the new alert names.
+
+`--check-only` validates without installing (this is what CI runs).
+
+**Verify:** the script does it for you and exits non-zero if it could not.
+Independently: `curl -s localhost:9090/api/v1/rules | grep -c alert`.
+
+> The multi-host tree `deploy/monitoring/rules/` is **not** covered — it
+> belongs to the ansible `prometheus` role, which requires a two-host
+> `prometheus_pair` inventory group r1 does not have. It remains a gated
+> surface.
 
 ### systemd units
 ```
