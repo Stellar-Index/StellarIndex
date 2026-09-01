@@ -15,6 +15,8 @@ against.
 
 ## [Unreleased]
 
+## [v0.56.0] — 2026-09-01
+
 ### Fixed
 
 - **The status page could report more active sources than it had.** It
