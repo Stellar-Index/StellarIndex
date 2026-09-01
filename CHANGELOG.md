@@ -15,6 +15,28 @@ against.
 
 ## [Unreleased]
 
+### Added
+
+- **Prometheus rules now apply themselves on every r1 deploy, and prove
+  they loaded.** `configs/prometheus/apply-rules.sh` validates with
+  `promtool`, installs atomically, **removes rule files the repo no longer
+  has**, reloads by signal (r1's HTTP lifecycle API is disabled), then
+  POLLS `/api/v1/rules` until every expected alert is loaded *and*
+  healthy — restoring its backup and failing if not. Wired into
+  `deploy.yml` unconditionally, so the host's rule set is a function of
+  the repo rather than of who remembered to run what, and the
+  config-apply gate stops asking operators to acknowledge that surface
+  (every other surface still gates; the exemption is an anchored
+  path-prefix and is proved not to leak).
+
+  This closes a gap that bit three times on 2026-09-01: a merged
+  ClickHouse availability alert that watched nothing because its rule
+  file never reached the host — and ClickHouse had no other health
+  signal at all; a deleted alert that kept firing for hours from a file
+  the repo no longer contained; and a deploy misread as never-fired from
+  a single sample taken inside the reload window, which is why
+  verification here polls instead of sampling once. (#471)
+
 ### Fixed
 
 - **The status page can now tell "off" from "broken".** It lists every

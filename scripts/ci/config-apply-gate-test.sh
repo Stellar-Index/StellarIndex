@@ -98,7 +98,7 @@ release() {
 # runGate <version> [ack] → sets RC + OUT. GITHUB_STEP_SUMMARY is pointed
 # at a scratch file so the summary block does not pollute OUT.
 runGate() {
-  OUT="$(cd "$TMP/repo" && GITHUB_STEP_SUMMARY="$TMP/summary" bash "$GATE" "$1" "${2:-false}" "${3:-}" 2>&1)"
+  OUT="$(cd "$TMP/repo" && GITHUB_STEP_SUMMARY="$TMP/summary" bash "$GATE" "$1" "${2:-false}" "${3:-}" "${4:-}" 2>&1)"
   RC=$?
 }
 
@@ -204,6 +204,81 @@ runGate vNOPE
 expect "unresolvable version fails closed" 1 "does not resolve to a commit"
 runGate v0.2.0 false vNOPE
 expect "unresolvable host baseline fails closed" 1 "does not resolve to a commit"
+
+# --- 11. the [applied] argument: a self-applying surface is retired
+# from the gate WITHOUT weakening it for anything else.
+#
+# configs/prometheus/rules.r1/ became self-applying (apply-rules.sh runs
+# in the deploy job, and VERIFIES against /api/v1/rules rather than just
+# copying). The risk of that exemption is that it is written too broadly
+# and silently clears surfaces nobody applied — which would restore the
+# exact 2026-09-01 failure the gate exists to catch. So the cases that
+# matter are the negative ones: the exemption must not leak.
+mkrepo
+release configs/prometheus/rules.r1/storage.yml
+runGate v0.2.0 false "" "configs/prometheus/rules.r1/"
+expect "an auto-applied rules change needs no operator ack" 0 "applied and verified automatically"
+
+# The same change WITHOUT the applied arg (e.g. a region whose deploy
+# does not run the applier) must still gate. Passing here would mean the
+# exemption is unconditional.
+mkrepo
+release configs/prometheus/rules.r1/storage.yml
+runGate v0.2.0
+expect "the same change still gates when nothing applied it" 1 "changed 1 config surface(s)"
+
+# The exemption must not cover a DIFFERENT surface. rules.r1 being
+# auto-applied says nothing about the multi-host rule tree, the ansible
+# role, or alertmanager.
+mkrepo
+release deploy/monitoring/rules/storage.yml
+runGate v0.2.0 false "" "configs/prometheus/rules.r1/"
+expect "the exemption does not cover deploy/monitoring/rules/" 1 "changed 1 config surface(s)"
+
+mkrepo
+release configs/ansible/roles/archival-node/templates/stellarindex.toml.j2
+runGate v0.2.0 false "" "configs/prometheus/rules.r1/"
+expect "the exemption does not cover the ansible role" 1 "changed 1 config surface(s)"
+
+# A release touching BOTH an applied and an unapplied surface must still
+# fail — and report only the surface that is actually outstanding. This
+# is the mixed case that a naive "any applied ⇒ pass" would get wrong.
+mkrepo
+releaseAs v0.2.0 configs/prometheus/rules.r1/storage.yml
+releaseAs v0.3.0 configs/ansible/roles/archival-node/templates/stellarindex.toml.j2
+runGate v0.3.0 false v0.1.0 "configs/prometheus/rules.r1/"
+expect "a mixed release still gates on the surface nobody applied" 1 "changed 1 config surface(s)"
+# The gate must ATTRIBUTE each surface correctly, not merely fail: the
+# auto-applied one under the "applied and VERIFIED" banner, and the
+# outstanding count must be 1 (the ansible template), not 2. A gate that
+# failed with a count of 2 would be telling the operator to go apply a
+# surface this deploy already applied and proved live.
+if [[ "$OUT" != *"VERIFIED automatically"* ]]; then
+  echo "FAIL: mixed release did not report the auto-applied surface as applied"
+  echo "$OUT" | sed 's/^/    | /' | head -8
+  fail=$((fail + 1))
+elif [[ "$OUT" != *"changed 1 config surface(s)"* ]]; then
+  echo "FAIL: mixed release miscounted the outstanding surfaces (want exactly 1)"
+  echo "$OUT" | sed 's/^/    | /' | head -8
+  fail=$((fail + 1))
+elif [[ "$OUT" == *"VERIFIED automatically"*"stellarindex.toml.j2"* ]]; then
+  echo "FAIL: the auto-applied banner claimed a surface this deploy never applied"
+  echo "$OUT" | sed 's/^/    | /' | head -8
+  fail=$((fail + 1))
+else
+  echo "ok: mixed release attributes each surface to the right column"
+  pass=$((pass + 1))
+fi
+
+# The applied prefix is an anchored PATH PREFIX, not a substring. A
+# caller passing a loose token must not exempt a sibling tree: "rules"
+# must not clear deploy/monitoring/rules/. Without anchoring, grep -F
+# matches mid-path and the exemption silently widens to a surface
+# nothing applied.
+mkrepo
+release deploy/monitoring/rules/storage.yml
+runGate v0.2.0 false "" "rules"
+expect "a loose prefix does not exempt a sibling rule tree" 1 "changed 1 config surface(s)"
 
 # ─── The CALLER must pass the baseline ──────────────────────────────
 #
