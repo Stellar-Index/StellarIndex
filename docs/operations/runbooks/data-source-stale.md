@@ -1,6 +1,6 @@
 ---
 title: Runbook — data source stale
-last_verified: 2026-08-29
+last_verified: 2026-09-01
 status: current
 severity: P3
 ---
@@ -38,7 +38,7 @@ source as anomalous:
 | -------- | ------------- | --------- | ---- |
 | `oracle` (`ecb`) | `oracle_updates.ingested_at` | **96 h** | ECB is a DAILY FX reference published ~16:00 CET on TARGET business days — a 3 h threshold read stale ~21 h of every day, and 96 h tolerates a weekend plus a holiday |
 | `oracle` (everything else) | `oracle_updates.ingested_at` | 3 h | reflector / redstone / band / chainlink / coingecko update every few minutes |
-| `fx` | `fx_quotes.bucket` | 48 h | daily-grain; measured off the bucket, so "today's bucket written" = the worker is alive |
+| `fx` | `fx_quotes.bucket` | **76 h** | daily-grain; measured off the bucket, so "today's bucket written" = the worker is alive. 76 h mirrors `aggregate.composite_reference.fx_max_age_hours` — the budget the SERVING path applies to its FX leg — and spans a weekend market close (#370) |
 | `trades` (`phoenix`, `comet`) | `source_volume_1h.bucket` | **24 h** | measured gap distribution on these sparse Soroban AMMs is max 8 h 28 m / p99 3 h 12 m; a genuine 12 h+ market lull false-fired the flat 4 h threshold twice (the CS-102 class — quiet, not stale) |
 | `trades` (everything else) | `source_volume_1h.bucket` | 4 h | |
 | `supply` | `asset_supply_history.time` | 30 h | whole-table max — see the false-positive note below |
@@ -85,7 +85,22 @@ crashed timer, or a connector outage.
 ## Known false-positive patterns
 
 - **FX `massive`** is daily-grain; freshness is measured off `bucket` (today's
-  bucket written), threshold 48h — a same-day late publish does not fire.
+  bucket written), threshold **76 h** — a same-day late publish does not fire,
+  and neither does a weekend.
+
+  This was 48 h until 2026-09-01 and fired **every weekend** (#370). `massive`
+  publishes a business-day snapshot and FX markets close, so Friday's bucket is
+  the freshest thing that exists until Monday: Fri 00:00 → Mon 00:00 is 72 h.
+  Observed live on 2026-08-30 with the worker entirely healthy — hourly
+  `forex: fx_quotes persisted rows=818`, and
+  `stellarindex_external_fx_rate_rejected_total` zero for every reason.
+
+  76 h is not a round-up: it mirrors `aggregate.composite_reference.fx_max_age_hours`,
+  the tolerance the serving path already applies to its FX leg. An alert
+  stricter than what the code accepts reports a fault the system does not have.
+  `scripts/ci/data-freshness-test.sh` now pins the two together, so changing
+  either without the other fails CI. A feed genuinely dead on a Tuesday still
+  trips this within the day.
 - **`domain="supply"` measures the WHOLE table's `max(time)`**, so it proves
   only that SOME asset is publishing. On 2026-07-28 it read green while 37 of 48
   watched assets had frozen. The per-asset shape it cannot express is the
@@ -109,6 +124,11 @@ crashed timer, or a connector outage.
 
 ## Changelog
 
+
+- 2026-09-01 — FX threshold 48 h → 76 h, mirroring
+  `aggregate.composite_reference.fx_max_age_hours`. At 48 h the alert could not
+  span a weekend market close and fired every Sunday against a healthy feed
+  (#370); a CI guard now pins the two budgets together.
 - 2026-08-29 — re-verified against HEAD (runbook Wave L, #319): added the
   per-domain threshold table — the page implied one uniform cadence while the
   script carries per-source exceptions (ECB 96 h, phoenix/comet 24 h) and the
