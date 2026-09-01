@@ -39,6 +39,26 @@ against.
 
 ### Fixed
 
+- **`stellarindex_oracle_stale{source="band"}` was firing 100% of the
+  time, for both its assets, and had been for at least a week.** Band
+  declared a resolution of 60 seconds — a number taken from a
+  *poll-cadence recommendation* (how often a consumer might ask) rather
+  than the relayer's publication interval. The alert thresholds at 10×
+  that, so it tripped after 10 minutes against an oracle that measurably
+  relays **hourly** (`changes(stellarindex_oracle_last_update_unix[24h])`
+  = 24, for `crypto:USDC` and `crypto:XLM` alike). Corrected to 3600 —
+  the measured value — with the measurement recorded at the constant.
+
+  Band was the only oracle whose declared resolution disagreed with
+  reality; reflector-dex measured 301s against a declared 300. The new
+  `internal/sources/band/resolution_test.go` pins the *relationship*
+  rather than the number: the threshold must be looser than the observed
+  cadence, and must not be so loose that a real outage goes unnoticed —
+  silencing an alert by inflating its threshold is always available and
+  always wrong. The oracle-stale runbook now leads with this
+  false-positive shape and gives the query that separates it from a
+  genuine stall. (#473)
+
 - **The status page can now tell "off" from "broken".** It lists every
   source in the registry, so `coinmarketcap` and `cryptocompare` — both
   fully implemented, both needing a paid API key, neither ever switched

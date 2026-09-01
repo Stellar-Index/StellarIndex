@@ -47,13 +47,38 @@ const SourceName = "band"
 // is u64 at this scale.
 const DefaultDecimals uint8 = 9
 
-// DefaultResolutionSeconds reflects Band's variable relayer
-// cadence — secondary validation source, not real-time. 60s aligns
-// with the poll-cadence recommendation in the discovery doc.
+// DefaultResolutionSeconds is Band's MEASURED relay cadence on
+// mainnet: one hour.
+//
 // Emitted as the `stellarindex_oracle_resolution_seconds` gauge by
-// [pipeline.BuildDispatcher] at registration time, so the
-// oracle-stale alert has a per-source threshold.
-const DefaultResolutionSeconds = 60
+// [pipeline.BuildDispatcher] at registration time. It is not
+// documentation — `stellarindex_oracle_stale` alerts at 10× this
+// value, so the constant IS the alert threshold for this source.
+//
+// It was 60 until 2026-09-01, taken from "the poll-cadence
+// recommendation in the discovery doc" — how often a CONSUMER might
+// poll, not how often the relayer publishes. That made the threshold
+// 10 minutes against an oracle that updates hourly, and
+// `stellarindex_oracle_stale{source="band"}` fired for 100% of
+// samples over the trailing 7 days, for both crypto:USDC and
+// crypto:XLM. An alert that is always firing carries no information
+// and desensitises the one signal that would show a real oracle
+// outage.
+//
+// Measured on r1, 2026-09-01, over 24h:
+//
+//	changes(stellarindex_oracle_last_update_unix{source="band"}[24h])
+//	  crypto:USDC = 24    crypto:XLM = 24     → every 3600s
+//
+// For contrast, the same query put reflector-dex at 301s against a
+// declared 300 and reflector-fx at exactly 300 — band was the only
+// source whose declared resolution disagreed with reality, and it
+// disagreed by 60×.
+//
+// If Band's relayer cadence changes, RE-MEASURE with the query above
+// rather than reasoning from its docs: this constant is wrong exactly
+// when it is derived from intent instead of observation.
+const DefaultResolutionSeconds = 3600
 
 // Relay function names on the StandardReference contract. Both
 // produce symbol_rates updates; the decoder matches either.
