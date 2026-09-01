@@ -15,6 +15,8 @@ against.
 
 ## [Unreleased]
 
+## [v0.54.1] — 2026-09-01
+
 ### Fixed
 
 - **`/v1/assets` listing keys are now prewarmed, chosen from observed
