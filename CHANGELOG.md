@@ -15,6 +15,22 @@ against.
 
 ## [Unreleased]
 
+### Added
+
+- **ClickHouse now has a health signal.** It was the only API dependency
+  on r1 with no Prometheus exporter — postgres, redis and minio each
+  have one — and nothing in either rule tree alerted on it, so the raw
+  lake disappearing had no single symptom (#371 F2). The served API
+  keeps working from the Postgres served tier while ingest silently
+  stops advancing, which is exactly the failure worth paging on. Rather
+  than add an exporter, the API now publishes its EXISTING `/v1/readyz`
+  check results as `stellarindex_dependency_up{dependency="…"}` — a
+  signal that measures whether the API can actually reach the
+  dependency, and that covers postgres, schema and redis at the same
+  time. New `stellarindex_dependency_down` alert in both rule trees,
+  with a runbook.
+  ([#462](https://github.com/Stellar-Index/StellarIndex/pull/462))
+
 ### Fixed
 
 - **Disarmed five operations-doc instructions that would each cause an
