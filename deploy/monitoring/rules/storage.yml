@@ -711,3 +711,42 @@ groups:
             Uncorrected media errors on a ZFS member. ZFS will surface
             corruption on scrub, but the drive reporting them first is the
             earlier signal.
+
+      # #371 F2: ClickHouse is the only dependency on r1 with no
+      # Prometheus exporter of its own — postgres, redis and minio each
+      # have one. It is also the raw lake the ADR-0033 completeness
+      # claim rests on, so before this alert existed its disappearance
+      # had no single symptom: endpoints would simply start failing.
+      #
+      # The signal is the API's OWN readiness check, published as a
+      # gauge (#371). That is deliberately better than a sidecar
+      # exporter here: it measures whether the API can actually reach
+      # ClickHouse, which is the thing that matters, rather than whether
+      # a separate process can.
+      #
+      # `== 0` and not `absent()`: the gauge is published for every
+      # check on every readiness round, including failing ones, so a
+      # zero is a real answer. Alerting on absence would fire whenever a
+      # check is renamed or the API is briefly down — which the
+      # api-down alert already covers.
+      - alert: stellarindex_dependency_down
+        expr: stellarindex_dependency_up == 0
+        for: 2m
+        labels:
+          severity: page
+          team: stellarindex
+          component: storage
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/dependency-down.md
+          summary: "API dependency {{ $labels.dependency }} is unreachable"
+          description: |
+            The API's /v1/readyz check for {{ $labels.dependency }} has been
+            failing for 2+ minutes on {{ $labels.instance }}.
+
+            For clickhouse this is the raw lake (ADR-0034): ingest writes and
+            every projector read go through it, and it has no exporter of its
+            own, so this gauge is the only signal that it is gone.
+
+            For postgres/redis the dedicated exporter alerts fire alongside
+            this one and carry more detail — treat those as primary and this
+            as corroboration.

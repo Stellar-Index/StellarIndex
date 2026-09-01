@@ -193,6 +193,11 @@ func registerFreezeLifecycleMetrics() {
 // registerAppMetrics).
 func registerAppMetricsTail() {
 	Registry.MustRegister(
+		// Readiness-check gauge (#371 F2) — the only alertable signal
+		// ClickHouse has, since it is the one dependency on r1 with no
+		// Prometheus exporter of its own.
+		DependencyUp,
+
 		// Source-family counter (#291). It belongs beside
 		// SourceUnknownSymbolsTotal in [registerAppMetrics] and is
 		// registered here only because that function already sat exactly
@@ -584,6 +589,41 @@ var HTTPRequestDuration = prometheus.NewHistogramVec(
 // Gauge semantics: set to current value on every detector cycle;
 // reset to 0 when the worker finds no gaps >= threshold. NOT a
 // counter — operators read absolute value, not deltas.
+// DependencyUp reports the result of each /v1/readyz readiness check
+// as an alertable gauge: 1 when the dependency answered, 0 when it did
+// not.
+//
+// The API has always CHECKED its dependencies — computeReadyz pings
+// postgres, schema, redis and clickhouse on every readiness round — but
+// the outcome existed only as JSON on an HTTP endpoint. Nothing scraped
+// it, so nothing could alert on it.
+//
+// That left ClickHouse with no health signal at all (#371 F2).
+// Postgres, Redis and MinIO each have a Prometheus exporter on r1;
+// ClickHouse has none, and it is the raw lake — the substrate the
+// ADR-0033 completeness claim rests on. If it went away, the only
+// symptom would be endpoints failing one by one.
+//
+// Exposing the existing check is deliberately cheaper than adding a
+// ClickHouse exporter: it needs no new scrape target, no new package on
+// the host, and it measures the thing that actually matters — whether
+// the API can reach the dependency — rather than whether a sidecar can.
+// It also covers every dependency at once rather than just the one that
+// prompted it.
+//
+// Gauge semantics: overwritten on every readiness round, so it reflects
+// the most recent check rather than a historical high-water mark. A
+// dependency that disappears from the check set stops being reported;
+// alert on `== 0`, never on `absent()` alone, or a renamed check reads
+// as an outage.
+var DependencyUp = prometheus.NewGaugeVec(
+	prometheus.GaugeOpts{
+		Name: "stellarindex_dependency_up",
+		Help: "Result of each /v1/readyz readiness check: 1 = the dependency answered, 0 = it did not. Covers postgres, schema, redis and clickhouse.",
+	},
+	[]string{"dependency"},
+)
+
 var IngestGapLedgers = prometheus.NewGaugeVec(
 	prometheus.GaugeOpts{
 		Name: "stellarindex_ingest_gap_ledgers",

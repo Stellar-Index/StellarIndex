@@ -34,6 +34,45 @@ Histogram, labels `method`, `route`.
 Handler latency including time-in-middleware. Buckets 1ms – 10s with
 extra resolution at the 200ms / 500ms SLO boundaries.
 
+### `stellarindex_dependency_up`
+
+Gauge, label `dependency`. Emitted by the API binary only.
+
+The result of each `/v1/readyz` readiness check — `1` when the
+dependency answered, `0` when it did not. Covers `postgres`, `schema`,
+`redis` and `clickhouse`. Overwritten on every readiness round, so it
+reflects the most recent check rather than a high-water mark.
+
+**When to look at this.** Almost always because
+`stellarindex_dependency_down` paged. The dependency label is what
+decides how much weight to give it, because the dependencies are not
+equally covered elsewhere:
+
+- **`clickhouse`** — this is the *only* signal. ClickHouse is the raw
+  lake (ADR-0034) and is the one dependency on r1 with no Prometheus
+  exporter of its own, unlike postgres, redis and minio. Before this
+  metric existed, the lake disappearing had no single symptom: the
+  served API keeps working from the Postgres served tier while ingest
+  silently stops advancing.
+- **`postgres`, `redis`** — corroboration. Their exporters
+  (`pg_up`, redis_exporter) fire alongside and carry more detail. This
+  gauge firing *without* them points at the path between the API and
+  the dependency — credentials, pool exhaustion, network — rather than
+  the dependency itself.
+- **`schema`** — the migration state the binary expects versus what the
+  database has. Fires after a deploy whose migration did not run.
+
+Alert on `== 0`, never on `absent()`: the gauge is published for
+failing checks too, so a zero is a real answer, whereas absence would
+also mean "check renamed" or "API restarting". A dependency missing
+from the output entirely is a publisher bug, not a healthy dependency —
+`internal/api/v1/dependency_up_test.go` pins that, and the assertion
+gathers the metric family rather than reading through
+`WithLabelValues`, which would create the child on read and make an
+unpublished series indistinguishable from a genuine `0`.
+
+Runbook: [dependency-down.md](../../operations/runbooks/dependency-down.md).
+
 ### `stellarindex_ingest_gap_ledgers`
 
 Gauge, labels `source`, `table`.

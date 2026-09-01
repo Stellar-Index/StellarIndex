@@ -2180,6 +2180,18 @@ func (s *Server) computeReadyz() (int, []byte) {
 				r.Error = err.Error()
 			}
 			results[i] = r // distinct indices — no mutex needed
+
+			// Publish the outcome as an alertable gauge. The check
+			// already runs on every readiness round; before this, its
+			// result existed only as JSON on /v1/readyz, so nothing
+			// could page on a dependency going away (#371 F2 —
+			// ClickHouse is the one dependency on r1 with no exporter
+			// of its own, and it is the raw lake).
+			up := 0.0
+			if r.OK {
+				up = 1
+			}
+			obs.DependencyUp.WithLabelValues(c.Name()).Set(up)
 		}(i, c)
 	}
 	wg.Wait()
