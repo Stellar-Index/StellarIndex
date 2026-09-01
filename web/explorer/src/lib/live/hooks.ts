@@ -175,6 +175,37 @@ export function usePriceFlash(
 const LEDGER_FOLLOW_REFRESH_MS = 15_000;
 
 /**
+ * Throttle state, keyed by the serialised query key and shared across
+ * every hook instance — NOT per-component.
+ *
+ * It used to be a `useRef`, which meant the throttle only ever throttled
+ * a component against itself. Two components following the same key
+ * (`HomeTopMovers` and `HomeTopAssets` both follow `['/v1/assets']`)
+ * observe the same SSE frame in one React commit, so both effects ran
+ * back-to-back with both refs at 0, and neither could see the other.
+ *
+ * The cost was not one extra cache read. Each invalidation matched BOTH
+ * `/v1/assets` queries on the page, and TanStack's `invalidateQueries`
+ * defaults to `cancelRefetch: true` — so the second invalidation
+ * cancelled and restarted two already-in-flight fetches. Four requests
+ * per ledger advance where one component would have made two. Measured
+ * on r1: 224 bare `/v1/assets` requests from a single browser in 30
+ * minutes, arriving four-at-once (issue #470).
+ *
+ * Keyed by `keyStr` rather than global, so panels following different
+ * keys never throttle each other. The map holds one small entry per
+ * distinct key, and the keys come from call sites in source — a bounded
+ * set — so it does not grow with traffic or time.
+ */
+const lastFollowRefetchByKey = new Map<string, number>();
+
+/** Test hook: clear the shared throttle between cases. Mirrors
+ * `resetStreamsForTest` in ./streams. */
+export function resetLedgerFollowThrottleForTest(): void {
+  lastFollowRefetchByKey.clear();
+}
+
+/**
  * useLedgerFollow — turn a static `useQuery` panel into a live one: on
  * each new ledger close (one SSE connection shared tab-wide via the
  * multiplexer), invalidate `queryKey`, throttled to at most once per
@@ -193,7 +224,6 @@ export function useLedgerFollow(
 ): void {
   const frame = useLedgerStream();
   const queryClient = useQueryClient();
-  const lastRefetchRef = useRef(0);
   const streamLatest = frame?.data.latest_ledger;
   // Serialise the key to a stable primitive so a fresh array literal
   // each render doesn't retrigger the effect; reconstruct inside.
@@ -205,11 +235,30 @@ export function useLedgerFollow(
     if (!enabled) return;
     if (streamLatest == null) return;
     const now = Date.now();
-    if (now - lastRefetchRef.current < minIntervalMs) return;
-    lastRefetchRef.current = now;
-    void queryClient.invalidateQueries({
-      queryKey: JSON.parse(keyStr) as unknown[],
-    });
+    const last = lastFollowRefetchByKey.get(keyStr) ?? 0;
+    if (now - last < minIntervalMs) return;
+    lastFollowRefetchByKey.set(keyStr, now);
+    void queryClient.invalidateQueries(
+      { queryKey: JSON.parse(keyStr) as unknown[] },
+      // Second argument — InvalidateOptions, NOT the filters object.
+      // `cancelRefetch` is not a filter, and putting it in the first
+      // argument type-errors rather than silently doing nothing.
+      //
+      // Do NOT cancel-and-restart a fetch already in flight. TanStack
+      // defaults this to true, which turns a redundant invalidation into
+      // redundant NETWORK traffic: the in-flight request is abandoned in
+      // the cache and a fresh one issued. Worse here than usual, because
+      // `apiGet` builds its own AbortSignal and never forwards the one
+      // TanStack passes — so the abandoned request is not actually
+      // cancelled on the wire and completes anyway. We pay for it twice
+      // and use one result.
+      //
+      // This still matters with the shared throttle above: two panels
+      // can follow OVERLAPPING prefixes rather than identical ones
+      // (`['/v1/markets']` also matches `['/v1/markets', source]`), and
+      // those are separate throttle keys by design.
+      { cancelRefetch: false },
+    );
   }, [streamLatest, queryClient, minIntervalMs, keyStr, enabled]);
 }
 
