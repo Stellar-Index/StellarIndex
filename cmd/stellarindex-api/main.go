@@ -4616,6 +4616,47 @@ func prewarmLight(
 	// the in-flight cycle's per-key warming.
 	mkCtx, mkCancel := context.WithTimeout(ctx, 5*time.Minute)
 	defer mkCancel()
+
+	// ORDER MATTERS: the /v1/assets listing keys are warmed FIRST,
+	// ahead of the markets/pools work below.
+	//
+	// They used to sit after ~20 cold reads (8 DistinctPairsExt, 4+5
+	// AllPools, the per-CEX SourceMarkets loop). At seconds each on a
+	// cold start that pushed them a long way into the cycle, so a
+	// browser arriving seconds after a restart still paid the fill
+	// itself. Measured on r1 with the API up at 06:14:37, AFTER the
+	// passes were made concurrent:
+	//
+	//	06:15:01  9903 ms  /v1/assets?include=sparkline&limit=10&order_by=…
+	//	06:15:01  9905 ms  /v1/assets?limit=50
+	//
+	// Concurrency between the two passes was necessary but not
+	// sufficient — the queue inside THIS pass was the remaining cost.
+	// /v1/assets is the most-requested route in production and backs the
+	// explorer's landing page, so it goes first; markets and pools are
+	// secondary and can warm behind it.
+
+	// /v1/coins?limit=200&include=sparkline backs the unified
+	// currencies listing — single most-trafficked asset-catalogue read.
+	//
+	// Important: the handler's `prependNative` path subtracts one
+	// from `limit` when cursor/issuer/q are all empty (the explorer's
+	// no-filter case) so it can splice the synthetic XLM row at the
+	// top without overshooting the user's requested page size. So a
+	// /v1/coins?limit=200 user request actually calls
+	// `ListAssetsExt(ctx, ListAssetsOptions{Limit: 199, …})` under the
+	// hood — passing Limit=200 here warms a different cache key than
+	// the one the user request looks up. Mirror the listingLimit the
+	// handler actually uses.
+	assetsReaderCtx, assetsReaderCancel := context.WithTimeout(ctx, 20*time.Second)
+	defer assetsReaderCancel()
+	if _, err := assetsReader.ListAssetsExt(assetsReaderCtx, timescale.ListAssetsOptions{Limit: 199}); err != nil {
+		logger.Debug("prewarm asset-catalogue listing failed", "err", err)
+	}
+
+	// …and the SEPARATE /v1/assets listing, whose handler does the
+	// OPPOSITE arithmetic to /v1/coins above. See prewarmAssetListings.
+	prewarmAssetListings(assetsReaderCtx, logger, assetsReader)
 	// Mirrors the most-trafficked /v1/markets, /v1/pools requests
 	// the explorer fires (default order, no source filter). The
 	// limit set covers the four common values we see in practice:
@@ -4701,28 +4742,6 @@ func prewarmLight(
 			logger.Debug("prewarm per-source markets failed", "source", src, "err", err)
 		}
 	}
-
-	// /v1/coins?limit=200&include=sparkline backs the unified
-	// currencies listing — single most-trafficked asset-catalogue read.
-	//
-	// Important: the handler's `prependNative` path subtracts one
-	// from `limit` when cursor/issuer/q are all empty (the explorer's
-	// no-filter case) so it can splice the synthetic XLM row at the
-	// top without overshooting the user's requested page size. So a
-	// /v1/coins?limit=200 user request actually calls
-	// `ListAssetsExt(ctx, ListAssetsOptions{Limit: 199, …})` under the
-	// hood — passing Limit=200 here warms a different cache key than
-	// the one the user request looks up. Mirror the listingLimit the
-	// handler actually uses.
-	assetsReaderCtx, assetsReaderCancel := context.WithTimeout(ctx, 20*time.Second)
-	defer assetsReaderCancel()
-	if _, err := assetsReader.ListAssetsExt(assetsReaderCtx, timescale.ListAssetsOptions{Limit: 199}); err != nil {
-		logger.Debug("prewarm asset-catalogue listing failed", "err", err)
-	}
-
-	// …and the SEPARATE /v1/assets listing, whose handler does the
-	// OPPOSITE arithmetic to /v1/coins above. See prewarmAssetListings.
-	prewarmAssetListings(assetsReaderCtx, logger, assetsReader)
 
 	// #37 fix: /v1/assets/native is the most-trafficked single-asset
 	// page (XLM is the explorer's default landing) and its
