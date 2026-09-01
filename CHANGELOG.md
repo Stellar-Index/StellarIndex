@@ -15,6 +15,24 @@ against.
 
 ## [Unreleased]
 
+### Changed
+
+- **CLAUDE.md is now about the project, not about one deployment.** 133
+  lines describing how the reference deployment (`r1`) is operated —
+  ansible-managed host config, the `run-heavy-job.sh` wrapper, cutting a
+  release, deploying, and the long-session working cadence — moved to
+  `docs/operations/maintainer-workflow.md`. What stays is true for
+  anyone who clones or forks the repo: the invariants, the repo map, the
+  domain traps, and the contributor recipes. Also corrects two stale
+  claims: CLAUDE.md referenced a `/v1/currencies` route that does not
+  exist in the spec (removed; only the in-process `CurrenciesReader`
+  seam survives), and the repo map described the projector as reading
+  from `soroban_events` without noting that the ClickHouse
+  `contract_events` lake is the default source (ADR-0034) and Postgres
+  is the legacy fallback. Seven cross-references in runbooks and lint
+  comments were repointed at the new home.
+  ([#450](https://github.com/Stellar-Index/StellarIndex/pull/450))
+
 ### Added
 
 - **Slow requests now log their query shape.** The access log recorded

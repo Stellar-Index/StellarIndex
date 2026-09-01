@@ -132,7 +132,7 @@ stellarindex-ops backfill -config /etc/stellarindex.toml \
 # per chunk); the flag's own guidance is 4-16 on a 16-core box, above
 # which postgres max_connections or galexie S3 list throughput is the
 # bottleneck. Heavy one-shots on r1 ALWAYS go through the wrapper
-# (CLAUDE.md "Heavy one-shot jobs on r1"), one at a time. The
+# (docs/operations/maintainer-workflow.md, "Heavy one-shot jobs"), one at a time. The
 # wrapper's flock is per job NAME and its MemoryMax=20G scope cap
 # (MemorySwapMax=0 — kill, not swap) applies to the whole wrapped
 # process, chunks included: raise -parallel and you divide that

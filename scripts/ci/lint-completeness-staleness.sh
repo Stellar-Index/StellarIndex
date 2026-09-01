@@ -15,7 +15,8 @@
 # failure class (MNY-04) the flag exists to prevent.
 #
 # The AUTHORITATIVE cadence is the r1-deployed, Ansible-rendered timer
-# (CLAUDE.md: "r1 configuration is ansible-managed", enforced by
+# (docs/operations/maintainer-workflow.md: "r1 configuration is
+# ansible-managed", enforced by
 # ansible-drift.yml):
 #   configs/ansible/roles/archival-node/templates/systemd/compute-completeness.timer.j2
 # (templated + enabled in tasks/14-stellarindex-services.yml). NOTE:

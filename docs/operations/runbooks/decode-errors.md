@@ -114,8 +114,8 @@ This alert is P3 because there's no emergency runtime response — we can't un-d
         which **refuses** any source that is not `BackfillSafe` in
         `internal/sources/external/registry.go`.
       Either way, on r1 a re-derive is a heavy one-shot: run it under
-      `/usr/local/sbin/run-heavy-job.sh`, one job at a time (CLAUDE.md
-      "Heavy one-shot jobs on r1").
+      `/usr/local/sbin/run-heavy-job.sh`, one job at a time
+      (docs/operations/maintainer-workflow.md, "Heavy one-shot jobs").
 - [ ] Step 4 — if the cause is a regression (option 3): `git revert` the suspect commit and deploy. File an incident to retry the regressed change with a proper test.
 - [ ] Verification: `rate(...decode_errors_total[5m])` drops back under the 1/sec threshold within 5 min of mitigation.
 
