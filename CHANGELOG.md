@@ -15,6 +15,31 @@ against.
 
 ## [Unreleased]
 
+### Fixed
+
+- **The home page issued four duplicate `/v1/assets` requests per ledger
+  advance, and the two it "cancelled" still completed on the wire.**
+  `useLedgerFollow`'s throttle was a per-component `useRef`, so it only
+  ever throttled a component against itself. `HomeTopMovers` and
+  `HomeTopAssets` both follow `['/v1/assets']`, observe the same SSE
+  frame in one React commit, and ran back-to-back with both refs at zero
+  — neither could see the other. Each invalidation matched both
+  `/v1/assets` queries, and TanStack's `invalidateQueries` defaults to
+  `cancelRefetch: true`, so the second one cancelled and restarted two
+  in-flight fetches. Measured on r1: **224 bare `/v1/assets` requests
+  from one browser in 30 minutes, arriving four-at-once** every ~37s
+  (the rate the ingest frontier advances — not a timer).
+
+  The throttle is now shared per query key across every hook instance,
+  so N followers of one key produce one invalidation, and
+  `cancelRefetch: false` stops a redundant invalidation from becoming
+  redundant network traffic — which matters because `apiGet` never
+  forwards TanStack's `AbortSignal`, so an abandoned request is not
+  actually cancelled and completes anyway. The same shape existed for
+  `['/v1/markets']`, which by prefix also sweeps
+  `['/v1/markets', source]`. (#470)
+
+
 ## [v0.57.0] — 2026-09-01
 
 ### Added
