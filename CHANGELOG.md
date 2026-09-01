@@ -15,6 +15,22 @@ against.
 
 ## [Unreleased]
 
+### Fixed
+
+- **The FX feed now reports its entries.** `massive` — the active fiat-FX
+  feed, and the USD anchor behind per-trade `usd_volume` and the ADR-0051
+  local-currency derivation — had **no series at all** in
+  `stellarindex_source_events_total`, because the forex worker writes
+  `fx_quotes` directly and never passes through the ingest pipeline's
+  sink, which is the only other place that counter is incremented. The
+  status page's per-source "entries (24h)" column reads exactly that
+  metric, so a feed writing 116 rows a day displayed as `0` —
+  indistinguishable from a dead connector, next to ones that genuinely
+  were. Rows are now counted per data point, attributed to the provider
+  that actually answered (so a fallback's rows are not credited to
+  `massive`), and only on a committed non-empty write.
+  ([#463](https://github.com/Stellar-Index/StellarIndex/pull/463))
+
 ### Added
 
 - **ClickHouse now has a health signal.** It was the only API dependency
