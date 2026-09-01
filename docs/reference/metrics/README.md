@@ -340,18 +340,30 @@ Every read through the API's in-memory cache wrappers
 (`v1.CachedMarketsReader`, future `v1.CachedCoinsReader`, …)
 increments this counter. `cache` is the wrapper name (e.g.
 `markets`); `op` is the cached method (`distinct_pairs` /
-`source_markets` / `asset_markets` / `all_pools`); `result` is
-`hit` (returned cached value, including single-flight-wait
-callers that piggy-backed on an in-progress upstream call) or
-`miss` (called upstream).
+`source_markets` / `asset_markets` / `all_pools`). `result` is a
+READ outcome — `hit` (returned cached value, including
+single-flight-wait callers that piggy-backed on an in-progress
+upstream call), `stale` (served an expired value while a background
+refresh runs) or `miss` (called upstream) — or one of two
+side-events: `refresh_error` (a background refresh failed) and
+`evicted` (a bounded cache dropped its oldest entry to admit a new
+key; emitted by the `observations` and `oracle` wrappers, which cap
+their maps because their key is caller-controlled on a public route).
 
 Use to detect prewarm-key drift: when a prewarm goroutine warms
 key A but the handler looks up key B, `result="miss"` rate
 stays high even though the prewarm cycle is running. Suggested
-alert: `rate(stellarindex_api_cache_ops_total{result="miss"}[5m])
-/ rate(stellarindex_api_cache_ops_total[5m]) > 0.5` sustained
-for 10 min on any (cache, op) pair — for hot ops the prewarm
-should keep miss rate under 10%.
+alert: `rate(stellarindex_api_cache_ops_total{result="miss"}[5m]) /
+rate(stellarindex_api_cache_ops_total{result=~"hit|miss|stale"}[5m]) >
+0.5` sustained for 10 min on any (cache, op) pair — for hot ops the
+prewarm should keep miss rate under 10%. Keep the denominator
+filtered to the read outcomes: `evicted` increments once per admitted
+key, so an unfiltered ratio can never exceed 0.5 during the
+key-enumeration storm the alert is meant to catch.
+
+A sustained `result="evicted"` rate is itself the signal that a
+bounded cache is being churned — a working set larger than its cap, or
+an anonymous caller walking the key space.
 
 ### `stellarindex_api_sparkline7d_rows_total`
 

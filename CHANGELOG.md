@@ -17,6 +17,28 @@ against.
 
 ### Fixed
 
+- **`/v1/oracle/latest`'s in-process cache grew without bound on a
+  public unauthenticated route.** `CachedOracleReader`'s entry map is
+  keyed by the caller's sorted asset list plus the source filter, and
+  nothing ever removed a successful fill — only failures deleted their
+  entry, and an empty result for an asset no oracle quotes is a success.
+  An anonymous caller naming distinct assets minted a permanent entry
+  per request until the API process OOMed. Capped at 4096 entries with
+  the oldest-filled-first eviction the `observations` and asset-detail
+  caches already use; in-flight entries are never evicted, so a waiter
+  is never orphaned from the fill about to close its channel. Evicting a
+  still-fresh entry costs at most one extra upstream query.
+
+  `stellarindex_api_cache_miss_rate_high` was disarmed by the eviction
+  counter it now shares with the `observations` cache: its denominator
+  summed **every** `result` value, and a bounded cache under key
+  enumeration emits one `evicted` per `miss`, so `miss / (miss +
+  evicted)` could never exceed the `> 0.5` threshold — the alert went
+  silent during exactly the attack it should catch. Both rule trees now
+  divide by the read outcomes only (`hit|miss|stale`), which also
+  removes the pre-existing `refresh_error` dilution on the `coins`,
+  `markets`, `network_stats` and `observations` caches. (#368)
+
 - **`stellarindex_data_source_stale{source="massive"}` fired every
   weekend against a completely healthy feed.** The freshness emitter gave
   the `fx` domain a 48h budget, but `massive` publishes a business-day
