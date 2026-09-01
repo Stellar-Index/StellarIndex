@@ -342,7 +342,7 @@ func TestDistinctSourceClassCount(t *testing.T) {
 		// field exists for.
 		{"CEX + DEX", []string{"binance", "soroswap"}, 2},
 		// CEX + DEX + FX — three Subclasses under ClassExchange → 3.
-		{"CEX + DEX + FX", []string{"binance", "soroswap", "polygon-forex"}, 3},
+		{"CEX + DEX + FX", []string{"binance", "soroswap", "exchangeratesapi"}, 3},
 		// CEX + Oracle — distinct parent classes → 2.
 		{"CEX + Oracle", []string{"binance", "reflector-dex"}, 2},
 		// Four buckets: CEX + Oracle + Aggregator + AuthoritySanity.

@@ -425,7 +425,7 @@ func (s *Store) SourceEntryCounts(ctx context.Context) (map[string]int64, error)
 //	oracle_updates                 — oracle publications (band, redstone,
 //	                                 reflector-{dex,cex,fx}, chainlink).
 //	fx_quotes                      — off-chain FX (ecb, frankfurter,
-//	                                 exchangeratesapi, polygonforex,
+//	                                 exchangeratesapi,
 //	                                 coingecko-fx, …).
 //	blend_auctions                 — Blend lending auctions; literal
 //	                                 source 'blend' (single-source table).

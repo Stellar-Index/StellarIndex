@@ -309,18 +309,18 @@ func TestFormatRatFixed(t *testing.T) {
 func TestFilterForVWAP_KeepsExchangeClassOnly(t *testing.T) {
 	now := time.Now()
 	trades := []canonical.Trade{
-		buildTradeFrom(t, "binance", big.NewInt(1), big.NewInt(1), now),       // exchange ✓
-		buildTradeFrom(t, "coingecko", big.NewInt(2), big.NewInt(2), now),     // aggregator ✗
-		buildTradeFrom(t, "coinmarketcap", big.NewInt(3), big.NewInt(3), now), // aggregator ✗
-		buildTradeFrom(t, "reflector-dex", big.NewInt(4), big.NewInt(4), now), // oracle ✗
-		buildTradeFrom(t, "ecb", big.NewInt(5), big.NewInt(5), now),           // authority_sanity ✗
-		buildTradeFrom(t, "kraken", big.NewInt(6), big.NewInt(6), now),        // exchange ✓
-		buildTradeFrom(t, "unknown-venue", big.NewInt(7), big.NewInt(7), now), // unregistered → fallback IncludeInVWAP=false ✗
-		buildTradeFrom(t, "polygon-forex", big.NewInt(8), big.NewInt(8), now), // exchange ✓ (institutional FX)
+		buildTradeFrom(t, "binance", big.NewInt(1), big.NewInt(1), now),          // exchange ✓
+		buildTradeFrom(t, "coingecko", big.NewInt(2), big.NewInt(2), now),        // aggregator ✗
+		buildTradeFrom(t, "coinmarketcap", big.NewInt(3), big.NewInt(3), now),    // aggregator ✗
+		buildTradeFrom(t, "reflector-dex", big.NewInt(4), big.NewInt(4), now),    // oracle ✗
+		buildTradeFrom(t, "ecb", big.NewInt(5), big.NewInt(5), now),              // authority_sanity ✗
+		buildTradeFrom(t, "kraken", big.NewInt(6), big.NewInt(6), now),           // exchange ✓
+		buildTradeFrom(t, "unknown-venue", big.NewInt(7), big.NewInt(7), now),    // unregistered → fallback IncludeInVWAP=false ✗
+		buildTradeFrom(t, "exchangeratesapi", big.NewInt(8), big.NewInt(8), now), // exchange ✓ (institutional FX)
 	}
 
 	got := filterForVWAP(append([]canonical.Trade(nil), trades...))
-	wantSources := []string{"binance", "kraken", "polygon-forex"}
+	wantSources := []string{"binance", "kraken", "exchangeratesapi"}
 	if len(got) != len(wantSources) {
 		t.Fatalf("filterForVWAP: len=%d want %d (%v)", len(got), len(wantSources), got)
 	}
@@ -1276,13 +1276,13 @@ func TestTick_MinUSDVolumeFilter(t *testing.T) {
 	usd, _ := canonical.NewFiatAsset("USD")
 	pair, _ := canonical.NewPair(xlm, usd)
 
-	// Trade from polygon-forex (FX class, registered IncludeInVWAP=true).
+	// Trade from exchangeratesapi (FX class, registered IncludeInVWAP=true).
 	// FX pollers stamp amounts at 1e6, not the CEX 1e8 — the registry
 	// declares AmountDecimals:6 and the gate honours it per trade
 	// (MNY-05), so callers below express `q` in 1e6 units.
 	mkFXTrade := func(q *big.Int, ts time.Time) canonical.Trade {
 		return canonical.Trade{
-			Source:      "polygon-forex",
+			Source:      "exchangeratesapi",
 			Ledger:      0,
 			TxHash:      "0000000000000000000000000000000000000000000000000000000000000000",
 			OpIndex:     0,
@@ -1425,7 +1425,7 @@ func TestTick_MinUSDVolumeFilter(t *testing.T) {
 		eur, _ := canonical.NewFiatAsset("EUR")
 		eurPair, _ := canonical.NewPair(xlm, eur)
 		thinTrade := canonical.Trade{
-			Source:      "polygon-forex",
+			Source:      "exchangeratesapi",
 			Ledger:      0,
 			TxHash:      "0000000000000000000000000000000000000000000000000000000000000000",
 			Timestamp:   time.Now(),
@@ -1457,7 +1457,7 @@ func TestTick_MinUSDVolumeFilter(t *testing.T) {
 	// gutting most of a window must not let the few survivors ride
 	// in on the pre-filter total.
 	//
-	// Setup: one FX-class trade ($1k, polygon-forex registered as
+	// Setup: one FX-class trade ($1k, exchangeratesapi registered as
 	// ClassExchange/IncludeInVWAP=true, retained) + one trade from
 	// an UNKNOWN source ($100k, dropped by filterForVWAP because
 	// the registry's fail-closed default is IncludeInVWAP=false).
@@ -1469,7 +1469,7 @@ func TestTick_MinUSDVolumeFilter(t *testing.T) {
 	// survivor at 1e6, the unknown source at the 1e8 registry fallback.
 	t.Run("class filter gutted window: drops despite pre-filter clearing threshold", func(t *testing.T) {
 		survivor := canonical.Trade{
-			Source:      "polygon-forex", // ClassExchange, IncludeInVWAP=true
+			Source:      "exchangeratesapi", // ClassExchange, IncludeInVWAP=true
 			Ledger:      0,
 			TxHash:      "0000000000000000000000000000000000000000000000000000000000000000",
 			OpIndex:     0,
@@ -2113,7 +2113,7 @@ func TestTick_AnomalyWarn_EmitsMetric(t *testing.T) {
 // constant.
 //
 // The off-chain convention is not uniform. external.Registry declares
-// AmountDecimals:6 for the FX pollers (massive / polygon-forex /
+// AmountDecimals:6 for the FX pollers (massive / exchangeratesapi /
 // exchangeratesapi) with the comment "so the USD-volume gate scales
 // them right" — a declaration the gate did not read: it took 8 for
 // every fiat:USD-quoted trade whoever emitted it, understating a
@@ -2158,7 +2158,7 @@ func TestUSDVolumeForPairPerTrade_PerSourceDecimals(t *testing.T) {
 
 	t.Run("fiat:USD from a 6dp FX source", func(t *testing.T) {
 		// $10,000 at the FX pollers' 1e6 scale.
-		trades := []canonical.Trade{mk(usdPair, "polygon-forex", 10_000_000_000, 0)}
+		trades := []canonical.Trade{mk(usdPair, "exchangeratesapi", 10_000_000_000, 0)}
 		total, per := usdVolumeForPairPerTrade(usdPair, trades, classicPegs, nil)
 		if math.Abs(total-10_000) > 0.01 {
 			t.Fatalf("total = %.2f, want 10000 — a 1e8 divisor yields %.2f", total, 10_000.0/100)
@@ -2178,8 +2178,8 @@ func TestUSDVolumeForPairPerTrade_PerSourceDecimals(t *testing.T) {
 
 	t.Run("mixed 6dp + 8dp bucket sums correctly", func(t *testing.T) {
 		trades := []canonical.Trade{
-			mk(usdPair, "binance", 3_000_000_000_000, 0),    // $30,000 at 1e8
-			mk(usdPair, "polygon-forex", 10_000_000_000, 1), // $10,000 at 1e6
+			mk(usdPair, "binance", 3_000_000_000_000, 0),       // $30,000 at 1e8
+			mk(usdPair, "exchangeratesapi", 10_000_000_000, 1), // $10,000 at 1e6
 		}
 		total, _ := usdVolumeForPairPerTrade(usdPair, trades, classicPegs, nil)
 		if math.Abs(total-40_000) > 0.01 {

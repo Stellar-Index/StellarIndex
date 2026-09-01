@@ -7,7 +7,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/sources/external/scale"
 )
 
-// decimalStringToScaledInt mirrors the helper in polygonforex /
+// decimalStringToScaledInt mirrors the helper in exchangeratesapi /
 // CMC / coingecko. Pin edges so a refactor that breaks
 // negative-handling, fractional truncation, or scientific-notation
 // rejection gets caught.

@@ -76,7 +76,7 @@ groups:
       # missed cycles, comfortably above the normal cadence + transient
       # upstream-fetch failures, and ~6.75 days below the 7-day cliff.
       # `max` (no by) is fleet-level: fires only when EVERY FX source's
-      # freshest quote is stale, so re-enabling polygon-forex /
+      # freshest quote is stale, so re-enabling exchangeratesapi /
       # exchangeratesapi as fallbacks naturally clears it. Found silent
       # ~4h on 2026-07-07 with no alert — this is the fix.
       - alert: stellarindex_external_fx_feed_stale

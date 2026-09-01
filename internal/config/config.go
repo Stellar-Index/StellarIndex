@@ -626,7 +626,6 @@ type ExternalConfig struct {
 	Bitstamp         ExternalVenueConfig         `toml:"bitstamp"         doc:"Bitstamp v2 WebSocket live_trades streamer (XLM/USD, XLM/EUR, XLM/GBP, XLM/BTC, BTC/USD, BTC/EUR, ETH/USD)."`
 	Coinbase         ExternalVenueConfig         `toml:"coinbase"         doc:"Coinbase Exchange WebSocket matches streamer (XLM-USD, BTC-USD, ETH-USD)."`
 	ExchangeRatesApi ExchangeRatesApiVenueConfig `toml:"exchangeratesapi" doc:"ExchangeRatesApi.io REST poller for fiat cross-rates (Professional tier required for USD base + 1-min cadence + redistribution)."`
-	PolygonForex     PolygonForexVenueConfig     `toml:"polygon_forex"    doc:"Polygon.io Forex Snapshot poller — institutional-grade FX, Advanced tier ($199/mo+) required."`
 	CoinGecko        ExternalVenueConfig         `toml:"coingecko"        doc:"CoinGecko /simple/price poller. Class=aggregator (divergence-only). Free tier works; no auth."`
 	CoinMarketCap    CoinMarketCapVenueConfig    `toml:"coinmarketcap"    doc:"CoinMarketCap /v2 quotes poller. Class=aggregator. Paid API key; Standard tier ($79/mo+) for commercial redistribution."`
 	CryptoCompare    CryptoCompareVenueConfig    `toml:"cryptocompare"    doc:"CryptoCompare /data/pricemulti poller. Class=aggregator. Paid API key via Authorization header."`
@@ -660,15 +659,6 @@ type ExchangeRatesApiVenueConfig struct {
 	Enabled bool   `toml:"enabled" doc:"Whether this connector runs. Off by default." default:"false"`
 	APIKey  string `toml:"api_key" doc:"ExchangeRatesApi access key. Prefer env var; TOML fallback exists for local-dev convenience." env:"EXCHANGERATESAPI_KEY" default:""`
 	Base    string `toml:"base" doc:"Base currency (USD, EUR, GBP, …). Defaults to USD. Free tier locked to EUR; paid tier accepts any allow-listed fiat." default:"USD"`
-}
-
-// PolygonForexVenueConfig carries the Polygon.io Forex connector
-// settings. Advanced tier (~$199/mo) required for the snapshot
-// endpoint; lower tiers produce ErrAPIRejected at first poll.
-type PolygonForexVenueConfig struct {
-	Enabled bool   `toml:"enabled" doc:"Whether this connector runs. Off by default." default:"false"`
-	APIKey  string `toml:"api_key" doc:"Polygon.io API key. Prefer env var POLYGON_API_KEY; TOML fallback for local-dev only." env:"POLYGON_API_KEY" default:""`
-	Base    string `toml:"base" doc:"Base currency filter. Only tickers matching C:<base><quote> emit. Defaults to USD." default:"USD"`
 }
 
 // CoinMarketCapVenueConfig carries the CMC Pro API auth + toggle.
@@ -1924,7 +1914,6 @@ func defaultExternalConfig() ExternalConfig {
 		Bitstamp:         ExternalVenueConfig{Enabled: false},
 		Coinbase:         ExternalVenueConfig{Enabled: false},
 		ExchangeRatesApi: ExchangeRatesApiVenueConfig{Enabled: false, Base: "USD"},
-		PolygonForex:     PolygonForexVenueConfig{Enabled: false, Base: "USD"},
 		CoinGecko:        ExternalVenueConfig{Enabled: false},
 		CoinMarketCap:    CoinMarketCapVenueConfig{Enabled: false},
 		CryptoCompare:    CryptoCompareVenueConfig{Enabled: false},

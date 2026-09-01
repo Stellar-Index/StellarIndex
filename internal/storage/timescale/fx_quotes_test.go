@@ -199,7 +199,7 @@ func TestFXSnapFromRows_Cross(t *testing.T) {
 	older := newer.Add(-24 * time.Hour)
 	rows := map[string]fxSnapRow{
 		"EUR": {Bucket: newer, RateUSD: "1.085", Source: "massive"},
-		"GBP": {Bucket: older, RateUSD: "1.25", Source: "polygon-forex"},
+		"GBP": {Bucket: older, RateUSD: "1.25", Source: "exchangeratesapi"},
 	}
 	price, obs, src, err := fxSnapFromRows(mkFiatPair(t, "EUR", "GBP"), rows)
 	if err != nil {
@@ -212,8 +212,11 @@ func TestFXSnapFromRows_Cross(t *testing.T) {
 	if !obs.Equal(older) {
 		t.Errorf("observedAt = %v, want the older bucket %v", obs, older)
 	}
-	if src != "massive+polygon-forex" {
-		t.Errorf("source = %q, want massive+polygon-forex", src)
+	// Sorted join: exchangeratesapi < massive alphabetically. The fixture
+	// used to pair massive with polygon-forex, which sorted the other way —
+	// the assertion moved with the fixture, the sort property did not change.
+	if src != "exchangeratesapi+massive" {
+		t.Errorf("source = %q, want exchangeratesapi+massive (sorted join)", src)
 	}
 }
 

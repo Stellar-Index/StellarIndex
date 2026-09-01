@@ -1697,7 +1697,7 @@ func usdVolumeForPairPerTrade(pair canonical.Pair, batch []canonical.Trade, clas
 //
 // The off-chain convention is NOT uniform: the CEX pollers stamp 8
 // decimals, but the FX pollers stamp 6
-// ([external.Registry]'s `massive` / `polygon-forex` /
+// ([external.Registry]'s `massive` /
 // `exchangeratesapi` all declare AmountDecimals:6, with the comment
 // "so the USD-volume gate scales them right"). Valuing a 6dp
 // fiat:USD-quoted amount at 1e8 understates it 100× — enough on its own

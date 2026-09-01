@@ -20,7 +20,7 @@ import (
 
 // Off-chain amount scaling is NOT uniform (CLAUDE.md; CS-040): CEX and
 // reference-aggregator sources stamp amounts at 10^8, but the FX pollers
-// (ecb / exchangeratesapi / polygon-forex / massive) stamp 10^6. The
+// (ecb / exchangeratesapi / massive) stamp 10^6. The
 // per-source authority is external.Registry's AmountDecimals, read via
 // Metadata.AmountScaleDecimals() — the USD-volume paths below consult it
 // instead of a hard-coded 8, which mis-valued FX trades 100×.
@@ -1650,7 +1650,7 @@ func (s *Store) TradesInRangeAfter(
 //     ticker within [fxQuotesSnapLookback] wins; USD legs are exact 1
 //     (rate_usd is USD-anchored). See [fxSnapFromRows] for the exact-
 //     Rat cross/inversion math.
-//  2. `trades` — the legacy connector-path fallback (polygon-forex /
+//  2. `trades` — the legacy connector-path fallback (exchangeratesapi /
 //     exchangeratesapi rows; disabled in production but kept for
 //     compatibility if re-enabled). Fires only when fx_quotes has no
 //     row in the lookback. When multiple FX sources have a quote

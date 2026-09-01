@@ -64,7 +64,6 @@ import (
 	externalecb "github.com/Stellar-Index/StellarIndex/internal/sources/external/ecb"
 	externalexchangerates "github.com/Stellar-Index/StellarIndex/internal/sources/external/exchangeratesapi"
 	externalkraken "github.com/Stellar-Index/StellarIndex/internal/sources/external/kraken"
-	externalpolygonforex "github.com/Stellar-Index/StellarIndex/internal/sources/external/polygonforex"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/sorobanevents"
 	soroswap_router "github.com/Stellar-Index/StellarIndex/internal/sources/soroswap_router"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
@@ -919,31 +918,6 @@ func startExternalConnectors( //nolint:gocognit,gocyclo,funlen // dispatch-heavy
 		enabled = append(enabled, externalexchangerates.SourceName)
 	}
 
-	if cfg.PolygonForex.Enabled {
-		p, err := externalpolygonforex.NewPoller(cfg.PolygonForex.APIKey)
-		if err != nil {
-			return nil, nil, fmt.Errorf("polygon-forex: %w", err)
-		}
-		if cfg.PolygonForex.Base != "" {
-			p.Base = cfg.PolygonForex.Base
-		}
-		// Pair list: the union of every fiat appearing in the
-		// enabled streamers' default pair sets. For v1 we use
-		// a static default set — EUR/GBP/JPY/CAD/AUD/CHF + any
-		// base-currency override. Operators can extend via config
-		// in a follow-up PR.
-		pairs := defaultFXPairs(p.Base)
-		pollers = append(pollers, external.PollerSpec{
-			Poller: p,
-			Pairs:  pairs,
-		})
-		logger.Info("external poller enabled",
-			"source", externalpolygonforex.SourceName,
-			"base", p.Base,
-			"symbols", len(pairs))
-		enabled = append(enabled, externalpolygonforex.SourceName)
-	}
-
 	// Aggregator pollers: cross-check only, class=aggregator →
 	// emitted OracleUpdates excluded from VWAP. Pair list is the
 	// union of fiat-quoted crypto pairs across enabled streamers;
@@ -1479,7 +1453,7 @@ func defaultAggregatorPairs() []canonical.Pair {
 }
 
 // defaultFXPairs returns the G10-ish fiat cross-rate set against
-// the given base currency. These feed ExchangeRatesApi / Polygon.io
+// the given base currency. These feed ExchangeRatesApi
 // / ECB — all FX pollers share the same target currency list.
 // Operator overrides via per-poller Symbols field when needed.
 func defaultFXPairs(base string) []canonical.Pair {

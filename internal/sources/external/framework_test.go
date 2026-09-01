@@ -14,7 +14,7 @@ func TestRegistry_KnownSourcesClassified(t *testing.T) {
 		"reflector-dex", "reflector-cex", "reflector-fx",
 		"redstone", "band",
 		"binance", "kraken", "bitstamp", "coinbase",
-		"massive", "polygon-forex", "exchangeratesapi",
+		"massive", "exchangeratesapi",
 		"coingecko", "coinmarketcap", "cryptocompare",
 		"ecb",
 	}
@@ -35,7 +35,7 @@ func TestIsOnChain_Partition(t *testing.T) {
 		// CEX
 		"binance": true, "kraken": true, "bitstamp": true, "coinbase": true,
 		// FX
-		"massive": true, "polygon-forex": true, "exchangeratesapi": true,
+		"massive": true, "exchangeratesapi": true,
 		// aggregators
 		"coingecko": true, "coinmarketcap": true, "cryptocompare": true,
 		// sovereign anchor
@@ -146,7 +146,7 @@ func TestRegistry_BackfillSafePolicy(t *testing.T) {
 		"blend",         // audited 2026-05-02 (11 contracts, 3 unique WASMs, no mid-life upgrades over 11.79M-ledger walk) — see docs/operations/wasm-audits/blend.md §"Phase 2 results"
 		"blend_emitter", // audited 2026-07-10 (ClickHouse-lake-only; all 469 lifetime events shape-verified, 465/465 distribute exhaustively) — see docs/operations/wasm-audits/blend_emitter.md
 		"binance", "kraken", "bitstamp", "coinbase",
-		"massive", "polygon-forex", "exchangeratesapi",
+		"massive", "exchangeratesapi",
 		"coingecko", "coinmarketcap", "cryptocompare",
 		"ecb",
 	}
@@ -203,8 +203,8 @@ func TestFXSources_DeterministicLexOrder(t *testing.T) {
 // operator adds a new SubclassFX vendor, the snap rule picks it up
 // without code changes elsewhere.
 func TestIsFXSource_RegistryDriven(t *testing.T) {
-	if !IsFXSource("polygon-forex") {
-		t.Error("IsFXSource(polygon-forex) = false, want true")
+	if !IsFXSource("exchangeratesapi") {
+		t.Error("IsFXSource(exchangeratesapi) = false, want true")
 	}
 	if !IsFXSource("exchangeratesapi") {
 		t.Error("IsFXSource(exchangeratesapi) = false, want true")
