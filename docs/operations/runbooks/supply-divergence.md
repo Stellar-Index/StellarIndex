@@ -113,8 +113,9 @@ If the cause is a **stale SDF exclusion set** (the common case):
 - [ ] Update BOTH lists in one PR (secrets via
       `ansible-vault edit` if any balance is sensitive; the account
       list is public network truth). r1 config is ansible-managed —
-      the change lands in `configs/ansible/` in the same PR (CLAUDE.md
-      "r1 configuration is ansible-managed").
+      the change lands in `configs/ansible/` in the same PR
+      (docs/operations/maintainer-workflow.md, "r1 configuration is
+      ansible-managed").
 - [ ] Apply: `ansible-playbook -i inventory/r1.yml
       playbooks/archival-node.yml --tags supply --check --diff` then
       without `--check`.
