@@ -486,8 +486,8 @@ never do; that's expected, not broken.
   `stellarindex-ops` against a large ledger range: an unwindowed
   re-derive on an under-provisioned box can balloon memory and take
   down colocated services (this happened on r1 on 2026-07-05 — see
-  CLAUDE.md's "Heavy one-shot jobs on r1" section for the full
-  incident).
+  docs/operations/maintainer-workflow.md's "Heavy one-shot jobs"
+  section for the full incident).
 - **Backfilling / catching up after downtime:** see
   [`docs/operations/backfill-procedure.md`](backfill-procedure.md)
   and, for Soroban-derived sources specifically,
