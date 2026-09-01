@@ -278,7 +278,7 @@ func TestTick_Triangulation_FXSnap_HappyPath(t *testing.T) {
 	fx := &fakeFXStore{
 		quote:      new(big.Rat).SetFrac(big.NewInt(90), big.NewInt(100)),
 		observedAt: time.Now().UTC().Add(-1 * time.Minute),
-		source:     "polygon-forex",
+		source:     "exchangeratesapi",
 	}
 
 	o := New(nil, cache, Config{

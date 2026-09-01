@@ -163,11 +163,6 @@ cursor_store_scheme   = "postgres"
   # api_key = ""    # prefer env: EXCHANGERATESAPI_KEY
   # base    = "USD"
 
-  [external.polygon_forex]
-  enabled = false
-  # api_key = ""    # prefer env: POLYGON_API_KEY
-  # base    = "USD"
-
   # ClassAggregator — divergence signal only, excluded from VWAP.
   #
   # CoinGecko tightened the unauthenticated-tier throttling in late

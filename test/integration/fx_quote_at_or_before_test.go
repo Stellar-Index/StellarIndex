@@ -50,9 +50,9 @@ func TestFXQuoteAtOrBefore(t *testing.T) {
 	// 0.93 EUR per USD:    base=1e8,    quote=93_000_000
 	// 0.94 EUR per USD:    base=1e8,    quote=94_000_000
 	trades := []c.Trade{
-		mkIntegrationTrade("polygon-forex", 1, t0, pair, 100_000_000, 92_000_000),
+		mkIntegrationTrade("exchangeratesapi", 1, t0, pair, 100_000_000, 92_000_000),
 		mkIntegrationTrade("exchangeratesapi", 2, t0.Add(15*time.Minute), pair, 100_000_000, 93_000_000),
-		mkIntegrationTrade("polygon-forex", 3, t0.Add(30*time.Minute), pair, 100_000_000, 94_000_000),
+		mkIntegrationTrade("exchangeratesapi", 3, t0.Add(30*time.Minute), pair, 100_000_000, 94_000_000),
 	}
 	for _, tr := range trades {
 		if err := store.InsertTrade(ctx, tr); err != nil {
@@ -90,8 +90,8 @@ func TestFXQuoteAtOrBefore(t *testing.T) {
 		if err != nil {
 			t.Fatalf("FXQuoteAtOrBefore: %v", err)
 		}
-		if src != "polygon-forex" {
-			t.Errorf("got source %q, want polygon-forex", src)
+		if src != "exchangeratesapi" {
+			t.Errorf("got source %q, want exchangeratesapi", src)
 		}
 		if !obs.Equal(t0.Add(30 * time.Minute)) {
 			t.Errorf("got observed_at %v, want %v", obs, t0.Add(30*time.Minute))
@@ -103,8 +103,8 @@ func TestFXQuoteAtOrBefore(t *testing.T) {
 		if err != nil {
 			t.Fatalf("FXQuoteAtOrBefore: %v", err)
 		}
-		if src != "polygon-forex" {
-			t.Errorf("got source %q, want polygon-forex", src)
+		if src != "exchangeratesapi" {
+			t.Errorf("got source %q, want exchangeratesapi", src)
 		}
 	})
 
@@ -136,7 +136,7 @@ func TestFXQuoteAtOrBefore(t *testing.T) {
 		if src == "binance" {
 			t.Errorf("filter leaked non-FX source %q (observed_at=%v)", src, obs)
 		}
-		// Latest FX should still be the 30-min polygon-forex row.
+		// Latest FX should still be the 30-min exchangeratesapi row.
 		if !obs.Equal(t0.Add(30 * time.Minute)) {
 			t.Errorf("got observed_at %v, want %v (latest FX row)", obs, t0.Add(30*time.Minute))
 		}
@@ -145,7 +145,7 @@ func TestFXQuoteAtOrBefore(t *testing.T) {
 	// NOTE: every subtest above exercises the LEGACY trades fallback —
 	// fx_quotes is empty in this test's database, so the fx_quotes-first
 	// read (BACKLOG #42) misses and the connector-path trades rows win.
-	// That IS the compatibility contract: re-enabled polygon-forex /
+	// That IS the compatibility contract: re-enabled exchangeratesapi /
 	// exchangeratesapi connectors keep working when the massive feed has
 	// no rows. The fx_quotes-first behaviour is proven in
 	// TestFXQuoteAtOrBeforeFXQuotesFirst below.
@@ -153,8 +153,11 @@ func TestFXQuoteAtOrBefore(t *testing.T) {
 	t.Run("FXSources is deterministic and lex-ordered", func(t *testing.T) {
 		got := external.FXSources()
 		// massive (the forex worker's fx_quotes feed) was bridged into the
-		// registry as a SubclassFX source (P0-7) — lex-sorted between the two.
-		want := []string{"exchangeratesapi", "massive", "polygon-forex"}
+		// registry as a SubclassFX source (P0-7). polygon-forex was removed
+		// 2026-09-01 — polygon.io redirects to massive.com, so it was the same
+		// upstream as massive under a dead name, and carrying IncludeInVWAP:true
+		// meant enabling it would have double-counted massive's own rates.
+		want := []string{"exchangeratesapi", "massive"}
 		if len(got) != len(want) {
 			t.Fatalf("FXSources len=%d, want %d (%v)", len(got), len(want), got)
 		}
@@ -201,7 +204,7 @@ func TestFXQuoteAtOrBeforeFXQuotesFirst(t *testing.T) {
 
 	// Legacy connector-path row: 0.94 EUR per USD at cutoff-2h.
 	// FX connector trades use the uniform 1e8 scale on each side.
-	legacy := mkIntegrationTrade("polygon-forex", 11, cutoff.Add(-2*time.Hour), pair, 100_000_000, 94_000_000)
+	legacy := mkIntegrationTrade("exchangeratesapi", 11, cutoff.Add(-2*time.Hour), pair, 100_000_000, 94_000_000)
 	if err := store.InsertTrade(ctx, legacy); err != nil {
 		t.Fatalf("InsertTrade: %v", err)
 	}
@@ -227,7 +230,7 @@ func TestFXQuoteAtOrBeforeFXQuotesFirst(t *testing.T) {
 			t.Fatalf("FXQuoteAtOrBefore: %v", err)
 		}
 		if src != "massive" {
-			t.Errorf("source = %q, want massive (fx_quotes must win over the polygon-forex trades row)", src)
+			t.Errorf("source = %q, want massive (fx_quotes must win over the exchangeratesapi trades row)", src)
 		}
 		if !obs.Equal(day) {
 			t.Errorf("observedAt = %v, want the fx_quotes bucket %v", obs, day)

@@ -117,9 +117,12 @@ var Registry = map[string]Metadata{
 	// /v1/sources classifies it as external FX (SubclassFX → IsOnChain=false)
 	// instead of fail-closing through Lookup's unknown-source fallback.
 	//
-	// `polygon-forex` + `exchangeratesapi` are the SAME-role external.Connector
-	// implementations (trades-path, currently disabled); polygon-forex is the
-	// same upstream provider as `massive`. The X2.5 triangulation forex-snap
+	// `exchangeratesapi` is a SAME-role external.Connector implementation
+	// (trades-path, currently disabled). A `polygon-forex` connector was
+	// removed on 2026-09-01: polygon.io now redirects to massive.com, so it
+	// was the same upstream as `massive` under a dead name — and being
+	// registered with IncludeInVWAP:true meant enabling it would have
+	// double-counted massive's rates. The X2.5 triangulation forex-snap
 	// (FXQuoteAtOrBefore) reads fx_quotes-FIRST (the massive feed's table;
 	// BACKLOG #42) and only falls back to `trades` filtered by FXSources()
 	// when fx_quotes has no row in the lookback — so these connector-path
@@ -127,7 +130,6 @@ var Registry = map[string]Metadata{
 	// FX pollers stamp amounts at 1e6 (DefaultDecimals=6), NOT the CEX 1e8 —
 	// AmountDecimals:6 so the USD-volume gate scales them right (CS-040).
 	"massive":          {Class: ClassExchange, Subclass: SubclassFX, DefaultWeight: 100, IncludeInVWAP: true, Paid: true, BackfillAvailable: true, BackfillSafe: true, AmountDecimals: 6},
-	"polygon-forex":    {Class: ClassExchange, Subclass: SubclassFX, DefaultWeight: 100, IncludeInVWAP: true, Paid: true, BackfillAvailable: true, BackfillSafe: true, AmountDecimals: 6},
 	"exchangeratesapi": {Class: ClassExchange, Subclass: SubclassFX, DefaultWeight: 100, IncludeInVWAP: true, Paid: true, BackfillAvailable: true, BackfillSafe: true, AmountDecimals: 6},
 
 	// ─── Aggregators (divergence signal; excluded from VWAP) ─────

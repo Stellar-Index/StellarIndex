@@ -7,7 +7,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/sources/external/scale"
 )
 
-// decimalStringToScaledInt mirrors the helper in polygonforex /
+// decimalStringToScaledInt mirrors the helper in exchangeratesapi /
 // exchangeratesapi. CMC's prices come from /v2 quotes/latest as
 // floats; the helper is the back-stop converter when we already
 // have a decimal string. Pin the edge cases so a refactor that

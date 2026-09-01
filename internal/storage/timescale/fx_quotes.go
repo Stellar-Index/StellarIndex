@@ -130,7 +130,7 @@ func (s *Store) ListFXHistory(ctx context.Context, ticker string, from, to time.
 //
 // The triangulation forex-snap ([Store.FXQuoteAtOrBefore]) historically
 // read the `trades` hypertable filtered by external.FXSources() — the
-// connector-path FX sources (polygon-forex / exchangeratesapi / ecb)
+// connector-path FX sources (exchangeratesapi / ecb)
 // which are DISABLED in production. The ACTIVE FX feed (`massive`, the
 // internal/sources/external/forex worker) writes the `fx_quotes` hypertable
 // instead, so the snap always soft-fell-back to cached VWAP while fresh

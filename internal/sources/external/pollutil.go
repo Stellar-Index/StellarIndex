@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 // pollutil.go — shared scaffolding for the polling connectors (the
-// FX pollers in particular: ecb / exchangeratesapi / polygonforex).
+// FX pollers in particular: ecb / exchangeratesapi).
 // Extracted from three near-identical per-package copies
 // (maintainability audit D3 cluster 1 / D1 M0-1 follow-up): the HTTP
 // GET plumbing, the secret-redacting transport-error formatter, and

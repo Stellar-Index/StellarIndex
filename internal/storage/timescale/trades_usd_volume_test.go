@@ -83,8 +83,8 @@ func TestTradeUSDVolume_PopulatedForExternalUSDPaths(t *testing.T) {
 			// AmountDecimals: 6; CS-040 / audit 2026-07-31): 500_000
 			// raw units are $0.50. The pre-fix hard-coded 8 valued
 			// this 100× low ($0.005).
-			name:   "polygon-forex + fiat:USD → 1e6 → $0.50",
-			source: "polygon-forex",
+			name:   "exchangeratesapi + fiat:USD → 1e6 → $0.50",
+			source: "exchangeratesapi",
 			quote:  usd,
 			amt:    500_000,
 			want:   "0.50000000",

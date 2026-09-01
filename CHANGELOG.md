@@ -52,6 +52,19 @@ against.
   fired when Stellar was merely busy.
   ([#465](https://github.com/Stellar-Index/StellarIndex/pull/465))
 
+### Removed
+
+- **Removed the `polygon-forex` connector.** polygon.io now redirects to
+  massive.com, so it was the same upstream provider as our active
+  `massive` FX feed under a dead name. It was not merely cosmetic: the
+  registry carried it with `IncludeInVWAP: true`, so enabling it would
+  have pulled the same upstream rates into VWAP twice. Removes the
+  package, registry entry, config type and env override, indexer
+  wiring, the `verify-external` poller, three rule-file label matchers,
+  and the prose references across Go and YAML. `exchangeratesapi`
+  remains as the surviving same-role trades-path connector.
+  ([#466](https://github.com/Stellar-Index/StellarIndex/pull/466))
+
 ## [v0.55.0] — 2026-09-01
 
 ### Fixed
