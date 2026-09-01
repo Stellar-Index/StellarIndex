@@ -15,6 +15,22 @@ against.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Restored the oracle `raw:` consumer guards deleted by #305's squash
+  merge** (issue #339). Auditing them against HEAD and live production
+  found the *code* already correct — divergence is safe by construction
+  (`Pair.Validate` refuses a raw leg, `LookupPrice` takes a `Pair`, and
+  `LatestOracleObservation` matches `asset = ANY($2)`), and
+  `/v1/oracle/streams` honours its opt-in contract (verified live: 119
+  rows with 0 raw by default, 120 including `raw:USDT0` with
+  `include_unmapped=true`). What was missing was the proof. Two guards
+  restored: one pinning that no raw key can reach the divergence read
+  seam, one requiring every scanning read of `oracle_updates` to key by
+  canonical asset, filter raw, or carry a written exemption. Both
+  mutation-tested in each direction.
+  ([#451](https://github.com/Stellar-Index/StellarIndex/pull/451))
+
 ### Changed
 
 - **CLAUDE.md is now about the project, not about one deployment.** 133
