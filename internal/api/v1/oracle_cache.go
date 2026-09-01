@@ -60,6 +60,62 @@ type oracleCacheEntry struct {
 	err error
 }
 
+// oracleCacheMaxEntries bounds the entry map.
+//
+// The key is the caller's sorted asset list plus the source filter, and
+// `/v1/oracle/latest?asset=` is public and unauthenticated — every
+// distinct asset an anonymous caller names mints a new key. Successful
+// fills were never evicted (only failures delete their entry, and an
+// empty result for an asset no oracle quotes is a SUCCESS), so a walk of
+// the asset key space grew the map without limit until the process OOMed.
+//
+// The cap + oldest-first eviction mirrors the bounded siblings
+// (historyCacheMaxEntries, assetDetailCacheMaxEntries) and sits far above
+// the real working set: the SLA probe and the explorer poll a handful of
+// assets, and a multi-asset request collapses to one key.
+const oracleCacheMaxEntries = 4096
+
+// evictIfFullLocked drops the oldest-filled entry when the map is at
+// capacity. Caller must hold c.mu, and must only call it when admitting a
+// NEW key — replacing an expired entry is size-neutral and would
+// otherwise cost an unrelated live key for nothing.
+//
+// In-flight entries (at.IsZero()) are never evicted — dropping one would
+// orphan its waiters from the fill that is about to close their channel.
+// The map can therefore sit briefly above the cap when every entry is a
+// live fill, but that overshoot is bounded by the number of concurrent
+// requests, not by the key space, and reclaims as those fills land.
+// Evicting a still-fresh entry costs at most one extra upstream query on
+// the next request for it, so correctness is unaffected. With the cap far
+// above the working set the scan is cheap and runs only on
+// insert-at-capacity.
+func (c *CachedOracleReader) evictIfFullLocked(op string) {
+	if len(c.entries) < oracleCacheMaxEntries {
+		return
+	}
+	var (
+		oldestKey string
+		oldestAt  time.Time
+	)
+	for k, e := range c.entries {
+		if e.at.IsZero() {
+			continue // fill in flight — waiters depend on it
+		}
+		if oldestKey == "" || e.at.Before(oldestAt) {
+			oldestKey, oldestAt = k, e.at
+		}
+	}
+	if oldestKey != "" {
+		delete(c.entries, oldestKey)
+		// NOTE: `evicted` is NOT a read outcome, so the
+		// api_cache_miss_rate_high alert filters it (and
+		// `refresh_error`) out of its denominator in both rule trees.
+		// Left unfiltered it cancelled the very miss storm it is meant
+		// to catch: miss/(miss+evicted) can never exceed 0.5.
+		obs.APICacheOpsTotal.WithLabelValues("oracle", op, "evicted").Inc()
+	}
+}
+
 // NewCachedOracleReader wraps `upstream` with a TTL cache. ttl=0
 // disables caching (every call passes through). 3 s is the
 // production default — well below every oracle's publish cadence.
@@ -155,6 +211,9 @@ func (c *CachedOracleReader) fetch(
 	// (C) Leader: take the slot, run the upstream call inline.
 	done := make(chan struct{})
 	entry := &oracleCacheEntry{flight: done}
+	if !ok {
+		c.evictIfFullLocked(op)
+	}
 	c.entries[key] = entry
 	c.mu.Unlock()
 	obs.APICacheOpsTotal.WithLabelValues("oracle", op, "miss").Inc()

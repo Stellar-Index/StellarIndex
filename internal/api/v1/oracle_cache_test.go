@@ -3,6 +3,7 @@ package v1
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -174,6 +175,66 @@ func TestCachedOracleReader_DoesNotCacheError(t *testing.T) {
 	// Both calls must hit upstream — error wasn't cached.
 	if got := up.updatesCalls.Load(); got != 2 {
 		t.Errorf("upstream called %d times under repeated error; want 2", got)
+	}
+}
+
+// TestCachedOracleReader_BoundedUnderAssetChurn is the regression proof for
+// the unbounded-map defect: /v1/oracle/latest?asset= is public and
+// unauthenticated, so an anonymous caller enumerating distinct assets must
+// NOT grow the entry map without limit. A long TTL is used so nothing
+// expires — forcing the SIZE cap, not expiry, to do the bounding, which is
+// exactly the crawler/attacker shape (fresh, distinct, never-repeated keys).
+//
+// The second half pins the POLICY, not just the bound: the entries dropped
+// must be the oldest ones. An evict-newest (or evict-the-key-just-asked-for)
+// implementation would satisfy the size assertion while pinning the first
+// 4096 keys forever and thrashing one rotating slot, so post-warm-up traffic
+// would never cache.
+func TestCachedOracleReader_BoundedUnderAssetChurn(t *testing.T) {
+	up := &fakeOracleUpstream{}
+	c := NewCachedOracleReader(up, time.Hour)
+
+	churn := func(i int) []canonical.Asset {
+		t.Helper()
+		a, err := canonical.NewOracleRawAsset(fmt.Sprintf("CHURN%d", i))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return []canonical.Asset{a}
+	}
+	const overshoot = 500
+	for i := 0; i < oracleCacheMaxEntries+overshoot; i++ {
+		if _, err := c.LatestOracleUpdatesForAssets(context.Background(), churn(i), ""); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	c.mu.Lock()
+	n := len(c.entries)
+	c.mu.Unlock()
+	if n > oracleCacheMaxEntries {
+		t.Fatalf("cache grew to %d entries under asset churn; must be bounded at %d", n, oracleCacheMaxEntries)
+	}
+
+	// The FIRST key of the churn is the oldest — it must be gone, so
+	// re-requesting it goes upstream again.
+	before := up.updatesCalls.Load()
+	if _, err := c.LatestOracleUpdatesForAssets(context.Background(), churn(0), ""); err != nil {
+		t.Fatal(err)
+	}
+	if got := up.updatesCalls.Load(); got != before+1 {
+		t.Errorf("the oldest key still served from cache after %d newer keys were admitted; "+
+			"eviction must drop the oldest", oracleCacheMaxEntries+overshoot)
+	}
+
+	// A key from the recent tail must still be resident — eviction reclaims
+	// from the cold end, so the live working set keeps its cache.
+	before = up.updatesCalls.Load()
+	if _, err := c.LatestOracleUpdatesForAssets(context.Background(), churn(oracleCacheMaxEntries+overshoot-100), ""); err != nil {
+		t.Fatal(err)
+	}
+	if got := up.updatesCalls.Load(); got != before {
+		t.Errorf("a recently-filled key was evicted (upstream re-called); eviction should drop the oldest, not the newest")
 	}
 }
 

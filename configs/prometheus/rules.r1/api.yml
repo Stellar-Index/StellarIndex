@@ -135,15 +135,22 @@ groups:
       # threshold on RATIO not absolute miss count: a cache that
       # serves 1 req/s with 100 % miss is fine, a cache that
       # serves 1000 req/s with 50 % miss is a phantom-key drift.
+      #
+      # Denominator is filtered to the READ outcomes (hit|miss|stale).
+      # `evicted` and `refresh_error` are side-events, not requests, and
+      # counting them made the alert unfirable exactly when it matters:
+      # a bounded cache under key enumeration emits one `evicted` per
+      # `miss`, so miss/(miss+evicted) tops out at 0.5 and never crosses
+      # the threshold.
       - alert: stellarindex_api_cache_miss_rate_high
         expr: |
           (
             sum by (cache, op) (rate(stellarindex_api_cache_ops_total{result="miss"}[5m]))
             /
-            sum by (cache, op) (rate(stellarindex_api_cache_ops_total[5m]))
+            sum by (cache, op) (rate(stellarindex_api_cache_ops_total{result=~"hit|miss|stale"}[5m]))
           ) > 0.5
           and
-          sum by (cache, op) (rate(stellarindex_api_cache_ops_total[5m])) > 0.1
+          sum by (cache, op) (rate(stellarindex_api_cache_ops_total{result=~"hit|miss|stale"}[5m])) > 0.1
         for: 10m
         labels:
           severity: ticket
