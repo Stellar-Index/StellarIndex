@@ -46,16 +46,35 @@
 # is an ERROR, not "no changes" — a gate that cannot see the diff has no
 # basis for a green.
 #
-# Usage: config-apply-gate.sh <version-tag> [acknowledged] [baseline-tag]
+# Usage: config-apply-gate.sh <version-tag> [acknowledged] [baseline-tag] [applied]
 #   <version-tag>   the deploying tag, e.g. v0.43.0
 #   [acknowledged]  "true" if the operator passed config_acknowledged=true
 #   [baseline-tag]  the version live on the host, if known; defaults to
 #                   the previous release tag by ancestry
+#   [applied]       space-separated surface prefixes this deploy already
+#                   applied AND VERIFIED automatically — see below
+#
+# The [applied] argument exists so automation can retire surfaces from
+# this gate ONE AT A TIME as they become self-applying, without weakening
+# it for the rest. Today the only such surface is
+# configs/prometheus/rules.r1/, applied by configs/prometheus/apply-rules.sh
+# in the deploy job — which validates with promtool, installs atomically,
+# reconciles deletions, reloads, and then POLLS /api/v1/rules until every
+# expected alert is loaded and healthy, restoring a backup if not.
+#
+# The bar for adding to this list is that last clause: the applier must
+# VERIFY the surface is live and fail if it is not. A step that merely
+# copies a file has not earned an exemption — it reproduces the exact
+# 2026-09-01 failure this gate exists to catch, where a merged ClickHouse
+# alert watched nothing and a deleted alert kept firing. The caller must
+# also pass a surface here ONLY when the apply actually succeeded on this
+# run; a pre-declared list would clear the gate for a step that never ran.
 set -uo pipefail
 
 VERSION="${1:?deploying version tag, e.g. v0.43.0}"
 ACK="${2:-false}"
 BASELINE="${3:-}"
+APPLIED="${4:-}"
 
 # Config surfaces a binary deploy does NOT apply. Directory prefixes are
 # git pathspecs: the trailing slash matches everything beneath them.
@@ -106,9 +125,54 @@ fi
 
 SUMMARY="${GITHUB_STEP_SUMMARY:-/dev/stdout}"
 
+# Subtract surfaces this deploy applied AND verified automatically. They
+# stay in SURFACES above (so the diff still SEES them, and a run that did
+# not apply them still gates on them) — they are only removed from what
+# the operator is asked to acknowledge.
+# Matching is an anchored PATH-PREFIX test, not a substring search. A
+# substring match would let a loose token ("rules") silently exempt
+# deploy/monitoring/rules/ as well as configs/prometheus/rules.r1/ —
+# quietly widening the exemption to a surface nothing applied, which is
+# the failure mode this whole gate exists to prevent.
+AUTO_APPLIED=""
+if [ -n "$APPLIED" ] && [ -n "$CHANGED" ]; then
+  remaining=""
+  while IFS= read -r path; do
+    [ -z "$path" ] && continue
+    exempt=""
+    for prefix in $APPLIED; do
+      case "$path" in
+        "$prefix"*) exempt=1; break ;;
+      esac
+    done
+    if [ -n "$exempt" ]; then
+      AUTO_APPLIED="${AUTO_APPLIED}${path}"$'\n'
+    else
+      remaining="${remaining}${path}"$'\n'
+    fi
+  done <<EOF
+$CHANGED
+EOF
+  CHANGED="$(printf '%s' "$remaining")"
+fi
+
+if [ -n "$AUTO_APPLIED" ]; then
+  n=$(printf '%s' "$AUTO_APPLIED" | grep -c . || true)
+  echo "✓ ${n} config surface(s) were applied and VERIFIED automatically by this deploy:"
+  printf '%s' "$AUTO_APPLIED" | sed 's/^/    /'
+  {
+    echo "- ✓ config-apply gate: **${n}** surface(s) applied *and verified live* automatically by this deploy (not left to the operator)."
+  } >>"$SUMMARY" 2>/dev/null || true
+fi
+
 if [ -z "$CHANGED" ]; then
-  echo "✓ no config-surface changes between ${PREV} and ${VERSION} — the binary deploy is complete."
-  echo "- ✓ config-apply gate: no config-surface changes between \`${PREV}\` and \`${VERSION}\`." >>"$SUMMARY" 2>/dev/null || true
+  if [ -n "$AUTO_APPLIED" ]; then
+    echo "✓ every changed config surface between ${PREV} and ${VERSION} was applied and verified automatically — nothing left for the operator."
+    echo "- ✓ config-apply gate: every changed surface was auto-applied and verified; no operator action outstanding." >>"$SUMMARY" 2>/dev/null || true
+  else
+    echo "✓ no config-surface changes between ${PREV} and ${VERSION} — the binary deploy is complete."
+    echo "- ✓ config-apply gate: no config-surface changes between \`${PREV}\` and \`${VERSION}\`." >>"$SUMMARY" 2>/dev/null || true
+  fi
   exit 0
 fi
 

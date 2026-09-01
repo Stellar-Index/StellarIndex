@@ -784,6 +784,26 @@ jobs:
           S=$(mktemp)
           printf 'HEALTHCHECKS_DEADMANSSWITCH_URL=https://hc-ping.com/x\nDISCORD_WEBHOOK_URL_PAGES=https://discord.com/api/webhooks/1/a\nDISCORD_WEBHOOK_URL_ALERTS=https://discord.com/api/webhooks/2/b\n' > "$S"
           ALERTMANAGER_SECRETS="$S" bash configs/alertmanager/apply.sh --check-only
+      - name: validate the rules-apply script (and that it still counts alerts)
+        # apply-rules.sh verifies a deploy by asserting every alert it
+        # extracted from the repo actually loaded on the host. That check
+        # is only worth the number it extracts: if the extractor silently
+        # stops matching, the script exits 0 having verified nothing —
+        # the same vacuous-guard shape as a test that asserts on an
+        # absent metric child. So don't just run it; cross-check its
+        # count against an independent one and fail on disagreement.
+        run: |
+          bash configs/prometheus/apply-rules.sh --check-only
+          extracted=$(bash configs/prometheus/apply-rules.sh --check-only \
+            | sed -nE 's/^apply-rules: expecting ([0-9]+) alert.*/\1/p')
+          independent=$(grep -rhoE '^\s*-\s*alert:\s*\S+' configs/prometheus/rules.r1/*.yml \
+            | sed -E 's/^\s*-\s*alert:\s*//' | sort -u | wc -l | tr -d ' ')
+          echo "extracted=$extracted independent=$independent"
+          if [ "$extracted" != "$independent" ] || [ "${extracted:-0}" -lt 50 ]; then
+            echo "::error::apply-rules.sh extracted $extracted alerts, independent count $independent." \
+                 "A drifting extractor makes deploy verification vacuous." >&2
+            exit 1
+          fi
 
   # ────────────────────────────────────────────────────────────────
   # Security — fast scans on every PR: govulncheck + gitleaks (below).

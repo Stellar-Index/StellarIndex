@@ -748,6 +748,63 @@ jobs:
             -e "pgbackrest_backup_enabled=${BACKUP_GATE}" \
             configs/ansible/playbooks/deploy-binary.yml
 
+      - name: Apply Prometheus rules (r1)
+        # The one config surface a deploy now applies ITSELF instead of
+        # asking the operator to remember. On 2026-09-01 the same gap bit
+        # three times in one day: a merged ClickHouse availability alert
+        # that watched nothing because its rule file never reached the
+        # host (and ClickHouse had no other health signal at all), and a
+        # DELETED alert that kept firing for hours from a rule file the
+        # repo no longer contained.
+        #
+        # Deliberately UNCONDITIONAL — not gated on "did this release
+        # change the rules". The failure above was drift that had already
+        # accumulated on the host, which a change-triggered apply would
+        # never have corrected. Reconciling every deploy is what makes
+        # the host's rule set a function of the repo rather than of the
+        # history of who remembered to run what.
+        #
+        # r1 only: rules.r1/ is the single-host overlay. The multi-host
+        # tree (deploy/monitoring/rules/) belongs to the ansible
+        # prometheus role, which requires a 2-host prometheus_pair
+        # inventory group r1 does not have — so it stays in the gate.
+        #
+        # continue-on-error: the binaries are already live by this point.
+        # A failed rule apply must be LOUD (the gate below then fails,
+        # because the surface stays unexempted) but must not abort the
+        # remaining post-deploy verification. apply-rules.sh restores its
+        # own backup on failure, so a bad apply leaves the previous rule
+        # set running rather than none.
+        id: prom_rules
+        if: inputs.region == 'r1'
+        continue-on-error: true
+        env:
+          DEPLOY_HOST: ${{ steps.region.outputs.host }}
+          DEPLOY_USER: ${{ steps.region.outputs.user }}
+        run: |
+          set -euo pipefail
+          # -i ~/.ssh/id_deploy: the key the "Configure SSH" step wrote.
+          # There is no default identity on the runner, so omitting this
+          # fails to authenticate — every other raw ssh here passes it.
+          SSH_OPTS=(-i ~/.ssh/id_deploy -o BatchMode=yes -o ConnectTimeout=20)
+          TARGET="${DEPLOY_USER}@${DEPLOY_HOST}"
+          scp "${SSH_OPTS[@]}" -q configs/prometheus/apply-rules.sh \
+            "${TARGET}:/tmp/apply-rules.sh"
+          ssh "${SSH_OPTS[@]}" "$TARGET" \
+            'rm -rf /tmp/rules.r1.incoming && mkdir -p /tmp/rules.r1.incoming'
+          scp "${SSH_OPTS[@]}" -q configs/prometheus/rules.r1/*.yml \
+            "${TARGET}:/tmp/rules.r1.incoming/"
+          # The script validates with promtool, installs atomically,
+          # removes files the repo no longer has, reloads via signal
+          # (the HTTP lifecycle API is disabled on r1), then POLLS
+          # /api/v1/rules until every expected alert is loaded AND
+          # healthy — restoring its backup if it never is.
+          ssh "${SSH_OPTS[@]}" "$TARGET" 'bash /tmp/apply-rules.sh /tmp/rules.r1.incoming'
+          ssh "${SSH_OPTS[@]}" "$TARGET" 'rm -rf /tmp/rules.r1.incoming /tmp/apply-rules.sh' || true
+          # Written LAST, so `set -e` on any step above leaves it unset and
+          # the config-apply gate keeps demanding this surface.
+          echo "applied=configs/prometheus/rules.r1/" >>"$GITHUB_OUTPUT"
+
       - name: Config-apply gate
         # Runs AFTER the binaries are deployed. deploy-binary.yml swaps
         # binaries only; when a release changed the ansible config,
@@ -762,8 +819,15 @@ jobs:
           VERSION: ${{ inputs.version }}
           CONFIG_ACK: ${{ inputs.config_acknowledged }}
           BASELINE: ${{ steps.baseline.outputs.live }}
+          # Surfaces THIS run applied and verified. The Apply-Prometheus-rules
+          # step writes this output as its LAST action, after apply-rules.sh
+          # has polled /api/v1/rules and confirmed every alert is live — and
+          # the step runs under `set -e`, so any earlier failure aborts before
+          # the write and leaves this empty. A failed or skipped apply
+          # therefore keeps rules.r1/ in the gate, where it belongs.
+          APPLIED: ${{ steps.prom_rules.outputs.applied }}
         run: |
-          bash scripts/ci/config-apply-gate.sh "$VERSION" "$CONFIG_ACK" "$BASELINE"
+          bash scripts/ci/config-apply-gate.sh "$VERSION" "$CONFIG_ACK" "$BASELINE" "$APPLIED"
 
       - name: Served-path smoke
         # Runs AFTER the config-apply gate, i.e. after every deploy
