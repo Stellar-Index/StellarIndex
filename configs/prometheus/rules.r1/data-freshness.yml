@@ -79,37 +79,52 @@ groups:
 
             Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/completeness-incomplete.md
 
-      # The system recognition census (event shapes on contracts NO source owns)
-      # is EXPECTED to be large and slowly growing — it is the rest of the
-      # Soroban ecosystem, not a gap, which is why the exporter excludes it from
-      # stellarindex_completeness_incomplete. The alertable signal is a JUMP: a
-      # protocol we DO index losing its ownership mapping drops its shapes out
-      # of per-source recognition (which then reads green over a real drop — the
-      # rozo/BACKLOG-89 blind spot) and into this count as a step change.
-      # Organic growth measured ~30 shapes/day (2026-08 census: 22,919 shapes
-      # over ~2 years); 250 in 2 days is far outside organic drift but below a
-      # typical protocol family's shape count.
-      - alert: stellarindex_recognition_unattributed_jump
-        expr: |
-          delta(stellarindex_recognition_unattributed_shapes[2d]) > 250
+      # UNRECOGNIZED EVENTS FROM A KNOWN PROTOCOL — the bucket that means
+      # our bug.
+      #
+      # A source we index emitted a (contract, topic) shape none of its
+      # decoders claimed, so we are silently dropping events on a protocol
+      # we promised to cover. attributeRecognitionGaps caps that source's
+      # recognition axis; recognition_ok goes 0.
+      #
+      # This REPLACES stellarindex_recognition_unattributed_jump, which
+      # watched the other bucket — unrecognized shapes on contracts NOBODY
+      # owns, i.e. foreign protocols. That number is 23866 and grows
+      # forever as Stellar grows; the jump alert tried to infer a registry
+      # regression from its growth RATE against a ~30/day organic baseline.
+      # The inference is unreliable in both directions: it fires when
+      # Stellar is merely busy (361 in 2 days on 2026-09-01, all of them on
+      # unowned contracts, no source degraded), and a regression would look
+      # identical to growth from the alert alone.
+      #
+      # The signal it was trying to infer is directly observable here, so
+      # infer nothing: alert on the source axis itself.
+      - alert: stellarindex_source_recognition_failing
+        expr: stellarindex_recognition_ok == 0
         for: 1h
         labels:
           severity: ticket
           team: stellarindex
           component: completeness
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/recognition-unattributed-jump.md
-          summary: "Unattributed recognition shapes jumped by {{ $value | printf `%.0f` }} in 2 days"
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/source-recognition-failing.md
+          summary: "{{ $labels.source }} emitted events none of its decoders recognise"
           description: |
-            stellarindex_recognition_unattributed_shapes rose by {{ $value | printf `%.0f` }}
-            over 2 days — far above organic foreign-protocol drift (~30/day). Suspect an
-            ownership-registry regression: a protocol we index lost its owner mapping, so its
-            shapes fell out of the per-source recognition axis (now reading green over a real
-            drop) and into the unattributed census. Run `stellarindex-ops ch-recognition` and
-            diff the top shapes against the enabled-source contract registries
-            (protocol_contracts / GatedRegistryOptions).
+            Source {{ $labels.source }} has an unrecognized (contract, topic) shape on a
+            contract it OWNS — an event we are silently dropping on a protocol we claim to
+            index. Its ADR-0033 coverage verdict is capped until this is resolved.
 
-            Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/recognition-unattributed-jump.md
+            Two usual causes: the protocol upgraded its contract in place and changed an
+            event shape (Soroban contracts can update_contract without changing address —
+            see docs/architecture/contract-schema-evolution.md), or a new event kind shipped
+            that the decoder has no arm for.
+
+            Run `stellarindex-ops ch-recognition -config /etc/stellarindex.toml -top 60` and
+            look for shapes whose contract_id belongs to this source's registry.
+
+            NOT to be confused with stellarindex_recognition_unattributed_shapes, which
+            counts shapes on contracts nobody owns (foreign protocols). That number is large,
+            always growing, and inert.
 
       # A TWAP continuous aggregate is emptied-pending-refresh: a migration
       # recreated it WITH NO DATA (0081/0115/0126) and the MANUAL
