@@ -15,6 +15,8 @@ against.
 
 ## [Unreleased]
 
+## [v0.54.2] — 2026-09-01
+
 ### Fixed
 
 - **The startup cache prewarm no longer makes users wait on operator
