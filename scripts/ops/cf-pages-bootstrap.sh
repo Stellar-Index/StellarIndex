@@ -1,5 +1,12 @@
 #!/usr/bin/env bash
-# Idempotent Cloudflare Pages provisioning for stellarindex.io.
+# ONE-TIME Cloudflare Pages bootstrap for a NEW zone.
+#
+# NOT idempotent against a live zone, despite reading like it: the
+# DNS upserts at the bottom will repoint the apex at the pre-rename
+# "stellarindex-showcase" project, detaching the live explorer. See
+# the safety interlock below. The word "idempotent" is what made
+# docs/operations/cf-pages-setup.md describe this as safe to run
+# from CI (#362).
 #
 # Creates / updates three Pages projects (showcase, dashboard,
 # status), binds custom domains, and (when the zone is on
@@ -34,6 +41,44 @@
 #   2 — CF API call failed (script aborted partway; safe to re-run)
 
 set -euo pipefail
+
+# ─── SAFETY INTERLOCK (do not remove without reading this) ────────
+#
+# This script was written for the ORIGINAL bootstrap, before the
+# 2026-07-03 rename. Run against the live zone today it does two
+# irreversible things:
+#
+#   1. Creates the PRE-RENAME Pages projects (stellarindex-showcase
+#      et al), which are not what serves the site now.
+#   2. Upserts the APEX record stellarindex.io -> the showcase Pages
+#      project, DETACHING the live explorer from the domain.
+#
+# It is kept because the bootstrap procedure it encodes is still the
+# reference for standing up a fresh zone. It must not run against a
+# zone that is already live.
+#
+# To use it on a genuinely new zone, set CF_BOOTSTRAP_I_UNDERSTAND=1.
+# The variable is deliberately awkward: an operator who has not read
+# the paragraph above will not guess it, and CI cannot supply it by
+# accident.
+if [ "${CF_BOOTSTRAP_I_UNDERSTAND:-}" != "1" ]; then
+  cat >&2 <<'REFUSAL'
+cf-pages-bootstrap: REFUSING TO RUN.
+
+This script upserts the apex DNS record to the pre-rename
+"stellarindex-showcase" Pages project. Against the live zone that
+detaches the explorer from stellarindex.io.
+
+It is a reference for bootstrapping a NEW zone, not a maintenance
+tool for the current one. If you are certain the target zone is not
+live, re-run with:
+
+    CF_BOOTSTRAP_I_UNDERSTAND=1 CF_API_TOKEN=... ./cf-pages-bootstrap.sh
+
+See docs/operations/cf-pages-setup.md.
+REFUSAL
+  exit 1
+fi
 
 : "${CLOUDFLARE_API_TOKEN:?CLOUDFLARE_API_TOKEN env var is required}"
 : "${CLOUDFLARE_ACCOUNT_ID:?CLOUDFLARE_ACCOUNT_ID env var is required}"

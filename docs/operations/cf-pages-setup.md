@@ -1,5 +1,18 @@
 # Cloudflare Pages — bootstrap
 
+> ⚠️ **DO NOT RUN `scripts/ops/cf-pages-bootstrap.sh` AGAINST THE LIVE
+> ZONE.** This page previously described it as idempotent and safe to
+> run from CI. It is neither. The script creates the **pre-rename**
+> Pages projects and upserts the apex record `stellarindex.io` → the
+> `stellarindex-showcase` Pages project, which **detaches the live
+> explorer from the domain**.
+>
+> The script now refuses to run unless `CF_BOOTSTRAP_I_UNDERSTAND=1` is
+> set, so an accidental invocation exits 1 without touching Cloudflare.
+> Treat what follows as the reference procedure for standing up a NEW
+> zone, not as a maintenance tool for the current one.
+
+
 > **Moved (2026-06):** the live status page now lives on the main site at
 > `https://stellarindex.io/status`. The `status.stellarindex.io` subdomain +
 > its `stellarindex-status` CF Pages project still exist but are **redirect-only**
