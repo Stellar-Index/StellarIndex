@@ -175,25 +175,31 @@ Symptoms: public repo content doesn't match private; orphan-
 branch initial commit had unintended files; secrets accidentally
 included; license/CONTRIBUTING/etc. headers wrong.
 
-Public-repo rollback is a `git push --force` to an empty repo
-or — safer — delete the public repo entirely and re-create.
-Either way, do NOT touch the private repo (it's the source of
-truth).
+> ⚠️ **The repo-deletion option has been REMOVED from this runbook.**
+> It invoked the GitHub CLI's repo-delete subcommand against this
+> repository, with confirmation suppressed, and was
+> written before the public flip executed (2026-07-03). There is no
+> longer a separate private source of truth: **the public repo IS the
+> repo**. Running that command destroys the project's history, every
+> issue, every PR and every release artifact — irreversibly, and in the
+> middle of an incident, which is exactly when someone reaches for a
+> runbook. It is not recoverable by re-doing the cut-over, because there
+> is nothing left to cut over from.
+
+Public-repo rollback is a force-push of a corrected commit. Do NOT
+delete or re-create the repository.
 
 ```sh
-# OPTION A — repo is empty enough that nobody cloned it:
-gh repo delete Stellar-Index/StellarIndex --yes
-# Then re-do the cut-over per public-flip.md from step 5.
-
-# OPTION B — repo has been observed (someone might have cloned):
-# Force-push a corrected initial commit. Coordinate with anyone
-# who already cloned to re-pull.
+# Force-push a corrected initial commit. Coordinate with anyone who has
+# already cloned so they re-pull.
 git push origin +public-v1:main
 ```
 
-Per [`public-flip.md`](public-flip.md), the
-`git clone --no-local --no-hardlinks` step makes Option A
-genuinely safe — the private repo is untouched.
+If the damage is broader than a force-push can fix — secrets in history,
+an unintended file set — stop and treat it as a security incident per
+[SECURITY.md](../../SECURITY.md) rather than reaching for a destructive
+repo-level command. Rotating an exposed credential is recoverable;
+deleting the repository is not.
 
 ### E. Status page misbehaving
 
