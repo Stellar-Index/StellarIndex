@@ -85,6 +85,7 @@ signal lands.
 
 | Name | Metric | Condition | Severity | Runbook |
 | ---- | ------ | --------- | -------- | ------- |
+| `stellarindex_dependency_down` | `stellarindex_dependency_up` | == 0 for > 2 m | **P1** | [dependency-down](runbooks/dependency-down.md) |
 | `stellarindex_timescale_primary_down` | `up{job="postgres",role="primary"}` | == 0 for > 30 s | **P1** | [timescale-primary-down](runbooks/timescale-primary-down.md) |
 | `stellarindex_timescale_replica_lag` | `pg_replication_lag_seconds` on sync replica | > 5 s for > 2 min | P2 | [replica-lag](runbooks/replica-lag.md) |
 | `stellarindex_timescale_disk_full` | `(node_filesystem_avail_bytes / node_filesystem_size_bytes) * 100` on DB vol | < 10 % | **P1** | [db-disk-full](runbooks/db-disk-full.md) |
