@@ -15,6 +15,8 @@ against.
 
 ## [Unreleased]
 
+## [v0.55.0] — 2026-09-01
+
 ### Fixed
 
 - **The FX feed now reports its entries.** `massive` — the active fiat-FX
