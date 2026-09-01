@@ -148,5 +148,45 @@ else
   bad "rc=$RC file: $(cat "$PROM")"
 fi
 
+# ─── 6. the FX staleness budget must MIRROR the serving code ─────────
+#
+# The alert threshold and the tolerance the serving path applies are two
+# copies of one number in two languages, with nothing tying them
+# together. They drifted: the SQL said 48h while
+# `aggregate.composite_reference.fx_max_age_hours` said 76h, so
+# `stellarindex_data_source_stale{source="massive"}` fired EVERY weekend
+# against a healthy feed (#370). `massive` publishes a business-day
+# snapshot and FX markets close — Fri 00:00 → Mon 00:00 is 72h, so 48h
+# could not survive a normal weekend.
+#
+# An alert stricter than the tolerance the code actually uses reports a
+# fault the system does not have. This pins them together so the next
+# change to either has to change both.
+echo "data-freshness-test: FX budget mirrors the serving config"
+
+SRC_SH="$(dirname "$0")/../../configs/ansible/roles/archival-node/files/data-freshness.sh"
+CFG_GO="$(dirname "$0")/../../internal/config/config.go"
+
+# The fx-domain threshold, in seconds, as the emitter's SQL declares it.
+fx_thr="$(grep -E "^ *SELECT 'fx', source," -A0 "$SRC_SH" | grep -oE '[0-9]{4,}' | tail -1)"
+# The serving budget, in hours, from the config default tag.
+fx_hours="$(grep -oE 'fx_max_age_hours[^`]*default:"[0-9]+"' "$CFG_GO" | grep -oE 'default:"[0-9]+"' | grep -oE '[0-9]+')"
+
+if [[ -z "$fx_thr" || -z "$fx_hours" ]]; then
+  bad "could not read both numbers (sql='$fx_thr' config='${fx_hours}h') — the guard must fail loudly rather than silently pass when its anchors move"
+elif [[ "$fx_thr" -eq $((fx_hours * 3600)) ]]; then
+  ok "fx threshold ${fx_thr}s == fx_max_age_hours ${fx_hours}h"
+else
+  bad "fx threshold ${fx_thr}s != fx_max_age_hours ${fx_hours}h ($((fx_hours * 3600))s). An alert budget that disagrees with the serving budget either fires on healthy data or hides a real stall."
+fi
+
+# And it must be able to span a weekend market close at all — the
+# property that actually broke, independent of the exact number.
+if [[ -n "$fx_thr" && "$fx_thr" -gt $((72 * 3600)) ]]; then
+  ok "fx threshold spans a 72h weekend close"
+else
+  bad "fx threshold ${fx_thr}s does not exceed a 72h weekend; a business-day FX feed will false-fire every Sunday"
+fi
+
 printf 'data-freshness-test: %d passed, %d failed\n' "$pass" "$fail"
 [[ $fail -eq 0 ]]
