@@ -481,6 +481,29 @@ func (w *Worker) persistSnapshot(ctx context.Context, snap *Snapshot) {
 	}
 	w.logger.Info("forex: fx_quotes persisted", "rows", len(batch))
 
+	// Count the rows as SOURCE ENTRIES, the same universal per-source
+	// counter every ingest-pipeline source increments.
+	//
+	// This worker writes fx_quotes directly and never passes through
+	// internal/pipeline's sink, which is the only other place
+	// SourceEventsTotal is touched. So massive — the ACTIVE fiat-FX
+	// feed, and the USD anchor behind per-trade usd_volume and the
+	// ADR-0051 local-currency derivation — had no series in that metric
+	// at all. The status page's per-source "entries (24h)" column reads
+	// it, so a feed writing 116 rows a day and driving every non-USD
+	// price on the platform displayed as 0, indistinguishable from a
+	// dead connector.
+	//
+	// Labelled with sourceLabel() rather than the fxSource constant so a
+	// run served by a FALLBACK provider is counted against the provider
+	// that actually answered. Attributing a fallback's rows to massive
+	// would report a feed as healthy while it was in fact down.
+	//
+	// Placed after the committed non-empty write, on the same reasoning
+	// the liveness gauge below documents: an empty batch or a failed
+	// insert must not make the feed look productive.
+	obs.SourceEventsTotal.WithLabelValues(w.sourceLabel()).Add(float64(len(batch)))
+
 	// Stamp the FX-feed liveness gauge ONLY on a committed non-empty
 	// write. An empty batch (upstream returned no usable rates) or a
 	// failed InsertFXQuoteBatch (returned above) deliberately leaves the
