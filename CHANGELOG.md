@@ -15,6 +15,8 @@ against.
 
 ## [Unreleased]
 
+## [v0.57.0] — 2026-09-01
+
 ### Added
 
 - **Prometheus rules now apply themselves on every r1 deploy, and prove
