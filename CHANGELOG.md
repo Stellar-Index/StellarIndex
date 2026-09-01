@@ -15,6 +15,21 @@ against.
 
 ## [Unreleased]
 
+### Fixed
+
+- **The status page can now tell "off" from "broken".** It lists every
+  source in the registry, so `coinmarketcap` and `cryptocompare` — both
+  fully implemented, both needing a paid API key, neither ever switched
+  on — rendered an entry count of `0` beside sources doing millions and
+  read as dead connectors. The per-source row now carries `enabled`
+  (from `stellarindex_source_enabled`) and the table renders "not
+  enabled" rather than a misleading zero. Also corrects the coverage
+  table's empty-state copy, which advertised a 30-minute refresh when
+  the ADR-0033 completeness verdict is a **daily** job (05:30 UTC) —
+  that mismatch is why a healthy two-hour-old figure read as a stalled
+  pipeline.
+  ([#469](https://github.com/Stellar-Index/StellarIndex/pull/469))
+
 ## [v0.56.0] — 2026-09-01
 
 ### Fixed

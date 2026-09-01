@@ -205,6 +205,17 @@ type StatusBackend interface {
 	// Prometheus range-increase, not a trades-hypertable scan).
 	// Sources with no events in the window are absent from the map.
 	SourceEntries24h(ctx context.Context) (map[string]int64, error)
+
+	// SourceEnabled reports which registry sources are actually switched
+	// on, from stellarindex_source_enabled. Sources absent from the map
+	// have never been enabled on this deployment.
+	//
+	// The status page lists every entry in external.Registry, so a source
+	// that was implemented but never wired up renders beside working ones
+	// with an entry count of 0 — indistinguishable from a dead connector.
+	// coinmarketcap and cryptocompare are both in that state: fully built,
+	// paid API keys, never switched on.
+	SourceEnabled(ctx context.Context) (map[string]bool, error)
 }
 
 // PrometheusStatusBackend hits a local Prometheus' HTTP query
@@ -450,6 +461,24 @@ func (p *PrometheusStatusBackend) SourceEntries24h(ctx context.Context) (map[str
 		if v, ok := sample.Float(); ok && v > 0 {
 			out[src] = int64(v + 0.5) // round to nearest whole event
 		}
+	}
+	return out, nil
+}
+
+// SourceEnabled implements [StatusBackend]. See the interface doc.
+func (p *PrometheusStatusBackend) SourceEnabled(ctx context.Context) (map[string]bool, error) {
+	const q = `stellarindex_source_enabled == 1`
+	res, err := p.queryVector(ctx, q)
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string]bool, len(res))
+	for _, sample := range res {
+		src, _ := sample.Labels["source"].(string)
+		if src == "" {
+			continue
+		}
+		out[src] = true
 	}
 	return out, nil
 }

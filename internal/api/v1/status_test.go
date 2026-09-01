@@ -23,6 +23,8 @@ type fakeStatusBackend struct {
 	sourceEntries24h map[string]int64
 
 	hbErr, latErr, freErr, incErr, entriesErr error
+	sourceEnabled                             map[string]bool
+	enabledErr                                error
 }
 
 func (f *fakeStatusBackend) Heartbeats(context.Context) (map[string]time.Time, error) {
@@ -43,6 +45,10 @@ func (f *fakeStatusBackend) Incidents(context.Context) (StatusIncidents, error) 
 
 func (f *fakeStatusBackend) SourceEntries24h(context.Context) (map[string]int64, error) {
 	return f.sourceEntries24h, f.entriesErr
+}
+
+func (f *fakeStatusBackend) SourceEnabled(context.Context) (map[string]bool, error) {
+	return f.sourceEnabled, f.enabledErr
 }
 
 func TestStatus_NoBackend_DegradedSurface(t *testing.T) {
