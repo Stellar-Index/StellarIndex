@@ -15,6 +15,21 @@ against.
 
 ## [Unreleased]
 
+### Fixed
+
+- **The `/v1/assets` listing keys are now warmed first in the prewarm
+  cycle.** They previously sat behind ~20 cold reads (8
+  `DistinctPairsExt`, 4+5 `AllPools`, the per-CEX `SourceMarkets` loop),
+  which on a cold start pushed them far enough into the cycle that a
+  browser arriving seconds after a restart still paid the fill. Measured
+  on r1 *after* the two prewarm passes were made concurrent (#455), the
+  API up at 06:14:37: 9903 ms at 06:15:01. Concurrency between passes
+  was necessary but not sufficient — the queue inside the light pass was
+  the remaining cost. `/v1/assets` is the most-requested route in
+  production and backs the explorer's landing page, so it now warms
+  ahead of markets and pools.
+  ([#457](https://github.com/Stellar-Index/StellarIndex/pull/457))
+
 ## [v0.54.2] — 2026-09-01
 
 ### Fixed
