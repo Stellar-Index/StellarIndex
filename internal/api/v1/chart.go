@@ -58,6 +58,48 @@ var chartTimeframes = map[string]chartTimeframeSpec{
 	"all": {Duration: 0, DefaultGranule: "1d"},
 }
 
+// chartWithheldForScam applies the directory-scam gate to /v1/chart,
+// writing the withheld problem and reporting true when the series must
+// not be served.
+//
+// /v1/chart served a full price SERIES for a flagged issuer while
+// /v1/price, /v1/price/tip, /v1/price/batch, /v1/vwap, /v1/twap, the
+// SEP-40 oracle and the asset headline all withheld it (#366). A series
+// is arguably worse than a point: withholding one number denies a quote,
+// but an ungated chart hands over the whole trajectory, which is what
+// makes a manufactured market look legitimate.
+//
+// Called from handleChart after the pair is known and BEFORE
+// dispatchSpecialisedChart, which is the load-bearing placement. Keying
+// on the BASE (not the pair) survives the frontend's XLM triangulation,
+// so a flagged asset cannot slip through against a different quote. And
+// sitting ahead of the dispatch covers the default path plus every
+// specialised variant (market-cap, fiat-cross, TWAP) with ONE check —
+// gating each variant separately is precisely how this class keeps
+// recurring, since a surface added later simply misses it. This is its
+// third appearance: MSP-02 found /v1/vwap and /v1/twap ungated after
+// pricingguard/scam.go's own doc claimed a single reader-seam gate
+// covered everything, which was never true of endpoints that compute
+// from their own fetch. /v1/chart reads history directly, same shape.
+//
+// Deliberately NOT pushed down into the history reader: that reader also
+// backs /v1/history and /v1/observations, and scam.go, substance.go and
+// the withheld problem's own guidance text all promise those raw
+// surfaces stay visible. Gating there would make our own error
+// message's escape-hatch advice a lie — the same reasoning vwap.go
+// records for tradesInRangeWithStablecoinFallback.
+//
+// Extracted rather than inlined because inlining pushed handleChart to
+// cognitive complexity 21 against the package's ceiling of 20. The lint
+// was right: the handler already dispatches four ways.
+func (s *Server) chartWithheldForScam(w http.ResponseWriter, r *http.Request, pair canonical.Pair) bool {
+	if s.scam == nil || !s.scam.Withheld(r.Context(), pair.Base, "chart") {
+		return false
+	}
+	writePriceWithheldProblem(w, r, pair.Base, pair.Quote)
+	return true
+}
+
 // handleChart serves
 // GET /v1/chart?asset=<id>&quote=<id>&timeframe=<tf>&granularity=<g>&price_type=<pt>
 //
@@ -82,6 +124,11 @@ func (s *Server) handleChart(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+
+	if s.chartWithheldForScam(w, r, pair) {
+		return
+	}
+
 	tfRaw, tf, gran, priceType, ok := parseChartParams(w, r)
 	if !ok {
 		return
