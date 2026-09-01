@@ -34,6 +34,16 @@ import (
 // Does NOT log query parameters or request bodies — they may
 // carry API keys or PII. Add named fields in specific handlers
 // when needed.
+// SlowRequestThreshold is the latency at or above which a request also
+// logs its query shape and a `slow=true` marker.
+//
+// 500 ms is the published p99 SLA target, so "slow" here means "outside
+// the number we promise" rather than an arbitrary line. On r1 that
+// selected ~0.2% of requests (48 of 21,104 in a 30-minute sample), which
+// is the property that matters: the field has to be rare enough not to
+// re-create the journal pressure this file's 429 note is about.
+const SlowRequestThreshold = 500 * time.Millisecond
+
 func Logger(logger *slog.Logger) Middleware {
 	if logger == nil {
 		logger = slog.Default()
@@ -65,6 +75,26 @@ func Logger(logger *slog.Logger) Middleware {
 				"request_id", RequestIDFrom(r),
 				"remote_ip", remote,
 				"user_agent", r.UserAgent(),
+			}
+
+			// A slow request additionally carries its query SHAPE. On
+			// this API the query string is what decides the query plan —
+			// `/v1/assets` is one route and many plans, selected by limit,
+			// order_by and cursor — so `path` alone cannot tell an
+			// operator which request was slow. Measured on r1 2026-09-01:
+			// /v1/assets?limit=100 served in 82 ms while the same limit
+			// with order_by=volume_24h_usd_desc took 1523 ms. Identical
+			// log lines, 18x apart.
+			//
+			// Values are allow-listed, never raw — see QueryShape. The
+			// field is attached only above the threshold, which keeps the
+			// journal-pressure objection in this file's own doc satisfied:
+			// on r1 this is ~0.2% of requests.
+			if latency >= SlowRequestThreshold {
+				if shape := QueryShapeOf(r); shape != "" {
+					attrs = append(attrs, "query_shape", shape)
+				}
+				attrs = append(attrs, "slow", true)
 			}
 
 			switch {
