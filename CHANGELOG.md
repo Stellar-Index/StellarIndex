@@ -17,6 +17,32 @@ against.
 
 ### Fixed
 
+- **Customer email addresses and API keys were landing verbatim in the
+  public edge access log.** `GET /v1/account/admin/lookup?email=…` was not
+  covered by Caddy's query redaction, which ENUMERATED the parameters to
+  redact — so every parameter added since was logged in full, and every
+  future one would be too. `X-API-Key` fared worse: it is our own header
+  name for a customer's live key, Caddy has never heard of it, and it was
+  logged complete and replayable by anyone with Grafana read access.
+
+  The filter is now allow-list-shaped by construction rather than by
+  enumeration: the whole query string is replaced (`[?].*` → `?<redacted>`,
+  keeping the path, which is the log's primary diagnostic), and the
+  credential-bearing headers are dropped — `X-API-Key`, `X-Reason` (staff
+  free text on admin routes) and `Referer`, which can carry *another*
+  origin's query string with its own token still in it. Both copies of the
+  Caddyfile stay byte-identical, and a Go test now parses them so drift
+  fails the build rather than being noticed by hand.
+
+  Separately, `internal/config/validate.go` formatted a full Postgres DSN —
+  password included — into a fatal boot error, which goes to journald and on
+  into Loki. Every connection-string and credential-shaped value in that
+  file is now redacted at the point of formatting, not just the DSN that was
+  reported: `redis_addr`, each `redis_sentinel_addrs` entry, and the four
+  `s3_*_key_env` settings. A test pins both halves — the error must not echo
+  the secret, and it must still identify which setting was wrong. (#346)
+
+
 - **`/v1/oracle/latest`'s in-process cache grew without bound on a
   public unauthenticated route.** `CachedOracleReader`'s entry map is
   keyed by the caller's sorted asset list plus the source filter, and

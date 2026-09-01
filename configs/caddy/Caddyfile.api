@@ -168,8 +168,10 @@ api.stellarindex.io {
 	# aggregation (Loki) when that lands.
 	log {
 		output stdout
-		# Redact the query string. Caddy's JSON access log records
-		# request.uri verbatim, INCLUDING the query — and
+		# Redact the WHOLE query string, on both sides of the request,
+		# plus the credential-bearing headers Caddy has never heard of.
+		# Caddy's JSON access log records request.uri verbatim,
+		# INCLUDING the query — and
 		# /v1/auth/callback?token=<plaintext> carries a live single-use
 		# dashboard credential, while /v1/signup/verify?token=<plaintext>
 		# carries the email-verification one. Both were landing in
@@ -180,13 +182,67 @@ api.stellarindex.io {
 		# (internal/api/v1/middleware/logger.go) — that guarantee was
 		# being defeated one layer up (cold audit 2026-08-04).
 		#
+		# The first version of this filter ENUMERATED the one parameter
+		# to redact (`token`), so every parameter added since leaked by
+		# default — which is how /v1/account/admin/lookup?email=<customer
+		# email> put customer addresses in the edge log. The inverse, an
+		# allow-list, is not expressible here: Caddy's `query` filter can
+		# only NAME parameters to act on, and an allow-list written as a
+		# regexp over the uri is not safe either — an unencoded `&`
+		# inside a value (legal in an email local-part) ends the match
+		# and the tail is logged verbatim. So the edge keeps NO query
+		# values at all.
+		#
+		# Nothing diagnosable is lost. Which query values are safe to log
+		# is already decided once, in Go, by a tested allow-list with a
+		# length bound and control-character stripping — QueryShape in
+		# internal/api/v1/middleware/slow_query_shape.go, attached by the
+		# API's own logger to every request over the p99 SLA target. The
+		# edge does not need a second, weaker copy of that rule.
+		#
+		# Request headers: Caddy blanks Authorization / Cookie /
+		# Set-Cookie / Proxy-Authorization itself (the `log_credentials`
+		# default), which covers Bearer keys and the dashboard session
+		# cookie. But X-API-Key is OUR name for the customer's live API
+		# key (docs/getting-started.md; bearerOrXKey in
+		# internal/api/v1/middleware/auth.go) and Caddy has never heard
+		# of it — it was logged in full, replayable by anyone with
+		# Grafana read access. Referer can carry another origin's query
+		# string (a dashboard link with its ?token= still in it), and
+		# X-Reason is staff free text on the admin routes, which belongs
+		# in the audit table it is already written to, not here.
+		#
+		# Response headers: redacting only the request would still leak,
+		# because TrailingSlashRedirect
+		# (internal/api/v1/middleware/trailingslash.go) answers
+		# /v1/account/admin/lookup/?email=<customer email> with a 308
+		# whose Location is the same URI, QUERY PRESERVED — and Caddy
+		# logs resp_headers. log_credentials knows nothing about
+		# Location, and the redirect target is derivable from the
+		# request uri we already log, so drop the header outright.
+		#
+		# Header names must be in Go's canonical MIME form, which is how
+		# net/http parses them and therefore the key Caddy logs them
+		# under — a mismatched case matches nothing and fails open
+		# SILENTLY, so the exact spellings are pinned by
+		# internal/config/caddy_access_log_test.go.
+		#
 		# NOTE: takes effect only after an ansible run with --tags caddy.
 		format filter {
 			wrap json
 			fields {
-				request>uri query {
-					replace token REDACTED
-				}
+				# `[?]` rather than `\?`: a character class needs no
+				# backslash, so the pattern reads identically to the
+				# Caddyfile lexer and to Go's regexp, which is the
+				# engine this filter runs on. The first `?` in a request
+				# URI is the query delimiter, so this drops the query
+				# and only the query — the path, the log's primary
+				# diagnostic, survives.
+				request>uri regexp "[?].*" "?<redacted>"
+				request>headers>X-Api-Key delete
+				request>headers>Referer delete
+				request>headers>X-Reason delete
+				resp_headers>Location delete
 			}
 		}
 		# Skip /v1/healthz spam from the active health check.
