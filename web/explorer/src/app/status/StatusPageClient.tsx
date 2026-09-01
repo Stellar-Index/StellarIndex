@@ -151,6 +151,13 @@ type IngestionSnapshot = Omit<
       // receive a response that omits it — an unguarded render would
       // throw and the segment error boundary would blank the page.
       entries_24h?: number;
+      // Evolving: enabled — whether the source is actually switched on
+      // (stellarindex_source_enabled). The table lists every registry
+      // entry, so without this a source that was implemented but never
+      // wired renders 0 beside sources doing millions and reads as
+      // broken rather than off. Optional + guarded like entries_24h: an
+      // explorer deploy ahead of the API must not throw.
+      enabled?: boolean;
     }
   >;
 };
@@ -1871,8 +1878,11 @@ function BackfillCoverageTable({
   if (!rows || rows.length === 0) {
     return (
       <div className="border-warn-300 bg-warn-50 text-warn-700 rounded-lg border p-3 text-xs">
-        Coverage snapshot pending — first refresh runs ~30s after process start,
-        then every 30 min.
+        Coverage snapshot pending. This table shows two figures on
+        different cadences: the gap-detector snapshot refreshes every 30
+        min, and the ADR-0033 completeness verdict is a daily job (05:30
+        UTC), so a verified row is normally hours old and that is
+        expected — not a stalled pipeline.
       </div>
     );
   }
@@ -1890,7 +1900,14 @@ function BackfillCoverageTable({
         <h3 className="text-ink-faint text-[11px] font-semibold tracking-wider uppercase">
           Ingest coverage — genesis → tip
         </h3>
-        <span className="text-ink-faint text-[10px]">
+        <span
+          className="text-ink-faint text-[10px]"
+          /* "oldest data" is dominated by the ADR-0033 completeness verdict,
+             which is a DAILY job (05:30 UTC) — so a reading of a few hours is
+             the normal state, not a stall. Without saying so the figure reads
+             as a broken pipeline to anyone who assumes it tracks ingest. */
+          title="Oldest figure in the table. The completeness verdict is recomputed daily (05:30 UTC) and the gap-detector snapshot every 30 min, so a few hours here is expected."
+        >
           {oldestDataAt && (
             <>
               oldest data {formatRelative(oldestDataAt)}
@@ -2118,7 +2135,13 @@ function SourceHealthTable({ rows }: { rows: IngestionSnapshot['sources'] }) {
               const classLabel = r.subclass
                 ? `${r.class}/${r.subclass}`
                 : r.class;
-              const silent = r.include_in_vwap && r.entries_24h === 0;
+              // `enabled === false` means never switched on. Treat an
+              // ABSENT field as enabled: an explorer running ahead of an
+              // API that does not send it yet must not label every source
+              // "not enabled".
+              const notEnabled = r.enabled === false;
+              const silent =
+                !notEnabled && r.include_in_vwap && r.entries_24h === 0;
               return (
                 <tr key={r.name}>
                   <td className="text-ink-body px-3 py-2 font-mono">
@@ -2130,7 +2153,16 @@ function SourceHealthTable({ rows }: { rows: IngestionSnapshot['sources'] }) {
                       silent ? 'text-bad-700' : 'text-ink-body'
                     }`}
                   >
-                    {r.entries_24h?.toLocaleString('en-US') ?? '—'}
+                    {notEnabled ? (
+                      <span
+                        className="text-ink-faint"
+                        title="This source is implemented but has never been switched on for this deployment — it is not failing, it is off."
+                      >
+                        not enabled
+                      </span>
+                    ) : (
+                      (r.entries_24h?.toLocaleString('en-US') ?? '—')
+                    )}
                   </td>
                   <td className="tnum text-ink-muted px-3 py-2 text-right">
                     {r.volume_24h_usd ? formatUSD(r.volume_24h_usd) : '—'}

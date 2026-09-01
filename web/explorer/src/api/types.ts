@@ -2242,6 +2242,12 @@ export interface paths {
          *     trades-table aggregates and legitimately 0 for oracles, FX
          *     feeds, and bridges.
          *
+         *     `enabled` reports whether the source is switched on for this
+         *     deployment. The list covers every source in the registry,
+         *     including ones that are implemented but never wired up, so
+         *     `enabled: false` with `entries_24h: 0` means "off", not
+         *     "failing" — a distinction the counts alone cannot carry.
+         *
          *     Served from a 15-second background-refreshed snapshot;
          *     `Cache-Control` is `private, no-cache` accordingly. Unknown
          *     source names 404 (the registry is static per deploy — see
@@ -12729,6 +12735,7 @@ export interface operations {
                      *         "backfill_safe": true,
                      *         "trade_count_24h": 10023,
                      *         "entries_24h": 10023,
+                     *         "enabled": true,
                      *         "volume_24h_usd": "1245001.55",
                      *         "markets_count_24h": 4
                      *       },

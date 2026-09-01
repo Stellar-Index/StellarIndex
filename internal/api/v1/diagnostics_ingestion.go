@@ -475,7 +475,14 @@ type SourceHealthRow struct {
 	// non-zero for every active source, on-chain or external, unlike
 	// trade_count_24h which is trades-table-only (and 0 for oracles,
 	// bridges, FX) and which a trades-scan timeout can silently zero.
-	Entries24h      int64  `json:"entries_24h"`
+	Entries24h int64 `json:"entries_24h"`
+	// Enabled distinguishes "switched on and quiet" from "never switched
+	// on". The table lists every external.Registry entry, so without this
+	// a source that was implemented but never wired (coinmarketcap,
+	// cryptocompare — both fully built, both needing a paid key) renders
+	// an entry count of 0 beside sources doing millions, and reads as
+	// broken rather than off.
+	Enabled         bool   `json:"enabled"`
 	VolumeUSD24h    string `json:"volume_24h_usd,omitempty"`
 	MarketsCount24h int64  `json:"markets_count_24h"`
 }
@@ -1211,6 +1218,22 @@ func buildSourceHealth(ctx context.Context, s *Server) []SourceHealthRow {
 			s.logger.Warn("diagnostics/ingestion: source entries_24h", "err", err)
 		}
 	}
+	// Which sources are actually switched on. Same soft-fail posture as
+	// entries_24h above: on error every row reads enabled=false, which
+	// renders as "not enabled" — visibly wrong rather than quietly
+	// implying a dead connector, and self-corrects on the next request.
+	enabledSources := map[string]bool{}
+	if s.statusBackend != nil {
+		ectx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		m, err := s.statusBackend.SourceEnabled(ectx)
+		cancel()
+		if err == nil {
+			enabledSources = m
+		} else {
+			s.logger.Warn("diagnostics/ingestion: source enabled", "err", err)
+		}
+	}
+
 	// Trades/volume/markets — best-effort enrichment. Its error is
 	// intentionally swallowed: under backfill load this scan can time
 	// out, leaving trade_count/volume 0/empty while entries_24h above
@@ -1240,6 +1263,7 @@ func buildSourceHealth(ctx context.Context, s *Server) []SourceHealthRow {
 			}
 		}
 		row.Entries24h = entries24h[name]
+		row.Enabled = enabledSources[name]
 		out = append(out, row)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
