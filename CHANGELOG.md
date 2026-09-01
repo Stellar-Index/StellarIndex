@@ -17,6 +17,30 @@ against.
 
 ### Fixed
 
+- **Disarmed five operations-doc instructions that would each cause an
+  incident if followed** (#362), verified reproducing against HEAD
+  first. The Cloudflare Pages bootstrap script upserted the apex record
+  to the pre-rename project — detaching the live explorer — while its
+  own header called it "idempotent" and its doc called it safe from CI;
+  it now refuses to run without an explicit acknowledgement.
+  `credential-rotation.md` told operators to apply `--tags minio` alone,
+  but the galexie env templates are imported under `tags: [galexie]`, so
+  the secret rotated server-side while galexie kept the old one — a
+  self-inflicted `SignatureDoesNotMatch` ingest outage, during a
+  rotation. `sep41-mint-recovery.md` prescribed
+  `TRUNCATE sep41_supply_rollup`, which deletes migration 0088's
+  pre-Soroban genesis baseline; the worker then re-folds to
+  `genesis_baseline_ledger = NULL` and lifetime supply silently
+  under-reports. `adr-0033-data-recovery.md` said to DELETE served rows
+  then replay with `stellarindex-ops backfill`, which builds gated
+  decoders with an empty identity registry and **exits 0 having written
+  nothing**. And `rollback.md` still carried a repo-deletion command
+  from before the 2026-07-03 public flip, when there is no longer a
+  private source of truth to recover from.
+  ([#461](https://github.com/Stellar-Index/StellarIndex/pull/461))
+
+### Fixed
+
 - **`/v1/chart` now withholds price series for directory-scam-flagged
   issuers** (#366). It served a full trajectory while `/v1/price`,
   `/v1/price/tip`, `/v1/price/batch`, `/v1/vwap`, `/v1/twap`, the SEP-40

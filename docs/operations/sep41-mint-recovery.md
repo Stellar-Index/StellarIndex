@@ -151,14 +151,40 @@ psql "$STELLARINDEX_POSTGRES_DSN" -c "
    WHERE contract_id IN ('CBH4M45T...OCKF','CDLZFC3S...YSC','CCW67TSZ...MI75');"
 ```
 
-**Broad (simpler, matches the migration-0085 contract)** — truncate the
-whole rollup; every watched contract briefly uses the full-sum fallback
-until the worker re-folds. Prefer the scoped DELETE unless most contracts
-are affected. TRUNCATE may need the table owner:
+> ⚠️ **The `TRUNCATE sep41_supply_rollup` option has been REMOVED.**
+> It predates migration 0088, which added `genesis_mint_total`,
+> `genesis_burn_total`, `genesis_clawback_total` and
+> `genesis_baseline_ledger` — the **pre-Soroban** running totals, seeded
+> once from the ClickHouse lake and *not derivable from Soroban events*.
+>
+> TRUNCATE deletes those rows. The worker then re-folds from Soroban
+> history alone and recreates each row with `genesis_mint_total = 0` and
+> `genesis_baseline_ledger = NULL`, which the reader treats as "not yet
+> seeded" and contributes nothing — so lifetime supply silently
+> **under-reports** until someone re-seeds the baseline by hand. That is
+> the incident-2026-07-06 class the baseline exists to prevent, and
+> nothing about it looks like an error at the time.
+>
+> It is also no longer necessary. `ch-rebuild -sep41 -write` resets the
+> fold checkpoint itself and preserves the baseline — its own `-contracts`
+> flag documentation says so, and cites this runbook:
+> *"ONLY these contracts' sep41_supply_rollup fold rows are reset
+> afterwards (genesis baseline preserved) … a scoped recovery is safe by
+> default, no manual rollup surgery."* The tool logs
+> `reset N sep41_supply_rollup fold row(s) … (genesis baseline preserved)`
+> when it does it.
+
+**If most contracts are affected**, do not truncate — run the scoped
+re-derive across them and let the tool reset the folds:
 
 ```sh
-sudo -u postgres psql -d stellarindex -c "TRUNCATE sep41_supply_rollup;"
+/usr/local/sbin/run-heavy-job.sh sep41-recover \
+  stellarindex-ops ch-rebuild -sep41 -write \
+    -contracts 'CBH4M45T...OCKF,CDLZFC3S...YSC,CCW67TSZ...MI75'
 ```
+
+`-contracts` must be a SUBSET of `[supply] watched_sep41_contracts`; a
+contract outside that set is read but decodes to nothing (the tool warns).
 
 The aggregator's `runSEP41SupplyRollup` worker re-folds on its next
 cadence (`[supply] aggregator_refresh_cadence`) — sequentially, one

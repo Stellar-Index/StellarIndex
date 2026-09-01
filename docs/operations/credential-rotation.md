@@ -67,19 +67,34 @@ check `configs/ansible/roles/archival-node/defaults/main.yml` (search
    #   galexie_archive_s3_secret_key: "<new secret>"       (archive-writer)
    #   vault_stellarindex_reader_secret_key: "<new secret>" (ops user)
    ```
-3. **Dry-run, then apply the `minio` tag.**
+3. **Dry-run, then apply — `minio,galexie` together, not `minio` alone.**
    ```sh
    ansible-playbook -i inventory/r1.yml playbooks/archival-node.yml \
-     --tags minio --check --diff
+     --tags minio,galexie --check --diff
    ansible-playbook -i inventory/r1.yml playbooks/archival-node.yml \
-     --tags minio
+     --tags minio,galexie -e galexie_restart_ack=true
    ```
-   `09-minio.yml`'s `mc admin user add local <key> <new secret>`
-   task (the "Create galexie-writer MinIO user" / "Create
-   galexie-archive-writer MinIO user" / "Create stellarindex-reader
-   MinIO user" tasks) **updates the secret in place** if the user
-   already exists — this is the actual rotation step server-side. It
-   is idempotent and safe to re-run.
+
+   > ⚠️ **`--tags minio` on its own causes a self-inflicted outage.**
+   > This step used to say exactly that, and claimed the galexie env
+   > files re-templated as part of the same run. They do not.
+   > `07-galexie.yml` — which templates `/etc/default/galexie`,
+   > `/etc/default/galexie-backfill` and
+   > `/etc/default/galexie-archive-fill` — is imported under
+   > `tags: [galexie]` (`tasks/main.yml`), so a `minio`-only run never
+   > touches it.
+   >
+   > The failure is quiet and total: `09-minio.yml`'s
+   > `mc admin user add` **does** rotate the secret server-side, so
+   > MinIO immediately starts rejecting the old one, while galexie is
+   > still holding it in an env file nothing re-rendered. Ingest stops
+   > with `SignatureDoesNotMatch` — during a credential rotation, when
+   > an operator is least likely to read it as their own doing.
+   >
+   > `-e galexie_restart_ack=true` is required for the galexie restart
+   > to actually happen; without it the role renders the change and
+   > deliberately leaves the restart to a second, acknowledged run.
+
 4. **The env files re-template automatically** as part of the same
    `--tags minio` run:
    - `/etc/default/galexie` (galexie-writer) — has a `notify:

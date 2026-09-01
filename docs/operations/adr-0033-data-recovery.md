@@ -117,17 +117,40 @@ DELETE FROM trades
  WHERE source IN ('aquarius','comet','soroswap','phoenix')
    AND ledger BETWEEN <from> AND <to>;
 ```
-```
-GOMAXPROCS=2 nice -n 19 stellarindex-ops backfill \
-  -source aquarius,comet,soroswap,phoenix \
-  -from <from> -to <to> -bucket galexie-archive
+> ⚠️ **The replay step used to be `stellarindex-ops backfill -source
+> aquarius,comet,soroswap,phoenix`. That combination deletes your rows
+> and then writes nothing back.**
+>
+> All four of those are ADR-0035 **gated** sources. `backfill.go` builds
+> gated decoders with an EMPTY identity registry — its own comment says
+> so: *"gated=nil: backfill runs every gated decoder with an EMPTY
+> identity registry."* With no admitted contracts, every event fails the
+> `Matches()` identity check, nothing decodes, and the command **exits
+> 0** having written zero trades. Following the old sequence leaves the
+> served range permanently empty with a success exit code and no error
+> to notice.
+>
+> These are projected sources (ADR-0031/0032), so the correct catch-up
+> is a projector replay, which reads the ClickHouse lake through the
+> real gated registry.
+
+```sh
+# Dry-run first — prints the dirty window and cursor rewind it would do.
+stellarindex-ops projector-replay -config /etc/stellarindex.toml \
+  -source aquarius -from <from> -dry-run
+
+# Then for real, one source at a time, under the heavy-job wrapper.
+/usr/local/sbin/run-heavy-job.sh projector-replay-aquarius \
+  stellarindex-ops projector-replay -config /etc/stellarindex.toml \
+    -source aquarius -from <from>
 ```
 
-Safety: only delete rows you are about to immediately re-backfill from
-`galexie-archive` (the source of truth); never delete a range you can't
-replay. Do it in bounded windows and verify row counts recover before
-moving on. soroswap requires the pair-registry seed (RPC) for token
-identities — the backfill path seeds it.
+Safety: only delete rows you are about to immediately replay, and
+**verify the replay actually wrote rows before deleting the next
+range** — the failure mode above is silent, so a row-count check after
+the first window is what distinguishes a working replay from a
+zero-write one. Never delete a range you cannot replay. soroswap
+requires the pair-registry seed for token identities.
 
 ### 4. Truthful watermarks + verification
 
