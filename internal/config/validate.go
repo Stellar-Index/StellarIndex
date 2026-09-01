@@ -278,24 +278,20 @@ func (s StorageConfig) validate() error { //nolint:gocognit,gocyclo // dispatch-
 			"value — this field holds the password itself (see field doc)", ErrInvalidConfig, s.ClickHouseServingPassword)
 	}
 	if s.S3AccessKeyEnv != "" && !envVarNameShapePattern.MatchString(s.S3AccessKeyEnv) {
-		return fmt.Errorf("%w: storage.s3_access_key_env %q doesn't look like an env-var NAME (expected "+
-			"UPPER_SNAKE_CASE) — this field holds the NAME to dereference, not the credential itself",
-			ErrInvalidConfig, s.S3AccessKeyEnv)
+		return errEnvNameShape("s3_access_key_env")
 	}
 	if s.S3SecretKeyEnv != "" && !envVarNameShapePattern.MatchString(s.S3SecretKeyEnv) {
-		return fmt.Errorf("%w: storage.s3_secret_key_env %q doesn't look like an env-var NAME (expected "+
-			"UPPER_SNAKE_CASE) — this field holds the NAME to dereference, not the credential itself",
-			ErrInvalidConfig, s.S3SecretKeyEnv)
+		return errEnvNameShape("s3_secret_key_env")
 	}
 	if !strings.HasPrefix(s.PostgresDSN, "postgres://") &&
 		!strings.HasPrefix(s.PostgresDSN, "postgresql://") {
-		return fmt.Errorf("%w: storage.postgres_dsn %q must start with postgres:// or postgresql://",
-			ErrInvalidConfig, s.PostgresDSN)
+		return fmt.Errorf("%w: storage.postgres_dsn %s must start with postgres:// or postgresql://",
+			ErrInvalidConfig, redactConnString(s.PostgresDSN))
 	}
 	if s.RedisAddr != "" {
 		if _, _, err := net.SplitHostPort(s.RedisAddr); err != nil {
-			return fmt.Errorf("%w: storage.redis_addr %q must be host:port: %w",
-				ErrInvalidConfig, s.RedisAddr, err)
+			return fmt.Errorf("%w: storage.redis_addr %s must be host:port (%s)",
+				ErrInvalidConfig, redactConnString(s.RedisAddr), addrErrReason(err))
 		}
 	}
 	if len(s.RedisSentinelAddrs) > 0 {
@@ -305,8 +301,8 @@ func (s StorageConfig) validate() error { //nolint:gocognit,gocyclo // dispatch-
 		}
 		for i, addr := range s.RedisSentinelAddrs {
 			if _, _, err := net.SplitHostPort(addr); err != nil {
-				return fmt.Errorf("%w: storage.redis_sentinel_addrs[%d] %q must be host:port: %w",
-					ErrInvalidConfig, i, addr, err)
+				return fmt.Errorf("%w: storage.redis_sentinel_addrs[%d] %s must be host:port (%s)",
+					ErrInvalidConfig, i, redactConnString(addr), addrErrReason(err))
 			}
 		}
 	}
@@ -360,19 +356,15 @@ func (s StorageConfig) validate() error { //nolint:gocognit,gocyclo // dispatch-
 	// the exact silent-degradation shape the 2026-07-25 cold-tier
 	// incident was made of. Reject at load time instead.
 	if (s.S3ColdAccessKeyEnv == "") != (s.S3ColdSecretKeyEnv == "") {
-		return fmt.Errorf("%w: storage.s3_cold_access_key_env (%q) and storage.s3_cold_secret_key_env (%q) must "+
+		return fmt.Errorf("%w: storage.s3_cold_access_key_env (%s) and storage.s3_cold_secret_key_env (%s) must "+
 			"be set together — leave BOTH empty for anonymous reads (public buckets), or name BOTH env vars for "+
-			"static credentials", ErrInvalidConfig, s.S3ColdAccessKeyEnv, s.S3ColdSecretKeyEnv)
+			"static credentials", ErrInvalidConfig, setOrEmpty(s.S3ColdAccessKeyEnv), setOrEmpty(s.S3ColdSecretKeyEnv))
 	}
 	if s.S3ColdAccessKeyEnv != "" && !envVarNameShapePattern.MatchString(s.S3ColdAccessKeyEnv) {
-		return fmt.Errorf("%w: storage.s3_cold_access_key_env %q doesn't look like an env-var NAME (expected "+
-			"UPPER_SNAKE_CASE) — this field holds the NAME to dereference, not the credential itself",
-			ErrInvalidConfig, s.S3ColdAccessKeyEnv)
+		return errEnvNameShape("s3_cold_access_key_env")
 	}
 	if s.S3ColdSecretKeyEnv != "" && !envVarNameShapePattern.MatchString(s.S3ColdSecretKeyEnv) {
-		return fmt.Errorf("%w: storage.s3_cold_secret_key_env %q doesn't look like an env-var NAME (expected "+
-			"UPPER_SNAKE_CASE) — this field holds the NAME to dereference, not the credential itself",
-			ErrInvalidConfig, s.S3ColdSecretKeyEnv)
+		return errEnvNameShape("s3_cold_secret_key_env")
 	}
 	// ClickHouse feed-switch dependency (ADR-0034 #10, C3-20): the
 	// projector reads forward events from the CH lake's contract_events,
@@ -386,6 +378,76 @@ func (s StorageConfig) validate() error { //nolint:gocognit,gocyclo // dispatch-
 			ErrInvalidConfig)
 	}
 	return nil
+}
+
+// A config-validation failure is FATAL at boot: the message goes to
+// stderr, systemd hands it to journald, promtail ships it to Loki on
+// the 720h retention, and anyone with Grafana read access can then read
+// it — the same log store the edge access-log leak (#346 F2) put
+// credentials into, reached from the other side.
+//
+// So the rule for every branch below is: echo the offending VALUE only
+// when the branch can ONLY fire on a non-secret. The two
+// redis_password_env / clickhouse_serving_password_env branches above
+// satisfy that and deliberately keep their %q — they fire only when the
+// value matched envVarNameLikePattern, i.e. it is provably one of this
+// project's own env-var NAMES and not a password, and naming it is the
+// whole diagnostic. Every branch that reaches these helpers is the
+// opposite: each fires on exactly the paste-the-credential-where-the-
+// name-goes mistake it exists to catch, or on an operator input that is
+// malformed and therefore cannot be assumed to be anything.
+
+// errEnvNameShape reports a storage.*_key_env field whose value does not
+// have the shape of an env-var name. The value is withheld: this branch
+// fires precisely when the operator pasted the credential itself where
+// the NAME belongs, so printing it would put an S3 secret key in the
+// boot log.
+func errEnvNameShape(field string) error {
+	return fmt.Errorf("%w: storage.%s doesn't look like an env-var NAME (expected UPPER_SNAKE_CASE) — "+
+		"this field holds the NAME to dereference, not the credential itself (value withheld: if you "+
+		"pasted the credential here, echoing it would leak it into the boot log)", ErrInvalidConfig, field)
+}
+
+// setOrEmpty describes whether a credential-adjacent field was populated
+// without disclosing what with — enough to tell an operator WHICH half
+// of an all-or-nothing pair they left out.
+func setOrEmpty(v string) string {
+	if v == "" {
+		return "empty"
+	}
+	return "set"
+}
+
+// redactConnString renders a connection string for a fatal boot error
+// without disclosing it. A Postgres DSN carries its password inline
+// (postgres://user:pw@host/db) and so does a managed-Redis URI — every
+// hosted Redis vendor issues rediss://default:<password>@host:port
+// rather than the bare host:port storage.redis_addr wants, which is the
+// single likeliest way a real password reaches this code path. The
+// branches that call this fire on MALFORMED input, so nothing about the
+// string can be assumed: keep the scheme, which is the part that shows
+// the operator what they got wrong, and drop the rest.
+func redactConnString(v string) string {
+	if v == "" {
+		return "(empty)"
+	}
+	if i := strings.Index(v, "://"); i > 0 {
+		return v[:i] + "://<redacted>"
+	}
+	return "<redacted>"
+}
+
+// addrErrReason returns net.SplitHostPort's reason WITHOUT the address
+// it embeds. *net.AddrError formats as "address <addr>: <reason>", so
+// wrapping it with %w would re-leak the very value redactConnString just
+// withheld — the reason alone ("too many colons in address", "missing
+// port in address") is what actually helps.
+func addrErrReason(err error) string {
+	var addrErr *net.AddrError
+	if errors.As(err, &addrErr) {
+		return addrErr.Err
+	}
+	return "not host:port"
 }
 
 func (i IngestionConfig) validate() error {
