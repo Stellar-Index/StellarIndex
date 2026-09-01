@@ -940,9 +940,13 @@ var HTTPRequestSuccessDuration = prometheus.NewHistogramVec(
 
 // APICacheOpsTotal — every read through an in-memory cache wrapper
 // (`v1.CachedMarketsReader`, `v1.CachedAssetsReader`, …) increments
-// this counter. The `result` label is `hit` (returned cached value)
-// or `miss` (called upstream). The `op` label names the cached
-// method (e.g. `all_pools`, `distinct_pairs`, `list_coins`).
+// this counter. The `result` label is a READ outcome — `hit`
+// (returned cached value), `stale` (served a stale value while a
+// refresh runs) or `miss` (called upstream) — or one of the two
+// side-events the wrappers also record: `refresh_error` (a background
+// refresh failed) and `evicted` (a bounded cache dropped its oldest
+// entry to admit a new key). The `op` label names the cached method
+// (e.g. `all_pools`, `distinct_pairs`, `list_coins`).
 //
 // Why: prewarm goroutines warm cache keys that MUST match what
 // handlers look up. If those keys drift (different filter shape,
@@ -952,13 +956,16 @@ var HTTPRequestSuccessDuration = prometheus.NewHistogramVec(
 // cheapest detector.
 //
 // Alert idea: `rate(stellarindex_api_cache_ops_total{result="miss"}
-// [5m]) / rate(stellarindex_api_cache_ops_total[5m]) > 0.5` sustained
-// 10 min on any (cache, op) is suspicious — prewarm should keep
-// hot ops > 90% hit.
+// [5m]) / rate(stellarindex_api_cache_ops_total{result=~"hit|miss|
+// stale"}[5m]) > 0.5` sustained 10 min on any (cache, op) is
+// suspicious — prewarm should keep hot ops > 90% hit. The denominator
+// MUST stay filtered to the read outcomes: `evicted` fires once per
+// admitted key, so an unfiltered ratio caps at 0.5 under exactly the
+// key-enumeration storm the alert exists to catch.
 var APICacheOpsTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_api_cache_ops_total",
-		Help: "Cache reads through API in-memory cache wrappers, labelled by cache name + op + result (hit|miss).",
+		Help: "Cache operations in API in-memory cache wrappers, labelled by cache name + op + result (read outcomes hit|miss|stale, side-events refresh_error|evicted).",
 	},
 	[]string{"cache", "op", "result"},
 )

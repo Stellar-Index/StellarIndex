@@ -1,6 +1,6 @@
 ---
 title: Runbook — cache-miss-rate-high
-last_verified: 2026-08-29
+last_verified: 2026-09-01
 status: current
 severity: P2
 ---
@@ -19,7 +19,11 @@ severity: P2
 
 ## Symptoms
 
-- `(rate(stellarindex_api_cache_ops_total{result="miss"}[5m]) / rate(stellarindex_api_cache_ops_total[5m])) > 0.5` sustained 10 min
+- `(rate(stellarindex_api_cache_ops_total{result="miss"}[5m]) / rate(stellarindex_api_cache_ops_total{result=~"hit|miss|stale"}[5m])) > 0.5` sustained 10 min
+- The denominator counts READ outcomes only. `result="evicted"` and
+  `result="refresh_error"` are side-events, not requests; leaving them
+  in the denominator made the alert unfirable on a bounded cache under
+  key enumeration (one `evicted` per `miss` caps the ratio at 0.5).
 - The alert fires per `(cache, op)` so the label tells you which cache.
 - Likely correlated: the underlying API surface gets noticeably slower (the explorer page that hits this cache feels sluggish) and `http_request_duration_seconds` p95 climbs.
 - NOT correlated: total request volume — we threshold on ratio, so a low-traffic cache with 100% miss won't fire (the `> 0.1 req/s` floor in the expression prevents flapping on quiet caches).
@@ -34,6 +38,16 @@ severity: P2
 2. **Check the prewarm code.** Open `cmd/stellarindex-api/main.go`, function `prewarmCaches` (main.go:4429) — it dispatches two tiers: `prewarmHeavy` (the `sources_stats` family, 5-min cadence) and `prewarmLight` (markets/pools/coins/native, 60 s cadence). Find the call corresponding to the alerted op. Compare every argument against what the handler at `internal/api/v1/markets.go` passes.
 3. **Diff the cache keys.** The cache key is a `fmt.Sprintf` of the args (see `internal/api/v1/markets_cache.go` `fetchPairs` / `fetchPools`). If the prewarm passes `Order=0` and the handler passes `Order=1`, the keys differ. We've shipped 3 of these bugs in 24h (#1185 Order, #1194 Sources, #1195 Limit) — same family.
 4. **Sanity check the cache TTL vs prewarm cadence.** `v1.NewCachedMarketsReader(...)` is constructed with `2*time.Minute`; `prewarmCaches` runs the heavy tier every 5 min and the light tier every 60 s. If a tier's cadence ever exceeds its caches' TTL, the cache expires before the next refresh and looks like a miss-storm.
+
+5. **Rule out key churn before blaming the prewarm.** The `observations`
+   and `oracle` caches are size-capped (`historyCacheMaxEntries` /
+   `oracleCacheMaxEntries`, both 4096) because their key is
+   caller-controlled on a public unauthenticated route. If
+   `rate(stellarindex_api_cache_ops_total{cache="<alerted>",result="evicted"}[5m])`
+   is also non-zero, the map is at capacity and the miss rate is churn,
+   not drift — either a genuine working set larger than the cap (raise
+   it) or a caller walking the asset/pair key space (rate-limit it). No
+   prewarm change will help.
 
 ## Mitigation
 
@@ -60,6 +74,12 @@ severity: P2
 
 ## Changelog
 
+- 2026-09-01 — denominator narrowed to the read outcomes
+  (`hit|miss|stale`) in both rule trees. `evicted` / `refresh_error`
+  are side-events; with the bounded `oracle` / `observations` caches
+  emitting one `evicted` per admitted key, the unfiltered ratio could
+  not exceed 0.5 and the alert was silent during a key-enumeration
+  storm. Added diagnosis step 5 for that case.
 - 2026-08-29 — re-verified against HEAD (Wave I). Cache inventory
   expanded from 4 markets-ops to the real seven `cache` label
   values (`coins`/`issuers`/`markets`/`network_stats`/`observations`/
