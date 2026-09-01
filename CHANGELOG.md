@@ -15,6 +15,8 @@ against.
 
 ## [Unreleased]
 
+## [v0.54.3] — 2026-09-01
+
 ### Fixed
 
 - **The `/v1/assets` listing keys are now warmed first in the prewarm
