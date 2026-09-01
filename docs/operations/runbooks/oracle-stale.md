@@ -1,6 +1,6 @@
 ---
 title: Runbook — oracle-stale
-last_verified: 2026-08-29
+last_verified: 2026-09-01
 status: current
 severity: P2
 ---
@@ -56,6 +56,43 @@ Key signals:
 - **On-chain activity paused** → the oracle's off-chain publisher (Reflector relayer, Redstone DataService, Band's chain-write bot) is down. Nothing we can do except switch providers or fail over.
 - **We see SOME events but they're not decoding** → `stellarindex_source_decode_errors_total` for that source is also elevated. Jump to `decode-errors.md`.
 
+## First, rule out a mis-declared resolution (this alert's main false positive)
+
+The threshold is `10 × stellarindex_oracle_resolution_seconds`, and that
+gauge comes from a **hard-coded constant per source**
+(`DefaultResolutionSeconds` in each `internal/sources/<oracle>/events.go`).
+Nothing reconciles it against how often the oracle really publishes. When
+the constant is tighter than reality, this alert fires during entirely
+normal operation and never clears.
+
+That is not hypothetical: `band` declared `60` — copied from a
+poll-cadence *recommendation* rather than the relayer's publication
+interval — while Band actually relays hourly. The alert fired for
+**100% of samples over 7 days** on `crypto:USDC` and `crypto:XLM` before
+it was corrected to `3600` (2026-09-01).
+
+So before triaging a stall, check that the alert is measuring something
+real:
+
+```sh
+# Measured cadence vs declared, for the alerting source:
+#   how many times did the last-update gauge actually advance in 24h?
+curl -s --get http://localhost:9090/api/v1/query \
+  --data-urlencode 'query=86400 / changes(stellarindex_oracle_last_update_unix{source="<source>"}[24h])'
+# ...against what we declare:
+curl -s --get http://localhost:9090/api/v1/query \
+  --data-urlencode 'query=stellarindex_oracle_resolution_seconds{source="<source>"}'
+```
+
+If the measured interval is **larger than 10× the declared resolution**,
+the oracle is fine and the constant is wrong — fix the constant, don't
+chase an outage. `internal/sources/band/resolution_test.go` pins that
+relationship for band; a source without such a test can drift silently.
+
+Two tells that distinguish this from a real stall: the alert has been
+firing continuously rather than starting at a point in time, and
+`/v1/oracle/streams` shows recent observations for the same source.
+
 ## Mitigation
 
 - [ ] Step 1 — identify whether the stall is upstream (publisher / contract) or downstream (our ingestion) via the probes above.
@@ -77,6 +114,9 @@ Originally flagged P2 (ticket) because the impact is bounded — the API keeps s
 
 ## Changelog
 
+- 2026-09-01 — added the mis-declared-resolution section. `band` declared a
+  60s resolution against an hourly relay cadence, so this alert fired 100%
+  of the time for both its assets; corrected to 3600 and pinned by a test.
 - 2026-04-23 — initial draft. Replaces the 404 in the divergence alert rules' runbook_url.
 - 2026-04-30 — rpc-probe URL points at a public stellar-rpc; r1
   doesn't run its own (removed 2026-04-23).
