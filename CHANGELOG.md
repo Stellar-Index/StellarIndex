@@ -15,6 +15,26 @@ against.
 
 ## [Unreleased]
 
+### Changed
+
+- **Split the recognition signal into the two things it actually
+  measures.** The ADR-0033 recognition scan produces two buckets that
+  mean opposite things, and only the harmless one was visible.
+  `stellarindex_recognition_unattributed_shapes` counts shapes on
+  contracts **nobody owns** — foreign protocols we don't index. It was
+  23,866 on 2026-09-01, grows permanently with Stellar itself, and is a
+  coverage-ambition figure for prioritising which decoder to build next.
+  The bucket that means a real defect — a protocol we DO index emitting
+  events its decoders can't claim — was computed, stored as
+  `completeness_snapshots.recognition_ok`, and **never exported**. So
+  the inert number carried both a metric and an alert while the
+  meaningful one had neither. `stellarindex_recognition_ok{source}` is
+  now emitted per source, and `stellarindex_source_recognition_failing`
+  alerts on it. Drops `stellarindex_recognition_unattributed_jump`,
+  which inferred a registry regression from the census's growth rate and
+  fired when Stellar was merely busy.
+  ([#465](https://github.com/Stellar-Index/StellarIndex/pull/465))
+
 ## [v0.55.0] — 2026-09-01
 
 ### Fixed

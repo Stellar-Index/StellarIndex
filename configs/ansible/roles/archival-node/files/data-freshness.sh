@@ -54,8 +54,10 @@ trap 'rm -f "$TMP"' EXIT
   echo '# TYPE stellarindex_data_freshness_stale gauge'
   echo '# HELP stellarindex_completeness_incomplete 1 when a source latest ADR-0033 verdict is complete=false (real served<>lake gap). Excludes the system recognition row — see stellarindex_recognition_unattributed_shapes.'
   echo '# TYPE stellarindex_completeness_incomplete gauge'
-  echo '# HELP stellarindex_recognition_unattributed_shapes Distinct (contract, topic) event shapes in the lake no enabled source claims. Expected large and slowly growing (foreign protocols); the alertable signal is a JUMP (ownership-registry regression).'
+  echo '# HELP stellarindex_recognition_unattributed_shapes UNKNOWN-PROTOCOL events: distinct (contract, topic) shapes in the lake on contracts NO source owns. Foreign protocols we do not index. Expected large and permanently growing as Stellar grows — 23866 as of 2026-09-01 against ~30/day organic drift. A coverage-ambition number for prioritising which decoders to build next, NOT an error condition. Deliberately NOT alerted on: see stellarindex_recognition_ok for the signal that means a real defect.'
   echo '# TYPE stellarindex_recognition_unattributed_shapes gauge'
+  echo '# HELP stellarindex_recognition_ok UNRECOGNIZED EVENTS FROM A KNOWN PROTOCOL: 0 when a source WE INDEX emitted a (contract, topic) shape none of its decoders claimed, 1 when every shape on its owned contracts decodes. This is the bucket that means OUR bug — a protocol we promised to cover is silently dropping events — and it is the one worth paging on. Distinct from unattributed_shapes, which counts other people contracts and is inert.'
+  echo '# TYPE stellarindex_recognition_ok gauge'
   echo '# HELP stellarindex_twap_history_missing 1 when a TWAP continuous aggregate is missing the history prices_1m holds — a migration recreated/emptied it (WITH NO DATA) and the manual refresh_continuous_aggregate follow-up never ran.'
   echo '# TYPE stellarindex_twap_history_missing gauge'
 } > "$TMP"
@@ -142,6 +144,31 @@ SQL
 "$PSQL" "$STELLARINDEX_POSTGRES_DSN" -tA -F$'\t' >> "$TMP" <<'SQL'
 SELECT 'stellarindex_completeness_incomplete{source="'||source||'"} '||(NOT complete)::int::text
   FROM (SELECT DISTINCT ON (source) source, complete
+          FROM completeness_snapshots ORDER BY source, computed_at DESC) s
+ WHERE source <> 'recognition';
+SQL
+
+# Per-source recognition verdict — the OWNED bucket.
+#
+# attributeRecognitionGaps splits every unrecognized shape two ways: gaps on
+# contracts a source OWNS cap that source's recognition axis, and gaps on
+# unowned contracts flow to the system `recognition` row as the unattributed
+# census. Only the first kind is a defect — it means a protocol we index
+# emitted an event none of its decoders claimed, so we are silently dropping
+# data we promised to cover.
+#
+# That bucket was computed but never exported: recognition_ok has been a
+# column on completeness_snapshots all along and appeared only in the API's
+# /v1/coverage response. So the harmless number (unattributed_shapes) carried
+# a metric AND an alert, while the harmful one had neither.
+#
+# The system `recognition` row is excluded for the same reason it is excluded
+# from completeness_incomplete above: it is the unowned census, not a source,
+# and its recognition_ok is false permanently by construction (it can only be
+# true if no un-indexed Soroban contract exists anywhere on the network).
+"$PSQL" "$STELLARINDEX_POSTGRES_DSN" -tA -F$'\t' >> "$TMP" <<'SQL'
+SELECT 'stellarindex_recognition_ok{source="'||source||'"} '||recognition_ok::int::text
+  FROM (SELECT DISTINCT ON (source) source, recognition_ok
           FROM completeness_snapshots ORDER BY source, computed_at DESC) s
  WHERE source <> 'recognition';
 SQL

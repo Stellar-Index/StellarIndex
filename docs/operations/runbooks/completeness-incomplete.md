@@ -79,10 +79,15 @@ The `detail` column names the per-target Δ and window.
   ecosystem, ~23k shapes growing ~30/day), so `complete=false` there is the
   permanent expected state of a curated indexer, not a served↔lake gap. Folding
   it in kept this ticket alert firing continuously from 2026-08-17. The
-  registry-regression signal that row DOES carry is exported separately as
-  `stellarindex_recognition_unattributed_shapes` and alerted on as a step change
-  by `stellarindex_recognition_unattributed_jump`
-  ([recognition-unattributed-jump](recognition-unattributed-jump.md)).
+  unattributed census that row carries is exported separately as
+  `stellarindex_recognition_unattributed_shapes` — shapes on contracts NOBODY
+  owns, i.e. foreign protocols. It is large and permanently growing, and is
+  deliberately NOT alerted on. The signal that means a real defect is
+  per-source: `stellarindex_recognition_ok == 0`, meaning a protocol we DO
+  index emitted something its decoders could not claim
+  ([source-recognition-failing](source-recognition-failing.md)). Until
+  2026-09-01 the alert watched the census and inferred the defect from its
+  growth rate; it now reads the per-source axis directly.
 - **A green verdict with a lagging watermark.** `complete=true` only speaks for
   the range that was walked; `stellarindex_completeness_watermark_lag_ledgers`
   (CS-090) is the companion gauge for "verified, but only up to an old ledger".
