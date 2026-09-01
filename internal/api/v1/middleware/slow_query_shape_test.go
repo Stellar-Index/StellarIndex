@@ -34,16 +34,23 @@ func TestQueryShapeRedactsEverythingNotAllowListed(t *testing.T) {
 	// never contribute a value. The list is deliberately not exhaustive:
 	// the design is allow-list, so an unknown parameter is redacted by
 	// construction rather than by remembering to deny it.
+	// The fixture values are deliberately NOT secret-shaped. Redaction
+	// keys on the parameter NAME — an unknown name is redacted whatever
+	// it carries — so a realistic-looking credential would add nothing to
+	// this test except a gitleaks finding on our own repo. It did: an
+	// earlier revision used an `sk_live_…` fixture and the secrets gate
+	// correctly rejected it.
 	u, err := url.Parse(
-		"/v1/x?q=alice%40example.com&email=bob%40example.com&api_key=sk_live_abc123" +
-			"&token=eyJhbGciOi&cursor=100%3Aabc&account=GABC123&limit=10")
+		"/v1/x?q=alice%40example.com&email=bob%40example.com&api_key=fake-not-a-credential" +
+			"&token=fake-not-a-token&cursor=100%3Aabc&account=GABC123&limit=10")
 	if err != nil {
 		t.Fatal(err)
 	}
 	got := QueryShape(u)
 
 	for _, leaked := range []string{
-		"alice", "bob", "example.com", "sk_live_abc123", "eyJhbGciOi", "GABC123", "100:abc",
+		"alice", "bob", "example.com", "fake-not-a-credential", "fake-not-a-token",
+		"GABC123", "100:abc",
 	} {
 		if strings.Contains(got, leaked) {
 			t.Errorf("shape %q leaked %q — query values can carry API keys and PII "+
