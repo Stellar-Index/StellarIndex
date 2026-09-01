@@ -15,6 +15,21 @@ against.
 
 ## [Unreleased]
 
+### Fixed
+
+- **The startup cache prewarm no longer makes users wait on operator
+  diagnostics.** `prewarmHeavy` (whose `sources_stats` aggregate alone
+  takes ~8s) ran *before* `prewarmLight`, so for tens of seconds after
+  every restart the `/v1/assets` listing keys were still cold. Measured
+  on r1 with the API up at 05:10:16, real browsers paid 10025 ms at
+  05:10:37 and 2016 ms at 05:11:02 — 21 and 46 seconds after boot — for
+  keys the prewarm had not reached yet. The two passes now run
+  concurrently at startup; they touch disjoint readers, so there is no
+  shared state to race. Steady state was already healthy (a constant 11
+  detail-prewarms per cycle, 94% hit rate), so this is a startup-window
+  defect that recurred on every deploy.
+  ([#455](https://github.com/Stellar-Index/StellarIndex/pull/455))
+
 ## [v0.54.1] — 2026-09-01
 
 ### Fixed

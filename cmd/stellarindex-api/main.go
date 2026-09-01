@@ -54,6 +54,7 @@ import (
 	"os/signal"
 	"runtime/debug"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -4515,9 +4516,41 @@ func prewarmCaches(
 	lightCadence := 60 * time.Second
 
 	// Fire both immediately on startup so the first user request
-	// after a binary restart hits a warm cache.
-	prewarmHeavy(ctx, logger, stats)
-	prewarmLight(ctx, logger, markets, assetsReader, issuers, verifiedAssetIDs)
+	// after a binary restart hits a warm cache — CONCURRENTLY, because
+	// running them in sequence meant the user-facing pass waited on the
+	// operator-facing one.
+	//
+	// prewarmHeavy's sources_stats query alone takes ~8s (see its own
+	// note below), and it ran FIRST. So for tens of seconds after every
+	// restart the listing keys were still cold while the heavy
+	// diagnostic aggregate churned. Measured on r1 2026-09-01, API up at
+	// 05:10:16:
+	//
+	//	05:10:37  10025 ms  /v1/assets?include=sparkline&limit=10&order_by=…
+	//	05:10:37  10026 ms  /v1/assets?limit=50
+	//	05:11:02   2016 ms  both again
+	//
+	// Real users, 21s and 46s after boot, paying cold fills for keys the
+	// prewarm had not reached yet. Steady state was already healthy (a
+	// constant 11 detail-prewarms per cycle, 94% cache hit rate), so this
+	// is purely a startup-window defect — and it recurs on every deploy.
+	//
+	// The two passes touch disjoint readers (stats vs
+	// markets/assets/issuers), so there is no shared state to race; each
+	// already carries its own per-call deadlines.
+	var warm sync.WaitGroup
+	warm.Add(2)
+	go func() {
+		defer warm.Done()
+		defer recoverBackgroundWorker(logger, "prewarm-light-initial")
+		prewarmLight(ctx, logger, markets, assetsReader, issuers, verifiedAssetIDs)
+	}()
+	go func() {
+		defer warm.Done()
+		defer recoverBackgroundWorker(logger, "prewarm-heavy-initial")
+		prewarmHeavy(ctx, logger, stats)
+	}()
+	warm.Wait()
 
 	heavyTick := time.NewTicker(heavyCadence)
 	defer heavyTick.Stop()
