@@ -15,6 +15,8 @@ against.
 
 ## [Unreleased]
 
+## [v0.54.0] — 2026-09-01
+
 ### Fixed
 
 - **Restored the oracle `raw:` consumer guards deleted by #305's squash
