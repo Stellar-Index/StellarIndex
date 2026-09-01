@@ -17,6 +17,28 @@ against.
 
 ### Fixed
 
+- **`stellarindex_data_source_stale{source="massive"}` fired every
+  weekend against a completely healthy feed.** The freshness emitter gave
+  the `fx` domain a 48h budget, but `massive` publishes a business-day
+  snapshot and FX markets close — Friday's bucket is the freshest thing
+  that exists until Monday, and Fri 00:00 → Mon 00:00 is 72h. Observed
+  live on 2026-08-30 with the worker fine (hourly `fx_quotes persisted
+  rows=818`, zero rejections for every reason).
+
+  Raised to 76h, which is not a round-up: it mirrors
+  `aggregate.composite_reference.fx_max_age_hours`, the tolerance the
+  **serving** path already applies to its FX leg. An alert stricter than
+  what the code accepts reports a fault the system does not have. The two
+  numbers were copies in different languages with nothing tying them
+  together, so `scripts/ci/data-freshness-test.sh` now pins them —
+  changing either without the other fails CI, in both directions. Same
+  reasoning as the existing `ecb` exception, which already had 4 days for
+  exactly this. A feed genuinely dead on a Tuesday still trips within the
+  day. (#370)
+
+
+### Fixed
+
 - **The home page issued four duplicate `/v1/assets` requests per ledger
   advance, and the two it "cancelled" still completed on the wire.**
   `useLedgerFollow`'s throttle was a per-component `useRef`, so it only

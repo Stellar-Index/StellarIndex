@@ -77,8 +77,28 @@ WITH f AS (
   UNION ALL
   -- FX is daily-grain: observed_at is the data-point time (lags ~a day even
   -- when healthy), so freshness is measured off `bucket` (today's bucket
-  -- written = the worker is alive). 48h tolerates a late daily publish.
-  SELECT 'fx', source, extract(epoch FROM now()-max(bucket)), 172800
+  -- written = the worker is alive).
+  --
+  -- 76h, NOT 48h, and the number is not arbitrary: it mirrors
+  -- `aggregate.composite_reference.fx_max_age_hours` (default 76,
+  -- internal/config/config.go) — the budget the SERVING path already
+  -- applies to its FX leg. An alert stricter than the tolerance the code
+  -- actually uses reports a fault the system does not have.
+  --
+  -- 48h could not survive a weekend. `massive` publishes a business-day
+  -- snapshot and FX markets close, so Friday's bucket is the freshest
+  -- thing that exists until Monday: Fri 00:00 → Mon 00:00 is 72h. The
+  -- alert therefore fired EVERY weekend (#370, observed 2026-08-30 00:00Z
+  -- with the worker healthy — `forex: fx_quotes persisted rows=818` every
+  -- hour, and `stellarindex_external_fx_rate_rejected_total` zero for all
+  -- reasons). 76h clears Monday's publish with slack.
+  --
+  -- Same reasoning as the `ecb` exception above, which was given 4 days
+  -- for exactly this: a business-day reference needs a threshold that
+  -- spans a market close, or it measures the calendar rather than our
+  -- health. A feed genuinely dead on a Tuesday still trips this within
+  -- the day.
+  SELECT 'fx', source, extract(epoch FROM now()-max(bucket)), 273600
     FROM fx_quotes WHERE bucket > now()-interval '30 days' GROUP BY source
   UNION ALL
   -- Sparse Soroban AMMs get 24h: phoenix's MEASURED 30-day gap
