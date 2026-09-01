@@ -206,7 +206,7 @@ groups:
             half of triangulations — most chained-fiat rates are using
             the degraded cached-VWAP fallback instead of the bucket-end
             FX-source quote that ADR-0018 mandates for across-region
-            consistency. Investigate FX ingestion: polygon-forex /
+            consistency. Investigate FX ingestion: exchangeratesapi /
             exchangeratesapi connector health, and the trades hypertable's
             FX rows.
             Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/aggregator-fx-snap-fallback-dominant.md

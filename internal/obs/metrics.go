@@ -3290,7 +3290,7 @@ var AggregatorCompositeFreezeSuppressedTotal = prometheus.NewCounter(
 // because FXQuoteAtOrBefore returned no row at-or-before the bucket
 // end. Steady state should be near-zero once FX ingestion is warm.
 // Sustained > 50% of triangulations indicates an FX-source health
-// issue (polygon-forex / exchangeratesapi) — see the matching alert
+// issue (exchangeratesapi) — see the matching alert
 // in deploy/monitoring/rules/aggregator.yml.
 //
 // Label `leg` is the canonical pair string of the FX leg that fell

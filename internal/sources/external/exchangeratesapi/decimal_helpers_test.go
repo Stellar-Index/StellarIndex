@@ -9,7 +9,7 @@ import (
 
 // scale.SciDecimalStringToScaledInt is the precision-preserving
 // converter for ExchangeRatesAPI quotes. Unlike the strict form the
-// polygonforex/CMC callers use, this one ACCEPTS scientific notation
+// exchangeratesapi/CMC callers use, this one ACCEPTS scientific notation
 // — small inverted rates ("2e-10") are normalised through
 // ParseFloat. Pin both branches FROM THIS VENUE'S PERSPECTIVE so a
 // refactor can't accidentally switch the poller to the strict form

@@ -315,7 +315,7 @@ func (o *Orchestrator) lookupCrossOracle(ctx context.Context, pair canonical.Pai
 //   - two CEXes (binance + coinbase) → both `exchange:cex` → 1
 //   - CEX + DEX (binance + soroswap) → `exchange:cex` + `exchange:dex` → 2
 //   - CEX + Oracle (binance + reflector-dex) → 2
-//   - DEX + FX (soroswap + polygon-forex) → 2
+//   - DEX + FX (soroswap + massive) → 2
 //
 // Sources outside ClassExchange typically have empty Subclass —
 // their parent Class already captures the economic distinction

@@ -42,12 +42,12 @@ groups:
         expr: |
           (
             (
-              sum by (source) (increase(stellarindex_trade_inserts_total{source=~"binance|kraken|bitstamp|coinbase|massive|exchangeratesapi|polygon-forex|ecb",usd_volume_populated="yes"}[1h]))
+              sum by (source) (increase(stellarindex_trade_inserts_total{source=~"binance|kraken|bitstamp|coinbase|massive|exchangeratesapi|ecb",usd_volume_populated="yes"}[1h]))
               or
-              sum by (source) (increase(stellarindex_trade_inserts_total{source=~"binance|kraken|bitstamp|coinbase|massive|exchangeratesapi|polygon-forex|ecb"}[1h])) * 0
+              sum by (source) (increase(stellarindex_trade_inserts_total{source=~"binance|kraken|bitstamp|coinbase|massive|exchangeratesapi|ecb"}[1h])) * 0
             )
             /
-            sum by (source) (increase(stellarindex_trade_inserts_total{source=~"binance|kraken|bitstamp|coinbase|massive|exchangeratesapi|polygon-forex|ecb"}[1h]))
+            sum by (source) (increase(stellarindex_trade_inserts_total{source=~"binance|kraken|bitstamp|coinbase|massive|exchangeratesapi|ecb"}[1h]))
           ) < 0.999
         for: 30m
         labels:

@@ -25,7 +25,6 @@ import (
 	externalecb "github.com/Stellar-Index/StellarIndex/internal/sources/external/ecb"
 	externalexchangerates "github.com/Stellar-Index/StellarIndex/internal/sources/external/exchangeratesapi"
 	externalkraken "github.com/Stellar-Index/StellarIndex/internal/sources/external/kraken"
-	externalpolygonforex "github.com/Stellar-Index/StellarIndex/internal/sources/external/polygonforex"
 )
 
 // verifyExternal starts every enabled off-chain connector, drains
@@ -36,7 +35,7 @@ import (
 // "Enabled" means cfg.External.<venue>.enabled = true AND (for
 // paid-tier venues) the API key is non-empty after env resolution.
 // Free venues (binance, kraken, bitstamp, coinbase, coingecko, ecb)
-// start unconditionally once enabled; paid venues (polygonforex,
+// start unconditionally once enabled; paid venues (
 // coinmarketcap, cryptocompare, exchangeratesapi) need their
 // respective API keys.
 //
@@ -241,17 +240,6 @@ func buildVerifyExternal(cfg config.ExternalConfig) ([]external.StreamerSpec, []
 		}
 		pollers = append(pollers, external.PollerSpec{Poller: p, Pairs: verifyDefaultFXPairs(p.Base)})
 		enabled = append(enabled, externalexchangerates.SourceName)
-	}
-	if cfg.PolygonForex.Enabled {
-		p, err := externalpolygonforex.NewPoller(cfg.PolygonForex.APIKey)
-		if err != nil {
-			return nil, nil, nil, fmt.Errorf("polygon-forex: %w", err)
-		}
-		if cfg.PolygonForex.Base != "" {
-			p.Base = cfg.PolygonForex.Base
-		}
-		pollers = append(pollers, external.PollerSpec{Poller: p, Pairs: verifyDefaultFXPairs(p.Base)})
-		enabled = append(enabled, externalpolygonforex.SourceName)
 	}
 	if cfg.CoinGecko.Enabled {
 		pollers = append(pollers, external.PollerSpec{

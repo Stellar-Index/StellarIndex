@@ -48,7 +48,7 @@ func TestClassifyUSDVolumeTier(t *testing.T) {
 		// must divide by the same per-source scale the stamper uses, or
 		// it certifies a 100× error as correct).
 		{"cex USD quote", "binance", "crypto:XLM", "fiat:USD", TierQuotePegged, 8},
-		{"fx USD quote", "polygon-forex", "fiat:EUR", "fiat:USD", TierQuotePegged, 6},
+		{"fx USD quote", "exchangeratesapi", "fiat:EUR", "fiat:USD", TierQuotePegged, 6},
 		{"fx USD base", "exchangeratesapi", "fiat:USD", "fiat:JPY", TierBasePegged, 6},
 		// Off-chain: neither leg USD → estimated (FX tier).
 		{"cex EUR quote", "binance", "crypto:XLM", "fiat:EUR", TierEstimated, 0},

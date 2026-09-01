@@ -98,10 +98,6 @@ func (c *Config) ApplyEnvOverrides() []string {
 		c.External.ExchangeRatesApi.APIKey = v
 		overridden = append(overridden, "external.exchangeratesapi.api_key")
 	}
-	if v := os.Getenv("POLYGON_API_KEY"); v != "" {
-		c.External.PolygonForex.APIKey = v
-		overridden = append(overridden, "external.polygon_forex.api_key")
-	}
 	if v := os.Getenv("COINMARKETCAP_API_KEY"); v != "" {
 		c.External.CoinMarketCap.APIKey = v
 		overridden = append(overridden, "external.coinmarketcap.api_key")
