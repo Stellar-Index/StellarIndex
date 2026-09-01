@@ -4687,6 +4687,10 @@ func prewarmLight(
 		logger.Debug("prewarm asset-catalogue listing failed", "err", err)
 	}
 
+	// …and the SEPARATE /v1/assets listing, whose handler does the
+	// OPPOSITE arithmetic to /v1/coins above. See prewarmAssetListings.
+	prewarmAssetListings(assetsReaderCtx, logger, assetsReader)
+
 	// #37 fix: /v1/assets/native is the most-trafficked single-asset
 	// page (XLM is the explorer's default landing) and its
 	// GetNativeAssetRow hits the heavy `listAssetsBaseSelect`
@@ -4739,6 +4743,100 @@ func prewarmLight(
 	// This runs on the 60s light cadence — 5x inside the 5-minute TTL, so
 	// a dropped cycle still cannot expose a cold slot.
 	prewarmIssuers(mkCtx, logger, issuers)
+}
+
+// assetListingPrewarmLimits are the `?limit=` values /v1/assets callers
+// actually send, taken from OBSERVED traffic rather than assumption.
+//
+// An earlier revision of this list was inferred from the explorer's
+// source and would have been wrong: it warmed 1/10/100/500 and missed
+// `?limit=50` entirely, which turned out to be the single most
+// expensive shape in production. The query-shape logging added in #449
+// is what made the real distribution visible.
+//
+// Measured on r1 over 100 minutes after the v0.54.0 deploy, slow
+// requests (>=500 ms) grouped by shape, excluding SSE streams:
+//
+//	18x  avg 4053 ms   72.9 s total   real   ?limit=50
+//	16x  avg 4485 ms   71.8 s total   real   ?include=sparkline&limit=10&order_by=volume_24h_usd_desc
+//	12x  avg 1192 ms   14.3 s total   probe  (/v1/pairs, not this route)
+//	 6x  avg  960 ms    5.8 s total   probe  (/v1/issuers, not this route)
+//	 1x  avg 2008 ms                  probe  ?limit=500
+//	 1x  avg 1790 ms                  real   ?limit=100
+//	 1x  avg 1607 ms                  probe  ?limit=5
+//
+// The two real shapes are 84% of all slow time on the API.
+//
+// `include=sparkline` is deliberately NOT a dimension here: measured at
+// the origin it costs nothing (7.8 ms with it, 8.8 ms without, on the
+// same warm listing), because the sparkline attach reads its own
+// already-warm per-asset slots rather than changing this cache key.
+var assetListingPrewarmLimits = []int{1, 5, 10, 50, 100, 500}
+
+// prewarmAssetListings warms the /v1/assets listing keys.
+//
+// The handler overfetches by one — `ListAssetsOptions{Limit: limit + 1}`
+// — so a `?limit=50` request looks up the key for 51. That +1 arrived
+// with F-1326, which fixed cursor pagination (before it, `len(rows) >
+// limit` was never true and only the first page of ~440K assets was
+// reachable). The prewarm was never updated to match, so /v1/assets has
+// had NO warm key of its own since.
+//
+// The overfetch is easy to disbelieve, so it is measured. At the r1
+// origin, with `?limit=50` kept warm by live traffic:
+//
+//	?limit=50  → internal Limit 51   0.007 s
+//	?limit=51  → internal Limit 52   1.359 s
+//
+// Two adjacent user-facing limits, 180x apart, differing only in which
+// internal key live traffic happens to keep warm. That is also why this
+// helper takes USER-facing limits and applies the +1 itself: doing the
+// arithmetic in one place is the difference between warming the slot
+// callers hit and warming a phantom one.
+//
+// Both orders are warmed. `order_by` is absent on most requests, which
+// parseAssetsOrder maps to AssetsOrderObservationCountDesc, but the
+// explorer's home table asks for volume_24h_usd_desc.
+//
+// Every other option stays at its zero value on purpose: those are the
+// no-filter, no-cursor requests a first page-load makes. A filtered or
+// paginated request is a deliberate narrowing by a caller already past
+// the landing page.
+func prewarmAssetListings(
+	ctx context.Context, logger *slog.Logger, assetsReader *v1.CachedAssetsReader,
+) {
+	if assetsReader == nil {
+		return
+	}
+	for _, opts := range assetListingPrewarmOptions() {
+		if _, err := assetsReader.ListAssetsExt(ctx, opts); err != nil {
+			logger.Debug("prewarm assets listing failed",
+				"limit", opts.Limit, "order", opts.Order, "err", err)
+		}
+	}
+}
+
+// assetListingPrewarmOptions is the exact set of cache keys to warm.
+//
+// Separated from the IO so the arithmetic is testable on its own: the
+// `+1` and the limit set are the two things that decide whether this
+// warms the slots callers hit or a set of phantom ones, and neither
+// needs a database to check.
+func assetListingPrewarmOptions() []timescale.ListAssetsOptions {
+	orders := []timescale.AssetsOrder{
+		timescale.AssetsOrderObservationCountDesc, // `order_by` absent
+		timescale.AssetsOrderVolume24hUSDDesc,     // the explorer's home table
+	}
+	out := make([]timescale.ListAssetsOptions, 0, len(orders)*len(assetListingPrewarmLimits))
+	for _, order := range orders {
+		for _, userLimit := range assetListingPrewarmLimits {
+			out = append(out, timescale.ListAssetsOptions{
+				Limit: userLimit + 1, // mirror handleAssetListFromAssets
+				Order: order,
+			})
+		}
+	}
+	return out
 }
 
 // prewarmIssuerLimits are the /v1/issuers limits worth keeping warm.
