@@ -94,8 +94,8 @@ redeployed since, the old behaviour is still live — check the script on disk.
 
 - `stellarindex_data_source_stale`, `stellarindex_completeness_incomplete` — the alerts this watchdog feeds ([data-source-stale](data-source-stale.md), [completeness-incomplete](completeness-incomplete.md)).
 - `stellarindex_supply_assets_stale`, `stellarindex_twap_history_missing`,
-  `stellarindex_recognition_unattributed_jump` — the other gauges this one
-  script emits; they all go dark together.
+  `stellarindex_recognition_unattributed_shapes`, `stellarindex_recognition_ok`
+  — the other gauges this one script emits; they all go dark together.
 - `stellarindex_ingest_gap_detector_silent` — the analogous meta-alert for the gap detector.
 - `scripts/ci/data-freshness-test.sh` — the fixture test that pins the
   best-effort ClickHouse probe.
