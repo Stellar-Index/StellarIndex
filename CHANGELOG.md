@@ -15,6 +15,22 @@ against.
 
 ## [Unreleased]
 
+### Fixed
+
+- **`/v1/chart` now withholds price series for directory-scam-flagged
+  issuers** (#366). It served a full trajectory while `/v1/price`,
+  `/v1/price/tip`, `/v1/price/batch`, `/v1/vwap`, `/v1/twap`, the SEP-40
+  oracle and the asset headline all withheld the same asset. A series is
+  arguably worse than a point: withholding one number denies a quote,
+  but an ungated chart hands over the whole trajectory, which is what
+  makes a manufactured market look legitimate. The gate sits before the
+  specialised dispatch, so the default path and every variant
+  (market-cap, fiat-cross, TWAP) are covered by one check, and it keys
+  on the BASE asset so it survives XLM triangulation. The raw surfaces
+  the withheld message points users to — `/v1/observations`, `/v1/ohlc`,
+  `/v1/history` — stay visible by design.
+  ([#460](https://github.com/Stellar-Index/StellarIndex/pull/460))
+
 ## [v0.54.3] — 2026-09-01
 
 ### Fixed
