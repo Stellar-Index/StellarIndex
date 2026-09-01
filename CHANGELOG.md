@@ -15,6 +15,22 @@ against.
 
 ## [Unreleased]
 
+### Fixed
+
+- **`/v1/assets` listing keys are now prewarmed, chosen from observed
+  traffic.** The handler overfetches by one (`Limit: limit + 1`, added by
+  F-1326 to fix cursor pagination) and the prewarm never mirrored it, so
+  the route had no warm key of its own. Measured at the r1 origin:
+  `?limit=50` served in 0.007 s while `?limit=51` took 1.359 s — two
+  adjacent limits 180x apart, differing only in which internal key live
+  traffic happened to keep warm. The limit set comes from the
+  query-shape logging added in #449, not from inference: production
+  showed `?limit=50` (18 requests, 4053 ms avg) and
+  `?include=sparkline&limit=10&order_by=volume_24h_usd_desc` (16
+  requests, 4485 ms avg) to be 84% of all slow time, and an earlier
+  inferred key set had missed `?limit=50` entirely.
+  ([#453](https://github.com/Stellar-Index/StellarIndex/pull/453))
+
 ## [v0.54.0] — 2026-09-01
 
 ### Fixed
