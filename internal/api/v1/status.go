@@ -268,13 +268,54 @@ func (p *PrometheusStatusBackend) Latency(ctx context.Context) (StatusLatency, e
 	return out, nil
 }
 
+// activeSourcesQuery and totalSourcesQuery are the numerator and
+// denominator of the status page's "Active sources" headline. They are
+// package-level so the invariant BETWEEN them — that the numerator is a
+// strict subset of the denominator — can be asserted without standing up
+// a Prometheus.
+//
+// The numerator MUST join on stellarindex_source_enabled. Without it the
+// counts come from different populations and the ratio can exceed 1: six
+// always-on supply observers (trustlines, sep41_supply, sep41_transfers,
+// sac_balances, liquidity_pools, claimable_balances) emit events but
+// carry no `enabled` config flag, because they are wired into the indexer
+// rather than configured. Measured on r1 2026-09-01, that produced a
+// public status page reading "26 / 25".
+const activeSourcesQuery = `count(
+	(rate(stellarindex_source_events_total[7d]) > 0)
+	and on (source) (stellarindex_source_enabled == 1)
+)`
+
+const totalSourcesQuery = `count(stellarindex_source_enabled == 1)`
+
 func (p *PrometheusStatusBackend) Freshness(ctx context.Context) (StatusFreshness, error) {
 	var out StatusFreshness
 
-	// Active sources: those whose source_enabled == 1 AND have
-	// emitted an event in the last 10 minutes.
-	if res, err := p.queryVector(ctx,
-		`count(rate(stellarindex_source_events_total[10m]) > 0)`); err == nil {
+	// Active sources: enabled sources that have emitted an event in the
+	// trailing 7 days.
+	//
+	// Two things were wrong here and they compounded into a headline
+	// that could read "26 / 25" on the public status page.
+	//
+	// 1. POPULATION. The comment already promised an intersection with
+	//    source_enabled, but the query never joined on it — it counted
+	//    ANY source emitting events. six always-on supply observers
+	//    (trustlines, sep41_supply, sep41_transfers, sac_balances,
+	//    liquidity_pools, claimable_balances) emit events but carry no
+	//    `enabled` config flag, because they are wired into the indexer
+	//    rather than configured. They inflated the numerator only. The
+	//    `and on (source)` join makes the numerator a strict subset of
+	//    the denominator, so the ratio cannot exceed 1 by construction.
+	//
+	// 2. WINDOW. 10 minutes is far shorter than the publication cadence
+	//    of several legitimately-enabled sources — rozo, phoenix, ecb
+	//    and band all emit in single or double digits per DAY, and band
+	//    emits nothing on most days by design (its contract publishes no
+	//    events; we observe the relay call instead). A 10-minute window
+	//    reported those as inactive, which is a claim about our ingest
+	//    that is not true. 7 days is long enough that a source appearing
+	//    inactive means something has actually stopped.
+	if res, err := p.queryVector(ctx, activeSourcesQuery); err == nil {
 		for _, s := range res {
 			if v, ok := s.Float(); ok {
 				out.ActiveSources = int(v)
@@ -283,8 +324,7 @@ func (p *PrometheusStatusBackend) Freshness(ctx context.Context) (StatusFreshnes
 	}
 
 	// Total sources configured as enabled.
-	if res, err := p.queryVector(ctx,
-		`count(stellarindex_source_enabled == 1)`); err == nil {
+	if res, err := p.queryVector(ctx, totalSourcesQuery); err == nil {
 		for _, s := range res {
 			if v, ok := s.Float(); ok {
 				out.TotalSources = int(v)

@@ -15,6 +15,23 @@ against.
 
 ## [Unreleased]
 
+### Fixed
+
+- **The status page could report more active sources than it had.** It
+  read **26 / 25** on 2026-09-01. Two independent faults: the numerator
+  never joined on `stellarindex_source_enabled` despite its own comment
+  promising it, so six always-on supply observers (trustlines,
+  sep41_supply, sep41_transfers, sac_balances, liquidity_pools,
+  claimable_balances) — which emit events but carry no `enabled` config
+  flag — inflated it; and the 10-minute activity window was far shorter
+  than several enabled sources' publication cadence, so `blend_emitter`
+  (496 events in ~12.6M ledgers), `rozo` (2 in 24h), `phoenix`, `ecb`
+  and `band` were reported inactive when nothing was wrong. Now an
+  intersection over a 7-day window, which makes the ratio coherent by
+  construction. Verified against live r1: **25 / 25**, zero enabled
+  sources missed.
+  ([#467](https://github.com/Stellar-Index/StellarIndex/pull/467))
+
 ### Changed
 
 - **Split the recognition signal into the two things it actually
