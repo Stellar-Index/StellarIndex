@@ -86,16 +86,18 @@ func TestRecentOperations_CursorPageIsBoundedBelowTheCursor(t *testing.T) {
 		t.Fatalf("issued %d queries for a full cursor page, want 1: %v", len(conn.queries), conn.queries)
 	}
 	q := conn.queries[0]
-	// The cursor tuple still bounds the page from ABOVE — paging must stay
-	// exact across a ledger that straddles a page boundary.
-	if !strings.Contains(q, "(ledger_seq, tx_index, op_index) < (?, ?, ?)") {
-		t.Fatalf("cursor page lost its keyset tuple comparison:\n%s", q)
+	// The keyset comparison still bounds the page from ABOVE — paging must
+	// stay exact across a ledger that straddles a page boundary. Since #484
+	// it is spelled index-prunably rather than as a bare tuple compare;
+	// explorer_reader_deep_cursor_test.go pins that spelling.
+	if !strings.Contains(q, recentOperationsCursorPredicate) {
+		t.Fatalf("cursor page lost its keyset comparison:\n%s", q)
 	}
 	if !strings.Contains(q, "AND ledger_seq >= ?") {
 		t.Fatalf("cursor page carries no tail-window lower bound (this is the #444 defect):\n%s", q)
 	}
 	args := conn.args[0]
-	want := []any{cur.Ledger, cur.A, cur.B, cur.Ledger - uint32(recentLedgersTailWindow), 25}
+	want := []any{cur.Ledger, cur.Ledger, cur.A, cur.B, cur.Ledger - uint32(recentLedgersTailWindow), 25}
 	if len(args) != len(want) {
 		t.Fatalf("cursor args = %v, want %v", args, want)
 	}
@@ -120,7 +122,9 @@ func TestRecentOperations_CursorNearGenesisClampsTheLowerBound(t *testing.T) {
 		t.Fatalf("RecentOperations: %v", err)
 	}
 	args := conn.args[0]
-	if got, want := args[3], uint32(0); got != want {
+	// args = [ledger, ledger, tx_index, op_index, lower, limit] — the lower
+	// bound is index 4 since #484 bound the ledger to both predicate arms.
+	if got, want := args[4], uint32(0); got != want {
 		t.Fatalf("lower bound near genesis = %v (%T), want %v — uint32 underflow would empty the page", got, got, want)
 	}
 }
@@ -192,13 +196,13 @@ func TestRecentOperations_ShortCursorPageFallsBackKeepingItsCursorClause(t *test
 		t.Fatalf("issued %d queries, want 2: %v", len(conn.queries), conn.queries)
 	}
 	fb, fbArgs := conn.queries[1], conn.args[1]
-	if !strings.Contains(fb, "(ledger_seq, tx_index, op_index) < (?, ?, ?)") {
+	if !strings.Contains(fb, recentOperationsCursorPredicate) {
 		t.Fatalf("fallback dropped the keyset cursor — it would restart the listing at the tip:\n%s", fb)
 	}
 	if strings.Contains(fb, "AND ledger_seq >= ?") {
 		t.Fatalf("fallback still carries the window bound; it is not a fallback:\n%s", fb)
 	}
-	want := []any{cur.Ledger, cur.A, cur.B, 20}
+	want := []any{cur.Ledger, cur.Ledger, cur.A, cur.B, 20}
 	if len(fbArgs) != len(want) {
 		t.Fatalf("fallback args = %v, want %v", fbArgs, want)
 	}

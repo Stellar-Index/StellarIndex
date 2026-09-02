@@ -600,6 +600,12 @@ func scanOpsLight(rows driver.Rows) ([]OpRow, error) {
 // short instead would truncate the listing and mint a next_cursor that
 // skips real operations; falling back costs the old query only in the cases
 // where the old query was the only one.
+//
+// A cursor page can be REFUSED: it carries a row budget, and a cursor whose
+// read would exceed it returns ErrOperationsCursorTooDeep rather than a
+// minutes-long scan (#484). Organic paging cannot reach one — the budget is
+// ~18x the densest legitimate window — but `?cursor=` is publicly mintable,
+// so the unservable case has to have an answer that is not "read 215 GiB".
 func (r *ExplorerReader) RecentOperations(ctx context.Context, limit int, cur ExplorerCursor) ([]OpRow, error) {
 	if limit <= 0 || limit > 200 {
 		limit = 50
@@ -622,7 +628,10 @@ func (r *ExplorerReader) recentOperationsPage(ctx context.Context, limit int, cu
 	args := []any{}
 	switch {
 	case cur.IsSet():
-		args = append(args, cur.Ledger, cur.A, cur.B)
+		// Ledger binds TWICE — once to the index-usable `ledger_seq < ?`
+		// arm and once to the `ledger_seq = ?` arm that confines the
+		// tuple comparison to a single ledger (#484).
+		args = append(args, cur.Ledger, cur.Ledger, cur.A, cur.B)
 		if bounded {
 			// Clamp at 0 — uint32 underflow near genesis would wrap and
 			// return nothing (the RecentLedgers cursor branch's lesson).
@@ -638,6 +647,13 @@ func (r *ExplorerReader) recentOperationsPage(ctx context.Context, limit int, cu
 	args = append(args, limit)
 	rows, err := r.conn.Query(ctx, q, args...)
 	if err != nil {
+		if isTooManyRows(err) {
+			// The lake REFUSED the caller's cursor rather than serving
+			// it (#484). Surface it as its own class so it is never
+			// read as an internal fault or as retryable capacity.
+			return nil, fmt.Errorf("clickhouse: recent operations from cursor %d.%d.%d: %w: %w",
+				cur.Ledger, cur.A, cur.B, ErrOperationsCursorTooDeep, err)
+		}
 		return nil, fmt.Errorf("clickhouse: recent operations: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
@@ -673,18 +689,112 @@ func (r *ExplorerReader) recentOperationsPage(ctx context.Context, limit int, cu
 // page. It is a PERFORMANCE bound only — RecentOperations re-runs the
 // UNBOUNDED form whenever the bounded pass comes back short, so no page is
 // ever truncated by it.
+//
+// The cursor arms carry recentOperationsCursorPredicate (index-prunable, and
+// the reason that #444 bound now actually bites — see #484) plus
+// recentOperationsCursorRowCeiling. Both are documented on their consts.
 func recentOperationsQuery(hasCursor, bounded bool) string {
 	q := `SELECT ` + opColsLight + ` FROM stellar.operations`
 	switch {
 	case hasCursor && bounded:
-		q += ` WHERE (ledger_seq, tx_index, op_index) < (?, ?, ?) AND ledger_seq >= ?`
+		q += ` WHERE ` + recentOperationsCursorPredicate + ` AND ledger_seq >= ?`
 	case hasCursor:
-		q += ` WHERE (ledger_seq, tx_index, op_index) < (?, ?, ?)`
+		q += ` WHERE ` + recentOperationsCursorPredicate
 	case bounded:
 		q += ` WHERE ledger_seq > (SELECT max(ledger_seq) FROM stellar.operations) - ?`
 	}
 	q += ` ORDER BY ledger_seq DESC, tx_index DESC, op_index DESC LIMIT 1 BY ledger_seq, tx_index, op_index LIMIT ?`
-	return q + explorerScanSettings
+	q += explorerScanSettings
+	if hasCursor {
+		q += recentOperationsCursorRowCeiling
+	}
+	return q
+}
+
+// recentOperationsCursorPredicate is RecentOperations' keyset cursor
+// comparison, written so ClickHouse's primary index can PRUNE on it (#484).
+//
+// It is EXACTLY equivalent to the tuple form it replaced —
+// `(ledger_seq, tx_index, op_index) < (?, ?, ?)` — because lexicographic
+// order on a product of totally-ordered sets IS
+//
+//	(L,T,O) < (l,t,o)  ⟺  L < l  ∨  (L = l ∧ (T,O) < (t,o))
+//
+// and this is literally that identity's first expansion step, with the inner
+// comparison left as a tuple so it is not re-derived. All three columns are
+// non-Nullable UInt32 (see the stellar.operations DDL), so there is no
+// three-valued-logic case where the two forms could diverge, and
+// ExplorerCursor.IsSet() guarantees l > 0 so the `ledger_seq < ?` arm cannot
+// be asked about an underflowed bound.
+//
+// Why it matters (measured on r1's system.query_log, 2026-09-02): KeyCondition
+// does NOT decompose a 3-column tuple comparison, so in the old form the ONLY
+// index-usable predicate on a cursor page was #444's `ledger_seq >= lower` —
+// which selects everything ABOVE the cursor, i.e. essentially the whole table.
+// `EXPLAIN ESTIMATE` for `?cursor=5000000.0.0` selected 80 parts /
+// 24,693,075,112 rows / 3,014,332 marks; the same page in this form selects
+// 1 part / 4,157 rows / 1 mark. Executed, that is 2.86 BILLION rows / 32 GiB
+// in 30 s and still unfinished (killed at the cap), versus 4,157 rows /
+// 564 KiB / 5 ms. In the rewrite arm 1 constrains the leading key column to a
+// half-open range and arm 2 pins it to a point, so their union is the
+// index-usable `ledger_seq <= l`.
+//
+// The outer parentheses are load-bearing: SQL binds AND tighter than OR, so
+// without them the `AND ledger_seq >= ?` window bound would attach to the
+// equality arm alone and the query would return every operation below the
+// cursor — a correctness bug on top of the scan it is meant to remove.
+const recentOperationsCursorPredicate = `(ledger_seq < ? OR (ledger_seq = ? AND (tx_index, op_index) < (?, ?)))`
+
+// recentOperationsCursorRowCeiling is the per-request row budget on a CURSOR
+// page. `?cursor=` is publicly mintable dotted decimal on an unauthenticated
+// route, so the cursor arms are the one place in this listing where a caller
+// picks the size of the read; the ceiling makes a pathological pick REFUSED
+// (ClickHouse code 158 TOO_MANY_ROWS, raised from the read pool in ~0.5 s)
+// rather than served over minutes (#484).
+//
+// 200M is ~18x the densest legitimate window and ~123x below the pathological
+// whole-table selection, both measured on r1 2026-09-02:
+//   - the bounded cursor arm reads at most `recentLedgersTailWindow` ledgers;
+//     the densest 5,000-ledger window on r1 holds 10.94M operations (mean
+//     4.81M), so it cannot approach the ceiling without ~40,000 ops/ledger —
+//     far beyond anything the protocol admits. Measured worst legitimate
+//     cursor page (dense tip, limit 200): 524,288 rows.
+//   - the UNBOUNDED cursor fallback reads [genesis, cursor]. Deep cursors are
+//     cheap there (40,639 rows for cursor 5000000.0.0), but a near-tip cursor
+//     would select the whole table — and that arm only runs when the tail
+//     window came back short, which on a live network it does not. Refusing
+//     is the fail-closed answer for exactly the shape the finding is about.
+//
+// read_overflow_mode is pinned to 'throw' rather than left to the default:
+// a server profile that flipped it to 'break' would silently TRUNCATE the
+// page and mint a next_cursor from the wrong last row, which is a data bug
+// wearing a performance fix's clothes.
+//
+// Deliberately NOT applied to the two first-page arms. Measured on r1: the
+// #444 unbounded first-page fallback (no predicate at all) announces 217.44M
+// rows to the read pool and would be REFUSED at this ceiling. That arm is
+// #444's correctness net for a quiet tip window, and it carries no
+// caller-controlled input — so ceiling-ing it would convert "the network went
+// quiet" into a hard error without closing any attacker-reachable path.
+const recentOperationsCursorRowCeiling = `, max_rows_to_read = 200000000, read_overflow_mode = 'throw'`
+
+// chTooManyRows is ClickHouse's TOO_MANY_ROWS — the code the server raises
+// when a query would exceed max_rows_to_read under read_overflow_mode='throw'.
+const chTooManyRows = 158
+
+// ErrOperationsCursorTooDeep is returned when a cursor page trips
+// recentOperationsCursorRowCeiling: the request was REFUSED by the lake, not
+// failed by it. Callers should render it as a client error against the
+// supplied `?cursor=` (the caller chose an unservable position), never as an
+// internal fault or a retryable capacity signal — a retry of the identical
+// cursor is refused identically.
+var ErrOperationsCursorTooDeep = errors.New("clickhouse: operations cursor exceeds the per-request row budget")
+
+// isTooManyRows reports whether err is the server refusing a query for its row
+// budget (158). Mirrors isMemoryLimitExceeded's shape in sac_balance_seed.go.
+func isTooManyRows(err error) bool {
+	var chErr *clickhouse.Exception
+	return errors.As(err, &chErr) && chErr.Code == chTooManyRows
 }
 
 // OpTypeCount is one op-type's count in the stats window.

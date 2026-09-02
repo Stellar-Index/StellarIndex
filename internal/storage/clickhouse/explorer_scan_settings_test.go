@@ -124,7 +124,7 @@ func TestExplorerScanQueries_ShapePreserved(t *testing.T) {
 	// actually protects — the arg count matching the clause count — is
 	// now asserted directly.)
 	for _, q := range []string{recentOperationsQuery(false, true), recentOperationsQuery(false, false)} {
-		if strings.Contains(q, "(ledger_seq, tx_index, op_index) < (?, ?, ?)") {
+		if strings.Contains(q, recentOperationsCursorPredicate) || strings.Contains(q, "(ledger_seq, tx_index, op_index) < (?, ?, ?)") {
 			t.Errorf("recentOperationsQuery(false, …) must not carry a cursor clause:\n%s", q)
 		}
 		if !strings.Contains(q, "LIMIT 1 BY ledger_seq, tx_index, op_index") {
@@ -132,8 +132,15 @@ func TestExplorerScanQueries_ShapePreserved(t *testing.T) {
 		}
 	}
 	for _, q := range []string{recentOperationsQuery(true, true), recentOperationsQuery(true, false)} {
-		if !strings.Contains(q, "(ledger_seq, tx_index, op_index) < (?, ?, ?)") {
-			t.Errorf("recentOperationsQuery(true, …) missing its cursor tuple comparison:\n%s", q)
+		// The keyset comparison is now spelled index-prunably (#484) —
+		// `ledger_seq < ? OR (ledger_seq = ? AND (tx_index, op_index) <
+		// (?, ?))`, exactly equivalent to the tuple form it replaced. The
+		// full shape (including the forbidden tuple-only spelling) is
+		// pinned in explorer_reader_deep_cursor_test.go; this row keeps
+		// asserting the property it always asserted, that a cursor arm
+		// carries a full-primary-key keyset comparison.
+		if !strings.Contains(q, recentOperationsCursorPredicate) {
+			t.Errorf("recentOperationsQuery(true, …) missing its keyset cursor comparison:\n%s", q)
 		}
 		if !strings.Contains(q, "LIMIT 1 BY ledger_seq, tx_index, op_index") {
 			t.Errorf("recentOperationsQuery(true, …) missing its DAT-10 LIMIT 1 BY dedup:\n%s", q)

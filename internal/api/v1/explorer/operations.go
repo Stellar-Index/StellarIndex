@@ -2,6 +2,7 @@ package explorer
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"strconv"
 	"strings"
@@ -552,6 +553,18 @@ func (h *Handler) operationsDirectory(w http.ResponseWriter, r *http.Request) {
 	out, err := h.buildOperationsDirectory(ctx, limit, cur)
 	if err != nil {
 		if h.ClientAborted(r, err) {
+			return
+		}
+		// A cursor so deep that the bounded read hits its row ceiling is
+		// the CALLER's fault, not ours, and an identical retry is refused
+		// identically — so it must not be dressed up as retryable (#484).
+		// The cursor is a publicly mintable dotted decimal, which is why
+		// this path exists at all.
+		if errors.Is(err, clickhouse.ErrOperationsCursorTooDeep) {
+			h.Logger.Warn("explorer RecentOperations refused a too-deep cursor")
+			h.WriteProblem(w, r, "https://api.stellarindex.io/errors/cursor-too-deep",
+				"Cursor too deep", http.StatusBadRequest,
+				"the supplied cursor would require scanning an unbounded portion of the table; page forward from a more recent cursor, or use ?ledger= to address a specific ledger")
 			return
 		}
 		if retryableColdMiss(ctx, err) {
