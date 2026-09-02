@@ -106,6 +106,7 @@ export function SourcesTable() {
   if (isError) {
     return (
       <Panel
+        headingLevel={2}
         title="Sources"
         source={asExample('/v1/sources')}
         bodyClassName="text-sm text-down-strong"
@@ -118,6 +119,7 @@ export function SourcesTable() {
   if (isLoading || !data) {
     return (
       <Panel
+        headingLevel={2}
         title="Sources"
         source={asExample('/v1/sources')}
         bodyClassName="text-sm text-ink-muted"
@@ -129,6 +131,7 @@ export function SourcesTable() {
   if (stellar.length === 0) {
     return (
       <Panel
+        headingLevel={2}
         title="Sources"
         source={asExample('/v1/sources')}
         bodyClassName="text-sm text-ink-muted"
@@ -164,6 +167,7 @@ export function SourcesTable() {
       </div>
       {!filter && classMix.length > 1 && (
         <Panel
+          headingLevel={2}
           title="By class"
           hint="Stellar on-chain source composition — only exchange-class (DEX) contributes to VWAP"
           source={asExample('/v1/sources')}
@@ -177,6 +181,7 @@ export function SourcesTable() {
       )}
       {filter && grouped.length === 0 && (
         <Panel
+          headingLevel={2}
           title="Sources"
           source={asExample('/v1/sources')}
           bodyClassName="text-sm text-ink-muted"
@@ -186,6 +191,7 @@ export function SourcesTable() {
       )}
       {grouped.map(({ klass, rows }) => (
         <Panel
+          headingLevel={2}
           key={klass}
           title={titleCase(klass)}
           hint={classHint(klass)}

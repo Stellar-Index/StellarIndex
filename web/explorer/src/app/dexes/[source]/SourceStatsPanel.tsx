@@ -74,6 +74,7 @@ export function SourceStatsPanel({
 
   return (
     <Panel
+      headingLevel={2}
       title="24h activity"
       hint={`Live from /v1/sources?include=stats,sparkline,sparkline7d (source=${source})`}
       source={asExample('/v1/sources', { include: 'stats,sparkline,sparkline7d' })}

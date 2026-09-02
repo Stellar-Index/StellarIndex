@@ -55,6 +55,7 @@ export function RoutedVolumePanel() {
 
   return (
     <Panel
+      headingLevel={2}
       title="Routed volume (24h)"
       hint="Trades tagged routed_via — same-tx attribution of router invocations to underlying pair trades; vault entries are listed for completeness (they don't accrue per-tx tags)"
       source={asExample('/v1/aggregators')}

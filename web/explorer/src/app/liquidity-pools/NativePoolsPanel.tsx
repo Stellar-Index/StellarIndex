@@ -67,6 +67,7 @@ export function NativePoolsPanel() {
 
   return (
     <Panel
+      headingLevel={2}
       title="Native pool reserves & depth (current)"
       hint="Live two-sided reserves read from each native pool's ledger entry in the certified lake. Depth is a constant-product model estimate from current reserves (fee on input) — not an order book. The listing ranks pools by number of liquidity providers."
       source={asExample('/v1/liquidity-pools')}

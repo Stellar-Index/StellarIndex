@@ -48,6 +48,7 @@ export function IssuersTable() {
   if (isError) {
     return (
       <Panel
+        headingLevel={2}
         title="Issuers"
         source={asExample('/v1/issuers', { limit: 100 })}
         bodyClassName="text-sm text-down-strong"
@@ -60,6 +61,7 @@ export function IssuersTable() {
   if (isLoading || !data) {
     return (
       <Panel
+        headingLevel={2}
         title="Issuers"
         source={asExample('/v1/issuers', { limit: 100 })}
         bodyClassName="text-sm text-ink-muted"
@@ -71,6 +73,7 @@ export function IssuersTable() {
   if (data.length === 0) {
     return (
       <Panel
+        headingLevel={2}
         title="Issuers"
         source={asExample('/v1/issuers', { limit: 100 })}
         bodyClassName="text-sm text-ink-muted"
@@ -82,6 +85,7 @@ export function IssuersTable() {
 
   return (
     <Panel
+      headingLevel={2}
       title={`${data.length} top issuers`}
       hint="Ranked by total observation count across each issuer's assets"
       source={asExample('/v1/issuers', { limit: 100 })}

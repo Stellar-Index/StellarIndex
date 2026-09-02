@@ -185,7 +185,7 @@ export default async function IssuerDetailPage({ params }: { params: Params }) {
             {shortKey(g_strkey)}
           </h1>
         </header>
-        <Panel title="Issuer not found" bodyClassName="text-sm text-ink-body">
+        <Panel headingLevel={2} title="Issuer not found" bodyClassName="text-sm text-ink-body">
           <p>
             No row found for that G-strkey, or the issuer hasn&apos;t issued a
             classic asset that&apos;s appeared in any trade or ChangeTrust op
@@ -317,6 +317,7 @@ export default async function IssuerDetailPage({ params }: { params: Params }) {
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
         <Panel
+          headingLevel={2}
           title="Activity"
           source={asExample(`/v1/issuers/${g_strkey}`)}
           panelId="activity-card"
@@ -354,7 +355,7 @@ export default async function IssuerDetailPage({ params }: { params: Params }) {
           </dl>
         </Panel>
 
-        <Panel title="Auth flags" panelId="auth-flags-card">
+        <Panel headingLevel={2} title="Auth flags" panelId="auth-flags-card">
           {detail.auth_required == null &&
           detail.auth_revocable == null &&
           detail.auth_immutable == null &&
@@ -379,6 +380,7 @@ export default async function IssuerDetailPage({ params }: { params: Params }) {
       </div>
 
       <Panel
+        headingLevel={2}
         title="External views"
         hint="Cross-reference this issuer on other Stellar explorers"
         bodyClassName="text-sm text-ink-body"
@@ -433,6 +435,7 @@ export default async function IssuerDetailPage({ params }: { params: Params }) {
       </Panel>
 
       <Panel
+        headingLevel={2}
         title={assets ? `Issued assets (${assets.length})` : 'Issued assets'}
         hint="All classic assets we've observed minted by this G-strkey"
         source={asExample(`/v1/issuers/${g_strkey}`)}

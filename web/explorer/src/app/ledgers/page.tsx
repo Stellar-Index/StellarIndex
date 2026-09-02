@@ -34,7 +34,7 @@ export default function LedgersPage() {
 
       {/* S-005: ledger cadence answers "is the network healthy" before
           the row list — same shared series /network renders. */}
-      <ThroughputPanel defaultMetric="ledgers" />
+      <ThroughputPanel headingLevel={2} defaultMetric="ledgers" />
 
       {/* NO Suspense wrapper (2026-08-09): LedgersTable takes no
           useSearchParams, so a <Suspense fallback={null}> around it was

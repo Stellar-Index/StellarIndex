@@ -49,6 +49,7 @@ export function HoldersTabPanel({ assetID, decimals = 7 }: { assetID: string; de
 
   return (
     <Panel
+      headingLevel={2}
       title={data && (data.holder_count ?? 0) > 0 ? `Holders (${formatCompact(data.holder_count ?? 0)})` : 'Holders'}
       hint={holders.length > 0 ? 'top 100 by balance' : undefined}
       source={source}
@@ -136,9 +137,9 @@ function HoldersConcentration({
   if (total <= 0) return null;
   return (
     <div className="border-b border-line-subtle px-4 pb-4">
-      <h4 className="mb-2 text-[11px] uppercase tracking-wider text-ink-muted">
+      <h3 className="mb-2 text-[11px] uppercase tracking-wider text-ink-muted">
         Concentration — within the served top {holders.length}
-      </h4>
+      </h3>
       <DonutChart
         data={[
           { label: 'Top 10 holders', value: top10, color: CATEGORICAL_PALETTE[0] },

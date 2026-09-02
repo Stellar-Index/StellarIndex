@@ -38,11 +38,19 @@ export function VenueMarketsTable({
   source,
   title,
   rowNoun,
+  headingLevel = 3,
 }: {
   source: string;
   title: string;
   /** "pools" | "pairs" — loading/empty/unavailable copy. */
   rowNoun: string;
+  /**
+   * Heading rank for `title`, forwarded to `reveal/Panel`. Defaults to 3
+   * (a panel nested under a section `<h2>`); a caller that renders the
+   * table as a page's top-level section passes 2 so the outline doesn't
+   * skip h2 (WCAG 1.3.1 — #486).
+   */
+  headingLevel?: 2 | 3 | 4;
 }) {
   const [order, setOrder] = useState<Order>('volume_24h_usd_desc');
   const pager = useCursorPager();
@@ -89,6 +97,7 @@ export function VenueMarketsTable({
 
   return (
     <Panel
+      headingLevel={headingLevel}
       title={title}
       hint="One row per (base, quote) pair observed in the last 14 days"
       source={asExample('/v1/markets', {

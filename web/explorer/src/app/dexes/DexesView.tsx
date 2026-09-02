@@ -132,6 +132,7 @@ export function DexesView() {
       <DexProtocolsTable />
 
       <Panel
+        headingLevel={2}
         title={`${pools.length} pools on this page${sourceFilter ? ` (${sourceFilter} only)` : ''}`}
         hint="Source: /v1/pools"
         source={asExample('/v1/pools', {

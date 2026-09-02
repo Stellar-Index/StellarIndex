@@ -124,6 +124,7 @@ function MostActivePanel({ sacMap }: { sacMap: SACMap }) {
 
   return (
     <Panel
+      headingLevel={2}
       title={rows.length > 0 ? `Most active (${formatCompact(rows.length)})` : 'Most active'}
       source={asExample('/v1/contracts', { days: 30, limit: 100 })}
       bodyClassName="-mx-4"
@@ -241,6 +242,7 @@ function RegistryPanel() {
 
   return (
     <Panel
+      headingLevel={2}
       title={rows.length > 0 ? `Attributed protocols (${formatCompact(rows.length)})` : 'Registry'}
       source={asExample('/v1/protocols')}
       bodyClassName="-mx-4"

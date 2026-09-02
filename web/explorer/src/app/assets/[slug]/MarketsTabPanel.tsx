@@ -52,6 +52,7 @@ export function MarketsTabPanel({ assetID }: { assetID: string }) {
   if (markets.isError) {
     return (
       <Panel
+        headingLevel={2}
         title="Markets"
         source={asExample('/v1/markets', { limit: 100 })}
         bodyClassName="text-sm text-down-strong"
@@ -63,6 +64,7 @@ export function MarketsTabPanel({ assetID }: { assetID: string }) {
   if (markets.isLoading) {
     return (
       <Panel
+        headingLevel={2}
         title="Markets"
         source={asExample('/v1/markets', { limit: 100 })}
         bodyClassName="text-sm text-ink-muted"
@@ -74,6 +76,7 @@ export function MarketsTabPanel({ assetID }: { assetID: string }) {
   if (matched.length === 0) {
     return (
       <Panel
+        headingLevel={2}
         title="Markets"
         hint="No active markets in the last 14 days"
         source={asExample('/v1/markets', { limit: 100 })}
@@ -87,6 +90,7 @@ export function MarketsTabPanel({ assetID }: { assetID: string }) {
 
   return (
     <Panel
+      headingLevel={2}
       title={`${matched.length} active market${matched.length === 1 ? '' : 's'}`}
       hint="Pairs involving this coin that traded in the last 14 days"
       source={asExample('/v1/markets', { limit: 100 })}

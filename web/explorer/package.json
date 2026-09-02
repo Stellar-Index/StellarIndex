@@ -16,7 +16,8 @@
     "generate:api": "openapi-typescript ../../openapi/stellar-index.v1.yaml -o src/api/types.ts",
     "build:worker": "OPEN_NEXT=1 opennextjs-cloudflare build -c wrangler.ssr.jsonc",
     "preview:worker": "opennextjs-cloudflare preview -c wrangler.ssr.jsonc",
-    "prebuild": "mkdir -p public/openapi && cp ../../openapi/stellar-index.v1.yaml public/openapi/stellar-index.v1.yaml"
+    "prebuild": "mkdir -p public/openapi && cp ../../openapi/stellar-index.v1.yaml public/openapi/stellar-index.v1.yaml",
+    "postbuild": "HEADING_ORDER_REQUIRE_BUILD=1 vitest run --reporter=verbose src/lib/heading-order.built.test.ts"
   },
   "dependencies": {
     "@resvg/resvg-js": "^2.6.2",

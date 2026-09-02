@@ -68,6 +68,7 @@ export function DexProtocolsTable() {
 
   return (
     <Panel
+      headingLevel={2}
       title="DEX protocols"
       hint="Per-protocol 24h activity"
       source={asExample('/v1/sources', { include: 'stats' })}

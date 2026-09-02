@@ -46,7 +46,7 @@ export function SourceTopChart({
 
   if (q.isLoading) {
     return (
-      <Panel title="Top pair">
+      <Panel headingLevel={2} title="Top pair">
         <Skeleton className="h-[300px] w-full" />
       </Panel>
     );
@@ -63,6 +63,7 @@ export function SourceTopChart({
 
   return (
     <Panel
+      headingLevel={2}
       title={`Top pair — ${baseLabel}/${quoteLabel}`}
       hint={`${sourceName}'s highest-volume pair over the trailing 24h`}
       source={asExample('/v1/markets', {

@@ -66,6 +66,7 @@ export function ChartPanel({ assetID }: { assetID: string }) {
   const { quote, label } = chartQuoteFor(assetID);
   return (
     <Panel
+      headingLevel={2}
       title="Price chart"
       hint={`OHLC + volume · quoted in ${label}`}
       source={asExample('/v1/ohlc', {
@@ -97,6 +98,7 @@ function FiatUsdChartPanel({ assetID }: { assetID: string }) {
   const hasSeries = !!data && data.length >= 2;
   return (
     <Panel
+      headingLevel={2}
       title="Price chart"
       hint="USD price · daily · trailing week"
       source={asExample('/v1/chart', {
@@ -130,7 +132,7 @@ function FiatUsdChartPanel({ assetID }: { assetID: string }) {
  */
 function UsdcReferencePanel() {
   return (
-    <Panel title="Price chart" hint="USD reference">
+    <Panel headingLevel={2} title="Price chart" hint="USD reference">
       <div className="flex flex-col items-center justify-center gap-3 py-14 text-center">
         <div className="text-ink font-mono text-4xl tracking-tight">≈ $1.00</div>
         <p className="text-ink-muted max-w-md text-sm">

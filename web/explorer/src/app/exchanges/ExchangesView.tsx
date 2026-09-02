@@ -104,6 +104,7 @@ export function ExchangesView() {
       )}
 
       <Panel
+        headingLevel={2}
         title={
           registryAvailable
             ? `${rows.length} centralised exchanges`
@@ -278,6 +279,7 @@ function AllCEXMarkets() {
 
   return (
     <Panel
+      headingLevel={2}
       title={
         marketsAvailable
           ? `${markets.length} CEX pairs · sorted by 24h volume`

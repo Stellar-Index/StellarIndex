@@ -8,14 +8,25 @@ export function EmptyState({
   title,
   description,
   action,
+  headingLevel = 3,
   className,
 }: {
   icon?: ReactNode;
   title: ReactNode;
   description?: ReactNode;
   action?: ReactNode;
+  /**
+   * Heading rank for `title`. Defaults to 3, which is right for an empty
+   * state inside a card/panel (itself an `<h3>` under a SectionHeader
+   * `<h2>`). An empty state that IS a page's top-level section must pass
+   * 2, or the outline skips h2 and `heading-order` (WCAG 1.3.1) fails —
+   * the visual style is unchanged either way, since it lives in the
+   * className, not the tag. (#486)
+   */
+  headingLevel?: 2 | 3 | 4;
   className?: string;
 }) {
+  const H = `h${headingLevel}` as const;
   return (
     <div
       className={cn(
@@ -28,7 +39,7 @@ export function EmptyState({
           {icon}
         </div>
       )}
-      <h3 className="text-ink text-sm font-semibold">{title}</h3>
+      <H className="text-ink text-sm font-semibold">{title}</H>
       {description && (
         <p className="text-ink-muted mt-1 max-w-sm text-sm">{description}</p>
       )}

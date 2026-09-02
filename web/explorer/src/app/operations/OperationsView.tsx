@@ -121,8 +121,8 @@ export function OperationsView() {
           page 1; deep-paging visitors came for the rows. */}
       {!cursor && (
         <div className="grid gap-6 lg:grid-cols-2">
-          <OperationMixPanel linkRows={false} />
-          <ThroughputPanel defaultMetric="ops" />
+          <OperationMixPanel headingLevel={2} linkRows={false} />
+          <ThroughputPanel headingLevel={2} defaultMetric="ops" />
         </div>
       )}
 
@@ -136,6 +136,7 @@ export function OperationsView() {
       )}
 
       <Panel
+        headingLevel={2}
         title={ops.length > 0 ? `Recent operations (${formatCompact(ops.length)})` : 'Recent operations'}
         hint={following ? 'live' : undefined}
         source={asExample('/v1/operations', { limit: PAGE_SIZE })}

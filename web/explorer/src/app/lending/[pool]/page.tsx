@@ -259,7 +259,7 @@ export default async function LendingPoolPage({ params }: { params: Params }) {
       </header>
 
       {label?.note && (
-        <Panel title="About this contract">
+        <Panel headingLevel={2} title="About this contract">
           <p className="text-ink-body text-sm leading-relaxed">{label.note}</p>
         </Panel>
       )}
@@ -291,7 +291,7 @@ export default async function LendingPoolPage({ params }: { params: Params }) {
       )}
 
       {data && (
-        <Panel title="Last activity">
+        <Panel headingLevel={2} title="Last activity">
           <div className="space-y-1 text-sm">
             <div className="text-ink-body">
               Most recent auction event:{' '}

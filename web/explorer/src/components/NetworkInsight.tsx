@@ -63,7 +63,18 @@ function useOpTypeStats() {
  * bars. `linkRows` controls whether rows deep-link to /operations
  * (turn it off ON /operations itself).
  */
-export function OperationMixPanel({ linkRows = true }: { linkRows?: boolean }) {
+export function OperationMixPanel({
+  linkRows = true,
+  headingLevel = 3,
+}: {
+  linkRows?: boolean;
+  /**
+   * Heading rank for the panel title, forwarded to `reveal/Panel`.
+   * Defaults to 3; a page that renders this as a top-level section
+   * passes 2 so the outline doesn't skip h2 (WCAG 1.3.1 — #486).
+   */
+  headingLevel?: 2 | 3 | 4;
+}) {
   const { data: stats, isLoading, isError } = useOpTypeStats();
   const sorted = [...(stats ?? [])]
     .sort((a, b) => (b.count ?? 0) - (a.count ?? 0))
@@ -73,6 +84,7 @@ export function OperationMixPanel({ linkRows = true }: { linkRows?: boolean }) {
 
   return (
     <Panel
+      headingLevel={headingLevel}
       title="Operation mix — trailing 24h"
       source={asExample('/v1/operations', { limit: 1 })}
       bodyClassName="space-y-2.5"
@@ -148,10 +160,17 @@ export function ThroughputPanel({
   defaultMetric = 'ops',
   windowDays = 30,
   height = 240,
+  headingLevel = 3,
 }: {
   defaultMetric?: ThroughputMetric;
   windowDays?: number;
   height?: number;
+  /**
+   * Heading rank for the panel title, forwarded to `reveal/Panel`.
+   * Defaults to 3; a page that renders this as a top-level section
+   * passes 2 so the outline doesn't skip h2 (WCAG 1.3.1 — #486).
+   */
+  headingLevel?: 2 | 3 | 4;
 }) {
   const [metric, setMetric] = useState<ThroughputMetric>(defaultMetric);
   const tpQ = useQuery<ThroughputResp>({
@@ -190,6 +209,7 @@ export function ThroughputPanel({
 
   return (
     <Panel
+      headingLevel={headingLevel}
       title={`${labels[metric]} per day — trailing ${windowDays}d`}
       hint={total > 0 ? `${formatCompact(total)} total` : undefined}
       source={asExample('/v1/network/throughput', { window_days: windowDays })}

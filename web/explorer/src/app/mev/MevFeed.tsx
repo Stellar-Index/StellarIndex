@@ -106,6 +106,7 @@ export function MevFeed() {
 
   return (
     <Panel
+      headingLevel={2}
       title={`Detected MEV events${rows.length > 0 ? ` (${rows.length})` : ''}`}
       hint="All kinds, newest first. Positional/structural evidence — direction and profit are never inferred; each event's detail.note states exactly what is claimed."
       source={asExample('/v1/mev', { limit: 50 })}

@@ -65,7 +65,7 @@ export function IssuerPathView() {
       </header>
 
       {!valid && (
-        <Panel title="Invalid issuer" bodyClassName="text-sm text-ink-body">
+        <Panel headingLevel={2} title="Invalid issuer" bodyClassName="text-sm text-ink-body">
           The path segment isn&apos;t a valid Stellar account (G…) key.{' '}
           <Link href="/issuers" className="text-brand-600 hover:underline">
             Browse issuers →
@@ -75,6 +75,7 @@ export function IssuerPathView() {
 
       {valid && (
         <Panel
+          headingLevel={2}
           title="Issuer"
           source={asExample(`/v1/issuers/${g}`)}
           bodyClassName="space-y-3"

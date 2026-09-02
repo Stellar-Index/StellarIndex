@@ -121,9 +121,9 @@ export function PoolDepthDetail({ row }: { row: PoolDepthRow }) {
             assets. */}
         {directions.map((d) => (
           <div key={d.key} className="space-y-1.5">
-            <h4 className="text-[11px] font-medium uppercase tracking-wider text-ink-muted">
+            <h3 className="text-[11px] font-medium uppercase tracking-wider text-ink-muted">
               {d.heading}
-            </h4>
+            </h3>
             <HBarList
               ariaLabel={`${d.heading}: largest fill within each slippage tier`}
               items={d.items}
@@ -134,9 +134,9 @@ export function PoolDepthDetail({ row }: { row: PoolDepthRow }) {
 
       {donutOk && (
         <div className="space-y-1.5">
-          <h4 className="text-[11px] font-medium uppercase tracking-wider text-ink-muted">
+          <h3 className="text-[11px] font-medium uppercase tracking-wider text-ink-muted">
             Reserve composition — valued at the pool&apos;s mid price
-          </h4>
+          </h3>
           <DonutChart
             size={120}
             thickness={16}

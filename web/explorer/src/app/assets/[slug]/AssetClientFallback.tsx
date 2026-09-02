@@ -77,6 +77,7 @@ export function AssetClientFallback({ slug }: { slug: string }) {
   if (state === 'loading' || state === 'reloading') {
     return (
       <Panel
+        headingLevel={2}
         title="Loading asset…"
         bodyClassName="text-sm text-ink-body"
       >
@@ -90,6 +91,7 @@ export function AssetClientFallback({ slug }: { slug: string }) {
   if (state === 'recoverable') {
     return (
       <Panel
+        headingLevel={2}
         title={`${slug}`}
         bodyClassName="space-y-2 text-sm text-ink-body"
       >
@@ -137,6 +139,7 @@ export function AssetClientFallback({ slug }: { slug: string }) {
   if (state === 'error') {
     return (
       <Panel
+        headingLevel={2}
         title="Couldn&apos;t reach the API"
         bodyClassName="text-sm text-ink-body"
       >
@@ -147,6 +150,7 @@ export function AssetClientFallback({ slug }: { slug: string }) {
 
   return (
     <Panel
+      headingLevel={2}
       title="Asset not found"
       bodyClassName="text-sm text-ink-body"
     >

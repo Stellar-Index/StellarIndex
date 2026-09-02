@@ -47,14 +47,14 @@ export function VenueChart({ venue }: { venue: string }) {
 
   if (pairsLoading) {
     return (
-      <Panel title="Live chart" hint="Loading pairs…" source={asExample('/v1/markets', { source: venue })}>
+      <Panel headingLevel={2} title="Live chart" hint="Loading pairs…" source={asExample('/v1/markets', { source: venue })}>
         <div className="h-[380px]" />
       </Panel>
     );
   }
   if (pairsError) {
     return (
-      <Panel title="Live chart" hint="Pair list unavailable" source={asExample('/v1/markets', { source: venue })}>
+      <Panel headingLevel={2} title="Live chart" hint="Pair list unavailable" source={asExample('/v1/markets', { source: venue })}>
         <div className="flex h-[380px] items-center justify-center px-4 text-center text-sm text-ink-muted">
           Couldn&apos;t load pairs for this venue ({pairsError}).
         </div>
@@ -63,7 +63,7 @@ export function VenueChart({ venue }: { venue: string }) {
   }
   if (pairs.length === 0) {
     return (
-      <Panel title="Live chart" hint="No pairs reporting" source={asExample('/v1/markets', { source: venue })}>
+      <Panel headingLevel={2} title="Live chart" hint="No pairs reporting" source={asExample('/v1/markets', { source: venue })}>
         <div className="flex h-[380px] items-center justify-center text-sm text-ink-muted">
           No pairs reporting in the last 14 days.
         </div>
@@ -76,6 +76,7 @@ export function VenueChart({ venue }: { venue: string }) {
 
   return (
     <Panel
+      headingLevel={2}
       title="Live chart"
       hint="OHLC + volume"
       source={

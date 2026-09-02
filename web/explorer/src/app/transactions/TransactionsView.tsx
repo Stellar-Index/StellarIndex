@@ -97,7 +97,7 @@ export function TransactionsView() {
       {/* S-004: the page was a bare list — the daily-throughput series
           the API already serves answers "how busy is the network" before
           the visitor scrolls a single row. */}
-      <ThroughputPanel defaultMetric="txs" />
+      <ThroughputPanel headingLevel={2} defaultMetric="txs" />
 
       <TxTable
         seq={seq}
@@ -126,7 +126,7 @@ function TxTable({
   const source = seq != null ? asExample(`/v1/ledgers/${seq}/transactions`) : undefined;
   if (isError) {
     return (
-      <Panel title="Transactions" source={source} bodyClassName="text-sm text-down-strong">
+      <Panel headingLevel={2} title="Transactions" source={source} bodyClassName="text-sm text-down-strong">
         Failed to load transactions:{' '}
         {error instanceof Error ? error.message : 'unknown error'}
       </Panel>
@@ -134,20 +134,21 @@ function TxTable({
   }
   if (isLoading || rows == null) {
     return (
-      <Panel title="Transactions" source={source} bodyClassName="text-sm text-ink-muted">
+      <Panel headingLevel={2} title="Transactions" source={source} bodyClassName="text-sm text-ink-muted">
         Loading…
       </Panel>
     );
   }
   if (rows.length === 0) {
     return (
-      <Panel title="Transactions" source={source} bodyClassName="text-sm text-ink-muted">
+      <Panel headingLevel={2} title="Transactions" source={source} bodyClassName="text-sm text-ink-muted">
         Ledger #{seq?.toLocaleString('en-US')} closed no transactions. Try an older ledger.
       </Panel>
     );
   }
   return (
     <Panel
+      headingLevel={2}
       title={`Transactions (${formatCompact(rows.length)})`}
       hint={rows[0] ? formatTimestamp(rows[0].close_time) : undefined}
       source={source}

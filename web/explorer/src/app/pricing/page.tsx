@@ -165,7 +165,7 @@ function TierCard({ tier }: { tier: Tier }) {
     <Card className={tier.highlight ? 'ring-1 ring-brand-500/40' : undefined}>
       <CardBody className="flex h-full flex-col">
         <div className="mb-3 flex items-center justify-between gap-2">
-          <h3 className="text-h3 font-semibold text-ink">{tier.name}</h3>
+          <h2 className="text-h3 font-semibold text-ink">{tier.name}</h2>
           {tier.highlight && <Badge tone="brand">Self-service</Badge>}
         </div>
         <div>

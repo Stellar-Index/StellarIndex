@@ -88,6 +88,7 @@ export default function MevPage() {
       <MevFeed />
 
       <Panel
+        headingLevel={2}
         title="What we look for"
         hint="Pattern catalogue — evidence-first, false-positive-tolerant"
       >
@@ -111,6 +112,7 @@ export default function MevPage() {
       </Panel>
 
       <Panel
+        headingLevel={2}
         title="Why this matters for pricing"
         bodyClassName="text-sm text-ink-body space-y-2"
       >
@@ -132,6 +134,7 @@ export default function MevPage() {
       </Panel>
 
       <Panel
+        headingLevel={2}
         title="Known limits"
         bodyClassName="text-sm text-ink-body space-y-2"
       >

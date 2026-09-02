@@ -106,6 +106,7 @@ export function OraclesView() {
       </header>
 
       <Panel
+        headingLevel={2}
         title="Connected oracles"
         hint="Per-oracle 24h activity"
         source={asExample('/v1/sources', { class: 'oracle', include: 'stats' })}
@@ -187,6 +188,7 @@ export function OraclesView() {
       </Panel>
 
       <Panel
+        headingLevel={2}
         title={`Price streams${streamRows.length > 0 ? ` (${streamRows.length} active)` : ''}`}
         hint="Latest observation per (oracle, asset, quote) — 7d window"
         source={asExample('/v1/oracle/streams', STREAMS_PARAMS)}
@@ -263,6 +265,7 @@ export function OraclesView() {
 
       {streamsAvailable && (
         <Panel
+          headingLevel={2}
           title={`Unmapped feeds${unmappedRows.length > 0 ? ` (${unmappedRows.length})` : ''}`}
           hint="Symbols published under no canonical asset — recorded verbatim, reference-only"
           source={asExample('/v1/oracle/streams', STREAMS_PARAMS)}
@@ -356,6 +359,7 @@ export function OraclesView() {
       )}
 
       <Panel
+        headingLevel={2}
         title="SEP-40 compatibility"
         hint="Drop-in oracle interface"
         source={asExample('/v1/oracle/lastprice', { asset: 'native' })}

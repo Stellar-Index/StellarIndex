@@ -42,6 +42,7 @@ export function HistoryTabPanel({
   if (history.isError) {
     return (
       <Panel
+        headingLevel={2}
         title="Recent trades"
         source={asExample('/v1/history', {
           base: assetID,
@@ -58,6 +59,7 @@ export function HistoryTabPanel({
   if (history.isLoading) {
     return (
       <Panel
+        headingLevel={2}
         title="Recent trades"
         source={asExample('/v1/history', {
           base: assetID,
@@ -76,6 +78,7 @@ export function HistoryTabPanel({
   if (rows.length === 0) {
     return (
       <Panel
+        headingLevel={2}
         title="Recent trades"
         source={asExample('/v1/history', {
           base: assetID,
@@ -92,6 +95,7 @@ export function HistoryTabPanel({
 
   return (
     <Panel
+      headingLevel={2}
       title={`Recent trades — last ${rows.length}`}
       source={asExample('/v1/history', {
         base: assetID,

@@ -87,9 +87,9 @@ export default function ResearchPage() {
                   </span>
                 )}
               </div>
-              <h4 className="text-sm font-semibold leading-snug text-ink group-hover:text-brand-600">
+              <h3 className="text-sm font-semibold leading-snug text-ink group-hover:text-brand-600">
                 {d.title}
-              </h4>
+              </h3>
               <p className="text-xs text-ink-body">
                 {d.description}
               </p>
@@ -139,9 +139,9 @@ export default function ResearchPage() {
                   </span>
                 )}
               </div>
-              <h4 className="text-sm font-semibold leading-snug text-ink group-hover:text-brand-600">
+              <h3 className="text-sm font-semibold leading-snug text-ink group-hover:text-brand-600">
                 {d.title}
-              </h4>
+              </h3>
               <p className="text-xs text-ink-body">
                 {d.description}
               </p>
@@ -172,11 +172,21 @@ export default function ResearchPage() {
           (status) =>
             grouped[status].length === 0 ? null : (
               <div key={status} className="space-y-2">
-                {status !== 'Accepted' && (
-                  <h3 className="text-xs font-semibold uppercase tracking-wider text-ink-muted">
-                    {status}
-                  </h3>
-                )}
+                {/* The Accepted group is deliberately unlabelled on screen
+                    (it is the default, and a label above the first grid
+                    read as a duplicate of the section title) — but the
+                    group IS a level in the outline, so the heading is
+                    rendered sr-only rather than dropped. Without it the
+                    ADR cards below jumped h2 → h4 (WCAG 1.3.1, #486). */}
+                <h3
+                  className={
+                    status === 'Accepted'
+                      ? 'sr-only'
+                      : 'text-xs font-semibold uppercase tracking-wider text-ink-muted'
+                  }
+                >
+                  {status}
+                </h3>
                 <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
                   {grouped[status].map((adr) => (
                     <Link

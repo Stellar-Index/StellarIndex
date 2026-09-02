@@ -231,6 +231,7 @@ export default async function ExternalAssetDetailPage({
       </header>
 
       <Panel
+        headingLevel={2}
         title="Price"
         hint={
           view.price_as_of
@@ -270,7 +271,7 @@ export default async function ExternalAssetDetailPage({
         )}
       </Panel>
 
-      <Panel title="About" bodyClassName="space-y-3 text-sm text-ink-body">
+      <Panel headingLevel={2} title="About" bodyClassName="space-y-3 text-sm text-ink-body">
         {view.description && (
           <p className="leading-relaxed">{view.description}</p>
         )}

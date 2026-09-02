@@ -39,6 +39,7 @@ export function AssetFAQ({ symbol, hasIssuer }: { symbol: string; hasIssuer: boo
   const items = assetFaqFor(symbol, hasIssuer);
   return (
     <Panel
+      headingLevel={2}
       title="FAQ"
       hint="Common questions about this asset"
       bodyClassName="space-y-2 text-sm"

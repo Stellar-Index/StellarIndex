@@ -415,7 +415,7 @@ export default async function PairPage({ params }: { params: Params }) {
           </div>
         </Panel>
 
-        <SourceBreakdown base={base} quote={quote} />
+        <SourceBreakdown headingLevel={2} base={base} quote={quote} />
 
         <Panel
           title="Recent activity"

@@ -47,6 +47,7 @@ export function ReferencePriceAggregators() {
 
   return (
     <Panel
+      headingLevel={2}
       title="Reference price aggregators"
       hint="Cross-check sources — never priced into our VWAP"
       source={asExample('/v1/sources', { class: 'aggregator', include: 'stats' })}

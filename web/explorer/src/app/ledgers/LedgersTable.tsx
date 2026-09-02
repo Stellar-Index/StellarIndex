@@ -108,6 +108,7 @@ export function LedgersTable() {
   if (isError) {
     return (
       <Panel
+        headingLevel={2}
         title="Ledgers"
         source={source}
         bodyClassName="text-sm text-down-strong"
@@ -120,6 +121,7 @@ export function LedgersTable() {
   if (isLoading || !data) {
     return (
       <Panel
+        headingLevel={2}
         title="Ledgers"
         source={source}
         bodyClassName="text-sm text-ink-muted"
@@ -132,6 +134,7 @@ export function LedgersTable() {
   if (ledgers.length === 0) {
     return (
       <Panel
+        headingLevel={2}
         title="Ledgers"
         source={source}
         bodyClassName="text-sm text-ink-muted"
@@ -146,6 +149,7 @@ export function LedgersTable() {
 
   return (
     <Panel
+      headingLevel={2}
       title={`${ledgers.length} ledgers`}
       hint={
         newest != null && oldest != null

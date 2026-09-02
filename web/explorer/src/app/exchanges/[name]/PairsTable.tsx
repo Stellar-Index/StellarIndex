@@ -13,6 +13,7 @@ export function PairsTable({
 }) {
   return (
     <VenueMarketsTable
+      headingLevel={2}
       source={source}
       title={`${exchangeName} pairs`}
       rowNoun="pairs"

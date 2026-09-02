@@ -157,7 +157,7 @@ function ChannelCard({ channel }: { channel: Channel }) {
       </div>
       <div className="flex-1 space-y-1.5">
         <div className="flex items-baseline gap-2">
-          <h3 className="text-sm font-semibold">{channel.title}</h3>
+          <h2 className="text-sm font-semibold">{channel.title}</h2>
           <code className="font-mono text-xs text-ink-muted">
             {channel.destination}
           </code>

@@ -177,6 +177,7 @@ export function NetworkView() {
       <HeroStats stats={s} tip={tip} />
 
       <Panel
+        headingLevel={2}
         title="Throughput"
         source={asExample('/v1/network/throughput', {
           window_days: windowDays,
@@ -265,7 +266,7 @@ export function NetworkView() {
       <ChainEconomics buckets={completeBuckets} windowDays={windowDays} />
 
       <div className="grid gap-6 lg:grid-cols-2">
-        <OperationMixPanel />
+        <OperationMixPanel headingLevel={2} />
         <LatestLedgers
           ledgers={ledgersQ.data?.ledgers}
           loading={ledgersQ.isLoading}
@@ -335,6 +336,7 @@ function ChainEconomics({
   return (
     <div className="grid gap-6 lg:grid-cols-2">
       <Panel
+        headingLevel={2}
         title="Daily fee burn"
         hint="XLM paid in transaction fees per complete UTC day — the day-over-day delta of the cumulative network fee pool, off each day's last ledger."
         source={asExample('/v1/network/throughput', {
@@ -367,6 +369,7 @@ function ChainEconomics({
         )}
       </Panel>
       <Panel
+        headingLevel={2}
         title="Ledger total_coins"
         hint={
           IS_MAINNET
@@ -578,6 +581,7 @@ function LatestLedgers({
   const rows = (ledgers ?? []).slice(0, 12);
   return (
     <Panel
+      headingLevel={2}
       title="Latest ledgers"
       source={asExample('/v1/ledgers', { limit: 12 })}
       bodyClassName="-mx-4 -mb-4"
@@ -656,6 +660,7 @@ function TopMarkets() {
   const rows = (data ?? []).slice(0, 8);
   return (
     <Panel
+      headingLevel={2}
       title="Top Stellar markets"
       hint="On-chain DEX pools by trailing-24h volume — SDEX + Soroban DEXes only."
       source={asExample('/v1/pools', {
@@ -747,6 +752,7 @@ function ActiveSources() {
     .slice(0, 8);
   return (
     <Panel
+      headingLevel={2}
       title="Most active Stellar sources"
       hint="On-chain venues only — CEX / aggregator / FX feeds live on /exchanges."
       source={asExample('/v1/sources', { include: 'stats' })}
@@ -832,6 +838,7 @@ function NetworkComposition() {
 
   return (
     <Panel
+      headingLevel={2}
       title="Volume by Stellar venue — 24h"
       hint="Share of trailing-24h on-chain USD volume across Stellar DEX venues."
       source={asExample('/v1/sources', { include: 'stats' })}
@@ -930,6 +937,7 @@ function DigDeeper() {
   const cards = availableRoutes(DEEPER);
   return (
     <Panel
+      headingLevel={2}
       title="Dig deeper"
       bodyClassName="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4"
     >

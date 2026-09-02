@@ -1065,6 +1065,7 @@ function OverviewBody({
     <div className="space-y-4">
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
         <Panel
+          headingLevel={2}
           title="Price"
           hint={
             price?.flags?.triangulated
@@ -1150,7 +1151,7 @@ function OverviewBody({
           </dl>
         </Panel>
 
-        <Panel title="Observations" panelId="obs-card">
+        <Panel headingLevel={2} title="Observations" panelId="obs-card">
           <dl className="grid grid-cols-2 gap-2 text-sm">
             <Stat label="Total" value={formatCompact(coin.observation_count)} />
             <Stat
@@ -1187,9 +1188,10 @@ function OverviewBody({
           /v1/markets/sources aggregate the pair pages chart. The
           component renders nothing when no source has priced USD
           volume for this asset. */}
-      <SourceBreakdown asset={coin.asset_id} />
+      <SourceBreakdown headingLevel={2} asset={coin.asset_id} />
 
       <Panel
+        headingLevel={2}
         title="External views"
         hint="Cross-reference this asset on other Stellar explorers"
         bodyClassName="text-sm text-ink-body"
@@ -1228,6 +1230,7 @@ function OverviewBody({
 
       {coin.top_markets && coin.top_markets.length > 0 && (
         <Panel
+          headingLevel={2}
           title="Top markets"
           hint={`${coin.top_markets.length} most active by 24h volume`}
           source={asExample('/v1/assets/{slug}', { slug: coin.slug })}
@@ -1295,6 +1298,7 @@ function OverviewBody({
 
       {hasSupply && (
         <Panel
+          headingLevel={2}
           title="Supply"
           hint="From /v1/assets — circulating / total / max where the supply pipeline has computed them."
           source={asExample('/v1/assets/{asset_id}', {
@@ -1330,7 +1334,7 @@ function OverviewBody({
         </Panel>
       )}
       {coin.issuer && (
-        <Panel title="Issuer" source={asExample(`/v1/issuers/${coin.issuer}`)}>
+        <Panel headingLevel={2} title="Issuer" source={asExample(`/v1/issuers/${coin.issuer}`)}>
           <dl className="grid grid-cols-1 gap-2 text-sm sm:grid-cols-2">
             <div>
               <dt className="text-ink-muted text-[11px] tracking-wider uppercase">

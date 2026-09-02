@@ -95,6 +95,7 @@ export default function AggregatorsPage() {
       </header>
 
       <Panel
+        headingLevel={2}
         title="Why aggregators don't price into VWAP"
         bodyClassName="text-sm text-ink-body space-y-2"
       >

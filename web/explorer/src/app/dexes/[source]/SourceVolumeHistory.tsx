@@ -68,6 +68,7 @@ export function SourceVolumeHistory({ source }: { source: string }) {
 
   return (
     <Panel
+      headingLevel={2}
       title="USD volume — 90d"
       hint="Daily summed USD volume (priced trades) from the protocol analytics aggregate"
       source={asExample(`/v1/protocols/${source}`)}

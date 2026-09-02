@@ -76,6 +76,7 @@ export function PoolReserves({ pool }: { pool: string }) {
 
   return (
     <Panel
+      headingLevel={2}
       title="Reserve composition"
       hint="Real current-state TVL / utilisation / supply+borrow APR, decoded from the pool contract's Soroban storage (ADR-0039)."
       source={asExample(`/v1/lending/pools/${pool}/reserves`, {})}
@@ -107,9 +108,9 @@ export function PoolReserves({ pool }: { pool: string }) {
       {priced.length > 0 && (
         <div className="border-line/60 space-y-4 border-y py-4">
           <div className="space-y-1.5">
-            <h4 className="text-ink-muted text-[11px] font-medium tracking-wider uppercase">
+            <h3 className="text-ink-muted text-[11px] font-medium tracking-wider uppercase">
               Supplied vs borrowed — USD, priced reserves
-            </h4>
+            </h3>
             <PairedBars
               ariaLabel={`Supplied vs borrowed per priced reserve: ${priced
                 .map(
@@ -136,9 +137,9 @@ export function PoolReserves({ pool }: { pool: string }) {
           </div>
 
           <div className="space-y-1.5">
-            <h4 className="text-ink-muted text-[11px] font-medium tracking-wider uppercase">
+            <h3 className="text-ink-muted text-[11px] font-medium tracking-wider uppercase">
               Utilization — borrowed / supplied, fixed 0–100% scale
-            </h4>
+            </h3>
             <HBarList
               ariaLabel={`Utilization per reserve: ${reserves
                 .map(
@@ -165,9 +166,9 @@ export function PoolReserves({ pool }: { pool: string }) {
             (rv) => rv.supply_apr != null || rv.borrow_apr != null,
           ) && (
             <div className="space-y-1.5">
-              <h4 className="text-ink-muted text-[11px] font-medium tracking-wider uppercase">
+              <h3 className="text-ink-muted text-[11px] font-medium tracking-wider uppercase">
                 Interest rates — supply vs borrow APR
-              </h4>
+              </h3>
               <PairedBars
                 ariaLabel={`APR per reserve: ${reserves
                   .filter(

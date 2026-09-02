@@ -101,6 +101,7 @@ export function PairPathView() {
 
       {!valid && (
         <EmptyState
+          headingLevel={2}
           title="Unrecognised pair"
           description="A market URL looks like /markets/<base>~<quote>."
         />
@@ -108,6 +109,7 @@ export function PairPathView() {
 
       {valid && (
         <Panel
+          headingLevel={2}
           title="Price"
           hint="Volume-weighted across every venue we index"
           source={asExample('/v1/price', { base, quote })}

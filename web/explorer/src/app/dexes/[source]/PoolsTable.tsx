@@ -17,6 +17,7 @@ export function PoolsTable({
 }) {
   return (
     <VenueMarketsTable
+      headingLevel={2}
       source={source}
       title={sourceName === 'sdex' ? 'SDEX markets' : `${sourceName} pools`}
       rowNoun={sourceName === 'sdex' ? 'pairs' : 'pools'}

@@ -41,6 +41,7 @@ function ExpandableText({ title, body }: { title: string; body: string }) {
   const hasMore = more.length > 0;
   return (
     <Panel
+      headingLevel={2}
       title={title}
       bodyClassName="text-sm text-ink-body space-y-3 leading-relaxed"
     >

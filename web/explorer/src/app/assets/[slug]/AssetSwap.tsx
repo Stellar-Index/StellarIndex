@@ -181,6 +181,7 @@ export function AssetSwap({
 
   return (
     <Panel
+      headingLevel={2}
       title="Converter"
       source={asExample('/v1/price', { asset: symbol, quote: 'fiat:USD' })}
       bodyClassName=""

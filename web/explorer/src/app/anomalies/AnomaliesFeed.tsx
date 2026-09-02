@@ -77,6 +77,7 @@ export function AnomaliesFeed() {
     <>
       <AnomalyVisuals data={data} events={events} />
       <Panel
+        headingLevel={2}
         title="Freeze timeline"
         hint="Every clear→firing transition from the durable freeze_events mirror, newest first."
         source={asExample('/v1/anomalies', { limit: 100, include: 'daily' })}
@@ -211,6 +212,7 @@ function AnomalyVisuals({ data, events }: { data?: AnomaliesResp; events: Freeze
       <div className="grid gap-6 lg:grid-cols-2">
         {donut.length > 0 && (
           <Panel
+            headingLevel={2}
             title="Freezes by reason — 30d"
             hint="Composition of the trailing-30-day freeze tally by trigger reason."
             source={asExample('/v1/anomalies', { limit: 100, include: 'daily' })}
@@ -224,6 +226,7 @@ function AnomalyVisuals({ data, events }: { data?: AnomaliesResp; events: Freeze
         )}
         {histogram.length > 0 && (
           <Panel
+            headingLevel={2}
             title="Freeze duration"
             hint={`How long pairs stayed dark before recovering — the ${recovered.length} recovered freeze${
               recovered.length === 1 ? '' : 's'
@@ -239,6 +242,7 @@ function AnomalyVisuals({ data, events }: { data?: AnomaliesResp; events: Freeze
       </div>
       {heatCells != null && (
         <Panel
+          headingLevel={2}
           title="Freeze calendar — day × reason, 30d"
           hint="Each cell is one UTC day for one trigger reason; darker = more freezes. Clustered columns are incidents, an even wash is background noise."
           source={asExample('/v1/anomalies', { limit: 100, include: 'daily' })}

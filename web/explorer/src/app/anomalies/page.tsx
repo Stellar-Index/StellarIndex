@@ -79,6 +79,7 @@ export default function AnomaliesPage() {
       <AnomaliesFeed />
 
       <Panel
+        headingLevel={2}
         title="What freezes a pair"
         bodyClassName="space-y-3"
       >
@@ -118,6 +119,7 @@ export default function AnomaliesPage() {
       </Panel>
 
       <Panel
+        headingLevel={2}
         title="Reading the timeline"
         bodyClassName="text-sm text-ink-body space-y-2"
       >

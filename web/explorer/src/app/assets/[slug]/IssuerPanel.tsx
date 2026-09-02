@@ -24,6 +24,7 @@ export function IssuerPanel({ gStrkey }: { gStrkey: string }) {
   if (isError) {
     return (
       <Panel
+        headingLevel={2}
         title="Issuer"
         source={asExample(`/v1/issuers/${gStrkey}`)}
         bodyClassName="text-sm text-ink-muted"
@@ -37,6 +38,7 @@ export function IssuerPanel({ gStrkey }: { gStrkey: string }) {
   if (isLoading || !data) {
     return (
       <Panel
+        headingLevel={2}
         title="Issuer"
         source={asExample(`/v1/issuers/${gStrkey}`)}
         bodyClassName="text-sm text-ink-muted"
@@ -71,6 +73,7 @@ export function IssuerPanel({ gStrkey }: { gStrkey: string }) {
         </div>
       )}
       <Panel
+        headingLevel={2}
         title="Issuer identity"
         // CS-100: org_name is only an authoritative organisation identity
         // when SEP-1 verified (bidirectional). Unverified it is self-declared
@@ -122,6 +125,7 @@ function IssuedAssetsTable({ issuer }: { issuer: Issuer }) {
   if (!assets) {
     return (
       <Panel
+        headingLevel={2}
         title="Issued assets"
         source={asExample(`/v1/issuers/${issuer.g_strkey}`)}
         bodyClassName="text-sm text-ink-muted"
@@ -134,6 +138,7 @@ function IssuedAssetsTable({ issuer }: { issuer: Issuer }) {
   if (assets.length === 0) {
     return (
       <Panel
+        headingLevel={2}
         title="Issued assets"
         source={asExample(`/v1/issuers/${issuer.g_strkey}`)}
         bodyClassName="text-sm text-ink-muted"
@@ -145,6 +150,7 @@ function IssuedAssetsTable({ issuer }: { issuer: Issuer }) {
 
   return (
     <Panel
+      headingLevel={2}
       title="Issued assets"
       hint={`${assets.length} asset${assets.length === 1 ? '' : 's'}`}
       source={asExample(`/v1/issuers/${issuer.g_strkey}`)}

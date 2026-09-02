@@ -99,6 +99,7 @@ export function PairReservesPanel() {
 
   return (
     <Panel
+      headingLevel={2}
       title="Pool reserves & depth (current)"
       hint="Live contract-storage read from the certified lake. Depth is a constant-product model estimate from current reserves (0.3% fee on input) — not an order book. Served for Soroswap only: the one venue whose pool-storage layout is verified."
       source={asExample('/v1/pools/reserves')}

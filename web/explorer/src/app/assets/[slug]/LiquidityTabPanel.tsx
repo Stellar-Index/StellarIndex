@@ -75,6 +75,7 @@ export async function LiquidityTabPanel({
 
   return (
     <Panel
+      headingLevel={2}
       title={`Liquidity — every DEX pool that touches ${code}`}
       hint="Per-source breakdown across DEXes. Backed by /v1/pools?asset= (base OR quote)."
       source={asExample('/v1/pools', {

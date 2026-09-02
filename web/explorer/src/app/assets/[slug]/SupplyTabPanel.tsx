@@ -37,6 +37,7 @@ export function SupplyTabPanel({ assetID }: { assetID: string }) {
   if (asset.isError) {
     return (
       <Panel
+        headingLevel={2}
         title="Supply"
         source={asExample('/v1/assets/{asset_id}', { asset_id: assetID })}
         bodyClassName="text-sm text-down-strong"
@@ -49,6 +50,7 @@ export function SupplyTabPanel({ assetID }: { assetID: string }) {
   if (asset.isLoading) {
     return (
       <Panel
+        headingLevel={2}
         title="Supply"
         source={asExample('/v1/assets/{asset_id}', { asset_id: assetID })}
         bodyClassName="text-sm text-ink-muted"
@@ -62,6 +64,7 @@ export function SupplyTabPanel({ assetID }: { assetID: string }) {
   if (!a) {
     return (
       <Panel
+        headingLevel={2}
         title="Supply"
         source={asExample('/v1/assets/{asset_id}', { asset_id: assetID })}
         bodyClassName="text-sm text-ink-muted"
@@ -81,6 +84,7 @@ export function SupplyTabPanel({ assetID }: { assetID: string }) {
 
   return (
     <Panel
+      headingLevel={2}
       title="Supply"
       source={asExample('/v1/assets/{asset_id}', { asset_id: assetID })}
       bodyClassName="space-y-4"
@@ -140,9 +144,9 @@ export function SupplyTabPanel({ assetID }: { assetID: string }) {
 
           {(a.fixed_number || a.max_number || a.is_unlimited != null) && (
             <div className="rounded-lg border border-line bg-surface-muted p-3 text-xs">
-              <h4 className="mb-1 font-semibold uppercase tracking-wider text-ink-muted">
+              <h3 className="mb-1 font-semibold uppercase tracking-wider text-ink-muted">
                 SEP-1 issuance declarations
-              </h4>
+              </h3>
               <p className="text-ink-body">
                 What the issuer pledged in their <span className="font-mono">stellar.toml</span>
                 — distinct from the live-ledger numbers above.
@@ -195,9 +199,9 @@ function MarketCapChart({ assetID }: { assetID: string }) {
 
   return (
     <div className="rounded-lg border border-line bg-surface p-4">
-      <h4 className="mb-2 font-semibold uppercase tracking-wider text-xs text-ink-muted">
+      <h3 className="mb-2 font-semibold uppercase tracking-wider text-xs text-ink-muted">
         Market-cap timeline
-      </h4>
+      </h3>
       {q.isLoading && <div className="h-[260px]" />}
       {/* A failed /v1/chart used to fall straight into the empty state
           and assert "no market-cap history for this asset". Absent is
@@ -238,9 +242,9 @@ function OnChainSupply({ data, decimals }: { data: AssetSupply; decimals: number
   const clawback = parseSmallest(data.clawback_total, decimals);
   return (
     <div className="rounded-lg border border-up/30 bg-up-subtle/50 p-3">
-      <h4 className="mb-2 text-xs font-semibold uppercase tracking-wider text-up">
+      <h3 className="mb-2 text-xs font-semibold uppercase tracking-wider text-up">
         On-chain supply (live)
-      </h4>
+      </h3>
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <Metric
           label="Total"

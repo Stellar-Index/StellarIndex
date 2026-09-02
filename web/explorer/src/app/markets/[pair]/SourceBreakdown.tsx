@@ -31,10 +31,18 @@ export function SourceBreakdown({
   base,
   quote,
   asset,
+  headingLevel = 3,
 }: {
   base?: string;
   quote?: string;
   asset?: string;
+  /**
+   * Heading rank for the panel title, forwarded to `reveal/Panel`.
+   * Defaults to 3 (a panel nested under a section `<h2>`); the callers
+   * that render it as a top-level page section pass 2 so the outline
+   * doesn't skip a level (WCAG 1.3.1 — #486).
+   */
+  headingLevel?: 2 | 3 | 4;
 }) {
   const params = asset ? { asset } : { base: base ?? '', quote: quote ?? '' };
   const { data, isLoading, isError } = useQuery<MarketSourcesResp>({
@@ -61,6 +69,7 @@ export function SourceBreakdown({
 
   return (
     <Panel
+      headingLevel={headingLevel}
       title="Volume by source — 24h"
       hint="Each venue's share of the trailing-24h USD volume on this market."
       source={asExample('/v1/markets/sources', params)}

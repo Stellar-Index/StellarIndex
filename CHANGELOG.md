@@ -29,9 +29,39 @@ against.
   on a clean exit.
 
 ### Fixed
+- **docs(ops):** `cdn-setup.md`'s main policy table still listed `/v1/price*` at `s-maxage=60` and all of `/v1/oracle/*` at 300 after #344 changed both — the corrected row had gone into the handler-override table below it instead. An operator building CDN rules from that page would have re-introduced exactly the shared TTL #344 removed for breaching the 150 s freshness target.
 - **ops:** the #475 SIGPIPE lint caught one spelling of its class and licensed the rest. An independent review found `awk '…{exit}'` consuming an unbounded pipe **five lines from the fix that shipped with it**, in the ZFS prune loop — the same abort-while-the-pool-fills failure the original fix was for. The lint now matches every early-exit consumer (`head`, `awk … exit`, `sed … q`, `grep -m`), which immediately found two more real sites: the same prune loop and the galexie tip-lag probe's partition listing, benign only because of a trailing `|| true`. Self-test extended with a case per spelling.
 - **indexer:** the #368 M2 drain fix (d160215b) could wedge the process forever, which was worse than the bug it fixed. `externalWait()` waits on the external connectors, and those are bound to `rootCtx`, whose `cancel` only fires when `run()` returns — so on the producer-error path nothing had told them to stop and the wait never completed. The process would sit there with its metrics server already shut down, never exiting, so systemd never restarted it; r1 runs seven external connectors, so one MinIO blip would have wedged ingest silently. `rootCtx` is now cancelled before the drain, making both shutdown paths identical. Caught by an independent review of the same day's commits, never deployed.
 
+- **explorer(a11y):** 694 of the 1,691 built pages that carry a heading jumped
+  straight from `h1` to `h3` — WCAG 1.3.1 (Info and Relationships), Level A,
+  on the majority of the site (#486). #335 gave `ui/Card` and `reveal/Panel` a
+  `headingLevel` prop and fixed the two pages in its scope; every other page
+  came from a call site that renders a `Panel` / `Card` / `EmptyState` as the
+  page's **top-level** section and inherited the nested-panel default of
+  `<h3>`, so a screen-reader user navigating by heading was told about a
+  section level that isn't there. Count reproduced independently before the
+  change (2,363 emitted `.html`, 1,691 with a heading, 694 skipping) and after
+  (0 of 1,691). By page volume: `/assets/[slug]` 512 (the converter, the
+  issuer panel and every tab panel), `/issuers/[g_strkey]` 101,
+  `/external/assets/[slug]` 33, `/lending/[pool]` 22, `/dexes/[source]` 5,
+  `/exchanges/[name]` 4, plus 17 index pages. The rank is **threaded, not
+  hardcoded**: `ui/Feedback`'s `EmptyState`, `VenueMarketsTable`,
+  `NetworkInsight`'s `ThroughputPanel` / `OperationMixPanel` and
+  `SourceBreakdown` each take a `headingLevel` that defaults to today's 3, so
+  nothing moves until a caller opts in. Panels promoted to `<h2>` had their
+  own nested `<h4>`s demoted to `<h3>` in the same change (supply + holders
+  tabs, pool reserves, native-pool depth) so the fix cannot create the mirror
+  defect one level down. `/research`'s ADR grid keeps a status heading for the
+  Accepted group, rendered `sr-only` — the group is a real level in the
+  outline even where the label is redundant on screen. Guarded three ways so
+  the count cannot regrow: `pnpm build` now runs the scan itself as
+  `postbuild` and fails on ANY skipped level, printing what it checked (490
+  files / 458 with headings on the CI stub build); a render-level test asserts
+  the outline of the components whose real content exists only after
+  hydration, which a scan of `out/` cannot see; and the scanner has its own
+  unit tests, because a checker that quietly stops finding anything reads
+  exactly like a fixed codebase.
 - **ingest:** Band's genesis ledger disagreed across four constants — `reconciliation_catalogue.go` and `protocols_registry.go` said 60,000,000 while `per_source_gaps.go` and `diagnostics_ingestion.go` said 50,842,736 (#361/#363). The 9.16M-ledger difference silently shortened the range every completeness and gap check evaluated, so the source read clean over a window that excluded most of its history. All four now agree on 50,842,736. The value is awkward to derive, which is how it drifted: Band's contract emits **zero events**, so the obvious `contract_events` probe returns 0 rows and reads as absence rather than as the wrong table. It comes from `contract_instance_changes` (whose own floor is 50,457,429, so it is not a coverage artifact), corroborated by 4,210 `contract_data` writes from the same ledger and by the WASM audit. **Expect band to go red until a catch-up runs** — `oracle_updates` starts at 60,000,414, so the gap between true genesis and the first projected row is real and was being hidden.
 - **observability:** the API binary's 16 background-worker guards logged a panic and moved no metric (#368 M4). `stellarindex_worker_panicked` therefore never fired for a dead webhook sender, reaper or prewarm loop — the one thing that makes a silently-stopped worker visible. `recoverBackgroundWorker` now delegates to a new `worker.Report`, so every binary moves the same counter that the page rule reads. (`recover()` only works one frame deep, which is why the API helper cannot simply call `worker.Recover` and needs the recovered value handed to a shared reporter instead.)
 - **indexer:** an ingest error discarded up to 256 already-cursored events on the way out (#368 M2). The shutdown select returned the producer's error immediately, skipping `externalWait`, `close(events)` and the `sinkDone` wait — so everything still sitting in the channel buffer was dropped, and because those events had already been counted against the cursor the next start resumed past them. A silent hole, on the exact path a decoder fault takes: `pipeline.ProcessLedger` recovers a decoder panic INTO a ledger error, which arrives on that channel. The error is now recorded and returned AFTER the drain; the exit code is unchanged. A structural guard test fails if any `return` reappears inside that select.
