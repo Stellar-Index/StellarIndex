@@ -174,9 +174,26 @@ func TestCaddyfilesShareAccessLogBlock(t *testing.T) {
 func caddyLogBlock(t *testing.T, path string) string {
 	t.Helper()
 	src := readCaddyfile(t, path)
-	start := strings.Index(src, "\tlog {\n")
+
+	// Take the LAST `\tlog {`, not the first — the SITE block's logger.
+	//
+	// This helper fed every assertion in this file, and when b44cda44
+	// added an identical filter to the GLOBAL options block, "first" started
+	// resolving to that one instead. The site logger then had no coverage at
+	// all: stripping its four header/Location deletes left every test in
+	// this file green, while that logger writes 15,450 of r1's 15,473 access
+	// lines — so an X-Api-Key would have reached Loki with CI passing.
+	//
+	// A guard that silently stops guarding is worse than no guard, because
+	// the green run is taken as evidence. The global block is asserted
+	// separately by TestCaddyAccessLogFilterIsGlobalNotJustTheSite, which
+	// reads the file's head, so the two never collapse onto the same text.
+	start := strings.LastIndex(src, "\tlog {\n")
 	if start < 0 {
 		t.Fatalf("%s: no access-log block", path)
+	}
+	if strings.Index(src, "\tlog {\n") == start {
+		t.Fatalf("%s: only ONE `log {` block found — the global options block and the site block must BOTH carry the filter (#346 F2b); a single block means one of the two loggers is unfiltered", path)
 	}
 	rest := src[start:]
 	end := strings.Index(rest, "\n\t}\n")
