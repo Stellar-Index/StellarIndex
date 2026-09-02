@@ -13,37 +13,59 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/xdrjson"
 )
 
-// opsDirTTL bounds how stale the cached /v1/operations directory first page can
-// be. The directory changes each ledger (~5s close time), so a few seconds keeps
-// it within ~one ledger while absorbing repeated hits under real traffic.
-const opsDirTTL = 3 * time.Second
+// opsDirTTL bounds how fresh the cached /v1/operations directory first page
+// is considered. The directory changes each ledger (~5s close time), so ~two
+// ledgers keeps it recognisably current while absorbing repeated hits.
+//
+// Raised 3s → 10s with the move to stale-serve (#444 / #332 F2, 2026-09-02).
+// At 3s and fill-on-miss, r1's actual arrival rate meant nearly every hit
+// missed and paid the read inline — the cache was warm essentially only for
+// concurrent bursts. Past the TTL the entry is now SERVED (flags.stale + its
+// real as_of) while a detached refresh runs, so the TTL sets the freshness
+// LABEL rather than gating a blocking recompute.
+const opsDirTTL = 10 * time.Second
 
-// opsDirCache is a tiny TTL cache for the network-wide /v1/operations directory
-// FIRST page (no cursor). That page is identical for every caller between
-// ledgers, but assembling it is a ~300ms multi-column DESC-LIMIT read over the
-// 24B-row lake plus the 24h op-type aggregation. Caching the assembled view for
-// opsDirTTL makes the endpoint effectively free once traffic is concurrent.
-// Keyed by limit; cursor pages are unique + cheaper (they skip the stats) so
-// they're never cached. Zero value is ready to use (map lazily created).
+// opsDirRefreshTimeout bounds one detached first-page rebuild. The read
+// itself is a tail-window-bounded page plus the batched parent-transaction
+// outcome read (its own 3s budget), so 30s is contention headroom, not an
+// expectation.
+const opsDirRefreshTimeout = 30 * time.Second
+
+// opsDirCache is a tiny SWR cache for the network-wide /v1/operations
+// directory FIRST page (no cursor). That page is identical for every caller
+// between ledgers, but assembling it is a multi-column DESC-LIMIT read over
+// the 24B-row lake plus the batched tx-outcome read. Keyed by limit; cursor
+// pages are unique + cheaper (they skip the stats) so they're never cached.
+// Zero value is ready to use (maps lazily created).
+//
+// SWR, not fill-on-miss: an expired entry is still served — 200 +
+// flags.stale + the entry's real as_of — while a single detached refresh
+// rebuilds it, exactly the contract hot_reads.go documents for the holders
+// and contracts-directory caches. Only a never-computed limit blocks.
 type opsDirCache struct {
 	mu      sync.Mutex
 	entries map[int]opsDirEntry
+	// flight collapses concurrent detached refreshes per limit.
+	flight perKeyFlight
 }
 
 type opsDirEntry struct {
-	view    OperationsView
-	expires time.Time
+	view     OperationsView
+	cachedAt time.Time
 }
 
-// get returns the cached first-page view for limit if still fresh.
-func (c *opsDirCache) get(limit int) (OperationsView, bool) {
+// get returns the cached first-page view for limit whenever one exists —
+// INCLUDING past the TTL (fresh=false). Staleness is the caller's judgment,
+// so a run of failed refreshes degrades to old-but-real data rather than to
+// a blocking read on every hit.
+func (c *opsDirCache) get(limit int) (e opsDirEntry, ok, fresh bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	e, ok := c.entries[limit]
-	if !ok || time.Now().After(e.expires) {
-		return OperationsView{}, false
+	e, ok = c.entries[limit]
+	if !ok {
+		return opsDirEntry{}, false, false
 	}
-	return e.view, true
+	return e, true, time.Since(e.cachedAt) <= opsDirTTL
 }
 
 // put caches the assembled first-page view for limit.
@@ -53,7 +75,7 @@ func (c *opsDirCache) put(limit int, view OperationsView) {
 	if c.entries == nil {
 		c.entries = make(map[int]opsDirEntry)
 	}
-	c.entries[limit] = opsDirEntry{view: view, expires: time.Now().Add(opsDirTTL)}
+	c.entries[limit] = opsDirEntry{view: view, cachedAt: time.Now()}
 }
 
 // opTypeStatsTTL bounds the trailing-24h op-type breakdown. It is deliberately
@@ -279,7 +301,7 @@ func (h *Handler) stampTxOutcomes(ctx context.Context, ops []OpView, rows []clic
 // the request context was the failure (route-sweep 2026-07-29): the
 // day-window FINAL GROUP BY shared the directory's 8s budget and dragged
 // the whole /v1/operations page into its 503 class every 5 minutes.
-func (h *Handler) resolveOpTypeStats(_ context.Context, _ *http.Request) []OpTypeStatV {
+func (h *Handler) resolveOpTypeStats() []OpTypeStatV {
 	cached, fresh := h.opTypeStats.get()
 	if fresh {
 		return cached
@@ -509,11 +531,17 @@ func (h *Handler) operationsDirectory(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// The first page (no cursor) is the hot, cacheable path — same for every
-	// caller between ledgers. Serve it from the short-TTL cache when warm.
+	// caller between ledgers. Serve it from the SWR cache whenever an entry
+	// exists: fresh as-is, stale with flags.stale + its real as_of while a
+	// detached rebuild runs. Only a never-computed limit falls through to the
+	// inline read below.
 	firstPage := !cur.IsSet()
 	if firstPage {
-		if view, hit := h.opsDir.get(limit); hit {
-			h.WriteJSON(w, view, false)
+		if e, hit, fresh := h.opsDir.get(limit); hit {
+			if !fresh {
+				h.refreshOpsDirectory(limit) //nolint:contextcheck // intentional detach — see refreshOpsDirectory
+			}
+			h.writeJSONAt(w, e.view, !fresh, e.cachedAt)
 			return
 		}
 	}
@@ -521,7 +549,7 @@ func (h *Handler) operationsDirectory(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), explorerReadTimeout)
 	defer cancel()
 
-	rows, err := h.Reader.RecentOperations(ctx, limit, cur)
+	out, err := h.buildOperationsDirectory(ctx, limit, cur)
 	if err != nil {
 		if h.ClientAborted(r, err) {
 			return
@@ -537,6 +565,22 @@ func (h *Handler) operationsDirectory(w http.ResponseWriter, r *http.Request) {
 			"Internal error", http.StatusInternalServerError, "")
 		return
 	}
+	if firstPage {
+		h.opsDir.put(limit, out) // warm the cache with the assembled first page
+	}
+	h.WriteJSON(w, out, false)
+}
+
+// buildOperationsDirectory assembles one directory page. It is the SINGLE
+// assembler behind both the request path and the detached refresh, so a
+// served-from-cache page can never carry a different shape (missing
+// coverage note, missing op_type_stats, differently-derived next_cursor)
+// than a freshly-computed one.
+func (h *Handler) buildOperationsDirectory(ctx context.Context, limit int, cur clickhouse.ExplorerCursor) (OperationsView, error) {
+	rows, err := h.Reader.RecentOperations(ctx, limit, cur)
+	if err != nil {
+		return OperationsView{}, err
+	}
 	out := OperationsView{Operations: make([]OpView, len(rows))}
 	for i, o := range rows {
 		out.Operations[i] = opViewLight(o) // directory = summary; body fields on the detail views
@@ -549,9 +593,49 @@ func (h *Handler) operationsDirectory(w http.ResponseWriter, r *http.Request) {
 	// Op-type stats are best-effort context — a failure here shouldn't
 	// fail the listing (only attached on the first page to keep paging
 	// responses lean).
-	if firstPage {
-		out.OpTypeStats = h.resolveOpTypeStats(ctx, r)
-		h.opsDir.put(limit, out) // warm the cache with the assembled first page
+	if !cur.IsSet() {
+		out.OpTypeStats = h.resolveOpTypeStats() //nolint:contextcheck // intentional detach — the 24h aggregate must never share a request deadline (see resolveOpTypeStats)
 	}
-	h.WriteJSON(w, out, false)
+	return out, nil
+}
+
+// refreshOpsDirectory kicks ONE detached first-page rebuild for limit (a
+// no-op while a flight for that limit is already up). Detached for the
+// reason every sibling refresher is: bound to the request deadline, a slow
+// rebuild dies with the request and the entry never gets any younger, so
+// the NEXT visitor pays the same wait.
+//
+// Bounded by the shared refresh gate under its own class: `?limit=` is
+// caller-chosen (1..200 after ParseLimit), so an unbounded refresher here
+// would let a limit sweep queue 200 lake reads onto the shared pool. On
+// saturation we skip and keep serving the stale entry — never queue.
+func (h *Handler) refreshOpsDirectory(limit int) {
+	key := strconv.Itoa(limit)
+	fl, owner := h.opsDir.flight.begin(key)
+	if !owner {
+		return
+	}
+	gate := h.detachedGate()
+	if !gate.TryAcquireClass("ops_directory") {
+		h.opsDir.flight.end(key, fl, errRefreshSaturated)
+		return
+	}
+	go func() {
+		defer gate.ReleaseClass("ops_directory")
+		start := time.Now()
+		rctx, cancel := context.WithTimeout(context.Background(), opsDirRefreshTimeout)
+		defer cancel()
+		out, err := h.buildOperationsDirectory(rctx, limit, clickhouse.ExplorerCursor{})
+		obs.ObserveExplorerSWRRefresh("ops_directory", start, err)
+		if err != nil {
+			// Keep the previous entry — old-but-real beats blank, and the
+			// served response already discloses it via flags.stale.
+			h.Logger.Warn("explorer operations directory detached refresh failed (serving last good)",
+				"limit", limit, "err", err)
+			h.opsDir.flight.end(key, fl, err)
+			return
+		}
+		h.opsDir.put(limit, out)
+		h.opsDir.flight.end(key, fl, nil)
+	}()
 }

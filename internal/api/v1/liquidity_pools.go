@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/obs"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 )
 
@@ -56,6 +57,12 @@ const (
 	// ranking drift slowly — and turns a burst of listing requests into
 	// at most one lake scan a minute.
 	nativeLPListingTTL = 60 * time.Second
+	// nativeLPListingRefreshTimeout bounds ONE detached rescan (and the
+	// prewarm call). The scan measured ~0.07s at the lake plus a Go decode
+	// of ~40k entries; 30s is contention headroom, and it is deliberately
+	// well under the handler's own 12s-per-request ceiling being irrelevant
+	// here — this budget belongs to the background goroutine, not a caller.
+	nativeLPListingRefreshTimeout = 30 * time.Second
 )
 
 // LiquidityPoolReservesRow is the wire shape for one native (CAP-38)
@@ -174,31 +181,112 @@ func (s *Server) serveOneLiquidityPool(ctx context.Context, w http.ResponseWrite
 	writeJSON(w, out, Flags{Stale: stale})
 }
 
-// nativeLPListing returns the cached top-N ranked native-pool listing,
-// refreshing it at most every nativeLPListingTTL. The mutex is held
-// across the refresh so a burst of concurrent cold requests collapses
-// onto one whole-prefix lake scan (same posture as lakeWatermark). On a
-// refresh error with a prior value cached, the stale value is served
-// rather than failing the request.
+// nativeLPListing returns the cached top-N ranked native-pool listing.
+//
+// STALE-SERVE (#332 F4, 2026-09-02). It used to hold nativeLPMu across the
+// refresh, so the first caller after every 60s TTL lapse paid the whole
+// `liquidity_pool`-prefix lake scan on its request deadline (measured live:
+// 0.825 s on /v1/liquidity-pools) and every concurrent caller queued behind
+// it — and with no prewarm anywhere, at production's arrival rate that first
+// caller was close to the common case rather than the exception. Now an
+// existing entry is ALWAYS returned immediately; a lapsed one additionally
+// kicks ONE detached refresh. Only a never-computed process fills inline,
+// and PrewarmNativeLiquidityPools removes even that from the request path.
+//
+// The listing's `flags.stale` is NOT set from the cache's age: on this
+// endpoint that flag means lake freshness (ADR-0041 Decision 4) and
+// overloading it would make a 61-second-old ranking indistinguishable from
+// a lagging ingest. Cache health is observable instead through
+// stellarindex_explorer_swr_refresh_total{cache="native_lp_listing"} — and
+// every row carries its own per-pool as_of_ledger regardless.
 func (s *Server) nativeLPListing(ctx context.Context) ([]LiquidityPoolReservesRow, error) {
 	s.nativeLPMu.Lock()
-	defer s.nativeLPMu.Unlock()
-	if !s.nativeLPFetched.IsZero() && time.Since(s.nativeLPFetched) < nativeLPListingTTL {
-		return s.nativeLPCached, nil
+	rows, fetched := s.nativeLPCached, s.nativeLPFetched
+	s.nativeLPMu.Unlock()
+
+	if !fetched.IsZero() {
+		if time.Since(fetched) >= nativeLPListingTTL {
+			s.refreshNativeLPListing() //nolint:contextcheck // intentional detach — the rescan must outlive the request that noticed the lapse (see refreshNativeLPListing)
+		}
+		return rows, nil
 	}
+	return s.fillNativeLPListing(ctx)
+}
+
+// fillNativeLPListing runs the ranked scan and stores the result. The fill
+// mutex collapses a burst of concurrent COLD callers onto one scan (the
+// posture the old TTL branch had for every caller); it is never held while
+// a warm entry is being served.
+func (s *Server) fillNativeLPListing(ctx context.Context) ([]LiquidityPoolReservesRow, error) {
+	s.nativeLPFillMu.Lock()
+	defer s.nativeLPFillMu.Unlock()
+
+	// Double-check: a caller that queued behind another's fill must serve
+	// that result rather than rescan.
+	s.nativeLPMu.Lock()
+	rows, fetched := s.nativeLPCached, s.nativeLPFetched
+	s.nativeLPMu.Unlock()
+	if !fetched.IsZero() && time.Since(fetched) < nativeLPListingTTL {
+		return rows, nil
+	}
+
+	start := time.Now()
 	states, err := s.explorer.NativeLiquidityPoolsRanked(ctx, nativeLPListingCap)
+	obs.ObserveExplorerSWRRefresh("native_lp_listing", start, err)
 	if err != nil {
-		if !s.nativeLPFetched.IsZero() {
-			return s.nativeLPCached, nil
+		if !fetched.IsZero() {
+			return rows, nil // last-good beats failing the request
 		}
 		return nil, err
 	}
-	rows := make([]LiquidityPoolReservesRow, 0, len(states))
+	out := make([]LiquidityPoolReservesRow, 0, len(states))
 	for _, st := range states {
-		rows = append(rows, buildLiquidityPoolRow(st))
+		out = append(out, buildLiquidityPoolRow(st))
 	}
-	s.nativeLPCached, s.nativeLPFetched = rows, time.Now()
-	return rows, nil
+	s.nativeLPMu.Lock()
+	s.nativeLPCached, s.nativeLPFetched = out, time.Now()
+	s.nativeLPMu.Unlock()
+	return out, nil
+}
+
+// refreshNativeLPListing kicks ONE detached rescan (a no-op while one is
+// already running). Detached because the point is that no visitor waits on
+// it: bound to a request deadline, a slow scan dies with the request and
+// the next visitor pays the same wait again.
+func (s *Server) refreshNativeLPListing() {
+	if !s.nativeLPRefreshing.CompareAndSwap(false, true) {
+		return
+	}
+	go func() {
+		defer s.nativeLPRefreshing.Store(false)
+		ctx, cancel := context.WithTimeout(context.Background(), nativeLPListingRefreshTimeout)
+		defer cancel()
+		if _, err := s.fillNativeLPListing(ctx); err != nil {
+			// The previous entry is retained and still served; the
+			// refresh metric above is where a dying refresher shows up.
+			s.logger.Warn("native liquidity-pool listing detached refresh failed (serving last good)", "err", err)
+		}
+	}()
+}
+
+// PrewarmNativeLiquidityPools primes the /v1/liquidity-pools ranked
+// listing. Exposed on the Server so cmd/stellarindex-api can drive it from
+// the same prewarm loop as the other snapshot caches — the listing had NO
+// prewarm at all, so every process started cold and the first visitor after
+// boot paid the whole-prefix scan inline.
+//
+// Drift-safe by construction: it calls the EXACT function the handler calls,
+// with the same (only) argument, so there is no prewarmed-key-vs-requested-key
+// gap to get wrong (the /v1/pools lesson).
+func (s *Server) PrewarmNativeLiquidityPools(ctx context.Context) {
+	if s.explorer == nil || ctx.Err() != nil {
+		return
+	}
+	pctx, cancel := context.WithTimeout(ctx, nativeLPListingRefreshTimeout)
+	defer cancel()
+	if _, err := s.nativeLPListing(pctx); err != nil {
+		s.logger.Debug("prewarm native liquidity-pool listing failed", "err", err)
+	}
 }
 
 // buildLiquidityPoolRow assembles one wire row from a decoded native

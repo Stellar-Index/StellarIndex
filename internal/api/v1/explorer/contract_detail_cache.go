@@ -65,14 +65,37 @@ type contractDetailCache struct {
 // page's actual freshness need.
 const contractCodeHistoryTTL = 24 * time.Hour
 
+// positionsCacheKey is the key PREFIX (and therefore the TTL + refresh
+// class) for GET /v1/accounts/{g}/positions. Named rather than inlined
+// because three files have to agree on it: the handler, detailTTLForKey
+// below, and the tests that seed an entry.
+const positionsCacheKey = "pos:"
+
+// accountPositionsTTL is the "pos:" key class's freshness window (#332 F1,
+// 2026-09-02). Deliberately SHORTER than contractDetailTTL: a DeFi
+// positions list is a statement about what an address holds RIGHT NOW, and
+// a user who just deposited should not be told for five minutes that they
+// have not. One minute still collapses a page's repeat loads and every
+// concurrent visitor onto a single six-fold fan-out, which is the measured
+// cost (1.15–1.25 s per uncached hit on r1), and past it the entry is
+// served stale-but-labelled rather than recomputed inline — so the ceiling
+// on how old a served list can be is bounded by the refresh succeeding,
+// not by this constant alone.
+const accountPositionsTTL = time.Minute
+
 // detailTTLForKey maps a cache key to its freshness window — 5 minutes
-// for the live-ish classes (detail events, interactions, activity), 24h
-// for the near-immutable code-history timeline.
+// for the live-ish classes (detail events, interactions, activity), 1
+// minute for account positions, 24h for the near-immutable code-history
+// timeline.
 func detailTTLForKey(key string) time.Duration {
-	if strings.HasPrefix(key, "ch:") {
+	switch {
+	case strings.HasPrefix(key, "ch:"):
 		return contractCodeHistoryTTL
+	case strings.HasPrefix(key, positionsCacheKey):
+		return accountPositionsTTL
+	default:
+		return contractDetailTTL
 	}
-	return contractDetailTTL
 }
 
 // get returns the entry for key whenever one exists — INCLUDING past the

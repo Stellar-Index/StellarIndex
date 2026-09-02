@@ -260,6 +260,29 @@ func (h *Handler) collectPositions(ctx context.Context, g string, resolve positi
 	return positions
 }
 
+// accountPositionsSnapshot is the cached payload behind AccountPositions:
+// the UNFILTERED fold output plus the coverage note that was true when it
+// was computed. `include_closed` is applied at serve time, so both variants
+// share one cache entry (and one set of six Postgres reads).
+//
+// A DEGRADED snapshot (one or more folds unreadable) IS cached. It travels
+// with its coverage_note, so it is never passed off as complete, and the
+// alternative — refusing to cache while a fold is down — would make every
+// request during an outage pay the full six-fold latency AND still be
+// degraded. Old-but-real-and-labelled beats slow-and-degraded.
+type accountPositionsSnapshot struct {
+	positions    []PositionEntry
+	coverageNote string
+}
+
+// AccountPositions is SWR-cached (#332 F1, 2026-09-02). The six folds ran
+// inline on the request context, with no memoisation and no flight — live on
+// r1 the endpoint measured 1.253 s then 1.148 s back-to-back, i.e. every
+// visitor paid the whole fan-out every time, while the sibling
+// /v1/accounts/{g} had been cached since 2026-07-30. It now takes the same
+// contract AccountActivity documents: fresh entry as-is, an expired one
+// served immediately with flags.stale + its real as_of while one detached
+// rebuild runs, and only a never-computed account waits.
 func (h *Handler) AccountPositions(w http.ResponseWriter, r *http.Request) {
 	if h.Positions == nil {
 		h.positionsUnavailable(w, r)
@@ -274,26 +297,52 @@ func (h *Handler) AccountPositions(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), explorerReadTimeout)
 	defer cancel()
 
-	resolve := h.newPositionAssetResolver(ctx)
+	v, asOf, degraded, err := h.contractDetailCached(ctx, positionsCacheKey+g, func(rctx context.Context) (any, error) {
+		// The resolver and the folds must run on the REFRESH context —
+		// binding either to a request that may already be gone is how a
+		// detached rebuild silently produces a half-resolved payload.
+		var cov positionsCoverage
+		positions := h.collectPositions(rctx, g, h.newPositionAssetResolver(rctx), &cov)
+		return accountPositionsSnapshot{positions: positions, coverageNote: cov.note()}, nil
+	})
+	if err != nil {
+		if h.ClientAborted(r, err) {
+			return
+		}
+		if retryableColdMiss(ctx, err) {
+			h.Logger.Warn("explorer AccountPositions deadline exceeded", "account", g)
+			h.writeRetryable(w, r, err, "https://api.stellarindex.io/errors/account-positions-timeout",
+				"Account positions timed out")
+			return
+		}
+		h.Logger.Error("explorer AccountPositions failed", "err", err, "account", g)
+		h.WriteProblem(w, r, "https://api.stellarindex.io/errors/internal",
+			"Internal error", http.StatusInternalServerError, "")
+		return
+	}
+	snap, ok := v.(accountPositionsSnapshot)
+	if !ok {
+		h.Logger.Error("explorer AccountPositions: unexpected cached payload type", "account", g)
+		h.WriteProblem(w, r, "https://api.stellarindex.io/errors/internal",
+			"Internal error", http.StatusInternalServerError, "")
+		return
+	}
 
-	var cov positionsCoverage
-	positions := h.collectPositions(ctx, g, resolve, &cov)
-
-	out := make([]PositionEntry, 0, len(positions))
-	for _, p := range positions {
+	out := make([]PositionEntry, 0, len(snap.positions))
+	for _, p := range snap.positions {
 		if !includeClosed && p.closed {
 			continue
 		}
 		out = append(out, p)
 	}
 
-	h.WriteJSON(w, AccountPositionsView{
+	h.writeJSONAt(w, AccountPositionsView{
 		Account:       g,
 		Positions:     out,
 		IncludeClosed: includeClosed,
 		Note:          positionsHonestNote,
-		CoverageNote:  cov.note(),
-	}, false)
+		CoverageNote:  snap.coverageNote,
+	}, degraded, asOf)
 }
 
 // ─── asset / venue display-label resolution ──────────────────────────

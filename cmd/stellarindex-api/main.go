@@ -1435,6 +1435,14 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 	// ledgers that used to run inline on the 8s request budget, so a cold
 	// or loaded /network first load lost the panel entirely. Its cache
 	// also has a 5-minute TTL — this cadence keeps it permanently fresh.
+	// PrewarmNativeLiquidityPools joins them (#332 F4, 2026-09-02): the
+	// /v1/liquidity-pools ranked listing had NO prewarm anywhere, so the
+	// first visitor after every boot paid the whole-prefix lake scan
+	// inline. Its ENTRY only needs to EXIST for the request path to stop
+	// blocking — freshness is maintained by the request-kicked detached
+	// refresh at its own 60s TTL — so this cadence is a
+	// never-cold/repair guarantee, not the freshness mechanism, and the
+	// call is a no-op whenever the entry is already warm.
 	go func() {
 		defer recoverBackgroundWorker(logger, "prewarm-supply-wealth")
 		const cadence = 5 * time.Minute
@@ -1443,6 +1451,7 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 		apiSrv.PrewarmContractsDirectory(rootCtx)
 		apiSrv.PrewarmOpTypeStats(rootCtx)
 		apiSrv.PrewarmNetworkThroughput(rootCtx)
+		apiSrv.PrewarmNativeLiquidityPools(rootCtx)
 		t := time.NewTicker(cadence)
 		defer t.Stop()
 		for {
@@ -1455,6 +1464,7 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 				apiSrv.PrewarmContractsDirectory(rootCtx)
 				apiSrv.PrewarmOpTypeStats(rootCtx)
 				apiSrv.PrewarmNetworkThroughput(rootCtx)
+				apiSrv.PrewarmNativeLiquidityPools(rootCtx)
 			}
 		}
 	}()

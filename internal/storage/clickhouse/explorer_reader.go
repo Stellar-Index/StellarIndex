@@ -574,19 +574,66 @@ func scanOpsLight(rows driver.Rows) ([]OpRow, error) {
 
 // RecentOperations returns the most-recent operations network-wide,
 // newest first, keyset-paged by the composite (ledger_seq, tx_index,
-// op_index) cursor. A bare reverse scan from the tip of the table's
-// sort key — fast, no extra index. Backs the /v1/operations directory.
-// Returns the LIGHT column set (opColsLight — no body_xdr); the returned
+// op_index) cursor. Backs the /v1/operations directory. Returns the
+// LIGHT column set (opColsLight — no body_xdr); the returned
 // OpRow.BodyXDR is always "". The directory is a summary listing; callers
 // needing the decoded body use the per-ledger / per-tx paths.
+//
+// TWO-PASS, tail-window first (#444 / #332 F2, 2026-09-02). The old form
+// carried NO lower bound on either arm, and the "cheap streamed reverse
+// scan" the query's own comment claimed was refuted by ClickHouse's
+// query_log on r1: the first page read 10.3M rows / 1.37 GiB in
+// 1,788–1,875 ms, because with no ledger predicate every part in every
+// partition is a candidate and the reverse read opens all of them.
+//
+// So the read is tried against a `recentLedgersTailWindow`-wide slice of
+// ledgers FIRST — anchored at the tip for the first page, at the cursor for
+// a continuation page — which prunes to the newest partition(s) (operations
+// is PARTITION BY intDiv(ledger_seq, 1000000)). That bounded pass returns
+// EXACTLY the same rows as the unbounded one whenever the window holds a
+// full page, because a descending (ledger_seq, tx_index, op_index) page
+// anchored at the window's top can only contain rows inside the window.
+//
+// When it comes back SHORT (fewer than `limit` rows) the window did not
+// hold a page — a quiet network, a sparse historical region under a cursor,
+// or a genuinely final page — so the read is REPEATED UNBOUNDED. Stopping
+// short instead would truncate the listing and mint a next_cursor that
+// skips real operations; falling back costs the old query only in the cases
+// where the old query was the only one.
 func (r *ExplorerReader) RecentOperations(ctx context.Context, limit int, cur ExplorerCursor) ([]OpRow, error) {
 	if limit <= 0 || limit > 200 {
 		limit = 50
 	}
-	q := recentOperationsQuery(cur.IsSet())
+	rows, err := r.recentOperationsPage(ctx, limit, cur, true)
+	if err != nil {
+		return nil, err
+	}
+	if len(rows) >= limit {
+		return rows, nil
+	}
+	return r.recentOperationsPage(ctx, limit, cur, false)
+}
+
+// recentOperationsPage runs ONE RecentOperations pass, bounded to the tail
+// window or not. Arg order mirrors recentOperationsQuery's clause order:
+// the cursor tuple, then the window's lower bound, then the limit.
+func (r *ExplorerReader) recentOperationsPage(ctx context.Context, limit int, cur ExplorerCursor, bounded bool) ([]OpRow, error) {
+	q := recentOperationsQuery(cur.IsSet(), bounded)
 	args := []any{}
-	if cur.IsSet() {
+	switch {
+	case cur.IsSet():
 		args = append(args, cur.Ledger, cur.A, cur.B)
+		if bounded {
+			// Clamp at 0 — uint32 underflow near genesis would wrap and
+			// return nothing (the RecentLedgers cursor branch's lesson).
+			lower := uint32(0)
+			if cur.Ledger > uint32(recentLedgersTailWindow) {
+				lower = cur.Ledger - uint32(recentLedgersTailWindow)
+			}
+			args = append(args, lower)
+		}
+	case bounded:
+		args = append(args, uint32(recentLedgersTailWindow))
 	}
 	args = append(args, limit)
 	rows, err := r.conn.Query(ctx, q, args...)
@@ -605,20 +652,36 @@ func (r *ExplorerReader) RecentOperations(ctx context.Context, limit int, cur Ex
 // ingested_at (which opColsLight doesn't even select) until a background
 // merge — without dedup this directory listing served the SAME operation
 // twice. LIMIT 1 BY, not FINAL: FINAL would force ClickHouse to merge
-// every overlapping part to answer this bare `ORDER BY … DESC LIMIT n`
-// tip query with no lower bound — the exact O(table) trap
-// recentLedgersTailWindow works around for RecentLedgers. LIMIT 1 BY
-// composes with the SAME ORDER BY the query already has, so it stays a
-// cheap streamed reverse scan from the tip, not a full-table merge.
+// every overlapping part in the scanned range to answer this
+// `ORDER BY … DESC LIMIT n` query. LIMIT 1 BY composes with the SAME ORDER
+// BY the query already has, so it dedups inside the streamed read rather
+// than triggering a merge.
 //
 // explorerScanSettings: a reverse tip read is cheap in TIME but its stream
 // setup still fans out over the part layout at default threads (route-sweep
 // 2026-07-29: /v1/operations was in the 8s-budget 503 class); pinning
 // threads bounds the fan-out with no correctness change.
-func recentOperationsQuery(hasCursor bool) string {
+//
+// The `bounded` arm carries the LOWER ledger bound that makes the read
+// partition-pruned (#444 / #332 F2, 2026-09-02) — `> tip -
+// recentLedgersTailWindow` on the first page, `>= cursor -
+// recentLedgersTailWindow` on a cursor page. That is the same bound
+// RecentLedgers takes on both of ITS arms, for the same measured reason:
+// with no ledger predicate every part in every partition is a candidate,
+// and r1's query_log measured the "cheap streamed reverse scan" this
+// comment used to claim at 10.3M rows / 1.37 GiB / 1.8 s for one 50-row
+// page. It is a PERFORMANCE bound only — RecentOperations re-runs the
+// UNBOUNDED form whenever the bounded pass comes back short, so no page is
+// ever truncated by it.
+func recentOperationsQuery(hasCursor, bounded bool) string {
 	q := `SELECT ` + opColsLight + ` FROM stellar.operations`
-	if hasCursor {
+	switch {
+	case hasCursor && bounded:
+		q += ` WHERE (ledger_seq, tx_index, op_index) < (?, ?, ?) AND ledger_seq >= ?`
+	case hasCursor:
 		q += ` WHERE (ledger_seq, tx_index, op_index) < (?, ?, ?)`
+	case bounded:
+		q += ` WHERE ledger_seq > (SELECT max(ledger_seq) FROM stellar.operations) - ?`
 	}
 	q += ` ORDER BY ledger_seq DESC, tx_index DESC, op_index DESC LIMIT 1 BY ledger_seq, tx_index, op_index LIMIT ?`
 	return q + explorerScanSettings

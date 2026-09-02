@@ -379,6 +379,14 @@ func TestExplorerReads_BoundedByReadTimeout(t *testing.T) {
 				// survives the request that kicked it — still bounded,
 				// just not request-scoped.
 				wantBudget = networkThroughputRefreshTimeout
+			case "AccountPositions":
+				// SWR'd on the shared contract-detail cache (#332 F1,
+				// 2026-09-02): the six-fold fan-out runs DETACHED on
+				// that budget — still bounded, still
+				// cancellation-observing, just not request-scoped. The
+				// REQUEST-side bound is unchanged (the cold wait is
+				// capped by explorerReadTimeout in the handler).
+				wantBudget = contractDetailRefreshTimeout
 			}
 			if probe.budget <= 0 || probe.budget > wantBudget {
 				t.Fatalf("%s: deadline budget %v not in (0, %v]", tc.name, probe.budget, wantBudget)

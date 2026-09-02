@@ -177,9 +177,16 @@ type Server struct {
 	// whole-`liquidity_pool`-prefix lake scan (~40k pools) ranked in
 	// Go; cached so the listing endpoint doesn't re-scan per request
 	// (see handleLiquidityPools in liquidity_pools.go).
+	// nativeLPMu guards the entry itself and is NEVER held across the
+	// scan (#332 F4, 2026-09-02 — it used to be, so the first caller
+	// after every TTL lapse paid the scan inline and the rest queued).
+	// nativeLPFillMu collapses concurrent COLD fills onto one scan;
+	// nativeLPRefreshing admits one detached rescan at a time.
 	nativeLPMu              sync.Mutex
 	nativeLPCached          []LiquidityPoolReservesRow
 	nativeLPFetched         time.Time
+	nativeLPFillMu          sync.Mutex
+	nativeLPRefreshing      atomic.Bool
 	volume                  VolumeReader
 	change24h               Change24hReader
 	priceAt                 PriceAtReader

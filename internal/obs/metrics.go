@@ -4097,7 +4097,7 @@ var AuthReaperIntervalSeconds = prometheus.NewGaugeVec(
 var ExplorerSWRRefreshTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_explorer_swr_refresh_total",
-		Help: "Explorer stale-while-revalidate detached refresh outcomes per cache (accounts_wealth|asset_holders|contract_detail|contracts_dir|network_throughput|op_type_stats|protocol_bespoke|ttl_liveness × ok|error).",
+		Help: "Explorer stale-while-revalidate detached refresh outcomes per cache (accounts_wealth|asset_holders|contract_detail|contracts_dir|native_lp_listing|network_throughput|op_type_stats|ops_directory|protocol_bespoke|ttl_liveness × ok|error).",
 	},
 	[]string{"cache", "outcome"},
 )

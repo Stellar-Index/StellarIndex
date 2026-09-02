@@ -3041,9 +3041,9 @@ else (#368 M4). See runbooks/worker-panicked.md.
 ### `stellarindex_explorer_swr_refresh_total`
 
 Counter. Labels: `cache` (`accounts_wealth` | `asset_holders` |
-`contract_detail` | `contracts_dir` | `network_throughput` |
-`op_type_stats` | `protocol_bespoke` | `ttl_liveness`),
-`outcome` (`ok` | `error`).
+`contract_detail` | `contracts_dir` | `native_lp_listing` |
+`network_throughput` | `op_type_stats` | `ops_directory` |
+`protocol_bespoke` | `ttl_liveness`), `outcome` (`ok` | `error`).
 
 Detached stale-while-revalidate refresh outcomes for the explorer's
 snapshot caches (route-sweep 2026-07-29; `contract_detail` — the shared
@@ -3051,7 +3051,12 @@ per-contract events/interactions/code-history cache — joined 2026-07-30;
 `network_throughput` — the /v1/network/throughput daily series — and
 `protocol_bespoke` — the last-good block under the
 /v1/protocols/{name} visual suite, a SERVED-TIER refresh sharing this
-pair because its contract is identical — joined 2026-08-13). The SWR design makes
+pair because its contract is identical — joined 2026-08-13;
+`ops_directory` — the /v1/operations first page, which moved from
+fill-on-miss to stale-serve when its unbounded lake read was bounded —
+and `native_lp_listing` — the /v1/liquidity-pools ranked listing, whose
+60s refresh used to run inline under a held mutex — joined 2026-09-02).
+The SWR design makes
 refresh failures invisible at the API surface by construction —
 stale-but-real keeps serving with `flags.stale` — so this counter is
 the ONLY place a persistently dying refresher is visible before its

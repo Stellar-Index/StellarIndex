@@ -33,6 +33,43 @@ against.
 - **caching:** the closed-bucket price surfaces get their own shared-cache band — `/v1/price`, `/v1/price/batch`, `/v1/price/changes` go from `s-maxage=60` to `s-maxage=5`, and `/v1/oracle/latest` joins them (#344). ADR-0015/0018 is a determinism contract, not a freshness bound, so a shared cache serving a previous closed bucket keeps determinism while breaking the *most recent* closed-bucket clause — which is what the SLA probe measures against a 150 s target (60 s bucket + 30 s CAGG `end_offset` + schedule + runtime). At 60 s the edge could serve a bucket a full bucket behind origin (age up to 210 s, past the probe bound) and a stale `flags.frozen` / `confidence` for two aggregator ticks. `/v1/oracle/latest` is a latest-observation surface with no closed-bucket contract and had been sitting in the 300 s catalogue band purely because it matched the `/v1/oracle/` prefix. `max-age` stays 30 s: a client's own copy is not a shared-cache lie. Nothing honours `s-maxage` today (api. is grey-cloud), so this lands before an edge exists rather than after.
 - **deploy:** the config-apply gate could pass on a **false green** (#427). Its baseline is the version live on the host; when that read FAILED it warned and fell back to the previous release tag by ancestry, so the gate diffed `<prev>..<version>` — usually nothing — and passed. Both test-net deploys on 2026-09-02 did exactly that (the ProxyJump identity bug, #434) across a five-release catch-up that touched 9-11 gated files. A read failure now fails the step with an actionable error; a genuinely absent sidecar (first deploy to a host) still falls back, and the two cases are distinguished by a remote snippet that always exits 0. `stellarindex-migrate` is excluded from the minimum — it gates no config surface, is omitted from some deploys by design, and as the oldest sidecar it dragged the baseline to a range nobody was deploying. New `deploy-baseline-test` runs the extracted step against a fake ssh and pins all three behaviours.
 - **ops:** `galexie-archive-fill` failed roughly one run in three with exit 2 (#475) — root cause, not the one fixed in be4907c5. `sort | head -n N` under `set -euo pipefail`: `head` closes the pipe, systemd's `IgnoreSIGPIPE=yes` default turns the signal into EPIPE, `sort` prints `write failed: 'standard output': Broken pipe` and exits 2, and pipefail promotes that to the pipeline. It only fires once the producer outsizes the 64 KiB pipe buffer, which is why it looked random (r1's journal: three failures, the last 2026-09-02 18:19:35 UTC, AFTER the retry helper — which could not help, the AWS call had succeeded). Now writes the listing to a file and slices the file. Same class fixed in `node-healthcheck.sh` (log noise on every run), `zfs-snapshot.sh` (could abort the prune loop exactly when the pool is filling), `audit-public-api.sh` and `cut-release.sh`; the bounded sites carry a `# sigpipe-ok:` justification. New gate `lint-shell-sigpipe` + its self-test guard the class in verify.sh and CI.
+- **`/v1/operations` read 10.3 M rows / 1.37 GiB for one 50-row page
+  (#444, #332 F2).** `RecentOperations` carried no ledger lower bound on
+  either arm, so ClickHouse had every part in every partition as a
+  candidate for the reverse read — 1,788–1,875 ms per page in r1's own
+  `system.query_log`, which is the whole of the route's 2.238 s 6h p95
+  (not `op_type_stats`, which is detached and never on a request path).
+  Both arms are now bounded to a `recentLedgersTailWindow` slice — `> tip
+  − 5000` on the first page, `>= cursor − 5000` (clamped at 0) on a cursor
+  page — so the read is partition-pruned, and a bounded pass that comes
+  back SHORT is re-run unbounded, so a quiet network or a sparse
+  historical region can never be served a truncated page or a
+  skip-forward `next_cursor`. The directory's first-page cache moved from
+  3 s fill-on-miss to 10 s stale-while-revalidate: a lapsed entry is
+  served with `flags.stale` + its real `as_of` while one gated, detached
+  rebuild runs, so no visitor waits on a rebuild once any entry exists.
+- **`/v1/accounts/{g}/positions` ran its six-protocol fan-out on every
+  request (#332 F1)** — 1.253 s then 1.148 s back-to-back on production,
+  while the sibling `/v1/accounts/{g}` had been memoised since 2026-07-30.
+  It now rides the shared explorer SWR cache under its own `pos:` key
+  class with a 1-minute freshness window (deliberately shorter than the
+  5-minute contract-detail default: a positions list is a claim about
+  right now) and its own detached-refresh class, so a burst of cold
+  accounts cannot starve the contract panels. The cached set is
+  UNFILTERED, so `?include_closed` shares one entry and one fan-out.
+- **The `/v1/liquidity-pools` ranked listing had no prewarm and refreshed
+  inline under a held mutex (#332 F4).** Once every 60 s TTL lapse the
+  next caller paid the whole-`liquidity_pool`-prefix lake scan on its
+  request deadline (0.825 s live) and every concurrent caller queued
+  behind it; a cold process charged it to the first visitor. The entry is
+  now always served immediately while one detached rescan runs, cold
+  fills are collapsed onto a single scan, and
+  `PrewarmNativeLiquidityPools` joins the API's 5-minute prewarm loop —
+  calling the handler's own function, so there is no prewarmed-key drift.
+  `flags.stale` is deliberately NOT set from cache age here (on this route
+  it means lake freshness, ADR-0041 D4); cache health is reported through
+  `stellarindex_explorer_swr_refresh_total{cache="native_lp_listing"}`,
+  alongside the new `ops_directory` series.
 - **coverage:** `/v1/coverage` on testnet / futurenet reported **0 of 14 sources complete BY CONSTRUCTION** (#483) — the completeness catalogue listed the pubnet protocol sources with their pubnet genesis floors (soroswap 50,746,266 against a 4.4M tip) and pubnet contract sets on every network, so the verdict could never go green however complete the lake was. New `internal/sourcenet` classifies each source as pubnet-anchored (ADR-0035 contract identity) or ledger-anchored; the reconciliation catalogue drops the inapplicable ones, `compute-completeness` clears their stale snapshot rows, and the endpoint reports them in `not_applicable_sources` with a reason plus the serving `network`, excluded from every total. Pubnet output is unchanged apart from the two new fields.
 - **alerting:** `stellarindex_stellar_stack_lagging` / `_protocol_lag` could never fire — the alert's static `component: stellar-stack` label overwrote the probe metric's own `component` (core/galexie/archivist), two lagging components collapsed to one labelset and Prometheus rejected the rule (`health: err`, live on r1 with archivist=1 AND galexie=1). The expr now renames the metric label to `stack_component` before the static label is applied; runbook + annotations follow. Both rule trees.
 - **`/v1/oracle/streams` re-ran the oracle scan on every hit (#332 F5).**

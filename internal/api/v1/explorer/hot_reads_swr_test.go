@@ -224,7 +224,7 @@ func TestResolveOpTypeStats_NeverComputesInline(t *testing.T) {
 	h, reader := newSWRHandler()
 	// Cold: returns nothing (panel omitted — op_type_stats is omitempty),
 	// kicks the detached refresh.
-	if got := h.resolveOpTypeStats(context.Background(), nil); got != nil {
+	if got := h.resolveOpTypeStats(); got != nil {
 		t.Fatalf("cold resolve returned %v, want nil (panel appears next request)", got)
 	}
 	waitFlightIdle(t, &h.opTypeStats.flight, "stats")
@@ -232,7 +232,7 @@ func TestResolveOpTypeStats_NeverComputesInline(t *testing.T) {
 		t.Fatalf("detached stats refresh ran %d times, want 1", got)
 	}
 	// Warm: served from cache, no further compute.
-	stats := h.resolveOpTypeStats(context.Background(), nil)
+	stats := h.resolveOpTypeStats()
 	if len(stats) != 1 || stats[0].Type != "payment" || stats[0].Count != 9 {
 		t.Fatalf("warm resolve = %+v, want the cached normalized breakdown", stats)
 	}

@@ -30,28 +30,30 @@ func requireScanSettings(t *testing.T, name, q string) {
 
 func TestExplorerScanQueries_CarryBoundedSettings(t *testing.T) {
 	for name, q := range map[string]string{
-		"recentOperationsQuery(first page)":     recentOperationsQuery(false),
-		"recentOperationsQuery(cursor)":         recentOperationsQuery(true),
-		"opTypeStatsQuery":                      opTypeStatsQuery,
-		"accountOpTypeCountsQuery":              accountOpTypeCountsQuery,
-		"accountTransactionsQuery(first page)":  accountTransactionsQuery(false),
-		"accountTransactionsQuery(cursor)":      accountTransactionsQuery(true),
-		"accountOperationsQuery(first page)":    accountOperationsQuery(false, false),
-		"accountOperationsQuery(cursor)":        accountOperationsQuery(true, false),
-		"accountOperationsQuery(watermark)":     accountOperationsQuery(true, true),
-		"contractEventsRecentQuery(first page)": contractEventsRecentQuery(false, false),
-		"contractEventsRecentQuery(cursor)":     contractEventsRecentQuery(true, false),
-		"recentContractsQuery":                  recentContractsQuery,
-		"contractInteractionsQuery":             contractInteractionsQuery,
-		"contractCodeHistoryQuery":              contractCodeHistoryQuery,
-		"accountTrustlinesQuery":                accountTrustlinesQuery,
-		"accountOffersQuery":                    accountOffersQuery,
-		"assetHoldersQuery":                     assetHoldersQuery,
-		"assetHoldersCountQuery":                assetHoldersCountQuery,
-		"nativeHoldersQuery":                    nativeHoldersQuery,
-		"nativeHoldersCountQuery":               nativeHoldersCountQuery,
-		"accountsUnspendableQuery":              accountsUnspendableQuery,
-		"accountMovementsQuery(bare)":           accountMovementsQuery(AccountMovementFilter{}, false),
+		"recentOperationsQuery(first page)":                     recentOperationsQuery(false, true),
+		"recentOperationsQuery(first page, unbounded fallback)": recentOperationsQuery(false, false),
+		"recentOperationsQuery(cursor)":                         recentOperationsQuery(true, true),
+		"recentOperationsQuery(cursor, unbounded fallback)":     recentOperationsQuery(true, false),
+		"opTypeStatsQuery":                                      opTypeStatsQuery,
+		"accountOpTypeCountsQuery":                              accountOpTypeCountsQuery,
+		"accountTransactionsQuery(first page)":                  accountTransactionsQuery(false),
+		"accountTransactionsQuery(cursor)":                      accountTransactionsQuery(true),
+		"accountOperationsQuery(first page)":                    accountOperationsQuery(false, false),
+		"accountOperationsQuery(cursor)":                        accountOperationsQuery(true, false),
+		"accountOperationsQuery(watermark)":                     accountOperationsQuery(true, true),
+		"contractEventsRecentQuery(first page)":                 contractEventsRecentQuery(false, false),
+		"contractEventsRecentQuery(cursor)":                     contractEventsRecentQuery(true, false),
+		"recentContractsQuery":                                  recentContractsQuery,
+		"contractInteractionsQuery":                             contractInteractionsQuery,
+		"contractCodeHistoryQuery":                              contractCodeHistoryQuery,
+		"accountTrustlinesQuery":                                accountTrustlinesQuery,
+		"accountOffersQuery":                                    accountOffersQuery,
+		"assetHoldersQuery":                                     assetHoldersQuery,
+		"assetHoldersCountQuery":                                assetHoldersCountQuery,
+		"nativeHoldersQuery":                                    nativeHoldersQuery,
+		"nativeHoldersCountQuery":                               nativeHoldersCountQuery,
+		"accountsUnspendableQuery":                              accountsUnspendableQuery,
+		"accountMovementsQuery(bare)":                           accountMovementsQuery(AccountMovementFilter{}, false),
 		"accountMovementsQuery(filter+cursor)": accountMovementsQuery(AccountMovementFilter{
 			Kind: "payment", Direction: AccountMovementSent, Asset: "native",
 		}, true),
@@ -114,14 +116,28 @@ func TestExplorerScanQueries_ShapePreserved(t *testing.T) {
 	if strings.Contains(accountTransactionsQuery(false), "< (?, ?)") {
 		t.Error("accountTransactionsQuery(false) must not carry a cursor clause")
 	}
-	if strings.Contains(recentOperationsQuery(false), "WHERE") {
-		t.Error("recentOperationsQuery(false) must not carry a WHERE clause")
+	// A first page carries no CURSOR clause on either arm. (Until
+	// 2026-09-02 this was asserted as "no WHERE at all", which was a
+	// faithful proxy only while the query had no lower bound either — the
+	// #444 tail-window bound is a WHERE on the first page, and is pinned
+	// in explorer_reader_recent_operations_test.go. The property this row
+	// actually protects — the arg count matching the clause count — is
+	// now asserted directly.)
+	for _, q := range []string{recentOperationsQuery(false, true), recentOperationsQuery(false, false)} {
+		if strings.Contains(q, "(ledger_seq, tx_index, op_index) < (?, ?, ?)") {
+			t.Errorf("recentOperationsQuery(false, …) must not carry a cursor clause:\n%s", q)
+		}
+		if !strings.Contains(q, "LIMIT 1 BY ledger_seq, tx_index, op_index") {
+			t.Errorf("recentOperationsQuery(false, …) missing its DAT-10 LIMIT 1 BY dedup:\n%s", q)
+		}
 	}
-	if !strings.Contains(recentOperationsQuery(true), "(ledger_seq, tx_index, op_index) < (?, ?, ?)") {
-		t.Error("recentOperationsQuery(true) missing its cursor tuple comparison")
-	}
-	if !strings.Contains(recentOperationsQuery(false), "LIMIT 1 BY ledger_seq, tx_index, op_index") {
-		t.Error("recentOperationsQuery missing its DAT-10 LIMIT 1 BY dedup")
+	for _, q := range []string{recentOperationsQuery(true, true), recentOperationsQuery(true, false)} {
+		if !strings.Contains(q, "(ledger_seq, tx_index, op_index) < (?, ?, ?)") {
+			t.Errorf("recentOperationsQuery(true, …) missing its cursor tuple comparison:\n%s", q)
+		}
+		if !strings.Contains(q, "LIMIT 1 BY ledger_seq, tx_index, op_index") {
+			t.Errorf("recentOperationsQuery(true, …) missing its DAT-10 LIMIT 1 BY dedup:\n%s", q)
+		}
 	}
 
 	// The movements builder's clause order must mirror its arg order.

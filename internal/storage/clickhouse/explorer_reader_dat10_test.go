@@ -45,24 +45,33 @@ func TestRecentOperations_DedupsPerPrimaryKey(t *testing.T) {
 	if len(rows) != 1 {
 		t.Fatalf("rows = %d, want 1", len(rows))
 	}
-	if len(conn.queries) != 1 {
-		t.Fatalf("issued %d queries, want 1", len(conn.queries))
+	// TWO queries since #444 (2026-09-02): the stub answers with one row for
+	// a 50-row page, which is the short-page case, so the tail-window pass is
+	// followed by the unbounded fallback (see
+	// explorer_reader_recent_operations_test.go). The DAT-10 dedup assertions
+	// below therefore have to hold on BOTH arms — an arm that loses it serves
+	// a re-ingested operation twice just as surely as the old single query
+	// would have.
+	if len(conn.queries) != 2 {
+		t.Fatalf("issued %d queries, want 2 (bounded pass + unbounded fallback on a short page)", len(conn.queries))
 	}
-	q := conn.queries[len(conn.queries)-1]
-	// audit DAT-10: without a dedup construct a re-ingested op leaves an
-	// un-merged duplicate part and this directory listing serves it twice.
-	if !strings.Contains(q, "LIMIT 1 BY ledger_seq, tx_index, op_index") {
-		t.Fatalf("query = %q, want a `LIMIT 1 BY ledger_seq, tx_index, op_index` dedup clause", q)
-	}
-	// Must stay a cheap tip scan: NOT FINAL (would force a full-table merge
-	// on this un-bounded reverse scan — see RecentLedgers' tail-window note).
-	if strings.Contains(q, "stellar.operations FINAL") {
-		t.Fatalf("query = %q, must NOT use FINAL on the un-bounded tip scan", q)
-	}
-	// The LIMIT 1 BY clause must come AFTER the existing ORDER BY and BEFORE
-	// the page-size LIMIT (ClickHouse clause order), not replace either.
-	if !strings.Contains(q, "ORDER BY ledger_seq DESC, tx_index DESC, op_index DESC LIMIT 1 BY") {
-		t.Fatalf("query = %q, want LIMIT 1 BY to follow the existing ORDER BY", q)
+	for _, q := range conn.queries {
+		// audit DAT-10: without a dedup construct a re-ingested op leaves an
+		// un-merged duplicate part and this directory listing serves it twice.
+		if !strings.Contains(q, "LIMIT 1 BY ledger_seq, tx_index, op_index") {
+			t.Fatalf("query = %q, want a `LIMIT 1 BY ledger_seq, tx_index, op_index` dedup clause", q)
+		}
+		// NOT FINAL: it would force a merge across every part in the scanned
+		// range, which on the fallback arm is still the whole table.
+		if strings.Contains(q, "stellar.operations FINAL") {
+			t.Fatalf("query = %q, must NOT use FINAL on the reverse directory scan", q)
+		}
+		// The LIMIT 1 BY clause must come AFTER the existing ORDER BY and
+		// BEFORE the page-size LIMIT (ClickHouse clause order), not replace
+		// either.
+		if !strings.Contains(q, "ORDER BY ledger_seq DESC, tx_index DESC, op_index DESC LIMIT 1 BY") {
+			t.Fatalf("query = %q, want LIMIT 1 BY to follow the existing ORDER BY", q)
+		}
 	}
 }
 
