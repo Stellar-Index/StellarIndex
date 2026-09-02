@@ -117,6 +117,35 @@ type TVLUSDPegInfo interface {
 	QuoteUSDPegInfo(asset canonical.Asset) (decimals int, ok bool)
 }
 
+// TVLValueGate is the serving-side TRUST gate on a reserve leg: may this
+// platform publish a USD valuation of this asset at all? (#338)
+//
+// It is the same question — and, in production, literally the same
+// decision function — every other served price surface asks. The TVL
+// path used to ask nobody: `rateFor` consulted only the resolver, whose
+// sole floor is one cent of quote notional, so a directory-scam-flagged
+// issuer's token with a single self-traded $0.01 minute was valued into
+// a pool's TVL at its own VWAP and summed into the protocol headline.
+// A number an attacker authors is not a lower bound, it is a lie with a
+// "≥" in front of it.
+//
+// Production wiring routes to cmd/stellarindex-api's priceWithheld
+// chokepoint (substance gate OR scam gate — the MSP-cluster invariant
+// that the two are never consulted separately). Nil is a valid
+// allow-everything gate, so a deployment with [pricing_guard] disabled
+// keeps today's figures.
+//
+// Two things belong to that production adapter rather than here,
+// because that is where the gates and the operator's peg list already
+// live: the quote set a "does this asset have a publishable USD price"
+// question expands to (vs XLM / vs fiat:USD / vs a declared peg — the
+// same three [Server.listingPriceAllowed] tries), and the
+// low-cardinality metric label the guards count the verdict under
+// (obs.PriceServe{Scam,Substance}WithheldTotal).
+type TVLValueGate interface {
+	ValueWithheld(ctx context.Context, asset canonical.Asset) bool
+}
+
 // DEXTVLSources are the read seams the TVL snapshot is computed from.
 // Every field is optional; a protocol whose readers are missing is
 // simply absent from the snapshot (same degradation contract as the
@@ -148,6 +177,10 @@ type DEXTVLSources struct {
 	// PegInfo short-circuits operator-declared USD pegs to $1 at their
 	// real decimals. Optional.
 	PegInfo TVLUSDPegInfo
+	// Gate withholds the USD valuation of a reserve leg whose asset the
+	// serving trust guards refuse to price (#338). Optional; nil values
+	// every leg exactly as before, and says so in Basis.
+	Gate TVLValueGate
 	// Logger for refresh warnings. Optional.
 	Logger Logger
 }
@@ -187,7 +220,7 @@ func (c *DEXTVLCache) Snapshot() (map[string]ProtocolTVLView, time.Time) {
 // swap in atomically.
 func (c *DEXTVLCache) Refresh(ctx context.Context) error {
 	now := time.Now().UTC()
-	valuer := newTVLValuer(c.src.Pricer, c.src.PegInfo, now)
+	valuer := newTVLValuer(c.src.Pricer, c.src.PegInfo, c.src.Gate, now)
 	next := make(map[string]ProtocolTVLView, 4)
 	prev, _ := c.Snapshot()
 	var errs []error
@@ -227,6 +260,29 @@ func (c *DEXTVLCache) Refresh(ctx context.Context) error {
 	return err
 }
 
+// tvlBasisUnpricedTail is the clause every protocol's Basis ends with:
+// the honest lower-bound contract. An unpriced leg contributes exactly
+// 0 and its pool counts in UnpricedPools, which is what the explorer's
+// "≥" prefix and hatched bar tail render.
+const tvlBasisUnpricedTail = "; unpriced legs contribute 0"
+
+// tvlBasisGatedTail extends it when a trust gate is wired. Written from
+// what actually ships, not from intent: a deployment with
+// [pricing_guard] disabled wires no gate, and claiming the screen ran
+// would be worse than saying nothing.
+const tvlBasisGatedTail = tvlBasisUnpricedTail +
+	", and a leg whose asset the serving trust gates withhold " +
+	"(directory-flagged issuer, or a market below the substance floor) " +
+	"is counted unpriced rather than valued"
+
+// basisTail returns the lower-bound clause matching THIS cache's wiring.
+func (c *DEXTVLCache) basisTail() string {
+	if c.src.Gate == nil {
+		return tvlBasisUnpricedTail
+	}
+	return tvlBasisGatedTail
+}
+
 // carryPrev keeps a protocol's previous snapshot entry across a failed
 // per-protocol refresh.
 func carryPrev(next, prev map[string]ProtocolTVLView, name string) {
@@ -262,7 +318,7 @@ func (c *DEXTVLCache) refreshSoroswap(ctx context.Context, valuer *tvlValuer, no
 	view := ProtocolTVLView{
 		AsOf: now.Format(time.RFC3339),
 		Basis: "sum of current pair reserves (lake instance storage; archived pairs excluded), " +
-			"valued through the served USD price tiers; unpriced legs contribute 0",
+			"valued through the served USD price tiers" + c.basisTail(),
 	}
 	for _, st := range states {
 		view.PoolsTotal++
@@ -307,7 +363,7 @@ func (c *DEXTVLCache) refreshAquarius(ctx context.Context, valuer *tvlValuer, no
 	view := ProtocolTVLView{
 		AsOf: now.Format(time.RFC3339),
 		Basis: fmt.Sprintf("sum of each pool's latest post-state reserve snapshot (aquarius_reserves, trailing %dd), "+
-			"valued through the served USD price tiers; unpriced legs contribute 0", aquariusTVLWindowDays),
+			"valued through the served USD price tiers%s", aquariusTVLWindowDays, c.basisTail()),
 	}
 	for _, p := range pools {
 		view.PoolsTotal++
@@ -356,8 +412,8 @@ func (c *DEXTVLCache) refreshPhoenix(ctx context.Context, valuer *tvlValuer, now
 	view := ProtocolTVLView{
 		AsOf: now.Format(time.RFC3339),
 		Basis: "sum of current pool reserves (lake persistent storage; archived pools excluded, " +
-			"unrecognised storage shapes counted unpriced), valued through the served USD price tiers; " +
-			"unpriced legs contribute 0",
+			"unrecognised storage shapes counted unpriced), valued through the served USD price tiers" +
+			c.basisTail(),
 	}
 	for _, st := range states {
 		view.PoolsTotal++
@@ -402,7 +458,7 @@ func (c *DEXTVLCache) refreshComet(ctx context.Context, valuer *tvlValuer, now t
 		AsOf: now.Format(time.RFC3339),
 		Basis: "sum of current per-token pool balance records (lake persistent storage; archived pools " +
 			"excluded, unrecognised storage shapes counted unpriced), valued through the served USD " +
-			"price tiers; unpriced legs contribute 0",
+			"price tiers" + c.basisTail(),
 	}
 	for _, st := range states {
 		view.PoolsTotal++
@@ -445,16 +501,25 @@ func (c *DEXTVLCache) countUndecodablePools(view *ProtocolTVLView, protocol stri
 }
 
 // tvlValuer prices raw on-chain reserve legs in USD, memoising one
-// resolver hit per token per refresh.
+// resolver hit — and one trust verdict — per token per refresh.
 type tvlValuer struct {
-	pricer  TVLUSDPricer
-	pegInfo TVLUSDPegInfo
-	at      time.Time
-	memo    map[string]*big.Rat // token strkey → raw-ratio USD rate; nil = unpriceable
+	pricer   TVLUSDPricer
+	pegInfo  TVLUSDPegInfo
+	gate     TVLValueGate
+	at       time.Time
+	memo     map[string]*big.Rat // token strkey → raw-ratio USD rate; nil = unpriceable
+	gateMemo map[string]bool     // token strkey → "the trust gates withhold this asset"
 }
 
-func newTVLValuer(pricer TVLUSDPricer, pegInfo TVLUSDPegInfo, at time.Time) *tvlValuer {
-	return &tvlValuer{pricer: pricer, pegInfo: pegInfo, at: at, memo: map[string]*big.Rat{}}
+func newTVLValuer(pricer TVLUSDPricer, pegInfo TVLUSDPegInfo, gate TVLValueGate, at time.Time) *tvlValuer {
+	return &tvlValuer{
+		pricer:   pricer,
+		pegInfo:  pegInfo,
+		gate:     gate,
+		at:       at,
+		memo:     map[string]*big.Rat{},
+		gateMemo: map[string]bool{},
+	}
 }
 
 // classicScaleDecimals is the 7-decimal Stellar classic scale every
@@ -488,6 +553,16 @@ func (v *tvlValuer) legUSD(ctx context.Context, token string, raw *big.Int) (*bi
 	if !ok {
 		return nil, false
 	}
+	// Serving trust gates FIRST — before the declared-peg shortcut, not
+	// after it (#338). Same ordering the asset detail path fixed on
+	// 2026-08-25: suppressScamIssuerPricing runs AFTER fillDeclaredPegPrice
+	// precisely so a re-fill cannot resurrect a withheld value. A token
+	// an operator declared 1:1-USD is still a token whose issuer the
+	// curated directory may since have flagged, and the flag is the
+	// later, narrower, owner-level decision.
+	if v.withheld(ctx, token, asset) {
+		return nil, false
+	}
 	// Operator-declared USD peg: exactly $1 per whole unit at the
 	// peg's real decimals.
 	if v.pegInfo != nil {
@@ -501,6 +576,31 @@ func (v *tvlValuer) legUSD(ctx context.Context, token string, raw *big.Int) (*bi
 	}
 	usd := new(big.Rat).SetFrac(raw, pow10(classicScaleDecimals))
 	return usd.Mul(usd, rate), true
+}
+
+// withheld memoises the trust verdict per token per refresh.
+//
+// The gate is asked about the token's CANONICAL identity, not its raw
+// pool form. Pool legs are C-strkeys by construction (tvlAssetForToken
+// yields a Soroban asset for everything but the XLM SAC), and the scam
+// directory is keyed by the ISSUER G-address that only a classic asset
+// carries — so a configured classic↔SAC wrapper must be collapsed to
+// its classic twin first or the gate answers about the wrong identity.
+// canonical.CanonicalAsset is the same [supply].sac_wrappers-fed
+// collapse /v1/assets/{sac} applies (assets.go, "Configured classic↔SAC
+// wrappers"); a SAC the operator has NOT declared stays Soroban, which
+// the substance gate still measures (SubstanceGated covers
+// AssetSoroban) but the scam gate cannot speak about.
+func (v *tvlValuer) withheld(ctx context.Context, token string, asset canonical.Asset) bool {
+	if v.gate == nil {
+		return false
+	}
+	if cached, seen := v.gateMemo[token]; seen {
+		return cached
+	}
+	out := v.gate.ValueWithheld(ctx, canonical.CanonicalAsset(asset))
+	v.gateMemo[token] = out
+	return out
 }
 
 // rateFor memoises the resolver lookup per token per refresh.

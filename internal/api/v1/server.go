@@ -375,6 +375,15 @@ type Server struct {
 	// (native + verified catalogue), built once via knownSACsOnce.
 	knownSACsOnce sync.Once
 	knownSACs     map[string]struct{}
+	// verifiedSACs is the REVERSE map knownSACs cannot serve: computed
+	// SAC contract id → the native/verified-catalogue asset it wraps.
+	// Deliberately excludes the operator's sac_wrappers (which may name
+	// unverified assets) — it backs an identity TRUST decision, the
+	// oracle ticker gate in oracle.go, so only derivation from the
+	// verified catalogue may populate it. Built once via
+	// verifiedSACsOnce.
+	verifiedSACsOnce sync.Once
+	verifiedSACs     map[string]canonical.Asset
 	// assetDetailCache is the response-level cache for /v1/assets/{id}.
 	// Stores the pre-rendered JSON bytes + Flags per asset_id with a
 	// short TTL (30s by default). Cache hits skip the entire handler

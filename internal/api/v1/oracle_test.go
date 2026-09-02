@@ -10,6 +10,7 @@ import (
 
 	v1 "github.com/Stellar-Index/StellarIndex/internal/api/v1"
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/currency"
 )
 
 type stubOracleReader struct {
@@ -265,9 +266,20 @@ func TestOracleLatest_NativeExpandsToCryptoXLM(t *testing.T) {
 // translation for stablecoin classic credit assets — Reflector
 // publishes USDC under the global `crypto:USDC` ticker rather
 // than per-issuer.
+//
+// The asset id here is Circle's real Stellar issuance, and since #336
+// that is load-bearing rather than incidental: the expansion is gated
+// on the verified-currency catalogue, so the catalogue is now part of
+// the fixture. The ASSERTION is unchanged — a verified issuer still
+// gets its ticker; TestOracleLatest_ImpersonatorGetsNoVerifiedTicker
+// (oracle_identity_gate_test.go) pins that nobody else does.
 func TestOracleLatest_ClassicExpandsToCryptoTicker(t *testing.T) {
+	cat, err := currency.LoadEmbedded()
+	if err != nil {
+		t.Fatalf("LoadEmbedded: %v", err)
+	}
 	reader := &stubOracleReader{}
-	srv := v1.New(v1.Options{Oracle: reader})
+	srv := v1.New(v1.Options{Oracle: reader, VerifiedCurrencies: cat})
 	tsrv := httpTestServer(t, srv)
 
 	resp := mustGet(t, tsrv.URL+"/v1/oracle/latest?asset=USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN")

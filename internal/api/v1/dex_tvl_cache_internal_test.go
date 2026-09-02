@@ -273,7 +273,7 @@ func TestDEXTVLCache_MissingReadersOmitProtocols(t *testing.T) {
 }
 
 func TestTVLValuer_LegEdgeCases(t *testing.T) {
-	v := newTVLValuer(stubTVLPricer{rates: map[string]string{"native": "2"}}, nil, time.Now())
+	v := newTVLValuer(stubTVLPricer{rates: map[string]string{"native": "2"}}, nil, nil, time.Now())
 	ctx := context.Background()
 
 	if usd, ok := v.legUSD(ctx, canonical.XLMSacContractID, big.NewInt(0)); !ok || usd.Sign() != 0 {

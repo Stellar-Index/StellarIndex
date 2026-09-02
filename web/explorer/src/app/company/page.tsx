@@ -114,11 +114,14 @@ export default function CompanyPage() {
               </strong>{' '}
               Forex is currently a daily-grain shim while we wire a
               proper feed. Soroban DEX TVL is served only where real
-              post-state reserves exist (Soroswap, Aquarius) and is an
-              explicit lower bound when a pool leg can&apos;t be priced;
-              Phoenix and Comet emit flow deltas, so we don&apos;t
-              fabricate a TVL for them. CEX order-book depth isn&apos;t
-              ingested (the native SDEX book is). The{' '}
+              post-state reserves exist — Soroswap and Aquarius from
+              pool reserves, Phoenix and Comet from the pools&apos;
+              on-chain storage entries (their events carry flow deltas,
+              which we never dress up as a TVL) — and is an explicit
+              lower bound whenever a pool leg can&apos;t be priced.
+              Native SDEX liquidity pools aren&apos;t valued yet. CEX
+              order-book depth isn&apos;t ingested (the native SDEX book
+              is). The{' '}
               <Link href="/methodology" className="text-brand-600 hover:underline">
                 /methodology
               </Link>{' '}

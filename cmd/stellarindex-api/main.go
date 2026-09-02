@@ -1077,7 +1077,20 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 		PhoenixReserves: phoenixTVLReserves,
 		CometPools:      comet.MainnetGatedSet(),
 		CometReserves:   cometTVLReserves,
-		Logger:          logger.With("component", "dex-tvl"),
+		// Same serving trust gates every price surface consults, on the
+		// same chokepoint (#338). Without this the TVL sum was the one
+		// published USD figure with no scam screen and a $0.01 floor:
+		// a directory-flagged issuer's token with one self-traded minute
+		// on any peg market was valued into the protocol headline at its
+		// own VWAP. A withheld leg now counts its pool unpriced, so the
+		// number stays an honest lower bound rather than becoming a
+		// fabricated one.
+		Gate: dexTVLValueGate{
+			substance: substanceGate,
+			scam:      scamGate,
+			usdPegs:   usdPegs,
+		},
+		Logger: logger.With("component", "dex-tvl"),
 	}
 	if fx, err := timescale.NewVWAPUSDFXResolver(store, timescale.VWAPUSDFXResolverOptions{
 		USDPegs: cfg.Trades.USDPeggedClassicAssets,
@@ -3483,6 +3496,59 @@ type storePriceReader struct {
 	logger        *slog.Logger                // nil → no guard logging
 	substance     *pricingguard.SubstanceGate // nil → no thin-market gate
 	scam          *pricingguard.ScamGate      // nil → no scam-issuer gate
+}
+
+// dexTVLGateSurface is this path's low-cardinality label on
+// obs.PriceServe{Scam,Substance}WithheldTotal. A distinct constant, not
+// a reuse of "price_read": an operator seeing a step-change needs to
+// know WHICH surface withheld, and the TVL refresh asks the gates on a
+// 10-minute background cadence over the whole pool token set, so its
+// rate has nothing to do with request traffic.
+const dexTVLGateSurface = "dex_tvl"
+
+// dexTVLValueGate adapts the price-withholding chokepoint to the
+// question the DEX TVL snapshot asks per reserve leg (#338): may this
+// platform publish a USD valuation of this asset at all?
+//
+// It answers by routing through priceWithheld — never by consulting
+// either gate itself, which is the MSP-cluster invariant
+// (TestWithholdingGatesAreSpelledOnlyAtTheChokepoint) — so the TVL
+// figure can never drift out of step with what /v1/price serves for
+// the same asset.
+//
+// The quote fan-out mirrors v1.Server.listingPriceAllowed exactly: an
+// asset's value is publishable when ANY of its plausible backing pairs
+// clears the floor (vs XLM, the dominant on-chain quote; vs fiat:USD,
+// which the alias union extends to the CEX-fed crypto:X series; or vs
+// an operator-declared USD peg, the resolver's direct_usd route). The
+// scam verdict is quote-independent, so a flagged issuer withholds on
+// every arm and the whole asset is refused.
+type dexTVLValueGate struct {
+	substance *pricingguard.SubstanceGate
+	scam      *pricingguard.ScamGate
+	usdPegs   []canonical.Asset
+}
+
+// ValueWithheld reports whether asset's reserves must contribute no USD
+// value. Native XLM is never withheld — it is definitionally liquid and
+// its identity pairs degenerate under the alias union, the same
+// exemption listingPriceAllowed carries.
+func (g dexTVLValueGate) ValueWithheld(ctx context.Context, asset canonical.Asset) bool {
+	if asset.Type == canonical.AssetNative {
+		return false
+	}
+	quotes := make([]canonical.Asset, 0, 2+len(g.usdPegs))
+	quotes = append(quotes, canonical.NativeAsset(), usdQuoteAsset)
+	quotes = append(quotes, g.usdPegs...)
+	for _, quote := range quotes {
+		if asset.Equal(quote) {
+			continue // degenerate identity pair
+		}
+		if !priceWithheld(ctx, g.substance, g.scam, asset, quote, dexTVLGateSurface) {
+			return false
+		}
+	}
+	return true
 }
 
 // buildSubstanceGate maps the [pricing_guard] config section onto the

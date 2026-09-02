@@ -8,6 +8,7 @@ import (
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/external"
+	"github.com/Stellar-Index/StellarIndex/internal/xdrjson"
 )
 
 // OracleReader is the storage-side interface for /v1/oracle/latest
@@ -46,11 +47,40 @@ type OracleReader interface {
 // Reflector publishes XLM under crypto:XLM, and an empty 285 ms
 // hypertable scan was the wall-clock cost of proving it.
 //
+// The `crypto:<TICKER>` translation is IDENTITY-GATED (#336). It used
+// to fire on the CODE alone, so any classic asset whose code happened
+// to spell a global ticker was answered with the REAL issuer's oracle
+// rows: `?asset=USDC-GBNZILST…AQUA` — AQUA's issuer wearing Circle's
+// code, an asset that does not exist — returned band / redstone /
+// reflector-cex USDC prices verbatim (verified live on r1, 2026-09-02).
+// That is the attacker-authored-pricing class of the 2026-08 valuation
+// incident: identity is (code, issuer), never code alone. Only an asset
+// the verified-currency catalogue itself issues under that ticker
+// (internal/currency — the same trust surface `/v1/assets/{slug}`
+// dispatches on) may claim the ticker's readings; an impersonator gets
+// its own key and, correctly, no rows.
+//
+// A Soroban contract id resolves FIRST through the deterministic SAC
+// derivation (internal/xdrjson, ADR-0013): a contract that IS native
+// XLM's or a verified asset's Stellar Asset Contract denotes that
+// asset, so it inherits the classic key and then faces the same gate.
+// An arbitrary C-address derives to nothing and keeps only its own key.
+//
 // Returned slice always includes the original asset; subsequent
 // entries are best-effort translations the storage layer's
 // `WHERE asset = ANY($1)` filter unions over.
-func oracleAssetCandidates(a canonical.Asset) []canonical.Asset {
+func (s *Server) oracleAssetCandidates(a canonical.Asset) []canonical.Asset {
 	candidates := []canonical.Asset{a}
+
+	// SAC wrapper → the native/classic asset it provably wraps.
+	if a.Type == canonical.AssetSoroban {
+		wrapped, ok := s.verifiedSACAsset(a.ContractID)
+		if !ok {
+			return candidates
+		}
+		candidates = append(candidates, wrapped)
+		a = wrapped
+	}
 
 	// `native` → also try `crypto:XLM`.
 	if a.Type == canonical.AssetNative {
@@ -60,18 +90,84 @@ func oracleAssetCandidates(a canonical.Asset) []canonical.Asset {
 		return candidates
 	}
 
-	// Classic credit asset → also try `crypto:<CODE>` so global
-	// stablecoin tickers (USDC, USDT, EURC) match Reflector's
-	// per-ticker rows. Harmless on assets Reflector doesn't track
-	// (the ANY($1) filter just yields zero rows for that key).
-	if a.Type == canonical.AssetClassic && a.Code != "" {
-		if x, err := canonical.ParseAsset("crypto:" + a.Code); err == nil {
+	// Verified classic credit asset → also try `crypto:<TICKER>` so the
+	// global stablecoin tickers (USDC, PYUSD, EURC) match Reflector's
+	// per-ticker rows. Harmless on verified assets Reflector doesn't
+	// track (the ANY($1) filter just yields zero rows for that key).
+	if ticker, ok := s.verifiedTickerFor(a); ok {
+		if x, err := canonical.ParseAsset("crypto:" + ticker); err == nil {
 			candidates = append(candidates, x)
 		}
-		return candidates
 	}
-
 	return candidates
+}
+
+// verifiedTickerFor returns the global crypto ticker a CLASSIC asset is
+// entitled to be answered under: non-empty only when this exact
+// (code, issuer) is the verified-currency catalogue's own Stellar
+// issuance for that ticker.
+//
+// Nil catalogue and unverified issuer both fail CLOSED. A deployment
+// that wires no catalogue has no basis on which to grant any asset a
+// global ticker, and granting one to everybody is the defect this gate
+// exists to remove.
+//
+// A ticker the catalogue holds with NO Stellar issuance (`reference_only`
+// entries — USDT, BTC, …) is never granted either, which is the
+// catalogue's own doctrine (see currency.indexTickerOnlyEntry): no
+// legitimate classic asset can bear a ticker verified as belonging to
+// an off-Stellar asset, so every classic `USDT-G…` is by construction
+// an impersonator.
+func (s *Server) verifiedTickerFor(a canonical.Asset) (string, bool) {
+	if a.Type != canonical.AssetClassic || a.Code == "" || a.Issuer == "" {
+		return "", false
+	}
+	vc, ok := s.verifiedCurrencies.LookupByStellarAssetID(a.String())
+	if !ok || vc.Ticker == "" {
+		return "", false
+	}
+	return vc.Ticker, true
+}
+
+// verifiedSACAsset maps a Soroban contract id back to the native or
+// verified-catalogue classic asset whose Stellar Asset Contract it is.
+//
+// Trust anchor is DERIVATION, not metadata: the map is built by
+// deriving each candidate asset's deterministic SAC id through the same
+// internal/xdrjson call [Server.buildKnownSACs] uses (the v1 layer must
+// not import go-stellar-sdk/xdr directly — ADR-0013), so a contract can
+// only claim an identity whose derivation lands on it. Built once,
+// cached. Empty when no network passphrase is configured — fail-closed:
+// no derivation, no translation.
+func (s *Server) verifiedSACAsset(contractID string) (canonical.Asset, bool) {
+	s.verifiedSACsOnce.Do(func() { s.verifiedSACs = s.buildVerifiedSACs() })
+	a, ok := s.verifiedSACs[contractID]
+	return a, ok
+}
+
+func (s *Server) buildVerifiedSACs() map[string]canonical.Asset {
+	set := make(map[string]canonical.Asset)
+	if s.networkPassphrase == "" {
+		return set
+	}
+	add := func(assetID string) {
+		a, err := canonical.ParseAsset(assetID)
+		if err != nil {
+			return
+		}
+		if cid, ok := xdrjson.SACContractID(assetID, s.networkPassphrase); ok {
+			set[cid] = a
+		}
+	}
+	add("native")
+	if s.verifiedCurrencies != nil {
+		for _, vc := range s.verifiedCurrencies.Browseable() {
+			if se := vc.StellarEntry(); se != nil && se.AssetID != "" {
+				add(se.AssetID)
+			}
+		}
+	}
+	return set
 }
 
 // OracleReading is the wire shape for /v1/oracle/latest entries.
@@ -170,7 +266,7 @@ func (s *Server) handleOracleLatest(w http.ResponseWriter, r *http.Request) {
 	olCtx, olCancel := context.WithTimeout(r.Context(), 8*time.Second)
 	defer olCancel()
 	updates, err := reader.LatestOracleUpdatesForAssets(
-		olCtx, oracleAssetCandidates(asset), source)
+		olCtx, s.oracleAssetCandidates(asset), source)
 	if err != nil {
 		if clientAborted(r, err) {
 			return

@@ -2014,7 +2014,7 @@ metric watches for.
 ### `stellarindex_price_serve_substance_withheld_total`
 
 Counter, label `surface` (`price_read` | `tip` | `oracle` |
-`asset_headline` | `price_alert`).
+`asset_headline` | `price_alert` | `dex_tvl`).
 
 Fires once per aggregated-price serve WITHHELD by the serving-side
 thin-market substance gate (`internal/pricingguard.SubstanceGate`,
@@ -2037,10 +2037,17 @@ first), while a jump after a config deploy means the
 Verdicts are cached ~60s per pair, so the counter tracks withheld
 REQUESTS, not distinct pairs. Dashboard-only, no alert rule.
 
+`surface="dex_tvl"` is the one BACKGROUND producer: the DEX TVL
+snapshot refresh asks the gates about every pool reserve token on its
+10-minute cadence, so its rate is a function of the pool token set
+rather than of request traffic, and a withheld leg shows up as a pool
+moving into `unpriced_pools` on `/v1/protocols` (the `≥` lower bound),
+never as a smaller number claiming to be exact.
+
 ### `stellarindex_price_serve_scam_withheld_total`
 
 Counter, label `surface` (`price_read` | `tip` | `oracle` |
-`asset_headline`).
+`asset_headline` | `dex_tvl`).
 
 Fires once per aggregated-price serve WITHHELD by the serving-side
 scam-pricing gate (`internal/pricingguard.ScamGate`): the requested

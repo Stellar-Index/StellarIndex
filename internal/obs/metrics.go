@@ -2824,7 +2824,10 @@ var AggregatorMinUSDVolumeUnvaluableTotal = prometheus.NewCounterVec(
 // Labelled by `surface` — WHICH serving path withheld: "price_read"
 // (the shared /v1/price + batch + assets-enrichment reader), "tip"
 // (/v1/price/tip), "oracle" (SEP-40 passthrough), "asset_headline"
-// (GlobalAssetView), "price_alert" (customer price-alert evaluator).
+// (GlobalAssetView), "price_alert" (customer price-alert evaluator),
+// "dex_tvl" (the DEX TVL snapshot refresh valuing pool reserve legs —
+// a 10-minute BACKGROUND cadence over the whole pool token set, so its
+// rate is unrelated to request traffic).
 // Low-cardinality constants only — NEVER a pair label; the gate is hit
 // by arbitrary user-supplied pairs (tens of thousands of assets, see
 // the cardinality warning on PriceStalenessSeconds).
@@ -2845,7 +2848,9 @@ var PriceServeSubstanceWithheldTotal = prometheus.NewCounterVec(
 // PriceServeScamWithheldTotal — count of aggregated-price serves withheld
 // by the scam-pricing gate because the asset's issuer is flagged
 // scam-class (malicious/unsafe/fraud/scam/hack/phishing) in the curated
-// account directory. Labelled by serving surface. A non-zero rate here
+// account directory. Labelled by serving surface — same constant set as
+// PriceServeSubstanceWithheldTotal above, including "dex_tvl" (pool
+// reserve legs refused a USD valuation). A non-zero rate here
 // with no matching directory change can indicate the gate mis-firing;
 // a sudden drop to zero while flagged issuers still trade can indicate
 // the gate failing open (see the paired warn log).

@@ -200,9 +200,16 @@ func (s *Server) handleChangeSummary(w http.ResponseWriter, r *http.Request) {
 	// asset_id form (`native`, `crypto:XLM`, `USDC-GA5Z…`, …). A
 	// caller passing the friendly slug "XLM" or just "USDC" without
 	// the issuer suffix would 404 against the strict-equality lookup
-	// even when the underlying data exists. Expand into the same set
-	// of candidate forms `oracleAssetCandidates` uses for
-	// /v1/oracle/latest, then try each in order. First hit wins.
+	// even when the underlying data exists. Expand into candidate
+	// forms, then try each in order; first hit wins.
+	//
+	// Deliberately NOT the same set as `oracleAssetCandidates` (which
+	// it once mirrored): that helper's ticker translation is gated on
+	// the verified-currency catalogue since #336, because it answers a
+	// per-ISSUER identity with global-ticker rows. This one only ever
+	// promotes a BARE code the caller typed — an id carrying `-` or `:`
+	// is left alone (see changeSummaryCoinCandidates), so no
+	// (code, issuer) pair is ever widened to a ticker here.
 	candidates := changeSummaryCoinCandidates(entityType, entityID)
 
 	var (
