@@ -2,6 +2,7 @@ package middleware
 
 import (
 	"net/http"
+	"regexp"
 	"strings"
 )
 
@@ -85,14 +86,65 @@ func CacheControlWithCDN(cdnEnabled bool) func(http.Handler) http.Handler {
 // are emitted on cacheable routes. When false, only `max-age`
 // (client tier) survives — operators without a CDN in front of
 // the API set this so a CDN they don't have can't cache anything.
+// Closed-ledger detail paths (#332 F3, 2026-09-02). A ledger's own row, its
+// transaction list and a transaction by hash are IMMUTABLE once the ledger
+// has closed, yet they fell through to the conservative default and were
+// served `private, no-store` — the explorer re-fetched a 71 KB transaction
+// list on every visit to a ledger page. The band below is deliberately
+// modest (1 min client / 5 min CDN), not a year: policyForPath knows
+// nothing about the tip, and a ledger a few seconds old can be served
+// before every downstream projection for it has landed, so a long TTL
+// could pin a partial view. Five minutes rides out that lag and still
+// absorbs the repeat-visit cost.
+var (
+	ledgerDetailPath = regexp.MustCompile(`^/v1/ledgers/[0-9]+(/transactions|/operations)?$`)
+	txDetailPath     = regexp.MustCompile(`^/v1/tx/[0-9a-fA-F]{64}$`)
+)
+
+// ledgerPolicy classifies the operator probes and the explorer's ledger/tx
+// surface (#332 F3, 2026-09-02). ok=false means "not one of mine — fall
+// through to the main switch".
+//
+//   - A ledger's own row, its transaction/operation list and a transaction by
+//     hash are IMMUTABLE once the ledger closes, yet they fell through to the
+//     conservative default and were served `private, no-store` — the explorer
+//     re-fetched a 71 KB transaction list on every visit to a ledger page. The
+//     band is deliberately modest (1 min client / 5 min CDN), not a year:
+//     policyForPath knows nothing about the tip, and a ledger a few seconds
+//     old can be served before every downstream projection for it has
+//     landed, so a long TTL could pin a partial view.
+//   - /v1/ledgers (the list) moves every ~5 s and /v1/network/throughput
+//     already has a server-side cache; both get the status-like short band.
+func ledgerPolicy(path string, cdnEnabled bool) (string, bool) {
+	switch {
+	// Operator endpoints — probed by systemd/Prometheus/uptime checks; a
+	// cached probe is a lie. (Moved here from the main switch with the
+	// ledger cases so policyForPath stays under the gocyclo ceiling.)
+	case path == "/v1/healthz", path == "/v1/readyz", path == "/v1/version", path == "/metrics":
+		return "no-store", true
+	case ledgerDetailPath.MatchString(path), txDetailPath.MatchString(path):
+		if cdnEnabled {
+			return "public, max-age=60, s-maxage=300", true
+		}
+		return "public, max-age=60", true
+	case path == "/v1/ledgers", path == "/v1/network/throughput":
+		if cdnEnabled {
+			return "public, max-age=10, s-maxage=15", true
+		}
+		return "public, max-age=10", true
+	}
+	return "", false
+}
+
 func policyForPath(path string, cdnEnabled bool) string {
+	// Closed-ledger detail + the two fast-moving explorer reads (#332 F3)
+	// live in their own helper so this switch stays under the gocyclo
+	// ceiling; see ledgerPolicy for the rationale on each band.
+	if p, ok := ledgerPolicy(path, cdnEnabled); ok {
+		return p
+	}
 	switch {
 	// ─── Operator endpoints — never cached ──────────────────────
-	case path == "/v1/healthz",
-		path == "/v1/readyz",
-		path == "/v1/version",
-		path == "/metrics":
-		return "no-store"
 
 	// ─── Account endpoints — auth-tied, MUST NOT hit CDN ────────
 	case strings.HasPrefix(path, "/v1/account/"):

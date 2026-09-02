@@ -3,6 +3,7 @@ package middleware
 import (
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -25,6 +26,19 @@ func TestPolicyForPath_PinsDirectives(t *testing.T) {
 		// Status rollup — short public cache so the explorer polling
 		// fan-out doesn't multiply against the API
 		{"/v1/status", "public, max-age=10, s-maxage=15"},
+
+		// Closed-ledger detail is immutable → modest public band (#332 F3);
+		// the list + throughput move fast → status-like short band. The
+		// account surface stays private (guards that the new regexps do
+		// not over-match).
+		{"/v1/ledgers/64000000", "public, max-age=60, s-maxage=300"},
+		{"/v1/ledgers/64000000/transactions", "public, max-age=60, s-maxage=300"},
+		{"/v1/ledgers/64000000/operations", "public, max-age=60, s-maxage=300"},
+		{"/v1/tx/" + strings.Repeat("ab", 32), "public, max-age=60, s-maxage=300"},
+		{"/v1/tx/notahash", "private, no-store"},
+		{"/v1/ledgers", "public, max-age=10, s-maxage=15"},
+		{"/v1/network/throughput", "public, max-age=10, s-maxage=15"},
+		{"/v1/ledgers/64000000/transactions/extra", "private, no-store"},
 
 		// Account — auth-tied
 		{"/v1/account/me", "private, no-store"},
