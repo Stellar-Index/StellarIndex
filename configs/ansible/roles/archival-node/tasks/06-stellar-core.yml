@@ -5,9 +5,18 @@
 # Phase B+ gets mirrored to MinIO/S3.
 
 - name: Add SDF apt key
-  ansible.builtin.get_url:
-    url: "https://apt.stellar.org/SDF.asc"
+  # VENDORED, not fetched (2026-09-02, ansible-drift): `get_url` reported
+  # `changed` on every --check run because it cannot decide whether the
+  # remote differs without downloading — even with a checksum pin it still
+  # flagged. A public signing key belongs in version control anyway: a
+  # rotation becomes a reviewable diff to files/sdf.asc (sha256
+  # 48c38236… verified == apt.stellar.org on 2026-09-02) rather than a
+  # silent refetch of whatever the server happens to serve.
+  ansible.builtin.copy:
+    src: sdf.asc
     dest: /etc/apt/keyrings/sdf.asc
+    owner: root
+    group: root
     mode: "0644"
 
 - name: Add SDF apt repo (stable)

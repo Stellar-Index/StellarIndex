@@ -671,7 +671,6 @@
     # cap67-movements: a continuous FOLLOW DAEMON now (5.3), not a
     # timer+oneshot — only the .service is rendered; the old .timer is
     # retired below.
-    - cap67-movements.service
     - holders-rollup.service
     - holders-rollup.timer
     - census-rollup.service
@@ -872,6 +871,20 @@
     state: absent
   notify: Reload systemd
 
+- name: Install cap67-movements.service (own task so a unit change restarts ONLY this daemon)
+  # Split out of the shared unit loop above on 2026-09-02: that loop notifies
+  # only "Reload systemd", and the daemon used to be restarted UNCONDITIONALLY
+  # by the enable task below (ansible-drift red since 08-31). Templating it
+  # here lets a genuine unit-file change notify a targeted restart, while an
+  # unchanged unit leaves the running daemon alone.
+  ansible.builtin.template:
+    src: systemd/cap67-movements.service.j2
+    dest: /etc/systemd/system/cap67-movements.service
+    mode: "0644"
+  notify:
+    - Reload systemd
+    - Restart cap67-movements
+
 - name: Enable + (re)start the cap67-movements follow daemon (5.3, real-time movements)
   # Long-lived daemon: catches up to the contiguous tip, then follows at
   # FOLLOW_INTERVAL. Restart=always in the unit makes it crash-safe; it
@@ -884,9 +897,16 @@
   # on stale unit config. A deterministic restart is safe here — SIGTERM is
   # graceful (the loop exits mid-derive, the watermark holds, ReplacingMergeTree
   # dedups any re-derived window).
+  #
+  # 2026-09-02 (ansible-drift red since 08-31): `restarted` is unconditional,
+  # so this task reports `changed` on EVERY run — including every `--check`
+  # — and restarts a healthy daemon on every real apply. The timer→daemon
+  # cutover it guarded against is long past. `started` + a handler notified
+  # by the unit-template task above restarts the daemon exactly when its
+  # unit file changes, which is the only time a restart is warranted.
   ansible.builtin.systemd:
     name: cap67-movements.service
-    state: restarted
+    state: started
     enabled: true
     daemon_reload: true
 

@@ -170,3 +170,13 @@
   ansible.builtin.systemd:
     name: prometheus-postgres-exporter
     state: restarted
+
+- name: Restart cap67-movements
+  # Targeted restart for the follow daemon, notified ONLY by its own unit
+  # template (14-stellarindex-services.yml). SIGTERM is graceful: the loop
+  # exits mid-derive, the watermark holds, ReplacingMergeTree dedups any
+  # re-derived window — so a restart on a real unit change is safe.
+  ansible.builtin.systemd:
+    name: cap67-movements.service
+    state: restarted
+    daemon_reload: true

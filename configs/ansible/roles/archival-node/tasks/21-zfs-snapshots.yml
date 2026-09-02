@@ -35,12 +35,18 @@
 - name: Ensure node_exporter textfile-collector dir exists for the snapshot gauges
   # Normally created by 10-observability.yml; repeated here so a
   # `--tags zfs-snapshots` apply on its own is self-sufficient.
+  # Ownership MUST match 10-observability.yml's declaration of the same dir
+  # (stellarindex:stellarindex, group-writable): data-freshness.service runs
+  # as User=stellarindex and writes its .prom here. This task previously said
+  # root:root 0755, so the two tasks flipped the dir on alternate runs —
+  # ansible-drift red since 08-31 — and a root:root apply would have broken
+  # the stellarindex-owned writers. (2026-09-02)
   ansible.builtin.file:
     path: /var/lib/node_exporter/textfile_collector
     state: directory
-    owner: root
-    group: root
-    mode: "0755"
+    owner: stellarindex
+    group: stellarindex
+    mode: "0775"
 
 - name: Install zfs-snapshot systemd units
   ansible.builtin.template:

@@ -20,9 +20,15 @@
 # codified here so a fresh host (r2/r3/test net) gets it too. `state: present`
 # never upgrades an already-installed pin, so r1 is untouched.
 - name: Add SDF apt key (captive-core for galexie)
-  ansible.builtin.get_url:
-    url: "https://apt.stellar.org/SDF.asc"
+  # Same vendored key as 06-stellar-core.yml (files/sdf.asc, sha256 48c38236…
+  # verified == apt.stellar.org 2026-09-02). This duplicate was the task that
+  # kept ansible-drift red after the first was fixed: get_url reports `changed`
+  # on every --check run because it cannot compare without downloading.
+  ansible.builtin.copy:
+    src: sdf.asc
     dest: /etc/apt/keyrings/sdf.asc
+    owner: root
+    group: root
     mode: "0644"
 
 - name: Add SDF apt repo (captive-core for galexie)
