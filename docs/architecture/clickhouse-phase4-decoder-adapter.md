@@ -1,12 +1,14 @@
 ---
 title: Phase 4 design — ClickHouse → decoder input adapter (re-derive Postgres)
 last_verified: 2026-06-07
-status: design
+status: shipped (2026-06/07) — see ingest-pipeline.md
 ---
 
 # Phase 4 — ClickHouse → decoder input adapter
 
-**Status: design.** Implements ADR-0034 Phase 4: re-derive the Postgres
+> **Status (2026-09-02): SHIPPED (2026-06/07).** The re-derivation path described here is live as `stellarindex-ops ch-rebuild` / `projected-rebuild` / `projector-replay`; the binding description is [`ingest-pipeline.md`](ingest-pipeline.md) §"projector-replay vs projected-rebuild". Read below for the design rationale, not for current status.
+
+**Status: shipped (2026-06/07).** Implements ADR-0034 Phase 4: re-derive the Postgres
 semantic/pricing tier *from ClickHouse*, not from a second galexie walk. The
 hard-won protocol decoders are **reused unchanged**; only their input source
 moves from "LCM walked by the dispatcher" to "rows read from ClickHouse".
@@ -48,7 +50,7 @@ re-encoding, no XDR re-touch — and feeds the existing decoders verbatim.
 | `Decoder` (event) | `events.Event` | `contract_events` | **ready** (schema populated) |
 | `OpDecoder` (classic op) | `xdr.Operation` + result | `operations.body_xdr` + `operation_results.result_xdr` | ready (unmarshal base64) |
 | `ContractCallDecoder` | contractID + fn + args | `operations` (InvokeContract) + `op_args` | ready |
-| `LedgerEntryChangeDecoder` | `xdr.LedgerEntryChange` | `ledger_entry_changes` | **blocked** — table not yet populated (Phase 2 deferred it) |
+| `LedgerEntryChangeDecoder` | `xdr.LedgerEntryChange` | `ledger_entry_changes` | **populated** (2026-09: the largest table in the lake at 6.55 TiB — `multi-region-ha.md:127`); live floor ledger 63,050,000, earlier history via `ch-backfill` |
 
 Event-based decoders (soroswap, phoenix, comet, blend, reflector, redstone,
 sep41, cctp, rozo) are the bulk and are unblocked now. SDEX + change_trust +

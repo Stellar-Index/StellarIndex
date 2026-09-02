@@ -1,12 +1,19 @@
 ---
 title: Supply derivation from the ClickHouse lake (every token)
 last_verified: 2026-07-10
-status: design
+status: implemented (2026-06-08) then superseded (2026-06-30 / 2026-07-10) — see §7 and supply-pipeline.md
 ---
 
 # Supply from ClickHouse — baseline snapshot + forward flows
 
-**Status: design.** How to serve circulating/total supply for **every token**
+> **Status (2026-09-02): NOT design — implemented then superseded.** This
+> doc's own §7 records it: the design shipped 2026-06-08 as
+> `stellarindex-ops ch-supply` and was superseded on 2026-06-30 / 2026-07-10
+> by the decode-at-ingest `stellar.supply_flows` path. The current
+> description of record is [`supply-pipeline.md`](supply-pipeline.md); read
+> §§1-6 below as the reasoning, and §7 for what actually runs.
+
+**Original status line: design.** How to serve circulating/total supply for **every token**
 when the served tier is (re)built from the ClickHouse Tier-1 lake (ADR-0034),
 given the lake captures *activity* (events/ops) but not full ledger-entry
 *state*. The answer: supply is a mint/burn calculation, and the flows we need

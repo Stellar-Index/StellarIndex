@@ -22,14 +22,12 @@
     "@resvg/resvg-js": "^2.6.2",
     "@tanstack/react-query": "^5.102.8",
     "clsx": "^2.1.1",
-    "date-fns": "^4.4.0",
     "lightweight-charts": "^5.2.1",
     "lucide-react": "^1.35.0",
     "next": "16.3.3",
     "react": "19.2.8",
     "react-dom": "19.2.8",
     "satori": "^0.33.4",
-    "sonner": "^2.0.8",
     "tailwind-merge": "^3.6.0",
     "workers-og": "^0.0.27"
   },
@@ -76,11 +74,6 @@
       "nanoid@>=4": ">=5.1.6",
       "undici@>=7 <8": ">=7.29.0",
       "undici@>=8": ">=8.9.0"
-    },
-    "auditConfig": {
-      "ignoreGhsas": [
-        "GHSA-52cp-r559-cp3m"
-      ]
     },
     "patchedDependencies": {
       "eslint-plugin-react@7.37.5": "patches/eslint-plugin-react@7.37.5.patch"

@@ -3,7 +3,7 @@ title: Status page hosting comparison
 last_verified: 2026-05-13
 status: superseded
 related:
-  - web/status/README.md (the shipped implementation)
+  - web/explorer/src/app/status/ (the shipped implementation; web/status/ is a 301 stub)
   - docs/operations/runbooks/sev-status-page-update.md (operator runbook for the shipped path)
   - docs/operations/sev-playbook.md §5.1 (Public communication)
   - docs/operations/public-flip.md §"Post-flip" (DNS cutover)
@@ -14,10 +14,17 @@ related:
 > **Superseded note (2026-05-13).** When this doc was originally
 > written (2026-04-30) it recommended Instatus. The project
 > ultimately shipped something different — a self-hosted static
-> Next.js app under [`web/status/`](../../web/status/README.md)
-> deploying to Cloudflare Pages, with incidents authored as
-> Markdown files under
-> `internal/incidents/data/<YYYY-MM-DD>-<slug>.md`. The shipped
+> page rendered **inside the explorer** at
+> `web/explorer/src/app/status/` (served at `stellarindex.io/status`,
+> post-mortems at `status/incident/[slug]`), with incidents authored
+> as Markdown files under
+> `internal/incidents/data/<YYYY-MM-DD>-<slug>.md` and loaded at
+> build time by `web/explorer/src/lib/incidents.ts`. **Correction
+> (2026-09-02):** the standalone `web/status/` app named in the
+> original note no longer exists — it is a redirect-only Cloudflare
+> Pages stub whose `web/status/public/_redirects` 301s
+> `status.stellarindex.io` to `stellarindex.io/status` (F-1211 /
+> wave 57). The shipped
 > approach is closest to "cstate" in this doc's matrix; see the
 > [§Why we ended up at "cstate-shaped"](#why-we-ended-up-at-cstate-shaped)
 > section at the bottom for what changed in the analysis.
@@ -235,15 +242,21 @@ implementation.
 
 ### What was actually built
 
-[`web/status/`](../../web/status/README.md) — a Next.js 15 static
-export deploying to Cloudflare Pages on every push to `main`.
+`web/explorer/src/app/status/` — a route inside the **explorer's**
+Next.js 16 static export, deploying to Cloudflare Pages on every push
+to `main` and served at `stellarindex.io/status` (post-mortems at
+`status/incident/[slug]`). *(2026-09-02 correction: this paragraph
+originally named a standalone `web/status/` Next.js 15 app. That app
+was retired in wave 57 — `web/status/` is now a redirect-only stub,
+`web/status/public/_redirects` 301ing `status.stellarindex.io` to
+`stellarindex.io/status`.)*
 Incidents are Markdown files under
 `internal/incidents/data/<YYYY-MM-DD>-<slug>.md`, embedded into the
 API binary via `go:embed` so `stellarindex-ops emit-incident` can
 fire customer-webhook fan-out (`incident.sev1` /
 `incident.resolved`, F-1249) directly from the same source. The
 status page itself is a static rendering of the same corpus via
-`web/status/src/lib/incidents.ts`.
+`web/explorer/src/lib/incidents.ts`.
 
 This is the matrix's "cstate" shape, with two material differences:
 - **Cloudflare Pages, not GitHub Pages.** Build + propagate is

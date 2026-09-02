@@ -56,12 +56,12 @@ export function DirectionPill({
         : sign === 'up' && abs < 20
           ? 'bg-up-subtle text-up-strong'
           : sign === 'up'
-            ? 'bg-up text-white'
+            ? 'bg-up text-surface-canvas'
             : sign === 'down' && abs < 5
               ? 'bg-down-subtle/40 text-down-strong'
               : sign === 'down' && abs < 20
                 ? 'bg-down-subtle text-down-strong'
-                : 'bg-down text-white';
+                : 'bg-down text-surface-canvas';
   return (
     <span
       className={twMerge(

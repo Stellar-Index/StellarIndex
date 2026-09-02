@@ -1,7 +1,7 @@
 ---
 title: Repo Hygiene & Tech-Debt Prevention Plan
 last_verified: 2026-05-03
-status: ratified
+status: ratified, PARTIALLY STALE — §6 (feature flags) and parts of §7/§8 describe machinery that was never built; corrected inline 2026-09-02 (#361)
 ---
 
 # Repo Hygiene & Tech-Debt Prevention Plan
@@ -203,9 +203,14 @@ accumulate "rubber-stamp" approvals that hide bugs.
 
 **Enforcement:**
 
-- GitHub Action labels PRs `size/XL` at 500+. Label blocks auto-merge
-  unless a reviewer applies `size/XL-approved`.
-- CODEOWNERS requires review; the author never self-approves.
+- ~~GitHub Action labels PRs `size/XL` at 500+.~~ **Not built** (verified
+  2026-09-02): no size-labelling workflow exists under `.github/`.
+- ~~CODEOWNERS requires review; the author never self-approves.~~
+  **Consciously suspended.** `CODEOWNERS` exists as review *routing*, but
+  the project works direct-to-main pre-1.0, and `ci.yml` is PR-triggered —
+  a push to `main` does not run the matrix at all. Whether to restore
+  branch protection + mandatory review before the 1.0 announcement is an
+  **open decision for the maintainer**, not a doc bug.
 - `make verify` must pass locally before pushing (this is a
   contributor habit; CI re-runs the same gates).
 
@@ -227,7 +232,17 @@ accumulate "rubber-stamp" approvals that hide bugs.
 **Rule:** every feature flag has a scheduled **removal date** at
 creation.
 
-**Schema:**
+> **NOT IMPLEMENTED (verified 2026-09-02).** There is no `internal/flags`
+> package and no `flags.*.Enabled(ctx)` call anywhere in the tree, so the
+> schema, the `Remove-by:` forcing function and the nightly CI job below
+> describe machinery that was never built. What the project actually uses
+> instead is **config-level kill-switches** — plain booleans in
+> `internal/config` with their rationale in the `doc:` struct tag (e.g.
+> `aggregate.triangulation_enabled`, `storage.clickhouse_projector_source`)
+> — which get no automatic expiry. Keep this section as the intended
+> policy, not as a description of the repo.
+
+**Schema (proposed, not built):**
 
 ```go
 // Flag: aggregate_tier_3_sources
@@ -286,7 +301,12 @@ only.
 
 ## 8. Code quality gates (mechanical)
 
-All enforced in `.golangci.yml` + `.github/workflows/ci.yml`.
+Enforced in `.golangci.yml` + `.github/workflows/{ci,security}.yml`.
+**Re-checked 2026-09-02:** `gitleaks`, `spectral` and `govulncheck` are
+all really wired (ci.yml + security.yml). The **Coverage row below is
+not a gate** — `ci.yml:181` runs `go test -coverprofile=coverage.txt`
+and then merely uploads `coverage.txt` as a build artifact; nothing
+compares it against a baseline, so no coverage drop can fail a build.
 
 | Gate | Tool | Fails on |
 | ---- | ---- | -------- |
@@ -297,7 +317,7 @@ All enforced in `.golangci.yml` + `.github/workflows/ci.yml`.
 | Security | `gosec` | any finding (except `G104` — we use `errcheck`) |
 | Complexity | `gocognit`, `gocyclo`, `funlen` | `cognit > 15`, `cyclo > 15`, `lines > 80` |
 | Tests | `go test -race` | any failing or `-race` data race |
-| Coverage | `go test -coverprofile` | coverage drop on changed packages |
+| Coverage | `go test -coverprofile` | **nothing — artifact only** (`ci.yml:181` + "Upload coverage"). A coverage-diff gate is *not* implemented. |
 | Supply chain | `govulncheck`, `gitleaks` | any finding |
 | OpenAPI | `spectral` | any rule violation |
 

@@ -1,3 +1,13 @@
+---
+title: Stellar-focus refactor plan
+# 2026-07-09 = the last pass that checked Units A-D end to end (see the
+# banner). On 2026-09-02 (issue #361) only the three ADR-0042
+# follow-through items were re-checked, plus this frontmatter added so the
+# file stops being exempt from lint-docs.sh §6.
+last_verified: 2026-07-09
+status: shipped in full (2026-06-16) — ADR-0042's follow-through also closed (2026-09-02)
+---
+
 # Stellar-focus refactor plan
 
 > **Status:** SHIPPED IN FULL (corrected 2026-07-09). Units A (explorer
@@ -8,11 +18,14 @@
 > 2026-06-30 update incorrectly said Unit D "remains" — verified
 > 2026-07-09: zero `NetworkView`/`PerNetworkAssetView`/`networks[]`
 > occurrences in internal/ or pkg/, no `/assets/{slug}/{network}` route
-> in the spec. What ADR-0042 still leaves open is smaller and different
-> in kind: the `kind` discriminator on `/v1/assets/{asset_id}`'s dual
-> shape, the SDK `AssetLookup` typed union (the remaining pkg/client
-> break), and `x-stability: experimental` annotations — tracked as
-> ADR-0042 follow-through, not as "Unit D".
+> in the spec.
+>
+> **Update 2026-09-02: ADR-0042's follow-through has since shipped too —
+> nothing remains open.** All three items this banner listed are in the
+> tree: the `kind` discriminator on `/v1/assets/{asset_id}`'s dual shape
+> (`openapi/stellar-index.v1.yaml:515,531` → `kind: stellar_asset`), the
+> SDK `AssetLookup` typed union (`pkg/client/types.go:202-205`), and the
+> `x-stability` annotations (29 occurrences in the spec).
 > **Date:** 2026-06-16
 > **Author:** cold-audit synthesis (4 parallel auditors: API+wire+SDK,
 > currency+aggregate+storage, explorer UI, docs+branding).

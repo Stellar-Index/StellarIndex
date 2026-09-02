@@ -297,6 +297,9 @@ export default async function SourceDetailPage({ params }: { params: Params }) {
             cursors (e.g. WebSocket-only venues that backfill via REST).
           </p>
         ) : (
+          // WCAG 1.4.10 Reflow: wide mono columns scroll inside the panel
+          // instead of pushing the whole page sideways at 320px.
+          <div className="overflow-x-auto">
           <table className="divide-line min-w-full divide-y text-sm">
             <thead>
               <tr className="text-ink-muted text-left text-[10px] tracking-wider uppercase">
@@ -330,6 +333,7 @@ export default async function SourceDetailPage({ params }: { params: Params }) {
               ))}
             </tbody>
           </table>
+          </div>
         )}
       </Panel>
 
@@ -352,6 +356,9 @@ export default async function SourceDetailPage({ params }: { params: Params }) {
             yet.
           </p>
         ) : (
+          // WCAG 1.4.10 Reflow: wide mono columns scroll inside the panel
+          // instead of pushing the whole page sideways at 320px.
+          <div className="overflow-x-auto">
           <table className="divide-line min-w-full divide-y text-sm">
             <thead>
               <tr className="text-ink-muted text-left text-[10px] tracking-wider uppercase">
@@ -412,6 +419,7 @@ export default async function SourceDetailPage({ params }: { params: Params }) {
               })}
             </tbody>
           </table>
+          </div>
         )}
       </Panel>
     </Container>

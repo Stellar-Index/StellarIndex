@@ -10,6 +10,10 @@ related:
 
 # Redis Sentinel ansible role — design note
 
+> **Deferral (2026-09-02):** single-region HA (Patroni / HAProxy / Redis
+> Sentinel) is **ADR-0050 Phase 1**, deferred post-v1.0 — see
+> [`multi-region-ha.md`](multi-region-ha.md) §0c/§10. Not launch-critical.
+
 > **NOT shipped (corrected 2026-07-24, audit-2026-07-23 DOC-05).** This
 > banner previously read "Shipped"; that was false for the ansible role,
 > and it self-contradicted the very next paragraph, which called this
@@ -32,7 +36,12 @@ related:
 >   the connection-factory work landed in its own package) is called from
 >   `cmd/stellarindex-api`, `cmd/stellarindex-aggregator`, and
 >   `cmd/stellarindex-ops`. Because r1's config sets no
->   `redis.sentinel_addrs`, production today exercises only the plain
+>   `[storage] redis_sentinel_addrs` (**corrected 2026-09-02** — there is
+>   no `redis.sentinel_addrs` key; the fields are flat members of
+>   `StorageConfig`: `redis_sentinel_addrs`, `redis_master_name`,
+>   `redis_password_env`, `internal/config/config.go:869-877`, and the
+>   table below already uses the flat names), production today exercises
+>   only the plain
 >   `redis.NewClient` branch — the `FailoverClient` branch is correct code
 >   but dormant until an ansible-role deploy actually stands up Sentinel.
 > - Body sections below describing "future work" or "PR shape" are

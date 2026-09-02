@@ -10,10 +10,8 @@
 // output:'export' only pre-render generateStaticParams and 404 on
 // unknown params).
 
-import { Check, Copy } from 'lucide-react';
-
 import type { components, paths } from '@/api/types';
-import { useCopyToClipboard } from '@/components/ui';
+import { CopyButton } from '@/components/ui';
 
 // ---------------------------------------------------------------------------
 // Wire shapes — every endpoint is wrapped as { data, as_of, flags }.
@@ -263,23 +261,10 @@ export function CopyHash({
 // text. Use when the value is already shown next to it (e.g. an
 // account link) and you just want a copy affordance.
 export function CopyValue({ value }: { value: string }) {
-  // FEC audit A3-F7: behavior lives in the canonical ui hook (this file's
-  // implementation WAS the winner — cleanup + propagation guards — and
-  // was absorbed there); only the compact look stays local.
-  const { copied, copy } = useCopyToClipboard(value);
-  return (
-    <button
-      type="button"
-      onClick={copy}
-      className="text-ink-faint hover:text-brand-600"
-      aria-label="Copy to clipboard"
-      title="Copy to clipboard"
-    >
-      {copied ? (
-        <Check className="text-up-strong h-3 w-3" />
-      ) : (
-        <Copy className="h-3 w-3" />
-      )}
-    </button>
-  );
+  // FEC audit A3-F7 absorbed the BEHAVIOR into the canonical ui hook; the
+  // local look was kept, and with it a 12×12px hit area — half the WCAG
+  // 2.5.8 Target Size (Minimum) floor of 24px. Rather than re-grow the
+  // fork, delegate to the canonical CopyButton (24×24, plus the "Copied"
+  // live region), so every call site inherits one fix.
+  return <CopyButton value={value} title="Copy to clipboard" />;
 }

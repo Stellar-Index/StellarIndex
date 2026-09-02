@@ -28,7 +28,8 @@ closed-interval data on comparable surfaces.
 
 ## Evidence
 
-- The SLA probe (`stellarindex-sla-probe`, 10-min timer on r1) measures
+- The SLA probe (`stellarindex-sla-probe`, **15-min** timer on r1 —
+  `configs/healthchecks/stellarindex-sla-probe.timer:12`, `OnUnitActiveSec=15min`) measures
   `observed_at` staleness against the 30s target on `/price/tip` per
   request and records pass/fail; see the probe's JSON verdict series.
 - 2026-06-13 spot checks: `/price/tip?asset=crypto:XLM` and (post

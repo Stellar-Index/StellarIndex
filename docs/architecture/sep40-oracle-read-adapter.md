@@ -1,7 +1,7 @@
 ---
 title: SEP-40 on-chain oracle read adapter — scope investigation + design
 last_verified: 2026-07-06
-status: proposed
+status: decided — ADR-0045 Accepted 2026-07-06 (defer the generic reader; the serve surface already ships)
 ---
 
 # SEP-40 on-chain oracle read adapter
@@ -9,7 +9,9 @@ status: proposed
 **BACKLOG #60 (RFP §6 accommodation).** This note is the investigation
 + design that gates whether a "SEP-40 oracle read adapter" is a thin
 add-on, already covered, or a genuine new source. Decision record:
-[ADR-0045](../adr/0045-sep40-oracle-read-adapter.md) (Proposed).
+[ADR-0045](../adr/0045-sep40-oracle-read-adapter.md) — **Accepted** 2026-07-06
+(`docs/adr/0045-sep40-oracle-read-adapter.md:4`; this note said "Proposed"
+until 2026-09-02).
 
 **Verdict up front:** SEP-40 as a *served wire shape* is already
 shipped, and every oracle we ingest today is already a SEP-40 contract
@@ -160,7 +162,7 @@ speculative infrastructure.
 
 ## References
 
-- [ADR-0045](../adr/0045-sep40-oracle-read-adapter.md) — decision (Proposed)
+- [ADR-0045](../adr/0045-sep40-oracle-read-adapter.md) — decision (**Accepted**, 2026-07-06)
 - [ADR-0039](../adr/0039-soroban-contract-state-reader.md) — Soroban contract state reader (the substrate)
 - [ADR-0035](../adr/0035-factory-anchored-contract-gating.md) / [ADR-0040](../adr/0040-completing-contract-gating.md) — contract-identity gating
 - [ADR-0031](../adr/0031-data-derived-coverage-signal.md) / [ADR-0032](../adr/0032-per-source-tables-as-projections.md) — one writer per domain

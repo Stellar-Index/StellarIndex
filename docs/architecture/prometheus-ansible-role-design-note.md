@@ -1,7 +1,7 @@
 ---
 title: Prometheus + AlertManager ansible role — design note
 last_verified: 2026-06-30
-status: shipped (Task #72 / #83 — configs/ansible/roles/prometheus)
+status: role code shipped, NOT applied to any host (corrected 2026-09-02) — it is the MULTI-HOST shape and fails preflight against inventory/r1.yml (OBS-02); r1's Prometheus + Alertmanager are hand-managed out of band
 related:
   - docs/architecture/ha-plan.md §7 (observability)
   - docs/architecture/{patroni,redis-sentinel,haproxy}-ansible-role-design-note.md (sister roles)
@@ -10,7 +10,23 @@ related:
 
 # Prometheus + AlertManager ansible role — design note
 
-> Bootstraps the fourth sub-role of Task #72 after Patroni
+> **Correction (2026-09-02): the role code exists, but it has never been
+> applied to a host, and it cannot be applied to r1 as written.**
+> `configs/ansible/playbooks/monitoring.yml:15-31` says so explicitly:
+> `roles/prometheus/tasks/01-preflight.yml` requires a `prometheus_pair`
+> group with exactly two hosts plus populated scrape-target groups, while
+> `inventory/r1.yml` defines a single-host `archival_nodes` group — "so the
+> play fails at the first assert". **R1's Prometheus + Alertmanager are
+> managed out-of-band today**: `configs/prometheus/rules.r1/` (kept in
+> lockstep with `deploy/monitoring/rules/` by
+> `scripts/ci/lint-rule-equivalence`) plus
+> `configs/alertmanager/alertmanager.r1.yml` + `apply.sh`. Wiring the
+> single-box path needs a single-host code path in the role, not an
+> inventory edit. Note also that the three "sister" roles named below are
+> themselves NOT shipped, and single-region HA is ADR-0050 Phase 1,
+> deferred post-v1.0 ([`multi-region-ha.md`](multi-region-ha.md) §0c/§10).
+>
+> *Original note:* Bootstraps the fourth sub-role of Task #72 after Patroni
 > (#344), Redis Sentinel (#350), and HAProxy (#362). Closes the
 > "metrics surface that emits → metrics surface that scrapes"
 > seam for the launch-readiness HA path: the previous three

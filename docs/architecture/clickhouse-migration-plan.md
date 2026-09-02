@@ -6,7 +6,9 @@ status: accepted
 
 # Migration plan: galexie → ClickHouse → protocol decoders → Postgres
 
-**Status: accepted (ADR-0034, 2026-06-05); migration in progress.** A comprehensive, phased migration to the storage
+> **Status (2026-09-02): EXECUTED — read the phases below as the historical plan.** Phases 0-7 shipped between 2026-06-05 and 2026-07: the ClickHouse lake is the certified raw history (ADR-0034), the projector reads `contract_events` from it by default (`internal/config/config.go:943`, `clickhouse_projector_source` default `true`), the completeness verdict ships (ADR-0033), and the explorer + per-protocol pages are live. **Phase 8 — decommission the Postgres `soroban_events` landing zone — is the only open phase** (BACKLOG #39). One section is not merely historical but *wrong* against the invariant that replaced it: §10a's "`trades` → DROP + rebuild … + retention" was overtaken by `migrations/0031_remove_trades_retention.up.sql:31` (`remove_retention_policy('trades')`, 2026-05-14) and CLAUDE.md invariant 8 — **raw `trades` are kept forever**; a retention policy on `trades` is drift to be removed, not a plan to execute.
+
+**Status: accepted (ADR-0034, 2026-06-05).** A comprehensive, phased migration to the storage
 architecture that supports BOTH the pricing product AND a full,
 searchable Stellar/Soroban explorer — without the bulk-reprocessing wall
 we hit with `soroban_events` and `trades` in Postgres.

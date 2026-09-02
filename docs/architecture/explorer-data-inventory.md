@@ -1,10 +1,12 @@
 ---
 title: Showcase site — data, IA, and API plan
 last_verified: 2026-05-04
-status: planning
+status: historical plan (2026-05) — superseded by the shipped explorer
 ---
 
 # Showcase site — data, IA, and API plan
+
+> **Status (2026-09-02): HISTORICAL PLAN (2026-05). Do not build from the routes below.** The explorer shipped under `web/explorer/` with an `/assets/*` route tree (`web/explorer/src/app/assets/`) — there is **no `coins` directory** and no `/v1/coins` API surface (see [`coins-to-assets-migration.md`](coins-to-assets-migration.md), `status: complete`), so every `/coins/...` path named below is dead. The shipped information architecture is [`explorer-ux-plan.md`](explorer-ux-plan.md); the shipped API contract is `openapi/stellar-index.v1.yaml`. Kept for its persona / data-need analysis, which is still the reasoning of record.
 
 **Codename:** none yet — referred to as "the showcase" in this doc.
 **Domain:** `stellarindex.io` for the site (live on Cloudflare

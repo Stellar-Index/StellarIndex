@@ -15,6 +15,13 @@ export type PanelProps = {
   source?: RequestExample;
   /** Anchor id for deep-linking (e.g. `#confidence-card`). */
   panelId?: string;
+  /**
+   * Heading rank for `title`. Defaults to 3 (a panel nested under a
+   * SectionHeader `<h2>`). A panel that IS a page's top-level section must
+   * pass 2 or the outline skips h2 and `heading-order` (WCAG 1.3.1) fails.
+   * Purely semantic — the visual style is on the className, not the tag.
+   */
+  headingLevel?: 2 | 3 | 4;
   className?: string;
   bodyClassName?: string;
   children: React.ReactNode;
@@ -36,15 +43,17 @@ export function Panel({
   hint,
   source,
   panelId,
+  headingLevel = 3,
   className,
   bodyClassName,
   children,
 }: PanelProps) {
+  const H = `h${headingLevel}` as const;
   return (
     <section
       id={panelId}
       className={twMerge(
-        'relative rounded-lg border border-line bg-surface p-4',
+        'border-line bg-surface relative rounded-lg border p-4',
         className,
       )}
     >
@@ -52,12 +61,8 @@ export function Panel({
         <header className="mb-3 flex items-start justify-between gap-2">
           {title && (
             <div>
-              <h3 className="text-sm font-medium">{title}</h3>
-              {hint && (
-                <p className="text-xs text-ink-muted">
-                  {hint}
-                </p>
-              )}
+              <H className="text-sm font-medium">{title}</H>
+              {hint && <p className="text-ink-muted text-xs">{hint}</p>}
             </div>
           )}
           {source && <RequestReveal example={source} position="inline" />}

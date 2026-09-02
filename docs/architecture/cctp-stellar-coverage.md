@@ -13,7 +13,14 @@ This document captures the contract identities, event schemas, and
 the design decisions for integrating Circle's CCTP v2 on Stellar
 into the Stellar Index's source fleet. The implementation lives in
 `internal/sources/cctp/` (decoder + dispatcher adapter + consumer)
-with persistence to the `cctp_events` hypertable (migration 0038).
+with persistence to the `cctp_events` hypertable (migration 0038 —
+`migrations/0038_create_cctp_events.up.sql`; §"storage options" below
+still names 0037, which is wrong). **Since ADR-0032 (rc.97) `cctp_events`
+is written by `internal/projector`, not by the dispatcher's events
+goroutine** — `cctp.Event` is an arm of `IsProjectedEvent`
+(`internal/pipeline/sink.go:499`), so catch-up after a missing window is
+`stellarindex-ops projector-replay -source cctp -from <ledger>`, never a
+bespoke backfill subcommand.
 The storage shape — a per-protocol table rather than a shared
 `bridge_events` — was operator-confirmed 2026-05-22. Remaining
 work: the WASM-history audit that flips `BackfillSafe` true, and
@@ -198,7 +205,8 @@ shapes to consider:
    columns `ledger, ts, tx_hash, op_index, contract_id,
    event_type (enum), burn_token / mint_token, amount,
    counterparty_domain, counterparty_address, fee, hook_data`.
-   Migration `0037_create_cctp_events.up.sql`. The cleanest
+   Migration `0038_create_cctp_events.up.sql` (this section read
+   `0037` until 2026-09-02; the file on disk is 0038). The cleanest
    semantic match — bridge events have their own shape.
 
 2. **Generic `soroban_events` hypertable.** A wider net that

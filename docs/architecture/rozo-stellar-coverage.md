@@ -15,7 +15,12 @@ deployment status for integrating Rozo's intent-based cross-chain
 contracts on Stellar into the Stellar Index. The v1 Payment
 implementation lives in `internal/sources/rozo/` (decoder +
 dispatcher adapter + consumer) with persistence to the `rozo_events`
-hypertable (migration 0039). The storage shape — a per-protocol
+hypertable (migration 0039). **Since ADR-0032 (rc.97) `rozo_events` is
+written by `internal/projector`, not by the dispatcher's events
+goroutine** — `rozo.Event` is an arm of `IsProjectedEvent`
+(`internal/pipeline/sink.go:499`), so catch-up is
+`stellarindex-ops projector-replay -source rozo -from <ledger>`.
+The storage shape — a per-protocol
 table rather than a shared `bridge_events` — was operator-confirmed
 2026-05-22. v2 Forwarder / IntentBridge and the newer rozo-intents
 schema are pre-mainnet; the design narrative below is retained for

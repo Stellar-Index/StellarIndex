@@ -11,6 +11,12 @@ implementation: configs/ansible/roles/patroni/
 
 # Patroni ansible role — design note
 
+> **Deferral (2026-09-02):** single-region HA (Patroni / HAProxy / Redis
+> Sentinel) is **ADR-0050 Phase 1**, deferred post-v1.0 — see
+> [`multi-region-ha.md`](multi-region-ha.md) §0c/§10. This role is not
+> launch-critical, and the *stretched* multi-region Patroni cluster that
+> older docs describe is explicitly rejected by ADR-0050.
+
 > **NOT shipped (corrected 2026-07-24, audit-2026-07-23 DOC-05).** The
 > frontmatter previously read `status: shipped`; that was false. The role's
 > files exist under `configs/ansible/roles/patroni/`, but **no playbook
@@ -192,8 +198,13 @@ namespace: /service/
 name: {{ inventory_hostname }}
 
 restapi:
-  listen: 0.0.0.0:8008
-  connect_address: {{ ansible_host }}:8008
+  # CORRECTED 2026-09-02: this sketch said `0.0.0.0:8008`, which is
+  # security-regressive against the role that actually shipped. The real
+  # template binds the private/cluster interface — CS-122,
+  # configs/ansible/roles/patroni/templates/patroni.yml.j2:12 (default
+  # `{{ ansible_host }}:8008`, roles/patroni/defaults/main.yml:28).
+  listen: {{ patroni_rest_listen }}
+  connect_address: {{ patroni_rest_connect_address }}
 
 etcd3:
   hosts: {{ groups['all'] | map('extract', hostvars, 'ansible_host') | map('regex_replace', '$', ':2379') | list }}
@@ -231,8 +242,11 @@ bootstrap:
     - host  all          all         10.0.0.0/8  md5
 
 postgresql:
-  listen: 0.0.0.0:5432
-  connect_address: {{ ansible_host }}:5432
+  # CORRECTED 2026-09-02: same CS-122 point — never 0.0.0.0. The shipped
+  # template is `{{ patroni_postgres_listen_addr }}:{{ patroni_postgres_port }}`
+  # (configs/ansible/roles/patroni/templates/patroni.yml.j2:68).
+  listen: "{{ patroni_postgres_listen_addr }}:{{ patroni_postgres_port }}"
+  connect_address: {{ ansible_host }}:{{ patroni_postgres_port }}
   data_dir: {{ patroni_data_dir }}
   bin_dir: /usr/lib/postgresql/{{ patroni_postgres_version }}/bin
   pgpass: /tmp/pgpass0

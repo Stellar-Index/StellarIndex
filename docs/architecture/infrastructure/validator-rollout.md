@@ -6,6 +6,8 @@ status: accepted — phased rollout described here is post-launch (Phase-3); the
 
 # Validator Rollout — 1 → 3, as one Tier-1 Org
 
+> ⛔ **SUPERSEDED in its infrastructure shape by ADR-0050 / [`../multi-region-ha.md`](../multi-region-ha.md) (2026-08-21). Do not implement the topology from this doc.** Phases C/D below join R2 and R3 to a **stretched Patroni cluster** with a 5-node cross-region etcd — exactly what [ADR-0050](../../adr/0050-multi-region-ha-architecture.md) §Decision rejects ("no cross-region Postgres replication and no stretched Patroni cluster"; Model B is independent per-region ingest, determinism not replication). Two more corrections of fact: **R1 is Hetzner FSN1 (Falkenstein), not London** (`infrastructure/archival-node-spec.md` status line), and Phase A's `stellar-rpc` co-residency **never ran on r1** — stellar-rpc was removed 2026-04-23 and is not in the ingest path (CLAUDE.md "stellar-rpc is NOT in our production ingest path"; `internal/ledgerstream` → `internal/dispatcher`). The **validator aspiration itself** (three geographically-separated full validators, HSM-held keys) is [ADR-0004](../../adr/0004-tier1-validator-aspiration.md) and is unchanged; only the database/rpc topology below is superseded. Read the phase table for the validator-operations sequence, not for the deployment shape.
+
 **Owner:** @ash.
 **Extends:** [ADR-0004 Tier-1 validator aspiration](../../adr/0004-tier1-validator-aspiration.md).
 **Relates to:** [archival-node-spec.md](archival-node-spec.md),

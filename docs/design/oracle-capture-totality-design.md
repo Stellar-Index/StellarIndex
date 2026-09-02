@@ -1,6 +1,8 @@
 # Oracle capture-totality design — StellarIndex oracle_updates record layer (Reflector / RedStone / Band)
 
-> Status: DESIGN (Wave B, 2026-08-28). Produced by a read-only investigation against HEAD 4aa93e96; every claim cites file:line. Open questions at the end are decisions for the operator.
+> **Status (2026-09-02): SHIPPED.** PR1-PR5 landed 2026-08-28/29 (#245 raw `AssetType`, #247 decoders emit `raw:<symbol>` instead of dropping, #248 consumer guards, #261 explorer "Unmapped feeds"). The PR3 consumer guards were silently dropped by the #305 squash on 2026-08-29 and **restored on 2026-09-02** (`131f0f1a`, #339) — the guard of record is `internal/divergence/oracle.go:178` (`!u.Asset.IsMapped() || !u.Quote.IsMapped()` refuses a raw row as a comparison) plus the `-- totality: includes unmapped` markers in `internal/storage/timescale/`. The **binding summary is CLAUDE.md → "Oracle decoders never DROP an unmapped symbol"**; `internal/canonical/asset_raw.go` is the type of record. §1's "Current behaviour (the defect)" table is historical.
+>
+> *Original header:* Status: DESIGN (Wave B, 2026-08-28). Produced by a read-only investigation against HEAD 4aa93e96; every claim cites file:line. Open questions at the end are decisions for the operator.
 
 # Oracle capture-totality — record layer total, interpretation layer selective
 

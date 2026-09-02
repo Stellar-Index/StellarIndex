@@ -126,6 +126,7 @@ export default function DivergencesPage() {
       <DivergenceFeed />
 
       <Panel
+        headingLevel={2}
         title="Why we monitor divergence"
         bodyClassName="text-sm text-ink-body space-y-2"
       >
@@ -201,6 +202,7 @@ export default function DivergencesPage() {
       </div>
 
       <Panel
+        headingLevel={2}
         title="Reading the board"
         bodyClassName="text-sm text-ink-body space-y-2"
       >

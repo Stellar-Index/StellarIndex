@@ -96,21 +96,33 @@ export function CopyButton({
 >) {
   const { copied, copy } = useCopyToClipboard(value);
   return (
-    <button
-      type="button"
-      aria-label="Copy to clipboard"
-      onClick={copy}
-      className={cn(
-        'text-ink-faint hover:bg-surface-subtle hover:text-ink-body inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-sm transition-colors',
-        className,
-      )}
-      {...props}
-    >
-      {copied ? (
-        <Check className="text-up h-3.5 w-3.5" />
-      ) : (
-        <Copy className="h-3.5 w-3.5" />
-      )}
-    </button>
+    <>
+      <button
+        type="button"
+        aria-label="Copy to clipboard"
+        onClick={copy}
+        className={cn(
+          // h-6 w-6 = 24px, the WCAG 2.5.8 Target Size (Minimum) floor.
+          // The icon stays 14px; only the hit area grows.
+          'text-ink-faint hover:bg-surface-subtle hover:text-ink-body inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-sm transition-colors',
+          className,
+        )}
+        {...props}
+      >
+        {copied ? (
+          <Check className="text-up h-3.5 w-3.5" />
+        ) : (
+          <Copy className="h-3.5 w-3.5" />
+        )}
+      </button>
+      {/* WCAG 4.1.3 Status Messages: success was a colour-only swap to a
+          tick, silent to a screen reader. A SIBLING (not a child) so it
+          can't perturb the button's accessible name — the SearchModal
+          result-count idiom. sr-only is absolutely positioned, so this
+          adds nothing to layout. */}
+      <span className="sr-only" role="status" aria-live="polite">
+        {copied ? 'Copied' : ''}
+      </span>
+    </>
   );
 }

@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { useQuery } from '@tanstack/react-query';
 
 import { Panel } from '@/components/reveal';
+import { CopyButton } from '@/components/ui';
 import { HBarList } from '@/components/charts/Bars';
 import { apiGet, asExample } from '@/api/client';
 import { formatRelative } from '@/lib/format';
@@ -331,13 +332,21 @@ export function LendingPoolsTable() {
                   </Td>
                   <Td>
                     <div className="space-y-0.5">
-                      <Link
-                        href={`/lending/${poolId}`}
-                        className="block font-mono text-[11px] hover:text-brand-600"
-                        title={poolId}
-                      >
-                        {poolId.slice(0, 6)}…{poolId.slice(-6)}
-                      </Link>
+                      {/* The full pool id was hover-only (`title=`), so
+                          touch + keyboard users could not recover it. The
+                          copy button is the reachable path; it sits BESIDE
+                          the link, never inside it (no nested
+                          interactives). */}
+                      <div className="flex items-center gap-1">
+                        <Link
+                          href={`/lending/${poolId}`}
+                          className="block font-mono text-[11px] hover:text-brand-600"
+                          title={poolId}
+                        >
+                          {poolId.slice(0, 6)}…{poolId.slice(-6)}
+                        </Link>
+                        <CopyButton value={poolId} />
+                      </div>
                       {/* Curated label where we have one; else a generic
                           "Blend pool" tag so newer/unmapped pools are still
                           identified rather than shown as a bare hash (audit

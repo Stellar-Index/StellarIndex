@@ -22,6 +22,11 @@ related:
 > described below. Everything below is the pre-implementation design
 > record.
 >
+> **Deferral (2026-09-02): not launch-critical.** Single-region HA
+> (HAProxy / Patroni / Redis Sentinel) is **ADR-0050 Phase 1**, deferred
+> post-v1.0 — [`multi-region-ha.md`](multi-region-ha.md) §0c/§10. Read the
+> "launch-critical" framing below as of its 2026-05 authorship date.
+>
 > Bootstraps the third launch-critical sub-role of Task #72 after
 > Patroni (#344) and Redis Sentinel (#350). HAProxy is the
 > api-tier load balancer fronting the `stellarindex-api` pool;

@@ -1,10 +1,16 @@
 ---
 title: ADR-0044 Stage 1 spike report — OpenNext on Cloudflare Workers
 last_verified: 2026-07-04
-status: current
+status: point-in-time spike report (2026-07-04) — ADR-0044 Accepted; the worker build exists, but static export remains the deployed default
 ---
 
 # ADR-0044 Stage 1 spike report — OpenNext on Cloudflare Workers
+
+> **Status (2026-09-02): this is a dated spike report, not a live status
+> page.** ADR-0044 is Accepted and the OpenNext worker build exists, but the
+> explorer still ships as a **static export by default** —
+> `web/explorer/next.config.mjs:31` keeps `output: 'export'` unless
+> `OPEN_NEXT=1` is set. Read the numbers below as of their capture date.
 
 Date: 2026-07-04
 Scope: prove an OpenNext build of the CURRENT explorer app (no

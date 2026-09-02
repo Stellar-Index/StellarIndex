@@ -110,6 +110,9 @@ export function AnomaliesFeed() {
           </p>
         )}
         {events.length > 0 && (
+          // WCAG 1.4.10 Reflow: the wide mono columns scroll inside the
+          // panel instead of pushing the whole page sideways at 320px.
+          <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-line text-left text-[11px] uppercase tracking-wider text-ink-muted">
@@ -165,6 +168,7 @@ export function AnomaliesFeed() {
               })}
             </tbody>
           </table>
+          </div>
         )}
       </Panel>
     </>

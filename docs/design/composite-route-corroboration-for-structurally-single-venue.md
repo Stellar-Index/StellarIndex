@@ -1,6 +1,8 @@
 # Composite-route corroboration for structurally single-venue pairs: route table, disjointness verdicts, config, and honest fallback (2026-08-28)
 
-> Status: DESIGN (Wave B, 2026-08-28). Produced by a read-only investigation against HEAD 4aa93e96; every claim cites file:line. Open questions at the end are decisions for the operator.
+> **Status (2026-09-02): §10.1 SHIPPED (#288, `db7216b9`) — §8.1-8.3 NOT shipped.** The shipped amendment is `internal/aggregate/orchestrator/composite_reference.go`. **The metric this doc names in §8.3 and §9 (`stellarindex_aggregator_route_corroboration`) was never created** — do not grep for it in a validation step. The metric that exists is `stellarindex_aggregator_composite_corroboration` (`internal/obs/metrics.go:3285`), a GaugeVec labelled `(pair, window, verdict)` with verdict ∈ {corroborated, refuted, unavailable}. The §4 fiat/fiat-leg rule is prose only: **nothing in code enforces it**, so it remains a latent trap rather than a guard.
+>
+> *Original header:* Status: DESIGN (Wave B, 2026-08-28). Produced by a read-only investigation against HEAD 4aa93e96; every claim cites file:line. Open questions at the end are decisions for the operator.
 
 # Composite-route corroboration for structurally single-venue pairs
 

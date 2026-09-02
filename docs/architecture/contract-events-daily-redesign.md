@@ -1,13 +1,17 @@
 ---
 title: contract_events_daily MV redesign — uniqExact → uniqCombined(17)
 last_verified: 2026-07-24
-status: accepted
+status: applied on r1 (2026-09-02, #482) — schema drift 0 divergent
 ---
 
 # contract_events_daily MV redesign
 
-**Status: accepted; code-complete. r1 apply is the remaining operator
-step (see § Procedure).**
+**Status: APPLIED (2026-09-02, #482).** The r1 apply that this line used to
+name as "the remaining operator step" has happened. Verified read-only against
+r1 on 2026-09-02: `SHOW CREATE TABLE stellar.contract_events_daily_mv` returns
+`uniqCombinedState(17)`, matching `deploy/clickhouse/tier1_schema.sql:499`; the
+post-apply schema-drift check reported **0 divergent**. § Procedure below is
+kept as the record of how it was done (and as the recipe for any other host).
 
 ## 1. Incident context
 

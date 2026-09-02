@@ -9,6 +9,8 @@ status: point-in-time audit
 > **Note (audit 2026-06-12):** point-in-time audit snapshot;
 > `last_verified` is its capture date, not a fresh re-verification.
 
+> **Status (2026-09-02): every gap listed below has since closed — do not action this doc.** The "Phase-1 decoder not yet wired" rows for `cctp` and `rozo` are stale: both are **projected** sources, i.e. `cctp.Event` and `rozo.Event` are arms of `IsProjectedEvent` (`internal/pipeline/sink.go:499`) and `internal/projector` is their sole writer (ADR-0031/0032). The "real decoder gap: soroswap-router (8,729× undercount)" is closed too — `soroswap_router` is a wired `ContractCallDecoder` (CLAUDE.md invariant 7; log-only, deliberately outside `IsProjectedEvent`). Kept as the evidence trail for how the gaps were found.
+
 > Comparing per-contract activity on Stellar Expert vs our internal
 > `source_entry_counts` to find decoder coverage gaps. Companion to
 > [storage-considerations.md](storage-considerations.md) — both came

@@ -9,9 +9,12 @@ supersedes: v2 (light-mode, 2026-06-17)
 # Design system
 
 The shared visual language for every Stellar Index web surface — the public
-explorer (`web/explorer`, which also hosts the in-site customer account at
-`/account/*`) and the status page (`web/status`). One system, applied
-everywhere.
+explorer (`web/explorer`), which also hosts the in-site customer account at
+`/account/*` **and the status page** at `web/explorer/src/app/status/`.
+One system, applied everywhere — and, since wave 57, one app: `web/status/`
+is a redirect-only stub (`web/status/public/_redirects` 301s
+`status.stellarindex.io` → `stellarindex.io/status`), so its leftover
+`src/app/globals.css` light-palette tokens render nowhere.
 
 **Live reference:** `/dev/styleguide` (+ `/dev/primitives`) in the explorer
 renders every token and component. **Tokens:** the `@theme` block in

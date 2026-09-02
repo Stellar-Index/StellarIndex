@@ -156,6 +156,9 @@ function DepthTable({
             : `${truncated} offers`}
         </span>
       </div>
+      {/* WCAG 1.4.10 Reflow: the mono price/amount columns scroll in
+          place instead of pushing the page sideways at 320px. */}
+      <div className="overflow-x-auto">
       <table className="min-w-full text-xs">
         <thead>
           <tr className="text-ink-muted text-[10px] tracking-wider uppercase">
@@ -191,6 +194,7 @@ function DepthTable({
           })}
         </tbody>
       </table>
+      </div>
     </div>
   );
 }

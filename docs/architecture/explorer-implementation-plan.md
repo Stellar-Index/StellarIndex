@@ -1,10 +1,12 @@
 ---
 title: Showcase site — implementation plan
 last_verified: 2026-05-13
-status: planning
+status: superseded by the shipped explorer (web/explorer/)
 ---
 
 # Showcase site — implementation plan
+
+> **Status (2026-09-02): SUPERSEDED by the explorer that shipped.** The stack table and phase tickets below are the 2026-05 proposal, not what exists. As built: `web/explorer/` on **Next.js 16** (`web/explorer/package.json:28` → `"next": "16.3.3"`), static export by default with the OpenNext worker behind `OPEN_NEXT=1` (`web/explorer/next.config.mjs:31`, ADR-0044), and an **in-house component layer** at `@/components/ui` with tokens in `src/app/globals.css` — **no shadcn/ui** (zero occurrences in `package.json`); see [`design-system.md`](design-system.md). Read §1 for the reasoning behind the choices, not for the versions.
 
 > **Companion doc:** [`explorer-data-inventory.md`](explorer-data-inventory.md)
 > describes WHAT we're building. This doc describes HOW we'll build it

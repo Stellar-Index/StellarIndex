@@ -1253,7 +1253,7 @@ function EndpointMatrix({
             <h3 className="text-ink-faint mb-2 text-[11px] font-semibold tracking-wider uppercase">
               {group}
             </h3>
-            <Card flat className="overflow-hidden">
+            <Card flat className="overflow-x-auto">
               <table className="w-full text-sm">
                 <tbody className="divide-line divide-y">
                   {eps.map((ep) => {
@@ -1928,7 +1928,7 @@ function BackfillCoverageTable({
         (the verifier hasn&apos;t run), which can read ~100% for sparse or
         partially-indexed sources.
       </p>
-      <div className="border-line overflow-hidden rounded-lg border">
+      <div className="border-line overflow-x-auto rounded-lg border">
         <table className="w-full text-xs">
           <thead className="bg-surface-muted text-ink-faint">
             <tr>
@@ -2118,7 +2118,7 @@ function SourceHealthTable({ rows }: { rows: IngestionSnapshot['sources'] }) {
       <h3 className="text-ink-faint mb-2 text-[11px] font-semibold tracking-wider uppercase">
         Sources — {safeRows.length} registered
       </h3>
-      <div className="border-line overflow-hidden rounded-lg border">
+      <div className="border-line overflow-x-auto rounded-lg border">
         <table className="w-full text-xs">
           <thead className="bg-surface-muted text-ink-faint">
             <tr>

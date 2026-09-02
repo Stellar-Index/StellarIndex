@@ -20,6 +20,8 @@ be revisited with real numbers (see
 §2D, decision **(iii) hold now, re-rank after v1.0**). This doc is that
 re-rank.
 
+> **CORRECTION (2026-09-02): the headline below was wrong at write time.** USDx, EURx and GBPx were **already** in the r1 `watched_sep41_contracts` map when this census was written — `configs/ansible/roles/archival-node/templates/stellarindex.toml.j2:436,437,444` — and that map predates the census by a month (the strings are present at `b040514d`, 2026-06-12). So "captured by **nothing** today" is false for three of the four tokens; only **FXG** is absent from the watched map. What remains genuinely unshipped is the *other* half of the recommendation: no FxDAO entry exists in the verified-currency catalogue (`internal/currency/data/seed.yaml` — zero matches for `fxdao`/`USDx`), which is the hand-curated trust surface and a code change + redeploy (CLAUDE.md, `internal/currency`).
+
 ## TL;DR verdict
 
 **None of the five clear the bar for a native six-file decoder today.**

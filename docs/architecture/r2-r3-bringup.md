@@ -1,7 +1,7 @@
 ---
 title: R2 / R3 multi-region bringup
 last_verified: 2026-05-12
-status: draft
+status: superseded by ADR-0050 / [multi-region-ha.md](multi-region-ha.md) (2026-08-21) — see the banner below; do not implement
 ---
 
 # R2 / R3 bringup — multi-region cutover playbook

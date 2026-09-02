@@ -1,7 +1,7 @@
 ---
 title: Oracle manipulation — attack catalogue and defensive layers
 last_verified: 2026-05-03
-status: living document
+status: living document — Layers 4/5 and the freeze thresholds corrected against code 2026-09-02 (#361); the attack catalogue itself not re-derived
 ---
 
 # Oracle manipulation — attack catalogue and defensive layers
@@ -179,8 +179,14 @@ volume (~$50K daily). System state:
 | T+3m | $100.00 | 1980σ | 1 | 0.02 | **Yes** |
 | T+5m | $50.00 | 980σ | 1 | 0.02 | **Yes** |
 
-Freeze condition `confidence < 0.10 AND z_score > 5σ AND source_count
+Freeze condition `confidence < 0.45 AND z_score > 5σ AND source_count
 <= 1` trips at T+0 and stays tripped throughout the attack window.
+(**Corrected 2026-09-02:** the confidence leg is **0.45**, not the 0.10
+this doc and ADR-0019 originally specified —
+`internal/config/config.go:1096`, `confidence_max_freeze`, changed by
+operator decision on 2026-07-25 because "0.10 in practice required
+z ≈ 15 and never fired". Note the deliberate hysteresis against
+`unfreeze_confidence_min` = 0.30, `config.go:1120`.)
 
 ### Per-surface response during the attack
 
@@ -284,7 +290,11 @@ on-chain price back to ~$1.00:
 ### Engineering observability during the event
 
 Operators see (via Prometheus + alertmanager):
-- `stellarindex_anomaly_freeze_engaged{asset="USTRY-G..."}` gauge: 1
+- `stellarindex_anomaly_freeze_engaged_total{...}` counter increments
+  and `stellarindex_anomaly_freeze_active{...}` gauge reads 1
+  (`internal/obs/metrics.go:3037` and `:3146` — **corrected 2026-09-02**;
+  the single `stellarindex_anomaly_freeze_engaged` gauge this line used
+  to name does not exist)
 - `stellarindex_anomaly_z_score{asset="USTRY-G..."}` histogram: spikes
 - `stellarindex_anomaly_confidence{asset="USTRY-G..."}` gauge: drops
 - P2 alert "anomaly freeze engaged on USTRY-G..." fires within 1
@@ -368,34 +378,53 @@ default ~$10K and `aggregate.min_per_bucket_volume_usd` ~$1K.
 Sources/pools below the floor are excluded from VWAP for that
 bucket but still recorded in raw trades for audit.
 
-### Layer 4 — Outlier detection (alert-only, partial)
+### Layer 4 — Outlier trimming (ACTIVE — trades are dropped, not just alerted)
 
-The `aggregator-outlier-storm` alert fires when a single source's
-contributions diverge from the inter-source median by N sigma.
-Today this is monitor-only — operators see the alert but the
-filter is calibrated for noise rejection, not adversarial
-detection.
+**Corrected 2026-09-02: this layer is NOT alert-only.** The filter
+actively DROPS prints before they reach VWAP. `outlier_sigma_threshold`
+(default **4**, `internal/config/config.go:1150`) rejects a trade that
+sits more than N robust scales from *every* reference it is scored
+against, and the implementation is a masking-resistant **median +
+1.4826·MAD**, not mean+stdev — plus a **time-local** neighbourhood test
+so an *agreed* regime shift survives while a lone wild print does not
+(`internal/aggregate/outliers_local.go`). Drops are counted at
+`internal/aggregate/orchestrator/orchestrator.go:1086` as
+`stellarindex_aggregator_dropped_trades_total{reason="outlier",pair=…}`.
 
-**Defends against:** Step 3, after-the-fact. Manipulation is
-detected within minutes; doesn't prevent the bad bucket from
-landing.
+**Defends against:** Step 3, *before* the bucket lands, for prints that
+disagree with both the window and their own neighbourhood.
 
-**Hardening:** Make the storm AUTOMATICALLY exclude the offending
-source from the bucket when σ-threshold is exceeded for >
-threshold count, with manual review afterwards. Today's runbook
-suggests this manually; should be automatic for high-confidence
-outlier-storm detections.
+**Known limit (not a hardening idea — a live property):** the filter is
+**volume-blind** — one price per trade — so a large legitimate print far
+from a tight cluster can be dropped. The alerting half is now two rules,
+`stellarindex_aggregator_outlier_storm` and
+`..._outlier_trim_fraction` (`configs/prometheus/rules.r1/aggregator.yml:61,115`).
+**Still not built:** automatic *source*-level exclusion on sustained
+outlier-storm; that remains an operator action per runbook.
 
-### Layer 5 — Cross-reference divergence monitoring (planned, NOT shipped)
+### Layer 5 — Cross-reference divergence monitoring — **SHIPPED**
 
-`internal/divergence/` (planned package per CLAUDE.md) will:
+**Corrected 2026-09-02: this layer is shipped and wired, not planned.**
+`internal/divergence/` exists, runs on the aggregator's tick (gated by
+`divergence_min_interval_seconds`, default 300s), and publishes to Redis
+under `div:<pair>` — **keyed by PAIR, not by asset**
+(`internal/cachekeys/keys.go:409`, `DivergenceKey("div:" + pair.String())`,
+e.g. `div:native/fiat:USD`; the pre-fix `div:<base>` key let the last pair
+win, see the comment at `:390`). Live sources are CoinGecko and
+Chainlink-HTTP. What it does:
 
-- Cross-check our computed VWAP against CoinGecko / CMC /
-  Chainlink-HTTP / Reflector / Band / Redstone outputs
-- Set `flags.divergence_warning: true` on every response when
-  divergence > threshold
-- Trip an alert; runbook walks operators through "is this a real
-  market event or a manipulation in progress?"
+- Cross-check our computed VWAP against **CoinGecko and Chainlink-HTTP**
+  (as wired today — a CMC poller exists under `internal/sources/external/`
+  but is **not** wired into divergence; Reflector / Band / Redstone are
+  ingested oracles, not divergence references)
+- Set `flags.divergence_warning: true` on the response when
+  divergence > threshold — this half is live end-to-end
+- **NOT live:** the Prometheus half. `stellarindex_price_divergence_warning`
+  and `..._critical` exist as rules in both trees but are **INERT** — no
+  metric produces the series they match (F-1329;
+  `configs/prometheus/rules.r1/divergence.yml:25,44`, and
+  `aggregator.yml:184` warns operators not to wait on them). The wire flag
+  is the only working signal today.
 
 **Defends against:** Steps 4–5, by giving downstream consumers a
 wire-level signal that we disagree with the broader oracle
@@ -447,7 +476,8 @@ additional layer that protects single-source assets:
   agreement, and baseline data quality into a single
   `data.confidence ∈ [0, 1]` value on every published price.
 - **Freeze policy on closed-bucket surface only** — when
-  `confidence < 0.10 AND z_score > 5σ AND source_count <= 1`,
+  `confidence < 0.45 AND z_score > 5σ AND source_count <= 1`
+  (`confidence_max_freeze` default 0.45 since 2026-07-25; was 0.10),
   `/v1/price` returns last-known-good with `flags.frozen: true`.
   `/v1/price/tip` and `/v1/observations` ignore freeze
   (their consistency contracts permit anomalous data).
@@ -487,7 +517,8 @@ Phase 3 cross-oracle factor is the remaining piece).
 | **Per-asset confidence + freeze policy (Phase 2 statistical baselines)** | ADR-0019 | Phase 2 | **Shipped** — `internal/aggregate/baseline/` (Median/MAD/ZScore + multi-window refresh) + `internal/aggregate/confidence/` (six-factor weighted-geomean score) | **High** — replaces operator thresholds with per-asset learned thresholds; the proper protection against USTRY-shape attacks |
 | **`internal/divergence/` cross-reference** | ADR-0019 | Phase 3 | **Wired** — divergence worker writes `cachekeys.Divergence(asset)`; orchestrator reads it via `lookupDivergencePct` and feeds `confidence.CrossOracleFactor`. Production-quality operational coverage tracked as L7.3 (post-launch). | **High** — last line of defense; the post-launch L7.3 work tunes divergence-source coverage, not the wiring itself |
 | **Liquidity floor per source per bucket** | (planned) | — | Trade-volume weighted, no absolute floor | **Medium** — partially covered by ADR-0019's `liquidity_factor` in confidence; an explicit hard floor is complementary |
-| **Auto-exclude in outlier-storm** | (planned) | — | Alert-only | **Medium** — detect-and-react vs detect-and-prevent |
+| **Outlier trimming** | ADR-0019 | — | **Shipped and ACTIVE** — median+1.4826·MAD, σ=4, time-local (`internal/aggregate/outliers_local.go`); drops prints before VWAP | — |
+| **Auto-exclude the offending SOURCE in outlier-storm** | (planned) | — | Not built — trimming is per-print, not per-source; source exclusion is still a manual runbook step | **Medium** — detect-and-react vs detect-and-prevent |
 | **Stablecoin depeg auto-gating** | (planned) | — | Manual policy via aggregator class system | **Low** — depeg detection works; auto-gating during severe depegs would prevent stablecoin-as-collateral exploits |
 
 ## Adversarial-testing exercises (recommended, not yet scheduled)
@@ -501,8 +532,9 @@ realistic manipulation attempts:
    - Outlier-storm alert fires within 1 bucket
    - VWAP barely moves (other sources dominate)
    - `flags.divergence_warning` flips on the affected pair (the
-     divergence service writes to `div:<asset>` Redis keys; the
-     `/v1/price` handler surfaces the flag)
+     divergence service writes to `div:<pair>` Redis keys —
+     `internal/cachekeys/keys.go:409`; the `/v1/price` handler surfaces
+     the flag)
 
 2. **Single-source compromise.** Configure a "malicious binance"
    stub that returns price ×2 on all trades. Confirm:

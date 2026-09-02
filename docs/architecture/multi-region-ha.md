@@ -1,5 +1,10 @@
 ---
 title: Multi-region HA — the current, authoritative program plan
+# 2026-08-21 = the date of the cold 6-auditor audit recorded below, which is
+# the last pass that checked this doc's claims end to end. Added 2026-09-02
+# (issue #361): without it, lint-docs.sh §6 `continue`d this file and the
+# repo's authoritative HA plan sat permanently outside the freshness gate.
+last_verified: 2026-08-21
 status: authoritative (ratified by ADR-0050, 2026-08-21)
 supersedes:
   - docs/architecture/infrastructure/multi-region-topology.md
@@ -197,7 +202,7 @@ Until it lands, only *anonymous* traffic fails over cleanly.
 
 ## 4. Per-region shapes (amends ADR-0016)
 
-| | **R1 — Frankfurt / Hetzner** | **R2 — US / Vultr** | **R3 — Singapore / Vultr** |
+| | **R1 — Falkenstein (FSN1) / Hetzner** | **R2 — US / Vultr** | **R3 — Singapore / Vultr** |
 |---|---|---|---|
 | Role | **primary + lake authority + integrity leader** | active pricing + explorer edge/proxy | active pricing + thin lake proxy |
 | Provider | Hetzner dedicated (existing) | **Vultr US bare metal** (was AWS — see note) | Vultr SG bare metal |
@@ -261,11 +266,12 @@ wanted.
   request time on Cloudflare Workers, so it resolves the API region at **runtime** and
   can fail over to a healthy region (the current static-export build-time bake, flagged
   by the audit, is transitional and resolved by ADR-0044 + a runtime region list).
-- **Per-tier / lake-aware health (audit gap — must build):** `/readyz` treats CH as
-  non-critical and returns 200 even when CH is dead, so an LB on `/readyz` would keep a
-  CH-broken region in the pool. Add a **lake-critical health signal** (e.g. `/livez/lake`
-  → 503 when CH is unreachable) and **split origins or path-steering** so lake routes can
-  fail over while pricing does not.
+- **Per-tier / lake-aware health — SHIPPED (signal) / open (routing):** `/readyz` treats
+  CH as non-critical and returns 200 even when CH is dead, so an LB on `/readyz` would keep
+  a CH-broken region in the pool. The **lake-critical signal now exists**:
+  `GET /v1/livez/lake` (`internal/api/v1/server.go:1787`, single-flight cached per #310)
+  returns 503 when ClickHouse is unreachable. What is still **not built** is the consuming
+  half — split origins / path-steering so lake routes fail over while pricing does not.
 - **Streaming/SSE:** ledger/observations streams have no replay (silent gap on
   reconnect); price-stream resume tokens are per-region. Accept-and-document, or add
   content-anchored resume (`Last-Event-ID` with a portable cursor) if needed.
@@ -274,13 +280,20 @@ wanted.
 
 1. **Off-site raw-archive DR** (§5) — the crown-jewel copy on Cloudflare R2. Also the
    region-bootstrap source. Fold into ADR-0043's offsite-repo2 work.
+   **Partly shipped (2026-08-29):** the *Postgres* half is done — pgBackRest `repo2` is an
+   encrypted off-site S3 repo, backed up nightly per repo and alerted on staleness
+   (`deploy/monitoring/rules/backup-offsite.yml` → `stellarindex_backup_offsite_stale`;
+   the repo2 gate is `configs/ansible/roles/archival-node/tasks/18-pgbackrest-backup.yml:132`).
+   The *raw-archive / lake* half is still open — ClickHouse has no data backup.
 2. **Determinism hardening** (audit §13-A) — make the served answer actually
    byte-identical where it isn't:
-   - OHLC `open`/`close`: the CAGG uses `first/last` over non-unique `ts` → add a
-     deterministic ordering column (`seq` = packed `ledger,tx_index,op_index,source`)
-     and rebuild the continuous aggregate; fix the raw-bar path's `ORDER BY` too.
-   - `account_movements`: add `FINAL`/`LIMIT 1 BY` dedup (it's the one lake reader
-     missing it).
+   - OHLC `open`/`close` — **SHIPPED**: `migrations/0147_ohlc_deterministic_tiebreak.up.sql`
+     adds the deterministic ordering and rebuilds the aggregate.
+   - `account_movements` — **CLOSED as not-needed, by design.** The NO-FINAL reads are
+     deliberate and the reasoning is in the code: `max()` and `uniqExact` over duplicate
+     ReplacingMergeTree parts are already exact because a duplicate is the identical tuple
+     (`internal/storage/clickhouse/account_movements.go:370` and `:635`). Adding `FINAL`
+     would buy nothing and cost a merge-time scan.
    - Strip wall-clock/region-local watermark from served responses (throughput chart,
      movements `coverage_note`/cursor).
 3. **Lake-aware health + failover routing** (§6).
@@ -308,10 +321,10 @@ much larger decision.
 
 ## 9. The SLO guard (make the invariant enforceable, not aspirational)
 
-Add a test/lint that **fails** if any SLO'd handler (`/v1/price`-class or `/v1/oracle/*`)
-gains a remote-CH, cross-region-proxy, or S3 dependency. This turns §3a's "no SLO'd route
-crosses a region boundary" from a promise into a checked invariant, so a future change
-can't silently route pricing over a WAN.
+**SHIPPED:** `internal/api/v1/slo_guard_test.go` is the test that **fails** if an SLO'd
+handler (`/v1/price`-class or `/v1/oracle/*`) gains a remote-CH, cross-region-proxy or S3
+dependency. §3a's "no SLO'd route crosses a region boundary" is a checked invariant, not a
+promise, so a future change can't silently route pricing over a WAN.
 
 ## 10. Phasing
 

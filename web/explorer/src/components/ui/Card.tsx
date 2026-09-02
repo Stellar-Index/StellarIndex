@@ -43,6 +43,14 @@ type CardHeaderProps = {
   actions?: ReactNode;
   /** An eyebrow/kicker label above the title. */
   eyebrow?: ReactNode;
+  /**
+   * Heading rank for `title`. Defaults to 3, which is right for a card
+   * nested under a SectionHeader (`ui/Page`'s `<h2>`). A card that IS a
+   * page's top-level section must pass 2, or the outline skips h2 and
+   * `heading-order` (WCAG 1.3.1) fails — the visual size is unchanged
+   * either way, since the styling lives in the className, not the tag.
+   */
+  headingLevel?: 2 | 3 | 4;
   className?: string;
 };
 
@@ -51,8 +59,10 @@ export function CardHeader({
   description,
   actions,
   eyebrow,
+  headingLevel = 3,
   className,
 }: CardHeaderProps) {
+  const H = `h${headingLevel}` as const;
   return (
     <div
       className={cn(
@@ -67,9 +77,9 @@ export function CardHeader({
           </div>
         )}
         {title && (
-          <h3 className="truncate text-[15px] font-semibold text-ink">
+          <H className="truncate text-[15px] font-semibold text-ink">
             {title}
-          </h3>
+          </H>
         )}
         {description && (
           <p className="mt-0.5 text-sm text-ink-muted">{description}</p>

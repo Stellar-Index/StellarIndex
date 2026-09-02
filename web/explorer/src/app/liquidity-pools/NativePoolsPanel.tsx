@@ -12,7 +12,7 @@ import {
   assetLabel,
   displayUnits,
 } from './PoolDepthDetail';
-import { Button } from '@/components/ui';
+import { Button, Mono } from '@/components/ui';
 
 interface LiquidityPoolRow extends PoolDepthRow {
   pool_hex: string;
@@ -149,12 +149,15 @@ export function NativePoolsPanel() {
                         <span className="font-medium">
                           {a} / {b}
                         </span>{' '}
-                        <span
-                          className="text-ink-muted font-mono text-xs"
-                          title={row.pool}
-                        >
-                          {row.pool.slice(0, 4)}…{row.pool.slice(-4)}
-                        </span>
+                        {/* The full pool id was hover-only (`title=`),
+                            unreachable by touch/keyboard. Mono keeps the
+                            hover title AND adds the canonical copy
+                            button, which is the reachable path. */}
+                        <Mono
+                          value={row.pool}
+                          truncate={{ head: 4, tail: 4 }}
+                          className="text-ink-muted text-xs"
+                        />
                       </td>
                       <td className="py-2 pr-3 text-right tabular-nums">
                         {displayUnits(
@@ -181,13 +184,33 @@ export function NativePoolsPanel() {
                       <td className="text-ink-muted py-2 pr-3 text-right tabular-nums">
                         {row.as_of_ledger.toLocaleString('en-US')}
                       </td>
-                      <td className="text-ink-muted py-2 text-right text-xs">
-                        {open ? 'Hide depth ▴' : 'Depth ▾'}
+                      {/* The keyboard/AT path to the depth detail. The
+                          row's onClick stays a mouse convenience; this
+                          native <button> puts the expander in the tab
+                          order and states its expanded/collapsed status
+                          (WCAG 2.1.1 / 4.1.2). */}
+                      <td className="py-2 text-right text-xs">
+                        <button
+                          type="button"
+                          aria-expanded={open}
+                          aria-controls={`pool-depth-${row.pool}`}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setExpanded(open ? null : row.pool);
+                          }}
+                          className="text-ink-muted hover:text-brand-600 focus-visible:ring-brand-500/60 rounded-sm px-1 py-0.5 transition-colors focus-visible:ring-2 focus-visible:outline-hidden"
+                        >
+                          {open ? 'Hide depth ▴' : 'Depth ▾'}
+                        </button>
                       </td>
                     </tr>
                     {open && (
                       <tr className="border-line/60 bg-surface-subtle/50 border-b">
-                        <td colSpan={7} className="px-3 py-3">
+                        <td
+                          colSpan={7}
+                          id={`pool-depth-${row.pool}`}
+                          className="px-3 py-3"
+                        >
                           <PoolDepthDetail row={row} />
                         </td>
                       </tr>

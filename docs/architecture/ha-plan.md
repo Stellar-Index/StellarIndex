@@ -1,7 +1,7 @@
 ---
 title: High-Availability Infrastructure Plan
 last_verified: 2026-07-25
-status: ratified but PARTIALLY STALE — §4.3/§8 refreshed 2026-07-18 for ClickHouse (§4.3's hardware-expansion claim corrected 2026-07-24, §8/§3.3's backup deployment status corrected 2026-07-25, audit-2026-07-23 DOC-05/DOC-06); §3 still lacks a CH tier (see top amendment)
+status: ratified but PARTIALLY STALE — §4.3/§8 refreshed 2026-07-18 for ClickHouse (§4.3's hardware-expansion claim corrected 2026-07-24, §8/§3.3's backup deployment status corrected 2026-07-25, audit-2026-07-23 DOC-05/DOC-06). 2026-09-02 (#361): §2 diagram, §3.4, §3.8, §6 and the §8/restore-drill "reality check" blocks corrected against code — those blocks had INVERTED (repo2 + restore drill are live). §3 still lacks a CH tier (see top amendment); cost/RTO tables NOT re-verified
 ---
 
 > ⚠️ **Multi-region content superseded by ADR-0050 / [`multi-region-ha.md`](multi-region-ha.md) (2026-08-21).** This plan's multi-region framing (and its "active/active out of scope for v1" stance) is overturned. The **single-region HA design** below (HAProxy / Patroni / Redis-Sentinel) remains current and is **Phase 1** of the multi-region plan — read it for that, not for the multi-region shape.
@@ -130,15 +130,16 @@ provider's storage economics.
                       └───────────────┬──────────────┘
                                       │
                       ┌───────────────┴──────────────┐
-                      │   stellarindex-indexer pool   │   one shard per source
-                      │   (per-source orchestration) │
-                      └───┬──────────┬──────────┬────┘
-                          │          │          │
-                    ┌─────┴───┐ ┌────┴────┐ ┌───┴─────┐
-                    │ core A  │ │ core B  │ │ rpc A/B │
-                    │+galexie │ │+galexie │ │(captive)│
-                    │  (R640) │ │ (R640)  │ │ (R640)  │
-                    └─────────┘ └─────────┘ └─────────┘
+                      │   stellarindex-indexer       │   ONE process; the
+                      │   (dispatcher → decoders)    │   dispatcher fans out,
+                      └───────┬──────────────┬───────┘   no per-source shard
+                              │              │
+                        ┌─────┴───┐    ┌─────┴───┐
+                        │ galexie │    │ galexie │   captive core is a
+                        │+captive │    │+captive │   SUBPROCESS of galexie
+                        │  core   │    │  core   │   — no standalone core,
+                        │ (R640)  │    │ (R640)  │   no stellar-rpc service
+                        └─────────┘    └─────────┘   (removed 2026-04-23)
 ```
 
 Component counts in §3. Each box is ≥ N+1; the stellar-core nodes are
@@ -245,23 +246,30 @@ provisioned; cloud is pay-as-you-use for DR.
   - **RPO 5 min** (WAL archiving lag SLA).
   - **Restore test:** automated on a timer, evidence appended to
     `docs/operations/drills/` per
-    [ADR-0043](../adr/0043-backup-and-restore-strategy.md) §3 (that
-    ADR says *monthly*; the shipped
-    `restore-drill.timer` template is *weekly* — unreconciled drift,
-    do not treat either as a live guarantee). There is no ops
-    dashboard for drill results, here or anywhere in the repo.
+    [ADR-0043](../adr/0043-backup-and-restore-strategy.md) §3.
+    **Corrected 2026-09-02:** the claimed weekly-vs-monthly drift does
+    not exist — the shipped timer is *monthly*
+    (`configs/ansible/roles/archival-node/templates/systemd/restore-drill.timer.j2:27`,
+    `OnCalendar=Sat *-*-01..07 04:00:00 UTC`), matching the ADR. There is
+    still no ops dashboard for drill results, here or anywhere in the repo.
   > **Reality check (2026-07-25, audit-2026-07-23 DOC-06).** On R1
   > today: the repo is `repo1` at `/var/lib/pgbackrest` — a local ZFS
   > dataset on the same `data` pool as the DB, **not** MinIO and not
   > off-site (§8). `pgbackrest-backup.timer` is enabled and runs
   > **full Sunday / diff Mon–Sat at 02:00 UTC** — there is no hourly
   > `incr`. WAL archiving is continuous (`archive-async=y`), so the
-  > 5-min RPO holds *for repo1 only*. The restore drill is **not
-  > automated**: `restore-drill.timer` (Sat 04:00 UTC) is installed
-  > but deliberately left disabled while the pool is tight
-  > (`tasks/18-pgbackrest-backup.yml`), and exactly **one** drill has
-  > ever run — 2026-07-03, repo1, manual
-  > (`docs/operations/drills/restore-drills.md`).
+  > 5-min RPO holds for repo1; repo2 (off-site S3, 2026-08-29) is
+  > backed up nightly on its own schedule.
+  >
+  > **CORRECTED 2026-09-02 — this paragraph was inverted.** The restore
+  > drill **is** automated. `restore-drill.timer` was ENABLED on
+  > 2026-07-27 once the galexie trim cleared the capacity condition it
+  > was gated on, and its cadence is **monthly** (first Saturday, 04:00
+  > UTC) per ADR-0043 §1/§3 —
+  > `configs/ansible/roles/archival-node/tasks/18-pgbackrest-backup.yml:333-350`
+  > carries the enable task and the dated rationale. The drill's own
+  > precondition check still refuses (exit 2, uncounted) if free space
+  > regresses, so it is safe under capacity pressure.
 - **Failover:** Patroni leader election. Target RTO 60 s.
 - **Connection secret:** read via secret manager at startup, never
   on disk.
@@ -308,14 +316,16 @@ provisioned; cloud is pay-as-you-use for DR.
   - **SSE subscriber registry** — key `sub:<channel>`, no TTL
     (heartbeat).
 - **Failure mode:** master down → Sentinel failover, 15–30 s
-  window. During the window `stellarindex-api` returns `stale_flag=true`
+  window. During the window `stellarindex-api` returns `stale: true`
   on affected keys (pulls from Timescale as fallback).
 - **Persistence:** AOF every-second. RDB nightly. We **do not**
   rely on Redis persistence for correctness — a wiped Redis
   re-hydrates from Timescale within 2 min (the
   `stellarindex-aggregator` re-warms).
-- **Caveat:** token-bucket rate-limit resets on a wipe (users get
-  a grace minute). Acceptable.
+- **Caveat:** the rate-limit counter resets on a wipe (users get a grace
+  minute). Acceptable. Note the limiter is a **fixed-window** Redis
+  counter (INCR+EXPIRE), *not* a token bucket — `internal/ratelimit/doc.go:1-3`
+  states the choice and its rationale.
 
 ### 3.5 MinIO
 
@@ -367,9 +377,15 @@ provisioned; cloud is pay-as-you-use for DR.
 
 ### 3.8 stellarindex-indexer fleet
 
-- **Topology:** one `stellarindex-indexer` process per source (SDEX,
-  Soroswap, Aquarius, Phoenix, Comet, Blend, Reflector, Redstone,
-  Band, CEX, FX — roughly 11 processes).
+- **Topology (corrected 2026-09-02):** **one** `stellarindex-indexer`
+  process, not one per source. It walks ledgers once via
+  `internal/ledgerstream` and the `internal/dispatcher` fans each ledger
+  to every registered decoder. The per-source `Source`/`Orchestrator`
+  goroutine seam this bullet described was **deleted in 2026-07** —
+  `internal/consumer/` is now `doc.go` + `event.go` (the transport-neutral
+  `consumer.Event` contract) and no `StreamLive` exists anywhere in the
+  tree. Off-chain CEX/FX connectors still run their own goroutines, but
+  inside the same binary and outside the dispatcher path.
 - **Cursors:** persisted in Timescale per-source
   (`cursor(<source_id>)`). On restart the indexer resumes from the
   saved cursor.
@@ -462,11 +478,11 @@ Detail + live capacity table: `docs/operations/runbooks/phase-a-capacity-relief-
 | -------------- | ------------ | --------- | --------------- |
 | 1 `stellarindex-api` pod | 33% reduced serving capacity | HAProxy routes to other 2; auto-restart | < 30 s |
 | 2 `stellarindex-api` pods | 66% reduced | degraded SLA warning alert | 1–5 min manual intervention |
-| Redis master | One hash slot unavailable for ~30 s | stale_flag on affected keys; `/v1/readyz` returns 200 with `status="degraded"` during the window (wave-110 critical/non-critical split — Redis is non-critical, cache misses fall through to Timescale); HAProxy keeps the backend in service | Sentinel failover 15–30 s |
+| Redis master | One hash slot unavailable for ~30 s | `stale: true` on affected keys; `/v1/readyz` returns 200 with `status="degraded"` during the window (wave-110 critical/non-critical split — Redis is non-critical, cache misses fall through to Timescale); HAProxy keeps the backend in service | Sentinel failover 15–30 s |
 | Timescale primary | Writes fail | Patroni elects replica; api switches read pool via PgBouncer | 30–60 s |
 | PgBouncer pair | All DB access fails | Depends on keepalived VIP failover timing | 5–15 s |
 | 1 stellar-core | Aggregator loses one ingest source | duplicate stream from others; dedup by hash | instant |
-| All 3 stellar-core | No new ledger events | API returns stale_flag=true and 30 s-old data from cache | minutes–hours |
+| All 3 stellar-core | No new ledger events | API returns `stale: true` and 30 s-old data from cache | minutes–hours |
 | 1 stellar-rpc | `getEvents` subscribers fall over to survivor | automatic | < 10 s |
 | MinIO 1–3 nodes | EC(6+3) preserves reads/writes | auto-heal on replacement | hours |
 | MinIO 4–6 nodes | Writes fail; reads OK | alert SEV-1 | hours–days |
@@ -483,8 +499,9 @@ times.
 
 ## 6. Security posture
 
-Not the full threat model (that lives in `docs/operations/threat-model.md`,
-Week 9), but the HA-relevant items:
+Not the full threat model — **note (2026-09-02): `docs/operations/threat-model.md`
+does not exist and never has**; there is no consolidated threat model in the
+repo, so treat the list below as the only written HA-security posture:
 
 - **Secrets:** Vault (colo) + AWS Secrets Manager (cloud), cross-
   replicated via periodic sync. Application reads at startup via a
@@ -541,10 +558,10 @@ Alerts already sketched in `docs/operations/alerts-catalog.md` (Week 9).
 > ZFS pool with the database it protects.** `systemctl list-timers` shows
 > `pgbackrest-backup.timer` and nothing else — no `clickhouse-backup`, no
 > `restore-drill`.
-> During an incident, plan recovery from what is actually on the box, not from this table. **What exists today on R1:** pgBackRest **`repo1` only**, at `/var/lib/pgbackrest` — a ZFS dataset on the *same* `data` pool as the database it protects (`templates/pgbackrest.conf.j2`), full Sunday + differential Mon–Sat at 02:00 UTC with continuous WAL archiving. **A pool/box loss loses the data *and* every backup of it.** Specifically not provisioned:
 >
-> - **ClickHouse — no backup of any kind.** `clickhouse-backup` appears nowhere in the repo outside design docs. The 8.6 TiB lake's only recovery path today is re-derivation from the galexie archive (~1–2 weeks).
-> - **Postgres off-site (`repo2`) — not configured.** `configs/ansible/inventory/r1.yml` sets `pgbackrest_offsite_ack: true`, the explicit acknowledgement of this gap that `tasks/18-pgbackrest-backup.yml` demands in lieu of an S3 repo.
+> **UPDATED 2026-09-02 — the Postgres half of this block is no longer true.** During an incident, plan recovery from what is actually on the box, not from this table. **What exists today on R1:** pgBackRest `repo1` at `/var/lib/pgbackrest` — a ZFS dataset on the *same* `data` pool as the database it protects (`templates/pgbackrest.conf.j2`), full Sunday + differential Mon–Sat at 02:00 UTC with continuous WAL archiving — **plus `repo2`, an encrypted off-site S3 repo provisioned 2026-08-29** (ADR-0043 §2.2). Backups run per-repo nightly and staleness is alerted (`stellarindex_backup_offsite_stale`, `deploy/monitoring/rules/backup-offsite.yml`); the role gates repo2 rendering on `pgbackrest_repo2_s3_bucket` being set (`configs/ansible/roles/archival-node/tasks/18-pgbackrest-backup.yml:132`), and the `pgbackrest_offsite_ack: true` escape hatch is no longer what r1 relies on. So a pool/box loss no longer takes Postgres with it. Still not provisioned:
+>
+> - **ClickHouse — no DATA backup of any kind.** `clickhouse-backup` appears nowhere in the repo outside design docs. Only a schema+state snapshot job exists (`tasks/08-clickhouse.yml`), and on r1 it has no off-site target either. The lake's only recovery path today is re-derivation from the galexie archive (~1–2 weeks).
 > - **Galexie archive off-site — not configured.** Galexie exports to the box's own MinIO (`galexie_s3_endpoint: http://127.0.0.1:9000`) and the only `mc mirror` job, `galexie-archive-fill.sh`, runs *inbound* (AWS public blockchain dataset → `local/galexie-archive`). Nothing copies the archive **out**, and ADR-0027's cold-S3 tier is not enabled on r1 (`s3_cold_bucket_archive` unset).
 > - **Config / vault / secrets tarball — no such job exists.**
 >
@@ -575,21 +592,21 @@ carries four boolean flags:
 
 | Flag | Meaning | When we set it |
 | ---- | ------- | -------------- |
-| `stale_flag` | Price > 30 s old | Redis hot key TTL expired + aggregator hasn't written new value |
+| `stale` | Price > 30 s old | Redis hot key TTL expired + aggregator hasn't written new value |
 | `reduced_redundancy` | Price derived from fewer sources than normal | Any configured source for this asset is unhealthy (cursor lag > 60 s) |
 | `triangulated` | Price derived via a USD/BTC hop, not direct | Pair has no direct market meeting min-volume threshold |
 | `divergence_warning` | Sources disagree > configured threshold | Cross-check against CoinGecko / CMC / Chainlink-HTTP fails bound |
 
 No flag is a response-level error; they're advisory. Clients decide
 whether to accept. The `price` value is always best-available;
-`stale_flag=true` means "here's the last known good, fix your
+`stale: true` means "here's the last known good, fix your
 decision-making accordingly."
 
 Specific "everything is on fire" scenarios:
 
 | Scenario | Response |
 | -------- | -------- |
-| Full primary-colo outage | DNS flip to cloud DR → API serves from AWS + last-synced Timescale replica (RPO 5 min) with `stale_flag=true` on every response until ingest is re-established. |
+| Full primary-colo outage | DNS flip to cloud DR → API serves from AWS + last-synced Timescale replica (RPO 5 min) with `stale: true` on every response until ingest is re-established. |
 | One critical source (e.g., Reflector) offline | Affected assets get `reduced_redundancy=true`; others unaffected. |
 | Divergence: Redstone vs CEX > 5% | `divergence_warning=true` on affected assets; internal alert to @ash for market-event sanity check. |
 | TimescaleDB read-replica lag > 10 s | API briefly reads from primary (via PgBouncer session-mode pool); alert if sustained. |

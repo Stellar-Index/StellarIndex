@@ -1,10 +1,26 @@
 ---
 title: Pre-P23 classic-asset-movement reconstruction (+ pre-P18 ClaimAtom coverage) — research
 last_verified: 2026-07-10
-status: research (evidence base for a forthcoming ADR)
+status: research — consumed by ADR-0047 (Accepted); Phase 1 shipped 2026-07-10
 ---
 
 # Pre-P23 classic-asset-movement reconstruction — research
+
+> **Status (2026-09-02): the "forthcoming ADR" arrived and its Phase 1
+> shipped.** [ADR-0047](../adr/0047-pre-p23-classic-movement-reconstruction.md)
+> is Accepted, and Phase 1 landed 2026-07-10 (`13b6db0d`):
+> `stellarindex-ops classic-movements-backfill`
+> (`cmd/stellarindex-ops/main.go:184`) reconstructs **Payment +
+> CreateAccount** pre-P23 from the ClickHouse lake. Note the write target
+> moved: the original Postgres `classic_movements` hypertable (migration
+> 0105) was superseded by ADR-0048 D2 and **dropped** in migration 0113 —
+> the backfill now writes ClickHouse-native `stellar.account_movements`
+> only (`internal/storage/clickhouse/account_movements.go`) and opens no
+> Postgres connection. This remains the evidence
+> base; it is no longer the open question. One caveat below is **not**
+> re-verified as of 2026-09-02 — the `ledger_entry_changes` backfill status in
+> §"the lake can support it" is stated as of 2026-07-10 and was not re-checked
+> in this pass.
 
 This is a **research doc, not a decision**. It exists to give the
 forthcoming ADR a grounded evidence base: what has to be

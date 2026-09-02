@@ -72,7 +72,10 @@ export default function SignupPage() {
         <h2 className="mb-4 text-xl font-semibold text-ink">
           Tiers
         </h2>
-        <div className="overflow-hidden rounded-xl border border-line">
+        {/* overflow-x-auto, not -hidden: WCAG 1.4.10 Reflow — the nowrap
+            tier headers were CLIPPED at 320px with no way to reach them.
+            The radius still clips. */}
+        <div className="overflow-x-auto rounded-xl border border-line">
           {/* table-wave:allowlist prose — marketing tier table (operator
               decision D5 2026-08-24): stays a hand-rolled <table>; the
               A2-01 data-table wave (Table primitives) must not sweep it. */}

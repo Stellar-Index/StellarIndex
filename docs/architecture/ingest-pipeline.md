@@ -42,12 +42,23 @@ internal/pipeline/sink.go  ← fans each decoded item to its destination:
     │     ledgers are contiguous + hash-chained to genesis. This is the
     │     substrate that proves "100% coverage" (ADR-0033).
     │
-    ├─► soroban_events landing zone (ADR-0029, Postgres) ── raw Soroban events
-    │     │   tailed by ↓
+    ├─► soroban_events landing zone (ADR-0029, Postgres) ── raw Soroban events.
+    │     LEGACY FALLBACK ONLY, decommission-pending (BACKLOG #39).
+    │
+    │   THE PROJECTOR'S READ SOURCE IS THE CLICKHOUSE `contract_events` LAKE
+    │   BY DEFAULT — storage.clickhouse_projector_source, default true
+    │   (internal/config/config.go:943; ADR-0041/0034). It tails the Postgres
+    │   landing zone only when that switch is turned off.
     │     ▼
     │   internal/projector/  ← the ONE writer for Soroban-derived per-source
-    │     │   tables (trades, blend_*, phoenix_*, comet_*, soroswap_skim,
-    │     │   cctp_events, rozo_events, sep41_*, reflector/redstone oracle_updates).
+    │     │   tables (trades, blend_* incl. blend_backstop + blend_emitter,
+    │     │   phoenix_*, comet_*, aquarius_*, defindex_* (Event/VaultEvent/
+    │     │   DFeesEvent), sorocredit_*, soroswap_skim, cctp_events,
+    │     │   rozo_events, sep41_* (supply + transfers),
+    │     │   reflector/redstone oracle_updates) — the authoritative list is
+    │     │   the switch in internal/pipeline/sink.go::IsProjectedEvent
+    │     │   (:486-502), AST-checked in lockstep with the projector registry
+    │     │   by TestLockstep_RegistrySourcesFullyWired.
     │     │   ADR-0031/0032. Catch-up = `projector-replay -source <n> -from <l>`
     │     │   for small rewinds, `projected-rebuild -source <n> -from <l>` for
     │     │   anything bigger (ADR-0048 D3 — see below).
@@ -272,7 +283,10 @@ in a per-source poll loop.
 - [ADR-0013](../adr/0013-go-stellar-sdk-xdr-for-scval.md) — SDK
   dependency, which gives us `ingest.ApplyLedgerMetadata`.
 - [ADR-0029](../adr/0029-soroban-events-landing-zone.md) — the
-  `soroban_events` raw landing zone the projector tails.
+  `soroban_events` raw landing zone. It is the projector's **legacy
+  fallback** read source only; the default is the ClickHouse lake
+  (`clickhouse_projector_source`, `internal/config/config.go:943`) and
+  decommissioning the landing zone is BACKLOG #39.
 - [ADR-0031](../adr/0031-data-derived-coverage-signal.md) /
   [ADR-0032](../adr/0032-per-source-tables-as-projections.md) —
   data-derived coverage + per-source tables as projections; the

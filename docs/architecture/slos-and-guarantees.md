@@ -14,7 +14,8 @@ each with concrete, re-runnable proof. Companion docs: `coverage-matrix.md`
 
 - **Surface**: `/v1/price/tip` (+ SSE stream). Definition pinned in
   `freshness-definition.md`.
-- **Proof**: sla-probe verdict series (10-min timer, r1) — `pass` with
+- **Proof**: sla-probe verdict series (**15-min** timer, r1 —
+  `configs/healthchecks/stellarindex-sla-probe.timer:12`) — `pass` with
   per-endpoint freshness; spot probes show single-digit-second
   `observed_at` age for both `crypto:XLM` and `native`.
 
@@ -72,7 +73,13 @@ Verified live 2026-06-13:
 - **Proof**: the origin-direct run sustained **1031 req/min on a single
   key** (Prometheus `rate(http_request_duration_seconds_count)`, measured
   live) for 30 min with **zero rate-limit (429) failures**.
-- **Headroom**: anon tier is provisioned at 6000/min and authenticated
+- **Headroom**: the anon tier is provisioned at 6000/min **on r1
+  specifically** (`configs/ansible/roles/archival-node/templates/stellarindex.toml.j2:340`); the **shipped default is 60/min**
+  (`internal/config/config.go:1197`, `configs/example.toml:278`), so a fork
+  or a fresh deployment gets 1/100th of this headroom unless it opts in.
+  Whether 6000/min is the intended public anonymous tier is an open
+  operator decision (#359); both numbers are stated here deliberately.
+  Authenticated
   keys default to 1000/min (`key_rate_limit_per_min`, per-key
   configurable via `mint-key -rate-limit-per-min`); a saturation probe
   drove ~18,000/min on one key before any limiter pushback.

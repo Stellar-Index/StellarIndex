@@ -1,6 +1,8 @@
 # Outlier-trim drift artifact: MAD-over-window trims agreed regime shifts; alert measures re-counted window tail, not venue disagreement
 
-> Status: DESIGN (Wave B, 2026-08-28). Produced by a read-only investigation against HEAD 4aa93e96; every claim cites file:line. Open questions at the end are decisions for the operator.
+> **Status (2026-09-02): SHIPPED WITH AMENDMENTS (#244, 2026-08-28).** The mechanics as built are **not** the §Design sketch below — read `internal/aggregate/outliers_local.go` (its header documents the anchored, time-local median+1.4826·MAD filter and why the union predicate and nearest-neighbour fallback were added). The alert as built is `stellarindex_aggregator_outlier_trim_fraction` (`configs/prometheus/rules.r1/aggregator.yml:115`), with the pre-2026-08-28 counter gate kept as `stellarindex_aggregator_outlier_trim_rate_legacy` (`:162`) for a one-week overlap that **retires 2026-09-04**. **PR-5 (the window-cap rework) was NOT shipped**, so the §Risks window-cap item still stands.
+>
+> *Original header:* Status: DESIGN (Wave B, 2026-08-28). Produced by a read-only investigation against HEAD 4aa93e96; every claim cites file:line. Open questions at the end are decisions for the operator.
 
 # Outlier-trim drift artifact (2026-08-28)
 

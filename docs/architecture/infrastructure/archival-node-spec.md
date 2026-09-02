@@ -6,6 +6,8 @@ status: ratified — embodied in `configs/ansible/roles/archival-node/`; r1 (Het
 
 # Full Archival Node — Hardware & Software Spec
 
+> **Amendment (change made 2026-04-23, recorded here 2026-09-02): the `stellar-rpc` rows and columns below are historical.** r1 today runs **Galexie (with its own captive stellar-core subprocess) + ClickHouse + TimescaleDB + MinIO + the four `stellarindex-*` binaries** — there is no standalone `stellar-core` service and no `stellar-rpc` service (CLAUDE.md "stellar-rpc is NOT in our production ingest path"; ingest is `internal/ledgerstream` → `internal/dispatcher`, ADR-0034). `stellar-rpc` survives only for the `rpc-probe` operator diagnostic and fixture capture. **Consequence for sizing: any row below that budgets for stellar-rpc over-provisions by one captive-core** (CPU, RAM and the second core DB). The hardware envelope is otherwise unchanged, and ClickHouse — which post-dates this spec — is the dominant disk consumer today (`multi-region-ha.md:126`).
+
 **Owner:** @ash + @alex (ops).
 **Scope:** one node. Three of these ship into three regions; multi-
 region topology lives in

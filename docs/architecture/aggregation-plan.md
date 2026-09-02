@@ -1,7 +1,7 @@
 ---
 title: Aggregation plan — the policy chain from raw trade to served price
 last_verified: 2026-07-06
-status: binding
+status: binding — outlier-filter description, orchestrator state, alert inventory and div: key shape corrected against code 2026-09-02 (#361); the rest not re-derived this pass
 ---
 
 # Aggregation plan
@@ -95,11 +95,14 @@ and `aggregate.VWAP`. Each step is independent and falls back to
 | --- | --- | --- | --- |
 | 1. Stablecoin expansion | OFF | `aggregate.enable_stablecoin_fiat_proxy` | Expand fiat-quote targets to direct + stablecoin backers; rewrite via `aggregate.ProxyPair` |
 | 2. Class filter | ON | `aggregate.disable_class_filter` (inverted — zero is filter ON) | Drop non-`ClassExchange` rows; aggregator / oracle / authority_sanity classes don't contribute to VWAP |
-| 3. Outlier filter | ON (`σ=4.0`) | `aggregate.outlier_sigma_threshold` | Drop trades whose price differs from the window mean by > σ standard deviations |
+| 3. Outlier filter | ON (`σ=4.0`) | `aggregate.outlier_sigma_threshold` | Drop a trade only when it sits > σ **robust scales (1.4826·MAD)** from **every** reference it is scored against — the window MEDIAN *and* its time-local neighbourhood (own/adjacent 1-minute buckets, or nearest prints for thin series). **Median+MAD, not mean+stdev** (`internal/aggregate/outliers_local.go`; `internal/config/config.go:1150` states this verbatim). Volume-blind: one price per trade. |
 
 Order matters: class filter runs before the outlier filter because
 the σ arithmetic should run over a pair-homogeneous, exchange-only
-sample. Stablecoin expansion runs before both — it re-stamps the
+sample. (**Corrected 2026-09-02:** this section previously described the
+outlier step as "> σ standard deviations from the window mean". It has
+never been a mean/stdev test in the shipped code, and since #244 it is
+additionally *time-local* so an agreed regime shift survives.) Stablecoin expansion runs before both — it re-stamps the
 rewritten trades onto the target pair, and the class filter then
 treats each row by its venue identity (binance, coinbase, …) not
 by the original on-chain pair.
@@ -113,9 +116,9 @@ by the original on-chain pair.
   want to fold it into our own VWAP. Filtering at decode would
   strip information we need.
 - **Decoders never drop outliers.** σ-deviance is a window-relative
-  signal. A row that's 5σ from the per-pair window mean is noise
-  on a single pair but might be perfectly normal across all pairs
-  combined.
+  signal. A row that's 5 robust scales from the per-pair window median
+  is noise on a single pair but might be perfectly normal across all
+  pairs combined.
 
 In short: ingest preserves truth; aggregation applies policy.
 
@@ -149,15 +152,24 @@ behaviour day-to-day.
 
 ## Observability
 
-Three Prometheus rules (`deploy/monitoring/rules/aggregator.yml`)
-consume four counters from `internal/obs/metrics.go`:
+`deploy/monitoring/rules/aggregator.yml` (and its R1 overlay
+`configs/prometheus/rules.r1/aggregator.yml`, kept in lockstep by
+`scripts/ci/lint-rule-equivalence`) carries **12** alerts as of
+2026-09-02, not three: `aggregator_silent`, `outlier_storm`,
+`outlier_trim_fraction`, `outlier_trim_rate_legacy` (overlap copy,
+retires 2026-09-04), `fx_snap_fallback_dominant`,
+`triangulation_chains_dry`, `class_drop_spike`, `cache_write_errors`,
+`protocol_events_rollup_failing`, `asset_volume_rollup_failing`,
+`nonstandard_decimals_correction_failing`,
+`customer_webhook_fanout_failing`. The counters below are the subset
+this doc's policy chain feeds:
 
 | Counter | Labels | Used by |
 | --- | --- | --- |
 | `stellarindex_aggregator_ticks_total` | `outcome` (ok/error) | `aggregator_silent` alert |
 | `stellarindex_aggregator_vwap_writes_total` | — | `aggregator_silent` alert |
 | `stellarindex_aggregator_empty_windows_total` | — | (Operator dashboards; see runbooks) |
-| `stellarindex_aggregator_dropped_trades_total` | `reason` (class/outlier) | `aggregator_outlier_storm` + `aggregator_class_drop_spike` alerts |
+| `stellarindex_aggregator_dropped_trades_total` | `reason` (class/outlier) **and `pair`** (`orchestrator.go:1068,1086`) | `aggregator_outlier_trim_rate_legacy` + `aggregator_class_drop_spike` alerts |
 
 Alert runbooks at:
 
@@ -210,9 +222,18 @@ window.
 
 ## Boundaries — what this layer does NOT do
 
-- **No persistent state.** The orchestrator is stateless across
-  ticks; everything it needs comes from Timescale or
-  `external.Registry` at refresh time. Restart-friendly by design.
+- **No persistent state — but NOT stateless.** Nothing is written to
+  disk, yet the orchestrator carries **load-bearing cross-tick in-memory
+  state**: `prevVWAPs` (the anomaly comparator), `frozenPrevVWAPs` (the
+  freeze-ladder shadow comparator), `freezeStates`, `lastComposites` and
+  `tickEdgeQuotes` — all documented at
+  `internal/aggregate/orchestrator/orchestrator.go:642-679`, together with
+  the incidents that made them necessary. **A restart loses them**, and a
+  frozen pair with no `prev` is UNSCORED, which can neither fire nor
+  release (observed live as reason `phase2:unscored`). Treat "restart-
+  friendly" as "restarts safely", not "restarts free". *(Corrected
+  2026-09-02: this bullet previously read "the orchestrator is stateless
+  across ticks".)*
 - **No cross-binary state coupling.** Aggregator → API
   communication is via Redis keys + the static registry. The API
   has no read path into the orchestrator's in-memory `Stats()`.
@@ -242,7 +263,9 @@ landed during the launch-readiness sweep:
 - **Divergence detection.** Shipped — `divergence.Service` queries
   CoinGecko + Chainlink HTTP per-pair on every aggregator Tick
   (per `internal/aggregate/orchestrator/divergence_refresh.go`,
-  PR #429), writes `div:<asset>` to Redis with a 5-min TTL, and
+  PR #429), writes **`div:<pair>`** to Redis with a 5-min TTL
+  (`internal/cachekeys/keys.go:409` — keyed by pair; the older
+  `div:<base>` shape let the last pair win), and
   the API's `flags.divergence_warning` reads the cache. Per-Tick
   outcomes labelled by `ok / no_vwap / parse_error / refresh_error`
   via `stellarindex_divergence_refresh_total`; sustained
@@ -260,10 +283,13 @@ re-deriving the design space:
   serve them from Redis. Deferred behind real production traffic
   data — VWAP is the dominant query shape; pre-computing TWAP
   too costs Redis without an established demand-side signal.
-- **MAD-based outlier filter.** σ-mean is brittle on small
-  windows with fat tails. Switch to median-absolute-deviation
-  behind the same `outlier_sigma_threshold` flag once we have
-  pubnet runtime data backing the change with an ADR.
+- ~~**MAD-based outlier filter.**~~ **SHIPPED — moved out of Deferred
+  2026-09-02.** The filter is median + 1.4826·MAD behind the same
+  `outlier_sigma_threshold` flag, and #244 (2026-08-28) added the
+  time-local neighbourhood test after a live false-fire on
+  `crypto:XLM/fiat:USD` where an *agreed* 2% step was trimmed wholesale.
+  Code: `internal/aggregate/outliers_local.go` (its header carries the
+  incident narrative) and `internal/aggregate/global.go`.
 - **Continuous-aggregate refresh driver.** Timescale's background
   job handles materialised-view refresh today. A custom driver
   with tighter freshness guarantees lands when API consumers

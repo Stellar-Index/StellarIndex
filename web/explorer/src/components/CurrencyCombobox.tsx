@@ -1,6 +1,13 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 
 import { useDialog } from '@/lib/useDialog';
 
@@ -39,6 +46,11 @@ export function CurrencyCombobox({
   const [highlight, setHighlight] = useState(0);
   const wrapRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
+  // Stable ids so the trigger can point at the listbox and the search box
+  // can name its active option (ARIA combobox pattern, WCAG 4.1.2).
+  const baseId = useId();
+  const listId = `${baseId}-listbox`;
+  const optionId = (i: number) => `${baseId}-option-${i}`;
 
   const filtered = useMemo(() => {
     const q = query.trim().toUpperCase();
@@ -98,6 +110,11 @@ export function CurrencyCombobox({
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        // Only while the panel exists — a dangling aria-controls target
+        // is an invalid reference.
+        aria-controls={open ? listId : undefined}
         className={triggerCls}
       >
         {value} ▾
@@ -131,16 +148,41 @@ export function CurrencyCombobox({
               // Escape-to-close is handled by useDialog (panelRef) above.
             }}
             placeholder={placeholder}
+            role="combobox"
+            aria-expanded="true"
+            aria-controls={listId}
+            aria-autocomplete="list"
+            // DOM focus stays on the search box; this is what tells AT
+            // which option the arrow keys have landed on.
+            aria-activedescendant={
+              filtered[highlight] ? optionId(highlight) : undefined
+            }
             className="border-line bg-surface w-full border-b px-3 py-2 text-sm focus:outline-hidden"
           />
-          <ul className="max-h-64 overflow-y-auto py-1 text-sm">
+          {/* Deliberately NOT re-labelled: the wrapping panel already
+              carries aria-label={placeholder}, and naming both would put
+              two identically-named nodes in the a11y tree. */}
+          <ul
+            id={listId}
+            role="listbox"
+            className="max-h-64 overflow-y-auto py-1 text-sm"
+          >
             {filtered.length === 0 && (
-              <li className="text-ink-muted px-3 py-2 text-xs">No matches</li>
+              // Not an option — role="none" keeps the listbox's children
+              // to options only (aria-required-children).
+              <li role="none" className="text-ink-muted px-3 py-2 text-xs">
+                No matches
+              </li>
             )}
             {filtered.map((t, i) => (
-              <li key={t}>
+              // role="none" strips the implicit listitem so the listbox's
+              // only children are options (aria-required-children).
+              <li key={t} role="none">
                 <button
                   type="button"
+                  id={optionId(i)}
+                  role="option"
+                  aria-selected={t === value}
                   onClick={() => commit(t)}
                   onMouseEnter={() => setHighlight(i)}
                   className={`flex w-full items-center justify-between px-3 py-1.5 font-mono text-xs tracking-wider uppercase ${

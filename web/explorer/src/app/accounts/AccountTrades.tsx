@@ -217,9 +217,13 @@ function TradeRow({ t }: { t: AccountTrade }) {
   return (
     <TR>
       <Td>
-        <span className="whitespace-nowrap font-mono text-xs text-ink-muted" title={formatTimestamp(t.ts)}>
+        {/* The exact instant used to be hover-only (`title=`), i.e.
+            mouse-only. <time dateTime> makes it machine-readable and the
+            sr-only copy reachable by touch + screen reader. */}
+        <time dateTime={t.ts ?? undefined} className="whitespace-nowrap font-mono text-xs text-ink-muted" title={formatTimestamp(t.ts)}>
           {relativeAge(t.ts)}
-        </span>
+          <span className="sr-only"> ({formatTimestamp(t.ts)})</span>
+        </time>
       </Td>
       <Td>
         <span className="text-xs text-ink-body">{t.source}</span>

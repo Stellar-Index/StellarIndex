@@ -168,15 +168,6 @@ export function formatDurationLong(ms: number): string {
   return m === 0 ? `${h}h` : `${h}h ${m}m`;
 }
 
-/**
- * formatRelativeTitle — the absolute ISO string for a title attr next
- * to formatRelative's "2m ago" (AM-23: relative-only timestamps were
- * unverifiable; hover now shows the exact instant).
- */
-export function formatRelativeTitle(iso: string | null | undefined): string {
-  return iso ?? '';
-}
-
 // ── Base-unit (smallest-unit integer string) scaling — ADR-0003 ──────────
 //
 // Balance/supply strings arrive as smallest-unit integers that can exceed

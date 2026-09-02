@@ -1,10 +1,28 @@
 ---
 title: Platform spec — customer + staff dashboards, billing, full lifecycle
 last_verified: 2026-07-26
-status: design proposal — §7.2 admin endpoints are now split into SHIPPED vs proposed
+status: design proposal — §7.2 admin endpoints split into SHIPPED vs proposed; §1.5, §2.1, §2.2, §3.1 and §7 marked NOT BUILT against code 2026-09-02 (#363). Sections without a 2026-09-02 note were NOT re-verified
 ---
 
 # Platform spec — customer + staff dashboards, billing, full lifecycle
+
+> **Status (2026-09-02): DESIGN PROPOSAL. Read the SHIPPED list below before
+> trusting any section.** This is a large document and most of it describes
+> intent, not code. What actually ships today: magic-link + passkey sign-in
+> with a cookie session (`internal/api/v1/dashboardauth/`); API keys with
+> **scopes** and expiry (`platform.KnownKeyScopes`, `internal/platform/apikey.go:75`,
+> `internal/api/v1/admin_keys.go:49`); the Redis-counter usage pipeline
+> (`internal/usage/` → 5-min rollup → `usage_daily`) behind
+> `GET /v1/account/usage`; the operator surfaces `POST`/`DELETE /v1/admin/keys`,
+> `GET`/`PATCH /v1/admin/accounts/{id}` and the three status-notice routes; and
+> one staff tool, `GET /v1/account/admin/lookup`
+> (`internal/api/v1/dashboardauth/handlers.go:252`).
+> **Not built:** MFA/TOTP anywhere (§1.5), the `GET /v1/auth/whoami` route
+> (§2.1), the `permissions` JSON model (§2.2 — superseded by key scopes), the
+> `api_usage_events` event-ingestion pipeline (§3 — the table + CAGGs exist in
+> migration 0027 but are permanently empty), the staff perimeter (§7), and the
+> MRR/ARR revenue surfaces (already covered by §4's SUPERSEDED banner).
+> The per-section notes added on 2026-09-02 mark each of these inline.
 
 ## Goals
 
@@ -167,7 +185,13 @@ Per-account roles, enforced at every dashboard endpoint:
 Staff is a separate flag, not a role — orthogonal to the
 account hierarchy.
 
-### 1.5 MFA
+### 1.5 MFA — **NOT BUILT**
+
+> **Not implemented (verified 2026-09-02):** `grep -rli totp internal cmd
+> web/explorer/src` returns nothing. There is no MFA of any kind, no
+> `mfa_enabled` column in use, and no recovery codes. The "mandatory for
+> owners + billing role on **paid plans**" rule is also moot while the
+> platform is free (§"Pricing"). Everything in this section is proposal.
 
 TOTP only (no SMS — doesn't add security, adds cost). Setup flow:
 1. User scans QR code → confirms with one valid OTP → `mfa_enabled = true`
@@ -224,11 +248,17 @@ CREATE INDEX api_keys_account_active_idx
 | Edit | `PATCH /v1/account/keys/{id}` | Rename / change rate limit / IP allowlist / expiry |
 | Rotate | `POST /v1/account/keys/{id}/rotate` | Atomic: mint new + revoke old, returns new plaintext |
 | Revoke | `DELETE /v1/account/keys/{id}` | Soft-delete via `revoked_at`; key fails 401 immediately |
-| Test | `GET /v1/auth/whoami` | Returns Subject if the bearer key is live |
+| Test | ~~`GET /v1/auth/whoami`~~ — **no such route** (verified 2026-09-02: zero matches for `whoami` in `internal/api/v1/`). Use any authenticated endpoint, or `GET /v1/account/usage`, to test a key. | — |
 
-### 2.2 Permissions (scoped keys)
+### 2.2 Permissions (scoped keys) — **shipped differently**
 
-`permissions` JSON shape:
+> **As built (2026-09-02):** authorisation is a flat **scope vocabulary**, not
+> the nested `permissions` object below — `platform.KnownKeyScopes()`
+> (`internal/platform/apikey.go:75-77`) is the accepted set, an empty scope
+> list mints full access (`internal/api/v1/admin_keys.go:49`), and the spec
+> never mentions scopes at all. Treat the JSON below as a rejected shape.
+
+`permissions` JSON shape (proposed, superseded by key scopes):
 
 ```json
 {
@@ -281,7 +311,18 @@ secret managers.
 
 ## 3. Usage tracking & analytics
 
-### 3.1 Event ingestion
+### 3.1 Event ingestion — **DEAD SCHEMA; the real pipeline is `internal/usage`**
+
+> **Not implemented (verified 2026-09-02).** `internal/platform/usage.go:1-22`
+> says it plainly: `UsageStore`/`UsageEvent`/`UsageRollup` have **zero
+> implementations and zero callers**, nothing drains a Redis stream into
+> `AppendEvent`, and the `api_usage_events` hypertable + `api_usage_{5m,1h,1d}`
+> CAGGs from migration 0027 exist in the schema but are **never written to**.
+> Anything built on this section will silently see no rows.
+> **The live pipeline is a different package:** `internal/usage` — per-subject
+> and per-`endpoint×outcome` Redis INCR counters, rolled up every 5 minutes
+> into the `usage_daily` hypertable, which is what backs
+> `GET /v1/account/usage`. Orphaned-schema cleanup is tracked as #357/#358.
 
 Every authenticated request emits one usage event. Cost-conscious:
 do **not** write to Postgres in the request hot path — buffer
@@ -579,6 +620,20 @@ full retention (12mo).
 ---
 
 ## 7. Staff dashboard
+
+> **NOT BUILT (verified 2026-09-02) — every bullet in the auth list below is
+> aspirational.** What exists: a staff member is just `users.is_staff = true`
+> carrying the **same customer session cookie**, whose TTL is **30 days**
+> (`internal/api/v1/dashboardauth/handlers.go:196-197`,
+> `c.SessionTTL = 30 * 24 * time.Hour` — there is only one session TTL in the
+> codebase, so "30-minute idle timeout vs 30-day for customers" is not a
+> distinction that exists). There is **no TOTP**, **no IP allowlist**, and **no
+> separate host** — the one staff tool is `GET /v1/account/admin/lookup`
+> (`handlers.go:252`, gated by `RequireSession` + an `IsStaff` check at
+> `handlers_admin.go:50-56`) served from the main API host and reached at
+> `/dashboard/admin` in the same explorer app. Whether to BUILD this perimeter
+> is an open decision for the maintainer; documenting that it does not exist is
+> not.
 
 Strict separation from customer dashboard. Hosted at
 `admin.stellarindex.io` (separate Cloudflare Pages project),

@@ -1,7 +1,7 @@
 ---
 title: Wiring decomposition — api main.go, Server options, ops CLI (D1)
 last_verified: 2026-07-02
-status: current
+status: partially shipped — Unit 3 SHIPPED (2026-09-02 check); Units 1/2/4 not re-verified this pass
 ---
 
 # Wiring decomposition spec (delegation-ready)
@@ -44,9 +44,21 @@ Adding a reader today edits three synchronized sites (~60 deps each):
 - REJECTED alternative: a reflection/registry DI container —
   boring-over-clever; embedding gets the 3→1 win without magic.
 
-## Unit 3 — group the ops CLI dispatch
+## Unit 3 — group the ops CLI dispatch — **SHIPPED**
 
-`cmd/stellarindex-ops/main.go` is a flat ~55-case switch. A
+> **Status (2026-09-02): SHIPPED, with one deviation and one item still
+> open.** The dispatch is now a table, not a switch:
+> `cmd/stellarindex-ops/main.go:113` declares
+> `var subcommands = map[string]func(args []string) error{…}` with **69**
+> entries. Deviation: it is a **map keyed by name**, not the
+> `[]subcommand{…}` slice-of-structs with a `synopsis` field this spec
+> proposed. Consequence: **help text is still hand-maintained** (the static
+> `usageBody` const at `:262`), so the "one source of truth" half of the
+> bullet below is NOT done. The `default:`-case references to never-built
+> subcommands are gone from the dispatch; `cache-prime` /
+> `verify-invariants` survive only as a comment at `:110-111`.
+
+`cmd/stellarindex-ops/main.go` was a flat ~55-case switch. A
 framework (cobra/urfave) is REJECTED: new dep, new idiom, zero user
 benefit for an operator CLI. Instead:
 

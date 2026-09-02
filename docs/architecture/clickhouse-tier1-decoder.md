@@ -1,13 +1,14 @@
 ---
 title: Phase 2 design — structural decoder (galexie → ClickHouse Tier-1)
 last_verified: 2026-06-05
-status: design
+status: shipped — both §6 gates passed 2026-06-05; genesis→tip lake complete
 ---
 
 # Phase 2 — structural decoder (galexie → ClickHouse Tier-1)
 
-**Status: design (gated — no full backfill until the two gates in §6 pass on
-a sample).** Implements ADR-0034 Tier-1 ingest: decode every LCM into the
+> **Status (2026-09-02): SHIPPED.** The §6 gate this doc was blocked on is recorded as passed in its own §6.1 ("Gate 1 — throughput + footprint: **PASS**", 2026-06-05), and the lake has since been walked genesis→tip (`multi-region-ha.md:126` measures it at 14.59 TiB CH-reported / 9.30 TiB physical, ledgers contiguous + hash-chained). The **schema of record is `deploy/clickhouse/tier1_schema.sql`**, not the DDL sketches below — read those as the design rationale.
+
+**Status: shipped (both §6 gates passed on the 2026-06-05 sample).** Implements ADR-0034 Tier-1 ingest: decode every LCM into the
 six `stellar.*` ClickHouse tables, *structurally* (no protocol semantics),
 retaining raw XDR, completely + idempotently, for backfill + live.
 

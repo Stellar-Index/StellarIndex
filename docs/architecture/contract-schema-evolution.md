@@ -6,6 +6,19 @@ status: living doc
 
 # Per-contract schema evolution across versions
 
+> **Partial re-check (2026-09-02, issue #361).** `last_verified` is
+> deliberately left at 2026-05-03: only the checklist below and the
+> gate it drives were re-checked this pass, **not** the per-source WASM
+> hashes and fixture findings in §"What we know per source", which
+> still carry their 2026-04-23 capture date. What was confirmed today:
+> the `wasm-history` CLI family exists (`cmd/stellarindex-ops/main.go:155`);
+> per-source audit logs live under `docs/operations/wasm-audits/`; and
+> **every registered source in `internal/sources/external/registry.go` is
+> now `BackfillSafe: true` (28 entries)** — the only `false` left is the
+> zero-value fallback at `:166`, which keeps an *unknown* source
+> fail-closed. A full re-verification is still owed before this doc's
+> 180-day hard-fail (2026-10-30).
+
 Stellar's XDR protocol version is handled elsewhere — the SDK
 dispatches LedgerCloseMeta V0/V1/V2 for us. This doc is about
 something different and less well-handled: **individual DeFi contracts

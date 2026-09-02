@@ -29,7 +29,7 @@ export function NetworkLivePanel() {
     (cursors.data ? maxLiveLedger(cursors.data) : null);
 
   return (
-    <Panel title="Network" hint="Stellar pulse" source={asExample('/v1/network/stats')}>
+    <Panel headingLevel={2} title="Network" hint="Stellar pulse" source={asExample('/v1/network/stats')}>
       <div className="space-y-3">
         <div>
           <div className="text-2xl font-bold tabular-nums">
@@ -70,6 +70,7 @@ export function SystemHealthLivePanel() {
   if (isLoading || !data) {
     return (
       <Panel
+        headingLevel={2}
         title="System health"
         source={asExample('/v1/diagnostics/cursors')}
         bodyClassName="text-xs text-ink-muted"
@@ -94,6 +95,7 @@ export function SystemHealthLivePanel() {
 
   return (
     <Panel
+      headingLevel={2}
       title="System health"
       hint="Live from /v1/diagnostics/cursors"
       source={asExample('/v1/diagnostics/cursors')}

@@ -22,9 +22,10 @@ export function SortPill({
     <button
       type="button"
       onClick={onClick}
-      className={`rounded-md px-2 py-0.5 ${
+      aria-pressed={active}
+      className={`focus-visible:ring-brand-500/60 rounded-md px-2 py-0.5 focus-visible:ring-2 focus-visible:outline-hidden ${
         active
-          ? 'bg-brand-600 text-white'
+          ? 'bg-brand-fill text-white'
           : 'bg-surface-subtle text-ink-body hover:bg-line'
       }`}
     >

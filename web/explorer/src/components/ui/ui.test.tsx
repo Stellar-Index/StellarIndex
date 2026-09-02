@@ -81,6 +81,27 @@ describe('ui primitives — render + semantics', () => {
     }
   });
 
+  // #335 F5 (WCAG 1.3.1 / axe heading-order): CardHeader hardcoded <h3>
+  // while ui/Page's SectionHeader is <h2>, so a card used as a page's
+  // top-level section produced h1 → h3 and skipped a level. The rank is
+  // now caller-selectable; the visual style is unchanged either way.
+  it('CardHeader titles default to h3 and honour headingLevel', () => {
+    const { unmount } = render(<CardHeader title="Default rank" />);
+    expect(
+      screen.getByRole('heading', { level: 3, name: 'Default rank' }),
+    ).toBeInTheDocument();
+    unmount();
+
+    render(<CardHeader title="Top-level section" headingLevel={2} />);
+    const h2 = screen.getByRole('heading', { level: 2, name: 'Top-level section' });
+    expect(h2.tagName).toBe('H2');
+    // The rank moved, the styling did not.
+    expect(h2).toHaveClass('truncate');
+    expect(
+      screen.queryByRole('heading', { level: 3 }),
+    ).not.toBeInTheDocument();
+  });
+
   it('Mono truncates a long identifier head…tail and keeps the full value on hover', () => {
     render(<Mono value="GABCDEFGHIJKLMNOP" truncate copy={false} />);
     const elided = screen.getByText('GABCDE…MNOP');

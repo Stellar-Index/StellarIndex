@@ -25,6 +25,15 @@
   --color-brand-900: #b3caff;
   --color-brand-950: #0b1226;
 
+  /* Brand as a FILL behind white text — deliberately a separate family from
+     the brand-N ramp. brand-600 is the link/text accent (366 `text-brand-600`
+     sites read 4.29:1 on surface); darkening it to clear 4.5:1 behind white
+     would drag every one of those links DOWN. So the two fill steps below
+     carry the button/pill surfaces instead, and the ramp is left alone.
+     White-on contrast: fill 6.38:1, hover 9.57:1 (WCAG 1.4.3 AA). */
+  --color-brand-fill: #3358bf;
+  --color-brand-fill-hover: #21408f;
+
   /* Surfaces — neutral near-black, a whisper of cool. */
   --color-surface: #101216;
   --color-surface-canvas: #0a0b0d;
@@ -35,6 +44,13 @@
   --color-line-subtle: #17191f;
   --color-line: #23272f;
   --color-line-strong: #30353f;
+  /* Form-control boundary. line-strong is 1.52:1 on surface — decorative
+     hairlines may be that quiet, but the EDGE OF AN INPUT is a UI component
+     boundary and WCAG 1.4.11 wants 3:1. Held against every surface an input
+     can sit on: canvas 3.85:1, surface 3.67:1, surface-muted 3.38:1. (The
+     obvious lighter-grey pick, #5a6273, is 3.06:1 on surface but only
+     2.82:1 on surface-muted — it fails inside a muted card.) */
+  --color-line-input: #666e80;
 
   /* Ink — text hierarchy (light on dark). */
   --color-ink: #f4f6fa;
@@ -206,7 +222,7 @@
 
   /* Accessible focus ring. */
   :focus-visible {
-    @apply outline-hidden ring-2 ring-brand-500/70 ring-offset-2 ring-offset-surface-canvas;
+    @apply ring-brand-500/70 ring-offset-surface-canvas ring-2 ring-offset-2 outline-hidden;
   }
 
   /* Hairline default border so `border` alone reads as a hairline. */

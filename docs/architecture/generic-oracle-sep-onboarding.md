@@ -1,7 +1,7 @@
 ---
 title: Generic oracle + SEP onboarding — investigation and design
 last_verified: 2026-07-10
-status: investigation
+status: decided — §3(b) SHIPPED in internal/canonical/discovery (oracle-shaped sniffing, 2026-07-10); §3(a)/(c) deferred per ADR-0045
 ---
 
 # Generic oracle + SEP onboarding
@@ -195,7 +195,18 @@ same substrate Blend pool state already uses.
   still no concrete integration target to design the storage-key /
   completeness pieces against.
 
-### (b) SEP-shaped discovery pipeline — extend the existing sniffer
+### (b) SEP-shaped discovery pipeline — extend the existing sniffer — **SHIPPED**
+
+> **Status (2026-09-02): SHIPPED.** `internal/canonical/discovery` was
+> broadened on 2026-07-10 citing this very section — see
+> `internal/canonical/discovery/doc.go:20-45`, which adds
+> `SniffOracleEvent` (topic-symbol set incl. `lastprice`, `x_last_price`,
+> `oracle`/`Oracle`/`ORACLE`, `StandardReference`;
+> `sniffer.go:201`) and `SniffOracleCall` (the event-less half, matching
+> `relay`/`force_relay`/`write_prices`/`lastprice`/… by function name, so a
+> Band-alike under a different contract id is still sighted). Both remain
+> **sighting-only**: they write `discovered_assets` and never decode or
+> attribute (ADR-0035 doctrine).
 
 Generalize `internal/canonical/discovery` (today: SEP-41 topic-symbol
 sniffing → `discovered_assets` table → `stellarindex-ops discovery`

@@ -159,6 +159,21 @@ groups:
       # alerts-catalog row, in BOTH rule trees, once trim_fraction has
       # been observed firing (or correctly silent) on live data for a
       # week. Same runbook.
+      #
+      # OVERLAP EVIDENCE BANKED 2026-09-02 (#363, read-only r1 Prometheus
+      # query, 7d lookback). Do NOT retire before the date — the overlap
+      # week from 2026-08-28 completes on 09-04 and only 5 days had
+      # elapsed when this was recorded. What the 7d window shows:
+      #   - outlier_trim_rate_legacy: reached `pending` ONLY (never
+      #     firing; the 2h `for:` was never satisfied), on
+      #     crypto:XLM/fiat:USD. This is the "record the pair + window
+      #     before retiring" note the paragraph above asks for.
+      #   - outlier_trim_fraction: zero alerts — and correctly silent,
+      #     not input-starved: stellarindex_aggregator_window_trades has
+      #     108 live series, so its expression is being evaluated.
+      #   - outlier_storm: 10 alert series (2 firing), i.e. the
+      #     dispersion signal itself is live.
+      # On/after 2026-09-04 this rule can be deleted mechanically.
       - alert: stellarindex_aggregator_outlier_trim_rate_legacy
         expr: |
           sum by (pair) (rate(stellarindex_aggregator_dropped_trades_total{reason="outlier"}[10m])) > 10

@@ -80,8 +80,9 @@ export function DivergenceFeed() {
       <BoardBars rows={rows} />
 
       <Panel
+        headingLevel={2}
         title="Divergence board"
-        hint="Latest comparison per (pair, reference) over the trailing 7 days — our VWAP vs each external reference, widest gap first. Click a row to plot its history above."
+        hint="Latest comparison per (pair, reference) over the trailing 7 days — our VWAP vs each external reference, widest gap first. Choose a row's Plot control to chart its history above."
         source={asExample('/v1/divergence', { limit: 100, window_days: 7 })}
         bodyClassName="space-y-3"
       >
@@ -99,6 +100,9 @@ export function DivergenceFeed() {
           </p>
         )}
         {rows.length > 0 && (
+          // WCAG 1.4.10 Reflow: 8 columns of unbreakable mono cells scroll
+          // inside the panel, not sideways across the whole page.
+          <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
               <tr className="border-line text-ink-muted border-b text-left text-[11px] tracking-wider uppercase">
@@ -112,7 +116,8 @@ export function DivergenceFeed() {
                 </th>
                 <th className="py-1.5 pr-4 text-right font-normal">Δ%</th>
                 <th className="py-1.5 pr-4 font-normal">Observed</th>
-                <th className="py-1.5 font-normal">State</th>
+                <th className="py-1.5 pr-4 font-normal">State</th>
+                <th className="py-1.5 font-normal" aria-hidden />
               </tr>
             </thead>
             <tbody>
@@ -161,7 +166,7 @@ export function DivergenceFeed() {
                     <td className="text-ink-muted py-1.5 pr-4 font-mono text-[11px]">
                       {fmtTs(d.observed_at ?? '')}
                     </td>
-                    <td className="py-1.5">
+                    <td className="py-1.5 pr-4">
                       {firing ? (
                         <span className="bg-down-subtle text-down-strong rounded-sm px-1.5 py-0.5 text-[10px] font-medium uppercase">
                           firing
@@ -172,11 +177,41 @@ export function DivergenceFeed() {
                         </span>
                       )}
                     </td>
+                    {/* The keyboard/AT path to the chart above. The row's
+                        onClick is a mouse convenience only; this native
+                        <button> is what puts series selection in the tab
+                        order and gives Enter/Space activation for free
+                        (WCAG 2.1.1). The state is aria-current, NOT a
+                        toggle state: the board is single-select, so
+                        re-activating the plotted row leaves it plotted,
+                        and a two-state toggle would misdescribe it. */}
+                    <td className="py-1.5 text-right">
+                      <button
+                        type="button"
+                        aria-current={isSel ? 'true' : 'false'}
+                        aria-label={`Plot ${shortAssetText(d.asset_id)}/${shortAssetText(d.quote_id)} vs ${d.reference} history`}
+                        onClick={() =>
+                          setSelected({
+                            asset: d.asset_id ?? '',
+                            quote: d.quote_id ?? '',
+                            reference: d.reference ?? '',
+                          })
+                        }
+                        className={`focus-visible:ring-brand-500/60 rounded-sm px-1.5 py-0.5 text-[11px] transition-colors focus-visible:ring-2 focus-visible:outline-hidden ${
+                          isSel
+                            ? 'text-brand-600 font-medium'
+                            : 'text-ink-faint hover:text-brand-600'
+                        }`}
+                      >
+                        {isSel ? 'Plotted' : 'Plot'}
+                      </button>
+                    </td>
                   </tr>
                 );
               })}
             </tbody>
           </table>
+          </div>
         )}
       </Panel>
     </>
@@ -238,6 +273,7 @@ function DivergenceSeriesPanel({
 
   return (
     <Panel
+      headingLevel={2}
       title={
         sel
           ? `Δ% history — ${shortAssetText(sel.asset)}/${shortAssetText(sel.quote)} vs ${sel.reference}`
@@ -335,6 +371,7 @@ function BoardBars({ rows }: { rows: DivergenceResp['observations'] }) {
   if (items.length === 0) return null;
   return (
     <Panel
+      headingLevel={2}
       title="Current board by |Δ%|"
       hint="Every (pair, reference) currently on the board — bar length is the gap magnitude; green = we're above the reference, red = below."
       source={asExample('/v1/divergence', { limit: 100, window_days: 7 })}

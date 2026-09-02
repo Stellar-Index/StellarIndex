@@ -9,6 +9,11 @@ related:
 
 # Loki + Promtail ansible role — design note
 
+> **Deferral (2026-09-02):** the multi-host observability/HA build-out this
+> role belongs to is **ADR-0050 Phase 1**, deferred post-v1.0 —
+> [`multi-region-ha.md`](multi-region-ha.md) §0c/§10. Not launch-critical;
+> r1's hand-installed single-host Loki stands in.
+
 > **NOT shipped (corrected 2026-07-24, audit-2026-07-23 DOC-05).** The
 > frontmatter previously read `status: shipped, closes Task #72`; that was
 > false. The role's files exist under `configs/ansible/roles/loki/`, but

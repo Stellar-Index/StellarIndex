@@ -1,7 +1,7 @@
 ---
 title: Storage layering — eliminating the storage→domain upward imports (D8 M0-1)
 last_verified: 2026-07-02
-status: current
+status: superseded — shipped differently (internal/domain + shrink-only baseline, 2026-07-10); the commit-4 storage-purity lint was rejected
 ---
 
 > **CORRECTION (audit 2026-07-16):** where this spec says the team decided NOT
@@ -11,6 +11,8 @@ status: current
 > "no internal/domain" statements below as historical.
 
 # Storage layering spec (delegation-ready)
+
+> **Status (2026-09-02): SHIPPED DIFFERENTLY — the §"payoff gate" below was not built.** There is **no `storage-purity` rule** in `scripts/ci/lint-imports.sh`, and the "there should be none" end-state was not reached: `scripts/ci/lint-imports.baseline:27-40` records that the D8 move (2026-07-10) cleared **9 of the original 15** storage→compute violations and that "the remaining 6 could NOT move mechanically — each pulls in actual compute/policy logic, not just a persisted shape". What actually enforces the layering today is that **shrink-only baseline** (a new violation fails CI; the six residents are grandfathered by name), not a purity rule. Read the commit sequence below as the plan it was, not as a description of the gate.
 
 **Problem (maintainability audit D8):** `internal/storage/timescale`
 imports UPWARD into compute + sources in exactly 13 files (verified

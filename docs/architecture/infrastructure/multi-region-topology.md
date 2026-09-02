@@ -1,7 +1,7 @@
 ---
 title: Multi-Region Topology — 3-region active/active with primary/replica degradation
 last_verified: 2026-05-03
-status: ratified — per-region storage shapes captured in [ADR-0016](../../adr/0016-per-region-storage-strategy.md); cross-region serving invariant in [ADR-0015](../../adr/0015-last-closed-bucket-rate-serving.md)
+status: superseded by ADR-0050 / [multi-region-ha.md](../multi-region-ha.md) (2026-08-21) — ratified 2026-05-03 as Model A, since rejected. Historical value: per-region storage shapes ([ADR-0016](../../adr/0016-per-region-storage-strategy.md)) and the cross-region serving invariant ([ADR-0015](../../adr/0015-last-closed-bucket-rate-serving.md))
 ---
 
 > ⛔ **SUPERSEDED by ADR-0050 / [`../multi-region-ha.md`](../multi-region-ha.md) (2026-08-21). Do not implement from this doc.** Its Model A (one global Patroni cluster, writes always to R1, R2/R3 as read-only replicas), its per-region S3-tiered lake, and its $15–24k/month full-per-region-HA-fleet cost basis are all **rejected**. The current architecture is active/active pricing + R1-authority lake + cross-region failover, one box per region.
@@ -281,7 +281,7 @@ is closed-bucket VWAP/TWAP/OHLC, byte-equivalent across regions —
 so different storage shapes don't break the cross-region rate
 agreement.
 
-### 7.1 R1 (Frankfurt, Hetzner) — full local mirror
+### 7.1 R1 (Falkenstein / FSN1, Hetzner) — full local mirror
 
 - Local MinIO single-node on raidz1 (single parity — one drive of
   tolerance) across 4 × 7.68 TB NVMe.

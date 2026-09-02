@@ -160,13 +160,33 @@ export function PairReservesPanel() {
                       <td className="py-2 pr-3 text-right tabular-nums text-ink-muted">
                         {row.as_of_ledger.toLocaleString('en-US')}
                       </td>
-                      <td className="py-2 text-right text-xs text-ink-muted">
-                        {open ? 'Hide depth ▴' : 'Depth ▾'}
+                      {/* The keyboard/AT path to the depth detail. The
+                          row's onClick stays a mouse convenience; this
+                          native <button> puts the expander in the tab
+                          order and states its expanded/collapsed status
+                          (WCAG 2.1.1 / 4.1.2). */}
+                      <td className="py-2 text-right text-xs">
+                        <button
+                          type="button"
+                          aria-expanded={open}
+                          aria-controls={`pair-depth-${row.pool}`}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setExpanded(open ? null : row.pool);
+                          }}
+                          className="rounded-sm px-1 py-0.5 text-ink-muted transition-colors hover:text-brand-600 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-brand-500/60"
+                        >
+                          {open ? 'Hide depth ▴' : 'Depth ▾'}
+                        </button>
                       </td>
                     </tr>
                     {open && (
                       <tr className="border-b border-line/60 bg-surface-subtle/50">
-                        <td colSpan={6} className="px-3 py-3">
+                        <td
+                          colSpan={6}
+                          id={`pair-depth-${row.pool}`}
+                          className="px-3 py-3"
+                        >
                           {row.depth.length === 0 ? (
                             <p className="text-xs text-ink-muted">
                               One side of this pool is empty — no meaningful depth.

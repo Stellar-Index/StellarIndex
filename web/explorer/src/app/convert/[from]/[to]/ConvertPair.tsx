@@ -3,6 +3,8 @@
 import { useState, useMemo } from 'react';
 import { ArrowLeftRight } from 'lucide-react';
 
+import { formatRelative } from '@/lib/format';
+
 import { useConvertRate } from './ConvertLive';
 
 /**
@@ -107,7 +109,7 @@ export function ConvertPair({
             {updatedAt > 0 && (
               <>
                 <span className="mx-1.5">·</span>
-                Updated {formatRelativeTime(updatedAt)}
+                Updated {formatRelative(new Date(updatedAt).toISOString())}
               </>
             )}
           </>
@@ -125,12 +127,4 @@ function formatRate(n: number): string {
   if (Math.abs(n) >= 1) return n.toFixed(4);
   if (Math.abs(n) >= 0.01) return n.toFixed(6);
   return n.toFixed(8);
-}
-
-function formatRelativeTime(ms: number): string {
-  const diff = Date.now() - ms;
-  if (diff < 5_000) return 'just now';
-  if (diff < 60_000) return `${Math.floor(diff / 1000)}s ago`;
-  if (diff < 3600_000) return `${Math.floor(diff / 60_000)}m ago`;
-  return new Date(ms).toLocaleTimeString('en-US');
 }

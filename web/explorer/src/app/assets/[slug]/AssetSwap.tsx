@@ -261,7 +261,10 @@ function SwapRow({
       className={cn(
         'rounded-lg border bg-surface-canvas px-3.5 py-4 transition-colors',
         // The active field is signalled by a lighter border, not a focus ring
-        // on the input itself.
+        // on the input itself. That border delta alone is 1.22:1 — invisible —
+        // so focus ALSO raises a ring on the wrapper (brand-500 on canvas =
+        // 5.33:1), which is what WCAG 2.4.7 / 2.4.11 actually require.
+        'focus-within:ring-2 focus-within:ring-brand-500/60',
         active ? 'border-line-strong' : 'border-line',
       )}
     >
@@ -274,7 +277,7 @@ function SwapRow({
           onFocus={onFocus}
           placeholder="0"
           aria-label={`Amount in ${token.symbol}`}
-          className="w-full min-w-0 bg-transparent font-mono text-2xl tabular-nums text-ink placeholder:text-ink-faint focus:outline-none focus-visible:ring-0 focus-visible:ring-offset-0"
+          className="w-full min-w-0 bg-transparent font-mono text-2xl tabular-nums text-ink placeholder:text-ink-faint focus:outline-none"
         />
         <button
           type="button"
