@@ -79,7 +79,7 @@ func TestCopyMergeSEP41_GenerationGuard(t *testing.T) {
 			if err := store.DB().QueryRowContext(ctx, q, contractID, int(ledger)).Scan(&amount, &gen); err != nil {
 				t.Fatalf("read sep41_supply_events: %v", err)
 			}
-			return
+			return amount, gen
 		}
 
 		// gen 1 — the wrong original value lands via the bulk path.
@@ -145,7 +145,7 @@ func TestCopyMergeSEP41_GenerationGuard(t *testing.T) {
 			if err := store.DB().QueryRowContext(ctx, q, contractID, int(ledger)).Scan(&amount, &gen); err != nil {
 				t.Fatalf("read sep41_transfers: %v", err)
 			}
-			return
+			return amount, gen
 		}
 
 		store.SetDeriveGeneration(1)

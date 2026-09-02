@@ -31,7 +31,7 @@ echo "lint-unit-failed-baseline-test: catch-all exclusion list"
 
 [ -f "$BASELINE" ] || { echo "  FAIL baseline missing: $BASELINE"; exit 1; }
 
-units=$(grep -vE '^\s*#|^\s*$' "$BASELINE" | sed -E 's/\s*#.*//; s/\s+$//')
+units=$(grep -vE '^\s*#|^\s*$' "$BASELINE" | sed -E 's/[[:space:]]*#.*//; s/[[:space:]]+$//')
 if [ -z "$units" ]; then
   bad "baseline is empty — the catch-all would cover everything and this test would assert nothing"
 else
