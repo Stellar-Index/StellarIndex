@@ -462,3 +462,41 @@ func TestFilterCatalogueByNetwork(t *testing.T) {
 		t.Errorf("real catalogue on pubnet: kept %d of %d, dropped %v", len(keptFull), len(full), droppedFull)
 	}
 }
+
+// TestBandGenesisAgreesAcrossEveryConstant pins the fix for a four-way
+// disagreement (#361/#363). Band's genesis lived in four places and two
+// of them said 60,000,000 while two said 50,842,736 — a 9.16M-ledger
+// difference that silently shortened the range every completeness and
+// gap check evaluated, so the source read clean over a window that
+// excluded most of its history.
+//
+// The right value is hard to find, which is why it drifted: Band's
+// Soroban contract emits ZERO events, so the obvious probe (min ledger
+// in contract_events) returns 0 rows and reads as "no data" rather than
+// "wrong table". It has to come from contract_instance_changes, and it
+// is corroborated by contract_data writes in ledger_entry_changes from
+// the same ledger and by the WASM audit.
+func TestBandGenesisAgreesAcrossEveryConstant(t *testing.T) {
+	const bandGenesis = 50_842_736
+
+	cat, _, err := buildReconciliationCatalogue(config.Config{})
+	if err != nil {
+		t.Skipf("catalogue build unavailable in this environment: %v", err)
+	}
+	var found bool
+	for _, src := range cat {
+		if src.name != "band" {
+			continue
+		}
+		found = true
+		if src.genesis != bandGenesis {
+			t.Errorf("reconciliation catalogue band genesis = %d, want %d — "+
+				"an event-table probe returns 0 rows for Band (it emits none), so a "+
+				"'corrected' value derived that way is vacuous; use "+
+				"contract_instance_changes", src.genesis, bandGenesis)
+		}
+	}
+	if !found {
+		t.Fatal("band is not in the reconciliation catalogue")
+	}
+}

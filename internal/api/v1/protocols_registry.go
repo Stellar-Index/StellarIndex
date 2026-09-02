@@ -196,10 +196,13 @@ var protocolRegistry = []ProtocolMeta{
 		EventKinds:    []string{"soroswap-router.swap"},
 	},
 	{
-		Name:          "band",
-		Category:      "oracle",
-		Description:   "Band Protocol oracle — reference rates observed from relay()/force_relay() invocations (the contract emits no events).",
-		GenesisLedger: 60_000_000,
+		Name:        "band",
+		Category:    "oracle",
+		Description: "Band Protocol oracle — reference rates observed from relay()/force_relay() invocations (the contract emits no events).",
+		// Band's first on-chain write. Not discoverable from contract_events —
+		// Band emits no events — so this comes from contract_instance_changes
+		// and the WASM audit; see reconciliation_catalogue.go (#361/#363).
+		GenesisLedger: 50_842_736,
 		EventKinds:    []string{"band.update"},
 	},
 	{

@@ -487,7 +487,19 @@ func buildReconciliationCatalogue(cfg config.Config) ([]reconSource, *soroswap.D
 	// verify range; the empty pre-first-call prefix reconciles to zero.
 	if a := cfg.Oracle.Band.StandardReferenceContract; a != "" {
 		cat = append(cat, reconSource{
-			name: "band", genesis: 60_000_000, callContract: a, callDec: band.NewDecoder(a),
+			// 50,842,736 is Band's first on-chain write, not 60,000,000 (#361/#363).
+			// It cannot be found the usual way: Band's Soroban contract emits ZERO
+			// events, so a contract_events probe returns 0 rows and reads as absence.
+			// The number comes from contract_instance_changes (min ledger 50,842,736,
+			// against that table's own floor of 50,457,429, so it is not a coverage
+			// artifact) and is corroborated by 4,210 contract_data writes in
+			// ledger_entry_changes from the same ledger. It matches the WASM audit
+			// and the two other constants that already carried it.
+			//
+			// Expect this to turn band RED until a catch-up runs: oracle_updates
+			// starts at 60,000,414, so the 9.16M ledgers between the true genesis
+			// and the first projected row are a real gap that 60,000,000 was hiding.
+			name: "band", genesis: 50_842_736, callContract: a, callDec: band.NewDecoder(a),
 			targets: []reconTarget{{"oracle_updates", "source = 'band'", nil}},
 		})
 	}
