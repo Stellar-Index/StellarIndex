@@ -47,6 +47,7 @@ CREATE TABLE IF NOT EXISTS stellar.transactions
     result_code     Int32,
     memo_type       LowCardinality(String),
     memo            String,
+    ingested_at     DateTime DEFAULT now(),
     -- Soroban resource metering (extract.go:extractSorobanMetering). All
     -- DEFAULT 0 → additive + old-binary-safe; only Soroban txs are non-zero, so
     -- these sparse columns compress to near-nothing. DECLARED = the submitter's
@@ -63,7 +64,6 @@ CREATE TABLE IF NOT EXISTS stellar.transactions
     soroban_nonrefundable_fee Int64  DEFAULT 0,  -- actual non-refundable fee charged
     soroban_refundable_fee    Int64  DEFAULT 0,  -- actual refundable fee charged
     soroban_rent_fee          Int64  DEFAULT 0,  -- actual rent fee charged
-    ingested_at     DateTime DEFAULT now(),
     -- Bloom skip-index for hash lookups (GET /v1/tx/{hash}, ADR-0038): the
     -- sort key is (ledger_seq, tx_index), so WHERE tx_hash=? would otherwise
     -- full-scan. New parts are indexed on insert; existing history needs a
