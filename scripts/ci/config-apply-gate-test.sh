@@ -340,10 +340,18 @@ else
   # the read must supply one per file. `cat` mashes six versions into a
   # single token that a `^`-only anchor matches, which failed the gate
   # closed on every deploy and skipped the post-deploy smoke step.
-  if grep -qE 'awk 1 /var/lib/stellarindex/deployed-versions' "$WF"; then
+  #
+  # Asserted as a PROPERTY, not one spelling: the read must run `awk 1`
+  # and must not `cat` the directory. #427 replaced the single-line
+  # `awk 1 /var/lib/.../stellarindex-*` with a loop that skips the
+  # migrate sidecar and calls `awk 1 "$f"` per file — same guarantee,
+  # different text, and the old literal grep failed it.
+  if grep -q 'deployed-versions' "$WF" \
+     && grep -qE '(^|[^-[:alnum:]])awk 1( |")' "$WF" \
+     && ! grep -qE '(^|[^[:alnum:]])cat [^|]*deployed-versions' "$WF"; then
     check_caller "deploy.yml reads the sidecars newline-safely (awk 1, not cat)" "ok"
   else
-    check_caller "deploy.yml reads the sidecars newline-safely (found a bare 'cat' over deployed-versions/* — the files have no trailing newline, so N binaries concatenate into one garbage token)" "no"
+    check_caller "deploy.yml reads the sidecars newline-safely (found a bare 'cat' over deployed-versions/*, or no 'awk 1' at all — the files have no trailing newline, so N binaries concatenate into one garbage token)" "no"
   fi
 
   # And the version regex must be anchored at BOTH ends, so a mashed or
