@@ -717,14 +717,23 @@ func run(cfgPath string, dryRun bool) error {
 	// does). We MUST NOT close(events) while that goroutine might still
 	// send on it — see the G20-02 wait below.
 	streamExited := false
+	// fatalErr is returned AFTER the drain below, never instead of it.
+	// Returning here used to skip externalWait, close(events) and the
+	// sinkDone wait outright, so up to one channel buffer of events —
+	// 256 — was discarded on the way out. Those events were already
+	// counted against the cursor, so the next start resumed past them
+	// and they were simply gone: a silent hole, on the exact path a
+	// decoder fault takes (pipeline.ProcessLedger recovers a decoder
+	// panic INTO a ledger error, which arrives here). #368 M2.
+	var fatalErr error
 	select {
 	case <-rootCtx.Done():
 		logger.Info("shutdown signal received — draining", "budget", pipeline.ShutdownDeadline.String())
 	case err := <-streamErr:
 		streamExited = true
 		if err != nil && !errors.Is(err, context.Canceled) {
-			logger.Error("ledgerstream exited with error", "err", err)
-			return err
+			logger.Error("ledgerstream exited with error — draining before exit", "err", err)
+			fatalErr = err
 		}
 	}
 
@@ -800,7 +809,10 @@ func run(cfgPath string, dryRun bool) error {
 			logger.Warn("projector drain timeout — hard exit")
 		}
 	}
-	return nil
+	// Surface the producer's failure only now that everything it had
+	// already produced has been persisted. The exit code is unchanged;
+	// what changed is that the buffer is not thrown away first.
+	return fatalErr
 }
 
 // startExternalConnectors builds the enabled off-chain connectors
