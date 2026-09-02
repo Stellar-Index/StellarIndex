@@ -218,6 +218,23 @@ func safeDecode(dec Decoder, ev events.Event) (outs []consumer.Event, err error)
 	return dec.Decode(ev)
 }
 
+// safeMatches runs dec.Matches under the same per-event recover as
+// [safeDecode]. Matches is not the safe half of the pair: it type-asserts
+// topic vectors and reads body fields to decide ownership, so a malformed
+// row panics there just as readily as in Decode — and until now that panic
+// escaped, taking down whichever binary was reconciling (the ops path's
+// twin of the dispatcher's #371 F1). A panic is treated exactly like a
+// decode failure: the row is skipped AND recorded as a blind spot, so a
+// ledger the re-derive could not evaluate can never be certified clean.
+func safeMatches(dec Decoder, ev events.Event) (matched bool, err error) {
+	defer func() {
+		if rec := recover(); rec != nil {
+			matched, err = false, fmt.Errorf("decoder panicked matching event shape: %v", rec)
+		}
+	}()
+	return dec.Matches(ev), nil
+}
+
 // ReDeriveOutputCounts re-runs the decoder over the raw events in
 // [from, to] and returns how many outputs it emits per ledger. Outputs
 // are attributed to the triggering row's ledger; because every
@@ -249,7 +266,12 @@ func ReDeriveOutputCounts(
 				blind.Unreconstructable(row.Ledger)
 				return nil //nolint:nilerr // soft-fail like the projector; recorded as a blind spot, not swallowed.
 			}
-			if !dec.Matches(ev) {
+			matched, merr := safeMatches(dec, ev)
+			if merr != nil {
+				blind.Undecodable(row.Ledger)
+				return nil //nolint:nilerr // panicking Matches: skip the row, pin the verdict.
+			}
+			if !matched {
 				return nil
 			}
 			outs, derr := safeDecode(dec, ev)
@@ -314,7 +336,12 @@ func ReDeriveOutputCountsByKindFromEvents(
 				return nil // exact-identity duplicate part; count once
 			}
 			haveLast, lL, lTx, lOp, lEv = true, ev.Ledger, ev.TxHash, ev.OperationIndex, ev.EventIndex
-			if !dec.Matches(ev) {
+			matched, merr := safeMatches(dec, ev)
+			if merr != nil {
+				blind.Undecodable(ev.Ledger)
+				return nil //nolint:nilerr // panicking Matches: skip the event, pin the verdict.
+			}
+			if !matched {
 				return nil
 			}
 			outs, derr := safeDecode(dec, ev)
@@ -365,7 +392,12 @@ func ReDeriveOutputCountsByKind(
 				blind.Unreconstructable(row.Ledger)
 				return nil //nolint:nilerr // soft-fail like the projector; recorded as a blind spot.
 			}
-			if !dec.Matches(ev) {
+			matched, merr := safeMatches(dec, ev)
+			if merr != nil {
+				blind.Undecodable(row.Ledger)
+				return nil //nolint:nilerr // panicking Matches: skip the row, pin the verdict.
+			}
+			if !matched {
 				return nil
 			}
 			outs, derr := safeDecode(dec, ev)

@@ -552,3 +552,43 @@ func TestReDeriveOutputCountsByKindFromEvents_SweptOutputCountsAtOwnLedger(t *te
 		t.Errorf("plain trade at stream ledger 160 = %d, want %d", got, want)
 	}
 }
+
+// panickingMatcher panics in Matches — the half of the Decoder pair that
+// safeDecode never covered. Matches type-asserts topic vectors and reads
+// body fields to decide ownership, so a malformed row panics there just as
+// readily as in Decode.
+type panickingMatcher struct{ panicOnMatch bool }
+
+func (p panickingMatcher) Matches(events.Event) bool {
+	if p.panicOnMatch {
+		panic("malformed topic vector")
+	}
+	return true
+}
+
+func (p panickingMatcher) Decode(events.Event) ([]consumer.Event, error) {
+	panic("decode should not be reached when Matches panics")
+}
+
+// TestSafeMatches_PanicBecomesAnError pins the ops-path twin of the
+// dispatcher's poison-ledger class (#371 F1): a decoder that panics while
+// DECIDING OWNERSHIP must not take the reconciling binary down with it. It
+// must read as an error so the caller records a blind spot — a ledger the
+// re-derive could not evaluate must never be certified clean.
+func TestSafeMatches_PanicBecomesAnError(t *testing.T) {
+	matched, err := safeMatches(panickingMatcher{panicOnMatch: true}, events.Event{})
+	if err == nil {
+		t.Fatal("a panicking Matches returned no error — the panic escaped, or was swallowed silently")
+	}
+	if matched {
+		t.Error("a panicking Matches must never report a match")
+	}
+	if !strings.Contains(err.Error(), "panicked") {
+		t.Errorf("error should name the panic, got %q", err)
+	}
+
+	matched, err = safeMatches(panickingMatcher{}, events.Event{})
+	if err != nil || !matched {
+		t.Errorf("a well-behaved Matches must pass through unchanged: matched=%v err=%v", matched, err)
+	}
+}
