@@ -61,6 +61,92 @@ severity: P1
   about exit codes) and the three doc-truth diffs (each adds new false
   claims; re-derive claim-by-claim). Details in the handover folder.
 
+### Execution log — 2026-09-02 (primary back; "resolve everything" pass)
+
+**Fleet.** testnet + futurenet deployed **v0.51.0 → v0.57.0** via `deploy.yml`
+— the first workflow deploys to a test net that ever succeeded. The path had
+been broken since 08-31 (#434): `-i id_deploy` applied only to the target hop,
+the ProxyJump inner connection used default identities and died at the JUMP
+host while the diagnostic blamed the VM (fixed 595068a7: `~/.ssh/config`
+IdentityFile for every hop). Both VMs verified live: all units active, 0
+failed, healthz 200, migrations 150 clean. [V]
+
+**History.** futurenet: ledger 2 → tip, distinct == span, 0 gaps — complete.
+testnet: the lake held ~126k of 4.46M ledgers (one gap: 4,338,974 missing
+after ledger 1025) while the 17 GB `galexie-archive` bucket covered
+0–4,351,999 in 68 partitions — the ClickHouse load had simply never been run.
+Ran `ch-backfill -from 1026 -to 4339999 -bucket galexie-archive
+-parallel 2` under `run-heavy-job.sh` (~1,000–1,400 ledgers/s, ≈ 65 min;
+`/usr/local/sbin/testnet-history-backfill.sh`) — **verified complete 16:20Z:
+distinct 4,467,039 == span, ledger 2 → tip, 0 gaps.** Both test-net lakes are
+now complete. Found on the way (#483): `/v1/coverage` on both test nets is
+0/14 complete BY CONSTRUCTION — pubnet genesis floors + pubnet contract sets
+applied to every network — so the verdict there is not yet a canary. Two traps on the way, both recorded in memory:
+the ops binary needs `/etc/default/stellarindex*` SOURCED when run by hand
+(anonymous → `AccessDenied` that looks like a policy fault), and testnet's
+MinIO runs with OLDER root creds than `/etc/default/minio` (re-templated
+08-27, never restarted — do not restart casually: galexie's service account
+is parented to the running root). [V]
+
+**Drift (W4).** `ansible-drift` had been red since 08-31 on three PLAYBOOK
+defects, not host drift: cap67 `state: restarted` (always-changed + restarted
+a healthy daemon every apply → `started` + a targeted handler), the SDF apt
+key via checksum-less `get_url` declared TWICE (vendored `files/sdf.asc`,
+`copy` in both), and the node_exporter textfile dir declared in two tasks
+with CONFLICTING ownership (flipped every run; a root:root apply would have
+broken the stellarindex-owned writers). Real merged≠live on r1 then applied:
+Caddy whole-query + credential-header redaction (customer emails had been
+landing in the edge log), `stellarindex-ops` env, `ops_batch` CH profile,
+drop-guard pin. The CI drift check ALSO carried a stale copy of the vault
+(`ANSIBLE_VAULT_FILE_B64` predated `vault_clickhouse_ops_batch_password`) —
+refreshed from the local encrypted vault. r1 now: 0 failed units, only the
+deadmansswitch heartbeat firing; the three repo-ahead tasks (restore-drill
+script + units, migrations sync) applied and **`ansible-drift` re-ran GREEN
+(`changed=0`)**. [V]
+
+**Alerting.** Two rule defects fixed and applied to r1 out of band (202
+alerts loaded, every rule `health: ok`): `stellarindex_stellar_stack_lagging`
+/ `_protocol_lag` had NEVER been evaluable — the static `component:
+stellar-stack` label overwrote the probe metric's own `component`, two lagging
+components collapsed to one labelset and Prometheus rejected the rule
+(6e463928; archivist + galexie are now correctly PENDING at lag=1 — a
+same-major upstream release exists for each, ticket in 2 d). Worker panics
+are now counted + paged (ab54173a) and the three auth-table reapers publish
+liveness so a dead reaper no longer looks like a quiet table
+(`stellarindex_auth_reaper_stalled`, d0a4058a, #368 M5).
+
+**Issues (40 → 32 open + 1 new).** Closed on verification, not self-report: #277
+(injectable clock, 772c1c9f), #330 (futurenet on release binaries; no
+aggregator is BY DESIGN), #337 (order-book: API + `OrderBookPanel` live),
+#369 (`statusServicesOr` lower-cases), #379 (20 stale branches deleted).
+Fixed: #339 (PR #305's squash had silently reverted #248's raw-row oracle
+guards across 5 files + 1 test — restored by 3-way merge, two conflicts
+resolved for HEAD), #343 (drill now runs the CH re-derive stage on schedule
+and emits throughput gauges), #357 F1 (nine downs said "loud" and DELETEd —
+now RAISE), #358 (phantom `sdex-offers` gap target dropped), #475 (AWS
+listing retries), #332 F3/F5/F7/F8, #368 M4 + M5. Closed on verification
+later the same day: #339, #343. Labelled `post-v1` (deliberate features,
+not defects): #349–#352. Labelled `needs-ash`: #334 (no MX / SPF / DMARC —
+re-verified with dig; exact records posted on the issue).
+Corrected in place: #371 F2 is DONE (alert exists), not metric-only.
+Partially addressed with remaining scope commented: #346, #362, #331, #371.
+Verified still open, scoped: #374 (needs a provenance column + fallback
+query), #368 M5 (reaper-liveness clause), #478 (per-source vs per-asset —
+Ash), #372, #340, #357 F2-F14, #358 items 2-6, #359-#363, #335 (10 of 11),
+#338, #336, #444, #459 (Ash), #427 (Ash), #443 (codified; CI vault now has
+the var — verify the assertion clears, then close).
+
+**Also fixed on the way.** `verify.sh` had failed on every maintainer Mac
+(BSD sed `\s`) — 9/9 now; `lint-migration-immutability` baseline refreshed
+for the down-only edits per its own "editing is safe" path.
+
+**Process.** Direct-to-main, no PRs, until the 1.0 announcement (Ash,
+2026-09-02). Dependabot #431, #412, #430 merged (CI green after rebase);
+the only open PR is #237 (legal pages — Ash's, parked). Branches: main +
+#237 only. Second pass (Ash, 16:30Z): every remaining issue goes through
+verify-at-HEAD → propose → adversarial review → fix → verify → close with
+evidence; ten read-only verifier agents dispatched by area, fixers follow.
+
 ### Session refresh — 2026-08-28 (v0.45.0 → v0.47.2 + adversarial plan-audit)
 
 > **Read this before the 2026-08-25 boxes below.** Where an older box says an
