@@ -708,15 +708,46 @@ jobs:
           # concatenation (or any other malformed sidecar) is rejected
           # rather than silently treated as a version. The optional
           # suffix keeps pre-release tags like v1.2.3-rc.1 valid.
-          live=$(ssh -i ~/.ssh/id_deploy -o BatchMode=yes -o ConnectTimeout=15 \
-                   ${proxy} "${DEPLOY_USER}@${DEPLOY_HOST}" \
-                   "awk 1 /var/lib/stellarindex/deployed-versions/stellarindex-* 2>/dev/null" \
-                 | tr -d '\r' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$' | sort -V | head -1 || true)
+          #
+          # stellarindex-migrate is EXCLUDED from the minimum (#427). It
+          # legitimately lags: it gates no config surface, is omitted from
+          # some deploys by design, and being the oldest sidecar it dragged
+          # the baseline back and made the gate diff a range nobody was
+          # deploying. Every other binary must be current for the config to
+          # count as applied.
+          #
+          # The remote snippet always exits 0 and prints nothing when the
+          # directory is absent, so a genuinely first-ever deploy is
+          # distinguishable from a FAILED READ. That distinction is the
+          # point: before #427 an ssh failure warned and fell back to
+          # `<prev-tag>..<version>`, i.e. "no config changes" — a FALSE
+          # GREEN. Both test-net deploys on 2026-09-02 hit exactly that
+          # (the ProxyJump identity bug, #434) during a five-release
+          # catch-up that touched 9-11 gated files, and the gate passed.
+          remote='d=/var/lib/stellarindex/deployed-versions;
+                  if [ -d "$d" ]; then
+                    for f in "$d"/stellarindex-*; do
+                      [ -e "$f" ] || continue
+                      case "$f" in *stellarindex-migrate) continue ;; esac
+                      awk 1 "$f"
+                    done
+                  fi
+                  exit 0'
+          set +e
+          raw=$(ssh -i ~/.ssh/id_deploy -o BatchMode=yes -o ConnectTimeout=15 \
+                  ${proxy} "${DEPLOY_USER}@${DEPLOY_HOST}" "$remote")
+          rc=$?
+          set -e
+          if [ "$rc" -ne 0 ]; then
+            echo "::error::config-apply gate: could not reach ${DEPLOY_USER}@${DEPLOY_HOST} to read the deployed-versions sidecar (ssh exit ${rc}). Refusing to fall back to the previous release tag — that fallback silently reports 'no config changes' on a multi-release catch-up. Fix the connection (or pass the host's live version explicitly) and re-run."
+            exit 1
+          fi
+          live=$(printf '%s\n' "$raw" | tr -d '\r' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$' | sort -V | sed -n '1p' || true)
           if [ -n "$live" ]; then
-            echo "host live version (lowest across binaries): $live"
+            echo "host live version (lowest across binaries, migrate excluded): $live"
             echo "live=$live" >> "$GITHUB_OUTPUT"
           else
-            echo "::warning::could not read the host's deployed-versions sidecar; the config-apply gate will fall back to the previous release tag by ancestry, which is only correct if the fleet is exactly one release behind."
+            echo "::warning::the host has no deployed-versions sidecar (first deploy to this host, or the directory was wiped); the config-apply gate falls back to the previous release tag by ancestry, which is only correct if the fleet is exactly one release behind."
             echo "live=" >> "$GITHUB_OUTPUT"
           fi
 

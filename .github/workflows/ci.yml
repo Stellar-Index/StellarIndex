@@ -508,6 +508,16 @@ jobs:
         # shape, skip scripts without pipefail/-e, and FAIL rather than pass
         # when a root contains no pipefail scripts at all.
         run: ./scripts/ci/lint-shell-sigpipe-test.sh
+      - name: deploy-baseline self-test
+        # #427: the config-apply gate's baseline is the version live on the
+        # host. A FAILED read used to warn and fall back to the previous
+        # release tag, so the gate diffed a range nobody was deploying and
+        # passed — both test-net deploys on 2026-09-02 went green that way
+        # across five releases touching 9-11 gated files. This pins that a
+        # read failure FAILS, that an absent sidecar (first deploy) still
+        # falls back, and that stellarindex-migrate stays excluded from the
+        # minimum. Runs the extracted step against a fake ssh; no network.
+        run: ./scripts/ci/deploy-baseline-test.sh
       - name: check-deploy-protection self-test
         # deploy-approval-gate (audit-2026-07-23): fixtures for the
         # fail-closed environment-approval assertion deploy.yml runs
