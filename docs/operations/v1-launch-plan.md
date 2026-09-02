@@ -39,6 +39,28 @@ severity: P1
 > The distinction is the point. A plan that presents carried claims as
 > verified is the same failure mode as an API that renders absent as zero.
 
+### Process addendum — 2026-09-02 (primary handed back; cadence)
+
+- **Primary development handed back** from the secondary agent (Ash's Intel
+  mac) at 10:30Z. Handover docs are OFF-REPO by Ash's instruction (the shared
+  `~/Public/stellarindex-handover/` folder; copied to the primary's machine).
+  State at hand-off: r1 **v0.57.0**, 20/21 coverage axes, 1 alert
+  (`galexie-archive-fill`, #475). **testnet + futurenet are v0.51.0 — six
+  releases behind**; nobody has deployed there since, so they are not testing
+  what ships. Three r1 files were hand-converged by scp (Caddyfile filter
+  block #480, `data-freshness.sh` #477, `tier1_schema.sql` #482) — byte-
+  identical to the role's render, backups in `/root/`, drift shows nothing.
+- **Cadence: direct-to-main, no PRs, until the 1.0 launch announcement**
+  (Ash, 2026-09-02: "PR per unit has really slowed us down"). This is the
+  explicit agreement `maintainer-workflow.md` says may override its
+  PR-per-unit default. Still binding: `verify.sh` green before every push,
+  the no-orphan-work contract (no branches → no orphans; never leave one),
+  and money/auth/migration changes called out to Ash explicitly.
+- **Stopped on purpose, do not resume as-is:** #371 F1 (decoder panic —
+  guard the four `dispatcher.go` decode seams + `Matches`, change nothing
+  about exit codes) and the three doc-truth diffs (each adds new false
+  claims; re-derive claim-by-claim). Details in the handover folder.
+
 ### Session refresh — 2026-08-28 (v0.45.0 → v0.47.2 + adversarial plan-audit)
 
 > **Read this before the 2026-08-25 boxes below.** Where an older box says an
