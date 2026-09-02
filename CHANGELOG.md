@@ -17,6 +17,28 @@ against.
 
 ### Fixed
 
+- **Two public docs stated that Comet was ungated; the code has gated it
+  since 2026-07-08.** `docs/protocols/README.md` — the page whose whole
+  purpose is to evidence ADR-0035/0040 contract gating — carried Comet as
+  "❌ UNGATED — last remaining (CS-026)", and `docs/methodology/vwap-aggregation.md`
+  told readers that every on-chain source is attributed by contract
+  identity "with one known exception, Comet, which still matches on topic
+  bytes alone", citing the protocols page as its evidence.
+
+  Neither is true. `comet.Decoder.Matches` returns
+  `d.reg.Has(ev.ContractID)` and the registry is seeded from
+  `comet.MainnetGatedSet()` at dispatcher construction, so a copycat
+  emitting the shared Balancer-v1 `("POOL", …)` topic bytes fails closed.
+  Both pages now say so, and both record the limit that matters: gating
+  governs what is recorded from the date each source was gated onward —
+  rows captured earlier came from the prior decoder and were not
+  retroactively re-verified.
+
+  For a product whose central claim is verified data, a public page
+  understating our own verification is the same class of defect as one
+  overstating it. (#359)
+
+
 - **Customer email addresses and API keys were landing verbatim in the
   public edge access log.** `GET /v1/account/admin/lookup?email=…` was not
   covered by Caddy's query redaction, which ENUMERATED the parameters to
