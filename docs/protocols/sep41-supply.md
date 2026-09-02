@@ -1,3 +1,9 @@
+---
+title: SEP-41 Soroban token supply — verification
+last_verified: 2026-07-06
+status: current
+---
+
 # SEP-41 supply & transfers — event verification
 
 > **What this page is:** SEP-41 is a token *standard*, not a single
@@ -112,10 +118,13 @@ Two provenance caveats follow, both material to a completeness claim:
    substrate coverage" claim (ADR-0034); a SAC-wrapper lifetime total is
    "faithful within a replay-derived opening balance", not
    "cryptographically provable to genesis".
-2. **The served tier is watched-set-gated and bare-i128 in the Soroban
-   era; the CH lake is network-wide and map/muxed-aware.** Their
-   Soroban-era totals can therefore legitimately differ (migration 0085's
-   header records why we do **not** re-point the per-tick read at
+2. **The served tier is watched-set-gated (operator-listed contracts
+   only) while the CH lake is network-wide; both are map/muxed-aware.**
+   The served decoder has type-tested and unwrapped the CAP-67 map body
+   since the 2026-07-06 dropped-mints fix (see "Body is also dual-shape"
+   above), so the difference is **watched-set scope alone** — their
+   Soroban-era totals can legitimately differ on that basis (migration
+   0085's header records why we do **not** re-point the per-tick read at
    ClickHouse). We seed only the disjoint pre-Soroban partition, never
    re-source the overlapping window, so there is no double-count.
 

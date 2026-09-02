@@ -1,3 +1,9 @@
+---
+title: Band — contract & event verification
+last_verified: 2026-07-06
+status: current
+---
+
 # Band — contract & event verification
 
 > **For the Band team:** this is how Stellar Index ingests Band's Soroban
@@ -69,13 +75,16 @@ Provenance details:
 Class `Oracle` / `IncludeInVWAP=false` (`external.Registry`). Surfaced on
 `/v1/sources` for transparency, excluded from VWAP.
 
-**Metric caveat (corrected 2026-08-03):** Band emits no CONTRACT
-events, but `stellarindex_source_events_total{source="band"}` does NOT
-read zero — `dispatchContractCall` bumps it per matched call, and r1
-shows a non-zero value. The earlier "reads zero by design" note was
-wrong and told operators to ignore a working outage signal. Use it, plus
-the cursor-advance metric, to confirm the ContractCallDecoder is
-firing.
+**Metric caveat (corrected 2026-08-03, attribution corrected
+2026-09-02):** Band emits no CONTRACT events, but
+`stellarindex_source_events_total{source="band"}` does NOT read zero,
+and r1 shows a non-zero value. The counter is bumped by the **pipeline
+sink**, not by the dispatcher: `internal/pipeline/sink.go` increments it
+for every `consumer.Event` it persists, keyed by the event's source, so
+each `OracleUpdate` the ContractCallDecoder emits lands on the `band`
+child. (`dispatchContractCall` itself touches no counter.) Use this
+series, plus the cursor-advance metric, to confirm the
+ContractCallDecoder is firing.
 
 ## Backfill safety
 

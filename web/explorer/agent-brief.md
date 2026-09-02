@@ -9,7 +9,8 @@ system, don't reinvent it.**
 
 The public Stellar Index explorer + showcase (`stellarindex.io`). **Next 16**
 (app router, `output: 'export'` static) · **React 19** · **Tailwind 4** ·
-TanStack Query. Customer account at `/account/*`. ~70 routes.
+TanStack Query. Customer dashboard at `/dashboard/*`. ~80 routes (82
+`page.tsx` at 2026-09-02).
 
 ## Hard rules (these are what keep a redesign mergeable)
 

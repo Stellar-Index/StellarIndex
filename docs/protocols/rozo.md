@@ -1,3 +1,9 @@
+---
+title: Rozo — contract & event verification
+last_verified: 2026-07-09
+status: current
+---
+
 # Rozo — contract & event verification
 
 > **For the Rozo team:** this is the set of Rozo v1 Payment contracts and

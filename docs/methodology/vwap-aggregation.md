@@ -50,8 +50,8 @@ The **filtered** price flows through one ordered path
 |---|---|---|
 | 1. Stablecoin expansion | OFF (operator opt-in) | Expand a fiat-quote target (`XLM/fiat:USD`) to its direct pair + stablecoin-backed pairs, rewriting the quote side |
 | 2. Source-class filter | ON | Drop every trade whose source is not a VWAP-eligible exchange (see below) |
-| 3. Outlier filter | ON (σ = 4.0) | Drop trades whose price is more than σ × 1.4826 × MAD from the window **median** |
-| 4. Min-USD-volume gate + freeze | ON | Suppress a window that clears too little USD volume; serve last-known-good instead of a freshly-computed value on an anomaly freeze |
+| 3. Outlier filter | ON (σ = 4.0) | Time-local robust filter: drop a print only when it sits more than σ × scale from **every** reference — the whole window's median/MAD band, its own and the neighbouring 1-minute buckets, or the nearest prints (see "Outlier filtering" below) |
+| 4. Min-USD-volume gate + freeze | ON | Suppress a window that clears too little USD volume; on a single-venue anomaly, first rebuild the pair's composite reference (e.g. XLM/USD × USD/GBP) on the **same** bucket — if it corroborates the move within 0.75 % the freeze is suppressed, otherwise serve last-known-good; a held freeze auto-releases when the composite agrees with the fresh candidate within 2 % **or** the cross-oracle median agrees within 5 % (`phase2_freeze.go`) — the composite is the tighter of two lenses, not the only one, and a pair outside the composite allow-list has only the median |
 | 5. VWAP | — | `Σquote / Σbase` over what survives |
 
 The class filter runs **before** the outlier filter so outlier statistics
@@ -93,9 +93,11 @@ fat-finger / manipulation print the CAGG would otherwise serve with
 pair like `crypto:XLM/fiat:USD` sits tightly clustered and always passes,
 so its served value is byte-identical to pre-guard behaviour); it catches
 only gross deviation and never a legitimately volatile-but-real move — a
-stablecoin depeg is *served*, not hidden — and a pair with too little
-history to form a baseline fails **open** (serves the
-candidate). All of it is exact `*big.Rat` (ADR-0003).
+stablecoin depeg is *served*, not hidden. Only a pair with **no**
+usable trailing buckets fails **open** (there is no centre to judge
+against, so the candidate is served); a pair with a *thin* history is
+judged against a wider but finite ratio-only band rather than failing
+open. All of it is exact `*big.Rat` (ADR-0003).
 
 ## Source-class policy — who gets a vote
 
@@ -208,9 +210,10 @@ normally-distributed data (`robust.go`).
   degraded signal isn't compounded by dropping half the data).
 - The statistics are computed in exact rational arithmetic, as is the
   VWAP itself.
-- When every surviving price is identical the MAD is zero, which would
-  make the band degenerate; a relative floor of 0.5 % of the centre is
-  substituted in that case.
+- When a strict **majority** of surviving prices coincide the MAD is
+  zero, which would collapse the band to a point; a relative floor of
+  0.5 % of the centre (±2 % at the default σ = 4) is substituted in that
+  case.
 
 **Corrected 2026-08-04.** This section previously described a
 standard-deviation filter around the unweighted *mean*, and stated that
@@ -237,13 +240,16 @@ chain of direct prices:
 price(A→C) = price(A→B) × price(B→C)          (e.g. XLM/USD × USD/EUR = XLM/EUR)
 ```
 
-`internal/aggregate/triangulate.go` multiplies exact rationals along an
-arbitrary-length chain; any zero/negative leg fails closed
-(`ErrTriangulateZero`). A triangulated response carries
-`flags.triangulated: true` so the derivation is never hidden. For
-chained-fiat legs a forex snapshot (`FXQuoteAtOrBefore`) supplies the FX
-rate at-or-before the trade time from the active FX feed's `fx_quotes`
-table.
+`internal/aggregate/router.go` is a graph-based cross-rate router: it
+enumerates every independent shortest path from base to quote through
+the hub assets (XLM, USD, BTC, …), composites each path in exact
+`*big.Rat`, gates each route on a weakest-link confidence floor, and
+combines the surviving routes with the exact **median** (not a mean). A
+zero or negative leg cannot form an edge, so a degenerate chain fails
+closed. A triangulated response carries `flags.triangulated: true` so
+the derivation is never hidden. For chained-fiat legs a forex snapshot
+(`FXQuoteAtOrBefore`) supplies the FX rate at-or-before the trade time
+from the active FX feed's `fx_quotes` table.
 
 ## Closed-bucket serving (cross-region determinism)
 
@@ -273,10 +279,13 @@ The direct-read path serves the `prices_*` continuous aggregates
   stands and is documented here instead.
 - **The `twap` column is `avg(quote/base)` — an unweighted per-trade
   mean, NOT a time-weighted average.** Despite the name it carries no time
-  weighting. The genuinely time-weighted TWAP lives in the dedicated
-  `twap_1h` / `twap_1d` aggregates (`migrations/0081…`), which
-  `/v1/twap` and `/v1/history` read; nothing reads `prices_*.twap`. Treat
-  that column as a legacy equal-weight mean.
+  weighting. It has exactly one consumer: the `twap_1h` / `twap_1d`
+  aggregates (`migrations/0081…`) are `avg(prices_1m.twap)`, and they
+  serve `/v1/chart?price_type=twap` — a minute-resolution approximation
+  of a time-weighted mean, documented in 0081's own header. `/v1/twap`
+  reads no CAGG at all: it computes a genuinely time-weighted TWAP on
+  demand from raw trades (`internal/aggregate/twap.go`). Treat the
+  column itself as a legacy equal-weight mean.
 - **Every column above assumes both legs are 7-decimal.** `quote_amount`
   and `base_amount` are smallest-unit integers; the ratio only equals the
   true price when both assets share a decimals scale. As of 2026-07-10

@@ -18,8 +18,11 @@ status: current
 >   schemas reverse-engineered from real r1-lake fixtures (2026-07-07).
 > - **Gate status:** ✅ Gated (single hard-coded trust-root contract +
 >   childgate; ADR-0035).
-> - **BackfillSafe:** ❌ `false` — no WASM-history audit yet
->   (`docs/operations/wasm-audits/sorocredit.md` pending).
+> - **BackfillSafe:** ✅ `true` — audited 2026-07-07 lake-direct
+>   (single instance WASM `84a88013…` set at deploy, ledger 61,620,824,
+>   zero executable changes; one invariant on-wire schema per event type
+>   across the contract's whole life). Safe from ledger 61,620,822 —
+>   `docs/operations/wasm-audits/sorocredit.md`.
 
 ## Contracts
 
@@ -37,7 +40,7 @@ mainnet contracts (`CAYUK5JF…`, `CBNOHFX7…`) emit the same distinctive
 topic symbols (~159 events total) and are **deliberately excluded** by
 the identity gate — `sorocredit` is scoped to the single main contract.
 
-## Events (7)
+## Events (8)
 
 | Topic | Body | → served table |
 |---|---|---|
@@ -48,16 +51,25 @@ the identity gate — `sorocredit` is scoped to the single main contract.
 | `BeaconUpdated` | `Vec[Void, Address(new_beacon)]` | `credit_events` |
 | `SupportedAssetAdded` | `[Address(asset)]` + `Vec[…config…]` | `credit_events` |
 | `CollateralHashUpdated` | `Vec[Bytes(old), Bytes(new)]` | `credit_events` |
+| `TreasuryUpdated` | `Vec[Address(old), Address(new)]` — protocol-treasury pointer rotation, captured verbatim (no promoted column) | `credit_events` |
 
 Every event is decoded (EVERY-event invariant). No event contributes to
 pricing / VWAP — this is explorer coverage only.
 
 **Topic census re-confirmation (ROADMAP #89, 2026-07-10):** a
 read-only lake topic census against the gated main contract found
-no topic outside the 7 above — `Liquidation` (105,275),
+no topic outside the 7 known at that date — `Liquidation` (105,275),
 `StatementPublished` (104,451), `NewCollateralContract` (18,245),
 `Withdrawal` (10,769), `BeaconUpdated` (1), `CollateralHashUpdated`
-(1), `SupportedAssetAdded` (1). Coverage confirmed complete.
+(1), `SupportedAssetAdded` (1).
+
+**8th topic added 2026-08-18.** The ADR-0033 recognition audit caught
+one real `TreasuryUpdated` event on the main contract at ledger
+63,847,367 that `classify()` had dropped, tripping
+`recognition_ok=false`. It is now decoded into `credit_events`
+(`treasury_updated`, admitted by migration 0145's `event_type` CHECK) —
+which is the recognition gate working as designed: an unmodelled topic
+caps the verdict rather than disappearing.
 
 ## ⚠️ `Liquidation` is a SCHEDULED SETTLEMENT, not distress
 

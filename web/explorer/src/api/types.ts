@@ -7622,6 +7622,20 @@ export interface operations {
                  *     CoinsReader is wired.
                  */
                 issuer?: string;
+                /**
+                 * @description Structural asset-class filter (BACKLOG #54), distinct from
+                 *     the `asset_class` catalogue dispatch above. One of `native`,
+                 *     `classic`, `soroban`, `fiat`; `any` (or omitted) disables
+                 *     the filter. Any other value returns 400.
+                 */
+                type?: "native" | "classic" | "soroban" | "fiat" | "any";
+                /**
+                 * @description Exact, CASE-SENSITIVE Stellar asset code (1-12 alphanumeric
+                 *     characters — the alphanum4/alphanum12 rule). Combine with
+                 *     `issuer` to pin a single classic asset. A malformed value
+                 *     returns 400.
+                 */
+                code?: string;
             };
             header?: never;
             path?: never;
@@ -14043,10 +14057,12 @@ export interface operations {
                      *       "data": {
                      *         "plaintext": "re_live_4f9c1d8b3a7e2f1c9d4b8a6e3f2c1d9b8a7e6f5d4c3b2a1f",
                      *         "key_id": "k_8f3a2c1b9e7d4f6a",
+                     *         "key_prefix": "re_live_4f9c1d8b",
                      *         "identifier": "signup-3d4f9a2c1e8b7f6d",
                      *         "label": "production-api-1",
                      *         "tier": "apikey",
-                     *         "rate_limit_per_min": 1000
+                     *         "rate_limit_per_min": 1000,
+                     *         "email_verification_sent": false
                      *       },
                      *       "as_of": "2026-05-05T14:35:42.881Z",
                      *       "flags": {
@@ -14062,11 +14078,15 @@ export interface operations {
                             /** @description Bearer token. Show ONCE; unrecoverable. */
                             plaintext: string;
                             key_id: string;
+                            /** @description Non-secret leading fragment of the key, safe to display/log for correlation. Omitted when the store does not record one. */
+                            key_prefix?: string;
                             identifier: string;
                             label?: string;
                             /** @enum {string} */
                             tier: "apikey";
                             rate_limit_per_min: number;
+                            /** @description True when the deployment is wired for email-ownership verification and a verification link was sent. False on deployments without a verifier/emailer — the key authenticates immediately. */
+                            email_verification_sent: boolean;
                         };
                     };
                 };

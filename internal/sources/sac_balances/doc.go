@@ -23,7 +23,7 @@
 //     `Map({amount: i128, authorized: bool, clawback: bool})`.
 //   - Some custom token contracts store a bare `i128`.
 //
-// extractBalanceAmount tries both — i128 first, then map-with-
+// scval.SEP41BalanceAmount tries both — i128 first, then map-with-
 // amount-field. Other shapes return an error and the observation
 // is dropped (counted as a decode error in dispatcher Stats).
 //

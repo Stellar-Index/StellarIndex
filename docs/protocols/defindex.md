@@ -1,10 +1,17 @@
+---
+title: DeFindex — contract & event verification
+last_verified: 2026-07-10
+status: current
+---
+
 # DeFindex — contract & event verification
 
 > **For the DeFindex team:** this is the set of DeFindex factories, vaults,
 > and strategy contracts Stellar Index ingests. Please confirm the four
 > factories and help with the one **remaining open question** below (the
-> vault self-registration gap — the strategy side is now resolved, see
-> "Resolved 2026-07-10").
+> vault self-registration gap). The strategy PROVENANCE question is
+> answered — see "Resolved 2026-07-10" — but strategies are gated by a
+> curated set exactly like vaults; they do not self-register.
 >
 > - **Enumeration method:** ADR-0040 §3 multi-proof classification — every
 >   lake emitter cross-checked against (A) creation-transaction
@@ -79,14 +86,18 @@ And separately: are the **7 `BlendStrategy`** contracts **created by their
 vaults** (fan-out), or **shared / independently deployed** (need their own
 allowlist)?
 
-> **✅ ANSWERED 2026-07-10** (see "Resolved 2026-07-10 — BlendStrategy
-> factory-anchoring" below): strategies are **independently deployed and
-> referenced by vault configs**, not vault-created. The `create` event's
-> body carries each asset's assigned strategy address(es) directly
-> (`assets[].strategies[].address`) — this IS decodable, and the decoder
-> now extracts it live to self-register new strategies. The vault's own
-> address remains NOT decodable (the paragraph above is otherwise
-> unchanged) — that structural gap is the one still-open question.
+> **✅ ANSWERED 2026-07-10, REVISED 2026-08-25** (see "Resolved
+> 2026-07-10 — BlendStrategy factory-anchoring" below): strategies are
+> **independently deployed and referenced by vault configs**, not
+> vault-created. The `create` event's body does carry each asset's
+> assigned strategy address(es) (`assets[].strategies[].address`), but
+> that field is **attacker-controlled** — anyone may call the public
+> factory naming arbitrary addresses — so the live self-registration
+> built on it was **removed on 2026-08-25** (W8 6c). Strategies, like
+> vaults, are curated-set only (`defindex.MainnetStrategies`) plus
+> operator-seeded `protocol_contracts` rows. The vault's own address
+> remains NOT decodable (the paragraph above is otherwise unchanged) —
+> that structural gap is the one still-open question.
 
 > **Note:** DeFindex topics are namespaced (`DeFindexVault`,
 > `BlendStrategy`), so collision risk is low and the urgency is lower than
@@ -388,13 +399,13 @@ extension) + `projector-replay`.
 1. Deploy the gated build (the in-code seed is the trust root for BOTH
    vaults and strategies).
    `seed-protocol-contracts -source defindex` walks the factories'
-   `create` events and, **as of 2026-07-10, is no longer a no-op**: the
-   body's `assets[].strategies[].address` field self-registers every
-   strategy into `protocol_contracts` (verified to exactly reproduce
-   `MainnetStrategies`, 16/16). It remains a no-op for VAULTS — their own
-   address still isn't in the body — so re-running it is safe (idempotent
-   upsert) but won't discover new vaults; that's still the curated-seed /
-   `protocol_contracts` manual path.
+   `create` events and is a **no-op for both layers**: the vault's own
+   address is not in the body, and the body's
+   `assets[].strategies[].address` field is attacker-controlled and is
+   **no longer auto-seeded** (removed 2026-08-25, W8 6c). Re-running it
+   is safe (idempotent upsert) but discovers nothing; new vaults AND new
+   strategies are admitted via the curated in-code seed or a manually
+   verified `protocol_contracts` row.
 2. Re-derive: `projector-replay -source defindex -from 57056338` (under
    `run-heavy-job.sh`). Replay is upsert-only, so ALSO delete the flagged
    contracts' rows:
@@ -430,7 +441,7 @@ extension) + `projector-replay`.
    all 19 now emit `DeFindexVault` events; the 2026-06-12 snapshot was
    simply early. No answer needed.
 
-## ✅ Resolved 2026-07-10 — BlendStrategy factory-anchoring
+## ✅ Resolved 2026-07-10 — BlendStrategy factory-anchoring (wiring reverted 2026-08-25)
 
 **Question:** are `BlendStrategy` contracts created by their vaults
 (fan-out, Blend-pool-style) or shared/independently deployed?
@@ -470,25 +481,36 @@ adopted). The schema is byte-identical on the earliest factory
 (`CAVP2QLP…`, ledger 55,484,403) and the current one (`CDKFHFJI…`),
 confirming it hasn't changed across the protocol's history.
 
-**Gate wiring shipped 2026-07-10** (`internal/sources/defindex/decode.go`
-`decodeFactoryCreateStrategies`, wired in `dispatcher_adapter.go`
-`Decode`): a `create` event from a canonical factory now Seeds every
-strategy address its body announces into the `contractid.Registry` —
-the same live-upsert path Blend/Soroswap/Aquarius use for their
-factory-anchored fan-out. A new BlendStrategy deployment self-registers
-in the same tx it's created, with NO operator step and NO code change —
-closing that half of ADR-0040's "curated-set gate" classification for
-defindex to a genuine factory-anchored gate. **The vault side is
-unaffected and unchanged**: no create body has ever been observed to
-carry the new vault's own address (confirmed again in this same
-117-body sweep), so `MainnetVaults` remains curated-set only per the
-"Open question" above — this is a permanent architectural fact about
+**Gate wiring: shipped 2026-07-10, REVERTED 2026-08-25 (W8 6c).**
+Extracting `assets[].strategies[].address` from create bodies was wired
+as a live seed (`decodeFactoryCreateStrategies`, called from
+`dispatcher_adapter.go` `Decode`) and then **removed as a
+registry-poisoning vector**: the DeFindex factory is permissionless, so
+`Matches()` proving the emitter is a canonical factory only proves the
+real factory announced *some* — possibly attacker-owned — vault, and the
+strategy addresses that vault names are caller-supplied. An attacker
+could therefore have registered arbitrary contracts as "strategies"
+simply by naming them, after which their own `("BlendStrategy", …)`
+events would have decoded as recognised DeFindex flows. The extraction
+above remains valid as a one-off **audit** (it reproduced
+`MainnetStrategies` 16/16, and r1's persisted set was verified on
+2026-08-25 to hold exactly those 16 — zero poisoned rows), **not as a
+trust root**. A `create` is still recognised — it Matches, decodes
+cleanly, and emits nothing — and a new BlendStrategy deployment
+fail-closes into an ADR-0033 recognition gap until it is
+evidence-verified and seeded, the same posture vaults have. **The vault
+side is unaffected and unchanged**: no create body has ever been
+observed to carry the new vault's own address (confirmed again in this
+same 117-body sweep), so `MainnetVaults` remains curated-set only per
+the "Open question" above — this is a permanent architectural fact about
 the DeFindex factory contract, not a temporary gap pending more
 evidence, unless the team can point to a decodable source for it
 (factory view function, salt/deployer derivation, or the authoritative
 list per the three-way ask above).
 
-Golden real-lake-bytes tests: `internal/sources/defindex/decode_test.go`
-`TestDecode_factoryCreate_seedsStrategiesFromRealLakeBytes` (3 cases —
-two-strategy body, zero-strategy body, and the earliest-factory body) and
-`TestDecode_factoryCreate_malformedBodyErrors`.
+Security regression tests (real lake bytes, same three bodies):
+`internal/sources/defindex/decode_test.go`
+`TestDecode_factoryCreate_doesNotSeedFromBody` — asserts the registry
+does not grow and each named strategy stays unrecognised — and
+`TestDecode_curatedStrategy_stillRecognised`, which proves legitimate
+curated flows are untouched.

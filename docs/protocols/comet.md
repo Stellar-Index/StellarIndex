@@ -1,3 +1,9 @@
+---
+title: Comet — contract & event verification
+last_verified: 2026-07-08
+status: current
+---
+
 # Comet — contract & event verification
 
 > **For the Comet / Blend teams:** this documents how Stellar Index
@@ -75,6 +81,16 @@ Notes:
   rows don't collide.
 - **`pool_amount_in` (BPT burned) is withdraw-only** — NULL on the other
   three liquidity kinds.
+- **Self-pair swaps (2026-08-25).** A `swap` whose `token_in ==
+  token_out` — the primitive used in the 2026-08 Blend/Comet exploit —
+  decodes *fully* but maps to **zero** `trades` rows: it is not a
+  serveable trade. It returns no error, so the completeness re-derive
+  scores it `expected=0` rather than as an undecodable blind spot that
+  would fail the source's verdict closed forever. It is counted on
+  `stellarindex_amm_self_pair_swap_total{source="comet"}`, but only when
+  the ledger closed within the last hour (`selfPairLiveWindow`), so a
+  backfill or re-derive over the historical exploit window does not
+  re-fire the alert.
 
 ## Events NOT decoded (and why)
 
@@ -90,10 +106,14 @@ Verified absent from the Soroban port 2026-05-26:
   standard token-event surface**, claimed by `internal/sources/sep41_supply`
   when the pool is in scope; re-decoding it here would double-count.
 
-A future Comet upgrade that starts emitting any of these routes to
-`Decode`, which rejects unknown `("POOL", *)` kinds as `ErrNotCometEvent`
-and counts them on `source_orphan_events_total{source="comet"}` — the
-signal to extend `classify`.
+A future Comet upgrade that starts emitting any of these fails
+`Matches` (`classify` returns `""`) and lands in the dispatcher's
+**global** unmatched tally (`decoder_stats_5m`) and in the ADR-0033
+recognition audit (`RecognitionOK=false` for the gated pool) — that
+audit is the live signal to extend `classify`. Comet implements no
+`EvictedOrphans()` reporter, so the per-source
+`stellarindex_source_orphan_events_total{source="comet"}` series never
+populates and nothing alerts on it.
 
 ## Gate status — GATED (curated allowlist, 2026-07-08; CS-026 closed)
 

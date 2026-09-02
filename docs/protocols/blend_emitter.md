@@ -1,3 +1,9 @@
+---
+title: Blend Emitter — contract & event verification
+last_verified: 2026-07-09
+status: current
+---
+
 # Blend Emitter — contract & event verification
 
 > **For the Blend team:** this documents how Stellar Index attributes
@@ -101,7 +107,7 @@ historical range.
 
 | Event | Hypertable | Migration |
 | --- | --- | --- |
-| `distribute` / `drop` / `q_swap` / `swap` | `blend_emitter_events` | 0095 |
+| `distribute` / `drop` / `q_swap` / `swap` | `blend_emitter_events` | 0096 |
 
 ## Aggregator treatment
 

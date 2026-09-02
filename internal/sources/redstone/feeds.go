@@ -58,11 +58,14 @@ var (
 )
 
 // feedRegistry maps each EXACT on-chain feed_id() string to the
-// canonical (base, quote) pair it prices — the 30 RedStone Stellar
+// canonical (base, quote) pair it prices — the 31 RedStone Stellar
 // mainnet feeds: 19 captured on-chain 2026-05-22 (#53; see
-// ADR-0028) plus 11 from the 2026-07-24 relayer expansion (ledger
+// ADR-0028), 11 from the 2026-07-24 relayer expansion (ledger
 // 63624934 — unknown ids were skipped fail-closed, ~5,600 events
-// dropped, until the expansion block below landed).
+// dropped, until the expansion block below landed), and USDT0 added
+// 2026-08-31 (3c7e7440, #439) — that one arrived without this count
+// being updated, which is what a stale magic number in a comment does.
+// It is asserted below rather than trusted.
 //
 // Invariant (pinned by TestFeedRegistry_UniquePairs): no two
 // feed_ids map to the same (Base, Quote) pair — feeds arrive

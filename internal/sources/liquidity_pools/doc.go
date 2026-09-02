@@ -16,8 +16,9 @@
 // LiquidityPoolEntryConstantProduct carries
 // `Params.AssetA` + `ReserveA` + `Params.AssetB` + `ReserveB`.
 // The observer reads those fields directly. Future LP variants
-// (none on the protocol roadmap at v1) would extend the type
-// switch in `extractFromChange`.
+// (none on the protocol roadmap at v1) would extend the
+// ConstantProduct branch in Matches/Decode (an inline check in
+// dispatcher_adapter.go — this package has no shared extract helper).
 //
 // # Removed-variant (pool emptied and deleted)
 //

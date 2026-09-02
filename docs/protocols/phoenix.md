@@ -1,3 +1,9 @@
+---
+title: Phoenix — contract & event verification
+last_verified: 2026-08-18
+status: current
+---
+
 # Phoenix — contract & event verification
 
 > **For the Phoenix team:** this is the complete set of Phoenix contracts
@@ -7,15 +13,18 @@
 > below) and rely on this list being complete.
 >
 > - **Enumeration method:** RPC view — the factory's `query_pools()` plus
->   the multihop contract (Phoenix pools were created before our lake's
->   earliest ledger, 50.46M, so there are **no `create` events in the lake**
->   to enumerate from).
+>   the multihop contract. The ORIGINAL pools were created before our
+>   lake's earliest ledger (50.46M), so they carry no `create` event we
+>   could enumerate from; LATER pools (from ledger 51,572,026 on) DO have
+>   factory `create` transactions in the lake and were verified from them
+>   on 2026-08-18.
 > - **Last verified:** 2026-08-18 (r1 lake event activity; the original
 >   pool list was the 2026-05-01 WASM-history walk — see the 2026-08-18
 >   completeness-gap update below).
 > - **Gate status:** ✅ Gated code-side (2026-07-02, ADR-0040 §1 mechanism 2
->   — curated-set registry: the **12 pools + 16 stake contracts** below are
->   the in-code seed `phoenix.MainnetGatedSet`; factory creation events
+>   — curated-set registry: the **12 String-schema pools + 1 Map-schema
+>   pool + 16 stake contracts** below are the in-code seed
+>   `phoenix.MainnetGatedSet`; factory creation events
 >   predate the lake so the seed is the trust root). Operator rollout
 >   remaining per ADR-0040 §2: deploy, lake re-derive, one green verdict
 >   cycle. An unlisted pool/stake contract fail-closes into a recognition
@@ -43,7 +52,7 @@
 | Factory | `CB4SVAWJA6TSRNOJZ7W2AWFW46D5VR4ZMFZKDIKXEINZCZEGZCJZCKMI` | none | Emits `("create","liquidity_pool")`, but only before our lake. Pools enumerated via its `query_pools()` view. |
 | Multihop | `CCLZRD4E72T7JCZCN3P7KNPYNXFYKQCL64ECLX7WP5GNVYPYJGU2IO2G` | `initialize` ×1 | **Emits no `swap` events** — it relays to pools, so a pool-only gate loses no trades. |
 
-## Pools (12)
+## Pools (13)
 
 Pools that have emitted `swap` in the lake are marked **active** with their
 swap count; the rest are in the factory's `query_pools()` but have no swap
@@ -63,6 +72,7 @@ activity in our window.
 | `CCKOC2LJTPDBKDHTL3M5UO7HFZ2WFIHSOKCELMKQP3TLCIVUBKOQL4HB` | no lake events |
 | `CCUCE5H5CKW3S7JBESGCES6ZGDMWLNRY3HOFET3OH33MXZWKXNJTKSM3` | no lake events |
 | `CDQLKNH3725BUP4HPKQKMM7OO62FDVXVTO7RCYPID527MZHJG2F3QBJW` | no lake events |
+| `CBENABXP6C4C7WG6KB7JQOTDS5GIIXF3IX3PIYNZFCDZDWUHITO2HZ4S` | newer pool WASM — single-event **Map-body** swap schema (`decodeSwapMap`); appeared 2026-07-02 (factory "Updated Config" + create in the same window). Seeded via `phoenix.MainnetMapPools` |
 
 ## Stake contracts (16 — separate from the pools)
 
@@ -104,9 +114,12 @@ bond/unbond yet. **Please send the complete pool → stake-contract mapping.**
 **Note on completeness:** the `swap` topic is emitted by 49 distinct
 contracts in our lake (most are other AMMs), and `withdraw_liquidity` by
 75 — so we **cannot** reverse-derive or verify the complete Phoenix pool
-set from event topics, and Phoenix's pool-creation events predate our lake,
-so we have no live signal for new pools. The pool list above is the
-factory's `query_pools()` snapshot (2026-05-01); a gate built on it would
+set from event topics. The ORIGINAL pools' creation events predate our
+lake, so the earliest pools carry no on-chain provenance we can read;
+later pools do (factory `create` from 51,572,026 on, used for the
+2026-08-18 verification). The pool list above is the factory's
+`query_pools()` snapshot (2026-05-01) plus that lake walk; a gate built
+on it would
 **silently drop** any pool or stake contract not on the list. This is why
 we need the team to confirm completeness (or a `query_pools()` we can
 re-poll) **before** enforcing the gate. **If Phoenix has deployed pools or
@@ -114,15 +127,25 @@ stake contracts since 2026-05-01, please send the additions.**
 
 ## Events decoded
 
-Verified against `phoenix-contracts` `pool/src/contract.rs`. Each Phoenix
-action emits **multiple field-named events** (e.g. a swap emits 8) that we
-correlate by `(ledger, tx_hash, op_index)` into one trade.
+Verified against `phoenix-contracts` `pool/src/contract.rs`. There are
+**two swap event schemas** and both are decoded. The older pools emit
+**multiple field-named events** per action (a swap emits 8, each with a
+2-tuple `ScvString` topic) that we correlate by
+`(ledger, tx_hash, op_index)` into one trade. The **newer** pool WASM
+emits ONE `ScvSymbol("swap")` event whose `ScvMap` body carries the
+whole trade (underscore-spelled Symbol keys), decoded directly by
+`decodeSwapMap` with no correlation buffer. Because gating is by
+contract identity, a curated pool that upgrades from one shape to the
+other in place is already covered — only the decode dispatch depends on
+the topic shape.
 
 | Action (topic[0]) | Where it lands |
 |---|---|
 | `swap` | `trades` (source=phoenix) |
 | `provide_liquidity`, `withdraw_liquidity` | `phoenix_liquidity` |
 | `bond`, `unbond`, `withdraw_rewards`, `distribute_rewards` | `phoenix_stake_events` |
+| `initialize` (`XYK LP token_a` / `token_b`, once per pool deploy) | `phoenix_initialize` (migration 0131) |
+| admin-rotation topics (`XYK Pool: ` — replace_requested / replace_set / undo / accepted) | `phoenix_admin_events` (migration 0132) |
 
 ## Rewards topics — HANDLED (ROADMAP #89, 2026-07-10)
 

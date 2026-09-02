@@ -53,16 +53,17 @@ The `flags` block is the operational quality signal:
 |---|---|
 | `stale` | Response degraded below the surface's documented contract (see [ADR-0018](adr/0018-api-consistency-surfaces.md) for the per-surface baseline) |
 | `reduced_redundancy` | Cross-region archive completeness is degraded ([ADR-0017](adr/0017-archive-completeness-invariants.md)) |
-| `triangulated` | Reserved for a future triangulated public-serving path; the current Timescale-backed API leaves this false in normal operation |
+| `triangulated` | The price was derived through a cross-rate route or a stablecoin-peg constituent rather than a single direct market ([ADR-0026](adr/0026-stablecoin-fiat-proxy-late-binding.md)); set by `/v1/price`, `/v1/price/at`, `/v1/ohlc`, `/v1/chart` |
 | `divergence_warning` | Anomaly detection or cross-reference observed a meaningful divergence; treat with caution |
+| `divergence_checked` | Whether the cross-reference check reached a verdict at all. When this is `false`, `divergence_warning: false` means **blind**, not "the sources agree" (CS-087) |
 | `frozen` | Anomaly detection refused to publish the new bucket; this response carries the previous bucket's last-known-good value ([ADR-0019](adr/0019-anomaly-response-and-confidence-scoring.md)) |
 | `single_source` | Only one source contributed; combined with `frozen` this is the manipulation signature |
 
 ## Authentication
 
-The free tier supports anonymous requests at a low rate limit.
-Authenticated tiers unlock higher limits + access to private
-surfaces (`/v1/observations`, `/v1/account/*`). The key is accepted
+Anonymous requests are supported on every public surface. A key
+buys per-subject attribution, usage reporting, and access to the
+private `/v1/account/*` surfaces. The key is accepted
 on either the `X-API-Key` header or `Authorization: Bearer <key>`
 (the Go SDK always sends `Authorization: Bearer <key>`; `X-API-Key`
 is a convenience for hand-written curl calls).
@@ -101,6 +102,7 @@ curl -fsSL -X POST https://api.stellarindex.io/v1/signup \
     "plaintext": "sip_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
     "key_id": "kid_…",
     "key_prefix": "sip_xxxxxxxx",
+    "identifier": "signup-3d4f9a2c1e8b7f6d",
     "tier": "apikey",
     "rate_limit_per_min": 1000,
     "email_verification_sent": false
@@ -135,20 +137,30 @@ curl -fsSL -X POST https://api.stellarindex.io/v1/account/keys \
      -d '{"label":"my laptop"}'
 ```
 
-Rotation is available via `POST /v1/account/keys`; revocation is not
-shipped yet in this snapshot.
+Rotation is `POST /v1/account/keys`; revocation is
+`DELETE /v1/account/keys/{keyID}` — self-service, scoped to the
+caller's own keys.
 
 ## Rate limits
 
-| Tier | Anonymous | Authenticated |
+| Tier | Hosted `api.stellarindex.io` | Self-hosted default |
 |---|---|---|
-| Requests / minute | 60 | 1 000 |
+| Anonymous (per IP) | 6 000 / min | 60 / min (`[api].anon_rate_limit_per_min`) |
+| Free key (per key) | 1 000 / min (stamped at mint) | 1 000 / min (`[api].key_rate_limit_per_min`) |
+| Partner (per key) | staff-set, up to 100 000 / min | — |
 
-Rate-limit headers on every response:
+On the hosted deployment an anonymous IP's throughput deliberately
+exceeds a single free key's: keys exist for per-subject attribution,
+usage reporting and the private surfaces, not for headroom. A free
+key's budget is **stamped on the key at mint time** and overrides the
+deployment's default, so the two numbers move independently.
+
+**The live limit is always the one in `X-RateLimit-Limit`** — read it
+rather than hard-coding either number:
 
 ```
-X-RateLimit-Limit:     1000
-X-RateLimit-Remaining: 987
+X-RateLimit-Limit:     6000
+X-RateLimit-Remaining: 5958
 ```
 
 Exceeded limits return `429 Too Many Requests` with `Retry-After`.
@@ -169,7 +181,7 @@ ticks during such windows (operators alert on a sustained spike).
 | Markets / pairs | `/v1/markets`, `/v1/pairs` | closed-bucket |
 | Oracle (SEP-40) | `/v1/oracle/lastprice`, `/v1/oracle/x_last_price`, `/v1/oracle/prices`, `/v1/oracle/latest` | closed-bucket |
 | Sources | `/v1/sources` | closed-bucket |
-| Account | `/v1/account/me`, `/v1/account/usage`, `/v1/account/keys` | private |
+| Account | `/v1/account/me`, `/v1/account/usage`, `/v1/account/keys` (`GET`/`POST`, `DELETE /{keyID}`) | private |
 
 The three consistency surfaces are not interchangeable. **Query
 parameters never shift the surface** — pick the URL that matches
@@ -207,7 +219,7 @@ fmt.Printf("%s = %s %s (as of %s)\n",
 The SDK returns the full `Envelope[T]` shape so consumers can read
 `env.Flags.Stale`, `env.Flags.DivergenceWarning`, etc. alongside
 `env.Data`. See [`pkg/client/doc.go`](../pkg/client/doc.go) for the
-full surface — ~36 typed methods covering pricing (`Price`,
+full surface — 39 typed methods covering pricing (`Price`,
 `PriceAt`, `PriceTip`, `PriceBatch`, `OHLC`, `History`,
 `HistorySinceInception`, `VWAP`, `TWAP`), market data (`Markets`,
 `Pair`, `Pools`), the asset catalogue (`Assets`, `Asset`,
@@ -256,7 +268,7 @@ command:
 
 ```sh
 git clone git@github.com:Stellar-Index/StellarIndex.git
-cd stellar-index
+cd StellarIndex
 make dev    # docker-compose: TimescaleDB + Redis + MinIO (app binaries run on the host)
 ```
 

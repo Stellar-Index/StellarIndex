@@ -1,3 +1,9 @@
+---
+title: Soroswap — contract & event verification
+last_verified: 2026-06-12
+status: current
+---
+
 # Soroswap — contract & event verification
 
 > **For the Soroswap team:** this is the set of Soroswap factories and the

@@ -1,3 +1,9 @@
+---
+title: Reflector — contract & event verification
+last_verified: 2026-07-06
+status: current
+---
+
 # Reflector — contract & event verification
 
 > **For the Reflector team:** this is the set of Reflector oracle

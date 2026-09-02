@@ -47,7 +47,7 @@ CHANGELOG).
 
 ```sh
 git clone https://github.com/Stellar-Index/StellarIndex
-cd stellar-index
+cd StellarIndex
 make deps      # download Go modules + tools
 make verify    # canonical pre-push gate — fmt, vet, lint, doc-lint,
                # import-lint, openapi-url-lint, monitoring-rules
@@ -104,8 +104,11 @@ checks are enforced by CI; the judgement checks by your reviewer.
 - [ ] `make verify` passes (covers `make lint`, `make test -race`,
       doc / import / openapi / monitoring lints, and the
       integration-build smoke check).
-- [ ] Coverage does not decrease on changed packages.
-- [ ] `govulncheck` / `gitleaks` / `gosec` clean.
+- [ ] Coverage report attached by CI (the `coverage.txt` artifact);
+      reviewers eyeball the changed packages — there is no automated
+      ratchet.
+- [ ] `govulncheck` / `gitleaks` clean; `gosec` runs as a golangci-lint
+      linter under `make lint` (excluded on `_test.go` only).
 - [ ] Every new exported symbol has a Godoc comment.
 - [ ] Every `TODO` / `FIXME` is in the form `TODO(#123): …`.
 - [ ] If OpenAPI changed, reference docs regenerate cleanly.
@@ -132,26 +135,31 @@ CEX, DEX, AMM, FX, oracle — same pattern. See:
   — the binding rules for source packages (pure decoders, no
   goroutines, no RPC clients, dispatcher owns routing).
 
-Five-file convention per source:
+**On-chain Soroban sources — six files, plus six wiring edits.**
+Follow [docs/contributing/add-onchain-source.md](docs/contributing/add-onchain-source.md);
+it is the authoritative checklist and the wiring edits are what make
+the difference between a source that emits rows and one that compiles,
+registers nowhere and silently emits nothing.
 
 ```
 internal/sources/<name>/
 ├── README.md
-├── events.go       (event/topic decoding for on-chain; WS message decoding for CEX)
-├── decode.go       (raw → internal/canonical.Trade)
-├── consumer.go     (consumer.Source impl — wires the source into the registry)
+├── events.go                (event/topic types + classification)
+├── decode.go                (raw → internal/canonical.Trade / domain events)
+├── consumer.go
+├── dispatcher_adapter.go    (implements dispatcher.Decoder — the PRODUCTION seam)
 └── source_test.go
 ```
 
-On-chain sources additionally carry `dispatcher_adapter.go` (the
-seam to `internal/dispatcher`) and a `factory_seed.go` for any
-factory-deployed pair-contract enumeration. External (CEX / FX)
-sources may have `streamer.go` + `backfill.go` instead of one
-`consumer.go` when the venue separates streaming and REST
-backfill (e.g. binance). The five files above are the canonical
-core; review the existing connectors before adding a new one.
+**CEX / FX venues are a different shape.** They live at
+`internal/sources/external/<venue>/` and implement the
+`external.Connector` sub-interfaces (`Streamer` / `Poller` /
+`Backfiller`), not `consumer.Source`: `events.go`, `parse.go`,
+`streamer.go` and/or a poller, `backfill.go`, `pairs.go`. Template:
+`binance`.
 
-Plus fixtures in `test/fixtures/<name>/`.
+Fixtures are **inline golden frames in the package's `*_test.go`** —
+there is no `test/fixtures/<name>/` directory for external sources.
 
 **Coverage invariant (ADR-0030).** If your source writes to a new per-source hypertable (any `CREATE TABLE *_events|*_liquidity|*_positions|*_emissions|*_admin|*_transfers|*_swaps|*_stake_events|*_supply_events|*_auctions` migration), you MUST register it in `internal/storage/timescale/per_source_gaps.go`'s `DefaultGapDetectorTargets` in the same PR. CI's `TestGapDetectorTargetsCoverAllPerSourceHypertables` fails otherwise. A new Soroban source's PR should also add a `<name>` case in `internal/projector/registry.go::buildSource` and a `consumer.Event` arm in `internal/pipeline/sink.go::IsProjectedEvent` so the projector (ADR-0032) catches up its rows on cursor rewind via `stellarindex-ops projector-replay`.
 
@@ -163,7 +171,9 @@ Plus fixtures in `test/fixtures/<name>/`.
   `"added soroswap swap decoder"`).
 - Scope prefix where useful: `sources/soroswap: correlate swap+sync`.
 - Body wraps at 72 chars.
-- Sign commits (`git commit -S`) — branch protection enforces.
+- Sign commits (`git commit -S`) where you can; signing is not
+  enforced by branch protection today (`main` is unprotected — the repo
+  is direct-to-main, see docs/operations/maintainer-workflow.md).
 
 Squash-merge is the default; preserve logical history only if every
 commit is individually green + reviewable.
@@ -177,11 +187,15 @@ Three layers:
 - **Unit tests** — co-located with code (`foo.go` + `foo_test.go`).
   Run on every PR. Target 80%+ coverage per package.
 - **Integration tests** — `test/integration/`, behind
-  `// +build integration`. Testcontainers for real Postgres +
-  Redis + MinIO. Run on label `ready-for-integration` + nightly.
+  `//go:build integration`. Testcontainers for real Postgres +
+  Redis + MinIO. Run on **every PR** as four Docker shards
+  (`scripts/ci/integration-shard.sh`), plus a compile-only
+  `make test-integration-build` smoke in the unit job that catches
+  build-tag breakage without spinning containers.
 - **Load tests** — `test/load/`, k6 scripts. Run pre-release.
 
-See [engineering-standards.md §9 testing](docs/engineering-standards.md).
+See engineering-standards.md [§4.10 (tests as documentation)](docs/engineering-standards.md)
+and §14.8–14.9 (table tests; worker metrics asserted via `obstest`).
 
 ---
 

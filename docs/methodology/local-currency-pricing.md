@@ -1,3 +1,9 @@
+---
+title: Local-currency pricing
+last_verified: 2026-09-02
+status: current
+---
+
 # Local-currency pricing
 
 How Stellar Index produces a price in your currency, and what that

@@ -1,3 +1,9 @@
+---
+title: RedStone — contract & event verification
+last_verified: 2026-07-27
+status: current
+---
+
 # RedStone — contract & event verification
 
 > **For the RedStone team:** this is the Adapter contract and the 30-feed

@@ -334,19 +334,25 @@ today=$(date -u +%s)
 stale_threshold=$((90 * 24 * 60 * 60))   # 90 days in seconds
 fail_threshold=$((180 * 24 * 60 * 60))   # 180 days — hard fail
 
-# Iterate over 'current' docs — architecture/, operations/, adr/ and
+# Iterate over 'current' docs — architecture/, operations/, adr/,
 # contributing/ (added 2026-09-02, issue #362: the contributor
 # checklists were never walked, so `add-onchain-source.md` could and did
-# drift from the wiring it prescribes).
+# drift from the wiring it prescribes) and protocols/ + methodology/
+# (added 2026-09-02, issue #359).
 #
-# Under docs/operations and docs/contributing a MISSING last_verified is
-# now an error, not a skip. The old `continue` meant 23 operator
-# procedures — including three of the five files the #461
-# dangerous-instruction fix had just rewritten — sat outside the
-# freshness lint entirely: opting out was as easy as not writing the
-# frontmatter, and nothing said so. Under docs/architecture and docs/adr
-# it stays advisory (ADRs are immutable records; the ADR checks live in
-# §8).
+# Under docs/operations, docs/contributing, docs/protocols and
+# docs/methodology a MISSING last_verified is now an error, not a skip.
+# The old `continue` meant 23 operator procedures — including three of
+# the five files the #461 dangerous-instruction fix had just rewritten —
+# sat outside the freshness lint entirely: opting out was as easy as not
+# writing the frontmatter, and nothing said so. The PUBLIC trees are the
+# same trap with a worse blast radius: docs/protocols/README.md tells
+# each protocol team "each page carries a last_verified date", yet 15 of
+# 17 protocol pages and 2 of 5 methodology pages carried none, so
+# widening the scan roots alone would have been a no-op — every one of
+# them would simply have been skipped. Under docs/architecture and
+# docs/adr it stays advisory (ADRs are immutable records; the ADR checks
+# live in §8).
 #
 # RECORD subtrees are exempt by design: evidence/, postmortems/,
 # incidents/, notes/ and wasm-audits/ are dated artefacts of a moment,
@@ -358,7 +364,8 @@ fail_threshold=$((180 * 24 * 60 * 60))   # 180 days — hard fail
 # opt out by accident. A freshness stamp on a post-mortem would
 # demand periodic re-verification of something that must never change,
 # and would hard-fail at 180 days for being exactly what it is.
-find docs/architecture docs/operations docs/adr docs/contributing -type f -name '*.md' 2>/dev/null | while read -r f; do
+find docs/architecture docs/operations docs/adr docs/contributing \
+     docs/protocols docs/methodology -type f -name '*.md' 2>/dev/null | while read -r f; do
   # Skip generated docs, archive, templates.
   if grep -q "GENERATED FILE - DO NOT EDIT" "$f" 2>/dev/null; then continue; fi
   if [[ "$f" == *"_archive"* ]] || [[ "$f" == *"_template"* ]]; then continue; fi
@@ -372,8 +379,8 @@ find docs/architecture docs/operations docs/adr docs/contributing -type f -name 
       docs/operations/wasm-audits/*|\
       *-[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9].md)
         continue ;;
-      docs/operations/*|docs/contributing/*)
-        err "Doc '$f' has no last_verified frontmatter — every living operator/contributor procedure carries one so §6 can age it out. Add 'last_verified: YYYY-MM-DD' with the date you actually checked its claims (record-only subtrees evidence/ postmortems/ incidents/ notes/ wasm-audits/ are exempt)."
+      docs/operations/*|docs/contributing/*|docs/protocols/*|docs/methodology/*)
+        err "Doc '$f' has no last_verified frontmatter — every living operator/contributor procedure and every public protocol/methodology page carries one so §6 can age it out. Add 'last_verified: YYYY-MM-DD' with the date you actually checked its claims (record-only subtrees evidence/ postmortems/ incidents/ notes/ wasm-audits/ are exempt)."
         continue ;;
       *)
         continue ;;

@@ -1,3 +1,9 @@
+---
+title: Aquarius — contract & event verification
+last_verified: 2026-07-05
+status: current
+---
+
 # Aquarius — contract & event verification
 
 > **For the Aquarius team:** this is how Stellar Index attributes Aquarius
@@ -49,9 +55,12 @@ The two questions this page used to carry are answered by the lake itself:
 | Source (topic[0]) | Where it lands |
 |---|---|
 | pool `trade` | `trades` (source=aquarius) |
-| pool `deposit` / `withdraw` / `update_reserves` / `reserves_sync` | liquidity / reserves tracking |
+| pool `deposit` / `withdraw` / `update_reserves` | liquidity / reserves tracking |
+| pool `reserves_sync` | `aquarius_reserves_sync` (migration 0128) — one row per position in the synced vector |
 | router `add_pool` | pool registration (gate fan-out — registers the pool in the contract-identity registry; emits no flow/trade row) |
 | pool rewards-gauge (12 kinds, incl. router-side `config_rewards`) | `aquarius_rewards_events` (migration 0099) |
+| router/pool `set_protocol_fee` / `claim_protocol_fee` | `aquarius_protocol_fee` (migration 0129) |
+| router/pool kill-switch (`kill_*` / `unkill_*`, emergency mode) | `aquarius_kill_switches` (migration 0130) |
 | router/pool governance + upgrade (8 kinds) | `aquarius_admin` (migration 0100) |
 
 ## ✅ Rewards-gauge + governance topics — decoded (ROADMAP #89, closed 2026-07-10)

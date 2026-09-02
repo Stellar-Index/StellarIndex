@@ -982,3 +982,18 @@ func TestFeedRegistry_USDT0MapsToItsOwnAsset(t *testing.T) {
 		t.Error("USDT0 is published in USD directly; Invert must be false")
 	}
 }
+
+// TestFeedRegistry_CountMatchesItsDocComment stops the registry's size
+// from drifting away from the number written above it. USDT0 landed in
+// 3c7e7440 (#439) and the comment kept saying 30 for two days, which is
+// exactly how a doc-truth audit ends up filing a "wrong count" finding
+// against code that is itself correct.
+//
+// If you are adding a feed: update the constant AND the doc comment. The
+// point of the assertion is that you cannot forget.
+func TestFeedRegistry_CountMatchesItsDocComment(t *testing.T) {
+	const documented = 31
+	if got := len(feedRegistry); got != documented {
+		t.Errorf("feedRegistry has %d entries but its doc comment says %d — update BOTH (internal/sources/redstone/feeds.go)", got, documented)
+	}
+}

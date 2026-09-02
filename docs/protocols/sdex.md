@@ -1,3 +1,9 @@
+---
+title: SDEX (classic Stellar DEX) — trade & source verification
+last_verified: 2026-07-06
+status: current
+---
+
 # SDEX (classic Stellar DEX) — trade & source verification
 
 > **What this page is:** SDEX is not a third-party contract, so there is
@@ -41,14 +47,18 @@ resting offers and emit multiple trades.
 
 ### ClaimAtom variants
 
-`xdr.ClaimAtom` is a three-arm union; the decoder handles two and
-surfaces the third as a hard error:
+`xdr.ClaimAtom` is a three-arm union; **all three arms are decoded**:
 
 | Variant | Status |
 |---|---|
 | `ClaimAtomTypeOrderBook` | decoded — standard order-book match |
 | `ClaimAtomTypeLiquidityPool` | decoded — AMM-side fill against a classic pool (post-P18) |
-| `ClaimAtomTypeV0` | `ErrUnknownClaimAtomType` — legacy pre-P18 shape; should not appear on a healthy modern stream. A sustained rate alerts via `stellarindex_source_decode_errors_total{source="sdex"}` |
+| `ClaimAtomTypeV0` | decoded — legacy pre-CAP-27 order-book shape. Identical fields to `OrderBook` except the seller arrives as raw ed25519 bytes rather than an `AccountId`, so the decoder derives the G-strkey from them (F-1233). Previously this arm returned an error and the per-claim skip silently dropped V0 fills, holing SDEX history since inception |
+
+`ErrUnknownClaimAtomType` is now reserved for an **unknown future
+variant** only. A non-zero rate on
+`stellarindex_source_decode_errors_total{source="sdex"}` therefore means
+a protocol bump added an arm we have not audited — not old ledgers.
 
 "Op succeeded with zero trades" (e.g. a `ManageSellOffer` that posts a
 resting order without matching) is **not** a decode error — it simply
@@ -78,8 +88,9 @@ contributes them at full precision (no scale rewrite).
 on-chain Soroban WASM dependency to audit, so it works the same over
 historical ledgers as live. SDEX trades go back to genesis. The only
 decode-error budget to watch is `ErrUnknownClaimAtomType`, which should
-stay at zero on modern ledgers (a non-zero rate signals a protocol bump
-we haven't audited or replay over very old pre-P18 ledgers).
+stay at zero on **every** ledger, old or new: all three ClaimAtom arms
+including the legacy V0 shape are decoded, so a non-zero rate can only
+mean a protocol bump added a fourth arm we haven't audited.
 
 ## References
 

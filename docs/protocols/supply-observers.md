@@ -1,3 +1,9 @@
+---
+title: Classic supply observers — verification
+last_verified: 2026-07-06
+status: current
+---
+
 # Classic supply observers — verification
 
 > **What this page is:** the classic (non-Soroban) supply observers are
@@ -8,7 +14,7 @@
 > figure.
 >
 > - **Enumeration method:** operator watched-set (`[supply]
->   watched_accounts` / `watched_classic_assets` / `sac_wrappers`). No
+>   sdf_reserve_accounts` / `watched_classic_assets` / `sac_wrappers`). No
 >   "watch every account" mode at v1 — the 50M+ network-account table-size
 >   implications need their own ADR.
 > - **Last verified:** 2026-07-06 (sources under `internal/sources/*`
@@ -52,27 +58,33 @@ metadata overlay (both replace the old operator-static config maps).
 These are honest caveats, not bugs — read before citing a
 circulating-supply number as exact:
 
-- **Removed-variant overcount (claimable balances + LPs).** The XDR
-  `LedgerKey` for a claimable balance carries only the `BalanceId`, and
-  for an LP only the `PoolId` — neither carries the asset. So a *Removed*
-  change can't be asset-key-filtered at the observer without a
-  prior-row lookup. Current handling: `Matches` returns **false** for all
-  Removed changes, so the Sum overcounts by the claimed-but-not-recorded
-  amount. For **circulating supply this is a conservative error** — we
-  under-report circulating (treating claimed-and-gone as "still in
-  claimable / still in pool") rather than over-report. A writer-side
-  prior-asset lookup is the planned fix, gated on the overcount being
-  measurable in production.
+- **Removed-variant handling (claimable balances + LPs) — resolved.**
+  The XDR `LedgerKey` for a claimable balance carries only the
+  `BalanceId`, and for an LP only the `PoolId` — neither carries the
+  asset, so a *Removed* change cannot be asset-key-filtered on its own.
+  stellar-core emits the full pre-image as a `LEDGER_ENTRY_STATE` change
+  immediately before the `LEDGER_ENTRY_REMOVED` for the same entry, so
+  each observer memoizes the State pre-image for the duration of the
+  ledger walk and emits one removal Observation (balance zero,
+  `IsRemoval`) per watched side. A removal whose pre-image is not in the
+  same ledger is **silently dropped** — `dispatchEntryChange` does not
+  call `bumpUnmatched()`, and neither observer package emits a metric or
+  a log line for it (`internal/dispatcher/dispatcher.go`). The effect is
+  a CONSERVATIVE error on the money path: the removal is not applied, so
+  circulating supply — and therefore market cap — is UNDER-reported
+  rather than over-reported. That direction is deliberate; the silence
+  is not, and it is why a drop cannot currently be detected.
 - **SAC balance value shape varies by contract.** Native (host)
   SACs store `Map({amount, authorized, clawback})`; some custom token
-  contracts store a bare `i128`. `extractBalanceAmount` tries both; any
-  other shape is dropped and counted as a dispatcher decode error.
+  contracts store a bare `i128`. `scval.SEP41BalanceAmount` tries both;
+  any other shape is dropped and counted as a dispatcher decode error.
 - **Watched-set, not network-wide.** Every observer only sees the
   operator-configured watched set. A circulating-supply figure is
   complete only to the extent the watched set is complete for that asset.
 - **LP variant scope.** Only `ConstantProduct` LPs exist on Stellar
-  today; a future variant would need a `type` switch extension in
-  `extractFromChange`.
+  today; a future variant would need the ConstantProduct branch in the
+  LP observer's `Matches` / `Decode` extended (it is an inline check in
+  `liquidity_pools/dispatcher_adapter.go`, not a shared helper).
 
 ## Amount precision
 

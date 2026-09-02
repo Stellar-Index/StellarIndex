@@ -25,9 +25,9 @@ We commit to:
 In scope:
 
 - The Stellar Index server binaries (`stellarindex-indexer`, `stellarindex-aggregator`,
-  `stellarindex-api`, `stellarindex-ops`, `stellarindex-migrate`).
-- The Go SDK in `pkg/client/` (planned; will be in scope once it ships —
-  tracked in CLAUDE.md repo map).
+  `stellarindex-api`, `stellarindex-ops`, `stellarindex-migrate`,
+  `stellarindex-sla-probe`).
+- The Go SDK in `pkg/client/` — the SemVer-stable public surface.
 - The deployment kits in `deploy/`.
 - The API surface exposed at our hosted endpoint.
 
@@ -56,7 +56,9 @@ through transparency. Specifically:
   which ranges are currently mid-fill. **Not gated.**
 - `/v1/diagnostics/ingestion` — per-class entry counts +
   freshness. **Not gated.**
-- `/v1/diagnostics/density` — coverage roll-up. **Not gated.**
+- `/v1/diagnostics/archive` — archive-completeness state. **Not gated.**
+- `/v1/coverage` — the ADR-0033/ADR-0034 two-axis completeness
+  verdict (`lake_complete` / `complete`). **Not gated.**
 
 Risk model: an adversary who scrapes these endpoints learns no
 more than they can already infer from the price/markets/network

@@ -1,3 +1,9 @@
+---
+title: Protocol verification pages
+last_verified: 2026-09-02
+status: current
+---
+
 # Protocol verification pages
 
 One page per on-chain protocol we index, listing **every contract we
@@ -39,8 +45,10 @@ always in our lake (which starts at ledger 50,457,424):
 - **WASM-hash walk** — contracts sharing the protocol's pool/vault WASM
   hash (the `wasm-history` audit). The fallback discriminator.
 
-Each page states which method produced its set and the `last_verified`
-date, so a team can tell us if a contract is missing or mis-attributed.
+Each page states which method produced its set and carries a
+`last_verified` frontmatter date (CI's `lint-docs.sh` §6 fails a page
+older than 180 days and requires the field to be present), so a team can
+tell us if a contract is missing or mis-attributed.
 
 ## Status legend
 
@@ -56,6 +64,7 @@ date, so a team can tell us if a contract is missing or mis-attributed.
 |---|---|---|---|
 | Soroswap | lake deploy-graph | ✅ Gated (4 factories) | [soroswap.md](soroswap.md) |
 | Blend | lake deploy-graph | ✅ Gated (2 factories, 27 pools) — lending, excluded from VWAP | [blend.md](blend.md) |
+| Blend Emitter | lake topic census (single contract) | ✅ Gated (curated 1-contract allowlist, 2026-07-09) — BLND emissions plumbing, `Lending` class, excluded from VWAP | [blend_emitter.md](blend_emitter.md) |
 | SoroCredit | single trust-root | ✅ Gated (1 contract + child collateral positions) — consumer USDC credit/CDP, no pricing signal | [sorocredit.md](sorocredit.md) |
 | Aquarius | router-anchored | ✅ Gated (router + 332 pools, 2026-07-05) | [aquarius.md](aquarius.md) |
 | Phoenix | RPC view (pre-lake) | ✅ Gated code-side (curated set, 2026-07-02); operator rollout pending | [phoenix.md](phoenix.md) |
@@ -93,7 +102,7 @@ date, so a team can tell us if a contract is missing or mis-attributed.
 | Protocol | Gate status | Page |
 |---|---|---|
 | Reflector (DEX/CEX/FX) | ✅ Gated — 3 pinned contract IDs | [reflector.md](reflector.md) |
-| RedStone | ✅ Gated — 1 Adapter contract + 30-feed registry | [redstone.md](redstone.md) |
+| RedStone | ✅ Gated — 1 Adapter contract + 31-feed registry | [redstone.md](redstone.md) |
 | Band | ✅ Gated — 1 StandardReference contract (ContractCall, zero events) | [band.md](band.md) |
 
 ### Bridges (flow coverage, excluded from VWAP)
@@ -101,7 +110,7 @@ date, so a team can tell us if a contract is missing or mis-attributed.
 | Protocol | Gate status | Page |
 |---|---|---|
 | CCTP (Circle) | ✅ Gated — 3 pinned contracts | [cctp.md](cctp.md) |
-| Rozo | ✅ Gated — 3 v1 Payment contracts | [rozo.md](rozo.md) |
+| Rozo | ✅ Gated — 4 v1 Payment contracts (the 4th admitted after the original three; see page) | [rozo.md](rozo.md) |
 
 ### Supply
 
