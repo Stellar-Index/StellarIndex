@@ -44,15 +44,25 @@ import (
 // local recoverBackgroundWorker exactly (log-only; no restart).
 func Recover(logger *slog.Logger, name string) {
 	if r := recover(); r != nil {
-		if logger == nil {
-			logger = slog.Default()
-		}
-		// Count before logging so the metric exists even if logging fails
-		// (#368 M4): this is the ONLY signal that a worker is now dead.
-		obs.WorkerPanicsTotal.WithLabelValues(name).Inc()
-		logger.Error("background worker panicked — worker STOPPED, process still running",
-			"worker", name,
-			"panic", fmt.Sprintf("%v", r),
-			"stack", string(debug.Stack()))
+		Report(logger, name, r)
 	}
+}
+
+// Report records an ALREADY-RECOVERED panic. It exists because recover()
+// only works one frame deep: a caller with its own deferred function
+// (stellarindex-api's recoverBackgroundWorker, which carries a different
+// log message about the API still serving) cannot delegate to [Recover]
+// and must hand the recovered value here instead. Every binary therefore
+// moves the same counter, which is what the page rule reads.
+func Report(logger *slog.Logger, name string, r any) {
+	if logger == nil {
+		logger = slog.Default()
+	}
+	// Count before logging so the metric exists even if logging fails
+	// (#368 M4): this is the ONLY signal that a worker is now dead.
+	obs.WorkerPanicsTotal.WithLabelValues(name).Inc()
+	logger.Error("background worker panicked — worker STOPPED, process still running",
+		"worker", name,
+		"panic", fmt.Sprintf("%v", r),
+		"stack", string(debug.Stack()))
 }

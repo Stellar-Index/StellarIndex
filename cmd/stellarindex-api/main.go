@@ -52,11 +52,12 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"runtime/debug"
 	"strings"
 	"sync"
 	"syscall"
 	"time"
+
+	workerpkg "github.com/Stellar-Index/StellarIndex/internal/worker"
 
 	"github.com/redis/go-redis/v9"
 
@@ -123,12 +124,18 @@ import (
 // the process has no reason to live, and recovering there would leave a running
 // process serving nothing — strictly worse than crashing. Same reasoning as
 // AGT-12's SSE producers, which recover per-connection for exactly this reason.
+//
+// It delegates to [worker.Recover] rather than logging directly. The local
+// copy used to log and nothing more, so a dead worker produced one line in
+// the journal and no metric — invisible to alerting, which is the whole
+// point of noticing (#368 M4). worker.Recover increments
+// stellarindex_worker_panics_total{worker} BEFORE logging, so the counter
+// exists even if the log write fails, and the page fires either way.
 func recoverBackgroundWorker(logger *slog.Logger, worker string) {
+	// Note: recover() only works one frame deep, so this cannot simply
+	// call worker.Recover — the deferred function IS this one.
 	if r := recover(); r != nil {
-		logger.Error("background worker panicked — worker STOPPED, API still serving",
-			"worker", worker,
-			"panic", fmt.Sprintf("%v", r),
-			"stack", string(debug.Stack()))
+		workerpkg.Report(logger, worker, r)
 	}
 }
 

@@ -13,6 +13,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus/testutil"
+
+	"github.com/Stellar-Index/StellarIndex/internal/obs"
+
 	"github.com/alicebob/miniredis/v2"
 	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
@@ -685,5 +689,25 @@ func TestInProcessSignupIPThrottle_EnforcesPerIPCap(t *testing.T) {
 	}
 	if err := th.CheckIP(ctx, "198.51.100.6"); err != nil {
 		t.Errorf("a different IP must not be throttled by another IP's exhausted cap: %v", err)
+	}
+}
+
+// TestRecoverBackgroundWorker_CountsThePanic pins #368 M4's completion.
+// This helper used to log and nothing else, so a dead background worker
+// left one line in the journal and moved no metric — invisible to
+// alerting, which is the only reason to notice at all. It must move the
+// same counter the indexer's workers move, because one page rule reads
+// it for every binary.
+func TestRecoverBackgroundWorker_CountsThePanic(t *testing.T) {
+	const name = "test-api-worker"
+	before := testutil.ToFloat64(obs.WorkerPanicsTotal.WithLabelValues(name))
+
+	func() {
+		defer recoverBackgroundWorker(slog.New(slog.NewTextHandler(io.Discard, nil)), name)
+		panic("simulated worker fault")
+	}()
+
+	if got := testutil.ToFloat64(obs.WorkerPanicsTotal.WithLabelValues(name)) - before; got != 1 {
+		t.Errorf("stellarindex_worker_panics_total{worker=%q} rose by %v, want 1", name, got)
 	}
 }
