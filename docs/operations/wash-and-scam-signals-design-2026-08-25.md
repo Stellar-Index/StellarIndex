@@ -1,6 +1,7 @@
 ---
 title: Volume-legitimacy + scam signals for the asset directory
-status: design (operator policy pending on §4)
+last_verified: 2026-08-24
+status: partially shipped — §3 landed (#423, #460); §4 policy still pending
 date: 2026-08-25
 ---
 
@@ -42,6 +43,15 @@ Derived `volume_character` enum on the asset/pair payload:
 `concentrated` (>90% one account pair on a market-styled pair).
 
 ## 3. Scam-label surfacing (SHIP FIRST — no policy needed)
+
+> **SHIPPED** (#423, #460). Scam-flagged issuers no longer publish a
+> price claim: `suppressScamIssuerPricing` /
+> `withholdPriceSeriesWhenUnpriced` in
+> `internal/api/v1/asset_directory_tags.go`, with the matching
+> withholding in `internal/api/v1/assets.go` and
+> `internal/api/v1/chart.go`. The rest of this section is retained as
+> the design record; §4 is still the open decision.
+
 
 `account_directory` (migration 0136, stellar-expert public-directory) ALREADY
 tags the scam issuer `{malicious, unsafe}` with domain audrev-stellar.com —

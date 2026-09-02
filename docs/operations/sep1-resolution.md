@@ -24,7 +24,7 @@ in-code overview.
 asset request →
   v1/assets/{id} handler →
     metadata.Cache.Get(home_domain)
-      ↓ Redis HIT (15-min TTL)
+      ↓ Redis HIT (24 h TTL — `cachekeys.TOMLTTL`)
         return cached SEP1 struct
       ↓ Redis MISS
         singleflight gate (one fetch per home_domain at a time)
@@ -34,7 +34,7 @@ asset request →
               ↓ TLS handshake (5s timeout)
               ↓ HTTP read (10s total budget)
               ↓ TOML parse
-          ↓ on success: write to Redis with 15-min TTL, return SEP1
+          ↓ on success: write to Redis with a 24 h TTL, return SEP1
           ↓ on failure: return error to caller; DO NOT cache the error
 ```
 
@@ -56,7 +56,7 @@ Common causes:
 
 **Resolver behaviour:** returns `ErrSEP1NotFound`. **Cache
 behaviour:** the error is NOT cached (per design — a transient
-404 during a deployment shouldn't poison the cache for 15 min).
+404 during a deployment shouldn't poison the cache for a day).
 **Handler behaviour:** asset overlay degrades cleanly — fields
 that come from SEP-1 are reported as `null`, the `home_domain`
 field on the asset response stays populated from the `AccountEntry`,
@@ -128,8 +128,15 @@ issuer, not us. Report to the security mailing list per
 
 ## Cache invalidation
 
-The 15-min TTL handles routine staleness. Three cases need
-explicit invalidation:
+The 24 h TTL handles routine staleness — a `stellar.toml` is
+issuer-controlled reference data that changes on the order of
+weeks-to-never, and a short TTL only makes every cold
+`/v1/assets/{id}` pay a ~500 ms upstream HTTPS fetch on the request
+path (`cachekeys.TOMLTTL`'s own doc comment). The
+`sep1-refresh.timer` re-resolves the whole watched set daily at
+**05:12 UTC**, so in practice an entry is at most a day stale even
+without a request touching it. Three cases need explicit
+invalidation:
 
 ### 1. Issuer publishes a corrected stellar.toml
 
@@ -245,7 +252,7 @@ as a future hardening item.
 ## References
 
 - Cache schema: [ADR-0007](../adr/0007-redis-cache-schema.md)
-  (`toml:<domain>` namespace, 15-min TTL)
+  (`toml:<domain>` namespace, 24 h TTL)
 - Supply policy: [ADR-0011](../adr/0011-supply-algorithm.md) (uses
   SEP-1 `[[CURRENCIES]].max_supply` as the off-chain max-supply
   source)

@@ -1,3 +1,9 @@
+---
+title: Testnet + Futurenet deployment
+last_verified: 2026-08-27
+status: current
+---
+
 # Testnet + Futurenet deployment
 
 How to stand up StellarIndex Testnet and Futurenet instances. Companion:

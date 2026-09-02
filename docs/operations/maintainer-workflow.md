@@ -1,3 +1,9 @@
+---
+title: Maintainer workflow — running the reference deployment
+last_verified: 2026-09-02
+status: current
+---
+
 # Maintainer workflow — running the reference deployment
 
 This file describes how the **reference deployment** (`r1`) is
@@ -66,8 +72,12 @@ End-to-end (operator side):
 3. **Cut the tag** via the guard-rail script:
    ```sh
    git checkout main && git pull --ff-only origin main
-   bash scripts/dev/cut-release.sh vX.Y.Z
+   bash scripts/dev/cut-release.sh vX.Y.Z --yes
    ```
+
+   `--yes` skips the interactive confirmation. From a non-TTY shell the
+   prompt hits EOF, so without `--yes` (or `--dry-run`) the script exits
+   2 immediately — pass it whenever you are not at a terminal.
    The script verifies branch + clean tree + sync + non-empty CHANGELOG
    section + green `verify.sh` before tagging and pushing. Pass
    `--dry-run` first to see the plan.
@@ -98,6 +108,15 @@ gh workflow run deploy.yml \
   -f version=vX.Y.Z \
   -f binaries=stellarindex-indexer,stellarindex-aggregator,stellarindex-api
 ```
+
+If the release touched any config-bearing surface (the ansible
+`stellarindex.toml`, Prometheus rules, systemd units, DB schema), add
+`-f config_acknowledged=true` — and mean it. `deploy-binary.yml` swaps
+BINARIES ONLY, so a feature those surfaces gate ships dead and silent
+until an operator applies the config; the post-deploy config-apply gate
+fails the job to force the question. A config-free release passes it
+either way, so the flag is not boilerplate. See
+[deploy-config-apply.md](deploy-config-apply.md).
 
 The workflow downloads the binaries from the GitHub Release,
 verifies SHA256SUMS, and runs an Ansible playbook over SSH that

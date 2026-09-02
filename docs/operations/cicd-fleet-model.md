@@ -1,3 +1,9 @@
+---
+title: CI/CD fleet model (design proposal)
+last_verified: 2026-08-27
+status: design
+---
+
 # CI/CD fleet model (design proposal)
 
 Status: **proposal** — needs its own plan→audit before implementation. The

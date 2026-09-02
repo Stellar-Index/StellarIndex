@@ -1,3 +1,9 @@
+---
+title: Restore-drill evidence log
+last_verified: 2026-08-29
+status: living
+---
+
 # Restore-drill evidence log
 
 One entry per drill (ADR-0043 §3; CS-110: "a backup that has never

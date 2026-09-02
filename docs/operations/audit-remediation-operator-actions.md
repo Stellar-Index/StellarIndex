@@ -1,5 +1,6 @@
 ---
 title: Audit remediation — items requiring operator (human) action
+last_verified: 2026-07-26
 status: living — populated as remediation proceeds
 ---
 

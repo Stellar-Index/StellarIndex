@@ -43,7 +43,7 @@ backing Galexie's S3-compatible target. Four identities matter:
 | MinIO root | `minio_root_user` / `minio_root_password` | full admin | the ansible role's own `mc alias set local ...` bootstrap step (09-minio.yml); not used by any running service |
 | `galexie-writer` | `galexie_s3_access_key` / `galexie_s3_secret_key` | write-only, `galexie-live` bucket (policy `galexie-writer.json`) | `galexie.service` via `/etc/default/galexie` |
 | `galexie-archive-writer` | `galexie_archive_s3_access_key` (fixed literal `"galexie-archive-writer"` in `defaults/main.yml`, not vaulted) / `galexie_archive_s3_secret_key` (vaulted) | write (no delete), `galexie-archive` bucket — policy `galexie-archive-writer.json`, **ansible-managed only since 2026-07-25**, see §MinIO identity inventory | the one-shot archive-backfill galexie instance via `/etc/default/galexie-backfill`; the rehydrate procedure in [lcm-cache-tiering.md](lcm-cache-tiering.md) |
-| `stellarindex-reader` (**"the ops user"**) | `stellarindex_reader_access_key` (fixed literal `"stellarindex-reader"`, not vaulted) / `stellarindex_reader_secret_key` → aliased in `defaults/main.yml` to `vault_stellarindex_reader_secret_key` (renamed 2026-07-03 drift audit) | read-only, both `galexie-live` + `galexie-archive` | `stellarindex-ops verify-archive`, and — per `/etc/default/stellarindex-ops` — the indexer/aggregator/api's `AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY` env for the ledgerstream reader path |
+| `stellarindex-reader` (**"the ops user"**) | `stellarindex_reader_access_key` (fixed literal `"stellarindex-reader"`, not vaulted) / `stellarindex_reader_secret_key` → aliased in `defaults/main.yml` to `vault_stellarindex_reader_secret_key` (renamed 2026-07-03 drift audit) | read-only, both `galexie-live` + `galexie-archive` | the indexer/aggregator/api's `AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY` (ledgerstream reader path) via **`/etc/default/stellarindex`** — templated by `14-stellarindex-services.yml` under tag `stellarindex`; and `stellarindex-ops verify-archive` / the heavy-job wrapper via `/etc/default/stellarindex-ops` — templated by `09-minio.yml` under tag `minio`. **Two files, two tags** |
 
 Only the **access key** for `galexie-writer` is vault-sourced (the
 identity itself, not just its secret) — `galexie-archive-writer` and
@@ -67,53 +67,74 @@ check `configs/ansible/roles/archival-node/defaults/main.yml` (search
    #   galexie_archive_s3_secret_key: "<new secret>"       (archive-writer)
    #   vault_stellarindex_reader_secret_key: "<new secret>" (ops user)
    ```
-3. **Dry-run, then apply — `minio,galexie` together, not `minio` alone.**
+3. **Dry-run, then apply — `minio,galexie,stellarindex` together, never
+   a subset.**
    ```sh
    ansible-playbook -i inventory/r1.yml playbooks/archival-node.yml \
-     --tags minio,galexie --check --diff
+     --tags minio,galexie,stellarindex --check --diff
    ansible-playbook -i inventory/r1.yml playbooks/archival-node.yml \
-     --tags minio,galexie -e galexie_restart_ack=true
+     --tags minio,galexie,stellarindex -e galexie_restart_ack=true
    ```
 
-   > ⚠️ **`--tags minio` on its own causes a self-inflicted outage.**
-   > This step used to say exactly that, and claimed the galexie env
-   > files re-templated as part of the same run. They do not.
-   > `07-galexie.yml` — which templates `/etc/default/galexie`,
-   > `/etc/default/galexie-backfill` and
-   > `/etc/default/galexie-archive-fill` — is imported under
-   > `tags: [galexie]` (`tasks/main.yml`), so a `minio`-only run never
-   > touches it.
+   > ⚠️ **Any subset of those three tags causes a self-inflicted
+   > outage.** `09-minio.yml`'s `mc admin user add` **does** rotate the
+   > secret server-side the moment the `minio` tag runs, so MinIO starts
+   > rejecting the old one immediately — while every consumer still
+   > holds it in an env file that only its OWN tag re-renders:
    >
-   > The failure is quiet and total: `09-minio.yml`'s
-   > `mc admin user add` **does** rotate the secret server-side, so
-   > MinIO immediately starts rejecting the old one, while galexie is
-   > still holding it in an env file nothing re-rendered. Ingest stops
-   > with `SignatureDoesNotMatch` — during a credential rotation, when
-   > an operator is least likely to read it as their own doing.
+   > | Consumer | Credential file | Rendered by | Tag |
+   > |---|---|---|---|
+   > | `galexie.service` | `/etc/default/galexie` | `07-galexie.yml` | `galexie` |
+   > | archive-fill / backfill one-shots | `/etc/default/galexie-backfill`, `/etc/default/galexie-archive-fill` | `07-galexie.yml` | `galexie` |
+   > | **`stellarindex-indexer` / `-aggregator` / `-api`** | **`/etc/default/stellarindex`** | `14-stellarindex-services.yml` | **`stellarindex`** |
+   > | `verify-archive`, `ch-live-catchup`, `run-heavy-job.sh`, interactive ops | `/etc/default/stellarindex-ops` | `09-minio.yml` | `minio` |
+   >
+   > A `minio`-only run strands galexie; a `minio,galexie` run strands
+   > the three long-running services (the row this doc got wrong until
+   > 2026-09-02 — it named `/etc/default/stellarindex-ops` as the
+   > services' credential file, which it is not: the units carry
+   > `EnvironmentFile=/etc/default/stellarindex`,
+   > `templates/systemd/stellarindex-indexer.service.j2:30`). The
+   > symptom is ledgerstream `SignatureDoesNotMatch` and ingest stops —
+   > during a credential rotation, when an operator is least likely to
+   > read it as their own doing.
+   >
+   > The `stellarindex` tag is safe to add to a config apply: the
+   > binary build/install tasks are gated behind
+   > `manage_stellarindex_binaries` (default `false`) and the migration
+   > apply behind `stellarindex_apply_migrations` (default `false`)
+   > — `14-stellarindex-services.yml:46,62,107,197`. It is the same
+   > surface the weekly `ansible-drift.yml` applies untagged.
    >
    > `-e galexie_restart_ack=true` is required for the galexie restart
    > to actually happen; without it the role renders the change and
    > deliberately leaves the restart to a second, acknowledged run.
 
-4. **The env files re-template automatically** as part of the same
-   `--tags minio` run:
-   - `/etc/default/galexie` (galexie-writer) — has a `notify:
-     Restart galexie` handler, so **galexie restarts automatically**
-     when this task changes content.
-   - `/etc/default/galexie-backfill` (archive-writer) — **no
-     restart handler** (it's a one-shot backfill instance, normally
-     not running); nothing to restart in steady state.
-   - `/etc/default/stellarindex-ops` (ops user / `stellarindex-reader`)
-     — templated by the same `09-minio.yml` task file but **has no
-     `notify:` handler at all**. Re-applying `--tags minio` refreshes
-     the file on disk, but `stellarindex-indexer` /
-     `stellarindex-aggregator` / `stellarindex-api` **do not pick up
-     the new secret until manually restarted** — they read this file
-     only once via `EnvironmentFile=` at process start. Restart them
-     explicitly:
-     ```sh
-     systemctl restart stellarindex-indexer stellarindex-aggregator stellarindex-api
-     ```
+4. **Let the handlers do the restarts — do NOT restart by hand.**
+   With all three tags in the run, every consumer is re-rendered and
+   restarted by the role itself:
+   - `/etc/default/galexie` (galexie-writer) — rendered under
+     `galexie`; has a `notify: Restart galexie` handler, so **galexie
+     restarts automatically** (given `galexie_restart_ack=true`).
+   - `/etc/default/galexie-backfill` / `-archive-fill`
+     (archive-writer) — rendered under `galexie`; **no restart
+     handler** (one-shot instances, normally not running); nothing to
+     restart in steady state.
+   - `/etc/default/stellarindex` (ops user / `stellarindex-reader`) —
+     rendered under `stellarindex` and notifies **`Restart
+     stellarindex-indexer` / `-aggregator` / `-api`**
+     (`14-stellarindex-services.yml:213-231`), so the three services
+     pick the new secret up on that same run.
+   - `/etc/default/stellarindex-ops` (ops user) — rendered under
+     `minio`; read fresh by each one-shot, nothing to restart.
+
+   > ⚠️ **A manual `systemctl restart stellarindex-*` before the
+   > `stellarindex` tag has run re-reads the OLD secret** and puts all
+   > three services back into `SignatureDoesNotMatch` — the previous
+   > version of this step prescribed exactly that. If you have already
+   > done it, re-run step 3 with the full tag list; the handlers will
+   > restart them on the new file.
+
 5. **Verify.** `mc admin info local` (root creds) should show the
    user with the new secret's fingerprint; `journalctl -u galexie -n
    50` should show continued successful uploads with no
@@ -157,12 +178,14 @@ see the note in `09-minio.yml`'s `/etc/default/stellarindex-ops`
 template and `feedback_minio_cred_drift`). This happens whenever
 one side of a rotation moves without the other:
 
-- The vault secret was updated but `--tags minio` was never
-  re-applied (env file still has the old secret).
-- `--tags minio` was applied but the corresponding service was
-  never restarted (this is the `stellarindex-ops` env-file gap
-  called out in step 4 above — there is no ansible handler wired to
-  it).
+- The vault secret was updated but the apply ran with a PARTIAL tag
+  list, so one of the four credential files still has the old secret
+  (`minio` renders `/etc/default/stellarindex-ops`, `galexie` renders
+  `/etc/default/galexie*`, `stellarindex` renders
+  `/etc/default/stellarindex` — see the table in step 3).
+- The right tag ran but the consumer was restarted BEFORE it, so the
+  process is still holding the pre-rotation value it read from
+  `EnvironmentFile=` at start.
 - The MinIO user was rotated by hand (`mc admin user add ...`
   run directly on the host, bypassing ansible) without updating the
   vault — the next `--tags minio` re-apply would silently revert it,
@@ -179,8 +202,8 @@ signature`; confirm which identity is failing (galexie-writer vs
 ops-user) from the unit; compare `/etc/default/galexie` (or
 `/etc/default/stellarindex-ops`) against what the vault currently
 holds (`ansible-vault view inventory/r1.secrets.yml`) — a mismatch
-means re-run `--tags minio` and restart the affected service(s) per
-the steps above.
+means re-run step 3 with the full `minio,galexie,stellarindex` tag
+list and let the handlers restart the affected services.
 
 ### Config-assertion backstop
 

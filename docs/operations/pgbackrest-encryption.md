@@ -1,3 +1,9 @@
+---
+title: pgBackRest repository encryption
+last_verified: 2026-07-25
+status: current
+---
+
 # pgBackRest repository encryption (F4-F2)
 
 **Status:** repo1 is UNENCRYPTED on r1 today. This document is the

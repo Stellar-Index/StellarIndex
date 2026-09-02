@@ -1,3 +1,9 @@
+---
+title: LCM cache tiering — operator runbook
+last_verified: 2026-08-29
+status: current
+---
+
 # LCM cache tiering — operator runbook
 
 Per [ADR-0027](../adr/0027-lcm-cache-tiering.md). This runbook is

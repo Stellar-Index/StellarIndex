@@ -186,20 +186,36 @@ included; license/CONTRIBUTING/etc. headers wrong.
 > runbook. It is not recoverable by re-doing the cut-over, because there
 > is nothing left to cut over from.
 
-Public-repo rollback is a force-push of a corrected commit. Do NOT
-delete or re-create the repository.
+**Public-repo rollback rolls FORWARD.** History is never rewritten and
+the repository is never deleted or re-created.
 
 ```sh
-# Force-push a corrected initial commit. Coordinate with anyone who has
-# already cloned so they re-pull.
-git push origin +public-v1:main
+# Revert the bad commit(s), oldest-first, and push normally.
+git revert --no-edit <sha>            # or <oldest>^..<newest> for a range
+git push origin main
 ```
 
-If the damage is broader than a force-push can fix — secrets in history,
-an unintended file set — stop and treat it as a security incident per
-[SECURITY.md](../../SECURITY.md) rather than reaching for a destructive
-repo-level command. Rotating an exposed credential is recoverable;
-deleting the repository is not.
+> ⚠️ **Do not force-push `main`.** This runbook prescribed
+> `git push origin +public-v1:main` until 2026-09-02. `main` carries no
+> branch protection and no rulesets, so that command succeeds — it
+> rewrites the public repository's history, breaks every clone, fork
+> and existing PR, and orphans the commits the release tags point at.
+> It also cannot work as written: `public-v1` exists on no remote. The
+> project's standing rule since the 2026-07-03 public flip is **never
+> force-push history**.
+
+A revert leaves the bad commit in history on purpose: that is the point
+of a public log, and it is the only rollback that every clone converges
+on without operator coordination.
+
+If the damage is something a revert cannot undo — **secrets committed to
+history**, an unintended file set — a force-push does not fix it either
+(the objects survive on GitHub via the pre-rewrite refs, forks and the
+events API). Stop and treat it as a security incident per
+[SECURITY.md](../../SECURITY.md): **rotate the exposed credential
+first** — that is the recoverable action — then decide about history
+surgery with the maintainers. Rotating an exposed credential is
+recoverable; deleting or rewriting the repository is not.
 
 ### E. Status page misbehaving
 

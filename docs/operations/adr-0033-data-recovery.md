@@ -1,3 +1,9 @@
+---
+title: ADR-0033 data-recovery runbook
+last_verified: 2026-09-02
+status: current
+---
+
 # ADR-0033 data-recovery runbook
 
 This runbook drives the data-completion half of ADR-0033: recovering the
@@ -132,18 +138,40 @@ DELETE FROM trades
 >
 > These are projected sources (ADR-0031/0032), so the correct catch-up
 > is a projector replay, which reads the ClickHouse lake through the
-> real gated registry.
+> real gated registry. For a rewind larger than about **1M ledgers**
+> use `stellarindex-ops projected-rebuild … -write` instead —
+> `projector-replay` is bound by the live projector's 5 s tick and 60 s
+> per-source timeout (see
+> [runbooks/projector-replay.md](runbooks/projector-replay.md)); the two
+> must never run concurrently over the same source's history.
 
 ```sh
 # Dry-run first — prints the dirty window and cursor rewind it would do.
+# (Dry run is the DEFAULT; -dry-run is a documented no-op alias.)
 stellarindex-ops projector-replay -config /etc/stellarindex.toml \
   -source aquarius -from <from> -dry-run
 
 # Then for real, one source at a time, under the heavy-job wrapper.
+# -write is MANDATORY — see the warning below.
 /usr/local/sbin/run-heavy-job.sh projector-replay-aquarius \
   stellarindex-ops projector-replay -config /etc/stellarindex.toml \
-    -source aquarius -from <from>
+    -source aquarius -from <from> -write
 ```
+
+> ⚠️ **`projector-replay` is fail-closed: without `-write` it writes
+> nothing and exits 0.** `internal/ops/ingest/projector.go:43` registers
+> the shared write gate, and `internal/ops/opsutil/opsutil.go:96-112`
+> makes dry run the DEFAULT (`DryRun() = !*g.write`; `-dry-run` is an
+> explicit no-op alias). A `-write`-less "for real" run after the
+> `DELETE` above prints
+> `═══ DRY RUN — no writes; pass -write to apply ═══` on **stderr**,
+> buried in the wrapper's own preamble, then rewinds no cursor and
+> exits 0 — leaving the deleted range permanently empty. This runbook
+> shipped exactly that command between 2026-09-01 and 2026-09-02.
+>
+> Confirm the run printed `═══ WRITING — applying changes ═══` (not
+> `DRY RUN`) and that the replayed range has a non-zero row count
+> **before deleting the next one**.
 
 Safety: only delete rows you are about to immediately replay, and
 **verify the replay actually wrote rows before deleting the next

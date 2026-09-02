@@ -52,7 +52,7 @@ docs/contributing/add-migration.md.)
 
 ```sh
 go test -run TestLockstep ./internal/pipeline/        # catches missed wiring edits 3/4/5 (F-1316 class)
-go test -run TestReconciliationCatalogue ./cmd/stellarindex-ops/
+go test -run 'ReconciliationCatalogue' ./internal/ops/chops/   # catalogue promotion + genesis mirror (4 tests; the old cmd/ path matched ZERO and printed ok)
 go test ./internal/sources/<name>/ ./internal/pipeline/ ./internal/projector/
 go run ./scripts/ci/lint-pk-discriminators            # new table's PK has a per-event discriminator
 bash scripts/ci/lint-imports.sh                       # no xdr outside scval, no rpc in ingest

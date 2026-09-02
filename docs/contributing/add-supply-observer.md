@@ -1,3 +1,9 @@
+---
+title: Checklist — add a supply observer
+last_verified: 2026-07-01
+status: current
+---
+
 # Checklist — add a supply observer
 
 Reference: `internal/sources/sac_balances/`. Design: `docs/architecture/supply-pipeline.md`

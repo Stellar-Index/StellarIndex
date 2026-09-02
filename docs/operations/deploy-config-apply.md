@@ -1,5 +1,6 @@
 ---
 title: Post-deploy config-apply (the "config ships dead" guard)
+last_verified: 2026-09-01
 status: operational
 ---
 

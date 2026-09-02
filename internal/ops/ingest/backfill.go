@@ -584,17 +584,23 @@ func runBackfillChunk(ctx context.Context, logger *slog.Logger, opts backfillOpt
 		logger.Info("skipping CAGG refresh — soroban-events has no CAGGs")
 	case opts.refreshCAGGs:
 		// Force-materialise the long-lived CAGGs over the chunk's
-		// timestamp range. Without this, historical inserts get dropped
-		// by the 90-day retention policy on the raw trades table BEFORE
-		// the policy refresher's natural cadence picks them up — which
-		// is what happened to the May 2026 SDEX backfill (cursors
-		// completed, trades inserted, retention dropped them within 24h,
-		// no CAGG materialisation, ~80M trades of work lost).
+		// timestamp range. Historically this was data-loss protection:
+		// a 90-day retention policy on raw `trades` dropped historical
+		// inserts before the refresher's natural cadence materialised
+		// them (the May 2026 SDEX backfill — cursors completed, trades
+		// inserted, retention dropped them within 24h, ~80M trades of
+		// work lost). Migration 0031 REMOVED that policy (and the
+		// 30-day one on prices_1m/15m); per ADR-0034 raw trades are
+		// kept forever. What is left is a correctness-of-the-served-
+		// view concern, not a loss one: without this refresh the
+		// backfilled range's CAGG buckets stay unmaterialised — the
+		// rows are in `trades` but absent from every OHLC/VWAP read —
+		// until the next policy run or a manual refresh covers them.
 		//
-		// We refresh prices_1h / 4h / 1d / 1w / 1mo (the no-retention
-		// CAGGs per migration 0002). prices_1m and prices_15m have
-		// 30-day retention by design, so refreshing them for historical
-		// ranges would just be wasted work.
+		// We refresh prices_1h / 4h / 1d / 1w / 1mo (migration 0002).
+		// prices_1m and prices_15m are deliberately skipped: their
+		// 1-minute/15-minute grain over a historical range is a large
+		// refresh for a window nothing reads at that resolution.
 		//
 		// DAT-09 / REL-08: a refresh failure here is FATAL to the
 		// chunk — the function returns before the checkpoint below, so
@@ -605,7 +611,7 @@ func runBackfillChunk(ctx context.Context, logger *slog.Logger, opts backfillOpt
 		}
 	default:
 		logger.Warn("skipping CAGG refresh (-refresh-caggs=false)",
-			"impact", "historical inserts will be dropped by 90-day retention before CAGG policy materialises them",
+			"impact", "the range's prices_1h/4h/1d/1w/1mo buckets stay unmaterialised until the next CAGG policy run or a manual refresh_continuous_aggregate — the trades rows are durable (migration 0031 removed the retention policy), but every OHLC/VWAP read over the range is short until then",
 		)
 	}
 

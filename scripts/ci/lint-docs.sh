@@ -324,17 +324,51 @@ today=$(date -u +%s)
 stale_threshold=$((90 * 24 * 60 * 60))   # 90 days in seconds
 fail_threshold=$((180 * 24 * 60 * 60))   # 180 days — hard fail
 
-# Iterate over 'current' docs. Docs without frontmatter are ignored at
-# this level — we're not forcing frontmatter on every file, only on
-# docs in the opt-in 'current' tracking set (architecture/, operations/, adr/).
-find docs/architecture docs/operations docs/adr -type f -name '*.md' 2>/dev/null | while read -r f; do
+# Iterate over 'current' docs — architecture/, operations/, adr/ and
+# contributing/ (added 2026-09-02, issue #362: the contributor
+# checklists were never walked, so `add-onchain-source.md` could and did
+# drift from the wiring it prescribes).
+#
+# Under docs/operations and docs/contributing a MISSING last_verified is
+# now an error, not a skip. The old `continue` meant 23 operator
+# procedures — including three of the five files the #461
+# dangerous-instruction fix had just rewritten — sat outside the
+# freshness lint entirely: opting out was as easy as not writing the
+# frontmatter, and nothing said so. Under docs/architecture and docs/adr
+# it stays advisory (ADRs are immutable records; the ADR checks live in
+# §8).
+#
+# RECORD subtrees are exempt by design: evidence/, postmortems/,
+# incidents/, notes/ and wasm-audits/ are dated artefacts of a moment,
+# not living procedure. So is any file whose NAME ends in a date
+# (`*-YYYY-MM-DD.md`) — a campaign ledger or remediation record names the
+# day it describes, and stamping it `last_verified` would either lie
+# about re-verification or hard-fail at 180 days for being exactly what
+# it is. The date must be in the FILENAME, so a living procedure cannot
+# opt out by accident. A freshness stamp on a post-mortem would
+# demand periodic re-verification of something that must never change,
+# and would hard-fail at 180 days for being exactly what it is.
+find docs/architecture docs/operations docs/adr docs/contributing -type f -name '*.md' 2>/dev/null | while read -r f; do
   # Skip generated docs, archive, templates.
   if grep -q "GENERATED FILE - DO NOT EDIT" "$f" 2>/dev/null; then continue; fi
   if [[ "$f" == *"_archive"* ]] || [[ "$f" == *"_template"* ]]; then continue; fi
 
   # Extract last_verified date from frontmatter if present.
   verified=$(awk '/^last_verified:/{print $2; exit}' "$f" 2>/dev/null | tr -d '"')
-  if [ -z "$verified" ]; then continue; fi
+  if [ -z "$verified" ]; then
+    case "$f" in
+      docs/operations/evidence/*|docs/operations/postmortems/*|\
+      docs/operations/incidents/*|docs/operations/notes/*|\
+      docs/operations/wasm-audits/*|\
+      *-[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9].md)
+        continue ;;
+      docs/operations/*|docs/contributing/*)
+        err "Doc '$f' has no last_verified frontmatter — every living operator/contributor procedure carries one so §6 can age it out. Add 'last_verified: YYYY-MM-DD' with the date you actually checked its claims (record-only subtrees evidence/ postmortems/ incidents/ notes/ wasm-audits/ are exempt)."
+        continue ;;
+      *)
+        continue ;;
+    esac
+  fi
 
   verified_epoch=$(date -u -j -f "%Y-%m-%d" "$verified" +%s 2>/dev/null || \
                    date -u -d "$verified" +%s 2>/dev/null || echo "")
@@ -431,6 +465,14 @@ fi
 # `alert: <name>` must appear verbatim somewhere in that doc. Caught
 # the `stellarindex_ingestion_insert_errors` drift on 2026-04-23 —
 # the alert was live but the catalogue didn't list it.
+#
+# The grep below is name-presence only, so it never noticed that the
+# catalogue's SEVERITY column disagreed with the rules it described (190
+# of 203 rows, issue #362) — including 15 rows labelled `P3` whose rules
+# are `informational`, which alertmanager.r1.yml routes to a receiver
+# with no delivery at all. The YAML-aware
+# scripts/ci/lint-alerts-catalog.py checks that column, and does the
+# name parity in BOTH directions across BOTH rule trees.
 
 echo "Checking alerts-catalog drift..."
 if [ -d deploy/monitoring/rules ] && [ -f docs/operations/alerts-catalog.md ]; then
@@ -441,6 +483,23 @@ if [ -d deploy/monitoring/rules ] && [ -f docs/operations/alerts-catalog.md ]; t
         err "alert rule '$alert' not listed in docs/operations/alerts-catalog.md"
       fi
     done
+fi
+
+echo "Checking alerts-catalog severity parity..."
+if catalog_out=$(python3 scripts/ci/lint-alerts-catalog.py 2>&1); then
+  # Echo the self-accounting line even on the green path. A gate that
+  # prints NOTHING when it passes is indistinguishable from a gate that
+  # never ran (2026-07-24); the "checked N of M" line is what makes the
+  # difference visible in the CI log.
+  printf '  %s\n' "$(printf '%s\n' "$catalog_out" | grep 'problem(s) found' || true)"
+else
+  while IFS= read -r line; do
+    [ -z "$line" ] && continue
+    case "$line" in
+      *"problem(s) found"*) continue ;;  # summary line, not a distinct error
+    esac
+    err "alerts-catalog:$line"
+  done <<< "$catalog_out"
 fi
 
 # ─── 11. Runbook body references to obs-owned metric namespaces ─────────────

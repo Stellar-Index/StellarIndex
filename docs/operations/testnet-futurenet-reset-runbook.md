@@ -1,3 +1,9 @@
+---
+title: Testnet / Futurenet reset runbook
+last_verified: 2026-08-27
+status: current
+---
+
 # Testnet / Futurenet reset runbook
 
 Test networks **reset**: Testnet ~quarterly; Futurenet on protocol bumps.

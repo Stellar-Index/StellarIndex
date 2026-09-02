@@ -77,7 +77,7 @@ Talking points:
 
 ```sh
 curl -sH "Authorization: Bearer $KEY" \
-  "$BASE/price/tip?base=native&quote=fiat:USD" | jq .
+  "$BASE/price/tip?asset=native&quote=fiat:USD" | jq .
 ```
 
 Talking points:
@@ -87,6 +87,11 @@ Talking points:
   Use `/v1/price` for trade execution + reporting.
 - The two URLs are deliberately distinct — a query param can't
   flip between them. URL discipline is a feature.
+- **Note the parameter name.** `/v1/price/tip` and
+  `/v1/price/stream` take `asset=` (quote defaults to `fiat:USD`);
+  `/v1/price`, `/v1/observations` and `/v1/history/*` take `base=`.
+  `base=` on tip or stream is a **400 `missing-asset`** — do not
+  find that out in front of a customer.
 
 ### Stage 4 — Per-source observations (3 min)
 
@@ -120,7 +125,7 @@ Talking points:
 
 ```sh
 curl -NH "Authorization: Bearer $KEY" \
-  "$BASE/price/stream?base=native&quote=fiat:USD"
+  "$BASE/price/stream?asset=native&quote=fiat:USD"
 ```
 
 Let it run for 60 seconds. One `data: {...}` line per closed

@@ -1,3 +1,9 @@
+---
+title: Test-net explorer data audit
+last_verified: 2026-08-29
+status: point-in-time audit
+---
+
 # Test-net explorer data audit (testnet + futurenet)
 
 > **Status (2026-08-29, issue #328).** This doc is the working queue, not a

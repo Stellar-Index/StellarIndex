@@ -113,6 +113,88 @@ against.
   gate. It now refuses the board with an `ErrAPIRejected`-class error —
   the same "stop rather than stamp a row we cannot honestly date" rule
   the base-mismatch check already applied.
+- **ops-docs:** removed 23 verified-wrong operator instructions from
+  `docs/operations/` and the config they describe (#362). The four that
+  cause damage if followed today: (1) the MinIO **reader-credential
+  rotation** ran `--tags minio,galexie`, which never re-templates
+  `/etc/default/stellarindex` — the file the indexer/aggregator/api
+  actually load — while `09-minio.yml` rotates the secret server-side,
+  so ingest stops with `SignatureDoesNotMatch` and step 4's manual
+  restart brings all three up on the OLD secret; the tag list is now
+  `minio,galexie,stellarindex` and the handlers do the restarts.
+  (2) `adr-0033-data-recovery.md`'s "then for real" `projector-replay`
+  omitted `-write`; the command has been fail-closed dry-run since
+  7045e0bc, so an operator deleted rows, got a DRY RUN banner and exit
+  0, and left the range permanently empty. (3) `sep41-mint-recovery.md`
+  led with a "scoped (recommended)" `DELETE FROM sep41_supply_rollup`,
+  which destroys migration 0088's `genesis_*` columns for those
+  contracts — the reader treats a NULL baseline as unseeded, so
+  lifetime supply silently under-reports; replaced with the
+  `ch-rebuild -sep41 -write` UPDATE-based fold reset that preserves the
+  baseline. (4) `rollback.md` prescribed `git push origin +public-v1:main`
+  — a force-push to an unprotected `main` on a public repo — now a
+  `git revert` roll-forward.
+- **ansible:** the weekly **Tier D fork-detection cron** rendered
+  `-from 2 -to -1` on every host without a live seam (the default),
+  which `verify-archive`'s `fs.Uint` rejects at parse time (#362).
+  Confirmed on r1: `journalctl -t stellarindex-tier-d --since -60d` was
+  empty — the ADR-0016 §7.4 control had never run once. `-to` is now
+  emitted only when a seam is set (its zero value already means
+  "resolve the bound from the peers' tips") and `-from` follows the
+  sibling units' hot floor. New `scripts/ci/verify-archive-tier-d-test.sh`
+  renders the real task under real Jinja for four host shapes and
+  fails on any flag value the binary cannot parse.
+- **alerts-catalog:** the Severity column read `P1`/`P2`/`P3` and
+  claimed those mapped to SEV-1/2/3, but no rule has ever carried a
+  `P*` label — 190 of 203 rows disagreed with the rule they described
+  (#362). Worst class: 15 rows labelled `P3` whose rules are
+  `informational`, which `alertmanager.r1.yml` routes to `receiver:
+  silent` — **no delivery at all**. The column is regenerated from
+  `labels.severity`, the legend now states the real
+  `page|ticket|informational` ladder and what each one actually
+  delivers, and new `scripts/ci/lint-alerts-catalog.py` (wired into
+  `lint-docs.sh` §10) fails CI on any future drift, in both directions,
+  across both rule trees.
+- **docs-lint:** `lint-docs.sh` skipped, rather than failed, a doc with
+  no `last_verified` frontmatter, and never walked `docs/contributing`
+  at all — so 23 operator procedures (including three of the five files
+  the #461 dangerous-instruction fix had just rewritten) sat outside
+  the freshness lint entirely (#362). Missing frontmatter is now an
+  error under `docs/operations` and `docs/contributing`, with the
+  dated record subtrees (`evidence/`, `postmortems/`, `incidents/`,
+  `notes/`, `wasm-audits/`) exempt by design; the 30 affected files
+  carry frontmatter.
+- **deploy/systemd:** the reference `archive-completeness.service` a
+  self-hoster is told to `sudo cp` shipped `Environment=ARCHIVE_TO=0`,
+  which the binary rejects outright (`-to is required`) — it failed on
+  every timer tick (#362). It now mirrors the ansible template's
+  `ExecStartPre=compute-archive-to.sh` +
+  `EnvironmentFile=-/run/archive-completeness.env` + `-network`.
+- **docs:** eight further verified-wrong claims (#362) — `deploy-workflow.md`
+  omitted `config_acknowledged` (the config-apply gate FAILS the job
+  without it) and listed 3 of the 6 default binaries; `release-process.md`
+  step 4 was a raw `git tag`/`git push` that bypasses
+  `scripts/dev/cut-release.sh`'s seven gates; `backfill-procedure.md`'s
+  verify SQL selected `bucket_to_ts` / `vwap_quote_per_base` (the real
+  columns are `bucket` / `vwap`) and claimed r1 has coverage from ledger
+  2 despite the ADR-0027 hot-floor trim; `backfill-with-live-ingest.md`
+  grepped for the pre-rebrand `ratesengine-ops` binary and named a
+  non-existent alert; `archive-completeness.md` claimed `-to 0` resolves
+  the tip, that there are no `check`/`fix` modes, and listed a six-layer
+  fallback chain that is really nine cross-anchor sources;
+  `archival-node-bringup.md` named a `refetch-history-archive` script
+  that ships nowhere, used the illegal `-tier chain,peers`, printed a
+  `s3_bucket_archive_prefix` key the strict loader rejects, rested on
+  superseded ADR-0016, and could not boot a greenfield indexer (no
+  ClickHouse); `sep1-resolution.md` said 15-min TTL for a 24 h one
+  (`cachekeys.TOMLTTL`); `cdn-setup.md`'s header table was regenerated
+  from `policyForPath`. Plus: `customer-demo-script.md`'s tip + SSE
+  curls used `base=` where those two routes read `asset=` (live-verified
+  400s), the `add-onchain-source` SKILL's verification command matched
+  ZERO tests and printed `ok`, `cut-release.sh` claimed container images
+  it does not build, `wrangler.toml` named the pre-rename Pages project,
+  and `internal/ops/ingest/backfill.go` warned about a 90-day `trades`
+  retention that migration 0031 removed.
 - **coverage:** `/v1/coverage` on testnet / futurenet reported **0 of 14 sources complete BY CONSTRUCTION** (#483) — the completeness catalogue listed the pubnet protocol sources with their pubnet genesis floors (soroswap 50,746,266 against a 4.4M tip) and pubnet contract sets on every network, so the verdict could never go green however complete the lake was. New `internal/sourcenet` classifies each source as pubnet-anchored (ADR-0035 contract identity) or ledger-anchored; the reconciliation catalogue drops the inapplicable ones, `compute-completeness` clears their stale snapshot rows, and the endpoint reports them in `not_applicable_sources` with a reason plus the serving `network`, excluded from every total. Pubnet output is unchanged apart from the two new fields.
 - **alerting:** `stellarindex_stellar_stack_lagging` / `_protocol_lag` could never fire — the alert's static `component: stellar-stack` label overwrote the probe metric's own `component` (core/galexie/archivist), two lagging components collapsed to one labelset and Prometheus rejected the rule (`health: err`, live on r1 with archivist=1 AND galexie=1). The expr now renames the metric label to `stack_component` before the static label is applied; runbook + annotations follow. Both rule trees.
 - **`/v1/oracle/streams` re-ran the oracle scan on every hit (#332 F5).**

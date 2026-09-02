@@ -1,3 +1,9 @@
+---
+title: SEP-41 dropped-mint recovery
+last_verified: 2026-09-02
+status: current
+---
+
 # SEP-41 dropped-mint recovery (scoped)
 
 Recover a handful of SEP-41 supply rows (mint / burn / clawback) that a
@@ -140,42 +146,59 @@ The recovery adds rows BELOW the existing checkpoint, so the worker will
 re-folds from zero (documented on `AdvanceSEP41SupplyRollup` +
 migration 0085).
 
-**Scoped (recommended)** — drop only the affected rows; the worker
-re-folds each from zero on its next pass, and meanwhile the reader falls
-back to the exact full-sum (so correctness is restored immediately, the
-fast path is restored shortly after):
+**There is nothing to do here by hand.** The step-2 `ch-rebuild -sep41
+-write -contracts …` run already reset the fold checkpoint for exactly
+those contracts, as its last act after the events were fully written
+(`internal/ops/chops/ch_rebuild.go:631-640`). Confirm it happened:
 
-```sh
-psql "$STELLARINDEX_POSTGRES_DSN" -c "
-  DELETE FROM sep41_supply_rollup
-   WHERE contract_id IN ('CBH4M45T...OCKF','CDLZFC3S...YSC','CCW67TSZ...MI75');"
+```
+ch-rebuild: reset 3 sep41_supply_rollup fold row(s) [SCOPED — 3 contract(s)];
+the aggregator worker will re-fold from zero (genesis baseline preserved)
 ```
 
-> ⚠️ **The `TRUNCATE sep41_supply_rollup` option has been REMOVED.**
-> It predates migration 0088, which added `genesis_mint_total`,
-> `genesis_burn_total`, `genesis_clawback_total` and
-> `genesis_baseline_ledger` — the **pre-Soroban** running totals, seeded
-> once from the ClickHouse lake and *not derivable from Soroban events*.
+If that line is absent from the step-2 output, step 2 ran **without**
+`-write` (dry run is the default) or without `-sources sep41_supply` —
+re-run it correctly. The reset is an `UPDATE … SET mint_total = 0,
+burn_total = 0, clawback_total = 0, last_ledger = 0`
+(`internal/storage/timescale/sep41_supply_events.go:959-985`); with
+`last_ledger` back at 0 the reader serves the exact full-sum fallback
+until the worker re-folds, so correctness is restored immediately and
+the fast path shortly after.
+
+> ⚠️ **Never `DELETE` or `TRUNCATE` `sep41_supply_rollup` — scoped or
+> not.**
 >
-> TRUNCATE deletes those rows. The worker then re-folds from Soroban
-> history alone and recreates each row with `genesis_mint_total = 0` and
-> `genesis_baseline_ledger = NULL`, which the reader treats as "not yet
-> seeded" and contributes nothing — so lifetime supply silently
-> **under-reports** until someone re-seeds the baseline by hand. That is
-> the incident-2026-07-06 class the baseline exists to prevent, and
-> nothing about it looks like an error at the time.
+> This runbook prescribed a "scoped (recommended)"
+> `DELETE FROM sep41_supply_rollup WHERE contract_id IN (…)` until
+> 2026-09-02. A row DELETE destroys migration 0088's
+> `genesis_mint_total`, `genesis_burn_total`, `genesis_clawback_total`
+> and `genesis_baseline_ledger` — the **pre-Soroban** running totals,
+> seeded once from the ClickHouse lake and *not derivable from Soroban
+> events*.
 >
-> It is also no longer necessary. `ch-rebuild -sep41 -write` resets the
-> fold checkpoint itself and preserves the baseline — its own `-contracts`
+> Removing the row (whole-table TRUNCATE or a contract-scoped DELETE —
+> the blast radius differs, the mechanism does not) makes the worker
+> re-fold from Soroban history alone and recreate the row with
+> `genesis_mint_total = 0` and `genesis_baseline_ledger = NULL`, which
+> the reader treats as "not yet seeded"
+> (`SEP41GenesisBaselineSeeded`, `sep41_supply_events.go:256-264`) and
+> contributes nothing — so lifetime supply silently **under-reports**
+> for those contracts until someone re-seeds the baseline by hand
+> (`stellarindex-ops supply seed-sep41-genesis`). That is the
+> incident-2026-07-06 class the baseline exists to prevent, and nothing
+> about it looks like an error at the time.
+>
+> It is also unnecessary. `ch-rebuild -sep41 -write` resets the fold
+> checkpoint itself and preserves the baseline — its own `-contracts`
 > flag documentation says so, and cites this runbook:
 > *"ONLY these contracts' sep41_supply_rollup fold rows are reset
 > afterwards (genesis baseline preserved) … a scoped recovery is safe by
-> default, no manual rollup surgery."* The tool logs
-> `reset N sep41_supply_rollup fold row(s) … (genesis baseline preserved)`
-> when it does it.
+> default, no manual rollup surgery."*
 
-**If most contracts are affected**, do not truncate — run the scoped
-re-derive across them and let the tool reset the folds:
+**If the reset line was missing** — step 2 ran dry, or with
+`-sources sep41_transfers` only, so `sep41_supply_events` was never
+touched and there was nothing to re-fold — re-run the re-derive with the
+supply source and `-write`, and let the tool reset the folds:
 
 ```sh
 /usr/local/sbin/run-heavy-job.sh sep41-recover \

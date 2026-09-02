@@ -1,3 +1,9 @@
+---
+title: Frontend consistency & DRY audit
+last_verified: 2026-08-24
+status: point-in-time audit
+---
+
 # Frontend consistency & DRY audit — run plan (2026-08-24)
 
 **Trigger:** the container-drift incident — the design-system `Container`

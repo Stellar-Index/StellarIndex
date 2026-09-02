@@ -73,7 +73,8 @@ It is a reference for bootstrapping a NEW zone, not a maintenance
 tool for the current one. If you are certain the target zone is not
 live, re-run with:
 
-    CF_BOOTSTRAP_I_UNDERSTAND=1 CF_API_TOKEN=... ./cf-pages-bootstrap.sh
+    CF_BOOTSTRAP_I_UNDERSTAND=1 CLOUDFLARE_API_TOKEN=... CLOUDFLARE_ACCOUNT_ID=... \
+        ./cf-pages-bootstrap.sh
 
 See docs/operations/cf-pages-setup.md.
 REFUSAL

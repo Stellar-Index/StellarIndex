@@ -1,14 +1,21 @@
-# Cloudflare Pages config for the Stellar Index showcase.
+# Cloudflare Pages config for the Stellar Index explorer.
 #
 # Recommended deploy path is the dashboard's git integration —
 # every push to main rebuilds + deploys without hitting our GitHub
-# Actions budget. See docs/operations/showcase-deployment.md.
+# Actions budget. See docs/operations/explorer-deployment.md.
 #
 # This file exists for the manual-deploy fallback path
-# (.github/workflows/showcase-deploy.yml + Wrangler CLI). When the
+# (.github/workflows/explorer-deploy.yml + Wrangler CLI). When the
 # git integration is the sole publisher this file is harmless
 # scaffolding.
+#
+# `name` must be the MAINNET Pages project. CI always passes an
+# explicit --project-name (explorer-deploy.yml), so it only binds a
+# bare local `wrangler pages deploy` — which is exactly the case that
+# used to publish into the pre-rename `stellarindex-showcase` project.
+# The per-network projects are stellarindex-explorer{,-testnet,
+# -futurenet}.
 
-name = "stellarindex-showcase"
+name = "stellarindex-explorer"
 pages_build_output_dir = "./out"
 compatibility_date = "2026-05-05"

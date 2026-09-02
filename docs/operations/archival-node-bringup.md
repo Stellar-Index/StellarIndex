@@ -45,9 +45,39 @@ operator follow-up). On r1 it was installed by hand from
 cd configs/ansible
 ansible-playbook playbooks/archival-node.yml \
   --inventory inventory/<host>.yml \
-  --extra-vars "@inventory/<host>.secrets.yml" \
+  --extra-vars "secrets_file=inventory/<host>.secrets.yml" \
+  --extra-vars "manage_stellarindex_binaries=true" \
+  --extra-vars "stellarindex_apply_migrations=true" \
+  --extra-vars "run_clickhouse=true" \
   --ask-vault-pass
 ```
+
+> ⚠️ **Four `--extra-vars` that a verbatim run used to omit, each of
+> which silently produces a half-built host:**
+>
+> - **`secrets_file=`** — `playbooks/archival-node.yml` loads
+>   `vars_files: "{{ secrets_file | default('../inventory/r1.secrets.yml') }}"`.
+>   Passing the secrets with `--extra-vars "@…"` does **not** change
+>   that default, so on any non-r1 host the play loads **r1's** vault
+>   (or dies if you don't have it). Set the variable, don't `@`-load
+>   the file.
+> - **`manage_stellarindex_binaries=true`** — defaults to `false`
+>   (`14-stellarindex-services.yml:46,62,107`); binary build/install is
+>   normally the deploy workflow's job. A greenfield host has no
+>   binaries, so bootstrap needs it on.
+> - **`stellarindex_apply_migrations=true`** — defaults to `false`
+>   (`:197`). Without it the database is created but empty.
+> - **`run_clickhouse=true`** — defaults to `false`
+>   (`defaults/main.yml:82`) while `storage.clickhouse_live_sink`
+>   defaults to **`true`** (`internal/config/config.go:937`,
+>   `stellarindex.toml.j2`). The indexer opens the live sink at boot
+>   and returns `clickhouse live-sink: …` if it cannot connect
+>   (`cmd/stellarindex-indexer/main.go`), so a greenfield host with no
+>   ClickHouse **will not start** at step 5. Install ClickHouse (this
+>   flag) or opt the host out with
+>   `stellarindex_clickhouse_live_sink=false` — accepting the loss of
+>   the certified lake, the CH completeness path and lake-derived
+>   supply (ADR-0034/0041).
 
 This creates: ZFS pool + datasets, MinIO single-node + buckets +
 IAM (`galexie-writer`, `galexie-archive-writer`,
@@ -129,18 +159,34 @@ On r1 the sweep found **5 193 corrupt files** distributed across
 `bucket/` (2 906), `scp/` (1 023), `transactions/` (740),
 `results/` (462), `ledger/` (62). Re-fetch each from upstream:
 
+> ⚠️ **`/usr/local/bin/refetch-history-archive` does not exist.** This
+> step named it three times; nothing in this repo ships it, and the
+> ansible role does not install it. Use the two tools that ARE shipped.
+
+Re-mirror the affected paths with `stellar-archivist` (installed by
+the role, `07-galexie.yml`) — it re-fetches only what is missing or
+fails to verify:
+
 ```sh
-ssh <host> 'systemd-run --unit=archivist-refetch --no-block /usr/local/bin/refetch-history-archive'
-# Wait for /tmp/refetch-2-done to appear, then check the result:
-ssh <host> 'cat /tmp/refetch-2-summary.txt; wc -l /tmp/refetch-failed-2.txt'
+# Delete the corrupt objects first — archivist will not overwrite a
+# file that is present, only fetch one that is absent.
+ssh <host> 'xargs -a /tmp/corrupt-gz.txt -r rm -f'
+ssh <host> "systemd-run --unit=archivist-refetch --no-block \
+  stellar-archivist mirror \
+    https://history.stellar.org/prd/core-live/core_live_001 \
+    file:///srv/history-archive"
+ssh <host> 'journalctl -u archivist-refetch -f'
 ```
 
-Expect ≥ 99 % fixed. Stragglers are usually in `bucket/` and are
-typically transient network errors — re-run with `--retry 3` and
-lower parallelism:
+Then repair anything archivist could not, from the nine cross-anchor
+sources, with `archive-completeness` (`-to` is REQUIRED — it is not
+optional and `0` is rejected; see
+[archive-completeness.md](archive-completeness.md)):
 
 ```sh
-ssh <host> 'PARALLEL=4 RETRIES=3 /usr/local/bin/refetch-history-archive --input /tmp/refetch-failed-2.txt'
+ssh <host> '/usr/local/sbin/run-heavy-job.sh archive-completeness-bringup \
+  /usr/local/bin/stellarindex-ops archive-completeness fix \
+    -from <hot-floor-or-2> -to <tip> -workers 8 -network pubnet'
 ```
 
 Sweep again to confirm:
@@ -179,16 +225,31 @@ ssh <host> 'zfs list -Ho used data/minio'
 
 ```sh
 ssh <host>
-set -a; source /etc/default/stellarindex-ops; set +a
+# Read the EnvironmentFile VERBATIM — never `source` it. Its values are
+# unquoted (that is what systemd wants), so the shell would expand `$`,
+# split on `;`/`&`/`|`/whitespace and eat quotes inside a secret, and the
+# job would fail with a mangled DSN or S3 key while the services around it
+# keep working (deploy-ansible-secrets-5). Same reader as
+# run-heavy-job.sh / compute-archive-to.sh.
+while IFS= read -r l || [ -n "$l" ]; do
+  case "$l" in [A-Za-z_]*=*) export "$l";; esac
+done < /etc/default/stellarindex-ops
+
 tmux new-window -t gbackfill -n verify-A
 tmux send-keys -t gbackfill:verify-A "
-stellarindex-ops verify-archive \
-  -config /etc/stellarindex.toml \
-  -tier all \
-  -from 2 -to <SEAM-1> \
+/usr/local/sbin/run-heavy-job.sh verify-archive-bringup \
+  /usr/local/bin/stellarindex-ops verify-archive \
+    -config /etc/stellarindex.toml \
+    -tier all \
+    -from 2 -to <SEAM-1> \
   2>&1 | tee /var/log/galexie-verify.log
 " Enter
 ```
+
+(`-tier` is single-valued; `all` = chain + checkpoint + peers +
+archivist. A comma-separated list is `unknown -tier`. The heavy-job
+wrapper is mandatory for a walk this long —
+[maintainer-workflow.md](maintainer-workflow.md) §Heavy one-shot jobs.)
 
 `<SEAM>` is the live-start ledger from step 1. Tier A walks every
 ledger and confirms the hash chain links; Tier B compares each 64th
@@ -226,9 +287,12 @@ Re-apply just the stellarindex bits:
 ansible-playbook playbooks/archival-node.yml \
   --tags stellarindex \
   --inventory inventory/<host>.yml \
-  --extra-vars "@inventory/<host>.secrets.yml" \
+  --extra-vars "secrets_file=inventory/<host>.secrets.yml" \
   --ask-vault-pass
 ```
+
+(Same `secrets_file=` note as step 1 — `--extra-vars "@…"` does not
+override the playbook's `r1.secrets.yml` default.)
 
 This re-templates `/etc/stellarindex.toml` with the seam value and
 restarts `stellarindex-indexer.service`. The indexer log should
@@ -294,15 +358,20 @@ Never try to fix a partial partition by `mc cp --recursive`. See
 Same procedure as step 3 above:
 
 ```sh
-# Sweep + refetch.
-ssh <host> 'systemd-run --unit=sweep ... && /usr/local/bin/refetch-history-archive'
+# Sweep, delete the corrupt objects, re-mirror, then cross-anchor fix —
+# the full sequence is in step 3 above.
+ssh <host> 'find /srv/history-archive -type f -name "*.gz" -print0 \
+  | xargs -0 -P 16 gzip -t 2>&1 | sed -E "s/^gzip: //;s/:.*//" > /tmp/corrupt-gz.txt'
+ssh <host> 'xargs -a /tmp/corrupt-gz.txt -r rm -f'
+ssh <host> 'stellar-archivist mirror \
+  https://history.stellar.org/prd/core-live/core_live_001 file:///srv/history-archive'
 ```
 
 ### Postgres is empty / wiped
 
 ```sh
 # Re-run migrations:
-ssh <host> 'set -a; source /etc/default/stellarindex-ops; set +a; \
+ssh <host> 'while IFS= read -r l || [ -n "$l" ]; do case "$l" in [A-Za-z_]*=*) export "$l";; esac; done < /etc/default/stellarindex-ops; \
   stellarindex-migrate -migrations /usr/local/share/stellarindex/migrations up'
 
 # Ingestion cursor is gone, so the indexer needs an explicit
@@ -355,12 +424,25 @@ write twice, all skip already-complete work. Keep going.
 
 ---
 
-## Per-region variations (R2 AWS / R3 Vultr) — per ADR-0016
+## Per-region variations (R2 / R3) — ⚠️ historical, ADR-0016 is superseded
+
+> ⛔ **The per-region shapes below describe
+> [ADR-0016](../adr/0016-per-region-storage-strategy.md), which is
+> `status: Superseded` — replaced by
+> [ADR-0050](../adr/0050-multi-region-ha-architecture.md) /
+> [multi-region-ha.md](../architecture/multi-region-ha.md) on
+> 2026-08-21.** ADR-0050 rejects ADR-0016's Model A ("Postgres
+> replication from R1 is the canonical history"), its R2-on-AWS shape,
+> and its ClickHouse-blind per-region sizing.
+>
+> **Do not provision R2 or R3 from this section.** It is retained as a
+> record of what was planned, and because §Per-region trust +
+> verification model below is still the shape of the Tier A/D split.
+> Derive the actual per-region recipe from ADR-0050 first.
 
 The recipe above is the **R1 (Hetzner Frankfurt)** path: full local
-mirror of every dataset. For the other two regions the storage shape
-differs (per [ADR-0016](../adr/0016-per-region-storage-strategy.md))
-and several recipe steps change or drop.
+mirror of every dataset. Under ADR-0016 the storage shape differed per
+region and several recipe steps changed or dropped, as follows.
 
 ### R2 — AWS us-east-1 (galexie-direct-from-public-bucket)
 
@@ -382,21 +464,32 @@ Differences from the recipe above:
   [storage]
   s3_endpoint        = "https://s3.us-east-2.amazonaws.com"
   s3_bucket_archive  = "aws-public-blockchain"
-  s3_bucket_archive_prefix = "v1.1/stellar/ledgers/pubnet/"
   s3_region          = "us-east-2"
   ```
+
+  > ⚠️ **There is no `s3_bucket_archive_prefix` key.** This block
+  > carried one; the loader is STRICT and rejects unknown keys
+  > (`config: unknown keys in …`, `internal/config/load.go`), so the
+  > indexer would refuse to boot on the config as printed. `[storage]`
+  > has `s3_endpoint`, `s3_region`, `s3_bucket_archive`,
+  > `s3_bucket_live` and no prefix key — a bucket-internal prefix is
+  > not expressible here today, which is one of the things ADR-0050
+  > has to settle before R2 is provisioned this way.
 
   AWS public bucket access is anonymous — no `STELLARINDEX_S3_*` creds
   needed for the archive read path; galexie's S3 client falls back
   to anonymous when no credentials are configured. (`galexie-live/`
   for R2's own captive-core export still uses an authenticated
   bucket in us-east-1.)
-- **Step 5 (verify-archive)** — runs `-tier chain,peers` (Tier A + D),
-  not `all`. Tier A confirms R2's local chain integrity (catches
-  bytes corrupted in transit from AWS). Tier D cross-validates against
-  ~6 tier-1 validator archives over HTTPS (catches a forked upstream).
-  No `/srv/history-archive` needed. Wall-clock ~30-45 min for
-  Tier A + D.
+- **Step 5 (verify-archive)** — `-tier` takes ONE value, never a list:
+  `chain | checkpoint | peers | archivist | all`
+  (`internal/ops/archive/verify_archive.go`; anything else is
+  `unknown -tier`). To get Tier A + D, run it **twice**:
+  `-tier chain` then `-tier peers`. Tier A confirms R2's local chain
+  integrity (catches bytes corrupted in transit from AWS); Tier D
+  cross-validates against the built-in tier-1 peer set over HTTPS
+  (catches a forked upstream) and needs no `/srv/history-archive`.
+  Wall-clock ~30-45 min for both.
 - **Step 6 (indexer apply + start)** — same as R1 but
   `stellarindex_live_seam_ledger` in inventory points at *R2's own
   galexie-append start*, not R1's. Otherwise identical.
@@ -442,8 +535,9 @@ Differences from the recipe above:
 
   Wall-clock: ~6-8 h (same bandwidth as R1's fill, plus Vultr's S3
   endpoint write latency from the bare metal).
-- **Step 5 (verify-archive)** — `-tier chain,peers` (Tier A + D),
-  no `/srv/history-archive` needed. ~30-45 min.
+- **Step 5 (verify-archive)** — two runs, `-tier chain` then
+  `-tier peers` (Tier A + D; `-tier` is single-valued). No
+  `/srv/history-archive` needed. ~30-45 min.
 - **Step 6 (indexer apply + start)** — config points the indexer's
   archive bucket at `vultr-objstor/galexie-archive` instead of the
   local MinIO bucket. `stellarindex_live_seam_ledger` is R3's own
@@ -460,7 +554,7 @@ S3 fill + verify), most of which is the AWS-public-bucket read
 
 ### Per-region trust + verification model
 
-Recapping per ADR-0016:
+Recapping per ADR-0016 (superseded — see the banner above):
 
 - **R1** is the *integrity leader*. Runs all four tiers (A+B+D+E)
   on a schedule (Tier B + E weekly, Tier A nightly, Tier D weekly).

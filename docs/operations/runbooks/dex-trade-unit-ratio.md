@@ -104,7 +104,7 @@ frequent equal-value fills is the known false-positive pattern below.
       the affected range and re-derive the source's history from the
       ClickHouse lake (ADR-0034): `stellarindex-ops ch-rebuild -source
       <name>` for non-projected sources, or `stellarindex-ops
-      projector-replay -source <name> -from <ledger>` for projected
+      projector-replay -source <name> -from <ledger> -write` for projected
       ones. Don't merge fixed and corrupted rows for the same range.
 - [ ] Verification:
       `increase(stellarindex_dex_trade_unit_ratio_total{source="<source>"}[30m])`

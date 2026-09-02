@@ -1,3 +1,9 @@
+---
+title: SEP-41 watched-set — decision doc
+last_verified: 2026-07-26
+status: superseded
+---
+
 # SEP-41 watched-set — decision doc (RETIRED 2026-07-25)
 
 > **⚠ RETIRED — HISTORICAL RECORD ONLY. ITS PREMISE IS FALSE.**

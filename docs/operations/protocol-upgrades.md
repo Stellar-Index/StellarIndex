@@ -1,3 +1,9 @@
+---
+title: Stellar protocol upgrades
+last_verified: 2026-08-27
+status: current
+---
+
 # Stellar protocol upgrades
 
 Stellar bumps its ledger protocol version periodically (Futurenet leads, then

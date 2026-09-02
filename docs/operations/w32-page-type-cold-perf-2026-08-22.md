@@ -1,3 +1,9 @@
+---
+title: W3.2 — Cold full-page performance
+last_verified: 2026-08-24
+status: point-in-time audit
+---
+
 # W3.2 — Cold full-page performance: every other page type (first live measurement, 2026-08-22)
 
 **What this is.** W3.1 proved the contract page subsecond-on-cold bar with

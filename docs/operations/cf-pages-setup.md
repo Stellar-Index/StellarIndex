@@ -1,3 +1,9 @@
+---
+title: Cloudflare Pages — bootstrap
+last_verified: 2026-09-02
+status: current
+---
+
 # Cloudflare Pages — bootstrap
 
 > ⚠️ **DO NOT RUN `scripts/ops/cf-pages-bootstrap.sh` AGAINST THE LIVE
@@ -89,13 +95,17 @@ export CLOUDFLARE_ACCOUNT_ID=...
 # 2. Dry-run (shows the JSON bodies, no changes):
 DRY_RUN=1 bash scripts/ops/cf-pages-bootstrap.sh
 
-# 3. For real:
-bash scripts/ops/cf-pages-bootstrap.sh
+# 3. For real — ONLY against a zone that is not live (see the banner):
+CF_BOOTSTRAP_I_UNDERSTAND=1 bash scripts/ops/cf-pages-bootstrap.sh
 ```
 
-The script is **idempotent** — re-runs just verify state and
-patch any drift. Safe to run from CI on every change to
-`scripts/ops/cf-pages-bootstrap.sh` itself.
+Re-runs converge existing projects onto the declared config, but the
+script is **not** safe to run repeatedly against a live zone and is
+**not** wired into any workflow: step 4 below upserts the apex record
+onto the pre-rename `stellarindex-showcase` project, which detaches
+the live explorer from `stellarindex.io`. That is why
+`CF_BOOTSTRAP_I_UNDERSTAND=1` is required and why nothing in
+`.github/workflows/` invokes it.
 
 ## What it does
 
@@ -110,9 +120,14 @@ patch any drift. Safe to run from CI on every change to
    showcase).
 4. Upserts the four CNAME / A records (proxied) at the zone.
 
-After the first successful run, every push to `main` triggers
-an automatic deploy on each Pages project (the git integration
-handles it; no GitHub Actions minutes consumed).
+After the first successful run, deploys come from whichever
+publish path that zone is configured for. For **this** zone that is
+Cloudflare's dashboard git integration (no GitHub Actions minutes),
+with `.github/workflows/explorer-deploy.yml` as the
+`workflow_dispatch`-only direct-upload fallback — it never fires on
+push. The projects this script creates carry `build_command` /
+`output_dir`, so a zone whose git integration is not connected
+deploys nothing until it is.
 
 ## Verify
 

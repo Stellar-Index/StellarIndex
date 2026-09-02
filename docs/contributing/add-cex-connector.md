@@ -1,3 +1,9 @@
+---
+title: Checklist — add a CEX / FX connector
+last_verified: 2026-07-10
+status: current
+---
+
 # Checklist — add a CEX / FX connector (off-chain)
 
 Reference: `internal/sources/external/binance/`. Framework: `internal/sources/external/framework.go`.

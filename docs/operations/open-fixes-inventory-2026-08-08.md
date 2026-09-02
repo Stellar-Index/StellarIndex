@@ -1,3 +1,9 @@
+---
+title: Open fixes inventory — 2026-08-08
+last_verified: 2026-08-29
+status: point-in-time audit
+---
+
 # Open fixes inventory — 2026-08-08
 
 > **⛔ SUPERSEDED 2026-08-29 by

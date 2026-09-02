@@ -85,18 +85,31 @@ mid-release wastes a tag and forces a `.N+1` cut.
    PR:
    - Replace `## [Unreleased]` with `## [vX.Y.Z] — YYYY-MM-DD`
    - Add a fresh empty `## [Unreleased]` block above it
-   - At the bottom of the file, update the version-comparison links
-     to point at the new tag
    - Title the PR `release: vX.Y.Z`
+
+   (This file carries no `[vX.Y.Z]: <compare-url>` link references at
+   the bottom — there is nothing to update. Earlier versions of this
+   step said there was.)
 3. **Merge the release PR.** Squash-merge once CI is green. **Do
    not** tag before this PR has landed on `main` — the tag must
    point at the commit that contains the promoted CHANGELOG block.
-4. **Create + push the tag.**
+4. **Cut the tag with `scripts/dev/cut-release.sh` — not by hand.**
    ```sh
    git checkout main && git pull --ff-only origin main
-   git tag vX.Y.Z
-   git push origin vX.Y.Z
+   bash scripts/dev/cut-release.sh vX.Y.Z --dry-run   # every gate, no tag
+   bash scripts/dev/cut-release.sh vX.Y.Z --yes       # tag + push
    ```
+   The script is the executable form of steps 1-3 and refuses to tag
+   when any of them was skipped: SemVer tag shape, on `main`, clean
+   working tree, in sync with `origin/main`, tag does not already
+   exist, a **non-empty** `## [vX.Y.Z] — YYYY-MM-DD` section exists in
+   `CHANGELOG.md`, and `bash scripts/dev/verify.sh` is green. A raw
+   `git tag` / `git push` bypasses all seven — this step used to
+   prescribe exactly that.
+
+   (`--yes` is required for non-TTY/automation; without a terminal and
+   without it the script refuses rather than let the confirmation
+   prompt hit EOF — a 2026-08-28 "release cut" that pushed no tag.)
    The tag push triggers `.github/workflows/release.yml` which:
    - Cross-compiles every binary in `cmd/` for `linux/amd64` (and
      `linux/arm64` if the matrix is enabled)
@@ -157,8 +170,9 @@ mid-release wastes a tag and forces a `.N+1` cut.
    `[Unreleased]` entry for the deprecation note.
 6. **Optional manual edits to the Release page.** The auto-generated
    notes pull from the CHANGELOG block. Add the "Tested against
-   protocol XX" line manually if the workflow couldn't infer it
-   (it tries `stellar-core --version` from the build runner). The
+   protocol XX" line **by hand** — `release.yml` has no protocol
+   inference (it does not run `stellar-core --version`, and never has;
+   the runner has no captive core). The
    `.github/RELEASE_NOTES_TEMPLATE.md` mirrors the structure if you
    need to expand sections.
 

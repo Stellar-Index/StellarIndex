@@ -1,3 +1,9 @@
+---
+title: Checklist — add a Prometheus metric
+last_verified: 2026-07-01
+status: current
+---
+
 # Checklist — add a Prometheus metric
 
 Reference: the wave-88/89/90/91 paired series (`divergence_refresh_*`).

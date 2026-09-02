@@ -59,13 +59,21 @@ than fill walks).
 Even without operator vigilance the recurrence pattern is now
 alertable:
 
-| Signal | Alert | Page |
+| Signal | Alert | Severity |
 | --- | --- | --- |
-| Live cursor stalls | `stellarindex_ingestion_source_insert_stale` | P2 |
-| Live indexer keeps inserting duplicates only | `stellarindex_ingestion_duplicate_flood` | P2 |
-| Aggregator output stops | `stellarindex_aggregator_silent` | P1 |
-| Per-asset staleness > 120 s | `stellarindex_api_price_stale` | P2 |
-| Postgres connection pool saturated | `stellarindex_postgres_connections_high` | P2 |
+| Live cursor stalls | `stellarindex_ingestion_source_insert_stale` | ticket |
+| Live indexer keeps inserting duplicates only | `stellarindex_ingestion_duplicate_flood` | ticket |
+| Aggregator output stops | `stellarindex_aggregator_silent` | **page** |
+| Per-asset staleness > 120 s | `stellarindex_api_price_stale` | ticket |
+| Postgres connections > 80 % of `max_connections` | `stellarindex_timescale_connections_saturated` | ticket |
+
+> Severities are the rules' own `labels.severity` — the routing key
+> (`page` → Discord #stellarindex-pages, `ticket` → #stellarindex-alerts).
+> The last row used to name `stellarindex_postgres_connections_high`,
+> which is defined in NEITHER rule tree — so an operator watching for it
+> mid-backfill would have watched forever. The real alert is
+> `stellarindex_timescale_connections_saturated`
+> (`configs/prometheus/rules.r1/storage.yml:320`).
 
 The first two were shipped in this session (tasks #61 / #62 /
 #67) specifically to surface the F-0020 pattern at first
@@ -83,9 +91,12 @@ proven otherwise, and stop the heavy walker first.
 
 ```sh
 # On r1 — find the fill PID. The fill is a manual operator invocation
-# (`stellarindex-ops backfill -source soroban-events`), NOT a systemd unit;
-# there is no soroban-events-fill.service.
-ps -eo pid,args | grep '[r]atesengine-ops backfill'
+# (`stellarindex-ops backfill -source soroban-events`, normally wrapped by
+# run-heavy-job.sh), NOT a systemd unit.
+# NOTE the binary name: the pattern below used to read '[r]atesengine-ops',
+# the PRE-REBRAND name, so it matched nothing mid-incident and the operator
+# concluded no fill was running.
+ps -eo pid,args | grep '[s]tellarindex-ops backfill'
 # kill -INT by the EXPLICIT PID (graceful — drains in-flight rows then exits).
 # Do NOT `pkill -f 'backfill'`: the pattern self-matches your own shell over
 # ssh and can kill the wrong process.

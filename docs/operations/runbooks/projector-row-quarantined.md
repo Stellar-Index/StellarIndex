@@ -64,7 +64,7 @@ downstream PK/constraint violation, or a malformed on-chain payload).
       contract data, etc.). Fix the underlying defect first; re-driving
       without fixing it just re-quarantines the same row.
 - [ ] Once fixed, re-drive the specific row/range with
-      `stellarindex-ops projector-replay -source <X> -from <ledger>`
+      `stellarindex-ops projector-replay -source <X> -from <ledger> -write`
       (the raw event is still in the lake — nothing to re-derive from
       scratch).
 - [ ] Verification: the re-drive succeeds and no new

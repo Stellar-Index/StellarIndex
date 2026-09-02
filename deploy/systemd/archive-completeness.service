@@ -4,18 +4,41 @@
 # tick (one-shot oneshot semantics); the timer file at
 # archive-completeness.timer schedules the cadence.
 #
-# Operator wiring:
+# REFERENCE unit for self-hosters. The reference deployment (r1) runs
+# the ansible-rendered
+# configs/ansible/roles/archival-node/templates/systemd/archive-completeness.service.j2
+# instead; that template is the authority, and this file mirrors its
+# ARCHIVE_TO mechanism. Keep the two in step.
 #
+# Operator wiring — BOTH files, the helper first:
+#
+#   sudo install -m 0755 \
+#     configs/ansible/roles/archival-node/files/compute-archive-to.sh \
+#     /usr/local/sbin/compute-archive-to.sh
 #   sudo cp deploy/systemd/archive-completeness.{service,timer} /etc/systemd/system/
 #   sudo systemctl daemon-reload
 #   sudo systemctl enable --now archive-completeness.timer
 #
 # Configuration (override via /etc/default/archive-completeness):
 #
-#   ARCHIVE_FROM       Default 2 (genesis)
-#   ARCHIVE_TO         Network head ledger (REQUIRED — operator-set;
-#                      typically pulled by an envrionment script
-#                      from `mc ls --recursive ... | tail -1`)
+#   ARCHIVE_FROM       Default 2 (genesis). Set it to your hot floor if
+#                      you trim history (ADR-0027): below the floor the
+#                      local archive is deliberately empty.
+#   ARCHIVE_TO         Network head ledger. **REQUIRED and non-zero** —
+#                      `archive-completeness verify` refuses to run
+#                      without it ("-to is required",
+#                      internal/ops/archive/archive_completeness.go).
+#                      There is deliberately no Environment= default
+#                      here: ExecStartPre computes it at start time from
+#                      the indexer cursor and writes
+#                      /run/archive-completeness.env, which the
+#                      EnvironmentFile below layers on top. Set it in
+#                      /etc/default/archive-completeness only if you are
+#                      not running the helper.
+#   STELLAR_NETWORK    pubnet (default) | testnet | futurenet. The
+#                      cross-anchor FILL phase is PUBNET-ONLY; on any
+#                      other value it REFUSES rather than write pubnet
+#                      checkpoints into a test-net store.
 #   TEXTFILE_OUTPUT    node_exporter's textfile_collector dir + filename
 #   REPORT_OUTPUT      JSON report path (operator audit trail)
 
@@ -28,18 +51,28 @@ Wants=network-online.target
 [Service]
 Type=oneshot
 EnvironmentFile=-/etc/default/archive-completeness
+# ARCHIVE_TO is computed at start time from the indexer cursor —
+# compute-archive-to.sh writes ARCHIVE_TO=<n> here. This file is loaded
+# LAST so it wins over /etc/default/archive-completeness.
+EnvironmentFile=-/run/archive-completeness.env
 
 # Sensible defaults. Operators override via /etc/default/archive-completeness.
+# NOTE: there is no ARCHIVE_TO default on purpose. It used to be
+# `Environment=ARCHIVE_TO=0`, which the binary rejects outright ("-to is
+# required") — so a self-hoster who followed the wiring above got a unit
+# that failed on every single timer tick.
 Environment=ARCHIVE_FROM=2
-Environment=ARCHIVE_TO=0
+Environment=STELLAR_NETWORK=pubnet
 Environment=TEXTFILE_OUTPUT=/var/lib/node_exporter/textfile_collector/archive_completeness.prom
 Environment=REPORT_OUTPUT=/var/lib/galexie/last-completeness-report.json
 Environment=WORKERS=8
 
+ExecStartPre=/usr/local/sbin/compute-archive-to.sh
 ExecStart=/usr/local/bin/stellarindex-ops archive-completeness verify \
   -from ${ARCHIVE_FROM} \
   -to ${ARCHIVE_TO} \
   -workers ${WORKERS} \
+  -network ${STELLAR_NETWORK} \
   -textfile-output ${TEXTFILE_OUTPUT} \
   -output-file ${REPORT_OUTPUT}
 

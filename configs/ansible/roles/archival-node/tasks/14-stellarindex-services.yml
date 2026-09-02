@@ -917,6 +917,25 @@
 # different chain than the network's signed reality, Tier D catches it).
 # Runs as root because it needs to read /etc/default/stellarindex-ops
 # for galexie-archive S3 creds. Output to journald (logger -t).
+#
+# -to is CONDITIONAL, and that is load-bearing. `verify-archive -to` is
+# an fs.Uint (internal/ops/archive/verify_archive.go:66) whose ZERO value
+# means "unbounded — resolve the upper bound from the peers' own
+# .well-known/stellar-history.json" (verify_archive.go:805-819). This
+# task used to render `-to {{ stellarindex_live_seam_ledger | int - 1 }}`
+# unconditionally; stellarindex_live_seam_ledger defaults to 0
+# (defaults/main.yml), so on every host that has not set a seam the cron
+# rendered `-to -1`, which the flag parser rejects with
+#   invalid value "-1" for flag -to: parse error
+# before the tool does any work. Verified live on r1 2026-09-02: the
+# rendered /etc/cron.d file carried `-from 2 -to -1` and
+# `journalctl -t stellarindex-tier-d --since -60d` was EMPTY — the
+# fork-detection control ADR-0016 §7.4 requires had never run once.
+# Emitting nothing when there is no seam lets the zero-value semantics
+# do their job. Guarded by scripts/ci/verify-archive-tier-d-test.sh.
+#
+# -from follows the sibling units (verify-archive-tier-a/-b,
+# archive-completeness): the node's hot floor when it has one, else 2.
 
 - name: Install Tier D verify-archive weekly cron
   ansible.builtin.cron:
@@ -935,5 +954,6 @@
       -config /etc/stellarindex.toml
       -tier peers
       -peer-samples 50
-      -from 2 -to {{ stellarindex_live_seam_ledger | default(0) | int - 1 }}
+      -from {{ stellarindex_archive_hot_floor | default(2) }}
+      {{ ('-to ' ~ (stellarindex_live_seam_ledger | default(0) | int - 1)) if (stellarindex_live_seam_ledger | default(0) | int) > 0 else '' }}
       2>&1 | logger -t stellarindex-tier-d'

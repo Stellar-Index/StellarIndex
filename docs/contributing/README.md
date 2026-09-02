@@ -1,3 +1,9 @@
+---
+title: Contributing checklists
+last_verified: 2026-07-01
+status: current
+---
+
 # Contributing checklists
 
 Copy-followable checklists for the recurring "add an X" tasks. Each names the exact

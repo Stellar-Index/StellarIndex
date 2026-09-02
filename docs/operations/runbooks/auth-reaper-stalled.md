@@ -1,4 +1,5 @@
 ---
+last_verified: 2026-09-02
 alert: stellarindex_auth_reaper_stalled
 severity: ticket
 ---

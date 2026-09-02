@@ -491,7 +491,8 @@ never do; that's expected, not broken.
 - **Backfilling / catching up after downtime:** see
   [`docs/operations/backfill-procedure.md`](backfill-procedure.md)
   and, for Soroban-derived sources specifically,
-  `stellarindex-ops projector-replay -source <name> -from <ledger>`
+  `stellarindex-ops projector-replay -source <name> -from <ledger> -write`
+  (fail-closed: without `-write` it reports and writes nothing)
   (never a bespoke `<source>-backfill` command — those were removed;
   see CLAUDE.md invariant 7).
 

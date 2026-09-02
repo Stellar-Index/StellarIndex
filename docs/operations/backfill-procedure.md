@@ -88,10 +88,16 @@ cycle. Aggregates persist.
       directory) before this flag flips. SDEX + off-chain are
       `BackfillSafe=true` unconditionally.
 - [ ] **Galexie archive bucket reaches the requested range.**
-      Today r1 has full coverage from ledger 2; r2 reads via
-      `aws-public-blockchain` so any range is reachable; r3
-      pulls from Vultr Object Storage. If a range is older than
-      the archive bucket on a given region, run from r1.
+      r1's `galexie-archive` mirror is TRIMMED to a hot floor
+      (ADR-0027; `stellarindex_archive_hot_floor` in the region's
+      inventory — 49,984,000 on r1 today), so it does **not** reach
+      ledger 2 and a request below the floor finds no objects. Check
+      the floor before choosing `-from`:
+      `ssh r1 'grep ARCHIVE_HOT_FLOOR /etc/default/galexie-archive-fill'`.
+      r2 reads via `aws-public-blockchain` so any range is reachable;
+      r3 pulls from Vultr Object Storage. Below the floor, source from
+      the region that still holds the range — or rehydrate it first
+      (see [lcm-cache-tiering.md](lcm-cache-tiering.md)).
 - [ ] **Disk + DB headroom.** A ~24h backfill produces tens of
       thousands of trade rows for popular pairs; budget IO for
       the CAGG materialisation that follows insert.
@@ -148,19 +154,33 @@ below the live seam; `galexie-live` when it's above. The CLI
 picks automatically — you can override with `-bucket` if the
 range straddles.
 
-### 3. Run
+### 3. Run — under the heavy-job wrapper on r1
 
 ```sh
-stellarindex-ops backfill \
-  -config /etc/stellarindex.toml \
-  -from 50000000 \
-  -to   50100000
+/usr/local/sbin/run-heavy-job.sh backfill-50000000-50100000 \
+  /usr/local/bin/stellarindex-ops backfill \
+    -config /etc/stellarindex.toml \
+    -from 50000000 \
+    -to   50100000
 ```
+
+> ⚠️ **The wrapper is mandatory for every ops one-shot on r1**
+> ([maintainer-workflow.md](maintainer-workflow.md) §Heavy one-shot
+> jobs). It puts the job in a systemd scope with `MemoryMax=20G`,
+> `MemorySwapMax=0`, batch-class CPU/IO weights, a per-job singleton
+> lock and the disk watchdog, and imports the low-priority ClickHouse
+> `ops_batch` identity. A raw run has none of that: on 2026-07-05 an
+> unwindowed re-derive ballooned, swapped galexie's captive core into
+> an `invalid local state` wedge and froze the lake for 11 hours. Use
+> a UNIQUE job name per attempt — a name whose lock is still held is
+> **skipped**, silently and with exit 0.
 
 Stream the output to a log so a stuck run is diagnosable:
 
 ```sh
-stellarindex-ops backfill ... 2>&1 | tee backfill-50000000-50100000.log
+/usr/local/sbin/run-heavy-job.sh backfill-50000000-50100000 \
+  /usr/local/bin/stellarindex-ops backfill ... 2>&1 \
+  | tee backfill-50000000-50100000.log
 ```
 
 Throughput in steady state: ~50-150 ledgers/second per source,
@@ -220,12 +240,11 @@ psql stellarindex -c "
 
 # CAGG materialisation should auto-trigger; verify by querying:
 psql stellarindex -c "
-  SELECT bucket_to_ts, base_asset, quote_asset,
-         vwap_quote_per_base, trade_count
+  SELECT bucket, base_asset, quote_asset, vwap, trade_count
   FROM prices_1m
-  WHERE bucket_to_ts BETWEEN '2026-04-15' AND '2026-04-15 01:00'
+  WHERE bucket BETWEEN '2026-04-15' AND '2026-04-15 01:00'
     AND base_asset = 'native'
-  ORDER BY bucket_to_ts
+  ORDER BY bucket
   LIMIT 5;
 "
 ```

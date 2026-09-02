@@ -31,14 +31,35 @@ This doc covers the **deploy** half. The **release** half is in
 gh workflow run deploy.yml \
   -f region=r1 \
   -f version=v0.2.0 \
-  -f binaries=stellarindex-indexer,stellarindex-aggregator,stellarindex-api
+  -f config_acknowledged=true
 ```
 
 Or use the GitHub Actions UI: Actions → deploy → Run workflow,
 fill in the dropdowns.
 
-Defaults if `binaries` is omitted: `stellarindex-indexer,stellarindex-aggregator,stellarindex-api`
-(the three long-running services).
+`config_acknowledged` is **not optional in practice.** The
+**Config-apply gate** runs after the binaries land and FAILS the job
+when any config surface (ansible, Prometheus rules, systemd units, DB
+schema) changed since the previous release tag and the flag is not
+`true` — a binary deploy applies none of those, so the feature they
+gate would ship dead and silent (the 2026-08-25 declared-peg and
+`rules.d` incidents). Set it only once you have applied, or are about
+to apply, that config: see
+[`deploy-config-apply.md`](deploy-config-apply.md). A config-free
+release passes the gate either way.
+
+Defaults if `binaries` is omitted — **six**, not three
+(`.github/workflows/deploy.yml`, `binaries.default`):
+`stellarindex-indexer`, `stellarindex-aggregator`, `stellarindex-api`,
+`stellarindex-sla-probe`, `stellarindex-ops`, `stellarindex-migrate`.
+`stellarindex-ops` and `stellarindex-sla-probe` are in the default set
+deliberately: omitting them let `ops` sit two releases behind on r1
+while thirteen units — the data-integrity gates and served-tier
+writers — exec'd it, with every deploy reporting success.
+
+> **Test nets** (`testnet` / `futurenet`) MUST override `binaries` to
+> `stellarindex-indexer,stellarindex-api,stellarindex-ops` — no
+> aggregator, since there are no USD markets off pubnet.
 
 The workflow refuses to run unless `version` matches
 `vX.Y.Z[-prerelease][+build]` and the GitHub Release exists.
@@ -188,7 +209,8 @@ did). Operator checklist:
 | "Bad binary preserved at …failed-vX.Y.Z" | New binary failed health probe; rolled back | Inspect `/usr/local/bin/<binary>.failed-<v>` on the host; `journalctl -u <binary> -n 200` shows why |
 | SSH timeout / "permission denied" | Stale key, removed `authorized_keys` entry, host firewall change | Verify `DEPLOY_SSH_PRIVATE_KEY` is current; SSH manually from a known-good box |
 | Fails at "Apply outstanding migrations" | A migration errored (permission, syntax, lock timeout) before any binary was touched | See §Migrations run before binaries, and are not rolled back — check `stellarindex-migrate … status`, fix forward with a new migration |
-| "Post-deploy version mismatch" *(future check)* | Currently disabled — no `--version` flag on binaries | Track in launch-readiness backlog |
+| "binary version skew on r1 after deploy" | The **Served-path smoke** step runs `stellarindex-binary-version-probe.service` and asserts `stellarindex_binary_version_skew == 0` / `probe_success == 1`. Non-zero means a release-managed binary is on a different version (binaries carry `-version`, e.g. `cmd/stellarindex-indexer/main.go`); a MISSING unit means the observability config has not been applied to r1 — the config-apply-gate class | Re-run the deploy naming the stale binary. Runbook: [binary-version-skew](runbooks/binary-version-skew.md) |
+| "Config-apply gate" fails | A config/schema surface changed since the previous tag and `config_acknowledged` was not `true`. Non-destructive — the binaries are already live; the gate is flagging an outstanding config apply | Apply the config per [deploy-config-apply.md](deploy-config-apply.md), then re-run with `-f config_acknowledged=true` |
 
 ## Cross-references
 

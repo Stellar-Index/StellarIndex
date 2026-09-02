@@ -1,3 +1,9 @@
+---
+title: Lake deduplication — operator runbook
+last_verified: 2026-07-25
+status: point-in-time audit
+---
+
 # Lake deduplication — operator runbook (2026-07)
 
 Companion driver: `deploy/clickhouse/lake-dedup-driver.sh`. Read the

@@ -1,3 +1,9 @@
+---
+title: Galexie backfill
+last_verified: 2026-09-02
+status: current
+---
+
 # Galexie backfill — genesis → live-bucket handoff
 
 Procedure for replaying pubnet history into the `galexie-archive`
@@ -6,10 +12,29 @@ afterwards to prove the bytes are canonical.
 
 > **See also:** [archive-completeness.md](archive-completeness.md) +
 > [ADR-0017](../adr/0017-archive-completeness-invariants.md) — the
-> *steady-state* completeness story (daily cron, multi-source
-> fallback, dual-archive invariants). This doc is the *one-shot*
-> historical bring-up; the completeness daemon takes over once the
-> bootstrap is clean.
+> *steady-state* completeness story (daily cron, cross-anchor fill,
+> dual-archive invariants). This doc is the *one-shot* historical
+> bring-up; the completeness daemon takes over once the bootstrap is
+> clean.
+
+> ⚠️ **"Genesis → live bucket" is the GREENFIELD shape, not r1's shape
+> today.** ADR-0027 trimmed `galexie-archive` on r1 to a **hot floor**
+> (`stellarindex_archive_hot_floor`, 49,984,000 as of 2026-09-02 —
+> `/etc/default/galexie-archive-fill` on the host). Everything below
+> that floor is intentionally absent locally and lives in the cold
+> tier. So on r1:
+>
+> - Do **not** run this procedure with `--start 2`. It would re-download
+>   ~48 M ledgers the trim deliberately removed and refill the pool.
+> - A gap **below** the floor is not a defect and must not be "fixed"
+>   here — see [lcm-cache-tiering.md](lcm-cache-tiering.md) for the
+>   rehydrate path.
+> - A gap **above** the floor is what `galexie-archive-fill` and the
+>   ADR-0017 completeness daemon already handle on their own timers.
+>
+> Read this doc as written for a **fresh archival node** (or a region
+> that keeps a full mirror). On a trimmed node, substitute the hot
+> floor for ledger 2 everywhere below.
 
 ## Why a separate bucket
 
@@ -40,12 +65,29 @@ afterwards to prove the bytes are canonical.
    `galexie-backfill.toml`, change
    `datastore_config.params.destination_bucket_path = "galexie-archive/"`
    and point `captive_core_toml_path` at the new backfill cfg.
-5. **Launch.** Use `galexie scan-and-fill --start 2 --end N`
-   (`scan-and-fill` is **idempotent** — safe to interrupt/restart;
-   picks up where it left off; only writes ledgers missing from
-   the bucket). `--end` is `first-live-ledger − 1`. Run in tmux or
-   as a `galexie-backfill.service` oneshot systemd unit so it
-   survives SSH disconnects.
+5. **Launch — under the heavy-job wrapper on r1.**
+   ```sh
+   /usr/local/sbin/run-heavy-job.sh galexie-backfill-<start>-<end> \
+     /usr/local/bin/galexie scan-and-fill --start <start> --end <end>
+   ```
+   `--start` is 2 on a greenfield node, the **hot floor** on a trimmed
+   one (see the banner above); `--end` is `first-live-ledger − 1`.
+   `scan-and-fill` is **idempotent** — safe to interrupt/restart, picks
+   up where it left off, only writes ledgers missing from the bucket.
+
+   The wrapper is mandatory for heavy one-shots on r1
+   ([maintainer-workflow.md](maintainer-workflow.md) §Heavy one-shot
+   jobs): `MemoryMax=20G`, `MemorySwapMax=0`, batch-class CPU/IO
+   weights, a singleton lock and the disk watchdog. This job is
+   precisely the class the wrapper exists for — a multi-hour walk
+   sharing a host with the consensus-critical live captive core, which
+   an unwrapped re-derive wedged for 11 hours on 2026-07-05. Use a
+   UNIQUE job name per attempt: a name whose lock is still held is
+   **skipped**, silently and with exit 0.
+
+   Run it from tmux or as a `galexie-backfill.service` oneshot systemd
+   unit (which should itself call the wrapper) so it survives SSH
+   disconnects.
 6. **Throughput expectation** — full pubnet ≈ 62 M ledgers →
    **8–14 h wall-clock** on r1-class hardware (observed
    2026-04-25 backfill run on r1: 9 h 33 m for phase 1 alone).

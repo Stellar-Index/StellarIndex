@@ -130,10 +130,12 @@ Expected side of the gate = the SAME decoders run over the lake (`compute_comple
 Per-source replay (gen-stamped writers; PK-stable so idempotent):
 
 ```
+# -write is mandatory: ch-rebuild defaults to dry-run (count only),
+# internal/ops/chops/ch_rebuild.go:129.
 stellarindex-ops ch-rebuild -config /etc/stellarindex/stellarindex.toml \
-  -sources reflector-dex,reflector-cex,reflector-fx,redstone -from <G> -to <TIP>
+  -sources reflector-dex,reflector-cex,reflector-fx,redstone -from <G> -to <TIP> -write
   # genesis per reconciliation_catalogue.go: dex 50_644_229, cex 50_644_239, fx 56_733_481, redstone 58_758_722
-stellarindex-ops ch-rebuild -config … -contract-calls -contracts <BAND_STANDARD_REFERENCE_C> -from <G_band> -to <TIP>
+stellarindex-ops ch-rebuild -config … -contract-calls -contracts <BAND_STANDARD_REFERENCE_C> -from <G_band> -to <TIP> -write
   # catalogue says 60_000_000, per_source_gaps.go says 50_842_736 — REQUIRES-LIVE-VERIFY:
   #   psql -c "SELECT min(ledger) FROM oracle_updates WHERE source='band'"
 stellarindex-ops seed-entry-counts -config …

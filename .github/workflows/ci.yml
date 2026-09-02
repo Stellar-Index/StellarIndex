@@ -1161,6 +1161,14 @@ jobs:
         # replaces. Runs galexie-effective-checksum.yml for real against
         # temp files with a stub handler — no hosts, no secrets.
         run: ./scripts/ci/ansible-galexie-restart-test.sh
+      - name: verify-archive Tier D cron-argument test (#362)
+        # r1 2026-09-02: the Tier D fork-detection cron rendered
+        # `-to -1` (stellarindex_live_seam_ledger defaults to 0, minus 1),
+        # which `verify-archive`'s fs.Uint rejects at parse time — the
+        # weekly ADR-0016 §7.4 control had never produced a single journal
+        # line. --syntax-check and ansible-lint both pass such a task; only
+        # RENDERING it and checking the flag values catches it. No hosts.
+        run: ./scripts/ci/verify-archive-tier-d-test.sh
       - name: deploy migrations-sync test (structural + local ansible run)
         # 2026-08-29 incident (r1 deploy of v0.49.0, run 33244745680): the
         # directory-src `copy` that #268 put in for the migrations dir is one

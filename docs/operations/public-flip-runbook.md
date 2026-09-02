@@ -1,3 +1,9 @@
+---
+title: Public open-source flip — operator runbook
+last_verified: 2026-07-27
+status: historical record
+---
+
 # Public open-source flip — operator runbook
 
 > **⚠️ HISTORICAL (2026-07-27).** Executed 2026-07-03. The two-repo /

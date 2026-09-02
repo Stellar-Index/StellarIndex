@@ -29,9 +29,12 @@
 #      a. `git tag <tag>`
 #      b. `git push origin <tag>`
 #
-# release.yml fires on the tag push and produces the GitHub Release +
-# container images. See docs/operations/release-process.md for the
-# full runbook this script implements.
+# release.yml fires on the tag push and produces the GitHub Release
+# (cross-compiled binaries + SHA256SUMS + a sigstore bundle). It does
+# NOT build or push container images — that job was dropped on
+# 2026-05-11 (.github/workflows/release.yml header). See
+# docs/operations/release-process.md for the full runbook this script
+# implements.
 
 set -euo pipefail
 

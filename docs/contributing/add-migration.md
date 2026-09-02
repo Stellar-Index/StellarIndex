@@ -1,3 +1,9 @@
+---
+title: Checklist — add a migration
+last_verified: 2026-07-01
+status: current
+---
+
 # Checklist — add a migration
 
 Reference + full rules: `migrations/README.md`.

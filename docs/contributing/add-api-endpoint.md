@@ -1,3 +1,9 @@
+---
+title: Checklist — add an API endpoint (v1)
+last_verified: 2026-07-01
+status: current
+---
+
 # Checklist — add an API endpoint (v1)
 
 Reference: any `internal/api/v1/*.go` handler + `server.go::mountRoutes`.

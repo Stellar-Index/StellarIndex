@@ -1,3 +1,9 @@
+---
+title: Checklist — add an on-chain source (Soroban)
+last_verified: 2026-07-01
+status: current
+---
+
 # Checklist — add an on-chain source (Soroban DEX / event decoder)
 
 Reference implementation: `internal/sources/soroswap/`. Binding rules: CLAUDE.md
@@ -49,5 +55,6 @@ rejects an `enabled_sources` name missing from `KnownSources`; `lint-imports.sh`
 ## Done when
 Unit + fixture tests pass; `bash scripts/dev/verify.sh` is green; enabling the source and
 running against a known ledger range produces rows in its table. Catch-up is
-`stellarindex-ops projector-replay -source <name> -from <ledger>` — **never** a bespoke
+`stellarindex-ops projector-replay -source <name> -from <ledger> -write` (fail-closed:
+no `-write` = dry run) — **never** a bespoke
 `<name>-backfill` subcommand.

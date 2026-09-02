@@ -122,7 +122,8 @@ Re-derive from the lake — never a MinIO re-walk (invariant 8).
 ```sh
 # Projected sources (soroswap, blend, phoenix, comet, defindex, sep41_*,
 # reflector/redstone oracle_updates, …):
-stellarindex-ops projector-replay -source <name> -from <ledger>
+stellarindex-ops projector-replay -config /etc/stellarindex.toml \
+  -source <name> -from <ledger> -write   # without -write this is a DRY RUN that exits 0
 
 # Non-projected sources (sdex, band, supply observers):
 stellarindex-ops ch-rebuild ...   # see docs/operations/backfill-procedure.md
