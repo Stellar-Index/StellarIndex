@@ -4,9 +4,18 @@ title: Explorer rendering moves from static export to edge SSR
 status: Accepted
 date: 2026-07-03
 supersedes: []
+superseded_by: null
 ---
 
 # ADR-0044: Explorer rendering moves from static export to edge SSR
+
+> **Status note (2026-09-02, #360).** Read this ADR as a PLAN, not as
+> deployed state. Stage 1 (the spike) is complete —
+> `docs/architecture/adr-0044-stage1-spike.md`. Stage 2 (edge SSR)
+> remains operator-gated behind `OPEN_NEXT=1` and the
+> `cf-ssr-shadow.yml` workflow; production stellarindex.io is still the
+> static export (`output: 'export'` in `web/explorer/next.config.mjs`).
+> ADR-0050 treats this ADR as load-bearing, so the distinction matters.
 
 Deciders: @ash (accepted 2026-07-04; Workers paid pricing approved in
 principle — traffic-modeled cost numbers to be reviewed before the

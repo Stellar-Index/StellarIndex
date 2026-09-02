@@ -80,7 +80,7 @@ See [_template.md](_template.md) for the boilerplate.
 | [0025](0025-caddy-cloudflare-trusted-proxy.md) | Accepted | Caddy trusts Cloudflare for client-IP signal via CIDR-pinned static list | 2026-05-10 |
 | [0026](0026-stablecoin-fiat-proxy-late-binding.md) | Accepted | Stablecoin → fiat proxy is late-binding aggregator policy, not eager ingest normalisation | 2026-05-10 |
 | [0027](0027-lcm-cache-tiering.md) | Accepted | LCM cache tiering — local galexie-archive as hot, aws-public-blockchain as cold | 2026-05-20 |
-| [0028](0028-rwa-asset-representation.md) | Accepted | Tokenized real-world assets as `AssetType = "rwa"` — RedStone RWA feeds (BENJI, GILTS, …) | 2026-05-27 |
+| [0028](0028-rwa-asset-representation.md) | Accepted | Tokenized real-world assets as `AssetType = "rwa"` — RedStone RWA feeds (BENJI, GILTS, …) | 2026-05-22 |
 | [0029](0029-soroban-events-landing-zone.md) | Superseded by [0034](0034-tiered-clickhouse-architecture.md) | soroban_events raw-event landing zone | 2026-05-25 |
 | [0030](0030-per-source-coverage-invariant.md) | Accepted | Per-source coverage invariant | 2026-05-28 |
 | [0031](0031-data-derived-coverage-signal.md) | Accepted | Coverage signal is data-derived from authoritative stores | 2026-05-29 |
@@ -98,7 +98,7 @@ See [_template.md](_template.md) for the boilerplate.
 | [0043](0043-backup-and-restore-strategy.md) | Accepted | Backup + restore strategy — offsite repo2, CH lake protection via drilled re-derive + tail/DDL push, monthly scratch-restore drills | 2026-07-02 |
 | [0044](0044-explorer-edge-rendering.md) | Accepted | Explorer rendering moves from static export to edge SSR | 2026-07-04 |
 | [0045](0045-sep40-oracle-read-adapter.md) | Accepted | SEP-40 on-chain oracle read adapter — defer generic reader; serve surface already ships | 2026-07-06 |
-| [0046](0046-mad-outlier-filter.md) | Accepted | MAD-based outlier filtering for VWAP inputs — log-space modified z-score, shadow-first rollout; thresholds deferred to production traffic | 2026-07-08 |
+| [0046](0046-mad-outlier-filter.md) | Accepted | MAD-based outlier filtering for VWAP inputs (amended 2026-09: shipped as price-space median/MAD plus a time-local layer; no log-space z, no shadow phase) | 2026-07-08 |
 | [0047](0047-pre-p23-classic-movement-reconstruction.md) | Accepted | Pre-P23 classic-movement reconstruction from the lake | 2026-07-10 |
 | [0048](0048-serve-by-query-shape.md) | Accepted | Serve by query shape — the account-movement archive is ClickHouse-native (amends 0047 D1) | 2026-07-10 |
 | [0049](0049-anonymous-access-and-passkey-auth.md) | Proposed | Anonymous access, open self-service registration, and passkey auth (no payment surface) — retroactive record of the shipped auth pivot | 2026-08-14 |

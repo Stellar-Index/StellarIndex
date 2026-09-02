@@ -9,6 +9,25 @@ superseded_by: null
 
 # ADR-0019: Anomaly response policy and confidence scoring
 
+> **Amendment (2026-08-29, #288 — composite reference on the current
+> bucket; recorded 2026-09-02 per #360).** The parenthetical below that
+> reads "composites are not recorded for a frozen target and go stale in
+> ~60 s, so in practice it cannot certify a release mid-hold" is
+> SUPERSEDED. For an allow-listed structurally single-venue target
+> (`[aggregate.composite_reference]`, default ON for crypto:XLM/fiat:GBP
+> and crypto:XLM/fiat:EUR) the aggregator rebuilds the composite
+> (XLM/USD × USD/GBP) on the SAME bucket, from this tick's leg publish
+> and a fresh FX snapshot — never a prior tick's sample. Agreement within
+> `tolerance_bps` (75) suppresses the three-signal fire with
+> `corroboration_basis=composite`; disagreement or an unavailable
+> reference freezes exactly as before, with the cause in the reason
+> string. The same sample is also a mid-hold RELEASE lens:
+> `release_corroborated` is satisfied when the composite agrees with the
+> candidate within `release_band_pct` (default 2 %, deliberately tighter
+> than the 5 % cross-oracle band). The FX cross still never counts as a
+> second SOURCE — `source_count` is unchanged. Code:
+> `internal/aggregate/orchestrator/composite_reference.go`.
+
 > **Amendment (2026-07-26, N-F6) — the freeze DURATION now exists,
 > and its initial hold is scaled by corroboration rather than flat.**
 > §"Freeze duration" below specifies a state machine: a 30-minute

@@ -9,6 +9,20 @@ superseded_by: null
 
 # ADR-0033: Completeness verification — substrate continuity, recognition, projection reconciliation
 
+> **Amendment (2026-07-16 decision, recorded 2026-09-02 per #360).**
+> [ADR-0034](0034-tiered-clickhouse-architecture.md) amends Claim 3: the
+> reconciliation oracle is the ClickHouse lake. The SERVED verdict is now
+> TWO-AXIS — `lake_complete` (substrate ∧ recognition, genesis to tip)
+> and `complete` (additionally gated by the projection reconcile over the
+> projected window) — see the `/v1/coverage` schema in
+> `openapi/stellar-index.v1.yaml` and
+> `internal/api/v1/coverage_verdicts.go`. Per-source applicability is
+> network-scoped as of #483: a source anchored to pubnet contract
+> identities is reported `not_applicable` on a test net rather than
+> counted incomplete. The 2026-07-16 decision note itself lives outside
+> the repository (`notes/` is gitignored); this paragraph is its in-tree
+> record.
+
 > **Reality note (2026-06-12, F-1354 / D2-04).** Where this ADR
 > describes `hashdb` as a **feeder** of `ledger_ingest_log`, note that
 > `internal/hashdb` is currently an **unwired library** — it has zero

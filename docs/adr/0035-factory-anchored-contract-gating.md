@@ -9,6 +9,14 @@ superseded_by: null
 
 # ADR-0035: Factory-anchored contract gating for Soroban decoders
 
+> **Forward pointer (2026-07-08; recorded 2026-09-02 per #360).** Comet —
+> listed below as the remaining ungated source — was gated on 2026-07-08
+> with a curated one-pool allowlist (`comet.MainnetGatedSet`). See
+> [ADR-0040](0040-completing-contract-gating.md) and its 2026-07-24
+> amendment, which corrects the "WASM-hash sweep" language: no such sweep
+> exists; a new mainnet comet pool requires an operator
+> `seed-protocol-contracts -source comet`.
+
 ## Context
 
 A Soroban event decoder implements `dispatcher.Decoder`:

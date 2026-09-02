@@ -10,6 +10,27 @@ superseded_by: null
 # ADR-0046 — MAD-based outlier filtering for VWAP inputs
 
 - **Decides:** the replacement design for the Phase-1 σ-threshold
+> **Amendment (2026-09-02, #360).** The DECISION — replace mean/σ with a
+> 50 %-breakdown robust filter — stands. The MECHANISM shipped differently
+> and the rollout plan never ran, so read the sections below as the
+> proposal, not as deployed state. What ships
+> (`internal/aggregate/outliers.go`): an exact `*big.Rat` median +
+> 1.4826·MAD in PRICE space, not the log-space Iglewicz–Hoaglin modified
+> z of §1; a no-op below 3 prices, not 5 (§2); a MAD==0 fallback of 0.5 %
+> of centre (±2 % at σ=4, `robust.go`), not `log(1+ε)` with ε=0.25 (§2);
+> and a single knob, `aggregate.outlier_sigma_threshold` (default 4) —
+> the `k` and `ε` of §3 do not exist. Phase A (shadow mode,
+> `aggregator_outlier_filter_disagreement_total`) was never built: the
+> metric appears nowhere in Go, in either rule tree, or in the metrics
+> reference, and the filter went straight to serving. Since 2026-08-28
+> the PUBLISHED VWAP uses the time-local layer instead
+> (`outliers_local.go`, wired at `orchestrator.go`): every print is
+> scored against the window band, its own and adjacent one-minute
+> buckets and its nearest prints, so an agreed regime shift survives
+> instead of being trimmed. The whole-window form described here
+> survives only as the per-request `/v1/vwap?outlier_sigma=` and
+> `/v1/ohlc` semantics. See `docs/methodology/vwap-aggregation.md`.
+
   outlier filter (`internal/aggregate/outliers.go`), per BACKLOG #44's
   "write the ADR now — the design needs no traffic, only the
   thresholds do".

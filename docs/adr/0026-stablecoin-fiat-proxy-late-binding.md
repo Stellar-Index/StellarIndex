@@ -9,6 +9,12 @@ superseded_by: null
 
 # ADR-0026: Stablecoin → fiat proxy is late-binding aggregator policy, not eager ingest normalisation
 
+> **Amendment (2026-09-02, #360).** The proxy map below has grown
+> additively; the POLICY (map at VWAP compute time, never at ingest) is
+> unchanged. Current map (`internal/aggregate/stablecoin.go`):
+> USDT / USDC / DAI / PYUSD / USDP → USD; EURC / EUROC / EUROB → EUR;
+> MXNe → MXN.
+
 ## Context
 
 Most CEX and DEX trades quote against a USD stablecoin

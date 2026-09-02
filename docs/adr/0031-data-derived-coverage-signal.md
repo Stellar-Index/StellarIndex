@@ -9,6 +9,13 @@ superseded_by: null
 
 # ADR-0031: Coverage signal is data-derived from authoritative stores
 
+> **Amendment (2026-06-05, ADR-0034; recorded 2026-09-02 per #360).**
+> [ADR-0034](0034-tiered-clickhouse-architecture.md) amends this ADR: the
+> authoritative data-derived signal is now computed against the
+> ClickHouse lake (`stellarindex-ops compute-completeness`), and the
+> Postgres `source_coverage_snapshots` gap detector described below
+> remains as the supporting ALERTING signal rather than the verdict.
+
 > **Note (ADR-0033, 2026-06-02).** ADR-0033 introduced
 > `completeness_snapshots` (substrate continuity + recognition +
 > projection reconciliation) as the **authoritative** coverage

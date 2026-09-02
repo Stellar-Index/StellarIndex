@@ -3,7 +3,7 @@
 // server build consumed by @opennextjs/cloudflare (Workers SSR).
 // The static-export path stays the default — nothing changes unless
 // the env var is set. See docs/adr/0044-explorer-edge-rendering.md
-// and docs/adr/0044-stage1-spike.md.
+// and docs/architecture/adr-0044-stage1-spike.md.
 const openNext = process.env.OPEN_NEXT === '1';
 
 /** @type {import('next').NextConfig} */

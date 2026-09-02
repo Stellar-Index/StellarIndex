@@ -9,6 +9,18 @@ superseded_by: null
 
 # ADR-0032: Per-source tables are projections of `soroban_events`
 
+> **Amendment (2026-06-05, ADR-0034; CLI note 2026-06; recorded
+> 2026-09-02 per #360).** [ADR-0034](0034-tiered-clickhouse-architecture.md)
+> amends the projector's READ source: the per-source tables are
+> projections of the ClickHouse `contract_events` lake by default
+> (`storage.clickhouse_projector_source = true`). Postgres
+> `soroban_events` is the legacy FALLBACK source, decommission-pending
+> (#39) — the "sole authoritative store" claim below is historical.
+> Separately, the replay CLI shipped as `stellarindex-ops
+> projector-replay -source <name> -from <ledger> [-to <ledger>]`
+> (`internal/ops/ingest/projector.go`), NOT as the `projector --source X
+> --replay` form written below, and there is no `--all-sources` flag.
+
 ## Context
 
 Every Soroban-event ingest path today has **two parallel writers**

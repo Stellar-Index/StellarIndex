@@ -95,6 +95,16 @@ LCM census.
 
 ## Accepted exclusion: ledger_entry_changes not yet populated (G12-03)
 
+> **Amendment (ADR-0038 Phase C; recorded 2026-09-02 per #360).** This
+> exclusion is **CLOSED**. `ExtractLedger` populates `Extract.Changes`
+> (`internal/storage/clickhouse/extract.go`, `extractEntryChanges` walks
+> the per-operation LedgerEntry changes) and `stellar.ledger_entry_changes`
+> is a live, written and read table — `StreamEntryChanges` (ADR-0047
+> Phase 4 movement reconstruction) and `entry_backfill.go` both use it.
+> The section below is preserved as the record of why it was deferred,
+> not as current state.
+
+
 The Tier-1 lake materialises ledgers, transactions, operations,
 operation_results, contract_events, and supply_flows. The
 `stellar.ledger_entry_changes` table is schema'd (and the write path is
