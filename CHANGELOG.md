@@ -16,6 +16,7 @@ against.
 ## [Unreleased]
 
 ### Added
+
 - **observability:** auth-reaper liveness (#368 M5) — `stellarindex_auth_reaper_last_sweep_unix{reaper}` + `stellarindex_auth_reaper_interval_seconds{reaper}` for the login-code-lockout, magic-link and signup reapers, and the `stellarindex_auth_reaper_stalled` ticket (3× the reaper's own cadence, both rule trees, runbook `auth-reaper-stalled.md`). A dead reaper previously froze its rows gauge at a healthy-looking value; the `_table_growing` alerts could only fire after the table had actually filled.
 - **Every recovered background-worker panic is now counted and paged
   (#368 M4).** `worker.Recover` kept the process alive but left only one
@@ -28,6 +29,7 @@ against.
   on a clean exit.
 
 ### Fixed
+
 - **ingest:** Band's genesis ledger disagreed across four constants — `reconciliation_catalogue.go` and `protocols_registry.go` said 60,000,000 while `per_source_gaps.go` and `diagnostics_ingestion.go` said 50,842,736 (#361/#363). The 9.16M-ledger difference silently shortened the range every completeness and gap check evaluated, so the source read clean over a window that excluded most of its history. All four now agree on 50,842,736. The value is awkward to derive, which is how it drifted: Band's contract emits **zero events**, so the obvious `contract_events` probe returns 0 rows and reads as absence rather than as the wrong table. It comes from `contract_instance_changes` (whose own floor is 50,457,429, so it is not a coverage artifact), corroborated by 4,210 `contract_data` writes from the same ledger and by the WASM audit. **Expect band to go red until a catch-up runs** — `oracle_updates` starts at 60,000,414, so the gap between true genesis and the first projected row is real and was being hidden.
 - **observability:** the API binary's 16 background-worker guards logged a panic and moved no metric (#368 M4). `stellarindex_worker_panicked` therefore never fired for a dead webhook sender, reaper or prewarm loop — the one thing that makes a silently-stopped worker visible. `recoverBackgroundWorker` now delegates to a new `worker.Report`, so every binary moves the same counter that the page rule reads. (`recover()` only works one frame deep, which is why the API helper cannot simply call `worker.Recover` and needs the recovered value handed to a shared reporter instead.)
 - **indexer:** an ingest error discarded up to 256 already-cursored events on the way out (#368 M2). The shutdown select returned the producer's error immediately, skipping `externalWait`, `close(events)` and the `sinkDone` wait — so everything still sitting in the channel buffer was dropped, and because those events had already been counted against the cursor the next start resumed past them. A silent hole, on the exact path a decoder fault takes: `pipeline.ProcessLedger` recovers a decoder panic INTO a ledger error, which arrives on that channel. The error is now recorded and returned AFTER the drain; the exit code is unchanged. A structural guard test fails if any `return` reappears inside that select.
@@ -275,7 +277,6 @@ against.
   `X-RateLimit-Limit` header, which is the only honest source.
 
 
-### Fixed
 - **Restored the oracle raw-row consumer guards that PR #305's squash merge
   silently reverted (#339).** Five files had lost PR #248's changes and one
   test file was deleted: `divergence.LookupPrice` no longer refused an
@@ -291,7 +292,6 @@ against.
   pins in `test/integration/oracle_raw_consumers_test.go` are back.
 
 
-### Fixed
 
 - **`ch-schema-drift.service` failed every day on r1 because the repo and
   the host build `stellar.transactions` in different column orders.**
@@ -405,7 +405,6 @@ against.
   day. (#370)
 
 
-### Fixed
 
 - **The home page issued four duplicate `/v1/assets` requests per ledger
   advance, and the two it "cancelled" still completed on the wire.**
@@ -428,7 +427,6 @@ against.
   actually cancelled and completes anyway. The same shape existed for
   `['/v1/markets']`, which by prefix also sweeps
   `['/v1/markets', source]`. (#470)
-
 
 ## [v0.57.0] — 2026-09-01
 
