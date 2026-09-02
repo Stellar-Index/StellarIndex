@@ -28,6 +28,7 @@ against.
   on a clean exit.
 
 ### Fixed
+- **coverage:** `/v1/coverage` on testnet / futurenet reported **0 of 14 sources complete BY CONSTRUCTION** (#483) — the completeness catalogue listed the pubnet protocol sources with their pubnet genesis floors (soroswap 50,746,266 against a 4.4M tip) and pubnet contract sets on every network, so the verdict could never go green however complete the lake was. New `internal/sourcenet` classifies each source as pubnet-anchored (ADR-0035 contract identity) or ledger-anchored; the reconciliation catalogue drops the inapplicable ones, `compute-completeness` clears their stale snapshot rows, and the endpoint reports them in `not_applicable_sources` with a reason plus the serving `network`, excluded from every total. Pubnet output is unchanged apart from the two new fields.
 - **alerting:** `stellarindex_stellar_stack_lagging` / `_protocol_lag` could never fire — the alert's static `component: stellar-stack` label overwrote the probe metric's own `component` (core/galexie/archivist), two lagging components collapsed to one labelset and Prometheus rejected the rule (`health: err`, live on r1 with archivist=1 AND galexie=1). The expr now renames the metric label to `stack_component` before the static label is applied; runbook + annotations follow. Both rule trees.
 - **`/v1/oracle/streams` re-ran the oracle scan on every hit (#332 F5).**
   `CachedOracleReader.LatestOracleStreams` was the one pass-through on the
