@@ -418,3 +418,47 @@ func TestValidateSourceFilter(t *testing.T) {
 		})
 	}
 }
+
+// TestFilterCatalogueByNetwork pins #483: on a test net the pubnet-anchored
+// protocol sources leave the catalogue entirely (their decoders match
+// nothing there and their pubnet genesis floors sit above the network's
+// tip), while the ledger-anchored ones stay. On pubnet the filter is the
+// identity — that is the safety argument for the whole change.
+func TestFilterCatalogueByNetwork(t *testing.T) {
+	cat := []reconSource{
+		{name: "soroswap"},
+		{name: "sdex"},
+		{name: "blend"},
+		{name: "sep41_transfers"},
+		{name: "reflector-dex"},
+	}
+
+	kept, dropped := filterCatalogueByNetwork(cat, "pubnet")
+	if len(kept) != len(cat) || len(dropped) != 0 {
+		t.Errorf("pubnet must be the identity: kept=%d dropped=%v", len(kept), dropped)
+	}
+
+	kept, dropped = filterCatalogueByNetwork(cat, "testnet")
+	var names []string
+	for _, s := range kept {
+		names = append(names, s.name)
+	}
+	if len(names) != 2 || names[0] != "sdex" || names[1] != "sep41_transfers" {
+		t.Errorf("testnet kept = %v, want [sdex sep41_transfers] in input order", names)
+	}
+	if len(dropped) != 3 || dropped[0] != "blend" || dropped[1] != "reflector-dex" || dropped[2] != "soroswap" {
+		t.Errorf("testnet dropped = %v, want blend, reflector-dex, soroswap (sorted)", dropped)
+	}
+
+	// The real catalogue must survive the filter on pubnet with every
+	// source intact — a name that sourcenet does not classify would
+	// silently vanish here, so this is the cross-check that matters.
+	full, _, err := buildReconciliationCatalogue(config.Config{})
+	if err != nil {
+		t.Skipf("catalogue build unavailable in this environment: %v", err)
+	}
+	keptFull, droppedFull := filterCatalogueByNetwork(full, "pubnet")
+	if len(keptFull) != len(full) || len(droppedFull) != 0 {
+		t.Errorf("real catalogue on pubnet: kept %d of %d, dropped %v", len(keptFull), len(full), droppedFull)
+	}
+}

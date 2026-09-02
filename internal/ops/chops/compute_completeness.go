@@ -20,6 +20,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/dispatcher"
 	"github.com/Stellar-Index/StellarIndex/internal/events"
 	"github.com/Stellar-Index/StellarIndex/internal/pipeline"
+	"github.com/Stellar-Index/StellarIndex/internal/sourcenet"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/band"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/sdex"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/soroswap"
@@ -650,6 +651,22 @@ func computeCompleteness(args []string) error { //nolint:funlen,gocognit,gocyclo
 			return fmt.Errorf("upsert recognition snapshot: %w", err)
 		}
 		fmt.Fprintf(os.Stderr, "compute-completeness: recognition  unattributed=%d coverage=%.4f\n", len(unattributed), recW.CoveragePct)
+	}
+
+	// #483: on a non-pubnet network, rows written for pubnet-only sources
+	// (before the catalogue was network-scoped) would keep the verdict
+	// red by construction — clear them. Only canonical names sourcenet
+	// itself classifies as not applicable are ever passed.
+	if na := sourcenet.NotApplicableOn(cfg.Stellar.Network); len(na) > 0 {
+		names := make([]string, 0, len(na))
+		for _, e := range na {
+			names = append(names, e.Source)
+		}
+		if n, derr := store.DeleteCompletenessSnapshots(ctx, names); derr != nil {
+			return fmt.Errorf("compute-completeness: clear not-applicable snapshots: %w", derr)
+		} else if n > 0 {
+			fmt.Fprintf(os.Stderr, "compute-completeness: network=%s — cleared %d stale snapshot row(s) for pubnet-only sources\n", cfg.Stellar.Network, n)
+		}
 	}
 
 	return nil

@@ -4561,6 +4561,8 @@ paths:
                     computed_at: '2026-07-03T05:30:21.937134Z'
                   complete_sources: 14
                   lake_complete_sources: 15
+                  network: pubnet
+                  not_applicable_sources: []
                   total_sources: 15
                 as_of: '2026-07-03T22:38:20.564931481Z'
                 flags:
@@ -4576,7 +4578,7 @@ paths:
                     properties:
                       data:
                         type: object
-                        required: [sources, complete_sources, lake_complete_sources, total_sources]
+                        required: [sources, complete_sources, lake_complete_sources, total_sources, network, not_applicable_sources]
                         properties:
                           sources:
                             type: array
@@ -4635,6 +4637,25 @@ paths:
                             type: integer
                             description: Count of sources with lake_complete=true (lake/archive axis).
                           total_sources: { type: integer }
+                          network:
+                            type: string
+                            enum: [pubnet, testnet, futurenet]
+                            description: >-
+                              The Stellar network this deployment serves. Protocol sources are
+                              anchored to pubnet contract identities (ADR-0035); on a test net they
+                              do not exist and are listed in `not_applicable_sources` instead of
+                              being counted incomplete.
+                          not_applicable_sources:
+                            type: array
+                            description: >-
+                              Sources that do not exist on this network — excluded from `sources`
+                              and from every total. Always empty on pubnet.
+                            items:
+                              type: object
+                              required: [source, reason]
+                              properties:
+                                source: { type: string }
+                                reason: { type: string }
         "503":
           description: No completeness reader wired on this deployment.
           content:

@@ -11812,6 +11812,8 @@ export interface operations {
                      *         ],
                      *         "complete_sources": 14,
                      *         "lake_complete_sources": 15,
+                     *         "network": "pubnet",
+                     *         "not_applicable_sources": [],
                      *         "total_sources": 15
                      *       },
                      *       "as_of": "2026-07-03T22:38:20.564931481Z",
@@ -11878,6 +11880,16 @@ export interface operations {
                             /** @description Count of sources with lake_complete=true (lake/archive axis). */
                             lake_complete_sources: number;
                             total_sources: number;
+                            /**
+                             * @description The Stellar network this deployment serves. Protocol sources are anchored to pubnet contract identities (ADR-0035); on a test net they do not exist and are listed in `not_applicable_sources` instead of being counted incomplete.
+                             * @enum {string}
+                             */
+                            network: "pubnet" | "testnet" | "futurenet";
+                            /** @description Sources that do not exist on this network — excluded from `sources` and from every total. Always empty on pubnet. */
+                            not_applicable_sources: {
+                                source: string;
+                                reason: string;
+                            }[];
                         };
                     };
                 };

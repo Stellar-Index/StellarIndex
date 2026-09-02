@@ -117,6 +117,18 @@ export function CoveragePanel() {
           </tbody>
         </table>
       </div>
+
+      {data.not_applicable_sources && data.not_applicable_sources.length > 0 && (
+        <p className="mt-3 text-xs text-ink-faint">
+          <span className="text-ink-body">
+            Not applicable on {data.network}:
+          </span>{' '}
+          {data.not_applicable_sources.map((na) => na.source).join(', ')}. These
+          protocols are anchored to pubnet contract identities (ADR-0035), so
+          they do not exist on this network — they are excluded from the totals
+          above rather than counted incomplete.
+        </p>
+      )}
     </section>
   );
 }

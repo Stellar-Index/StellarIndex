@@ -4,10 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
 	v1 "github.com/Stellar-Index/StellarIndex/internal/api/v1"
+	"github.com/Stellar-Index/StellarIndex/internal/sourcenet"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
@@ -251,4 +253,108 @@ func TestHandleCoverageVerdicts_StaleWhenVerdictIsOld(t *testing.T) {
 	if coverageStaleFlag(t, httpTestServer(t, fresh).URL) {
 		t.Error("flags.stale = true for a 5-minute-old verdict with no live tip wired")
 	}
+}
+
+// TestHandleCoverageVerdicts_NetworkScoping pins #483: on a test net the
+// pubnet-anchored protocol sources are reported as NOT APPLICABLE and
+// excluded from every total, instead of counting as incomplete because
+// their pubnet genesis floor (soroswap 50,746,266) sits above the
+// network's tip. Pubnet output is unchanged except for the two new
+// fields.
+func TestHandleCoverageVerdicts_NetworkScoping(t *testing.T) {
+	now := time.Now().UTC().Truncate(time.Second)
+	snaps := []timescale.CompletenessSnapshot{
+		{
+			Source: "sdex", Genesis: 2, Tip: 4_467_014, Watermark: 4_467_014,
+			CoveragePct: 100, Complete: true, LakeComplete: true,
+			SubstrateOK: true, RecognitionOK: true, ProjectionOK: true, ComputedAt: now,
+		},
+		{
+			// A stale row written before the catalogue was network-scoped.
+			Source: "soroswap", Genesis: 50_746_266, Tip: 4_467_014, Watermark: 50_746_265,
+			CoveragePct: 0, Complete: false, LakeComplete: false,
+			SubstrateOK: true, RecognitionOK: true, ProjectionOK: false, ComputedAt: now,
+		},
+	}
+
+	t.Run("testnet excludes pubnet-only sources", func(t *testing.T) {
+		srv := v1.New(v1.Options{
+			Network:            "testnet",
+			CompletenessReader: &stubCompletenessReader{snaps: snaps},
+		})
+		ts := httpTestServer(t, srv)
+		resp := mustGet(t, ts.URL+"/v1/coverage")
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("status = %d, want 200", resp.StatusCode)
+		}
+		var env struct {
+			Data v1.CoverageVerdictsView `json:"data"`
+		}
+		if err := json.NewDecoder(resp.Body).Decode(&env); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		d := env.Data
+		if d.Network != "testnet" {
+			t.Errorf("network = %q, want testnet", d.Network)
+		}
+		if len(d.Sources) != 1 || d.Sources[0].Source != "sdex" {
+			t.Fatalf("sources = %+v, want sdex only (the stale soroswap row must be dropped)", d.Sources)
+		}
+		if d.TotalSources != 1 || d.CompleteSources != 1 || d.LakeCompleteSources != 1 {
+			t.Errorf("totals = %d/%d complete, %d lake, want 1/1 and 1",
+				d.CompleteSources, d.TotalSources, d.LakeCompleteSources)
+		}
+		if len(d.NotApplicableSources) != len(sourcenet.PubnetOnlySources) {
+			t.Fatalf("not_applicable_sources = %d, want %d", len(d.NotApplicableSources), len(sourcenet.PubnetOnlySources))
+		}
+		var sawSoroswap bool
+		for _, na := range d.NotApplicableSources {
+			if na.Source == "soroswap" {
+				sawSoroswap = true
+				if !strings.Contains(na.Reason, "testnet") {
+					t.Errorf("reason must name the network: %q", na.Reason)
+				}
+			}
+		}
+		if !sawSoroswap {
+			t.Error("soroswap must appear in not_applicable_sources")
+		}
+	})
+
+	t.Run("pubnet is unchanged", func(t *testing.T) {
+		srv := v1.New(v1.Options{
+			Network:            "pubnet",
+			CompletenessReader: &stubCompletenessReader{snaps: snaps},
+		})
+		ts := httpTestServer(t, srv)
+		resp := mustGet(t, ts.URL+"/v1/coverage")
+		var env struct {
+			Data v1.CoverageVerdictsView `json:"data"`
+		}
+		if err := json.NewDecoder(resp.Body).Decode(&env); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		d := env.Data
+		if d.Network != "pubnet" || len(d.NotApplicableSources) != 0 {
+			t.Errorf("pubnet: network=%q not_applicable=%d, want pubnet and 0", d.Network, len(d.NotApplicableSources))
+		}
+		if d.TotalSources != 2 || d.CompleteSources != 1 {
+			t.Errorf("pubnet totals = %d/%d, want 1/2 (both rows kept)", d.CompleteSources, d.TotalSources)
+		}
+	})
+
+	t.Run("unset network defaults to pubnet", func(t *testing.T) {
+		srv := v1.New(v1.Options{CompletenessReader: &stubCompletenessReader{snaps: snaps}})
+		ts := httpTestServer(t, srv)
+		resp := mustGet(t, ts.URL+"/v1/coverage")
+		var env struct {
+			Data v1.CoverageVerdictsView `json:"data"`
+		}
+		if err := json.NewDecoder(resp.Body).Decode(&env); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		if env.Data.Network != "pubnet" || env.Data.TotalSources != 2 {
+			t.Errorf("default: network=%q total=%d, want pubnet and 2", env.Data.Network, env.Data.TotalSources)
+		}
+	})
 }

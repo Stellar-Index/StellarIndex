@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/Stellar-Index/StellarIndex/internal/sourcenet"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
@@ -76,6 +77,13 @@ type CoverageVerdictView struct {
 	ComputedAt time.Time `json:"computed_at"`
 }
 
+// NotApplicableSourceView is one source that does not exist on the
+// serving network (#483).
+type NotApplicableSourceView struct {
+	Source string `json:"source"`
+	Reason string `json:"reason"`
+}
+
 // CoverageVerdictsView is the envelope data field of GET /v1/coverage.
 type CoverageVerdictsView struct {
 	// Sources lists every audited source's verdict, source-sorted.
@@ -89,6 +97,16 @@ type CoverageVerdictsView struct {
 	// genesis-complete, independent of the served tier's retention
 	// window. See CoverageVerdictView.LakeComplete.
 	LakeCompleteSources int `json:"lake_complete_sources"`
+	// Network is the Stellar network this deployment serves (pubnet /
+	// testnet / futurenet). Protocol sources are anchored to pubnet
+	// contract identities (ADR-0035), so on a test net they do not
+	// exist — they are listed in NotApplicableSources with a reason and
+	// EXCLUDED from Sources and every total, instead of being counted
+	// incomplete by construction (#483).
+	Network string `json:"network"`
+	// NotApplicableSources names the sources that do not exist on this
+	// network. Always empty on pubnet.
+	NotApplicableSources []NotApplicableSourceView `json:"not_applicable_sources"`
 }
 
 // coverageVerdictStaleLedgers bounds how far the LIVE ingest frontier
@@ -153,8 +171,24 @@ func (s *Server) handleCoverageVerdicts(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	view := CoverageVerdictsView{Sources: make([]CoverageVerdictView, 0, len(snaps))}
+	network := s.network
+	if network == "" {
+		network = sourcenet.Pubnet
+	}
+	view := CoverageVerdictsView{
+		Sources:              make([]CoverageVerdictView, 0, len(snaps)),
+		Network:              network,
+		NotApplicableSources: make([]NotApplicableSourceView, 0),
+	}
+	for _, na := range sourcenet.NotApplicableOn(network) {
+		view.NotApplicableSources = append(view.NotApplicableSources, NotApplicableSourceView{Source: na.Source, Reason: na.Reason})
+	}
 	for _, sn := range snaps {
+		// A stale pubnet-only row (written before the catalogue was
+		// network-scoped) must not count against a test net.
+		if ok, _ := sourcenet.Applicable(sn.Source, network); !ok {
+			continue
+		}
 		view.Sources = append(view.Sources, CoverageVerdictView{
 			Source:             sn.Source,
 			Complete:           sn.Complete,

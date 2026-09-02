@@ -1225,6 +1225,7 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 	}
 
 	apiSrv := v1.New(v1.Options{
+		Network:     cfg.Stellar.Network,
 		Logger:      logger.With("component", "api"),
 		ReadyChecks: checks,
 		Assets:      assetReader,

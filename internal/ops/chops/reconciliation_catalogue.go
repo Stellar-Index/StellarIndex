@@ -2,6 +2,7 @@ package chops
 
 import (
 	"fmt"
+	"os"
 	"sort"
 	"strings"
 
@@ -10,6 +11,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/completeness"
 	"github.com/Stellar-Index/StellarIndex/internal/config"
 	"github.com/Stellar-Index/StellarIndex/internal/dispatcher"
+	"github.com/Stellar-Index/StellarIndex/internal/sourcenet"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/aquarius"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/band"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/blend"
@@ -510,7 +512,45 @@ func buildReconciliationCatalogue(cfg config.Config) ([]reconSource, *soroswap.D
 		cat = append(cat, sepCat...)
 	}
 
+	cat, dropped := filterCatalogueByNetwork(cat, cfg.Stellar.Network)
+	if len(dropped) > 0 {
+		fmt.Fprintf(os.Stderr, "compute-completeness: network=%s — %d pubnet-only source(s) not applicable, excluded from the catalogue: %s\n",
+			cfg.Stellar.Network, len(dropped), strings.Join(dropped, ","))
+	}
 	return cat, soroswapDec, nil
+}
+
+// filterCatalogueByNetwork drops every catalogue source that does not
+// exist on network (#483): protocol decoders are anchored to PUBNET
+// contract identities (ADR-0035), so on testnet / futurenet they match
+// nothing and their pubnet genesis floors (soroswap 50,746,266) sit above
+// the network's tip — every such source read "incomplete" by construction
+// and the test-net verdict could never go green. Returns the surviving
+// catalogue (input order) and the dropped names (source-sorted) so the
+// caller can log them and delete their stale snapshots. On pubnet this is
+// the identity.
+func filterCatalogueByNetwork(cat []reconSource, network string) (kept []reconSource, dropped []string) {
+	names := make([]string, 0, len(cat))
+	for _, src := range cat {
+		names = append(names, src.name)
+	}
+	_, excluded := sourcenet.Filter(names, network)
+	if len(excluded) == 0 {
+		return cat, nil
+	}
+	drop := make(map[string]struct{}, len(excluded))
+	for _, e := range excluded {
+		drop[e.Source] = struct{}{}
+		dropped = append(dropped, e.Source)
+	}
+	kept = make([]reconSource, 0, len(cat)-len(excluded))
+	for _, src := range cat {
+		if _, ok := drop[src.name]; ok {
+			continue
+		}
+		kept = append(kept, src)
+	}
+	return kept, dropped
 }
 
 // validateSourceFilter fails CLOSED when a -source filter names no source in

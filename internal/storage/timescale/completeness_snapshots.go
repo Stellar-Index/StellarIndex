@@ -106,3 +106,23 @@ func (s *Store) ListCompletenessSnapshots(ctx context.Context) ([]CompletenessSn
 	}
 	return out, nil
 }
+
+// DeleteCompletenessSnapshots removes the verdict rows of the named
+// sources. Used by compute-completeness on a non-pubnet network to clear
+// rows written for pubnet-only sources before the catalogue was
+// network-scoped (#483); the caller passes only catalogue names it has
+// itself classified as not applicable, never arbitrary input. A nil or
+// empty list is a no-op.
+func (s *Store) DeleteCompletenessSnapshots(ctx context.Context, sources []string) (int64, error) {
+	if len(sources) == 0 {
+		return 0, nil
+	}
+	res, err := s.db.ExecContext(ctx,
+		`DELETE FROM completeness_snapshots WHERE source = ANY($1)`,
+		sources)
+	if err != nil {
+		return 0, fmt.Errorf("delete completeness snapshots: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	return n, nil
+}

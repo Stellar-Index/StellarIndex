@@ -138,6 +138,7 @@ func (c schemaVersionChecker) Ping(ctx context.Context) error {
 // Thread-safe.
 type Server struct {
 	logger              *slog.Logger
+	network             string
 	checks              []ReadyChecker
 	assets              AssetReader
 	prices              PriceReader
@@ -440,6 +441,11 @@ type DashboardAuthMounter interface {
 // Options configures a [Server] at construction.
 type Options struct {
 	Logger *slog.Logger
+	// Network is the Stellar network this deployment serves
+	// (config [stellar] network: pubnet / testnet / futurenet; empty =
+	// pubnet). /v1/coverage uses it to report which protocol sources do
+	// not exist on this network instead of counting them incomplete (#483).
+	Network string
 	// ReadyChecks are polled by /readyz. Order matters only for
 	// log output (first-failed wins).
 	ReadyChecks []ReadyChecker
@@ -1253,6 +1259,7 @@ func New(opts Options) *Server { //nolint:funlen // pure field-mapping construct
 	}
 	s := &Server{
 		logger:                 logger,
+		network:                opts.Network,
 		checks:                 opts.ReadyChecks,
 		assets:                 opts.Assets,
 		prices:                 opts.Prices,
