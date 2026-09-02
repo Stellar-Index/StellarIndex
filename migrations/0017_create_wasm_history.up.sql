@@ -4,7 +4,10 @@
 -- citizen. Today the data lives in `stellarindex-ops wasm-history` JSONL
 -- output on r1; usable for one-shot audits but invisible to the API.
 -- This migration is the foundation for the protocol/contract explorer
--- pages (per docs/architecture/showcase-site-data-inventory.md §7.10)
+-- pages (per docs/architecture/explorer-data-inventory.md §9.1 — the
+-- doc was renamed from showcase-site-data-inventory.md in 6f21cc8f and
+-- its §7 subsection numbering did not survive; corrected 2026-09-02,
+-- #358 dead-pointer sweep)
 -- and for the "contract version timeline" surface that lets users
 -- diff WASM versions side by side.
 --

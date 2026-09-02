@@ -461,9 +461,10 @@ func listingRankTierExpr(order AssetsOrder) string {
 //
 // Volume aggregation: prices_1m.volume_usd summed across the
 // trailing 24h, where the asset participates as base OR quote.
-// classic_asset_stats_5m is unwritten today (migration shipped
-// without a writer); most classic assets have no direct
-// fiat:USD pair either. The CTE-with-UNION sidesteps both.
+// classic_asset_stats_5m used to be the intended source; it never
+// got a writer and migration 0152 dropped it (#358). Most classic
+// assets have no direct fiat:USD pair either. The CTE-with-UNION
+// sidesteps both.
 //
 // Price + 24h change: latest + 24h-ago snapshots, with XLM
 // triangulation when no direct USD-quote pair (fiat:USD or the
@@ -2398,8 +2399,9 @@ const getNativeAssetSQL = `
 // LatestAssetStats returns per-asset 24h volume + supply stats
 // for /v1/assets/{id}. Volume sums prices_1m.volume_usd across
 // pairs where the asset is base or quote (mirrors
-// Volume24hUSDForAsset). Supply is null for now — the source
-// table classic_asset_stats_5m is unwritten.
+// Volume24hUSDForAsset). Supply is null for now — the intended
+// source table classic_asset_stats_5m never got a writer and was
+// dropped by migration 0152 (#358).
 //
 // Always returns nil error for a row that simply has no stats;
 // the LEFT JOINs evaluate to NULL.

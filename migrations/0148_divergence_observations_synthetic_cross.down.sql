@@ -3,8 +3,13 @@
 -- (deliberate: down-migrating with data present should be loud, not
 -- silent — same stance as 0092/0070's downs). Same decompress dance as
 -- the up (compressed hypertable; DELETE + constraint swap both need
--- uncompressed chunks). No explicit BEGIN — matches the 0101/0092
+-- uncompressed chunks). No explicit BEGIN — matches the 0101
 -- decompress-migration convention (the runner owns transactionality).
+-- (Corrected 2026-09-02, #357 F11: this cited "0101/0092". 0092 is
+--  neither — it has an explicit `BEGIN;` at 0092.down.sql:5 and calls
+--  no decompress_chunk; only 0101.up.sql:54 does. 0148's UP citing
+--  "0070/0092" for the DROP + re-ADD constraint idiom IS accurate and
+--  is left alone.)
 
 SELECT decompress_chunk(c, true) FROM show_chunks('divergence_observations') c;
 

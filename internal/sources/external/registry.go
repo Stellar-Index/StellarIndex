@@ -80,7 +80,10 @@ var Registry = map[string]Metadata{
 	// Captured for per-tx attribution + user-intent visibility (path
 	// requested vs path realised; aggregator vault → underlying
 	// protocol exposures). See docs/architecture/explorer-data-
-	// inventory.md §7.9 + migration 0025 (routers + aggregator_exposures).
+	// inventory.md §9.9 + migration 0025 (`routers`). The sibling
+	// aggregator_exposures table 0025 also created never got the
+	// exposure ticker that would have written it, and migration 0152
+	// dropped it (#358) — vault exposure is not persisted today.
 	"soroswap-router": {Class: ClassRouter, DefaultWeight: 0, IncludeInVWAP: false, Paid: false, BackfillAvailable: true, BackfillSafe: true /* audited 2026-05-19; r1 wasm-history walk: single hash 4c3db3eb...07 over the contract's entire life [50746272→tip], zero mid-life upgrades; both swap_exact_tokens_for_tokens + swap_tokens_for_exact_tokens exports verified present; ContractCallDecoder (router emits no events). See docs/operations/wasm-audits/soroswap-router.md */},
 	"defindex":        {Class: ClassRouter, DefaultWeight: 0, IncludeInVWAP: false, Paid: false, BackfillAvailable: true, BackfillSafe: true /* audited 2026-05-19; decoder re-derived to the real on-chain schema ("BlendStrategy",deposit|withdraw){from,amount}, topic-dispatched across all emitters (the tag-1.0.0 "DeFindexVault" schema was fiction; deployed WASM 11329c24...988 is Blend strategy code). Live-verified post-rc.58 deploy: indexer emitting `defindex strategy flow` log lines against real traffic (9 in 90min sample). wasm2wat data-section scan of the deployed bytes confirmed all required symbols present (BlendStrategy/deposit/withdraw/from/amount). See docs/operations/wasm-audits/defindex.md */},
 

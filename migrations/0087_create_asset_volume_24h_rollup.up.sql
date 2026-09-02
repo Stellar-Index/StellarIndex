@@ -1,7 +1,10 @@
 -- 0087 up — `asset_volume_24h` worker-maintained rollup.
 --
 -- Backs the `volume_24h_usd` column on the GET /v1/assets listing
--- (internal/storage/timescale/coins.go's `per_asset_24h_vol` CTE). The
+-- (the `per_asset_24h_vol` CTE, which lives in
+-- internal/storage/timescale/asset_catalogue.go — the header said
+-- coins.go, a file that no longer exists; corrected 2026-09-02, #357
+-- F13). The
 -- live derivation is a per-request SUM(volume_usd) over the prices_1m
 -- continuous aggregate, single-sided per asset (base OR quote) via a
 -- UNION ALL then GROUP BY asset_id. On the UNFILTERED listing that

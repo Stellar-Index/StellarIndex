@@ -187,6 +187,16 @@ Each phase lists tickets with **acceptance criteria** (AC), **dependencies** (De
 
 All 10 migrations + their backfills. Each is its own commit/PR.
 
+> **Status note (2026-09-02, migration 0152 / #358).** Phase 1 landed the
+> schema for six capabilities whose Phase-3/4 WRITER was never built
+> (1.1/1.2 wasm history, 1.6's `tvl_observations`, 1.8's `anchors`, 1.10,
+> 1.11's `aggregator_exposures`). Those tables were empty in every
+> environment for four months and have now been dropped. Phase 3.1, 3.5
+> and 4.4 below therefore start by RE-CREATING their table in the same
+> migration that adds the writer — migration 0152's down carries the
+> exact original DDL to copy from. Ship the table and its writer
+> together; that is the lesson.
+
 | # | Ticket | AC | Est |
 |---|---|---|---|
 | 1.1 | Migration 0017: `wasm_versions` + `contract_wasm_history` | Up + down; integration test populates a row | S |

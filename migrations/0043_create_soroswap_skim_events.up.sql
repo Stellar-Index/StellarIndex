@@ -11,8 +11,11 @@
 -- granular-coverage mission) and so reserve-divergence analytics
 -- can correlate skim with the immediately-following sync event.
 --
--- Body shape per Phase-1 audit (docs/discovery/dexes-amms/soroswap.md
--- §"SoroswapPair, skim"):
+-- Body shape per Phase-1 audit (the cited
+-- docs/discovery/dexes-amms/soroswap.md was removed from the tree with
+-- the rest of docs/discovery/; the live equivalents are
+-- internal/sources/soroswap/README.md and docs/protocols/soroswap.md —
+-- corrected 2026-09-02, #358):
 --
 --   struct SkimEvent { skimmed_0: i128, skimmed_1: i128 }
 --

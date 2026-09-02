@@ -6,7 +6,9 @@
 -- this table.
 --
 -- Refreshed every 5 minutes by an aggregator worker (Phase 3,
--- showcase-site-data-inventory.md §11). For each known
+-- explorer-data-inventory.md §11 — the doc was renamed from
+-- showcase-site-data-inventory.md in 6f21cc8f; corrected 2026-09-02).
+-- For each known
 -- (entity_type, entity_id) the worker:
 --   - Reads the current value from the appropriate source table
 --     (prices_1m for coins, tvl_observations for protocols, etc.).

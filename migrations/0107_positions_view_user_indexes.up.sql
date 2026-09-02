@@ -16,9 +16,12 @@
 --     POOL-leading — useless for "every position event for this user
 --     across every pool" (migration 0045/0053). A plain
 --     `WHERE user_address = $1` would seq-scan the hypertable — the
---     exact "no unbounded trade-scan queries" failure mode CLAUDE.md /
---     feedback_no_unbounded_trade_scan.md already learned the hard way
---     once (sep41_transfers, migration 0106, same shape).
+--     exact "no unbounded trade-scan queries" failure mode
+--     docs/operations/v1-launch-plan.md:2486 already learned the hard
+--     way once (sep41_transfers, migration 0106, same shape). The
+--     original citation, `feedback_no_unbounded_trade_scan.md`, is an
+--     agent auto-memory note that has never been in this repo;
+--     corrected 2026-09-02, #358.
 --   blend_backstop_events — every existing index leads with contract_id,
 --     event_kind, pool (partial), or ledger (migration 0063); NONE leads
 --     with user_address.

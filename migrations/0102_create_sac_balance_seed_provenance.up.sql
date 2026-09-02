@@ -34,8 +34,12 @@
 -- and the same ADR-0033 substrate-reproducibility discipline: a seed
 -- against a source with a coverage floor should be visibly
 -- distinguishable from one that scanned full history, so an operator
--- (or a future decision on the supply_cross_check_divergence downgrade,
--- notes/ROADMAP.md §2 "Supply cross-check downgrade") can tell, per
+-- (or a future decision on the supply_cross_check_divergence downgrade —
+-- this cited notes/ROADMAP.md §2, and notes/ is gitignored
+-- (.gitignore:148) so the pointer resolves to nothing for anyone who did
+-- not write it; the in-repo equivalents are ADR-0011 §"cross-check" and
+-- docs/operations/runbooks/supply-cross-check-divergence.md — corrected
+-- 2026-09-02, #357 F12) can tell, per
 -- contract, whether a residual divergence is expected (never
 -- full-history seeded) or actually anomalous (full-history seeded, still
 -- diverging).

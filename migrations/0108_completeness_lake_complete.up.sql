@@ -1,5 +1,11 @@
 -- 0108 up — two-axis completeness verdict: add `lake_complete`
--- (notes/DECISION-genesis-complete-verdict-2026-07-16.md, Option B).
+-- (Option B of the 2026-07-16 genesis-complete-verdict decision. That
+--  decision note lives in the maintainer's gitignored notes/ directory
+--  (.gitignore:148) and is NOT in this repo; the public statement of the
+--  same two-axis verdict is the /v1/coverage operation description in
+--  openapi/stellar-index.v1.yaml, plus ADR-0033 and ADR-0034. Corrected
+--  2026-09-02, #357 F12; migration 0151 re-issues the stored COMMENT
+--  that carried the same dead pointer.)
 --
 -- completeness_snapshots.complete has always meant substrate ∧
 -- recognition ∧ projection — but projection reconcile for

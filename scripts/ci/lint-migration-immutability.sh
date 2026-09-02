@@ -44,10 +44,32 @@
 #   migration is still possible — it just becomes an explicit `--write`
 #   in the diff rather than a silent drop.
 #
+# WHAT MAY BE EDITED (the one rule; migrations/README.md "Amending a
+# shipped migration" holds the long form and the rationale):
+#
+#   A shipped migration's UP body is immutable; its DOWN body and its
+#   header COMMENTS may be corrected through the baseline-refresh path
+#   (lint-migration-immutability --write) with a CHANGELOG line;
+#   anything stored in the database (COMMENT ON, defaults) needs a new
+#   migration.
+#
+#   This gate deliberately cannot tell those apart — it hashes bytes,
+#   and a hash cannot know whether the changed line was above BEGIN;.
+#   It is the FORCING FUNCTION, not the judgement: a correctable edit
+#   still has to move a visible checksum line, which is what puts the
+#   decision in front of a reviewer. Reviewers enforce the rule; this
+#   script guarantees they get the chance to.
+#
+#   Before 2026-09-02 the repo held the opposite claim too
+#   (scripts/ci/lint-docs.sh froze two wrong migration headers as
+#   "CANNOT BE CORRECTED") while febf720a edited nine shipped downs
+#   under this header. Both are resolved to the rule above; lint-docs.sh
+#   no longer carries an exemption list.
+#
 # Maintenance:
 #
-#   Adding (or, deliberately, editing/removing) a migration → refresh the
-#   baseline in the same change and commit it:
+#   Adding (or, per the rule above, editing/removing) a migration →
+#   refresh the baseline in the same change and commit it:
 #
 #       ./scripts/ci/lint-migration-immutability.sh --write
 #
@@ -169,13 +191,19 @@ re-runs an applied number and never content-hashes (cmd/stellarindex-migrate).
 So editing a shipped migration in place leaves every environment that ran
 the old text permanently diverged from a fresh DB, silently.
 
-Fix one of these ways:
-  * Do NOT edit a shipped migration — write a NEW numbered migration that
-    makes the correction forward, then refresh the baseline (--write).
-  * If the file was genuinely never shipped/applied anywhere and editing
-    it is safe, make the edit and refresh the baseline in the same PR:
+Fix one of these ways (migrations/README.md "Amending a shipped migration"):
+  * The change touches a shipped up.sql's SQL, or anything STORED in the
+    database (COMMENT ON text, a column DEFAULT) — do NOT edit the file.
+    Write a NEW numbered migration that makes the correction forward,
+    then refresh the baseline (--write). Editing the file only changes
+    what a FRESH database gets; every applied environment stays wrong.
+  * The change is a HEADER COMMENT on an up.sql, or a down.sql body —
+    that is correctable in place. Make the edit, refresh the baseline in
+    the same commit, and add a CHANGELOG line:
         ./scripts/ci/lint-migration-immutability.sh --write
     The changed checksum line is then visible + reviewable in the diff.
+  * The file was genuinely never shipped/applied anywhere — same
+    mechanics as above.
 EOF
   exit 1
 fi

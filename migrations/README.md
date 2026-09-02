@@ -28,7 +28,10 @@ migrate -path migrations -database "${STELLARINDEX_POSTGRES_DSN}" down 1
 ## Rules
 
 1. **Never edit a migration that has run in production** (this
-   includes staging). Add a new migration instead.
+   includes staging). Add a new migration instead. The one narrow,
+   written-down exception — correcting a WRONG COMMENT — is spelled out
+   in [Amending a shipped migration](#amending-a-shipped-migration)
+   below; it never touches an up-migration's SQL.
 2. **Numbering must be dense** — no gaps, no duplicates.
    (Historical exception, recorded 2026-08-04: 0075, 0077, 0078, 0079
    and 0084 are unused. They were never present in the tree and nothing
@@ -107,6 +110,61 @@ migrate -path migrations -database "${STELLARINDEX_POSTGRES_DSN}" down 1
    `migrate down` on a failed deploy (down-migrations can be
    data-destructive, and the pipeline has no way to know whether
    anything already depends on what it would be reverting).
+
+## Amending a shipped migration
+
+Until 2026-09-02 the repo carried two contradictory precedents for this,
+both on `main`: `scripts/ci/lint-docs.sh` recorded that even a
+comment-only edit to a shipped migration "CANNOT BE CORRECTED" and froze
+two wrong headers permanently, while `febf720a` edited nine shipped
+`.down.sql` files and refreshed the checksum baseline, citing
+`lint-migration-immutability.sh`'s own "deliberately editing → refresh
+the baseline" header. Every header nit therefore had two valid
+dispositions and nobody could say which was the rule. The rule is:
+
+> **A shipped migration's UP body is immutable; its DOWN body and its
+> header COMMENTS may be corrected through the baseline-refresh path
+> (`lint-migration-immutability --write`) with a CHANGELOG line; anything
+> stored in the database (`COMMENT ON`, defaults) needs a new migration.**
+
+Why each clause holds:
+
+- **UP body immutable.** golang-migrate keys a migration only on its
+  `NNNN_` integer and never content-hashes the file, so an environment
+  that ran the old text stays permanently diverged from a fresh database
+  built from the new text — and nothing complains. That is the whole
+  point of the checksum gate.
+- **Header comments correctable.** A `--` comment above `BEGIN;` is not
+  executed. Editing one cannot make an applied database diverge from a
+  fresh one; it can only make the file agree with reality. Freezing a
+  comment buys no safety and costs every future reader — the two frozen
+  self-citations (`0096` said "0095 up", `0125` said "0124 up") sent
+  readers to an unrelated migration for two months. Corrections are
+  still VISIBLE: the checksum line moves, so the diff shows it.
+- **DOWN body correctable.** A `down.sql` is a local/dev iteration lever
+  (rule 9); this repo does not auto-run `migrate down` on a failed
+  deploy, and no down in this tree has ever run against production. A
+  down that does not faithfully reverse its up is a latent trap, and the
+  fix for it is to correct the down, not to ship a new migration whose
+  own down would inherit the same bug.
+- **Stored strings need a new migration.** `COMMENT ON` text and column
+  DEFAULTs live in the DATABASE catalog, not in the file. Editing the
+  original migration changes only what a FRESH database gets; the string
+  an operator reads through `\d+` on an existing deployment stays wrong
+  forever. Re-issuing it in a new migration is the only correction that
+  reaches both. Migration 0151 is the worked example.
+
+Mechanics for a correctable edit — all three in ONE commit:
+
+1. Edit the header comment / down body.
+2. `./scripts/ci/lint-migration-immutability.sh --write` (the baseline
+   moves in the same diff, so the change is reviewable, not silent).
+3. A `CHANGELOG.md` line under `## [Unreleased]` saying which migration
+   and which claim was wrong.
+
+Not covered by this rule, and still forbidden: renumbering, deleting, or
+re-purposing a shipped migration; changing a shipped `up.sql`'s SQL for
+ANY reason, including a bug in it (ship a corrective migration instead).
 
 ## Conventions
 
@@ -284,6 +342,8 @@ migration lands.
 | 0148 | [`0148_divergence_observations_synthetic_cross.up.sql`](0148_divergence_observations_synthetic_cross.up.sql) | Widens `divergence_observations.reference` CHECK to admit `synthetic-usd-cross` (PR #149's second lens for non-USD-fiat pairs). Verification-panel fix: without it every flushObservations INSERT for the new source fails the 0019 CHECK, and the audit-trail row for the reference that certifies unattended freeze releases could never exist. Compressed hypertable (segmentby includes `reference`) → 0101 decompress-every-chunk dance; policy recompresses. Keep `internal/api/v1/anomalies.go::divergenceReferences` in lockstep. |
 | 0149 | [`0149_create_asset_volume_character_rollup.up.sql`](0149_create_asset_volume_character_rollup.up.sql) | New `asset_volume_character` worker-maintained rollup. Backs the `volume_character` label + account-structure signals on `GET /v1/assets/{id}` and (#30 follow-up) the `GET /v1/assets` listing. The live derivation is a per-asset trailing-14d account-structure roll over the `trades` hypertable — maker/taker live only in Timescale, not the ClickHouse lake — producing distinct makers/takers, top unordered-(maker,taker) pair share, self-cross share, issuer-side share, market-styled share, and a derived `market | operational | concentrated` character. Additive (new table) + old-binary-safe (rule 9). |
 | 0150 | [`0150_add_trades_signer.up.sql`](0150_add_trades_signer.up.sql) | Adds `trades.signer` — the transaction source account (fee-payer) behind an AMM/Soroban swap. The AMM decoders (comet/soroswap/aquarius/phoenix) set `taker` to the on-chain caller and leave `maker` empty, so a router-driven swap has no EOA attribution (the taker is the router contract). The tx source account is that missing initiator, and it is NOT re-derivable from the lake events the projector replays. Additive (nullable column) + old-binary-safe (rule 9). |
+| 0151 | [`0151_catalog_comment_corrections.up.sql`](0151_catalog_comment_corrections.up.sql) | Re-issues twelve wrong `COMMENT ON` strings (#357 F4/F5/F6, #358 0001/0003/item-7/0108, #346 F9): `soroban_events.topics_xdr` pointed at a "ClickHouse-lake re-project" recovery that does not exist; `aquarius_protocol_fee.recipient` still told readers to join a trade to find the token that 0139's `token` column carries; `aquarius_rewards_events` said 11 kinds where the CHECK admits 12; `trades.usd_volume` said "derived by the aggregator post-insert" when it is valued AT INSERT and a NULL never fills in; `oracle_updates.contract_id` named `coinmarketcap`/`chainlink-http` (measured on r1: chainlink, coingecko, ecb); `decoder_stats_5m` cited a `/v1/diagnostics/decoders` route that is not in the spec; `completeness_snapshots` cited a gitignored `notes/` file; and `customer_webhooks.secret_hash` got its first comment, recording that it holds the RAW HMAC key, not a hash. Catalog-only — no heap, no index, no chunk. Down restores all seven previous strings verbatim. Stored strings cannot be fixed by editing the original migration (see [Amending a shipped migration](#amending-a-shipped-migration)). |
+| 0152 | [`0152_drop_unwired_scaffold_tables.up.sql`](0152_drop_unwired_scaffold_tables.up.sql) | Drops six never-wired scaffold tables — `wasm_versions` + `contract_wasm_history` (0017), `tvl_observations` (0021), `anchors` (0023), `classic_asset_stats_5m` (0024), `aggregator_exposures` (0025) — plus the four orphaned `stripe_event_log` columns and two partial indexes from 0118/0121, whose writers were deleted in `d2185560` (#358 items 2-6, #357 F8). Each had ZERO Go readers and writers at HEAD **and** in the released v0.57.0 tree, and `count(*) = 0` on r1. **⚠ The up REFUSES (RAISE EXCEPTION) if any of the six holds a row** — loud, not silent. Nothing is dropped, but golang-migrate marks 152 DIRTY, so recovery is `stellarindex-migrate force 151` → inspect/empty the table the message names → `stellarindex-migrate up`. Down re-creates every table with its original DDL and re-adds the Stripe shape with its 0118/0121 comments. Ships with the two sibling enumerations that would otherwise break: `scripts/ops/add-missing-compression-policies.sql` (ON_ERROR_STOP would abort the rest of the list) and `scripts/ops/config-assertions.sh` (`compression_policies_applied` would fail forever). |
 
 
 F-1241 (codex audit-2026-05-12): the table previously stopped at

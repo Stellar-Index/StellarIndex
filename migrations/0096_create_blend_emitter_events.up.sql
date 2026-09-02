@@ -1,4 +1,6 @@
--- 0095 up — `blend_emitter_events` hypertable.
+-- 0096 up — `blend_emitter_events` hypertable.
+-- (Header said "0095 up" from the day it shipped — corrected 2026-09-02
+--  under migrations/README.md "Amending a shipped migration"; #357 F2.)
 --
 -- One row per observed event from the Blend **Emitter** contract —
 -- the protocol-emissions plumbing that mints/distributes BLND to the

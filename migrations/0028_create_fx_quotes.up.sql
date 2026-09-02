@@ -8,7 +8,9 @@
 -- but useless for any longer historical chart. This table makes
 -- fx history persistent + arbitrary-depth.
 --
--- Writer: `internal/sources/forex/worker.go` calls
+-- Writer: `internal/sources/external/forex` calls
+--   (the package moved under internal/sources/external/ when the
+--   off-chain connectors were consolidated; corrected 2026-09-02, #358)
 --   `(*timescale.Store).InsertFXQuoteBatch` on each refresh tick
 --   so live data backfills as it arrives. Backfill from the
 --   Massive historical endpoint is a separate one-shot script

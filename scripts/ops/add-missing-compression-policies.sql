@@ -33,6 +33,14 @@
 -- compression on those needs a deliberate compress_segmentby choice;
 -- tracked in the master plan, out of scope for this pure-policy script.
 --
+-- REMOVED 2026-09-02 with migration 0152 (#358): aggregator_exposures
+-- (0025), classic_asset_stats_5m (0024) and tvl_observations (0021)
+-- were dropped as never-wired scaffolds. They MUST come out of the list
+-- below in the same change: `\set ON_ERROR_STOP on` plus a
+-- add_compression_policy on a table that no longer exists aborts the
+-- whole DO block, so every table AFTER the missing one silently never
+-- gets its policy.
+--
 -- Operator usage (post-D4):
 --   PGPASSWORD=$(cat /etc/stellarindex/postgres-password.txt) \
 --   psql -h 127.0.0.1 -U stellarindex -d stellarindex \
@@ -54,11 +62,9 @@ DECLARE
     tbl text;
     tables text[] := ARRAY[
         'account_observations',        -- 0010
-        'aggregator_exposures',        -- 0025
         'blend_backstop_events',       -- 0063
         'cctp_events',                 -- 0038
         'claimable_observations',      -- 0012
-        'classic_asset_stats_5m',      -- 0024
         'decoder_stats_5m',            -- 0020
         'defindex_flows',              -- 0050
         'divergence_observations',     -- 0019
@@ -70,8 +76,7 @@ DECLARE
         'sdex_offer_events',           -- 0026
         'sep41_supply_events',         -- 0015
         'soroswap_router_swaps',       -- 0049
-        'trustline_observations',      -- 0011
-        'tvl_observations'             -- 0021
+        'trustline_observations'       -- 0011
     ];
 BEGIN
     FOREACH tbl IN ARRAY tables LOOP

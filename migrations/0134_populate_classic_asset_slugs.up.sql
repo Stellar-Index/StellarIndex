@@ -18,7 +18,9 @@
 -- resolves through the verified-currency catalogue (which owns
 -- human-name slugs) or 404s, exactly like the API already behaves.
 --
--- Three deterministic tiers, computed in ONE statement because slug is
+-- Two deterministic tiers (the header said "three" and then enumerated
+-- two, matching the two CASE branches below — corrected 2026-09-02,
+-- #357 F10), computed in ONE statement because slug is
 -- UNIQUE and a multi-statement backfill could trip its own constraint
 -- mid-way:
 --

@@ -737,7 +737,22 @@ The audit work isn't compute — it's **discipline**. Every new endpoint must ac
 
 Six new tables. Migrations 0017-0022.
 
+> **Status note (2026-09-02, migration 0152 / #358).** Six of the tables
+> below shipped as schema but never got the writer the plan assumed, and
+> were empty in every environment from the day they were created. They
+> have now been DROPPED: `wasm_versions` + `contract_wasm_history`
+> (§9.1), `tvl_observations` (§9.5), `anchors` (§9.7),
+> `classic_asset_stats_5m` (§9.8), `aggregator_exposures` (§9.9). The
+> DDL below is retained as the design of record — the migration that
+> finally adds the corresponding writer re-creates the table alongside
+> it (migration 0152's down has the exact original DDL). Everything else
+> in §9 is live.
+
 ### 9.1 `wasm_versions` + `contract_wasm_history`
+
+> **DROPPED by 0152 — never had a writer.** The WASM-history capability
+> shipped over the ClickHouse lake instead
+> (`internal/storage/clickhouse/wasm_lake_reader.go`).
 
 ```sql
 -- 0017
@@ -839,6 +854,9 @@ SELECT create_hypertable('decoder_stats_5m', 'bucket',
 
 ### 9.5 `tvl_observations` + `mev_events`
 
+> **`tvl_observations` DROPPED by 0152 — the per-protocol TVL ticker
+> (plan step 3.1) was never built.** `mev_events` is live and unchanged.
+
 ```sql
 -- 0021
 CREATE TABLE tvl_observations (
@@ -902,6 +920,10 @@ Refreshed by an aggregator job every 5 min. Powers every multi-window delta stri
 
 ### 9.7 `classic_assets`, `issuers`, `anchors`
 
+> **`anchors` DROPPED by 0152 — nothing ever selected from or inserted
+> into it.** SEP-1 anchor metadata is served from `internal/metadata`.
+> `classic_assets` and `issuers` are live and unchanged.
+
 ```sql
 -- 0023
 CREATE TABLE classic_assets (
@@ -946,6 +968,10 @@ CREATE TABLE anchors (
 
 ### 9.8 `classic_asset_stats_5m`
 
+> **DROPPED by 0152 — never had a writer.** The `/v1/coins` reader was
+> moved to the `prices_1m` UNION CTE in `2f06533a` (2026-05-06)
+> precisely because this table was always empty.
+
 ```sql
 -- 0024
 CREATE TABLE classic_asset_stats_5m (
@@ -964,6 +990,10 @@ SELECT create_hypertable('classic_asset_stats_5m', 'bucket',
 ```
 
 ### 9.9 `routers` + `routed_via` + `aggregator_exposures`
+
+> **`aggregator_exposures` DROPPED by 0152 — the DeFindex exposure
+> ticker (plan step 3.5) was never built.** `routers` and
+> `trades.routed_via` are live and unchanged.
 
 Powers §7.9.1 — router/aggregator attribution.
 

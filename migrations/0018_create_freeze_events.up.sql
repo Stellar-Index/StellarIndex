@@ -10,8 +10,11 @@
 --
 --   1. State evaporates on Redis restart. We lose history of every
 --      freeze that ever fired.
---   2. The "freeze timeline" UI (showcase-site-data-inventory.md
---      §7.18) needs persistent rows to render. So does any
+--   2. The "freeze timeline" UI (explorer-data-inventory.md §7 "Page
+--      inventory" — the doc was renamed from
+--      showcase-site-data-inventory.md in 6f21cc8f and its §7
+--      subsection numbering did not survive; corrected 2026-09-02)
+--      needs persistent rows to render. So does any
 --      post-mortem article that wants to deep-link
 --      "/anomalies/freeze-2025-03-14T12:42".
 --

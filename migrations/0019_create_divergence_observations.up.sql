@@ -10,7 +10,9 @@
 -- are recomputed each tick and dropped. This means we cannot:
 --
 --   - Plot divergence over time on the /divergences page
---     (showcase-site-data-inventory.md §7.19).
+--     (explorer-data-inventory.md §7 "Page inventory" — the doc was
+--     renamed from showcase-site-data-inventory.md in 6f21cc8f and its
+--     §7 subsection numbering did not survive; corrected 2026-09-02).
 --   - Verify retroactively whether a manipulation event lined up
 --     with our cross-oracle observations.
 --   - Provide ground-truth for incident post-mortems that need to

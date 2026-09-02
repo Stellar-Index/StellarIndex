@@ -211,17 +211,31 @@ PY
 fi
 
 # Migration self-citation. A migration's own header comment should cite
-# its OWN number. 0125_projection_dirty_windows.up.sql opens with
+# its OWN number. 0125_projection_dirty_windows.up.sql opened with
 # "0124 up", and 0096_create_blend_emitter_events.up.sql with "0095 up"
 # — both real but DIFFERENT migrations, so a reader following the
 # reference lands on an unrelated change (wave-D CV-7).
 #
-# THOSE TWO CANNOT BE CORRECTED. Applied migrations are immutable
-# (lint-migration-immutability, rule 9) and even a comment-only edit
-# changes the checksum. Immutability is the stronger rule — a migration
-# whose bytes can change is a migration whose applied-ness cannot be
-# proven — so the drift is RECORDED here instead of being fixed, and
-# this check exists to stop the SET growing.
+# This check originally EXEMPTED those two on the grounds that an
+# applied migration is immutable and even a comment-only edit changes
+# its checksum, so the drift could only be recorded. That reasoning was
+# wrong, and it contradicted the other precedent on main (febf720a
+# edited nine shipped downs and refreshed the baseline). The rule is now
+# written down once, in migrations/README.md "Amending a shipped
+# migration":
+#
+#   A shipped migration's UP body is immutable; its DOWN body and its
+#   header COMMENTS may be corrected through the baseline-refresh path
+#   (lint-migration-immutability --write) with a CHANGELOG line;
+#   anything stored in the database (COMMENT ON, defaults) needs a new
+#   migration.
+#
+# A `--` line above BEGIN; is not executed, so correcting one cannot
+# make an applied database diverge from a fresh one — and the checksum
+# baseline still moves in the same diff, so the edit is visible rather
+# than silent. Both headers were corrected under that rule (#357 F2/F3),
+# and there is consequently NO exemption list here: every up.sql must
+# cite its own number, with no grandfathered set to grow.
 #
 # Deliberately narrow: it checks the mechanical half — a file
 # disagreeing with its own filename — not "does every `migration NNNN`
@@ -230,13 +244,9 @@ fi
 # freeze_events.go cites 0124 and is CORRECT (0124 really is
 # freeze_reason_other); a blanket find-and-replace would have broken it.
 echo "Checking migration self-citation..."
-# Pre-existing drift, frozen by immutability. Adding to this list is not
-# an option for a NEW migration — fix the header before it ships.
-MIGRATION_CITATION_KNOWN="0125_projection_dirty_windows.up.sql 0096_create_blend_emitter_events.up.sql"
 for mig in migrations/[0-9][0-9][0-9][0-9]_*.up.sql; do
   [ -f "$mig" ] || continue
   base=$(basename "$mig")
-  case " $MIGRATION_CITATION_KNOWN " in *" $base "*) continue ;; esac
   num=$(printf '%s' "$base" | cut -c1-4)
   first=$(head -1 "$mig")
   # Strip ADR-NNNN / CS-NNN / F-NNNN ids first: they are four digits but
@@ -246,7 +256,7 @@ for mig in migrations/[0-9][0-9][0-9][0-9]_*.up.sql; do
   cited=$(printf '%s' "$first" | sed -E 's/(ADR|CS|F)-[0-9]+//g' \
           | grep -oE '\b[0-9]{4}\b' | head -1 || true)
   if [ -n "$cited" ] && [ "$cited" != "$num" ]; then
-    err "$mig: header cites migration $cited but this file IS $num — a reader following that reference lands on a different migration. Fix it BEFORE the migration ships; once applied it is immutable and cannot be corrected."
+    err "$mig: header cites migration $cited but this file IS $num — a reader following that reference lands on a different migration. Fix the header (a header comment IS correctable on a shipped migration — see migrations/README.md 'Amending a shipped migration' — then run scripts/ci/lint-migration-immutability.sh --write in the same commit)."
   fi
 done
 

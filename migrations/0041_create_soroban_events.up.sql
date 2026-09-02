@@ -45,13 +45,14 @@
 --     the dispatcher already populates. Empty when the event came
 --     from a non-InvokeContract op (CAP-67 transfer events tied to
 --     classic ops, system events, etc.). Stored as the
---     concatenation of base64-encoded XDR blobs is the existing wire
---     format on `events.Event.OpArgs`, but here we store the
---     concatenated raw XDR with a length-prefix delimiter — wait,
---     actually `op_args_xdr` here is the SDK's InvokeContract
---     argument vector as raw XDR (the whole args list, not one
---     per-arg blob). Downstream consumers parse with the standard
---     XDR machinery.
+--     SDK's InvokeContract argument vector as raw XDR — the WHOLE
+--     args list, not one blob per argument. Downstream consumers
+--     parse it with the standard XDR machinery.
+--     (This paragraph shipped as an un-finished draft: it described a
+--     length-prefixed concatenation of per-arg base64 blobs, then
+--     said "— wait, actually" and gave the real shape. Only the
+--     second half was ever true. Corrected 2026-09-02, #358; the
+--     column itself is unchanged.)
 --
 -- Index strategy (per ADR-0029): three indexes for the canonical
 -- query shapes future decoder backfills will use.

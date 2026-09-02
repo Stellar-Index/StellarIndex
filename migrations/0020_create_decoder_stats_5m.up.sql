@@ -8,13 +8,21 @@
 --   - last_ledger        (most recent ledger the decoder produced output for)
 --
 -- These live in process memory only. They feed Prometheus metrics —
--- which is fine for alerting, but not for the showcase
--- /diagnostics/decoders page (showcase-site-data-inventory.md §7.22)
--- which needs queryable history per source.
+-- which is fine for alerting, but not for the explorer
+-- /diagnostics/decoders page (explorer-data-inventory.md §7 "Page
+-- inventory" — the doc was renamed from showcase-site-data-inventory.md
+-- in 6f21cc8f and its §7 subsection numbering did not survive) which
+-- needs queryable history per source. NOTE (2026-09-02, #358 item 7):
+-- that page and its GET /v1/diagnostics/decoders route were never
+-- built — the route is not in openapi/stellar-index.v1.yaml and no Go
+-- code selects from this table. It is write-only today.
 --
--- This table is the persistent rollup. An aggregator-side worker
--- reads dispatcher.Stats() every 5 minutes, atomically snapshots-and-
--- clears the counters, and writes one row per source per bucket.
+-- This table is the persistent rollup. The writer is the INDEXER's
+-- statsflush worker (internal/dispatcher/statsflush), NOT an
+-- aggregator-side worker as this header originally said (corrected
+-- 2026-09-02, #358 item 7). It reads dispatcher.Stats() every 5
+-- minutes, atomically snapshots-and-clears the counters, and writes
+-- one row per source per bucket.
 -- Atomic snapshot-and-clear is the contract that prevents
 -- double-counting between buckets.
 --
