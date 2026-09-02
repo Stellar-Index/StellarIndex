@@ -77,8 +77,8 @@ This section records WHY, so the next session does not re-litigate it from memor
 
    | Endpoint | Actual `Cache-Control` |
    |---|---|
-   | `/v1/price` | `public, max-age=30, s-maxage=60` — the SAME switch case as `/v1/assets`, which this entry contrasts it against |
-   | `/v1/oracle/latest` | `public, max-age=60, s-maxage=300` (the `/v1/oracle/` prefix arm) |
+   | `/v1/price` | `public, max-age=30, s-maxage=5` (was `s-maxage=60`, shared with `/v1/assets`, until #344 gave the closed-bucket price surfaces their own band) |
+   | `/v1/oracle/latest` | `public, max-age=30, s-maxage=5` (was `public, max-age=60, s-maxage=300` — it inherited the `/v1/oracle/` prefix arm by accident until #344) |
    | `/v1/ledgers/latest` | **not a route.** `latest` binds `{seq}`, fails `parseLedgerSeq`, and 400s. The nearest real endpoint is `/v1/ledger/tip`, which the handler sets to `public, max-age=2` |
 
    The policy is the ORIGINAL April 2026 one (`33b9f567`), four months older than

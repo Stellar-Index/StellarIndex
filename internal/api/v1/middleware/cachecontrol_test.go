@@ -3,6 +3,8 @@ package middleware
 import (
 	"net/http"
 	"net/http/httptest"
+	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -55,12 +57,19 @@ func TestPolicyForPath_PinsDirectives(t *testing.T) {
 		{"/v1/observations", "private, no-cache, must-revalidate"},
 		{"/v1/observations/stream", "private, no-cache, must-revalidate"},
 
-		// Current price + asset detail — short cache
-		{"/v1/price", "public, max-age=30, s-maxage=60"},
-		{"/v1/price/batch", "public, max-age=30, s-maxage=60"},
+		// Closed-bucket price surfaces — 5s shared cache (#344). The
+		// 150s SLA-probe freshness target leaves no room for the old
+		// s-maxage=60: it can serve a bucket a full bucket behind
+		// origin (age <= 210s) and a stale frozen/confidence for two
+		// aggregator ticks. max-age stays 30s — a client's own copy is
+		// not a shared-cache lie.
+		{"/v1/price", "public, max-age=30, s-maxage=5"},
+		{"/v1/price/batch", "public, max-age=30, s-maxage=5"},
 		// Multi-horizon change strip tracks the current-price band
 		// (anchor moves on every bucket close).
-		{"/v1/price/changes", "public, max-age=30, s-maxage=60"},
+		{"/v1/price/changes", "public, max-age=30, s-maxage=5"},
+
+		// Current asset detail — short cache
 		{"/v1/assets", "public, max-age=30, s-maxage=60"},
 		{"/v1/assets/native", "public, max-age=30, s-maxage=60"},
 		{"/v1/assets/USDC-GA5Z/metadata", "public, max-age=30, s-maxage=60"},
@@ -76,7 +85,8 @@ func TestPolicyForPath_PinsDirectives(t *testing.T) {
 		{"/v1/markets", "public, max-age=60, s-maxage=300"},
 		{"/v1/pairs", "public, max-age=60, s-maxage=300"},
 		{"/v1/sources", "public, max-age=60, s-maxage=300"},
-		{"/v1/oracle/latest", "public, max-age=60, s-maxage=300"},
+		// NB /v1/oracle/latest is NOT here — it left the catalogue band
+		// in #344; see TestPolicyForPath_OracleLatestIsNotTheOraclePrefixBand.
 		{"/v1/oracle/lastprice", "public, max-age=60, s-maxage=300"},
 		{"/v1/oracle/prices", "public, max-age=60, s-maxage=300"},
 
@@ -271,5 +281,52 @@ func TestCacheControlWithCDN_FalseDropsSMaxAge(t *testing.T) {
 
 	if got := rec.Header().Get("Cache-Control"); got != "public, max-age=60" {
 		t.Errorf("Cache-Control with cdn=false = %q, want \"public, max-age=60\"", got)
+	}
+}
+
+// TestPolicyForPath_OracleLatestIsNotTheOraclePrefixBand pins the #344
+// separation explicitly, because it is the kind of thing a later edit
+// "tidies" back together. /v1/oracle/latest is a LATEST-OBSERVATION-per-
+// source surface: no closed-bucket contract, no staleness flag on the
+// reading. It sat in the 300s catalogue band solely because it matched
+// the `/v1/oracle/` prefix arm — five minutes of shared-cache lag on a
+// surface whose whole claim is "latest". Its siblings genuinely are
+// catalogue reads and must stay where they are.
+func TestPolicyForPath_OracleLatestIsNotTheOraclePrefixBand(t *testing.T) {
+	latest := policyForPath("/v1/oracle/latest", true)
+	prefix := policyForPath("/v1/oracle/streams", true)
+	if latest == prefix {
+		t.Fatalf("/v1/oracle/latest fell back into the /v1/oracle/ prefix band (%q) — it must carry the short closed-bucket band", latest)
+	}
+	if latest != "public, max-age=30, s-maxage=5" {
+		t.Errorf("/v1/oracle/latest = %q, want the 5s shared band", latest)
+	}
+	if !strings.Contains(prefix, "s-maxage=300") {
+		t.Errorf("/v1/oracle/streams = %q, want the 300s catalogue band (only `latest` was moved)", prefix)
+	}
+}
+
+// TestPolicyForPath_PriceSharedTTLIsBoundedByTheProbe encodes WHY the
+// number is 5 and not 60: the SLA probe's closed-bucket freshness target
+// is 150s and is built from 60s bucket + 30s CAGG end_offset + <=30s
+// schedule + runtime. A shared TTL adds itself to that worst case, so any
+// s-maxage above ~30s puts a compliant origin outside its own SLA at the
+// edge. The test fails if someone raises it back.
+func TestPolicyForPath_PriceSharedTTLIsBoundedByTheProbe(t *testing.T) {
+	const probeBudgetSeconds = 30 // headroom inside the 150s target
+	for _, path := range []string{"/v1/price", "/v1/price/batch", "/v1/price/changes", "/v1/oracle/latest"} {
+		got := policyForPath(path, true)
+		m := regexp.MustCompile(`s-maxage=(\d+)`).FindStringSubmatch(got)
+		if m == nil {
+			t.Errorf("%s = %q, expected an s-maxage directive when the CDN is enabled", path, got)
+			continue
+		}
+		secs, err := strconv.Atoi(m[1])
+		if err != nil {
+			t.Fatalf("%s: unparseable s-maxage in %q: %v", path, got, err)
+		}
+		if secs > probeBudgetSeconds {
+			t.Errorf("%s has s-maxage=%d — above the %ds headroom inside the SLA probe's 150s closed-bucket target (#344)", path, secs, probeBudgetSeconds)
+		}
 	}
 }

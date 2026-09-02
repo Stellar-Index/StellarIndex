@@ -480,8 +480,21 @@ authenticated callers see their tier's budget (1,000 / 10,000 /
 | `/v1/healthz`, `/v1/readyz`, `/v1/version`, `/metrics` | `no-store` |
 | `/v1/account/*`, `/v1/auth/sep10/*` | `private, no-store` |
 | `/v1/price/tip`, `/v1/observations*` | `private, no-cache, must-revalidate` |
-| `/v1/price`, `/v1/price/batch`, `/v1/assets*` | `public, max-age=30, s-maxage=60` |
-| `/v1/history*`, `/v1/ohlc`, `/v1/vwap`, `/v1/twap`, `/v1/markets`, `/v1/pairs`, `/v1/sources`, `/v1/oracle/*` | `public, max-age=60, s-maxage=300` |
+| `/v1/price`, `/v1/price/batch`, `/v1/price/changes`, `/v1/oracle/latest` | `public, max-age=30, s-maxage=5` |
+| `/v1/assets*`, `/v1/pools/reserves`, `/v1/liquidity-pools`, `/v1/sdex/orderbook` | `public, max-age=30, s-maxage=60` |
+| `/v1/history*`, `/v1/ohlc`, `/v1/vwap`, `/v1/twap`, `/v1/markets`, `/v1/pairs`, `/v1/sources`, the rest of `/v1/oracle/*` | `public, max-age=60, s-maxage=300` |
+
+The **5 s** shared TTL on the price surfaces is not a round number picked
+for taste. ADR-0015/0018 is a determinism contract, not a freshness bound,
+so a shared cache serving a previous closed bucket keeps determinism while
+breaking the "most recent closed bucket" clause — which is exactly what the
+SLA probe measures against a 150 s target (60 s bucket + 30 s continuous-
+aggregate `end_offset` + up to 30 s of schedule + runtime). A shared TTL
+adds itself to that worst case and to the lag on the per-request
+`as_of`, `confidence` and `flags.frozen` fields. `/v1/oracle/latest` joins
+them because it is a latest-observation surface with no closed-bucket
+contract at all; it previously inherited the 300 s catalogue band from the
+`/v1/oracle/` prefix (#344).
 
 The current stack does **not** emit `ETag`, `Server-Timing`,
 `X-Correlation-ID`, or conditional-GET 304 responses in this
