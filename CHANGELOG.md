@@ -17,6 +17,28 @@ against.
 
 ### Fixed
 
+- **`ch-schema-drift.service` failed every day on r1 because the repo and
+  the host build `stellar.transactions` in different column orders.**
+  `deploy/clickhouse/tier1_schema.sql` declared the nine `soroban_*`
+  columns inside the `CREATE TABLE`, before `ingested_at` — but
+  `transactions_soroban_metering.sql` adds those same columns to an
+  existing table with `ALTER TABLE … ADD COLUMN`, which **appends** them
+  after `ingested_at`. So a fresh box and an upgraded box ended up with the
+  same 22 columns in two different orders, and the drift checker correctly
+  flagged one of them every night.
+
+  Writes were never at risk — the insert names its columns explicitly
+  (`internal/storage/clickhouse/sink.go`), so position does not affect what
+  lands where. The cost was a permanently red unit and a permanently firing
+  `stellarindex_systemd_unit_failed`, on the one check that would catch a
+  *real* schema divergence.
+
+  `tier1_schema.sql` now declares `ingested_at` where the ALTER path puts
+  it, so both paths converge. Verified by executing the corrected DDL into
+  a scratch database on r1 and diffing `system.columns` against the live
+  table: byte-identical, 22 columns in the same order. (#472)
+
+
 - **Two public docs stated that Comet was ungated; the code has gated it
   since 2026-07-08.** `docs/protocols/README.md` — the page whose whole
   purpose is to evidence ADR-0035/0040 contract gating — carried Comet as
