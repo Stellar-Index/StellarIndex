@@ -479,7 +479,12 @@ func TestFilterCatalogueByNetwork(t *testing.T) {
 func TestBandGenesisAgreesAcrossEveryConstant(t *testing.T) {
 	const bandGenesis = 50_842_736
 
-	cat, _, err := buildReconciliationCatalogue(config.Config{})
+	// band only enters the catalogue when its contract is configured — it
+	// is reached through the InvokeContract (callDec) path, not by topic.
+	cfg := config.Config{}
+	cfg.Oracle.Band.StandardReferenceContract = "CDEGQ2P4RXDT7BXCOAJB4MDNMSTOTBBHNS7HHRZ7ZKBWHSPQXNSMPPMV"
+
+	cat, _, err := buildReconciliationCatalogue(cfg)
 	if err != nil {
 		t.Skipf("catalogue build unavailable in this environment: %v", err)
 	}
@@ -497,6 +502,6 @@ func TestBandGenesisAgreesAcrossEveryConstant(t *testing.T) {
 		}
 	}
 	if !found {
-		t.Fatal("band is not in the reconciliation catalogue")
+		t.Fatal("band is not in the reconciliation catalogue even with its contract configured")
 	}
 }
