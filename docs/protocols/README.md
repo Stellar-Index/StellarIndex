@@ -60,21 +60,33 @@ date, so a team can tell us if a contract is missing or mis-attributed.
 | Aquarius | router-anchored | ✅ Gated (router + 332 pools, 2026-07-05) | [aquarius.md](aquarius.md) |
 | Phoenix | RPC view (pre-lake) | ✅ Gated code-side (curated set, 2026-07-02); operator rollout pending | [phoenix.md](phoenix.md) |
 | DeFindex | multi-proof classification | ✅ Gated (curated 85 vaults + 16 strategies, 4 factories, 2026-07-05) | [defindex.md](defindex.md) |
-| Comet | — (topic-bytes only) | ❌ **UNGATED — last remaining (CS-026)** | [comet.md](comet.md) |
+| Comet | curated allowlist (no deployed factory) | ✅ Gated (1 pool, 2026-07-08 — CS-026 closed) | [comet.md](comet.md) |
 | SDEX (classic) | op-result XDR | N/A — no contracts | [sdex.md](sdex.md) |
 
-> **Gating is now complete except Comet.** ADR-0035 gates every decoder on
-> contract identity so a look-alike contract can't inject fabricated
+> **Every on-chain source is now gated on contract identity.** ADR-0035
+> gates each decoder so a look-alike contract cannot inject fabricated
 > trades under a protocol's source name. Factory fan-out is clean when the
 > creation event **carries the child's address** (Blend `deploy`, Soroswap
-> `new_pair` — both lake-verified). Where that signal is absent —
-> Phoenix/Aquarius pools predate the lake (50.46M), DeFindex's `create`
-> carries the vault *config* but not its address — the gate anchors on a
-> curated / registry-cross-checked seed instead (Phoenix curated set,
-> Aquarius router `add_pool` == registry API, DeFindex multi-proof
-> classification). **Comet is the one source still matching on topic bytes
-> alone** — it has no factory namespace and needs a pool allowlist /
-> WASM-hash gate (CS-026, [ADR-0040](../adr/0040-completing-contract-gating.md)).
+> `new_pair` — both lake-verified). Where that signal is absent — Phoenix
+> pools predate the lake (50.46M), DeFindex's `create` carries the vault
+> *config* but not its address — the gate anchors on a curated or
+> registry-cross-checked seed instead (Phoenix curated set, DeFindex
+> multi-proof classification). Aquarius is neither: its router's `add_pool`
+> events are in the lake and register pools live, cross-checked against the
+> registry API.
+>
+> **Comet closed the last gap (CS-026) on 2026-07-08.** It has no known
+> deployed mainnet factory, so it cannot be factory-anchored; instead the
+> decoder gates on a curated allowlist seeded in code
+> (`comet.MainnetGatedSet`, today exactly the BLND/USDC backstop pool) and
+> its `Matches` returns `d.reg.Has(ev.ContractID)`
+> (`internal/sources/comet/dispatcher_adapter.go`). A future genuine Comet
+> pool must be operator-admitted before its events attribute — fail-closed,
+> and visible as an ADR-0033 recognition gap.
+>
+> One caveat this table cannot express: gating changed what is *recorded
+> from that date onward*. Rows captured before a source was gated came from
+> the prior decoder and have not been retroactively re-verified.
 
 ### Oracles (reported on `/v1/sources`, excluded from VWAP)
 
