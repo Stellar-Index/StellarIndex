@@ -255,7 +255,13 @@ enforce_min_free() {
       candidates+="$(list_auto_snapshots "$ds" | sed '$d')"$'\n'
     done
     # Oldest across datasets first (creation is column 2).
-    name="$(printf '%s' "$candidates" | awk -F'\t' 'NF==2' | sort -t $'\t' -k2,2n | head -n1 | cut -f1)"
+    # $candidates is every prunable auto snapshot across all datasets —
+    # unbounded on a long-lived pool, so `| head` could EPIPE `sort` under
+    # pipefail and abort the prune loop exactly when the pool is filling
+    # (#475). Sort to completion in a substitution, then slice in the shell.
+    sorted_candidates="$(printf '%s' "$candidates" | awk -F'\t' 'NF==2' | sort -t $'\t' -k2,2n)"
+    name="${sorted_candidates%%$'\n'*}"
+    name="${name%%$'\t'*}"
     if [[ -z "$name" ]]; then
       log "guard: nothing left to prune (each dataset is down to its newest auto snapshot); free ${free} still < ${ZFS_SNAPSHOT_MIN_FREE_BYTES}"
       return 1

@@ -191,6 +191,9 @@ while IFS='|' read -r p95 name path n okp p50 p99 mx; do
 done < <(printf '%s\n' "${RESULTS[@]}" | sort -t'|' -k1,1nr)
 
 echo
+# sigpipe-ok: RESULTS holds one short line per swept route (<100 of them,
+# ~80 bytes each) — far under the 64 KiB pipe buffer, so head cannot
+# close the pipe before sort finishes (#475).
 slow=$(printf '%s\n' "${RESULTS[@]}" | sort -t'|' -k1,1nr | head -1)
 printf '%sslowest: %s (p95 %s ms)%s\n' "$B" \
   "$(echo "$slow"|cut -d'|' -f2)" "$(echo "$slow"|cut -d'|' -f1)" "$O"

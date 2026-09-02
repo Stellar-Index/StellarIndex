@@ -65,6 +65,8 @@ else
     H=$(curl -sIk "$HOST/v1/account/me" 2>&1 || true)
 fi
 check "/v1/account/me sends no-store" "no-store" "$(echo "$H" | grep -i cache-control || echo MISSING)"
+# sigpipe-ok: $H is a single response's header block (a few hundred bytes)
+# and the pipeline is already `|| echo ""`-tolerant (#475).
 edge=$(echo "$H" | grep -iE "cf-cache-status|x-cache" | head -1 || echo "")
 if [ -z "$edge" ] || [[ "$edge" == *"BYPASS"* ]] || [[ "$edge" == *"DYNAMIC"* ]]; then
     green "  ✓ Edge bypasses /v1/account/* (or no edge in front)"

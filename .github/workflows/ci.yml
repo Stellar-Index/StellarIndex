@@ -492,6 +492,22 @@ jobs:
         # shard, none empty, deterministic) and that empty/bad-arg paths
         # fail loudly. Stub listing, no Docker, no go build.
         run: ./scripts/ci/integration-shard-test.sh
+      - name: lint-shell-sigpipe
+        # #475: `… | sort | head -n N` under `set -o pipefail` is a coin
+        # flip — head closes the pipe, systemd's IgnoreSIGPIPE default turns
+        # the signal into EPIPE, the producer prints "write failed: Broken
+        # pipe" and exits non-zero, and pipefail promotes that to the
+        # pipeline. It only fires once the producer outsizes the 64 KiB pipe
+        # buffer, so it passes review and every small-input test, then fails
+        # a third of production runs (r1's galexie-archive-fill, three times).
+        run: ./scripts/ci/lint-shell-sigpipe.sh
+      - name: lint-shell-sigpipe self-test
+        # Pins the gate non-vacuous: it must CATCH a pipefail script piping
+        # into head, honour a `# sigpipe-ok:` marker anywhere in the comment
+        # block above the line, ignore a comment that merely quotes the bad
+        # shape, skip scripts without pipefail/-e, and FAIL rather than pass
+        # when a root contains no pipefail scripts at all.
+        run: ./scripts/ci/lint-shell-sigpipe-test.sh
       - name: check-deploy-protection self-test
         # deploy-approval-gate (audit-2026-07-23): fixtures for the
         # fail-closed environment-approval assertion deploy.yml runs

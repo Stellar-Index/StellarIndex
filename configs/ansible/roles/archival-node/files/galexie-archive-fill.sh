@@ -94,9 +94,22 @@ if [ "$PARTIAL_CHECK_WINDOW" -gt 0 ]; then
   # FIRST. e.g. FC42F7FF--62720000-... sorts BEFORE FFFFFFFF--0-63999
   # (genesis). `head -N` therefore gives us the latest N partitions —
   # filter `.config.json` (the bucket marker file) out first.
+  #
+  # `sort` writes to a FILE and `head` reads it back, rather than the
+  # obvious `sort | head -n N`. Under `set -euo pipefail` that pipeline
+  # is a coin flip: `head` exits after N lines and closes the pipe,
+  # systemd's default IgnoreSIGPIPE=yes turns the signal into EPIPE, and
+  # `sort` prints "write failed: 'standard output': Broken pipe" and
+  # exits 2 — which pipefail promotes to the pipeline's status and set -e
+  # turns into a failed unit. It only bites when the listing exceeds the
+  # 64 KiB pipe buffer, so it fired on roughly a third of runs and looked
+  # random (#475; three failures in r1's journal, the last 2026-09-02
+  # 18:19:35 UTC, AFTER the be4907c5 retry helper — which cannot help,
+  # because the AWS call itself succeeded).
   aws_ls aws-public-blockchain/v1.1/stellar/ledgers/pubnet/ \
-    | awk '{print $NF}' | sed 's:/$::' | { grep -v '^\.' || true; } | sort \
-    | head -n "$PARTIAL_CHECK_WINDOW" \
+    | awk '{print $NF}' | sed 's:/$::' | { grep -v '^\.' || true; } \
+    | sort > /tmp/galexie-fill.partitions.txt
+  head -n "$PARTIAL_CHECK_WINDOW" /tmp/galexie-fill.partitions.txt \
     > /tmp/galexie-fill.tail.txt
   while read -r p; do
     [ -z "$p" ] && continue

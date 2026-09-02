@@ -168,7 +168,9 @@ echo ""
 echo "Ready to cut release $TAG"
 echo "  branch:        $branch ($local_sha)"
 echo "  tag:           $TAG"
-echo "  CHANGELOG:     $(printf '%s' "$changelog_section" | head -3 | sed 's/^/    /')"
+# A release's CHANGELOG section runs to many KiB, so piping it into `head`
+# can EPIPE the writer under pipefail (#475). sed reads to completion.
+echo "  CHANGELOG:     $(printf '%s' "$changelog_section" | sed -n '1,3p' | sed 's/^/    /')"
 echo ""
 
 if [[ "$DRY_RUN" -eq 1 ]]; then

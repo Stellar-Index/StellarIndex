@@ -53,6 +53,8 @@ echo "  Network exposure"
 if [ ! -f "$CONFIG" ]; then
   fail "config file present" "$CONFIG missing"
 else
+  # sigpipe-ok: $CONFIG is a TOML file of a few KiB and the grep matches at
+  # most a handful of lines — well under the pipe buffer (#475).
   listen_addr="$(grep -E '^\s*listen_addr\s*=' "$CONFIG" | head -1 | sed -E 's/.*=\s*"([^"]+)".*/\1/' || true)"
   if [ -z "$listen_addr" ]; then
     listen_addr="0.0.0.0:3000  (default)"
@@ -62,6 +64,8 @@ else
       pass "listen_addr is loopback" "$listen_addr"
       ;;
     *)
+      # sigpipe-ok: $CONFIG is a TOML file of a few KiB and the grep matches at
+      # most a handful of lines — well under the pipe buffer (#475).
       proxy_cidrs="$(grep -E '^\s*trusted_proxy_cidrs\s*=' "$CONFIG" | head -1 || true)"
       if [ -z "$proxy_cidrs" ] || echo "$proxy_cidrs" | grep -q '\[\s*\]'; then
         fail "listen_addr public + no trusted proxies" "$listen_addr"
@@ -92,6 +96,8 @@ echo
 
 # ── 2. CORS narrowed
 echo "  CORS"
+# sigpipe-ok: $CONFIG is a TOML file of a few KiB and the grep matches at
+# most a handful of lines — well under the pipe buffer (#475).
 allowed_origins="$(grep -E '^\s*allowed_origins\s*=' "$CONFIG" 2>/dev/null | head -1 || true)"
 if [ -z "$allowed_origins" ] || echo "$allowed_origins" | grep -q '"\*"'; then
   fail "allowed_origins is wide open" '["*"] — narrow to your showcase + API hostnames'

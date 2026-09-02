@@ -140,9 +140,15 @@ g_enter_epoch=$(date -d "$g_enter_iso" +%s 2>/dev/null || echo 0)
 g_age=$(( $(date +%s) - g_enter_epoch ))
 if [ "$g_age" -gt "$GALEXIE_WARMUP_SEC" ]; then
   # mc --json gives a machine-readable listing; sort by lastModified.
-  last_iso=$(mc ls --json --recursive local/galexie-live/ 2>/dev/null \
+  # `sort` writes to a file and `head` reads it back — see #475: with
+  # pipefail set, `sort -r | head -1` makes `sort` die on EPIPE once the
+  # listing exceeds the pipe buffer (which a live bucket always does),
+  # logging "write failed: 'standard output': Broken pipe" on every
+  # healthcheck. Harmless here only because this script omits `set -e`.
+  mc ls --json --recursive local/galexie-live/ 2>/dev/null \
     | jq -r 'select(.key | test("\\.xdr\\.zst$")) | .lastModified' 2>/dev/null \
-    | sort -r | head -1)
+    | sort -r > /tmp/galexie-live-mtimes.txt || true
+  last_iso=$(head -1 /tmp/galexie-live-mtimes.txt)
   if [ -n "$last_iso" ]; then
     last_epoch=$(date -d "$last_iso" +%s 2>/dev/null || echo 0)
     lag=$(( $(date +%s) - last_epoch ))

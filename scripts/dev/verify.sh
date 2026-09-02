@@ -57,6 +57,8 @@ echo "=== Migration immutability ===" && ./scripts/ci/lint-migration-immutabilit
 echo "=== Migration immutability self-test ===" && ./scripts/ci/lint-migration-immutability-test.sh
 echo "=== Completeness-staleness calibration ===" && ./scripts/ci/lint-completeness-staleness.sh
 echo "=== Integration-shard partition self-test ===" && ./scripts/ci/integration-shard-test.sh
+echo "=== Shell SIGPIPE (pipe-into-head) ===" && ./scripts/ci/lint-shell-sigpipe.sh
+echo "=== Shell SIGPIPE self-test ===" && ./scripts/ci/lint-shell-sigpipe-test.sh
 echo "=== Deploy-protection self-test ===" && ./scripts/ci/check-deploy-protection-test.sh
 echo "=== Main-CI-health decision-core self-test ===" && ./scripts/ci/check-main-ci-health-test.sh
 echo "=== SLA-evidence decision-core + k6-weekly wiring self-test ===" && ./scripts/ci/check-sla-evidence-test.sh

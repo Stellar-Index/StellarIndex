@@ -66,7 +66,9 @@ audit() {
     detail=$(echo "$body" | python3 -c \
       "import sys,json; d=json.load(sys.stdin); print(d.get('detail',d.get('title','?'))[:160])" \
       2>/dev/null)
-    [ -z "$detail" ] && detail=$(echo "$body" | head -c 120)
+    # $body is an unbounded HTTP response body, so `| head -c` can EPIPE the
+    # writer under pipefail (#475). Slice it in the shell instead.
+    [ -z "$detail" ] && detail=${body:0:120}
     printf "  %sFAIL%s %-44s %sHTTP %s — %s%s\n" "$RED" "$OFF" "$label" "$DIM" "$status" "$detail" "$OFF"
     FAILS=$((FAILS + 1))
   fi
