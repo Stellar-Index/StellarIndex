@@ -7,8 +7,12 @@
 -- stance as 0070/0092/0094's down).
 BEGIN;
 
-DELETE FROM discovered_assets WHERE discovery_kind <> 'sep41';
-
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM discovered_assets WHERE discovery_kind <> 'sep41') THEN
+    RAISE EXCEPTION '0103_discovery_oracle_broadening.down.sql: discovered_assets still holds rows where discovery_kind <> ''sep41'' — down-migrating with data present is LOUD, not silent (#357). Delete them explicitly first if that is really what you want.';
+  END IF;
+END $$;
 ALTER TABLE discovered_assets DROP CONSTRAINT discovered_assets_first_seen_event_check;
 ALTER TABLE discovered_assets ADD CONSTRAINT discovered_assets_first_seen_event_check CHECK (first_seen_event IN (
     'transfer',

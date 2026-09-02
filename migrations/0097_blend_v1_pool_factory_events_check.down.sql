@@ -4,7 +4,12 @@
 -- not silent — same stance as 0092/0094/0095's down).
 BEGIN;
 
-DELETE FROM blend_emissions WHERE event_kind = 'update_emissions';
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM blend_emissions WHERE event_kind = 'update_emissions') THEN
+    RAISE EXCEPTION '0097_blend_v1_pool_factory_events_check.down.sql: blend_emissions still holds rows where event_kind = ''update_emissions'' — down-migrating with data present is LOUD, not silent (#357). Delete them explicitly first if that is really what you want.';
+  END IF;
+END $$;
 ALTER TABLE blend_emissions DROP CONSTRAINT blend_emissions_event_kind_check;
 ALTER TABLE blend_emissions ADD CONSTRAINT blend_emissions_event_kind_check CHECK (event_kind IN (
     'gulp', 'claim',
@@ -12,7 +17,12 @@ ALTER TABLE blend_emissions ADD CONSTRAINT blend_emissions_event_kind_check CHEC
     'bad_debt', 'defaulted_debt'
 ));
 
-DELETE FROM blend_admin WHERE event_kind IN ('new_liquidation_auction', 'delete_liquidation_auction');
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM blend_admin WHERE event_kind IN ('new_liquidation_auction', 'delete_liquidation_auction')) THEN
+    RAISE EXCEPTION '0097_blend_v1_pool_factory_events_check.down.sql: blend_admin still holds rows where event_kind IN (''new_liquidation_auction'', ''delete_liquidation_auction'') — down-migrating with data present is LOUD, not silent (#357). Delete them explicitly first if that is really what you want.';
+  END IF;
+END $$;
 ALTER TABLE blend_admin DROP CONSTRAINT blend_admin_event_kind_check;
 ALTER TABLE blend_admin ADD CONSTRAINT blend_admin_event_kind_check CHECK (event_kind IN (
     'set_admin', 'update_pool',
