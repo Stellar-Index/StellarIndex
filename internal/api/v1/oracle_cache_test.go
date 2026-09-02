@@ -238,18 +238,37 @@ func TestCachedOracleReader_BoundedUnderAssetChurn(t *testing.T) {
 	}
 }
 
-func TestCachedOracleReader_StreamsIsPassthrough(t *testing.T) {
+// TestCachedOracleReader_StreamsAreCached — LatestOracleStreams was the one
+// pass-through on the wrapper (#332 F5): every /v1/oracle/streams hit re-ran
+// the oracle_updates scan and rebuilt ~34 KB, 0.43–0.46 s WARM on production.
+// It now rides the same TTL + single-flight as its siblings: N calls inside
+// the window cost ONE upstream scan, and the window is honoured (a call past
+// the TTL refetches).
+func TestCachedOracleReader_StreamsAreCached(t *testing.T) {
 	up := &fakeOracleUpstream{}
 	c := NewCachedOracleReader(up, 5*time.Second)
-	for i := 0; i < 4; i++ {
+	for i := 0; i < 5; i++ {
 		if _, err := c.LatestOracleStreams(context.Background()); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if got := up.streamsCalls.Load(); got != 4 {
-		t.Errorf("upstream LatestOracleStreams called %d times; want 4 (pass-through, no cache)", got)
+	if got := up.streamsCalls.Load(); got != 1 {
+		t.Fatalf("upstream LatestOracleStreams called %d times inside the TTL, want 1 (streams must be cached like the other reads)", got)
 	}
 	if got := up.updatesCalls.Load(); got != 0 {
-		t.Errorf("upstream LatestOracleUpdatesForAssets called %d times during streams test; want 0", got)
+		t.Fatalf("upstream LatestOracleUpdatesForAssets called %d times during the streams test; want 0 (the streams slot must not touch the per-asset slots)", got)
+	}
+	// Past the TTL the entry is stale and a refetch happens — mirror the
+	// sibling test so the two reads cannot drift apart in behaviour.
+	c2 := NewCachedOracleReader(up, 10*time.Millisecond)
+	if _, err := c2.LatestOracleStreams(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(25 * time.Millisecond)
+	if _, err := c2.LatestOracleStreams(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if got := up.streamsCalls.Load(); got != 3 {
+		t.Fatalf("upstream LatestOracleStreams called %d times total, want 3 (1 cached run + 2 across an expired TTL)", got)
 	}
 }
