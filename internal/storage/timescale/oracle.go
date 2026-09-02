@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"log/slog"
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
@@ -368,7 +369,7 @@ func (s *Store) LatestOracleObservation(ctx context.Context, source string, base
 // Diagnostic helper, not for production hot paths.
 func (s *Store) CountOracleUpdates(ctx context.Context) (int64, error) {
 	var n int64
-	err := s.db.QueryRowContext(ctx, `SELECT count(*) FROM oracle_updates`).Scan(&n)
+	err := s.db.QueryRowContext(ctx, `SELECT count(*) FROM oracle_updates -- totality: includes unmapped`).Scan(&n)
 	if err != nil {
 		return 0, fmt.Errorf("timescale: CountOracleUpdates: %w", err)
 	}
@@ -394,7 +395,7 @@ func (s *Store) LatestOracleStreams(ctx context.Context) ([]canonical.OracleUpda
                price, decimals,
                COALESCE(confidence, 0),
                COALESCE(observer, '')
-          FROM oracle_updates
+          FROM oracle_updates -- totality: includes unmapped
          WHERE ts > NOW() - INTERVAL '7 days'
          ORDER BY source, asset, quote, ts DESC
     `
@@ -404,6 +405,7 @@ func (s *Store) LatestOracleStreams(ctx context.Context) ([]canonical.OracleUpda
 	}
 	defer func() { _ = rows.Close() }()
 	var out []canonical.OracleUpdate
+	dropped := 0
 	for rows.Next() {
 		var u canonical.OracleUpdate
 		var assetStr, quoteStr string
@@ -447,6 +449,9 @@ func (s *Store) LatestOracleStreams(ctx context.Context) ([]canonical.OracleUpda
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("timescale: LatestOracleStreams rows: %w", err)
+	}
+	if dropped > 0 {
+		slog.Warn("timescale: LatestOracleStreams: rows dropped for unparseable asset/quote", "dropped", dropped, "returned", len(out))
 	}
 	return out, nil
 }

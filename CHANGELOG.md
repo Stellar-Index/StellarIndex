@@ -16,6 +16,22 @@ against.
 ## [Unreleased]
 
 ### Fixed
+- **Restored the oracle raw-row consumer guards that PR #305's squash merge
+  silently reverted (#339).** Five files had lost PR #248's changes and one
+  test file was deleted: `divergence.LookupPrice` no longer refused an
+  unmapped `raw:` row (the confidence cross-oracle path could price from
+  one), the oracle bespoke block dropped its "Unmapped feeds" KPI and the
+  `raw:` FILTER, and the `-- totality: includes unmapped` declarations on
+  `CountOracleUpdates`, `SeedSourceEntryCounts` and `countRecentEventsQuery`
+  were gone. Re-applied from `2ce680f3` by three-way merge; the two hunks
+  that conflicted with later work were resolved in favour of HEAD (the
+  wave-D `OracleStreamRowsUnparsedTotal` metric supersedes #248's
+  slog+counter, and `TestOracleUpdatesReadsAreKeyedOrDeclared` supersedes
+  the narrower `…DeclareRawRowPolicy` guard). The real-Timescale behaviour
+  pins in `test/integration/oracle_raw_consumers_test.go` are back.
+
+
+### Fixed
 
 - **`ch-schema-drift.service` failed every day on r1 because the repo and
   the host build `stellar.transactions` in different column orders.**
