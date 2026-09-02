@@ -239,3 +239,38 @@ func TestNew_NilStorePanics(t *testing.T) {
 	}()
 	magiclinkreaper.New(nil, magiclinkreaper.Options{})
 }
+
+// TestSweep_MarksLiveness pins #368 M5: every COMPLETED sweep — including a
+// failed one — stamps the liveness gauge, and construction publishes the
+// configured interval the stalled alert scales its threshold by. A dead
+// reaper is otherwise invisible: its rows gauge just freezes at a
+// healthy-looking number.
+func TestSweep_MarksLiveness(t *testing.T) {
+	g := obs.AuthReaperLastSweepUnix.WithLabelValues(obs.AuthReaperMagicLink)
+	start := float64(time.Now().Unix())
+
+	magiclinkreaper.New(&fakeMagicLinkStore{}, magiclinkreaper.Options{Logger: silent()}).Sweep(context.Background())
+	if got := testutil.ToFloat64(g); got < start {
+		t.Fatalf("liveness gauge after ok sweep = %v, want >= %v", got, start)
+	}
+	if iv := testutil.ToFloat64(obs.AuthReaperIntervalSeconds.WithLabelValues(obs.AuthReaperMagicLink)); iv != magiclinkreaper.DefaultInterval.Seconds() {
+		t.Fatalf("interval gauge = %v, want %v", iv, magiclinkreaper.DefaultInterval.Seconds())
+	}
+
+	// Failing is not dead: the errors counter reports the failure, the
+	// liveness gauge reports the reaper is still running.
+	g.Set(0)
+	failing := &fakeMagicLinkStore{sweepErr: errors.New("deadlock detected")}
+	magiclinkreaper.New(failing, magiclinkreaper.Options{Logger: silent()}).Sweep(context.Background())
+	if got := testutil.ToFloat64(g); got < start {
+		t.Fatalf("liveness gauge after failed sweep = %v, want >= %v (failed != dead)", got, start)
+	}
+
+	// A cancelled sweep is the reaper GOING AWAY — it must not read as alive.
+	cancelled := &fakeMagicLinkStore{sweepErr: context.Canceled}
+	before := testutil.ToFloat64(g)
+	magiclinkreaper.New(cancelled, magiclinkreaper.Options{Logger: silent()}).Sweep(context.Background())
+	if got := testutil.ToFloat64(g); got != before {
+		t.Fatalf("cancelled sweep advanced liveness gauge: %v -> %v", before, got)
+	}
+}

@@ -444,6 +444,38 @@ groups:
             fail-open ends at an account takeover with no trace.
             Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/login-code-lockout-table-growing.md
 
+      # ── Auth-reaper liveness (#368 M5) ─────────────────────────────────
+      # The three auth-table reapers (login_code_lockouts, magic_link_tokens,
+      # speculative-account orphans) each report WHAT they did; none
+      # reported THAT they ran. A dead reaper freezes every rows gauge at a
+      # healthy-looking value, so login_code_lockout_table_growing
+      # (rows > 10000) can never see the bound being lost. The threshold is
+      # relative to each reaper's own configured cadence (3 × interval —
+      # an hourly reaper tickets after ~3 h of silence). A DISABLED reaper
+      # publishes no series and never alerts: absence is config, not death.
+      - alert: stellarindex_auth_reaper_stalled
+        expr: |
+          (time() - stellarindex_auth_reaper_last_sweep_unix)
+            > 3 * stellarindex_auth_reaper_interval_seconds
+        for: 15m
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: api
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/auth-reaper-stalled.md
+          summary: "{{ $labels.reaper }} auth reaper has not completed a sweep for {{ $value | humanizeDuration }}"
+          description: |
+            The {{ $labels.reaper }} reaper in the API binary last completed
+            a sweep {{ $value | humanizeDuration }} ago — more than three
+            times its configured interval. Its bounded table
+            (login_code_lockouts / magic_link_tokens / speculative
+            accounts) is no longer being trimmed; the rows gauge it
+            normally refreshes is FROZEN, not healthy. Check the API
+            binary's log for the reaper's "sweep failed" / panic lines and
+            whether the goroutine is stuck on a Postgres call.
+            Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/auth-reaper-stalled.md
+
       # v0.21.4 background cache workers. The DEX TVL refresher
       # recomputes per-protocol TVL every 10 min; a failed protocol
       # keeps its previous entry, so /v1/dexes + /v1/protocols keep

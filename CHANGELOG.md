@@ -16,6 +16,7 @@ against.
 ## [Unreleased]
 
 ### Added
+- **observability:** auth-reaper liveness (#368 M5) — `stellarindex_auth_reaper_last_sweep_unix{reaper}` + `stellarindex_auth_reaper_interval_seconds{reaper}` for the login-code-lockout, magic-link and signup reapers, and the `stellarindex_auth_reaper_stalled` ticket (3× the reaper's own cadence, both rule trees, runbook `auth-reaper-stalled.md`). A dead reaper previously froze its rows gauge at a healthy-looking value; the `_table_growing` alerts could only fire after the table had actually filled.
 - **Every recovered background-worker panic is now counted and paged
   (#368 M4).** `worker.Recover` kept the process alive but left only one
   log line, so any of ~45 workers could die for good with no signal in

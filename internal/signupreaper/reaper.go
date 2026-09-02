@@ -93,6 +93,7 @@ func New(store OrphanStore, opts Options) *Reaper {
 	if r.interval <= 0 {
 		r.interval = DefaultInterval
 	}
+	obs.AuthReaperIntervalSeconds.WithLabelValues(obs.AuthReaperSignup).Set(r.interval.Seconds())
 	if r.minAge <= 0 {
 		r.minAge = DefaultMinAge
 	}
@@ -137,6 +138,9 @@ func (r *Reaper) Sweep(ctx context.Context) {
 		r.logger.Info("signup-reaper deleted speculative-account orphans",
 			"deleted", deleted)
 	}
+	// Liveness (#368 M5): the sweep COMPLETED — including the failure arm
+	// above; only the cancelled early return skips this.
+	obs.AuthReaperLastSweepUnix.WithLabelValues(obs.AuthReaperSignup).Set(float64(r.now().Unix()))
 }
 
 // sweepOnce performs the delete and returns (rows deleted, outcome).

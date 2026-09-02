@@ -240,3 +240,38 @@ func TestNew_DefaultsAreProduction(t *testing.T) {
 		t.Errorf("olderThan = %v, want %v (DefaultRetention must apply to a zero Options)", got, want)
 	}
 }
+
+// TestSweep_MarksLiveness pins #368 M5: every COMPLETED sweep — including a
+// failed one — stamps the liveness gauge, and construction publishes the
+// configured interval the stalled alert scales its threshold by. A dead
+// reaper is otherwise invisible: its rows gauge just freezes at a
+// healthy-looking number.
+func TestSweep_MarksLiveness(t *testing.T) {
+	g := obs.AuthReaperLastSweepUnix.WithLabelValues(obs.AuthReaperLoginCode)
+	start := float64(time.Now().Unix())
+
+	logincodereaper.New(&fakeLockoutStore{}, logincodereaper.Options{Logger: silent()}).Sweep(context.Background())
+	if got := testutil.ToFloat64(g); got < start {
+		t.Fatalf("liveness gauge after ok sweep = %v, want >= %v", got, start)
+	}
+	if iv := testutil.ToFloat64(obs.AuthReaperIntervalSeconds.WithLabelValues(obs.AuthReaperLoginCode)); iv != logincodereaper.DefaultInterval.Seconds() {
+		t.Fatalf("interval gauge = %v, want %v", iv, logincodereaper.DefaultInterval.Seconds())
+	}
+
+	// Failing is not dead: the errors counter reports the failure, the
+	// liveness gauge reports the reaper is still running.
+	g.Set(0)
+	failing := &fakeLockoutStore{sweepErr: errors.New("deadlock detected")}
+	logincodereaper.New(failing, logincodereaper.Options{Logger: silent()}).Sweep(context.Background())
+	if got := testutil.ToFloat64(g); got < start {
+		t.Fatalf("liveness gauge after failed sweep = %v, want >= %v (failed != dead)", got, start)
+	}
+
+	// A cancelled sweep is the reaper GOING AWAY — it must not read as alive.
+	cancelled := &fakeLockoutStore{sweepErr: context.Canceled}
+	before := testutil.ToFloat64(g)
+	logincodereaper.New(cancelled, logincodereaper.Options{Logger: silent()}).Sweep(context.Background())
+	if got := testutil.ToFloat64(g); got != before {
+		t.Fatalf("cancelled sweep advanced liveness gauge: %v -> %v", before, got)
+	}
+}

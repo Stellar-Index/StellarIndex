@@ -183,3 +183,30 @@ func TestRun_ReturnsOnContextCancel(t *testing.T) {
 		t.Error("Run did not sweep before returning")
 	}
 }
+
+// TestSweep_MarksLiveness pins #368 M5: every COMPLETED sweep — including a
+// failed one — stamps the liveness gauge, and construction publishes the
+// configured interval the stalled alert scales its threshold by. A dead
+// reaper is otherwise invisible: its rows gauge just freezes at a
+// healthy-looking number.
+func TestSweep_MarksLiveness(t *testing.T) {
+	g := obs.AuthReaperLastSweepUnix.WithLabelValues(obs.AuthReaperSignup)
+	start := float64(time.Now().Unix())
+
+	signupreaper.New(&fakeOrphanStore{}, signupreaper.Options{Logger: silent()}).Sweep(context.Background())
+	if got := testutil.ToFloat64(g); got < start {
+		t.Fatalf("liveness gauge after ok sweep = %v, want >= %v", got, start)
+	}
+	if iv := testutil.ToFloat64(obs.AuthReaperIntervalSeconds.WithLabelValues(obs.AuthReaperSignup)); iv != signupreaper.DefaultInterval.Seconds() {
+		t.Fatalf("interval gauge = %v, want %v", iv, signupreaper.DefaultInterval.Seconds())
+	}
+
+	// Failing is not dead: the errors counter reports the failure, the
+	// liveness gauge reports the reaper is still running.
+	g.Set(0)
+	failing := &fakeOrphanStore{err: errors.New("deadlock detected")}
+	signupreaper.New(failing, signupreaper.Options{Logger: silent()}).Sweep(context.Background())
+	if got := testutil.ToFloat64(g); got < start {
+		t.Fatalf("liveness gauge after failed sweep = %v, want >= %v (failed != dead)", got, start)
+	}
+}

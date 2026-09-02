@@ -1720,6 +1720,34 @@ swept once settled (48 h, live locks exempt).
 Alert: `stellarindex_login_code_lockout_table_growing` →
 [login-code-lockout-table-growing](../../operations/runbooks/login-code-lockout-table-growing.md).
 
+### `stellarindex_auth_reaper_last_sweep_unix`
+
+Gauge, labelled `reaper` ∈ {`login_code`, `magic_link`, `signup`}. Set at
+the END of every completed sweep of the three auth-table reapers in the
+API binary (`internal/logincodereaper`, `internal/magiclinkreaper`,
+`internal/signupreaper`) — including sweeps that FAILED (a failing reaper
+is alive; its errors counter reports the failure), excluding the
+ctx-cancelled early return (that is the reaper going away).
+
+Why it exists (#368 M5): each reaper already reported WHAT it did, none
+reported THAT it ran. A reaper that dies leaves its rows gauge frozen at
+the last healthy value and its errors counter at zero — the bound on an
+attacker-fillable table is lost with every other signal reading "fine".
+Read this next to the rows gauges: a flat rows gauge with a stale sweep
+timestamp is a dead reaper, not a quiet table.
+
+A disabled reaper (config-gated, never constructed) publishes no series.
+
+Alert: `stellarindex_auth_reaper_stalled` →
+[auth-reaper-stalled](../../operations/runbooks/auth-reaper-stalled.md).
+
+### `stellarindex_auth_reaper_interval_seconds`
+
+Gauge, labelled `reaper` (same values). The configured sweep cadence,
+published once at construction so the stalled alert's threshold
+(3 × interval) follows each deployment's own setting instead of a
+hard-coded hour.
+
 ### `stellarindex_login_code_lockout_rows_deleted_total`
 
 Counter, unlabelled.

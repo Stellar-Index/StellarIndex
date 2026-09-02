@@ -281,6 +281,8 @@ func registerAppMetricsTail() {
 		ProtocolDetailRefreshTotal,
 		ProtocolDetailRefreshDurationSeconds,
 		WorkerPanicsTotal,
+		AuthReaperLastSweepUnix,
+		AuthReaperIntervalSeconds,
 	)
 
 	seedBoundedLabelSeries()
@@ -4044,6 +4046,52 @@ var WorkerPanicsTotal = prometheus.NewCounterVec(
 		Help: "Panics recovered by worker.Recover, per background worker name. Each one is a worker that is now STOPPED until the process restarts.",
 	},
 	[]string{"worker"},
+)
+
+// Auth-reaper liveness (#368 M5). Three background reapers bound the
+// attacker-fillable / speculative auth tables (login_code_lockouts,
+// magic_link_tokens, speculative-account orphans). Each already reports
+// WHAT it did — rows deleted, errors, row-count gauges — but none reported
+// THAT it ran. A reaper that dies (panic, hung Postgres call, never
+// started) leaves every one of those signals frozen at a healthy-looking
+// value, so the bound is lost silently. Two gauges, one label:
+//
+//	stellarindex_auth_reaper_last_sweep_unix{reaper}   set at the END of
+//	    every Sweep — INCLUDING failed sweeps (a failing reaper is alive;
+//	    its errors counter says so), EXCLUDING the ctx-cancelled early
+//	    return (that is the reaper going away, which is what we want to
+//	    see).
+//	stellarindex_auth_reaper_interval_seconds{reaper}  the configured
+//	    cadence, set once at construction, so the alert threshold is
+//	    relative to the deployment's own interval rather than a
+//	    hard-coded hour.
+//
+// Alert: stellarindex_auth_reaper_stalled — time() - last_sweep >
+// 3 × interval, for 15m. A DISABLED reaper (config-gated, never
+// constructed) publishes no series and therefore never alerts: absence is
+// a configuration choice, not a death.
+const (
+	AuthReaperLoginCode = "login_code"
+	AuthReaperMagicLink = "magic_link"
+	AuthReaperSignup    = "signup"
+)
+
+// AuthReaperLastSweepUnix — see the auth-reaper liveness note above.
+var AuthReaperLastSweepUnix = prometheus.NewGaugeVec(
+	prometheus.GaugeOpts{
+		Name: "stellarindex_auth_reaper_last_sweep_unix",
+		Help: "Unix time of the most recent COMPLETED sweep of each auth-table reaper (login_code|magic_link|signup); failed sweeps count, cancelled ones do not.",
+	},
+	[]string{"reaper"},
+)
+
+// AuthReaperIntervalSeconds — see the auth-reaper liveness note above.
+var AuthReaperIntervalSeconds = prometheus.NewGaugeVec(
+	prometheus.GaugeOpts{
+		Name: "stellarindex_auth_reaper_interval_seconds",
+		Help: "Configured sweep cadence of each auth-table reaper, in seconds (the stalled alert's threshold is 3x this).",
+	},
+	[]string{"reaper"},
 )
 
 var ExplorerSWRRefreshTotal = prometheus.NewCounterVec(

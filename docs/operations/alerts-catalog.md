@@ -459,6 +459,7 @@ auto-unfreeze at all. Rules in
 | `stellarindex_monthly_quota_fail_open` | `sum(rate(stellarindex_monthly_quota_fail_open_total[5m]))` | > 0 for ≥ 10 min (metered-spend ceiling bypassing on a counter read error) | P3 | [monthly-quota-fail-open](runbooks/monthly-quota-fail-open.md) |
 | `stellarindex_admin_audit_write_failing` | `sum by (surface) (increase(stellarindex_admin_audit_write_failures_total[1h]))` | > 0 for ≥ 5 min (a privileged mutation committed with no durable audit row) | P3 | [admin-audit-write-failing](runbooks/admin-audit-write-failing.md) |
 | `stellarindex_login_code_lockout_table_growing` | `stellarindex_login_code_lockout_rows` **or** `increase(stellarindex_login_code_lockout_errors_total{op="status_check"}[1h])` | rows > 10000, **or** any fail-open, for ≥ 30 min (a table an unauthenticated caller keys, or the code-brute-force bound not being enforced) | P3 | [login-code-lockout-table-growing](runbooks/login-code-lockout-table-growing.md) |
+| `stellarindex_auth_reaper_stalled` | `time() - stellarindex_auth_reaper_last_sweep_unix{reaper}` vs `3 × stellarindex_auth_reaper_interval_seconds{reaper}` | a reaper (login_code / magic_link / signup) has not completed a sweep for > 3× its cadence, for ≥ 15 min (its rows gauge is frozen, not healthy) | P3 | [auth-reaper-stalled](runbooks/auth-reaper-stalled.md) |
 | `stellarindex_tls_cert_expiring_soon` | `stellarindex_tls_cert_not_after_unix - time()` per host | < 14 days for ≥ 1 h | P2 | [tls-cert-expiring-soon](runbooks/tls-cert-expiring-soon.md) |
 
 ## Supply alerts

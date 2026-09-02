@@ -129,6 +129,7 @@ func New(store LockoutStore, opts Options) *Reaper {
 	if r.interval <= 0 {
 		r.interval = DefaultInterval
 	}
+	obs.AuthReaperIntervalSeconds.WithLabelValues(obs.AuthReaperLoginCode).Set(r.interval.Seconds())
 	if r.retention <= 0 {
 		r.retention = DefaultRetention
 	}
@@ -179,6 +180,9 @@ func (r *Reaper) Sweep(ctx context.Context) {
 		r.logger.Info("login-code-lockout reaper: deleted settled rows", "deleted", deleted)
 	}
 	r.refreshGauge(ctx)
+	// Liveness (#368 M5): the sweep COMPLETED — including the failure arm
+	// above; only the cancelled early return skips this.
+	obs.AuthReaperLastSweepUnix.WithLabelValues(obs.AuthReaperLoginCode).Set(float64(r.now().Unix()))
 }
 
 // refreshGauge publishes the current row count. A count failure is
