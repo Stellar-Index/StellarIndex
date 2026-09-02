@@ -1,6 +1,6 @@
 ---
 title: VWAP & price-aggregation methodology
-last_verified: 2026-08-28
+last_verified: 2026-09-02
 status: current
 ---
 
@@ -126,9 +126,13 @@ VWAP until an operator explicitly registers it. A typo can never quietly
 inject unauthorised data into the average.
 
 **Trust in the trades themselves:** every on-chain source is attributed
-by contract identity (ADR-0035) so a look-alike contract can't inject
-fabricated trades under a protocol's name — with **one known exception,
-Comet**, which still matches on topic bytes alone (CS-026). See the
+by contract identity (ADR-0035), so a look-alike contract cannot inject
+fabricated trades under a protocol's name. Comet was the last source
+matching on topic bytes alone; it has been gated on a curated allowlist
+since 2026-07-08 (CS-026 closed), so there is no longer an exception.
+One limit worth stating plainly: gating governs what is recorded from the
+date each source was gated onward — earlier rows came from the prior
+decoder and have not been retroactively re-verified. See the
 [per-protocol verification pages](../protocols/README.md).
 
 ## Stablecoin → fiat proxy (late binding)
