@@ -147,6 +147,106 @@ the only open PR is #237 (legal pages — Ash's, parked). Branches: main +
 verify-at-HEAD → propose → adversarial review → fix → verify → close with
 evidence; ten read-only verifier agents dispatched by area, fixers follow.
 
+### Execution log — 2026-09-02 (evening: verified issue-clearing wave)
+
+**Method, set by Ash.** Every issue goes verify-at-HEAD → propose →
+adversarial review of the proposal → fix → independent verification →
+close with evidence. No issue closes on a self-report. Ten read-only
+verifiers re-checked every open issue against HEAD first; their reports
+are the working set (kept out of this repo, they carry live infra
+detail). Fixers then worked in worktrees, and a separate verifier judged
+each diff before it landed. That last step earned its keep twice: it
+caught a patch that would have silently reverted the same day's cache fix
+in `cdn-setup.md`, and two `Matches` call sites the poison-ledger fixer's
+own census had missed.
+
+**Cadence.** Direct-to-main, no PRs, per Ash 2026-09-02. 43 commits.
+
+**Closed on evidence (11):** #339 #343 #344 #357 #358 #360 #362 #427
+#444 #475 #483.
+
+**The findings that mattered more than their issue titles suggested:**
+
+- **#444 — `/v1/operations` had no ledger lower bound on either arm.**
+  One 50-row page read 10.09 M rows / 1.37 GiB / 1.83 s at the origin.
+  Now 0.201 s / 1.04 M rows, measured from r1's `system.query_log` before
+  and after, with a bounded and an unbounded page at a pinned ledger
+  proven to return byte-identical rows.
+- **#362 — the alert catalogue's severity column contradicted the rules
+  in 190 of 203 rows**, and regenerating it surfaced a real operational
+  fact: 15 alerts carry `severity: informational`, which alertmanager
+  routes to a receiver with no config block. They fire, are accepted, and
+  reach nobody. Filed as #485; the policy half is Ash's.
+- **#475 — `galexie-archive-fill` had been failing ~1 run in 3** on
+  `sort | head` under `pipefail`: `head` closes the pipe, systemd's
+  `IgnoreSIGPIPE` turns the signal into EPIPE, `sort` exits 2. The August
+  retry helper could never have fixed it — the AWS call was succeeding.
+  Fixed in five scripts including the ZFS prune loop, where it could
+  abort pruning exactly when the pool fills, plus a lint for the class.
+- **#427 — the config-apply gate could pass on a false green.** A failed
+  sidecar read fell back to the previous tag and diffed nothing. BOTH
+  test-net deploys that day went green that way across five releases of
+  unapplied config.
+- **#336 — an impersonator asset was served the real issuer's oracle
+  rows**, reproduced live on r1: USDC minted by the AQUA issuer returned
+  Circle's four USDC oracle rows, and verification found a second shape
+  the audit missed (a fabricated `USDT-G…`). Gated on the verified
+  catalogue; ten adversarial shapes now fail closed.
+- **#338 — TVL counted tokens the served price path refuses.** Total
+  drops ~$41.5M → ~$40.0M on first refresh, ~$1.1M of it one Aquarius
+  pool whose USTRY leg has a $167 best market. `/v1/assets` already
+  served `price_usd: null` for it, so this brings TVL into agreement with
+  every other surface.
+- **#361/#363 — Band's genesis disagreed across four constants**
+  (60,000,000 vs 50,842,736). The 9.16M-ledger difference shortened the
+  range every completeness and gap check evaluated, so the source could
+  read clean over a window excluding most of its history. Expect band RED
+  until a catch-up runs — `oracle_updates` starts at 60,000,414, and that
+  gap is real.
+- **#371 F1 — one decoder panic was a total ingest outage.** It unwound
+  to LEDGER granularity, discarded every source's outputs for that
+  ledger, refused the cursor advance and exited; systemd restarted onto
+  the same poison event until the unit parked. Guarded at four seams,
+  plus two more the fixer missed.
+- **#368 M2 — an ingest error discarded up to 256 already-cursored
+  events** by returning before the drain, so the next start resumed past
+  them. Silent and permanent, on the exact path a decoder fault takes.
+- **CLAUDE.md described a removed poisoning vector as a live feature** —
+  DeFindex strategy self-registration, deleted 2026-08-25 precisely
+  because the factory is public and the address field caller-supplied.
+  The worst file to carry that claim, since it is what every agent reads
+  first.
+
+**Applied to r1 out of band (do not repeat):** config-assertions ahead of
+migration 0152 (the new want-list is a strict subset, so early apply is a
+no-op; without it `stellarindex_config_assertion_failed` would fire and
+stay); the global Caddy PII log filter; the journald consolidation; the
+Prometheus rules after each rule change; and the SLA-probe key rotated to
+a least-privilege tier after its plaintext appeared in an August
+transcript.
+
+**Test nets.** Both lakes complete and contiguous: testnet ledger 2 →
+4.47M from its 2025-12-17 reset, futurenet ledger 2 → 353k from its
+2026-08-13 reset. Their `/v1/coverage` read 0/14 by construction (#483,
+fixed) because pubnet genesis floors and pubnet contract sets were
+applied to every network.
+
+**Protocol 28 pins ledger close to exactly 5.000 s.** Testnet upgraded at
+ledger 4,365,284 (2026-08-27 17:00:07 UTC) and its six-second ledgers
+went from 0.7% — steady across every era sampled — to zero. That is why
+both test nets show exactly 17,280 ledgers/day while pubnet, still on 27,
+runs ~15,300 (≈5.65 s). Verified against SDF's own testnet Horizon: our
+close times match to the second. **Consequence: pubnet's ledgers/day
+jumps ~13% on upgrade**, so anything sizing a window, a retention horizon
+or a capacity plan from ledgers/day needs re-checking before then.
+
+**Still open and genuinely Ash's:** #334 (no MX/SPF/DMARC — records
+posted), #345 (decks beyond the in-repo proposal), #346 F1/F4 (audit-log
+retention is a comment nothing enforces; the privacy page offers erasure
+that PRV-1 dropped), #378 (staging target, or retire the k6 role in
+favour of the SLA probe), #478 (what `oracle_stale` should mean on a
+change-driven oracle), #485 (whether those 15 alerts should reach anyone).
+
 ### Session refresh — 2026-08-28 (v0.45.0 → v0.47.2 + adversarial plan-audit)
 
 > **Read this before the 2026-08-25 boxes below.** Where an older box says an
