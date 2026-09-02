@@ -136,11 +136,83 @@ func ledgerPolicy(path string, cdnEnabled bool) (string, bool) {
 	return "", false
 }
 
+// ─── Closed-bucket price surfaces — VERY short shared cache ──
+// ADR-0015/0018 is a DETERMINISM contract (byte-identical for the
+// same (pair, window, from_ts)), not a freshness bound — so a shared
+// cache serving a previous closed bucket keeps determinism while
+// breaking the "MOST RECENT closed bucket" clause, which is exactly
+// what the SLA probe measures (150 s target: 60 s bucket + 30 s CAGG
+// end_offset + <=30 s schedule + runtime).
+//
+// A shared TTL of d adds d to the worst-case age of `observed_at`,
+// makes the per-request `as_of` lie by up to d, and extends by d the
+// window in which a pre-freeze price is served with `frozen=false`
+// after a phase-2 freeze fires. The old s-maxage=60 was not provable
+// on any of the three: it can serve a bucket a full bucket behind
+// origin (age <= 210 s, past the 150 s probe bound) and stale
+// `frozen` / `confidence` for two 30 s aggregator ticks.
+//
+// 5 s is: inside the probe bound (<=155 s), inside one aggregator
+// tick, and inside one bucket for the large majority of fills.
+// `max-age` stays 30 s — private client reuse is the client's own
+// copy, not a shared-cache lie. (The only PROVABLE alternative is a
+// per-response s-maxage = secondsUntil(bucketEnd + 30 s); it needs
+// bucket phase in the middleware, which this layer does not have.)
+//
+// /v1/oracle/latest joins them: it is a "latest observation per
+// source" surface with NO closed-bucket contract and no staleness
+// flag, and it sat in the 300 s catalogue band purely because of the
+// `/v1/oracle/` prefix arm below. #344.
+func shortBandPolicy(path string, cdnEnabled bool) (string, bool) {
+	switch {
+	case path == "/v1/price",
+		strings.HasPrefix(path, "/v1/price/batch"),
+		path == "/v1/price/changes",
+		path == "/v1/oracle/latest":
+		if cdnEnabled {
+			return "public, max-age=30, s-maxage=5", true
+		}
+		return "public, max-age=30", true
+
+	// Updates on every bucket close; CDN entry should turn over
+	// inside one bucket so consumers see fresh closed-bucket data.
+	// ─── Current asset / pool state — short cache ───────────────
+	case path == "/v1/assets",
+		strings.HasPrefix(path, "/v1/assets/"),
+		// Pool reserves — CURRENT contract state from the lake; can
+		// change every ledger (~5 s) but the explorer polls it, so
+		// the short band absorbs fan-out while staying honest about
+		// "current". Exact-match: the /v1/pools listing keeps its
+		// longer closed-window cache in the catalogue band below.
+		path == "/v1/pools/reserves",
+		// Native (CAP-38) liquidity-pool reserves — same CURRENT-lake-
+		// state nature as /v1/pools/reserves (both listing + ?pool=).
+		path == "/v1/liquidity-pools",
+		// SDEX order-book depth — CURRENT offer state from the
+		// in-process book, which itself advances every ~60s; the
+		// short band absorbs widget polling without overstating
+		// freshness the snapshot doesn't have.
+		path == "/v1/sdex/orderbook":
+		if cdnEnabled {
+			return "public, max-age=30, s-maxage=60", true
+		}
+		return "public, max-age=30", true
+	}
+	return "", false
+}
+
 func policyForPath(path string, cdnEnabled bool) string {
 	// Closed-ledger detail + the two fast-moving explorer reads (#332 F3)
 	// live in their own helper so this switch stays under the gocyclo
 	// ceiling; see ledgerPolicy for the rationale on each band.
 	if p, ok := ledgerPolicy(path, cdnEnabled); ok {
+		return p
+	}
+	// The two SHORT bands: closed-bucket price surfaces (5s shared) and
+	// current asset/pool state (60s shared). Lifted out of the switch to
+	// stay under the gocyclo ceiling; see shortBandPolicy for why 5s and
+	// not 60s on the price side (#344).
+	if p, ok := shortBandPolicy(path, cdnEnabled); ok {
 		return p
 	}
 	switch {
@@ -230,66 +302,6 @@ func policyForPath(path string, cdnEnabled bool) string {
 			return "public, max-age=10, s-maxage=15"
 		}
 		return "public, max-age=10"
-
-	// ─── Closed-bucket price surfaces — VERY short shared cache ──
-	// ADR-0015/0018 is a DETERMINISM contract (byte-identical for the
-	// same (pair, window, from_ts)), not a freshness bound — so a shared
-	// cache serving a previous closed bucket keeps determinism while
-	// breaking the "MOST RECENT closed bucket" clause, which is exactly
-	// what the SLA probe measures (150 s target: 60 s bucket + 30 s CAGG
-	// end_offset + <=30 s schedule + runtime).
-	//
-	// A shared TTL of d adds d to the worst-case age of `observed_at`,
-	// makes the per-request `as_of` lie by up to d, and extends by d the
-	// window in which a pre-freeze price is served with `frozen=false`
-	// after a phase-2 freeze fires. The old s-maxage=60 was not provable
-	// on any of the three: it can serve a bucket a full bucket behind
-	// origin (age <= 210 s, past the 150 s probe bound) and stale
-	// `frozen` / `confidence` for two 30 s aggregator ticks.
-	//
-	// 5 s is: inside the probe bound (<=155 s), inside one aggregator
-	// tick, and inside one bucket for the large majority of fills.
-	// `max-age` stays 30 s — private client reuse is the client's own
-	// copy, not a shared-cache lie. (The only PROVABLE alternative is a
-	// per-response s-maxage = secondsUntil(bucketEnd + 30 s); it needs
-	// bucket phase in the middleware, which this layer does not have.)
-	//
-	// /v1/oracle/latest joins them: it is a "latest observation per
-	// source" surface with NO closed-bucket contract and no staleness
-	// flag, and it sat in the 300 s catalogue band purely because of the
-	// `/v1/oracle/` prefix arm below. #344.
-	case path == "/v1/price",
-		strings.HasPrefix(path, "/v1/price/batch"),
-		path == "/v1/price/changes",
-		path == "/v1/oracle/latest":
-		if cdnEnabled {
-			return "public, max-age=30, s-maxage=5"
-		}
-		return "public, max-age=30"
-
-	// ─── Current price + asset detail — short cache ─────────────
-	// Updates on every bucket close; CDN entry should turn over
-	// inside one bucket so consumers see fresh closed-bucket data.
-	case path == "/v1/assets",
-		strings.HasPrefix(path, "/v1/assets/"),
-		// Pool reserves — CURRENT contract state from the lake; can
-		// change every ledger (~5 s) but the explorer polls it, so
-		// the short band absorbs fan-out while staying honest about
-		// "current". Exact-match: the /v1/pools listing keeps its
-		// longer closed-window cache in the catalogue band below.
-		path == "/v1/pools/reserves",
-		// Native (CAP-38) liquidity-pool reserves — same CURRENT-lake-
-		// state nature as /v1/pools/reserves (both listing + ?pool=).
-		path == "/v1/liquidity-pools",
-		// SDEX order-book depth — CURRENT offer state from the
-		// in-process book, which itself advances every ~60s; the
-		// short band absorbs widget polling without overstating
-		// freshness the snapshot doesn't have.
-		path == "/v1/sdex/orderbook":
-		if cdnEnabled {
-			return "public, max-age=30, s-maxage=60"
-		}
-		return "public, max-age=30"
 
 	// ─── Historical / closed-bucket / catalogue — longer cache ──
 	// Closed buckets are immutable per ADR-0015 but the
