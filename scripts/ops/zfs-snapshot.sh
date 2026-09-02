@@ -266,7 +266,13 @@ enforce_min_free() {
       log "guard: nothing left to prune (each dataset is down to its newest auto snapshot); free ${free} still < ${ZFS_SNAPSHOT_MIN_FREE_BYTES}"
       return 1
     fi
-    created="$(printf '%s' "$candidates" | awk -F'\t' -v n="$name" '$1==n{print $2; exit}')"
+    # Same EPIPE class as the sort above (#475): `awk ... exit` stops
+    # reading, `printf` is still writing an unbounded $candidates, and
+    # under `set -euo pipefail` the write error takes down the prune loop
+    # exactly when the pool is filling. `exit` is not `head`, which is why
+    # the lint did not see it — the lint now looks for early-exit awk too.
+    # Read from the already-sorted list instead of re-piping.
+    created="$(awk -F'\t' -v n="$name" '$1==n{print $2; exit}' <<<"$sorted_candidates")"
     destroy_auto_snapshot "$name" "min-free guard, created $created"
     # ZFS reclaims space asynchronously; a re-read right after destroy
     # can lag by a txg. Worst case this over-prunes by one snapshot,

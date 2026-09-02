@@ -76,6 +76,9 @@ else
   esac
 
   # Verify the running process matches.
+  # sigpipe-ok: `ss -tlnp` lists listening sockets only — tens of lines,
+  # orders of magnitude under the pipe buffer, so awk's early exit cannot
+  # make ss block on a write (#475).
   actual="$(ss -tlnp 2>/dev/null | awk '/stellarindex-api/ {print $4; exit}')"
   if [ -n "$actual" ]; then
     case "$actual" in

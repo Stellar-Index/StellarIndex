@@ -74,7 +74,12 @@ newest_ledger() {
   # partition's first page of objects), so buffering is free.
   local bucket="$1" parts_raw objs_raw part name ledger
   parts_raw=$(mc ls "$bucket/" 2>/dev/null) || true
-  part=$(printf '%s\n' "$parts_raw" | awk '/\/$/{print $NF; exit}' | sed 's:/$::') || true
+  # Read from the variable, not through a pipe: `awk ... exit` stops
+  # reading and `printf` would take EPIPE on a bucket whose partition
+  # listing outsizes the 64 KiB pipe buffer (#475). Benign here only
+  # because of the trailing `|| true` — which is exactly the kind of
+  # accidental cover that lets the class survive.
+  part=$(awk '/\/$/{print $NF; exit}' <<<"$parts_raw" | sed 's:/$::') || true
   if [ -z "$part" ]; then
     echo "0"
     return

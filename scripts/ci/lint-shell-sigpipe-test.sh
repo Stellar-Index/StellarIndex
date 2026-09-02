@@ -58,6 +58,18 @@ mc ls bucket/ | sort > /tmp/all.txt
 head -n 4 /tmp/all.txt > /tmp/out.txt'
 check "write-then-slice passes" 0 "$TMP/fixed"
 
+mk awkexit offender.sh 'set -euo pipefail
+printf "%s\\n" "$big" | awk "/x/{print; exit}" > /tmp/out.txt'
+check "pipe into an early-exit awk is caught (not just head)" 1 "$TMP/awkexit"
+
+mk sedq offender.sh 'set -euo pipefail
+mc ls bucket/ | sed -n "1p;q" > /tmp/out.txt'
+check "pipe into sed with q is caught" 1 "$TMP/sedq"
+
+mk grepm offender.sh 'set -euo pipefail
+mc ls bucket/ | grep -m 1 thing > /tmp/out.txt'
+check "pipe into grep -m is caught" 1 "$TMP/grepm"
+
 echo "lint-shell-sigpipe-test: escape hatch"
 
 mk okinline ok.sh 'set -euo pipefail

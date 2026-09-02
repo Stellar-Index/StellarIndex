@@ -1,8 +1,13 @@
 #!/usr/bin/env bash
 # lint-shell-sigpipe — refuse `… | head` inside a pipefail shell script.
 #
-# THE BUG CLASS (#475). Under `set -o pipefail`, a pipeline ending in
-# `head -n N` is a coin flip:
+# THE BUG CLASS (#475). Under `set -o pipefail`, a pipeline whose LAST
+# stage stops reading early is a coin flip. `head -n N` is the obvious
+# form, but any early-exit consumer does it: `awk '...{exit}'`,
+# `sed '...q'`, `grep -m N`. The first version of this lint matched only
+# `head`, and an independent review found `awk ... exit` five lines from
+# the fix it shipped with — a lint that catches one spelling of a class
+# licenses the others. Example of the obvious form:
 #
 #     mc ls … | sort | head -n 4 > out      # looks fine, fails ~1 run in 3
 #
@@ -60,10 +65,10 @@ while IFS= read -r f; do
     case "$body$prev" in
       *sigpipe-ok:*) continue ;;
     esac
-    printf 'lint-shell-sigpipe: %s:%s pipes into head under pipefail — write to a file, then head the file\n' "$f" "$line"
+    printf 'lint-shell-sigpipe: %s:%s pipes into an EARLY-EXIT consumer (head / awk exit / sed q / grep -m) under pipefail — land the output in a file or variable first, then slice it\n' "$f" "$line"
     printf '    %s\n' "$body"
     fail=$((fail + 1))
-  done < <(grep -nE '\|[[:space:]]*head([[:space:]]|$)' "$f" | cut -d: -f1 | sed 's/$/:/')
+  done < <(grep -nE '\|[[:space:]]*head([[:space:]]|$)|\|[[:space:]]*awk[^|]*\<exit\>|\|[[:space:]]*sed[^|]*\<q\>|\|[[:space:]]*grep[^|]*-m[[:space:]]*[0-9]' "$f" | cut -d: -f1 | sed 's/$/:/')
 done < <(find "${roots[@]}" -type f -name '*.sh' 2>/dev/null | sort)
 
 if [ "$checked" -eq 0 ]; then
@@ -71,7 +76,7 @@ if [ "$checked" -eq 0 ]; then
   exit 1
 fi
 if [ "$fail" -gt 0 ]; then
-  echo "lint-shell-sigpipe: FAIL — $fail pipe-into-head site(s) in $checked pipefail script(s)" >&2
+  echo "lint-shell-sigpipe: FAIL — $fail early-exit-consumer site(s) in $checked pipefail script(s)" >&2
   exit 1
 fi
-echo "lint-shell-sigpipe: OK — $checked pipefail script(s), no unguarded pipe-into-head"
+echo "lint-shell-sigpipe: OK — $checked pipefail script(s), no unguarded pipe into an early-exit consumer"
