@@ -540,6 +540,26 @@ jobs:
           chmod 700 ~/.ssh
           printf '%s\n' "$SSH_KEY" > ~/.ssh/id_deploy
           chmod 600 ~/.ssh/id_deploy
+          # Make id_deploy the identity for EVERY hop, not just the target
+          # (#434, 2026-09-02). `ssh -i ~/.ssh/id_deploy -o ProxyJump=<jump>
+          # <vm>` applies -i to the VM connection only; the ProxyJump hop is a
+          # separate ssh invocation that does NOT inherit -i and falls back to
+          # the default identity paths — the runner has none, so the jump
+          # connection failed with "Permission denied (publickey,password)"
+          # and the stdio forward closed ("Connection closed by UNKNOWN port
+          # 65535"). Both test-net deploys had failed exactly that way since
+          # 2026-08-31 while the direct-to-jump test below passed, because
+          # that test DOES carry -i — so the diagnostic blamed the VM hop that
+          # was never reached. ansible's --private-key has the same
+          # target-only scope; ssh_config covers it too.
+          cat > ~/.ssh/config <<'SSHCFG'
+          Host *
+            IdentityFile ~/.ssh/id_deploy
+            IdentitiesOnly yes
+            StrictHostKeyChecking yes
+            UserKnownHostsFile ~/.ssh/known_hosts
+          SSHCFG
+          chmod 600 ~/.ssh/config
           # F-1297 (codex audit-2026-05-13): fail fast if the
           # pinned host-key secret is missing instead of falling
           # back to live `ssh-keyscan` — the fallback was a
@@ -610,7 +630,7 @@ jobs:
           if "${probe[@]}" -v "${DEPLOY_USER}@${HOST}" true 2>/tmp/path.err; then
             echo "full path OK — ansible should connect"
           else
-            echo "::error::the jump hop succeeded but the VM '${HOST}' did not. The deploy key reaches the jump host; the failure is the SECOND hop. Check, in order: is sshd listening on the VM; is the deploy public key in ITS authorized_keys; has the VM's host key changed since the pin was captured; does the inventory address still match the VM's NAT address. Verbatim ssh diagnostics below (key material redacted)."
+            echo "::error::the direct test to the jump host passed but the ProxyJump probe to the VM '${HOST}' did not. This does NOT by itself prove the second hop is at fault: before 2026-09-02 the ProxyJump INNER connection did not inherit -i and failed with the same Permission denied + Connection closed by UNKNOWN port 65535 (fixed via ~/.ssh/config above). Check, in order: is sshd listening on the VM; is the deploy public key in ITS authorized_keys; has the VM's host key changed since the pin was captured; does the inventory address still match the VM's NAT address. Verbatim ssh diagnostics below (key material redacted)."
             sed -e 's/[A-Za-z0-9+/=]\{40,\}/<redacted>/g' /tmp/path.err \
               | grep -viE 'identity file|will attempt key|offering|send_pubkey_test' \
               | tail -18 >&2
