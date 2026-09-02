@@ -175,21 +175,47 @@
       # final guardrail above SystemMaxUse).
       SystemKeepFree=300M
       # MaxRetentionSec is an explicit UPPER BOUND on how long any
-      # journal entry may live (#346 F5). It is a no-op today — Caddy's
-      # access-log volume hits SystemMaxUse first, giving an effective
-      # retention of roughly TEN HOURS on r1 — but "we keep logs for at
-      # most a month" is then a property of the configuration rather
-      # than a coincidence of current traffic. Without it, a drop in
-      # request volume silently extends retention, and the privacy page
-      # would be making a claim nothing enforces.
+      # journal entry may live (#346 F5). It is a no-op on volume today
+      # — Caddy's access-log volume hits SystemMaxUse first, giving an
+      # effective retention of roughly TEN HOURS on r1 — but it makes
+      # "we keep logs for at most N" a property of the configuration
+      # rather than a coincidence of current traffic. Without it, a drop
+      # in request volume silently EXTENDS retention and the privacy
+      # page would be claiming something nothing enforces.
       #
-      # The BINDING number for anything published is Loki's
+      # 14 days, not a month: r1 was already running 14d via a
+      # hand-written drop-in (size-limit.conf, root, 2026-05-10) that
+      # sorts AFTER this file and therefore won. Rather than loosen the
+      # live ceiling to match a codified value, the codified value
+      # adopts the tighter live one and the stray file is removed below,
+      # so ansible is authoritative and the two can never disagree again.
+      #
+      # The BINDING number for anything PUBLISHED is Loki's
       # retention_period (720h / 30 days, configs/loki/loki.r1.yml) —
       # journald is the short-lived local buffer, Loki is the archive.
-      MaxRetentionSec=1month
+      MaxRetentionSec=14d
+      # Carried over from the same stray file so removing it changes
+      # nothing about the running configuration.
+      SystemMaxFileSize=50M
       # Rate-limit override (F-0031 closure).
       RateLimitIntervalSec=10s
       RateLimitBurst=50000
+  notify:
+    - Restart systemd-journald
+  tags: [log-discipline, journald]
+
+# The drop-in above supersedes a hand-written one that predates it
+# (/etc/systemd/journald.conf.d/size-limit.conf, root-owned, created
+# 2026-05-10). It sorted lexically AFTER 00-cap.conf, so ITS values won
+# — the applied-but-never-codified case, the mirror image of the usual
+# codified-but-never-applied drift. Every setting it carried
+# (SystemMaxUse, SystemMaxFileSize, MaxRetentionSec) is now in the
+# managed file at the same or tighter value, so removing it is a no-op
+# on behaviour and makes ansible the single authority (#346 F5).
+- name: Remove the superseded hand-written journald drop-in
+  ansible.builtin.file:
+    path: /etc/systemd/journald.conf.d/size-limit.conf
+    state: absent
   notify:
     - Restart systemd-journald
   tags: [log-discipline, journald]
