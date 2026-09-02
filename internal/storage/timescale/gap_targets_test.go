@@ -79,9 +79,10 @@ func TestGapDetectorTargetsCoverAllPerSourceHypertables(t *testing.T) {
 // from refactor" is not a valid reason — delete the entry or the
 // table instead.
 var excludedFromGapDetector = map[string]string{
-	"freeze_events":    "system-state table, not per-source ingest. Populated on demand by /v1/admin/freeze handler; no continuous-coverage invariant.",
-	"mev_events":       "MEV detection sidecar — populated only when an op's effects suggest sandwich/frontrun. Sparse-by-design, not a coverage signal.",
-	"api_usage_events": "HTTP-request usage logging for the platform API, not Stellar-network ingest. No coverage invariant.",
+	"sdex_offer_events": "#358 (2026-09-02): migration 0026 created the table but NO writer has ever existed — nothing in internal/ or cmd/ inserts into it. A target here scanned a permanently-empty table and reported a permanent genesis→tip gap for a phantom source (and made backfill_coverage lie). Re-add the target WITH the writer.",
+	"freeze_events":     "system-state table, not per-source ingest. Populated on demand by /v1/admin/freeze handler; no continuous-coverage invariant.",
+	"mev_events":        "MEV detection sidecar — populated only when an op's effects suggest sandwich/frontrun. Sparse-by-design, not a coverage signal.",
+	"api_usage_events":  "HTTP-request usage logging for the platform API, not Stellar-network ingest. No coverage invariant.",
 	// classic_movements (migration 0105, ADR-0047) doesn't match
 	// perSourcePattern's suffix list (it ends in "_movements", not
 	// "_events"/etc.), so this entry isn't mechanically required by

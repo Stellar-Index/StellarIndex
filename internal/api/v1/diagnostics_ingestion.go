@@ -866,10 +866,6 @@ func sourceFromTargetSource(targetSource string) string {
 		return "comet"
 	case "soroswap-skim":
 		return "soroswap"
-	case "sdex-offers":
-		// sdex-offers projects from the SDEX classic-DEX ledger
-		// path but is reported separately as a target.
-		return targetSource
 	}
 	// Default 1:1 (sdex, soroban-events, cctp, rozo, ...)
 	return targetSource

@@ -396,11 +396,13 @@ var DefaultGapDetectorTargets = []GapDetectorTarget{
 	// SDEX scans 62M trades rows — long ScanCadence so we don't
 	// pile concurrent runs on postgres (see soroban-events comment).
 	{Source: "sdex", Table: "trades", LedgerColumn: "ledger", WhereFilter: "source = 'sdex'", Genesis: 2, MinGapSizeOverride: 1000000, ScanCadence: 6 * time.Hour},
-	// SDEX offer-state events (OfferCreated/OfferUpdated/OfferRemoved)
-	// land in their own hypertable — complement to the trade flow.
-	// An offer-events writer halt would not show up in the trades
-	// gauge above; the dedicated target catches it.
-	{Source: "sdex-offers", Table: "sdex_offer_events", LedgerColumn: "ledger", Genesis: 2},
+	// NO target for sdex_offer_events (#358, 2026-09-02). Migration 0026
+	// created the table but no writer has EVER existed — nothing in
+	// internal/ or cmd/ inserts into it — so a gap-detector target here
+	// scanned a permanently-empty table and reported a permanent
+	// genesis→tip "gap" for a source that does not exist, which is noise
+	// that also made `backfill_coverage` lie about a phantom source. If an
+	// offer-events writer ships, add the target back WITH the writer.
 	// Soroban-DEX sources also write into the unified `trades`
 	// hypertable; each gets a per-source gap-detector target with
 	// a source-tagged WhereFilter. Without these the API's
