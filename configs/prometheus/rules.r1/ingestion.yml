@@ -221,6 +221,42 @@ groups:
             minutes. Usually a contract-event-schema change or a regression
             in the decoder.
 
+      # A decoder CRASHED on an input (#371 F1). The dispatcher recovers
+      # the panic, skips that one input, counts it as a decode error and
+      # lets the ledger complete — which is the only design that does not
+      # turn one decoder's bug into an all-source ingest outage (before
+      # the guard the process exited, systemd restarted it onto the same
+      # cursor, and StartLimitBurst restarts later the unit parked in
+      # `failed`). The trade is only sound if the skip is LOUD, so this
+      # pages on the FIRST occurrence.
+      #
+      # Raw value, not increase(): the counter is process-lifetime and a
+      # poison input usually panics ONCE, so the series is born at 1 and
+      # never moves again — increase() over a series that appears inside
+      # the lookback window evaluates to 0 and would never fire. `> 0`
+      # also keeps firing until the fixed binary is deployed, which is
+      # correct: the decoder is still dropping every event of that shape.
+      - alert: stellarindex_decoder_panicked
+        expr: stellarindex_decoder_panics_total > 0
+        for: 0m
+        labels:
+          severity: page
+          team: stellarindex
+          component: ingestion
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/decoder-panicked.md
+          summary: "decoder {{ $labels.source }} panicked — its events are being SKIPPED (#371 F1)"
+          description: |
+            The {{ $labels.source }} decoder panicked on a ledger input. The
+            dispatcher skipped that input and ingest continued, so the cursor
+            is advancing and every other source is unaffected — but this
+            decoder will keep dropping every event of that shape until a
+            fixed binary ships. The raw event is still in the ClickHouse
+            lake, so nothing is lost permanently. Runbook: find the
+            `decoder panicked` log line (it carries ledger / tx_hash /
+            op_index / stack), fix the decoder, then re-derive the window
+            with projector-replay or ch-rebuild.
+
       # Oracle capture-totality (docs/design/oracle-capture-totality-design.md):
       # an indexed on-chain oracle (Reflector / RedStone / Band) is
       # publishing a symbol / feed_id the canonical allow-list does not

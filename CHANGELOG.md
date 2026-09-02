@@ -70,6 +70,49 @@ against.
   it means lake freshness, ADR-0041 D4); cache health is reported through
   `stellarindex_explorer_swr_refresh_total{cache="native_lp_listing"}`,
   alongside the new `ops_directory` series.
+- **A single poison ledger crash-looped the whole indexer (#371 F1).**
+  `internal/dispatcher` had no `recover()` anywhere, so a panic in any
+  decoder's `Matches` or `Decode` unwound to the LEDGER-level recover in
+  `internal/pipeline/processor.go`, which discarded every source's
+  outputs for that ledger, refused the cursor advance, and exited the
+  process. systemd restarted it onto the same cursor, the same input
+  panicked, and after `StartLimitBurst` restarts the unit parked in
+  `failed` — one decoder's bug stopping all ingest indefinitely. All four
+  dispatch seams (Soroban events, contract calls, classic ops, ledger-
+  entry changes) now guard `Matches` **and** `Decode` together and turn a
+  panic into the decode error each seam already skips on: the one input
+  is lost for the one decoder, the ledger completes, the cursor advances.
+  The skip is loud, not silent — new `stellarindex_decoder_panics_total{source}`,
+  page rule `stellarindex_decoder_panicked` in both rule trees, runbook
+  `decoder-panicked.md` — and the raw event is still in the ClickHouse
+  lake, so ADR-0033 marks the window `complete=false` and
+  `projector-replay` / `ch-rebuild` re-derives it after the decoder fix.
+  Exit codes and supervisor semantics are unchanged.
+- **A MinIO restart could park `stellarindex-indexer` in `failed`
+  (#371 F3).** The live tail overrode the SDK's `RetryWait` to 500 ms for
+  tip latency, but `RetryLimit` stayed at the SDK default of 5 — and
+  since the two are multiplied, a non-NotFound datastore fault
+  (connection refused, 5xx, TLS reset) was tolerated for **2.5 seconds**.
+  A MinIO restart therefore exited the indexer repeatedly until systemd's
+  `StartLimitBurst=10`/`5min` parked the unit, taking ingest, the CH live
+  sink, hashdb and the projector with it until a human ran
+  `systemctl reset-failed`. Fault tolerance is now stated as a time
+  budget (`ledgerstream.Config.LiveRetryBudget`, 5 min in production)
+  with the attempt count derived from the wait actually in force, so
+  tuning tip latency can no longer shrink it; the "ledger not yet
+  written" fast path is untouched (it never consumes an attempt). The
+  indexer unit's restart-storm limit is re-sized from ~100 s to ~10 min
+  of continuous failure (`StartLimitBurst=60`/`15min` at `RestartSec=10s`)
+  in both `deploy/systemd/` and the ansible template, so a dependency
+  outage no longer parks it before the dependency finishes restarting.
+- **The exchangeratesapi FX poller stamped `time.Now()` on an undateable
+  rate board (#371 F7).** A response with `timestamp: 0` carries rates of
+  unknown age; substituting wall-clock re-labelled a possibly-stale board
+  as freshly observed, and this connector is `IncludeInVWAP`, so those
+  rows out-ranked genuinely older quotes in every downstream freshness
+  gate. It now refuses the board with an `ErrAPIRejected`-class error —
+  the same "stop rather than stamp a row we cannot honestly date" rule
+  the base-mismatch check already applied.
 - **coverage:** `/v1/coverage` on testnet / futurenet reported **0 of 14 sources complete BY CONSTRUCTION** (#483) — the completeness catalogue listed the pubnet protocol sources with their pubnet genesis floors (soroswap 50,746,266 against a 4.4M tip) and pubnet contract sets on every network, so the verdict could never go green however complete the lake was. New `internal/sourcenet` classifies each source as pubnet-anchored (ADR-0035 contract identity) or ledger-anchored; the reconciliation catalogue drops the inapplicable ones, `compute-completeness` clears their stale snapshot rows, and the endpoint reports them in `not_applicable_sources` with a reason plus the serving `network`, excluded from every total. Pubnet output is unchanged apart from the two new fields.
 - **alerting:** `stellarindex_stellar_stack_lagging` / `_protocol_lag` could never fire — the alert's static `component: stellar-stack` label overwrote the probe metric's own `component` (core/galexie/archivist), two lagging components collapsed to one labelset and Prometheus rejected the rule (`health: err`, live on r1 with archivist=1 AND galexie=1). The expr now renames the metric label to `stack_component` before the static label is applied; runbook + annotations follow. Both rule trees.
 - **`/v1/oracle/streams` re-ran the oracle scan on every hit (#332 F5).**

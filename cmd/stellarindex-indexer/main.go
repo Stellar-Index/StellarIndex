@@ -234,6 +234,11 @@ func run(cfgPath string, dryRun bool) error {
 	if err != nil {
 		return fmt.Errorf("build dispatcher: %w", err)
 	}
+	// The dispatcher logs exactly one thing — a recovered decoder panic
+	// (#371 F1) — and that line carries the ledger/tx/op coordinate the
+	// runbook needs, so give it this binary's configured logger rather
+	// than letting it fall back to slog.Default().
+	disp.SetLogger(logger)
 
 	// ─── Router attribution sweeper (migration 0025 Phase B) ────
 	// Periodically tags recent same-tx soroswap `trades` rows with

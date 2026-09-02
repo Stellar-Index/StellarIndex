@@ -2,6 +2,7 @@ package pipeline
 
 import (
 	"testing"
+	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/config"
 )
@@ -98,6 +99,53 @@ func TestLedgerstreamConfig_ColdTierSkippedForLiveBucket(t *testing.T) {
 	}
 	if got.ColdDataStoreFactory != nil {
 		t.Error("ColdDataStoreFactory must be nil for the live bucket")
+	}
+}
+
+// TestLedgerstreamConfig_LiveTailRetryPolicy pins BOTH halves of the
+// live-tail retry policy on the bucket that actually gets it (#371 F3).
+//
+// The two are one decision, not two independent knobs: the NotFound
+// fast path (LiveRetryWait — "the tip isn't written yet", retried
+// WITHOUT consuming an attempt) is what keeps ingest lag small, and the
+// fault budget (LiveRetryBudget) is what keeps a MinIO restart from
+// exiting the process. Before the budget existed the first silently
+// determined the second — 500ms × the SDK's RetryLimit of 5 = 2.5
+// SECONDS of tolerance for a dependency that restarts for minutes.
+//
+// The archive bucket is read as a BOUNDED range, where a missing object
+// is a hard error rather than a wait-for-tip, so neither applies there.
+func TestLedgerstreamConfig_LiveTailRetryPolicy(t *testing.T) {
+	t.Parallel()
+	cfg := config.Config{
+		Stellar: config.StellarConfig{Network: "pubnet"},
+		Storage: config.StorageConfig{
+			S3Endpoint:      "http://127.0.0.1:9000",
+			S3Region:        "r1",
+			S3BucketArchive: "galexie-archive",
+			S3BucketLive:    "galexie-live",
+		},
+	}
+
+	live := LedgerstreamConfig(cfg, cfg.Storage.S3BucketLive)
+	if live.LiveRetryWait != liveTailRetryWait {
+		t.Errorf("live LiveRetryWait = %v, want %v (tip-latency fast path)", live.LiveRetryWait, liveTailRetryWait)
+	}
+	if live.LiveRetryBudget != liveTailRetryBudget {
+		t.Errorf("live LiveRetryBudget = %v, want %v", live.LiveRetryBudget, liveTailRetryBudget)
+	}
+	// The property that matters operationally: the tolerated outage has
+	// to outlast a MinIO restart (2-3 min observed, including a config
+	// apply), or the indexer exits and systemd's StartLimit parks it.
+	if live.LiveRetryBudget < 3*time.Minute {
+		t.Errorf("live-tail fault tolerance = %v; a MinIO restart takes 2-3 min, so this must be comfortably longer",
+			live.LiveRetryBudget)
+	}
+
+	archive := LedgerstreamConfig(cfg, cfg.Storage.S3BucketArchive)
+	if archive.LiveRetryWait != 0 || archive.LiveRetryBudget != 0 {
+		t.Errorf("archive bucket got live-tail overrides (wait=%v budget=%v), want both zero - bounded reads keep strict semantics",
+			archive.LiveRetryWait, archive.LiveRetryBudget)
 	}
 }
 

@@ -122,6 +122,38 @@ type Config struct {
 	// missing object there is a hard error, not a wait-for-tip).
 	LiveRetryWait time.Duration
 
+	// LiveRetryBudget is how long a live-tail fetch worker keeps
+	// retrying a datastore FAULT before giving up, for an **unbounded
+	// (live-tail)** stream only (#371 F3). Zero leaves the SDK/derived
+	// RetryLimit untouched.
+	//
+	// The SDK's ledger buffer treats the two failure modes very
+	// differently, and that asymmetry is what this knob exists to
+	// exploit (go-stellar-sdk ingest/ledgerbackend/ledger_buffer.go
+	// `worker`):
+	//
+	//   - `os.ErrNotExist` on an unbounded range — "the tip hasn't been
+	//     written yet". Sleeps RetryWait and retries WITHOUT consuming
+	//     an attempt, forever. This is the hot path on a caught-up
+	//     indexer and LiveRetryWait keeps it fast (see above).
+	//   - anything else (connection refused, 5xx, TLS reset) — consumes
+	//     an attempt; after RetryLimit of them the backend cancels and
+	//     Stream returns, which in the indexer means process exit.
+	//
+	// Because the two share RetryWait, shortening it for tip-latency
+	// also shortened the FAULT tolerance: at LiveRetryWait=500ms and
+	// the SDK's RetryLimit=5, a MinIO blip was survivable for 2.5
+	// SECONDS. A MinIO restart of a couple of minutes therefore exited
+	// the indexer repeatedly until systemd's StartLimit parked the unit
+	// in `failed`. Expressing the tolerance as a TIME budget instead of
+	// an attempt count keeps the two concerns independent: RetryLimit
+	// is derived as ceil(budget / RetryWait), so tuning tip latency can
+	// never again silently shrink fault tolerance.
+	//
+	// Ignored for bounded ranges, like LiveRetryWait: a bounded walk's
+	// missing object is a hard error and its caller decides.
+	LiveRetryBudget time.Duration
+
 	// TolerateTrailingMissing — when true, a bounded Stream that
 	// fails with the SDK's "ledger object containing sequence X is
 	// missing" error is converted to a clean walk-complete (returns
@@ -217,12 +249,13 @@ func Stream(
 		buffered = ingest.DefaultBufferedStorageBackendConfig(lpf)
 	}
 
-	// Live-tail RetryWait override — see Config.LiveRetryWait. Only
-	// an unbounded range (to == 0) waits for the tip; on a bounded
-	// range a missing object is a hard error, so the override is
-	// meaningless there and deliberately not applied.
-	if to == 0 && cfg.LiveRetryWait > 0 {
-		buffered.RetryWait = cfg.LiveRetryWait
+	// Live-tail retry policy — see Config.LiveRetryWait /
+	// Config.LiveRetryBudget. Only an unbounded range (to == 0) waits
+	// for the tip; on a bounded range a missing object is a hard error,
+	// so the overrides are meaningless there and deliberately not
+	// applied.
+	if to == 0 {
+		applyLiveRetryPolicy(cfg, &buffered)
 	}
 
 	var ledgerRange ledgerbackend.Range
@@ -270,6 +303,44 @@ func Stream(
 		)
 	}
 	return maybeTolerateTrailingMissing(cfg, from, to, delivered, err)
+}
+
+// applyLiveRetryPolicy stamps the live-tail retry overrides onto the
+// BufferedStorageBackend config (#371 F3). Split out of [Stream] so the
+// policy — not just its inputs — is unit-testable: the ONLY correctness
+// property that matters here is that the derived attempt count times the
+// wait covers the configured budget, and that is invisible from Stream's
+// signature.
+//
+// Order is load-bearing: RetryWait is overridden first, because the
+// attempt count is derived FROM it. Deriving the limit from the SDK's
+// 30s default while the worker actually sleeps 500ms would give a
+// tolerance 60× shorter than asked for — the same coupling bug in a new
+// costume.
+//
+// Callers must gate on the range being unbounded; see [Stream].
+func applyLiveRetryPolicy(cfg Config, buffered *ledgerbackend.BufferedStorageBackendConfig) {
+	if cfg.LiveRetryWait > 0 {
+		buffered.RetryWait = cfg.LiveRetryWait
+	}
+	if limit := liveRetryLimit(buffered.RetryWait, cfg.LiveRetryBudget); limit > 0 {
+		buffered.RetryLimit = limit
+	}
+}
+
+// liveRetryLimit converts a wall-clock fault-tolerance budget into the
+// SDK's attempt count, rounding UP so the budget is a floor rather than
+// a ceiling. Returns 0 (meaning "leave the SDK default alone") when
+// either input is non-positive.
+func liveRetryLimit(wait, budget time.Duration) uint32 {
+	if wait <= 0 || budget <= 0 {
+		return 0
+	}
+	attempts := (budget + wait - 1) / wait
+	if attempts < 1 {
+		attempts = 1
+	}
+	return uint32(attempts)
 }
 
 // validateRange rejects malformed ranges before PrepareRange. A

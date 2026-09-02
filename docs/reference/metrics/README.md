@@ -463,6 +463,57 @@ canonical-invariant violations. Distinct from `orphan_events`
 deltas after each processed ledger. Denominator is
 `stellarindex_source_matched_events_total`.
 
+Includes recovered decoder PANICS — see
+`stellarindex_decoder_panics_total` below, which is the strict subset
+of this counter that crashed rather than refused.
+
+### `stellarindex_decoder_panics_total`
+
+Counter, label `source`.
+
+Decoder panics the dispatcher recovered and converted into a decode
+error (#371 F1). Incremented in `internal/dispatcher/panic_guard.go`
+from all four dispatch seams — Soroban events, contract calls, classic
+ops, ledger-entry changes — and covering `Matches` as well as `Decode`,
+because a decoder that crashes deciding whether it owns an input is as
+broken as one that crashes parsing it.
+
+**When to look at this:** the moment it is non-zero. A recovered panic
+means a decoder is dropping every event of that shape, silently, and
+will keep doing so until a fixed binary ships. Nothing else in the
+ingest path complains: the input is skipped, the ledger completes, the
+cursor advances, and the only downstream tell is `/v1/coverage` turning
+`complete=false` for that window after the next ADR-0033 re-derive.
+
+Before the guard existed this class of bug had a much louder failure
+mode and a much worse one: the panic escaped to the LEDGER-level
+recover in `internal/pipeline/processor.go`, which discarded every
+source's outputs for the ledger and returned an error that exited the
+indexer process. systemd restarted it onto the same cursor, the same
+input panicked, and `StartLimitBurst` restarts later the unit parked in
+`failed` — one decoder's bug stopping all ingest indefinitely. The
+counter is what buys the right to skip instead.
+
+Chart it against `stellarindex_source_decode_errors_total` (this is a
+strict subset) — the shape matters: one increment is a single poison
+event; a value climbing every ledger is a whole event schema the
+decoder no longer understands, i.e. that source is dark from that
+ledger on.
+
+Alert: `stellarindex_decoder_panicked` (`> 0`, page) → runbook
+[decoder-panicked](../../operations/runbooks/decoder-panicked.md).
+The expression deliberately reads the raw value rather than
+`increase(...)`: the counter is process-lifetime and a poison input
+typically panics once, so the series is born at 1 and never moves —
+`increase()` over a series that first appears inside its own lookback
+window evaluates to 0 and the page would never fire.
+
+An ABSENT series means "this process has recovered no decoder panic
+since boot". Because the alert is a raw-value comparison rather than a
+rate, absence is unambiguous, which is why this counter is deliberately
+NOT pre-seeded in `seedBoundedLabelSeries` the way the `increase()`- and
+`rate()`-based counters are.
+
 ### `stellarindex_source_unknown_symbols_total`
 
 Counter, label `source`.

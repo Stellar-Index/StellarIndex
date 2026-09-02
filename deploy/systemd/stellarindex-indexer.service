@@ -42,8 +42,28 @@ Requires=postgresql.service
 # placed under [Service]. When more than StartLimitBurst restarts occur
 # within StartLimitIntervalSec the unit enters `failed`, which the
 # node_systemd_unit_state{state="failed"} alert pages on.
-StartLimitIntervalSec=5min
-StartLimitBurst=10
+#
+# Sized as a DEPENDENCY-OUTAGE budget, not a magic number (#371 F3).
+# With RestartSec=10s below, 60 restarts is ~10 minutes of continuous
+# failure before the unit parks — comfortably longer than a MinIO or
+# Postgres restart (2-3 min observed on r1, including a config apply),
+# and the interval must exceed 60 × 10s = 600s or the burst could never
+# accumulate inside the window and the unit would hot-loop forever
+# instead of parking. Was 10/5min, i.e. ~100 SECONDS: an indexer that
+# exits on a dependency blip was parked in `failed` before the
+# dependency finished restarting, needing a human `systemctl
+# reset-failed` to bring ingest back.
+#
+# What this does NOT do, so nobody plans around it: a permanently broken
+# config (bad credentials, deleted bucket) will not park the unit either.
+# With the retry budget in force the process survives ~5 min per attempt
+# and RestartSec adds 10s, so a start cycle is ~5min10s — it can never
+# reach 60 starts inside a 15-minute window, and `systemd_unit_failed`
+# therefore never fires for that fault. The cover is the ingest-side
+# alert (`all_sources_stopped`, page, ~3-8 min), which is the honest
+# signal for "the indexer is up but is not ingesting" anyway.
+StartLimitIntervalSec=15min
+StartLimitBurst=60
 
 [Service]
 Type=simple
@@ -83,9 +103,11 @@ LimitNOFILE=1048576
 LimitNPROC=1048576
 
 # Restart on crash but with backoff to avoid hot-looping on a
-# config-side break (e.g. DB unreachable). The restart-storm limit
-# that marks the unit `failed` (and pages via node_systemd_unit_state)
-# lives in [Unit] (StartLimit*) — see the comment there.
+# config-side break (e.g. DB unreachable). 10s matches
+# stellarindex-aggregator; the API uses 5s because it is customer-
+# facing. The restart-storm limit that marks the unit `failed` (and
+# pages via node_systemd_unit_state) lives in [Unit] (StartLimit*) —
+# see the comment there, which derives its burst FROM this value.
 Restart=on-failure
 RestartSec=10s
 

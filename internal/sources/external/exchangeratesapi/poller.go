@@ -171,10 +171,19 @@ func (p *Poller) PollOnce(ctx context.Context, pairs []canonical.Pair) ([]canoni
 		return nil, nil, fmt.Errorf("%w: base mismatch — requested %q, got %q", ErrAPIRejected, base, lr.Base)
 	}
 
-	ts := time.Unix(lr.Timestamp, 0).UTC()
 	if lr.Timestamp == 0 {
-		ts = time.Now().UTC()
+		// Refuse rather than stamp wall-clock (#371 F7). The venue's
+		// `timestamp` is when the RATE was observed; substituting
+		// time.Now() re-labels a quote of unknown age as fresh, and
+		// this connector is IncludeInVWAP — so a stale (or replayed)
+		// board would have been priced as a current one and would have
+		// out-ranked genuinely older quotes in every freshness gate
+		// downstream. Same reasoning, and the same error class, as the
+		// base-mismatch arm above: stop rather than stamp a row we
+		// cannot honestly date.
+		return nil, nil, fmt.Errorf("%w: missing timestamp — refusing to stamp %d rate(s) with wall-clock time", ErrAPIRejected, len(lr.Rates))
 	}
+	ts := time.Unix(lr.Timestamp, 0).UTC()
 
 	updates := make([]canonical.OracleUpdate, 0, len(lr.Rates))
 	baseAsset, err := canonical.NewFiatAsset(base)

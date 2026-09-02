@@ -153,6 +153,32 @@ func TestPollOnce_BaseMismatch_Rejected(t *testing.T) {
 	}
 }
 
+// TestPollOnce_MissingTimestamp_Rejected pins #371 F7: a response with
+// `timestamp: 0` carries rates of UNKNOWN age, and the poller used to
+// substitute time.Now() — re-labelling a possibly-stale (or replayed)
+// board as freshly observed. This connector is IncludeInVWAP, so those
+// rows would have out-ranked genuinely older quotes in every freshness
+// gate downstream. Refuse instead, same error class as the base
+// mismatch: emit nothing rather than a row we cannot honestly date.
+func TestPollOnce_MissingTimestamp_Rejected(t *testing.T) {
+	srv := newTestServer(t, `{
+      "success": true, "timestamp": 0, "base": "USD", "date": "2026-04-24",
+      "rates": {"EUR": 0.9235, "GBP": 0.7845}
+    }`, http.StatusOK)
+	defer srv.Close()
+
+	p, _ := NewPoller("TEST_KEY")
+	p.Endpoint = srv.URL
+	updates, quotes, err := p.PollOnce(context.Background(), buildPairs(t))
+	if !errors.Is(err, ErrAPIRejected) {
+		t.Fatalf("expected ErrAPIRejected for a missing timestamp, got %v", err)
+	}
+	if len(updates) != 0 || len(quotes) != 0 {
+		t.Errorf("emitted %d update(s) / %d quote(s) on an undateable board, want none",
+			len(updates), len(quotes))
+	}
+}
+
 func TestPollOnce_UnknownCurrencySkipped(t *testing.T) {
 	// Venue returns an obscure currency not on our allow-list;
 	// skip per-entry, keep emitting the rest.

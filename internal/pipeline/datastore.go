@@ -25,6 +25,32 @@ import (
 // ledgerstream.Config.LiveRetryWait.
 const liveTailRetryWait = 500 * time.Millisecond
 
+// liveTailRetryBudget is how long the live tail keeps retrying a
+// datastore FAULT (connection refused, 5xx, TLS reset) before the
+// stream gives up — as opposed to a "the tip isn't written yet" miss,
+// which the SDK retries forever without consuming attempts. See
+// ledgerstream.Config.LiveRetryBudget for the mechanism.
+//
+// #371 F3: this used to be an accident rather than a decision. The SDK
+// pairs RetryWait with RetryLimit=5, so shortening RetryWait to 500ms
+// above for tip latency also shortened MinIO-fault tolerance to 5 ×
+// 500ms = **2.5 seconds**. MinIO is a local systemd unit that restarts
+// for upgrades and config applies; a restart of a couple of minutes
+// therefore killed stellarindex-indexer over and over until systemd's
+// StartLimit parked the unit in `failed` — taking ingest, the CH live
+// sink, hashdb and the projector down with it, and needing a human
+// `systemctl reset-failed` to come back.
+//
+// 5 minutes is chosen to comfortably exceed a MinIO restart (observed
+// 2–3 min worst case, including a config apply) plus the host-level
+// blips that accompany one. The cost of the wait is bounded and cheap:
+// the retries are against a refused local socket, and a genuinely
+// permanent fault (bad credentials, deleted bucket) still surfaces —
+// five minutes later, well inside what the cursor-lag alerts cover.
+// It does NOT slow the tip: a not-yet-written ledger never consumes an
+// attempt, so caught-up re-checks still happen every liveTailRetryWait.
+const liveTailRetryBudget = 5 * time.Minute
+
 // LedgerstreamConfig builds a ledgerstream.Config pointing at one
 // galexie bucket. Pass cfg.Storage.S3BucketArchive for historical
 // reads (ledger < seam) or S3BucketLive for the live tail.
@@ -68,11 +94,15 @@ func LedgerstreamConfig(cfg config.Config, bucket string) ledgerstream.Config {
 		TolerateTrailingMissing: true,
 	}
 
-	// Live-tail latency: the live bucket is read as an unbounded
-	// stream, so shorten RetryWait (archive reads are bounded and
-	// ignore it). galexie-live is the only bucket that gets this.
+	// Live-tail latency + fault tolerance: the live bucket is read as
+	// an unbounded stream, so shorten RetryWait (archive reads are
+	// bounded and ignore it) and state the fault-tolerance budget
+	// EXPLICITLY rather than inheriting whatever RetryWait × the SDK's
+	// RetryLimit happens to come to. galexie-live is the only bucket
+	// that gets either.
 	if bucket == cfg.Storage.S3BucketLive {
 		out.LiveRetryWait = liveTailRetryWait
+		out.LiveRetryBudget = liveTailRetryBudget
 	}
 
 	// Tiered-read opt-in: only attach a ColdDataStore when the

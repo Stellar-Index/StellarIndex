@@ -50,6 +50,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"sync"
 	"time"
 
@@ -438,6 +439,15 @@ type Dispatcher struct {
 	// there. See [Dispatcher.SetRawEventSink].
 	rawEventSink RawEventSink
 
+	// logger is used by exactly one code path: the decoder-panic guard
+	// (#371 F1, see recordDecoderPanic). The dispatcher is otherwise
+	// silent by design — every other signal it produces is a counter
+	// the caller mirrors into obs — but a recovered panic has to carry
+	// its stack and ledger coordinate somewhere an operator can read.
+	// Nil is fine: [Dispatcher.log] falls back to slog.Default(). See
+	// [Dispatcher.SetLogger].
+	logger *slog.Logger
+
 	// statsMu guards every read + write of the counter fields below
 	// (eventsSeen / decodeErrors / unmatchedHits / txReadErrors).
 	// ProcessLedger mutates them on the dispatch goroutine while the
@@ -630,6 +640,15 @@ type RawEventSink interface {
 // ADR-0029 for the design rationale.
 func (d *Dispatcher) SetRawEventSink(sink RawEventSink) {
 	d.rawEventSink = sink
+}
+
+// SetLogger installs the logger the decoder-panic guard writes to
+// (#371 F1). Nil leaves the fallback in place (slog.Default()), so a
+// dispatcher built without one still reports a recovered panic — just
+// without the binary/format the operator configured. Not safe
+// concurrent with ProcessLedger; called once at startup.
+func (d *Dispatcher) SetLogger(logger *slog.Logger) {
+	d.logger = logger
 }
 
 // Stats is a snapshot of the dispatcher's internal counters. Keyed
@@ -1202,17 +1221,29 @@ func walkV4Operations(ops []xdr.OperationMetaV2, dispatch func(int, xdr.LedgerEn
 // statsMu (F-1317). Called pre-Decode on every matched input across
 // all four dispatch seams. The lock is held only for the single map
 // write so the decoder's own work runs lock-free.
+//
+// Lazily initialises the map, like bumpUncorroborated: since #371 F1
+// this is also called from the decoder-panic guard, and a nil-map write
+// there would panic INSIDE the recover handler — turning a contained
+// decoder fault back into the process crash the guard exists to remove.
 func (d *Dispatcher) bumpEventsSeen(name string) {
 	d.statsMu.Lock()
+	if d.eventsSeen == nil {
+		d.eventsSeen = map[string]int{}
+	}
 	d.eventsSeen[name]++
 	d.statsMu.Unlock()
 }
 
 // bumpDecodeError increments the per-source decode-error counter
 // under statsMu (F-1317). Called when a matched decoder's Decode
-// returns an error.
+// returns an error — or panics (#371 F1); see bumpEventsSeen for why
+// the map is lazily initialised.
 func (d *Dispatcher) bumpDecodeError(name string) {
 	d.statsMu.Lock()
+	if d.decodeErrors == nil {
+		d.decodeErrors = map[string]int{}
+	}
 	d.decodeErrors[name]++
 	d.statsMu.Unlock()
 }
@@ -1268,7 +1299,7 @@ func (d *Dispatcher) contractCallPathActive() bool {
 // even if nothing downstream claims it" discipline as the event
 // path — see the widened gate in ProcessLedger that keeps this hook
 // live even when zero ContractCallDecoders are registered.
-func (d *Dispatcher) dispatchContractCall(ctx ContractCallContext) ([]consumer.Event, error) {
+func (d *Dispatcher) dispatchContractCall(ctx ContractCallContext) (outs []consumer.Event, err error) {
 	if d.discoverySink != nil {
 		if hit, ok := discovery.SniffOracleCall(discovery.OracleCallInput{
 			ContractID:        ctx.ContractID,
@@ -1279,7 +1310,22 @@ func (d *Dispatcher) dispatchContractCall(ctx ContractCallContext) ([]consumer.E
 			d.discoverySink.Push(hit)
 		}
 	}
+	// Decoder-panic guard (#371 F1) — installed AFTER the discovery
+	// hook so it covers Matches+Decode and nothing else. See
+	// recordDecoderPanic for why a panic becomes this seam's ordinary
+	// decode error.
+	var (
+		current string
+		seen    bool
+	)
+	defer func() {
+		if r := recover(); r != nil {
+			outs, err = nil, d.recordDecoderPanic(current, seen, r,
+				panicSite{Ledger: ctx.Ledger, TxHash: ctx.TxHash, OpIndex: ctx.OpIndex})
+		}
+	}()
 	for _, ccd := range d.contractCallDecoders {
+		current, seen = ccd.Name(), false
 		if !ccd.Matches(ctx.ContractID, ctx.FunctionName) {
 			continue
 		}
@@ -1297,12 +1343,13 @@ func (d *Dispatcher) dispatchContractCall(ctx ContractCallContext) ([]consumer.E
 			return nil, nil
 		}
 		d.bumpEventsSeen(ccd.Name())
-		outs, err := ccd.Decode(ctx)
-		if err != nil {
+		seen = true
+		got, derr := ccd.Decode(ctx)
+		if derr != nil {
 			d.bumpDecodeError(ccd.Name())
-			return nil, err
+			return nil, derr
 		}
-		return outs, nil
+		return got, nil
 	}
 	return nil, nil
 }
@@ -1318,18 +1365,31 @@ func (d *Dispatcher) RouteContractCall(ctx ContractCallContext) ([]consumer.Even
 // are silently dropped — entry changes are high-volume (every
 // successful tx produces several) so an unmatched-counter would
 // dominate the metric.
-func (d *Dispatcher) dispatchEntryChange(ctx LedgerEntryChangeContext) ([]consumer.Event, error) {
+func (d *Dispatcher) dispatchEntryChange(ctx LedgerEntryChangeContext) (outs []consumer.Event, err error) {
+	// Decoder-panic guard (#371 F1) — see recordDecoderPanic.
+	var (
+		current string
+		seen    bool
+	)
+	defer func() {
+		if r := recover(); r != nil {
+			outs, err = nil, d.recordDecoderPanic(current, seen, r,
+				panicSite{Ledger: ctx.Ledger, TxHash: ctx.TxHash, OpIndex: ctx.OpIndex})
+		}
+	}()
 	for _, ld := range d.entryDecoders {
+		current, seen = ld.Name(), false
 		if !ld.Matches(ctx.Change) {
 			continue
 		}
 		d.bumpEventsSeen(ld.Name())
-		outs, err := ld.Decode(ctx)
-		if err != nil {
+		seen = true
+		got, derr := ld.Decode(ctx)
+		if derr != nil {
 			d.bumpDecodeError(ld.Name())
-			return nil, err
+			return nil, derr
 		}
-		return outs, nil
+		return got, nil
 	}
 	return nil, nil
 }
@@ -1342,18 +1402,31 @@ func (d *Dispatcher) RouteEntryChange(ctx LedgerEntryChangeContext) ([]consumer.
 }
 
 // dispatchOp runs one operation through the op-decoder chain.
-func (d *Dispatcher) dispatchOp(ctx OpContext) ([]consumer.Event, error) {
+func (d *Dispatcher) dispatchOp(ctx OpContext) (outs []consumer.Event, err error) {
+	// Decoder-panic guard (#371 F1) — see recordDecoderPanic.
+	var (
+		current string
+		seen    bool
+	)
+	defer func() {
+		if r := recover(); r != nil {
+			outs, err = nil, d.recordDecoderPanic(current, seen, r,
+				panicSite{Ledger: ctx.Ledger, TxHash: ctx.TxHash, OpIndex: ctx.OpIndex})
+		}
+	}()
 	for _, od := range d.opDecoders {
+		current, seen = od.Name(), false
 		if !od.Matches(ctx.Op) {
 			continue
 		}
 		d.bumpEventsSeen(od.Name())
-		outs, err := od.Decode(ctx)
-		if err != nil {
+		seen = true
+		got, derr := od.Decode(ctx)
+		if derr != nil {
 			d.bumpDecodeError(od.Name())
-			return nil, err
+			return nil, derr
 		}
-		return outs, nil
+		return got, nil
 	}
 	return nil, nil
 }
@@ -1398,7 +1471,7 @@ func (d *Dispatcher) Route(ev events.Event) ([]consumer.Event, error) {
 // regardless of whether topic[0] decodes to a watched symbol (this
 // hook is the catch-all for every Soroban contract event,
 // powering the `soroban_events` raw-event landing zone).
-func (d *Dispatcher) dispatchOne(ev events.Event) ([]consumer.Event, error) {
+func (d *Dispatcher) dispatchOne(ev events.Event) (outs []consumer.Event, err error) {
 	if d.discoverySink != nil {
 		if hit, ok := discovery.Sniff(ev); ok {
 			d.discoverySink.Push(hit)
@@ -1416,17 +1489,33 @@ func (d *Dispatcher) dispatchOne(ev events.Event) ([]consumer.Event, error) {
 	if d.rawEventSink != nil {
 		d.rawEventSink.PushEvent(ev)
 	}
+	// Decoder-panic guard (#371 F1) — installed AFTER the discovery and
+	// raw-event hooks so it covers Matches+Decode and nothing else: a
+	// fault in the lake sink is NOT a decoder bug and must keep its
+	// existing (ledger-level) handling. See recordDecoderPanic.
+	var (
+		current string
+		seen    bool
+	)
+	defer func() {
+		if r := recover(); r != nil {
+			outs, err = nil, d.recordDecoderPanic(current, seen, r,
+				panicSite{Ledger: ev.Ledger, TxHash: ev.TxHash, OpIndex: ev.OperationIndex})
+		}
+	}()
 	for _, dec := range d.decoders {
+		current, seen = dec.Name(), false
 		if !dec.Matches(ev) {
 			continue
 		}
 		d.bumpEventsSeen(dec.Name())
-		outs, err := dec.Decode(ev)
-		if err != nil {
+		seen = true
+		got, derr := dec.Decode(ev)
+		if derr != nil {
 			d.bumpDecodeError(dec.Name())
-			return nil, err
+			return nil, derr
 		}
-		return outs, nil
+		return got, nil
 	}
 	d.bumpUnmatched()
 	return nil, nil

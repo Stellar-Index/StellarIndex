@@ -281,6 +281,7 @@ func registerAppMetricsTail() {
 		ProtocolDetailRefreshTotal,
 		ProtocolDetailRefreshDurationSeconds,
 		WorkerPanicsTotal,
+		DecoderPanicsTotal,
 		AuthReaperLastSweepUnix,
 		AuthReaperIntervalSeconds,
 	)
@@ -1064,6 +1065,39 @@ var SourceDecodeErrorsTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_source_decode_errors_total",
 		Help: "Events that failed to decode, per source.",
+	},
+	[]string{"source"},
+)
+
+// DecoderPanicsTotal — per-source counter of decoder PANICS the
+// dispatcher recovered and converted into a decode error (#371 F1).
+//
+// A recovered panic is a strict SUBSET of SourceDecodeErrorsTotal: the
+// dispatcher counts both, because "this decoder refused the input" and
+// "this decoder crashed on the input" demand very different responses
+// even though the ingest-side handling is deliberately identical (skip
+// the one input, keep the rest of the ledger, advance the cursor).
+//
+// Why this needs its own series rather than a log line: before the
+// guard, a panicking decoder killed the whole indexer PROCESS. systemd
+// restarted it, the same ledger was re-read, the same decoder panicked,
+// and after StartLimitBurst restarts the unit parked in `failed` — one
+// source's bug stopping ingest for every source. Skipping the event
+// instead is only the right trade if the skip is LOUD, because the
+// decoder will keep dropping every event of that shape until someone
+// ships a fix.
+//
+// Alerted by `stellarindex_decoder_panicked` (ingestion.yml) as a PAGE
+// on the raw counter value rather than on increase(): the counter is
+// process-lifetime and a poison event typically panics ONCE (it is
+// skipped and the stream moves on), so a series that appears at 1 and
+// stays there must still fire — which increase() over a series born
+// inside the lookback window cannot do.
+// Runbook: docs/operations/runbooks/decoder-panicked.md.
+var DecoderPanicsTotal = prometheus.NewCounterVec(
+	prometheus.CounterOpts{
+		Name: "stellarindex_decoder_panics_total",
+		Help: "Decoder panics recovered by the dispatcher and skipped as decode errors, per source. Non-zero means a decoder bug is dropping every event of that shape.",
 	},
 	[]string{"source"},
 )

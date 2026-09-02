@@ -15,12 +15,28 @@ Wants=network-online.target
 
 # Restart-storm limit — [Unit] directives per systemd.unit(5); systemd
 # >=230 IGNORES StartLimit* under [Service]. More than StartLimitBurst
+# NOTE (#371 F3): with the live-tail retry budget in force a start
+# cycle is ~5min10s, so a PERMANENTLY broken config can never reach
+# 60 starts inside 15 min and `systemd_unit_failed` will not fire for
+# it. The honest cover for that fault is the ingest-side
+# `all_sources_stopped` page. Keep this in lockstep with
+# deploy/systemd/stellarindex-indexer.service.
 # restarts within StartLimitIntervalSec parks the unit in `failed`,
 # which node_systemd_unit_state{state="failed"} pages on instead of
 # hot-looping forever (audit-2026-07-23 REL-resource-governance — this
 # had drifted from the deploy/systemd/*.service reference copies).
-StartLimitIntervalSec=5min
-StartLimitBurst=10
+#
+# Sized as a DEPENDENCY-OUTAGE budget (#371 F3): with RestartSec=10s
+# below, 60 restarts is ~10 minutes of continuous failure before the
+# unit parks — longer than a MinIO or Postgres restart (2-3 min on r1,
+# including a config apply) — and the interval must exceed 60 × 10s =
+# 600s or the burst could never accumulate inside the window and the
+# unit would hot-loop forever instead of parking. Was 10/5min, i.e.
+# ~100 SECONDS, so a dependency blip parked ingest in `failed` before
+# the dependency had finished restarting. Keep in lockstep with
+# deploy/systemd/stellarindex-indexer.service.
+StartLimitIntervalSec=15min
+StartLimitBurst=60
 
 [Service]
 Type=simple
