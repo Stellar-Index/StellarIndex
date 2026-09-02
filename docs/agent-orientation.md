@@ -321,12 +321,17 @@ linked design doc has the full detail.
   `soroswap` (pair/factory registry), `blend` (childgate), `phoenix`
   (curated set, 2026-07-02), `aquarius` (router-anchored: the router's
   `add_pool` events announce exactly the registry-API pool set, 2026-07-05),
-  `defindex` (mixed: the factory `create` event does NOT carry the
-  VAULT'S OWN address, so new vaults still fail-close until
-  operator-seeded — curated evidence-verified set, 2026-07-05; but the
-  same event's body DOES carry each asset's assigned BlendStrategy
-  address, so strategies self-register live off it since 2026-07-10 —
-  docs/protocols/defindex.md) and `comet` (curated one-pool allowlist —
+  `defindex` (the factory `create` event does NOT carry the VAULT'S OWN
+  address, so new vaults fail-close until operator-seeded — curated
+  evidence-verified set, 2026-07-05. Its body DOES carry each asset's
+  assigned BlendStrategy address, and strategies were self-registered
+  from it between 2026-07-10 and 2026-08-25 — that was REMOVED (76418937,
+  W8 6c) because the factory is public and the field is caller-supplied,
+  so anyone could name an arbitrary address and poison the registry.
+  Strategies are now admitted exactly like vaults: curated seed or an
+  operator `protocol_contracts` row. The extraction survives only as a
+  one-off audit tool. See docs/protocols/defindex.md and
+  TestDecode_factoryCreate_doesNotSeedFromBody) and `comet` (curated one-pool allowlist —
   no KNOWN DEPLOYED mainnet factory; upstream ships a factory contract
   emitting `("LOG","NEW_POOL")`, so factory anchoring becomes available
   if one ever deploys; the only mainnet pool is Blend's BLND/USDC
