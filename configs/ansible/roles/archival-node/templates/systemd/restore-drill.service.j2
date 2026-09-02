@@ -31,6 +31,13 @@ StartLimitBurst=3
 [Service]
 Type=oneshot
 EnvironmentFile=-/etc/default/stellarindex-ops
+# #343 (2026-09-02): ADR-0043 §2.2 says the drill re-derives a random 100k-
+# ledger window from the archive and MEASURES throughput, "giving an honest
+# RTO figure". The unit never set this, so the CH stage had never once run on
+# the schedule and the lake RTO was an unmeasured claim. Dry-run (decode
+# only, nothing written); the script emits the throughput gauges to the
+# node_exporter textfile dir when this is set.
+Environment=DRILL_CH_WINDOW=100000
 ExecStart=/usr/local/bin/restore-drill.sh
 # The script itself requires root (drops to postgres via sudo -u for
 # the actual pg/pgbackrest operations) — see its own EUID check.

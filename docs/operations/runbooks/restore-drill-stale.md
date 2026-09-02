@@ -26,6 +26,18 @@ severity: P3
   40 days (one missed monthly cycle plus slack), or none has ever been
   recorded.
 
+## Lake RTO is now a measured number (#343, 2026-09-02)
+
+The unit sets `DRILL_CH_WINDOW=100000`, so every scheduled drill also
+fetch+decodes a 100k-ledger window from the archive in dry-run (ADR-0043
+§2.2) and writes three textfile gauges beside `…_last_success_unix`:
+`stellarindex_restore_drill_ch_rederive_seconds`,
+`…_ch_rederive_window_ledgers` and `…_ch_rederive_ledgers_per_second`.
+Full-lake re-derive time ≈ live tip ÷ `ledgers_per_second` ÷ parallelism.
+The series is **absent** (not stale) when the CH stage did not run or
+failed — treat `absent()` after a drill as "unmeasured", never as "fast".
+
+
 ## Quick diagnosis (≤ 5 min)
 
 ```sh

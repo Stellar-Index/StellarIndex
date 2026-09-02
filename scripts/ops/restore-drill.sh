@@ -237,6 +237,21 @@ emit_metric() {
       echo "# HELP stellarindex_restore_drill_failures Number of failed verification checks in the most recent restore-drill run."
       echo "# TYPE stellarindex_restore_drill_failures gauge"
       echo "stellarindex_restore_drill_failures $fail_count"
+      # ClickHouse re-derive throughput (#343 / ADR-0043 §2.2): the lake RTO
+      # is only honest as a MEASURED number. Emitted only when the CH stage
+      # ran and succeeded; absent otherwise, so a missing series means "not
+      # measured", never a stale figure.
+      if [[ -n "${ch_secs:-}" && -n "${DRILL_CH_WINDOW:-}" && "${ch_rc:-1}" -eq 0 ]]; then
+        echo "# HELP stellarindex_restore_drill_ch_rederive_seconds Wall seconds the drill took to fetch+decode its ClickHouse re-derive window (dry-run, single-threaded)."
+        echo "# TYPE stellarindex_restore_drill_ch_rederive_seconds gauge"
+        echo "stellarindex_restore_drill_ch_rederive_seconds $ch_secs"
+        echo "# HELP stellarindex_restore_drill_ch_rederive_window_ledgers Size of the re-derive window the drill measured."
+        echo "# TYPE stellarindex_restore_drill_ch_rederive_window_ledgers gauge"
+        echo "stellarindex_restore_drill_ch_rederive_window_ledgers $DRILL_CH_WINDOW"
+        echo "# HELP stellarindex_restore_drill_ch_rederive_ledgers_per_second Measured re-derive throughput (window / seconds); full-lake RTO ≈ live tip / this / parallelism."
+        echo "# TYPE stellarindex_restore_drill_ch_rederive_ledgers_per_second gauge"
+        echo "stellarindex_restore_drill_ch_rederive_ledgers_per_second $(echo "scale=2; $DRILL_CH_WINDOW / ($ch_secs + 0.0001)" | bc)"
+      fi
     } > "$metric_tmp"
     chmod 644 "$metric_tmp"
     mv "$metric_tmp" "$metric_out"
