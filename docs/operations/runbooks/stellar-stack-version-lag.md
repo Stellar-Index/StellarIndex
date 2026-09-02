@@ -44,13 +44,13 @@ that gap.
 
 ## Symptoms
 
-- `stellarindex_stellar_stack_lagging{component="..."}` firing: the
+- `stellarindex_stellar_stack_lagging{stack_component="..."}` firing: the
   probe found `component` behind the latest available upstream
   version, sustained across 2+ consecutive daily runs. Not urgent by
   itself if `stellarindex_stellar_stack_protocol_lag` is NOT also
   firing for the same component — it means a patch/point release is
   available within the SAME protocol major.
-- `stellarindex_stellar_stack_protocol_lag{component="..."}` firing:
+- `stellarindex_stellar_stack_protocol_lag{stack_component="..."}` firing:
   `component` is a full protocol-major version behind upstream. This
   is the exact precondition for both founding incidents.
 - `stellarindex_stellar_stack_probe_success == 0`: the probe itself

@@ -34,7 +34,15 @@ groups:
     rules:
 
       - alert: stellarindex_stellar_stack_lagging
-        expr: stellarindex_stellar_stack_version_lag >= 1
+        # label_replace: the probe metric carries its OWN `component` label
+        # (core / galexie / archivist) and every alert in this tree sets a
+        # static `component:` for alertmanager's inhibit `equal: [component]`.
+        # Without the rename the static label overwrote the metric's and two
+        # lagging components collapsed to ONE labelset — Prometheus refused
+        # the rule ("vector contains metrics with the same labelset after
+        # applying alert labels"), so this alert could never fire (found
+        # 2026-09-02 with archivist=1 AND galexie=1 live on r1).
+        expr: label_replace(stellarindex_stellar_stack_version_lag, "stack_component", "$1", "component", "(.*)") >= 1
         for: 2d
         labels:
           severity: ticket
@@ -42,16 +50,16 @@ groups:
           component: stellar-stack
         annotations:
           runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/stellar-stack-version-lag.md
-          summary: "{{ $labels.component }} is lagging upstream (lag={{ $value }}, sustained 2d)"
+          summary: "{{ $labels.stack_component }} is lagging upstream (lag={{ $value }}, sustained 2d)"
           description: |
             The daily stellar-stack-version-probe has found the
-            installed {{ $labels.component }} behind the latest
+            installed {{ $labels.stack_component }} behind the latest
             upstream release for at least 2 days straight. At lag=1
             this is a same-major point/patch release — not urgent,
             but should be scheduled. (lag=2 pages separately via
             stellarindex_stellar_stack_protocol_lag — this alert can
             also be firing at the same time as that one.) Check
-            stellarindex_stellar_stack_installed_info{component="{{ $labels.component }}"}
+            stellarindex_stellar_stack_installed_info{component="{{ $labels.stack_component }}"}
             for the exact installed version string.
             Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/stellar-stack-version-lag.md
 
@@ -62,7 +70,15 @@ groups:
         # a MONTH (published 2026-06-10, protocol 27 activated
         # 2026-07-08) before this detector existed. Page well before
         # the next activation vote, not after ingest freezes/crash-loops.
-        expr: stellarindex_stellar_stack_version_lag >= 2
+        # label_replace: the probe metric carries its OWN `component` label
+        # (core / galexie / archivist) and every alert in this tree sets a
+        # static `component:` for alertmanager's inhibit `equal: [component]`.
+        # Without the rename the static label overwrote the metric's and two
+        # lagging components collapsed to ONE labelset — Prometheus refused
+        # the rule ("vector contains metrics with the same labelset after
+        # applying alert labels"), so this alert could never fire (found
+        # 2026-09-02 with archivist=1 AND galexie=1 live on r1).
+        expr: label_replace(stellarindex_stellar_stack_version_lag, "stack_component", "$1", "component", "(.*)") >= 2
         for: 6h
         labels:
           severity: page
@@ -70,9 +86,9 @@ groups:
           component: stellar-stack
         annotations:
           runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/stellar-stack-version-lag.md
-          summary: "{{ $labels.component }} is a PROTOCOL-MAJOR version behind upstream (P1)"
+          summary: "{{ $labels.stack_component }} is a PROTOCOL-MAJOR version behind upstream (P1)"
           description: |
-            The installed {{ $labels.component }} is behind upstream
+            The installed {{ $labels.stack_component }} is behind upstream
             by a full protocol-major version — the exact precondition
             for the 2026-07-08 (core) and 2026-07-09 (galexie /
             CAP-0071) incidents. Schedule the coordinated-upgrade
