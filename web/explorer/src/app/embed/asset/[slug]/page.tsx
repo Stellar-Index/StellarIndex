@@ -56,6 +56,37 @@ function getAssetIndex(): Promise<AssetIndex> {
           byKey.set(id.toLowerCase(), id);
         }
       }
+      // Catalogue slugs (#332 F7, 2026-09-02). The listing above is the
+      // per-Stellar-asset view; the verified-currency CATALOGUE (usdc, xlm,
+      // eurc, …) is a second, hand-vetted slug set served by
+      // /v1/assets/verified — and it is the one the widgets gallery links
+      // to. Without enumerating it here, /embed/asset/usdc 404'd at build
+      // time while /v1/assets/usdc answered fine. Map each slug to its
+      // canonical asset id where derivable so the sparkline fallback works.
+      try {
+        const vres = await fetch(`${API_BASE_URL}/v1/assets/verified`, {
+          signal: AbortSignal.timeout(BUILD_FETCH_TIMEOUT_MS),
+        });
+        if (vres.ok) {
+          const venv = (await vres.json()) as {
+            data: { slug?: string; ticker?: string; verified_issuer?: string }[];
+          };
+          for (const row of venv.data ?? []) {
+            const vslug = (row.slug || '').toLowerCase();
+            if (!vslug) continue;
+            if (!slugs.includes(vslug)) slugs.push(vslug);
+            if (byKey.has(vslug)) continue;
+            if (vslug === 'xlm') {
+              byKey.set(vslug, 'native');
+            } else if (row.ticker && row.verified_issuer && /^G[A-Z2-7]{55}$/.test(row.verified_issuer)) {
+              byKey.set(vslug, `${row.ticker}-${row.verified_issuer}`);
+            }
+          }
+        }
+      } catch {
+        // Catalogue enumeration is best-effort: a failure here must not
+        // drop the per-asset routes the listing already produced.
+      }
     } catch {
       // Leave empty — generateStaticParams falls back to the single
       // anchor slug, and the sparkline fallback simply renders no chart.
