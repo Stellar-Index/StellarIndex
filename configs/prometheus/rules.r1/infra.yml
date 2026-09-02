@@ -264,6 +264,23 @@ groups:
       # within minutes, and the units whose failure IS urgent already
       # have dedicated alerts at their own severities. `for: 15m` rides
       # out a unit that is failed-then-restarted by its own timer.
+      - alert: stellarindex_worker_panicked
+        expr: increase(stellarindex_worker_panics_total[10m]) > 0
+        for: 0m
+        labels:
+          severity: page
+          team: stellarindex
+          component: infra
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/worker-panicked.md
+          summary: "background worker {{ $labels.worker }} panicked and is STOPPED (#368 M4)"
+          description: |
+            worker.Recover swallowed a panic in {{ $labels.worker }} so the
+            process stayed up — but that worker will not run again until
+            its unit restarts. Nothing downstream fires until the symptom
+            (stale prices, unbounded table, cold cache) appears. See the
+            runbook: identify the worker, restart the owning unit, file the
+            panic as a bug.
       - alert: stellarindex_systemd_unit_failed
         expr: |
           node_systemd_unit_state{state="failed",name!~"verify-archive-tier-a\\.service|verify-archive-tier-b\\.service|ch-supply\\.service|pgbackrest-backup\\.service|ch-schema-snapshot\\.service"} == 1

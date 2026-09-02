@@ -6,6 +6,10 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/prometheus/client_golang/prometheus/testutil"
+
+	"github.com/Stellar-Index/StellarIndex/internal/obs"
+
 	"github.com/Stellar-Index/StellarIndex/internal/worker"
 )
 
@@ -60,4 +64,26 @@ func TestRecover_NilLoggerDoesNotItselfPanic(t *testing.T) {
 		panic("simulated worker fault")
 	}
 	guardedWorker() // must return without panicking out
+}
+
+// TestRecover_CountsThePanic — the whole point of #368 M4: a recovered panic
+// must leave a signal an alert can fire on, not just a log line. The
+// counter is per worker so the alert names the dead goroutine.
+func TestRecover_CountsThePanic(t *testing.T) {
+	before := testutil.ToFloat64(obs.WorkerPanicsTotal.WithLabelValues("test-worker-m4"))
+	func() {
+		defer worker.Recover(nil, "test-worker-m4")
+		panic("boom")
+	}()
+	after := testutil.ToFloat64(obs.WorkerPanicsTotal.WithLabelValues("test-worker-m4"))
+	if after-before != 1 {
+		t.Fatalf("stellarindex_worker_panics_total{worker=test-worker-m4} rose by %v, want exactly 1", after-before)
+	}
+	// A clean exit must NOT count.
+	func() {
+		defer worker.Recover(nil, "test-worker-m4")
+	}()
+	if got := testutil.ToFloat64(obs.WorkerPanicsTotal.WithLabelValues("test-worker-m4")); got != after {
+		t.Fatalf("counter moved on a non-panicking exit (%v → %v)", after, got)
+	}
 }

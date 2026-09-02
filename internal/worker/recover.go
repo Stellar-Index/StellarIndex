@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"log/slog"
 	"runtime/debug"
+
+	"github.com/Stellar-Index/StellarIndex/internal/obs"
 )
 
 // Recover turns a panic in a DETACHED background worker goroutine into a
@@ -45,6 +47,9 @@ func Recover(logger *slog.Logger, name string) {
 		if logger == nil {
 			logger = slog.Default()
 		}
+		// Count before logging so the metric exists even if logging fails
+		// (#368 M4): this is the ONLY signal that a worker is now dead.
+		obs.WorkerPanicsTotal.WithLabelValues(name).Inc()
 		logger.Error("background worker panicked — worker STOPPED, process still running",
 			"worker", name,
 			"panic", fmt.Sprintf("%v", r),

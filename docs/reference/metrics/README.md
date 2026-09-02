@@ -3001,6 +3001,15 @@ upstream of the book, and mean served depth is quietly stale for the
 affected keys — treat like an entry-change coverage gap, not a serving
 bug.
 
+### `stellarindex_worker_panics_total`
+
+Counter, label `worker`. Incremented by `worker.Recover` when a background
+goroutine panics and is swallowed so the process stays up. **When to look:**
+any increment means that worker is DEAD until the owning unit restarts —
+`worker.Recover` does not restart it. Alert: `stellarindex_worker_panicked`
+(page). Before this metric a recovered panic was one log line and nothing
+else (#368 M4). See runbooks/worker-panicked.md.
+
 ### `stellarindex_explorer_swr_refresh_total`
 
 Counter. Labels: `cache` (`accounts_wealth` | `asset_holders` |

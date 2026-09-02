@@ -97,6 +97,7 @@ signal lands.
 | `stellarindex_node_root_disk_full` | same expr on `mountpoint="/"` (distinct from DB vol — root FS holds /var/log + /tmp + /var/cache) | < 10 % | **P1** | [node-root-disk-full](runbooks/node-root-disk-full.md) |
 | `stellarindex_node_root_disk_warning` | same | < 20 % | P2 | [node-root-disk-warning](runbooks/node-root-disk-warning.md) |
 | (no active alert — surfaced via API log) | `forex: fx_quotes persist failed` log line — runtime symptom of an unapplied schema migration | repeating every ~5 min | P3 | [fx-history-missing](runbooks/fx-history-missing.md) |
+| `stellarindex_worker_panicked` | `increase(stellarindex_worker_panics_total[10m])` | > 0 — a background worker panicked and is stopped until its unit restarts (#368 M4) | **P1** | [worker-panicked](runbooks/worker-panicked.md) |
 | `stellarindex_postgres_ping_failing` | `rate(stellarindex_postgres_ping_total{outcome="error"}[5m])` | > 0.5/s for > 2 min — indexer pool wedged (F-0151) | **P1** | [postgres-ping-failing](runbooks/postgres-ping-failing.md) |
 | `stellarindex_timescale_connections_saturated` | `pg_stat_activity_count / pg_settings_max_connections * 100` | > 80 % for > 5 min | P2 | [pg-conns-saturated](runbooks/pg-conns-saturated.md) |
 | `stellarindex_timescale_lock_table_pressure` | `sum by (instance)(pg_locks_count) / on (instance)(pg_settings_max_locks_per_transaction * pg_settings_max_connections)` | > 70 % for > 5 min | P3 | [pg-conns-saturated](runbooks/pg-conns-saturated.md) |

@@ -280,6 +280,7 @@ func registerAppMetricsTail() {
 		ExplorerSWRRefreshDurationSeconds,
 		ProtocolDetailRefreshTotal,
 		ProtocolDetailRefreshDurationSeconds,
+		WorkerPanicsTotal,
 	)
 
 	seedBoundedLabelSeries()
@@ -4030,6 +4031,21 @@ var SDEXOrderBookUndecodableOffersTotal = prometheus.NewCounter(
 // the only place a persistently-dying refresher shows up before the
 // data is hours old. A sustained `error` rate on any one cache is a
 // ticket; bursts during lake merges self-heal.
+// WorkerPanicsTotal counts panics recovered by worker.Recover, per worker
+// name (#368 M4). Before this existed a recovered panic left ONE log line
+// and nothing else: the worker was stopped for good while the process
+// stayed up, and neither rule tree could see it — ~45 background workers
+// could die one by one with the first signal being a downstream freshness
+// alert hours later. Each increment is one dead worker until the binary
+// restarts; alerted by stellarindex_worker_panicked (infra.yml).
+var WorkerPanicsTotal = prometheus.NewCounterVec(
+	prometheus.CounterOpts{
+		Name: "stellarindex_worker_panics_total",
+		Help: "Panics recovered by worker.Recover, per background worker name. Each one is a worker that is now STOPPED until the process restarts.",
+	},
+	[]string{"worker"},
+)
+
 var ExplorerSWRRefreshTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_explorer_swr_refresh_total",

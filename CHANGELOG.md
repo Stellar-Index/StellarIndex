@@ -15,6 +15,48 @@ against.
 
 ## [Unreleased]
 
+### Added
+- **Every recovered background-worker panic is now counted and paged
+  (#368 M4).** `worker.Recover` kept the process alive but left only one
+  log line, so any of ~45 workers could die for good with no signal in
+  either rule tree until a downstream symptom appeared hours later.
+  `stellarindex_worker_panics_total{worker}` increments on every recovered
+  panic; `stellarindex_worker_panicked` (page, both trees) fires on any
+  increase; runbook `worker-panicked.md` says which unit to restart and
+  why. Unit test proves the counter rises exactly once per panic and not
+  on a clean exit.
+
+### Fixed
+- **`/v1/oracle/streams` re-ran the oracle scan on every hit (#332 F5).**
+  `CachedOracleReader.LatestOracleStreams` was the one pass-through on the
+  reader; each request rebuilt ~34 KB, measured 0.43–0.46 s WARM on
+  production, and it is fetched by `/oracles` and the home page. It now
+  rides the same 3 s TTL + single-flight as the per-asset reads. The test
+  that pinned the pass-through is replaced by one pinning the cached
+  contract (one upstream call per window; refetch past the TTL; the
+  per-asset slots untouched).
+- **Closed-ledger detail was served `private, no-store` (#332 F3).**
+  `/v1/ledgers/{seq}`, `/v1/ledgers/{seq}/transactions|operations` and
+  `/v1/tx/{hash}` fell through the cache-policy classifier to the
+  conservative default, so the explorer re-fetched a 71 KB transaction
+  list on every visit to an immutable ledger. Now `public, max-age=60,
+  s-maxage=300` — deliberately modest because the classifier cannot see
+  the tip and a seconds-old ledger may still be projecting. `/v1/ledgers`
+  and `/v1/network/throughput` (which already had a server cache) get the
+  short status-like band. Tests pin every new case plus non-matches.
+- **`/embed/asset/usdc` (and every other catalogue slug) 404'd (#332 F7).**
+  The embed route enumerated only the per-Stellar-asset listing; the
+  hand-vetted verified-currency catalogue is a second slug set served by
+  `/v1/assets/verified` — the one the widgets gallery links to. Both are
+  enumerated now, with catalogue slugs mapped to their canonical asset id
+  where derivable so the sparkline fallback still resolves.
+- **The spec's RateLimited example asserted a number that isn't ours
+  (#332 F8).** It said "limited to 60 requests per minute" — the config
+  default, while r1 runs `anon_rate_limit_per_min = 6000`. The example now
+  says the limit is deployment-configured and points at the
+  `X-RateLimit-Limit` header, which is the only honest source.
+
+
 ### Fixed
 - **Restored the oracle raw-row consumer guards that PR #305's squash merge
   silently reverted (#339).** Five files had lost PR #248's changes and one
