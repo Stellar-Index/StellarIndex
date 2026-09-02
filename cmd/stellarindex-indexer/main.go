@@ -746,6 +746,25 @@ func run(cfgPath string, dryRun bool) error {
 	// before this function returned and the process died. Do not replace
 	// it with a literal: TestShutdownDeadline_MainUsesConstant fails if
 	// the two ever drift apart again.
+	// Cancel rootCtx BEFORE draining. On the signal path it is already
+	// cancelled; on the producer-error path it is NOT, because `cancel` is
+	// only deferred and therefore fires after run() returns.
+	//
+	// That asymmetry made d160215b's drain a hang: externalWait() is a
+	// WaitGroup over the external connectors, and those are bound to
+	// rootCtx (startExternalConnectors(rootCtx, ...)). With rootCtx still
+	// live, nothing has told them to stop, so the wait never returns — the
+	// process sits there with its metrics server already shut down, never
+	// exiting, so systemd never restarts it. r1 runs seven external
+	// connectors, so a single MinIO blip would have wedged the indexer
+	// silently. Strictly worse than the dropped-buffer bug the drain was
+	// added to fix.
+	//
+	// Cancelling here makes both paths identical: connectors unwind, the
+	// sink drains via its ctx.Done() arm (the same arm the signal path
+	// uses, which runs the shutdown drain), and no events are lost.
+	cancel()
+
 	shutdownCtx, stopDrain := context.WithTimeout(context.Background(), pipeline.ShutdownDeadline)
 	defer stopDrain()
 
