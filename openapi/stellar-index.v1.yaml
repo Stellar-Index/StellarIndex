@@ -9985,7 +9985,7 @@ components:
             type: "https://api.stellarindex.io/errors/rate-limited"
             title: "Rate limit exceeded"
             status: 429
-            detail: "anonymous tier limited to 60 requests per minute; retry in 23 seconds"
+            detail: "anonymous tier rate limit reached — the limit is deployment-configured (api.anon_rate_limit_per_min; the X-RateLimit-Limit response header carries the live value); retry in 23 seconds"
             instance: "/v1/assets"
             request_id: "feb6615b1a38211b4835c0fefcd94ede"
     InternalError:
