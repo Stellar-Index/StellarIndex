@@ -1,6 +1,6 @@
 package v1
 
-import "strings"
+import "github.com/Stellar-Index/StellarIndex/internal/pii"
 
 // maskEmail redacts a customer email address for application logging
 // (audit PRV1 / OBS-04): keep the first local-part character + the full
@@ -15,25 +15,12 @@ import "strings"
 // which is exactly where an operator debugging an incident would
 // otherwise leave a plaintext address in the log store.
 //
-// This is a deliberate twin of dashboardauth's unexported maskEmail
-// rather than a shared call: package v1 does NOT import
-// dashboardauth (server.go documents the dependency as one-way —
-// dashboardauth depends on internal/platform + internal/notify, never
-// on this package's envelope), and inverting that edge for a 15-line
-// pure string helper would be a much worse trade than duplicating it.
-// The two implementations must stay behaviourally identical; the
-// contract is pinned by a test in each package.
-func maskEmail(email string) string {
-	at := strings.LastIndex(email, "@")
-	if at <= 0 {
-		if email == "" {
-			return ""
-		}
-		return "***" // malformed / no domain — hide entirely
-	}
-	local, domain := email[:at], email[at:]
-	if len(local) <= 1 {
-		return "***" + domain
-	}
-	return local[:1] + "***" + domain
-}
+// The implementation lives in internal/pii so there is exactly ONE of
+// it. It used to be a deliberate twin of dashboardauth's copy — package
+// v1 must not import dashboardauth, and inverting that edge for a
+// 15-line helper would have been a worse trade — but the comment also
+// claimed "the contract is pinned by a test in each package", and that
+// was false: only dashboardauth had the table test. A leaf package with
+// no internal imports dissolves the import problem instead of policing
+// it (#346 F8).
+func maskEmail(email string) string { return pii.MaskEmail(email) }

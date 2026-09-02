@@ -16,6 +16,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Stellar-Index/StellarIndex/internal/pii"
+
 	"github.com/google/uuid"
 
 	"github.com/Stellar-Index/StellarIndex/internal/api/v1/middleware"
@@ -1139,17 +1141,4 @@ func writeProblem(w http.ResponseWriter, status int, detail, instance string) {
 // local-part character + the full domain, hide the rest —
 // "alice@example.com" -> "a***@example.com". Enough to correlate a log line to
 // a domain / support ticket without persisting the full PII in application logs.
-func maskEmail(email string) string {
-	at := strings.LastIndex(email, "@")
-	if at <= 0 {
-		if email == "" {
-			return ""
-		}
-		return "***" // malformed / no domain — hide entirely
-	}
-	local, domain := email[:at], email[at:]
-	if len(local) <= 1 {
-		return "***" + domain
-	}
-	return local[:1] + "***" + domain
-}
+func maskEmail(email string) string { return pii.MaskEmail(email) }

@@ -185,3 +185,49 @@ func caddyLogBlock(t *testing.T, path string) string {
 	}
 	return rest[:end]
 }
+
+// TestCaddyAccessLogFilterIsGlobalNotJustTheSite pins #346 F2b. Attaching
+// the filter to the SITE's access logger leaves two other loggers in the
+// same process emitting a raw `request` object, and both were caught doing
+// it on r1: reverse_proxy runtime warnings (which embed request.uri and
+// headers when a client disconnects mid-response) and the catch-all
+// default access logger serving bare-IP / legacy-host traffic (which
+// echoed Location). Filtering the DEFAULT logger covers both.
+//
+// The site block keeps its own copy on purpose — `log` inside a site
+// block REPLACES the default for that site rather than layering onto it —
+// so the redaction line must appear at least twice per file. One
+// occurrence means someone moved it rather than adding it, and half the
+// loggers went unfiltered again.
+func TestCaddyAccessLogFilterIsGlobalNotJustTheSite(t *testing.T) {
+	for _, path := range caddyfiles {
+		src, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("read %s: %v", path, err)
+		}
+		body := string(src)
+
+		if got := strings.Count(body, `request>uri regexp`); got < 2 {
+			t.Errorf("%s has %d uri-redaction line(s), want >= 2 (one in the global options block, one in the site block) — the global logger is what covers reverse_proxy warnings and the catch-all :80 access log", path, got)
+		}
+
+		// The global block must be the one that opens the file, so the
+		// filter cannot have been satisfied by two site-level copies.
+		globalEnd := strings.Index(body, "\n}\n")
+		if globalEnd < 0 {
+			t.Fatalf("%s: could not find the end of the global options block", path)
+		}
+		global := body[:globalEnd]
+		for _, want := range []string{
+			`request>uri regexp "[?].*" "?<redacted>"`,
+			"request>headers>X-Api-Key delete",
+			"request>headers>Referer delete",
+			"request>headers>X-Reason delete",
+			"resp_headers>Location delete",
+		} {
+			if !strings.Contains(global, want) {
+				t.Errorf("%s global options block is missing %q — the default logger stays unfiltered", path, want)
+			}
+		}
+	}
+}

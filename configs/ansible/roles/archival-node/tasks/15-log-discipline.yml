@@ -174,6 +174,19 @@
       # last 300 MB of free space on the journal's filesystem (a
       # final guardrail above SystemMaxUse).
       SystemKeepFree=300M
+      # MaxRetentionSec is an explicit UPPER BOUND on how long any
+      # journal entry may live (#346 F5). It is a no-op today — Caddy's
+      # access-log volume hits SystemMaxUse first, giving an effective
+      # retention of roughly TEN HOURS on r1 — but "we keep logs for at
+      # most a month" is then a property of the configuration rather
+      # than a coincidence of current traffic. Without it, a drop in
+      # request volume silently extends retention, and the privacy page
+      # would be making a claim nothing enforces.
+      #
+      # The BINDING number for anything published is Loki's
+      # retention_period (720h / 30 days, configs/loki/loki.r1.yml) —
+      # journald is the short-lived local buffer, Loki is the archive.
+      MaxRetentionSec=1month
       # Rate-limit override (F-0031 closure).
       RateLimitIntervalSec=10s
       RateLimitBurst=50000

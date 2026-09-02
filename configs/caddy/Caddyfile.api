@@ -13,6 +13,38 @@
 # Operator email is for Let's Encrypt account registration —
 # expiration warnings and CA-required notices land here.
 {
+
+	# ─── PII redaction for EVERY logger in this process ────────────
+	# The site block below attaches this same filter to its own access
+	# logger. That is not enough: two other loggers in the same process
+	# emit an unfiltered `request` object, and both were observed doing
+	# it on r1 (#346 F2b).
+	#
+	#   1. `http.handlers.reverse_proxy` runtime warnings ("aborting
+	#      with incomplete response") embed request.uri and headers.
+	#      Over 24h: 5 lines carrying a query string, 11 carrying a
+	#      Referer. Those queries happened to be SSE stream params —
+	#      but a client that disconnects mid-response on
+	#      /v1/auth/callback?token=... would be logged verbatim here.
+	#   2. The catch-all default access logger (bare-IP and legacy-host
+	#      :80 traffic, plus internet background noise) is unfiltered:
+	#      4 lines/24h with a query, every one echoing Location.
+	#
+	# Filtering the DEFAULT logger covers both, because both write to
+	# it. The site block keeps its own copy: `log` in a site block
+	# replaces the default for that site rather than layering on it.
+	log {
+		format filter {
+			wrap json
+			fields {
+				request>uri regexp "[?].*" "?<redacted>"
+				request>headers>X-Api-Key delete
+				request>headers>Referer delete
+				request>headers>X-Reason delete
+				resp_headers>Location delete
+			}
+		}
+	}
 	email tls@stellarindex.io
 	# Auto-HTTPS on by default. If we ever need a no-DNS test mode:
 	#   auto_https disable_redirects
