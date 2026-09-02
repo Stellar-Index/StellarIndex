@@ -9,11 +9,19 @@ import (
 	"io"
 	"log/slog"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/config"
 	"github.com/Stellar-Index/StellarIndex/internal/consumer"
+	"github.com/Stellar-Index/StellarIndex/internal/sources/aquarius"
+	"github.com/Stellar-Index/StellarIndex/internal/sources/band"
+	"github.com/Stellar-Index/StellarIndex/internal/sources/phoenix"
+	sep41supply "github.com/Stellar-Index/StellarIndex/internal/sources/sep41_supply"
+	sep41transfers "github.com/Stellar-Index/StellarIndex/internal/sources/sep41_transfers"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/soroswap"
+	"github.com/Stellar-Index/StellarIndex/internal/sources/soroswap_router"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
@@ -256,5 +264,162 @@ func TestSEP41RollupResetPlan(t *testing.T) {
 				t.Errorf("contracts = %v, want %v", contracts, tc.wantContracts)
 			}
 		})
+	}
+}
+
+// ─── checkCHRebuildLiveOverlap: the ADR-0048 D3 contract on ch-rebuild ────
+//
+// The hazard the guard removes: `ch-rebuild -sources <projected> -to <tip>
+// -write` is a SECOND writer of a domain ADR-0031/0032 gives the projector
+// alone, and it stamps a positive derive_generation so its rows win the
+// upsert over the live projector's. projected-rebuild has refused that
+// since ADR-0048 D3; ch-rebuild did not (grep `cursor` in ch_rebuild.go
+// before this change: zero hits), and a guard on one of two bulk writers
+// is not a guard. Scripted cursor, mirroring TestCheckLiveCursorGuard.
+func TestCheckCHRebuildLiveOverlap(t *testing.T) {
+	// The live projector is at 63,000,000 for aquarius, is still behind at
+	// 61,000,000 for blend, and has never run for rozo.
+	cursors := map[string]uint32{"aquarius": 63_000_000, "blend": 61_000_000}
+	read := func(source string) (uint32, bool, error) {
+		last, ok := cursors[source]
+		return last, ok, nil
+	}
+	cases := []struct {
+		name         string
+		sources      []string
+		to           uint32
+		allowOverlap bool
+		wantErr      bool
+		wantInMsg    []string
+	}{
+		{name: "live-above-to: allowed", sources: []string{"aquarius"}, to: 62_894_000},
+		{name: "live-exactly-at-to: allowed (boundary)", sources: []string{"aquarius"}, to: 63_000_000},
+		{
+			name: "live-below-to: refused", sources: []string{"blend"}, to: 62_894_000,
+			wantErr: true, wantInMsg: []string{"blend", "61000000", "62894000", "allow-live-overlap"},
+		},
+		{
+			name: "no-cursor-at-all: refused by default", sources: []string{"rozo"}, to: 62_894_000,
+			wantErr: true, wantInMsg: []string{"rozo", "never run"},
+		},
+		{
+			// The r1 shape: one lagging source among several current ones
+			// must refuse the whole run, and name the lagging one.
+			name: "mixed set refuses on the one lagging source", sources: []string{"aquarius", "blend"}, to: 62_894_000,
+			wantErr: true, wantInMsg: []string{"blend"},
+		},
+		{name: "override allows the overlap", sources: []string{"blend", "rozo"}, to: 62_894_000, allowOverlap: true},
+		{name: "no projected sources in the run: nothing to guard", sources: nil, to: 63_500_000},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := checkCHRebuildLiveOverlap(tc.sources, tc.to, tc.allowOverlap, read)
+			if tc.wantErr && err == nil {
+				t.Fatalf("checkCHRebuildLiveOverlap(%v,%d,%v) = nil, want an error", tc.sources, tc.to, tc.allowOverlap)
+			}
+			if !tc.wantErr {
+				if err != nil {
+					t.Fatalf("checkCHRebuildLiveOverlap(%v,%d,%v) = %v, want nil", tc.sources, tc.to, tc.allowOverlap, err)
+				}
+				return
+			}
+			for _, want := range tc.wantInMsg {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("refusal %q missing %q", err.Error(), want)
+				}
+			}
+		})
+	}
+}
+
+// A mixed run must not be allowed by its CURRENT sources: the guard reads
+// every projected source in the run, not the first one that passes.
+func TestCheckCHRebuildLiveOverlap_ReadsEverySource(t *testing.T) {
+	var seen []string
+	read := func(source string) (uint32, bool, error) {
+		seen = append(seen, source)
+		return 63_000_000, true, nil
+	}
+	if err := checkCHRebuildLiveOverlap([]string{"aquarius", "soroswap", "phoenix"}, 62_000_000, false, read); err != nil {
+		t.Fatalf("all cursors above -to should pass: %v", err)
+	}
+	if !reflect.DeepEqual(seen, []string{"aquarius", "soroswap", "phoenix"}) {
+		t.Errorf("cursor reads = %v, want every projected source in the run", seen)
+	}
+}
+
+// A cursor read that FAILS must abort the run, never be read as "no
+// overlap" — the fail-closed half of the contract.
+func TestCheckCHRebuildLiveOverlap_CursorReadErrorRefuses(t *testing.T) {
+	boom := errors.New("connection refused")
+	err := checkCHRebuildLiveOverlap([]string{"aquarius"}, 62_000_000, false, func(string) (uint32, bool, error) {
+		return 0, false, boom
+	})
+	if !errors.Is(err, boom) {
+		t.Fatalf("guard error = %v, want it to wrap the cursor read failure", err)
+	}
+}
+
+// projectedSourcesInRun must RESOLVE the projected set from
+// projector.BuildRegistry — the same registry.go the indexer's projector
+// builds from — so the guard covers a source the moment the projector
+// does, and leaves the non-projected domains (sdex census, band /
+// soroswap-router ContractCall) alone: nothing else writes those, so
+// refusing there would be pure breakage.
+func TestProjectedSourcesInRun_SplitsProjectedFromNot(t *testing.T) {
+	cat := []reconSource{
+		{name: "aquarius", dec: aquarius.NewDecoder()},
+		{name: "soroswap", dec: soroswap.NewDecoder()},
+		{name: "sdex", census: true},                              // dec == nil: op-derived census, not projected
+		{name: "band", callDec: band.NewDecoder("CBANDCONTRACT")}, // ContractCall source, not projected
+		// A decoder-bearing entry whose NAME the projector does not own.
+		// soroswap-router is ContractCall-derived and explicitly excluded
+		// from pipeline.IsProjectedEvent (CLAUDE.md invariant 7), so its
+		// presence in the event catalogue must not arm the guard: only
+		// the registry lookup can tell these apart, a name list cannot.
+		{name: soroswap_router.SourceName, dec: soroswap.NewDecoder()},
+		{name: "phoenix", dec: phoenix.NewDecoder()},
+	}
+	all := func(string) bool { return true }
+	got := projectedSourcesInRun(config.Config{}, cat, nil, false, all)
+	want := []string{"aquarius", "soroswap", "phoenix"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("projected sources = %v, want %v", got, want)
+	}
+
+	// -sources narrows the run, and so must narrow the guard.
+	only := func(name string) bool { return name == "phoenix" }
+	got = projectedSourcesInRun(config.Config{}, cat, nil, false, only)
+	if !reflect.DeepEqual(got, []string{"phoenix"}) {
+		t.Errorf("filtered projected sources = %v, want [phoenix]", got)
+	}
+}
+
+// The sep41 pair is projected only when contracts are actually WATCHED
+// (projector.BuildRegistry skips them otherwise, and the dispatcher then
+// writes nothing either) — so the guard's answer is config-dependent, not
+// name-dependent. Pins that the resolution reads the live registry rather
+// than a list someone typed here.
+func TestProjectedSourcesInRun_SEP41FollowsTheWatchedSet(t *testing.T) {
+	sep41Cat := []reconSource{{name: sep41transfers.SourceName}, {name: sep41supply.SourceName}}
+	all := func(string) bool { return true }
+
+	got := projectedSourcesInRun(config.Config{}, nil, sep41Cat, true, all)
+	if len(got) != 0 {
+		t.Errorf("with no watched contracts the projector writes no sep41 rows, so nothing to guard; got %v", got)
+	}
+
+	var cfg config.Config
+	cfg.Supply.WatchedSEP41Contracts = []string{"CWATCHEDCONTRACT0000000000000000000000000000000000000000"}
+	got = projectedSourcesInRun(cfg, nil, sep41Cat, true, all)
+	want := []string{sep41transfers.SourceName, sep41supply.SourceName}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("watched sep41 sources = %v, want %v", got, want)
+	}
+
+	// -sep41 not passed: that pass does not run, so it is not guarded.
+	got = projectedSourcesInRun(cfg, nil, sep41Cat, false, all)
+	if len(got) != 0 {
+		t.Errorf("sep41 pass disabled → nothing to guard; got %v", got)
 	}
 }

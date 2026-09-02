@@ -17,6 +17,16 @@
 # NOT in scope: sdex (op-derived, correctly keyed), external/band (not
 # CH-event-derived). reflector/redstone are exact (no collision) — harmless.
 #
+# This is the ONE sanctioned ch-rebuild over projected domains (the replay
+# decision rule in docs/architecture/ingest-pipeline.md points here):
+# additive upserts cannot repair a wrong PK, so the window is DELETEd first.
+# Since #333 `ch-rebuild -write` reads the live projector's cursor per
+# source and refuses a range the live tail is still inside — the TO<=62.894M
+# scoping above already satisfies it, EXCEPT for a source whose own
+# projector cursor is lagging behind TO (e.g. a held blend_backstop catch-up).
+# Fix the lag (projector-replay / projected-rebuild) rather than reaching for
+# -allow-live-overlap.
+#
 # Run on r1: nohup setsid bash scripts/ops/ch-rebuild-projected.sh >/dev/null 2>&1 &
 set -uo pipefail
 # Read a systemd EnvironmentFile VERBATIM — never `.`/source it. Its

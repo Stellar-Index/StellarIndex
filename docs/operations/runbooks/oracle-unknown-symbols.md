@@ -1,6 +1,6 @@
 ---
 title: Runbook — oracle-unknown-symbols
-last_verified: 2026-08-29
+last_verified: 2026-09-02
 status: draft
 severity: P3
 ---
@@ -87,10 +87,18 @@ There is no runtime mitigation — the fix is a code change:
       and the alert clears after the 25 h window rolls off (it is
       `increase[25h]`, so expect it to stay red for up to a day after
       the fix — that is the window, not a regression).
-- [ ] Replay the affected ledger range so the historical slots land
-      (`stellarindex-ops ch-rebuild -sources <src> -from <first bad ledger> -to <tip>`;
-      once `raw:` rows exist the gen-N re-derive promotes them in place
-      on the same PK). Monitor to completion.
+- [ ] Replay the affected ledger range so the historical slots land;
+      once `raw:` rows exist the re-derive promotes them in place on the
+      same PK. Every oracle source here (`reflector-*`, `redstone`,
+      except `band`) is PROJECTED, so the command is the projected one —
+      see the replay decision rule
+      ([docs/architecture/ingest-pipeline.md](../../architecture/ingest-pipeline.md#the-replay-decision-rule)):
+      `stellarindex-ops projector-replay -source <src> -from <first bad ledger>`
+      for a rewind under ~1M ledgers, or
+      `stellarindex-ops projected-rebuild -config /etc/stellarindex.toml -source <src> -from <first bad ledger> -write`
+      for a bulk one. (`band` is ContractCall-derived and NOT projected:
+      that one is `ch-rebuild -contract-calls -sources band`.) Monitor to
+      completion.
 - [ ] Verification: `increase(stellarindex_source_unknown_symbols_total{source="<src>"}[1h]) == 0`
       and, post-replay, the `SELECT … WHERE asset LIKE 'raw:%'` count
       for that symbol is 0.

@@ -2,6 +2,7 @@ package chops
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"log/slog"
@@ -17,6 +18,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/ops/ingest"
 	"github.com/Stellar-Index/StellarIndex/internal/ops/opsutil"
 	"github.com/Stellar-Index/StellarIndex/internal/pipeline"
+	"github.com/Stellar-Index/StellarIndex/internal/projector"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/aquarius"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/comet"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/phoenix"
@@ -69,6 +71,119 @@ func seedSoroswapFromPG(ctx context.Context, store *timescale.Store, dec *sorosw
 		n++
 	}
 	return n, nil
+}
+
+// projectorCursorReader reports the live projector's cursor position for
+// one source: (lastLedger, true, nil) when a cursor row exists, and
+// (0, false, nil) when the projector has never run for that source. The
+// seam exists so the guard below is unit-testable with a scripted cursor
+// (mirroring projected_rebuild's checkLiveCursorGuard tests) instead of a
+// live ingestion_cursors table.
+type projectorCursorReader func(source string) (uint32, bool, error)
+
+// checkCHRebuildLiveOverlap is projected-rebuild's ADR-0048 D3 one-writer
+// contract (see checkLiveCursorGuard in projected_rebuild.go), ported to
+// ch-rebuild's multi-source shape.
+//
+// WHY IT HAS TO BE HERE TOO: `ch-rebuild -write` re-derives the SAME
+// projected domains the live projector owns (ADR-0031/0032 give each of
+// them exactly one writer), through the same decoders and the same
+// pipeline.HandleEvent sink — and it stamps a positive derive_generation,
+// so its rows WIN the ON CONFLICT guard over the live projector's gen-0
+// values. Run with `-to <tip>` it is therefore a second writer inside the
+// live projector's committed range, re-stamping rows the projector may
+// still be writing. Row content is identical on the same binary, so this
+// is an invariant-7 violation by construction rather than data loss — but
+// the sibling bulk path (projected-rebuild) already refuses it, and a
+// guard on one of two tools is not a guard. The runbooks that prescribe
+// `ch-rebuild ... -to <tip>` (see docs/architecture/ingest-pipeline.md's
+// replay decision rule) cannot make it safe; this refusal can.
+//
+// Semantics are byte-for-byte projected-rebuild's, per source: allowed
+// only when the live projector's cursor for that source is AT OR ABOVE
+// the requested top, i.e. this pass fills history strictly BEHIND a
+// live-current source. No cursor row at all is treated as "cursor at 0"
+// (a never-run projector WILL walk this range once it starts), and
+// -allow-live-overlap is the operator's explicit "I verified this is
+// safe" override. Non-projected passes (-sdex, -contract-calls, band /
+// soroswap-router) are not affected: nothing else writes those domains.
+//
+// DELIBERATE DIVERGENCE from projected-rebuild: that command applies the
+// guard to dry-runs too; this one arms it only under -write. ch-rebuild's
+// default mode writes nothing at all (it is the count/compare report that
+// ch-reproject shares), so a dry run cannot race any writer, and refusing
+// it would break the read-only reporting every operator procedure starts
+// with.
+func checkCHRebuildLiveOverlap(projectedSources []string, to uint32, allowOverlap bool, read projectorCursorReader) error {
+	if allowOverlap || len(projectedSources) == 0 {
+		return nil
+	}
+	var offenders []string
+	for _, name := range projectedSources {
+		last, have, err := read(name)
+		if err != nil {
+			return fmt.Errorf("read live projector cursor for %s: %w", name, err)
+		}
+		if liveCursorCovers(have, last, to) {
+			continue
+		}
+		cur := "none (projector has never run for this source)"
+		if have {
+			cur = fmt.Sprintf("%d", last)
+		}
+		offenders = append(offenders, fmt.Sprintf("%s (live cursor %s)", name, cur))
+	}
+	if len(offenders) == 0 {
+		return nil
+	}
+	return fmt.Errorf("ch-rebuild: refusing to -write — the live projector's cursor is below the requested top %d for: %s. "+
+		"ADR-0048 D3's one-writer contract: a projected source has exactly one writer, and this pass must only fill HISTORY BEHIND a live-current source — never a range the live tail might still walk into concurrently. "+
+		"Wait for the live projector to pass ledger %d, lower -to, drop those sources from -sources, or pass -allow-live-overlap if you have independently verified this is safe",
+		to, strings.Join(offenders, ", "), to)
+}
+
+// projectedSourcesInRun returns the names of the sources this invocation
+// would WRITE that the live projector also writes — resolved from
+// projector.BuildRegistry (the same registry.go the indexer's projector
+// goroutine builds from) rather than a list kept here, so a source added
+// to the projector is covered by the guard on its first run.
+//
+// A per-name BuildRegistry error means the name HAS a projector entry
+// whose config is incomplete; that is still the projector's domain, so it
+// counts as projected (fail-closed) rather than aborting the run — which
+// is why this returns no error of its own.
+func projectedSourcesInRun(cfg config.Config, cat, sep41Cat []reconSource, includeSEP41 bool, enabled func(string) bool) []string {
+	candidates := make([]string, 0, len(cat)+len(sep41Cat))
+	for _, src := range cat {
+		if src.dec != nil && enabled(src.name) {
+			candidates = append(candidates, src.name)
+		}
+	}
+	if includeSEP41 {
+		for _, src := range sep41Cat {
+			if enabled(src.name) {
+				candidates = append(candidates, src.name)
+			}
+		}
+	}
+	out := make([]string, 0, len(candidates))
+	for _, name := range candidates {
+		reg, err := projector.BuildRegistry([]string{name}, cfg.Oracle, cfg.Supply.WatchedSEP41Contracts, nil)
+		if err != nil {
+			out = append(out, name) // see the fail-closed note above
+			continue
+		}
+		// BuildRegistry ALWAYS appends the sep41 sources when contracts are
+		// watched, so "the registry is non-empty" is not the question —
+		// "did it resolve THIS name" is.
+		for _, s := range reg.Sources {
+			if strings.EqualFold(s.Name, name) {
+				out = append(out, name)
+				break
+			}
+		}
+	}
+	return out
 }
 
 // chRebuild is the ADR-0034 Phase-4 write path: it re-derives a ledger range's
@@ -127,6 +242,7 @@ func chRebuild(args []string) error { //nolint:gocognit,gocyclo,funlen // linear
 	contractsCSV := fs.String("contracts", "", "comma-separated contract C-strkeys to SCOPE the read to (default: no scope). For -sep41 this REPLACES [supply] watched_sep41_contracts as the contract_id READ prefilter, so a scoped recovery does an indexed scan of ONLY these contracts' events (far cheaper than all watched contracts) and idempotently ADDS their missing rows — the leanest way to recover dropped rows without a full re-derive. With -sep41 -write on the SUPPLY source, ONLY these contracts' sep41_supply_rollup fold rows are reset afterwards (genesis baseline preserved), so the worker re-folds their recovered below-checkpoint rows — a scoped recovery is safe by default, no manual rollup surgery. Must be a SUBSET of the watched set: the sep41 decoders still gate Matches() on the full watched set, so a contract outside it is read but decoded to nothing (a warning is printed). For the general event pass it is an extra decode-time contract gate. See docs/operations/sep41-mint-recovery.md.")
 	sep41SupplyOnly := fs.Bool("sep41-supply-only", false, "with -sep41 -sources sep41_supply: narrow the CH read to the supply-affecting topics (mint/burn/clawback) via the topic_0_sym prefilter, skipping the transfer firehose at the SQL layer — so recovering a high-transfer-volume contract's few mints does not re-read millions of transfer events. Invalid unless sep41_transfers is disabled (via -sources sep41_supply): the topic prefilter would otherwise silently drop transfer recovery.")
 	write := fs.Bool("write", false, "actually write to Postgres (default: dry-run, count only)")
+	allowLiveOverlap := fs.Bool("allow-live-overlap", false, "DANGEROUS: bypass the live-cursor guard and -write a range the live projector's cursor for a PROJECTED source is still inside. Only pass this if you have independently verified the live projector will not process this range concurrently — see the ADR-0048 D3 one-writer contract on checkCHRebuildLiveOverlap.")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -250,6 +366,26 @@ func chRebuild(args []string) error { //nolint:gocognit,gocyclo,funlen // linear
 		}
 	}
 	enabled := func(name string) bool { return len(srcFilter) == 0 || srcFilter[name] }
+
+	// ─── ADR-0048 D3 one-writer contract (ported from projected-rebuild) ──
+	// A -write pass over a PROJECTED source is a second writer of a domain
+	// ADR-0031/0032 gives to the projector alone. Refuse the overlap the
+	// same way projected-rebuild does — see checkCHRebuildLiveOverlap.
+	if *write {
+		projected := projectedSourcesInRun(cfg, cat, sep41Cat, *includeSEP41, enabled)
+		if gerr := checkCHRebuildLiveOverlap(projected, hi, *allowLiveOverlap, func(source string) (uint32, bool, error) {
+			c, cerr := store.GetCursor(ctx, "projector", source)
+			switch {
+			case errors.Is(cerr, timescale.ErrNotFound):
+				return 0, false, nil
+			case cerr != nil:
+				return 0, false, cerr
+			}
+			return c.LastLedger, true, nil
+		}); gerr != nil {
+			return gerr
+		}
+	}
 
 	mode := "DRY-RUN (count only)"
 	if *write {

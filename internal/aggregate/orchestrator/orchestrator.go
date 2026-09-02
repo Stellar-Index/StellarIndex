@@ -1165,6 +1165,10 @@ func (o *Orchestrator) refreshPairWindow( //nolint:funlen // 61>60 after the R-2
 	var compositeRef compositeReference
 	if o.compositeReferenceEligible(pair, trades) {
 		compositeRef = o.evaluateCompositeReference(ctx, pair, window, now, vwap)
+	} else {
+		// Not evaluated this tick — retire the previous tick's verdict
+		// rather than leaving it standing (see clearCompositeReference).
+		o.clearCompositeReference(pair, window)
 	}
 	conf, confOK := o.computeConfidence(ctx, pair, window, vwap, prevForConfidence, trades)
 	// The freeze's source_count leg (ADR-0019 3-signal AND) reads the

@@ -23,6 +23,11 @@
 #   - and the verdict does not depend on how BIG the commit range is (the
 #     SIGPIPE-under-pipefail class lint-baseline-growth-test.sh pins).
 #
+# Plus the wrong-command ADVISORY (#333): a plan that replays a PROJECTED
+# source with backfill/ch-rebuild warns (never fails), the projected
+# commands do not, and the projector source names are DERIVED from the
+# fixture's own registry rather than listed in the gate.
+#
 # Run: bash scripts/ci/lint-replay-plan-test.sh
 set -uo pipefail
 
@@ -43,7 +48,8 @@ fail=0
 mkrepo() {
   local bulk="${1:-0}"
   rm -rf "$TMP/repo"
-  mkdir -p "$TMP/repo/scripts/ci" "$TMP/repo/internal/canonical" "$TMP/repo/internal/sources/demo"
+  mkdir -p "$TMP/repo/scripts/ci" "$TMP/repo/internal/canonical" \
+           "$TMP/repo/internal/sources/demo" "$TMP/repo/internal/projector"
   cp "$GATE" "$TMP/repo/scripts/ci/lint-replay-plan.sh"
   (
     cd "$TMP/repo" || exit 1
@@ -58,6 +64,13 @@ mkrepo() {
     printf 'package demo\n\nfunc DefaultPairs() {}\n' > internal/sources/demo/pairs.go
     printf 'package demo\n\nfunc TestDecode() {}\n' > internal/sources/demo/decode_test.go
     printf 'package demo\n\nfunc helper() {}\n' > internal/sources/demo/helper.go
+    # The projector registry + the source constant it refers to, so the
+    # wrong-command advisory has a real derivation to resolve (it reads
+    # the repo it is run in, not this one). `other` is deliberately NOT
+    # in the registry: a non-projected name must not warn.
+    printf 'package demo\n\nconst SourceName = "demo"\n' > internal/sources/demo/consumer.go
+    printf 'package projector\n\nfunc buildSource(name string) {\n\tswitch name {\n\tcase demo.SourceName:\n\t}\n}\n' \
+      > internal/projector/registry.go
     git add -A
     git commit -qm "base"
     git rev-parse HEAD > "$TMP/base"
@@ -146,7 +159,7 @@ expect "venue pairs.go widening without a plan fails" 1 "~ internal/sources/demo
 
 # --- 3. declared plan passes ------------------------------------------
 mkrepo 0
-touch_commit internal/canonical/asset_fiat.go "$(printf 'canonical: widen fiat allow-list\n\nReplay-Plan: stellarindex-ops backfill --source reflector-fx --from 2026-06-01 on r1 after deploy')"
+touch_commit internal/canonical/asset_fiat.go "$(printf 'canonical: widen fiat allow-list\n\nReplay-Plan: stellarindex-ops projector-replay -source reflector-fx -from 61602787 on r1 after deploy')"
 runGate
 expect "declared plan passes" 0 "$DECLARED"
 
@@ -203,6 +216,37 @@ mkrepo 40
 touch_commit internal/canonical/asset_fiat.go "canonical: widen, large range, no plan"
 runGate
 expect "undeclared change still fails on a large commit range" 1 "$UNDECLARED"
+
+# --- 10. wrong-command advisory (warn only, never a failure) -----------
+WARN_DEMO="WARNING: the plan replays projected source 'demo'"
+mkrepo 0
+touch_commit internal/sources/demo/decode.go "$(printf 'fix(demo): widen the decoder\n\nReplay-Plan: stellarindex-ops ch-rebuild -sources demo -from 1 -to 2 -write on r1')"
+runGate
+expect "ch-rebuild on a projected source still PASSES (advisory, not a gate)" 0 "$DECLARED"
+expect "ch-rebuild on a projected source warns" 0 "$WARN_DEMO"
+expect "the advisory reports how many source names it resolved" 0 "cross-checked the declared plan against 1 projector source name"
+
+mkrepo 0
+touch_commit internal/sources/demo/decode.go "$(printf 'fix(demo): widen the decoder\n\nReplay-Plan: stellarindex-ops projector-replay -source demo -from 61602787 on r1')"
+runGate
+if [[ "$OUT" == *"$WARN_DEMO"* ]]; then
+  echo "FAIL: projector-replay on a projected source must not warn"
+  fail=$((fail + 1))
+else
+  echo "ok: projector-replay on a projected source does not warn"
+  pass=$((pass + 1))
+fi
+
+mkrepo 0
+touch_commit internal/sources/demo/decode.go "$(printf 'fix(demo): widen the decoder\n\nReplay-Plan: stellarindex-ops ch-rebuild -sdex -sources sdex -from 1 -to 2 -write')"
+runGate
+if [[ "$OUT" == *"WARNING: the plan replays projected source"* ]]; then
+  echo "FAIL: a NON-projected source (sdex) must not warn about ch-rebuild"
+  fail=$((fail + 1))
+else
+  echo "ok: ch-rebuild on a non-projected source does not warn"
+  pass=$((pass + 1))
+fi
 
 echo
 echo "lint-replay-plan-test: $pass passed, $fail failed"

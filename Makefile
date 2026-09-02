@@ -42,6 +42,12 @@ BINARIES := \
 #                              archive-verify test (hash-chain integrity,
 #                              ADR-0033/0016) had zero executing coverage
 #                              until this package was listed.
+# This variable is the SINGLE source of truth for the integration-suite
+# package set: scripts/ci/integration-shard.sh derives its shard-0-only
+# package list from `make print-int-test-pkgs` at run time (it used to
+# carry a hand-copied duplicate, so a package added here ran locally and
+# compiled in CI but was executed by no shard — #333 F1). Add a package
+# here and every CI path picks it up.
 INT_TEST_PKGS := ./test/integration/... ./cmd/stellarindex-ops/... ./internal/ops/archive/...
 SHARD ?= 0
 SHARDS ?= 4
@@ -141,6 +147,10 @@ test-integration-shard: ## One CI shard of the integration suite: make test-inte
 .PHONY: test-integration-build
 test-integration-build: ## Compile integration tests without running them (no Docker, fast). Catches build-tag breakage from interface changes.
 	$(GO) test -tags=integration -run nothing -count=0 $(INT_TEST_PKGS)
+
+.PHONY: print-int-test-pkgs
+print-int-test-pkgs: ## Print INT_TEST_PKGS (the integration-suite package list) — the single source of truth scripts/ci/integration-shard.sh derives its non-sharded packages from
+	@echo $(INT_TEST_PKGS)
 
 # k6 load suite (Task #74). Each target sets PROM_OUT for the
 # experimental-prometheus-rw exporter so the run lands in the same

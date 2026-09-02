@@ -91,6 +91,17 @@ log() {
 }
 die() { log "ERROR: $1"; exit "${2:-1}"; }
 
+# write_metrics builds the textfile in a temp file and only then renames it
+# into place. A `die` INSIDE that brace group (e.g. `zfs get usedbysnapshots`
+# failing for one dataset) exits straight past the mv/rm, so every timer run
+# left a `zfs_snapshot.prom.tmp.<pid>` behind — node_exporter ignores
+# non-.prom files, so no metric corrupts, but the textfile directory fills
+# one file per run until somebody notices. METRICS_TMP holds the in-flight
+# name; the trap removes it on ANY exit path and write_metrics clears it
+# once the rename has happened.
+METRICS_TMP=""
+trap 'rm -f "${METRICS_TMP:-}"' EXIT
+
 # ─── configuration parsing ──────────────────────────────────────────
 # Parallel indexed arrays (no `declare -A`: bash 3.2 on an operator's
 # macOS must still be able to run scripts/ci/zfs-snapshot-test.sh).
@@ -306,6 +317,7 @@ write_metrics() {
   mkdir -p "$TEXTFILE_DIR"
   out="$TEXTFILE_DIR/zfs_snapshot.prom"
   tmp="$out.tmp.$$"
+  METRICS_TMP="$tmp"   # see the EXIT trap: a die() below must not leak it
   read_pool_free; free="$POOL_FREE"
   {
     echo "# HELP stellarindex_zfs_pool_free_bytes Free bytes in the ZFS pool as reported by zpool list (pool-level, unlike node_filesystem_avail_bytes)."
@@ -347,6 +359,7 @@ write_metrics() {
   } > "$tmp"
   chmod 644 "$tmp"
   mv "$tmp" "$out"
+  METRICS_TMP=""       # renamed into place: nothing left to clean up
   rm -f "$TEXTFILE_DIR/zfs_snapshot_error.prom"
 }
 

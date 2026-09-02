@@ -148,6 +148,14 @@ min_usd_volume = 10000  # per-pair USD-volume floor for VWAP publication (anti-m
 # decision pending). Never add a non-USD fiat/fiat leg (EUR/GBP): the FX
 # snap derives it from the same fx_quotes USD rows as USD/GBP, so the router
 # would count one data row as two independent routes.
+#
+# 2026-08-29 amendment: see the §10.1 note above `[[aggregate.triangulations]]`
+# below — for the two allow-listed targets (crypto:XLM/fiat:GBP and
+# crypto:XLM/fiat:EUR) a composite REFERENCE built on the CURRENT bucket can
+# SUPPRESS a phase-2 fire (`corroboration_basis=composite`), binary-default ON.
+# So "runs the signed freeze-and-auto-release posture" above is no longer the
+# whole story for those two: a suppression in the logs is the amendment
+# working, not a bug.
 max_hops             = 3    # route length cap in LEGS (base→hub→quote = 2); accepted [2,4]
 min_route_confidence = 0.0  # weakest-link floor [0,1]; 0 keeps pre-router behaviour (dust USD pairs are already excluded from the graph by min_usd_volume). Raise to gate confident crosses on a route-quality floor.
 

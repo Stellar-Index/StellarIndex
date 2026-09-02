@@ -297,8 +297,17 @@ infeasible (OLTP-for-OLAP, billions of rows). Consequences:
   `drop_after` retention policy on `trades`, it's drift — remove it.
 - **Continuous aggregates**: `prices_1h/4h/1d`+ are indefinite (daily
   OHLC spans back to 2015); `prices_1m/15m` retention was also removed.
-- **Decoder backfills re-derive from the lake** (SQL / `ch-rebuild`), not
-  MinIO walks. Projected-source catch-up is `projector-replay`.
+- **Decoder backfills re-derive from the lake**, not MinIO walks — via
+  SQL, `ch-rebuild` for a non-projected domain (`-sdex`,
+  `-contract-calls`) — and note `-sep41` is NOT one of those: sep41_* IS
+  projected (§7, `projector/registry.go`, `sink.go::IsProjectedEvent`),
+  so its ch-rebuild pass is a second writer on a projected domain and is
+  exactly what the live-cursor refusal below exists for — and
+  `projector-replay` /
+  `projected-rebuild` for a projected one (§7's one-writer rule holds
+  for re-derives too; `ch-rebuild -write` refuses a range the live
+  projector is still inside). Which command, when:
+  [docs/architecture/ingest-pipeline.md](docs/architecture/ingest-pipeline.md#the-replay-decision-rule).
 
 ---
 

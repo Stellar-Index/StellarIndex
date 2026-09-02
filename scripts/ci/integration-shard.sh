@@ -21,8 +21,14 @@
 # (-tags=integration; only the deadline shrinks with the slice).
 #
 # Shard 0 additionally runs the non-sharded packages `make test-integration`
-# covers (INT_TEST_PKGS: cmd/stellarindex-ops, internal/ops/archive — they
-# finish in seconds), so the union of all shards == the Makefile target.
+# covers (INT_TEST_PKGS minus SHARDED_PKG: cmd/stellarindex-ops,
+# internal/ops/archive — they finish in seconds), so the union of all shards
+# == the Makefile target. That list is DERIVED from the Makefile at run time
+# (`make print-int-test-pkgs`), not copied here: the copy that used to live
+# in this file was guarded only by a "keep in lockstep" comment, so a package
+# added to INT_TEST_PKGS ran under `make test-integration` and compiled under
+# `make test-integration-build` but was executed by NO shard, and a failing
+# test in it shipped green (#333 F1).
 #
 # Fail-closed: an empty shard, an empty listing, a bad index, or a listing
 # that yields fewer tests than shards all exit non-zero — a shard that ran
@@ -40,14 +46,16 @@
 #                                CI runner, so 3x headroom — the 20m→35m
 #                                history in the Makefile is what happens with
 #                                no headroom).
+#   INTEGRATION_SHARD_MAKEFILE   makefile to read INT_TEST_PKGS from (default
+#                                `Makefile`); the self-test points it at
+#                                fixtures to prove the derivation tracks.
 set -euo pipefail
 
 cd "$(dirname "$0")/../.."
 
 SHARDED_PKG="./test/integration/..."
-# Keep in lockstep with INT_TEST_PKGS in the Makefile (minus SHARDED_PKG).
-EXTRA_PKGS="./cmd/stellarindex-ops/... ./internal/ops/archive/..."
 TIMEOUT="${INTEGRATION_SHARD_TIMEOUT:-15m}"
+MAKEFILE="${INTEGRATION_SHARD_MAKEFILE:-Makefile}"
 
 die() { echo "integration-shard: FAIL — $*" >&2; exit 1; }
 
@@ -57,6 +65,28 @@ idx="$1"; count="$2"
 [[ "$count" =~ ^[0-9]+$ ]] || die "SHARD_COUNT must be a positive integer, got '$count'"
 [ "$count" -ge 1 ] || die "SHARD_COUNT must be >= 1, got $count"
 [ "$idx" -lt "$count" ] || die "SHARD_INDEX $idx out of range for SHARD_COUNT $count"
+
+# ── shard-0-only packages, DERIVED from the Makefile ────────────────────
+# INT_TEST_PKGS is the one source of truth for what `make test-integration`
+# runs; EXTRA_PKGS is that list minus the package this script shards by
+# test name. Fail closed rather than guess: an unreadable makefile, an
+# empty list, or a list that no longer contains SHARDED_PKG all mean the
+# shard would silently run a DIFFERENT suite than the Makefile target it
+# stands in for.
+command -v make >/dev/null || die "make not on PATH — cannot derive INT_TEST_PKGS from $MAKEFILE"
+[ -r "$MAKEFILE" ] || die "makefile not readable: $MAKEFILE"
+int_pkgs="$(make -s -f "$MAKEFILE" print-int-test-pkgs)" ||
+  die "'make -f $MAKEFILE print-int-test-pkgs' failed — is the target still there?"
+[ -n "${int_pkgs//[[:space:]]/}" ] || die "INT_TEST_PKGS resolved empty from $MAKEFILE"
+read -r -a int_pkgs_arr <<<"$int_pkgs"   # split on whitespace, no globbing
+EXTRA_PKGS=()
+sharded_listed=0
+for pkg in "${int_pkgs_arr[@]}"; do
+  if [ "$pkg" = "$SHARDED_PKG" ]; then sharded_listed=1; continue; fi
+  EXTRA_PKGS+=("$pkg")
+done
+[ "$sharded_listed" -eq 1 ] ||
+  die "INT_TEST_PKGS ($int_pkgs) does not list $SHARDED_PKG — this script shards that package by test name, so the Makefile target and the shards have diverged"
 
 # ── full sorted listing (identical on every shard) ──────────────────────
 if [ -n "${INTEGRATION_SHARD_LIST_FILE:-}" ]; then
@@ -68,7 +98,12 @@ fi
 # `go test -list` also prints "ok <pkg> <time>" trailer lines; keep only
 # test identifiers. LC_ALL=C makes the sort byte-order-stable across
 # runners so every shard agrees on line numbers.
-all="$(printf '%s\n' "$raw" | grep -E '^Test[A-Za-z0-9_]*$' | LC_ALL=C sort -u || true)"
+# `[^[:space:]]` not `[A-Za-z0-9_]`: Go identifiers admit Unicode letters,
+# so `TestÜberweisung` is a real, listable test — the ASCII class dropped it
+# from the listing, which put it in no shard's -run regex and executed it
+# nowhere (#333). Every non-test line `go test -list` emits ("ok\t<pkg>\t0.5s",
+# "?\t<pkg>\t[no test files]") contains whitespace, so this stays exact.
+all="$(printf '%s\n' "$raw" | grep -E '^Test[^[:space:]]*$' | LC_ALL=C sort -u || true)"
 [ -n "$all" ] || die "test listing is empty — nothing to shard (build-tag or listing breakage?)"
 total="$(printf '%s\n' "$all" | wc -l | tr -d ' ')"
 [ "$total" -ge "$count" ] || die "only $total tests listed but $count shards requested — some shard would be empty"
@@ -80,6 +115,7 @@ n_mine="$(printf '%s\n' "$mine" | wc -l | tr -d ' ')"
 regex="^($(printf '%s\n' "$mine" | paste -sd '|' -))\$"
 
 echo "integration-shard: shard $idx of $count — $n_mine of $total tests in $SHARDED_PKG" >&2
+echo "integration-shard: shard-0-only packages from $MAKEFILE: ${EXTRA_PKGS[*]:-(none)}" >&2
 if [ "${INTEGRATION_SHARD_DRY_RUN:-0}" = "1" ]; then
   echo "integration-shard: -run $regex" >&2
   printf '%s\n' "$mine"
@@ -90,8 +126,7 @@ fi
 # this shard's tests; -timeout is the per-slice deadline (see header).
 go test -tags=integration -timeout "$TIMEOUT" -run "$regex" "$SHARDED_PKG"
 
-if [ "$idx" -eq 0 ]; then
-  echo "integration-shard: shard 0 also runs the non-sharded packages: $EXTRA_PKGS" >&2
-  # shellcheck disable=SC2086  # intentional word-split of the package list
-  go test -tags=integration -timeout "$TIMEOUT" $EXTRA_PKGS
+if [ "$idx" -eq 0 ] && [ "${#EXTRA_PKGS[@]}" -gt 0 ]; then
+  echo "integration-shard: shard 0 also runs the non-sharded packages: ${EXTRA_PKGS[*]}" >&2
+  go test -tags=integration -timeout "$TIMEOUT" "${EXTRA_PKGS[@]}"
 fi

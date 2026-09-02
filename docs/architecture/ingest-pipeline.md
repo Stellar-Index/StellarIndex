@@ -119,6 +119,54 @@ only in mechanism and throughput ceiling:
 
 ---
 
+## The replay decision rule
+
+**One rule, one place.** "A decoder changed — what replays history?" had
+three different answers in this repo (a `Replay-Plan:` commit trailer
+prescribing `ch-rebuild`, a runbook step prescribing `ch-rebuild`, and
+`scripts/ci/lint-replay-plan.sh`'s own FAIL example prescribing
+`backfill`), and they disagreed on a projected source. This section is
+the answer all three now point at (#333).
+
+Start by asking **who writes the domain** — the same question invariant 7
+(ADR-0031/0032, "one writer per data domain") answers. A source is
+PROJECTED if it has a case in `internal/projector/registry.go::buildSource`
+and an arm in `internal/pipeline/sink.go::IsProjectedEvent`.
+
+| The domain | The replay command |
+|---|---|
+| **Projected**, rewind ≲ 1M ledgers | `stellarindex-ops projector-replay -source <name> -from <ledger>` |
+| **Projected**, bulk (≳ 1M ledgers) | `stellarindex-ops projected-rebuild -config <toml> -source <name> -from <l> [-to <l>] -write` |
+| **Non-projected** lake re-derive (`sdex`, `band` / `soroswap-router` contract calls) | `stellarindex-ops ch-rebuild -config <toml> -from <l> -to <l> -write` with the matching pass flag (`-sdex` / `-contract-calls` / `-sep41`) |
+| `sep41` lake re-derive (`ch-rebuild -sep41 -write`) | Same command, but understand what it is: `sep41_*` is a PROJECTED domain (`projector/registry.go`, `sink.go::IsProjectedEvent`), so this pass is a second writer on it. That is precisely why `-write` refuses a range the live projector is still inside. Prefer `projector-replay` unless you specifically need the lake re-derive. |
+| Anything else | ask here first — do not invent a third path |
+
+Two corollaries, both learned the hard way:
+
+- **`stellarindex-ops backfill` is not a lake re-derive.** It is a MinIO
+  ledger walk (`internal/ledgerstream` → dispatcher), which invariant 8
+  rules out for decoder backfills, and on a gated projected source it
+  writes ZERO rows and still exits 0 (the cold-gate no-op documented at
+  `internal/ops/ingest/backfill.go:320-345`). It is never the answer to
+  "replay this decoder's history".
+- **`ch-rebuild`'s event pass can reach projected domains, so it is
+  guarded, not forbidden.** The one sanctioned projected use is the
+  clean-slate key repair (`scripts/ops/ch-rebuild-projected.sh`: DELETE
+  the window, then re-derive it with correct keys) — additive upserts
+  cannot fix a wrong PK. That run must stay strictly BEHIND the live
+  projector's tail, and since #333 `ch-rebuild -write` enforces it: it
+  reads the live projector's cursor for every projected source in the
+  run and refuses if any is still inside `[-from,-to]`, exactly as
+  `projected-rebuild` does (`-allow-live-overlap` is the explicit
+  operator override). Dry-run (`ch-rebuild` with no `-write`) writes
+  nothing and is never guarded.
+
+The `Replay-Plan:` commit trailer that `scripts/ci/lint-replay-plan.sh`
+requires on a decoder / allow-list change should name the command from
+this table, not a hand-written variant.
+
+---
+
 ## Binding rules
 
 ### 1. No stellar-rpc in production ingest

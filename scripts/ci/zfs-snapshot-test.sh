@@ -98,6 +98,12 @@ case "$cmd" in
   get)
     # zfs get -Hp -o value usedbysnapshots <ds>
     ds="${*: -1}"
+    # Fault injection for the metrics-tmp-leak test: make the property
+    # read fail for exactly one dataset, the way a pool hiccup would.
+    if [[ -n "${ZFS_GET_FAIL_DS:-}" && "$ds" == "$ZFS_GET_FAIL_DS" ]]; then
+      echo "cannot get 'usedbysnapshots' for '$ds': I/O error" >&2
+      exit 1
+    fi
     grep "^${ds}@" "$P/snapshots" 2>/dev/null | awk -F'\t' '{s+=$3} END{print s+0}'; exit 0 ;;
   *) echo "zfs stub: unsupported: $cmd $*" >&2; exit 99 ;;
 esac
@@ -316,6 +322,24 @@ reset_pool $(( 5 * TIB ))
 "$SCRIPT" rotate 2>/dev/null
 t ! -e "$TEXTFILE_DIR/zfs_snapshot_error.prom"
 res $? "a successful run removes the error textfile"
+
+echo "zfs-snapshot-test: a failed property read leaves no textfile temp behind"
+# write_metrics writes to "$out.tmp.$$" and only then renames. A `die`
+# inside that brace group (this fake makes `zfs get usedbysnapshots` fail
+# for one dataset) used to exit past the mv, leaving one
+# zfs_snapshot.prom.tmp.<pid> per run in the textfile directory forever.
+reset_pool $(( 5 * TIB ))
+rm -f "$TEXTFILE_DIR"/zfs_snapshot.prom.tmp.* 2>/dev/null
+ZFS_GET_FAIL_DS=data/postgres "$SCRIPT" metrics 2>"$TMP/log_tmpleak"; rc=$?
+t "$rc" -ne 0
+res $? "metrics with a failing 'zfs get usedbysnapshots' exits non-zero" "rc=$rc: $(cat "$TMP/log_tmpleak")"
+leaked="$(find "$TEXTFILE_DIR" -maxdepth 1 -name 'zfs_snapshot.prom.tmp.*' 2>/dev/null | tr '\n' ' ')"
+t -z "$leaked"
+res $? "the aborted run leaves no zfs_snapshot.prom.tmp.* behind" "leaked: $leaked"
+# Control: the same fake with no injected failure still writes the file.
+"$SCRIPT" metrics 2>/dev/null; rc=$?
+t "$rc" -eq 0 -a -f "$TEXTFILE_DIR/zfs_snapshot.prom"
+res $? "control: an unfaulted metrics run still writes the textfile" "rc=$rc"
 
 echo "zfs-snapshot-test: destroy choke point, pinned directly"
 # Source the script (main() is guarded on BASH_SOURCE) and call the

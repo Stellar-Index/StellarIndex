@@ -288,6 +288,15 @@ const (
 	projectedRebuildProgressInterval = 15 * time.Second
 )
 
+// liveCursorCovers is the ADR-0048 D3 one-writer predicate itself: the
+// live projector has already walked the whole requested range, so a bulk
+// re-derive of it only fills history strictly behind the live tail. It is
+// shared with ch-rebuild's checkCHRebuildLiveOverlap so the two tools
+// cannot drift apart on what "safe overlap" means.
+func liveCursorCovers(haveLive bool, liveLastLedger, to uint32) bool {
+	return haveLive && liveLastLedger >= to
+}
+
 // checkLiveCursorGuard is the ADR-0048 D3 one-writer contract, pulled out
 // as a pure function so it's unit-testable without a database. Refuses
 // (returns a non-nil error) unless the live projector's cursor for this
@@ -304,7 +313,7 @@ func checkLiveCursorGuard(haveLive bool, liveLastLedger, to uint32, allowOverlap
 	if allowOverlap {
 		return nil
 	}
-	if haveLive && liveLastLedger >= to {
+	if liveCursorCovers(haveLive, liveLastLedger, to) {
 		return nil
 	}
 	cur := "none (projector has never run for this source)"

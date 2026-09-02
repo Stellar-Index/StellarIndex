@@ -10,6 +10,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
+
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/external"
@@ -588,6 +590,24 @@ func (o *Orchestrator) emitCompositeReference(pair canonical.Pair, window time.D
 		return
 	}
 	o.logger.Debug("composite reference evaluated", attrs...)
+}
+
+// clearCompositeReference drops every composite-reference series for
+// (pair, window). Called on a tick where the pair is NOT eligible (it
+// gained a second venue, or left the allow-list): the gauges are a
+// per-tick verdict, so leaving the last eligible tick's "corroborated"
+// standing would have a dashboard — or an alert — assert that a freeze
+// decision consulted a reference it never saw, until the process
+// restarts. Same shape as recordVenueVWAPs' delete-then-set for a venue
+// that stopped trading.
+//
+// The label values MUST match emitCompositeReference's (`window.String()`,
+// not windowLabel) or this deletes nothing at all.
+func (o *Orchestrator) clearCompositeReference(pair canonical.Pair, window time.Duration) {
+	labels := prometheus.Labels{"pair": pair.String(), "window": window.String()}
+	obs.AggregatorCompositeCorroboration.DeletePartialMatch(labels)
+	obs.AggregatorCompositeReferenceLegSources.DeletePartialMatch(labels)
+	obs.AggregatorCompositeReferenceLegDispersionBps.DeletePartialMatch(labels)
 }
 
 // currentCompositeReference returns this tick's reference reading for

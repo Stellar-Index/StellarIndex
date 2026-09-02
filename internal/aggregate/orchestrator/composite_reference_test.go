@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/alicebob/miniredis/v2"
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/testutil"
 
 	"github.com/Stellar-Index/StellarIndex/internal/aggregate/baseline"
@@ -683,5 +684,132 @@ func TestCompositeReference_ReleaseBandHoldsVenueOffset(t *testing.T) {
 	if active() {
 		t.Fatal("venue back within 2 % of the composite did NOT auto-release — the positive path is broken, " +
 			"so the negative assertion above is vacuous")
+	}
+}
+
+// ─── the verdict gauges must not outlive the evaluated set ───────────────
+
+// compositeSeriesFor counts the series c holds for one (pair, window),
+// independently of whatever other tests in this package left on the
+// package-level collector. A registry can hold a collector that another
+// registry already holds, so this is a read-only lens on it.
+func compositeSeriesFor(t *testing.T, c prometheus.Collector, pair, window string) int {
+	t.Helper()
+	reg := prometheus.NewPedanticRegistry()
+	if err := reg.Register(c); err != nil {
+		t.Fatalf("register collector for inspection: %v", err)
+	}
+	mfs, err := reg.Gather()
+	if err != nil {
+		t.Fatalf("gather: %v", err)
+	}
+	n := 0
+	for _, mf := range mfs {
+		for _, m := range mf.GetMetric() {
+			var gotPair, gotWindow string
+			for _, lp := range m.GetLabel() {
+				switch lp.GetName() {
+				case "pair":
+					gotPair = lp.GetValue()
+				case "window":
+					gotWindow = lp.GetValue()
+				}
+			}
+			if gotPair == pair && gotWindow == window {
+				n++
+			}
+		}
+	}
+	return n
+}
+
+// TestCompositeReference_VerdictGaugeRetiredWhenPairLeavesTheEvaluatedSet
+// pins the lifetime of the three verdict series.
+//
+// The composite reference is evaluated ONLY for an allow-listed target
+// whose bucket is single-venue (compositeReferenceEligible). The gauges
+// it publishes are a PER-TICK verdict — so when the pair gains a second
+// venue and stops being evaluated, a lingering `verdict="corroborated"`
+// series claims a freeze decision consulted a reference that tick never
+// built, and keeps claiming it until the aggregator restarts. Nothing
+// deleted these series before this test (grep `Delete` in the package:
+// only recordVenueVWAPs had one).
+//
+// Note the label-value trap: emitCompositeReference labels the window
+// with window.String() ("1m0s"), not windowLabel ("1m"). A clear written
+// against the other convention deletes nothing and this test fails.
+func TestCompositeReference_VerdictGaugeRetiredWhenPairLeavesTheEvaluatedSet(t *testing.T) {
+	// A target no other test in this package uses, so the series counted
+	// here can only have come from this test.
+	xlmUSD := mkPair(t, "crypto", "XLM", "fiat", "USD")
+	usdCHF := mkPair(t, "fiat", "USD", "fiat", "CHF")
+	xlmCHF := mkPair(t, "crypto", "XLM", "fiat", "CHF")
+	window := time.Minute
+	now := time.Now().UTC()
+
+	store := &mockStore{perPair: map[string][]canonical.Trade{}}
+	cache, _ := newTestRedis(t)
+	o := New(store, cache, Config{
+		Pairs:          []canonical.Pair{xlmCHF, xlmUSD},
+		Windows:        []time.Duration{window},
+		Interval:       time.Hour,
+		Triangulations: []TriangulationChain{{Target: xlmCHF, Legs: []canonical.Pair{xlmUSD, usdCHF}}},
+		FXStore:        &fakeFXStore{quote: big.NewRat(90, 100), observedAt: now.Add(-time.Hour), source: "massive"},
+		FreezeWriter:   &recordingFreezeMarker{},
+		Baselines: stubBaselineSource{
+			multi:      baseline.MultiBaseline{Day30: &baseline.Baseline{Median: 0, MAD: 0.01, N: 100_000}},
+			computedAt: now,
+		},
+		CompositeReference: CompositeReferenceConfig{Enabled: true, Targets: []canonical.Pair{xlmCHF}},
+	})
+
+	setTrades := func(targetSources []string, ts time.Time) {
+		store.perPair[xlmUSD.String()] = []canonical.Trade{
+			makeTradeOn(t, xlmUSD, "kraken", 100_000_000, 10_000_000, ts),
+			makeTradeOn(t, xlmUSD, "coinbase", 100_000_000, 10_000_000, ts),
+		}
+		target := make([]canonical.Trade, 0, len(targetSources))
+		for _, src := range targetSources {
+			target = append(target, makeTradeOn(t, xlmCHF, src, 100_000_000, 9_000_000, ts))
+		}
+		store.perPair[xlmCHF.String()] = target
+	}
+
+	// Tick 1: single-venue target → evaluated, verdict published.
+	setTrades([]string{"soroswap"}, now.Add(-30*time.Second))
+	if err := o.Tick(context.Background()); err != nil {
+		t.Fatalf("tick 1: %v", err)
+	}
+	pairLabel, windowLabelValue := xlmCHF.String(), window.String()
+	if n := compositeSeriesFor(t, obs.AggregatorCompositeCorroboration, pairLabel, windowLabelValue); n != len(compositeVerdicts) {
+		t.Fatalf("after an evaluated tick: %d verdict series for %s/%s, want %d",
+			n, pairLabel, windowLabelValue, len(compositeVerdicts))
+	}
+	if g := testutil.ToFloat64(obs.AggregatorCompositeCorroboration.WithLabelValues(
+		pairLabel, windowLabelValue, string(compositeVerdictCorroborated))); g != 1 {
+		t.Fatalf("composite_corroboration{verdict=corroborated} = %v, want 1 "+
+			"(the composite 0.10 x 0.90 = 0.09 reproduces the direct print)", g)
+	}
+	if n := compositeSeriesFor(t, obs.AggregatorCompositeReferenceLegSources, pairLabel, windowLabelValue); n == 0 {
+		t.Fatal("after an evaluated tick: no leg-source series published")
+	}
+
+	// Tick 2: the target gains a SECOND venue → not evaluated at all.
+	setTrades([]string{"soroswap", "aquarius"}, now.Add(-5*time.Second))
+	if err := o.Tick(context.Background()); err != nil {
+		t.Fatalf("tick 2: %v", err)
+	}
+	if o.compositeReferenceEligible(xlmCHF, store.perPair[xlmCHF.String()]) {
+		t.Fatal("a two-venue bucket must not be composite-reference eligible — test setup is wrong")
+	}
+	if n := compositeSeriesFor(t, obs.AggregatorCompositeCorroboration, pairLabel, windowLabelValue); n != 0 {
+		t.Errorf("%d verdict series survive a tick that never evaluated the reference, want 0 — "+
+			"a dashboard/alert reading them would report a verdict this bucket's freeze never consulted", n)
+	}
+	if n := compositeSeriesFor(t, obs.AggregatorCompositeReferenceLegSources, pairLabel, windowLabelValue); n != 0 {
+		t.Errorf("%d leg-source series survive an un-evaluated tick, want 0", n)
+	}
+	if n := compositeSeriesFor(t, obs.AggregatorCompositeReferenceLegDispersionBps, pairLabel, windowLabelValue); n != 0 {
+		t.Errorf("%d leg-dispersion series survive an un-evaluated tick, want 0", n)
 	}
 }

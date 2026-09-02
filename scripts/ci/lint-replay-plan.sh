@@ -43,6 +43,11 @@
 # one. The failure mode this guards is a FORGOTTEN plan, not a hidden
 # bypass — one honest run per range is enough.
 #
+# One thing it does NOT decide: which command. That is the replay decision
+# rule in docs/architecture/ingest-pipeline.md, and a declared plan naming
+# a projected source with `backfill` / `ch-rebuild` gets a WARNING here
+# (never a failure — see warn_wrong_replay_command).
+#
 # Usage: BASE_SHA=<sha> ./scripts/ci/lint-replay-plan.sh
 #   BASE_SHA — the comparison base (PR base sha, or the push event's
 #              `before` sha). Unset/zero → check is skipped (first
@@ -110,6 +115,56 @@ has_replay_plan() {
   [[ -n "$trailers" ]]
 }
 
+# ── advisory: does the declared plan name the RIGHT command? ───────────
+# A projected source (ADR-0031/0032: written by internal/projector and
+# nothing else) is replayed with projector-replay / projected-rebuild.
+# `backfill` is a MinIO walk that invariant 8 rules out and that writes
+# ZERO rows on a gated projected source; `ch-rebuild` is the
+# non-projected pass (and its event pass over a projected domain is a
+# second writer). The rule lives in docs/architecture/ingest-pipeline.md
+# ("The replay decision rule"); this is a WARNING, never a failure — the
+# gate's job is to make the plan exist, and only a human knows whether an
+# unusual command is the clean-slate exception.
+#
+# The source names are DERIVED from the projector registry (resolving
+# each `case <pkg>.Source<X>:` through that package's constant), never
+# listed here — a list here would be the same drift this whole gate
+# exists to prevent. The count is printed so a derivation that silently
+# resolves nothing is visible rather than reading as "all clear".
+projector_source_names() {
+  local reg=internal/projector/registry.go pkg const
+  [[ -r "$reg" ]] || return 0
+  grep -oE 'case [a-z0-9_]+\.Source[A-Za-z]*:' "$reg" |
+    sed -E 's/^case //; s/:$//' |
+    while IFS=. read -r pkg const; do
+      # `<Const> = "<value>"` in the source package the case refers to.
+      grep -rhoE "${const}[[:space:]]*=[[:space:]]*\"[^\"]+\"" "internal/sources/${pkg}" 2>/dev/null |
+        sed -E 's/.*"([^"]+)".*/\1/'
+    done | LC_ALL=C sort -u
+}
+
+# warn_wrong_replay_command <trailer-lines>
+warn_wrong_replay_command() {
+  local trailers="$1" names count line name
+  names="$(projector_source_names)"
+  count="$(grep -c . <<<"$names" || true)"
+  echo "lint-replay-plan: cross-checked the declared plan against $count projector source name(s)"
+  [[ "$count" -gt 0 ]] || return 0
+  while IFS= read -r line; do
+    [[ -n "$line" ]] || continue
+    grep -qE '(^|[[:space:]])(backfill|ch-rebuild)([[:space:]]|$)' <<<"$line" || continue
+    while IFS= read -r name; do
+      [[ -n "$name" ]] || continue
+      grep -qE "(^|[[:space:]=,'\"])${name}([[:space:]=,'\"]|$)" <<<"$line" || continue
+      echo "  WARNING: the plan replays projected source '${name}' with backfill/ch-rebuild."
+      echo "           Projected sources have ONE writer (invariant 7): use"
+      echo "           'projector-replay -source ${name}' (rewind) or"
+      echo "           'projected-rebuild -source ${name} ... -write' (bulk)."
+      echo "           See docs/architecture/ingest-pipeline.md — The replay decision rule."
+    done <<<"$names"
+  done <<<"$trailers"
+}
+
 changed="$(changed_watched "$BASE_SHA" HEAD)"
 if [[ -z "${changed//[[:space:]]/}" ]]; then
   echo "lint-replay-plan: no decoder / asset allow-list change in range — nothing to declare."
@@ -122,7 +177,9 @@ log_body="$(git log --format=%B "${BASE_SHA}..HEAD")"
 
 if has_replay_plan "$log_body"; then
   echo "lint-replay-plan: decoder / asset allow-list change declared its replay plan:"
-  grep -iE '^Replay-Plan:' <<<"$log_body" | sed 's/^/  /'
+  declared="$(grep -iE '^Replay-Plan:' <<<"$log_body")"
+  sed 's/^/  /' <<<"$declared"
+  warn_wrong_replay_command "$declared"
   exit 0
 fi
 
@@ -147,9 +204,15 @@ Add a trailer to a commit message in the range:
 
     Replay-Plan: <what history is replayed, how, and by whom>
 
+The command comes from the replay decision rule in
+docs/architecture/ingest-pipeline.md ("The replay decision rule") — NOT
+from memory. A projected source (anything with a case in
+internal/projector/registry.go) replays with projector-replay or
+projected-rebuild; `backfill` is a MinIO walk and is never the answer.
+
 e.g.
 
-    Replay-Plan: stellarindex-ops backfill --source reflector-fx --from 2026-06-01 on r1 after deploy; 4 new codes (see fx_quotes)
+    Replay-Plan: stellarindex-ops projector-replay -source reflector-fx -from 61602787 on r1 after deploy; 4 new codes (see fx_quotes)
 
 If NO already-served history is affected (pure refactor, source with no
 rows yet, event that has never fired on mainnet), say so — and say why;
