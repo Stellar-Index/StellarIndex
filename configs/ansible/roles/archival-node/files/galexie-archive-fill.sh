@@ -50,6 +50,27 @@ PARTIAL_CHECK_WINDOW="${PARTIAL_CHECK_WINDOW:-4}"
 # Partition names should NOT have trailing slashes.
 PARTIALS_INPUT="${PARTIALS:-}"
 
+# aws_ls — list a prefix on the public AWS bucket with bounded retries (#475,
+# 2026-09-02). The S3 listing intermittently answers PermanentRedirect
+# ("must be addressed using the specified endpoint") even against the
+# regional endpoint; under `set -e` one such reply killed the whole run with
+# no output — the unit alternated clean/failed hourly and a REAL failure was
+# indistinguishable from AWS hiccups. Three attempts with backoff, then fail
+# LOUDLY with the reason on stderr so journald carries it.
+aws_ls() {  # $1=prefix (after aws-public/), remaining args passed to mc ls
+  local prefix="$1"; shift
+  local attempt out
+  for attempt in 1 2 3; do
+    if out=$(mc ls "$@" "aws-public/${prefix}" 2>/tmp/galexie-fill.awsls.err); then
+      printf '%s\n' "$out"; return 0
+    fi
+    echo "galexie-archive-fill: aws listing attempt ${attempt}/3 failed for ${prefix}: $(tail -1 /tmp/galexie-fill.awsls.err | cut -c1-160)" >&2
+    sleep $((attempt * 5))
+  done
+  echo "galexie-archive-fill: FATAL — AWS listing of ${prefix} failed 3 times; not a local fault" >&2
+  return 1
+}
+
 if [ -n "$PARTIALS_INPUT" ]; then
   echo "=== $(date -Iseconds) Phase 1: delete known partials ===" | tee -a "$LOG"
   echo "$PARTIALS_INPUT" | tr ' ' '\n' | grep -v '^$' | while read -r p; do
@@ -73,13 +94,13 @@ if [ "$PARTIAL_CHECK_WINDOW" -gt 0 ]; then
   # FIRST. e.g. FC42F7FF--62720000-... sorts BEFORE FFFFFFFF--0-63999
   # (genesis). `head -N` therefore gives us the latest N partitions —
   # filter `.config.json` (the bucket marker file) out first.
-  mc ls aws-public/aws-public-blockchain/v1.1/stellar/ledgers/pubnet/ \
-    | awk '{print $NF}' | sed 's:/$::' | grep -v '^\.' | sort \
+  aws_ls aws-public-blockchain/v1.1/stellar/ledgers/pubnet/ \
+    | awk '{print $NF}' | sed 's:/$::' | { grep -v '^\.' || true; } | sort \
     | head -n "$PARTIAL_CHECK_WINDOW" \
     > /tmp/galexie-fill.tail.txt
   while read -r p; do
     [ -z "$p" ] && continue
-    aws_n=$(mc ls --recursive "aws-public/aws-public-blockchain/v1.1/stellar/ledgers/pubnet/$p/" 2>/dev/null | wc -l)
+    aws_n=$(aws_ls "aws-public-blockchain/v1.1/stellar/ledgers/pubnet/$p/" --recursive | wc -l)
     local_n=$(mc ls --recursive "local/galexie-archive/$p/" 2>/dev/null | wc -l)
     if [ "$local_n" -gt 0 ] && [ "$local_n" -lt "$aws_n" ]; then
       # Queue it for Phase 3 instead of DELETING it. `mc mirror` is
@@ -107,7 +128,7 @@ if [ "$PARTIAL_CHECK_WINDOW" -gt 0 ]; then
 fi
 
 echo "=== $(date -Iseconds) Phase 2: build needs-work list ===" | tee -a "$LOG"
-mc ls aws-public/aws-public-blockchain/v1.1/stellar/ledgers/pubnet/ \
+aws_ls aws-public-blockchain/v1.1/stellar/ledgers/pubnet/ \
   | awk '{print $NF}' | sed 's:/$::' | sort > /tmp/galexie-fill.aws.txt
 mc ls local/galexie-archive/ \
   | awk '{print $NF}' | sed 's:/$::' | sort > /tmp/galexie-fill.local.txt
