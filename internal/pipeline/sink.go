@@ -219,9 +219,11 @@ func PersistEvents(ctx context.Context, logger *slog.Logger, store *timescale.St
 		wg.Add(1)
 		go func(workerID int) {
 			defer wg.Done()
-			// store doubles as the trade writer; the seam exists so the
-			// shutdown-race tests can intercept the batch path with a fake.
-			persistWorker(ctx, logger, store, store, in, mode, workerID, extBuf)
+			// store doubles as the trade writer AND — bound to the logger
+			// by storeEventPersister — as the non-trade event persister.
+			// Both seams exist so the shutdown-race tests can intercept a
+			// write with a fake.
+			persistWorker(ctx, logger, storeEventPersister(logger, store), store, in, mode, workerID, extBuf)
 		}(i)
 	}
 	wg.Wait()
@@ -242,13 +244,26 @@ func PersistEvents(ctx context.Context, logger *slog.Logger, store *timescale.St
 // is still well under the 25-conn pool ceiling.
 const PersistWorkers = 8
 
-// tw is the trade writer for the batch path — always `store` in
-// production (PersistEvents passes it twice); a fake in the shutdown-race
-// tests, which is the only reason the seam is a separate parameter.
+// ep and tw are the two write seams. In production both are the real
+// store (PersistEvents passes it twice, once wrapped by
+// [storeEventPersister]); a fake in the shutdown-race tests, which is the
+// only reason they are parameters rather than a `*timescale.Store`.
 //
 //nolint:gocognit,contextcheck // batched-drain loop has natural fan-out: ctx.Done, ticker, channel — splitting hurts readability of the flush invariants. The shutdown flush intentionally uses a fresh context (parent is canceled); see flushShutdown.
-func persistWorker(ctx context.Context, logger *slog.Logger, store *timescale.Store, tw tradeWriter, in <-chan consumer.Event, mode SinkMode, workerID int, extBuf *externalRetryBuffer) {
+func persistWorker(ctx context.Context, logger *slog.Logger, ep eventPersister, tw tradeWriter, in <-chan consumer.Event, mode SinkMode, workerID int, extBuf *externalRetryBuffer) {
 	tradeBuf := make([]canonical.Trade, 0, tradeBatchSize)
+	// carried holds NON-trade events whose steady-state write was
+	// cancelled mid-flight by the parent ctx — the non-trade twin of the
+	// `flush` carry below (#368 M3). Such an event is already OFF the
+	// channel, so nothing will ever redeliver it; abandoning it there
+	// threw away an already-cursored served-tier write while the worker's
+	// whole drain budget still sat unused. Bounded in practice by one
+	// entry: once ctx is cancelled shutdownSafeCtx hands out a FRESH
+	// bounded context, so every later abandon is a genuine loss and is
+	// reported rather than carried. Both arms that hand it to
+	// [persistCarried] then RETURN, so there is no reset — nothing reads
+	// it again.
+	var carried []consumer.Event
 	flushTicker := time.NewTicker(tradeBatchFlushInterval)
 	defer flushTicker.Stop()
 
@@ -336,33 +351,18 @@ func persistWorker(ctx context.Context, logger *slog.Logger, store *timescale.St
 			// and logs the undrained ledger range — before main hard-exits at
 			// [ShutdownDeadline].
 			deadline := time.Now().Add(drainTimeout)
+			// Carried events first: they were dequeued BEFORE anything
+			// still sitting in `in`, and nothing else can redeliver them.
+			persistCarried(carried, logger, ep, deadline)
 			shutdownCtx, shutdownCancel := context.WithDeadline(context.Background(), deadline)
-		drainInFlight:
-			for {
-				select {
-				case ev, ok := <-in:
-					if !ok {
-						break drainInFlight
-					}
-					if skipInSink(ev, mode) {
-						continue
-					}
-					if t, ok := tradeFromEvent(ev); ok {
-						tradeBuf = append(tradeBuf, t)
-						continue
-					}
-					persistEventResilient(shutdownCtx, logger, store, ev)
-				default:
-					break drainInFlight
-				}
-			}
+			tradeBuf = drainInFlightNow(shutdownCtx, in, logger, ep, mode, tradeBuf)
 			shutdownCancel()
 			flushShutdown(deadline)
 			// Only the first worker handles the blocking shutdown drain
 			// (catches events that arrive after our non-blocking sweep + the
 			// channel close) to avoid duplicate drain work; the others exit.
 			if workerID == 0 {
-				drainBufferedEvents(in, logger, store, mode, deadline)
+				drainBufferedEvents(in, logger, ep, tw, mode, deadline)
 			}
 			return
 		case <-flushTicker.C:
@@ -377,7 +377,9 @@ func persistWorker(ctx context.Context, logger *slog.Logger, store *timescale.St
 			fcancel()
 		case ev, ok := <-in:
 			if !ok {
-				flushShutdown(time.Now().Add(drainTimeout))
+				deadline := time.Now().Add(drainTimeout)
+				persistCarried(carried, logger, ep, deadline)
+				flushShutdown(deadline)
 				return
 			}
 			if skipInSink(ev, mode) {
@@ -400,8 +402,85 @@ func persistWorker(ctx context.Context, logger *slog.Logger, store *timescale.St
 			// same ADR-0041 failure policy as trades — see
 			// persistEventResilient. CON-09: see the flushTicker arm above.
 			fctx, fcancel := shutdownSafeCtx(ctx)
-			persistEventResilient(fctx, logger, store, ev)
+			if err := persistEventResilient(fctx, logger, ep, ev); err != nil {
+				// Same carry rule as `flush` above, for the same reason:
+				// only the parent-ctx case is carried. When shutdownSafeCtx
+				// already handed out a fresh bounded ctx (CON-09) its
+				// deadline IS the drain budget, so an abandon there is the
+				// genuine loss it is reported as (#368 M3).
+				if fctx == ctx {
+					carried = append(carried, ev)
+				} else {
+					reportAbandonedEvent(logger, ev, err)
+				}
+			}
 			fcancel()
+		}
+	}
+}
+
+// drainInFlightNow makes a NON-BLOCKING sweep over whatever is already
+// buffered in `in` and returns tradeBuf with every trade-shaped event it
+// found appended; non-trade events are persisted under ctx as it goes.
+//
+// C2-17: [persistWorker]'s shutdown arm calls this before exiting,
+// because the racy select can pick `<-ctx.Done()` while events are still
+// sitting in the channel buffer. Non-blocking (the default arm returns
+// the instant `in` is momentarily empty) so a channel the producer has
+// not closed yet cannot pin the worker — worker 0's blocking
+// [drainBufferedEvents] still catches late arrivals and the close.
+//
+// Extracted from that arm to keep [persistWorker] under the
+// cognitive-complexity gate (the campaign's precedent is to lower real
+// complexity rather than suppress the linter); behaviour is unchanged,
+// including that a closed channel and a momentarily-empty one both just
+// return.
+func drainInFlightNow(ctx context.Context, in <-chan consumer.Event, logger *slog.Logger, ep eventPersister, mode SinkMode, tradeBuf []canonical.Trade) []canonical.Trade {
+	for {
+		select {
+		case ev, ok := <-in:
+			if !ok {
+				return tradeBuf
+			}
+			if skipInSink(ev, mode) {
+				continue
+			}
+			if t, isTrade := tradeFromEvent(ev); isTrade {
+				tradeBuf = append(tradeBuf, t)
+				continue
+			}
+			if err := persistEventResilient(ctx, logger, ep, ev); err != nil {
+				reportAbandonedEvent(logger, ev, err)
+			}
+		default:
+			return tradeBuf
+		}
+	}
+}
+
+// persistCarried is flushShutdown's non-trade half: it re-writes the
+// events a steady-state persist had to abandon mid-flight, under a FRESH
+// context bounded by the worker's SHARED drain deadline. Same F-1318
+// rationale as flushShutdown — the parent ctx is already cancelled on
+// both shutdown paths, so passing it through would fail every insert
+// instantly — and same CON-10 rationale for taking the absolute deadline
+// rather than a fresh budget. Anything it still cannot land IS a genuine
+// loss, so it is reported here rather than carried further (#368 M3).
+//
+// The caller resets its own slice afterwards; taking it by value keeps
+// this a plain function rather than a closure over persistWorker's
+// locals, which is what keeps that function under the complexity gate.
+//
+//nolint:contextcheck // intentional fresh context; see godoc above.
+func persistCarried(carried []consumer.Event, logger *slog.Logger, ep eventPersister, deadline time.Time) {
+	if len(carried) == 0 {
+		return
+	}
+	cctx, cancel := context.WithDeadline(context.Background(), deadline)
+	defer cancel()
+	for _, ev := range carried {
+		if err := persistEventResilient(cctx, logger, ep, ev); err != nil {
+			reportAbandonedEvent(logger, ev, err)
 		}
 	}
 }
@@ -555,7 +634,7 @@ func IsSoleWriterProjected(ev consumer.Event) bool {
 // why it never fired in production).
 //
 //nolint:contextcheck,gocognit // intentional fresh context + batched-drain fan-out; see godoc above.
-func drainBufferedEvents(in <-chan consumer.Event, logger *slog.Logger, store *timescale.Store, mode SinkMode, deadline time.Time) {
+func drainBufferedEvents(in <-chan consumer.Event, logger *slog.Logger, ep eventPersister, tw tradeWriter, mode SinkMode, deadline time.Time) {
 	drainCtx, cancel := context.WithDeadline(context.Background(), deadline)
 	defer cancel()
 	tradeBuf := make([]canonical.Trade, 0, tradeBatchSize)
@@ -569,7 +648,7 @@ func drainBufferedEvents(in <-chan consumer.Event, logger *slog.Logger, store *t
 		// down, so every trade block-retries within the bounded drainCtx
 		// (2026-07-06 outage fix). An infra fault here abandons after the
 		// drainTimeout and logs the recoverable ledger range at ERROR.
-		reportAbandonedTrades(logger, "shutdown drain", flushTradeBatch(drainCtx, logger, store, nil, batch, -1), drainCtx.Err())
+		reportAbandonedTrades(logger, "shutdown drain", flushTradeBatch(drainCtx, logger, tw, nil, batch, -1), drainCtx.Err())
 	}
 	for {
 		select {
@@ -588,14 +667,18 @@ func drainBufferedEvents(in <-chan consumer.Event, logger *slog.Logger, store *t
 				}
 				continue
 			}
-			persistEventResilient(drainCtx, logger, store, ev) // bounded by the shared drain deadline
+			// Bounded by the shared drain deadline; an abandon here is a
+			// genuine loss (there is no later pass to carry it to).
+			if err := persistEventResilient(drainCtx, logger, ep, ev); err != nil {
+				reportAbandonedEvent(logger, ev, err)
+			}
 		case <-drainCtx.Done():
 			flushTrades()
 			// C2-17 + G15-08: the bounded drain deadline tripped with events
 			// possibly still buffered. drainFinalPass makes one last
 			// best-effort NON-BLOCKING pass over whatever's immediately
 			// available and reports exactly what's left undrained.
-			drainFinalPass(in, logger, store, mode)
+			drainFinalPass(in, logger, ep, tw, mode)
 			return
 		}
 	}
@@ -646,7 +729,7 @@ func (s *ledgerSpan) observe(l uint32) {
 	}
 }
 
-func drainFinalPass(in <-chan consumer.Event, logger *slog.Logger, store *timescale.Store, mode SinkMode) {
+func drainFinalPass(in <-chan consumer.Event, logger *slog.Logger, ep eventPersister, tw tradeWriter, mode SinkMode) {
 	finalCtx, finalCancel := context.WithTimeout(context.Background(), drainFinalPassBudget)
 	defer finalCancel()
 	finalTrades := make([]canonical.Trade, 0, tradeBatchSize)
@@ -677,14 +760,16 @@ drainRemainder:
 				finalTrades = append(finalTrades, t)
 				continue
 			}
-			persistEventResilient(finalCtx, logger, store, ev)
+			if err := persistEventResilient(finalCtx, logger, ep, ev); err != nil {
+				reportAbandonedEvent(logger, ev, err)
+			}
 		default:
 			break drainRemainder
 		}
 	}
 	if len(finalTrades) > 0 {
 		// nil extBuf: same shutdown block-and-retry posture as flushTrades.
-		reportAbandonedTrades(logger, "final pass", flushTradeBatch(finalCtx, logger, store, nil, finalTrades, -1), finalCtx.Err())
+		reportAbandonedTrades(logger, "final pass", flushTradeBatch(finalCtx, logger, tw, nil, finalTrades, -1), finalCtx.Err())
 	}
 	if total > 0 {
 		logger.Error("PersistEvents drain deadline exceeded — made a final best-effort persist pass; any residual is recoverable from the CH lake, re-derive this ledger range if the served tier is short",
@@ -1107,30 +1192,65 @@ func eventSource(ev consumer.Event) string {
 // means exactly the right thing here — the served-tier write path is
 // blocked and the cursor is not advancing. Genuine drops stay
 // distinguishable on SourceInsertErrorsTotal{kind="dropped"}.
-func persistEventResilient(ctx context.Context, logger *slog.Logger, store *timescale.Store, ev consumer.Event) {
+//
+// Return contract (#368 M3, mirroring [persistTrade]):
+//   - nil           — the write landed, OR it hit a permanent data fault
+//     (deterministically bad row: counted + logged HERE and dropped,
+//     because holding a poison row would wedge the pipeline).
+//   - the ctx error — the retry was abandoned because ctx was cancelled
+//     or its drain deadline expired. Deliberately NOT counted or logged
+//     here: only the caller knows whether the event still has a bounded
+//     drain pass ahead of it (persistWorker's `<-in` arm carries it) or
+//     is a genuine loss ([reportAbandonedEvent]). Counting it here would
+//     make every carry look like a drop.
+func persistEventResilient(ctx context.Context, logger *slog.Logger, ep eventPersister, ev consumer.Event) error {
 	attempt := 0
 	err := retryInfra(ctx, logger, "handle_event", func(c context.Context) error {
 		attempt++
 		// Only the first attempt counts the event on the per-source
 		// received/last-seen metrics; see handleEvent's countEvent godoc.
-		return handleEvent(c, logger, store, ev, attempt == 1)
+		return ep(c, ev, attempt == 1)
 	})
 	if err == nil {
-		return
+		return nil
 	}
-	// Whatever is left is a genuine loss for this event: count it under the
-	// ADR-0041 drop label and say so loudly. consumer.Event carries no
-	// ledger (kind + source is the whole identity the interface exposes),
-	// so the re-derive hint is the source's own gap detector / the
-	// completeness verdict rather than a ledger range.
-	obs.SourceInsertErrorsTotal.WithLabelValues(eventSource(ev), "dropped").Inc()
 	if isCtxErr(err) {
-		logger.Error("served-tier event abandoned on shutdown — re-derive this source's tail (per-source gap detector / completeness verdict will show it)",
-			"kind", ev.EventKind(), "source", eventSource(ev), "err", err)
-		return
+		return err
 	}
+	obs.SourceInsertErrorsTotal.WithLabelValues(eventSource(ev), "dropped").Inc()
 	logger.Error("served-tier event dropped — permanent data fault, row isolated so the pipeline keeps moving",
 		"kind", ev.EventKind(), "source", eventSource(ev), "err", err)
+	return nil
+}
+
+// reportAbandonedEvent counts and logs a non-trade served-tier event no
+// drain pass could land — the non-trade sibling of
+// [reportAbandonedTrades]. Call it exactly where the event has nowhere
+// left to go, never where it is about to be retried: consumer.Event
+// carries no ledger (kind + source is the whole identity the interface
+// exposes), so the re-derive hint is the source's own gap detector /
+// the completeness verdict rather than a ledger range.
+func reportAbandonedEvent(logger *slog.Logger, ev consumer.Event, err error) {
+	obs.SourceInsertErrorsTotal.WithLabelValues(eventSource(ev), "dropped").Inc()
+	logger.Error("served-tier event abandoned on shutdown — re-derive this source's tail (per-source gap detector / completeness verdict will show it)",
+		"kind", ev.EventKind(), "source", eventSource(ev), "err", err)
+}
+
+// eventPersister writes ONE non-trade served-tier event. It is always
+// [handleEvent] bound to the real store in production (see
+// [storeEventPersister]); the shutdown-race tests bind a fake, which is
+// the only reason the sink's drain path takes this rather than a
+// concrete *timescale.Store — the same seam rationale as [tradeWriter]
+// on the trade half.
+type eventPersister func(ctx context.Context, ev consumer.Event, countEvent bool) error
+
+// storeEventPersister binds [handleEvent] to a store and logger. A nil
+// store is legal and unchanged in behaviour: the unit tests that only
+// exercise the default/unhandled and Validate-rejects paths pass one.
+func storeEventPersister(logger *slog.Logger, store *timescale.Store) eventPersister {
+	return func(ctx context.Context, ev consumer.Event, countEvent bool) error {
+		return handleEvent(ctx, logger, store, ev, countEvent)
+	}
 }
 
 // persistTrade writes one trade with infrastructure-resilience

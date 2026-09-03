@@ -1563,10 +1563,16 @@ func TestPlatformPostgresStores(t *testing.T) {
 			t.Error("expected error for invalid condition on update")
 		}
 
-		// MarkPriceAlertFired stamps last_fired_at (cooldown clock).
+		// ClaimPriceAlertFire stamps last_fired_at (cooldown clock). The
+		// alert above carries cooldown_seconds = 0, so a never-fired row
+		// claims immediately.
 		firedAt := time.Now().UTC().Truncate(time.Microsecond)
-		if err := alerts.MarkPriceAlertFired(ctx, created.ID, firedAt); err != nil {
-			t.Fatalf("mark fired: %v", err)
+		claimed, err := alerts.ClaimPriceAlertFire(ctx, created.ID, firedAt)
+		if err != nil {
+			t.Fatalf("claim fire: %v", err)
+		}
+		if !claimed {
+			t.Fatal("claim fire on a never-fired alert returned claimed=false")
 		}
 		got, err = alerts.GetPriceAlert(ctx, created.ID)
 		if err != nil {
@@ -1767,6 +1773,117 @@ func TestPlatformPostgresStores(t *testing.T) {
 		}
 		if len(listed) != cap_ {
 			t.Errorf("persisted rows = %d, want %d (the cap)", len(listed), cap_)
+		}
+	})
+
+	// #368 M10 on real Postgres: the once-per-cooldown-window guarantee is
+	// the conditional UPDATE, not the evaluator's in-memory coolingDown
+	// check — that check reads the snapshot ListEnabledPriceAlerts took at
+	// the top of the sweep, so every concurrent evaluator passes it.
+	//
+	// Modelled exactly as production would race: N goroutines (stand-ins
+	// for a second aggregator / an R2-R3 standby / an overlapping deploy)
+	// claim the SAME crossing on the SAME alert at the same instant, all
+	// passing the same stale gate. Exactly one may win, because each
+	// customer webhook the loser would fan out to is a duplicate
+	// notification on a delivery id the customer cannot dedup.
+	//
+	// This has to be a DB test: the property is Postgres' row-lock
+	// serialisation of concurrent UPDATEs (the loser re-evaluates the
+	// predicate against the winner's committed row under READ COMMITTED),
+	// which no fake reproduces.
+	t.Run("PriceAlertStore/Concurrent_FireClaim_ExactlyOneWinner", func(t *testing.T) {
+		alerts := postgresstore.NewPriceAlertStore(store)
+		acct, err := accounts.Create(ctx, platform.Account{
+			Name: "ClaimRaceCo", Slug: "claimrace-" + strings.ToLower(uuid.New().String()[:8]),
+			BillingEmail: "claimrace-" + uuid.New().String() + "@a.example",
+			Tier:         platform.TierFree, Status: platform.AccountActive,
+		})
+		if err != nil {
+			t.Fatalf("create account: %v", err)
+		}
+		created, err := alerts.CreatePriceAlert(ctx, platform.PriceAlert{
+			AccountID: acct.ID, BaseAsset: "native", QuoteAsset: "fiat:USD",
+			Condition: platform.AlertAbove, Threshold: "0.15", Enabled: true,
+			CooldownSeconds: 3600, // a once-per-hour crossing notification
+		}, 25)
+		if err != nil {
+			t.Fatalf("create alert: %v", err)
+		}
+
+		const goroutines = 10
+		// One shared instant: every evaluator observed the same crossing on
+		// the same closed bucket, which is precisely when duplicates hurt.
+		firedAt := time.Now().UTC().Truncate(time.Microsecond)
+		var (
+			wg        sync.WaitGroup
+			won       int64
+			lost      int64
+			claimErrs int64
+			start     = make(chan struct{})
+		)
+		for i := 0; i < goroutines; i++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				<-start
+				claimed, err := alerts.ClaimPriceAlertFire(ctx, created.ID, firedAt)
+				switch {
+				case err != nil:
+					atomic.AddInt64(&claimErrs, 1)
+					t.Errorf("unexpected claim error: %v", err)
+				case claimed:
+					atomic.AddInt64(&won, 1)
+				default:
+					atomic.AddInt64(&lost, 1)
+				}
+			}()
+		}
+		close(start)
+		wg.Wait()
+
+		if got := atomic.LoadInt64(&won); got != 1 {
+			t.Errorf("claims won = %d, want exactly 1 — every extra winner is a duplicate customer webhook for one crossing (#368 M10)", got)
+		}
+		if got := atomic.LoadInt64(&lost); got != goroutines-1 {
+			t.Errorf("claims refused = %d, want %d", got, goroutines-1)
+		}
+		if got := atomic.LoadInt64(&claimErrs); got != 0 {
+			t.Errorf("claim errors = %d, want 0 — a refused claim is not an error", got)
+		}
+
+		got, err := alerts.GetPriceAlert(ctx, created.ID)
+		if err != nil {
+			t.Fatalf("get after claim race: %v", err)
+		}
+		if !got.LastFiredAt.Equal(firedAt) {
+			t.Errorf("LastFiredAt = %v, want %v — the winner's stamp must be durable", got.LastFiredAt, firedAt)
+		}
+
+		// A later crossing INSIDE the cooldown is still refused, and one
+		// past it claims again: the predicate is the cooldown, not a
+		// fire-once latch.
+		if claimed, err := alerts.ClaimPriceAlertFire(ctx, created.ID, firedAt.Add(59*time.Minute)); err != nil {
+			t.Fatalf("claim inside cooldown: %v", err)
+		} else if claimed {
+			t.Error("claimed 59 minutes into a 3600s cooldown; want refused")
+		}
+		after := firedAt.Add(3600 * time.Second)
+		if claimed, err := alerts.ClaimPriceAlertFire(ctx, created.ID, after); err != nil {
+			t.Fatalf("claim after cooldown: %v", err)
+		} else if !claimed {
+			t.Error("refused a claim exactly at the cooldown boundary; want claimed")
+		}
+
+		// A deleted alert claims nothing and is not an error — the
+		// evaluator treats it identically to losing the race.
+		if err := alerts.DeletePriceAlert(ctx, created.ID); err != nil {
+			t.Fatalf("delete: %v", err)
+		}
+		if claimed, err := alerts.ClaimPriceAlertFire(ctx, created.ID, after.Add(time.Hour)); err != nil {
+			t.Errorf("claim on a deleted alert returned an error: %v", err)
+		} else if claimed {
+			t.Error("claimed a fire on a deleted alert")
 		}
 	})
 }

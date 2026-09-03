@@ -83,7 +83,7 @@ type PriceAlert struct {
 // Implementation: postgresstore.PriceAlertStore (migration 0080). The
 // CRUD half (Create/Get/List-for-account/Update/Delete) is called by
 // the dashboard handlers in the API binary; the evaluator half
-// (ListEnabledPriceAlerts/MarkPriceAlertFired) is called by the
+// (ListEnabledPriceAlerts/ClaimPriceAlertFire) is called by the
 // aggregator's price-alert worker.
 type PriceAlertStore interface {
 	// CreatePriceAlert inserts a new alert, enforcing the per-account
@@ -113,8 +113,26 @@ type PriceAlertStore interface {
 	// id is not an error).
 	DeletePriceAlert(ctx context.Context, id uuid.UUID) error
 
-	// MarkPriceAlertFired stamps last_fired_at (and bumps updated_at).
-	// Called by the evaluator after it enqueues a delivery so the
-	// cooldown clock starts.
-	MarkPriceAlertFired(ctx context.Context, id uuid.UUID, firedAt time.Time) error
+	// ClaimPriceAlertFire atomically claims this crossing's cooldown
+	// window for the caller: it stamps last_fired_at (and bumps
+	// updated_at) ONLY when the row's own cooldown has elapsed, and
+	// reports whether it won.
+	//
+	// The claim has to be conditional in the UPDATE itself because the
+	// evaluator's cooldown check reads a SNAPSHOT taken by
+	// ListEnabledPriceAlerts at the top of the sweep. Two evaluators —
+	// an operator running a second aggregator, an R2/R3 standby, or a
+	// deploy in which the old and new process overlap — both pass that
+	// check on the same crossing, and an unconditional stamp then let
+	// BOTH fan out, so the customer got two webhooks per crossing and
+	// the once-per-cooldown-window guarantee was only ever true for a
+	// single instance (#368 M10). Postgres serialises the concurrent
+	// UPDATEs on the row lock, so the loser re-evaluates the predicate
+	// against the winner's committed row and matches nothing.
+	//
+	// claimed=false means "not yours to deliver": either another
+	// evaluator claimed this window, or the alert was deleted mid-sweep.
+	// Both call for the same thing — skip the fan-out — so they are
+	// deliberately not distinguished.
+	ClaimPriceAlertFire(ctx context.Context, id uuid.UUID, firedAt time.Time) (claimed bool, err error)
 }

@@ -24,10 +24,19 @@ type fakeAlertStore struct {
 	enabled  []platform.PriceAlert
 	listErr  error
 	firedIDs []uuid.UUID
-	// markErr is returned by the next markErrN calls to MarkPriceAlertFired,
-	// simulating a transient store write failure on the fired-mark.
-	markErr  error
-	markErrN int
+	// claimErr is returned by the next claimErrN calls to
+	// ClaimPriceAlertFire, simulating a transient store write failure on
+	// the fired-mark.
+	claimErr  error
+	claimErrN int
+	// dbLastFired is the AUTHORITATIVE last_fired_at the conditional
+	// UPDATE evaluates its predicate against — the row as it stands in
+	// Postgres NOW, which is not necessarily the snapshot
+	// ListEnabledPriceAlerts handed the evaluator at the top of the sweep.
+	// Seeding it independently of `enabled` is how a test models a second
+	// evaluator having claimed the same crossing in between (#368 M10).
+	// Empty entry = SQL NULL = never fired.
+	dbLastFired map[uuid.UUID]time.Time
 }
 
 func (s *fakeAlertStore) ListEnabledPriceAlerts(context.Context) ([]platform.PriceAlert, error) {
@@ -46,14 +55,32 @@ func (s *fakeAlertStore) ListEnabledPriceAlerts(context.Context) ([]platform.Pri
 	return out, nil
 }
 
-func (s *fakeAlertStore) MarkPriceAlertFired(_ context.Context, id uuid.UUID, firedAt time.Time) error {
+// ClaimPriceAlertFire models the conditional UPDATE, predicate and all:
+// it claims only when the AUTHORITATIVE row (dbLastFired) says the
+// cooldown has elapsed, never when the caller's snapshot does.
+func (s *fakeAlertStore) ClaimPriceAlertFire(_ context.Context, id uuid.UUID, firedAt time.Time) (bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.markErrN > 0 {
-		s.markErrN--
-		return s.markErr
+	if s.claimErrN > 0 {
+		s.claimErrN--
+		return false, s.claimErr
+	}
+	cooldown := 0
+	for _, a := range s.enabled {
+		if a.ID == id {
+			cooldown = a.CooldownSeconds
+		}
+	}
+	// last_fired_at IS NULL OR last_fired_at + cooldown <= firedAt
+	if last, ok := s.dbLastFired[id]; ok && !last.IsZero() &&
+		last.Add(time.Duration(cooldown)*time.Second).After(firedAt) {
+		return false, nil
 	}
 	s.firedIDs = append(s.firedIDs, id)
+	if s.dbLastFired == nil {
+		s.dbLastFired = map[uuid.UUID]time.Time{}
+	}
+	s.dbLastFired[id] = firedAt
 	// Reflect the postgres UPDATE so the next sweep's ListEnabled sees the
 	// advanced cooldown clock (last_fired_at) — without this the fake would
 	// never exercise coolingDown across sweeps.
@@ -62,7 +89,7 @@ func (s *fakeAlertStore) MarkPriceAlertFired(_ context.Context, id uuid.UUID, fi
 			s.enabled[i].LastFiredAt = firedAt
 		}
 	}
-	return nil
+	return true, nil
 }
 
 type fakeWebhooks struct {
@@ -146,7 +173,7 @@ func TestSweep_Fires(t *testing.T) {
 		t.Errorf("event type = %q", hooks.enqueued[0].EventType)
 	}
 	if len(alerts.firedIDs) != 1 || alerts.firedIDs[0] != alert.ID {
-		t.Errorf("MarkPriceAlertFired not recorded: %+v", alerts.firedIDs)
+		t.Errorf("ClaimPriceAlertFire not recorded: %+v", alerts.firedIDs)
 	}
 	if after := obstest.HistogramSampleCount(t, obs.PriceAlertEvalDurationSeconds, "outcome", "ok"); after <= before {
 		t.Errorf("ok histogram did not advance (%d -> %d)", before, after)
@@ -281,7 +308,7 @@ func TestSweep_NoSubscribedWebhook_DoesNotMarkFired(t *testing.T) {
 }
 
 // TestSweep_FiredMarkFlaky_NoDuplicateDelivery pins NTF-PA-01: a
-// transient MarkPriceAlertFired failure must NOT cause the crossing to be
+// transient ClaimPriceAlertFire failure must NOT cause the crossing to be
 // re-delivered to the same webhooks on the next tick. With the fired-mark
 // advanced before the fan-out, each subscribed webhook receives the
 // crossing at most once across repeated sweeps.
@@ -299,9 +326,9 @@ func TestSweep_FiredMarkFlaky_NoDuplicateDelivery(t *testing.T) {
 		CooldownSeconds: 3600, // a once-per-hour crossing notification
 	}
 	alerts := &fakeAlertStore{
-		enabled:  []platform.PriceAlert{alert},
-		markErr:  errors.New("transient db error"),
-		markErrN: 1, // the FIRST fired-mark write fails
+		enabled:   []platform.PriceAlert{alert},
+		claimErr:  errors.New("transient db error"),
+		claimErrN: 1, // the FIRST fired-mark write fails
 	}
 	hooks := &fakeWebhooks{byAcct: map[uuid.UUID][]platform.CustomerWebhook{
 		acct: {
@@ -381,5 +408,70 @@ func TestConditionCrossed(t *testing.T) {
 		if got != tc.want {
 			t.Errorf("conditionCrossed(%v,%s,%s) = %v, want %v", tc.cond, tc.observed, tc.threshold, got, tc.want)
 		}
+	}
+}
+
+// TestSweep_CrossingAlreadyClaimedByAnotherEvaluator_NoFanOut pins #368
+// M10: the cooldown gate is check-then-act, so it cannot be the thing
+// that guarantees one notification per crossing.
+//
+// coolingDown reads a.LastFiredAt from the SNAPSHOT
+// ListEnabledPriceAlerts took at the top of the sweep. Two evaluators
+// running the same code — an operator who started a second aggregator, an
+// R2/R3 standby, or the overlap window of a rolling deploy — take that
+// snapshot before either has fired, so BOTH pass the gate on the same
+// crossing. Pre-fix the mark was an unconditional UPDATE, so both also
+// "succeeded" and both fanned out: the customer got two webhooks per
+// crossing, with different delivery ids they cannot dedup on
+// X-StellarIndex-Delivery-Id.
+//
+// Modelled here as the second instance: the alert's snapshot says "never
+// fired" while the authoritative row already carries the winner's
+// last_fired_at, one second old, inside a one-hour cooldown. The
+// conditional UPDATE must refuse the claim and the fan-out must not
+// happen.
+//
+// Proven red on the pre-fix code: 1 delivery enqueued, want 0.
+func TestSweep_CrossingAlreadyClaimedByAnotherEvaluator_NoFanOut(t *testing.T) {
+	acct := uuid.New()
+	now := time.Date(2026, 7, 5, 12, 0, 0, 0, time.UTC)
+	alert := platform.PriceAlert{
+		ID: uuid.New(), AccountID: acct,
+		BaseAsset: "native", QuoteAsset: "fiat:USD",
+		Condition: platform.AlertAbove, Threshold: "0.15", Enabled: true,
+		CooldownSeconds: 3600,
+		// The snapshot this evaluator swept with: never fired. This is
+		// what makes coolingDown say "go ahead".
+		LastFiredAt: time.Time{},
+	}
+	alerts := &fakeAlertStore{
+		enabled: []platform.PriceAlert{alert},
+		// The row as it actually stands in Postgres: the other evaluator
+		// claimed this crossing a second ago, well inside the cooldown.
+		dbLastFired: map[uuid.UUID]time.Time{alert.ID: now.Add(-time.Second)},
+	}
+	hooks := &fakeWebhooks{byAcct: map[uuid.UUID][]platform.CustomerWebhook{
+		acct: {priceAlertWebhook(acct, true, string(platform.WebhookEventPriceAlert))},
+	}}
+	prices := fakePrices{price: "0.20", bucket: now, ok: true}
+
+	w := New(alerts, hooks, prices, Options{
+		Interval: time.Second,
+		Logger:   quietLogger(),
+		Clock:    func() time.Time { return now },
+	})
+	w.Sweep(context.Background())
+
+	if len(hooks.enqueued) != 0 {
+		t.Errorf("enqueued %d delivery/deliveries, want 0 — the crossing was already claimed by another evaluator, so this one must not fan out (the customer would receive the same crossing twice, on delivery ids they cannot dedup)", len(hooks.enqueued))
+	}
+	if len(alerts.firedIDs) != 0 {
+		t.Errorf("recorded %d claim(s), want 0 — the conditional UPDATE must match no row while the cooldown is unelapsed", len(alerts.firedIDs))
+	}
+	// And the winner's mark must be intact: a losing claim that still
+	// stamped last_fired_at would slide the whole fleet's cooldown window
+	// forward on every tick.
+	if got := alerts.dbLastFired[alert.ID]; !got.Equal(now.Add(-time.Second)) {
+		t.Errorf("last_fired_at = %v, want %v — a refused claim must not stamp the row", got, now.Add(-time.Second))
 	}
 }

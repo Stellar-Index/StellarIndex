@@ -24,7 +24,7 @@ const DefaultInterval = 30 * time.Second
 // postgresstore.PriceAlertStore.
 type AlertStore interface {
 	ListEnabledPriceAlerts(ctx context.Context) ([]platform.PriceAlert, error)
-	MarkPriceAlertFired(ctx context.Context, id uuid.UUID, firedAt time.Time) error
+	ClaimPriceAlertFire(ctx context.Context, id uuid.UUID, firedAt time.Time) (bool, error)
 }
 
 // WebhookEnqueuer is the account-scoped delivery seam. The evaluator
@@ -199,20 +199,36 @@ func (w *Worker) evaluateOne(ctx context.Context, a platform.PriceAlert, now tim
 	if err != nil {
 		return fmt.Errorf("build payload: %w", err)
 	}
-	// Advance the fired-mark BEFORE enqueuing (NTF-PA-01). The persisted
+	// Claim the crossing BEFORE enqueuing (NTF-PA-01). The persisted
 	// LastFiredAt is this crossing's idempotency key: when the mark only
 	// landed AFTER every EnqueueDelivery was durable, a transient mark
 	// failure left LastFiredAt unchanged and the next tick re-delivered
 	// the whole crossing — brand-new delivery ids the customer can't dedup
 	// on the X-StellarIndex-Delivery-Id header, silently breaking the
-	// once-per-cooldown-window guarantee. Marking first means a failure
+	// once-per-cooldown-window guarantee. Claiming first means a failure
 	// mid-fan-out cannot re-notify the webhooks that already received the
 	// crossing: the cooldown gate reads the durable mark on the next tick.
-	// A mark failure here aborts before any EnqueueDelivery, so nothing is
+	// A claim failure here aborts before any EnqueueDelivery, so nothing is
 	// sent twice; the residual trade is at-most-once on the narrow
-	// mark-ok/enqueue-fail window, which we accept over duplicate fan-out.
-	if err := w.alerts.MarkPriceAlertFired(ctx, a.ID, now); err != nil {
-		return fmt.Errorf("mark fired: %w", err)
+	// claim-ok/enqueue-fail window, which we accept over duplicate fan-out.
+	//
+	// The claim is CONDITIONAL in SQL, and that is what makes coolingDown
+	// above an optimisation rather than the guarantee: coolingDown reads
+	// the LastFiredAt snapshot ListEnabledPriceAlerts took at the top of
+	// this sweep, so two evaluators (a second aggregator, an R2/R3
+	// standby, an overlapping deploy) both pass it on the same crossing.
+	// Only one of them can win the row-locked UPDATE (#368 M10).
+	claimed, err := w.alerts.ClaimPriceAlertFire(ctx, a.ID, now)
+	if err != nil {
+		return fmt.Errorf("claim fire: %w", err)
+	}
+	if !claimed {
+		// Someone else owns this crossing's cooldown window, or the alert
+		// was deleted mid-sweep. Either way the fan-out is not ours: this
+		// is the guard working, not a failure.
+		w.logger.Info("price alert crossing already claimed — skipping fan-out",
+			"alert_id", a.ID, "account_id", a.AccountID)
+		return nil
 	}
 	enqueued, err := w.enqueueAll(ctx, hooks, payload)
 	if err != nil {

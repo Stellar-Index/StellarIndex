@@ -190,18 +190,38 @@ func (c *PriceAlertStore) DeletePriceAlert(ctx context.Context, id uuid.UUID) er
 	return nil
 }
 
-// MarkPriceAlertFired stamps last_fired_at (+ bumps updated_at).
-func (c *PriceAlertStore) MarkPriceAlertFired(ctx context.Context, id uuid.UUID, firedAt time.Time) error {
+// ClaimPriceAlertFire stamps last_fired_at (+ bumps updated_at) ONLY
+// when this alert's own cooldown window has elapsed, and reports whether
+// it won the claim. See [platform.PriceAlertStore] for why the gate has
+// to live in the UPDATE rather than in the evaluator (#368 M10).
+//
+// The predicate is the exact SQL translation of the evaluator's
+// coolingDown: never fired (NULL) OR last_fired_at + cooldown <= firedAt.
+// cooldown_seconds = 0 (the schema default, "re-fire every tick") reduces
+// it to last_fired_at <= firedAt, which is what that setting asks for.
+//
+// A row that does not exist and a row still inside its cooldown both
+// return claimed=false — unlike UpdatePriceAlert this does NOT report
+// [platform.ErrNotFound], because the caller's action is identical
+// either way and an alert deleted mid-sweep is not an error.
+func (c *PriceAlertStore) ClaimPriceAlertFire(ctx context.Context, id uuid.UUID, firedAt time.Time) (bool, error) {
 	const q = `
 		UPDATE price_alerts
 		   SET last_fired_at = $2,
 		       updated_at    = now()
 		 WHERE id = $1
+		   AND (last_fired_at IS NULL
+		        OR last_fired_at + (cooldown_seconds * interval '1 second') <= $2)
 	`
-	if _, err := c.s.db.ExecContext(ctx, q, id, firedAt.UTC()); err != nil {
-		return fmt.Errorf("postgresstore: MarkPriceAlertFired %s: %w", id, err)
+	res, err := c.s.db.ExecContext(ctx, q, id, firedAt.UTC())
+	if err != nil {
+		return false, fmt.Errorf("postgresstore: ClaimPriceAlertFire %s: %w", id, err)
 	}
-	return nil
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("postgresstore: ClaimPriceAlertFire %s rows affected: %w", id, err)
+	}
+	return n == 1, nil
 }
 
 // ─── helpers ────────────────────────────────────────────────────

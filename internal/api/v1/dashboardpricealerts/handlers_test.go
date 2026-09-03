@@ -101,14 +101,25 @@ func (s *fakeStore) DeletePriceAlert(_ context.Context, id uuid.UUID) error {
 	return nil
 }
 
-func (s *fakeStore) MarkPriceAlertFired(_ context.Context, id uuid.UUID, firedAt time.Time) error {
+// ClaimPriceAlertFire mirrors the store's conditional UPDATE (#368 M10):
+// it stamps only while the alert's own cooldown has elapsed, and reports
+// whether it claimed. Unused by the dashboard handlers — this fake
+// satisfies the whole platform.PriceAlertStore interface, of which the
+// evaluator half is not exercised here.
+func (s *fakeStore) ClaimPriceAlertFire(_ context.Context, id uuid.UUID, firedAt time.Time) (bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if a, ok := s.alerts[id]; ok {
-		a.LastFiredAt = firedAt
-		s.alerts[id] = a
+	a, ok := s.alerts[id]
+	if !ok {
+		return false, nil
 	}
-	return nil
+	if !a.LastFiredAt.IsZero() &&
+		a.LastFiredAt.Add(time.Duration(a.CooldownSeconds)*time.Second).After(firedAt) {
+		return false, nil
+	}
+	a.LastFiredAt = firedAt
+	s.alerts[id] = a
+	return true, nil
 }
 
 func newTestRig(t *testing.T, quotas map[platform.Tier]int) (*Handlers, *fakeStore, dashboardauth.SessionContext) {

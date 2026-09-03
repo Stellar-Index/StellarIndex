@@ -175,10 +175,14 @@ func TestShutdownDeadline_MainUsesConstant(t *testing.T) {
 // the cursor advanced. They must all go through persistEventResilient
 // (block-and-retry on infra, isolate+count on a permanent data fault).
 //
-// Structural rather than behavioural because these call sites take a
-// concrete *timescale.Store: the policy itself is proven behaviourally
-// by the retryInfra / classifyFault tests and end-to-end by
-// TestPersistEvents_DataFaultEventIsCountedAsDropped.
+// Structural because it is a wiring invariant over every call site in
+// those two functions, which no single behavioural test can cover. The
+// policy itself is proven behaviourally by the retryInfra /
+// classifyFault tests, end-to-end by
+// TestPersistEvents_DataFaultEventIsCountedAsDropped, and — for the
+// shutdown-race half — by
+// TestPersistWorker_ShutdownRacingInFlightEventWrite_EventLandsNotLost,
+// which the eventPersister seam (#368 M3) made possible.
 func TestSinkDrain_NonTradeWritesAreResilient(t *testing.T) {
 	fset := token.NewFileSet()
 	sink := parseFile(t, fset, "sink.go")
@@ -315,7 +319,7 @@ func TestDrainFinalPass_SkipInSinkExcludedFromReport(t *testing.T) {
 	var buf bytes.Buffer
 	logger := slog.New(slog.NewTextHandler(&buf, nil))
 
-	drainFinalPass(in, logger, nil, SinkModeSkipProjected)
+	drainFinalPass(in, logger, storeEventPersister(logger, nil), nil, SinkModeSkipProjected)
 
 	out := buf.String()
 	if !strings.Contains(out, "undrained_events=1") {
