@@ -23,8 +23,9 @@ info:
   description: |
     The Stellar Index API exposes the Stellar network as one
     consistent read surface: ledgers, transactions, operations and
-    contracts; the asset catalogue with supply and holders; complete
-    since-inception history; MEV / anomaly / divergence analytics;
+    contracts; the asset catalogue with supply and holders; price
+    history (CEX-sourced from 2018, on-chain SDEX from March 2026 —
+    not since-inception); MEV / anomaly / divergence analytics;
     and normalised, VWAP-aggregated prices for every classic and
     SEP-41 Soroban asset.
 
@@ -1108,19 +1109,22 @@ paths:
         The pair's closed VWAP bucket at-or-before `ts` — the cost-basis
         / PnL / tax-tooling lookup. The answer comes from the FINEST CAGG
         resolution that covers the instant: `prices_1m` for recent
-        timestamps, coarser bars (down to daily, back to 2015) for older
-        ones. `observed_at` is the BUCKET's close time, never `ts`, and
-        `window_seconds` reports the resolution used (60 for a 1-minute
-        bar, 86400 for a daily bar) — so callers see exactly how far the
-        nearest observation was and at what granularity. A nearest bucket
-        more than 24 hours before `ts` is a 404 (the endpoint refuses to
-        fabricate continuity across dead markets). When the literal pair
-        (and its aliases) has no bucket and the quote is `fiat:USD`, the
-        lookup retries each operator-declared USD-pegged classic (the
-        same stablecoin-proxy chain as /v1/price) and returns the peg's
-        bucket with `flags.triangulated=true`, echoing the requested
-        quote. Current price: /v1/price or /v1/price/tip. Multi-horizon
-        change: /v1/price/changes.
+        timestamps, coarser bars (down to daily, back to 2018) for older
+        ones. Daily coverage is not yet continuous — an instant in an
+        uncovered stretch resolves to no bucket and 404s rather than
+        being interpolated. `observed_at` is the BUCKET's close time,
+        never `ts`, and `window_seconds` reports the resolution used
+        (60 for a 1-minute bar, 86400 for a daily bar) — so callers see
+        exactly how far the nearest observation was and at what
+        granularity. A nearest bucket more than 24 hours before `ts` is
+        a 404 (the endpoint refuses to fabricate continuity across dead
+        markets). When the literal pair (and its aliases) has no bucket
+        and the quote is `fiat:USD`, the lookup retries each
+        operator-declared USD-pegged classic (the same stablecoin-proxy
+        chain as /v1/price) and returns the peg's bucket with
+        `flags.triangulated=true`, echoing the requested quote. Current
+        price: /v1/price or /v1/price/tip. Multi-horizon change:
+        /v1/price/changes.
       parameters:
         - { name: asset, in: query, required: true, schema: { type: string }, description: "Canonical asset id (native | CODE-G... | C... | fiat:XXX)." }
         - { name: quote, in: query, required: false, schema: { type: string }, description: "Quote asset id; default fiat:USD." }
@@ -1160,7 +1164,7 @@ paths:
         single request (RFP §6). Each horizon's reference is the closed
         VWAP at-or-before `now − horizon`, resolved by the SAME
         point-in-time engine as /v1/price/at (finest CAGG resolution that
-        covers the instant; daily bars reach back to 2015), so long
+        covers the instant; daily bars reach back to 2018), so long
         horizons still answer for pairs whose minute-level history has
         aged out of the served tier. A horizon with no data that far back
         (a young pair, or a market that predates the window) is returned

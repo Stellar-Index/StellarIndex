@@ -54,6 +54,50 @@ against.
 
 - **docs,ci:** three published channels 404'd for the first reader who followed them, and nothing in the tree could see it, because a GitHub repository setting and a DNS name are both invisible from inside a checkout. `SUPPORT.md` answered "How do I…" with a link to GitHub Discussions, and `.github/ISSUE_TEMPLATE/config.yml` put the same URL in front of every would-be issue reporter, on a repository reporting `has_discussions: false`. `SECURITY.md` offered GitHub's private vulnerability reporting as the fallback for "if the mailbox is not yet provisioned", and `repos/…/private-vulnerability-reporting` reports `enabled: false` — so **both documented disclosure routes were dead at the same time**, and a researcher holding a real finding had nowhere to send it, `security@stellarindex.io` being undeliverable until the Cloudflare Email Routing destination is verified (#334). `openapi/stellar-index.v1.yaml` declared a `Staging` server for `api.staging.stellarindex.io`, a hostname with **no DNS record at all** (`dig` returns nothing; `curl` exits 6, could-not-resolve), so every client importing the spec inherited a dead entry in its server picker — #316 ("no staging exists") was closed without removing it, and the generated Postman collection never carried it, so the promise existed only in the spec. **Two of the three are repository settings only the account owner can flip**, so the documents are corrected to promise only what answers today: `SUPPORT.md` leads with the reference and methodology pages, `SECURITY.md` keeps `security@stellarindex.io` as the RFC 9116 route and, for the case where that mail bounces, names a fallback that exists — a public issue asking for a private channel and carrying **no detail of the finding**. `docs/operations/external-channels.md` records each switch, where in GitHub's UI it lives, the `gh api` one-liner that reads its state, and exactly which wording to restore, so switching one on is a one-line flip rather than an archaeology exercise. `scripts/ci/lint-external-channels.sh` reads that file and fails the build if any tracked or untracked-non-ignored file names a string a channel forbids while it is `disabled`; the one exemption is the manifest itself, which names every forbidden string in order to forbid it. Its self-test proves the red path AND the revert — the same reference passes the moment the row says `enabled` — and found a hole in the gate on the way: a whitespace-only pattern cell yielded a pattern of literal spaces, which matched nearly every line in the tree (56 MB of "violations"), so patterns are now trimmed to empty, a disabled channel naming no string is an error, and a pattern under 8 characters is rejected as too broad to identify a channel. The staging entry was not a switch but a promise made ahead of a deployment, so it was removed rather than softened, from the spec, its generated copy (`make docs-api`), the base-URL list in `docs/reference/api-design.md` and the SDK example in `pkg/client/example_test.go`, which constructed a client against it; `scripts/ci/lint-openapi-urls` gained a third rule keeping it out — a `servers:` entry may only name a host in its `servedHosts` list or a loopback placeholder, because a server entry is offered as a selectable target by every generated client rather than read as prose, and the existing `TestLint_RealSpecIsClean` turns adding one back into a red test. The load-test harness still names the staging host in `K6_TARGET` examples: there it is a value the operator must supply, and its absence is already tracked and deliberately visible in `.github/workflows/k6-weekly.yml`.
 
+- **docs,explorer,api:** ten public claims that the deployment
+  contradicts, each re-measured against the hosted API rather than
+  reasoned about. **The landing page sold an API key as raising your
+  rate limit "from 60 to 1,000+ requests a minute"; a key CUTS the
+  limit sixfold** — the anonymous response header is
+  `x-ratelimit-limit: 6000` and a free key is stamped at 1,000. That is
+  deliberate, and /pricing has explained it all along ("a per-key
+  budget, not a raise"), so the front door and the quickstart were
+  contradicting the plans page; both now publish both numbers and say
+  what a key actually buys. **OHLC was advertised as "daily history
+  back to 2015"**: the first daily XLM/USD bar `/v1/ohlc` will serve is
+  2018-07-01, 2015/2016/2017 return zero bars, and 2021-01-31 →
+  2026-03-12 is empty — 1,866 days with nothing in them. The landing
+  page, `/price/at` and `/price/changes` now say 2018 and state that
+  coverage is not continuous, which matters most for `/price/at`, whose
+  callers are doing cost-basis and tax lookups. **"Complete
+  since-inception history"** (README + the OpenAPI `info.description`,
+  which is served to every consumer through the rendered reference)
+  becomes the wording #349 settled on: CEX-sourced from 2018, on-chain
+  SDEX from March 2026, not since-inception. /methodology described
+  "three regions ingest independently" in the present tense while /sla,
+  /company, /careers and `/v1/status` all report one — the invariant is
+  what makes the ADR-0050 topology safe, not a description of today, so
+  it is now written as such. The home currency strip promised "full
+  ~200-ticker coverage at /assets" and was wrong twice: the reference
+  catalogue holds 34 rows, and /assets is the Stellar-only directory
+  that redirects the reader back out to /external/assets — the caption
+  now links where the rows are. README's "tested against protocol 23"
+  is 27. /careers described a new decoder as a five-file package,
+  omitting `dispatcher_adapter.go` — the production seam implementing
+  `dispatcher.Decoder`, and the one file whose absence is silent
+  (source compiles, registers nowhere, emits nothing); its CEX-connector
+  sibling claimed the same convention, which that path has never used.
+  README listed the operator endpoints as `/healthz`, `/readyz`,
+  `/version` (all 404 on the hosted API — the routes are `/v1`-prefixed)
+  and listed SEP-10 web auth flatly under What's shipped, where it
+  answers 503 "no SEP-10 validator wired" without a server signing
+  seed. /company claimed /methodology "lists every gap and the path to
+  closing each"; /methodology has eight sections and no gap list, and
+  the gaps are enumerated in that /company bullet itself. Copy moved to
+  match the system throughout — no behaviour changed. A Go test pins
+  the README + spec claims and per-page vitest tests pin the explorer
+  ones, so each is caught at PR time rather than by a reader.
+
 ## [v0.59.1] — 2026-09-03
 
 ### Fixed
