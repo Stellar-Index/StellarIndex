@@ -66,6 +66,17 @@ export default function SignupPage() {
           </Link>{' '}
           — same magic-link form, just lands on your existing account.
         </p>
+        <p className="mt-2 text-xs text-ink-muted">
+          By creating an account you agree to the{' '}
+          <Link href="/terms" className="text-brand-600 hover:underline">
+            terms of service
+          </Link>{' '}
+          and{' '}
+          <Link href="/privacy" className="text-brand-600 hover:underline">
+            privacy policy
+          </Link>
+          .
+        </p>
       </section>
 
       <section className="mb-12">
