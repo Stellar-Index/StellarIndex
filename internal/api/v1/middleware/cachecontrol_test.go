@@ -40,6 +40,11 @@ func TestPolicyForPath_PinsDirectives(t *testing.T) {
 		{"/v1/tx/notahash", "private, no-store"},
 		{"/v1/ledgers", "public, max-age=10, s-maxage=15"},
 		{"/v1/network/throughput", "public, max-age=10, s-maxage=15"},
+		// The operations directory is /v1/ledgers' sibling listing and
+		// joins the same band (#332 F2). It had no case at all and shipped
+		// `private, no-store` from the default.
+		{"/v1/operations", "public, max-age=10, s-maxage=15"},
+		{"/v1/contracts", "public, max-age=10, s-maxage=15"},
 		{"/v1/ledgers/64000000/transactions/extra", "private, no-store"},
 
 		// Account — auth-tied
@@ -240,6 +245,8 @@ func TestPolicyForPath_CDNDisabled(t *testing.T) {
 		{"/v1/assets", "public, max-age=30"},
 		{"/v1/assets/native", "public, max-age=30"},
 		{"/v1/status", "public, max-age=10"},
+		{"/v1/operations", "public, max-age=10"},
+		{"/v1/contracts", "public, max-age=10"},
 		{"/v1/history", "public, max-age=60"},
 		{"/v1/ohlc", "public, max-age=60"},
 		{"/v1/vwap", "public, max-age=60"},
@@ -328,5 +335,39 @@ func TestPolicyForPath_PriceSharedTTLIsBoundedByTheProbe(t *testing.T) {
 		if secs > probeBudgetSeconds {
 			t.Errorf("%s has s-maxage=%d — above the %ds headroom inside the SLA probe's 150s closed-bucket target (#344)", path, secs, probeBudgetSeconds)
 		}
+	}
+}
+
+// TestPolicyForPath_OperationsSharesTheLedgerListBand pins #332 F2's
+// adjudication and the reason for it, because "operations" reads like a
+// catalogue and a later tidy-up would file it next to /v1/markets.
+//
+// /v1/operations shipped `private, no-store` — not a decision, just an
+// unclassified route landing on the conservative default. It is the sibling
+// of /v1/ledgers: a network-wide directory advancing once per ledger (~5s),
+// fronted by its own server-side cache. So it takes the SAME band.
+//
+// It must NOT take the 300s catalogue band. explorer.opsDirCache serves stale
+// on expiry and only refreshes ON a request, so at a low arrival rate an
+// entry's age is bounded by the inter-arrival gap, not by its 10s TTL
+// (measured on r1 2026-09-03: `as_of` 93.2s behind after a quiet window). A
+// 300s shared cache would compound that real staleness rather than absorb a
+// burst.
+func TestPolicyForPath_OperationsSharesTheLedgerListBand(t *testing.T) {
+	ops := policyForPath("/v1/operations", true)
+	if ops != "public, max-age=10, s-maxage=15" {
+		t.Fatalf("/v1/operations = %q, want the status-like short band it shares with /v1/ledgers", ops)
+	}
+	if ledgers := policyForPath("/v1/ledgers", true); ops != ledgers {
+		t.Errorf("/v1/operations = %q but its sibling /v1/ledgers = %q — the two listings must not drift apart", ops, ledgers)
+	}
+	if strings.Contains(ops, "s-maxage=300") {
+		t.Errorf("/v1/operations = %q — the 300s catalogue band would pin an already-stale directory at the edge", ops)
+	}
+	// Exact match, not a prefix: nothing else hangs off /v1/operations, and a
+	// future sub-route must be adjudicated on its own merits rather than
+	// inherit this band by accident.
+	if sub := policyForPath("/v1/operations/something", true); sub != "private, no-store" {
+		t.Errorf("policyForPath(%q) = %q, want the conservative default (the case is an exact match by design)", "/v1/operations/something", sub)
 	}
 }

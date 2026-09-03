@@ -113,8 +113,36 @@ var (
 //     policyForPath knows nothing about the tip, and a ledger a few seconds
 //     old can be served before every downstream projection for it has
 //     landed, so a long TTL could pin a partial view.
+//
 //   - /v1/ledgers (the list) moves every ~5 s and /v1/network/throughput
 //     already has a server-side cache; both get the status-like short band.
+//
+//   - /v1/operations joins them (#332 F2, 2026-09-03). It is /v1/ledgers'
+//     sibling listing — the network-wide operations directory, advancing once
+//     per ledger — and it too already has a server-side cache (opsDirCache,
+//     10 s TTL + stale-while-revalidate). It was never adjudicated, so it fell
+//     to the conservative default and shipped `private, no-store`: an 18 KB
+//     body that no client and no CDN could reuse for even one ledger. Nothing
+//     in it is per-user or auth-tied.
+//
+//     Note policyForPath sees only the path, so this one band also covers the
+//     `?ledger=<seq>` form of the same route. That form is IMMUTABLE (a closed
+//     ledger's operations), so 10 s/15 s under-caches it — the conservative
+//     direction, and the one to be wrong in. It is deliberately NOT given the
+//     longer 60 s/300 s catalogue band: opsDirCache serves stale on expiry and
+//     only refreshes ON a request, so at a low arrival rate an entry's age is
+//     bounded by the inter-arrival gap rather than by the TTL (measured on r1:
+//     an `as_of` 93 s behind after a quiet window). A 300 s edge TTL would
+//     compound that real staleness instead of absorbing a burst.
+//
+//   - /v1/contracts joins them on the same evidence. #332 F3 named it and
+//     the F3 fix did not reach it: live on 2026-09-03 it still answered
+//     `private, no-store` while its sibling /v1/ledgers answered the short
+//     band. It is the contracts directory, fronted by the same
+//     stale-while-revalidate server cache (recentContractsCached), and
+//     nothing in it is per-user or auth-tied. The EXACT-path match matters:
+//     /v1/contracts/{id} is a different surface and keeps its own
+//     adjudication.
 func ledgerPolicy(path string, cdnEnabled bool) (string, bool) {
 	switch {
 	// Operator endpoints — probed by systemd/Prometheus/uptime checks; a
@@ -127,7 +155,8 @@ func ledgerPolicy(path string, cdnEnabled bool) (string, bool) {
 			return "public, max-age=60, s-maxage=300", true
 		}
 		return "public, max-age=60", true
-	case path == "/v1/ledgers", path == "/v1/network/throughput":
+	case path == "/v1/ledgers", path == "/v1/network/throughput",
+		path == "/v1/operations", path == "/v1/contracts":
 		if cdnEnabled {
 			return "public, max-age=10, s-maxage=15", true
 		}

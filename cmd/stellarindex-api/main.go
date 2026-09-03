@@ -4896,13 +4896,12 @@ func prewarmLight(
 	// OPPOSITE arithmetic to /v1/coins above. See prewarmAssetListings.
 	prewarmAssetListings(assetsReaderCtx, logger, assetsReader, snaps)
 	// Mirrors the most-trafficked /v1/markets, /v1/pools requests
-	// the explorer fires (default order, no source filter). The
-	// limit set covers the four common values we see in practice:
-	// 5 (audit script), 25 (Scalar default test), 100 (OpenAPI
-	// default), 200 (currencies listing). Each limit is its own
-	// cache key under [v1.CachedMarketsReader.AllPools]; without
-	// per-limit prewarm, anything off the warmed key 503s under
-	// the new pools-server-timeout (#1082).
+	// the explorer fires (default order, no source filter). Each limit
+	// is its own cache key under [v1.CachedMarketsReader.AllPools];
+	// without per-limit prewarm, anything off the warmed key 503s
+	// under the new pools-server-timeout (#1082). The two routes get
+	// SEPARATE limit sets — see marketsPrewarmLimits and
+	// poolsPrewarmLimits for which callers each one is drawn from.
 	//
 	// Per-handler order semantics MUST match the cache key the
 	// handler will look up:
@@ -4922,9 +4921,10 @@ func prewarmLight(
 	// stringified Sources slice; passing `PoolsFilter{}` here
 	// (`Sources: nil` → key fragment `[]`) warms a different key
 	// than the user request lands on (`[aquarius comet phoenix
-	// sdex soroswap]`). Mirror the handler's behaviour explicitly.
-	dexSources := v1.DexSourceNames()
-	for _, lim := range []int{5, 25, 100, 200} {
+	// sdex soroswap]`). Mirror the handler's behaviour explicitly —
+	// prewarmPools does exactly that, and is where the /v1/pools half
+	// of this block now lives.
+	for _, lim := range marketsPrewarmLimits {
 		// Alphabetical (MarketsOrderPair). NOT the /v1/markets default —
 		// that switched to volume-desc on 2026-05-10 (this comment said
 		// "default order" until wave-D F-SDK-02). Still worth prewarming:
@@ -4944,10 +4944,8 @@ func prewarmLight(
 		if _, _, err := markets.DistinctPairsExt(mkCtx, "", lim, timescale.MarketsOrderVolume24hDesc); err != nil {
 			logger.Debug("prewarm markets failed", "limit", lim, "order", "volume_24h_usd_desc", "err", err)
 		}
-		if _, _, err := markets.AllPools(mkCtx, timescale.PoolsFilter{Sources: dexSources}, "", lim, timescale.MarketsOrderVolume24hDesc); err != nil {
-			logger.Debug("prewarm pools failed", "limit", lim, "err", err)
-		}
 	}
+	prewarmPools(mkCtx, logger, markets)
 
 	// Per-DEX prewarm — the explorer's /dexes/{source} pages each
 	// fire `/v1/pools?source=<dex>&limit=100`, which lands on a
@@ -5033,6 +5031,75 @@ func prewarmLight(
 	// This runs on the 60s light cadence — 5x inside the 5-minute TTL, so
 	// a dropped cycle still cannot expose a cold slot.
 	prewarmIssuers(mkCtx, logger, issuers)
+}
+
+// marketsPrewarmLimits are the `?limit=` values the /v1/markets prewarm
+// warms, for both orders. Unchanged from the single shared set these were
+// split out of: 5 (audit script), 25 (the explorer's HomeTopMarkets), 100
+// (OpenAPI default + MarketsTable + the asset page's markets tab), 200
+// (currencies listing).
+//
+// HomeRecentTrades asks for `?limit=3`, which is NOT warmed and stays that
+// way deliberately: measured on r1 2026-09-03, a never-requested
+// DistinctPairsExt limit costs 0.60-0.63 s cold, below the bar worth a
+// permanent background query, and the live `?limit=3` slot answered in
+// 0.8 ms because real traffic keeps it warm.
+var marketsPrewarmLimits = []int{5, 25, 100, 200}
+
+// poolsPrewarmLimits are the `?limit=` values the /v1/pools prewarm warms.
+//
+// SPLIT from marketsPrewarmLimits (#332 F4, 2026-09-03). Sharing one set
+// meant the pools warm-up inherited limits chosen for /v1/markets, and the
+// explorer's own pool tables ask for something else — `AllPools` keys on
+// the limit, so the warmed slots were beside the point:
+//
+//	/v1/pools?limit=8&order_by=volume_24h_usd_desc     2.197 s   (unwarmed)
+//	/v1/pools?limit=5   / 25 / 100 / 200               0.0008-0.0026 s (warmed)
+//
+// 8 is the missing one, and it is not an invented probe value — it is what
+// the shipped explorer's /network page sends for its "Top Stellar markets"
+// panel: NetworkView.tsx's TopMarkets calls usePools(8,
+// 'volume_24h_usd_desc') (web/explorer/src/api/hooks.ts). The origin's own
+// slow-request log recorded the shape verbatim:
+//
+//	{"path":"/v1/pools","latency_ms":2197.052,
+//	 "query_shape":"limit=8&order_by=volume_24h_usd_desc","slow":true}
+//
+// It did not show up in production request logs because the site is still
+// pre-launch: 24 h of non-curl /v1/pools traffic is the Next.js static
+// export build plus small ?base=&quote= fetches. An external live probe
+// (#332) is the right instrument for a site with no organic traffic yet.
+//
+// This is the THIRD instance of the same bug class in this file — see the
+// MarketsOrderPair phantom slot recorded in prewarmLight (2026-05-09) and
+// assetListingPrewarmLimits' missing `?limit=50` (#449). The lesson each
+// time: derive the set from what callers SEND, and keep the prewarm
+// argument byte-identical to the handler's.
+//
+// 100 stays for /dexes (PAGE_LIMIT) and the OpenAPI default; 5/25/200 stay
+// for the audit script, the Scalar default and the currencies listing.
+var poolsPrewarmLimits = []int{5, 8, 25, 100, 200}
+
+// prewarmPools warms the unfiltered /v1/pools listing slots.
+//
+// Split out of [prewarmLight] so the warmed cache key can be asserted
+// without standing up the assets/issuers readers — the same reason
+// prewarmIssuers is its own function. The point of the guard is that the
+// arguments are BYTE-IDENTICAL to the ones handlePools looks up: the
+// registry's DEX source set (not nil), an empty cursor, and
+// MarketsOrderVolume24hDesc (the handler's default for ""|
+// "volume_24h_usd_desc"). Every one of those three has been the drifted
+// dimension in a real incident.
+func prewarmPools(ctx context.Context, logger *slog.Logger, markets *v1.CachedMarketsReader) {
+	if markets == nil {
+		return
+	}
+	filter := timescale.PoolsFilter{Sources: v1.DexSourceNames()}
+	for _, lim := range poolsPrewarmLimits {
+		if _, _, err := markets.AllPools(ctx, filter, "", lim, timescale.MarketsOrderVolume24hDesc); err != nil {
+			logger.Debug("prewarm pools failed", "limit", lim, "err", err)
+		}
+	}
 }
 
 // assetListingPrewarmLimits are the `?limit=` values /v1/assets callers
