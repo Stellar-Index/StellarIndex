@@ -106,6 +106,14 @@ Intent-keyed: *Need to X → use `package.Symbol`*. Every symbol verified presen
 - Config → `config.Load`, `LoadWithEnv`, `LoadReader`, `Default`
 - Call our own API from Go → `pkg/client.New(opts)` (wire types in `pkg/client/types.go`)
 
+## Local verification workflow
+- Fast read-only feedback → `make check` / `scripts/dev/check.sh`
+- Machine capability report → `make doctor VERIFY_PROFILE=<profile>` / `scripts/dev/doctor.sh`
+- Push clearance over committed HEAD → `make prepush` / `scripts/dev/prepush.sh`
+- Pinned native-architecture Linux lane → `make prepush-linux` / `docker/verify/Dockerfile`
+- Parallel local integration shards → `make test-integration-local LOCAL_INT_SHARDS=N`
+- Integration path decision → `scripts/ci/prepush-integration-required.sh BASE HEAD`
+
 ---
 _Maintenance: this file must stay current — D4 recommends a CI check that every non-source
 leaf package has a `doc.go`, and a Definition-of-Done line requiring "checked

@@ -16,15 +16,20 @@ make dev               # local dependency stack (TimescaleDB + Redis + MinIO) in
                        # the app binaries run on the HOST; there is no API or ClickHouse service
 make test              # unit tests, ~2 min
 make test-integration  # spins its own containers via testcontainers-go; needs Docker
-make verify            # THE pre-push gate: fmt, vet, lint, docs, vuln, test
+make check             # fast read-only edit-loop feedback; not push clearance
+make prepush           # THE pre-push gate: clean HEAD, strict checks, selected integration
+make verify            # underlying sequential gate used by prepush
 ```
 
-- ALWAYS run `make verify` before pushing. NEVER substitute `make lint && make test` — that
+- ALWAYS run `make prepush` before pushing and require its literal `ALL REQUIRED CHECKS PASSED`.
+  NEVER substitute `make lint && make test` — that
   skips the doc, import, openapi and monitoring lints CI enforces.
-- `make verify` exceeds a 10-minute foreground timeout and its exit code is unreliable. Run it
-  backgrounded and grep the output for `ALL CHECKS PASSED`.
-- `make verify` does NOT run integration tests. Run `make test-integration` when you change a
-  storage query, a migration, or anything a fixture seeds.
+- `make prepush` can exceed a 10-minute foreground timeout. Run it backgrounded and inspect both
+  its status and final marker; never infer success from a job-completion notification.
+- `make prepush` automatically runs integration tests for storage, migration, fixture and ingest
+  changes. Set `VERIFY_INTEGRATION=always` when a change needs them but falls outside those paths.
+- Use [docs/contributing/local-verification.md](docs/contributing/local-verification.md) for native,
+  container, macOS and limited-machine profiles. A portable check is useful but is not clearance.
 - ALWAYS re-run all three generators together after editing `openapi/stellar-index.v1.yaml`:
   `make docs-api && make docs-postman && make web-generate-api`. Two of them have silently
   drifted onto main before.
@@ -130,9 +135,9 @@ Full evidence for each: [docs/architecture/domain-traps.md](docs/architecture/do
 - Smallest PR that advances one thing. NEVER "ship and clean up later".
 - ALWAYS state a measurement with its units and the command that produced it. A performance claim
   without a number is not a claim.
-- NEVER report a gate as passing on its exit code alone when the code is unreliable. `verify.sh`
-  and `r1-smoke.sh` both exit non-zero for reasons unrelated to the assertions; grep the output
-  for `ALL CHECKS PASSED` / the failure count. NEVER pipe a gate through `tee`, `head` or `sed` —
+- NEVER report a gate as passing on its exit code alone. Require `ALL REQUIRED CHECKS PASSED` from
+  `make prepush`, `ALL CHECKS PASSED` from `verify.sh`, or the failure count from `r1-smoke.sh`.
+  NEVER pipe a gate through `tee`, `head` or `sed` —
   you then read the pipe's status, not the gate's.
 - ALWAYS check for prior art before starting on a symptom: `gh pr list --state all --search`,
   `git branch -r | grep`, the runbook, and the backlog. Record the result in the PR body.

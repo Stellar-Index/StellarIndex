@@ -45,6 +45,7 @@ The full policy lives in docs/engineering-standards.md.
 
 ### Mechanical (CI enforces; tick when green locally)
 
+- [ ] `make prepush` printed `ALL REQUIRED CHECKS PASSED`.
 - [ ] `make lint` passes.
 - [ ] `make test` passes with `-race`.
 - [ ] Coverage on changed packages did not decrease.
