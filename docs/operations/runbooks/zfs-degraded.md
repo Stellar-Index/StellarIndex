@@ -122,8 +122,7 @@ ssh root@136.243.90.96 'zpool status data | grep -A5 resilver'
 ## Related
 
 - `nvme-smart.md` — precursor warnings.
-- `nvme-thermal.md` — another precursor (alert currently inert; see
-  that runbook's banner).
+- `nvme-thermal.md` — another precursor, and a page since 2026-09-03.
 - `db-disk-full.md` — running tight on capacity amplifies
   recovery stress.
 - `zfs-pool-full.md` — the capacity side of the same pool

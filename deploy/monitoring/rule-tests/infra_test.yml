@@ -1,5 +1,5 @@
 ---
-# promtool unit tests for the infra ZFS pool-capacity alerts.
+# promtool unit tests for the infra ZFS pool-capacity + NVMe alerts.
 #
 #   promtool test rules deploy/monitoring/rule-tests/infra_test.yml
 #
@@ -151,3 +151,72 @@ tests:
       - eval_time: 30m
         alertname: stellarindex_zfs_pool_critical_space
         exp_alerts: []
+
+  # ── ALERT-09, the NVMe pair ──────────────────────────────────────
+  # Both NVMe rules in infra.yml named series nothing emits —
+  # `node_disk_io_errors_total` and `node_nvme_temperature_celsius`,
+  # neither of which is a node_exporter metric — so they were
+  # structurally unfireable, the same class as C4-037/038 above. The
+  # live telemetry is the packaged nvme collector's textfile
+  # (`nvme.prom`), which publishes bare `nvme_*` series labelled per
+  # device. These two cases feed exactly that shape.
+  - interval: 1m
+    name: an NVMe past its thermal ceiling pages
+    input_series:
+      # One drive cooking while its neighbour stays cool: the alert has
+      # to name the hot device, not the whole chassis.
+      - series: 'nvme_temperature_celsius{device="nvme2n1",instance="r1:9100"}'
+        values: '75+0x30'
+      - series: 'nvme_temperature_celsius{device="nvme0n1",instance="r1:9100"}'
+        values: '38+0x30'
+
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: stellarindex_nvme_thermal_throttle
+        exp_alerts:
+          - exp_labels:
+              device: nvme2n1
+              instance: r1:9100
+              severity: page
+              team: stellarindex
+              component: infra
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/nvme-thermal.md
+              summary: "NVMe nvme2n1 at 75°C"
+              description: |
+                Enterprise NVMe spec'd to 70 °C. Above this it throttles IO →
+                catchup slows, Postgres WAL flush stalls. Check chassis airflow
+                + ambient temperature.
+
+  # A SINGLE error-log entry has to notify — that is the whole premise
+  # of the alert. The counter steps once at t=30m and then stays flat,
+  # which is also the case a `for` equal to the increase() window can
+  # never catch: the expr goes true at the entry and false exactly an
+  # hour later, so a `for: 1h` matures at the instant the condition
+  # expires and the alert never leaves pending.
+  - interval: 1m
+    name: one new NVMe controller error raises a ticket
+    input_series:
+      - series: 'nvme_num_err_log_entries_total{device="nvme1n1",instance="r1:9100"}'
+        values: '0+0x30 1+0x60'
+      - series: 'nvme_num_err_log_entries_total{device="nvme0n1",instance="r1:9100"}'
+        values: '0+0x91'
+
+    alert_rule_test:
+      - eval_time: 45m
+        alertname: stellarindex_nvme_smart_warn
+        exp_alerts:
+          - exp_labels:
+              device: nvme1n1
+              instance: r1:9100
+              severity: ticket
+              team: stellarindex
+              component: infra
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/nvme-smart.md
+              summary: "NVMe nvme1n1 logged new controller errors"
+              description: |
+                The drive's error-information log grew — an IO error, command
+                timeout or transport error the controller recorded. Schedule a
+                replacement during the next maintenance window even if ZFS
+                isn't complaining yet.

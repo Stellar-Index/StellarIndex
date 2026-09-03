@@ -105,7 +105,12 @@ EXTERNAL_OK=(
   pgbackrest_backup_info
   node_zfs_zpool_state node_filesystem_avail_bytes node_filesystem_size_bytes
   node_cpu_seconds_total node_memory_MemTotal_bytes node_memory_MemAvailable_bytes
-  node_disk_io_errors_total node_nvme_temperature_celsius node_vmstat_pswpout
+  node_vmstat_pswpout
+  # Packaged nvme collector textfile (nvme.prom), one series per device.
+  # `node_disk_io_errors_total` and `node_nvme_temperature_celsius` used
+  # to sit here: neither is a node_exporter metric, so listing them as
+  # "expected-external" documented two invented names as legitimate.
+  nvme_temperature_celsius nvme_num_err_log_entries_total
   up
 )
 

@@ -175,62 +175,68 @@ groups:
             and Postgres. Reclaim space NOW (drop stale snapshots, move
             pgBackRest off-box) or ingestion will halt.
 
-      # ── INERT — WRONG SERIES NAME, not "no producer" ──────────────
-      # The two NVMe alerts below are inert because they name series
-      # nothing emits: `node_disk_io_errors_total` and
-      # `node_nvme_temperature_celsius` are not node_exporter metrics
-      # (the diskstats collector has no io-errors series, and
-      # node_exporter has no NVMe-thermal collector).
+      # ── NVMe error log + thermal ──────────────────────────────────
+      # Both alerts below named series nothing emits:
+      # `node_disk_io_errors_total` and `node_nvme_temperature_celsius`
+      # are not node_exporter metrics (the diskstats collector has no
+      # io-errors series, and node_exporter has no NVMe-thermal
+      # collector), so a drive could run hot or fill its error log with
+      # no alert at all (wave-D ALERT-09).
       #
-      # This block USED TO justify that with "NEITHER a smartctl_exporter
-      # nor a textfile-collector script is deployed today (configs/ansible
-      # confirms only sla-probe + supply-snapshot write textfiles)". That
-      # is FALSE and has been for some time (wave-D ALERT-09):
+      # The telemetry was there the whole time under different names:
       # configs/ansible/roles/archival-node/tasks/10-observability.yml
-      # installs a drop-in piping the packaged
+      # pipes the packaged
       # `/usr/share/prometheus-node-exporter-collectors/nvme_metrics.py`
-      # into the SCRAPED textfile dir as `nvme.prom`, and three LIVE
-      # alerts already read its output — stellarindex_nvme_wear_high,
-      # _spare_low and _media_errors in storage.yml, all on bare
-      # `nvme_*` series.
+      # into the SCRAPED textfile dir as `nvme.prom`, which publishes
+      # bare `nvme_<field>` series per device — the same source the three
+      # live wear alerts in storage.yml read
+      # (`nvme_percentage_used_ratio`, `nvme_available_spare_ratio`,
+      # `nvme_media_errors_total`). Both series named below were read off
+      # r1's scrape before repointing: four series each, one per device.
       #
-      # So the thermal alert is very likely one metric-name edit from
-      # working: the sibling series follow the `nvme_<field>` convention
-      # (`nvme_percentage_used_ratio`, `nvme_available_spare_ratio`), and
-      # the temperature field would be `nvme_temperature_celsius`.
-      #
-      # NOT repointed here, deliberately. Confirming the series exists
-      # needs one read on r1 —
-      #   curl -s localhost:9100/metrics | grep '^nvme_temperature'
-      # — and this change is repo-only. Repointing an expr at a series
-      # that may not exist would swap an alert that is honestly inert for
-      # one that LOOKS live and still cannot fire, which is strictly
-      # worse. Operator: run the grep, then either repoint both trees or
-      # replace this paragraph with the observed absence.
-      #
-      # TRACKED in scripts/ci/lint-metric-refs.sh's KNOWN_INERT list.
+      # Fired-state coverage: deploy/monitoring/rule-tests/infra_test.yml.
       - alert: stellarindex_nvme_smart_warn
-        # INERT: node_disk_io_errors_total has no producer (see block above).
-        expr: increase(node_disk_io_errors_total[1h]) > 0
-        for: 1h
+        # The controller's error log, not `nvme_media_errors_total`:
+        # that series already has its own alert next door
+        # (stellarindex_nvme_media_errors, storage.yml), and pointing
+        # both at it would notify twice for one event. The error log is
+        # also the wider signal — command timeouts and transport errors
+        # land there and never touch the media counter.
+        expr: increase(nvme_num_err_log_entries_total[1h]) > 0
+        # 5m, not the 1h this used to carry. A `for` equal to the
+        # increase() window can never be satisfied by an isolated error:
+        # the expr is true for exactly the hour after the entry, so the
+        # condition expires at the same instant `for: 1h` would mature,
+        # and the single-error case this alert is named for would have
+        # had to become a steady stream to notify. Same shape as the
+        # media-errors sibling (long window, short `for`).
+        for: 5m
         labels:
           severity: ticket
           team: stellarindex
           component: infra
         annotations:
           runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/nvme-smart.md
-          summary: "NVMe {{ $labels.device }} reporting IO errors"
+          summary: "NVMe {{ $labels.device }} logged new controller errors"
           description: |
-            Any IO error on an NVMe is a warning sign — schedule a
-            replacement during next maintenance window even if ZFS isn't
-            complaining yet.
+            The drive's error-information log grew — an IO error, command
+            timeout or transport error the controller recorded. Schedule a
+            replacement during the next maintenance window even if ZFS
+            isn't complaining yet.
 
       - alert: stellarindex_nvme_thermal_throttle
-        # INERT: node_nvme_temperature_celsius has no producer (see block above).
-        expr: node_nvme_temperature_celsius > 70
+        expr: nvme_temperature_celsius > 70
         for: 5m
         labels:
-          severity: ticket
+          # Page, not the ticket this carried while it was inert. The
+          # wear alerts next door have months of lead time and are
+          # procurement triggers; this is a drive already past its rated
+          # ceiling, throttling live IO and accelerating its own wear for
+          # as long as it stays there. `ticket` routes to a chat channel
+          # on a 24h repeat interval — the wrong latency for a condition
+          # that compounds every hour it is left alone, on a pool with
+          # single parity.
+          severity: page
           team: stellarindex
           component: infra
         annotations:
