@@ -366,6 +366,17 @@ jobs:
         run: ./scripts/ci/lint-doc-links.sh
       - name: lint-doc-links self-test
         run: ./scripts/ci/lint-doc-links-test.sh
+      - name: lint-external-channels
+        # A repository setting or DNS name that is switched off cannot be
+        # seen from inside the tree, so three published channels shipped
+        # as 404s at once — a Discussions link on a repo without
+        # Discussions, a Security-tab reporting form that does not exist
+        # (leaving no working disclosure route at all), and a spec server
+        # for a host with no DNS. docs/operations/external-channels.md
+        # holds their state; this gate holds the docs to it.
+        run: ./scripts/ci/lint-external-channels.sh
+      - name: lint-external-channels self-test
+        run: ./scripts/ci/lint-external-channels-test.sh
 
   workflow-security:
     name: workflow static analysis (zizmor)
@@ -1065,7 +1076,7 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
-      - name: ADR-0018 URL-discipline check
+      - name: ADR-0018 URL-discipline + served-host check
         run: go run ./scripts/ci/lint-openapi-urls openapi/stellar-index.v1.yaml
       - name: ADR-0033 PK-discriminator check (coarse-PK data-loss guard)
         run: go run ./scripts/ci/lint-pk-discriminators

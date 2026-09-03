@@ -143,7 +143,9 @@ echo "=== Replay-plan tripwire self-test ===" && ./scripts/ci/lint-replay-plan-t
 echo "=== Restore-drill contract + abort-path tests ===" && bash scripts/ops/restore-drill-test.sh && bash scripts/ops/restore-drill-run-test.sh
 # BASE_SHA-gated like lint-baseline-growth.sh: self-skips locally, real in CI.
 echo "=== Replay-plan tripwire ===" && ./scripts/ci/lint-replay-plan.sh
-echo "=== OpenAPI URLs ===" && go run ./scripts/ci/lint-openapi-urls openapi/stellar-index.v1.yaml
+echo "=== External channels ===" && ./scripts/ci/lint-external-channels.sh
+echo "=== External channels self-test ===" && ./scripts/ci/lint-external-channels-test.sh
+echo "=== OpenAPI URLs (query discipline + served hosts) ===" && go run ./scripts/ci/lint-openapi-urls openapi/stellar-index.v1.yaml
 echo "=== PK discriminators ===" && go run ./scripts/ci/lint-pk-discriminators
 # Structural rule-file lint — pure-Python (no promtool), so it runs even
 # on machines without a Prometheus install and catches the mis-indented-rule
