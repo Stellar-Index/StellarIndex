@@ -494,12 +494,21 @@ func (s *Server) assetReaderOrNil() AssetReader { return s.assets }
 // assetListFilters holds the validated row-narrowing filters shared
 // by the /v1/assets listing paths (BACKLOG #54, matching the
 // TypeFilter / CodeFilter / IssuerFilter parameters in the OpenAPI
-// spec). An empty field means "no filter". typ is normalised so both
-// "any" and omitted collapse to "".
+// spec, plus the `q` search box). An empty field means "no filter".
+// typ is normalised so both "any" and omitted collapse to "".
+//
+// Every path that serves the listing takes this struct whole. Each
+// filter that travelled separately — or not at all — has since been
+// found dropped on one path or another: `q` was read straight off the
+// request by the unified path and never by the default one, and the
+// other three stopped at the asset_class dispatch. Carrying them as
+// one value is what makes a dropped filter a compile error instead of
+// a plausible wrong page.
 type assetListFilters struct {
 	typ    string // "" | native | classic | soroban | fiat
 	code   string // exact classic code, case-sensitive
 	issuer string // G-strkey, CRC-checked
+	q      string // case-insensitive substring over code / slug / issuer
 }
 
 // assetsOrderParam is the parsed `order_by` for /v1/assets: the store
@@ -609,7 +618,30 @@ func parseAssetListFilters(w http.ResponseWriter, r *http.Request) (assetListFil
 		f.issuer = iss
 	}
 
+	// q: free-text search. No validation to fail — any string is a
+	// legal substring — so it never contributes a 400.
+	f.q = strings.TrimSpace(q.Get("q"))
+
 	return f, true
+}
+
+// typeMatchesListingSpine reports whether a structural `type` filter
+// can match ANY row of the classic listing spine, which is
+// classic_assets UNION the traded Soroban-native contracts. A caller
+// that gets false must serve an empty page rather than query: no
+// predicate over that spine could return a row.
+//
+// native and fiat are the two that cannot match. Native XLM has no
+// classic_assets row (it is served by the catalogue phase and the
+// dedicated native reader) and fiat reference rows moved to
+// /v1/external/assets with the Stellar/external split (LC-001).
+//
+// `soroban` DOES match: the spine gained the traded contract assets in
+// 2026-08 (see listAssetsBaseSelect), and the fold that predated that
+// change — everything but `classic` short-circuits — had been quietly
+// answering `type=soroban` with an empty page ever since.
+func typeMatchesListingSpine(typ string) bool {
+	return typ == "" || typ == "classic" || typ == "soroban"
 }
 
 // isValidClassicCode reports whether s is a valid Stellar classic
@@ -643,14 +675,43 @@ func isValidClassicCode(s string) bool {
 //     1-12 alphanumeric (e.g. `USDC`). Not unique on Stellar —
 //     combine with issuer to pin a single asset.
 //   - issuer (optional): a G-strkey (CRC-checked).
+//   - q (optional): case-insensitive substring over code / slug /
+//     issuer (and, on catalogue rows, the currency name).
 //
-// The filters apply to the default classic-assets listing (the
-// AssetsReader path — `code`/`issuer` push down to the indexed
-// classic_assets columns; `type` folds against the homogeneously-
-// classic backing table). Consistent with how `issuer` already
-// scoped, they are NOT re-applied when `asset_class` dispatches to
-// the catalogue / unified paths (asset_class is the major dispatch);
-// validation still fires on every path so bad input never 200s.
+// The filters apply on the default listing AND on the unified
+// (`asset_class=all`) one, in both of its phases: `code` / `issuer` /
+// `type` push down to the listing spine, the catalogue phase narrows
+// its curated rows on the same three, and `q` searches both. They
+// travel as one assetListFilters value for a reason — every filter
+// that was passed piecemeal ended up dropped on some path, and the
+// response looked exactly like an unfiltered one (this is #355's
+// class: `include=sparkline7d` went the same way in this handler).
+// Validation fires before the dispatch, so bad input never 200s.
+//
+// A filtered listing reports the money of the rows the filter admitted.
+// On the unified path the alias fold merges a SAC wrapper's trailing-24h
+// volume onto its classic twin, and every row filter narrows the spine
+// before that fold — so a spine-served SAC-wrapped asset's
+// `volume_24h_usd` under any of the four filters is its classic-arm
+// figure alone. A verified-catalogue row is different and reports its
+// classic arm on EVERY request: its stats come from
+// [Server.lookupCatalogueTwin], an exact-issuer lookup of the classic
+// twin that never reaches the contract arm, so the fold plays no part.
+// Both facts are on the four parameters in the OpenAPI spec; see the
+// pushdown note in [Server.fetchClassicUnifiedRows] for why the filters
+// run before the fold rather than after it.
+//
+// `asset_class` remains the major dispatch, not a row filter. The
+// class-scoped catalogue listings (`fiat` / `stablecoin` / `crypto`)
+// serve their whole class and do NOT narrow on these filters, `q`
+// included — the same gap, still open on that path because it shares
+// its page writer with /v1/external/assets and closing it there is a
+// decision about that listing too. Stated on all four parameters in
+// the spec rather than refused with a 400, because the explorer's
+// search box and its class chips are independent controls
+// (web/explorer/src/app/assets/AssetsTable.tsx), so today's deployed
+// client sends `asset_class=stablecoin&q=…` on every keystroke: a 400
+// would replace an over-broad list with a hard error page.
 //
 // Returns an empty list when no AssetReader is wired (operator did
 // not configure the asset-catalog reader). The Envelope shape is
@@ -733,7 +794,7 @@ func (s *Server) handleAssetList(w http.ResponseWriter, r *http.Request) {
 	// classic-only listing don't see a wire-shape change. The
 	// explorer's /assets page passes asset_class=all explicitly.
 	if assetClass == "all" {
-		s.handleAssetListUnified(w, r, limit, cursor)
+		s.handleAssetListUnified(w, r, filters, limit, cursor)
 		return
 	}
 
@@ -792,15 +853,17 @@ func (s *Server) handleAssetList(w http.ResponseWriter, r *http.Request) {
 // populated — same shape as /v1/coins listings, just under the
 // /v1/assets URL.
 //
-// Honors the type / code / issuer row filters (BACKLOG #54):
+// Honors the type / code / issuer row filters (BACKLOG #54) and the
+// `q` search box:
 //   - code + issuer push down to the indexed classic_assets columns
 //     via ListAssetsExt.
-//   - type folds against the backing table: classic_assets is
-//     homogeneously classic, so a structural type filter that
-//     excludes classic (native / soroban / fiat) matches nothing and
-//     short-circuits to an empty page WITHOUT a DB round-trip.
-//     `classic` / `any` / omitted are a no-op. (Native XLM, Soroban,
-//     and fiat rows live on the catalogue / unified paths.)
+//   - type narrows the spine (see typeMatchesListingSpine) or folds to
+//     an empty page without a DB round-trip.
+//   - q substring-matches code / slug / issuer server-side. It was
+//     absent from this options bag while the unified path passed it,
+//     so `/v1/assets?q=…` — the shape a client sends when it has NOT
+//     opted into asset_class=all — searched nothing and returned the
+//     same first page of ~199K assets that no filter returns.
 //
 // The default order is observation_count_desc; `order` selects it or
 // volume_24h_usd_desc, and the SAME order is threaded through the
@@ -832,7 +895,7 @@ func (s *Server) handleAssetListFromAssets(
 			"Invalid cursor", http.StatusBadRequest, err.Error())
 		return
 	}
-	if filters.typ != "" && filters.typ != "classic" {
+	if !typeMatchesListingSpine(filters.typ) {
 		writeEnvelope(w, Envelope{Data: []AssetDetail{}, Flags: Flags{}})
 		return
 	}
@@ -846,6 +909,8 @@ func (s *Server) handleAssetListFromAssets(
 		Limit:  limit + 1,
 		Issuer: filters.issuer,
 		Code:   filters.code,
+		Type:   filters.typ,
+		Q:      filters.q,
 		Cursor: cursor,
 		Order:  order,
 	}
@@ -2059,15 +2124,27 @@ func bigFloatFromOptionalString(s *string) *big.Float {
 // has fewer remaining than `limit`, this handler returns the
 // catalogue tail and signals "classic:" next cursor; the client
 // fires the next page to fetch classic rows.
-func (s *Server) handleAssetListUnified(w http.ResponseWriter, r *http.Request, limit int, cursor string) {
+//
+// `filters` narrows BOTH phases. It reaches this handler at all only
+// since the drop it documents: the dispatch called this function
+// without the parsed filters, so `?asset_class=all&code=AQUA` (and
+// &issuer=…, and &type=…) served the byte-identical unfiltered page.
+// Filtering one phase would be no better — the catalogue phase is what
+// OPENS the listing, and it suppresses the classic twins of the rows it
+// serves, so a filter applied to the classic phase alone still hands
+// back a page of rows the caller excluded.
+func (s *Server) handleAssetListUnified(
+	w http.ResponseWriter, r *http.Request,
+	filters assetListFilters, limit int, cursor string,
+) {
 	phase, inner := parseUnifiedCursor(cursor)
 
 	if phase == "catalogue" {
-		s.serveCatalogueUnifiedPage(w, r, limit, inner)
+		s.serveCatalogueUnifiedPage(w, r, filters, limit, inner)
 		return
 	}
 	// phase == "classic"
-	s.serveClassicUnifiedPage(w, r, limit, inner)
+	s.serveClassicUnifiedPage(w, r, filters, limit, inner)
 }
 
 // parseUnifiedCursor decodes the phase-prefixed cursor format. An
@@ -2091,23 +2168,31 @@ func parseUnifiedCursor(cursor string) (phase, inner string) {
 // serveCatalogueUnifiedPage projects the catalogue, computes
 // market_cap, sorts, slices to the requested offset/limit, and
 // writes the envelope with the appropriate next-cursor.
-func (s *Server) serveCatalogueUnifiedPage(w http.ResponseWriter, r *http.Request, limit int, innerCursor string) {
+func (s *Server) serveCatalogueUnifiedPage(
+	w http.ResponseWriter, r *http.Request,
+	filters assetListFilters, limit int, innerCursor string,
+) {
 	if s.verifiedCurrencies == nil {
 		// No catalogue → skip directly to classic phase.
-		s.serveClassicUnifiedPage(w, r, limit, "")
+		s.serveClassicUnifiedPage(w, r, filters, limit, "")
 		return
 	}
 	// StellarIssued (not Browseable): the unified /v1/assets listing is
 	// Stellar-only post-split (LC-001) — fiat + reference-only coins move to
 	// /v1/external/assets. classic_assets (the classic phase) are all Stellar.
-	entries := s.verifiedCurrencies.StellarIssued()
+	//
+	// Narrow BEFORE the market-cap fan-out: an entry the caller filtered
+	// out would otherwise cost a supply + FX read to compute a cap for a
+	// row that can never be served.
+	entries := filterCatalogueEntries(s.verifiedCurrencies.StellarIssued(), filters)
 	caps := s.computeAllCatalogueMarketCaps(r.Context(), entries)
 	rows := s.projectCatalogueRows(r.Context(), entries, caps)
 	sortAssetDetailsByMarketCapDesc(rows)
 	// q= filter over the catalogue phase (S-011). The classic phase
 	// filters server-side via ListAssetsOptions.Q; the catalogue is a
-	// ~30-row in-process slice.
-	rows = filterCatalogueRowsByQuery(rows, r.URL.Query().Get("q"))
+	// ~30-row in-process slice. Applied to the ROWS, not the entries
+	// above, because it also matches the projected name.
+	rows = filterCatalogueRowsByQuery(rows, filters.q)
 
 	// parseOffsetCursor, not a silent Atoi. The old form swallowed every
 	// malformed inner cursor — `catalogue:abc`, `catalogue:-7`, an
@@ -2125,7 +2210,7 @@ func (s *Server) serveCatalogueUnifiedPage(w http.ResponseWriter, r *http.Reques
 	}
 	if offset >= len(rows) {
 		// Catalogue done → transition to classic.
-		s.serveClassicUnifiedPage(w, r, limit, "")
+		s.serveClassicUnifiedPage(w, r, filters, limit, "")
 		return
 	}
 	end := offset + limit
@@ -2157,7 +2242,7 @@ func (s *Server) serveCatalogueUnifiedPage(w http.ResponseWriter, r *http.Reques
 	// 11-row catalogue tail regardless of limit, and the /assets page
 	// presented the curated sliver as the entire asset universe).
 	if remaining := limit - len(page); remaining > 0 {
-		classicRows, nextInner, ok := s.fetchClassicUnifiedRows(w, r, remaining, "")
+		classicRows, nextInner, ok := s.fetchClassicUnifiedRows(w, r, filters, remaining, "")
 		if !ok {
 			return
 		}
@@ -2179,10 +2264,22 @@ func (s *Server) serveCatalogueUnifiedPage(w http.ResponseWriter, r *http.Reques
 // path with Volume24hUSDDesc ordering. The inner cursor is what
 // that path returned on the prior call. Next-cursor gets phase-
 // prefixed before going out the wire.
-func (s *Server) serveClassicUnifiedPage(w http.ResponseWriter, r *http.Request, limit int, innerCursor string) {
-	out, nextInner, ok := s.fetchClassicUnifiedRows(w, r, limit, innerCursor)
+func (s *Server) serveClassicUnifiedPage(
+	w http.ResponseWriter, r *http.Request,
+	filters assetListFilters, limit int, innerCursor string,
+) {
+	out, nextInner, ok := s.fetchClassicUnifiedRows(w, r, filters, limit, innerCursor)
 	if !ok {
 		return
+	}
+	// The same required-array guard handleAssetListFromAssets carries.
+	// AssetListEnvelope.data is `type: array` under `required`, so a nil
+	// slice here would serve `"data": null` on a 200. The fetch above
+	// returns non-nil on every path; the guard is here because THIS is
+	// where the wire contract is, and every empty phase must reach it
+	// as [].
+	if out == nil {
+		out = []AssetDetail{}
 	}
 	env := Envelope{Data: out, Flags: Flags{}}
 	if nextInner != "" {
@@ -2197,7 +2294,10 @@ func (s *Server) serveClassicUnifiedPage(w http.ResponseWriter, r *http.Request,
 // Shared by the classic phase AND the page-1 fill (S-002: page 1 used
 // to return just the 11-row catalogue tail regardless of limit,
 // making the curated sliver look like the asset universe).
-func (s *Server) fetchClassicUnifiedRows(w http.ResponseWriter, r *http.Request, limit int, innerCursor string) ([]AssetDetail, string, bool) {
+func (s *Server) fetchClassicUnifiedRows(
+	w http.ResponseWriter, r *http.Request,
+	filters assetListFilters, limit int, innerCursor string,
+) ([]AssetDetail, string, bool) {
 	// AGT-06: this phase's cursor is the
 	// `<rank_tier>:<vol_or_blank>:<asset_id>` shape this function itself
 	// emits below — reject a malformed one (e.g. a
@@ -2208,6 +2308,20 @@ func (s *Server) fetchClassicUnifiedRows(w http.ResponseWriter, r *http.Request,
 			"https://api.stellarindex.io/errors/invalid-cursor",
 			"Invalid cursor", http.StatusBadRequest, err.Error())
 		return nil, "", false
+	}
+	// A type this spine cannot carry (native / fiat) ends the phase
+	// before the reader: the catalogue phase above serves those rows,
+	// and querying for them here could only return nothing. ok=true — an
+	// empty classic phase is a legitimate result, not an error, and the
+	// callers write the envelope.
+	//
+	// Empty NON-NIL: this slice becomes the envelope's `data` verbatim on
+	// the classic phase, and AssetListEnvelope.data is a required array —
+	// a nil here publishes `"data": null` under a 200, which is the same
+	// shape of harm as the dropped filter (a response the caller cannot
+	// tell is wrong).
+	if !typeMatchesListingSpine(filters.typ) {
+		return []AssetDetail{}, "", true
 	}
 	if s.assetsReader == nil {
 		// No AssetsReader wired → empty terminator.
@@ -2220,7 +2334,34 @@ func (s *Server) fetchClassicUnifiedRows(w http.ResponseWriter, r *http.Request,
 		// S-011: the storage layer has supported Q since the AssetsReader
 		// store landed; the unified path never passed it, so the
 		// explorer's search box round-tripped to the same page.
-		Q: strings.TrimSpace(r.URL.Query().Get("q")),
+		Q: filters.q,
+		// The row filters the dispatch used to drop on this path. They
+		// push down to the spine exactly as they do on the default
+		// listing — same store, same predicates — so `code=AQUA` narrows
+		// here instead of returning the volume-ranked head of the whole
+		// directory.
+		//
+		// All four narrow the spine BEFORE foldAliasTwins runs, so a
+		// filtered page reports the volume of the rows the filter
+		// admitted. For `type=classic` that means a SAC-wrapped asset's
+		// classic row carries its CLASSIC-ARM volume alone: the SAC twin
+		// sits in the contract arm, the predicate excludes it, and there
+		// is then nothing for the fold to merge. That is the documented
+		// contract (see the `type` parameter in the OpenAPI spec), not an
+		// oversight.
+		//
+		// WHY pushdown rather than fold-then-filter: the spine is ~199K
+		// rows walked on a keyset cursor, and the fold is an in-process
+		// pass over one page. Filtering after it means asking the store
+		// for the UNFILTERED page and dropping rows in Go — an
+		// unbounded scan on the request path for a page that ends up
+		// arbitrarily short, which is the shape the #43 latency incident
+		// moved out of handlers. The three value-bearing filters have no
+		// other option anyway: `code` / `issuer` / `q` are indexed
+		// classic_assets columns, so they are pushdown or nothing.
+		Code:   filters.code,
+		Issuer: filters.issuer,
+		Type:   filters.typ,
 	}
 	// Overfetch-by-one (same shape as handleAssetListFromAssets) to
 	// drive the cursor advance.
@@ -2250,7 +2391,20 @@ func (s *Server) fetchClassicUnifiedRows(w http.ResponseWriter, r *http.Request,
 	// onto the classic twin the catalogue phase then represents. This is
 	// what stops "USDC shows twice" (classic USDC in the catalogue phase +
 	// its CCW67T… SAC leaking a second row through here).
-	out = s.foldAliasTwins(out)
+	//
+	// NOT under type=soroban. The fold suppresses an alias row whose
+	// canonical primary is absent from the page — a stray SAC twin is
+	// the duplicate it exists to remove — and that rule assumes the
+	// canonical row is representable on this listing. `type=soroban`
+	// makes it false by construction: the predicate excludes every
+	// canonical classic row, so EVERY surviving row is a stray by that
+	// rule and the phase answered a request for the contract arm with
+	// an empty page over the exact rows the store was holding. Nothing
+	// is lost by skipping it either — the arm the fold merges INTO is
+	// the one the caller filtered out, and no duplicate can exist among the classic↔SAC and XLM alias families the registry builds (a family with two contract members — a SAC-wrapper value that is itself a C-strkey, which config validation permits — would put both in this arm unfolded).
+	if filters.typ != "soroban" {
+		out = s.foldAliasTwins(out)
+	}
 	out = s.suppressCatalogueTwins(out)
 	s.stampListingCollisions(out)
 	s.applySubstanceGateToListing(r.Context(), out)
@@ -3537,12 +3691,28 @@ func (s *Server) fillCatalogueStatsForPage(ctx context.Context, page []AssetDeta
 	})
 }
 
+// Follow-up, named here rather than left implicit: this lookup reaches only
+// the classic arm, so a catalogue row's volume_24h_usd is its classic volume
+// on every request while the spine phase computes the classic+SAC sum for
+// the same asset and then suppresses that row in favour of this one. The
+// flagship listing therefore under-reports SAC-wrapped catalogue assets;
+// making this lookup fold-aware changes a served money value and belongs to
+// its own change.
 // lookupCatalogueTwin resolves a catalogue entry's Stellar asset id to
 // its listing row: the dedicated native reader for XLM (no
 // classic_assets twin exists), the exact-issuer listing filter for
 // classic ids (Q substring-matches column VALUES, so a full asset id
 // can never match — the lesson of v0.7.4/v0.7.5). Nil when the twin
 // isn't in the served store.
+//
+// ONE arm: the lookup keys on the classic issuer and a SAC wrapper has
+// none, so the row it returns — and with it the catalogue row's
+// volume_24h_usd and trade count, via mergeTwinStats — is the CLASSIC
+// arm's, on a filtered request and an unfiltered one alike.
+// foldAliasTwins never touches these rows: it runs on the classic
+// phase, whose copy of this same twin suppressCatalogueTwins then
+// drops. Stated on the four row filters in the OpenAPI spec so the
+// figure is not read as a cross-arm total.
 func (s *Server) lookupCatalogueTwin(ctx context.Context, assetID string) *timescale.AssetRow {
 	if assetID == "native" {
 		row, err := s.assetsReader.GetNativeAssetRow(ctx)
@@ -3618,6 +3788,56 @@ func mergeTwinStats(dst *AssetDetail, twin AssetDetail) {
 		dst.MarketCapUSD = nil
 		dst.FDVUSD = nil
 	}
+}
+
+// filterCatalogueEntries narrows catalogue entries by the structural
+// type / code / issuer row filters, in catalogue order.
+//
+// The filters match each entry's STELLAR ISSUANCE, not the projected
+// row: a catalogue row carries type "global" and no issuer, but it
+// stands in for its on-chain twin on this listing — suppressCatalogueTwins
+// drops the twin's classic row in its favour — so matching the wire
+// shape would drop USDC from `type=classic`, which is exactly the
+// asset the caller asked for.
+//
+// Native XLM has no code on-chain, so `code=` never selects it; it is
+// reachable via `type=native` (its issuance is asset_id "native") and
+// via `q=`.
+func filterCatalogueEntries(entries []*currency.VerifiedCurrency, f assetListFilters) []*currency.VerifiedCurrency {
+	if f.typ == "" && f.code == "" && f.issuer == "" {
+		return entries
+	}
+	out := make([]*currency.VerifiedCurrency, 0, len(entries))
+	for _, vc := range entries {
+		if stellarIssuanceMatches(vc.StellarEntry(), f) {
+			out = append(out, vc)
+		}
+	}
+	return out
+}
+
+// stellarIssuanceMatches reports whether one catalogue entry's Stellar
+// issuance satisfies the type / code / issuer filters. A nil issuance
+// (no Stellar entry at all) matches nothing: callers pass StellarIssued(),
+// so this is belt and braces rather than a live case.
+func stellarIssuanceMatches(se *currency.IssuanceEntry, f assetListFilters) bool {
+	if se == nil {
+		return false
+	}
+	if f.code != "" && se.Code != f.code {
+		return false
+	}
+	if f.issuer != "" && se.Issuer != f.issuer {
+		return false
+	}
+	if f.typ == "" {
+		return true
+	}
+	// The entry's asset_id is the canonical identity ("native",
+	// "CODE-ISSUER", a contract id), so its parsed type IS the
+	// structural class the filter names.
+	asset, err := canonical.ParseAsset(se.AssetID)
+	return err == nil && string(asset.Type) == f.typ
 }
 
 // filterCatalogueRowsByQuery applies the case-insensitive q= substring

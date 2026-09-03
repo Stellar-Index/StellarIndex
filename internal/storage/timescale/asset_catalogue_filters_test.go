@@ -1,6 +1,7 @@
 package timescale
 
 import (
+	"context"
 	"strings"
 	"testing"
 )
@@ -23,6 +24,21 @@ import (
 // is the guard that the pushdown must never come back, because the CTEs
 // it narrowed must never come back.
 
+// mustBuildAssetsQuery composes a listing query for a filter set the
+// spine can express. Every case below passes such a set, so an error is
+// the test's own bug and not a result worth asserting on — the
+// rejection path has its own test.
+func mustBuildAssetsQuery(
+	t *testing.T, limit int, issuer, code, cursor, q, typ string, order AssetsOrder,
+) (string, []any) {
+	t.Helper()
+	sql, args, err := buildAssetsQuery(limit, issuer, code, cursor, q, typ, order)
+	if err != nil {
+		t.Fatalf("buildAssetsQuery(typ=%q): %v", typ, err)
+	}
+	return sql, args
+}
+
 // TestListAssetsBaseSelectSQL_NoPushdownMachinery asserts the renderer
 // emits no chosen_assets CTE and no marker comments for either order.
 func TestListAssetsBaseSelectSQL_NoPushdownMachinery(t *testing.T) {
@@ -40,7 +56,7 @@ func TestListAssetsBaseSelectSQL_NoPushdownMachinery(t *testing.T) {
 // TestBuildAssetsQuery_NoFilters is the baseline arg shape: LIMIT only.
 func TestBuildAssetsQuery_NoFilters(t *testing.T) {
 	t.Parallel()
-	sql, args := buildAssetsQuery(100, "", "", "", "", AssetsOrderObservationCountDesc)
+	sql, args := mustBuildAssetsQuery(t, 100, "", "", "", "", "", AssetsOrderObservationCountDesc)
 	// `ca.` is the spine alias, so any composed outer predicate mentions
 	// it; the CTE bodies have WHEREs of their own that must not count.
 	if strings.Contains(sql, " WHERE ca.") {
@@ -56,7 +72,7 @@ func TestBuildAssetsQuery_NoFilters(t *testing.T) {
 func TestBuildAssetsQuery_IssuerFilter(t *testing.T) {
 	t.Parallel()
 	issuer := "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
-	sql, args := buildAssetsQuery(100, issuer, "", "", "", AssetsOrderObservationCountDesc)
+	sql, args := mustBuildAssetsQuery(t, 100, issuer, "", "", "", "", AssetsOrderObservationCountDesc)
 
 	if !strings.Contains(sql, "ca.issuer_g_strkey = $1") {
 		t.Error("issuer-filter query must keep the outer WHERE on ca.issuer_g_strkey")
@@ -70,7 +86,7 @@ func TestBuildAssetsQuery_IssuerFilter(t *testing.T) {
 // it to all three searchable columns.
 func TestBuildAssetsQuery_QFilter(t *testing.T) {
 	t.Parallel()
-	sql, args := buildAssetsQuery(50, "", "", "", "USDC", AssetsOrderObservationCountDesc)
+	sql, args := mustBuildAssetsQuery(t, 50, "", "", "", "USDC", "", AssetsOrderObservationCountDesc)
 	if got := strings.Count(sql, "LOWER($1)"); got != 3 {
 		t.Errorf("q filter must compare code, slug and issuer against $1; got %d references", got)
 	}
@@ -84,7 +100,7 @@ func TestBuildAssetsQuery_QFilter(t *testing.T) {
 func TestBuildAssetsQuery_IssuerAndQ(t *testing.T) {
 	t.Parallel()
 	issuer := "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
-	sql, args := buildAssetsQuery(100, issuer, "", "", "USD", AssetsOrderObservationCountDesc)
+	sql, args := mustBuildAssetsQuery(t, 100, issuer, "", "", "USD", "", AssetsOrderObservationCountDesc)
 	if !strings.Contains(sql, "ca.issuer_g_strkey = $1") {
 		t.Error("issuer must stay bound to $1 when q is also set")
 	}
@@ -100,7 +116,7 @@ func TestBuildAssetsQuery_IssuerAndQ(t *testing.T) {
 // equality on the indexed classic_assets.code column (BACKLOG #54).
 func TestBuildAssetsQuery_CodeFilter(t *testing.T) {
 	t.Parallel()
-	sql, args := buildAssetsQuery(100, "", "USDC", "", "", AssetsOrderObservationCountDesc)
+	sql, args := mustBuildAssetsQuery(t, 100, "", "USDC", "", "", "", AssetsOrderObservationCountDesc)
 
 	if !strings.Contains(sql, "ca.code = $1") {
 		t.Error("code-filter query must keep the outer WHERE on ca.code")
@@ -115,12 +131,106 @@ func TestBuildAssetsQuery_CodeFilter(t *testing.T) {
 func TestBuildAssetsQuery_IssuerAndCode(t *testing.T) {
 	t.Parallel()
 	issuer := "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
-	sql, args := buildAssetsQuery(100, issuer, "USDC", "", "", AssetsOrderObservationCountDesc)
+	sql, args := mustBuildAssetsQuery(t, 100, issuer, "USDC", "", "", "", AssetsOrderObservationCountDesc)
 
 	if !strings.Contains(sql, "ca.issuer_g_strkey = $1") || !strings.Contains(sql, "ca.code = $2") {
 		t.Error("issuer+code query must keep both outer-WHERE predicates")
 	}
 	if len(args) != 3 || args[0] != issuer || args[1] != "USDC" || args[2] != 100 {
 		t.Errorf("expected args=[issuer, code, limit]; got %v", args)
+	}
+}
+
+// TestBuildAssetsQuery_TypeFilter pins the structural-class predicate.
+// The spine is classic_assets UNION the traded Soroban-native
+// contracts; only the issuer tells the two arms apart (classic_assets
+// requires a G-issuer, the contract arm selects NULL for it). The
+// filter carries no placeholder — the value is a closed enum validated
+// at the edge, never interpolated — so the arg list must be untouched.
+func TestBuildAssetsQuery_TypeFilter(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		typ  string
+		want string
+	}{
+		{typ: "classic", want: "ca.issuer_g_strkey IS NOT NULL"},
+		{typ: "soroban", want: "ca.issuer_g_strkey IS NULL"},
+	} {
+		t.Run(tc.typ, func(t *testing.T) {
+			t.Parallel()
+			sql, args := mustBuildAssetsQuery(t, 100, "", "", "", "", tc.typ, AssetsOrderObservationCountDesc)
+			if !strings.Contains(sql, tc.want) {
+				t.Errorf("type=%s query must carry %q", tc.typ, tc.want)
+			}
+			if len(args) != 1 || args[0] != 100 {
+				t.Errorf("type filter must add no placeholder; got args=%v", args)
+			}
+		})
+	}
+}
+
+// TestBuildAssetsQuery_TypeCombinesWithCode — the type predicate is
+// composed with the others, and adding it must not shift the numbered
+// placeholders the value-bearing filters bind to.
+func TestBuildAssetsQuery_TypeCombinesWithCode(t *testing.T) {
+	t.Parallel()
+	sql, args := mustBuildAssetsQuery(t, 100, "", "USDC", "", "", "classic", AssetsOrderObservationCountDesc)
+	if !strings.Contains(sql, "ca.code = $1") {
+		t.Error("code must still bind to $1 alongside a type filter")
+	}
+	if !strings.Contains(sql, "ca.issuer_g_strkey IS NOT NULL") {
+		t.Error("type predicate dropped when combined with code")
+	}
+	if len(args) != 2 || args[0] != "USDC" || args[1] != 100 {
+		t.Errorf("expected args=[code, limit]; got %v", args)
+	}
+}
+
+// TestBuildAssetsQuery_UnknownTypeIsRefused — an unrecognised non-empty
+// `type` must NOT compose away into the unfiltered page. The listing has
+// ~199k rows and answers every request with a plausible 200, so a
+// silently-dropped filter is served as data the caller believes is
+// narrowed. Refusing is the only outcome the caller can tell apart.
+func TestBuildAssetsQuery_UnknownTypeIsRefused(t *testing.T) {
+	t.Parallel()
+	for _, typ := range []string{"bogus", "native", "fiat", "CLASSIC", " classic"} {
+		t.Run(typ, func(t *testing.T) {
+			t.Parallel()
+			sql, args, err := buildAssetsQuery(100, "", "", "", "", typ, AssetsOrderObservationCountDesc)
+			if err == nil {
+				// Query text elided — it is the whole 12KB spine, and the
+				// point is that it was composed at all.
+				t.Fatalf("type=%q was accepted (composed %d bytes of SQL, %d args) — an "+
+					"unknown filter must not fall through to the unfiltered listing",
+					typ, len(sql), len(args))
+			}
+			if sql != "" || args != nil {
+				t.Errorf("a refused filter must yield no query; got %d bytes of SQL, args=%v",
+					len(sql), args)
+			}
+		})
+	}
+}
+
+// TestListAssetsExt_UnknownTypeSurfacesTheError — the refusal must reach
+// the caller rather than being swallowed between the builder and the
+// query. The Store carries a nil *sql.DB on purpose: that is what proves
+// the guard runs BEFORE QueryContext, since reaching the round-trip at
+// all panics on it.
+func TestListAssetsExt_UnknownTypeSurfacesTheError(t *testing.T) {
+	t.Parallel()
+	s := &Store{}
+	defer func() {
+		if p := recover(); p != nil {
+			t.Errorf("ListAssetsExt composed a query for type=bogus and dialled it (%v) — "+
+				"an unrecognised filter must be refused before the round-trip", p)
+		}
+	}()
+	rows, err := s.ListAssetsExt(context.Background(), ListAssetsOptions{Limit: 10, Type: "bogus"})
+	if err == nil {
+		t.Fatalf("ListAssetsExt accepted type=bogus and returned %d rows", len(rows))
+	}
+	if !strings.Contains(err.Error(), "unsupported type filter") {
+		t.Errorf("error = %v, want it to name the unsupported filter", err)
 	}
 }

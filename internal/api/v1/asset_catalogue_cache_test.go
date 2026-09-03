@@ -212,6 +212,53 @@ func TestCachedAssetsReader_CodeInCacheKey(t *testing.T) {
 	}
 }
 
+// typeEchoUpstream tags each result with opts.Type, the same trick
+// codeEchoUpstream plays on Code.
+type typeEchoUpstream struct {
+	*fakeAssetsUpstream
+	calls atomic.Int64
+}
+
+func (u *typeEchoUpstream) ListAssetsExt(_ context.Context, opts timescale.ListAssetsOptions) ([]timescale.AssetRow, error) {
+	u.calls.Add(1)
+	return []timescale.AssetRow{{AssetID: "type=" + opts.Type}}, nil
+}
+
+// TestCachedAssetsReader_TypeInCacheKey — Type became a result-changing
+// dimension when it started narrowing the listing spine (classic vs the
+// traded Soroban-native contracts) instead of being folded away by the
+// handler. Left out of the key, `type=classic` and `type=soroban` share
+// one slot and whichever ran first serves the other its rows.
+func TestCachedAssetsReader_TypeInCacheKey(t *testing.T) {
+	up := &typeEchoUpstream{fakeAssetsUpstream: &fakeAssetsUpstream{}}
+	c := NewCachedAssetsReader(up, 60*time.Second)
+
+	classic, err := c.ListAssetsExt(context.Background(), timescale.ListAssetsOptions{Limit: 50, Type: "classic"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	soroban, err := c.ListAssetsExt(context.Background(), timescale.ListAssetsOptions{Limit: 50, Type: "soroban"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if classic[0].AssetID != "type=classic" || soroban[0].AssetID != "type=soroban" {
+		t.Fatalf("Type missing from cache key — got %q then %q (collision)",
+			classic[0].AssetID, soroban[0].AssetID)
+	}
+	if got := up.calls.Load(); got != 2 {
+		t.Errorf("distinct Type values must miss separately; upstream calls=%d want 2", got)
+	}
+	// An unfiltered listing is a third, distinct slot — it must not be
+	// served either of the narrowed page-sets.
+	all, err := c.ListAssetsExt(context.Background(), timescale.ListAssetsOptions{Limit: 50})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if all[0].AssetID != "type=" {
+		t.Errorf("unfiltered listing served a type-filtered slot: %q", all[0].AssetID)
+	}
+}
+
 // swrAssetsUpstream is a configurable ListAssetsExt stub for the
 // stale-while-revalidate tests: a per-call counter plus a settable
 // delay / return value / failure. Embeds fakeAssetsUpstream so the

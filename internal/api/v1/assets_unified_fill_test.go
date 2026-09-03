@@ -40,7 +40,7 @@ func TestUnifiedPage1Fill(t *testing.T) {
 	// path must still serve `limit` classic rows on page 1.
 	req := httptest.NewRequest(http.MethodGet, "/v1/assets?asset_class=all&limit=25&q=tok", nil)
 	rec := httptest.NewRecorder()
-	s.serveCatalogueUnifiedPage(rec, req, 25, "")
+	s.serveCatalogueUnifiedPage(rec, req, assetListFilters{q: "tok"}, 25, "")
 	if rec.Code != 200 {
 		t.Fatalf("status %d: %s", rec.Code, rec.Body.String())
 	}

@@ -28,10 +28,10 @@ func (s *stubAssetsReader) record(sig string) {
 
 func (s *stubAssetsReader) ListAssetsExt(_ context.Context, opts timescale.ListAssetsOptions) ([]timescale.AssetRow, error) {
 	// Mirrors the cache key's dimensions: the listing slot is selected
-	// by (Order, Limit, Cursor, Issuer, Code, Q) — the same tuple the
-	// /v1/assets and /v1/coins handlers each compute differently.
-	s.record(fmt.Sprintf("ListAssetsExt(order=%d limit=%d cursor=%q issuer=%q code=%q q=%q)",
-		int(opts.Order), opts.Limit, opts.Cursor, opts.Issuer, opts.Code, opts.Q))
+	// by (Order, Limit, Cursor, Issuer, Code, Type, Q) — the same tuple
+	// the /v1/assets and /v1/coins handlers each compute differently.
+	s.record(fmt.Sprintf("ListAssetsExt(order=%d limit=%d cursor=%q issuer=%q code=%q type=%q q=%q)",
+		int(opts.Order), opts.Limit, opts.Cursor, opts.Issuer, opts.Code, opts.Type, opts.Q))
 	return nil, nil
 }
 
