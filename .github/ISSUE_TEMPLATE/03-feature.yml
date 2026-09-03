@@ -1,0 +1,20 @@
+name: Feature or data request
+description: A protocol, endpoint, field, or capability that does not exist yet.
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What are you trying to do that you cannot do today
+      description: Describe the goal, not a proposed API shape. The shape is usually easier to get right once the goal is clear.
+    validations: {required: true}
+  - type: textarea
+    id: workaround
+    attributes:
+      label: How are you working around it now
+      description: If you are combining several endpoints, say which — that is often the strongest argument for a new one.
+  - type: textarea
+    id: shape
+    attributes:
+      label: Proposed shape, if you have one
+      description: Optional. Money is served as decimal strings and every response carries `as_of` plus `flags`; a proposal that fits those conventions is easier to accept.

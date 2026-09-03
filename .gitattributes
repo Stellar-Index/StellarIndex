@@ -1,0 +1,78 @@
+# .gitattributes — line endings, diff behaviour, and what GitHub counts.
+#
+# Three jobs:
+#
+#   1. NORMALISE line endings, so a contributor on Windows cannot turn a
+#      one-line change into a whole-file diff.
+#   2. Mark GENERATED files as such. They are checked in on purpose — the
+#      repo's drift gates compare them against their source — but a reviewer
+#      should not have to scroll a 4,000-line regenerated Postman collection
+#      to find the twenty lines that were hand-written. `linguist-generated`
+#      collapses them in a diff by default and excludes them from the
+#      language bar.
+#   3. Stop generated and vendored code misreporting what this project IS.
+#      Before this file, GitHub counted 3.3 MB of TypeScript — most of it a
+#      generated API client — and 628 KB of PL/pgSQL from migrations, against
+#      a codebase that is overwhelmingly Go.
+
+# ── Line endings ────────────────────────────────────────────────────────
+* text=auto eol=lf
+
+*.go        text eol=lf
+*.sh        text eol=lf
+*.sql       text eol=lf
+*.md        text eol=lf
+*.yml       text eol=lf
+*.yaml      text eol=lf
+*.json      text eol=lf
+*.toml      text eol=lf
+*.ts        text eol=lf
+*.tsx       text eol=lf
+
+# Shell scripts and Go source must never gain CRLF: a CRLF shebang is an
+# exec failure that reads as "file not found", and gofmt would rewrite
+# every line.
+*.sh        -crlf
+Makefile    -crlf
+
+# ── Binary ──────────────────────────────────────────────────────────────
+*.png       binary
+*.jpg       binary
+*.jpeg      binary
+*.gif       binary
+*.ico       binary
+*.woff      binary
+*.woff2     binary
+*.pdf       binary
+*.gz        binary
+*.zst       binary
+
+# ── Generated: collapsed in diffs, excluded from the language bar ────────
+# Each of these has a generator and a CI gate that fails if it drifts from
+# its source, so hand-editing one is already an error.
+docs/reference/**                       linguist-generated=true
+examples/postman/**                     linguist-generated=true
+web/explorer/src/api/types.ts           linguist-generated=true
+openapi/stellar-index.v1.yaml           linguist-documentation=true
+
+go.sum                                  linguist-generated=true
+*.lock                                  linguist-generated=true
+pnpm-lock.yaml                          linguist-generated=true
+web/*/pnpm-lock.yaml                    linguist-generated=true
+
+# Lock files should still MERGE sanely rather than conflict per line.
+go.sum                                  merge=union
+pnpm-lock.yaml                          -diff
+
+# ── Not the project's source language ───────────────────────────────────
+# Migrations are schema, not application code; docs are docs. Both are
+# first-class and reviewed, they just should not decide what GitHub says
+# this repository is written in.
+migrations/**                           linguist-language=SQL linguist-detectable=false
+docs/**                                 linguist-documentation=true
+test/fixtures/**                        linguist-vendored=true
+examples/**                             linguist-documentation=true
+
+# ── Vendored ────────────────────────────────────────────────────────────
+vendor/**                               linguist-vendored=true
+web/**/node_modules/**                  linguist-vendored=true

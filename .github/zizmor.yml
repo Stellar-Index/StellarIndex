@@ -1,0 +1,21 @@
+# zizmor — static analysis for GitHub Actions.
+#
+# These workflows deploy to production. They hold SSH deploy keys, an Ansible
+# vault password, and database credentials, and they run `ssh root@…` against
+# a live host. Nothing audited them until 2026-09.
+#
+# What it caught on its first run: `release.yml` granted `contents: write` at
+# WORKFLOW level, so the build matrix and the tag resolver held it too, when
+# only the publish job needs it — and that job already declared its own
+# permissions block. Fixed; least privilege restored.
+#
+# The gate runs at `--min-confidence medium`. The five findings that sit below
+# that line are all `cache-poisoning` on the pnpm/setup-node caches in the
+# publishing workflows, and zizmor itself rates each "audit confidence → Low".
+# Acting on them means disabling build caching on every publish path to defend
+# against an attacker who already needs write access to poison the cache. The
+# floor is a deliberate, reversible trade — not a suppression of the finding,
+# which stays visible in a local `zizmor .github/workflows/` run.
+#
+# Locally:  zizmor --no-online-audits .github/workflows/
+rules: {}

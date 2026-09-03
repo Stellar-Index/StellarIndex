@@ -1,0 +1,43 @@
+name: Data correctness
+description: A number the API serves is wrong, stale, or missing.
+labels: ["data-correctness"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Money and coverage claims are the things this project is most careful
+        about, so this template asks for the request and the response rather
+        than a description of them. A pasted response is worth more than three
+        paragraphs about it.
+  - type: input
+    id: request
+    attributes:
+      label: The exact request
+      description: Full URL, or the curl command.
+      placeholder: curl -s 'https://api.stellarindex.io/v1/price?base=native&quote=fiat:USD'
+    validations: {required: true}
+  - type: textarea
+    id: response
+    attributes:
+      label: What it returned
+      description: Paste the response. Include `as_of` and the `flags` object — staleness and withheld-price flags usually explain the discrepancy.
+      render: json
+    validations: {required: true}
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected, and why
+      description: If you have an independent source for the correct value, name it and link it. "It differs from X" is a much stronger report than "it looks wrong".
+    validations: {required: true}
+  - type: input
+    id: when
+    attributes:
+      label: When did you observe this (UTC)
+      description: Values are time-dependent; without a timestamp the number often cannot be reproduced.
+    validations: {required: true}
+  - type: dropdown
+    id: network
+    attributes:
+      label: Network
+      options: [pubnet, testnet, futurenet]
+    validations: {required: true}

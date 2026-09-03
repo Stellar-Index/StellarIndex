@@ -47,7 +47,12 @@ concurrency:
   cancel-in-progress: false
 
 permissions:
-  contents: write          # gh release create + upload assets
+  # Least privilege at WORKFLOW level: resolve-tag and the build matrix only
+  # read. `contents: write` is granted on the `release` job alone, which is
+  # the only one that creates a release or uploads an asset (see its own
+  # permissions block). Granting write here handed it to every job in the
+  # workflow, including the matrix that compiles untrusted-adjacent input.
+  contents: read
   # F-1296 (codex audit-2026-05-13): `id-token: write` was removed
   # here when nothing consumed the OIDC JWT. It is now granted —
   # but only at JOB level on the `release` job (see its

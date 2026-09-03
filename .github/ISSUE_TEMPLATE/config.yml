@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Question about using the API
+    url: https://github.com/Stellar-Index/StellarIndex/discussions
+    about: How do I query X, what does this field mean, why is this number what it is. Questions get better answers in Discussions than in the issue tracker.
+  - name: Security vulnerability
+    url: https://github.com/Stellar-Index/StellarIndex/blob/main/SECURITY.md
+    about: Do NOT open a public issue. Follow the disclosure process in SECURITY.md.
+  - name: Data looks wrong
+    url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/methodology/
+    about: Prices, volumes and supply are computed — the methodology docs explain how. If it still looks wrong after reading, open a Data correctness report.
