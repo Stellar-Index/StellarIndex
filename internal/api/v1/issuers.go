@@ -269,18 +269,25 @@ func (s *Server) handleIssuer(w http.ResponseWriter, r *http.Request) {
 
 	detailReason := scamReason(row.GStrkey)
 	out := Issuer{
-		GStrkey:        row.GStrkey,
-		HomeDomain:     row.HomeDomain,
-		OrgName:        row.OrgName,
-		OrgVerified:    row.OrgVerified,
-		ScamReason:     detailReason,
-		AuthRequired:   row.AuthRequired,
-		AuthRevocable:  row.AuthRevocable,
-		AuthImmutable:  row.AuthImmutable,
-		AuthClawback:   row.AuthClawback,
-		SEP1ResolvedAt: row.SEP1ResolvedAt,
-		SEP1Payload:    row.SEP1Payload,
-		CreationLedger: row.CreationLedger,
+		GStrkey:       row.GStrkey,
+		HomeDomain:    row.HomeDomain,
+		OrgName:       row.OrgName,
+		OrgVerified:   row.OrgVerified,
+		ScamReason:    detailReason,
+		AuthRequired:  row.AuthRequired,
+		AuthRevocable: row.AuthRevocable,
+		AuthImmutable: row.AuthImmutable,
+		AuthClawback:  row.AuthClawback,
+		// Carrying the persisted provenance is what ARMS the skip-gate in
+		// enrichIssuerFromAccountState below: a `last_known_before_removal`
+		// row must always be re-offered to the live reader, because it stops
+		// being true the moment the account is re-created and the drain's
+		// primary queue (`auth_required IS NULL`) will never revisit it.
+		AuthFlagsSource:     row.AuthFlagsSource,
+		AuthFlagsAsOfLedger: row.AuthFlagsAsOfLedger,
+		SEP1ResolvedAt:      row.SEP1ResolvedAt,
+		SEP1Payload:         row.SEP1Payload,
+		CreationLedger:      row.CreationLedger,
 	}
 	// Identity precedence (2026-08-06): DB row → live on-chain
 	// account state → curated knownIssuers map. The curated map used

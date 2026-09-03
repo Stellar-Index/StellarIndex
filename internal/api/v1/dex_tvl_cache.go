@@ -133,7 +133,10 @@ type TVLUSDPegInfo interface {
 // chokepoint (substance gate OR scam gate — the MSP-cluster invariant
 // that the two are never consulted separately). Nil is a valid
 // allow-everything gate, so a deployment with [pricing_guard] disabled
-// keeps today's figures.
+// keeps today's figures — and the production builder
+// (cmd/stellarindex-api's buildDEXTVLValueGate) returns a nil INTERFACE
+// when neither guard is wired, because an interface holding a
+// non-pointer struct is never == nil however empty the struct is.
 //
 // Two things belong to that production adapter rather than here,
 // because that is where the gates and the operator's peg list already
@@ -144,6 +147,17 @@ type TVLUSDPegInfo interface {
 // (obs.PriceServe{Scam,Substance}WithheldTotal).
 type TVLValueGate interface {
 	ValueWithheld(ctx context.Context, asset canonical.Asset) bool
+
+	// Screens names the withholding screens this gate ACTUALLY applies,
+	// in the Basis prose the [TVLScreenScamDirectory] /
+	// [TVLScreenSubstanceFloor] constants spell. Empty means the gate
+	// withholds nothing, and Basis then claims nothing.
+	//
+	// It is a required method, not an optional companion interface, on
+	// purpose: the gate is the only thing that knows which of its
+	// sub-guards the operator left wired, and a gate that cannot answer
+	// must not be describable as having screened anything.
+	Screens() []string
 }
 
 // DEXTVLSources are the read seams the TVL snapshot is computed from.
@@ -266,21 +280,41 @@ func (c *DEXTVLCache) Refresh(ctx context.Context) error {
 // "≥" prefix and hatched bar tail render.
 const tvlBasisUnpricedTail = "; unpriced legs contribute 0"
 
-// tvlBasisGatedTail extends it when a trust gate is wired. Written from
-// what actually ships, not from intent: a deployment with
-// [pricing_guard] disabled wires no gate, and claiming the screen ran
-// would be worse than saying nothing.
-const tvlBasisGatedTail = tvlBasisUnpricedTail +
-	", and a leg whose asset the serving trust gates withhold " +
-	"(directory-flagged issuer, or a market below the substance floor) " +
-	"is counted unpriced rather than valued"
+// TVLScreenScamDirectory / TVLScreenSubstanceFloor are the Basis
+// phrases naming each withholding screen a [TVLValueGate] can apply.
+// They live here, beside the sentence they are spliced into, so the
+// production adapter that knows WHICH screens are wired
+// (cmd/stellarindex-api's dexTVLValueGate) names them by constant
+// instead of re-typing the prose into a second copy.
+const (
+	TVLScreenScamDirectory  = "directory-flagged issuer"
+	TVLScreenSubstanceFloor = "a market below the substance floor"
+)
 
-// basisTail returns the lower-bound clause matching THIS cache's wiring.
+// basisTail returns the lower-bound clause matching THIS cache's wiring
+// — naming the screens the gate says it actually ran, never the full
+// set. Written from what ships, not from intent.
+//
+// Until 2026-09-03 this returned one fixed sentence naming BOTH screens
+// whenever a gate was non-nil, and the API binary wired the gate
+// unconditionally as a non-pointer struct (so `Gate == nil` was never
+// true in production). An operator running [pricing_guard]
+// disable_substance_gate = true — which makes buildSubstanceGate return
+// nil — was therefore told by every /v1/protocols response, and by the
+// explorer tooltip that renders Basis verbatim, that each leg had been
+// screened against the substance floor. It had not been.
 func (c *DEXTVLCache) basisTail() string {
 	if c.src.Gate == nil {
 		return tvlBasisUnpricedTail
 	}
-	return tvlBasisGatedTail
+	screens := c.src.Gate.Screens()
+	if len(screens) == 0 {
+		return tvlBasisUnpricedTail
+	}
+	return tvlBasisUnpricedTail +
+		", and a leg whose asset the serving trust gates withhold (" +
+		strings.Join(screens, ", or ") +
+		") is counted unpriced rather than valued"
 }
 
 // carryPrev keeps a protocol's previous snapshot entry across a failed

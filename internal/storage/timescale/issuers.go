@@ -18,14 +18,23 @@ type IssuerRow struct {
 	// OrgVerified is true only when the SEP-1 toml's [[CURRENCIES]] lists this
 	// issuer back (bidirectional proof). Without it, OrgName is issuer-self-
 	// declared and must NOT be rendered as authoritative (CS-100 impersonation).
-	OrgVerified    bool
-	AuthRequired   *bool
-	AuthRevocable  *bool
-	AuthImmutable  *bool
-	AuthClawback   *bool
-	SEP1ResolvedAt *string // RFC 3339; pointer for nullable column
-	SEP1Payload    json.RawMessage
-	CreationLedger *uint32
+	OrgVerified   bool
+	AuthRequired  *bool
+	AuthRevocable *bool
+	AuthImmutable *bool
+	AuthClawback  *bool
+	// AuthFlagsSource is how the four auth flags above were obtained — one
+	// of the AuthFlagsSource* constants, or "" when the provenance is not
+	// known (flags unresolved, or persisted before migration 0153). Empty
+	// means UNKNOWN, never "current": a consumer must not read the absence
+	// of a label as a claim that the reading is live (#374).
+	AuthFlagsSource string
+	// AuthFlagsAsOfLedger is the ledger the flags are true as of. nil when
+	// not known.
+	AuthFlagsAsOfLedger *uint32
+	SEP1ResolvedAt      *string // RFC 3339; pointer for nullable column
+	SEP1Payload         json.RawMessage
+	CreationLedger      *uint32
 }
 
 // GetIssuer returns the row for one G-strkey. Returns sql.ErrNoRows
@@ -41,6 +50,8 @@ func (s *Store) GetIssuer(ctx context.Context, gStrkey string) (IssuerRow, error
 		    auth_revocable,
 		    auth_immutable,
 		    auth_clawback,
+		    auth_flags_source,
+		    auth_flags_as_of_ledger,
 		    to_char(sep1_resolved_at, 'YYYY-MM-DD"T"HH24:MI:SS"Z"'),
 		    sep1_payload,
 		    creation_ledger
@@ -51,6 +62,8 @@ func (s *Store) GetIssuer(ctx context.Context, gStrkey string) (IssuerRow, error
 		row              IssuerRow
 		authReq, authRev sql.NullBool
 		authImm, authClb sql.NullBool
+		flagsSource      sql.NullString
+		flagsAsOf        sql.NullInt64
 		resolvedAt       sql.NullString
 		payload          sql.NullString
 		creation         sql.NullInt64
@@ -61,6 +74,7 @@ func (s *Store) GetIssuer(ctx context.Context, gStrkey string) (IssuerRow, error
 		&row.OrgName,
 		&row.OrgVerified,
 		&authReq, &authRev, &authImm, &authClb,
+		&flagsSource, &flagsAsOf,
 		&resolvedAt, &payload, &creation,
 	)
 	if err != nil {
@@ -81,6 +95,13 @@ func (s *Store) GetIssuer(ctx context.Context, gStrkey string) (IssuerRow, error
 	if authClb.Valid {
 		v := authClb.Bool
 		row.AuthClawback = &v
+	}
+	if flagsSource.Valid {
+		row.AuthFlagsSource = flagsSource.String
+	}
+	if flagsAsOf.Valid {
+		v := uint32(flagsAsOf.Int64) //nolint:gosec // ledger sequences are uint32 on the wire; the column is `integer`
+		row.AuthFlagsAsOfLedger = &v
 	}
 	if resolvedAt.Valid {
 		v := resolvedAt.String

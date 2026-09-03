@@ -3,6 +3,7 @@ package soroswap
 import (
 	"errors"
 	"sync"
+	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/consumer"
@@ -48,6 +49,12 @@ type PairTokens struct {
 // tooling call SeedPair concurrently at startup to warm the cache
 // from Timescale.
 type Decoder struct {
+	// mu guards buf, pairTokens and the skip counters. Every critical
+	// section that CALLS anything releases it via `defer` — see
+	// [Decoder.absorbEvent] for why the dispatcher's panic guard makes
+	// that load-bearing rather than stylistic. (The two bare counter
+	// increments in emitCompleted are single statements with no panic
+	// path.)
 	mu  sync.RWMutex
 	buf *buffer
 	// pairTokens maps pair-contract C-strkey → (token0, token1).
@@ -109,8 +116,9 @@ func WithSeededPairTokensDecoder(seed map[string]PairTokens) DecoderOption {
 //
 // Lets the indexer + backfill chunks persist the (pair, tokens)
 // mapping to durable storage so future restarts and other parallel
-// chunks inherit the registry. The hook is fired with the decoder's
-// mutex held — keep it cheap (a queued ExecContext is fine; a
+// chunks inherit the registry. The hook is fired AFTER the decoder's
+// mutex is released (see [Decoder.SeedPair]), but it still runs on the
+// dispatch goroutine — keep it cheap (a queued ExecContext is fine; a
 // blocking network call is not).
 func WithPairUpsertHook(hook func(pairStrkey, token0Strkey, token1Strkey string)) DecoderOption {
 	return func(d *Decoder) {
@@ -123,13 +131,23 @@ func WithPairUpsertHook(hook func(pairStrkey, token0Strkey, token1Strkey string)
 // any) so callers using SeedFromFactoryRPC also get the persistence
 // side-effect for free.
 func (d *Decoder) SeedPair(pair string, token0, token1 canonical.Asset) {
-	d.mu.Lock()
-	d.pairTokens[pair] = PairTokens{Token0: token0, Token1: token1}
-	hook := d.onNewPair
-	d.mu.Unlock()
+	hook := d.storePairTokens(pair, token0, token1)
 	if hook != nil {
 		hook(pair, token0.ContractID, token1.ContractID)
 	}
+}
+
+// storePairTokens records the mapping under the write lock and returns
+// the registered hook for the caller to fire OUTSIDE it. Deferred
+// unlock for the same reason [Decoder.absorbEvent] has one — a map
+// write is the one statement in this critical section that CAN panic
+// (a nil registry map), and the hook must not run with the decoder
+// lock held because it does IO.
+func (d *Decoder) storePairTokens(pair string, token0, token1 canonical.Asset) func(string, string, string) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.pairTokens[pair] = PairTokens{Token0: token0, Token1: token1}
+	return d.onNewPair
 }
 
 // Name implements [dispatcher.Decoder].
@@ -183,9 +201,7 @@ func (d *Decoder) Matches(ev events.Event) bool {
 		// dropped (ADR-0035 multi-factory).
 		return IsMainnetFactory(ev.ContractID)
 	}
-	d.mu.RLock()
-	_, known := d.pairTokens[ev.ContractID]
-	d.mu.RUnlock()
+	_, known := d.pairTokensFor(ev.ContractID)
 	return known
 }
 
@@ -256,15 +272,44 @@ func (d *Decoder) Decode(ev events.Event) ([]consumer.Event, error) {
 		return nil, err
 	}
 
-	d.mu.Lock()
-	completed, evicted := d.buf.absorb(&ev, kind, closedAt)
-	d.evictedOrphans += len(evicted)
-	d.mu.Unlock()
-
+	completed := d.absorbEvent(&ev, kind, closedAt)
 	if len(completed) == 0 {
 		return nil, nil // still buffering
 	}
 	return d.emitCompleted(completed)
+}
+
+// absorbEvent feeds one swap/sync into the correlation buffer under the
+// decoder lock and returns the pairs that just completed.
+//
+// A method with `defer d.mu.Unlock()` rather than the inline
+// Lock/…/Unlock this used to be, because the dispatcher RECOVERS a
+// decoder panic and carries on (internal/dispatcher/panic_guard.go,
+// #371 F1). A panic raised inside a critical section whose Unlock sits
+// on the line below it never runs that Unlock: d.mu stays held for the
+// life of the process, the very next event's Matches blocks on
+// RLock, and the whole dispatch goroutine deadlocks with /metrics
+// still answering and the unit still `active`. That is strictly worse
+// than the crash-loop the guard replaced — a wedge systemd cannot see.
+// Every other stateful adapter in the guarded set (phoenix,
+// liquidity_pools, claimable_balances) already unlocks via defer.
+func (d *Decoder) absorbEvent(ev *events.Event, kind string, closedAt time.Time) []RawPair {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	completed, evicted := d.buf.absorb(ev, kind, closedAt)
+	d.evictedOrphans += len(evicted)
+	return completed
+}
+
+// pairTokensFor reads the pair→tokens registry under the read lock.
+// One helper for the three readers (Matches, emitLiquidity,
+// emitCompleted) so the release is a `defer` in exactly one place —
+// same panic-safety reasoning as [Decoder.absorbEvent].
+func (d *Decoder) pairTokensFor(contractID string) (PairTokens, bool) {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	tokens, ok := d.pairTokens[contractID]
+	return tokens, ok
 }
 
 // emitLiquidity decodes a pair-contract deposit/withdraw event into a
@@ -289,11 +334,9 @@ func (d *Decoder) emitLiquidity(ev events.Event, kind string) ([]consumer.Event,
 		return nil, err
 	}
 	var tok0, tok1 string
-	d.mu.RLock()
-	if tokens, ok := d.pairTokens[ev.ContractID]; ok {
+	if tokens, ok := d.pairTokensFor(ev.ContractID); ok {
 		tok0, tok1 = tokens.Token0.String(), tokens.Token1.String()
 	}
-	d.mu.RUnlock()
 	return []consumer.Event{LiquidityEvent{
 		ContractID: ev.ContractID,
 		Ledger:     ev.Ledger,
@@ -320,9 +363,7 @@ func (d *Decoder) emitLiquidity(ev events.Event, kind string) ([]consumer.Event,
 func (d *Decoder) emitCompleted(completed []RawPair) ([]consumer.Event, error) {
 	out := make([]consumer.Event, 0, len(completed))
 	for _, r := range completed {
-		d.mu.RLock()
-		tokens, ok := d.pairTokens[r.Pair]
-		d.mu.RUnlock()
+		tokens, ok := d.pairTokensFor(r.Pair)
 		if !ok {
 			// No factory event seen for this pair yet (either we
 			// started ingesting mid-history, or the factory event

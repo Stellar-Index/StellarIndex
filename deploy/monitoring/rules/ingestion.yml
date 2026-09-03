@@ -136,6 +136,75 @@ groups:
             or shared storage (Timescale) before restarting the indexer.
             Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/all-ingestion-down.md
 
+      # A MinIO / lake outage must PAGE, and until 2026-09-03 it did not
+      # (RV2 #5). Three changes composed into that hole:
+      #
+      #   1. #371 F3 gave the live-tail read a ~5-minute retry budget, so
+      #      the process no longer exits within seconds of the lake going
+      #      away.
+      #   2. StartLimitBurst 60 / 15 min means a ~5min10s start cycle can
+      #      never accumulate enough restarts to park the unit, so
+      #      `stellarindex_systemd_unit_failed` (a TICKET, 15m) cannot
+      #      fire for it either.
+      #   3. The CEX/FX connectors run in the SAME binary and keep
+      #      incrementing stellarindex_source_events_total, so
+      #      `all_sources_stopped` — which the unit file named as the
+      #      cover — stays quiet while no ledger is being ingested at all.
+      #
+      # What is left without this rule: cursor_stuck (ticket) cannot fire
+      # for this cursor, because it joins `on (source)
+      # stellarindex_source_enabled`, and "ledgerstream" is a cursor
+      # namespace, not a configured source — no such series exists.
+      # source_stopped (ticket, 30m window) and data_source_stale
+      # (ticket, 1h) eventually notice. No page.
+      #
+      # So page on the thing that is actually wrong: the LEDGER cursor is
+      # not advancing. cmd/stellarindex-indexer advances this gauge only
+      # after a ledger is fully processed AND its cursor row is committed
+      # (processAndPersistCursor), so it is the honest liveness signal for
+      # the whole Galexie -> ledgerstream -> dispatcher -> Postgres path —
+      # a lake read failure, a wedged dispatch goroutine and a Postgres
+      # outage all stall it, and none of them is "all sources stopped".
+      #
+      # Two branches, handing over at the same 5m boundary, for the reason
+      # all_sources_stopped documents above: while the last samples are
+      # still in the window the gauge is flat and the delta branch fires;
+      # once the process is gone long enough for the series to age out,
+      # the delta branch has nothing to evaluate and absent_over_time
+      # takes over. The gauge is BORN on the first successfully committed
+      # ledger, so a restart that never gets one leaves it absent — that
+      # is the MinIO-outage shape, and it must not read as recovery.
+      #
+      # ~10 min to page (5m flat window + `for: 5m`). Live ledgers close
+      # every ~5-6 s, so five flat minutes is ~50 consecutive misses; a
+      # deploy or a Postgres restart is well inside it.
+      - alert: stellarindex_ingestion_ledger_stalled
+        expr: |
+          (
+            max_over_time(stellarindex_cursor_last_ledger{source="ledgerstream"}[5m])
+            - min_over_time(stellarindex_cursor_last_ledger{source="ledgerstream"}[5m])
+          ) == 0
+          or
+          absent_over_time(stellarindex_cursor_last_ledger{source="ledgerstream"}[5m])
+        for: 5m
+        labels:
+          severity: page
+          team: stellarindex
+          component: ingestion
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ledger-ingest-stalled.md
+          summary: "Ledger ingest has stalled — the indexer is not committing ledgers (SEV-1)"
+          description: |
+            stellarindex_cursor_last_ledger{source="ledgerstream"} has not
+            advanced for 10 minutes (or the series is gone entirely). No
+            new ledger has been fully processed and committed, so every
+            on-chain surface is frozen at that ledger while the in-process
+            CEX/FX connectors keep publishing — which is why
+            `all_sources_stopped` is NOT firing.
+            First checks: is the lake readable (MinIO / galexie-live), is
+            Postgres accepting writes, is the unit restart-looping?
+            Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ledger-ingest-stalled.md
+
       - alert: stellarindex_ingestion_cursor_stuck
         expr: |
           increase(stellarindex_cursor_last_ledger[5m]) == 0

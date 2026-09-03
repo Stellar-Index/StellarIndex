@@ -16,8 +16,16 @@
 // source becomes applicable on a network when a contract set for that
 // network is added to its decoder, which is a code change — the table
 // changes in the same commit. Consumers: the reconciliation catalogue
-// (compute-completeness), the coverage endpoint, and the per-source
-// gap-detector targets.
+// (compute-completeness, internal/ops/chops), the coverage endpoint
+// (internal/api/v1/coverage_verdicts.go), and the per-source gap
+// detector (timescale.ApplicableGapDetectorTargets, wired 2026-09-03 —
+// this doc named it as a consumer for a month before it was; RV1 #5).
+//
+// A consumer whose source names are not config.KnownSources — the gap
+// detector keys its targets per TABLE ("aquarius-liquidity") — maps each
+// one onto a canonical name first and guards that mapping with [Known],
+// because [Applicable] answers false for anything it does not classify
+// and that failure direction silently REMOVES a signal.
 package sourcenet
 
 import (
@@ -39,6 +47,7 @@ var allNetworks = map[string]struct{}{
 	"sep41_transfers": {}, // SAC / SEP-41 token events: any contract, any network
 	"sep41_supply":    {},
 	"recognition":     {}, // "no unrecognised event shapes on unowned contracts"
+	"soroban_events":  {}, // the raw Soroban landing zone: every contract event, any network
 	"ledgers":         {}, // substrate axes
 	"transactions":    {},
 	"operations":      {},
@@ -60,6 +69,24 @@ func Applicable(source, network string) (bool, string) {
 		return true, ""
 	}
 	return false, fmt.Sprintf("no contract set registered for network %s — the %s decoder is anchored to pubnet contract identities (ADR-0035)", network, source)
+}
+
+// Known reports whether this package has an OPINION about source — i.e.
+// whether it is classified as ledger-anchored (every network) or
+// pubnet-only. Consumers whose source list is not config.KnownSources
+// (the gap detector's per-TABLE target keys) use it to fail CI on an
+// unclassified name rather than let [Applicable] silently exclude it
+// from every non-pubnet network.
+func Known(source string) bool {
+	if _, ok := allNetworks[source]; ok {
+		return true
+	}
+	for _, s := range PubnetOnlySources {
+		if s == source {
+			return true
+		}
+	}
+	return false
 }
 
 // NotApplicable is one entry of the coverage endpoint's exclusion list.

@@ -904,8 +904,26 @@ Gauge, label `source`.
 
 Mirror of the committed `ingestion_cursors.last_ledger` value for the
 live ledgerstream pipeline, updated after each successful cursor
-upsert. `cursor-stuck` alert fires when `increase(...[5m]) == 0` with
-`source_enabled=1`.
+upsert — so it advances only when a ledger was fully processed AND its
+cursor row committed (`processAndPersistCursor`). That makes it the
+liveness signal for the whole Galexie → ledgerstream → dispatcher →
+Postgres path, not just for the read.
+
+Today the indexer emits exactly one series, `source="ledgerstream"`.
+Two alerts read it, and only one of them can fire for that series:
+
+- `ledger-ingest-stalled` (**page**) — flat for 5 min, or the series
+  absent, sustained 5 min (≈ 10 min without a committed ledger). The
+  gauge is created on the first successful commit, so a restart that
+  never gets one leaves it absent; the rule's `absent_over_time` branch
+  carries the page across that handover rather than resolving a SEV-1
+  while ingest is still dead.
+- `cursor-stuck` (ticket) — `increase(...[5m]) == 0` joined `on (source)
+  stellarindex_source_enabled == 1`. That join is why it does **not**
+  cover the ledgerstream cursor: `ledgerstream` is a cursor namespace,
+  not a configured source, so no `source_enabled{source="ledgerstream"}`
+  series exists. It is armed for per-SOURCE cursors, of which the
+  dispatcher-based ingest currently writes none.
 
 ### `stellarindex_trade_inserts_total`
 

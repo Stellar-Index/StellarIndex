@@ -18,14 +18,27 @@ import (
 // stubTVLGate withholds exactly the canonical assets it is told to.
 // Keyed on Asset.String() so a test can pin WHICH identity the valuer
 // asked about — the SAC-collapse half of the fix is invisible otherwise.
+//
+// screens mirrors what the production adapter reports (both guards
+// wired, in that order) unless a test sets it: the Basis sentence is
+// composed from it, so a gate that claims fewer screens must describe
+// fewer screens.
 type stubTVLGate struct {
 	withhold map[string]bool
 	asked    []string
+	screens  []string
 }
 
 func (g *stubTVLGate) ValueWithheld(_ context.Context, asset canonical.Asset) bool {
 	g.asked = append(g.asked, asset.String())
 	return g.withhold[asset.String()]
+}
+
+func (g *stubTVLGate) Screens() []string {
+	if g.screens == nil {
+		return []string{TVLScreenScamDirectory, TVLScreenSubstanceFloor}
+	}
+	return g.screens
 }
 
 // TestDEXTVLCache_GatedTokenContributesNoValue is the #338 regression.
@@ -106,6 +119,13 @@ func TestDEXTVLCache_GatedTokenContributesNoValue(t *testing.T) {
 // deployment with [pricing_guard] disabled wires no gate and must value
 // exactly what it valued before — and its Basis must NOT claim a screen
 // that did not run.
+//
+// This arm is REACHABLE in production: cmd/stellarindex-api's
+// buildDEXTVLValueGate returns a nil interface when neither guard was
+// built (pinned by TestBuildDEXTVLValueGate_NilWhenNoGuardIsWired in
+// that package). Until 2026-09-03 the wiring assigned a non-pointer
+// struct unconditionally, so this test pinned a path the API binary
+// could not take.
 func TestDEXTVLCache_NoGateKeepsTodaysFigures(t *testing.T) {
 	c := NewDEXTVLCache(tvlTestSources())
 	if err := c.Refresh(context.Background()); err != nil {
@@ -248,5 +268,60 @@ func TestDEXTVLCache_GatedAquariusLegCountsUnpriced(t *testing.T) {
 	if aq.PoolsTotal != 1 || aq.PoolsPriced != 0 || aq.UnpricedPools != 1 {
 		t.Errorf("aquarius pools = total %d priced %d unpriced %d, want 1/0/1",
 			aq.PoolsTotal, aq.PoolsPriced, aq.UnpricedPools)
+	}
+}
+
+// TestDEXTVLCache_BasisNamesOnlyTheScreensThatRan is the RV1-#3
+// regression: Basis is a public claim about which trust screens ran on
+// each reserve leg, rendered verbatim by the explorer's TVL tooltip
+// (web/explorer/src/app/protocols/ProtocolTvlPanel.tsx). It used to be
+// one fixed sentence naming BOTH screens whenever any gate was wired,
+// so an operator running [pricing_guard] disable_substance_gate = true
+// — which makes buildSubstanceGate return nil while the scam gate stays
+// wired — published "or a market below the substance floor" for legs no
+// substance screen had touched.
+func TestDEXTVLCache_BasisNamesOnlyTheScreensThatRan(t *testing.T) {
+	const (
+		bothScreens = "; unpriced legs contribute 0, and a leg whose asset the serving trust gates " +
+			"withhold (directory-flagged issuer, or a market below the substance floor) " +
+			"is counted unpriced rather than valued"
+		scamOnly = "; unpriced legs contribute 0, and a leg whose asset the serving trust gates " +
+			"withhold (directory-flagged issuer) is counted unpriced rather than valued"
+		noScreens = "; unpriced legs contribute 0"
+	)
+	for _, tc := range []struct {
+		name    string
+		screens []string
+		want    string
+	}{
+		// The r1 default: both guards wired. Byte-identical to the
+		// sentence shipped before this fix — the wire shape must not
+		// move for the deployment whose claim was true.
+		{"both guards wired", nil, bothScreens},
+		// disable_substance_gate = true: the scam directory still
+		// withholds, the substance floor does not exist.
+		{"substance gate disabled", []string{TVLScreenScamDirectory}, scamOnly},
+		// A gate that withholds nothing claims nothing.
+		{"no screen wired", []string{}, noScreens},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			src := tvlTestSources()
+			src.Gate = &stubTVLGate{screens: tc.screens}
+			c := NewDEXTVLCache(src)
+			if err := c.Refresh(context.Background()); err != nil {
+				t.Fatalf("Refresh: %v", err)
+			}
+			snap, _ := c.Snapshot()
+			phx, ok := snap["phoenix"]
+			if !ok {
+				t.Fatal("phoenix missing from snapshot")
+			}
+			if !strings.HasSuffix(phx.Basis, tc.want) {
+				t.Errorf("basis tail =\n\t%q\nwant\n\t%q", phx.Basis, tc.want)
+			}
+			if len(tc.screens) == 1 && strings.Contains(phx.Basis, "substance floor") {
+				t.Errorf("basis claims the substance floor screen with only the scam gate wired: %q", phx.Basis)
+			}
+		})
 	}
 }

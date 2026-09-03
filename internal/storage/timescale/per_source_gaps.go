@@ -3,7 +3,11 @@ package timescale
 import (
 	"context"
 	"fmt"
+	"log/slog"
+	"strings"
 	"time"
+
+	"github.com/Stellar-Index/StellarIndex/internal/sourcenet"
 )
 
 // GapDetectorTarget identifies one (source, table) pair the
@@ -28,6 +32,21 @@ type GapDetectorTarget struct {
 	Source       string
 	Table        string
 	LedgerColumn string
+
+	// CanonicalSource is the [sourcenet] source name this target's data
+	// belongs to, for targets whose key is a per-TABLE name rather than
+	// the source's own ("aquarius-liquidity" -> "aquarius",
+	// "sep41-transfers" -> "sep41_transfers"). Empty means Source is
+	// already the canonical name.
+	//
+	// It exists so the detector can ask the ONE question sourcenet
+	// answers — "does this source exist on the network this deployment
+	// indexes?" — without re-deriving it from the target key by string
+	// surgery. [TestGapDetectorTargetsResolveToKnownSources] fails CI
+	// when a target resolves to a name sourcenet has no opinion about,
+	// so a new target cannot silently fall into "unknown", which on a
+	// test net means EXCLUDED.
+	CanonicalSource string
 
 	// Genesis is the first ledger at which this source could
 	// possibly have data — typically the contract's deploy
@@ -153,6 +172,15 @@ type GapDetectorTarget struct {
 // GapDetectorFirstScanCap below tip) sits far above that floor.
 const sorobanEventsDistinctLedgerCountSQL = `SELECT COUNT(*) FROM ledger_ingest_log WHERE ledger_seq BETWEEN $1 AND $2 AND soroban_event_count > 0`
 
+// SourceNetKey is the [sourcenet] name for this target — its
+// [GapDetectorTarget.CanonicalSource] when set, else its Source.
+func (t GapDetectorTarget) SourceNetKey() string {
+	if t.CanonicalSource != "" {
+		return t.CanonicalSource
+	}
+	return t.Source
+}
+
 // EffectiveMinGapSize returns the threshold this target should use,
 // preferring [MinGapSizeOverride] if non-zero. Single source of
 // truth for both [FindPerSourceLedgerGaps] and the alert-rule
@@ -195,11 +223,11 @@ var DefaultGapDetectorTargets = []GapDetectorTarget{
 	// implemented by every Soroban token); use the era boundary
 	// as the conservative lower bound — anything earlier has no
 	// SEP-41 emissions by definition.
-	{Source: "sep41-transfers", Table: "sep41_transfers", LedgerColumn: "ledger", Genesis: 50_457_424},
+	{Source: "sep41-transfers", CanonicalSource: "sep41_transfers", Table: "sep41_transfers", LedgerColumn: "ledger", Genesis: 50_457_424},
 	// SEP-41 supply events fire only on mint/burn/clawback — much
 	// rarer than transfers. Live r1: most token issuers go many
 	// hours without a supply mutation.
-	{Source: "sep41-supply", Table: "sep41_supply_events", LedgerColumn: "ledger", Genesis: 50_457_424, MinGapSizeOverride: 100000},
+	{Source: "sep41-supply", CanonicalSource: "sep41_supply", Table: "sep41_supply_events", LedgerColumn: "ledger", Genesis: 50_457_424, MinGapSizeOverride: 100000},
 	// CCTP / Rozo are cross-chain bridges with sparse traffic
 	// (hours-to-days between events). 2026-06-16 re-measurement: a
 	// natural quiet window of 138,629 ledgers (~8 days) tripped the
@@ -212,7 +240,7 @@ var DefaultGapDetectorTargets = []GapDetectorTarget{
 	// comet_liquidity: pool-events are sparse; 2026-05-29 find-data-
 	// gaps showed 17 natural gaps across cascade-era data with max
 	// 7826 ledgers (~11h of natural pool silence). 50K threshold.
-	{Source: "comet-liquidity", Table: "comet_liquidity", LedgerColumn: "ledger", Genesis: 51_499_546, MinGapSizeOverride: 50000},
+	{Source: "comet-liquidity", CanonicalSource: "comet", Table: "comet_liquidity", LedgerColumn: "ledger", Genesis: 51_499_546, MinGapSizeOverride: 50000},
 	// blend-emitter: protocol-emissions plumbing (distribute / drop /
 	// q_swap / swap). 2026-07-09 lake measurement: 465 lifetime
 	// `distribute` events (the dominant kind — 99% of the table's
@@ -221,21 +249,21 @@ var DefaultGapDetectorTargets = []GapDetectorTarget{
 	// (drop ×2, q_swap ×1, swap ×1 — one-off admin actions) sit inside
 	// that same span. 200K sits above the observed envelope, matching
 	// cctp's threshold for a similarly sparse per-protocol table.
-	{Source: "blend-emitter", Table: "blend_emitter_events", LedgerColumn: "ledger", Genesis: 51_499_914, MinGapSizeOverride: 200000},
+	{Source: "blend-emitter", CanonicalSource: "blend_emitter", Table: "blend_emitter_events", LedgerColumn: "ledger", Genesis: 51_499_914, MinGapSizeOverride: 200000},
 	// soroswap-skim: a pair skim() is a manually-triggered, uncommon
 	// operation (excess-balance sweep) — 21 lifetime events on r1, last
 	// at L61,962,034. ADR-0033 has soroswap complete=t / coverage 1.0
 	// (every skim in the lake is captured), so the ~564K-ledger quiet
 	// stretches are genuine rarity, not a decoder gap. 700K override
 	// sits above the observed natural envelope.
-	{Source: "soroswap-skim", Table: "soroswap_skim_events", LedgerColumn: "ledger", Genesis: 50_746_266, MinGapSizeOverride: 700000},
+	{Source: "soroswap-skim", CanonicalSource: "soroswap", Table: "soroswap_skim_events", LedgerColumn: "ledger", Genesis: 50_746_266, MinGapSizeOverride: 700000},
 	// soroswap-liquidity: pair deposit/withdraw (LP add/remove) are
 	// sparse — 156 events across the recent ~1M-ledger window (deposit
 	// 132, withdraw 24), single-digit/day like skim. Large override so a
 	// genuinely quiet LP stretch doesn't read as a decoder outage.
 	// Genesis = soroswap protocol genesis (same as skim/trades). Added
 	// 2026-08-03 with migration 0127 (deposit/withdraw drop closed).
-	{Source: "soroswap-liquidity", Table: "soroswap_liquidity", LedgerColumn: "ledger", Genesis: 50_746_266, MinGapSizeOverride: 700000},
+	{Source: "soroswap-liquidity", CanonicalSource: "soroswap", Table: "soroswap_liquidity", LedgerColumn: "ledger", Genesis: 50_746_266, MinGapSizeOverride: 700000},
 	// soroswap-router: router invocations dispatched via
 	// dispatcher.ContractCallDecoder (router itself emits no
 	// Soroban events, hence no soroban_events landing). Per-source
@@ -265,7 +293,7 @@ var DefaultGapDetectorTargets = []GapDetectorTarget{
 	// dfees event in the lake (2026-08 capture) — NOT the source
 	// genesis: the topic simply never fired before 60,903,337, and a
 	// floor at 57M would flag ~3.8M permanently-empty ledgers.
-	{Source: "defindex-fees", Table: "defindex_fees", LedgerColumn: "ledger", Genesis: 60_903_337, MinGapSizeOverride: 700000},
+	{Source: "defindex-fees", CanonicalSource: "defindex", Table: "defindex_fees", LedgerColumn: "ledger", Genesis: 60_903_337, MinGapSizeOverride: 700000},
 	// phoenix-liquidity / phoenix-stake: events are user-action-triggered
 	// (provide/withdraw liquidity, bond/unbond stake) — multi-hour
 	// quiet windows are normal protocol behaviour, not data loss.
@@ -273,44 +301,44 @@ var DefaultGapDetectorTargets = []GapDetectorTarget{
 	// ~144,433 (liquidity) / ~144,425 (stake) ledgers as quiet windows
 	// accumulated, while ADR-0033 has phoenix complete=t / coverage 1.0
 	// (no loss). Bumped 50K → 200K to sit above the observed envelope.
-	{Source: "phoenix-liquidity", Table: "phoenix_liquidity", LedgerColumn: "ledger", Genesis: 51_572_016, MinGapSizeOverride: 200000},
+	{Source: "phoenix-liquidity", CanonicalSource: "phoenix", Table: "phoenix_liquidity", LedgerColumn: "ledger", Genesis: 51_572_016, MinGapSizeOverride: 200000},
 	// phoenix-initialize: per-pool-deploy token announcements — VERY
 	// sparse (40 events / 19 pools lake-wide; 0131, 2026-08-03). Huge
 	// override — pools deploy rarely, so long quiet stretches are normal.
-	{Source: "phoenix-initialize", Table: "phoenix_initialize", LedgerColumn: "ledger", Genesis: 51_572_016, MinGapSizeOverride: 2000000},
+	{Source: "phoenix-initialize", CanonicalSource: "phoenix", Table: "phoenix_initialize", LedgerColumn: "ledger", Genesis: 51_572_016, MinGapSizeOverride: 2000000},
 	// phoenix-admin-events: admin rotations — 0 occurrences to date
 	// (0132, defensive). Max override so the empty table never alerts;
 	// the gap detector reports "no rows yet", not an outage.
-	{Source: "phoenix-admin-events", Table: "phoenix_admin_events", LedgerColumn: "ledger", Genesis: 51_572_016, MinGapSizeOverride: 100000000},
-	{Source: "phoenix-stake", Table: "phoenix_stake_events", LedgerColumn: "ledger", Genesis: 51_572_016, MinGapSizeOverride: 200000},
+	{Source: "phoenix-admin-events", CanonicalSource: "phoenix", Table: "phoenix_admin_events", LedgerColumn: "ledger", Genesis: 51_572_016, MinGapSizeOverride: 100000000},
+	{Source: "phoenix-stake", CanonicalSource: "phoenix", Table: "phoenix_stake_events", LedgerColumn: "ledger", Genesis: 51_572_016, MinGapSizeOverride: 200000},
 	// aquarius-liquidity: deposit_liquidity / withdraw_liquidity are
 	// user-action-triggered and sparse (a few thousand events/month on
 	// r1 vs 360K+ trades) — multi-hour quiet windows are normal, so a
 	// wide override matches the phoenix-liquidity cadence. Genesis is
 	// the Aquarius pool deploy ledger (same as the aquarius trades
 	// target below). Migration 0089.
-	{Source: "aquarius-liquidity", Table: "aquarius_liquidity", LedgerColumn: "ledger", Genesis: 52_728_375, MinGapSizeOverride: 200000},
+	{Source: "aquarius-liquidity", CanonicalSource: "aquarius", Table: "aquarius_liquidity", LedgerColumn: "ledger", Genesis: 52_728_375, MinGapSizeOverride: 200000},
 	// aquarius-reserves: update_reserves fires on EVERY state-changing
 	// pool op (trade/deposit/withdraw), so it is roughly as dense as
 	// aquarius trades — a dense stream going quiet is a strong
 	// writer-halt tripwire. 100K override matches the aquarius trades
 	// target. Migration 0089.
-	{Source: "aquarius-reserves", Table: "aquarius_reserves", LedgerColumn: "ledger", Genesis: 52_728_375, MinGapSizeOverride: 100000},
+	{Source: "aquarius-reserves", CanonicalSource: "aquarius", Table: "aquarius_reserves", LedgerColumn: "ledger", Genesis: 52_728_375, MinGapSizeOverride: 100000},
 	// aquarius-reserves-sync: reserves_sync is sparse (68 events / 11
 	// pools in the recent ~4M-ledger window) — a distinct reserve-sync
 	// signal projected alongside update_reserves (0128, deposit/withdraw
 	// drop closed 2026-08-03). Large override so a quiet stretch doesn't
 	// read as a decoder outage. Genesis = Aquarius protocol genesis.
-	{Source: "aquarius-reserves-sync", Table: "aquarius_reserves_sync", LedgerColumn: "ledger", Genesis: 52_728_375, MinGapSizeOverride: 700000},
+	{Source: "aquarius-reserves-sync", CanonicalSource: "aquarius", Table: "aquarius_reserves_sync", LedgerColumn: "ledger", Genesis: 52_728_375, MinGapSizeOverride: 700000},
 	// aquarius-protocol-fee: set_protocol_fee (rare, 3 lake-wide) +
 	// claim_protocol_fee (2530 events / 99 pools) governance/treasury
 	// events, one table (0129, 2026-08-03). Large override — claims are
 	// bursty and set is very rare, so a quiet stretch is normal.
-	{Source: "aquarius-protocol-fee", Table: "aquarius_protocol_fee", LedgerColumn: "ledger", Genesis: 52_728_375, MinGapSizeOverride: 700000},
+	{Source: "aquarius-protocol-fee", CanonicalSource: "aquarius", Table: "aquarius_protocol_fee", LedgerColumn: "ledger", Genesis: 52_728_375, MinGapSizeOverride: 700000},
 	// aquarius-kill-switches: circuit-breaker toggles are VERY rare (32
 	// events lake-wide across 6 kinds; 0130, 2026-08-03). Huge override —
 	// a multi-month gap between pauses is normal, not an outage.
-	{Source: "aquarius-kill-switches", Table: "aquarius_kill_switches", LedgerColumn: "ledger", Genesis: 52_728_375, MinGapSizeOverride: 2000000},
+	{Source: "aquarius-kill-switches", CanonicalSource: "aquarius", Table: "aquarius_kill_switches", LedgerColumn: "ledger", Genesis: 52_728_375, MinGapSizeOverride: 2000000},
 	// aquarius-rewards: the rewards-gauge event surface (ROADMAP #89,
 	// migration 0099). Dominated by pool_state (339,712 lifetime — one
 	// of the densest Aquarius topics, fires on every reward-affecting
@@ -320,47 +348,47 @@ var DefaultGapDetectorTargets = []GapDetectorTarget{
 	// deploy ledger. 100K override matches the aquarius-reserves
 	// cadence — pool_state's density means a real writer halt still
 	// trips this well before a natural quiet stretch would.
-	{Source: "aquarius-rewards", Table: "aquarius_rewards_events", LedgerColumn: "ledger", Genesis: 52_728_375, MinGapSizeOverride: 100000},
+	{Source: "aquarius-rewards", CanonicalSource: "aquarius", Table: "aquarius_rewards_events", LedgerColumn: "ledger", Genesis: 52_728_375, MinGapSizeOverride: 100000},
 	// aquarius-admin: the governance/upgrade admin surface (ROADMAP
 	// #89, migration 0100) — router-scoped, operator-triggered
 	// actions (upgrades, ownership transfers, emergency mode). Rare by
 	// design (apply_upgrade: 706 lifetime across the whole protocol
 	// history is the DENSEST of the eight kinds); wide override
 	// matches blend-admin's sparsity treatment.
-	{Source: "aquarius-admin", Table: "aquarius_admin", LedgerColumn: "ledger", Genesis: 52_728_375, MinGapSizeOverride: 1300000},
+	{Source: "aquarius-admin", CanonicalSource: "aquarius", Table: "aquarius_admin", LedgerColumn: "ledger", Genesis: 52_728_375, MinGapSizeOverride: 1300000},
 	// blend_auctions: live r1 (2026-05-28) showed 8049 distinct
 	// ledgers across a 5.9M-ledger span = one event per ~735
 	// ledgers. 2026-05-29 measurement bumped the 50K override to
 	// 100K because the observed max gap (53515) was just over the
 	// previous threshold — pages on natural sparsity.
-	{Source: "blend-auctions", Table: "blend_auctions", LedgerColumn: "ledger", Genesis: 51_499_546, MinGapSizeOverride: 100000},
+	{Source: "blend-auctions", CanonicalSource: "blend", Table: "blend_auctions", LedgerColumn: "ledger", Genesis: 51_499_546, MinGapSizeOverride: 100000},
 	// blend_positions: live ingest only started 2026-05-28 (rc.83
 	// migration); 7635-ledger max gap = pre-history boundary +
 	// natural sparsity. 50K threshold.
-	{Source: "blend-positions", Table: "blend_positions", LedgerColumn: "ledger", Genesis: 51_499_546, MinGapSizeOverride: 50000},
+	{Source: "blend-positions", CanonicalSource: "blend", Table: "blend_positions", LedgerColumn: "ledger", Genesis: 51_499_546, MinGapSizeOverride: 50000},
 	// blend_emissions: emissions update on operator action (rare).
 	// blend_admin: admin actions are rare by design — only 261 lifetime
 	// events on r1, with a historical max quiet stretch of ~1,042,850
 	// ledgers (~90 days). ADR-0033 has blend complete=t / coverage 1.0,
 	// so that's genuine rarity. 1.3M override sits above it; real loss
 	// is caught by completeness_snapshots, not this threshold.
-	{Source: "blend-emissions", Table: "blend_emissions", LedgerColumn: "ledger", Genesis: 51_499_546, MinGapSizeOverride: 100000},
-	{Source: "blend-admin", Table: "blend_admin", LedgerColumn: "ledger", Genesis: 51_499_546, MinGapSizeOverride: 1300000},
+	{Source: "blend-emissions", CanonicalSource: "blend", Table: "blend_emissions", LedgerColumn: "ledger", Genesis: 51_499_546, MinGapSizeOverride: 100000},
+	{Source: "blend-admin", CanonicalSource: "blend", Table: "blend_admin", LedgerColumn: "ledger", Genesis: 51_499_546, MinGapSizeOverride: 1300000},
 	// blend-backstop: the Backstop insurance module's event surface.
 	// Sparse (deposit/withdraw/draw/distribute are episodic, not
 	// per-ledger), so a wide override avoids paging on natural quiet.
 	// Genesis ≈ first backstop activity observed in the lake.
-	{Source: "blend-backstop", Table: "blend_backstop_events", LedgerColumn: "ledger", Genesis: 56_627_571, MinGapSizeOverride: 100000},
+	{Source: "blend-backstop", CanonicalSource: "blend_backstop", Table: "blend_backstop_events", LedgerColumn: "ledger", Genesis: 56_627_571, MinGapSizeOverride: 100000},
 	// sorocredit — consumer-USDC credit / CDP protocol (single main
 	// contract). Four tables. Genesis = the main contract's first event
 	// (2026-03-12). Wide override: live ingest starts at deploy and the
 	// historical back-window fills only via projector-replay, so a large
 	// threshold avoids paging on the empty pre-fill range. See
 	// internal/sources/sorocredit/README.md.
-	{Source: "sorocredit-positions", Table: "credit_positions", LedgerColumn: "ledger", Genesis: 61_620_822, MinGapSizeOverride: 200000},
-	{Source: "sorocredit-statements", Table: "credit_statements", LedgerColumn: "ledger", Genesis: 61_620_822, MinGapSizeOverride: 200000},
-	{Source: "sorocredit-settlements", Table: "credit_settlements", LedgerColumn: "ledger", Genesis: 61_620_822, MinGapSizeOverride: 200000},
-	{Source: "sorocredit-events", Table: "credit_events", LedgerColumn: "ledger", Genesis: 61_620_822, MinGapSizeOverride: 200000},
+	{Source: "sorocredit-positions", CanonicalSource: "sorocredit", Table: "credit_positions", LedgerColumn: "ledger", Genesis: 61_620_822, MinGapSizeOverride: 200000},
+	{Source: "sorocredit-statements", CanonicalSource: "sorocredit", Table: "credit_statements", LedgerColumn: "ledger", Genesis: 61_620_822, MinGapSizeOverride: 200000},
+	{Source: "sorocredit-settlements", CanonicalSource: "sorocredit", Table: "credit_settlements", LedgerColumn: "ledger", Genesis: 61_620_822, MinGapSizeOverride: 200000},
+	{Source: "sorocredit-events", CanonicalSource: "sorocredit", Table: "credit_events", LedgerColumn: "ledger", Genesis: 61_620_822, MinGapSizeOverride: 200000},
 	// soroban-events spans the entire Soroban era from pubnet
 	// activation. Same lower bound as sep41-transfers. Long
 	// ScanCadence: 50M+ rows, scan dominates postgres for 5+ min
@@ -376,7 +404,7 @@ var DefaultGapDetectorTargets = []GapDetectorTarget{
 	// `ledger` and the generic COUNT(DISTINCT ledger) was a 556 s full
 	// scan of a 257 GB hypertable per cycle (r1 incident). The gap scan
 	// itself is unchanged (observed rows, 13-min PG timeout).
-	{Source: "soroban-events", Table: "soroban_events", LedgerColumn: "ledger", Genesis: 50_457_424, ScanCadence: 6 * time.Hour, MinGapSizeOverride: 100000, DistinctLedgerCountSQL: sorobanEventsDistinctLedgerCountSQL},
+	{Source: "soroban-events", CanonicalSource: "soroban_events", Table: "soroban_events", LedgerColumn: "ledger", Genesis: 50_457_424, ScanCadence: 6 * time.Hour, MinGapSizeOverride: 100000, DistinctLedgerCountSQL: sorobanEventsDistinctLedgerCountSQL},
 	// SDEX is classic-DEX and does NOT flow through soroban_events.
 	// Its rows live in the unified `trades` hypertable alongside
 	// every other trade-emitting source; the WhereFilter slices
@@ -435,6 +463,45 @@ var DefaultGapDetectorTargets = []GapDetectorTarget{
 	// per-ledger. A gap-detector LAG-scan needs ledger-keyed rows
 	// to find gaps; without those, coverage % stays n/a on the
 	// API listing (the customer sees the entry-count instead).
+}
+
+// ApplicableGapDetectorTargets drops the targets whose source does not
+// exist on this network (#483) and returns the rest in scan order. It
+// logs the exclusion set once, at the caller's boot, so an operator can
+// see WHY a target's gauges are absent rather than concluding the
+// detector is broken.
+//
+// Why the detector needs this at all: every Genesis in the registry is a
+// PUBNET contract-deploy ledger. On a test net (tip ~4.4M) the scan
+// window for e.g. soroswap comes out as [50746266, 4467040], which
+// [Store.FindPerSourceLedgerGaps] rejects as `invalid range` — every
+// pubnet-only target, every cycle, forever: an error counter that only
+// ever means "this source cannot exist here" and never produces a
+// signal. sourcenet is the ONE table that answers "does this source
+// exist on this network", so the detector asks it instead of growing a
+// second, driftable copy of the same judgement (the sourcenet package
+// doc named this consumer before it was wired; RV1 #5).
+//
+// Pubnet (and an empty or unknown network name) keeps every target, so
+// the r1 behaviour is unchanged.
+func ApplicableGapDetectorTargets(targets []GapDetectorTarget, network string, logger *slog.Logger) []GapDetectorTarget {
+	out := make([]GapDetectorTarget, 0, len(targets))
+	var excluded []string
+	for _, t := range targets {
+		if ok, _ := sourcenet.Applicable(t.SourceNetKey(), network); ok {
+			out = append(out, t)
+			continue
+		}
+		excluded = append(excluded, t.Source)
+	}
+	if len(excluded) > 0 && logger != nil {
+		logger.Info("gap-detector: sources not applicable on this network are not scanned",
+			"network", network,
+			"excluded", strings.Join(excluded, ","),
+			"scanned", len(out),
+			"registered", len(targets))
+	}
+	return out
 }
 
 // FindPerSourceLedgerGaps finds contiguous ledger-coverage gaps

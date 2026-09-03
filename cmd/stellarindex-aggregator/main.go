@@ -814,7 +814,12 @@ func run(cfgPath string, dryRun bool) error {
 	go func() {
 		defer worker.Recover(logger, "gap-detector")
 		defer refresherWG.Done()
-		if err := timescale.RunGapDetector(rootCtx, store, logger.With("component", "gap-detector")); err != nil && !errors.Is(err, context.Canceled) {
+		// Network-scoped (#483): every target Genesis is a PUBNET
+		// contract-deploy ledger, so on a test net the pubnet-only
+		// targets scan [genesis, tip] with genesis ABOVE tip and error
+		// out every cycle forever. sourcenet decides which exist here.
+		if err := timescale.RunGapDetector(rootCtx, store, logger.With("component", "gap-detector"),
+			cfg.Stellar.Network); err != nil && !errors.Is(err, context.Canceled) {
 			logger.Error("gap-detector exited with error", "err", err)
 		}
 	}()

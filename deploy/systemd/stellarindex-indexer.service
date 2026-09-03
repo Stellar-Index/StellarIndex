@@ -27,8 +27,11 @@
 # Restart policy: on-failure with a 10s delay. A panic during a
 # decoder bug should bring the binary back so a single bad ledger
 # doesn't wedge the pipeline indefinitely; an actually-broken
-# config (DB unreachable) loops and is observable via systemd
-# state + the `stellarindex_indexer_health` Prometheus metric.
+# config (DB unreachable) loops, and what makes that VISIBLE is
+# `stellarindex_ingestion_ledger_stalled` (page) — the committed
+# ledger cursor stops advancing. (There is no
+# `stellarindex_indexer_health` metric; nothing has ever emitted one,
+# and this comment named it until 2026-09-03.)
 
 [Unit]
 Description=Stellar Index — indexer (decoder pipeline → canonical trades)
@@ -40,8 +43,9 @@ Requires=postgresql.service
 # Restart-storm limit — [Unit] directives per systemd.unit(5). systemd
 # >=230 (the Ubuntu 22.04/24.04 deploy targets) IGNORES StartLimit* if
 # placed under [Service]. When more than StartLimitBurst restarts occur
-# within StartLimitIntervalSec the unit enters `failed`, which the
-# node_systemd_unit_state{state="failed"} alert pages on.
+# within StartLimitIntervalSec the unit enters `failed`, which
+# `stellarindex_systemd_unit_failed` alerts on — at severity TICKET,
+# for: 15m (configs/prometheus/rules.r1/infra.yml), not a page.
 #
 # Sized as a DEPENDENCY-OUTAGE budget, not a magic number (#371 F3).
 # With RestartSec=10s below, 60 restarts is ~10 minutes of continuous
@@ -59,9 +63,18 @@ Requires=postgresql.service
 # With the retry budget in force the process survives ~5 min per attempt
 # and RestartSec adds 10s, so a start cycle is ~5min10s — it can never
 # reach 60 starts inside a 15-minute window, and `systemd_unit_failed`
-# therefore never fires for that fault. The cover is the ingest-side
-# alert (`all_sources_stopped`, page, ~3-8 min), which is the honest
-# signal for "the indexer is up but is not ingesting" anyway.
+# therefore never fires for that fault.
+#
+# The cover is `stellarindex_ingestion_ledger_stalled` (page, ~10 min,
+# docs/operations/runbooks/ledger-ingest-stalled.md): the committed
+# LEDGER cursor stops advancing. It is deliberately not
+# `all_sources_stopped`, which this comment named until 2026-09-03 and
+# which cannot cover a lake outage on this deployment — the CEX/FX
+# connectors run in the same binary and keep
+# stellarindex_source_events_total moving while no ledger is read at
+# all. `cursor_stuck` cannot cover it either: it joins `on (source)
+# stellarindex_source_enabled`, and "ledgerstream" is a cursor
+# namespace rather than a configured source.
 StartLimitIntervalSec=15min
 StartLimitBurst=60
 
@@ -105,9 +118,10 @@ LimitNPROC=1048576
 # Restart on crash but with backoff to avoid hot-looping on a
 # config-side break (e.g. DB unreachable). 10s matches
 # stellarindex-aggregator; the API uses 5s because it is customer-
-# facing. The restart-storm limit that marks the unit `failed` (and
-# pages via node_systemd_unit_state) lives in [Unit] (StartLimit*) —
-# see the comment there, which derives its burst FROM this value.
+# facing. The restart-storm limit that marks the unit `failed` (which
+# `stellarindex_systemd_unit_failed` TICKETS on after 15m — it is not a
+# page) lives in [Unit] (StartLimit*) — see the comment there, which
+# derives its burst FROM this value.
 Restart=on-failure
 RestartSec=10s
 

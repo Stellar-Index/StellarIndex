@@ -18,13 +18,17 @@ Wants=network-online.target
 # NOTE (#371 F3): with the live-tail retry budget in force a start
 # cycle is ~5min10s, so a PERMANENTLY broken config can never reach
 # 60 starts inside 15 min and `systemd_unit_failed` will not fire for
-# it. The honest cover for that fault is the ingest-side
-# `all_sources_stopped` page. Keep this in lockstep with
-# deploy/systemd/stellarindex-indexer.service.
+# it. The honest cover for that fault is
+# `stellarindex_ingestion_ledger_stalled` (page, ~10 min): the
+# committed LEDGER cursor stops advancing. NOT `all_sources_stopped`,
+# which this comment named until 2026-09-03 — the CEX/FX connectors
+# share this binary and keep its input moving through a lake outage.
+# Keep this in lockstep with deploy/systemd/stellarindex-indexer.service.
 # restarts within StartLimitIntervalSec parks the unit in `failed`,
-# which node_systemd_unit_state{state="failed"} pages on instead of
-# hot-looping forever (audit-2026-07-23 REL-resource-governance — this
-# had drifted from the deploy/systemd/*.service reference copies).
+# which node_systemd_unit_state{state="failed"} raises a TICKET on
+# (`stellarindex_systemd_unit_failed`, for: 15m — not a page) instead
+# of hot-looping forever (audit-2026-07-23 REL-resource-governance —
+# this had drifted from the deploy/systemd/*.service reference copies).
 #
 # Sized as a DEPENDENCY-OUTAGE budget (#371 F3): with RestartSec=10s
 # below, 60 restarts is ~10 minutes of continuous failure before the

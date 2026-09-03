@@ -308,6 +308,128 @@ tests:
         alertname: stellarindex_ingestion_cursor_stuck
         exp_alerts: []
 
+  # ══ stellarindex_ingestion_ledger_stalled ═════════════════════════
+  # ── firing: the ledger cursor is frozen while the process lives ───
+  # The MinIO-outage shape while the F3 retry budget is still burning:
+  # the indexer is up and scrapeable, no ledger is being committed.
+  - interval: 1m
+    name: a frozen ledger cursor pages within ~10 minutes
+    input_series:
+      - series: 'stellarindex_cursor_last_ledger{job="stellarindex_indexer",instance="r1:9100",source="ledgerstream"}'
+        values: '63000000+0x20'
+    alert_rule_test:
+      - eval_time: 12m
+        alertname: stellarindex_ingestion_ledger_stalled
+        exp_alerts:
+          - exp_labels:
+              job: stellarindex_indexer
+              instance: r1:9100
+              source: ledgerstream
+              severity: page
+              team: stellarindex
+              component: ingestion
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ledger-ingest-stalled.md
+              summary: "Ledger ingest has stalled — the indexer is not committing ledgers (SEV-1)"
+              description: |
+                stellarindex_cursor_last_ledger{source="ledgerstream"} has not
+                advanced for 10 minutes (or the series is gone entirely). No
+                new ledger has been fully processed and committed, so every
+                on-chain surface is frozen at that ledger while the in-process
+                CEX/FX connectors keep publishing — which is why
+                `all_sources_stopped` is NOT firing.
+                First checks: is the lake readable (MinIO / galexie-live), is
+                Postgres accepting writes, is the unit restart-looping?
+                Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ledger-ingest-stalled.md
+
+  # ── firing: the series VANISHES and the page must persist ─────────
+  # A restart that never commits a ledger never creates the gauge child
+  # (it is set only after processAndPersistCursor succeeds), so the
+  # series ages out. The delta branch then has nothing to evaluate;
+  # absent_over_time carries the page rather than resolving a SEV-1
+  # while ingest is still dead.
+  - interval: 1m
+    name: a vanished ledger cursor keeps paging after the series ages out
+    input_series:
+      - series: 'stellarindex_cursor_last_ledger{job="stellarindex_indexer",instance="r1:9100",source="ledgerstream"}'
+        values: '63000000+0x3'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: stellarindex_ingestion_ledger_stalled
+        exp_alerts:
+          - exp_labels:
+              source: ledgerstream
+              severity: page
+              team: stellarindex
+              component: ingestion
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ledger-ingest-stalled.md
+              summary: "Ledger ingest has stalled — the indexer is not committing ledgers (SEV-1)"
+              description: |
+                stellarindex_cursor_last_ledger{source="ledgerstream"} has not
+                advanced for 10 minutes (or the series is gone entirely). No
+                new ledger has been fully processed and committed, so every
+                on-chain surface is frozen at that ledger while the in-process
+                CEX/FX connectors keep publishing — which is why
+                `all_sources_stopped` is NOT firing.
+                First checks: is the lake readable (MinIO / galexie-live), is
+                Postgres accepting writes, is the unit restart-looping?
+                Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ledger-ingest-stalled.md
+
+  # ── near-threshold: a cursor that is still advancing stays silent ─
+  - interval: 1m
+    name: an advancing ledger cursor raises nothing
+    input_series:
+      - series: 'stellarindex_cursor_last_ledger{job="stellarindex_indexer",instance="r1:9100",source="ledgerstream"}'
+        values: '63000000+12x20'
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: stellarindex_ingestion_ledger_stalled
+        exp_alerts: []
+
+  # ── the RV2 #5 scenario, end to end ──────────────────────────────
+  # A MinIO outage on r1: the ledger cursor freezes while the CEX/FX
+  # connectors in the SAME binary keep incrementing source_events_total.
+  # all_sources_stopped (the cover the unit file used to name) stays
+  # correctly quiet — its input is still moving — so this page is the
+  # only one that fires. That is the whole point of the rule.
+  - interval: 1m
+    name: a lake outage pages here while all_sources_stopped stays quiet
+    input_series:
+      - series: 'stellarindex_cursor_last_ledger{job="stellarindex_indexer",instance="r1:9100",source="ledgerstream"}'
+        values: '63000000+0x20'
+      - series: 'stellarindex_source_events_total{job="stellarindex_indexer",instance="r1:9100",source="binance"}'
+        values: '5000+40x20'
+      - series: 'stellarindex_source_events_total{job="stellarindex_indexer",instance="r1:9100",source="kraken"}'
+        values: '3000+25x20'
+    alert_rule_test:
+      - eval_time: 12m
+        alertname: stellarindex_ingestion_all_sources_stopped
+        exp_alerts: []
+      - eval_time: 12m
+        alertname: stellarindex_ingestion_ledger_stalled
+        exp_alerts:
+          - exp_labels:
+              job: stellarindex_indexer
+              instance: r1:9100
+              source: ledgerstream
+              severity: page
+              team: stellarindex
+              component: ingestion
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ledger-ingest-stalled.md
+              summary: "Ledger ingest has stalled — the indexer is not committing ledgers (SEV-1)"
+              description: |
+                stellarindex_cursor_last_ledger{source="ledgerstream"} has not
+                advanced for 10 minutes (or the series is gone entirely). No
+                new ledger has been fully processed and committed, so every
+                on-chain surface is frozen at that ledger while the in-process
+                CEX/FX connectors keep publishing — which is why
+                `all_sources_stopped` is NOT firing.
+                First checks: is the lake readable (MinIO / galexie-live), is
+                Postgres accepting writes, is the unit restart-looping?
+                Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ledger-ingest-stalled.md
+
   # ══ stellarindex_ingestion_orphan_events ══════════════════════════
   # ── firing: 30 orphans/min is well above the 10/min line ──────────
   - interval: 1m

@@ -157,9 +157,10 @@ func gapScanHighWater(ctx context.Context, store *Store, logger *slog.Logger, ta
 }
 
 // RunGapDetector blocks until ctx is cancelled, periodically
-// scanning every target in [DefaultGapDetectorTargets] for
-// contiguous ledger-coverage gaps and emitting per-(source, table)
-// gauges + meta-metrics.
+// scanning every target in [DefaultGapDetectorTargets] that exists on
+// `network` (see [ApplicableGapDetectorTargets] — pubnet is all of
+// them) for contiguous ledger-coverage gaps, emitting per-(source,
+// table) gauges + meta-metrics.
 //
 // Data-derived complement to the cursor-derived density projection
 // in /v1/diagnostics/ingestion. Cursor coverage measures process
@@ -185,13 +186,14 @@ func gapScanHighWater(ctx context.Context, store *Store, logger *slog.Logger, ta
 // has NOT elapsed since their last persisted scan are skipped by that
 // first cycle (see [seedGapDetectorState]); their gauges are re-emitted
 // from persisted state instead.
-func RunGapDetector(ctx context.Context, store *Store, logger *slog.Logger) error {
+func RunGapDetector(ctx context.Context, store *Store, logger *slog.Logger, network string) error {
 	if store == nil {
 		return nil
 	}
 	if logger == nil {
 		logger = slog.Default()
 	}
+	targets := ApplicableGapDetectorTargets(DefaultGapDetectorTargets, network, logger)
 
 	// Per-target last-scan timestamps drive the per-target cadence
 	// gate. Without per-target tracking, every target either scans
@@ -206,15 +208,15 @@ func RunGapDetector(ctx context.Context, store *Store, logger *slog.Logger) erro
 	// so every deploy / crash-loop iteration re-ran the 6h-cadence
 	// soroban_events + sdex scans immediately — each a >10-min IO
 	// storm on r1 — regardless of when they last ran.
-	preregisterGapDetectorSeries(DefaultGapDetectorTargets)
+	preregisterGapDetectorSeries(targets)
 	snapshots, err := store.ListSourceCoverage(ctx)
 	if err != nil {
 		logger.Warn("gap-detector: read source_coverage_snapshots for boot seed failed; gauges stay empty until first scan", "err", err)
 		snapshots = nil
 	}
-	lastScan := seedGapDetectorState(ctx, DefaultGapDetectorTargets, store.GetCursor, snapshots, logger, time.Now())
+	lastScan := seedGapDetectorState(ctx, targets, store.GetCursor, snapshots, logger, time.Now())
 
-	runOneGapDetectorCycleScheduled(ctx, store, logger, DefaultGapDetectorTargets, lastScan)
+	runOneGapDetectorCycleScheduled(ctx, store, logger, targets, lastScan)
 
 	// Ticker fires at the LCD cadence (30 min). Each tick iterates
 	// every target and only scans those whose individual cadence
@@ -227,7 +229,7 @@ func RunGapDetector(ctx context.Context, store *Store, logger *slog.Logger) erro
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-ticker.C:
-			runOneGapDetectorCycleScheduled(ctx, store, logger, DefaultGapDetectorTargets, lastScan)
+			runOneGapDetectorCycleScheduled(ctx, store, logger, targets, lastScan)
 		}
 	}
 }

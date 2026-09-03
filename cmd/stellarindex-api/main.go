@@ -1117,11 +1117,7 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 		// own VWAP. A withheld leg now counts its pool unpriced, so the
 		// number stays an honest lower bound rather than becoming a
 		// fabricated one.
-		Gate: dexTVLValueGate{
-			substance: substanceGate,
-			scam:      scamGate,
-			usdPegs:   usdPegs,
-		},
+		Gate:   buildDEXTVLValueGate(substanceGate, scamGate, usdPegs),
 		Logger: logger.With("component", "dex-tvl"),
 	}
 	if fx, err := timescale.NewVWAPUSDFXResolver(store, timescale.VWAPUSDFXResolverOptions{
@@ -3615,6 +3611,46 @@ type dexTVLValueGate struct {
 	substance *pricingguard.SubstanceGate
 	scam      *pricingguard.ScamGate
 	usdPegs   []canonical.Asset
+}
+
+// buildDEXTVLValueGate wires the TVL snapshot's trust gate from the
+// guards this deployment actually built, and returns a nil INTERFACE
+// when it built neither.
+//
+// The nil arm is why this is a function rather than a struct literal at
+// the call site: v1.DEXTVLSources.Gate is an interface, and an
+// interface holding a non-pointer struct is never == nil however empty
+// the struct is. Assigning `dexTVLValueGate{}` unconditionally (the
+// wiring until 2026-09-03) made v1's documented "no gate wired"
+// degradation unreachable in the API binary, so /v1/protocols claimed a
+// substance screen that [pricing_guard] disable_substance_gate = true
+// had switched off.
+func buildDEXTVLValueGate(
+	substance *pricingguard.SubstanceGate,
+	scam *pricingguard.ScamGate,
+	usdPegs []canonical.Asset,
+) v1.TVLValueGate {
+	if substance == nil && scam == nil {
+		return nil
+	}
+	return dexTVLValueGate{substance: substance, scam: scam, usdPegs: usdPegs}
+}
+
+// Screens implements [v1.TVLValueGate]: the withholding screens THIS
+// deployment wired, in the order the Basis sentence reads them. The
+// scam directory comes first because its verdict is quote-independent
+// (a flagged issuer withholds on every arm), the substance floor
+// second. A gate whose sub-guard is nil is nil-receiver-safe and
+// allow-everything, so naming it would claim a screen that never ran.
+func (g dexTVLValueGate) Screens() []string {
+	screens := make([]string, 0, 2)
+	if g.scam != nil {
+		screens = append(screens, v1.TVLScreenScamDirectory)
+	}
+	if g.substance != nil {
+		screens = append(screens, v1.TVLScreenSubstanceFloor)
+	}
+	return screens
 }
 
 // ValueWithheld reports whether asset's reserves must contribute no USD

@@ -26,7 +26,7 @@ enforced 2026-04-23 onward).
 
   | Severity | Rules | AlertManager route | Delivery |
   | --- | --- | --- | --- |
-  | `page` | 49 | `receiver: chat-page` | Discord **#stellarindex-pages**, `repeat_interval` 12 h. There is **no** PagerDuty leg — `pagerduty_configs` is unset, so nothing wakes anyone up. |
+  | `page` | 50 | `receiver: chat-page` | Discord **#stellarindex-pages**, `repeat_interval` 12 h. There is **no** PagerDuty leg — `pagerduty_configs` is unset, so nothing wakes anyone up. |
   | `ticket` | 134 | `receiver: chat-default` | Discord **#stellarindex-alerts**, `repeat_interval` 24 h. |
   | `informational` | 21 | `receiver: silent` | **Delivered to nobody, deliberately.** `silent` is declared with no `*_configs` block at all, which in Alertmanager means the alert is accepted and then dropped. It accumulates in the AlertManager UI and nothing else happens. |
 
@@ -78,6 +78,7 @@ enforced 2026-04-23 onward).
 | `stellarindex_ingestion_source_stopped_daily_publisher` | `rate(stellarindex_source_events_total[30h])` for ecb / band | == 0 for > 1 h | ticket | [source-stopped](runbooks/source-stopped.md) |
 | `stellarindex_ingestion_all_sources_stopped` | `sum(rate(stellarindex_source_events_total[5m]))` | == 0 for > 3 min | page | [all-ingestion-down](runbooks/all-ingestion-down.md) |
 | `stellarindex_ingestion_trade_buffer_drop` | `increase(stellarindex_source_insert_errors_total{kind="dropped"}[15m])` | > 0 for 15 min (any trade permanently dropped after the retry buffer overflowed) | ticket | [trade-insert-backpressure](runbooks/trade-insert-backpressure.md) |
+| `stellarindex_ingestion_ledger_stalled` | `max_over_time(stellarindex_cursor_last_ledger{source="ledgerstream"}[5m]) - min_over_time(...)`, or `absent_over_time(...)` | == 0 (or series gone) for > 5 min ⇒ ~10 min without a committed ledger. The CEX/FX connectors share the indexer binary, so `all_sources_stopped` stays quiet through a lake outage; `cursor_stuck` cannot fire for this cursor (it joins `source_enabled`, and `ledgerstream` is not a configured source). | page | [ledger-ingest-stalled](runbooks/ledger-ingest-stalled.md) |
 | `stellarindex_ingestion_cursor_stuck` | `increase(stellarindex_cursor_last_ledger[5m])` per source | == 0 while source is live | ticket | [cursor-stuck](runbooks/cursor-stuck.md) |
 | `stellarindex_ingestion_orphan_events` | `rate(stellarindex_source_orphan_events_total[10m])` | > 10/min per source | informational | [orphan-events](runbooks/orphan-events.md) |
 | `stellarindex_ingestion_decode_error` | `rate(stellarindex_source_decode_errors_total[5m])` | > 1/s sustained 5 min | informational | [decode-errors](runbooks/decode-errors.md) |
