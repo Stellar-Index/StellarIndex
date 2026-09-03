@@ -95,28 +95,18 @@ func (s *Server) handleObservations(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Fast-path for the synthesized USD reference quote (#29).
-	// `fiat:USD` (ADR-0010) is a reference-currency abstraction that is
-	// ALWAYS triangulated — no venue trades directly against it, so
-	// trades.quote_asset never holds the literal value `fiat:USD`. A
-	// `LatestTradePerSource` lookup for it does an unbounded per-chunk
-	// fan-out proving emptiness (measured >60s on r1, blowing the 8s
-	// ceiling below → 503, the status-page incident). The result is
-	// always an empty observations array; short-circuit to the
-	// triangulation-hint branch, no storage call.
-	//
-	// F-1325: this short-circuit was previously applied to EVERY fiat:*
-	// AND crypto:* quote — but that premise is false. CEX connectors
-	// write REAL trades quoted in `crypto:USDT`, `crypto:BTC`,
-	// `fiat:EUR` etc. (binance XLMUSDT/XLMBTC/BTCEUR → quote_asset =
-	// "crypto:USDT"/"crypto:BTC"/"fiat:EUR"), so suppressing those
-	// silently hid live CEX observations on the rawest API surface.
-	// Only `fiat:USD` is genuinely never a stored trade quote; everything
-	// else flows through the real (8s-bounded, index-covered) scan below.
-	if pair.Quote.Type == canonical.AssetFiat && pair.Quote.Code == "USD" {
-		s.writeEmptyObservationsFor(w, r, pair, source)
-		return
-	}
+	// NO quote family is answered from memory here, `fiat:USD` least of
+	// all — it is this endpoint's DEFAULT quote AND a real stored trade
+	// quote. The CEX connectors trade straight against it (coinbase /
+	// kraken / bitstamp XLM-USD, BTC-USD, ETH-USD), so `quote_asset`
+	// holds the literal string on every one of those rows: /v1/history
+	// serves them, and /v1/observations/stream — same computeObservations,
+	// no short-circuit — emits three venues for the very pair the #29
+	// fast-path here was answering with `[]`. That fast-path also
+	// out-lived its cost argument: migration 0037's
+	// trades_pair_source_ts_idx covers LatestTradePerSource's
+	// DISTINCT ON (source), so the lookup is O(num_sources), not the
+	// O(rows_in_pair) fan-out that was once measured.
 
 	// 8s ceiling on the trades hypertable scan. Same pattern as
 	// #1082, #1099-#1106. The deliberate 2026-05-08 prod test
@@ -179,24 +169,6 @@ func (s *Server) handleObservations(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, rows, flags, srcs...)
-}
-
-// writeEmptyObservationsFor writes the canonical empty observations
-// result + triangulation hint for the #29 aggregator-only-quote
-// fast-path (and any future path the handler decides has no rows to
-// consult). Extracted from handleObservations to keep gocognit
-// complexity below threshold; mirrors the post-storage empty-result
-// branch's flag-setting logic but never has SingleSource (zero rows).
-// Uses a tight (2s) ctx for the triangulation lookup so a slow
-// /v1/price fallback can't stall the fast-path.
-func (s *Server) writeEmptyObservationsFor(w http.ResponseWriter, r *http.Request, pair canonical.Pair, source string) {
-	flags := Flags{}
-	if source == "" {
-		triCtx, triCancel := context.WithTimeout(r.Context(), 2*time.Second)
-		defer triCancel()
-		flags.Triangulated = s.observationsHaveTriangulatedPrice(triCtx, pair)
-	}
-	writeJSON(w, []TradeRow{}, flags)
 }
 
 // fetchObservationsOrWriteError runs computeObservations and translates
