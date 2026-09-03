@@ -104,7 +104,10 @@ expect 'renamed partition scheme → DRIFT (malformed)' 1 "malformed partition p
 run "$(printf '%s\n%s\n' "$FULL" '                           PRE FFFF05FF--64000-127999/')" "$GOOD_MANIFEST"
 expect 'duplicate partition → DRIFT (overlap)' 1 'overlaps/duplicates'
 
-run "$(printf '%s\n' "$FULL" | head -1)" "$GOOD_MANIFEST"
+# First line only, without a pipe: `printf | head -1` under pipefail is a
+# SIGPIPE coin-flip once the listing exceeds a pipe buffer, and it failed
+# a full local run under load. Parameter expansion cannot be interrupted.
+run "${FULL%%$'\n'*}" "$GOOD_MANIFEST"
 expect 'listing with only .config.json → DRIFT (empty)' 1 'listing is EMPTY'
 
 # ── Manifest drift ──────────────────────────────────────────────────
