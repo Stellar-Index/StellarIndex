@@ -130,7 +130,57 @@ authority. Until one of those happens, treat
 `/var/lib/stellarindex/restore-drills/restore-drills.md` on r1 as the truth
 and this file as a snapshot of it.
 
-**Still outstanding, and it is the one that matters:** every run above is
-`repo1`, the LOCAL copy. The off-site copy (`repo2`, encrypted, S3
-eu-central-1) has never been restored — see the run below.
+---
+
+## Run 10 — 2026-09-03 — **the OFF-SITE copy, restored for the first time. 0 failures.**
+
+Every run before this one was `repo1`, the LOCAL copy. `repo2` — encrypted,
+S3 `eu-central-1` — is the copy that matters when the site is gone, and
+until today it had never been restored. A backup that has never been
+restored is a hope, not a backup, and that was the whole point of CS-110.
+
+| check | result |
+|---|---|
+| `pg_restore` | **OK — 2,813 s (47 min)** from repo2 |
+| `pg_start` | OK — scratch instance up on :5499, recovery complete |
+| `core_tables` | OK — 4 of 4 |
+| `wal_drain` | OK — replay reached `1C85/50286000` |
+| `tip_lag` | OK — restored tip 64,250,568 against live 64,250,585: **17 ledgers**, about 85 seconds |
+| `hash_chain_sample` | OK — **0 chain breaks** in the restored 100k tail |
+| `trades_window_match` | OK — trades[64150568, 64200568] restored **2,726,303 = 2,726,303** live, exact |
+| **failures** | **0** |
+
+Run under `run-heavy-job.sh` (singleton lock, 20 GB memory cap,
+deprioritised CPU and I/O), non-destructive throughout, on a dedicated ZFS
+dataset with 4.9 TB free against a 1,038 GB requirement.
+
+### The number this drill existed to produce
+
+**Off-site RTO is ~47 minutes of restore, against ~9 minutes from the
+local copy** (runs 6-9 were 496-539 s). The difference is bandwidth: 269 GB
+of compressed repository — a 242.6 GB full plus a 26.6 GB differential —
+pulled from S3 to Hetzner, expanding to 788 GB on disk. Roughly **$24 of
+AWS egress** for the drill.
+
+That gap belongs in the disaster-recovery plan. Any RTO commitment quoting
+the ~15-minute figure from the repo1 drills is quoting the wrong copy: in
+the disaster where the local repository is also gone, the honest number is
+**an hour**, plus WAL replay.
+
+### What it proves
+
+The encrypted off-site copy restores, recovers to consistency, and matches
+the live database **exactly** on an immutable window — zero hash-chain
+breaks and a byte-exact trades count 50,000 ledgers wide. The 17-ledger tip
+lag is WAL not yet archived at the moment the drill ran, not a defect; it is
+the tightest of any drill so far.
+
+### Still outstanding
+
+The drill wrote its evidence to `/var/lib/stellarindex/restore-drills/`
+on the box, as BDR-03 arranged, and this file is again a hand-copied
+snapshot of it. That is the staleness described above and it has not been
+fixed — only reconciled. The `restore-drill.timer` is monthly and defaults
+to `repo1`, so **nothing schedules an off-site drill**; today's was manual.
+One of the two should change.
 
