@@ -3,13 +3,13 @@ title: "2026-04 SEV-1 tabletop — Timescale primary failover"
 date: 2026-04-30
 type: tabletop
 scenario: scenarios/sev1-timescale-primary-failover.md
-participants: [ash, ash, ash]
+participants: [maintainer]
 last_verified: 2026-05-03
 ---
 
 # 2026-04 drill writeup — SEV-1 Timescale primary failover
 
-Pre-launch tabletop dry-run executed solo (`ash` rotated through
+Pre-launch tabletop dry-run executed solo (one person rotated through
 oncall / scribe / commander roles) to satisfy L5.7 / Task #76 of
 the launch-readiness backlog. Soloing a tabletop is a known
 limitation — see *Gaps observed* — but the dry-run still
@@ -110,19 +110,19 @@ solo drill. A real 3-person drill should file these under the
 `drill-action` label.
 
 - [x] **Reorder `runbooks/timescale-primary-down.md` Quick-diagnosis
-      to lead with `/v1/readyz`** — owner @ash, done in same PR
+      to lead with `/v1/readyz`** — owner the maintainer, done in same PR
       (filed inline below).
 - [x] **Cross-link §5.3 internal-channel template from
-      `timescale-primary-down.md` Mitigation** — owner @ash, done
+      `timescale-primary-down.md` Mitigation** — owner the maintainer, done
       in same PR.
 - [ ] **Quarterly chaos drill that actually runs `drop_chunks` on
-      staging** — owner @ash, due 2026-Q3 (post-launch chaos
+      staging** — owner the maintainer, due 2026-Q3 (post-launch chaos
       Wave 2).
 - [ ] **Add Patroni-driven failover scenario script as a
       successor to `sev1-timescale-primary-failover.md`** —
-      owner @ash, due 2026-Q3.
+      owner the maintainer, due 2026-Q3.
 - [ ] **3-person tabletop after launch with the next on-call
-      hire** — owner @ash, due 2026-Q3.
+      hire** — owner the maintainer, due 2026-Q3.
 
 ## Score
 
@@ -151,8 +151,8 @@ inline (runbook reorder + cross-link).
 
 ## Sign-off
 
-- **Drill leader:** ash
-- **Scribe:** ash
+- **Drill leader:** maintainer
+- **Scribe:** maintainer
 - **Posted action items by:** 2026-04-30
 - **Promoted to playbook update:** yes — runbook reorder lands in
   this PR.

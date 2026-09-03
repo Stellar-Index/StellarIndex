@@ -14,7 +14,7 @@ status: superseded by ADR-0050 / [multi-region-ha.md](../multi-region-ha.md) (20
 
 # Multi-Region Topology
 
-**Owner:** @ash.
+**Owner:** the maintainer.
 **Scope:** how our three archival-node deployments (per
 [archival-node-spec.md](archival-node-spec.md)) are arranged across
 three regions, replicated consistently, and degrade gracefully when

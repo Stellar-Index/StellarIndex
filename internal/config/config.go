@@ -1848,7 +1848,7 @@ func Default() Config {
 			MaxHops:                      3,
 			MinRouteConfidence:           0,
 			CompositeReference: CompositeReferenceConfig{
-				// ON by default (Ash, 2026-08-29): the mechanism is
+				// ON by default (maintainer, 2026-08-29): the mechanism is
 				// fail-closed on every leg (thin, stale, wrong class)
 				// and evaluated only on single-venue buckets of the
 				// listed targets — the pairs the design doc (§3) records

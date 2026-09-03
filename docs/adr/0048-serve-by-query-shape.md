@@ -10,7 +10,7 @@ superseded_by: null
 # ADR-0048: Serve by query shape — the account-movement archive is ClickHouse-native
 
 Amends ADR-0047 D1 (storage) and sharpens ADR-0034's lake/served
-split. Decided with @ash 2026-07-10 after a week of replay operations
+split. Decided with the maintainer 2026-07-10 after a week of replay operations
 made the cost model visible.
 
 > **Amendment (2026-07-24, audit-2026-07-23 wave5 DOC-05).** D3 below

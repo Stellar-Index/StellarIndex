@@ -90,7 +90,7 @@ Each fix landed as its own commit on `main` (see `git log`).
 > `docs/operations/deploy-workflow.md` §Migrations run before
 > binaries, and are not rolled back (BACKLOG #67).
 
-## ⏭ Deferred — need @ash direction or are large/design-gated
+## ⏭ Deferred — need the maintainer direction or are large/design-gated
 
 These are NOT operator-infra (those are in the operator register); they're code
 work I did not do autonomously because they need a product/design decision, are

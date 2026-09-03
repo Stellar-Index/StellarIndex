@@ -17,7 +17,7 @@ superseded_by: null
 > static export (`output: 'export'` in `web/explorer/next.config.mjs`).
 > ADR-0050 treats this ADR as load-bearing, so the distinction matters.
 
-Deciders: @ash (accepted 2026-07-04; Workers paid pricing approved in
+Deciders: the maintainer (accepted 2026-07-04; Workers paid pricing approved in
 principle — traffic-modeled cost numbers to be reviewed before the
 stage-3 cutover). Supersedes the `output: 'export'` decision embedded
 in the explorer since Phase 8 (never ADR'd; this made the choice

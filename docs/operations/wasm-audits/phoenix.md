@@ -195,8 +195,8 @@ Per-pool current WASM hashes (via `stellar contract fetch --id
 
 | hash (first 16) | role | active pools | reviewer | finding |
 | --- | --- | --- | --- | --- |
-| `167ab414a226427d` | pool (dominant) | 10 of 11 | ash@2026-04-29 | all 8 field-name strings present; matches current decoder |
-| `13b158655e403969` | pool (singleton) | 1 of 11 (CD5XNKK3) | ash@2026-04-29 | all 8 field-name strings present; identical contract interface to dominant; matches current decoder |
+| `167ab414a226427d` | pool (dominant) | 10 of 11 | maintainer@2026-04-29 | all 8 field-name strings present; matches current decoder |
+| `13b158655e403969` | pool (singleton) | 1 of 11 (CD5XNKK3) | maintainer@2026-04-29 | all 8 field-name strings present; identical contract interface to dominant; matches current decoder |
 
 ### Disassembly evidence
 

@@ -64,20 +64,20 @@ func TestSignupNewUser_EmailLocker_PreemptsLoser(t *testing.T) {
 
 	// Simulate the winner: pre-hold the lock + insert a User row
 	// behind the winner's Account so the loser's poll converges.
-	emailHash := hashEmailForLocker("ash@example.com")
+	emailHash := hashEmailForLocker("owner@example.com")
 	if ok, _, err := locker.Acquire(context.Background(), emailHash, time.Second); !ok || err != nil {
 		t.Fatalf("pre-acquire: ok=%v err=%v", ok, err)
 	}
 
 	winnerAcct, err := r.accounts.Create(context.Background(), platform.Account{
-		Name: "winner", Slug: "winner", BillingEmail: "ash@example.com",
+		Name: "winner", Slug: "winner", BillingEmail: "owner@example.com",
 		Tier: platform.TierFree, Status: platform.AccountActive,
 	})
 	if err != nil {
 		t.Fatalf("seed winner account: %v", err)
 	}
 	winner, err := r.users.CreateUser(context.Background(), platform.User{
-		AccountID: winnerAcct.ID, Email: "ash@example.com", Role: platform.RoleOwner,
+		AccountID: winnerAcct.ID, Email: "owner@example.com", Role: platform.RoleOwner,
 	})
 	if err != nil {
 		t.Fatalf("seed winner user: %v", err)
@@ -87,7 +87,7 @@ func TestSignupNewUser_EmailLocker_PreemptsLoser(t *testing.T) {
 
 	// Loser comes through signupNewUser. Lock acquire fails ->
 	// waitForWinnerUser converges to the winner row -> return.
-	got, err := r.h.signupNewUser(context.Background(), "ash@example.com")
+	got, err := r.h.signupNewUser(context.Background(), "owner@example.com")
 	if err != nil {
 		t.Fatalf("signupNewUser as loser: %v", err)
 	}

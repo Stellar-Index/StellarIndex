@@ -4,7 +4,7 @@ date: YYYY-MM-DD
 severity: SEV-?
 status: draft | published
 duration: HH:MM
-authors: [ash]
+authors: [maintainer]
 ---
 
 <!--

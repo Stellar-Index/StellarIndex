@@ -31,7 +31,7 @@ severity: P2
   Go straight to `aggregator-silent.md`.
 - `/v1/price?asset=<X>` returns 200 with a price but the
   `observed_at` timestamp is well behind wall-clock.
-- TODO(ash): the *Price → freshness* Grafana dashboard referenced by
+- TODO(maintainer): the *Price → freshness* Grafana dashboard referenced by
   earlier revisions of this runbook has no JSON in the repo; link the
   live dashboard UID here or drop the reference.
 

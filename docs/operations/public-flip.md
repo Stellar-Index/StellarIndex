@@ -58,7 +58,7 @@ satisfies it.
 | ☑ | r1 public IP scrubbed from working tree | PR #169 |
 | ☑ | `configs/ansible/inventory/r1.yml` removed from tracked files (added to `.gitignore`) | PR #169 |
 | ☑ | `SECURITY.md` lists `security@stellarindex.io` as the public reporting address (not an internal alias) | `SECURITY.md:9` (verified 2026-04-30) |
-| ☑ | `CODEOWNERS` uses external @-handles only — no internal-only logins | `CODEOWNERS` (only `@ash`, verified 2026-04-30) |
+| ☑ | `CODEOWNERS` uses external @-handles only — no internal-only logins | `CODEOWNERS` (only `the maintainer`, verified 2026-04-30) |
 | ☑ | `README.md` reads as a public landing page — what the project does, who it's for, getting-started link, badge for license + CI | `README.md` (verified 2026-04-30) |
 | ☑ | `CONTRIBUTING.md` welcomes external contributors (issue triage SLA, PR review SLA, code-of-conduct link) | `CONTRIBUTING.md` (verified 2026-04-30) |
 | ☑ | `CODE_OF_CONDUCT.md` is the standard Contributor Covenant | `CODE_OF_CONDUCT.md` (Contributor Covenant v2.1, verified 2026-04-30) |
@@ -102,7 +102,7 @@ PRs land between checklist verification and launch day. **Do this
 6. **External-asset readiness.** Confirm:
    - `SECURITY.md`'s reporting address (`security@stellarindex.io`)
      is monitored — send a test email if uncertain.
-   - The `CODEOWNERS` file's only @-handle (`@ash`) has the
+   - The `CODEOWNERS` file's only @-handle (`the maintainer`) has the
      bandwidth to triage day-1 external PRs (or has a delegate
      wired up post-flip via branch-protection settings).
    - The `Stellar-Index/StellarIndex` GitHub repo creation
@@ -196,7 +196,7 @@ on the clone could affect the private repo's reflog. `--no-local
 
 After the flip, both repos exist:
 
-- **Private (`ash/code/stellarindex`)** — full history, internal
+- **Private (`maintainer/code/stellarindex`)** — full history, internal
   audit trail, day-to-day work continues here. New work lands here
   first; later mirrored to public via merge PR (see below).
 - **Public (`Stellar-Index/StellarIndex`)** — clean derived artefact;

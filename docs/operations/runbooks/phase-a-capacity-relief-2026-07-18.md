@@ -38,7 +38,7 @@ Make room for the comprehensive backfill (Phase D) **without hitting the disk wa
 | after other-tables recompress (2.04× lever) | ~4–5 TiB | ~76–80% |
 | **after Phase D comprehensive backfill** | **~2.5–3.5 TiB** | **~83–85%** |
 
-**Capacity decision (Ash, 2026-07-19):** a few months of headroom is the bar, and it's **met** — Phase D lands at ~83–85% with ~2.5–3.5 TiB free ≈ **~6 months** of live-growth runway (~5.5 TiB/yr). **A second server will be procured later** for durable growth; the **S3 offload** (galexie archive 5.56 TiB + pgBackRest off-site → frees ~7.5 TiB) is a **deferred lever, not needed now.** ⚠️ The margin depends on the **other-tables recompress** delivering ~1.5–2.5 TiB — without it Phase D lands at ~91% (fits, no headroom), so it's a required Phase A step, not optional.
+**Capacity decision (maintainer, 2026-07-19):** a few months of headroom is the bar, and it's **met** — Phase D lands at ~83–85% with ~2.5–3.5 TiB free ≈ **~6 months** of live-growth runway (~5.5 TiB/yr). **A second server will be procured later** for durable growth; the **S3 offload** (galexie archive 5.56 TiB + pgBackRest off-site → frees ~7.5 TiB) is a **deferred lever, not needed now.** ⚠️ The margin depends on the **other-tables recompress** delivering ~1.5–2.5 TiB — without it Phase D lands at ~91% (fits, no headroom), so it's a required Phase A step, not optional.
 
 ---
 

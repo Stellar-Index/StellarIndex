@@ -83,7 +83,7 @@ ssh root@136.243.90.96 'systemctl status "run-heavy-*.scope" --no-pager'
 4. **ZFS ARC.** No ARC cap is codified — `zfs_arc_max` appears
    nowhere in the ansible role, so ARC follows the ZFS default
    (up to ~half of RAM, shrinking under pressure).
-   `TODO(ash): if a hand-set ARC cap exists live on r1, codify it
+   `TODO(maintainer): if a hand-set ARC cap exists live on r1, codify it
    in the role (AGENTS.md ansible-drift rule); if not, decide
    whether one is wanted.`
    - Signal: `arcstat` / `/proc/spl/kstat/zfs/arcstats` shows ARC
@@ -138,7 +138,7 @@ ssh root@136.243.90.96 'systemctl status "run-heavy-*.scope" --no-pager'
   SEV playbook). "Restart the pod" → restart the systemd unit.
   The "we cap ARC at ~50 % of RAM" claim was uncodified fiction
   (`zfs_arc_max` appears nowhere in ansible) — replaced with the
-  ZFS-default reality + TODO(ash) to codify if a live hand-set cap
+  ZFS-default reality + TODO(maintainer) to codify if a live hand-set cap
   exists. Swap: r1 HAS 16 G swap at `vm.swappiness=1`, so
   sustained swap traffic is itself a red flag (the old "swap
   mostly isn't enabled" line was wrong). OOM framing rewritten for

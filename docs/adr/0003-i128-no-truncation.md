@@ -164,7 +164,7 @@ verified-correct implementation in
   name contains `amount`, `balance`, `reserve`, `supply`, `price`,
   `wei`, `stroop`, or `value`.~~ (superseded by the grep-lint above)
 - Code review: CODEOWNERS requirement on `internal/canonical/`
-  means @ash sees any change to the core amount type.
+  means the maintainer sees any change to the core amount type.
 - Fixture tests: `TestAmountRoundTrip_KALIEN_Incident` et al. in
   `internal/canonical/amount_test.go`.
 

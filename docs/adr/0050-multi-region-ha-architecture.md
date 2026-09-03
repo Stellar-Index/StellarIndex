@@ -10,14 +10,14 @@ superseded_by: []
 
 # ADR-0050: Multi-region HA architecture
 
-Deciders: @ash (2026-08-21). Ratifies the program plan in
+Deciders: the maintainer (2026-08-21). Ratifies the program plan in
 [`docs/architecture/multi-region-ha.md`](../architecture/multi-region-ha.md),
 which holds the full detail, cost model, phasing, and audit provenance. This ADR
 records the **decision** and the **supersessions**.
 
 ## Context
 
-Ash decided to bring genuine multi-region HA before v1, with cross-region failover
+the maintainer decided to bring genuine multi-region HA before v1, with cross-region failover
 for both the API and the explorer. A cold adversarial audit (6 auditors,
 2026-08-20/21) validated a first-draft plan against the actual code and the live R1
 host and refuted its load-bearing claims. Two measurements forced the architecture:
@@ -31,7 +31,7 @@ host and refuted its load-bearing claims. Two measurements forced the architectu
    budget); and R3's 1.75 TiB disk physically cannot hold the lake.
 
 The prior ratified position (ADR-0008: "multi-region active/active is out of scope for
-v1") is overturned by Ash's decision; this ADR replaces it.
+v1") is overturned by the maintainer's decision; this ADR replaces it.
 
 ## Decision
 
@@ -90,7 +90,7 @@ in the plan doc.
 
 ## Amendment — 2026-08-29 (API-first)
 
-Ash: *"api is the main purpose really, people can wait 200 ms for explorer results."*
+Maintainer: *"api is the main purpose really, people can wait 200 ms for explorer results."*
 R2's optional hot lake set is dropped for v1 — R2 and R3 are the same shape (local
 pricing + Redis + API, all lake routes proxied to R1 at request level), which lowers
 both boxes to ~2 TB commodity bare metal. In exchange, **determinism hardening
@@ -100,7 +100,7 @@ promise, not an optimisation. See `docs/architecture/multi-region-ha.md` §0b.
 
 ## Status note — 2026-08-29: implementation DEFERRED to post-v1.0
 
-The architecture stands; the build does not start before v1.0 ships. Ash's reasoning,
+The architecture stands; the build does not start before v1.0 ships. the maintainer's reasoning,
 the measured cache-header evidence, and the cheapest-first resume sequence
 (Cloudflare -> micro-cache test -> R2 -> R3-on-evidence) are recorded in
 `docs/architecture/multi-region-ha.md` §0c. The v1.0-relevant residue is the

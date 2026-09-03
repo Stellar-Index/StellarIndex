@@ -181,7 +181,7 @@ happen the change is one `CONFIG SET` away.
   `/var/log/wasm-audit/` (a dedicated dir excluded from
   operator-default backups), not the root log dir — the
   `/var/log/wasm-history-*.stderr` pattern in the free-disk step
-  above is still where they land today. TODO(ash): codify the
+  above is still where they land today. TODO(maintainer): codify the
   dedicated dir (or a cleanup timer) in the wasm-audit procedure.
 
 ## Related runbooks

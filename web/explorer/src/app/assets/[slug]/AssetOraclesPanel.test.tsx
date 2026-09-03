@@ -309,7 +309,7 @@ describe('AssetOraclesPanel', () => {
     });
   });
 
-  // Ash's call (see SHOW_SYMBOL_MATCHED_RAW_FEEDS): symbol-matched raw
+  // the maintainer's call (see SHOW_SYMBOL_MATCHED_RAW_FEEDS): symbol-matched raw
   // feeds are OFF by default, and turning them on is one prop.
   describe('symbol-matched raw: feeds', () => {
     it('are not fetched or shown by default', async () => {

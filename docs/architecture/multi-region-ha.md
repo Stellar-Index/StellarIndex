@@ -26,7 +26,7 @@ audit: cold adversarial 6-auditor audit, 2026-08-20/21 (see §13)
 > rejected (cross-region Postgres replication, per-region S3-tiered lake, R2 on
 > AWS as a full lake holder). Those are dead. This is live.
 
-## 0. Requirements (Ash's decision)
+## 0. Requirements (the maintainer's decision)
 
 - **Multi-region HA before v1**, with genuine **cross-region failover for both
   the API and the explorer** (not just DR).
@@ -36,9 +36,9 @@ audit: cold adversarial 6-auditor audit, 2026-08-20/21 (see §13)
 - The agreed latency SLO (ADR-0009: **p95 ≤ 200 ms / p99 ≤ 500 ms** on
   `/v1/price` + `/v1/oracle/*`) must not regress.
 
-## 0b. Amendment — API-first (Ash, 2026-08-29)
+## 0b. Amendment — API-first (maintainer, 2026-08-29)
 
-**Decision: the API is the product; the explorer can pay the ocean.** Ash, after
+**Decision: the API is the product; the explorer can pay the ocean.** the maintainer, after
 seeing the measured split: *"api is the main purpose really, people can wait 200 ms
 for explorer results."*
 
@@ -67,9 +67,9 @@ Consequences, which SIMPLIFY §3b and §4:
   the ocean, and this amendment accepts that cost explicitly.
 
 
-## 0c. Status — DEFERRED to post-v1.0 (Ash, 2026-08-29)
+## 0c. Status — DEFERRED to post-v1.0 (maintainer, 2026-08-29)
 
-**R2/R3 are not on the v1.0 path.** Ash, after working the cost/benefit live:
+**R2/R3 are not on the v1.0 path.** the maintainer, after working the cost/benefit live:
 *"lets put the r2/r3 thing to bed for now, post r1, back to focusing on path to 1.0."*
 This section records WHY, so the next session does not re-litigate it from memory.
 
@@ -99,7 +99,7 @@ This section records WHY, so the next session does not re-litigate it from memor
    hits. What changes is the *shape* of the argument — the hot path is
    thinly-cacheable rather than uncacheable, which makes the micro-cache
    experiment below more attractive, not less.
-2. **The explorer does not justify a box.** Ash: *"people can wait 200 ms for
+2. **The explorer does not justify a box.** Maintainer: *"people can wait 200 ms for
    explorer results."* Deep explorer pages are lake-backed and proxy to R1 anyway
    (§0b); Cloudflare caching covers the immutable ones far more cheaply.
 3. **The real exposure is not latency, it is the single point of failure.** r1 is one

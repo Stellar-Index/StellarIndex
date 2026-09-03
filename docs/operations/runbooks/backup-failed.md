@@ -215,7 +215,7 @@ and the alert resolves within ~15 min.
 - `docs/adr/0043-backup-and-restore-strategy.md`.
 - HA plan §3.3 "Backup" reality check + §8: `docs/architecture/ha-plan.md`.
 
-> TODO(ash): the archival-node role templates no `archive_mode` /
+> TODO(maintainer): the archival-node role templates no `archive_mode` /
 > `archive_command` (WAL archiving is configured out-of-band on r1 per
 > `18-pgbackrest-backup.yml`); the live `pgbackrest.conf` is hand-managed
 > (`pgbackrest_manage_conf` defaults false). Confirm on r1 that

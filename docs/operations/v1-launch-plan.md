@@ -53,22 +53,22 @@ severity: P1
 | # | item | owner | state on 2026-09-03 |
 |---|---|---|---|
 | 0.1 | **`main` must be green** | agent | **DONE** (`fb73da9e5`). It had been red since `8b66519ae`: #331 F1 moved the listing's price derivation into a worker-maintained rollup and two integration tests still refreshed only the old continuous aggregate, so every asset came back unpriced. An all-unpriced board COLLAPSES rank tier 0 into tier 1, which is why the visible symptom was a wrong sort order rather than a missing price. `make verify` cannot see this class — it does not run integration tests. |
-| 0.2 | **`/terms` + `/privacy`** | **ASH — legal read only** | **BLOCKED ON ASH.** Both URLs 404 today. PR #237 has the code and the tests; it needs wording signed off, nothing else. |
+| 0.2 | **`/terms` + `/privacy`** | **owner — legal read only** | **BLOCKED ON THE OWNER.** Both URLs 404 today. PR #237 has the code and the tests; it needs wording signed off, nothing else. |
 | 0.3 | ~~Stop the status page saying `degraded`~~ | — | **NOT A BLOCKER — the measurement was contaminated, and the contamination was ours.** The audit sampled `/v1/status` and a 1-hour Prometheus window while TEN subagents were running cold ClickHouse and Postgres scans against r1. Two 6-hour windows from r1's own Prometheus settle it: ending **2026-09-02T20:00Z, before that load, p99 = 48.6 ms and p95 = 20.5 ms**; ending 2026-09-03T07:00Z, during it, p99 = 566.2 ms and p95 = 82.1 ms. Targets are 500 ms and 200 ms, so the steady state sits inside both by an order of magnitude. With the agents drained, live `/v1/status` reads `overall: ok`, p50 1 / p95 21 / p99 34 ms, zero active incidents. The per-route figures the audit quoted (`/v1/pairs` 4,975 ms, `/v1/accounts/{g}/operations` 4,966 ms, `/v1/pools` 4,700 ms) are load artefacts. **Neither of the audit's two options — 2-4 days of optimisation, or renegotiating the published target — is needed.** Two of those three routes were independently fixed anyway (`7c051edeb`, `d22e5409d`); `/v1/pairs` is being re-measured cleanly for cold-variant cost, which is a different and much smaller question. |
-| 0.4 | **Email/DNS perimeter (#334)** | agent + **2 clicks from Ash** | **RECORDS LIVE** (`91d0e469d`). MX, SPF (`-all`), DMARC (`p=quarantine`), a second DKIM selector and CAA are published and verified against the authoritative nameservers, with a drift check (`scripts/ops/dns-perimeter-check.sh`) and a weekly workflow. Two steps need Ash: click Cloudflare's destination-verification link so `security@` can forward, and publish the DS record at the registrar. Both are on #334. |
+| 0.4 | **Email/DNS perimeter (#334)** | agent + **2 clicks from the maintainer** | **RECORDS LIVE** (`91d0e469d`). MX, SPF (`-all`), DMARC (`p=quarantine`), a second DKIM selector and CAA are published and verified against the authoritative nameservers, with a drift check (`scripts/ops/dns-perimeter-check.sh`) and a weekly workflow. Two steps need the maintainer: click Cloudflare's destination-verification link so `security@` can forward, and publish the DS record at the registrar. Both are on #334. |
 
 ### Tier 1 — do before announcing; cheap; does not strictly block
 
 | # | item | owner |
 |---|---|---|
-| 1.1 | **#478** — decide what `oracle_stale` should MEAN on a change-driven oracle. It is the only non-heartbeat alert firing on r1, and it is why `/v1/status` reports an active incident. | **Ash decides the semantics**; agent implements |
-| 1.2 | **Sign the accepted-risk register (W6.5).** 15 candidates in `docs/audit/audit-2026-07-23/tail-triage-2026-07-26.md`; no signed register exists anywhere. | **Ash signs**; agent drafts |
+| 1.1 | **#478** — decide what `oracle_stale` should MEAN on a change-driven oracle. It is the only non-heartbeat alert firing on r1, and it is why `/v1/status` reports an active incident. | **The maintainer decides the semantics**; agent implements |
+| 1.2 | **Sign the accepted-risk register (W6.5).** 15 candidates in `docs/audit/audit-2026-07-23/tail-triage-2026-07-26.md`; no signed register exists anywhere. | **the maintainer signs**; agent drafts |
 | 1.3 | **Drill the OFF-SITE restore once.** repo2 writes nightly and has NEVER been restored — every entry in the on-box drill log says `(repo1)`. `DRILL_REPO=2` already exists in the script. | operator on r1 |
-| 1.4 | One live SEV drill + one rollback rehearsal. Scenarios are written and paging is now real; neither has been executed against wired paging. | agent + Ash |
-| 1.5 | Wire the five `HEALTHCHECKS_URL_*` on r1 so a stopped binary is detectable independently of Prometheus. | **Ash supplies URLs** |
+| 1.4 | One live SEV drill + one rollback rehearsal. Scenarios are written and paging is now real; neither has been executed against wired paging. | agent + the maintainer |
+| 1.5 | Wire the five `HEALTHCHECKS_URL_*` on r1 so a stopped binary is detectable independently of Prometheus. | **the maintainer supplies URLs** |
 | 1.6 | ~~**Re-frame the `recognition` axis on `/v1/coverage`.**~~ **DONE (2026-09-03).** It was a system audit signal, not a source, and as framed could NEVER read complete (`coverage_pct 0.00748`, "23,945 unrecognized shapes on unowned contracts"). It now has its own top-level `recognition` object with its own vocabulary and MORE of the audit's numbers (`unrecognized_shapes`, the new `unrecognized_contracts`, a plain-language `meaning` on the wire), and the headline counts sources only: **20 of 20**. A genuine source failure still fails the headline (`completeness.IsAuditAxis` is a narrow fail-loud predicate). Spec 1.20.0. **The go-live gate below still says 17/17 — that staleness is NOT fixed here** and remains open; the live figure is 20 sources. | agent |
 | 1.7 | **Test nets are a release and three migrations behind again** — `v0.57.0`/schema 150 against r1's `v0.58.0`/schema 153, ONE DAY after being caught up. Migrations 0151-0153 have run only in production. The drift has no automatic prevention, and that is the actual finding. | agent |
-| 1.8 | `gh variable delete DEPLOY_APPROVAL_RELAXED` + r1 required-reviewers, at the flip. | **Ash** |
+| 1.8 | `gh variable delete DEPLOY_APPROVAL_RELAXED` + r1 required-reviewers, at the flip. | **the maintainer** |
 | 1.9 | **D7** — the thin-pool third-alias VWAP review this plan says is owed "before public traffic". Never done, no artefact. | agent |
 
 ### Tier 2 — real work that does NOT gate the announcement
@@ -135,8 +135,8 @@ is superseded by D2** (single box with tested restore for v1); the
 
 ### Process addendum — 2026-09-02 (primary handed back; cadence)
 
-- **Primary development handed back** from the secondary agent (Ash's Intel
-  mac) at 10:30Z. Handover docs are OFF-REPO by Ash's instruction (the shared
+- **Primary development handed back** from the secondary agent (the maintainer's Intel
+  mac) at 10:30Z. Handover docs are OFF-REPO by the maintainer's instruction (the shared
   `~/Public/stellarindex-handover/` folder; copied to the primary's machine).
   State at hand-off: r1 **v0.57.0**, 20/21 coverage axes, 1 alert
   (`galexie-archive-fill`, #475). **testnet + futurenet are v0.51.0 — six
@@ -145,11 +145,11 @@ is superseded by D2** (single box with tested restore for v1); the
   block #480, `data-freshness.sh` #477, `tier1_schema.sql` #482) — byte-
   identical to the role's render, backups in `/root/`, drift shows nothing.
 - **Cadence: direct-to-main, no PRs, until the 1.0 launch announcement**
-  (Ash, 2026-09-02: "PR per unit has really slowed us down"). This is the
+  (the maintainer, 2026-09-02: "PR per unit has really slowed us down"). This is the
   explicit agreement `maintainer-workflow.md` says may override its
   PR-per-unit default. Still binding: `verify.sh` green before every push,
   the no-orphan-work contract (no branches → no orphans; never leave one),
-  and money/auth/migration changes called out to Ash explicitly.
+  and money/auth/migration changes called out to the maintainer explicitly.
 - **Stopped on purpose, do not resume as-is:** #371 F1 (decoder panic —
   guard the four `dispatcher.go` decode seams + `Matches`, change nothing
   about exit codes) and the three doc-truth diffs (each adds new false
@@ -220,30 +220,30 @@ and emits throughput gauges), #357 F1 (nine downs said "loud" and DELETEd —
 now RAISE), #358 (phantom `sdex-offers` gap target dropped), #475 (AWS
 listing retries), #332 F3/F5/F7/F8, #368 M4 + M5. Closed on verification
 later the same day: #339, #343. Labelled `post-v1` (deliberate features,
-not defects): #349–#352. Labelled `needs-ash`: #334 (no MX / SPF / DMARC —
+not defects): #349–#352. Labelled `needs-owner`: #334 (no MX / SPF / DMARC —
 re-verified with dig; exact records posted on the issue).
 Corrected in place: #371 F2 is DONE (alert exists), not metric-only.
 Partially addressed with remaining scope commented: #346, #362, #331, #371.
 Verified still open, scoped: #374 (needs a provenance column + fallback
 query), #368 M5 (reaper-liveness clause), #478 (per-source vs per-asset —
-Ash), #372, #340, #357 F2-F14, #358 items 2-6, #359-#363, #335 (10 of 11),
-#338, #336, #444, #459 (Ash), #427 (Ash), #443 (codified; CI vault now has
+the maintainer), #372, #340, #357 F2-F14, #358 items 2-6, #359-#363, #335 (10 of 11),
+#338, #336, #444, #459 (the maintainer), #427 (the maintainer), #443 (codified; CI vault now has
 the var — verify the assertion clears, then close).
 
 **Also fixed on the way.** `verify.sh` had failed on every maintainer Mac
 (BSD sed `\s`) — 9/9 now; `lint-migration-immutability` baseline refreshed
 for the down-only edits per its own "editing is safe" path.
 
-**Process.** Direct-to-main, no PRs, until the 1.0 announcement (Ash,
+**Process.** Direct-to-main, no PRs, until the 1.0 announcement (the maintainer,
 2026-09-02). Dependabot #431, #412, #430 merged (CI green after rebase);
-the only open PR is #237 (legal pages — Ash's, parked). Branches: main +
-#237 only. Second pass (Ash, 16:30Z): every remaining issue goes through
+the only open PR is #237 (legal pages — the maintainer's, parked). Branches: main +
+#237 only. Second pass (the maintainer, 16:30Z): every remaining issue goes through
 verify-at-HEAD → propose → adversarial review → fix → verify → close with
 evidence; ten read-only verifier agents dispatched by area, fixers follow.
 
 ### Execution log — 2026-09-02 (evening: verified issue-clearing wave)
 
-**Method, set by Ash.** Every issue goes verify-at-HEAD → propose →
+**Method.** Every issue goes verify-at-HEAD → propose →
 adversarial review of the proposal → fix → independent verification →
 close with evidence. No issue closes on a self-report. Ten read-only
 verifiers re-checked every open issue against HEAD first; their reports
@@ -254,7 +254,7 @@ caught a patch that would have silently reverted the same day's cache fix
 in `cdn-setup.md`, and two `Matches` call sites the poison-ledger fixer's
 own census had missed.
 
-**Cadence.** Direct-to-main, no PRs, per Ash 2026-09-02. 43 commits.
+**Cadence.** Direct-to-main, no PRs, per the maintainer 2026-09-02. 43 commits.
 
 **Closed on evidence (11):** #339 #343 #344 #357 #358 #360 #362 #427
 #444 #475 #483.
@@ -270,7 +270,7 @@ own census had missed.
   in 190 of 203 rows**, and regenerating it surfaced a real operational
   fact: 15 alerts carry `severity: informational`, which alertmanager
   routes to a receiver with no config block. They fire, are accepted, and
-  reach nobody. Filed as #485; the policy half is Ash's.
+  reach nobody. Filed as #485; the policy half is the maintainer's.
 - **#475 — `galexie-archive-fill` had been failing ~1 run in 3** on
   `sort | head` under `pipefail`: `head` closes the pipe, systemd's
   `IgnoreSIGPIPE` turns the signal into EPIPE, `sort` exits 2. The August
@@ -334,7 +334,7 @@ close times match to the second. **Consequence: pubnet's ledgers/day
 jumps ~13% on upgrade**, so anything sizing a window, a retention horizon
 or a capacity plan from ledgers/day needs re-checking before then.
 
-**Still open and genuinely Ash's:** #334 (no MX/SPF/DMARC — records
+**Still open and genuinely the maintainer's:** #334 (no MX/SPF/DMARC — records
 posted), #345 (decks beyond the in-repo proposal), #346 F1/F4 (audit-log
 retention is a comment nothing enforces; the privacy page offers erasure
 that PRV-1 dropped), #378 (staging target, or retire the k6 role in
@@ -391,7 +391,7 @@ change-driven oracle), #485 (whether those 15 alerts should reach anyone).
   inputs; this is about not losing evidence, not about pricing from them.
 - **Composite ≥2 routes per thin target** (the D1 fix — makes corroboration
   real rather than config-dead).
-- **ToS / Privacy pages** — absent. **Launch-blocking.** [D — wording is Ash's]
+- **ToS / Privacy pages** — absent. **Launch-blocking.** [D — wording is the maintainer's]
 - **Second public host into the launch gate** (W6).
 - **Runbooks: 79 of 149 are >90d stale**, including the DR / paging family.
   **Rollback has never been rehearsed.** Both go into W7.
@@ -399,7 +399,7 @@ change-driven oracle), #485 (whether those 15 alerts should reach anyone).
   trimming during a genuine −2% drift (not bad data) — an engineering item on
   the trimmer (drift-aware sigma), NOT a bypass.
 
-**Calendar is a fork** (depends on the external-review disposition, Ash's
+**Calendar is a fork** (depends on the external-review disposition, the maintainer's
 call): **3.5–4.5 wk** if external review is post-launch (signed off as such);
 **5–7 wk** if pre-launch.
 
@@ -407,15 +407,15 @@ call): **3.5–4.5 wk** if external review is post-launch (signed off as such);
 #### Afternoon addendum — 2026-08-28 (executed after the refresh above)
 - [V] **Testnet archive re-export live on the new schema.** Wipe of 1,555,392 objects finished 11:02Z; `galexie-backfill` restarted 11:58Z under `Restart=on-failure` with backfill-only vars (#230: `galexie_backfill_ledgers_per_file=64`, `files_per_partition=1000`); bucket manifest confirms `ledgersPerBatch:64, batchesPerPartition:1000`; reader-compat probe `ch-backfill 2..1025 -parallel 1` passed (785 ledgers/s, 111 MB RSS). tip-lag/contiguity/tier-a timers PAUSED for the window (tier-a state reset); re-enable after export + the tip-lag parser fix (#234).
 - [V] **issuer-flags backlog drained** in one bounded run: 48,981/59,192 flagged (383 auth_required, 2,202 clawback); 10,211 absent = outside the lake's captured window.
-- [V] **NEEDS-DATA closures:** 13b `account_activity` watermark at lake tip (30.7M rows); 14b already codified (`04-users.yml` sets `/srv/history-archive` 0755); 1c explained — the network page's `total_coins` (~105B, includes the 2019 burn account) vs `/v1/assets/native` 50.0018B (burn-excluded) = the 2.11× — a captioning fix, not a data bug. 8c/8d have no definitions in-repo (private mirror) — Ash to supply or drop.
+- [V] **NEEDS-DATA closures:** 13b `account_activity` watermark at lake tip (30.7M rows); 14b already codified (`04-users.yml` sets `/srv/history-archive` 0755); 1c explained — the network page's `total_coins` (~105B, includes the 2019 burn account) vs `/v1/assets/native` 50.0018B (burn-excluded) = the 2.11× — a captioning fix, not a data bug. 8c/8d have no definitions in-repo (private mirror) — the maintainer to supply or drop.
 - [V] **W5.3 is build work** (no `usd-volume-restamp` tool exists yet) → engineering wave. **W5.4 precondition holds** (9 burn>mint contracts, all within the 39 watched) but the runbook's 2M-ledger `ch-rebuild` dry-run drove r1 load to 12.9 and starved the aggregator's supply refresher (39-contract `supply_refresh_error_dominant`, cleared once killed). Root mechanism: the heavy-job wrapper's CPU/IO weights do not reach inside ClickHouse; ops readers connect as the default CH user with no priority profile (only the API has ADR-0048's `api_serving`). Retry requires an `ops_batch` CH profile + client option, smaller windows, off-peak.
 - [V] **CVE items were stale:** CVE-2026-56865/-56864/-17106 were bumped in f319060d (#169, 2026-08-25); `govulncheck` 0; `security.yml` dispatched and green.
 - [V] **New defect found via main CI:** `TestAsyncSink_StopDrainsPendingRows_NoChannelClose` flaked on the ansible-only #230 merge; reading the sink shows an in-flight steady-state flush is aborted (rows counted lost) when `Stop()` races it — shutdown data-loss in the raw `soroban_events` landing zone on every indexer restart. Fix in flight with a stress-proven test.
-- Wave A landed: #230, #231, #236 merged; #232–#235 queued behind main-green; #237 (ToS/Privacy) is a DRAFT for Ash's legal review.
+- Wave A landed: #230, #231, #236 merged; #232–#235 queued behind main-green; #237 (ToS/Privacy) is a DRAFT for the maintainer's legal review.
 
 
 #### Evening addendum — 2026-08-28 (Waves A–C landed; Wave B implementation in review)
-- [V] **Wave A**: #231 #232 #233 #234 #235 #236 #238 merged (7/8); #237 ToS/Privacy remains a DRAFT for Ash. Wave A nits → #253.
+- [V] **Wave A**: #231 #232 #233 #234 #235 #236 #238 merged (7/8); #237 ToS/Privacy remains a DRAFT pending legal review. Wave A nits → #253.
 - [V] **Wave C — all 12 must-verify runbooks were BROKEN** against HEAD (rule paths, Patroni/replica procedures on a single-node host, `db-primary.internal`, `pgrep` without `-f`, thresholds, severities). Corrected one-fixer-per-runbook + adversarial verify → #239 merged; operator live checks on r1 (patronictl/etcdctl absent, `pg_up == 0` loaded, pgbackrest root+postgres) PASS. **[DECIDE]** single-node r1 has no "promote a replica" path — pgBackRest restore is the only unrecoverable-primary option; accept, or prioritise the Patroni playbook.
 - [V] **Wave B designs** → #242 merged (`docs/design/`). Implementation PRs, each fixer→adversarial-verifier, all merge cleanly onto main (train-tested, 0 conflicts): #244 time-local outlier filter (root cause of `outlier_storm` and the 5× XLM/GBP freezes — every one a genuine move mis-scored by whole-window MAD), #245/#247/#248 oracle capture-totality PR1–3 (raw AssetType → decoders emit → consumers safe; no migration), #246 composite-route corroboration **DECLINED per design §10** (verifier proved a USD-FX hub route suppresses a real manipulation freeze) — **[DECIDE]** add `crypto:XLM/crypto:BTC` as a served pair for a real second route, or accept freeze-and-release.
 - [V] **New defects found and fixed (root cause, not symptom)**: #240 AsyncSink Stop() lost the in-flight batch on every deploy (merged; siblings → #252); #243 ops CH jobs ran as `default` at serving priority → `ops_batch` identity (merged, off by default; per-host enable is operator work); #249 testnet `/v1/assets/native` served the mainnet 50B constant; #254 `assets_popular_priceless` — XLM SAC accepted as a quote proxy but never priceable as base/hop while Aquarius writes swap direction; gap-detector `COUNT(DISTINCT ledger)` on the 257 GB `soroban_events` (no ledger index, no chunk exclusion, 2h inherited statement_timeout) drove load 19 and 503s → fix in progress (answer from `ledger_ingest_log`).
@@ -425,8 +425,8 @@ call): **3.5–4.5 wk** if external review is post-launch (signed off as such);
 - Progress: Wave A 88% · B ~70% · C 100% · D 0% · overall ~47%.
 #### Night addendum — 2026-08-29 00:00–02:00Z (v0.48.0 deployed; backups provisioned)
 - [V] **v0.48.0 cut and deployed to r1** (tag 11d41201 = code ffc04a7e; deploy run 33223475389): api/aggregator/indexer/ops all v0.48.0, skew 0, healthz/readyz 200; hot-account `/v1/accounts/{id}/operations` 8 s → 0.2–0.6 s (#281), 0×5xx since; time-local outlier filter live (`venue_vwap` gauges present). **All 34 repo `rules.r1` files applied** (r1 had lagged the repo: 8 stale, 2 missing), promtool ok, reload ok. **Alerts firing: deadman only.**
-- [V] **Backups (Ash go)**: S3 bucket `stellarindex-pgbackrest-r1` (eu-central-1, SSE-S3, public blocked, lifecycle abort-mpu 1d + expire 28d), least-privilege IAM user, AWS Budgets $30 tag-scoped + $50 account-wide (alerts to Ash). Secrets in the r1 vault; local inventory wired (repo2 retention 1 full / 7 d ≈ $12–17/mo). **Not yet applied on r1** — waits for #272 (template) + #294 (no ClickHouse restart on users.d apply) to merge. ZFS rolling snapshots (3 d CH / 7 d PG, 2 TiB min-free guard, fail-closed) → #295. Status-page backup panel + `/v1/diagnostics/backups` + `backup_offsite_stale` alert → #293. **Correction**: the AWS Public Blockchain dataset is complete (1,003 partitions, 0..64.19M); no Deep-Archive duplicate needed — ADR-0043 wording amendment + weekly completeness monitor → #287.
-- [V] **Design §10 amended (Ash)**: composite XLM/USD × USD/GBP corroborates/refutes single-venue freezes on the current bucket, never VWAP/source_count; leg-breadth + leg-dispersion guards; 2 % release band → #288 (verified, protected class).
+- [V] **Backups (the maintainer go)**: S3 bucket `stellarindex-pgbackrest-r1` (eu-central-1, SSE-S3, public blocked, lifecycle abort-mpu 1d + expire 28d), least-privilege IAM user, AWS Budgets $30 tag-scoped + $50 account-wide (alerts to the maintainer). Secrets in the r1 vault; local inventory wired (repo2 retention 1 full / 7 d ≈ $12–17/mo). **Not yet applied on r1** — waits for #272 (template) + #294 (no ClickHouse restart on users.d apply) to merge. ZFS rolling snapshots (3 d CH / 7 d PG, 2 TiB min-free guard, fail-closed) → #295. Status-page backup panel + `/v1/diagnostics/backups` + `backup_offsite_stale` alert → #293. **Correction**: the AWS Public Blockchain dataset is complete (1,003 partitions, 0..64.19M); no Deep-Archive duplicate needed — ADR-0043 wording amendment + weekly completeness monitor → #287.
+- [V] **Design §10 amended (the maintainer)**: composite XLM/USD × USD/GBP corroborates/refutes single-venue freezes on the current bucket, never VWAP/source_count; leg-breadth + leg-dispersion guards; 2 % release band → #288 (verified, protected class).
 - [V] ClickHouse drop-size guard: r1's 1 TiB was a hand edit never in ansible → #286 merged (pin 50 GiB + live verify; apply pending: remove the hand file first).
 - Open lane (all verified): #248 #249 #250 #251 #252 #253 #254 #258 #256 #246 #263 #265 #266–#274 #280 #287 #288 #293 #294 #295. r1 applies pending after merges: ops_batch enable, pgBackRest repo2, ZFS snapshots, drop-guard.
 - Progress: Wave A 88% · B ~80% · C 100% · D early ~70% · overall ~58%.
@@ -476,7 +476,7 @@ outstanding set:
   CEST, 34min, systemd Result=success/exit 0): pgBackRest restore →
   table-presence + ledger-hash-continuity + trade-count checks → clean
   teardown. Restore-from-backup is proven; W6.6's decision is no longer
-  blind (the provisioning of the OFF-SITE copy stays Ash-deferred).
+  blind (the provisioning of the OFF-SITE copy stays owner-deferred).
 - **W5.1 — ✅ CONFIRMED SATISFIED.** `contract_instance_changes` floor =
   50,457,429 = Soroban activation exactly; nothing earlier exists.
 - **W5.2 — ✅ COMPLETE (stale text).** dfees is fully modelled
@@ -1012,7 +1012,7 @@ there produces a credential with no consumer. Rotate; do not mint. Corrected
 **W6.4 — [OP] launch-flip toggle, not a defect.** Re-arm the deploy approval
 gate at the production flip: `gh variable delete DEPLOY_APPROVAL_RELAXED` + r1
 Required-reviewers. *(The relaxed state is an ACCEPTED risk-until-launch, not an
-open bug — Ash accepted it 2026-08-15 per NS-4/CID-4: the gate fails **closed**
+open bug — the maintainer accepted it 2026-08-15 per NS-4/CID-4: the gate fails **closed**
 and the relaxation is honest/visible, so there is nothing to "fix," only the
 one-line toggle to delete the variable at the flip.)*
 
@@ -1023,7 +1023,7 @@ risk-accepted. **Sequence after W4.1's manual drill run** — W4.1's *code* is n
 DONE (BDR-03, `dd7b995b`); the only thing left before this decision is no longer
 blind is the one **r1-ops** run of the drill (r1-ops #3) to get a current
 verdict. The provisioning itself (BDR-01/02/05: offsite pgBackRest repo2, off-box
-CH copy, owned deep-history copy) stays Ash-deferred ("sort after").
+CH copy, owned deep-history copy) stays owner-deferred ("sort after").
 
 **W6.7 — [OP]** Announcement copy; first-24h watch staffed. Gate on W6.1 and
 on the anomaly-freeze decision (D1) — otherwise the watch opens with a pager
@@ -1054,33 +1054,33 @@ possible from data we already serve but don't visualise.
 ---
 
 
-### D — Decisions RESOLVED 2026-08-29 (Ash)
+### D — Decisions RESOLVED 2026-08-29 (the maintainer)
 
 Recorded so nothing below is re-litigated. Where a row here disagrees with the
-older `### D — Decisions only Ash can make` table further down, **this is right**.
+older `### D — Decisions only the maintainer can make` table further down, **this is right**.
 
 | # | Decision | Basis |
 |---|---|---|
-| **D1** | **RATIFIED.** Anomaly-freeze: implement by shipping the composite-reference corroboration (#288), not by editing the alert. Live in v0.50.0 on r1 since 2026-08-29 ~21:00Z; verification is `increase(stellarindex_anomaly_freeze_engaged_total[24h])` **plus** `stellarindex_aggregator_composite_freeze_suppressed_total > 0` (the second proves the mechanism engaged rather than the market being calm) at ~21:00Z 2026-08-30. | Ash, explicit |
-| **D2** | **ACCEPTED-RISK + tested restore at v1.** Single box per region; multi-region ratified (ADR-0050) but deferred post-v1 with the reasoning in `docs/architecture/multi-region-ha.md` §0c. | Ash, "trust your recommendations" |
-| **D3** | **SIGNED OFF.** ClickHouse posture = ADR-0043 §2.1 schema+state snapshot + re-derive, plus the rolling ZFS snapshots that went live 2026-08-29. Do NOT resurrect full-lake copies. | Ash, explicit |
-| **D4** | **BUILD ALL THREE.** Order-book depth (#337), DEX TVL (#338), per-token oracle pages (#336). No retraction of site copy. | Ash, explicit |
-| **D5** | **ACCEPTED — but the basis I first recorded was WRONG and is corrected here.** Nothing in the served tier is pruned except `api_usage_events` (12 months, migration 0027). Migration **0031** removed retention from `trades`, `prices_1m` and `prices_15m`; **0040** removed it from `oracle_updates`; migration 0116 documents that the only surviving `add_retention_policy` in the tree is `api_usage_events`, verified against r1's live `timescaledb_information.jobs` on 2026-07-25 — re-verified 2026-08-29 (one registered retention job: api_usage_events, last success 08-28). Live data confirms it: `trades` holds 2018-07-01→now (738,248,187 rows), `oracle_updates` 2025-09-09→now. **So the v1 contract is 'we retain everything we index', not a set of windows.** My first draft of this row listed 30/90-day windows as the contract; that would have published a false and self-harming limit. The real limits worth stating to customers are COVERAGE, not retention: on-chain SDEX trades begin 2026-03-12 (see #349), CEX series begin 2018-07-01 (Kraken) and 2026-05-05 (Binance/Coinbase/Bitstamp). | Ash, "trust your recommendations"; corrected 2026-08-29 |
-| **D6** | **ACCEPTED as documented-unfillable.** Genesis edge [2 → 287,404]; recover via op-replay if ever needed. | Ash, "trust your recommendations" |
-| **D8** | **OVERRIDDEN → FIX FOR v1** (was: post-v1). The `*_FUNDAMENTAL` RedStone feeds publish a NAV ratio in BTC but are registered `quote=fiat:USD`, so `/v1/oracle/streams` serves `crypto:SolvBTC.BBN_FUNDAMENTAL = $1.00` for a token worth ~$78,313. Contained (RedStone is `IncludeInVWAP=false`, so no published price is wrong) but publicly visible with `mapped=true`. Fix in flight. | Ash, explicit |
-| **D9** | **DROPPED.** Stripe C3-081 reconcile closed as a formal DROP citing ADR-0049 (anon/free/partner access model). | Ash, "trust your recommendations" |
-| **D10** | Privacy review reduced to a sign-off, carried by PR #237 (Ash's legal read). | unchanged |
-| **DR** | **SIGNED OFF.** Off-site posture accepted: pgBackRest repo2 in S3 (AES-256, 1 full + 7 d diffs, ~$12–17/mo) + rolling ZFS snapshots. As of 2026-08-29 the nightly job writes **every** configured repo (repo1 diff 551 s, repo2 diff 466 s, both rc=0) — previously repo1 only. | Ash, explicit |
-| **W6.1** | **CLOSED.** Paging wired and proven: Discord (pages + alerts) and a Healthchecks.io dead-man, `alertmanager_notifications_total` incrementing on both integrations with 0 failures. | Ash supplied credentials |
+| **D1** | **RATIFIED.** Anomaly-freeze: implement by shipping the composite-reference corroboration (#288), not by editing the alert. Live in v0.50.0 on r1 since 2026-08-29 ~21:00Z; verification is `increase(stellarindex_anomaly_freeze_engaged_total[24h])` **plus** `stellarindex_aggregator_composite_freeze_suppressed_total > 0` (the second proves the mechanism engaged rather than the market being calm) at ~21:00Z 2026-08-30. | the maintainer, explicit |
+| **D2** | **ACCEPTED-RISK + tested restore at v1.** Single box per region; multi-region ratified (ADR-0050) but deferred post-v1 with the reasoning in `docs/architecture/multi-region-ha.md` §0c. | the maintainer, "trust your recommendations" |
+| **D3** | **SIGNED OFF.** ClickHouse posture = ADR-0043 §2.1 schema+state snapshot + re-derive, plus the rolling ZFS snapshots that went live 2026-08-29. Do NOT resurrect full-lake copies. | the maintainer, explicit |
+| **D4** | **BUILD ALL THREE.** Order-book depth (#337), DEX TVL (#338), per-token oracle pages (#336). No retraction of site copy. | the maintainer, explicit |
+| **D5** | **ACCEPTED — but the basis I first recorded was WRONG and is corrected here.** Nothing in the served tier is pruned except `api_usage_events` (12 months, migration 0027). Migration **0031** removed retention from `trades`, `prices_1m` and `prices_15m`; **0040** removed it from `oracle_updates`; migration 0116 documents that the only surviving `add_retention_policy` in the tree is `api_usage_events`, verified against r1's live `timescaledb_information.jobs` on 2026-07-25 — re-verified 2026-08-29 (one registered retention job: api_usage_events, last success 08-28). Live data confirms it: `trades` holds 2018-07-01→now (738,248,187 rows), `oracle_updates` 2025-09-09→now. **So the v1 contract is 'we retain everything we index', not a set of windows.** My first draft of this row listed 30/90-day windows as the contract; that would have published a false and self-harming limit. The real limits worth stating to customers are COVERAGE, not retention: on-chain SDEX trades begin 2026-03-12 (see #349), CEX series begin 2018-07-01 (Kraken) and 2026-05-05 (Binance/Coinbase/Bitstamp). | the maintainer, "trust your recommendations"; corrected 2026-08-29 |
+| **D6** | **ACCEPTED as documented-unfillable.** Genesis edge [2 → 287,404]; recover via op-replay if ever needed. | the maintainer, "trust your recommendations" |
+| **D8** | **OVERRIDDEN → FIX FOR v1** (was: post-v1). The `*_FUNDAMENTAL` RedStone feeds publish a NAV ratio in BTC but are registered `quote=fiat:USD`, so `/v1/oracle/streams` serves `crypto:SolvBTC.BBN_FUNDAMENTAL = $1.00` for a token worth ~$78,313. Contained (RedStone is `IncludeInVWAP=false`, so no published price is wrong) but publicly visible with `mapped=true`. Fix in flight. | the maintainer, explicit |
+| **D9** | **DROPPED.** Stripe C3-081 reconcile closed as a formal DROP citing ADR-0049 (anon/free/partner access model). | the maintainer, "trust your recommendations" |
+| **D10** | Privacy review reduced to a sign-off, carried by PR #237 (the maintainer's legal read). | unchanged |
+| **DR** | **SIGNED OFF.** Off-site posture accepted: pgBackRest repo2 in S3 (AES-256, 1 full + 7 d diffs, ~$12–17/mo) + rolling ZFS snapshots. As of 2026-08-29 the nightly job writes **every** configured repo (repo1 diff 551 s, repo2 diff 466 s, both rc=0) — previously repo1 only. | the maintainer, explicit |
+| **W6.1** | **CLOSED.** Paging wired and proven: Discord (pages + alerts) and a Healthchecks.io dead-man, `alertmanager_notifications_total` incrementing on both integrations with 0 failures. | The maintainer supplied credentials |
 
-**Still open and genuinely Ash-only:** PR #237 (legal read), external security-review booking, credential rotation for anything session-exposed (see the note on MinIO root below), and signing the accepted-risk list once drafted.
+**Still open and genuinely owner-only:** PR #237 (legal read), external security-review booking, credential rotation for anything session-exposed (see the note on MinIO root below), and signing the accepted-risk list once drafted.
 
 **D7 is not a decision — it is work I owe:** the C4-012/13 third-alias thin-pool VWAP surface needs a deliberate review before public traffic.
 
 **Correction to the security gate row:** it names `ratesengine-admin`, a pre-rename credential. Verified on r1 2026-08-29: MinIO root is now `stellarindex-admin` (40-char secret) and MinIO was restarted 2026-07-27, i.e. after the 2026-07-25 plaintext exposure. Whether the *password* rotated at that restart or only the username is not evidenced either way, so rotation is still worth doing on its own merits.
 
 
-### D — Decisions only Ash can make
+### D — Decisions only the maintainer can make
 
 **D1 — [V] Anomaly-freeze pages on CORRECT prices.** Verified worsening:
 `stellarindex_anomaly_freeze_engaged_total{class="default"}` was 382 on
@@ -1114,7 +1114,7 @@ model is now recorded in **ADR-0049** (`7ae91445`, audit-2026-08-14), which is
 the documented basis; close C3-081 as a formal DROP citing it.
 
 **D10** Privacy review — **reduced to a sign-off, not an engineering review.**
-GDPR Art.17 erasure was DROPPED as overdesigned (PRV-1, Ash 2026-08-15: not
+GDPR Art.17 erasure was DROPPED as overdesigned (PRV-1, Maintainer 2026-08-15: not
 storing user data meaningfully). Privacy hygiene is addressed in code:
 magic-link reaper (PRV-2, `828de74c`) bounds the unauth-writable table; IPs
 are documented with their retention rationale (PRV-3, `0b3a783c`). What remains
@@ -1136,10 +1136,10 @@ is a lightweight documentation sign-off, not open work.
 >   bug, a captioning one — and the caption shipped in #250, pinned by
 >   `LedgerView.test.tsx` asserting "ledger header · includes the 2019 burn".
 >   Closed.
-> - **8c / 8d confidence data-halves — BLOCKED ON ASH.** These two have **no
+> - **8c / 8d confidence data-halves — BLOCKED ON THE OWNER.** These two have **no
 >   definition anywhere in the repo**; they exist only in the private audit
 >   mirror. They cannot be measured, reproduced or closed by anyone working
->   from this repository. Ash to supply the definitions or drop the items —
+>   from this repository. the maintainer to supply the definitions or drop the items —
 >   they are the only NEEDS-DATA entries still open, and the only thing
 >   standing between W8 and fully closed.
 
@@ -1295,7 +1295,7 @@ one — they are lead-time items, not sequenced work.
   tx_hash_index_parity assertion (live+green on r1, ansible-codified),
   intra_ledger_seq backfill plan (post-launch), decompress-first
   replay runbook. Background: prices_* cagg refresh finishing.
-  **Everything remaining is YOURS, Ash** (in priority order): (1) wire
+  **Everything remaining is YOURS, the maintainer** (in priority order): (1) wire
   paging (~20 min turnkey) → I run the SEV drill on your word; (2)
   book the external security review; (3) the decisions list (§3/§4:
   accepted-risk sign-off, off-site backup, HA posture, freeze-paging
@@ -1352,9 +1352,9 @@ one — they are lead-time items, not sequenced work.
   completeness dirty-window hardening + 19,366 lake-classified cctp
   twins deleted; specs → 1.18.0, migrations 0124+0125). §2.6b is now
   COMPLETE (all three passes). v0.21.9 (audit payload) cutting now
-  under Ash's standing word.
+  under the maintainer's standing word.
 
-- 2026-07-31 ~23:00Z — 🚀 **v0.21.8 CUT + DEPLOYED on Ash's word**
+- 2026-07-31 ~23:00Z — 🚀 **v0.21.8 CUT + DEPLOYED on the maintainer's word**
   ("you can cut and deploy whenever you want"). Release build green
   (11 assets), deploy green, smoke 13/13, live version v0.21.8.
   Payload: redstone state-write attribution + soroswap
@@ -1422,7 +1422,7 @@ one — they are lead-time items, not sequenced work.
   worst bespoke battery ~1.9s / op-mix ~70ms even UNDER replay load —
   the live failures were saturation × request budgets, now removed
   from the user path. Holders cache verified already stale-serving.
-  All four of Ash's live-site reports now have merged fixes riding
+  All four of the maintainer's live-site reports now have merged fixes riding
   v0.21.8 (Go) + CF (web). §2.6b pass 3 substantially advanced.
 
 - 2026-07-31 ~12:30Z — 🧹 **Morning batch: both live-site bug classes
@@ -1511,7 +1511,7 @@ one — they are lead-time items, not sequenced work.
   mint_and_withdraw at 10× (7-dec vs 6-dec). Honest all-time flows:
   **inbound $11.87M / outbound $3.87M / net +$8.00M USDC; 851
   depositors, 8,803 recipients** (my earlier "$148.6M" quote was the
-  inflated formula — corrected to Ash). Spec 1.15.0. Operator
+  inflated formula — corrected by the maintainer). Spec 1.15.0. Operator
   cleanup candidate: drop the stale legacy duplicate rows (queries
   are safe regardless).
 
@@ -1555,7 +1555,7 @@ one — they are lead-time items, not sequenced work.
   endpoints + UI. r1 queue: replay → k6 → ops_by_source backfills +
   0123 CONCURRENT indexes → deploy.
 
-- 2026-07-30 ~15:30Z — 🔬 **Ash's GDVJM report root-caused + fixed in
+- 2026-07-30 ~15:30Z — 🔬 **the maintainer's GDVJM report root-caused + fixed in
   code: the account-history sourced arm was a 6-second bloom probe.**
   The account has only 328 ops — the cost was the READ SHAPE, not the
   account: `source_account = ?` bloom-probes the whole 23B/34B-row
@@ -1568,7 +1568,7 @@ one — they are lead-time items, not sequenced work.
   queue behind the replay. ALSO: address-intelligence build delegated
   (agent, worktree): /v1/accounts/{g}/trades (565.5M trades already
   carry source_account, 99.9998%) + /v1/accounts/{g}/activity
-  (segmented op/DeFi/bridge breakdown) + explorer UI — Ash's "see
+  (segmented op/DeFi/bridge breakdown) + explorer UI — the maintainer's "see
   everything every address has been doing" directive.
 
 - 2026-07-30 ~14:40Z — 🔧 **k6/AC2 path unblocked; run queued behind the
@@ -1588,7 +1588,7 @@ one — they are lead-time items, not sequenced work.
 - 2026-07-30 ~12:30Z — 🏁 **ROUTE GATE CLOSED: 0×5xx across all 94
   routes** (evidence: `evidence/2026-07-30-route-sweep-zero.md`),
   taken deliberately under replay saturation minutes after a restart.
-  The closing move came from Ash's architectural instinct ("don't we
+  The closing move came from the maintainer's architectural instinct ("don't we
   have near-instant access to balances?"): account trustline/offer
   reads rode the account_id bloom index — rewritten as key_xdr
   PK-prefix ranges (**5.18s → 0.069s measured, 75×**), so account
@@ -1600,7 +1600,7 @@ one — they are lead-time items, not sequenced work.
   Remaining: 17/17 verdict when the replay lands (~16:30Z, waiter
   armed) + k6 result + the operator-only list.
 
-- 2026-07-30 ~10:45Z — 🚀 **v0.21.5 CUT + DEPLOYED (Ash's word); final
+- 2026-07-30 ~10:45Z — 🚀 **v0.21.5 CUT + DEPLOYED (the maintainer's word); final
   acceptance nearly closed.** Deploy green (all 5 binaries; smoke
   13/13; one transient gh-watch network blip — the run itself
   succeeded). **Route-sweep: 94 routes → 93 clean.** The spill fix
@@ -1630,7 +1630,7 @@ one — they are lead-time items, not sequenced work.
   SKIP relaunched windows (unique job names per attempt); compressed-
   chunk DML needs the per-session decompression-cap raise. **Every
   data-quality item in the plan is now closed**; the only remaining
-  loop-executable work is the v0.21.5 chain, on Ash's word.
+  loop-executable work is the v0.21.5 chain, on the maintainer's word.
 
 - 2026-07-30 ~02:30Z — ✅ **verify-usd-volume CALIBRATED — the prove-it
   battery's last unfiled non-paging row** (evidence:
@@ -1682,7 +1682,7 @@ one — they are lead-time items, not sequenced work.
   Fixture-driven tests (real lake event + adversarial synthetic
   payloads), AGENTS.md + protocol page updated, verify green. **Needs
   v0.21.5 cut+deploy + projector-replay from 59,258,375 + full verify
-  to flip 17/17 — fourth tag, needs Ash's word (inbox #4 updated).**
+  to flip 17/17 — fourth tag, needs the maintainer's word (inbox #4 updated).**
   En route, also proven: the "legacy shape" hypothesis was WRONG — the
   pre-59.4M event schema is identical plus a bonus payload field; the
   blind class spans both WASM eras.
@@ -1701,7 +1701,7 @@ one — they are lead-time items, not sequenced work.
   readback. Then: reconcile 8/8 acceptance + route-sweep target
   0×5xx.
 
-- 2026-07-29 ~22:00Z — 🚀 **v0.21.4 CUT + DEPLOYED (Ash: "you can cut
+- 2026-07-29 ~22:00Z — 🚀 **v0.21.4 CUT + DEPLOYED (Maintainer: *"you can cut
   it"); chain running.** Sequence executed: CHANGELOG promoted (dup
   Added headers merged) → tag via guard-rail script → release.yml (11
   assets) → Step-1 DDL applied on r1 (`ttl_live_until` + MV; tip at
@@ -1828,11 +1828,11 @@ one — they are lead-time items, not sequenced work.
   (needs pool-storage decode); (4) discovered dead table:
   `sdex_offer_events` (migration 0026, nothing writes/reads it).
 
-- 2026-07-29 ~15:30Z — 🏗️ **Decision B9 RESOLVED by Ash + build started:**
+- 2026-07-29 ~15:30Z — 🏗️ **Decision B9 RESOLVED by the maintainer + build started:**
   per-token oracle layer = ALREADY SHIPPED (the July tier-valuation —
   blog/methodology copy to be updated); **BUILD: DEX TVL/liquidity
   aggregation + SDEX order-book depth + per-DEX volume/chart wiring**
-  (Ash: "any dex's and sdex I want the order book / depth for, as well
+  (Maintainer: *"any dex's and sdex I want the order book / depth for, as well
   as volume and charts and liquidity"); CEX order-book depth stays
   retracted post-v1. Build delegated to a fresh-context agent in a
   worktree (this session too deep for clean multi-unit feature work);
@@ -1895,7 +1895,7 @@ one — they are lead-time items, not sequenced work.
   supply publishing (137 snapshots/15 min); no backfills running.
   **Correction (the "quiet is not stale" trap caught the LOOP twice in
   one day, on the same table):** I read `max(ledger)` on
-  `account_observations` as a lagging/converging backlog and told Ash
+  `account_observations` as a lagging/converging backlog and told the maintainer
   it would "reach tip in ~1.5h". It is neither lagging nor converging —
   it is last WATCHED-ACCOUNT activity (SDF reserves move on multi-day
   cadence by design), the XLM anchor's dormant-accept path covers quiet
@@ -2351,7 +2351,7 @@ one — they are lead-time items, not sequenced work.
 - 2026-07-28 ~12:45Z — 📋 **v0.21.2 release prep: CHANGELOG curated and
   now complete.** The cut itself stays parked (one tag per session;
   v0.21.1 was this session's), but step 1 of /cut-release is done so the
-  cut is mechanical when Ash approves.
+  cut is mechanical when the maintainer approves.
 
   Audited `[Unreleased]` against `git log v0.21.1..HEAD`: **114 commits,
   30 of them code-bearing**, against 20 entries (5 Added / 15 Fixed —
@@ -2914,7 +2914,7 @@ one — they are lead-time items, not sequenced work.
 
   **AQUA went −13.2% → +0.18%** — its claimable component now reads
   13.74B, matching the size of the former understatement. This is the
-  fix Ash asked to have landed, and it is landed and evidenced.
+  fix the maintainer asked to have landed, and it is landed and evidenced.
 
   The three FAILs are NOT three problems:
   - **EURC + KALE are CS-102 casualties, not independent defects.** Both
@@ -3280,7 +3280,7 @@ the spec, so the wire-freeze prerequisite is met).
 > | **Alerts** | Residual: anomaly-freeze family (known [DECIDE]), dex informational ×6, cross-check ×3 (partial_wrap, dispositioned — Horizon-verified correct), compression pair (post-D4 item), metrics_registry_absent (informational), completeness (clears at next snapshot for sep41; redstone until decoder fix) |
 > | **Loop infra** | caffeinate held (workstation sleep killed timers 4×); cron guard hourly; unattended-upgrades bounced PG 04:24Z (libc — routine, non-incident) |
 >
-> **Ash's three items stand** (top of OPERATOR INBOX): wire paging,
+> **the maintainer's three items stand** (top of OPERATOR INBOX): wire paging,
 > book the security review, — and the SAC delete is now DONE/superseded.
 > **Next-release queue (code, no more tags this session):** redstone
 > decoder fix, TTL-classifier batch+settings fix, 40× table regression
@@ -3956,8 +3956,8 @@ doesn't serve that)**, first `verify-usd-volume -days 30` → calibrate the
 C4-055/066 alert. Also: SEV-1/2 paging drill + rollback rehearsal —
 evidence files have never been produced across three generations of plans.
 
-### 2.6b Final pre-launch passes (added 2026-07-31, Ash's ask)
-**Grounding incident (2026-07-31 ~09:45Z, Ash's live-site reports):**
+### 2.6b Final pre-launch passes (added 2026-07-31, the maintainer's ask)
+**Grounding incident (2026-07-31 ~09:45Z, the maintainer's live-site reports):**
 CCTP page missing its visual suite + roster "0 events" + /network/
 first-load "no operations in 24h" are ONE pattern: on-demand
 analytics builds miss the request budget on cold/loaded paths
@@ -4149,7 +4149,7 @@ invalidates an item. One plan; no forks._
 
 ## Addendum — 2026-08-29 morning (06:00–08:30Z)
 
-Lane state (serial, main-green after every squash): merged #304 #280 #268 #269 #274 #293 #300; open and green, in order: #271 → #295 → #287 → #303 → #307 → #305 → #261 → #252 → #253 → #254 → #262 → #246 → #297 → #256 → #285; #237 (legal) is Ash-only.
+Lane state (serial, main-green after every squash): merged #304 #280 #268 #269 #274 #293 #300; open and green, in order: #271 → #295 → #287 → #303 → #307 → #305 → #261 → #252 → #253 → #254 → #262 → #246 → #297 → #256 → #285; #237 (legal) is owner-only.
 
 Production (r1):
 - `--tags stellarindex` applied: era keys (`soroban_genesis_ledger`, `movements_floor_ledger`) + unit/timer drift; indexer/aggregator/api restarted, healthz/readyz 200. Tag-limited runs need `-e ansible_python_interpreter=/usr/bin/python3`.
@@ -4163,7 +4163,7 @@ Progress: Wave A 100% · Wave B ~88% · Wave C ~80% · Wave D 0% · overall ≈ 
 
 ## Addendum — 2026-08-29 midday (08:30–10:45Z)
 
-Process change (Ash): the second session files issues only; findings are remediated in one monolithic batch (fixer→verifier per issue, one integration branch, one PR, CI once). Squashes may be batched where logical; main's post-batch CI validates the batch and a red is bisected + fixed forward.
+Process change (the maintainer): the second session files issues only; findings are remediated in one monolithic batch (fixer→verifier per issue, one integration branch, one PR, CI once). Squashes may be batched where logical; main's post-batch CI validates the batch and a red is bisected + fixed forward.
 
 Shipped:
 - **v0.49.0** tagged at `1613a97f`, built (11 assets), deployed to r1 (run 33245533733, `migrations_skip=true` — zero new migrations since v0.48.0), verified served: indexer/aggregator/api v0.49.0, healthz/readyz 200, galexie untouched.
@@ -4173,7 +4173,7 @@ Shipped:
 - Merged: #285 #253 #246 #252 #307 #318 #314 #320 #313 #309 + morning set. Fixed forward: main red on `af5a9d1d` (#303 rule tests vs #297 rule text + stale Postman) → #320.
 - Alerts: `gap_detector_silent` fired 09:55Z after the aggregator restart (CounterVec absent until first scan; seeded schedule defers it) — cleared itself 10:00Z; #323 pre-registers the series so it cannot recur.
 
-Open lane: #261 (mapped-flag contract now implemented on the API side), #265 + #270 (rule-test text drift, fixed/fixing), #254 #256 #295 #323 (refreshed, CI), #288 (composite §10), #237 (Ash).
+Open lane: #261 (mapped-flag contract now implemented on the API side), #265 + #270 (rule-test text drift, fixed/fixing), #254 #256 #295 #323 (refreshed, CI), #288 (composite §10), #237 (the maintainer).
 
 Testnet backfill: resumed from 2,254,080 after the 5G-cap OOM; ~56% at 10:30Z, 0 restarts.
 

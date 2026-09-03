@@ -207,7 +207,7 @@ Pre-Soroban ledgers can't host the contract.
 
 | hash (first 16) | role | active range | reviewer | finding |
 | --- | --- | --- | --- | --- |
-| `6cdb9a3cdeec01a1` | StandardReference | L50,842,736 → L59,301,651 (walk-end; still current per live ingest through r1 tip L62,342,614) | ash@2026-04-29 | matches current decoder |
+| `6cdb9a3cdeec01a1` | StandardReference | L50,842,736 → L59,301,651 (walk-end; still current per live ingest through r1 tip L62,342,614) | maintainer@2026-04-29 | matches current decoder |
 
 ### `6cdb9a3cdeec01a1` — StandardReference, single hash, no upgrade
 

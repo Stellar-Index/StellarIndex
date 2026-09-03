@@ -130,7 +130,7 @@ For ETH/GBP and BTC/GBP (no real disjoint route by configuration) and for XLM/GB
 
 ### 10.1 Amendment (2026-08-29) — a composite reference may CORROBORATE or REFUTE the verdict
 
-Product decision (Ash, 2026-08-29), quoted: *"§10's 'an FX cross must never count as a second source' is too absolute. XLM/USD (multi-venue, deep) × USD/GBP (massive.com FX, very deep) is an excellent REFERENCE for XLM/GBP fair value."* And the spec amendment of the same day: *"the composite reference is only as strong as its weakest leg"* — the target/USD leg must itself be corroborated by ≥ N real exchange venues on the CURRENT bucket, and the FX leg must be fresh within its staleness budget and come from the fx source class (massive), never an oracle.
+Product decision (maintainer, 2026-08-29), quoted: *"§10's 'an FX cross must never count as a second source' is too absolute. XLM/USD (multi-venue, deep) × USD/GBP (massive.com FX, very deep) is an excellent REFERENCE for XLM/GBP fair value."* And the spec amendment of the same day: *"the composite reference is only as strong as its weakest leg"* — the target/USD leg must itself be corroborated by ≥ N real exchange venues on the CURRENT bucket, and the FX leg must be fresh within its staleness budget and come from the fx source class (massive), never an oracle.
 
 What changes, and what does not:
 
@@ -157,7 +157,7 @@ NOT EXAMINED: confidence.Compute weighting in full (used the orchestrator's reco
 - REQUIRES-LIVE-VERIFY: is the deployed aggregator binary on r1 built from a commit including dba24a90 (#203, binance XLMEUR + coinbase XLM-EUR)? Operator: `ssh r1 'stellarindex-aggregator --version'` and `psql -c "select source,count(*) from trades where base_asset='crypto:XLM' and quote_asset='fiat:EUR' and ts>now()-interval '1 hour' group by 1"` — expect 4 sources.
 - REQUIRES-LIVE-VERIFY: fx_quotes freshness for EUR and GBP and the massive key being live: `curl -s localhost:9090/api/v1/query?query=stellarindex_external_fx_last_quote_unix` and `psql -c "select ticker,max(bucket) from fx_quotes where ticker in ('EUR','GBP') group by 1"`.
 - REQUIRES-LIVE-VERIFY: current XLM/GBP confidence score distribution (is it ≥0.5 when 2 venues are active?) — `journalctl -u stellarindex-aggregator | grep 'freeze engaged' | grep 'crypto:XLM/fiat:GBP' | tail -50` and read confidence= in reason; this bounds how often the BTC→XLM→GBP nominal route could ever clear the floor.
-- Decision for Ash: accept freeze-and-auto-release as the signed posture for ETH/GBP and BTC/GBP (no real disjoint route by config), or fund the ETH/BTC venue-pair code change plus 30-day maturity?
+- Decision for the maintainer: accept freeze-and-auto-release as the signed posture for ETH/GBP and BTC/GBP (no real disjoint route by config), or fund the ETH/BTC venue-pair code change plus 30-day maturity?
 - Decision: should crypto:XLM/crypto:BTC be exposed on /v1/price as a served pair (it will be once aggregated), or should there be a served-pair allow-list distinct from the routing pair set?
 - Should the router's edge identity be extended with data-provenance keys (fx_quotes ticker rows) so USD-derived FX crosses are structurally non-disjoint, rather than relying on operators never configuring them?
 

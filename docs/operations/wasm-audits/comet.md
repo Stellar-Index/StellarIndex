@@ -225,7 +225,7 @@ current-state read sufficient when there's only one pool.
 
 | hash (first 16) | role | active range | reviewer | finding |
 | --- | --- | --- | --- | --- |
-| `8abc28913035c074` | Blend backstop pool (CAS3FL6T...) | L51,499,546 (first deploy) → r1 current tip (no upgrade) | ash@2026-04-29 | matches current decoder |
+| `8abc28913035c074` | Blend backstop pool (CAS3FL6T...) | L51,499,546 (first deploy) → r1 current tip (no upgrade) | maintainer@2026-04-29 | matches current decoder |
 
 ### `8abc28913035c074` — Blend backstop pool, single hash
 

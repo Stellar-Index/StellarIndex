@@ -8,7 +8,7 @@ status: ratified — embodied in `configs/ansible/roles/archival-node/`; r1 (Het
 
 > **Amendment (change made 2026-04-23, recorded here 2026-09-02): the `stellar-rpc` rows and columns below are historical.** r1 today runs **Galexie (with its own captive stellar-core subprocess) + ClickHouse + TimescaleDB + MinIO + the four `stellarindex-*` binaries** — there is no standalone `stellar-core` service and no `stellar-rpc` service (AGENTS.md "stellar-rpc is NOT in our production ingest path"; ingest is `internal/ledgerstream` → `internal/dispatcher`, ADR-0034). `stellar-rpc` survives only for the `rpc-probe` operator diagnostic and fixture capture. **Consequence for sizing: any row below that budgets for stellar-rpc over-provisions by one captive-core** (CPU, RAM and the second core DB). The hardware envelope is otherwise unchanged, and ClickHouse — which post-dates this spec — is the dominant disk consumer today (`multi-region-ha.md:126`).
 
-**Owner:** @ash + @alex (ops).
+**Owner:** the maintainer + @alex (ops).
 **Scope:** one node. Three of these ship into three regions; multi-
 region topology lives in
 [multi-region-topology.md](multi-region-topology.md).
@@ -350,7 +350,7 @@ Cheaper alternatives:
 - **Option C (Ryzen):** drop to ~$8 000 / node by using 7950X + 128 GB
   DDR5 + 4× 3.84 TB raidz1. Not recommended for validator promotion;
   acceptable for non-voting archival during Tranche I.
-- **Refurbished Dell R640 (existing):** @ash already owns at least
+- **Refurbished Dell R640 (existing):** the maintainer already owns at least
   one. R640 + 6× 3.84 TB NVMe = ~$2 000 marginal. Use as region-1
   node during bring-up; replace with new hardware only if measured
   performance is inadequate.

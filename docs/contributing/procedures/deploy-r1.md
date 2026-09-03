@@ -6,7 +6,7 @@ status: living doc
 
 # Deploy to the reference deployment (r1)
 Full runbook: `docs/operations/deploy-workflow.md`. Deploys are
-operator-triggered, never automatic on tag. Confirm with @ash before
+operator-triggered, never automatic on tag. Confirm with the maintainer before
 deploying anything he hasn't asked to ship.
 
 ## Invoke

@@ -6,7 +6,7 @@ status: ratified — `openapi/stellar-index.v1.yaml` is the binding contract; th
 
 # API Design — Stellar Index v1
 
-**Owner:** @ash.
+**Owner:** the maintainer.
 **Binds:** `openapi/stellar-index.v1.yaml` (source of truth for the
 wire contract), `internal/api/` (Go implementation),
 `pkg/client/` (Go SDK), `docs/reference/api/` (generated reference).
@@ -599,7 +599,7 @@ concurrently. `/v3` only when we can retire `/v1`.
   path as the server; tag with `client/v0.x.y` SemVer).
 - **TypeScript:** auto-generated from OpenAPI into
   `https://github.com/Stellar-Index/StellarIndex-js`. Published to
-  npm. Owner: community, with review by @ash for launch version.
+  npm. Owner: community, with review by the maintainer for launch version.
 - **Python:** post-launch, community-owned.
 
 All SDKs have:

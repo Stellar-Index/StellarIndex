@@ -6,7 +6,7 @@ status: ratified, PARTIALLY STALE — §6 (feature flags) and parts of §7/§8 d
 
 # Repo Hygiene & Tech-Debt Prevention Plan
 
-**Owner:** @ash.
+**Owner:** the maintainer.
 **Ratified:** 2026-04-22.
 **Binds:** every PR, every deploy, every reviewer.
 
@@ -249,7 +249,7 @@ creation.
 // Purpose: gate the Tier-3 CEX venue integrations (OKX, Bybit, Gate).
 // Created: 2026-05-20
 // Remove-by: 2026-08-20 (3 months)
-// Owner: @ash
+// Owner: the maintainer
 if flags.AggregateTier3Sources.Enabled(ctx) {
     ...
 }
@@ -576,7 +576,7 @@ checks.
 
 ## 20. Exit gates — when is the repo "healthy"?
 
-Gates checked weekly by @ash as part of the Friday wrap-up.
+Gates checked weekly by the maintainer as part of the Friday wrap-up.
 
 - [ ] CI green on main for 7 consecutive days.
 - [ ] No stale-doc warnings on `docs/architecture/` or `docs/operations/`.

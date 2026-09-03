@@ -11,7 +11,7 @@ superseded_by: null
 
 - **Decides:** LC-040 (dual-shape `/v1/assets/{slug}`), LC-031 /
   Unit D (residual cross-chain wire), and what "v1.0" promises at the
-  public flip. Requires @ash sign-off — these are product calls.
+  public flip. Requires the maintainer sign-off — these are product calls.
 - **Inputs:** docs/architecture/stellar-focus-refactor-plan.md §5
   Tier 3, audit 2026-06-30 LC-030/031/040, the SDK↔spec contract test
   (pkg/client/spec_contract_test.go), the explorer generated-types
@@ -109,7 +109,7 @@ breaks before the flip.
 - Anything not ready by the flip ships as `x-stability: experimental`
   rather than blocking v1.0.
 
-## Sign-off checklist (@ash)
+## Sign-off checklist (the maintainer)
 
 Signed off 2026-07-08 — all four accepted as recommended.
 

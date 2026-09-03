@@ -274,9 +274,9 @@ under `evidence/r1-walk-2026-05-01/disasm/`.
 
 | hash (first 16) | role | active range | reviewer | finding |
 | --- | --- | --- | --- | --- |
-| `5db738b05d914812` | factory | L50,746,266 → r1 tip | ash@2026-04-29 | matches current decoder |
-| `4c3db3ebd2d6a2ab` | router | L50,746,272 → r1 tip | ash@2026-04-29 | irrelevant — router events not decoded |
-| `18051456816b66f1` | pair instance (194 contracts) | per-pair first observation → r1 tip | ash@2026-04-30 | matches current decoder; SwapEvent + SyncEvent + NewPairEvent field names verified via `strings` |
+| `5db738b05d914812` | factory | L50,746,266 → r1 tip | maintainer@2026-04-29 | matches current decoder |
+| `4c3db3ebd2d6a2ab` | router | L50,746,272 → r1 tip | maintainer@2026-04-29 | irrelevant — router events not decoded |
+| `18051456816b66f1` | pair instance (194 contracts) | per-pair first observation → r1 tip | maintainer@2026-04-30 | matches current decoder; SwapEvent + SyncEvent + NewPairEvent field names verified via `strings` |
 
 ### `5db738b05d914812` — factory, single hash, no upgrade
 

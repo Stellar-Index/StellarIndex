@@ -59,7 +59,7 @@ shipped removed. Sources of detail: the per-area audit memory files
 this is the defect-side companion).
 
 Legend: **[ENG]** = engineering fix, no decision needed — queue and fix.
-**[ASH]** = needs an operator decision/action first. **[VERIFY]** = audit
+**[OWNER]** = needs an operator decision/action first. **[VERIFY]** = audit
 finding that may have been fixed since; re-verify before working.
 
 ## Tier 1 — site loading / explorer serving (the active thread)
@@ -122,7 +122,7 @@ observations alias fan-in (v0.30.0); /ledgers dead-Suspense fix
    `ledger_entries_current` (509d1d83); no changes-log scan remains on
    the resolvable path.
 
-## Tier 2 — data correctness / money (audit NEEDS-ASH backlog)
+## Tier 2 — data correctness / money (audit NEEDS-OWNER backlog)
 
 9. **[ENG] Phoenix pre-upgrade decode drops** — ALL 5,161 pre-upgrade
    swaps + 616 bond/616 unbond + Map-schema provide/withdraw_liquidity
@@ -131,13 +131,13 @@ observations alias fan-in (v0.30.0); /ledgers dead-Suspense fix
     a false premise) — decode + replay.
 11. **[ENG] Aquarius fee token dropped** though present in topic[1]
     (migration 0129 baked it in) — decode + replay + re-derive.
-12. **[ASH→ENG] SAC-wrapped assets as second un-aliased identity** —
+12. **[OWNER→ENG] SAC-wrapped assets as second un-aliased identity** —
     53.5% of USDC volume invisible to alias-blind readers; ten money
     handlers alias-blind (~$16.8M XLM volume hidden). Needs the
     alias-union sweep across handlers (mechanical but wide).
 13. **[VERIFY] XLM total_supply 2.11× across two routes; volume scale
     flips 10× between requests; markets.last_price stale:false lies.**
-14. **[ASH] SEP-41 genesis rollup resets on r1** — 13 contracts
+14. **[OWNER] SEP-41 genesis rollup resets on r1** — 13 contracts
     double-counted; EURC reset 2026-08-05, 12 remain (one psql each).
 15. **[ENG] LP reserves live-only from ledger 63.3M** — no
     trustline/LP-reserve backfill path exists; design one.
@@ -147,7 +147,7 @@ observations alias fan-in (v0.30.0); /ledgers dead-Suspense fix
 17. **[ENG] recognition_ok structurally always-true** for match-by-topic
     sources (ADR-0033 gap) — the completeness verdict can't see
     recognition failures for most sources.
-18. **[ASH] derive_generation blocks ALL projector-replay corrections**
+18. **[OWNER] derive_generation blocks ALL projector-replay corrections**
     — replay writes lose to equal-generation rows; corrections inert.
 19. **[ENG] comet migration-0059 double-count armed** — fires on the
     first comet replay; disarm before any replay.
@@ -157,7 +157,7 @@ observations alias fan-in (v0.30.0); /ledgers dead-Suspense fix
 21. **[VERIFY] explorer serves build-frozen prices as live** (8.9%
     wrong at audit) — partially addressed by LiveAssetPrice on asset
     pages; sweep the other price surfaces.
-22. **[ASH] pricingguard downside protection OFF for 27.5% of pairs**
+22. **[OWNER] pricingguard downside protection OFF for 27.5% of pairs**
     (attacker-inducible) — needs a policy call on the one-side-zero
     storage rule.
 23. **[VERIFY] confidence capped at 0.5 on all served pairs; baselines:
@@ -174,15 +174,15 @@ observations alias fan-in (v0.30.0); /ledgers dead-Suspense fix
 27. **[ENG] dashboard auth hardening** — 6-digit login code derivable
     from the stored token hash; signup email squatting; self-service
     key re-widening.
-28. **[ASH] billing bridge inert** — nothing writes
+28. **[OWNER] billing bridge inert** — nothing writes
     accounts.stripe_customer_id; whole billing path (incl.
     cancellation) dead. Product decision + wiring.
 29. **[ENG] CI gate residue** — lint-metric-refs accepts a comment as
     emission proof; actions-pinning no-op on push-to-main.
-30. **[ASH] archive one-offs** — chmod o+rx on placed archive dirs;
+30. **[OWNER] archive one-offs** — chmod o+rx on placed archive dirs;
     ADR-0017 contract 4 never runs on r1.
 
-## Tier 3 — operator one-offs (blocked on Ash or approval)
+## Tier 3 — operator one-offs (blocked on the maintainer or approval)
 
 31. Cloudflare zone cache rule (respect origin) + one-time purge.
 32. `ansible-playbook --tags caddy` (two pending config changes).

@@ -855,7 +855,7 @@ Firing alerts (14 total):
 
 ## Credentials (pointers, not values)
 
-- Vault password: in ash's password manager
+- Vault password: in the maintainer's password manager
 - MinIO root: in `inventory/r1.secrets.yml` (vaulted)
 - Postgres stellar-core role password: same
 - Healthchecks.io ping URL: in `/etc/default/node-healthcheck` on

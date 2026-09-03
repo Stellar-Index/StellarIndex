@@ -6,7 +6,7 @@ status: superseded — Hetzner FSN1 chosen for R1 ([r1-deployment-state.md](../.
 
 # Hosting Options — Skipping Colo Without Boxing Ourselves In
 
-**Owner:** @ash + @alex.
+**Owner:** the maintainer + @alex.
 **Decision:** Hetzner FSN1 (Falkenstein, DE) for R1, ratified
 via [ADR-0008](../../adr/0008-ha-topology.md) and operational
 since the host went live (see
@@ -186,7 +186,7 @@ is cheap** (elastic, CDN-cacheable, stateless). Split the difference.
   for our bulk ledger-meta ingest.
 - **Friends-and-family colo (someone's spare rack in a spare room).**
   Not a 99.9 % uptime environment.
-- **Re-purposing @ash's existing R640 as-is.** Viable as a dev +
+- **Re-purposing the maintainer's existing R640 as-is.** Viable as a dev +
   staging target but dedicating it to mainnet bring-up couples our
   schedule to physical shipping for the eventual move. Leave it in
   place for dev.
@@ -239,7 +239,7 @@ of procurement approval**. That unblocks Week 2–3 ingestion work in
 
 ### 5.2 Weeks 4–6: validator promotion on same hardware
 
-Remote-hand the HSM in. Key ceremony can happen at @ash's location
+Remote-hand the HSM in. Key ceremony can happen at the maintainer's location
 with the HSM and a fresh laptop — the key material is generated
 locally, then the HSM is shipped to the data centre via the
 provider's secure-shipment program. The HSM socket over USB works
@@ -331,7 +331,7 @@ Rationale:
    serialised. By Month 4 we can make a "move or stay" decision
    from data, not speculation.
 
-Pre-approval checklist for @ash before we click "provision":
+Pre-approval checklist for the maintainer before we click "provision":
 
 - [ ] Which region for the first node? (Falkenstein default;
       London/Helsinki if closer to home).
@@ -355,7 +355,7 @@ Honesty bill:
   the team's first real hardware swap is in production.
 - **HSM friction.** Remote-hand HSM install works, but the ceremony
   is best done somewhere the operators can physically attend. The
-  current plan has @ash generating keys locally and shipping the
+  current plan has the maintainer generating keys locally and shipping the
   provisioned HSM; that works but is one more moving part.
 - **Audit / compliance story.** For Tier-1 listing, SDF looks at
   operational posture. "We run at Hetzner" is weaker than "we run
@@ -372,7 +372,7 @@ work-streams.
 
 ## 10. Decision timeline
 
-- **Today:** @ash picks between Hetzner (cheap, fast, EU-only
+- **Today:** the maintainer picks between Hetzner (cheap, fast, EU-only
   first) vs Latitude.sh (more expensive, 3-region-ready, 5-min
   provision).
 - **+1 day:** node provisioned; Ansible runs our bootstrap.

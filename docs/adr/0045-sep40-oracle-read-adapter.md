@@ -9,7 +9,7 @@ superseded_by: null
 
 # ADR-0045: SEP-40 on-chain oracle read adapter
 
-Deciders: @ash (pending). Scope investigation: BACKLOG #60 (RFP §6
+Deciders: the maintainer (pending). Scope investigation: BACKLOG #60 (RFP §6
 accommodation). Full analysis:
 [docs/architecture/sep40-oracle-read-adapter.md](../architecture/sep40-oracle-read-adapter.md).
 

@@ -113,5 +113,5 @@ For postmortem:
 
 ## Changelog
 
-- 2026-08-28 — re-verified against HEAD: rule file path, `du -x`, swap/ZFS checks, PG-crash impact, 2026-06-11/08-05 signals, config-assertions gate, tag-scoped ansible re-apply; dropped nonexistent `galexie-verify-*.stderr` and obsolete `wasm-history-*.stderr` paths. TODO(ash): both rule files' `runbook_url` for this alert still point at `redis-write-blocked-disk-full.md`.
+- 2026-08-28 — re-verified against HEAD: rule file path, `du -x`, swap/ZFS checks, PG-crash impact, 2026-06-11/08-05 signals, config-assertions gate, tag-scoped ansible re-apply; dropped nonexistent `galexie-verify-*.stderr` and obsolete `wasm-history-*.stderr` paths. TODO(maintainer): both rule files' `runbook_url` for this alert still point at `redis-write-blocked-disk-full.md`.
 - 2026-05-12 — initial draft (audit-2026-05-12 F-1237 closure).

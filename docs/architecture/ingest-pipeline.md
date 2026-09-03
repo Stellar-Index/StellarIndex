@@ -288,7 +288,7 @@ call.
 
 ## Why this doc exists
 
-Agent + @ash mistake, 2026-04-23: built Task #164 (decoders) correctly
+Agent + the maintainer mistake, 2026-04-23: built Task #164 (decoders) correctly
 but wired the per-source `consumer.go` to `rpc *stellarrpc.Client` →
 `rpc.GetEvents`. This worked for tests (public RPC endpoint) but would
 never run on r1 because stellar-rpc was removed from r1 the same day.

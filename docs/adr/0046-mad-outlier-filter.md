@@ -134,7 +134,7 @@ config default change plus a CHANGELOG entry, not a code rewrite.
 - One more config knob; mitigated by shipping placeholders that match
   the literature defaults.
 
-## Sign-off checklist (@ash)
+## Sign-off checklist (the maintainer)
 
 Signed off 2026-07-09 — all four accepted.
 

@@ -249,7 +249,7 @@ We do not carry workarounds indefinitely.
 
 ### 3.5. On-call rotation
 
-- At launch: @ash + @alex split 24/7.
+- At launch: the maintainer + @alex split 24/7.
 - Post-launch: hire the third engineer, rotate 3-person weekly.
 - **Never solo on-call longer than 1 week**.
 - On-call escalation chain published at
@@ -541,8 +541,8 @@ Frontmatter YAML:
 ---
 title: Soroswap indexing
 last_verified: 2026-04-22
-verified_by: ash
-owners: ['@ash']
+verified_by: maintainer
+owners: ['the maintainer']
 supersedes: []
 status: current | generated | archived
 ---
@@ -830,7 +830,7 @@ rules, summarised:
 - **Renames ride other changes** — no rename-only PRs. Existing
   deviations are frozen in `scripts/ci/lint-lexicon.baseline`
   (shrink-only, CS-098 growth-tripwire-protected). The bulk
-  `Coin*`→`Asset*` rename is pending, deferred to @ash.
+  `Coin*`→`Asset*` rename is pending, deferred to the maintainer.
 
 Enforcement: `scripts/ci/lint-lexicon.sh` (verify.sh + CI) for the
 grep-able subset; reviewers cite lexicon.md rows for the rest.

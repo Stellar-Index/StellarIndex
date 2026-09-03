@@ -362,7 +362,7 @@ Common root-cause patterns:
   `-o cat` + the access-log-vs-ERROR-line split documented; dead
   `api-design.md` pointer → the OpenAPI spec's `/price/batch` limits;
   Detected-by → dual-tree (r1 primary).
-- 2026-04-23 — initial draft. @ash.
+- 2026-04-23 — initial draft. the maintainer.
 - 2026-04-30 — runbook now also covers the SLO multi-window
   availability burn-rate alerts shipped in #313 (per ADR-0009),
   which route here.

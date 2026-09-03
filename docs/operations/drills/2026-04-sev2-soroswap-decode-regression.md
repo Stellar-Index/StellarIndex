@@ -3,13 +3,13 @@ title: "2026-04 SEV-2 tabletop — Soroswap decoder regression after protocol up
 date: 2026-04-30
 type: tabletop
 scenario: scenarios/sev2-source-decoder-regression.md
-participants: [ash, ash, ash]
+participants: [maintainer]
 last_verified: 2026-05-03
 ---
 
 # 2026-04 drill writeup — SEV-2 Soroswap decoder regression
 
-Pre-launch tabletop dry-run executed solo (`ash` rotated through
+Pre-launch tabletop dry-run executed solo (one person rotated through
 oncall / scribe / commander roles), back-to-back with the SEV-1
 Timescale failover drill on the same day. Satisfies the SEV-2
 half of L5.7 / Task #76.
@@ -125,15 +125,15 @@ T+0 = trigger at 09:17 UTC. Times simulated.
 
 - [x] **Cross-link `decode-errors.md` Mitigation to mention
       `flags.divergence_warning` correlation when class-drop-spike
-      fires** — owner @ash, done in same PR.
-- [ ] **Add per-source decode-error ratio alert** — owner @ash,
+      fires** — owner the maintainer, done in same PR.
+- [ ] **Add per-source decode-error ratio alert** — owner the maintainer,
       due 2026-Q3 (post-launch alerting hardening).
-- [ ] **Add stellar-core release-notes RSS watcher** — owner @ash,
+- [ ] **Add stellar-core release-notes RSS watcher** — owner the maintainer,
       due 2026-Q3.
 - [ ] **Wire `stellarindex-ops backfill -source <name>` flag end-to-end
-      + integration test** — owner @ash, due 2026-Q3.
+      + integration test** — owner the maintainer, due 2026-Q3.
 - [ ] **3-person tabletop with state-transition rehearsal** —
-      owner @ash, due 2026-Q3.
+      owner the maintainer, due 2026-Q3.
 
 ## Score
 
@@ -161,8 +161,8 @@ T+0 = trigger at 09:17 UTC. Times simulated.
 
 ## Sign-off
 
-- **Drill leader:** ash
-- **Scribe:** ash
+- **Drill leader:** maintainer
+- **Scribe:** maintainer
 - **Posted action items by:** 2026-04-30
 - **Promoted to playbook update:** yes — `decode-errors.md`
   cross-link to `flags.divergence_warning` lands in this PR.

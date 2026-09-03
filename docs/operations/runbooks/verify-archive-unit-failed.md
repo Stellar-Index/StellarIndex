@@ -50,7 +50,7 @@ The journal output's last lines indicate the failure mode:
 | `WATCHDOG` timeout / `SIGTERM` | 1h of *silence* tripped `WatchdogSec` (r1 runs uncapped — `VERIFY_ARCHIVE_MAX_RUNTIME=0`; binary default 24h); investigate what the walk was stuck on |
 | `access denied` / `403` | AWS / MinIO credentials in `/etc/default/stellarindex-ops` rotated or wrong |
 
-`TODO(ash): the deploy/systemd unit copy says a 16h max-runtime — a
+`TODO(maintainer): the deploy/systemd unit copy says a 16h max-runtime — a
 third value; ansible is the authority (deploy/systemd drift class,
 cf. PR #253).`
 
@@ -126,7 +126,7 @@ Gather for the postmortem:
   `systemctl start archive-completeness.service` shortcut. Dead
   "8h cap" row replaced with the WatchdogSec=1h silence-timeout
   reality (r1 runs uncapped, VERIFY_ARCHIVE_MAX_RUNTIME=0;
-  TODO(ash) on the deploy/systemd 16h third value). Grep patterns
+  TODO(maintainer) on the deploy/systemd 16h third value). Grep patterns
   updated to the real messages (`chain break` /
   `is missing` / `checkpoint anchor mismatch`);
   `archive_files_missing` → full name

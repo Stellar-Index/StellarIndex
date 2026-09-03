@@ -262,14 +262,14 @@ backfill safety is unaffected.
 
 | hash (first 16) | cohort | role | active pools (2026-04-30) | reviewer | finding |
 | --- | --- | --- | --- | --- | --- |
-| `ae0da5a84b15805c` | A | volatile pool (dominant never-upgraded) | 149 | ash@2026-04-29 | matches current decoder |
-| `f1077e0b77da5e62` | A | stableswap pool | 13 | ash@2026-04-29 | matches current decoder |
-| `8875f0c770fb26d3` | A | rewards-enhanced variant | 6 | ash@2026-04-29 | matches current decoder |
-| `b54ba37b…` | B | upgrade chain step 1 (oldest) | superseded by step 4 | ash@2026-04-30 | matches current decoder |
-| `2d770946…` | B | upgrade chain step 2 | superseded by step 4 | ash@2026-04-30 | matches current decoder |
-| `7cecf23b…` | B | upgrade chain step 3 | superseded by step 4 | ash@2026-04-30 | matches current decoder |
-| `a1629dcd…` | B | upgrade chain step 4 (most-current) | 118 | ash@2026-04-30 | matches current decoder |
-| `4f080d24…` | B | upgrade chain step 5 (rolling out) | 18 | ash@2026-04-30 | matches current decoder |
+| `ae0da5a84b15805c` | A | volatile pool (dominant never-upgraded) | 149 | maintainer@2026-04-29 | matches current decoder |
+| `f1077e0b77da5e62` | A | stableswap pool | 13 | maintainer@2026-04-29 | matches current decoder |
+| `8875f0c770fb26d3` | A | rewards-enhanced variant | 6 | maintainer@2026-04-29 | matches current decoder |
+| `b54ba37b…` | B | upgrade chain step 1 (oldest) | superseded by step 4 | maintainer@2026-04-30 | matches current decoder |
+| `2d770946…` | B | upgrade chain step 2 | superseded by step 4 | maintainer@2026-04-30 | matches current decoder |
+| `7cecf23b…` | B | upgrade chain step 3 | superseded by step 4 | maintainer@2026-04-30 | matches current decoder |
+| `a1629dcd…` | B | upgrade chain step 4 (most-current) | 118 | maintainer@2026-04-30 | matches current decoder |
+| `4f080d24…` | B | upgrade chain step 5 (rolling out) | 18 | maintainer@2026-04-30 | matches current decoder |
 
 ### Source-of-truth: shared event emitter
 

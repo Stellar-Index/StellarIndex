@@ -74,7 +74,7 @@ methodology justification in the check's `note`.
 ## How to escalate
 
 Standing drift on a flagship value (XLM/USDC) that resists a day of
-investigation → raise with @ash; it may need an upstream
+investigation → raise with the maintainer; it may need an upstream
 (SDF/SE/Circle) methodology confirmation.
 
 ## Post-mortem notes from prior firings

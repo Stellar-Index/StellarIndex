@@ -86,7 +86,7 @@ Three branches:
   on. Do NOT raise `-max-runtime` — the uncapped setting is
   intentional (the Task #13 mid-pass-cap incident), and runtime isn't
   the limiter.
-- [ ] **Communicate degradation**: while this alert is firing, R2/R3 trust in R1's verification anchor is degrading. Today the degradation call is a comms action (status page / on-call channel), not a config flip — no `reduced_redundancy` config value exists; `ReducedRedundancy` is a wire-envelope field with zero producers (the L4.10 per-region trust wiring is unbuilt). `TODO(ash): wire L4.10 or drop this step.`
+- [ ] **Communicate degradation**: while this alert is firing, R2/R3 trust in R1's verification anchor is degrading. Today the degradation call is a comms action (status page / on-call channel), not a config flip — no `reduced_redundancy` config value exists; `ReducedRedundancy` is a wire-envelope field with zero producers (the L4.10 per-region trust wiring is unbuilt). `TODO(maintainer): wire L4.10 or drop this step.`
 - [ ] **Verification**: a clean run completes within 24h; the alert clears.
 
 ## Root cause analysis
@@ -180,7 +180,7 @@ its stdout goes to the systemd journal and is rotated by
   uncapped, incremental `-from-last-verified` state-file walk under
   run-heavy-job.sh) — "increase -max-runtime" advice removed.
   `reduced_redundancy` config flip replaced with the comms action +
-  TODO(ash) (L4.10 unwired). Hygiene examples: `--from 0` → `--from 2`
+  TODO(maintainer) (L4.10 unwired). Hygiene examples: `--from 0` → `--from 2`
   (flag floor) and wrapped in run-heavy-job.sh. Rule citation →
   `rules.r1/verify-archive.yml`; commands use r1 shapes; Tier B
   siblings added to Related.

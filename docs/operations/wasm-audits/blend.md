@@ -417,9 +417,9 @@ artifacts (`.wat` + `strings`) live alongside under
 
 | variant | hash (first 16) | active range | reviewer | finding |
 | --- | --- | --- | --- | --- |
-| Pool | `a41fc53d6753b6c0` | from each pool's first observation through r1 tip; no upgrades | ash@2026-04-30 | Decoder symbols present (`new_auction`, `fill_auction`, `delete_auction`); `AuctionData` field names `bid`/`lot`/`block` present; matches `internal/sources/blend` decoder expectations. |
-| Backstop V2 (Comet pool) | `c1f4502a757e25c6` | from L56,615,429 through r1 tip; no upgrades | ash@2026-05-02 | Comet decoder symbols present (`POOL`, `swap`, `caller`, `token_in`, `token_out`, `token_amount_in`, `token_amount_out`); SEP-41 LP-share surface (`Allowance`, `Balance`, `SwapFee`); matches `internal/sources/comet/{events,decode}.go`. |
-| Pool Factory V2 | `31328050548831f6` | from L56,615,428 through r1 tip; no upgrades | ash@2026-05-02 | `deploy` event symbol present; factory enumeration produced exactly 9 pool addresses, all on `a41fc53d…`. |
+| Pool | `a41fc53d6753b6c0` | from each pool's first observation through r1 tip; no upgrades | maintainer@2026-04-30 | Decoder symbols present (`new_auction`, `fill_auction`, `delete_auction`); `AuctionData` field names `bid`/`lot`/`block` present; matches `internal/sources/blend` decoder expectations. |
+| Backstop V2 (Comet pool) | `c1f4502a757e25c6` | from L56,615,429 through r1 tip; no upgrades | maintainer@2026-05-02 | Comet decoder symbols present (`POOL`, `swap`, `caller`, `token_in`, `token_out`, `token_amount_in`, `token_amount_out`); SEP-41 LP-share surface (`Allowance`, `Balance`, `SwapFee`); matches `internal/sources/comet/{events,decode}.go`. |
+| Pool Factory V2 | `31328050548831f6` | from L56,615,428 through r1 tip; no upgrades | maintainer@2026-05-02 | `deploy` event symbol present; factory enumeration produced exactly 9 pool addresses, all on `a41fc53d…`. |
 
 ### `c1f4502a757e25c6` — Backstop V2 (the Comet pool)
 

@@ -206,11 +206,11 @@ three contracts: `df88820e` is still production.
 
 | variant | hash (first 16) | active range | reviewer | finding |
 | --- | --- | --- | --- | --- |
-| FX | `df88820e231ad8f3` | L56,733,481 → L59,301,651 (walk-end; current per live ingest) | ash@2026-04-29 | matches current decoder |
-| DEX (post-v3) | `df88820e231ad8f3` | L51,656,692 → L59,301,651 (walk-end) | ash@2026-04-29 | matches current decoder |
-| CEX (post-v3) | `df88820e231ad8f3` | L51,656,689 → L59,301,651 (walk-end) | ash@2026-04-29 | matches current decoder |
-| DEX (pre-v3) | `4a64c8c8502df326` | L50,644,229 → L51,656,691 | ash@2026-04-29 | matches current decoder (disassembly) |
-| CEX (pre-v3) | `4a64c8c8502df326` | L50,644,239 → L51,656,688 | ash@2026-04-29 | matches current decoder (disassembly) |
+| FX | `df88820e231ad8f3` | L56,733,481 → L59,301,651 (walk-end; current per live ingest) | maintainer@2026-04-29 | matches current decoder |
+| DEX (post-v3) | `df88820e231ad8f3` | L51,656,692 → L59,301,651 (walk-end) | maintainer@2026-04-29 | matches current decoder |
+| CEX (post-v3) | `df88820e231ad8f3` | L51,656,689 → L59,301,651 (walk-end) | maintainer@2026-04-29 | matches current decoder |
+| DEX (pre-v3) | `4a64c8c8502df326` | L50,644,229 → L51,656,691 | maintainer@2026-04-29 | matches current decoder (disassembly) |
+| CEX (pre-v3) | `4a64c8c8502df326` | L50,644,239 → L51,656,688 | maintainer@2026-04-29 | matches current decoder (disassembly) |
 
 ### `df88820e231ad8f3` — current production, all three variants
 

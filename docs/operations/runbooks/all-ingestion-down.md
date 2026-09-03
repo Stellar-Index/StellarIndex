@@ -224,7 +224,7 @@ Patterns observed:
 
 ## Changelog
 
-- 2026-04-22 — initial draft. @ash.
+- 2026-04-22 — initial draft. the maintainer.
 - 2026-04-30 — quick-diagnosis + Mitigation A rewritten around
   Galexie + MinIO (the actual r1 upstream); rpc-probe URL points
   at a public stellar-rpc since r1 doesn't run its own

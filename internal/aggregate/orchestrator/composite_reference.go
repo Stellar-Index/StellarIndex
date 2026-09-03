@@ -120,7 +120,7 @@ const (
 	DefaultCompositeReferenceToleranceBps = 75
 
 	// DefaultCompositeReferenceMinLegSources — 2 real venues on the
-	// crypto/USD leg (Ash, 2026-08-29): a single-venue leg is the very
+	// crypto/USD leg (maintainer, 2026-08-29): a single-venue leg is the very
 	// thing under suspicion and corroborates nothing.
 	DefaultCompositeReferenceMinLegSources = 2
 

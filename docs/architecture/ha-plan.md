@@ -37,7 +37,7 @@ status: ratified but PARTIALLY STALE — §4.3/§8 refreshed 2026-07-18 for Clic
 
 # High-Availability Infrastructure Plan
 
-**Owner:** @ash (arch) + @alex (ops).
+**Owner:** the maintainer (arch) + @alex (ops).
 **Ratification:** binding decisions accepted as
 [ADR-0008](../adr/0008-ha-topology.md) on 2026-04-27. Per-component
 implementation lives in the relevant ansible roles
@@ -629,7 +629,7 @@ Specific "everything is on fire" scenarios:
 | -------- | -------- |
 | Full primary-colo outage | DNS flip to cloud DR → API serves from AWS + last-synced Timescale replica (RPO 5 min) with `stale: true` on every response until ingest is re-established. |
 | One critical source (e.g., Reflector) offline | Affected assets get `reduced_redundancy=true`; others unaffected. |
-| Divergence: Redstone vs CEX > 5% | `divergence_warning=true` on affected assets; internal alert to @ash for market-event sanity check. |
+| Divergence: Redstone vs CEX > 5% | `divergence_warning=true` on affected assets; internal alert to the maintainer for market-event sanity check. |
 | TimescaleDB read-replica lag > 10 s | API briefly reads from primary (via PgBouncer session-mode pool); alert if sustained. |
 
 ---

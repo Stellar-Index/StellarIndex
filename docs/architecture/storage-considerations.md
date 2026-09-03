@@ -320,7 +320,7 @@ Raw `trades` are kept **forever**. Migration 0031 removed the old
 EXACT mechanism of the recurring 'rogue retention on trades' data-loss
 drift". AGENTS.md carries it as a standing invariant: "If you see a
 `drop_after` retention policy on `trades`, it's drift — remove it."
-Ash signed it again as launch decision D5 (2026-08-29).
+the maintainer signed it again as launch decision D5 (2026-08-29).
 
 Arming it would also fire the completeness verifier immediately, not
 quietly: migration 0116 + `compute_completeness.go`'s `detectFloorLoss`

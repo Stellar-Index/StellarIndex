@@ -12,7 +12,7 @@ status: point-in-time audit
 audits. Prior passes hunted *existing near-duplicates* (that's how
 COR-14 caught the price-formatter forks) but never asked the inverse
 question — "which surfaces are NOT using the shared thing?" — which is
-the only shape of question that catches adoption gaps. Ash's concern,
+the only shape of question that catches adoption gaps. the maintainer's concern,
 verbatim scope: hand-rolled code we don't need, and inconsistencies in
 templating / component usage (DRY).
 

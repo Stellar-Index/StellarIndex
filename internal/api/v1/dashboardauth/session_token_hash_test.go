@@ -36,7 +36,7 @@ func TestSessionTokenIsHashedAtRest(t *testing.T) {
 		t.Fatalf("create account: %v", err)
 	}
 	user, err := r.users.CreateUser(context.Background(), platform.User{
-		AccountID: acct.ID, Email: "ash@example.com", Role: platform.RoleOwner,
+		AccountID: acct.ID, Email: "owner@example.com", Role: platform.RoleOwner,
 	})
 	if err != nil {
 		t.Fatalf("create user: %v", err)

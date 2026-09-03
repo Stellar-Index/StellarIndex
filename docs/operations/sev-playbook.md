@@ -122,7 +122,7 @@ re-probe.
 
 Primary oncall has **5 min** to acknowledge the page (PagerDuty's
 escalation policy). If unacknowledged → secondary oncall → backup
-engineer → @ash.
+engineer → the maintainer.
 
 Acknowledgement does NOT mean the incident is resolved. It means:
 "I'm awake, I've seen the alert, I'm on it."
@@ -330,7 +330,7 @@ recurrence.
 ## 7. Escalation chain
 
 Oncall rotations live in PagerDuty. Nightly coverage is
-@ash-primary / @alex-backup (as of Week 1; rotation starts Week 2).
+the maintainer-primary / @alex-backup (as of Week 1; rotation starts Week 2).
 
 If all oncall unreachable for > 30 min during a SEV-1:
 1. Declare the incident in the public Discord anyway (community
@@ -381,6 +381,6 @@ the same action-item discipline as postmortems.
 ## 10. Versioning
 
 This playbook is versioned via `last_verified` in the frontmatter.
-Revisions require sign-off from @ash + the current primary oncall.
+Revisions require sign-off from the maintainer + the current primary oncall.
 A revision that weakens any contractual timeline (§2) requires an
 ADR; strengthening them does not.

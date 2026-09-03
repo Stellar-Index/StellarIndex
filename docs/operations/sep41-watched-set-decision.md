@@ -82,5 +82,5 @@ their supplies — defer to phase 2 of this decision.
    verified working) → add sep41×2 to the reconcile catalogue →
    compute-completeness → 17/17.
 
-**@ash:** approve the approach and I'll execute end-to-end; or hand me
+**the maintainer:** approve the approach and I'll execute end-to-end; or hand me
 your preferred watched list directly.

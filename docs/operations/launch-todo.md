@@ -122,7 +122,7 @@ alarm; P0-3 code done (operator purchase pending).
 
 > ⏳ **PENDING OPERATOR ACTION:** buy a **CoinGecko Pro** plan (P0-3), then set
 > `COINGECKO_API_KEY` on r1 + restart the indexer — the only Phase-0 residual.
-> @ash to do later (noted 2026-06-30).
+> the maintainer to do later (noted 2026-06-30).
 
 | # | Item | Type | Status |
 |---|------|------|--------|

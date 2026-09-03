@@ -1921,7 +1921,7 @@ read this section rather than skim it:
   Trades retention is **forbidden**: migration 0031 removed it, 0031's
   own `.down.sql` names re-adding one as "the EXACT mechanism of the
   recurring 'rogue retention on trades' data-loss drift", AGENTS.md
-  carries it as a standing invariant, Ash re-signed it as launch
+  carries it as a standing invariant, the maintainer re-signed it as launch
   decision D5, and `test/integration/migrations_test.go` pins it.
   Arming it would also trip the completeness verifier immediately —
   migration 0116 treats a rising `MIN(ledger)` on a reconcile target
@@ -2197,7 +2197,7 @@ read this section rather than skim it:
 
 
 - **Composite-reference corroboration of the phase-2 freeze for
-  structurally single-venue targets** (product decision, Ash
+  structurally single-venue targets** (product decision, the maintainer
   2026-08-29; design doc §10.1 amendment). For an allow-listed target
   (`[aggregate.composite_reference]`, default ON for
   `crypto:XLM/fiat:GBP` + `crypto:XLM/fiat:EUR`) whose bucket is
@@ -2371,7 +2371,7 @@ read this section rather than skim it:
   duplicated, with the one-time cross-region copy (≈ $80 + $3–4/mo)
   recorded as the not-taken option. `off-site-backup-plan.md` status
   carries the same note.
-- **Public status page shows backup freshness (Ash, 2026-08-29).** New
+- **Public status page shows backup freshness (maintainer, 2026-08-29).** New
   read-only `GET /v1/diagnostics/backups` (experimental) reports the
   pgBackRest last full / diff / WAL-archive age, the per-repository
   newest backup (repo 1 on-host, repo 2 encrypted S3 off-site), the
@@ -2844,7 +2844,7 @@ read this section rather than skim it:
   raidz level is allowed only alongside the live one, so dated history
   survives and bare contradictions do not). The role DEFAULT stays raidz2
   — deliberately, it is the right shape for a *fresh* archival node — and
-  now says so. The `TODO(ash)` in `zfs-degraded.md` is closed with the
+  now says so. The `TODO(maintainer)` in `zfs-degraded.md` is closed with the
   evidence rather than another ssh request. Dated decision records
   (ADR-0016/0027, the superseded first-node runbook, the 2026-07-16 audit
   assessment that inferred raidz2 from docs while stating it had no live
@@ -8109,7 +8109,7 @@ dashboard re-login.**
 ### Added
 - **Two-axis completeness verdict: `lake_complete`** on
   `completeness_snapshots` / `GET /v1/coverage` (migration 0108;
-  `@ash`-approved decision brief
+  `the maintainer`-approved decision brief
   notes/DECISION-genesis-complete-verdict-2026-07-16.md, Option B).
   `complete` has always meant substrate ∧ recognition ∧ projection
   (ADR-0033), but projection reconcile for trade-emitting sources is
@@ -9631,7 +9631,7 @@ Tested against Stellar protocol v23.
   earlier Unit-D wire-collapse break (9442d311, 2026-06-16) shipped without one, which is
   why `semver-policy.md`'s "`pkg/client` is currently v0.1.0" line had gone stale; corrected
   in the same commit.
-  **@ash: there's a pre-existing wording contradiction between ADR-0042 /
+  **the maintainer: there's a pre-existing wording contradiction between ADR-0042 /
   stellar-focus-refactor-plan.md's "SemVer-major" framing for the Unit-D break and
   `semver-policy.md`'s own pre-v1.0 rule ("each breaking change should bump the *minor*
   version… not the major"). This commit follows the policy doc literally (minor bump,
@@ -9884,7 +9884,7 @@ Tested against Stellar protocol v23.
   statuses for 0040-0043 corrected to Accepted (missed in the acceptance commit).
 - ADRs 0040 (contract gating), 0041 (ingest durability, with a non-lake CEX/FX
   backpressure caveat), 0042 (v1 wire shape — all four sign-off boxes accepted) and
-  0043 (backup/restore) moved Proposed → **Accepted** (@ash sign-off 2026-07-08).
+  0043 (backup/restore) moved Proposed → **Accepted** (the maintainer sign-off 2026-07-08).
   Unblocks Unit D (#23), Coin→Asset rename (#47), the v1.0 wire freeze (#27) and the
   ansible backup role.
 - Projector `BatchLimit` tightened 10 000 → 1 000 ledgers per source per cycle so dense
@@ -10540,7 +10540,7 @@ Tested against Stellar protocol v23.
   dash-form asset id), every current deviation mapped file:symbol,
   and the migration rule (new code uses the canonical term; renames
   ride other changes; the bulk `Coin*`→`Asset*` rename stays deferred
-  to @ash). `docs/engineering-standards.md` gains §13 (lexicon
+  to the maintainer). `docs/engineering-standards.md` gains §13 (lexicon
   summary) + §14 "Go idioms" — 12 checkable house idioms
   (`%w`+sentinels, `New(deps…, opts Options)` with Logger in Options,
   slog-only, ctx-first, `_, _ =` explicit discards, WaitGroup-vs-
@@ -11428,7 +11428,7 @@ Tested against Stellar protocol v23.
   `stellarindex` (CS-114) and dr-activation's false "Drilled" claim replaced
   with the honest status (CS-113).
 - **ADR-0042 (Proposed): the v1 wire shape.** The decision package for the
-  public flip, awaiting @ash sign-off: execute the Unit-D Tier-3 cross-chain
+  public flip, awaiting the maintainer sign-off: execute the Unit-D Tier-3 cross-chain
   wire collapse pre-flip (rejecting the freeze fallback — pre-v1 with zero
   consumers is the only free moment), give the dual-shape `/v1/assets/{slug}`
   an explicit `kind` discriminator (`catalogue`/`stellar_asset`, oneOf +
@@ -26562,7 +26562,7 @@ pipeline itself is what's being tested.
     charts.
 
 - **PR 176 — Polygon.io Forex poller** (2026-04-24): top-tier
-  authoritative FX source, pre-approved by Ash as the "authority
+  authoritative FX source, pre-approved by the maintainer as the "authority
   that will not make mistakes" entry in the external fleet. Second
   FX connector (alongside ExchangeRatesApi which is now the
   secondary/redundancy layer).
@@ -26917,7 +26917,7 @@ pipeline itself is what's being tested.
     table (`USDT→USD`, `USDC→USD`, `PYUSD→USD`, `EUROC→EUR`,
     `EUROB→EUR`, `MXNe→MXN`) at VWAP compute time. Keeps the
     stored data honest; depeg failure mode surfaces cleanly
-    rather than hiding behind eager normalisation. Per Ash's
+    rather than hiding behind eager normalisation. Per the maintainer's
     guidance (memory: feedback_production_artifacts).
   - Dep: `github.com/coder/websocket v1.8.14` — pure-Go,
     context-aware, minimal transitive footprint.

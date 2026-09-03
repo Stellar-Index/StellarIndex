@@ -105,7 +105,7 @@ for the Cloudflare Pages hosts.
 ## Open: two things only the account owner can finish
 
 **1. Verify the Email Routing destination.** Cloudflare has sent a
-verification link to `ash@ashfrancis.com`. Until it is clicked, the MX
+verification link to `the maintainer address on file`. Until it is clicked, the MX
 records exist but no rule can be created, and mail to `security@` is
 rejected at SMTP time with a clear bounce rather than being silently
 dropped (the catch-all is deliberately left disabled so the failure is

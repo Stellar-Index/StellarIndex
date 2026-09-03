@@ -150,7 +150,7 @@ has ever emitted") is answered directly and exhaustively in Method
 
 | hash (first 16) | active range | reviewer | finding |
 | --- | --- | --- | --- |
-| `438a5528cff17ede` | Only hash observed; contract active L51,499,914 (genesis `drop`) -> L63,380,088 (latest `distribute`, near r1's current tip ~L63.4M) | ash@2026-07-10 | SHA256-verified against on-chain hash; every decoder-expected topic symbol + body field name present in the binary; 100% of 469 lifetime events (not sampled) decode to the exact shape `internal/sources/blend_emitter/decode.go` expects. |
+| `438a5528cff17ede` | Only hash observed; contract active L51,499,914 (genesis `drop`) -> L63,380,088 (latest `distribute`, near r1's current tip ~L63.4M) | maintainer@2026-07-10 | SHA256-verified against on-chain hash; every decoder-expected topic symbol + body field name present in the binary; 100% of 469 lifetime events (not sampled) decode to the exact shape `internal/sources/blend_emitter/decode.go` expects. |
 
 ## Failure modes specific to Blend Emitter
 

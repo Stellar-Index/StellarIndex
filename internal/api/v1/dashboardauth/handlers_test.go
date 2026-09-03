@@ -389,7 +389,7 @@ func TestHandleLogout_RevokesActiveSession(t *testing.T) {
 		Name: "x", Slug: "x", Tier: platform.TierFree, Status: platform.AccountActive,
 	})
 	user, _ := r.users.CreateUser(context.Background(), platform.User{
-		AccountID: acct.ID, Email: "ash@example.com", Role: platform.RoleOwner,
+		AccountID: acct.ID, Email: "owner@example.com", Role: platform.RoleOwner,
 	})
 	sess, token := mintTestSession(t, r.users, platform.Session{
 		UserID: user.ID, ExpiresAt: r.now().Add(24 * time.Hour),
@@ -476,7 +476,7 @@ func TestMiddleware_CookieToContext(t *testing.T) {
 		Name: "x", Slug: "x", Tier: platform.TierFree, Status: platform.AccountActive,
 	})
 	user, _ := r.users.CreateUser(context.Background(), platform.User{
-		AccountID: acct.ID, Email: "ash@example.com", Role: platform.RoleOwner,
+		AccountID: acct.ID, Email: "owner@example.com", Role: platform.RoleOwner,
 	})
 	_, token := mintTestSession(t, r.users, platform.Session{
 		UserID: user.ID, ExpiresAt: r.now().Add(24 * time.Hour),
@@ -510,7 +510,7 @@ func TestMiddleware_RevokedSessionDropsContext(t *testing.T) {
 		Name: "x", Slug: "x", Tier: platform.TierFree, Status: platform.AccountActive,
 	})
 	user, _ := r.users.CreateUser(context.Background(), platform.User{
-		AccountID: acct.ID, Email: "ash@example.com", Role: platform.RoleOwner,
+		AccountID: acct.ID, Email: "owner@example.com", Role: platform.RoleOwner,
 	})
 	sess, token := mintTestSession(t, r.users, platform.Session{
 		UserID: user.ID, ExpiresAt: r.now().Add(24 * time.Hour),
@@ -537,7 +537,7 @@ func TestMiddleware_SuspendedAccountRevokesAndDrops(t *testing.T) {
 		Name: "x", Slug: "x", Tier: platform.TierFree, Status: platform.AccountActive,
 	})
 	user, _ := r.users.CreateUser(context.Background(), platform.User{
-		AccountID: acct.ID, Email: "ash@example.com", Role: platform.RoleOwner,
+		AccountID: acct.ID, Email: "owner@example.com", Role: platform.RoleOwner,
 	})
 	sess, token := mintTestSession(t, r.users, platform.Session{
 		UserID: user.ID, ExpiresAt: r.now().Add(24 * time.Hour),

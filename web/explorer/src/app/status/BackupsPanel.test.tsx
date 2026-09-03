@@ -4,7 +4,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 import BackupsPanel from './BackupsPanel';
 
-// Backups panel (Ash, 2026-08-29): the public status page must show
+// Backups panel (maintainer, 2026-08-29): the public status page must show
 // backup freshness honestly — green only within SLO, red with the real
 // age past it, grey "no data" when a source is absent, and a
 // "not trustworthy" marker when the API's own Prometheus reads failed.

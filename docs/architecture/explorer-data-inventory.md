@@ -1342,7 +1342,7 @@ title: The Reflector / Blend incident of 2025-03-14
 date: 2025-03-14
 ledger_range: [50115000, 50120000]
 tags: [mev, oracle, blend, reflector, post-mortem]
-authors: [@ash, @reviewer]
+authors: [the maintainer, @reviewer]
 ---
 
 On March 14, 2025 at <RatesLink coin="aqua" quote="usdc" asOf={50115423}>

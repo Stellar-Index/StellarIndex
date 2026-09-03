@@ -20,7 +20,7 @@ severity: P2
 > `rules.r1/storage.yml`); if it also emits
 > `nvme_temperature_celsius` on r1, repoint the expr at that series
 > and drop the `KNOWN_INERT` entry.
-> TODO(ash): verify on r1 whether the nvme collector emits
+> TODO(maintainer): verify on r1 whether the nvme collector emits
 > `nvme_temperature_celsius`; if yes, repoint the expr in BOTH rule
 > trees and remove the `KNOWN_INERT` entry, then delete this TODO.
 
@@ -116,7 +116,7 @@ ssh root@136.243.90.96 'ipmitool sdr list | grep -iE "fan|temp"'
 - 2026-08-28 — re-verified against HEAD. Added the INERT-ALERT banner:
   `node_nvme_temperature_celsius` has no producer (KNOWN_INERT in
   `scripts/ci/lint-metric-refs.sh`; NO PRODUCER comment in the rule
-  files), with the un-inerting path left as TODO(ash). Commands
+  files), with the un-inerting path left as TODO(maintainer). Commands
   rehosted to `ssh root@136.243.90.96`; "colo's NOC" → Hetzner
   support (r1 is Hetzner FSN1). Related: swapped `replica-lag.md`
   (no replica) for `db-disk-full.md` and named the three live NVMe

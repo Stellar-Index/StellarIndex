@@ -8,7 +8,7 @@ status: accepted — phased rollout described here is post-launch (Phase-3); the
 
 > ⛔ **SUPERSEDED in its infrastructure shape by ADR-0050 / [`../multi-region-ha.md`](../multi-region-ha.md) (2026-08-21). Do not implement the topology from this doc.** Phases C/D below join R2 and R3 to a **stretched Patroni cluster** with a 5-node cross-region etcd — exactly what [ADR-0050](../../adr/0050-multi-region-ha-architecture.md) §Decision rejects ("no cross-region Postgres replication and no stretched Patroni cluster"; Model B is independent per-region ingest, determinism not replication). Two more corrections of fact: **R1 is Hetzner FSN1 (Falkenstein), not London** (`infrastructure/archival-node-spec.md` status line), and Phase A's `stellar-rpc` co-residency **never ran on r1** — stellar-rpc was removed 2026-04-23 and is not in the ingest path (AGENTS.md "stellar-rpc is NOT in our production ingest path"; `internal/ledgerstream` → `internal/dispatcher`). The **validator aspiration itself** (three geographically-separated full validators, HSM-held keys) is [ADR-0004](../../adr/0004-tier1-validator-aspiration.md) and is unchanged; only the database/rpc topology below is superseded. Read the phase table for the validator-operations sequence, not for the deployment shape.
 
-**Owner:** @ash.
+**Owner:** the maintainer.
 **Extends:** [ADR-0004 Tier-1 validator aspiration](../../adr/0004-tier1-validator-aspiration.md).
 **Relates to:** [archival-node-spec.md](archival-node-spec.md),
 [multi-region-topology.md](multi-region-topology.md).
@@ -103,7 +103,7 @@ it's a quality gate.
 ### Phase B — Week 4–5: Promote to validator, still 1 node
 
 - Key ceremony: generate `NODE_SEED` on YubiHSM-2, witnessed by
-  @ash + @alex, shamir-split backup to two safes.
+  the maintainer + @alex, shamir-split backup to two safes.
 - Config: `NODE_IS_VALIDATOR=true`, `NODE_SEED` resolved via the
   HSM signer daemon (never on disk).
 - Register with SDF: submit our validator public key to the
@@ -229,7 +229,7 @@ Apply at Phase B, C, D (once per validator).
 - Fresh YubiHSM-2, factory-reset, in an antistatic bag.
 - Dedicated "ceremony" laptop, offline, freshly imaged from a known-
   good ISO.
-- Two operators (@ash + @alex minimum).
+- Two operators (the maintainer + @alex minimum).
 - Witness camera (self-recorded, stored with the backup).
 - Pre-printed Shamir-backup forms.
 
@@ -325,7 +325,7 @@ serving requirement.
 | SDF denies T1 listing | E | not service-breaking; we keep running 3 validators, re-apply in 90 days |
 | Bad protocol upgrade | anytime | follow SDF's "3-of-4" upgrade rhythm; emergency rollback documented |
 | Regional outage during Phase C–D | C/D | we're running 1 active region; outages degrade to "offline" without split-brain because there's only one cluster member |
-| @ash unavailable for ceremony | B–D | @alex + one external witness can stand in; ceremony procedure is documented |
+| the maintainer unavailable for ceremony | B–D | @alex + one external witness can stand in; ceremony procedure is documented |
 
 ---
 

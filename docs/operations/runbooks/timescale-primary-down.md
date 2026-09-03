@@ -154,7 +154,7 @@ backup, not seconds. On return, the indexer's idempotent upserts
 (`ON CONFLICT DO NOTHING`) re-fill the gap from the archive; check
 `stellarindex_ingestion_cursor_stuck` and `stellarindex_ingest_gap_detected`.
 
-<!-- TODO(ash): decide the operator-facing bar for "restore in place vs.
+<!-- TODO(maintainer): decide the operator-facing bar for "restore in place vs.
      bring up the standby box" — there is no replica to promote today, and
      ADR-0050 explicitly builds no cross-region Postgres replication
      (R2/R3 re-ingest independently). Until the Phase-1 Patroni playbook
@@ -239,4 +239,4 @@ binaries, no `patroni`/`etcd` units, no `db-*.internal` hostnames.
   then `stellarindex_ingestion_cursor_stuck` (ticket, ~10 min); dropped the
   `deploy/timescale-statefulset.yaml` and R3-async-replica references
   (ADR-0050). Patroni text moved to the appendix.
-- 2026-04-22 — initial draft. @ash.
+- 2026-04-22 — initial draft. the maintainer.

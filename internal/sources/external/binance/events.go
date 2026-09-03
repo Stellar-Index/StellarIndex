@@ -43,7 +43,7 @@
 // Depeg policy: a Binance XLMUSDT trade emits as
 // canonical.Trade{Pair: XLM/USDT} — the aggregator's fiat-proxy
 // table (USDT→USD, USDC→USD, etc.) decides at VWAP compute time
-// whether to fold it into XLM/USD. Per Ash's guidance (memory:
+// whether to fold it into XLM/USD. Per the maintainer's guidance (memory:
 // feedback_production_artifacts): stablecoins pegs to fiat at the
 // aggregator layer, not at ingest. If the stablecoin depegs and
 // VWAP goes sideways, that's the correct failure mode — the data

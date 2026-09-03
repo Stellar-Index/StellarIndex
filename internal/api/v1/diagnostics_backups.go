@@ -209,7 +209,7 @@ const (
 	freshnessUnknown = "unknown"
 )
 
-// Backup freshness SLOs (Ash, 2026-08-29). Weekly full (Sunday) +
+// Backup freshness SLOs (maintainer, 2026-08-29). Weekly full (Sunday) +
 // daily diff + archive-async WAL + monthly drill + daily snapshot,
 // each with one missed cycle of slack. The alert thresholds in
 // storage.yml / restore-drill.yml are deliberately looser (they page

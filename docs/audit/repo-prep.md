@@ -51,7 +51,7 @@ correctness, VWAP/aggregation math, and completeness verdicts are the
 - **Web (pnpm v10, node 22 — the version CI pins; Next 16.2.12 / React 19 — NOT Next 15 as some docs say):** `web/explorer` and `web/status` each have
   `node_modules` present in the main checkout. In a worktree, symlink before
   any web gate:
-  `ln -s /Users/ash/code/stellarindex/web/explorer/node_modules <wt>/web/explorer/node_modules`
+  `ln -s <repo>/stellarindex/web/explorer/node_modules <wt>/web/explorer/node_modules`
   and the same for `web/status`. (`pnpm install --frozen-lockfile` also works
   but is slower.)
 
@@ -102,7 +102,7 @@ correctness, VWAP/aggregation math, and completeness verdicts are the
   a `Baseline-Growth: <reason>` commit trailer (CI lint-baseline-growth reds
   otherwise). Baselines are shrink-only by default.
 - FYI (audit lead): commitlint is in NO workflow, and the repo's local
-  `core.hooksPath` points at `/Users/ash/code/ratesengine/.git/hooks` which
+  `core.hooksPath` points at `<repo>/ratesengine/.git/hooks` which
   does not exist → git runs no hooks at all locally. The config header
   claiming "runs in CI via a small action and local hook" is drift.
 

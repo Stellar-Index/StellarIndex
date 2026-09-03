@@ -238,7 +238,7 @@ yet — that goes in the **Identified** entry after flip succeeds.
 > anywhere in the repo; `api.stellarindex.io` is a bare A record →
 > r1's Caddy (`Caddyfile.j2`, `136.243.90.96`). Both mechanisms below
 > are the [`multi-region-ha.md`](../../architecture/multi-region-ha.md)
-> §6 model. TODO(ash): decide the interim flip mechanism (manual
+> §6 model. TODO(maintainer): decide the interim flip mechanism (manual
 > Cloudflare-dashboard A-record change is the only option today) and
 > where the Cloudflare API token lives — `deploy/ops-keys.md` never
 > existed.
@@ -265,7 +265,7 @@ Cloudflare dashboard:
 update the A record directly:
 
 ```sh
-# Requires the Cloudflare API token (location: TODO(ash) — no ops-keys doc exists in-tree).
+# Requires the Cloudflare API token (location: TODO(maintainer) — no ops-keys doc exists in-tree).
 # No cf-cli wrapper exists; use the Cloudflare dashboard or the raw API to
 # repoint the api.stellarindex.io A record at the DR origin.
 # TTL is 60s by design; full propagation < 2 min
@@ -467,5 +467,5 @@ Run quarterly:
   ADR-0050 — re-read on each change to those docs.
 
 A failed drift signal is a launch-readiness regression — file
-an issue with the `dr-readiness` label (TODO(ash): confirm the label
+an issue with the `dr-readiness` label (TODO(maintainer): confirm the label
 exists on GitHub; nothing in-tree defines it).

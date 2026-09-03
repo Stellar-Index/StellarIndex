@@ -203,8 +203,8 @@ worker chunk before that ledger.
 
 | hash (first 16) | role | active range | reviewer | finding |
 | --- | --- | --- | --- | --- |
-| `b400f7a8ac121022` | Adapter (first-deploy hotfix) | L58,758,722 → L58,759,141 (420 ledgers, ~35 min) | ash@2026-04-29 | conditionally safe — see notes |
-| `5e93d22c9e19b254` | Adapter (production) | L58,759,142 → L59,301,651 (walk-end; ~36 days, still current per live ingest) | ash@2026-04-29 | matches current decoder |
+| `b400f7a8ac121022` | Adapter (first-deploy hotfix) | L58,758,722 → L58,759,141 (420 ledgers, ~35 min) | maintainer@2026-04-29 | conditionally safe — see notes |
+| `5e93d22c9e19b254` | Adapter (production) | L58,759,142 → L59,301,651 (walk-end; ~36 days, still current per live ingest) | maintainer@2026-04-29 | matches current decoder |
 
 ### `5e93d22c9e19b254` — production, current decoder target
 

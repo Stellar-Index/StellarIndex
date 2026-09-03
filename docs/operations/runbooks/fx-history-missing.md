@@ -199,7 +199,7 @@ ready check could compare the binary's expected schema version
 diagnostic if they diverge. Doesn't auto-apply but would catch
 any remaining out-of-band drift (e.g. a hand-copied binary)
 instead of letting it silently fail at runtime.
-TODO(ash): decide whether the startup gate is still worth it
+TODO(maintainer): decide whether the startup gate is still worth it
 post-F-1220, or close it as superseded.
 
 ## Related runbooks

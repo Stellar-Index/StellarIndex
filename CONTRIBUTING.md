@@ -94,6 +94,47 @@ If `make dev` fails out of the box, that's a bug — file an issue.
 
 ---
 
+## Commit messages
+
+Commits are the project's permanent engineering record. They are read
+years later by people bisecting a regression, auditing a money surface,
+or trying to understand why an invariant exists. Write for that reader.
+
+**Subject** — [Conventional Commits](https://www.conventionalcommits.org):
+`type(scope): summary`, imperative mood, no trailing full stop. Types in
+use: `feat`, `fix`, `perf`, `refactor`, `test`, `docs`, `ci`, `build`,
+`chore`, `style`, `security`, `release`. Scope is the package or surface
+(`api`, `ingest`, `storage`, `explorer`, `ops`, …). Keep it under 72
+characters; say what changed, not what you did.
+
+**Body** — wrap at 72 columns. State, in this order:
+
+1. **The defect or the need.** What was wrong, or why this is required.
+2. **The evidence.** Measurements with units, row counts, before/after
+   figures, the query or command that produced them. A performance claim
+   without a number is not a claim.
+3. **The fix, and the decision behind it.** Where a reasonable engineer
+   would have chosen differently, say why you did not.
+
+Reference issues as `#123`, commits by short SHA. Note breaking changes
+with a `BREAKING CHANGE:` footer.
+
+**Do not include:**
+
+- Trailers or bylines crediting tools, generators or assistants. The
+  author field is the record of authorship.
+- Personal names. Write the role — maintainer, reviewer, operator — not
+  the person. A commit is a technical record, not correspondence.
+- Narration of how the change was produced, or of the process that led
+  to it. The reader wants the defect, the evidence and the fix.
+- Anything that would not make sense to a contributor reading it in five
+  years with no other context.
+
+The same applies to pull request descriptions, tag messages, and document
+front matter.
+
+---
+
 ## Definition of Done
 
 A PR is merge-ready only when **all** are true. The mechanical
