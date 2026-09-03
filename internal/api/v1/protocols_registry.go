@@ -40,6 +40,8 @@ type ProtocolMeta struct {
 	EventKinds []string
 	// VerificationPage is the repo-relative path of the protocol's
 	// public verification/coverage write-up, "" when none exists yet.
+	// Derived from Name by withVerificationPages below — never set in a
+	// row literal, which is why it carries no value in this file.
 	VerificationPage string
 	// ExtraContracts folds a sub-module source's own contracts into
 	// this protocol's roster + analytics scope — for a source that is
@@ -61,7 +63,7 @@ type ProtocolMeta struct {
 
 // protocolRegistry is the static protocol directory served by
 // GET /v1/protocols. Ordering here is the wire ordering.
-var protocolRegistry = []ProtocolMeta{
+var protocolRegistry = withVerificationPages([]ProtocolMeta{
 	{
 		Name:          "sdex",
 		Category:      "dex",
@@ -70,30 +72,27 @@ var protocolRegistry = []ProtocolMeta{
 		EventKinds:    []string{"sdex.trade"},
 	},
 	{
-		Name:             "soroswap",
-		Category:         "amm",
-		Description:      "Soroswap AMM — constant-product Soroban pairs deployed from the Soroswap factory.",
-		GenesisLedger:    50_746_266,
-		Factories:        soroswap.MainnetFactories,
-		EventKinds:       []string{"soroswap.trade", "soroswap.skim"},
-		VerificationPage: "docs/protocols/soroswap.md",
+		Name:          "soroswap",
+		Category:      "amm",
+		Description:   "Soroswap AMM — constant-product Soroban pairs deployed from the Soroswap factory.",
+		GenesisLedger: 50_746_266,
+		Factories:     soroswap.MainnetFactories,
+		EventKinds:    []string{"soroswap.trade", "soroswap.skim"},
 	},
 	{
-		Name:             "aquarius",
-		Category:         "amm",
-		Description:      "Aquarius AMM — incentivised constant-product and stableswap pools anchored on the Aquarius router.",
-		GenesisLedger:    52_728_375,
-		Factories:        []string{aquarius.MainnetRouter},
-		EventKinds:       []string{"aquarius.trade", "aquarius.reserves", "aquarius.liquidity", "aquarius.rewards", "aquarius.admin"},
-		VerificationPage: "docs/protocols/aquarius.md",
+		Name:          "aquarius",
+		Category:      "amm",
+		Description:   "Aquarius AMM — incentivised constant-product and stableswap pools anchored on the Aquarius router.",
+		GenesisLedger: 52_728_375,
+		Factories:     []string{aquarius.MainnetRouter},
+		EventKinds:    []string{"aquarius.trade", "aquarius.reserves", "aquarius.liquidity", "aquarius.rewards", "aquarius.admin"},
 	},
 	{
-		Name:             "phoenix",
-		Category:         "amm",
-		Description:      "Phoenix AMM — Soroban constant-product pools with liquidity provision and stake events.",
-		GenesisLedger:    51_572_016,
-		EventKinds:       []string{"phoenix.trade", "phoenix.liquidity", "phoenix.stake"},
-		VerificationPage: "docs/protocols/phoenix.md",
+		Name:          "phoenix",
+		Category:      "amm",
+		Description:   "Phoenix AMM — Soroban constant-product pools with liquidity provision and stake events.",
+		GenesisLedger: 51_572_016,
+		EventKinds:    []string{"phoenix.trade", "phoenix.liquidity", "phoenix.stake"},
 	},
 	{
 		Name:          "comet",
@@ -120,7 +119,6 @@ var protocolRegistry = []ProtocolMeta{
 			// q_swap/swap vocabulary, but logically part of Blend.
 			"blend_emitter.distribute", "blend_emitter.drop", "blend_emitter.swap_config",
 		},
-		VerificationPage: "docs/protocols/blend.md",
 		// The two mainnet Backstop deployments plus the single Emitter
 		// deployment — separate event surfaces (own contracts, own event
 		// vocabularies) but part of the Blend protocol. Folding them here
@@ -144,7 +142,6 @@ var protocolRegistry = []ProtocolMeta{
 			sorocredit.SourceName + ".supported_asset_added",
 			sorocredit.SourceName + ".collateral_hash_updated",
 		},
-		VerificationPage: "docs/protocols/sorocredit.md",
 	},
 	{
 		Name:          "defindex",
@@ -166,7 +163,6 @@ var protocolRegistry = []ProtocolMeta{
 			// defindex_fees (migration 0146).
 			"defindex.vault.dfees",
 		},
-		VerificationPage: "docs/protocols/defindex.md",
 	},
 	{
 		Name:        "cctp",
@@ -233,6 +229,40 @@ var protocolRegistry = []ProtocolMeta{
 		GenesisLedger: 58_758_722,
 		EventKinds:    []string{"redstone.update"},
 	},
+})
+
+// verificationPageDocs names the protocols whose write-up does not live
+// at docs/protocols/<name>.md: the three Reflector feeds are three
+// source names sharing one page, and the router is a view of Soroswap's
+// swaps, documented on the Soroswap page. A name mapped to "" declares a
+// protocol that has no page yet — the API serves no link for it and
+// TestProtocolVerificationPages stops requiring one.
+var verificationPageDocs = map[string]string{
+	"reflector-dex":   "reflector",
+	"reflector-cex":   "reflector",
+	"reflector-fx":    "reflector",
+	"soroswap-router": "soroswap",
+}
+
+// withVerificationPages stamps each entry's verification-page path from
+// its name, so writing docs/protocols/<name>.md is all it takes to link
+// a protocol's write-up. Deriving it is the fix for a second, silent
+// edit site: the pages for ten protocols — sdex, comet, cctp, rozo,
+// band, redstone, the three Reflector feeds and the router — existed in
+// the tree while /v1/protocols reported verification_page: null, because
+// per-row literals here were only ever added for six.
+func withVerificationPages(reg []ProtocolMeta) []ProtocolMeta {
+	for i := range reg {
+		doc, ok := verificationPageDocs[reg[i].Name]
+		if !ok {
+			doc = reg[i].Name
+		}
+		if doc == "" {
+			continue
+		}
+		reg[i].VerificationPage = "docs/protocols/" + doc + ".md"
+	}
+	return reg
 }
 
 // protocolByName returns the registry entry for name, false when the
