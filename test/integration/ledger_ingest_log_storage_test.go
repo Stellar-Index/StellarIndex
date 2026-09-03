@@ -172,7 +172,8 @@ func TestLedgerIngestLog(t *testing.T) {
 	if err := store.UpsertCompletenessSnapshot(ctx, timescale.CompletenessSnapshot{
 		Source: "soroswap", Genesis: 100, Tip: 200, Watermark: 180,
 		CoveragePct: 0.80, Complete: false, FirstProblem: 181,
-		SubstrateOK: true, RecognitionOK: true, ProjectionOK: false, Detail: "projection: 1 mismatch",
+		ProjectionVerifiedFrom: 150,
+		SubstrateOK:            true, RecognitionOK: true, ProjectionOK: false, Detail: "projection: 1 mismatch",
 	}); err != nil {
 		t.Fatalf("UpsertCompletenessSnapshot (update): %v", err)
 	}
@@ -186,8 +187,13 @@ func TestLedgerIngestLog(t *testing.T) {
 			continue
 		}
 		found = true
-		if sn.Watermark != 180 || sn.CoveragePct != 0.80 || sn.ProjectionOK || sn.FirstProblem != 181 {
-			t.Errorf("snapshot = %+v, want Watermark=180 CoveragePct=0.80 ProjectionOK=false FirstProblem=181", sn)
+		// ProjectionVerifiedFrom (migration 0155) round-trips: the
+		// projection axis's floor is the bottom of the range
+		// ProjectionOK is a claim about, and Genesis (100 here) is the
+		// LAKE axis's floor — reading the second for the first is the
+		// overstatement the column exists to close.
+		if sn.Watermark != 180 || sn.CoveragePct != 0.80 || sn.ProjectionOK || sn.FirstProblem != 181 || sn.ProjectionVerifiedFrom != 150 {
+			t.Errorf("snapshot = %+v, want Watermark=180 CoveragePct=0.80 ProjectionOK=false FirstProblem=181 ProjectionVerifiedFrom=150", sn)
 		}
 		if sn.ComputedAt.IsZero() {
 			t.Error("ComputedAt is zero, want now()")

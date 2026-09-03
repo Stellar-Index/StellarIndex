@@ -179,6 +179,58 @@ func TestHandleProtocolsList_Happy(t *testing.T) {
 	}
 }
 
+// TestHandleProtocolsList_CompletenessCarriesProjectionFloor pins the
+// served-tier floor onto the directory row too.
+//
+// /v1/protocols republishes `complete` from the same
+// completeness_snapshots row /coverage serves, and it prints it
+// directly beneath the protocol's own `genesis_ledger` — so the summary
+// reads as "complete from genesis" unless the served tier's real floor
+// travels with it. sdex is the live case: genesis_ledger 2, served tier
+// from 61,609,957.
+func TestHandleProtocolsList_CompletenessCarriesProjectionFloor(t *testing.T) {
+	srv := v1.New(v1.Options{
+		CompletenessReader: &stubCompletenessReader{snaps: []timescale.CompletenessSnapshot{
+			{Source: "sdex", Genesis: 2, Complete: true, Watermark: 64_249_915, ProjectionVerifiedFrom: 61_609_957},
+		}},
+	})
+	ts := httpTestServer(t, srv)
+
+	resp := mustGet(t, ts.URL+"/v1/protocols")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	var env struct {
+		Data struct {
+			Protocols []map[string]any `json:"protocols"`
+		} `json:"data"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&env); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	var row map[string]any
+	for _, p := range env.Data.Protocols {
+		if p["name"] == "sdex" {
+			row = p
+		}
+	}
+	if row == nil {
+		t.Fatal("sdex not in directory")
+	}
+	c, _ := row["completeness"].(map[string]any)
+	if c == nil {
+		t.Fatalf("sdex has no completeness summary: %v", row)
+	}
+	got, ok := c["projection_verified_from"]
+	if !ok {
+		t.Fatalf("completeness summary has no projection_verified_from — complete=%v printed under "+
+			"genesis_ledger=%v reads as a claim back to 2015; summary=%v", c["complete"], row["genesis_ledger"], c)
+	}
+	if n, isNum := got.(float64); !isNum || uint32(n) != 61_609_957 {
+		t.Fatalf("projection_verified_from = %v, want 61609957", got)
+	}
+}
+
 // Detail for a protocol_contracts-gated source: instances carry
 // factory + first_ledger; event kinds + verification page surface.
 func TestHandleProtocolDetail_Blend(t *testing.T) {

@@ -1914,6 +1914,16 @@ export interface paths {
          *     genesis-complete even though the served tier only reconciles
          *     within its retention window.
          *
+         *     **Two floors, too.** `genesis_ledger` is the LAKE axis's floor —
+         *     the first ledger the source could have data at. The SERVED axis
+         *     has its own, `projection_verified_from`: the lowest ledger the
+         *     served tier actually holds a row at. They are frequently far
+         *     apart — sdex and the oracle sources publish `genesis_ledger: 2`
+         *     against a served tier that begins around ledger 61.6M — so
+         *     `complete: true` with `coverage_pct: 1` is a claim over
+         *     `[projection_verified_from, watermark_ledger]`, NOT over
+         *     `[genesis_ledger, watermark_ledger]`. Read the two together.
+         *
          *     **`sources` holds sources only.** The ADR-0033 recognition audit
          *     also produces a SYSTEM-wide census — event shapes in the lake on
          *     contracts no indexed source owns, i.e. Soroban protocols we have
@@ -5250,6 +5260,20 @@ export interface components {
                 complete: boolean;
                 /** Format: int64 */
                 watermark_ledger: number;
+                /**
+                 * Format: int64
+                 * @description Floor of the range `complete` is a claim about — the
+                 *     lowest ledger the SERVED tier holds any row at for this
+                 *     source. It is NOT `genesis_ledger` (the sibling field on
+                 *     this same row), which is the lake axis's floor and is
+                 *     routinely much lower: sdex publishes `genesis_ledger: 2`
+                 *     with a served tier that begins around ledger 61.6M.
+                 *     Reading `complete` against `genesis_ledger` overstates
+                 *     the claim by that whole span. Omitted when the audit
+                 *     recorded no floor — absent means UNKNOWN, never "from
+                 *     ledger 0". Same field, same semantics, as on `/coverage`.
+                 */
+                projection_verified_from?: number;
             };
             /**
              * @description Current pooled-liquidity value (TVL) in USD, from a
@@ -11984,8 +12008,24 @@ export interface operations {
                      *             "genesis_ledger": 52728375,
                      *             "watermark_ledger": 63305532,
                      *             "tip_ledger": 63305532,
+                     *             "projection_verified_from": 52728375,
                      *             "coverage_pct": 1,
                      *             "detail": "complete: substrate + recognition + projection verified to tip",
+                     *             "computed_at": "2026-07-03T05:30:21.937134Z"
+                     *           },
+                     *           {
+                     *             "source": "sdex",
+                     *             "complete": true,
+                     *             "lake_complete": true,
+                     *             "substrate_ok": true,
+                     *             "recognition_ok": true,
+                     *             "projection_ok": true,
+                     *             "genesis_ledger": 2,
+                     *             "watermark_ledger": 63305532,
+                     *             "tip_ledger": 63305532,
+                     *             "projection_verified_from": 61609957,
+                     *             "coverage_pct": 1,
+                     *             "detail": "projection: verified [63290000,63305532]; [61609957,63289999] carried from the prior clean verdict (tip=63289999), not re-verified this run",
                      *             "computed_at": "2026-07-03T05:30:21.937134Z"
                      *           },
                      *           {
@@ -11998,6 +12038,7 @@ export interface operations {
                      *             "genesis_ledger": 61500000,
                      *             "watermark_ledger": 63305532,
                      *             "tip_ledger": 63305532,
+                     *             "projection_verified_from": 61609957,
                      *             "coverage_pct": 1,
                      *             "detail": "projection: 3 mismatched ledger(s) outside the served retention window",
                      *             "computed_at": "2026-07-03T05:30:21.937134Z"
@@ -12067,10 +12108,40 @@ export interface operations {
                                 /** Format: int64 */
                                 tip_ledger: number;
                                 /**
+                                 * Format: int64
+                                 * @description PROJECTION-axis floor: the lowest ledger the
+                                 *     SERVED tier holds any row at for this source.
+                                 *     It is the bottom of the range `projection_ok`
+                                 *     — and therefore `complete` — is a claim about;
+                                 *     below it the served tier holds nothing.
+                                 *
+                                 *     It is NOT `genesis_ledger`, which is the LAKE
+                                 *     axis's floor and is routinely ten years lower:
+                                 *     on pubnet, sdex and the oracle sources publish
+                                 *     `genesis_ledger: 2` with a served tier that
+                                 *     begins around ledger 61.6M (March 2026). A
+                                 *     consumer reading only
+                                 *     complete/coverage_pct/genesis_ledger therefore
+                                 *     overstates the served claim by that whole span
+                                 *     — this field is the correction, and it is the
+                                 *     same number `detail` has always named in prose.
+                                 *
+                                 *     Omitted when the audit recorded no floor: a
+                                 *     verdict written before this field existed, or a
+                                 *     run whose projection axis was not evaluated
+                                 *     because an earlier claim already failed at
+                                 *     genesis (`projection_ok` false). Absent means
+                                 *     UNKNOWN, never "from ledger 0".
+                                 */
+                                projection_verified_from?: number;
+                                /**
                                  * @description Lake-axis coverage (watermark vs tip) — see
                                  *     watermark_ledger. A FRACTION in [0,1] despite
                                  *     the `_pct` name: 1.0 means the verdict reaches
-                                 *     the tip, not 100.
+                                 *     the tip, not 100. NOT scoped to
+                                 *     projection_verified_from: it is the lake axis's
+                                 *     number, so `coverage_pct: 1` never means the
+                                 *     served tier reaches genesis.
                                  */
                                 coverage_pct: number;
                                 /** Format: int64 */
@@ -12182,7 +12253,8 @@ export interface operations {
                      *             "events_24h": 1692662,
                      *             "completeness": {
                      *               "complete": false,
-                     *               "watermark_ledger": 63305532
+                     *               "watermark_ledger": 63305532,
+                     *               "projection_verified_from": 61609957
                      *             }
                      *           }
                      *         ],
@@ -12274,7 +12346,8 @@ export interface operations {
                      *         "events_24h": 3211,
                      *         "completeness": {
                      *           "complete": true,
-                     *           "watermark_ledger": 63305532
+                     *           "watermark_ledger": 63305532,
+                     *           "projection_verified_from": 51499546
                      *         },
                      *         "contracts": [
                      *           {
