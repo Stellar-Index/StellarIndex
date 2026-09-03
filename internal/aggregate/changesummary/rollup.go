@@ -93,9 +93,13 @@ type Worker struct {
 
 	// entities is the working set. Each one maps an
 	// (entity_type, entity_id) coordinate to the canonical pair
-	// whose VWAP drives the entity's deltas. Entities that don't
-	// have a single canonical pair (e.g. protocols, which sum
-	// across pools) live in their own workers.
+	// whose VWAP drives the entity's deltas. An entity with no
+	// single canonical pair — a protocol summing across pools, an
+	// ingest source summing across assets — cannot be expressed
+	// here at all, and no other worker computes one, so 'protocol'
+	// and 'source' rows do not exist on any deployment. The API
+	// surface says so rather than promising them (see
+	// allowedChangeSummaryEntityTypes in internal/api/v1/changes.go).
 	entities []Entity
 }
 
@@ -103,7 +107,7 @@ type Worker struct {
 // whose 1-minute VWAP series drives the deltas.
 type Entity struct {
 	Type string         // 'coin' | 'pair'
-	ID   string         // canonical id, e.g. "stellar" or "stellar/fiat:USD"
+	ID   string         // canonical id, e.g. "crypto:XLM" or "crypto:XLM/fiat:USD"
 	Pair canonical.Pair // source of truth for prices_1m lookups
 }
 

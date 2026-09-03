@@ -1641,9 +1641,10 @@ export interface paths {
          *     worker is lagging.
          *
          *     Returns 404 when the worker hasn't computed a row yet (fresh
-         *     deployment, newly-added entity, or bounded history). Returns
-         *     503 when this deployment hasn't wired the change-summary
-         *     reader.
+         *     deployment, newly-added entity, bounded history, or an entity
+         *     outside the aggregator's configured pair set — see `id`).
+         *     Returns 503 when this deployment hasn't wired the
+         *     change-summary reader.
          */
         get: operations["getEntityChanges"];
         put?: never;
@@ -11254,31 +11255,46 @@ export interface operations {
             path: {
                 /**
                  * @description Which entity family the delta strip is computed over:
-                 *     `coin` (an asset's price/volume deltas), `protocol`
-                 *     (per-protocol activity), `pair` (a trading pair), or
-                 *     `source` (an ingest source). Determines how `{id}` is
-                 *     interpreted — see the `id` parameter.
-                 * @example source
+                 *     `coin` (the deltas of one asset's price) or `pair` (the
+                 *     deltas of one trading pair's price). Determines how `{id}`
+                 *     is interpreted — see the `id` parameter.
+                 *
+                 *     Both families come off the same series — the 1-minute VWAP
+                 *     of an aggregator-configured pair — which is why they are
+                 *     the two the worker can compute. Families that would need a
+                 *     different series (per-protocol activity, per-ingest-source
+                 *     volume) have no producer and are not served: the
+                 *     `change_summary_5m` discriminator reserves room for them,
+                 *     but nothing writes those rows, so they are absent from
+                 *     this contract rather than documented and permanently
+                 *     empty.
+                 * @example coin
                  */
-                entity_type: "coin" | "protocol" | "pair" | "source";
+                entity_type: "coin" | "pair";
                 /**
                  * @description Canonical id for the entity. Form depends on
                  *     `entity_type`:
                  *
-                 *     - `coin`: any of the asset's identifier forms — friendly
-                 *       slug (`XLM`, `USDC`), canonical asset_id (`native`,
-                 *       `crypto:XLM`, `USDC-GA5Z…`), or bare classic code
-                 *       (`USDC` → also tries `crypto:USDC`). The handler
-                 *       expands the input into every candidate the
+                 *     - `coin`: the BASE asset of a configured pair, in any of
+                 *       its identifier forms — friendly slug (`XLM`), canonical
+                 *       asset_id (`native`, `crypto:XLM`, `USDC-GA5Z…`), or bare
+                 *       classic code (`USDC` → also tries `crypto:USDC`). The
+                 *       handler expands the input into every candidate the
                  *       change-summary worker might have keyed under and
                  *       returns the first hit. Without expansion, a typo of
                  *       the canonical form would 404 even when data is
                  *       populated under a sibling form.
-                 *     - `pair`: `base/quote` form (e.g. `native/USDC-GA5Z…`).
-                 *     - `protocol`: protocol slug (e.g. `soroswap`, `blend`).
-                 *     - `source`: source name (e.g. `binance`, `coinbase`,
-                 *       `sdex`).
-                 * @example binance
+                 *     - `pair`: `base/quote` form (e.g. `crypto:XLM/fiat:USD`).
+                 *       The `/` belongs to the id, not to the path, so the whole
+                 *       id occupies one path segment and must be percent-encoded
+                 *       (`crypto%3AXLM%2Ffiat%3AUSD`); an unencoded `/` splits
+                 *       the request across two segments and matches no route.
+                 *
+                 *     The rollup covers the pairs the aggregator is configured
+                 *     to price, not every indexed asset: an asset the aggregator
+                 *     publishes no VWAP for has no row here and 404s. Call
+                 *     `/v1/assets` for the full indexed universe.
+                 * @example crypto:XLM
                  */
                 id: string;
             };

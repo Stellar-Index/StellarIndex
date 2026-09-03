@@ -643,9 +643,10 @@ func ExampleClient_Observations() {
 // ExampleClient_ChangeSummary demonstrates the per-entity
 // multi-window delta rollup. The change-summary worker writes one
 // row per (entity_type, entity_id) every 5 min; this method
-// surfaces the latest. EntityType is one of "coin", "protocol",
-// "pair", "source"; for coin entities the API expands friendly
-// slugs (XLM, USDC) into canonical asset_id forms server-side.
+// surfaces the latest. EntityType is "coin" or "pair" — the two
+// families the worker computes; for coin entities the API expands
+// friendly slugs (XLM, USDC) into canonical asset_id forms
+// server-side.
 //
 // All H*/D* fields are *float64 — nil distinguishes "no value
 // yet" (window opened recently) from "0% change". Render `—` on
