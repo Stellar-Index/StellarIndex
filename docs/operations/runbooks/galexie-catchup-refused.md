@@ -4,7 +4,7 @@ last_verified: 2026-08-29
 status: current
 ---
 
-# stellarindex_galexie_catchup_refused (+ stellarindex_host_swap_activity)
+# stellarindex_galexie_catchup_refused
 
 ## At a glance
 
@@ -125,5 +125,6 @@ behaves as follows (`tasks/galexie-effective-checksum.yml`):
 - [docs/operations/archival-node-bringup.md](../archival-node-bringup.md)
   — the disaster-recovery triage tree if a restart does NOT recover
   (corrupt history archive path).
-- `stellarindex_host_swap_activity` shares this runbook: swap is the
-  early warning of the pressure class that causes the wedge.
+- [host-swap-activity](host-swap-activity.md) — the early warning for
+  the pressure class that causes this wedge. It fires first and has its
+  own triage; this runbook is where it escalates to.

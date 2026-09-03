@@ -419,3 +419,93 @@ tests:
       - eval_time: 120m
         alertname: stellarindex_dex_tvl_total_divergent
         exp_alerts: []
+
+  # ══ stellarindex_api_down — the SEV-1 page ════════════════════════
+  # The rule's own outage: the API scrape target disappears from
+  # service discovery (job removed from the scrape config, unit gone,
+  # target name stopped resolving), so no `up{job="stellarindex_api"}`
+  # series exists at all. `sum()` over an EMPTY vector returns empty,
+  # not 0, so `sum(up{...}) == 0` alone produces NO alert here — the
+  # page that exists for a total API outage is silent for one of the
+  # two ways a total outage looks. The absent_over_time arm is what
+  # fires; it carries the selector's `job` label.
+  #
+  # PROVEN-RED: drop the `or absent_over_time(...)` line from
+  # ../rules/api.yml and this case fails with
+  # "alertname:stellarindex_api_down, time:20m, exp:[...], got:[]".
+  - interval: 1m
+    name: an api scrape target that vanished from service discovery still pages
+    input_series:
+      # Another job is still scraped, so Prometheus itself is healthy —
+      # this is the API target specifically going missing, not a dead
+      # Prometheus (which meta.yml owns).
+      - series: 'up{job="node_exporter",instance="r1:9100"}'
+        values: '1+0x30'
+
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: stellarindex_api_down
+        exp_alerts:
+          - exp_labels:
+              job: stellarindex_api
+              severity: page
+              team: stellarindex
+              component: api
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api-down.md
+              summary: "Every API pod is down (SEV-1)"
+              description: |
+                No API instance is scrape-reachable across the fleet — or the
+                API scrape target has vanished from service discovery, in which
+                case the outage signal itself is blind. Both are pageable: the
+                first is a full public outage with customers seeing connection
+                errors, the second is an outage nobody would be told about.
+                Follow the api-down runbook immediately.
+
+  # ── the original outage shape still pages ────────────────────────
+  # Both pods are scraped and both report up==0. This is what the
+  # `sum() == 0` arm carries; keeping the case proves the absent arm
+  # was ADDED, not swapped in.
+  - interval: 1m
+    name: every scraped api pod down pages with no instance labels
+    input_series:
+      - series: 'up{job="stellarindex_api",instance="r1:3000"}'
+        values: '0+0x30'
+      - series: 'up{job="stellarindex_api",instance="r2:3000"}'
+        values: '0+0x30'
+
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: stellarindex_api_down
+        exp_alerts:
+          - exp_labels:
+              severity: page
+              team: stellarindex
+              component: api
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api-down.md
+              summary: "Every API pod is down (SEV-1)"
+              description: |
+                No API instance is scrape-reachable across the fleet — or the
+                API scrape target has vanished from service discovery, in which
+                case the outage signal itself is blind. Both are pageable: the
+                first is a full public outage with customers seeing connection
+                errors, the second is an outage nobody would be told about.
+                Follow the api-down runbook immediately.
+
+  # ── one surviving pod is NOT a fleet outage ──────────────────────
+  # Why the rule keeps `sum()` rather than the bare `up == 0` the
+  # exporter pages in meta.yml use: this is a SEV-1 for the whole
+  # fleet being gone, not a page per failing instance.
+  - interval: 1m
+    name: one healthy api pod keeps the page silent
+    input_series:
+      - series: 'up{job="stellarindex_api",instance="r1:3000"}'
+        values: '1+0x30'
+      - series: 'up{job="stellarindex_api",instance="r2:3000"}'
+        values: '0+0x30'
+
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: stellarindex_api_down
+        exp_alerts: []

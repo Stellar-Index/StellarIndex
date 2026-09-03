@@ -66,11 +66,26 @@ groups:
         # one metric (an absent `ok` child makes the comparison empty —
         # wave-D ALERT-06) or DIVIDES by one (wave-D ALERT-04). This is a
         # bare threshold on a single series: it goes from absent to
-        # present exactly when the bad thing happens, and increase()
-        # reports a positive delta for a counter that appears mid-window.
-        # Seeding it would add a permanent zero series for every oracle
-        # source for no gain.
-        expr: increase(stellarindex_oracle_stream_rows_unparsed_total[6h]) > 0
+        # present exactly when the bad thing happens. Seeding it would
+        # add a permanent zero series for every oracle source for no gain.
+        #
+        # But an unseeded counter is exactly what increase() cannot see
+        # the FIRST increment of: a `{source,field}` child born at 1 and
+        # never incremented again has a flat range, so increase() reads 0
+        # and this alert would never fire for a relabel that broke one
+        # row on a surface nobody re-requests. Second arm: the child
+        # exists now and did not exist one window ago — the same
+        # born-inside-the-window idiom backup-offsite.yml uses, and the
+        # counterpart to the raw-value comparison ingestion.yml's
+        # stellarindex_decoder_panicked landed for the same blindness. It
+        # goes quiet once the birth falls out of the window, so a fixed
+        # row stops ticketing without waiting for a process restart.
+        expr: |
+          increase(stellarindex_oracle_stream_rows_unparsed_total[6h]) > 0
+          or (
+            stellarindex_oracle_stream_rows_unparsed_total > 0
+            unless stellarindex_oracle_stream_rows_unparsed_total offset 6h
+          )
         for: 10m
         labels:
           severity: ticket
