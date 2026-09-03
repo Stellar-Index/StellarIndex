@@ -5207,6 +5207,13 @@ export interface components {
          *       Stellar ticker but the issuer doesn't. The matching
          *       `unverified_warning` body on the AssetDetail carries
          *       the verified-currency pointer (R-018 Phase 1.1).
+         *     - `filters_ignored` — the row-narrowing query parameters the
+         *       response did NOT apply, named as sent. Omitted when
+         *       everything supplied was applied. On `/v1/assets` the
+         *       class-scoped listings (`asset_class=fiat|stablecoin|crypto`)
+         *       serve their whole class and narrow on none of `type`,
+         *       `code`, `issuer`, `q`; they name what they dropped here so a
+         *       client can tell that over-broad page from a genuine match.
          */
         Flags: {
             /** @default false */
@@ -5238,6 +5245,8 @@ export interface components {
             rerouted: boolean;
             /** @default false */
             unverified_ticker_collision: boolean;
+            /** @description Names of the row-narrowing query parameters this response did NOT apply, spelled as the caller sent them (`type`, `code`, `issuer`, `q`). Absent when the response applied every filter it was given — an ignored filter and a matched one otherwise produce the same 200 over the same shape, so a client re-filtering the page has nothing else to key on. Set by `/v1/assets` on the listings whose rows come from a source that cannot narrow: the class-scoped catalogue listings (`asset_class=fiat|stablecoin|crypto`), and the lean asset-catalog fallback served when no listing store is configured. */
+            filters_ignored?: string[];
         };
         /**
          * @description Present on list endpoints when more rows exist beyond the
@@ -7761,7 +7770,9 @@ export interface operations {
                  *     Applied on the default listing and on `asset_class=all`.
                  *     NOT applied on `asset_class=fiat|stablecoin|crypto`: those
                  *     listings serve their whole class, so `q` is accepted and
-                 *     has no effect there.
+                 *     has no effect there — the response names
+                 *     it in `flags.filters_ignored`, so a client can tell the
+                 *     over-broad page from a match.
                  *
                  *     A row's `volume_24h_usd` under this filter is the volume of
                  *     the arm the filter admitted — see **Row filters and
@@ -7830,8 +7841,9 @@ export interface operations {
                  *     and `crypto` serve their whole class from the catalogue and
                  *     narrow on NONE of the row filters — `type`, `code`,
                  *     `issuer` and `q` are accepted and have no effect on those
-                 *     three. They apply on `all` and on the default (omitted)
-                 *     listing.
+                 *     three; each one a request supplies is named on the response
+                 *     in `flags.filters_ignored`. They apply on `all` and on the
+                 *     default (omitted) listing.
                  */
                 asset_class?: "fiat" | "stablecoin" | "crypto" | "blockchain" | "cryptocurrency" | "cryptocurrencies" | "all";
                 /**
@@ -7845,7 +7857,9 @@ export interface operations {
                  *     Applied on the default listing and on `asset_class=all`.
                  *     NOT applied on `asset_class=fiat|stablecoin|crypto`: those
                  *     listings serve their whole class, so `issuer` is accepted
-                 *     and has no effect there.
+                 *     and has no effect there — the response names
+                 *     it in `flags.filters_ignored`, so a client can tell the
+                 *     over-broad page from a match.
                  *
                  *     A row's `volume_24h_usd` under this filter is the volume of
                  *     the arm the filter admitted — see **Row filters and
@@ -7869,7 +7883,9 @@ export interface operations {
                  *     Applied on the default listing and on `asset_class=all`.
                  *     NOT applied on `asset_class=fiat|stablecoin|crypto`: those
                  *     listings serve their whole class, so `type` is accepted and
-                 *     has no effect there.
+                 *     has no effect there — the response names
+                 *     it in `flags.filters_ignored`, so a client can tell the
+                 *     over-broad page from a match.
                  *
                  *     **Row filters and `volume_24h_usd`.** All four row filters
                  *     (`type`, `code`, `issuer`, `q`) push down to the listing
@@ -7904,7 +7920,9 @@ export interface operations {
                  *     Applied on the default listing and on `asset_class=all`.
                  *     NOT applied on `asset_class=fiat|stablecoin|crypto`: those
                  *     listings serve their whole class, so `code` is accepted and
-                 *     has no effect there.
+                 *     has no effect there — the response names
+                 *     it in `flags.filters_ignored`, so a client can tell the
+                 *     over-broad page from a match.
                  *
                  *     A row's `volume_24h_usd` under this filter is the volume of
                  *     the arm the filter admitted — see **Row filters and

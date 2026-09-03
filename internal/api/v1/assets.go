@@ -511,6 +511,28 @@ type assetListFilters struct {
 	q      string // case-insensitive substring over code / slug / issuer
 }
 
+// ignored returns the names of the filters this request actually
+// supplied, in the order the OpenAPI spec lists them — the value a path
+// that serves its page WITHOUT applying any of them puts on
+// [Flags.FiltersIgnored].
+//
+// The spec says in prose which listings drop the row filters, and prose
+// is not something a client can branch on: the dropped-filter page and
+// the matched-filter page are the same 200 over the same shape. `type`
+// is reported only when it narrows — "any" normalises to "" at parse
+// time, so nothing was dropped when the caller disabled it themselves.
+func (f assetListFilters) ignored() []string {
+	var out []string
+	for _, p := range []struct{ name, value string }{
+		{"type", f.typ}, {"code", f.code}, {"issuer", f.issuer}, {"q", f.q},
+	} {
+		if p.value != "" {
+			out = append(out, p.name)
+		}
+	}
+	return out
+}
+
 // assetsOrderParam is the parsed `order_by` for /v1/assets: the store
 // order to use, plus whether the client actually asked for one.
 //
@@ -713,6 +735,12 @@ func isValidClassicCode(s string) bool {
 // client sends `asset_class=stablecoin&q=…` on every keystroke: a 400
 // would replace an over-broad list with a hard error page.
 //
+// Every path that drops a filter names it on the envelope instead —
+// `flags.filters_ignored` (see [assetListFilters.ignored]). Prose in
+// the spec tells an integrator writing the client; the flag tells the
+// client itself, which otherwise cannot distinguish the over-broad
+// page from a genuine match.
+//
 // Returns an empty list when no AssetReader is wired (operator did
 // not configure the asset-catalog reader). The Envelope shape is
 // otherwise correct so clients can integrate against the wire
@@ -782,7 +810,7 @@ func (s *Server) handleAssetList(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if assetClass == "fiat" || assetClass == "stablecoin" || assetClass == "crypto" {
-		s.handleAssetListFromCatalogue(w, r, assetClass, limit, cursor)
+		s.handleAssetListFromCatalogue(w, r, assetClass, filters, limit, cursor)
 		return
 	}
 
@@ -808,11 +836,17 @@ func (s *Server) handleAssetList(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Lean AssetReader fallback. Its ListAssets takes a cursor and a
+	// limit and nothing else, so NONE of the four row filters reaches
+	// it — the same silent over-broad page the class-scoped listings
+	// serve, from a different cause. Say which were dropped.
+	leanFlags := Flags{FiltersIgnored: filters.ignored()}
+
 	reader := s.assetReaderOrNil()
 	if reader == nil {
 		// Feature not wired yet — empty list is consistent with
 		// the contract and doesn't force a 503.
-		writeJSON(w, []AssetDetail{}, Flags{})
+		writeJSON(w, []AssetDetail{}, leanFlags)
 		return
 	}
 
@@ -839,7 +873,7 @@ func (s *Server) handleAssetList(w http.ResponseWriter, r *http.Request) {
 
 	env := Envelope{
 		Data:  rows,
-		Flags: Flags{},
+		Flags: leanFlags,
 	}
 	if next != "" {
 		env.Pagination = &Pagination{Next: next}
@@ -1765,9 +1799,21 @@ func normaliseAssetClass(raw string) string {
 //
 // Pagination via offset cursor — the result set is bounded at
 // ≤45 catalogue rows per class, so a simple offset is sufficient.
-func (s *Server) handleAssetListFromCatalogue(w http.ResponseWriter, r *http.Request, class string, limit int, cursor string) {
+//
+// The class IS the query here: this listing serves its whole class and
+// narrows on none of the row filters. `filters` is taken only to name
+// the ones the caller sent on `flags.filters_ignored`, so the
+// over-broad page is machine-readable as over-broad — the explorer
+// sends its class chip and its search box as independent parameters, so
+// `asset_class=stablecoin&q=…` arrives on every keystroke and cannot be
+// answered with a 400.
+func (s *Server) handleAssetListFromCatalogue(
+	w http.ResponseWriter, r *http.Request,
+	class string, filters assetListFilters, limit int, cursor string,
+) {
+	flags := Flags{FiltersIgnored: filters.ignored()}
 	if s.verifiedCurrencies == nil {
-		writeJSON(w, []AssetDetail{}, Flags{})
+		writeJSON(w, []AssetDetail{}, flags)
 		return
 	}
 	// StellarIssued (not Browseable): /v1/assets is Stellar-only post-split
@@ -1777,7 +1823,7 @@ func (s *Server) handleAssetListFromCatalogue(w http.ResponseWriter, r *http.Req
 	caps := s.computeCatalogueMarketCaps(r.Context(), matched, class)
 	rows := s.projectCatalogueRows(r.Context(), matched, caps)
 	sortAssetDetailsByMarketCapDesc(rows)
-	s.writeCataloguePage(w, r, rows, limit, cursor)
+	s.writeCataloguePage(w, r, rows, limit, cursor, flags)
 }
 
 // handleExternalAssetList serves GET /v1/external/assets — the NON-Stellar
@@ -1813,7 +1859,9 @@ func (s *Server) handleExternalAssetList(w http.ResponseWriter, r *http.Request)
 	caps := s.computeAllCatalogueMarketCaps(r.Context(), entries)
 	rows := s.projectCatalogueRows(r.Context(), entries, caps)
 	sortAssetDetailsByMarketCapDesc(rows)
-	s.writeCataloguePage(w, r, rows, limit, cursor)
+	// /v1/external/assets reads no row filters at all, so it has none to
+	// report as dropped.
+	s.writeCataloguePage(w, r, rows, limit, cursor, Flags{})
 }
 
 // filterCatalogueByClass returns the catalogue entries matching the
@@ -1937,13 +1985,21 @@ func parseOffsetCursor(w http.ResponseWriter, r *http.Request, cursor string) (i
 // previously these rows came from the price-less catalogue projection,
 // so every crypto/stablecoin row (even XLM) listed price_usd: null
 // (audit 2026-06-19 item 4).
-func (s *Server) writeCataloguePage(w http.ResponseWriter, r *http.Request, rows []AssetDetail, limit int, cursor string) {
+//
+// `flags` is the caller's envelope flags, carried onto every page this
+// writer emits including the empty one — the class-scoped listing puts
+// its dropped row filters there, and a past-the-end page dropped them
+// just the same.
+func (s *Server) writeCataloguePage(
+	w http.ResponseWriter, r *http.Request,
+	rows []AssetDetail, limit int, cursor string, flags Flags,
+) {
 	offset, ok := parseOffsetCursor(w, r, cursor)
 	if !ok {
 		return
 	}
 	if offset >= len(rows) {
-		writeJSON(w, []AssetDetail{}, Flags{})
+		writeJSON(w, []AssetDetail{}, flags)
 		return
 	}
 	end := offset + limit
@@ -1954,7 +2010,7 @@ func (s *Server) writeCataloguePage(w http.ResponseWriter, r *http.Request, rows
 	s.fillCataloguePricesForPage(r.Context(), page)
 	s.fillCatalogueStatsForPage(r.Context(), page)
 	s.attachSparkline7dIfRequested(r, page)
-	env := Envelope{Data: page, Flags: Flags{}}
+	env := Envelope{Data: page, Flags: flags}
 	if end < len(rows) {
 		next := strconv.Itoa(end)
 		env.Pagination = &Pagination{Next: next}
