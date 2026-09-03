@@ -71,6 +71,13 @@ Key signals:
 - **MinIO/Galexie down or unreachable** → lake outage. The indexer is
   burning its retry budget; expect `SignatureDoesNotMatch` (credential
   drift) or connection errors in the journal.
+- **`stellarindex_ledgerstream_live_start_retries_total` climbing** →
+  same conclusion, without an ssh. That counter moves only when the live
+  tail cannot OPEN the lake (datastore or schema unreadable), so a
+  climbing value confirms lake reachability as the cause and a flat one
+  rules it out. Nothing is being skipped while it climbs: the retry
+  re-issues the identical range and the cursor is written from the
+  callback, which has not run.
 - **Lake healthy, cursor flat, no restarts** → the dispatch goroutine is
   wedged or the sink is blocked. Check
   `stellarindex_decoder_panics_total` (a recovered decoder panic that
@@ -143,3 +150,10 @@ ADR-0033 verdict once ingest has caught up.
 - 2026-09-03 — initial version, with the alert (RV2 #5: the F3 retry
   budget plus the relaxed StartLimit left a MinIO outage page-free, and
   the unit file named a cover that cannot fire for it).
+- 2026-09-03 — added the
+  `stellarindex_ledgerstream_live_start_retries_total` signal. The F3
+  budget covered the WALK only; the datastore open + schema load ran
+  before it, un-retried, so a lake outage present at process start
+  failed in ~1s and the "~5min10s start cycle" above did not hold for
+  the one fault it was written about. The retry now covers the open too,
+  and this counter is what makes the resulting stall visible.

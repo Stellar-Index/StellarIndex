@@ -268,6 +268,7 @@ func registerAppMetricsTail() {
 
 		LedgerstreamTierReadTotal,
 		LedgerstreamColdReadDurationSeconds,
+		LedgerstreamLiveStartRetriesTotal,
 
 		DEXTVLRefreshTotal,
 		DEXTVLRefreshDurationSeconds,
@@ -1513,6 +1514,40 @@ var LedgerstreamColdReadDurationSeconds = prometheus.NewHistogramVec(
 		Buckets: []float64{0.005, 0.025, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30},
 	},
 	[]string{"outcome"},
+)
+
+// LedgerstreamLiveStartRetriesTotal — how many times the live tail has
+// re-attempted a start that failed before delivering a single ledger
+// (#371 F3). Emitted by internal/ledgerstream's retryLiveStart.
+//
+// What makes this distinct from every other ingest signal: it is the ONLY
+// series that moves while the indexer is alive, healthy in every other
+// respect, and simply cannot open the lake. The datastore open + schema
+// load happen once, before the SDK's fetch worker (and therefore before
+// the Config.LiveRetryBudget the worker spends) exists, so a MinIO that
+// is down at process start used to end the process in microseconds. It
+// now stalls and retries instead, and this counter is what stops that
+// stall being silent.
+//
+// When to look at it: the first branch of the ledger-ingest-stalled
+// runbook. A cursor that has stopped advancing while this counter climbs
+// is a lake-reachability problem (MinIO down, credentials rejected,
+// bucket gone) — not Postgres, not a decoder, not the dispatcher. A
+// cursor that has stopped advancing while this counter is FLAT rules the
+// lake out entirely.
+//
+// Plain counter, not a Vec: it exists from registration, so "no retries
+// have happened" and "this binary has never emitted it" are not the same
+// scrape. There is deliberately no `exhausted` sibling — that increment
+// would land immediately before the process exits and no scrape would
+// ever see it; exhaustion is covered by the process exit itself
+// (stellarindex_ingestion_ledger_stalled, plus
+// stellarindex_minio_exporter_down within ~2 min for the MinIO case).
+var LedgerstreamLiveStartRetriesTotal = prometheus.NewCounter(
+	prometheus.CounterOpts{
+		Name: "stellarindex_ledgerstream_live_start_retries_total",
+		Help: "Re-attempts of a live-tail stream that failed before delivering any ledger (datastore unreachable / schema unreadable at start). Climbs only while the indexer is up but cannot open the lake.",
+	},
 )
 
 // Sep1CacheOpsTotal — per-outcome counter for SEP-1 cache

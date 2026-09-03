@@ -65,6 +65,17 @@ Requires=postgresql.service
 # reach 60 starts inside a 15-minute window, and `systemd_unit_failed`
 # therefore never fires for that fault.
 #
+# That ~5min10s figure holds only because the budget covers the datastore
+# OPEN as well as the walk (internal/ledgerstream `retryLiveStart`). The
+# open + schema load run BEFORE the SDK fetch worker that spends the
+# in-walk budget exists, so until that outer retry landed a lake outage
+# present at START failed in about a second, the cycle collapsed to
+# RestartSec, sixty starts DID fit inside 15 minutes, and the unit parked
+# in `failed` — staying parked after MinIO came back until a human ran
+# `systemctl reset-failed`. Delete that retry and this paragraph becomes
+# false again; TestStream_liveTail_retriesWhenDataStoreIsDownAtStart is
+# what keeps it honest.
+#
 # The cover is `stellarindex_ingestion_ledger_stalled` (page, ~10 min,
 # docs/operations/runbooks/ledger-ingest-stalled.md): the committed
 # LEDGER cursor stops advancing. It is deliberately not

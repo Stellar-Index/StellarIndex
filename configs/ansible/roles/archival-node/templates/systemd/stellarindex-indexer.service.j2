@@ -23,6 +23,13 @@ Wants=network-online.target
 # committed LEDGER cursor stops advancing. NOT `all_sources_stopped`,
 # which this comment named until 2026-09-03 — the CEX/FX connectors
 # share this binary and keep its input moving through a lake outage.
+# The ~5min10s figure holds only because the budget covers the datastore
+# OPEN as well as the walk (ledgerstream.retryLiveStart). The open +
+# schema load run BEFORE the SDK fetch worker that spends the in-walk
+# budget exists, so until that outer retry landed a lake outage present
+# at START failed in ~1s, the cycle collapsed to RestartSec, and 60
+# starts DID fit inside 15 min — the unit parked in `failed` and stayed
+# parked after MinIO came back.
 # Keep this in lockstep with deploy/systemd/stellarindex-indexer.service.
 # restarts within StartLimitIntervalSec parks the unit in `failed`,
 # which node_systemd_unit_state{state="failed"} raises a TICKET on

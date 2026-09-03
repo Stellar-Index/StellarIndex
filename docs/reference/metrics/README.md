@@ -867,6 +867,46 @@ whole-partition fetches. The paired-histogram sibling of
 `stellarindex_ledgerstream_tier_read_total`; same always-registered
 rationale.
 
+### `stellarindex_ledgerstream_live_start_retries_total`
+
+Counter, no labels.
+
+Re-attempts of a **live-tail** stream that failed before delivering a
+single ledger — i.e. the lake could not be opened at all (`NewDataStore`
+or `LoadSchema` failed: MinIO down, credentials rejected, bucket gone).
+Emitted by `internal/ledgerstream`'s `retryLiveStart` (#371 F3).
+
+**When to look at it:** the first branch of
+`runbooks/ledger-ingest-stalled.md`. This is the only series that moves
+while the indexer is up, healthy in every other respect, and simply
+cannot read the lake — so it splits that runbook's first two checks
+apart without an ssh:
+
+- cursor flat **and this counter climbing** → lake reachability. Check
+  `minio.service`, the bucket, and the credentials in
+  `/etc/default/stellarindex-ops`. Nothing is being skipped: the retry
+  re-issues the identical range and the cursor is written from the
+  callback, which has not run.
+- cursor flat **and this counter flat** → the lake is fine; look at
+  Postgres, the dispatcher, or the sink.
+
+Why it exists at all: `Config.LiveRetryBudget` is spent inside the SDK's
+fetch worker, which only exists once the datastore is open and its
+schema loaded. Those two run once, up front, un-retried, so a lake
+outage present at process **start** was never covered — `Stream`
+returned in microseconds and the indexer exited, which at
+`RestartSec=10s` puts sixty restarts inside `StartLimitIntervalSec` and
+parks the unit in `failed` until a human clears it.
+
+There is deliberately **no** `exhausted` counterpart. It would increment
+once, immediately before the process exits, and no scrape would ever
+observe it. Budget exhaustion is covered by the process exit:
+`stellarindex_ingestion_ledger_stalled` (page, ~10 min) and — for the
+MinIO case specifically — `stellarindex_minio_exporter_down` (page,
+~2 min). No new alert rule was added for this counter for the same
+reason: both of those already fire on the fault, and a third would be
+noise on one event.
+
 ### `stellarindex_source_insert_errors_total`
 
 Counter, labels `source`, `kind` (`trade` / `oracle` / `panic` /

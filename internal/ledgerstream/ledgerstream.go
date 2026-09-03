@@ -38,6 +38,8 @@ import (
 	"github.com/stellar/go-stellar-sdk/support/datastore"
 	sdklog "github.com/stellar/go-stellar-sdk/support/log"
 	"github.com/stellar/go-stellar-sdk/xdr"
+
+	"github.com/Stellar-Index/StellarIndex/internal/obs"
 )
 
 // Config binds the SDK's datastore configuration + BufferedStorageBackend
@@ -276,34 +278,190 @@ func Stream(
 		return callback(lcm)
 	}
 
-	var err error
-	switch {
-	case cfg.tieringEnabled():
-		err = streamTiered(ctx, cfg, ledgerRange, buffered, countingCallback)
-	case ledgerRange.Bounded() && ledgerRange.To() == ledgerRange.From():
-		// The SDK's ingest.ApplyLedgerMetadata rejects a bounded
-		// range of exactly one ledger (producer.go: `To() <=
-		// From()`) even though the SDK exports SingleLedgerRange.
-		// Walk it with our own backend loop instead — this is
-		// ch-live-catchup's tip-extend case whenever the timer
-		// fires exactly one ledger behind the galexie tip.
-		err = streamHot(ctx, cfg, ledgerRange, buffered, countingCallback)
-	default:
-		err = ingest.ApplyLedgerMetadata(
-			ledgerRange,
-			ingest.PublisherConfig{
-				Registry:              cfg.Registry,
-				RegistryNamespace:     cfg.RegistryNamespace,
-				BufferedStorageConfig: buffered,
-				DataStoreConfig:       cfg.DataStore,
-				Log:                   cfg.Logger,
-			},
-			ctx,
-			countingCallback,
-		)
+	attempt := func() error {
+		switch {
+		case cfg.tieringEnabled():
+			return streamTiered(ctx, cfg, ledgerRange, buffered, countingCallback)
+		case ledgerRange.Bounded() && ledgerRange.To() == ledgerRange.From():
+			// The SDK's ingest.ApplyLedgerMetadata rejects a bounded
+			// range of exactly one ledger (producer.go: `To() <=
+			// From()`) even though the SDK exports SingleLedgerRange.
+			// Walk it with our own backend loop instead — this is
+			// ch-live-catchup's tip-extend case whenever the timer
+			// fires exactly one ledger behind the galexie tip.
+			return streamHot(ctx, cfg, ledgerRange, buffered, countingCallback)
+		default:
+			return ingest.ApplyLedgerMetadata(
+				ledgerRange,
+				ingest.PublisherConfig{
+					Registry:              cfg.Registry,
+					RegistryNamespace:     cfg.RegistryNamespace,
+					BufferedStorageConfig: buffered,
+					DataStoreConfig:       cfg.DataStore,
+					Log:                   cfg.Logger,
+				},
+				ctx,
+				countingCallback,
+			)
+		}
+	}
+
+	err := attempt()
+	if to == 0 {
+		err = retryLiveStart(ctx, cfg, &delivered, err, attempt)
 	}
 	return maybeTolerateTrailingMissing(cfg, from, to, delivered, err)
 }
+
+// retryLiveStart re-runs a live tail that failed WITHOUT EVER DELIVERING
+// A LEDGER, until Config.LiveRetryBudget is exhausted (#371 F3, residual).
+// It returns the last error, or nil if a re-attempt eventually ran clean.
+//
+// Why this exists on top of [applyLiveRetryPolicy]. That policy spends the
+// budget inside the SDK's fetch worker, and the worker only exists once
+// the datastore has been opened and its schema loaded. Both of those
+// happen ONCE, up front, with no retry anywhere:
+//
+//	dataStore, err := datastoreFactory(ctx, publisherConfig.DataStoreConfig)
+//	if err != nil { return fmt.Errorf("failed to create datastore: %w", err) }
+//	schema, err := datastore.LoadSchema(context.Background(), dataStore, …)
+//	if err != nil { return fmt.Errorf("failed to retrieve datastore schema: %w", err) }
+//
+// (go-stellar-sdk ingest/producer.go; our streamTiered/walkDataStore have
+// the same shape, and LoadSchema is a live round-trip — it LISTS the
+// bucket to discover the ledger file extension.) So a lake outage that is
+// present when the stream STARTS was not covered by the budget at all:
+// Stream returned in microseconds, not five minutes. Measured on the
+// unfixed code at 85µs against a 3s budget.
+//
+// That is not a cosmetic difference, because the indexer's supervisor
+// counts starts, not seconds. The first process burns its 5-minute
+// in-walk budget and exits; every restart after that dies in the startup
+// path in about a second, so the start cycle collapses to RestartSec
+// (10s). Sixty of those fit inside StartLimitIntervalSec=15min, the unit
+// parks in `failed`, and it stays parked after MinIO comes back until a
+// human runs `systemctl reset-failed`. The whole point of the budget was
+// that a lake blip degrades to stall-and-retry rather than needing an
+// operator, so the startup path has to honour it too.
+//
+// Three properties make the retry safe:
+//
+//   - It CANNOT skip a ledger. It re-attempts only while delivered == 0,
+//     re-issuing the identical range, so the caller's callback — which is
+//     where the cursor is written — has not run and there is nothing to
+//     resume past. The moment any ledger lands, a later failure is
+//     returned untouched: resuming mid-stream would need a cursor-aware
+//     restart, which belongs to the caller, not here.
+//   - It is BOUNDED, by wall clock rather than attempts. The deadline is
+//     fixed before the first re-attempt, so an attempt that itself
+//     consumes the whole in-walk budget leaves no time for another and
+//     the total stays ~one budget. An unbounded reconnect would convert a
+//     visible outage into a silent freeze, which is strictly worse than
+//     the crash it replaces.
+//   - It is VISIBLE while it runs, via
+//     stellarindex_ledgerstream_live_start_retries_total. Exhaustion
+//     itself is deliberately NOT a counter: it increments once and the
+//     process exits, so no scrape would ever see it — the honest cover
+//     for exhaustion is the process exit, which pages via
+//     stellarindex_ingestion_ledger_stalled (and, for the MinIO case,
+//     stellarindex_minio_exporter_down within ~2 min).
+//
+// Errors are deliberately NOT classified into transient and permanent
+// here. On an unbounded tail the only correct response to "I could not
+// start" is "try again shortly" whatever the cause, and the classes are
+// not reliably separable at this seam anyway — the SDK wraps with
+// pkg/errors and exposes no sentinel, and a 403 is as likely to be a
+// half-restarted MinIO as a revoked key. A genuinely permanent fault
+// (bad credentials, deleted bucket) therefore surfaces one budget later
+// instead of immediately, exactly as [Config.LiveRetryBudget] already
+// documents for the in-walk case.
+//
+// Backoff is exponential from LiveRetryWait, capped at
+// [maxLiveStartRetryWait]. No jitter: jitter exists to de-correlate many
+// clients against one server, and there is exactly one indexer per host
+// reading a MinIO on 127.0.0.1 — it would buy nothing here and make the
+// timing untestable.
+//
+// Callers must gate on the range being unbounded; see [Stream].
+func retryLiveStart(
+	ctx context.Context,
+	cfg Config,
+	delivered *uint32,
+	err error,
+	attempt func() error,
+) error {
+	if err == nil || cfg.LiveRetryBudget <= 0 || *delivered > 0 || ctx.Err() != nil {
+		return err
+	}
+	wait := cfg.LiveRetryWait
+	if wait <= 0 {
+		wait = defaultLiveStartRetryWait
+	}
+	deadline := time.Now().Add(cfg.LiveRetryBudget)
+	for time.Now().Before(deadline) {
+		if cfg.Logger != nil {
+			cfg.Logger.WithFields(map[string]interface{}{
+				"err":   err.Error(),
+				"wait":  wait.String(),
+				"until": deadline.Format(time.RFC3339),
+			}).Warn("ledgerstream: live tail could not start — retrying inside the fault budget")
+		}
+		obs.LedgerstreamLiveStartRetriesTotal.Inc()
+		if !sleepWithContext(ctx, wait) {
+			// Shutdown landed in the backoff window — the one place this
+			// function blocks that a plain walk does not. Carry the
+			// cancellation in the error so the indexer's
+			// `errors.Is(err, context.Canceled)` check still reads it as a
+			// clean stop; without it, a SIGTERM during a lake outage would
+			// exit non-zero and park the unit on a deliberate `systemctl
+			// stop`. The original cause is wrapped alongside so the journal
+			// still says WHY the tail had not started.
+			return fmt.Errorf("ledgerstream: live tail start abandoned on shutdown (last error: %w): %w", err, ctx.Err())
+		}
+		err = attempt()
+		// Stop on success, on anything the caller's callback has already
+		// seen (see the no-skip property above), and on shutdown — where
+		// the attempt's own error already carries the cancellation, since
+		// it came from a ctx-aware walk rather than from this loop.
+		if err == nil || *delivered > 0 || ctx.Err() != nil {
+			return err
+		}
+		wait *= 2
+		if wait > maxLiveStartRetryWait {
+			wait = maxLiveStartRetryWait
+		}
+	}
+	return err
+}
+
+// sleepWithContext sleeps for d, returning false if ctx was cancelled
+// first. Mirrors the SDK ledger buffer's helper of the same name so the
+// two retry loops behave identically on shutdown.
+func sleepWithContext(ctx context.Context, d time.Duration) bool {
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-ctx.Done():
+		return false
+	case <-t.C:
+		return true
+	}
+}
+
+const (
+	// defaultLiveStartRetryWait is the first backoff step used by
+	// [retryLiveStart] when the caller set a budget but no
+	// Config.LiveRetryWait. Production always sets both
+	// (pipeline.LedgerstreamConfig), so this only covers direct callers.
+	defaultLiveStartRetryWait = time.Second
+
+	// maxLiveStartRetryWait caps [retryLiveStart]'s exponential backoff.
+	// 30s matches the SDK's own default RetryWait, and at a 5-minute
+	// budget it keeps a full outage to ~16 re-attempts rather than the
+	// ~600 a flat 500ms step would make — each of which rebuilds an S3
+	// client through the AWS credential chain.
+	maxLiveStartRetryWait = 30 * time.Second
+)
 
 // applyLiveRetryPolicy stamps the live-tail retry overrides onto the
 // BufferedStorageBackend config (#371 F3). Split out of [Stream] so the
