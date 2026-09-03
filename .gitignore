@@ -163,3 +163,6 @@ gcp-key*.json
 !/.github/
 /*.local.md
 /CLAUDE.md
+
+# pnpm's per-project fallback store, created when the configured store is on another device.
+.pnpm-store/

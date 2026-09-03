@@ -36,4 +36,16 @@ path = ".gitleaks.toml"
 description = "Ansible vault-var files — real local secrets, gitignored repo-wide; exempt from the working-tree scan ONLY (history scan still flags them)"
 paths = [
   '''(^|/)[^/]+\.secrets\.ya?ml$''',
+  # Third-party package content is not this repository's working tree, and
+  # every committed byte is covered by the separate history scan. The store
+  # entry is load-bearing, not belt-and-braces: when pnpm's configured store
+  # sits on a different device from the project — the pre-push verifier
+  # bind-mounts the tree and keeps its store on a Docker volume — pnpm
+  # silently falls back to a per-project .pnpm-store/ at the tree root, whose
+  # content-addressed blobs are raw package files (fixture private keys,
+  # sample JWTs, example API keys). Scanned by the pinned gitleaks that is
+  # fifty-six findings and a minute of wall-clock; a host checkout, whose
+  # store shares the device, never grows the directory and never sees them.
+  '''(^|/)node_modules/''',
+  '''(^|/)\.pnpm-store/''',
 ]
