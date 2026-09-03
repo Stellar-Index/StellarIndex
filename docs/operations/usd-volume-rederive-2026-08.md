@@ -1,6 +1,6 @@
 ---
-title: Operator runbook — 2026-08 usd_volume re-derive + CAGG rebuild (tier-3b poisoning)
-last_verified: 2026-08-28
+title: Operator runbook — 2026-08 usd_volume re-derive + CAGG rebuild (tier-3b poisoning, exact tiers, XLM-base anchor)
+last_verified: 2026-09-03
 status: ready-to-execute
 ---
 
@@ -287,8 +287,130 @@ stellarindex-ops verify-usd-volume -config /etc/stellarindex.toml \
 - Do NOT pass `-fill-null` on the first pass. Unpriced exact-tier rows are
   the coverage alerts' population; fill them as a deliberate second pass
   once the value repair has been accepted.
-- Estimated-tier violations (the XLM-base bound) are NOT this tool's job —
-  steps 0–4 (`ch-rebuild`).
+- Tier-3b (quote-side FX bridge) violations are NOT this tool's job —
+  steps 0–4 (`ch-rebuild`). The tier-4 XLM anchor IS, via `-tier
+  xlm-base` — Step 6.
+
+## Step 6 — #372: re-derive the pre-`fd1860bd` XLM-base rows (`usd-volume-restamp -tier xlm-base`)
+
+A third class again. Step 5 repairs a SQL identity; this one RE-DERIVES
+the tier-4 XLM anchor, which is a function of `prices_1m` at the row's
+own timestamp and therefore cannot be spelled in SQL without
+re-implementing the waterfall.
+
+**The population.** Every on-chain DEX trade whose BASE leg is XLM
+(`native` or its SAC) and whose QUOTE leg is not USD-pegged, written
+before `fd1860bd` (2026-08-04, v0.25.0). Until that commit the waterfall
+reached the QUOTE side first, so the trade was valued through the token's
+own thin `<token>/USDC` `prices_1m` bucket — a rate its counterparties
+author — instead of off the XLM leg, which is the measured side of the
+trade and whose rate is a direct market. `a7892962` (2026-07-09) added
+the anchor only as a FALLBACK after the quote leg, so the whole
+2026-03-12 → 2026-07-21 span is dirty; every row is at
+`derive_generation = 0` (the 2026-08-05 re-derive covered `ts >=
+2026-07-22` only).
+
+**What the tool does** (`internal/storage/timescale/usd_volume_restamp_xlmbase.go`):
+
+- scans `(source ∈ the DEX registry, base_asset ∈ the two XLM wire forms,
+  derive_generation <= -max-generation)` per `-slice` window, and decides
+  the tier in GO with the insert path's own `usdVolumeDecimals` — a
+  USD-pegged quote is EXACT-tier and belongs to Step 5, never to this
+  one, so the two tools cannot undo each other;
+- rebuilds each row into its `canonical.Trade` and calls the store's own
+  `tradeUSDVolumeViaXLMBaseAnchor` with the resolver installed by
+  `InstallUSDVolumeResolution` — the same function `InsertTrade` calls.
+  The resolver is time-anchored to the ROW's `ts`, not to `now()`, so the
+  re-derive is deterministic given `prices_1m`;
+- **stops at the anchor.** The live insert path, when the anchor declines,
+  falls through to the quote side — the route that wrote the defect. This
+  tool reports such a row instead (`anchor declined, stored NULL` /
+  `stored VALUE`): a stored NULL stays NULL, and a stored value is never
+  blanked. An unpriced row stays recoverable; a confidently-wrong row at a
+  winning `derive_generation` does not;
+- INV-3, idempotence, the `SET LOCAL` decompression cap and the dry-run
+  default are exactly as Step 5, plus a `-batch` bound (default 2000 rows
+  per UPDATE transaction) and a live-overlap refusal: the window's top
+  on-chain ledger must be at or below the live `ledgerstream` cursor
+  (`-allow-live-overlap` overrides).
+
+**Measured on r1, read-only, 2026-09-03** (`-report`, three sample days):
+
+| day | scanned | quote-pegged (Step 5) | already correct | would change | of which NULL→value | anchor declined | Σ stored → Σ want |
+|---|---|---|---|---|---|---|---|
+| 2026-03-12 | 69,907 | 11,966 | 567 | 57,374 | 57,374 | 0 | $0.00 → $119,793.50 |
+| 2026-05-19 | 353,444 | 68,076 | 1,770 | 283,598 | 87,387 | 0 | $101,854.74 → $132,704.79 |
+| 2026-07-20 | 250,439 | 50,135 | 7,248 | 193,056 | 0 | 0 | $134,120.82 → $133,697.73 |
+
+Read that as three eras. **March**: the anchor did not exist at insert
+time and the quote side priced almost nothing, so 99% of the day's
+non-pegged XLM-base rows are NULL and $119,793 of one day's volume is
+invisible. **May**: mixed — 87,387 NULL plus a priced population that
+moves, with 23,442 rows ≥ 10% and 5 rows ≥ 10× (the largest, a `BUCK`
+row, from $0.0065 to $1.299). **July** (post-`a7892962`): no NULLs left,
+but 193,056 rows still differ because the anchor was only a fallback;
+722 move ≥ 10%, 35 ≥ 100%, and the day's total barely moves (−$423).
+`anchor declined = 0` on all three days — the anchor can price the entire
+population, so this re-derive leaves no residue.
+
+Mechanics:
+
+```sh
+# 1. REPORT first (read-only; refuses -write). This is the decision input.
+stellarindex-ops usd-volume-restamp -config /etc/stellarindex.toml \
+  -tier xlm-base -from 2026-05-19 -to 2026-05-19 -report -fill-null
+# 2. value repair, oldest → newest, one heavy job per ~2-3 weeks,
+#    UNIQUE job name per attempt, env file sourced:
+set -a; . /etc/default/stellarindex; set +a
+/usr/local/sbin/run-heavy-job.sh usd-xlmbase-w1-try1 \
+  /usr/local/bin/stellarindex-ops usd-volume-restamp \
+    -config /etc/stellarindex.toml -tier xlm-base \
+    -from 2026-03-12 -to 2026-03-31 -write
+# 3. coverage fill as a DELIBERATE second pass, same windows:
+/usr/local/sbin/run-heavy-job.sh usd-xlmbase-null-w1-try1 \
+  /usr/local/bin/stellarindex-ops usd-volume-restamp \
+    -config /etc/stellarindex.toml -tier xlm-base \
+    -from 2026-03-12 -to 2026-03-31 -fill-null -write
+# 4. CAGG refresh over the span — Step 3's list, in Step 3's ORDER.
+# 5. acceptance:
+stellarindex-ops verify-usd-volume -config /etc/stellarindex.toml \
+  -day 2026-07-21 -days 132
+```
+
+- **Resuming.** The tool is idempotent — a row already holding the
+  anchor's value is not a candidate — so an interrupted run is resumed by
+  re-running it from the day it stopped on. It prints that command on
+  failure. There is no cursor to reset.
+- **DECOMPRESS FIRST** applies here even more than in Step 5: this rewrites
+  ~28M rows across 132 days.
+- **`-min-rel-delta`** narrows a first pass to the large moves (e.g.
+  `0.1` for ≥ 10%), at the cost of leaving the rest at their old value and
+  the group at mixed generations. Prefer the full pass; the flag exists
+  for a load-constrained window, not as the default.
+- **CAGG ordering matters and is not alphabetical.** `prices_1m/15m/1h/4h/1d/1w/1mo`,
+  `pools_per_source_1h`, `dex_volume_by_pair_1d` and `source_volume_1h`
+  read `trades` DIRECTLY; `twap_1h` and `twap_1d` read `prices_1m`
+  (migration 0147). Refresh `prices_1m` first and the two `twap_*` LAST,
+  or the TWAP views inherit the pre-restamp `volume_usd`. Step 3's list is
+  already in that order.
+- **The refresh changes more than `volume_usd`.** Since migration 0115/0147
+  the price CAGGs compute `high_price`/`low_price`/`first_price`/`last_price`
+  with a `FILTER (WHERE usd_volume >= 0.01)` dust floor, so filling ~7M
+  NULL rows admits trades into the OHLC extremes that were previously
+  excluded. Expect historical highs/lows on thin XLM pairs to MOVE (they
+  become more complete, not less), and diff a few before/after.
+- **Feedback loop, deliberately one-way.** `prices_1m.volume_usd` is read
+  back by the resolver's tier-3b bridge leg (`queryXLMLeg`,
+  `volume_usd >= 0.01`), so the refresh does change which buckets can
+  price OTHER tokens later. The XLM anchor itself is NOT affected: it
+  resolves `native` through `queryDB`, whose floor is `vwap * volume`
+  (the bucket's own quote notional), not `volume_usd`. So the restamp
+  cannot move its own inputs — but a LATER `ch-rebuild` over the same era
+  will now be able to price token/token rows it previously could not.
+  That is a coverage gain, and it is why the CAGG refresh belongs AFTER
+  the whole span is restamped, not interleaved.
+- `asset_volume_character` needs no action: it is a trailing-14-day
+  rollup on a 15-minute cadence and the span is months old.
 
 ## Explicitly OUT of scope here (queued, do not silently absorb)
 

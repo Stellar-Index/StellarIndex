@@ -1168,9 +1168,20 @@ Subcommands:
                           Example:
                             stellarindex-ops verify-usd-volume \
                               -config /etc/stellarindex.toml -days 30
-  usd-volume-restamp -config PATH -from YYYY-MM-DD -to YYYY-MM-DD [-slice DUR] [-sources a,b] [-fill-null] [-heartbeat PATH] [-write]
-                          The corrective WRITE half of verify-usd-volume
-                          (W5.3). For every EXACT-tier (source, base, quote)
+  usd-volume-restamp -config PATH -from YYYY-MM-DD -to YYYY-MM-DD [-tier exact|xlm-base] [-slice DUR] [-sources a,b] [-fill-null] [-heartbeat PATH] [-allow-live-overlap] [-write]
+                          The corrective WRITE half of verify-usd-volume.
+                          -tier exact (default) repairs the SQL peg
+                          identity (W5.3); -tier xlm-base RE-DERIVES the
+                          tier-4 XLM anchor in Go through the store's own
+                          waterfall (#372) and takes the extra flags
+                          [-report] [-sample N] [-batch N]
+                          [-min-rel-delta F] [-max-generation N].
+                          BOTH tiers refuse a window the live ledgerstream
+                          cursor has not passed (-allow-live-overlap is the
+                          explicit override), and BOTH are fail-closed DRY
+                          RUNS without -write.
+
+                          -tier exact: for every EXACT-tier (source, base, quote)
                           group in the window — quote leg or base leg
                           USD-pegged — rewrites each row whose stored
                           usd_volume differs from the identity
@@ -1181,8 +1192,36 @@ Subcommands:
                           replay can never claw a correction back).
                           Repairs the pre-2026-07-23 class (USDC-base SDEX
                           rows valued by the resolver's VWAP instead of the
-                          $1 peg). Estimated tiers (FX / XLM anchor) are
-                          NEVER read — that is ch-rebuild's job.
+                          $1 peg). The FX tier is NEVER read by either tier
+                          — that is ch-rebuild's job.
+
+                          -tier xlm-base: for every on-chain DEX trade whose
+                          BASE leg is XLM (native or its SAC) and whose
+                          QUOTE leg is not USD-pegged, recomputes
+                          usd_volume = base_amount/1e7 x XLM/USD-at-ts by
+                          calling the store's own
+                          tradeUSDVolumeViaXLMBaseAnchor with the installed
+                          VWAPUSDFXResolver — the same function InsertTrade
+                          calls. Repairs the pre-fd1860bd class (#372):
+                          XLM-base trades valued QUOTE-side through the
+                          counterparty's own thin <token>/USDC book, or
+                          left NULL. A row the anchor CANNOT price is
+                          reported, never guessed at: its stored NULL stays
+                          NULL and its stored value is never blanked.
+                          -report prints the read-only decision block
+                          (candidates, NULL->value population, the
+                          distribution of relative moves, USD sums, the two
+                          extremes, a deterministic sample) and refuses
+                          -write. -min-rel-delta narrows the write set to
+                          the large moves; -max-generation targets a
+                          vintage (0 = the never-re-derived population).
+                          AFTER a run, refresh the CAGGs that read
+                          usd_volume over the span: prices_1m first, then
+                          prices_15m/1h/4h/1d/1w/1mo,
+                          pools_per_source_1h, dex_volume_by_pair_1d,
+                          source_volume_1h (all direct on trades), and
+                          twap_1h/twap_1d LAST (they read prices_1m).
+                          See docs/operations/usd-volume-rederive-2026-08.md.
                           Fail-closed DRY RUN by default (prints per-day
                           candidate counts); -write applies. Walks -from..-to
                           (inclusive UTC days, never today) oldest → newest
@@ -1199,6 +1238,9 @@ Subcommands:
                             stellarindex-ops usd-volume-restamp \
                               -config /etc/stellarindex.toml \
                               -from 2026-05-12 -to 2026-07-22 -write
+                            stellarindex-ops usd-volume-restamp \
+                              -config /etc/stellarindex.toml -tier xlm-base \
+                              -from 2026-03-12 -to 2026-07-21 -report
   state-snapshot -config PATH [-archive URL] [-checkpoint N] [-write] [-scope contracts|all|storage] [-ch ADDR] [-dry-run]
                           Read a history-archive checkpoint's ledger-entry
                           state and tally it per entry type. -write fills

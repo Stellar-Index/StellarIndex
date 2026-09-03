@@ -463,6 +463,80 @@ func isXLMAsset(a canonical.Asset) bool {
 		(a.Type == canonical.AssetSoroban && a.ContractID == nativeXLMSAC)
 }
 
+// ─── the tier-4 scope, as seen from a STORED row ─────────────────────
+//
+// The three helpers below answer, for a row already in `trades`, the
+// questions [tradeUSDVolume] answers for a row about to be inserted:
+// which sources this waterfall's DEX branches apply to, whether the
+// tier-4 XLM anchor is the branch that owns this (source, base, quote),
+// and what that branch computes.
+//
+// They live HERE rather than beside their caller
+// (usd_volume_restamp_xlmbase.go) for two reasons. The binding one is the
+// LOCKSTEP discipline in [tradeUSDVolume]'s header: the tier's definition
+// and the waterfall's branch order must be visible in one file, or a
+// re-ordering silently re-points the re-derive at a different population.
+// The second is architectural (D8 rule 4, scripts/ci/lint-imports.sh):
+// [external.Registry] is a compute-tier package that the storage tier
+// only reaches into from this already-grandfathered file.
+
+// dexSourceNames returns the registered source names whose subclass is
+// [external.SubclassDEX], sorted — the set whose trades the DEX branches
+// of this waterfall (tier 2's operator allow-list, the FX leg
+// cross-check, the tier-4 anchor) apply to. Read from the same
+// [external.Registry] the insert path consults, so a newly-registered
+// on-chain venue is covered the day it lands rather than the day someone
+// remembers to widen a hard-coded list.
+func dexSourceNames() []string {
+	out := make([]string, 0, len(external.Registry))
+	for name, md := range external.Registry {
+		if md.Subclass == external.SubclassDEX {
+			out = append(out, name)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// xlmBaseTierVerdict says which usd_volume tier owns a stored trade, from
+// the tier-4 XLM anchor's point of view. See [xlmBaseTierFor].
+type xlmBaseTierVerdict int
+
+const (
+	// xlmBaseTierOwns: the anchor is the branch [tradeUSDVolume] takes.
+	xlmBaseTierOwns xlmBaseTierVerdict = iota
+	// xlmBaseTierOutOfScope: not a DEX source, or the base leg is not an
+	// XLM form — the anchor declines such a trade outright.
+	xlmBaseTierOutOfScope
+	// xlmBaseTierQuotePegged: the QUOTE leg is a declared USD peg, so
+	// tier 1/2 values the trade EXACTLY and the anchor is never reached.
+	xlmBaseTierQuotePegged
+)
+
+// xlmBaseTierFor mirrors [tradeUSDVolume]'s branch order for one stored
+// trade: a DEX source, a quote leg [usdVolumeDecimals] does NOT recognise
+// as a USD peg, and an XLM base leg is exactly the combination under
+// which the waterfall takes the [tradeUSDVolumeViaXLMBaseAnchor] branch
+// ahead of the quote side. Every gate is the insert path's own call, not
+// a restatement of it.
+func xlmBaseTierFor(t canonical.Trade, quoteSpec *USDVolumeQuoteSpec) xlmBaseTierVerdict {
+	md := external.Lookup(t.Source)
+	if md.Subclass != external.SubclassDEX || !isXLMAsset(t.Pair.Base) {
+		return xlmBaseTierOutOfScope
+	}
+	if _, pegged := usdVolumeDecimals(t.Pair.Quote, md, quoteSpec); pegged {
+		return xlmBaseTierQuotePegged
+	}
+	return xlmBaseTierOwns
+}
+
+// tradeUSDVolumeViaXLMBaseAnchorFor is [tradeUSDVolumeViaXLMBaseAnchor]
+// for a STORED row: it resolves the source's subclass itself rather than
+// taking it from a caller that would have to look it up the same way.
+func tradeUSDVolumeViaXLMBaseAnchorFor(ctx context.Context, t canonical.Trade, r USDVolumeFXResolver) *string {
+	return tradeUSDVolumeViaXLMBaseAnchor(ctx, t, external.Lookup(t.Source).Subclass, r)
+}
+
 // baseAnchorEligible reports whether an asset can be valued from a
 // raw-VWAP rate by [tradeUSDVolumeViaXLMBaseAnchor].
 //
