@@ -734,16 +734,6 @@ PROCEDURE rather than working from memory:
 | `/diagnose-stellarindex` | r1 incident decision trees (frozen cursor, stale prices, verdict red) |
 | `/verify-done` | the pre-completion gate stack every other skill ends with |
 
-## Commit messages
-
-Conventional-commit subject, imperative mood. The body states the defect,
-the evidence for it, and the fix.
-
-- No trailers or bylines crediting tooling. The author field is the record.
-- No personal names in the body. Write what changed and why it is correct,
-  not who asked for it.
-- No narration of how the change was produced.
-
 ---
 
 ## How to ask for help
