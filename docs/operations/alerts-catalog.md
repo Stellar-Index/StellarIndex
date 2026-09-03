@@ -27,7 +27,7 @@ enforced 2026-04-23 onward).
   | Severity | Rules | AlertManager route | Delivery |
   | --- | --- | --- | --- |
   | `page` | 53 | `receiver: chat-page` | Discord **#stellarindex-pages**, `repeat_interval` 12 h. There is **no** PagerDuty leg — `pagerduty_configs` is unset, so nothing wakes anyone up. |
-  | `ticket` | 139 | `receiver: chat-default` | Discord **#stellarindex-alerts**, `repeat_interval` 24 h. |
+  | `ticket` | 140 | `receiver: chat-default` | Discord **#stellarindex-alerts**, `repeat_interval` 24 h. |
   | `informational` | 21 | `receiver: silent` | **Delivered to nobody, deliberately.** `silent` is declared with no `*_configs` block at all, which in Alertmanager means the alert is accepted and then dropped. It accumulates in the AlertManager UI and nothing else happens. |
 
   **`informational` is not "a low-priority ticket".** There is no
@@ -87,7 +87,8 @@ enforced 2026-04-23 onward).
 | `stellarindex_ingestion_oracle_unrepresentable_symbols` | `sum by (source) (increase(stellarindex_source_unrepresentable_symbols_total[25h]))` | > 0 sustained 30 min (an oracle publishes a feed_id the record layer cannot store even as `raw:` — the slot is dropped, no row written) | ticket | [oracle-unknown-symbols](runbooks/oracle-unknown-symbols.md) |
 | `stellarindex_ingestion_discovery_drops` | `increase(stellarindex_discovery_dropped_hits_total[10m])` | > 0 sustained 10 min | informational | [discovery-drops](runbooks/discovery-drops.md) |
 | `stellarindex_served_value_drift` | `stellarindex_served_value_ok == 0` | sustained 26 h (two daily runs) | ticket | [served-value-drift](runbooks/served-value-drift.md) |
-| `stellarindex_served_value_check_stale` | `time() - stellarindex_served_value_last_run_unix` | > 48 h | ticket | [served-value-drift](runbooks/served-value-drift.md) |
+| `stellarindex_served_value_check_stale` | `time() - stellarindex_served_value_last_run_unix` (or `absent_over_time(...[2d])`) | > 48 h for ≥ 1 h, or the series has never existed | ticket | [served-value-drift](runbooks/served-value-drift.md) |
+| `stellarindex_served_value_unit_failed` | `node_systemd_unit_state{name="verify-served-values.service",state="failed"} == 1 and the same 25 h earlier` | two consecutive daily runs failed (fires ~26 h after the first) | ticket | [served-value-drift](runbooks/served-value-drift.md) |
 | `stellarindex_served_value_persistently_skipped` | `stellarindex_served_value_skipped == 1` | sustained 26 h (two daily runs) | ticket | [served-value-drift](runbooks/served-value-drift.md) |
 | `stellarindex_cex_usd_volume_coverage_low` | per-source `increase(stellarindex_trade_inserts_total{usd_volume_populated="yes"}[1h])` / total, external venues | < 99.9% sustained 30 min | ticket | [usd-volume-coverage-plan](usd-volume-coverage-plan.md) |
 | `stellarindex_onchain_usd_volume_coverage_low` | same ratio over `[6h]`, aggregated across on-chain venues | < 99.5% sustained 1 h | ticket | [usd-volume-coverage-plan](usd-volume-coverage-plan.md) |

@@ -563,6 +563,23 @@ jobs:
         # the constants stay within [period+slack, 2*period) of the
         # Ansible-deployed compute-completeness.timer.
         run: ./scripts/ci/lint-completeness-staleness.sh
+      - name: lint-served-value-cadence
+        # The served-value truth harness (CS-010's only monitored check on
+        # the NUMBER rather than the pipe) shipped with three alerts, a
+        # runbook saying "daily timer" and nothing anywhere that ran it, so
+        # the textfile was never written and all three selected a series
+        # that had never existed. This asserts the harness is templated,
+        # rendered and enabled by ansible, and that the staleness
+        # threshold stays within [period+slack, 2*period] of the timer it
+        # is calibrated against — the lint-completeness-staleness contract
+        # applied to the other hand-calibrated cadence.
+        run: ./scripts/ci/lint-served-value-cadence.sh
+      - name: lint-served-value-cadence self-test
+        # Fixture tests for the gate above. Its assertion that ansible
+        # INSTALLS the units — rather than merely mentioning them, which a
+        # removal block does too — is only worth its line count if it is
+        # observed failing on the shapes it claims to catch.
+        run: ./scripts/ci/lint-served-value-cadence-test.sh
       - name: lint-migration-compat
         # CID-14 (audit-2026-07-23): migrations/README.md rule 9 —
         # every up-migration must be additive + old-binary-safe. The

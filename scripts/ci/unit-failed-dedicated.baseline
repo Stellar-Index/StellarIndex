@@ -14,3 +14,4 @@ verify-archive-tier-b.service  # stellarindex_verify_archive_tier_b_unit_failed
 ch-supply.service              # stellarindex_ch_supply_gapfill_failed
 pgbackrest-backup.service      # stellarindex_pgbackrest_backup_unit_failed
 ch-schema-snapshot.service     # stellarindex_ch_schema_snapshot_unit_failed
+verify-served-values.service   # stellarindex_served_value_unit_failed
