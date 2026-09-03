@@ -361,6 +361,24 @@ type ProtocolContractsReader interface {
 	ProtocolContractIndex(ctx context.Context) (map[string]string, error)
 }
 
+// protocolContractCounter is the OPTIONAL count-without-enumeration
+// capability the contracts reader may add (production wiring is
+// timescale.Store.CountSourceContracts). The handlers type-assert for it; a
+// reader without it leaves every contract_count derived from the roster.
+//
+// It exists for a protocol whose contract set dwarfs the enumerating roster
+// paths' LIMIT 5000: sorocredit deploys one Collateral-<uuid> child contract
+// per opened position (116k on r1). Counting a capped roster would publish
+// 5,000 and not enumerating at all publishes 0 — both are wrong numbers where
+// an exact one is a single COUNT away, so the count is read directly and the
+// roster stays empty.
+type protocolContractCounter interface {
+	// CountSourceContracts returns source's exact contract total. ok=false
+	// with a nil error means this source has no count-only path and the
+	// caller must count its roster instead.
+	CountSourceContracts(ctx context.Context, source string) (int64, bool, error)
+}
+
 // ProtocolStatsReader supplies the trailing-24h event count per source
 // (one grouped UNION ALL over the per-protocol tables). Production
 // wiring is timescale.Store.CountRecentEventsBySource. Nil reader →
@@ -414,7 +432,10 @@ type ProtocolView struct {
 	// the decoder anchors on (ADR-0035); empty for factory-less sources.
 	Factories []string `json:"factories"`
 	// ContractCount is the number of registered contract instances
-	// (protocol_contracts rows; soroswap_pairs rows for soroswap).
+	// (protocol_contracts rows; soroswap_pairs rows for soroswap). It is
+	// the TRUE total, which for a protocol whose instances are counted
+	// rather than enumerated exceeds len(Contracts) on the detail view —
+	// see protocolContractCounter.
 	ContractCount int `json:"contract_count"`
 	// Events24h is the trailing-24h decoded-event count across the
 	// protocol's served tables.
@@ -616,7 +637,12 @@ type ProtocolAnalyticsStatus struct {
 type ProtocolDetailView struct {
 	ProtocolView
 	// Contracts lists every registered instance; empty for sources
-	// without a contract registry (oracles, sdex, bridges).
+	// without a contract registry (oracles, sdex, bridges) AND for a
+	// source whose instances are counted rather than enumerated
+	// (sorocredit's per-position child contracts — see
+	// protocolContractCounter). An empty list therefore never contradicts
+	// a non-zero ContractCount: it means "not enumerated here", and the
+	// count is still the true total.
 	Contracts []ProtocolContractView `json:"contracts"`
 	// EventKinds lists the EventKind() discriminators the source's
 	// decoder emits.
@@ -826,7 +852,7 @@ func (s *Server) buildProtocolDetail(ctx context.Context, meta ProtocolMeta, win
 	classifyContractKinds(contracts, meta.Factories)
 	s.enrichContractTokens(ctx, meta, contracts)
 	v := ProtocolDetailView{
-		ProtocolView:     buildProtocolView(meta, len(contracts), s.protocolEvents24h(ctx), s.protocolVerdicts(ctx)),
+		ProtocolView:     buildProtocolView(meta, s.detailContractCount(ctx, meta, contracts), s.protocolEvents24h(ctx), s.protocolVerdicts(ctx)),
 		Contracts:        contracts,
 		EventKinds:       append([]string{}, meta.EventKinds...),
 		VerificationPage: meta.VerificationPage,
@@ -956,6 +982,63 @@ func (s *Server) rosterErr(ctx context.Context, meta ProtocolMeta) ([]ProtocolCo
 		rows = append(rows, ProtocolContractView{ContractID: id, Kind: "module"})
 	}
 	return rows, nil
+}
+
+// countedContractTotal resolves meta's contract_count WITHOUT enumerating a
+// roster, for the sources that have such a path (protocolContractCounter).
+// ok=false ⇒ no counter wired, or none for this source: the caller counts the
+// roster as before. An error is surfaced rather than swallowed so the caller
+// keeps the same honesty contract a failed roster read has — an unreadable
+// count is not a zero.
+func (s *Server) countedContractTotal(ctx context.Context, meta ProtocolMeta) (int, bool, error) {
+	counter, has := s.protocolContractsReader.(protocolContractCounter)
+	if !has {
+		return 0, false, nil
+	}
+	n, ok, err := counter.CountSourceContracts(ctx, meta.Name)
+	if err != nil || !ok {
+		return 0, false, err
+	}
+	// ExtraContracts are a folded-in sub-module's OWN addresses, living in
+	// that module's own tables — never inside this source's count.
+	return int(n) + len(meta.ExtraContracts), true, nil
+}
+
+// rosterCountErr returns the contract_count for meta: the counted TRUE total
+// where one exists, else the length of the enumerated roster. Errors surface
+// (the directory omits the source and names it in coverage_note rather than
+// publishing a fabricated zero — W1.3 honesty).
+func (s *Server) rosterCountErr(ctx context.Context, meta ProtocolMeta) (int, error) {
+	n, ok, err := s.countedContractTotal(ctx, meta)
+	if err != nil {
+		return 0, err
+	}
+	if ok {
+		return n, nil
+	}
+	rows, err := s.rosterErr(ctx, meta)
+	if err != nil {
+		return 0, err
+	}
+	return len(rows), nil
+}
+
+// detailContractCount is the contract_count the DETAIL view publishes:
+// len(roster) for a source whose roster is its count, and the counted TRUE
+// total for a source whose contracts are not enumerable (the roster then stays
+// empty while the count is real). A failed count degrades to the roster length
+// and logs — the detail path serves one named protocol, so it cannot omit it
+// the way the directory does.
+func (s *Server) detailContractCount(ctx context.Context, meta ProtocolMeta, roster []ProtocolContractView) int {
+	n, ok, err := s.countedContractTotal(ctx, meta)
+	if err != nil {
+		s.logger.Warn("protocol contract count read failed", "source", meta.Name, "err", err)
+		return len(roster)
+	}
+	if !ok {
+		return len(roster)
+	}
+	return n
 }
 
 // enrichProtocolAnalytics populates the lake-derived analytics on the detail
