@@ -21,6 +21,73 @@ import (
 // Windowed variants take sinceLedger (0 = all-time): bounding by ledger_seq
 // prunes partitions (PARTITION BY intDiv(ledger_seq,1e6)), which is what keeps
 // the daily-activity + breakdown queries fast on the 12B-row table.
+//
+// ── What "contract-scoped" actually costs (measured on r1, 2026-09-03) ──
+//
+// These three raw readers are the FALLBACK path. The serving path is the
+// contract_events_daily pre-aggregation below (*Fast); the raw readers run
+// only when that table is empty (a lake restored ahead of its rollup) or a
+// fast read errored. Their cost, cold, `use_query_condition_cache = 0`, over
+// the caller's real 90-day window (tip 64,249,968 → sinceLedger 62,694,768):
+//
+//	                        BUSY contract (125M ev/90d)   QUIET contract (200 ev/90d)
+//	EventBreakdown          58,460 ms / 1.09 B / 373 GiB   3,622 ms / 47.0 M / 17.2 GiB
+//	DailyActivity           18,279 ms / 1.09 B / 117 GiB
+//	ContractActivity        20,111 ms / 1.09 B / 117 GiB   1,585 ms / 47.0 M / 6.05 GiB
+//
+// The reason is the skip index, not FINAL. `contract_id` is a bloom_filter
+// skip index over a sorting key of (ledger_seq, tx_hash, op_index,
+// event_index), so a BUSY contract touches nearly every granule in the
+// window: 176,887 PK-selected → 132,830 after the bloom, a 1.33x prune.
+// FINAL's PrimaryKeyExpand then re-expands 132,830 → 132,830, i.e. it costs
+// NOTHING on a busy contract, because there was nothing left to add back.
+// (On a QUIET contract the numbers invert: the bloom prunes 132,833 → 1,031,
+// a 129x win, and FINAL re-expands that to 5,693 — the TxOutcomesByHash
+// trap, 5.5x, on a read that is 1.5 s in absolute terms.)
+//
+// Two things this is NOT, both measured before being ruled out:
+//
+//   - It is NOT fixed by passing the caller's upper bound. The caller holds
+//     the lake tip, but `AND ledger_seq <= tip` moves granule selection
+//     132,830 → 132,829. The scan already ends at the tip; there is no
+//     unbounded top end to close.
+//   - It is NOT fixed by explorerScanSettings. Pinning max_threads = 4 on
+//     the breakdown measured 105,649 ms vs 58,460 ms unpinned, for 373.33
+//     vs 373.41 GiB — nearly 2x SLOWER for identical I/O. The 40x-bytes
+//     fan-out that clause exists for (explorer_scan_settings_test.go) is a
+//     ledger_entries_current part-layout effect and does not apply here.
+//     Do not "fix" these queries by adding it.
+//
+// What IS applied is protocolRawScanRowCeiling — see its doc.
+
+// protocolRawScanRowCeiling refuses a raw protocol-analytics scan that the
+// ExplorerReader connection could not have served anyway, instead of letting
+// it burn the lake for 30 s and then die.
+//
+// The connection pins `max_execution_time: 30` and ReadTimeout 30 s
+// (NewExplorerReaderAuth). The slowest of the three reads is the breakdown,
+// measured at 1.09 B rows in 58,460 ms = 18.6 M rows/s on an IDLE r1 — so 30 s
+// buys at most ~558 M rows, and a busy protocol's 1.09 B-row window is roughly
+// 2x more than the connection can ever finish. Today that read is killed at
+// the 30 s mark having already decompressed ~190 GiB at 86 threads, three of
+// them concurrently per page build (enrichProtocolAnalytics runs the series,
+// breakdown and roster fills in parallel) — 605 GiB and ~250 threads spent to
+// produce nothing. That is the "57s / 3.2B-row scans starved the customer API"
+// event recorded on ProtocolContractActivityFast below.
+//
+// 600 M is that 558 M measured budget rounded up: a tripwire against the
+// impossible, not a policy bound on which protocols get analytics. Measured
+// effect on the busy contract's breakdown: 58,460 ms / 373 GiB → 179 ms / 0 B.
+// The quiet and mid-tier windows (47 M and 508 M rows) are under it and are
+// unaffected.
+//
+// read_overflow_mode='throw' REFUSES; it does not truncate. That distinction
+// is the whole point — every caller (fillProtocolSeries / fillProtocolBreakdown
+// / fillProtocolContractActivity) already degrades honestly on error, marking
+// the view's analytics status, whereas a LIMIT would have served a silently
+// short answer as if it were complete. Same posture and same server code (158)
+// as recentOperationsCursorRowCeiling in explorer_reader.go.
+const protocolRawScanRowCeiling = ` SETTINGS max_rows_to_read = 600000000, read_overflow_mode = 'throw'`
 
 // ProtocolEventTypeCount is one (event symbol → count) row of a protocol's
 // event-type distribution.
@@ -91,27 +158,11 @@ func (r *ExplorerReader) ProtocolEventBreakdown(ctx context.Context, contractIDs
 	//     per-field name we do NOT want to split on.
 	// The if() keeps Symbol-topic[0] events grouped by their symbol (t0/t1
 	// coalesced away) and only splits the empty bucket by (t1, t0).
-	q := `SELECT topic_0_sym,
-		       if(topic_0_sym = '', topics_xdr[2], '') AS t1,
-		       if(topic_0_sym = '', topics_xdr[1], '') AS t0,
-		       count() AS c
-		-- FINAL: stellar.contract_events is ReplacingMergeTree(ingested_at); an
-		-- un-merged re-ingested event double-counts here until a merge (audit
-		-- C2-12). Contract-scoped, so FINAL stays bounded.
-		-- Complete days only: the daily activity series excludes the current
-		-- (partial) day (UXP-16 phantom cliff), and EventsTotal is derived
-		-- from that series — the breakdown must share the bound or
-		-- sum(EventBreakdown) != EventsTotal breaks the reconcile.
-		FROM stellar.contract_events FINAL
-		WHERE contract_id IN (?) AND event_type = 'contract'
-		  AND close_time < toStartOfDay(now())`
 	args := []any{contractIDs}
 	if sinceLedger > 0 {
-		q += ` AND ledger_seq >= ?`
 		args = append(args, sinceLedger)
 	}
-	q += ` GROUP BY topic_0_sym, t1, t0 ORDER BY c DESC LIMIT 200`
-	rows, err := r.conn.Query(ctx, q, args...)
+	rows, err := r.conn.Query(ctx, protocolEventBreakdownQuery(sinceLedger > 0), args...)
 	if err != nil {
 		return nil, fmt.Errorf("clickhouse: protocol event breakdown: %w", err)
 	}
@@ -120,6 +171,39 @@ func (r *ExplorerReader) ProtocolEventBreakdown(ctx context.Context, contractIDs
 	// name can't be recovered from any topic are dropped here — protocols.go's
 	// reconcile folds them into the "untyped" remainder against the total.
 	return scanEventBreakdown(rows)
+}
+
+// protocolEventBreakdownQuery builds the raw event-type-distribution query.
+// Split out (like contractEventsFilteredQuery / recentOperationsQuery) so the
+// shape — FINAL, the ledger bound, the row ceiling — is unit-testable without
+// a ClickHouse server; losing any of them is silent and expensive.
+//
+// FINAL is REQUIRED, and not for the theoretical reason the old comment gave.
+// stellar.contract_events is ReplacingMergeTree(ingested_at) and its unmerged
+// duplicates are enormous on r1: the busy contract measured 154,915,417 events
+// with FINAL vs 224,616,719 without (+45%), and the quiet one 200 vs 388
+// (+94%). Dropping FINAL would overstate every protocol's headline event count
+// by tens of percent. (The DAT-10 tie-break argument applies here too —
+// `ingested_at` is DateTime, one-second resolution, so an `ORDER BY
+// ingested_at DESC LIMIT 1 BY` rewrite cannot break a same-second re-ingest
+// tie — but the 45-94% overcount is the decisive fact, not the tie.)
+func protocolEventBreakdownQuery(windowed bool) string {
+	q := `SELECT topic_0_sym,
+		       if(topic_0_sym = '', topics_xdr[2], '') AS t1,
+		       if(topic_0_sym = '', topics_xdr[1], '') AS t0,
+		       count() AS c
+		-- Complete days only: the daily activity series excludes the current
+		-- (partial) day (UXP-16 phantom cliff), and EventsTotal is derived
+		-- from that series — the breakdown must share the bound or
+		-- sum(EventBreakdown) != EventsTotal breaks the reconcile.
+		FROM stellar.contract_events FINAL
+		WHERE contract_id IN (?) AND event_type = 'contract'
+		  AND close_time < toStartOfDay(now())`
+	if windowed {
+		q += ` AND ledger_seq >= ?`
+	}
+	return q + ` GROUP BY topic_0_sym, t1, t0 ORDER BY c DESC LIMIT 200` +
+		protocolRawScanRowCeiling
 }
 
 // scanEventBreakdown aggregates (topic_0_sym, topic1_xdr, topic0_xdr, count)
@@ -220,6 +304,14 @@ func decodeTopicName(b64 string) (string, bool) {
 	return "", false
 }
 
+// protocolDailyActivityQuery — FINAL and the row ceiling are load-bearing for
+// the reasons on protocolEventBreakdownQuery / protocolRawScanRowCeiling.
+const protocolDailyActivityQuery = `SELECT toString(toDate(close_time)) AS d, count() AS c
+		FROM stellar.contract_events FINAL
+		WHERE contract_id IN (?) AND event_type = 'contract' AND ledger_seq >= ?
+		  AND close_time < toStartOfDay(now())
+		GROUP BY d ORDER BY d ASC` + protocolRawScanRowCeiling
+
 // ProtocolDailyActivity returns daily contract-event counts for a protocol's
 // contracts from sinceLedger forward (sinceLedger>0 required for performance —
 // the caller passes tip − window). Ascending by date. Complete days only:
@@ -231,12 +323,7 @@ func (r *ExplorerReader) ProtocolDailyActivity(ctx context.Context, contractIDs 
 	if len(contractIDs) == 0 {
 		return nil, nil
 	}
-	const q = `SELECT toString(toDate(close_time)) AS d, count() AS c
-		FROM stellar.contract_events FINAL
-		WHERE contract_id IN (?) AND event_type = 'contract' AND ledger_seq >= ?
-		  AND close_time < toStartOfDay(now())
-		GROUP BY d ORDER BY d ASC`
-	rows, err := r.conn.Query(ctx, q, contractIDs, sinceLedger)
+	rows, err := r.conn.Query(ctx, protocolDailyActivityQuery, contractIDs, sinceLedger)
 	if err != nil {
 		return nil, fmt.Errorf("clickhouse: protocol daily activity: %w", err)
 	}
@@ -252,6 +339,13 @@ func (r *ExplorerReader) ProtocolDailyActivity(ctx context.Context, contractIDs 
 	return out, rows.Err()
 }
 
+// protocolContractActivityQuery — FINAL and the row ceiling are load-bearing
+// for the reasons on protocolEventBreakdownQuery / protocolRawScanRowCeiling.
+const protocolContractActivityQuery = `SELECT contract_id, count() AS c, max(close_time) AS last_seen
+		FROM stellar.contract_events FINAL
+		WHERE contract_id IN (?) AND event_type = 'contract' AND ledger_seq >= ?
+		GROUP BY contract_id ORDER BY c DESC LIMIT 1000` + protocolRawScanRowCeiling
+
 // ProtocolContractActivity returns per-contract event counts + last-seen for a
 // protocol's roster, scoped to sinceLedger forward (>0 required — bounding by
 // ledger_seq prunes partitions; an all-time scan over the 12B-row table blows
@@ -260,11 +354,7 @@ func (r *ExplorerReader) ProtocolContractActivity(ctx context.Context, contractI
 	if len(contractIDs) == 0 {
 		return nil, nil
 	}
-	const q = `SELECT contract_id, count() AS c, max(close_time) AS last_seen
-		FROM stellar.contract_events FINAL
-		WHERE contract_id IN (?) AND event_type = 'contract' AND ledger_seq >= ?
-		GROUP BY contract_id ORDER BY c DESC LIMIT 1000`
-	rows, err := r.conn.Query(ctx, q, contractIDs, sinceLedger)
+	rows, err := r.conn.Query(ctx, protocolContractActivityQuery, contractIDs, sinceLedger)
 	if err != nil {
 		return nil, fmt.Errorf("clickhouse: protocol contract activity: %w", err)
 	}

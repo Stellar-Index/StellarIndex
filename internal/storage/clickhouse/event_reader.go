@@ -150,6 +150,22 @@ func forEachLedgerWindow(from, to, stride uint32, fn func(lo, hi uint32) error) 
 // because no-FINAL is far gentler on the shared host — so useFinal=false is
 // correct for a counting consumer that dedups, not a bug.
 //
+// On the "FINAL + contract_id filter + wide range" trap (the protocol_reader.go
+// class, swept 2026-09-03): this query CAN express it, and one caller does.
+// Census of every call site — projector.go, projected_rebuild.go,
+// completeness.go and ch_cap67_movements.go all pass useFinal=false; the sole
+// useFinal=true caller is ch_rebuild.go's sep41 dry-run, which passes the
+// operator's raw -from/-to with no windowing. That is DELIBERATE and must not
+// be given a row ceiling: it runs on openRead(), whose Settings pin
+// max_execution_time to 0 precisely so "a legitimate FINAL stream over a
+// full-history window" can run for minutes (gate.go, G12-04), it streams rather
+// than aggregates so its memory is bounded regardless of range, and the range
+// IS the operator's explicit request. The request-path protection lives on the
+// request-path reader instead (protocolRawScanRowCeiling). A NEW consumer of
+// this function that is request-path, passes useFinal=true AND a contract_id
+// filter would reproduce the trap — it needs its own ceiling, not this one's
+// absence taken as precedent.
+//
 // withOpArgs selects whether the read includes op_args_xdr. Only decoders that
 // consume events.Event.OpArgs need it (redstone zips write_prices feed_ids
 // from the op args — PR 166); every other decoder decodes from topics + data.
