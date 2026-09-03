@@ -123,8 +123,8 @@ dev-seed: ## Load fixture data into local stack
 
 .PHONY: fmt
 fmt: ## Format all Go code with gofumpt + goimports
-	@$(GOBIN)/gofumpt -w .
-	@$(GOBIN)/goimports -w -local $(MODULE) .
+	@git ls-files -z -- '*.go' | xargs -0 $(GOBIN)/gofumpt -w
+	@git ls-files -z -- '*.go' | xargs -0 $(GOBIN)/goimports -w -local $(MODULE)
 
 .PHONY: lint
 lint: ## Run golangci-lint

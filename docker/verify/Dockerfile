@@ -22,16 +22,16 @@ ENV PATH="/root/.local/bin:/go/bin:/pnpm:${PATH}" \
 
 COPY --from=node /usr/local/ /usr/local/
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
-      ca-certificates curl git jq make openssh-client pipx python3 rsync shellcheck xz-utils \
-    && rm -rf /var/lib/apt/lists/* \
-    && corepack enable pnpm \
-    && corepack prepare pnpm@10.33.0 --activate
-
 RUN go install mvdan.cc/gofumpt@${GOFUMPT_VERSION} \
     && go install golang.org/x/tools/cmd/goimports@${GOIMPORTS_VERSION} \
     && go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@${GOLANGCI_LINT_VERSION} \
     && go install golang.org/x/vuln/cmd/govulncheck@${GOVULNCHECK_VERSION}
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      ca-certificates curl git jq make openssh-client pipx python3 python3-jinja2 python3-yaml rsync shellcheck systemd xz-utils \
+    && rm -rf /var/lib/apt/lists/* \
+    && corepack enable pnpm \
+    && corepack prepare pnpm@10.33.0 --activate
 
 RUN set -eux; \
     case "${TARGETARCH}" in amd64|arm64) arch="${TARGETARCH}" ;; *) echo "unsupported architecture: ${TARGETARCH}"; exit 1 ;; esac; \
