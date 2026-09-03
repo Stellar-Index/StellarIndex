@@ -15,6 +15,7 @@ printf 'go=%s node=%s pnpm=%s golangci-lint=%s\n' \
   "$(go version | awk '{print $3}')" "$(node --version)" "$(pnpm --version)" "$(golangci-lint version --short 2>/dev/null || golangci-lint version | head -1)"
 
 echo "=== Install locked frontend dependencies ==="
+pnpm config set store-dir "$PNPM_STORE_DIR"
 for app in web/explorer web/status; do
   [[ -f "$app/pnpm-lock.yaml" ]] || continue
   pnpm --dir "$app" install --frozen-lockfile
