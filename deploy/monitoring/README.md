@@ -24,6 +24,7 @@ deploy/monitoring/
 ├── rules/
 │   ├── aggregator.yml          aggregator-silent / outlier-storm / class-drop-spike
 │   ├── anomaly.yml             freeze-engaged / freeze-sustained
+│   ├── api-smoke.yml           API-smoke shape assertions failing / not running
 │   ├── api.yml                 HTTP serving-plane alerts
 │   ├── archive-completeness.yml archive-files-missing / completeness-stale
 │   ├── cache.yml               Redis alerts

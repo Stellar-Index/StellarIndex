@@ -122,6 +122,7 @@ echo "=== Public-dataset drift decision-core self-test ===" && ./scripts/ci/chec
 echo "=== Jinja template parse gate ===" && ./scripts/ci/lint-jinja-templates.sh
 echo "=== Jinja template parse gate self-test ===" && ./scripts/ci/lint-jinja-templates-test.sh
 echo "=== pgBackRest backup wrapper self-test ===" && ./scripts/ci/pgbackrest-backup-test.sh
+echo "=== API-smoke textfile self-test ===" && ./scripts/ci/smoke-textfile-test.sh
 echo "=== data-freshness watchdog self-test ===" && ./scripts/ci/data-freshness-test.sh
 # BASE_SHA-gated. Both this and lint-replay-plan.sh below take their
 # comparison base from the environment, and with none set they print a skip
