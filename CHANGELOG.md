@@ -19,6 +19,26 @@ against.
 
 - **api:** `GET /v1/observations` returned an empty array for **its own default quote**. The handler short-circuited every `fiat:USD` request to `data: []` without consulting storage, on the stated premise that "`trades.quote_asset` never holds the literal value `fiat:USD`". That premise is false: the CEX connectors trade straight against USD (coinbase / kraken / bitstamp `XLM-USD`, `BTC-USD`, `ETH-USD`), so the column holds exactly that string on every one of those rows. The same deployment disproved it twice — `/v1/history?base=crypto:XLM&quote=fiat:USD` returns coinbase rows carrying `"quote_asset":"fiat:USD"`, and `/v1/observations/stream`, documented as "same compute" and sharing `computeObservations` with no short-circuit, emits bitstamp + coinbase + kraken for the identical pair the request endpoint answered with `[]`. The suppression was the residue of a partially-applied fix: it once covered all of `fiat:*` and `crypto:*`, was narrowed when CEX quotes were found underneath it, and the `fiat:USD` arm was left standing — over the one quote the endpoint uses when a caller supplies none. Its cost argument had also expired: migration 0037's `trades_pair_source_ts_idx` covers `LatestTradePerSource`'s `DISTINCT ON (source)`, making the lookup `O(num_sources)` rather than the `O(rows_in_pair)` fan-out that motivated the fast-path, and the handler's 8s ceiling still bounds it. The short-circuit and its now-unreachable empty-result helper are gone; the empty-result triangulation hint is unchanged, served by the post-storage branch that already handled it. The regression test that **pinned** the defect (asserting storage must NOT be called) is replaced by its inverse: a `fiat:USD` request must reach storage and must return the rows storage holds.
 
+- **api:** `/v1/history` and `/v1/chart` read their series keyed on the LITERAL pair
+  and never looped `canonical.AssetAliases`, so **`?base=native&quote=fiat:USD`
+  returned `data: []` while the identical window under `?base=crypto:XLM` returned a
+  full page**, and a chart for one spelling was empty against a populated series
+  under another. XLM's three canonical spellings (`native`, `crypto:XLM`, its SAC) are disjoint
+  venue populations: the on-chain decoders stamp `native`, the CEX parsers
+  `crypto:XLM`. `native` is the documented spelling of XLM on both parameters, so the
+  blind form was the one an API description sends a reader to first. Every sibling
+  read path — `/v1/vwap`, `/v1/ohlc`, `/v1/price`, `/v1/observations` — already
+  looped the aliases; these two were the holdouts. `/v1/chart`'s stablecoin fallback
+  did not cover the gap: it crosses the base aliases with PROXY quotes only and skips
+  the requested quote, leaving `crypto:XLM/fiat:USD` the one combination never read,
+  and a chart that did reach a peg was stamped `triangulated` when a direct series
+  existed one alias away. Both now try each spelling and take the first populated
+  one, literal form first — an alias is the same asset in another canonical form, not
+  a proxy, so it does not raise `flags.triangulated`, and `asset_id` still echoes the
+  requested spelling. `/v1/chart?price_type=twap` and `price_type=market_cap` are
+  fixed with the same helper. A populated pair still costs exactly one read, and
+  non-XLM pairs have one spelling and are unaffected.
+
 ## [v0.59.1] — 2026-09-03
 
 ### Fixed

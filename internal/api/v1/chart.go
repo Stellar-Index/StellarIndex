@@ -153,7 +153,7 @@ func (s *Server) handleChart(w http.ResponseWriter, r *http.Request) {
 	// + `granularity=1h` is ~8 760 buckets).
 	chartCtx, chartCancel := context.WithTimeout(r.Context(), 8*time.Second)
 	defer chartCancel()
-	points, err := s.history.HistoryPointsInRange(chartCtx, pair, gran, from, time.Time{}, historyMaxPoints)
+	points, err := s.chartPointsWithAliases(chartCtx, pair, s.chartVWAPReader(gran, from))
 	if errors.Is(err, ErrUnknownGranularity) {
 		writeProblem(w, r,
 			"https://api.stellarindex.io/errors/invalid-granularity",
@@ -314,7 +314,7 @@ func (s *Server) handleChartTWAP(
 		return s.history.TWAPPointsInRange(rc, p, twapGran, from, time.Time{}, historyMaxPoints)
 	}
 
-	points, err := read(ctx, pair)
+	points, err := s.chartPointsWithAliases(ctx, pair, read)
 	if errors.Is(err, ErrUnknownGranularity) {
 		// twapChartGranularity only ever emits 1h / 1d, both of which have
 		// a CAGG — this arm guards a future grain change, not user input.
@@ -713,6 +713,46 @@ func (s *Server) chartFiatProxyPairs(pair canonical.Pair) []canonical.Pair {
 	return out
 }
 
+// chartPointsWithAliases runs `read` against each XLM dual-form alias pair
+// and returns the FIRST non-empty series — the chart-side twin of
+// [Server.historyPointsWithAliases] / [Server.ohlcSeriesWithAliases].
+//
+// The literal-keyed read alone left every chart surface blind to the venues
+// publishing XLM under the other id: `?asset=native` read only
+// native/<quote> buckets while the CEX-fed series lives under
+// `crypto:XLM/<quote>`. [Server.chartStablecoinFallback] did not cover the
+// gap — it crosses the base aliases with PROXY quotes only and skips the
+// requested quote, so the one pair holding the answer
+// (`crypto:XLM/fiat:USD`) was the one combination never read, and a chart
+// that did fall through to a peg was needlessly stamped triangulated.
+//
+// An alias form is the same asset in another canonical spelling, not a
+// proxy, so a hit here does NOT raise flags.triangulated — the same
+// distinction [Server.fiatCombinedTrades] draws. First-hit rather than a
+// cross-form combine: blending buckets across alias forms would publish a
+// VWAP no venue set produced, exactly the gate the /v1/vwap point path
+// applies. The literal form is tried first, so a populated pair costs one
+// read; the caller's deadline covers all of them.
+func (s *Server) chartPointsWithAliases(
+	ctx context.Context,
+	pair canonical.Pair,
+	read func(context.Context, canonical.Pair) ([]HistoryPoint, error),
+) ([]HistoryPoint, error) {
+	for _, b := range assetAliases(pair.Base) {
+		for _, q := range assetAliases(pair.Quote) {
+			ap, perr := canonical.NewPair(b, q)
+			if perr != nil {
+				continue // degenerate alias combination (identity pair)
+			}
+			points, err := read(ctx, ap)
+			if err != nil || len(points) > 0 {
+				return points, err
+			}
+		}
+	}
+	return nil, nil
+}
+
 // chartVWAPReader returns a [chartStablecoinFallback] read closure that
 // fetches a pair's closed prices_<gran> series over [from, now).
 func (s *Server) chartVWAPReader(gran string, from time.Time) func(context.Context, canonical.Pair) ([]HistoryPoint, error) {
@@ -1028,7 +1068,7 @@ func (s *Server) handleChartMarketCapCrypto(
 
 	// USD price series (daily), with the stablecoin-USD proxy fallback
 	// the normal chart uses when nothing trades directly in fiat:USD.
-	pricePts, err := s.history.HistoryPointsInRange(ctx, pair, gran, from, time.Time{}, historyMaxPoints)
+	pricePts, err := s.chartPointsWithAliases(ctx, pair, s.chartVWAPReader(gran, from))
 	if err != nil {
 		if clientAborted(r, err) {
 			return
