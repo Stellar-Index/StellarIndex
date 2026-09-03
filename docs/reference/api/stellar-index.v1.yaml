@@ -3504,6 +3504,37 @@ paths:
                           auth_revocable: { type: [boolean, "null"] }
                           auth_immutable: { type: [boolean, "null"] }
                           auth_clawback: { type: [boolean, "null"] }
+                          auth_flags_source:
+                            type: string
+                            enum: [live, last_known_before_removal]
+                            description: |
+                              How the four `auth_*` flags above were obtained.
+
+                              `live` — decoded from the account's CURRENT
+                              on-chain AccountEntry; this IS the issuer's
+                              authorisation policy right now.
+
+                              `last_known_before_removal` — the issuer has
+                              MERGED ITS ACCOUNT AWAY. The flags are its last
+                              known state, as of `auth_flags_as_of_ledger`, and
+                              are a historical record — do NOT render them as
+                              the issuer's current policy, and note that such an
+                              issuer can no longer be verified on-chain (its
+                              `home_domain` is deliberately not carried over
+                              from the dead account).
+
+                              ABSENT means the provenance is unknown — the flags
+                              were never resolved, or were resolved before the
+                              provenance column existed. Absence is never a
+                              claim that the flags are current.
+                          auth_flags_as_of_ledger:
+                            type: [integer, "null"]
+                            description: |
+                              Ledger the `auth_*` flags are true as of: the
+                              AccountEntry's last-modified ledger when
+                              `auth_flags_source` is `live`, the ledger that
+                              merged the account away when it is
+                              `last_known_before_removal`. Absent when unknown.
                           sep1_resolved_at: { type: [string, "null"], format: date-time }
                           sep1_payload: { type: [object, "null"], additionalProperties: true }
                           creation_ledger: { type: [integer, "null"] }

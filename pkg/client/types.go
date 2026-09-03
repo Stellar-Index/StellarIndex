@@ -845,12 +845,20 @@ type Issuer struct {
 	OrgVerified bool `json:"org_verified"`
 	// ScamReason is non-empty when the issuer is in the curated
 	// scam directory — render as a warning.
-	ScamReason     string  `json:"scam_reason,omitempty"`
-	AuthRequired   *bool   `json:"auth_required,omitempty"`
-	AuthRevocable  *bool   `json:"auth_revocable,omitempty"`
-	AuthImmutable  *bool   `json:"auth_immutable,omitempty"`
-	AuthClawback   *bool   `json:"auth_clawback,omitempty"`
-	SEP1ResolvedAt *string `json:"sep1_resolved_at,omitempty"`
+	ScamReason    string `json:"scam_reason,omitempty"`
+	AuthRequired  *bool  `json:"auth_required,omitempty"`
+	AuthRevocable *bool  `json:"auth_revocable,omitempty"`
+	AuthImmutable *bool  `json:"auth_immutable,omitempty"`
+	AuthClawback  *bool  `json:"auth_clawback,omitempty"`
+	// AuthFlagsSource says WHERE the four flags above came from:
+	// "live" for a current ledger entry, "last_known" for an account
+	// that has since been removed (#374). A last_known row is a
+	// historical fact, not a current one — do not present it as the
+	// issuer's present configuration, and note it carries no
+	// home_domain, because a dead account must not keep advertising one.
+	AuthFlagsSource   string  `json:"auth_flags_source,omitempty"`
+	AuthFlagsAsOfLedg *uint32 `json:"auth_flags_as_of_ledger,omitempty"`
+	SEP1ResolvedAt    *string `json:"sep1_resolved_at,omitempty"`
 	// SEP1Payload is opaque JSON — schemas drift over time and many
 	// issuers add custom fields. Callers who need typed access
 	// should unmarshal into their own struct.

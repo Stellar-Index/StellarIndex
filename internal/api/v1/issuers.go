@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
@@ -63,15 +64,28 @@ type Issuer struct {
 	// ScamReason is non-empty when the issuer is flagged as scam /
 	// malicious by the curated `known_scams.go` map (sourced from
 	// stellar.expert's directory).
-	ScamReason     string          `json:"scam_reason,omitempty"`
-	AuthRequired   *bool           `json:"auth_required,omitempty"`
-	AuthRevocable  *bool           `json:"auth_revocable,omitempty"`
-	AuthImmutable  *bool           `json:"auth_immutable,omitempty"`
-	AuthClawback   *bool           `json:"auth_clawback,omitempty"`
-	SEP1ResolvedAt *string         `json:"sep1_resolved_at,omitempty"`
-	SEP1Payload    json.RawMessage `json:"sep1_payload,omitempty"`
-	CreationLedger *uint32         `json:"creation_ledger,omitempty"`
-	Assets         []IssuedAsset   `json:"assets,omitempty"`
+	ScamReason    string `json:"scam_reason,omitempty"`
+	AuthRequired  *bool  `json:"auth_required,omitempty"`
+	AuthRevocable *bool  `json:"auth_revocable,omitempty"`
+	AuthImmutable *bool  `json:"auth_immutable,omitempty"`
+	AuthClawback  *bool  `json:"auth_clawback,omitempty"`
+	// AuthFlagsSource says how the four auth_* flags above were obtained
+	// (#374). `live` — decoded from the account's CURRENT on-chain
+	// AccountEntry. `last_known_before_removal` — the issuer has MERGED ITS
+	// ACCOUNT AWAY and these are its flags as of `auth_flags_as_of_ledger`;
+	// they are a historical record, NOT the issuer's current authorisation
+	// policy, and must not be rendered as one. ~10.2k of ~59.2k known
+	// issuers are in that state. Omitted when the provenance is unknown
+	// (flags not resolved, or persisted before migration 0153 and not yet
+	// re-drained) — absence means "unknown", never "current".
+	AuthFlagsSource string `json:"auth_flags_source,omitempty"`
+	// AuthFlagsAsOfLedger is the ledger the flags are true as of. Omitted
+	// when unknown.
+	AuthFlagsAsOfLedger *uint32         `json:"auth_flags_as_of_ledger,omitempty"`
+	SEP1ResolvedAt      *string         `json:"sep1_resolved_at,omitempty"`
+	SEP1Payload         json.RawMessage `json:"sep1_payload,omitempty"`
+	CreationLedger      *uint32         `json:"creation_ledger,omitempty"`
+	Assets              []IssuedAsset   `json:"assets,omitempty"`
 }
 
 // IssuedAsset is one entry in the issuer's `assets` list.
@@ -304,8 +318,25 @@ func (s *Server) handleIssuer(w http.ResponseWriter, r *http.Request) {
 // backfill lands (data-truth G2). Stellar AccountEntry flags: AUTH_REQUIRED=1,
 // AUTH_REVOCABLE=2, AUTH_IMMUTABLE=4, AUTH_CLAWBACK=8. No-op when nothing is
 // missing or the explorer reader isn't wired.
+//
+// PROVENANCE (#374). A live AccountEntry is the authority on its own account,
+// so when one resolves its flags REPLACE anything the drain persisted and the
+// reading is stamped `live` with the entry's ledger. When none resolves,
+// whatever is persisted stands untouched and unlabelled: absence from the
+// current-state projection is what a merged account AND a lake-coverage gap
+// both look like, so this path may never conclude "removed" on its own — only
+// the drain, which reads an actual `removed` row and its removal ledger, may
+// write `last_known_before_removal`.
 func (s *Server) enrichIssuerFromAccountState(ctx context.Context, gStrkey string, out *Issuer) {
-	if out.AuthRequired != nil && out.HomeDomain != "" {
+	// The skip is a cost guard, not a correctness one, so it must not
+	// cover the one reading that goes stale: a last-known-before-removal
+	// row can never re-resolve on its own (the drain's queue is
+	// `auth_required IS NULL`, so it never revisits a row it has filled),
+	// and it stops being true the moment the account is re-created.
+	// A row with no provenance predates migration 0153, whose backfill
+	// records why those are known to be live-sourced.
+	if out.AuthFlagsSource != string(clickhouse.AuthFlagsSourceLastKnownBeforeRemoval) &&
+		out.AuthRequired != nil && out.HomeDomain != "" {
 		return
 	}
 	if s.explorer == nil {
@@ -315,15 +346,20 @@ func (s *Server) enrichIssuerFromAccountState(ctx context.Context, gStrkey strin
 	if err != nil || !st.Exists {
 		return
 	}
-	if out.AuthRequired == nil {
-		req := st.Flags&0x1 != 0
-		rev := st.Flags&0x2 != 0
-		imm := st.Flags&0x4 != 0
-		claw := st.Flags&0x8 != 0
-		out.AuthRequired = &req
-		out.AuthRevocable = &rev
-		out.AuthImmutable = &imm
-		out.AuthClawback = &claw
+	req := st.Flags&0x1 != 0
+	rev := st.Flags&0x2 != 0
+	imm := st.Flags&0x4 != 0
+	claw := st.Flags&0x8 != 0
+	out.AuthRequired = &req
+	out.AuthRevocable = &rev
+	out.AuthImmutable = &imm
+	out.AuthClawback = &claw
+	out.AuthFlagsSource = string(clickhouse.AuthFlagsSourceLive)
+	if st.LastModifiedLedger > 0 {
+		asOf := st.LastModifiedLedger
+		out.AuthFlagsAsOfLedger = &asOf
+	} else {
+		out.AuthFlagsAsOfLedger = nil
 	}
 	if out.HomeDomain == "" && st.HomeDomain != "" {
 		out.HomeDomain = st.HomeDomain

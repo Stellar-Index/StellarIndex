@@ -249,6 +249,13 @@ paths = [
   '''test/integration/dex_liquidity_depth_storage_test\.go''',
   '''test/integration/blend_emissions_bespoke_storage_test\.go''',
 ]
+[[rules.allowlists]]
+description = "Test-only Stellar G-strkey fixtures (public account IDs) used by the #374 last-known-auth-flags reader test: a removed issuer and a legacy account whose intra_ledger_seq is all-zero. Same entropy heuristic as the other G-strkey allowlists above — a bare 56-char base32 address looks like a generic API key and is not one. Account IDs are public ledger entries, and these two are specifically dead on-chain."
+paths = [
+  '''internal/storage/clickhouse/account_flags_bulk_test\.go''',
+]
+
+
 
 # ── curl-auth-header (default rule) ─────────────────────────────────
 # The default ruleset flags any `curl -H "Authorization: Bearer …"`

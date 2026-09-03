@@ -10793,6 +10793,37 @@ export interface operations {
                             auth_revocable?: boolean | null;
                             auth_immutable?: boolean | null;
                             auth_clawback?: boolean | null;
+                            /**
+                             * @description How the four `auth_*` flags above were obtained.
+                             *
+                             *     `live` — decoded from the account's CURRENT
+                             *     on-chain AccountEntry; this IS the issuer's
+                             *     authorisation policy right now.
+                             *
+                             *     `last_known_before_removal` — the issuer has
+                             *     MERGED ITS ACCOUNT AWAY. The flags are its last
+                             *     known state, as of `auth_flags_as_of_ledger`, and
+                             *     are a historical record — do NOT render them as
+                             *     the issuer's current policy, and note that such an
+                             *     issuer can no longer be verified on-chain (its
+                             *     `home_domain` is deliberately not carried over
+                             *     from the dead account).
+                             *
+                             *     ABSENT means the provenance is unknown — the flags
+                             *     were never resolved, or were resolved before the
+                             *     provenance column existed. Absence is never a
+                             *     claim that the flags are current.
+                             * @enum {string}
+                             */
+                            auth_flags_source?: "live" | "last_known_before_removal";
+                            /**
+                             * @description Ledger the `auth_*` flags are true as of: the
+                             *     AccountEntry's last-modified ledger when
+                             *     `auth_flags_source` is `live`, the ledger that
+                             *     merged the account away when it is
+                             *     `last_known_before_removal`. Absent when unknown.
+                             */
+                            auth_flags_as_of_ledger?: number | null;
                             /** Format: date-time */
                             sep1_resolved_at?: string | null;
                             sep1_payload?: {
