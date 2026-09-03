@@ -696,10 +696,13 @@ func TestAssetList_TypeClassic_PassesThrough(t *testing.T) {
 }
 
 func TestAssetList_TypeNative_ShortCircuitsEmpty(t *testing.T) {
-	// type=native (or soroban/fiat) matches nothing on the classic-
-	// only assetsReader listing → empty page WITHOUT hitting the reader
-	// (BACKLOG #54 type fold). The stub is seeded with a row that
-	// must NOT surface.
+	// type=native (or fiat) matches nothing on the listing spine →
+	// empty page WITHOUT hitting the reader (BACKLOG #54 type fold).
+	// The stub is seeded with a row that must NOT surface.
+	//
+	// soroban is NOT in that set: the spine gained the traded
+	// Soroban-native contracts, so that filter reaches the store and is
+	// answered there (TestAssetList_TypeSoroban_ReachesTheReader).
 	listReader := &listingStub{rows: []timescale.AssetRow{{
 		AssetID: "USDC-" + testUSDCIssuer, Code: "USDC", Slug: "usdc",
 	}}}
@@ -719,6 +722,35 @@ func TestAssetList_TypeNative_ShortCircuitsEmpty(t *testing.T) {
 	// Reader must not have been called at all (lastOpts stays zero).
 	if listReader.lastOpts.Limit != 0 {
 		t.Errorf("type=native must NOT call ListAssetsExt; lastOpts.Limit=%d", listReader.lastOpts.Limit)
+	}
+}
+
+func TestAssetList_TypeSoroban_ReachesTheReader(t *testing.T) {
+	// The listing spine is classic_assets UNION the traded
+	// Soroban-native contracts, so `type=soroban` is answerable and must
+	// be pushed down. It spent the interval between that spine change
+	// and this one being folded to an empty page alongside native/fiat —
+	// a filter for rows the store was holding all along.
+	listReader := &listingStub{rows: []timescale.AssetRow{{
+		AssetID: "CAUP7QFDIVYY4HYPHEUCVIVAUKY7CBHFVBQ2WWDGFME7RGVQ5SUKAAAA",
+		Slug:    "caup7qfd",
+	}}}
+	srv := v1.New(v1.Options{AssetsReader: listReader, Assets: &stubAssetReader{}})
+	ts := httpTestServer(t, srv)
+	resp := mustGet(t, ts.URL+"/v1/assets?type=soroban")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status=%d", resp.StatusCode)
+	}
+	var env struct {
+		Data []v1.AssetDetail `json:"data"`
+	}
+	mustDecode(t, resp, &env)
+	if listReader.lastOpts.Type != "soroban" {
+		t.Fatalf("ListAssetsExt saw Type=%q, want %q — the filter never reached the spine",
+			listReader.lastOpts.Type, "soroban")
+	}
+	if len(env.Data) != 1 {
+		t.Fatalf("type=soroban must serve the contract row; got %d rows want 1", len(env.Data))
 	}
 }
 

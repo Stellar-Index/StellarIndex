@@ -7752,7 +7752,22 @@ export interface operations {
             query?: {
                 /** @description Comma-separated row enrichments. Supported: `sparkline7d` (per-row 7-day price history for chart columns; one batch read per page). */
                 include?: string;
-                /** @description Case-insensitive substring filter over code / asset id / slug / name, applied server-side across BOTH phases of the unified listing (catalogue + the ~191K classic long tail). */
+                /**
+                 * @description Case-insensitive substring filter over code / asset id /
+                 *     slug / name, applied server-side across BOTH phases of the
+                 *     unified listing (catalogue + the ~191K classic long tail).
+                 *
+                 *     Applied on the default listing and on `asset_class=all`.
+                 *     NOT applied on `asset_class=fiat|stablecoin|crypto`: those
+                 *     listings serve their whole class, so `q` is accepted and
+                 *     has no effect there.
+                 *
+                 *     A row's `volume_24h_usd` under this filter is the volume of
+                 *     the arm the filter admitted — see **Row filters and
+                 *     `volume_24h_usd`** on the `type` parameter. A SAC wrapper
+                 *     has no code, slug or issuer to match, so `q` never selects
+                 *     one.
+                 */
                 q?: string;
                 /**
                  * @description Opaque pagination token echoed from a prior response's
@@ -7809,6 +7824,13 @@ export interface operations {
                  *       class plus indexed Stellar assets).
                  *
                  *     Omitted: the legacy classic-assets page (unfiltered).
+                 *
+                 *     The major dispatch, not a row filter. `fiat`, `stablecoin`
+                 *     and `crypto` serve their whole class from the catalogue and
+                 *     narrow on NONE of the row filters — `type`, `code`,
+                 *     `issuer` and `q` are accepted and have no effect on those
+                 *     three. They apply on `all` and on the default (omitted)
+                 *     listing.
                  */
                 asset_class?: "fiat" | "stablecoin" | "crypto" | "blockchain" | "cryptocurrency" | "cryptocurrencies" | "all";
                 /**
@@ -7818,6 +7840,16 @@ export interface operations {
                  *     include the full coin-overlay shape (price_usd /
                  *     volume_24h_usd / change_*_pct / etc) when a
                  *     CoinsReader is wired.
+                 *
+                 *     Applied on the default listing and on `asset_class=all`.
+                 *     NOT applied on `asset_class=fiat|stablecoin|crypto`: those
+                 *     listings serve their whole class, so `issuer` is accepted
+                 *     and has no effect there.
+                 *
+                 *     A row's `volume_24h_usd` under this filter is the volume of
+                 *     the arm the filter admitted — see **Row filters and
+                 *     `volume_24h_usd`** on the `type` parameter. A SAC wrapper
+                 *     has no issuer account, so `issuer` never selects one.
                  */
                 issuer?: string;
                 /**
@@ -7825,6 +7857,41 @@ export interface operations {
                  *     the `asset_class` catalogue dispatch above. One of `native`,
                  *     `classic`, `soroban`, `fiat`; `any` (or omitted) disables
                  *     the filter. Any other value returns 400.
+                 *
+                 *     The filter matches an asset's STELLAR ISSUANCE, not the
+                 *     `type` field on the row it returns. A verified-catalogue row
+                 *     carries `type: global` because it stands in for the on-chain
+                 *     twin whose classic row it suppresses, so USDC is returned by
+                 *     `type=classic` and XLM by `type=native` even though both
+                 *     rows are served as `global`.
+                 *
+                 *     Applied on the default listing and on `asset_class=all`.
+                 *     NOT applied on `asset_class=fiat|stablecoin|crypto`: those
+                 *     listings serve their whole class, so `type` is accepted and
+                 *     has no effect there.
+                 *
+                 *     **Row filters and `volume_24h_usd`.** All four row filters
+                 *     (`type`, `code`, `issuer`, `q`) push down to the listing
+                 *     spine, so a filtered row reports the volume of the arm the
+                 *     filter admitted rather than the asset's total across its
+                 *     forms. Two cases, and they differ:
+                 *
+                 *     - A SAC-wrapped asset served from the **classic spine**
+                 *       (any asset outside the verified catalogue) has its
+                 *       wrapper's trailing-24h volume merged onto its classic
+                 *       twin on an unfiltered `asset_class=all` request. Every
+                 *       row filter narrows before that merge, so `type=classic`,
+                 *       `code`, `issuer` and `q` each report the classic arm
+                 *       alone — materially lower than the unfiltered figure — and
+                 *       `type=soroban` returns the wrapper by itself with the
+                 *       wrapper's own volume.
+                 *     - A **verified-catalogue** row (the curated slugs that open
+                 *       the `asset_class=all` listing — `xlm`, `usdc`, `aqua`,
+                 *       `blnd`, …) reports its CLASSIC arm on every request,
+                 *       filtered or not. Its analytics come from a single-identity lookup of its Stellar issuance — an exact-issuer lookup of the classic twin, or the dedicated `native` reader for XLM — which cannot reach a SAC wrapper, and a SAC wrapper has no
+                 *       issuer, so no merge happens on that path at all. Do not
+                 *       read a catalogue row's unfiltered figure as a cross-arm
+                 *       total.
                  */
                 type?: "native" | "classic" | "soroban" | "fiat" | "any";
                 /**
@@ -7832,6 +7899,16 @@ export interface operations {
                  *     characters — the alphanum4/alphanum12 rule). Combine with
                  *     `issuer` to pin a single classic asset. A malformed value
                  *     returns 400.
+                 *
+                 *     Applied on the default listing and on `asset_class=all`.
+                 *     NOT applied on `asset_class=fiat|stablecoin|crypto`: those
+                 *     listings serve their whole class, so `code` is accepted and
+                 *     has no effect there.
+                 *
+                 *     A row's `volume_24h_usd` under this filter is the volume of
+                 *     the arm the filter admitted — see **Row filters and
+                 *     `volume_24h_usd`** on the `type` parameter. A SAC wrapper
+                 *     has no asset code, so `code` never selects one.
                  */
                 code?: string;
             };

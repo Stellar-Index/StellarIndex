@@ -343,8 +343,8 @@ func TestPrewarmLight_AssetListingWarmsAreHandlerReachable(t *testing.T) {
 // listAssetsSig renders a ListAssetsOptions the way stubAssetsReader
 // records it, so the warmed set and the observed calls are comparable.
 func listAssetsSig(o timescale.ListAssetsOptions) string {
-	return fmt.Sprintf("ListAssetsExt(order=%d limit=%d cursor=%q issuer=%q code=%q q=%q)",
-		int(o.Order), o.Limit, o.Cursor, o.Issuer, o.Code, o.Q)
+	return fmt.Sprintf("ListAssetsExt(order=%d limit=%d cursor=%q issuer=%q code=%q type=%q q=%q)",
+		int(o.Order), o.Limit, o.Cursor, o.Issuer, o.Code, o.Type, o.Q)
 }
 
 func sortedKeys(m map[string]bool) []string {

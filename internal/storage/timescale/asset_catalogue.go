@@ -137,6 +137,18 @@ type ListAssetsOptions struct {
 	// single asset. Pushes down to the indexed classic_assets.code
 	// column (BACKLOG #54).
 	Code string
+	// Type, when non-empty, narrows to one arm of the listing spine:
+	// "classic" (classic_assets — issuer_g_strkey is NOT NULL there by
+	// schema) or "soroban" (the traded discovered-contract arm, whose
+	// code / issuer / slug are NULL by nature). Those two and the empty
+	// value are the whole vocabulary; anything else is an ERROR from
+	// ListAssetsExt, never an ignored filter. The spine holds no native
+	// or fiat row at all, so a caller that wants one of those must fold
+	// it to an empty page itself — only the caller knows which other
+	// path serves it — but a store that quietly dropped the value would
+	// answer with the unfiltered page, which is indistinguishable from
+	// a filtered one and is the exact defect this filter closes.
+	Type string
 	// Cursor is the keyset cursor returned by the previous
 	// response's NextCursor field. Empty for the first page.
 	Cursor string
@@ -214,7 +226,10 @@ func (s *Store) ListAssetsExt(ctx context.Context, opts ListAssetsOptions) ([]As
 	case limit > 501:
 		limit = 501
 	}
-	query, args := buildAssetsQuery(limit, opts.Issuer, opts.Code, opts.Cursor, opts.Q, opts.Order)
+	query, args, err := buildAssetsQuery(limit, opts.Issuer, opts.Code, opts.Cursor, opts.Q, opts.Type, opts.Order)
+	if err != nil {
+		return nil, fmt.Errorf("timescale: ListAssets: %w", err)
+	}
 	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("timescale: ListAssets: %w", err)
@@ -738,10 +753,14 @@ func (s *Store) RefreshAssetVolume24h(ctx context.Context) error {
 
 // buildAssetsQuery composes the WHERE + ORDER + LIMIT around
 // listAssetsBaseSelectSQL, given the limit / issuer-filter /
-// code-filter / keyset cursor / search query. The combinatorial
-// explosion of (issuer × code × cursor × q) is too painful as a
-// switch; use a slice + numbered placeholders.
-func buildAssetsQuery(limit int, issuer, code, cursor, q string, order AssetsOrder) (string, []any) {
+// code-filter / keyset cursor / search query / structural-type filter.
+// The combinatorial explosion of (issuer × code × cursor × q × typ) is
+// too painful as a switch; use a slice + numbered placeholders.
+//
+// Returns an error for a `typ` the spine cannot express — see
+// [assetsTypeCondition]. A query is never composed from a filter this
+// function did not understand.
+func buildAssetsQuery(limit int, issuer, code, cursor, q, typ string, order AssetsOrder) (string, []any, error) {
 	var (
 		conds []string
 		args  []any
@@ -758,6 +777,13 @@ func buildAssetsQuery(limit int, issuer, code, cursor, q string, order AssetsOrd
 		// it pins a single asset.
 		args = append(args, code)
 		conds = append(conds, fmt.Sprintf("ca.code = $%d", len(args)))
+	}
+	typeCond, err := assetsTypeCondition(typ)
+	if err != nil {
+		return "", nil, err
+	}
+	if typeCond != "" {
+		conds = append(conds, typeCond)
 	}
 	if q != "" {
 		args = append(args, "%"+q+"%")
@@ -776,7 +802,34 @@ func buildAssetsQuery(limit int, issuer, code, cursor, q string, order AssetsOrd
 	if len(conds) > 0 {
 		where = " WHERE " + strings.Join(conds, " AND ")
 	}
-	return listAssetsBaseSelectSQL(order) + where + assetsOrderBy(order) + " LIMIT " + limitPlaceholder, args
+	return listAssetsBaseSelectSQL(order) + where + assetsOrderBy(order) + " LIMIT " + limitPlaceholder, args, nil
+}
+
+// assetsTypeCondition maps the structural `type` filter onto the only
+// thing that separates the listing spine's two arms: classic_assets
+// requires a G-issuer (issuer_g_strkey NOT NULL, migration 0023) while
+// the discovered-contract arm selects NULL for it — a contract asset has
+// no issuer account. Empty means no predicate. No placeholder: the value
+// is a closed enum, so it is matched, never interpolated.
+//
+// Any OTHER non-empty value is an error rather than a skipped case. A
+// switch with no default would have composed the filter away and served
+// the unfiltered page under a 200 — the caller cannot tell that from a
+// filter that matched everything, which is precisely the failure the
+// row filters exist to prevent. Callers fold `native` / `fiat` to an
+// empty page before they get here: the spine holds no such row, and
+// which path DOES serve them is the caller's knowledge, not the store's.
+func assetsTypeCondition(typ string) (string, error) {
+	switch typ {
+	case "":
+		return "", nil
+	case "classic":
+		return "ca.issuer_g_strkey IS NOT NULL", nil
+	case "soroban":
+		return "ca.issuer_g_strkey IS NULL", nil
+	default:
+		return "", fmt.Errorf("unsupported type filter %q (want \"classic\", \"soroban\" or empty)", typ)
+	}
 }
 
 // assetsCursorArgs returns the positional args appended for the
