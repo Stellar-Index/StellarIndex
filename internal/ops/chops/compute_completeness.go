@@ -465,6 +465,13 @@ func computeCompleteness(args []string) error { //nolint:funlen,gocognit,gocyclo
 		// guard and `detail` still states the floor.
 		lakeComplete := srW.Complete && substrateOK
 		projOK := false
+		// The projection axis's own floor, published alongside the verdict
+		// (migration 0155). Until now it existed only inside `detail`'s
+		// free text, so a consumer reading the typed fields saw
+		// genesis_ledger (the LAKE floor, often ledger 2) and read the
+		// served-tier claim as reaching back to it. 0 stays "not
+		// evaluated" — the else branches below leave it alone.
+		var projVerifiedFrom uint32
 		var w completeness.Watermark
 		// Incremental: only reconcile [projFrom, srW.Ledger], trusting
 		// [genesis, projFrom] as previously verified. In -pass mode projFrom is
@@ -488,6 +495,7 @@ func computeCompleteness(args []string) error { //nolint:funlen,gocognit,gocyclo
 				if serr != nil {
 					return fmt.Errorf("%s: served floor: %w", src.name, serr)
 				}
+				projVerifiedFrom = servedFrom
 				// N-F2 residual: a bottom-edge truncation is invisible to the
 				// reconcile itself, because the reconcile's own floor moves with
 				// it. Compare against the durable floor BEFORE reconciling, and
@@ -542,6 +550,10 @@ func computeCompleteness(args []string) error { //nolint:funlen,gocognit,gocyclo
 		} else {
 			// Legacy Postgres path: strict per-ledger projection pins the watermark.
 			if srW.Ledger >= genesis {
+				// This path reconciles the FULL [genesis, watermark] range,
+				// so its published floor is genesis — not a served-tier
+				// minimum.
+				projVerifiedFrom = genesis
 				pgaps, pblind, perr := reconcileSourceProjection(ctx, store, nil, src, genesis, srW.Ledger)
 				if perr != nil {
 					return fmt.Errorf("%s: projection: %w", src.name, perr)
@@ -597,9 +609,10 @@ func computeCompleteness(args []string) error { //nolint:funlen,gocognit,gocyclo
 		if err := store.UpsertCompletenessSnapshot(ctx, timescale.CompletenessSnapshot{
 			Source: src.name, Genesis: genesis, Tip: tip,
 			Watermark: w.Ledger, CoveragePct: w.CoveragePct, Complete: w.Complete,
-			LakeComplete: lakeComplete,
-			FirstProblem: w.FirstProblem,
-			SubstrateOK:  substrateOK, RecognitionOK: recOK, ProjectionOK: projOK,
+			LakeComplete:           lakeComplete,
+			FirstProblem:           w.FirstProblem,
+			ProjectionVerifiedFrom: projVerifiedFrom,
+			SubstrateOK:            substrateOK, RecognitionOK: recOK, ProjectionOK: projOK,
 			Detail: strings.Join(detail, "; "),
 		}); err != nil {
 			return fmt.Errorf("%s: upsert snapshot: %w", src.name, err)

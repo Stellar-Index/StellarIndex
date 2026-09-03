@@ -386,6 +386,16 @@ type ProtocolCompletenessView struct {
 	Complete bool `json:"complete"`
 	// WatermarkLedger is the highest ledger the verdict covers.
 	WatermarkLedger uint32 `json:"watermark_ledger"`
+	// ProjectionVerifiedFrom is the served tier's own floor — the bottom
+	// of the range Complete is a claim about. Carried here because this
+	// summary republishes Complete, and Complete without its floor reads
+	// as a claim back to the protocol's genesis_ledger (the row directly
+	// above it on the same object), which for a source whose served tier
+	// starts mid-history is wrong by the whole span between them. Omitted
+	// when the audit recorded no floor — see
+	// [CoverageVerdictView.ProjectionVerifiedFrom], which documents the
+	// field in full.
+	ProjectionVerifiedFrom uint32 `json:"projection_verified_from,omitempty"`
 }
 
 // ProtocolView is the wire shape of one directory row on
@@ -1181,8 +1191,9 @@ func buildProtocolView(meta ProtocolMeta, contractCount int, events map[string]i
 	}
 	if sn, ok := verdicts[meta.Name]; ok {
 		v.Completeness = &ProtocolCompletenessView{
-			Complete:        sn.Complete,
-			WatermarkLedger: sn.Watermark,
+			Complete:               sn.Complete,
+			WatermarkLedger:        sn.Watermark,
+			ProjectionVerifiedFrom: sn.ProjectionVerifiedFrom,
 		}
 	}
 	return v
