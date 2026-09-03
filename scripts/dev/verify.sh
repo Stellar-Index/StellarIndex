@@ -103,8 +103,21 @@ echo "=== Jinja template parse gate ===" && ./scripts/ci/lint-jinja-templates.sh
 echo "=== Jinja template parse gate self-test ===" && ./scripts/ci/lint-jinja-templates-test.sh
 echo "=== pgBackRest backup wrapper self-test ===" && ./scripts/ci/pgbackrest-backup-test.sh
 echo "=== data-freshness watchdog self-test ===" && ./scripts/ci/data-freshness-test.sh
-# BASE_SHA-gated: self-skips locally (no comparison base); runs for real in CI
-# with the PR/push base. Invoked here to keep verify↔CI parity honest.
+# BASE_SHA-gated. Both this and lint-replay-plan.sh below take their
+# comparison base from the environment, and with none set they print a skip
+# line and exit 0 — so invoking them bare made verify↔CI parity look honest
+# while checking nothing. That gap is not theoretical: 38fb58019 shipped an
+# undeclared .gitleaksignore entry through a fully green local run and turned
+# main red, and the gate's own anti-heal walk then held it red.
+#
+# Locally the analogue of CI's push base is the merge-base with the upstream
+# tip: it covers exactly the commits about to be pushed. With nothing
+# unpushed the range is empty and both gates pass trivially, which is correct
+# — there is no growth to declare.
+if [ -z "${BASE_SHA:-}" ] && git rev-parse -q --verify origin/main >/dev/null 2>&1; then
+    BASE_SHA="$(git merge-base origin/main HEAD 2>/dev/null || true)"
+    [ -n "$BASE_SHA" ] && export BASE_SHA && echo "verify: BASE_SHA=${BASE_SHA} (merge-base with origin/main)"
+fi
 echo "=== Baseline-growth tripwire ===" && ./scripts/ci/lint-baseline-growth.sh
 echo "=== Replay-plan tripwire self-test ===" && ./scripts/ci/lint-replay-plan-test.sh
 echo "=== Restore-drill contract + abort-path tests ===" && bash scripts/ops/restore-drill-test.sh && bash scripts/ops/restore-drill-run-test.sh
