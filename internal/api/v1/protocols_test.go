@@ -258,6 +258,34 @@ func TestHandleProtocolDetail_Soroswap(t *testing.T) {
 	}
 }
 
+// The verification page reaches the wire both for a protocol whose page
+// is named after it and for one documented on another protocol's page.
+// Both shapes served verification_page: null while the path was a
+// per-row literal only six rows carried.
+func TestHandleProtocolDetail_VerificationPage(t *testing.T) {
+	ts := protocolsTestServer(t)
+
+	for _, tc := range []struct{ name, want string }{
+		{"sdex", "docs/protocols/sdex.md"},
+		{"reflector-cex", "docs/protocols/reflector.md"},
+		{"soroswap-router", "docs/protocols/soroswap.md"},
+	} {
+		resp := mustGet(t, ts.URL+"/v1/protocols/"+tc.name)
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("%s: status = %d, want 200", tc.name, resp.StatusCode)
+		}
+		var env struct {
+			Data v1.ProtocolDetailView `json:"data"`
+		}
+		if err := json.NewDecoder(resp.Body).Decode(&env); err != nil {
+			t.Fatalf("%s: decode: %v", tc.name, err)
+		}
+		if env.Data.VerificationPage != tc.want {
+			t.Errorf("%s: verification_page = %q, want %q", tc.name, env.Data.VerificationPage, tc.want)
+		}
+	}
+}
+
 // Unknown protocol name → 404 problem.
 func TestHandleProtocolDetail_Unknown404(t *testing.T) {
 	ts := protocolsTestServer(t)
