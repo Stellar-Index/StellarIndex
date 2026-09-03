@@ -147,5 +147,59 @@ else
   bad "garbage sidecar: output='$gh' log='$out'"
 fi
 
+
+echo "deploy-baseline-test: the remote snippet itself"
+
+# The fake ssh above never RUNS the remote snippet, so its own logic went
+# untested — and that is exactly where the unreadable-sidecar hole lived.
+# Extract it from the workflow with sed (awk/sed only; no nested heredocs)
+# and execute it against real fixture directories.
+sed -n "/^ *remote='/,/^ *exit 0'/p" "$WORKFLOW" \
+  | sed "s/^ *remote='//; s/exit 0'$/exit 0/" > "$TMP/remote.sh"
+if ! grep -q "deployed-versions" "$TMP/remote.sh"; then
+  echo "deploy-baseline-test: could not extract the remote snippet from $WORKFLOW" >&2
+  exit 2
+fi
+
+rout=""
+run_remote() {
+  rout="$(sed "s#d=/var/lib/stellarindex/deployed-versions#d=$1#" "$TMP/remote.sh" | bash 2>/dev/null)"
+  return $?
+}
+
+mkdir -p "$TMP/sidecars"
+printf 'v0.57.0' > "$TMP/sidecars/stellarindex-api"
+printf 'v0.57.0' > "$TMP/sidecars/stellarindex-indexer"
+printf 'v0.11.0' > "$TMP/sidecars/stellarindex-migrate"
+
+run_remote "$TMP/sidecars"
+if [ $? -eq 0 ] && [ "$(printf '%s' "$rout" | grep -c 'v0.57.0')" -eq 2 ] && ! printf '%s' "$rout" | grep -q 'v0.11.0'; then
+  ok "remote snippet reads the sidecars and excludes migrate"
+else
+  bad "remote snippet output wrong: '$rout'"
+fi
+
+run_remote "$TMP/definitely-not-here"
+if [ $? -eq 0 ] && [ -z "$rout" ]; then
+  ok "absent directory exits 0 with no output (the first-deploy case)"
+else
+  bad "absent directory did not exit 0 with empty output: '$rout'"
+fi
+
+if [ "$(id -u)" -eq 0 ]; then
+  ok "unreadable-sidecar case skipped (running as root, which can read anything)"
+else
+  chmod 000 "$TMP/sidecars/stellarindex-api" 2>/dev/null
+  run_remote "$TMP/sidecars"
+  rc=$?
+  chmod 644 "$TMP/sidecars/stellarindex-api" 2>/dev/null
+  if [ "$rc" -eq 3 ]; then
+    ok "an UNREADABLE sidecar exits 3 rather than silently raising the baseline"
+  else
+    bad "unreadable sidecar returned $rc, want 3 — it would silently raise the baseline"
+  fi
+fi
+
+
 echo "deploy-baseline-test: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]

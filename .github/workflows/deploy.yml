@@ -724,14 +724,24 @@ jobs:
           # GREEN. Both test-net deploys on 2026-09-02 hit exactly that
           # (the ProxyJump identity bug, #434) during a five-release
           # catch-up that touched 9-11 gated files, and the gate passed.
+          # Three outcomes, deliberately distinguishable:
+          #   exit 0 + output  → sidecars read, that IS the baseline
+          #   exit 0 + no output → directory absent, i.e. first deploy to
+          #                        this host; falling back is correct
+          #   exit 3           → a sidecar exists but could not be READ
+          #
+          # The third case used to be indistinguishable from the second:
+          # `awk 1` was unchecked under an unconditional `exit 0`, so an
+          # unreadable file contributed nothing and silently RAISED the
+          # baseline — the same false green this step exists to stop,
+          # arriving by a different door.
           remote='d=/var/lib/stellarindex/deployed-versions;
-                  if [ -d "$d" ]; then
-                    for f in "$d"/stellarindex-*; do
-                      [ -e "$f" ] || continue
-                      case "$f" in *stellarindex-migrate) continue ;; esac
-                      awk 1 "$f"
-                    done
-                  fi
+                  [ -d "$d" ] || exit 0;
+                  for f in "$d"/stellarindex-*; do
+                    [ -e "$f" ] || continue;
+                    case "$f" in *stellarindex-migrate) continue ;; esac;
+                    awk 1 "$f" || exit 3;
+                  done;
                   exit 0'
           set +e
           raw=$(ssh -i ~/.ssh/id_deploy -o BatchMode=yes -o ConnectTimeout=15 \
@@ -739,6 +749,10 @@ jobs:
           rc=$?
           set -e
           if [ "$rc" -ne 0 ]; then
+            if [ "$rc" -eq 3 ]; then
+              echo "::error::config-apply gate: a deployed-versions sidecar exists on ${DEPLOY_HOST} but could not be READ (permissions?). Refusing to continue: an unreadable sidecar silently RAISES the baseline, which is the false green this gate exists to prevent."
+              exit 1
+            fi
             echo "::error::config-apply gate: could not reach ${DEPLOY_USER}@${DEPLOY_HOST} to read the deployed-versions sidecar (ssh exit ${rc}). Refusing to fall back to the previous release tag — that fallback silently reports 'no config changes' on a multi-release catch-up. Fix the connection (or pass the host's live version explicitly) and re-run."
             exit 1
           fi
