@@ -240,9 +240,15 @@ func ExactTierDelta(g TradeValuationGroup, tier USDVolumeTier, decimals int) (de
 // This feeds verify-usd-volume's XLM-BASE BOUND: tier-4 rows anchor
 // usd_volume to base_amount/1e7 × XLM/USD at trade time, so a
 // day-group's Σusd_volume must land within an intraday-range tolerance
-// of Σbase/1e7 × day-VWAP. The 2026-08-04 poisoning class was 10×–10⁶×
-// off; a coarse bound catches it while a day-granular rate cannot
-// false-alarm on normal intraday movement.
+// of Σbase/1e7 × day-VWAP.
+//
+// #372 F1 — this comment used to end "a day-granular rate cannot
+// false-alarm on normal intraday movement". It can. The anchor reads a
+// per-MINUTE prices_1m XLM/<peg> bucket and this reads a DAY bucket off
+// a different (CEX) series, so an honest day scores up to
+// max(intraday_hi/day_vwap, day_vwap/intraday_lo) — measured worst 1.2206
+// over 120 days of r1 data, against a 1.30 edge. The margin is measured,
+// not structural; see [chops.xlmBaseBoundTolerance] for the full numbers.
 func (s *Store) DayCloseVWAPXLMUSD(ctx context.Context, day time.Time) (string, bool, error) {
 	start := day.UTC().Truncate(24 * time.Hour)
 	const q = `

@@ -131,9 +131,104 @@ func runXLMBaseRestamp(ctx context.Context, store *timescale.Store, cfgPath stri
 		fmt.Printf("WARNING: %d row(s) planned but %d row(s) changed — a concurrent writer moved rows past the derive_generation guard\n",
 			run.totals.Changed, run.written)
 	}
+	fmt.Print(xlmBaseRestampFollowUp(from, to))
 	fmt.Printf("acceptance: stellarindex-ops verify-usd-volume -config %s -day %s -days %d\n",
 		cfgPath, to.Format(time.DateOnly), int(to.Sub(from).Hours()/24)+1)
 	return nil
+}
+
+// xlmBaseRestampCAGGs is the ORDERED list of continuous aggregates a
+// finished restamp must be followed by, with each one's minimum refresh
+// window (Timescale rejects `SQLSTATE 22023: refresh window too small`
+// for anything narrower than 2× the bucket).
+//
+// # Why this is printed at all (#372 F3)
+//
+// The `acceptance:` line below runs `verify-usd-volume`, which reads
+// `trades` DIRECTLY (TradeValuationByDay). Every SERVED volume surface —
+// /v1/markets volume, asset volume, venue rankings, market share, every
+// chart — reads a continuous aggregate instead, and none of them
+// auto-refresh anywhere near this far back. Measured `start_offset` on r1
+// 2026-09-03: prices_1m 5 min, prices_15m 1 h, prices_1h 4 h,
+// prices_4h 1 day, prices_1d / prices_1w / dex_volume_by_pair_1d /
+// source_volume_1h / pools_per_source_1h 7 days (prices_1w 28 days,
+// prices_1mo 3 months). So without this step the acceptance check goes
+// GREEN while every served surface keeps serving pre-restamp numbers
+// indefinitely.
+//
+// # The membership + order are DERIVED, not copied
+//
+// From `_timescaledb_catalog.continuous_agg` on r1 2026-09-03: exactly
+// these twelve aggregates have `trades` as their root hypertable
+// (oracle_prices_* hang off `oracle_updates`, supply_1d off
+// `asset_supply_history` — a usd_volume restamp cannot move them).
+//
+// Ten of the twelve read `trades` directly and are mutually independent,
+// so their relative order is free. `twap_1h` and `twap_1d` are the only
+// HIERARCHICAL ones — `parent_mat_hypertable_id` points at prices_1m's
+// materialisation — so prices_1m MUST be refreshed before them or they
+// re-materialise from stale input. That is the one load-bearing edge,
+// and it is why prices_1m leads and the twaps trail.
+//
+// Note the trap: prices_15m/1h/4h/1d/1w/1mo are NOT built on prices_1m
+// (each reads `trades` itself), so the coarse ones do not inherit a
+// prices_1m refresh — each needs its own call.
+var xlmBaseRestampCAGGs = []timescale.CAGGSpec{
+	// Must lead: twap_1h/twap_1d are materialised FROM this one.
+	{Name: "prices_1m", MinWindow: 2 * time.Minute},
+	{Name: "prices_15m", MinWindow: 30 * time.Minute},
+	{Name: "prices_1h", MinWindow: 3 * time.Hour},
+	{Name: "prices_4h", MinWindow: 12 * time.Hour},
+	{Name: "prices_1d", MinWindow: 3 * 24 * time.Hour},
+	{Name: "prices_1w", MinWindow: 3 * 7 * 24 * time.Hour},
+	{Name: "prices_1mo", MinWindow: 93 * 24 * time.Hour},
+	{Name: "dex_volume_by_pair_1d", MinWindow: 3 * 24 * time.Hour},
+	{Name: "source_volume_1h", MinWindow: 3 * time.Hour},
+	{Name: "pools_per_source_1h", MinWindow: 3 * time.Hour},
+	// Must trail prices_1m.
+	{Name: "twap_1h", MinWindow: 3 * time.Hour},
+	{Name: "twap_1d", MinWindow: 3 * 24 * time.Hour},
+}
+
+// xlmBaseRestampFollowUp renders the operator's post-write follow-up: the
+// ordered CAGG refresh block, and the `-min-rel-delta` guidance. Returned
+// as a string rather than printed so the ordering contract is testable
+// without capturing stdout.
+//
+// The window is [from 00:00Z, to+1d 00:00Z), padded per aggregate by
+// [timescale.PadRefreshWindow] so each call clears Timescale's
+// 2-bucket minimum. Padded buckets outside the restamp window
+// re-materialise unchanged, which is cheap; a call that is REJECTED for a
+// too-small window is the expensive outcome, because the operator reads
+// the error, skips that aggregate, and ships a partially-stale surface.
+func xlmBaseRestampFollowUp(from, to time.Time) string {
+	lo := from.UTC().Truncate(24 * time.Hour)
+	hi := to.UTC().Truncate(24*time.Hour).AddDate(0, 0, 1)
+
+	var b strings.Builder
+	b.WriteString("\nSTILL STALE AFTER A -write RUN — the acceptance check below CANNOT see this.\n")
+	b.WriteString("verify-usd-volume reads `trades` directly; every served volume surface reads a\n")
+	b.WriteString("continuous aggregate, and none auto-refresh further back than 7 days (prices_1m:\n")
+	b.WriteString("5 minutes). Until these run, /v1/markets volume, asset volume, venue rankings and\n")
+	b.WriteString("every chart keep serving the PRE-restamp numbers. Order is load-bearing:\n")
+	b.WriteString("twap_1h/twap_1d are built ON prices_1m, so prices_1m goes first.\n\n")
+	for _, c := range xlmBaseRestampCAGGs {
+		pf, pt := timescale.PadRefreshWindow(lo, hi, c.MinWindow)
+		b.WriteString(fmt.Sprintf("  CALL refresh_continuous_aggregate('%s', '%s', '%s');\n",
+			c.Name, pf.Format(time.RFC3339), pt.Format(time.RFC3339)))
+	}
+	b.WriteString("\nThen force the asset_volume_24h rollup (it re-sums prices_1m.volume_usd; it also\n")
+	b.WriteString("self-heals on its own cadence, so verify rather than assume).\n")
+	b.WriteString("\nFLAG GUIDANCE — `-min-rel-delta 0.001` is the recommended setting for a full-window\n")
+	b.WriteString("run. The re-derive reads the FINALISED prices_1m bucket while the original insert\n")
+	b.WriteString("read the partially-materialised real-time bucket for the same minute, so a large\n")
+	b.WriteString("share of the write set moves by less than 0.1% — repairing nothing, on a\n")
+	b.WriteString("COMPRESSED hypertable where the write is the expensive part. Measured over\n")
+	b.WriteString("2026-01-01..2026-07-21: of 10,734,569 non-null-fill changes, 8,423,350 move >=0.1%,\n")
+	b.WriteString("so the flag drops 2,311,219 rows (8.1% of the 28,583,186-row write set) at a cost\n")
+	b.WriteString("of <0.1% each. It never suppresses a NULL fill, which is where the coverage\n")
+	b.WriteString("recovery lives, so the tool's whole point survives the flag.\n\n")
+	return b.String()
 }
 
 // xlmBaseRestampOptions is the already-resolved flag set the run needs.

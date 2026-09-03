@@ -24,17 +24,71 @@ import (
 // [tradeUSDVolumeViaXLMBaseAnchor]).
 //
 // The population it exists for (issue #372, triage G9 2026-09-02): every
-// on-chain DEX trade with an XLM BASE leg written before `fd1860bd`
-// (2026-08-04, v0.25.0). Until that commit the waterfall reached the
-// QUOTE side first, so an `XLM/<token>` trade was valued through the
-// token's own thin `<token>/USDC` prices_1m bucket — a rate the token's
-// own counterparties author — instead of off the XLM leg, which is the
-// measured side of the trade and whose rate is a direct market. Measured
-// on r1: a 5-XLM sdex trade worth $0.72 stored as $0.0037 (43x under),
-// and ~31% of pre-2026-07-09 XLM-base rows stored NULL because the quote
-// leg resolved to nothing at all ($32k of $134k unpriced on 2026-05-19).
-// The insert path is correct at HEAD; nothing has ever re-derived the
-// rows behind it (they all sit at `derive_generation = 0`).
+// on-chain DEX trade with an XLM BASE leg, with a non-USD-pegged quote,
+// whose `usd_volume` the anchor tier would have written differently.
+//
+// # The right edge is 2026-07-19, not 2026-08-04 (#372 F2)
+//
+// This header used to scope the population as "written before `fd1860bd`
+// (2026-08-04, v0.25.0)". That is 15 days late, and it names a commit
+// date rather than a measured behaviour change. Measured on r1
+// 2026-09-03 over this tool's own population (DEX sources, base an XLM
+// form, quote not a declared peg), per UTC day:
+//
+//	day          rows       %rows NULL   Σstored / Σ(base/1e7 × dayVWAP)
+//	                                     priced rows only    all rows
+//	2026-07-18   262,541       0.2%        1.0147             0.7766
+//	2026-07-19   244,199       0.1%        1.0032             0.8569
+//	2026-07-20   200,304       0.0%        1.0016             1.0016
+//	2026-07-21   236,558       0.0%        1.0051             1.0051
+//
+// From 2026-07-20 the NULL fraction is 0 and both ratios agree, so there
+// is nothing left for this tool to do; **2026-07-19 is the last day with
+// a candidate**. Rows at ts ≥ 2026-07-22 additionally already carry
+// `derive_generation` 1785871528 from the 2026-08 re-derive, so the
+// tool's own `-max-generation` default would still admit them and rewrite
+// them for nothing. The shipped usage example's `-to 2026-07-21` is close
+// (2 days of churn, ~437k rows); `-to 2026-07-19` is exact.
+//
+// # What the population actually IS — coverage first, valuation second
+//
+// The other half of the old text implied wholesale MIS-VALUATION: the
+// waterfall reached the QUOTE side first, so an `XLM/<token>` trade was
+// valued through the token's own thin `<token>/USDC` bucket — a rate the
+// token's own counterparties author — instead of off the XLM leg. That
+// class is real and byte-proven (2026-05-19 sdex `native/BUCK`: 44.69 XLM
+// worth $6.47 stored as $0.15, reproducing the BUCK/USDC prices_1m VWAP
+// to 9 decimal places after that book fell 322× mid-day).
+//
+// But it is not the mass. Measured monthly on r1 over the same
+// population, valuing each day's XLM at that day's on-chain XLM/USD-peg
+// VWAP:
+//
+//	month     rows        %rows NULL   ratio (priced rows)   ratio (all rows)
+//	2026-03   2,052,367     99.0%        0.9993               0.2631
+//	2026-04   5,549,124     99.5%        0.9982               0.2890
+//	2026-05   7,743,745     76.0%        0.9973               0.3399
+//	2026-06   8,131,219     40.4%        1.0031               0.6452
+//	2026-07   7,115,201     16.0%        1.0035               0.6880
+//	2026-08   1,310,477      0.0%        0.9999               0.9999
+//
+// The PRICED rows aggregate to within 0.3% of the anchor in every month
+// a day rate exists for. The gap between the two ratio columns is
+// entirely rows stored NULL. So the bulk of this run is coverage
+// recovery (`-fill-null`), and the wrong-leg corrections are a long tail
+// of small dead-asset groups — consistent with the tool's own full-window
+// dry run, where 17,848,617 of 28,583,186 changed rows are NULL→value and
+// only 139,046 of the remainder move ≥10%.
+//
+// Beware the ratio that conflates the two: `prices_1m`/`prices_1d`
+// coalesce a NULL `usd_volume` to 0, so a CAGG-derived
+// `Σvolume_usd / Σ(volume/1e7 × dayVWAP)` reads a coverage hole as a
+// valuation error. That is what produced the "behaviour changed on
+// 2026-07-20" reading; the change on that date is the last NULLs
+// disappearing, not a valuation flip.
+//
+// The insert path is correct at HEAD; nothing has re-derived the rows
+// before 2026-07-22 (they sit at `derive_generation = 0`).
 //
 // Three rules make this a re-derive rather than a guess, and they are the
 // reason the arithmetic is NOT done in SQL:

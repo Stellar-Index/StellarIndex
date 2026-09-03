@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -42,7 +43,8 @@ import (
 //     crypto markets only, so a fiat:EUR quote could never resolve
 //     here at all. [VWAPUSDFXResolver.usdPriceForFiat].
 //  2. Direct `<asset>/<peg>` VWAP in prices_1m — the original path.
-//     [VWAPUSDFXResolver.queryDB].
+//     [VWAPUSDFXResolver.queryDB], which loops the asset's canonical
+//     alias forms against the alias-complete peg set.
 //  3. The XLM bridge — `<asset>/XLM x XLM/USD`. Most Stellar tokens
 //     have no stablecoin market but do have an XLM one, so this is
 //     what carries on-chain coverage past the USD-pegged pairs.
@@ -54,6 +56,28 @@ type VWAPUSDFXResolver struct {
 	// USDC-GA5Z…, USDT-GCQT…). The resolver queries prices_1m for
 	// `<asset>/<peg>` for each peg until one returns a row.
 	usdPegs []string
+
+	// pegForms is [usdPegs] made ALIAS-COMPLETE — every declared classic
+	// peg PLUS the SAC contract that wraps it, which is what
+	// [VWAPUSDFXResolver.queryDirectLeg] actually binds to
+	// `quote_asset = ANY(…)`.
+	//
+	// It exists because the peg set had two spellings in this package and
+	// only one of them was alias-complete: [USDVolumeQuoteSpec.QuoteUSDPegInfo]
+	// resolves a SAC contract id back to its classic and lets the SAC
+	// INHERIT the peg (tier 1/2), while this resolver bound the classic
+	// strings alone (tiers 3/4). A Soroban pool quoting in the USDC SAC is
+	// the same declared dollar as the SDEX book quoting in classic USDC —
+	// the peg assumption is identical, so the two tiers must agree on the
+	// set, and it is the SAC form that carries XLM's Soroban markets.
+	//
+	// Built by [usdPegForms] from the operator's own `[supply].sac_wrappers`
+	// rather than from [canonical.AssetAliases], deliberately: the
+	// process-wide alias registry is installed only by the api + aggregator
+	// binaries, so a registry-derived peg set would silently collapse back
+	// to the classic form in the indexer and in `stellarindex-ops` — the two
+	// processes that write `usd_volume`.
+	pegForms []string
 
 	// freshness is the maximum allowable (now - VWAP timestamp).
 	// Entries older than this return ok=false rather than letting
@@ -126,6 +150,15 @@ type VWAPUSDFXResolverOptions struct {
 	// a no-op (every USDPriceAt returns ok=false).
 	USDPegs []string
 
+	// PegSACWrappers is the operator's `[supply].sac_wrappers` map (SAC
+	// contract C-strkey → classic "CODE:ISSUER"), the same value
+	// [NewUSDVolumeQuoteSpec] consumes. Any wrapper pointing at a
+	// declared [USDPegs] member makes that SAC contract a peg form too —
+	// see [VWAPUSDFXResolver.pegForms]. Optional: omitting it leaves the
+	// peg set classic-only, which is what every caller did before the
+	// field existed.
+	PegSACWrappers map[string]string
+
 	// Freshness — max staleness for a returned rate. Set to a
 	// negative value (e.g. -1) to DISABLE the freshness check
 	// entirely (used by tests + by deployments where the
@@ -185,15 +218,80 @@ func NewVWAPUSDFXResolver(store *Store, opts VWAPUSDFXResolverOptions) (*VWAPUSD
 	// Defensive copy — caller may mutate their slice after.
 	pegs := make([]string, len(opts.USDPegs))
 	copy(pegs, opts.USDPegs)
+	pegForms, err := usdPegForms(pegs, opts.PegSACWrappers)
+	if err != nil {
+		return nil, err
+	}
 	return &VWAPUSDFXResolver{
 		store:           store,
 		usdPegs:         pegs,
+		pegForms:        pegForms,
 		freshness:       opts.Freshness,
 		bridgeFreshness: opts.BridgeFreshness,
 		cacheTTL:        opts.CacheTTL,
 		clock:           opts.Clock,
 		cache:           make(map[fxCacheKey]fxCacheEntry),
 	}, nil
+}
+
+// usdPegForms expands the operator's classic USD-peg list into the set of
+// asset FORMS a prices_1m `quote_asset` may legitimately carry for that
+// peg: each declared classic peg, plus the SAC contract that wraps it
+// where the operator declared one.
+//
+// The two inputs are exactly [NewUSDVolumeQuoteSpec]'s, and the membership
+// rule is exactly [USDVolumeQuoteSpec.QuoteUSDPegInfo]'s Soroban arm — a
+// SAC is a peg iff it resolves to a classic that is on the declared list.
+// Keeping the rule in one shape across both tiers is the point: a peg the
+// exact tier honours but the FX tier cannot see is a silent coverage hole,
+// not a conservative default.
+//
+// Strict on a malformed WRAPPER, like [NewUSDVolumeQuoteSpec]: a dropped
+// wrapper is invisible under-counted volume, which is the defect class
+// this expansion exists to remove. The declared pegs themselves are NOT
+// re-validated here — they are bound verbatim, exactly as before this
+// expansion existed, and [NewUSDVolumeQuoteSpec] is where an operator's
+// unparseable peg is rejected on the production wiring path.
+//
+// Matching is therefore string-shaped: [classicKey] renders a wrapper's
+// target in the same "CODE-ISSUER" wire form the peg list is written in,
+// so a peg spelled any other way expands to nothing — which is already
+// what it does in the SQL, where it is bound literally.
+//
+// Order is deterministic (declared pegs first, then wrappers by contract
+// id) so the bound array — and therefore the query plan — is stable across
+// runs; within the array order carries no meaning, since every member is
+// the same declared dollar.
+func usdPegForms(classicPegs []string, sacWrappers map[string]string) ([]string, error) {
+	forms := make([]string, 0, len(classicPegs))
+	seen := make(map[string]struct{}, len(classicPegs))
+	add := func(form string) {
+		if _, dup := seen[form]; dup {
+			return
+		}
+		seen[form] = struct{}{}
+		forms = append(forms, form)
+	}
+	pegged := make(map[string]struct{}, len(classicPegs))
+	for _, raw := range classicPegs {
+		pegged[raw] = struct{}{}
+		add(raw)
+	}
+	sacIDs := make([]string, 0, len(sacWrappers))
+	for sacID := range sacWrappers {
+		sacIDs = append(sacIDs, sacID)
+	}
+	sort.Strings(sacIDs)
+	for _, sacID := range sacIDs {
+		asset, err := canonical.ParseAsset(sacWrappers[sacID])
+		if err != nil {
+			return nil, fmt.Errorf("usd-volume fx resolver: sac_wrapper for %s (%q): %w", sacID, sacWrappers[sacID], err)
+		}
+		if _, ok := pegged[classicKey(asset)]; ok {
+			add(sacID)
+		}
+	}
+	return forms, nil
 }
 
 // USDPriceAt implements [USDVolumeFXResolver]. Returns the
@@ -705,14 +803,80 @@ const directLegMinQuoteVolume = "0.01"
 // scaleDenominator(stellarClassicDecimals) by a unit test.
 const pegQuoteScaleDenominator = 10_000_000
 
-// queryDB does one prices_1m read for `<asset>/<peg>` for any peg
-// in the configured list, at-or-before `at`. Returns the VWAP
-// string + the row's bucket timestamp on hit, or ("", zero, nil)
-// on miss.
+// queryDB resolves `<asset>/<peg>` out of prices_1m at-or-before `at`,
+// trying each of the asset's canonical FORMS in turn. Returns the VWAP
+// string + the row's bucket timestamp on the first form that hits, or
+// ("", zero, nil) when no form does.
+//
+// # Why this is a loop and not one query
+//
+// It binds one asset id, so before the loop it could only ever see the
+// ONE spelling the caller happened to hold — CLAUDE.md's dual-form rule
+// ("every asset-id read path MUST loop assetAliases()") applied to the
+// tier-3/4 USD anchor. XLM is where that bites: it has three canonical
+// identities (`native`, `crypto:XLM`, its SAC) and its USD markets are
+// split across them by VENUE, so binding `native` alone made the anchor
+// structurally blind to every Soroban XLM book.
+//
+// Measured on r1 2026-09-03, prices_1m buckets clearing this query's own
+// dust floor, XLM base x the operator's single declared peg:
+//
+//	base=native      x quote=USDC-GA5Z… (classic)  215,790  from 2026-03-12
+//	base=CAS3J7…SAC  x quote=CCW67T…SAC (the SAC)  291,883  from 2024-03-12
+//	every other base/quote combination of those forms       0
+//
+// So the two axes are not independent — only the both-alias-complete
+// predicate matches anything new, which is why the peg side widened to
+// [VWAPUSDFXResolver.pegForms] in the same change. With both, the XLM/USD
+// anchor gains ~2 years of reach: measured minutes NOT covered within the
+// 1h freshness window fall to 0.00-0.50% for every month from 2025-01
+// through 2026-02 (the window that reads $0.00 today), 2.6-8.2% for
+// 2024-11/12, and 23-95% across 2024-03..2024-10, where the Soroban book
+// is genuinely sparse. Before 2024-03-12 nothing is recoverable from a
+// peg-quoted market at all — the only XLM/USD series that reaches back
+// further is the CEX `crypto:XLM/fiat:USD` one, and `fiat:USD` is not a
+// declared peg, so it stays out of scope here.
+//
+// # Order is load-bearing
+//
+// [canonical.AssetAliases] returns the equivalence class in canonical
+// PRIORITY order with the SAC form LAST, precisely so a thin Soroban pool
+// cannot outrank a deep SDEX/CEX book. This loop takes the FIRST form
+// that yields a usable row, which is that contract — a set-shaped
+// `base_asset = ANY(forms)` would instead take the freshest bucket
+// regardless of form and hand the SAC pool the rate whenever it printed
+// last. It also makes the change purely ADDITIVE: for a window where the
+// pre-existing form hits, it hits first and the result is byte-identical
+// to before; the later forms are reached only where the answer would
+// otherwise have been "no price at all".
+//
+// Freshness needs no special handling in the loop: when it is enforced it
+// is a lower bucket bound INSIDE the SQL (see [VWAPUSDFXResolver.queryDirectLeg]),
+// so any row a form returns is already fresh, and "first form that returns
+// a row" is exactly "first form that produces a usable answer".
+func (r *VWAPUSDFXResolver) queryDB(ctx context.Context, asset canonical.Asset, at time.Time) (string, time.Time, error) {
+	for _, form := range canonical.AssetAliases(asset) {
+		vwap, bucket, err := r.queryDirectLeg(ctx, form, at)
+		if err != nil {
+			return "", time.Time{}, err
+		}
+		if vwap != "" {
+			return vwap, bucket, nil
+		}
+	}
+	return "", time.Time{}, nil
+}
+
+// queryDirectLeg does one prices_1m read for `<form>/<peg>` for any peg
+// form in [VWAPUSDFXResolver.pegForms], at-or-before `at`. Returns the
+// VWAP string + the row's bucket timestamp on hit, or ("", zero, nil)
+// on miss. [VWAPUSDFXResolver.queryDB] is the alias-looping caller.
 //
 // Implementation: single round-trip with `quote_asset = ANY(...)`
-// so the DB picks the highest-bucket row across all pegs in one
-// pass.
+// so the DB picks the highest-bucket row across all peg forms in one
+// pass. Set semantics are right on THIS side (unlike the base side's
+// ordered loop): every member is the same operator-declared dollar, so
+// there is no priority between them to preserve.
 //
 // Dust floor: buckets whose whole minute moved less than
 // [directLegMinQuoteVolume] of the peg are excluded, so a single
@@ -735,7 +899,7 @@ const pegQuoteScaleDenominator = 10_000_000
 // behaviour-preserving — anything below it is rejected anyway — and
 // lets TimescaleDB prune to the freshness window's chunks. When
 // freshness is disabled (0) we keep the unbounded scan.
-func (r *VWAPUSDFXResolver) queryDB(ctx context.Context, asset canonical.Asset, at time.Time) (string, time.Time, error) {
+func (r *VWAPUSDFXResolver) queryDirectLeg(ctx context.Context, asset canonical.Asset, at time.Time) (string, time.Time, error) {
 	q := fmt.Sprintf(`
 		SELECT bucket, vwap::text
 		  FROM prices_1m
@@ -746,7 +910,7 @@ func (r *VWAPUSDFXResolver) queryDB(ctx context.Context, asset canonical.Asset, 
 		   AND vwap * volume / %d::numeric >= $4::numeric`, pegQuoteScaleDenominator)
 	args := []any{
 		asset.String(),
-		r.usdPegs,
+		r.pegForms,
 		at.UTC(),
 		directLegMinQuoteVolume,
 	}
@@ -821,6 +985,9 @@ func InstallUSDVolumeResolution(store *Store, classicUSDPegs []string, sacWrappe
 
 	fxResolver, err := NewVWAPUSDFXResolver(store, VWAPUSDFXResolverOptions{
 		USDPegs: classicUSDPegs,
+		// Same map the quote spec above consumed, so tiers 1/2 and tiers
+		// 3/4 recognise the same peg forms. See [usdPegForms].
+		PegSACWrappers: sacWrappers,
 	})
 	if err != nil {
 		return fmt.Errorf("usd-volume fx resolver: %w", err)

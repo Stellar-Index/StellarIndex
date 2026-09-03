@@ -83,7 +83,7 @@ func usdVolumeRestamp(args []string) error { //nolint:gocognit,gocyclo,funlen //
 	report := fs.Bool("report", false, "-tier "+restampTierXLMBase+" only: print the full decision block (candidates, NULL->value population, relative-move distribution, USD sums, extremes, sample) and write nothing. Refuses -write.")
 	sample := fs.Int("sample", 10, "-tier "+restampTierXLMBase+" only: how many changed rows to print in the report's sample (deterministic reservoir)")
 	batch := fs.Int("batch", 2000, "-tier "+restampTierXLMBase+" only: rows per UPDATE transaction")
-	minRelDelta := fs.String("min-rel-delta", "", "-tier "+restampTierXLMBase+" only: skip writing rows whose relative move |new-old|/|old| is below this fraction (0.01 = 1%). Empty/0 = write every row that differs. Never skips a NULL fill.")
+	minRelDelta := fs.String("min-rel-delta", "", "-tier "+restampTierXLMBase+" only: skip writing rows whose relative move |new-old|/|old| is below this fraction (0.01 = 1%). Empty/0 = write every row that differs. Never skips a NULL fill. RECOMMENDED 0.001 for a full-window run: it drops ~8% of the write set that moves <0.1% purely from prices_1m finalisation — see the report footer.")
 	maxGeneration := fs.Int64("max-generation", -1, "-tier "+restampTierXLMBase+" only: only consider rows at derive_generation <= this. -1 = the run's own generation (everything). 0 targets exactly the never-re-derived population.")
 	gate := opsutil.RegisterWriteGate(fs)
 	if err := fs.Parse(args); err != nil {

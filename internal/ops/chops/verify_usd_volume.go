@@ -116,15 +116,38 @@ func verifyUSDVolume(args []string) error {
 }
 
 // xlmBaseBoundTolerance is the relative tolerance for the XLM-BASE
-// BOUND. Deliberately coarse: the check compares a day-group's stored
-// Σusd_volume against Σbase_amount/1e7 × the day's XLM/USD VWAP, and
-// individual trades were anchored at their own minute's rate, so
-// normal intraday XLM movement produces a few percent of legitimate
-// spread. The failure class this bound exists to catch (2026-08-04
-// tier-3b poisoning) was 10×–1,000,000× off; ±30% catches all of it
-// with zero false alarms on ordinary volatility. This is a SANITY
-// BOUND, not an exact identity — which is why it lives beside, not
-// inside, the exact-tier check.
+// BOUND: stored Σusd_volume must land within [1−tol, 1+tol] of
+// Σbase_amount/1e7 × the day's XLM/USD VWAP. This is a SANITY BOUND,
+// not an exact identity — which is why it lives beside, not inside,
+// the exact-tier check.
+//
+// # What ±30% actually catches (#372 F1 — the previous text here was wrong)
+//
+// It fires at **1.30× overstatement or 1.43× understatement** (a stored
+// value below 0.70 × expected). The old comment said "catches 10×+
+// errors", which reads as the bound's SENSITIVITY and is not: 10×–10⁶×
+// was the size of the 2026-08-04 tier-3b poisoning that motivated it,
+// not the threshold. Anyone reading it as a sensitivity figure concludes
+// a 1.3–1.7 ratio must be something other than an error — which is
+// exactly the wrong hypothesis issue #372 was opened on.
+//
+// # It is NOT structurally immune to intraday movement
+//
+// The old comment claimed "zero false alarms on ordinary volatility".
+// The two sides read DIFFERENT series: each trade was anchored at its
+// own minute's prices_1m XLM/<peg> bucket, while the bound divides by
+// the day's prices_1d crypto:XLM/fiat:USD VWAP. So the largest ratio an
+// entirely honest day can produce is
+//
+//	max(intraday_hi / day_vwap, day_vwap / intraday_lo)
+//
+// Measured on r1 over 120 days with both series present
+// (2026-01-01…2026-09-02): worst 1.2206 (2026-05-29, day VWAP
+// 0.21619906 against an intraday 0.19606124…0.26389110), mean 1.0370,
+// two days at or above 1.15, none at 1.30. So the bound holds today —
+// by 0.08, on measurement, NOT by construction. A day whose XLM range
+// is ~7% wider than 2026-05-29's can false-fire it, and tightening the
+// tolerance below ~1.25 without a notional floor makes that routine.
 const xlmBaseBoundTolerance = 0.30
 
 // xlmBaseLegScale returns the denominator that lifts a group's raw XLM
@@ -396,14 +419,45 @@ func printUSDVolumeTierTable(rollups map[timescale.USDVolumeTier]*usdVolumeTierR
 // that call, and a clean exit code on a money surface must never be mistaken
 // for "usd_volume is verified correct".
 func printUSDVolumeFooter(violations int) {
-	fmt.Printf(`
+	fmt.Print(usdVolumeFooterText(violations))
+}
+
+// xlmBaseBoundFiresOver / xlmBaseBoundFiresUnder are the bound's ACTUAL
+// firing thresholds, derived from [xlmBaseBoundTolerance] rather than
+// restated: a stored sum above (1+tol)× expected, or below (1−tol)×
+// expected — the latter meaning the stored value is 1/(1−tol) times too
+// LOW. They exist so [usdVolumeFooterText] cannot drift from the
+// constant the check actually uses, which is exactly how the footer came
+// to advertise "catches 10x+ errors" for a bound that fires at 1.30×.
+func xlmBaseBoundFiresOver() *big.Rat {
+	return new(big.Rat).Add(big.NewRat(1, 1), new(big.Rat).SetFloat64(xlmBaseBoundTolerance))
+}
+
+func xlmBaseBoundFiresUnder() *big.Rat {
+	return new(big.Rat).Inv(new(big.Rat).Sub(big.NewRat(1, 1), new(big.Rat).SetFloat64(xlmBaseBoundTolerance)))
+}
+
+// usdVolumeFooterText is [printUSDVolumeFooter]'s body, returned rather
+// than printed so the claims it makes are assertable in a test.
+func usdVolumeFooterText(violations int) string {
+	return fmt.Sprintf(`
 --- what this run proved ---
 CHECKED  quote_pegged + base_pegged: usd_volume == pegged_leg / 10^decimals,
          an exact identity with no tolerance.
-CHECKED  XLM-base estimated groups: Σusd_volume within ±30%% of
-         Σbase/1e7 × the day's CEX XLM/USD VWAP (the 2026-08-04
-         tier-3b poisoning class — coarse bound, catches 10x+ errors,
-         cannot false-alarm on intraday movement).
+CHECKED  XLM-base estimated groups: Σusd_volume within ±%s%% of
+         Σbase/1e7 × the day's CEX XLM/USD VWAP.
+         Read the bound honestly (#372 F1):
+           - it FIRES at %sx overstatement / %sx understatement.
+             10x-1,000,000x was the SIZE of the 2026-08-04 tier-3b
+             poisoning, not this bound's threshold. A ratio just past the
+             edge is a violation, not "within tolerance but interesting".
+           - it is NOT structurally immune to intraday movement. Trades
+             were anchored per-minute; this divides by a DAY VWAP off a
+             different series, so an honest day can score up to
+             max(intraday_hi/day_vwap, day_vwap/intraday_lo). Measured
+             on r1 over 120 days (2026-01-01..2026-09-02): worst 1.2206,
+             mean 1.0370, none reaching 1.30. It holds by 0.08 of
+             measured headroom, not by construction.
          Total: %d violation(s) across both checked classes.
 MEASURED remaining estimated tiers (non-XLM-base FX/bridge rows): sums and
          row counts printed only — genuinely inexact, no calibrated
@@ -418,5 +472,10 @@ OPERATOR FOLLOW-UP: run this on r1 across a representative span
 only then calibrate an alert threshold for the estimated tiers. Landing a
 guessed threshold on a money surface is the C6-118 mistake — an
 uncalibrated bound either false-fires forever or never fires at all.
-`, violations)
+`,
+		new(big.Rat).Mul(new(big.Rat).SetFloat64(xlmBaseBoundTolerance), big.NewRat(100, 1)).FloatString(0),
+		xlmBaseBoundFiresOver().FloatString(2),
+		xlmBaseBoundFiresUnder().FloatString(2),
+		violations,
+	)
 }
