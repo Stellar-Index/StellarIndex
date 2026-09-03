@@ -1663,7 +1663,7 @@ export interface paths {
         };
         /**
          * Per-source ingest cursor positions.
-         * @description Returns every row of the `ingestion_cursors` table — the
+         * @description Returns rows of the `ingestion_cursors` table — the
          *     per-source markers the dispatcher persists after each ledger
          *     is processed. Used for operator-facing diagnostics and the
          *     showcase /diagnostics page (so you can see at a glance which
@@ -1674,16 +1674,42 @@ export interface paths {
          *     Soroswap tracks the factory cursor + one cursor per pair)
          *     return one row per (source, sub_source) tuple.
          *
-         *     Pass `?max_age=<duration>` to omit completed-backfill
-         *     cursors that drown out the live ledgerstream marker —
-         *     useful when polling from monitoring tools that can't
-         *     post-filter. The explorer's `/diagnostics` page applies
+         *     Every row carries a derived `state`:
+         *
+         *       - `live` — written within the last 10 minutes.
+         *       - `stale` — behind, but inside the 7-day abandoned
+         *         boundary, so plausibly still running.
+         *       - `abandoned` — untouched for over 7 days. `ingestion_cursors`
+         *         has no retention and every sharded one-shot job leaves a
+         *         permanent row per shard behind, so these are records of
+         *         finished or abandoned work, not positions anything is
+         *         writing to.
+         *
+         *     The live cursor namespaces — `ledgerstream` (the live indexer's
+         *     position) and `projector` — are never `abandoned` at any age.
+         *     Nothing abandons a resume point something still reads, so an old
+         *     row there means ingest is **stuck**: it stays `stale`, and stays
+         *     in the default response, carrying its full `lag_seconds`.
+         *
+         *     **The default response is the `live` + `stale` set.** Pass
+         *     `?include_abandoned=true` (or `?status=abandoned`) for the dead
+         *     set — it is opt-in because it is the overwhelming majority of
+         *     the table and describes work that ended months ago.
+         *
+         *     Pass `?max_age=<duration>` for an arbitrary freshness
+         *     threshold — useful when polling from monitoring tools that
+         *     can't post-filter. The explorer's `/diagnostics` page applies
          *     the same filter client-side, defaulting to 1h.
          *
          *     Pass `?source=<name>` for an exact-match filter on the
          *     `source` column — typical values are `ledgerstream` (the
-         *     live indexer) and `backfill` (one row per backfill
-         *     range). Composes with `?max_age=` (both filters apply).
+         *     live indexer), `projector`, and one row per shard for each
+         *     one-shot job (`backfill`, `projected-rebuild`,
+         *     `census-backfill`, …). Composes with `?max_age=` (both
+         *     filters apply).
+         *
+         *     The response is paged (`limit`, default 500, max 2000) with the
+         *     offset token echoed in `pagination.next`.
          *
          *     Returns 503 when the deployment hasn't wired the cursors
          *     reader.
@@ -11286,31 +11312,60 @@ export interface operations {
                  *       - `active` — only rows with `lag_seconds <= 600` (10 min).
                  *         Excludes completed backfill cursors that linger in the
                  *         table after their range finished.
-                 *       - `stale`  — complement; only rows older than the 10-min
-                 *         boundary. Useful for spotting dead ingest paths.
-                 *       - omitted — return everything (subject to `max_age` + `source`).
+                 *       - `stale`  — rows older than the 10-min boundary that are
+                 *         not yet abandoned. Useful for spotting dead ingest paths
+                 *         that are still worth resuming.
+                 *       - `abandoned` — only one-shot job rows past the 7-day
+                 *         boundary (implies `include_abandoned=true`). The
+                 *         reap-planning view, so it never includes a live
+                 *         namespace: those are never reaped.
+                 *       - omitted — live + stale (subject to `max_age` + `source`).
                  *     Composes with `max_age`: for `status=active` the effective
                  *     window is whichever bound is tighter; for `status=stale` the
                  *     window becomes `[10m, max_age]`.
                  */
-                status?: "active" | "stale";
+                status?: "active" | "stale" | "abandoned";
+                /**
+                 * @description `true` adds rows whose `state` is `abandoned` (untouched for
+                 *     over 7 days) back into the response. They are excluded by
+                 *     default: `ingestion_cursors` accumulates one permanent row
+                 *     per one-shot job shard, so the dead set outnumbers the live
+                 *     one by an order of magnitude or more. Any other value (or
+                 *     omitted) leaves them out.
+                 */
+                include_abandoned?: "true";
                 /**
                  * @description Positive Go-duration string (e.g. `1h`, `30m`, `5m`,
                  *     `0.5h`). When present, rows whose `lag_seconds`
                  *     exceeds this value are excluded from the response.
-                 *     Empty / omitted preserves the legacy "return every
-                 *     cursor" contract.
+                 *     Empty / omitted leaves the `state` filters to decide.
                  */
                 max_age?: string;
                 /**
                  * @description Exact-match filter on the `source` column. Typical
-                 *     values: `ledgerstream` (the live indexer) or
-                 *     `backfill` (one row per backfill range). Unknown
+                 *     values: `ledgerstream` (the live indexer), `projector`,
+                 *     or one row per shard for each one-shot job (`backfill`,
+                 *     `projected-rebuild`, `census-backfill`, …). Unknown
                  *     values return an empty array (not 400) — keeps the
                  *     surface predictable when an operator typos vs. a
                  *     brand-new source we haven't seen yet.
                  */
                 source?: string;
+                /**
+                 * @description Maximum rows to return (1-2000, default 500).
+                 *     Out-of-range values return 400. The cap exists because
+                 *     `ingestion_cursors` is append-mostly, shrinking only under the explicit reap command — every sharded job
+                 *     leaves permanent rows behind — so an uncapped listing has
+                 *     no ceiling.
+                 */
+                limit?: number;
+                /**
+                 * @description Pagination offset, echoed verbatim from a prior response's
+                 *     `pagination.next`. Rows keep their `(source, sub_source)`
+                 *     ordering, so paging over a table that is append-mostly, shrinking only under the explicit reap command
+                 *     is stable. Non-integer or negative values return 400.
+                 */
+                cursor?: string;
             };
             header?: never;
             path?: never;
@@ -11328,14 +11383,14 @@ export interface operations {
                      * @example {
                      *       "data": [
                      *         {
-                     *           "source": "backfill",
-                     *           "sub_source": "11474999-15299997:sdex",
-                     *           "last_ledger": 15299997,
-                     *           "last_updated": "2026-05-14T18:19:34Z",
-                     *           "lag_seconds": 4335523
+                     *           "source": "ledgerstream",
+                     *           "last_ledger": 63302110,
+                     *           "last_updated": "2026-09-03T22:38:14Z",
+                     *           "lag_seconds": 4,
+                     *           "state": "live"
                      *         }
                      *       ],
-                     *       "as_of": "2026-07-03T22:38:18.218056301Z",
+                     *       "as_of": "2026-09-03T22:38:18.218056301Z",
                      *       "flags": {
                      *         "stale": false,
                      *         "reduced_redundancy": false,
@@ -11354,15 +11409,33 @@ export interface operations {
                             last_updated: string;
                             /** Format: int64 */
                             lag_seconds: number;
+                            /**
+                             * @description Derived lifecycle marker — `live` within
+                             *     10 minutes, `stale` within 7 days,
+                             *     `abandoned` beyond it. Abandoned rows are
+                             *     excluded unless asked for. The live
+                             *     namespaces (`ledgerstream`, `projector`)
+                             *     are never `abandoned`: an old row there
+                             *     is stuck ingest, so it stays `stale` and
+                             *     stays in the default response.
+                             * @enum {string}
+                             */
+                            state: "live" | "stale" | "abandoned";
                         }[];
+                        pagination?: components["schemas"]["Pagination"];
                     };
                 };
             };
             /**
-             * @description Either `max_age` didn't parse as a positive Go duration
+             * @description `max_age` didn't parse as a positive Go duration
              *     (`type=https://api.stellarindex.io/errors/invalid-max-age`),
+             *     `limit` was outside 1-2000
+             *     (`type=https://api.stellarindex.io/errors/invalid-limit`),
+             *     `cursor` wasn't a non-negative integer
+             *     (`type=https://api.stellarindex.io/errors/invalid-cursor`),
              *     or `status` was set to a value other than `active` /
-             *     `stale` (`type=https://api.stellarindex.io/errors/invalid-status`).
+             *     `stale` / `abandoned`
+             *     (`type=https://api.stellarindex.io/errors/invalid-status`).
              *     Body is the standard problem+json envelope.
              */
             400: {

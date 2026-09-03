@@ -734,10 +734,15 @@ func (c *Client) Issuer(ctx context.Context, gStrkey string) (*Envelope[Issuer],
 }
 
 // Cursors returns the per-source ingest cursor table from
-// `/v1/diagnostics/cursors`. Operator-facing diagnostic — every
-// (source, sub_source) tuple the dispatcher persists, with
+// `/v1/diagnostics/cursors`. Operator-facing diagnostic — the
+// (source, sub_source) tuples the dispatcher persists, with
 // `lag_seconds` precomputed server-side so callers don't need a
 // clock-sync agreement.
+//
+// The endpoint serves the live + stale rows: cursors left behind by
+// finished or abandoned one-shot jobs (Cursor.State "abandoned") are
+// omitted unless `?include_abandoned=true` is requested, which this
+// method does not do. It also pages at 500 rows.
 func (c *Client) Cursors(ctx context.Context) (*Envelope[[]Cursor], error) {
 	var env Envelope[[]Cursor]
 	if err := c.doJSON(ctx, http.MethodGet, "/v1/diagnostics/cursors", nil, nil, &env); err != nil {
