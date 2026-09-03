@@ -654,6 +654,17 @@ verify_archive_tier_b_enabled: "{{ (stellar_network | default('pubnet')) == 'pub
 # omitted where its anchor is not network-correct.
 archive_completeness_enabled: "{{ (stellar_network | default('pubnet')) == 'pubnet' }}"
 
+# verify-served-values — the served-value truth harness. Both of its
+# independent sources are PUBNET authorities: the SDF lumen API
+# (dashboard.stellar.org) and Stellar Expert's `/explorer/public/asset`.
+# Neither has a test-net equivalent this check could reconcile against, so
+# on a test net every check would compare a testnet-served number with a
+# mainnet truth and report permanent, meaningless drift — the same shape as
+# archive_completeness_enabled above, which measured a pubnet stub against
+# testnet's ledger range. Derived from the network so a fresh test net is
+# correct before anyone writes an inventory line.
+verify_served_values_enabled: "{{ (stellar_network | default('pubnet')) == 'pubnet' }}"
+
 # pgBackRest scheduled backups. pgBackRest itself is NOT installed by this
 # role (there is no apt task for it anywhere) — it is provisioned
 # out-of-band on the pubnet hosts. So on a test net, "enabled" installed a

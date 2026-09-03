@@ -775,6 +775,78 @@
       changed_when: false
       failed_when: false
 
+# ── verify-served-values — the served-value truth harness ────────────
+# The one check on the served NUMBER rather than the pipe (CS-010: XLM
+# market cap read +58% behind a green board). Its three alerts —
+# stellarindex_served_value_{drift,check_stale,persistently_skipped} —
+# shipped with the tool and the runbook said "daily timer", but nothing in
+# the role, in cron, or on the host ever ran it: no textfile was written, so
+# all three selected a series that had never existed. This block is what
+# makes them able to fire.
+#
+# Gated on verify_served_values_enabled: both ground truths are pubnet
+# authorities, so on a test net this would report permanent drift.
+- name: Install + enable verify-served-values (networks with pubnet ground truth)
+  # Tagged for the same reason as the loops above (:697): the ops-job
+  # units must be renderable WITHOUT a full archival-node run, because a
+  # full run can restart galexie and a galexie restart is a ~9-minute
+  # mainnet cold catchup.
+  tags: [ops-jobs]
+  when: verify_served_values_enabled | bool
+  block:
+    - name: Install verify-served-values unit + timer
+      ansible.builtin.template:
+        src: "systemd/{{ item }}.j2"
+        dest: "/etc/systemd/system/{{ item }}"
+        mode: "0644"
+      loop:
+        - verify-served-values.service
+        - verify-served-values.timer
+      notify: Reload systemd
+
+    - name: Enable + start verify-served-values.timer
+      ansible.builtin.systemd:
+        name: verify-served-values.timer
+        state: started
+        enabled: true
+        daemon_reload: true
+
+- name: Remove verify-served-values where its ground truth is not network-correct
+  # Paired with the install block above, and tagged alongside it, so
+  # `--tags ops-jobs` converges this unit on EITHER branch. An install-only
+  # tag is a half-tag (see the tier-b block below): flipping
+  # verify_served_values_enabled off on a host that already has the units
+  # would otherwise leave the timer enabled and every nightly run failing
+  # against a truth source that cannot match. Idempotent on a host that
+  # never had it.
+  tags: [ops-jobs]
+  when: not (verify_served_values_enabled | bool)
+  block:
+    - name: Stop + disable verify-served-values timer and service
+      ansible.builtin.systemd:
+        name: "{{ item }}"
+        state: stopped
+        enabled: false
+      loop:
+        - verify-served-values.timer
+        - verify-served-values.service
+      failed_when: false
+
+    - name: Remove verify-served-values unit files
+      ansible.builtin.file:
+        path: "/etc/systemd/system/{{ item }}"
+        state: absent
+      loop:
+        - verify-served-values.timer
+        - verify-served-values.service
+      notify: Reload systemd
+
+    - name: Clear the failed state left by earlier verify-served-values runs
+      ansible.builtin.command:
+        cmd: systemctl reset-failed verify-served-values.service
+      changed_when: false
+      failed_when: false
+
 # ── verify-archive Tier B — only where its anchor can be correct ─────
 # Tier B (checkpoint anchor, task #33 / W8 recon 14a): verify_archive.go
 # has always implemented `-tier checkpoint` but only Tier A was scheduled,

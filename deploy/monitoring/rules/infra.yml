@@ -298,7 +298,7 @@ groups:
             panic as a bug.
       - alert: stellarindex_systemd_unit_failed
         expr: |
-          node_systemd_unit_state{state="failed",name!~"verify-archive-tier-a\\.service|verify-archive-tier-b\\.service|ch-supply\\.service|pgbackrest-backup\\.service|ch-schema-snapshot\\.service"} == 1
+          node_systemd_unit_state{state="failed",name!~"verify-archive-tier-a\\.service|verify-archive-tier-b\\.service|ch-supply\\.service|pgbackrest-backup\\.service|ch-schema-snapshot\\.service|verify-served-values\\.service"} == 1
         for: 15m
         labels:
           severity: ticket
