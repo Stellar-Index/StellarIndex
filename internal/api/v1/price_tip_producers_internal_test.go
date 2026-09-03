@@ -25,7 +25,7 @@ func TestTipProducerRegistry_StartsOncePerKeyAcrossConcurrentAcquires(t *testing
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			releases[i], _ = reg.acquire(key, func(ctx context.Context) {
+			releases[i], _ = reg.acquire(key, nil, func(ctx context.Context) {
 				starts.Add(1)
 				<-ctx.Done()
 			})
@@ -54,9 +54,9 @@ func TestTipProducerRegistry_DistinctKeysGetDistinctProducers(t *testing.T) {
 	var starts atomic.Int32
 	start := func(ctx context.Context) { starts.Add(1); <-ctx.Done() }
 
-	r1, _ := reg.acquire(tipProducerKey{asset: "native", quote: "fiat:USD", window: 5}, start)
-	r2, _ := reg.acquire(tipProducerKey{asset: "native", quote: "fiat:USD", window: 10}, start)
-	r3, _ := reg.acquire(tipProducerKey{asset: "crypto:BTC", quote: "fiat:USD", window: 5}, start)
+	r1, _ := reg.acquire(tipProducerKey{asset: "native", quote: "fiat:USD", window: 5}, nil, start)
+	r2, _ := reg.acquire(tipProducerKey{asset: "native", quote: "fiat:USD", window: 10}, nil, start)
+	r3, _ := reg.acquire(tipProducerKey{asset: "crypto:BTC", quote: "fiat:USD", window: 5}, nil, start)
 	defer r1()
 	defer r2()
 	defer r3()
@@ -74,11 +74,11 @@ func TestTipProducerRegistry_LastReleaseStopsProducerAfterLinger(t *testing.T) {
 	var stopped atomic.Bool
 	key := tipProducerKey{asset: "native", quote: "fiat:USD", window: 5}
 
-	rel1, _ := reg.acquire(key, func(ctx context.Context) {
+	rel1, _ := reg.acquire(key, nil, func(ctx context.Context) {
 		<-ctx.Done()
 		stopped.Store(true)
 	})
-	rel2, _ := reg.acquire(key, func(context.Context) {
+	rel2, _ := reg.acquire(key, nil, func(context.Context) {
 		t.Error("second acquire must not start a new producer")
 	})
 
@@ -107,11 +107,11 @@ func TestTipProducerRegistry_ReacquireDuringLingerKeepsProducer(t *testing.T) {
 		stops.Add(1)
 	}
 
-	rel, _ := reg.acquire(key, start)
+	rel, _ := reg.acquire(key, nil, start)
 	rel()
 	// Re-acquire inside the linger window: the pending stop must be
 	// cancelled and the SAME producer keeps running.
-	rel2, _ := reg.acquire(key, start)
+	rel2, _ := reg.acquire(key, nil, start)
 	time.Sleep(60 * time.Millisecond) // well past the original linger deadline
 	if got := stops.Load(); got != 0 {
 		t.Fatalf("producer stopped despite re-acquire during linger (stops=%d)", got)
@@ -150,7 +150,7 @@ func TestTipProducerRegistry_CeilingBoundsDetachedProducers(t *testing.T) {
 	// cheapest attack would: one asset, one quote, many windows.
 	for w := 1; w <= ceiling*4; w++ {
 		key := tipProducerKey{asset: "native", quote: "fiat:USD", window: w}
-		release, ok := reg.acquire(key, func(ctx context.Context) { <-ctx.Done() })
+		release, ok := reg.acquire(key, nil, func(ctx context.Context) { <-ctx.Done() })
 		if !ok {
 			if release != nil {
 				t.Fatal("refused acquire must not hand back a release func — " +
@@ -189,7 +189,7 @@ func TestTipProducerRegistry_CeilingStillAdmitsExistingPair(t *testing.T) {
 	var held []func()
 	for w := 1; w <= ceiling; w++ {
 		key := tipProducerKey{asset: "native", quote: "fiat:USD", window: w}
-		release, ok := reg.acquire(key, func(ctx context.Context) { <-ctx.Done() })
+		release, ok := reg.acquire(key, nil, func(ctx context.Context) { <-ctx.Done() })
 		if !ok {
 			t.Fatalf("window %d refused below the ceiling", w)
 		}
@@ -204,6 +204,7 @@ func TestTipProducerRegistry_CeilingStillAdmitsExistingPair(t *testing.T) {
 	// A NEW key is refused...
 	if _, ok := reg.acquire(
 		tipProducerKey{asset: "native", quote: "fiat:EUR", window: 1},
+		nil,
 		func(ctx context.Context) { <-ctx.Done() },
 	); ok {
 		t.Error("a new pair was admitted past the ceiling")
@@ -212,6 +213,7 @@ func TestTipProducerRegistry_CeilingStillAdmitsExistingPair(t *testing.T) {
 	// ...while an existing one still joins.
 	release, ok := reg.acquire(
 		tipProducerKey{asset: "native", quote: "fiat:USD", window: 1},
+		nil,
 		func(ctx context.Context) { <-ctx.Done() },
 	)
 	if !ok {
@@ -228,6 +230,7 @@ func TestTipProducerRegistry_NegativeCeilingDisablesTheBound(t *testing.T) {
 	for w := 1; w <= 64; w++ {
 		if _, ok := reg.acquire(
 			tipProducerKey{asset: "native", quote: "fiat:USD", window: w},
+			nil,
 			func(ctx context.Context) { <-ctx.Done() },
 		); !ok {
 			t.Fatalf("window %d refused with the ceiling disabled", w)

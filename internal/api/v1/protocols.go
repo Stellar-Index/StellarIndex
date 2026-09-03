@@ -10,6 +10,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
+	"github.com/Stellar-Index/StellarIndex/internal/worker"
 )
 
 // protocolDetailTTL is the freshness horizon of a cached
@@ -120,6 +121,25 @@ func (s *Server) protoDetailRefreshLocked(key string, build func(context.Context
 	done := make(chan struct{})
 	s.protoDetailFlight[key] = done
 	go func() {
+		// Deregistering the flight and closing done are the terminal
+		// bookkeeping, run from a DEFER so a panic inside build cannot
+		// skip them. Left undone the key is wedged permanently:
+		// protoDetailRefreshLocked keeps returning the dead channel to
+		// every later request and to the prewarm sweep, each of which
+		// then waits on a close that will never come, and no rebuild of
+		// that protocol's page can ever start again.
+		//
+		// A panicking build counts as "degraded", not "ok": it produced
+		// no page, so the entry-displacement rule below must not run and
+		// a previously-HEALTHY cached page must survive. That is why the
+		// guard sits here rather than around build alone.
+		defer func() {
+			if rec := recover(); rec != nil {
+				worker.Report(s.logger, "api-protocol-detail-refresh", rec)
+				obs.ProtocolDetailRefreshTotal.WithLabelValues("degraded").Inc()
+			}
+			s.endProtoDetailFlight(key, done)
+		}()
 		start := time.Now()
 		rctx, cancel := context.WithTimeout(context.Background(), protocolDetailRefreshTimeout)
 		defer cancel()
@@ -148,7 +168,6 @@ func (s *Server) protoDetailRefreshLocked(key string, build func(context.Context
 		if outcome == "ok" || outcome == "stale" || !exists || !protoDetailEntryHealthy(existing) {
 			s.protoDetailCache[key] = protoDetailEntry{view: view, at: time.Now()}
 		}
-		delete(s.protoDetailFlight, key)
 		s.protoDetailMu.Unlock()
 
 		if outcome != "ok" && s.logger != nil {
@@ -159,9 +178,19 @@ func (s *Server) protoDetailRefreshLocked(key string, build func(context.Context
 		// would let a sweep finish with its last observation unrecorded.
 		obs.ProtocolDetailRefreshTotal.WithLabelValues(outcome).Inc()
 		obs.ProtocolDetailRefreshDurationSeconds.WithLabelValues(outcome).Observe(time.Since(start).Seconds())
-		close(done)
 	}()
 	return done
+}
+
+// endProtoDetailFlight deregisters the in-flight rebuild for key and
+// releases its waiters. Deferred by the rebuild goroutine so it runs on
+// EVERY exit including a panic — a flight left in the map is never
+// retried and its channel never closes.
+func (s *Server) endProtoDetailFlight(key string, done chan struct{}) {
+	s.protoDetailMu.Lock()
+	delete(s.protoDetailFlight, key)
+	s.protoDetailMu.Unlock()
+	close(done)
 }
 
 // protoDetailEntryHealthy reports whether a cached detail entry carries a
@@ -962,10 +991,25 @@ func (s *Server) enrichProtocolAnalytics(ctx context.Context, meta ProtocolMeta,
 	var wg sync.WaitGroup
 	var seriesOK, breakdownOK, contractsOK bool
 	wg.Add(3)
-	go func() { defer wg.Done(); seriesOK = s.fillProtocolSeries(ctx, meta.Name, ids, plan, view) }()
-	go func() { defer wg.Done(); breakdownOK = s.fillProtocolBreakdown(ctx, meta.Name, ids, plan, view) }()
+	// Detached from the handler goroutine, so middleware.Recoverer does
+	// not cover these — a panic would kill the process. Recovering
+	// leaves that fill's OK flag false, which is exactly the "this fill
+	// failed" signal `seriesOK && breakdownOK && contractsOK` already
+	// carries: the analytics block is marked incomplete and must not
+	// displace a healthy cached entry.
 	go func() {
 		defer wg.Done()
+		defer worker.Recover(s.logger, "api-protocol-series-fill")
+		seriesOK = s.fillProtocolSeries(ctx, meta.Name, ids, plan, view)
+	}()
+	go func() {
+		defer wg.Done()
+		defer worker.Recover(s.logger, "api-protocol-breakdown-fill")
+		breakdownOK = s.fillProtocolBreakdown(ctx, meta.Name, ids, plan, view)
+	}()
+	go func() {
+		defer wg.Done()
+		defer worker.Recover(s.logger, "api-protocol-contract-activity-fill")
 		contractsOK = s.fillProtocolContractActivity(ctx, meta.Name, ids, plan, view)
 	}()
 	wg.Wait()

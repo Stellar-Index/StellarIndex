@@ -9,6 +9,7 @@ import (
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
+	"github.com/Stellar-Index/StellarIndex/internal/worker"
 )
 
 // assetExtensionTimeout caps the total wall time for the
@@ -67,6 +68,16 @@ func (s *Server) applyAssetExtensionFields(ctx context.Context, detail *AssetDet
 }
 
 // fetchAssetExtensionResults runs the 6 reader calls in parallel.
+//
+// Every one is DETACHED from the handler goroutine, so
+// middleware.Recoverer does not cover it and an unrecovered panic in any
+// single reader would terminate the whole API process. Each therefore
+// registers worker.Recover, which leaves that field at its zero value
+// and its *Err at nil — indistinguishable, to applyAssetExtensionResults
+// below, from a reader that returned nothing, which is already the
+// documented best-effort contract of this overlay ("individual failures
+// leave the affected field nil"). Nothing is cached, so the next request
+// retries every field.
 func (s *Server) fetchAssetExtensionResults(ctx context.Context, assetID string) assetExtensionResults {
 	var (
 		r  assetExtensionResults
@@ -75,26 +86,32 @@ func (s *Server) fetchAssetExtensionResults(ctx context.Context, assetID string)
 	wg.Add(6)
 	go func() {
 		defer wg.Done()
+		defer worker.Recover(s.logger, "api-asset-extension-top-markets")
 		r.topMarkets, r.topMarketsErr = s.assetsReader.GetAssetTopMarkets(ctx, assetID, 5)
 	}()
 	go func() {
 		defer wg.Done()
+		defer worker.Recover(s.logger, "api-asset-extension-history-24h")
 		r.hist24, r.hist24Err = s.assetsReader.GetAssetPriceHistory24h(ctx, assetID)
 	}()
 	go func() {
 		defer wg.Done()
+		defer worker.Recover(s.logger, "api-asset-extension-history-7d")
 		r.hist7d, r.hist7dErr = s.assetsReader.GetAssetPriceHistory7d(ctx, assetID)
 	}()
 	go func() {
 		defer wg.Done()
+		defer worker.Recover(s.logger, "api-asset-extension-markets-count")
 		r.marketsCount, r.marketsErr = s.assetsReader.GetAssetMarketsCount(ctx, assetID)
 	}()
 	go func() {
 		defer wg.Done()
+		defer worker.Recover(s.logger, "api-asset-extension-trade-count")
 		r.tradeCount, r.tradeCountErr = s.assetsReader.GetAssetTradeCount24h(ctx, assetID)
 	}()
 	go func() {
 		defer wg.Done()
+		defer worker.Recover(s.logger, "api-asset-extension-ath")
 		r.ath, r.athErr = s.assetsReader.GetAssetATH(ctx, assetID)
 	}()
 	wg.Wait()

@@ -24,6 +24,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/incidents"
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
 	"github.com/Stellar-Index/StellarIndex/internal/version"
+	"github.com/Stellar-Index/StellarIndex/internal/worker"
 )
 
 // ReadyChecker is the interface /readyz polls to decide whether
@@ -2197,6 +2198,14 @@ func (s *Server) computeReadyz() (int, []byte) {
 		criticalFlags[i] = c.Critical()
 		go func(i int, c ReadyChecker) {
 			defer wg.Done()
+			// Detached from the handler goroutine: an unrecovered panic
+			// in a dependency's Ping would take the API down over a
+			// readiness probe. Recovering leaves results[i] at its zero
+			// value — Name "" and OK false — so readyz reports NOT READY
+			// and the load balancer sheds this instance. Fail-closed is
+			// the right degradation for a readiness check, and the next
+			// round re-probes from scratch.
+			defer worker.Recover(s.logger, "api-readyz-check")
 			err := c.Ping(ctx)
 			r := checkResult{Name: c.Name(), OK: err == nil}
 			if err != nil {

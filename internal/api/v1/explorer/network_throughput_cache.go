@@ -7,6 +7,7 @@ import (
 
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
+	"github.com/Stellar-Index/StellarIndex/internal/worker"
 )
 
 // This file extends the stale-while-revalidate layer (hot_reads.go) to
@@ -118,6 +119,16 @@ func (h *Handler) refreshNetworkThroughput() *keyFlight {
 	}
 	go func() {
 		defer gate.ReleaseClass("network_throughput")
+		// End the flight from a defer so a panic cannot wedge the
+		// throughput series forever — see perKeyFlight.end.
+		var err error
+		defer func() {
+			if rec := recover(); rec != nil {
+				worker.Report(h.Logger, "explorer-network-throughput-refresh", rec)
+				err = errRefreshPanicked
+			}
+			h.throughput.flight.end(networkThroughputFlightKey, fl, err)
+		}()
 		start := time.Now()
 		rctx, cancel := context.WithTimeout(context.Background(), networkThroughputRefreshTimeout)
 		defer cancel()
@@ -126,11 +137,9 @@ func (h *Handler) refreshNetworkThroughput() *keyFlight {
 		if err != nil {
 			// Keep the previous entry (if any) — old-but-real beats blank.
 			h.Logger.Warn("network throughput detached refresh failed", "err", err)
-			h.throughput.flight.end(networkThroughputFlightKey, fl, err)
 			return
 		}
 		h.throughput.put(buckets)
-		h.throughput.flight.end(networkThroughputFlightKey, fl, nil)
 	}()
 	return fl
 }

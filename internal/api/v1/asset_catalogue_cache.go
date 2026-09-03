@@ -2,11 +2,13 @@ package v1
 
 import (
 	"context"
+	"log/slog"
 	"sync"
 	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
+	"github.com/Stellar-Index/StellarIndex/internal/worker"
 )
 
 // CachedAssetsReader wraps a [AssetsReader] with a small per-key TTL
@@ -25,6 +27,16 @@ import (
 // Single-flight: concurrent callers during a refetch share one
 // upstream call, mirroring the SourcesStats / Markets caches.
 type CachedAssetsReader struct {
+	// logger sinks a panic recovered in a detached refresh goroutine.
+	// It is the PROCESS DEFAULT rather than the API Server's logger:
+	// these reader wrappers are constructed directly in
+	// cmd/stellarindex-api/main.go before the Server exists, and
+	// widening the exported constructor would churn every caller for a
+	// sink that ends up in the same journal either way. The
+	// load-bearing signal is stellarindex_worker_panics_total, which
+	// worker.Report moves regardless of the sink.
+	logger *slog.Logger
+
 	upstream AssetsReader
 	ttl      time.Duration
 
@@ -110,6 +122,7 @@ type assetsCacheEntry struct {
 // audit-2026-07-23); change the call site and this line together.
 func NewCachedAssetsReader(upstream AssetsReader, ttl time.Duration) *CachedAssetsReader {
 	return &CachedAssetsReader{
+		logger:     slog.Default(),
 		upstream:   upstream,
 		ttl:        ttl,
 		entries:    map[string]*assetsCacheEntry{},
@@ -425,6 +438,13 @@ func swr[T any](ctx context.Context, c *CachedAssetsReader, op, key string, upst
 // done/entry.flight. Mirrors asset_catalogue_cache.go refreshRows.
 func refreshSWR[T any](c *CachedAssetsReader, op string, entry *swrEntry, done chan struct{}, upstream func(context.Context) (T, error)) {
 	defer close(done)
+	// Clearing the in-flight marker is what makes the NEXT request retry.
+	// Registered before the guard below so it runs after it: a panic that
+	// left entry.flight set would wedge this key on its stale value for
+	// the life of the process, because (A') only kicks a refresh when
+	// e.flight == nil. Un-wedging beats a silent permanent freeze.
+	defer c.clearSWRFlight(entry)
+	defer worker.Recover(c.logger, "api-assets-catalogue-swr-refresh")
 	ctx, cancel := context.WithTimeout(context.Background(), assetsRefreshBudget)
 	defer cancel()
 
@@ -435,12 +455,28 @@ func refreshSWR[T any](c *CachedAssetsReader, op string, entry *swrEntry, done c
 		entry.at = time.Now()
 		entry.val = v
 	}
-	entry.flight = nil
 	c.mu.Unlock()
 
 	if err != nil {
 		obs.APICacheOpsTotal.WithLabelValues("coins", op, "refresh_error").Inc()
 	}
+}
+
+// clearSWRFlight releases the single-flight marker on a generic SWR
+// entry. Deferred by refreshSWR so it runs on EVERY exit including a
+// panic — an entry left in flight is never refreshed again.
+func (c *CachedAssetsReader) clearSWRFlight(entry *swrEntry) {
+	c.mu.Lock()
+	entry.flight = nil
+	c.mu.Unlock()
+}
+
+// clearRowsFlight is [CachedAssetsReader.clearSWRFlight] for the
+// assetsCacheEntry refreshers (refreshRows / refreshHistoryMap).
+func (c *CachedAssetsReader) clearRowsFlight(entry *assetsCacheEntry) {
+	c.mu.Lock()
+	entry.flight = nil
+	c.mu.Unlock()
 }
 
 // assetsRefreshBudget bounds a stale-while-revalidate background
@@ -594,6 +630,10 @@ func (c *CachedAssetsReader) refreshRows(
 	upstream func(context.Context) ([]timescale.AssetRow, error),
 ) {
 	defer close(done)
+	// See clearSWRFlight: deferred so a panic cannot leave this key
+	// permanently in flight and therefore permanently un-refreshed.
+	defer c.clearRowsFlight(entry)
+	defer worker.Recover(c.logger, "api-assets-catalogue-rows-refresh")
 	ctx, cancel := context.WithTimeout(context.Background(), assetsRefreshBudget)
 	defer cancel()
 
@@ -604,7 +644,6 @@ func (c *CachedAssetsReader) refreshRows(
 		entry.at = time.Now()
 		entry.rows = rows
 	}
-	entry.flight = nil
 	c.mu.Unlock()
 
 	if err != nil {
@@ -716,6 +755,10 @@ func (c *CachedAssetsReader) refreshHistoryMap(
 	upstream func(context.Context) (map[string][]timescale.AssetPricePoint, error),
 ) {
 	defer close(done)
+	// See clearSWRFlight: deferred so a panic cannot leave this key
+	// permanently in flight and therefore permanently un-refreshed.
+	defer c.clearRowsFlight(entry)
+	defer worker.Recover(c.logger, "api-assets-catalogue-history-refresh")
 	ctx, cancel := context.WithTimeout(context.Background(), assetsRefreshBudget)
 	defer cancel()
 
@@ -726,7 +769,6 @@ func (c *CachedAssetsReader) refreshHistoryMap(
 		entry.at = time.Now()
 		entry.historyByAsset = hist
 	}
-	entry.flight = nil
 	c.mu.Unlock()
 
 	if err != nil {

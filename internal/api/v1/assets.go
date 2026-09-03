@@ -15,6 +15,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/currency"
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
+	"github.com/Stellar-Index/StellarIndex/internal/worker"
 )
 
 // Sep1CachedReader is the narrow dependency /v1/assets/{id} uses to
@@ -1351,6 +1352,14 @@ func (s *Server) PrewarmClassicSupply(ctx context.Context) {
 // refresh burns its own budget in the background, callers are served stale, and
 // classicSupplyAttemptAt rate-limits retries.
 func (s *Server) refreshClassicSupply(er classicSupplyReader, done chan struct{}) {
+	// Clearing the flight and closing done are the terminal bookkeeping,
+	// deferred so a panic in the ClickHouse GROUP BY cannot skip them.
+	// A flight left set is never replaced — cachedClassicSupply only
+	// kicks a refresh when classicSupplyFlight is nil — so the map would
+	// freeze on its last value (or stay nil on a cold process) for the
+	// life of the API, silently dropping market_cap from every asset.
+	defer s.endClassicSupplyFlight(done)
+	defer worker.Recover(s.logger, "api-classic-supply-refresh")
 	ctx, cancel := context.WithTimeout(context.Background(), classicSupplyRefreshBudget)
 	defer cancel()
 
@@ -1361,12 +1370,20 @@ func (s *Server) refreshClassicSupply(er classicSupplyReader, done chan struct{}
 		s.classicSupplyCache = m
 		s.classicSupplyAt = time.Now()
 	}
-	s.classicSupplyFlight = nil
 	s.classicSupplyMu.Unlock()
-	close(done)
 	if err != nil {
 		s.logger.Warn("classic supply refresh failed (serving last good)", "err", err)
 	}
+}
+
+// endClassicSupplyFlight releases the single-flight marker and wakes the
+// cold-start waiters. Deferred by refreshClassicSupply so it runs on
+// EVERY exit including a panic.
+func (s *Server) endClassicSupplyFlight(done chan struct{}) {
+	s.classicSupplyMu.Lock()
+	s.classicSupplyFlight = nil
+	s.classicSupplyMu.Unlock()
+	close(done)
 }
 
 // dustLiquiditySuppressed reports whether a market cap / FDV backed by
@@ -1761,7 +1778,7 @@ func (s *Server) computeCatalogueMarketCaps(ctx context.Context, matched []*curr
 	if class != "fiat" {
 		return caps
 	}
-	forEachBounded(len(matched), readFanoutConcurrency, func(i int) {
+	forEachBounded(s.logger, len(matched), readFanoutConcurrency, func(i int) {
 		vc := matched[i]
 		if vc.CirculatingSupply == "" {
 			return
@@ -1898,7 +1915,7 @@ func (s *Server) fillCataloguePricesForPage(ctx context.Context, page []AssetDet
 	}
 	priceCtx, cancel := context.WithTimeout(ctx, 8*time.Second)
 	defer cancel()
-	forEachBounded(len(page), readFanoutConcurrency, func(i int) {
+	forEachBounded(s.logger, len(page), readFanoutConcurrency, func(i int) {
 		if page[i].PriceUSD != nil {
 			return
 		}
@@ -2287,7 +2304,7 @@ func (s *Server) fetchClassicUnifiedRows(w http.ResponseWriter, r *http.Request,
 // no market_cap available.
 func (s *Server) computeAllCatalogueMarketCaps(ctx context.Context, entries []*currency.VerifiedCurrency) []string {
 	caps := make([]string, len(entries))
-	forEachBounded(len(entries), readFanoutConcurrency, func(i int) {
+	forEachBounded(s.logger, len(entries), readFanoutConcurrency, func(i int) {
 		vc := entries[i]
 		if vc.Class != currency.ClassFiat || vc.CirculatingSupply == "" {
 			return
@@ -3481,7 +3498,7 @@ func (s *Server) fillCatalogueStatsForPage(ctx context.Context, page []AssetDeta
 	}
 	statsCtx, cancel := context.WithTimeout(ctx, 8*time.Second)
 	defer cancel()
-	forEachBounded(len(page), readFanoutConcurrency, func(i int) {
+	forEachBounded(s.logger, len(page), readFanoutConcurrency, func(i int) {
 		vc, ok := s.verifiedCurrencies.LookupBySlug(page[i].Slug)
 		if !ok {
 			return

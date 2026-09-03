@@ -9,6 +9,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
+	"github.com/Stellar-Index/StellarIndex/internal/worker"
 )
 
 // GET /v1/liquidity-pools — CURRENT two-sided reserves + a
@@ -258,7 +259,12 @@ func (s *Server) refreshNativeLPListing() {
 		return
 	}
 	go func() {
+		// The CAS gate is released by the deferred Store below on every
+		// path including a panic, so a recovered panic leaves the
+		// listing on its last-good entry and the NEXT visitor kicks a
+		// fresh rescan — no wedge. Only the process death needs fixing.
 		defer s.nativeLPRefreshing.Store(false)
+		defer worker.Recover(s.logger, "api-native-lp-listing-refresh")
 		ctx, cancel := context.WithTimeout(context.Background(), nativeLPListingRefreshTimeout)
 		defer cancel()
 		if _, err := s.fillNativeLPListing(ctx); err != nil {

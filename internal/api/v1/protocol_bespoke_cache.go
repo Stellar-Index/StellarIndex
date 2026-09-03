@@ -9,6 +9,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
+	"github.com/Stellar-Index/StellarIndex/internal/worker"
 )
 
 // This file puts a LAST-GOOD layer under the per-category bespoke
@@ -84,6 +85,12 @@ const bespokeGateClass = "protocol_bespoke"
 // reaches the wire: a first-ever miss degrades to "no block" (exactly as
 // a failed build already did) and the next build re-kicks.
 var errBespokeSaturated = errors.New("v1: protocol bespoke refresh capacity saturated; retry shortly")
+
+// errBespokePanicked is the flight error recorded when the detached
+// build goroutine panicked. Distinct from a build error so an operator
+// can tell "the builder died" (which also moved
+// stellarindex_worker_panics_total) from "the build failed".
+var errBespokePanicked = errors.New("v1: protocol bespoke build panicked")
 
 type bespokeEntry struct {
 	// blk is the last successfully-built block. A nil blk with ok=true is
@@ -197,6 +204,18 @@ func (s *Server) refreshBespoke(key, source, category string, windowDays int) *b
 	reader := s.protocolBespoke
 	go func() {
 		defer gate.ReleaseClass(bespokeGateClass)
+		// End the flight from a defer so a panic cannot wedge this key:
+		// bespokeCache.end both deregisters the flight and closes its
+		// done channel, and it cannot be called twice (it closes a
+		// channel), so this is the one place it may run.
+		var err error
+		defer func() {
+			if rec := recover(); rec != nil {
+				worker.Report(s.logger, "api-protocol-bespoke-build", rec)
+				err = errBespokePanicked
+			}
+			s.protocolBespokeCache.end(key, fl, err)
+		}()
 		start := time.Now()
 		rctx, cancel := context.WithTimeout(context.Background(), bespokeRefreshTimeout)
 		defer cancel()
@@ -207,11 +226,9 @@ func (s *Server) refreshBespoke(key, source, category string, windowDays int) *b
 			if s.logger != nil {
 				s.logger.Warn("protocol bespoke build failed", "source", source, "category", category, "window_days", windowDays, "err", err)
 			}
-			s.protocolBespokeCache.end(key, fl, err)
 			return
 		}
 		s.protocolBespokeCache.put(key, blk)
-		s.protocolBespokeCache.end(key, fl, nil)
 	}()
 	return fl
 }

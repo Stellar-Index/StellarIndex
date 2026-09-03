@@ -543,7 +543,7 @@ func (s *Server) attachFiatMarketCaps(ctx context.Context, entries []*currency.V
 	if s.prices == nil && s.fxHistory == nil {
 		return
 	}
-	forEachBounded(len(entries), readFanoutConcurrency, func(i int) {
+	forEachBounded(s.logger, len(entries), readFanoutConcurrency, func(i int) {
 		vc := entries[i]
 		if vc.Class != currency.ClassFiat || vc.CirculatingSupply == "" {
 			return

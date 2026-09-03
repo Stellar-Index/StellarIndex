@@ -12,6 +12,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 	"github.com/Stellar-Index/StellarIndex/internal/supply"
+	"github.com/Stellar-Index/StellarIndex/internal/worker"
 )
 
 // SupplyLooker is the read-side interface the v1 server uses to
@@ -151,7 +152,12 @@ func (s *Server) applyF2Fields(ctx context.Context, detail *AssetDetail, asset c
 			// degrades to the same: log it and leave the field unset.
 			defer func() {
 				if p := recover(); p != nil {
-					s.logger.Error("panic in asset-detail field populator", "panic", p)
+					// worker.Report, not a bare log: this is the counter
+					// the stellarindex_worker_panics_total page rule
+					// reads, so a populator that starts panicking on
+					// every request is visible to an operator rather
+					// than only to whoever greps the logs (#368 M4).
+					worker.Report(s.logger, "api-asset-detail-populator", p)
 				}
 			}()
 			fn()

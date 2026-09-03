@@ -12,6 +12,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/Stellar-Index/StellarIndex/internal/worker"
 )
 
 // StatusResponse is the wire shape for /v1/status — a customer-
@@ -574,10 +576,33 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		freErr, incErr error
 	)
 	wg.Add(4)
-	go func() { defer wg.Done(); hb, hbErr = s.statusBackend.Heartbeats(ctx) }()
-	go func() { defer wg.Done(); latency, latErr = s.statusBackend.Latency(ctx) }()
-	go func() { defer wg.Done(); freshness, freErr = s.statusBackend.Freshness(ctx) }()
-	go func() { defer wg.Done(); incidents, incErr = s.statusBackend.Incidents(ctx) }()
+	// Each panel read runs DETACHED from the handler goroutine, so
+	// middleware.Recoverer does not cover it and an unrecovered panic
+	// would take the whole API down. Recovering leaves that panel's
+	// value at its zero and its err at nil — which every consumer
+	// below already treats as "the backend returned nothing": the
+	// panel degrades and the rest of the page still renders. Nothing
+	// is latched; the next request rebuilds from scratch.
+	go func() {
+		defer wg.Done()
+		defer worker.Recover(s.logger, "api-status-heartbeats")
+		hb, hbErr = s.statusBackend.Heartbeats(ctx)
+	}()
+	go func() {
+		defer wg.Done()
+		defer worker.Recover(s.logger, "api-status-latency")
+		latency, latErr = s.statusBackend.Latency(ctx)
+	}()
+	go func() {
+		defer wg.Done()
+		defer worker.Recover(s.logger, "api-status-freshness")
+		freshness, freErr = s.statusBackend.Freshness(ctx)
+	}()
+	go func() {
+		defer wg.Done()
+		defer worker.Recover(s.logger, "api-status-incidents")
+		incidents, incErr = s.statusBackend.Incidents(ctx)
+	}()
 	wg.Wait()
 
 	// Background-service heartbeats — the services this deployment

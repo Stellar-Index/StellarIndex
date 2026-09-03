@@ -801,7 +801,7 @@ func (s *Server) fanOutAssetMarkets(ctx context.Context, reader MarketsReader, a
 		err        error
 	}
 	results := make([]result, len(assets))
-	forEachBounded(len(assets), readFanoutConcurrency, func(i int) {
+	forEachBounded(s.logger, len(assets), readFanoutConcurrency, func(i int) {
 		rows, observedAt, stale, err := assetMarketsLeg(ctx, reader, assets[i], limit, order)
 		results[i] = result{rows: rows, observedAt: observedAt, stale: stale, err: err} // distinct indices — no mutex needed
 	})

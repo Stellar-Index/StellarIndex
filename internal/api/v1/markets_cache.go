@@ -2,12 +2,14 @@ package v1
 
 import (
 	"context"
+	"log/slog"
 	"sync"
 	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
+	"github.com/Stellar-Index/StellarIndex/internal/worker"
 )
 
 // CachedMarketsReader wraps a [MarketsReader] with a small per-key
@@ -30,6 +32,16 @@ import (
 // pass-through — they're keyed too narrowly to benefit, and the
 // underlying queries are already fast.
 type CachedMarketsReader struct {
+	// logger sinks a panic recovered in a detached refresh goroutine.
+	// It is the PROCESS DEFAULT rather than the API Server's logger:
+	// these reader wrappers are constructed directly in
+	// cmd/stellarindex-api/main.go before the Server exists, and
+	// widening the exported constructor would churn every caller for a
+	// sink that ends up in the same journal either way. The
+	// load-bearing signal is stellarindex_worker_panics_total, which
+	// worker.Report moves regardless of the sink.
+	logger *slog.Logger
+
 	upstream MarketsReader
 	ttl      time.Duration
 
@@ -104,6 +116,7 @@ type marketsCacheEntry struct {
 // (the front page).
 func NewCachedMarketsReader(upstream MarketsReader, ttl time.Duration) *CachedMarketsReader {
 	return &CachedMarketsReader{
+		logger:   slog.Default(),
 		upstream: upstream,
 		ttl:      ttl,
 		entries:  map[string]*marketsCacheEntry{},
@@ -344,6 +357,15 @@ func (c *CachedMarketsReader) fetchPairs(
 // value and only clears the in-flight marker (retry next request);
 // single-flighted via done/entry.flight. Mirrors
 // asset_catalogue_cache.go refreshRows.
+// clearFlight releases the single-flight marker on entry. Deferred by
+// both refreshers so it runs on EVERY exit including a panic — an entry
+// left in flight is never refreshed again.
+func (c *CachedMarketsReader) clearFlight(entry *marketsCacheEntry) {
+	c.mu.Lock()
+	entry.flight = nil
+	c.mu.Unlock()
+}
+
 func (c *CachedMarketsReader) refreshPairs(
 	op string,
 	entry *marketsCacheEntry,
@@ -351,6 +373,13 @@ func (c *CachedMarketsReader) refreshPairs(
 	upstream func(context.Context) ([]Market, string, error),
 ) {
 	defer close(done)
+	// Clearing the in-flight marker is what makes the NEXT request
+	// retry. Deferred (rather than left inline below) so it runs on a
+	// PANIC too: an entry left in flight is never refreshed again,
+	// because (A') only kicks a refresh when e.flight == nil — the
+	// key would serve its stale value for the life of the process.
+	defer c.clearFlight(entry)
+	defer worker.Recover(c.logger, "api-markets-pairs-refresh")
 	ctx, cancel := context.WithTimeout(context.Background(), marketsRefreshBudget)
 	defer cancel()
 
@@ -362,7 +391,6 @@ func (c *CachedMarketsReader) refreshPairs(
 		entry.pairs = rows
 		entry.cursor = cursor
 	}
-	entry.flight = nil
 	c.mu.Unlock()
 
 	if err != nil {
@@ -464,6 +492,13 @@ func (c *CachedMarketsReader) refreshPools(
 	upstream func(context.Context) ([]Pool, string, error),
 ) {
 	defer close(done)
+	// Clearing the in-flight marker is what makes the NEXT request
+	// retry. Deferred (rather than left inline below) so it runs on a
+	// PANIC too: an entry left in flight is never refreshed again,
+	// because (A') only kicks a refresh when e.flight == nil — the
+	// key would serve its stale value for the life of the process.
+	defer c.clearFlight(entry)
+	defer worker.Recover(c.logger, "api-markets-pools-refresh")
 	ctx, cancel := context.WithTimeout(context.Background(), marketsRefreshBudget)
 	defer cancel()
 
@@ -475,7 +510,6 @@ func (c *CachedMarketsReader) refreshPools(
 		entry.pools = rows
 		entry.cursor = cursor
 	}
-	entry.flight = nil
 	c.mu.Unlock()
 
 	if err != nil {

@@ -2,11 +2,14 @@ package v1
 
 import (
 	"context"
+	"log/slog"
 	"net/http"
 	"sort"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/Stellar-Index/StellarIndex/internal/worker"
 )
 
 // BackupsDiagnostics is the wire shape of GET /v1/diagnostics/backups —
@@ -379,7 +382,7 @@ const (
 // metrics source. Every query runs concurrently under ctx; a failed
 // query leaves its item nil (→ "unknown") and degrades SourceStatus
 // rather than failing the whole document.
-func buildBackupsSnapshot(ctx context.Context, src backupMetricsSource, now time.Time) BackupsDiagnostics {
+func buildBackupsSnapshot(ctx context.Context, logger *slog.Logger, src backupMetricsSource, now time.Time) BackupsDiagnostics {
 	now = now.UTC()
 	exprs := []string{
 		promBackupSinceLast, promBackupInfo, promBackupFullSize, promWALArchiveAge,
@@ -393,6 +396,13 @@ func buildBackupsSnapshot(ctx context.Context, src backupMetricsSource, now time
 	for i, expr := range exprs {
 		go func(i int, expr string) {
 			defer wg.Done()
+			// Detached from the handler goroutine. On a panic this
+			// query's samples stay nil and its err stays nil — read
+			// below as "no samples", which degrades that one SLO row
+			// (the same as a query that returned nothing) rather than
+			// killing the process. The snapshot is rebuilt on its next
+			// refresh, so nothing is latched.
+			defer worker.Recover(logger, "api-backups-snapshot-query")
 			results[i], errs[i] = src.queryVector(ctx, expr)
 		}(i, expr)
 	}
@@ -636,7 +646,7 @@ func (s *Server) handleDiagnosticsBackups(w http.ResponseWriter, r *http.Request
 	defer s.backups.mu.Unlock()
 	if s.backups.builtAt.IsZero() || now.Sub(s.backups.builtAt) >= backupsCacheTTL {
 		ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
-		s.backups.snap = buildBackupsSnapshot(ctx, s.backupMetrics, now)
+		s.backups.snap = buildBackupsSnapshot(ctx, s.logger, s.backupMetrics, now)
 		cancel()
 		s.backups.builtAt = now
 	}

@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
+	"github.com/Stellar-Index/StellarIndex/internal/worker"
 )
 
 // This file extends the stale-while-revalidate layer (hot_reads.go) to the
@@ -175,6 +176,19 @@ func (h *Handler) refreshContractDetail(key string, compute func(context.Context
 	}
 	go func() {
 		defer gate.ReleaseClass(class)
+		// The flight is ENDED from this defer on EVERY path, panic
+		// included. An unended flight wedges the key permanently:
+		// begin() keeps handing the dead flight to later requests, so
+		// the key can never be recomputed, and end() cannot be called
+		// twice because it closes fl.done.
+		var err error
+		defer func() {
+			if rec := recover(); rec != nil {
+				worker.Report(h.Logger, "explorer-contract-detail-refresh", rec)
+				err = errRefreshPanicked
+			}
+			h.contractDetail.flight.end(key, fl, err)
+		}()
 		start := time.Now()
 		rctx, cancel := context.WithTimeout(context.Background(), contractDetailRefreshTimeout)
 		defer cancel()
@@ -183,11 +197,9 @@ func (h *Handler) refreshContractDetail(key string, compute func(context.Context
 		if err != nil {
 			// Keep the previous entry (if any) — old-but-real beats blank.
 			h.Logger.Warn("contract detail detached refresh failed", "key", key, "err", err)
-			h.contractDetail.flight.end(key, fl, err)
 			return
 		}
 		h.contractDetail.put(key, v)
-		h.contractDetail.flight.end(key, fl, nil)
 	}()
 	return fl
 }

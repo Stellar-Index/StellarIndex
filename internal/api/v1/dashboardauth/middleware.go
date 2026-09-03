@@ -12,6 +12,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/Stellar-Index/StellarIndex/internal/platform"
+	"github.com/Stellar-Index/StellarIndex/internal/worker"
 )
 
 // touchTimeout caps the async TouchSession write — this is a
@@ -165,8 +166,13 @@ func resolveSession(r *http.Request, cfg *Config, tracker *touchTracker) (Sessio
 			// every in-flight request.
 			defer func() {
 				if r := recover(); r != nil {
-					// No session_id: it is the bearer credential (see above).
-					cfg.Logger.Error("touch session panic", "err", r)
+					// worker.Report, not a bare log, so the panic moves
+					// stellarindex_worker_panics_total and reaches the
+					// page rule + runbook (#368 M4). Deliberately no
+					// session_id in the label or the message: it is the
+					// bearer credential (see above), and the worker
+					// label must stay a bounded constant anyway.
+					worker.Report(cfg.Logger, "api-dashboard-session-touch", r)
 				}
 			}()
 			ctx, cancel := newTouchCtx(parent)

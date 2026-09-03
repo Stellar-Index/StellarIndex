@@ -163,7 +163,7 @@ func TestBuildBackupsSnapshot_Projection(t *testing.T) {
 	// matcher (the matcher text is pinned by TestBackupsPromQL below).
 	src.samples[promBackupSinceLast] = src.samples[promBackupSinceLast][:3]
 
-	got := buildBackupsSnapshot(context.Background(), src, now)
+	got := buildBackupsSnapshot(context.Background(), nil, src, now)
 
 	if got.SourceStatus != "ok" {
 		t.Errorf("source_status = %q, want ok", got.SourceStatus)
@@ -255,7 +255,7 @@ func TestBuildBackupsSnapshot_AbsentAndFailed(t *testing.T) {
 		},
 		fail: map[string]bool{promWALArchiveAge: true},
 	}
-	got := buildBackupsSnapshot(context.Background(), src, now)
+	got := buildBackupsSnapshot(context.Background(), nil, src, now)
 
 	if got.SourceStatus != "degraded" {
 		t.Errorf("source_status = %q, want degraded (one query failed)", got.SourceStatus)
@@ -290,7 +290,7 @@ func TestBuildBackupsSnapshot_AbsentAndFailed(t *testing.T) {
 	for _, e := range []string{promBackupSinceLast, promBackupInfo, promBackupFullSize, promWALArchiveAge, promDrillSuccess, promDrillFailures, promDrillMtime, promSnapshotLast, promSnapshotOffsite} {
 		all.fail[e] = true
 	}
-	if got := buildBackupsSnapshot(context.Background(), all, now); got.SourceStatus != "unknown" || got.Freshness.Overall != freshnessUnknown {
+	if got := buildBackupsSnapshot(context.Background(), nil, all, now); got.SourceStatus != "unknown" || got.Freshness.Overall != freshnessUnknown {
 		t.Errorf("all-failed → source_status %q / overall %q, want unknown/unknown", got.SourceStatus, got.Freshness.Overall)
 	}
 }
@@ -323,7 +323,7 @@ func TestBuildBackupsSnapshot_FutureDatedOffsite(t *testing.T) {
 		promSnapshotLast:  {sample(nil, float64(now.Add(-6*time.Hour).Unix()))},
 	}}
 
-	got := buildBackupsSnapshot(context.Background(), src, now)
+	got := buildBackupsSnapshot(context.Background(), nil, src, now)
 
 	f := got.Freshness
 	if f.Offsite.Status != freshnessUnknown {

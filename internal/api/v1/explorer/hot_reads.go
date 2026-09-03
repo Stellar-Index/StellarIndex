@@ -9,6 +9,7 @@ import (
 
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
+	"github.com/Stellar-Index/StellarIndex/internal/worker"
 )
 
 // This file holds the bounded-TTL + single-flight layer in front of the
@@ -176,6 +177,15 @@ var errRefreshFailed = errors.New("explorer: detached cache refresh produced no 
 // retryable 503 as a read timeout — it is a capacity condition, not a bug.
 var errRefreshSaturated = errors.New("explorer: detached refresh capacity saturated; retry shortly")
 
+// errRefreshPanicked is what a COLD-path waiter receives when the
+// detached refresh it joined panicked. Distinct from a reader error so
+// an operator can tell "the refresher died" (which also moved
+// stellarindex_worker_panics_total) from "the query failed". A STALE
+// entry is unaffected: the served value is kept and the next request
+// starts a fresh flight, because the panicking flight is ended rather
+// than left latched.
+var errRefreshPanicked = errors.New("explorer: detached refresh panicked")
+
 // refreshAssetHolders kicks ONE detached holders scan for asset (no-op when
 // a flight is already up) and returns the flight to optionally wait on.
 // Detached on purpose: bound to a request's 8s deadline the scan for a huge
@@ -197,6 +207,16 @@ func (h *Handler) refreshAssetHolders(asset string) *keyFlight {
 	}
 	go func() {
 		defer gate.ReleaseClass("asset_holders")
+		// End the flight from a defer so a panic cannot wedge this
+		// asset's board forever — see perKeyFlight.end.
+		var err error
+		defer func() {
+			if rec := recover(); rec != nil {
+				worker.Report(h.Logger, "explorer-asset-holders-refresh", rec)
+				err = errRefreshPanicked
+			}
+			h.assetHolders.flight.end(asset, fl, err)
+		}()
 		start := time.Now()
 		rctx, cancel := context.WithTimeout(context.Background(), assetHoldersRefreshTimeout)
 		defer cancel()
@@ -205,11 +225,9 @@ func (h *Handler) refreshAssetHolders(asset string) *keyFlight {
 		if err != nil {
 			// Keep the previous entry (if any) — old-but-real beats blank.
 			h.Logger.Warn("asset holders detached refresh failed", "asset", asset, "err", err)
-			h.assetHolders.flight.end(asset, fl, err)
 			return
 		}
 		h.assetHolders.put(asset, assetHoldersEntry{holders: holders, total: total, cachedAt: time.Now()})
-		h.assetHolders.flight.end(asset, fl, nil)
 	}()
 	return fl
 }
@@ -356,6 +374,16 @@ func (h *Handler) refreshContractsDir(window int) *keyFlight {
 	}
 	go func() {
 		defer gate.ReleaseClass("contracts_dir")
+		// End the flight from a defer so a panic cannot wedge this
+		// window forever — see perKeyFlight.end.
+		var err error
+		defer func() {
+			if rec := recover(); rec != nil {
+				worker.Report(h.Logger, "explorer-contracts-dir-refresh", rec)
+				err = errRefreshPanicked
+			}
+			h.contractsDir.flight.end(key, fl, err)
+		}()
 		start := time.Now()
 		rctx, cancel := context.WithTimeout(context.Background(), contractsDirRefreshTimeout)
 		defer cancel()
@@ -365,11 +393,9 @@ func (h *Handler) refreshContractsDir(window int) *keyFlight {
 		if err != nil {
 			// Keep the previous entry (if any) — old-but-real beats blank.
 			h.Logger.Warn("contracts directory detached refresh failed", "window_days", window, "err", err)
-			h.contractsDir.flight.end(key, fl, err)
 			return
 		}
 		h.contractsDir.put(window, contractsDirEntry{rows: rows, since: since, cachedAt: time.Now()})
-		h.contractsDir.flight.end(key, fl, nil)
 	}()
 	return fl
 }

@@ -2,12 +2,14 @@ package v1
 
 import (
 	"context"
+	"log/slog"
 	"strconv"
 	"sync"
 	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/api/streaming"
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/worker"
 )
 
 // Shared tip-stream producers (real-time program RT-1; audit 2026-08-04
@@ -103,7 +105,7 @@ func (r *tipProducerRegistry) limit() int {
 // while costing nothing to serve, which is the opposite of the
 // protection intended. Callers must not use release when ok is false.
 func (r *tipProducerRegistry) acquire(
-	key tipProducerKey, start func(ctx context.Context),
+	key tipProducerKey, logger *slog.Logger, start func(ctx context.Context),
 ) (release func(), ok bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -128,7 +130,21 @@ func (r *tipProducerRegistry) acquire(
 		ctx, cancel := context.WithCancel(context.Background()) //nolint:gosec
 		p = &tipProducer{refs: 1, cancel: cancel}
 		r.active[key] = p
-		go start(ctx)
+		// `start` is a func VALUE, so the guard inside the producer it
+		// wraps (runSharedTipProducer defers recoverStreamProducer) is
+		// invisible to any static walk — including the one that keeps
+		// this file's goroutines guarded. Registering it HERE makes the
+		// guarantee checkable at the `go` statement, and it is a genuine
+		// backstop for any future caller that passes an unguarded start.
+		// Recovering leaves this producer stopped with its registry
+		// entry live; that entry is not a permanent wedge — release()
+		// still decrements, and the linger timer deletes it once the
+		// last subscriber leaves, so a new producer starts for the next
+		// subscriber after them.
+		go func() {
+			defer worker.Recover(logger, "api-sse-price_tip_shared")
+			start(ctx)
+		}()
 	}
 	return func() { r.release(key) }, true
 }
@@ -206,7 +222,7 @@ func (s *Server) acquireTipProducer(
 	asset, quote canonical.Asset, window int,
 ) (topic string, release func(), ok bool) {
 	key := tipProducerKey{asset: asset.String(), quote: quote.String(), window: window}
-	release, ok = s.tipProducers.acquire(key, func(ctx context.Context) {
+	release, ok = s.tipProducers.acquire(key, s.logger, func(ctx context.Context) {
 		s.runSharedTipProducer(ctx, key, asset, quote, window)
 	})
 	if !ok {

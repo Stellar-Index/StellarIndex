@@ -3,11 +3,13 @@ package v1
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"sync"
 	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
+	"github.com/Stellar-Index/StellarIndex/internal/worker"
 )
 
 // errNetworkStatsColdFailed is returned to a waiter that joined a cold
@@ -25,6 +27,16 @@ var errNetworkStatsColdFailed = errors.New("network stats: cold fetch failed")
 // off the request path with no material staleness. Same shape as the
 // coins/markets caches (asset_catalogue_cache.go), reduced to one key.
 type CachedNetworkStatsReader struct {
+	// logger sinks a panic recovered in a detached refresh goroutine.
+	// It is the PROCESS DEFAULT rather than the API Server's logger:
+	// these reader wrappers are constructed directly in
+	// cmd/stellarindex-api/main.go before the Server exists, and
+	// widening the exported constructor would churn every caller for a
+	// sink that ends up in the same journal either way. The
+	// load-bearing signal is stellarindex_worker_panics_total, which
+	// worker.Report moves regardless of the sink.
+	logger *slog.Logger
+
 	upstream NetworkStatsReader
 	ttl      time.Duration
 
@@ -39,7 +51,7 @@ type CachedNetworkStatsReader struct {
 // (every call passes through). 30s is the production default — matches the
 // coins cache and is far below the cadence at which these aggregates move.
 func NewCachedNetworkStatsReader(upstream NetworkStatsReader, ttl time.Duration) *CachedNetworkStatsReader {
-	return &CachedNetworkStatsReader{upstream: upstream, ttl: ttl}
+	return &CachedNetworkStatsReader{logger: slog.Default(), upstream: upstream, ttl: ttl}
 }
 
 // GetNetworkStats implements NetworkStatsReader with SWR semantics. It
@@ -143,8 +155,23 @@ func (c *CachedNetworkStatsReader) GetNetworkStatsAt(ctx context.Context) (times
 // a fresh background context (the triggering request's ctx dies the instant
 // the stale response is written), on success swaps val+at under the lock, on
 // failure keeps the stale value and only clears the in-flight marker.
+// clearFlight releases the single-flight marker. Deferred by refresh so
+// it runs on EVERY exit including a panic.
+func (c *CachedNetworkStatsReader) clearFlight() {
+	c.mu.Lock()
+	c.flight = nil
+	c.mu.Unlock()
+}
+
 func (c *CachedNetworkStatsReader) refresh(done chan struct{}) {
 	defer close(done)
+	// Clearing the in-flight marker is what makes the NEXT request
+	// retry. Deferred so it runs on a PANIC too: this cache holds ONE
+	// entry, so a marker left set freezes /v1/network-stats on its
+	// last value for the life of the process — and a cold process
+	// would answer errNetworkStatsColdFailed forever.
+	defer c.clearFlight()
+	defer worker.Recover(c.logger, "api-network-stats-refresh")
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
@@ -156,7 +183,6 @@ func (c *CachedNetworkStatsReader) refresh(done chan struct{}) {
 		c.at = time.Now()
 		c.hasVal = true
 	}
-	c.flight = nil
 	c.mu.Unlock()
 
 	if err != nil {

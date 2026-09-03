@@ -14,7 +14,7 @@ import (
 func TestForEachBounded_RunsEveryIndexOnce(t *testing.T) {
 	const n = 100
 	counts := make([]int32, n)
-	forEachBounded(n, 7, func(i int) {
+	forEachBounded(nil, n, 7, func(i int) {
 		atomic.AddInt32(&counts[i], 1)
 	})
 	for i, c := range counts {
@@ -42,7 +42,7 @@ func TestForEachBounded_RespectsConcurrencyLimit(t *testing.T) {
 	// is actually exercised rather than racing past instantly.
 	barrier.Add(1)
 	released := atomic.Bool{}
-	forEachBounded(n, limit, func(_ int) {
+	forEachBounded(nil, n, limit, func(_ int) {
 		cur := inFlight.Add(1)
 		for {
 			p := peak.Load()
@@ -68,13 +68,13 @@ func TestForEachBounded_RespectsConcurrencyLimit(t *testing.T) {
 // a non-positive limit degrades to serial, not a panic.
 func TestForEachBounded_DegenerateInputs(t *testing.T) {
 	ran := false
-	forEachBounded(0, 4, func(_ int) { ran = true })
-	forEachBounded(-3, 4, func(_ int) { ran = true })
+	forEachBounded(nil, 0, 4, func(_ int) { ran = true })
+	forEachBounded(nil, -3, 4, func(_ int) { ran = true })
 	if ran {
 		t.Error("fn ran for n <= 0")
 	}
 	var count int32
-	forEachBounded(3, 0, func(_ int) { atomic.AddInt32(&count, 1) })
+	forEachBounded(nil, 3, 0, func(_ int) { atomic.AddInt32(&count, 1) })
 	if count != 3 {
 		t.Errorf("limit<=0: ran %d of 3", count)
 	}

@@ -11,6 +11,7 @@ import (
 
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
+	"github.com/Stellar-Index/StellarIndex/internal/worker"
 	"github.com/Stellar-Index/StellarIndex/internal/xdrjson"
 )
 
@@ -359,6 +360,16 @@ func (h *Handler) refreshOpTypeStats() {
 		return
 	}
 	go func() {
+		// End the flight from a defer so a panic cannot wedge the
+		// op-type panel forever — see perKeyFlight.end.
+		var err error
+		defer func() {
+			if rec := recover(); rec != nil {
+				worker.Report(h.Logger, "explorer-op-type-stats-refresh", rec)
+				err = errRefreshPanicked
+			}
+			h.opTypeStats.flight.end("stats", fl, err)
+		}()
 		start := time.Now()
 		rctx, cancel := context.WithTimeout(context.Background(), opTypeStatsRefreshTimeout)
 		defer cancel()
@@ -368,7 +379,6 @@ func (h *Handler) refreshOpTypeStats() {
 			// Keep the previous value — the panel degrades to slightly-old
 			// numbers, never to nothing.
 			h.Logger.Warn("explorer OperationTypeStats detached refresh failed (serving last good)", "err", err)
-			h.opTypeStats.flight.end("stats", fl, err)
 			return
 		}
 		v := make([]OpTypeStatV, len(stats))
@@ -376,7 +386,6 @@ func (h *Handler) refreshOpTypeStats() {
 			v[i] = OpTypeStatV{Type: normalizeLakeOpType(st.OpType), Count: st.Count}
 		}
 		h.opTypeStats.put(v)
-		h.opTypeStats.flight.end("stats", fl, nil)
 	}()
 }
 
@@ -654,6 +663,16 @@ func (h *Handler) refreshOpsDirectory(limit int) {
 	}
 	go func() {
 		defer gate.ReleaseClass("ops_directory")
+		// End the flight from a defer so a panic cannot wedge this page
+		// size forever — see perKeyFlight.end.
+		var err error
+		defer func() {
+			if rec := recover(); rec != nil {
+				worker.Report(h.Logger, "explorer-ops-directory-refresh", rec)
+				err = errRefreshPanicked
+			}
+			h.opsDir.flight.end(key, fl, err)
+		}()
 		start := time.Now()
 		rctx, cancel := context.WithTimeout(context.Background(), opsDirRefreshTimeout)
 		defer cancel()
@@ -664,10 +683,8 @@ func (h *Handler) refreshOpsDirectory(limit int) {
 			// served response already discloses it via flags.stale.
 			h.Logger.Warn("explorer operations directory detached refresh failed (serving last good)",
 				"limit", limit, "err", err)
-			h.opsDir.flight.end(key, fl, err)
 			return
 		}
 		h.opsDir.put(limit, out)
-		h.opsDir.flight.end(key, fl, nil)
 	}()
 }

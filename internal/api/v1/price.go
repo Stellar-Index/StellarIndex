@@ -16,6 +16,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/aggregate"
 	"github.com/Stellar-Index/StellarIndex/internal/cachekeys"
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/worker"
 )
 
 // priceBatchMaxAssets is the upper bound on asset_ids per
@@ -1829,7 +1830,15 @@ func (s *Server) lookupPriceBatch(w http.ResponseWriter, r *http.Request, ids []
 	for i, raw := range ids {
 		wg.Add(1)
 		go func(i int, raw string) {
+			// Registered first so it unwinds LAST — the semaphore
+			// release below must run before the panic is swallowed, and
+			// wg.Done must run or wg.Wait() deadlocks.
 			defer wg.Done()
+			// Detached goroutine → middleware.Recoverer does not cover
+			// it. results[i] is left at its ZERO value on a panic, whose
+			// fail is nil and snap unset, so the id is DROPPED from the
+			// response rather than served with a fabricated price.
+			defer worker.Recover(s.logger, "api-price-batch-row")
 			sem <- struct{}{}
 			defer func() { <-sem }()
 			results[i] = s.resolveBatchRow(ctx, r, raw, quote)

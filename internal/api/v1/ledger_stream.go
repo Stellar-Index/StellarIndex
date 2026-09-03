@@ -3,12 +3,11 @@ package v1
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"net/http"
-	"runtime/debug"
 	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/api/streaming"
+	"github.com/Stellar-Index/StellarIndex/internal/worker"
 )
 
 const (
@@ -265,10 +264,12 @@ func ledgerStreamEvent(gen *streaming.Generator, view LedgerTipView) (streaming.
 // to lower real complexity rather than add //nolint).
 func (s *Server) recoverStreamProducer(stream string) {
 	if r := recover(); r != nil {
-		s.logger.Error("sse producer panicked",
-			"stream", stream,
-			"panic", fmt.Sprintf("%v", r),
-			"stack", string(debug.Stack()),
-		)
+		// Report rather than log locally: this is the ONE counter the
+		// stellarindex_worker_panics_total page rule reads, so a
+		// producer that dies here reaches an operator with a runbook
+		// instead of only a log line (#368 M4). The stream name becomes
+		// the worker label, which is what tells the operator WHICH
+		// stream stopped.
+		worker.Report(s.logger, "api-sse-"+stream, r)
 	}
 }

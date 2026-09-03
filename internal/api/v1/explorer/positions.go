@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
+	"github.com/Stellar-Index/StellarIndex/internal/worker"
 )
 
 // This file serves GET /v1/accounts/{g_strkey}/positions — the "DeFi
@@ -242,8 +243,17 @@ func (h *Handler) collectPositions(ctx context.Context, g string, resolve positi
 			// does not cover it. Degrade that fold instead.
 			defer func() {
 				if rec := recover(); rec != nil {
+					// worker.Report moves stellarindex_worker_panics_total
+					// so the page rule + runbook fire (#368 M4); the
+					// fold index and account stay in the local line
+					// below, out of the metric label, which must remain
+					// a bounded constant. covs[i].fail is what keeps the
+					// response HONEST — the coverage note discloses the
+					// missing fold rather than silently under-reporting
+					// the account's positions.
+					worker.Report(h.Logger, "explorer-account-positions-fold", rec)
 					h.Logger.Error("explorer AccountPositions fold panicked",
-						"fold", i, "account", g, "panic", rec)
+						"fold", i, "account", g)
 					covs[i].fail("panic")
 				}
 			}()

@@ -2,11 +2,14 @@ package v1
 
 import (
 	"context"
+	"errors"
+	"log/slog"
 	"sync"
 	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
+	"github.com/Stellar-Index/StellarIndex/internal/worker"
 )
 
 // CachedHistoryReader wraps a [HistoryReader], adding a small
@@ -47,6 +50,16 @@ import (
 // while the fill completes out-of-band and warms the cache for the
 // next poll.
 type CachedHistoryReader struct {
+	// logger sinks a panic recovered in a detached refresh goroutine.
+	// It is the PROCESS DEFAULT rather than the API Server's logger:
+	// these reader wrappers are constructed directly in
+	// cmd/stellarindex-api/main.go before the Server exists, and
+	// widening the exported constructor would churn every caller for a
+	// sink that ends up in the same journal either way. The
+	// load-bearing signal is stellarindex_worker_panics_total, which
+	// worker.Report moves regardless of the sink.
+	logger *slog.Logger
+
 	HistoryReader // embedded: every method pass-through unless overridden below
 
 	ttl time.Duration
@@ -94,6 +107,7 @@ type historyCacheEntry struct {
 // page tolerates 2m staleness on a "latest per source" surface).
 func NewCachedHistoryReader(upstream HistoryReader, ttl time.Duration) *CachedHistoryReader {
 	return &CachedHistoryReader{
+		logger:        slog.Default(),
 		HistoryReader: upstream,
 		ttl:           ttl,
 		entries:       map[string]*historyCacheEntry{},
@@ -218,6 +232,32 @@ func (c *CachedHistoryReader) LatestTradePerSource(
 // the entry is removed from the map; waiters still read entry.err
 // via their retained pointer. Mirrors markets_cache.go refreshPools
 // + the cold-leader error path, unified.
+// errHistoryFillPanicked is what a cold waiter receives when the fill
+// goroutine it joined panicked. It is a distinct sentinel rather than a
+// reused upstream error so an operator reading the 5xx can tell "the
+// refresher died" from "the query failed".
+var errHistoryFillPanicked = errors.New("history cache: fill panicked")
+
+// settleFailedFill applies the FAILED-fill bookkeeping to entry: keep a
+// stale value and clear the in-flight marker so the next expiry retries;
+// or, when there is no prior value, hand the error to the waiters and
+// drop the entry so the next request starts a fresh fill. Split out of
+// fill so the panic guard can run exactly the same transitions the error
+// path runs — a guard that only reported would leave the entry latched
+// in flight forever.
+func (c *CachedHistoryReader) settleFailedFill(key string, entry *historyCacheEntry, err error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if !entry.at.IsZero() {
+		entry.flight = nil
+		return
+	}
+	entry.err = err
+	if c.entries[key] == entry {
+		delete(c.entries, key)
+	}
+}
+
 func (c *CachedHistoryReader) fill(
 	key string,
 	entry *historyCacheEntry,
@@ -225,6 +265,30 @@ func (c *CachedHistoryReader) fill(
 	upstream func(context.Context) ([]canonical.Trade, error),
 ) {
 	defer close(done)
+	// Registered AFTER close(done), so it runs BEFORE it. That order is
+	// load-bearing: waiters read entry.err / entry.trades only once
+	// `done` closes, and that close is the happens-before edge, so the
+	// entry has to be SETTLED before it fires.
+	//
+	// Settling on a panic is the whole point. Without it the entry keeps
+	// entry.flight set and entry.at zero forever: the cold waiter wakes
+	// on the close, reads a nil error and nil trades, and returns an
+	// EMPTY result with 200 OK — and every later request re-joins the
+	// already-closed flight and gets the same empty answer, for the life
+	// of the process. A permanently-empty cache that reports success is
+	// strictly worse than the crash it replaces, so the recover runs the
+	// same bookkeeping the error path runs (see settleFailedFill).
+	//
+	// The only panic source inside the lock would be the switch below —
+	// map delete and field assignment, neither of which panics — so
+	// settleFailedFill cannot deadlock re-acquiring c.mu. The realistic
+	// panic is in upstream, which runs before the lock is taken.
+	defer func() {
+		if rec := recover(); rec != nil {
+			worker.Report(c.logger, "api-history-latest-per-source-fill", rec)
+			c.settleFailedFill(key, entry, errHistoryFillPanicked)
+		}
+	}()
 	ctx, cancel := context.WithTimeout(context.Background(), historyRefreshBudget)
 	defer cancel()
 

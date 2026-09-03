@@ -12,6 +12,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/sources/external"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 	"github.com/Stellar-Index/StellarIndex/internal/version"
+	"github.com/Stellar-Index/StellarIndex/internal/worker"
 )
 
 // FXCoverageReader is the seam the ingestion diagnostics reads
@@ -672,6 +673,13 @@ func (s *Server) buildIngestionSnapshot(ctx context.Context) IngestionDiagnostic
 		wg.Add(1)
 		go func(f filler) {
 			defer wg.Done()
+			// Detached from the handler goroutine — middleware.Recoverer
+			// does not cover it, so an unrecovered panic in ONE filler
+			// would take the whole API down to render a diagnostics
+			// page. Recovering leaves that filler's fields at their zero
+			// value, the same shape a timed-out filler leaves, and the
+			// snapshot is rebuilt from scratch on the next request.
+			defer worker.Recover(s.logger, "api-ingestion-snapshot-filler")
 			subCtx, subCancel := context.WithTimeout(ctx, f.timeout)
 			defer subCancel()
 			f.fn(subCtx)

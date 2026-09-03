@@ -4,6 +4,8 @@ import (
 	"context"
 	"sync"
 	"time"
+
+	"github.com/Stellar-Index/StellarIndex/internal/worker"
 )
 
 // This file puts a prewarmed, stale-while-revalidate layer under the
@@ -116,6 +118,16 @@ func (s *Server) cachedRosterCount(ctx context.Context, meta ProtocolMeta) (coun
 // deadline — and only DISPLACES the cached entry on success: a failed read
 // keeps the last-good count (old-but-real beats a fabricated zero), and a
 // first-ever failure leaves the key absent so the caller omits the source.
+// endRosterFlight deregisters fl and releases its waiters. Deferred by
+// the refresh goroutine so it runs on EVERY exit including a panic —
+// a flight left in the map is never retried and never closes.
+func (s *Server) endRosterFlight(key string, fl *rosterFlight) {
+	s.protocolRosterCache.mu.Lock()
+	delete(s.protocolRosterCache.flights, key)
+	s.protocolRosterCache.mu.Unlock()
+	close(fl.done)
+}
+
 func (s *Server) refreshRosterLocked(key string, meta ProtocolMeta) *rosterFlight {
 	if fl, up := s.protocolRosterCache.flights[key]; up {
 		return fl
@@ -123,6 +135,18 @@ func (s *Server) refreshRosterLocked(key string, meta ProtocolMeta) *rosterFligh
 	fl := &rosterFlight{done: make(chan struct{})}
 	s.protocolRosterCache.flights[key] = fl
 	go func() {
+		// Deregistering the flight and closing fl.done are the terminal
+		// bookkeeping, and they run from a DEFER so a panic in rosterErr
+		// cannot skip them. Left undone, the flight stays in the map
+		// forever and never closes: refreshRosterLocked keeps handing
+		// the dead flight to every later request, each of which then
+		// waits on a channel that will never fire.
+		defer func() {
+			if rec := recover(); rec != nil {
+				worker.Report(s.logger, "api-protocol-roster-refresh", rec)
+			}
+			s.endRosterFlight(key, fl)
+		}()
 		rctx, cancel := context.WithTimeout(context.Background(), protocolRosterRefreshTimeout)
 		defer cancel()
 		rows, err := s.rosterErr(rctx, meta)
@@ -131,13 +155,11 @@ func (s *Server) refreshRosterLocked(key string, meta ProtocolMeta) *rosterFligh
 		if err == nil {
 			s.protocolRosterCache.entries[key] = rosterEntry{count: len(rows), at: time.Now()}
 		}
-		delete(s.protocolRosterCache.flights, key)
 		s.protocolRosterCache.mu.Unlock()
 
 		if err != nil && s.logger != nil {
 			s.logger.Warn("protocol roster refresh failed", "source", meta.Name, "err", err)
 		}
-		close(fl.done)
 	}()
 	return fl
 }
