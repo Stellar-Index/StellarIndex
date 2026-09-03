@@ -49,6 +49,18 @@ describe('NetworkUnavailable', () => {
     expect(screen.getByText(/price aggregator/i)).toBeInTheDocument();
   });
 
+  it('titles the empty state at h2 — it sits directly under the page <h1>', async () => {
+    // A whole-page state, never a panel's. At the default h3, /markets on
+    // the test nets shipped an h1 → h3 outline (heading-order, WCAG 1.3.1)
+    // and the pages that dropped their <h1> had an h3 as the top heading.
+    const { NetworkUnavailable } = await loadFor('testnet');
+    render(<NetworkUnavailable href="/markets" />);
+    expect(screen.getByRole('heading', { level: 2 })).toHaveTextContent(
+      'Not available on Testnet',
+    );
+    expect(screen.queryByRole('heading', { level: 3 })).not.toBeInTheDocument();
+  });
+
   it('renders for an ungated route only when that route is unavailable', async () => {
     // A route with no capability entry is available everywhere, so the
     // component must stay silent rather than claim otherwise.

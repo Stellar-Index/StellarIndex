@@ -6,7 +6,7 @@ import { useSearchParams } from 'next/navigation';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { Panel } from '@/components/reveal';
-import { Container, Callout, TxStatusBadge } from '@/components/ui';
+import { Callout, TxStatusBadge } from '@/components/ui';
 import { OperationMixPanel, ThroughputPanel } from '@/components/NetworkInsight';
 import { apiGet, asExample } from '@/api/client';
 import { cn } from '@/lib/cn';
@@ -106,16 +106,7 @@ export function OperationsView() {
   }
 
   return (
-    <Container className="space-y-6 py-8">
-      <header className="space-y-1">
-        <p className="text-xs uppercase tracking-wider text-ink-muted">Explorer</p>
-        <h1 className="text-2xl font-semibold tracking-tight text-ink">Operations</h1>
-        <p className="max-w-2xl text-sm text-ink-muted">
-          Every operation on the network, newest first, decoded straight from
-          the certified lake. Click a hash for the full transaction.
-        </p>
-      </header>
-
+    <div className="space-y-6">
       {/* S-005: the chips row becomes the shared ranked-bars mix +
           the daily ops series — same components /network uses. Only on
           page 1; deep-paging visitors came for the rows. */}
@@ -255,6 +246,6 @@ export function OperationsView() {
           </Link>
         </div>
       )}
-    </Container>
+    </div>
   );
 }
