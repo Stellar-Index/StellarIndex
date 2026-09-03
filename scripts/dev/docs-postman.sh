@@ -38,12 +38,18 @@ mkdir -p examples/postman
 # through enum/format example values, so every run produced a different
 # collection and the committed artifact silently drifted).
 TMP=$(mktemp)
+if command -v openapi2postmanv2 >/dev/null 2>&1; then
+  CONVERTER=(openapi2postmanv2)
+else
+  CONVERTER=(npx --yes "openapi-to-postmanv2@${CONVERTER_VERSION}")
+fi
+
 NODE_OPTIONS="--require ${REPO_ROOT}/scripts/dev/postman-seed-random.js" \
-npx --yes "openapi-to-postmanv2@${CONVERTER_VERSION}" \
-    -s openapi/stellar-index.v1.yaml \
-    -o "$TMP" \
-    -p \
-    >/dev/null
+  "${CONVERTER[@]}" \
+      -s openapi/stellar-index.v1.yaml \
+      -o "$TMP" \
+      -p \
+      >/dev/null
 
 # openapi-to-postmanv2 stamps a fresh UUIDv4 into every "id" field
 # (and a "_postman_id" at the collection root, sourced from crypto so

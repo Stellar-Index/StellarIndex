@@ -14,6 +14,7 @@ ARG ZIZMOR_AMD64_SHA256=ec8c95cd800845abb9bbc5f377ec7c57d2eb8e2386a00a201d3a74ee
 ARG ZIZMOR_ARM64_SHA256=018a024d6b6d09733b07f6ef42838d984c23ec04bc9b2acd55f7d67826aeafe5
 ARG PROM_VERSION=2.55.1
 ARG ALERTMANAGER_VERSION=0.28.1
+ARG OPENAPI_TO_POSTMAN_VERSION=6.0.1
 
 ENV PATH="/root/.local/bin:/go/bin:/pnpm:${PATH}" \
     PIPX_HOME=/root/.local/pipx \
@@ -31,7 +32,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       ca-certificates curl git jq make openssh-client pipx python3 python3-jinja2 python3-yaml rsync shellcheck xz-utils \
     && rm -rf /var/lib/apt/lists/* \
     && corepack enable pnpm \
-    && corepack prepare pnpm@10.33.0 --activate
+    && corepack prepare pnpm@10.33.0 --activate \
+    && npm install --global "openapi-to-postmanv2@${OPENAPI_TO_POSTMAN_VERSION}"
 
 RUN set -eux; \
     case "${TARGETARCH}" in amd64|arm64) arch="${TARGETARCH}" ;; *) echo "unsupported architecture: ${TARGETARCH}"; exit 1 ;; esac; \
