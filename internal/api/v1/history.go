@@ -326,10 +326,12 @@ func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) { //nolin
 	// 8s ceiling on the trades hypertable range query. Same
 	// pattern as #1082 / #1099 / #1100 / #1101 / #1102. Long
 	// `from` windows (no `from` set, or month-spanning) can take
-	// 5–10s on a cold cache scanning per-trade rows.
+	// 5–10s on a cold cache scanning per-trade rows. One ceiling spans
+	// every alias scan below — the fan-in must not multiply the
+	// endpoint's worst-case hold.
 	hCtx, hCancel := context.WithTimeout(r.Context(), 8*time.Second)
 	defer hCancel()
-	trades, err := reader.TradesInRangeAfter(hCtx, pair,
+	trades, err := s.tradesInRangeAfterWithAliases(hCtx, reader, pair,
 		from, to, afterTs, afterLedger, afterTxHash, afterSource, afterOpIndex, limit)
 	if err != nil {
 		if clientAborted(r, err) {
@@ -724,6 +726,58 @@ func (s *Server) handleHistorySinceInception(w http.ResponseWriter, r *http.Requ
 		Granularity: gran,
 		Points:      wire,
 	}, Flags{Triangulated: triangulated})
+}
+
+// tradesInRangeAfterWithAliases reads one page of raw trades trying each
+// XLM dual-form alias pair and returns the FIRST non-empty page — the
+// raw-trade twin of [Server.historyPointsWithAliases], and the first-hit
+// gate [Server.tradesInRangeWithStablecoinFallback] already applies to a
+// non-fiat quote on the /v1/vwap side.
+//
+// A literal-keyed read is blind to every venue publishing XLM under
+// the other id: `?base=native&quote=fiat:USD` served an empty page while
+// the identical window under `?base=crypto:XLM` returned a full one, and
+// /v1/vwap — which loops the aliases — reported a live trade population for
+// the pair the same hour. `native` is the documented spelling of XLM on
+// this parameter, so the blind form is the one the API description sends a
+// reader to first.
+//
+// First-hit, NOT a cross-form merge, because the endpoint's ordering
+// contract is per-pair: rows come back ordered (ts, ledger, tx_hash,
+// op_index, source) and `cursor` resumes on that tuple. Serving one alias
+// form per page keeps the cursor monotonic over exactly the population it
+// was minted from. Cross-form trade FUSION is the same separate design
+// decision [Server.historyPointsWithAliases] defers on the bucket side.
+//
+// Non-XLM pairs have exactly one spelling, so they still do one scan; the
+// literal form is tried first, so a populated pair costs nothing. The
+// caller's deadline covers ALL scans (same rule as
+// [Server.computeObservations]). The first form's error propagates
+// unchanged.
+func (s *Server) tradesInRangeAfterWithAliases(
+	ctx context.Context,
+	reader HistoryReader,
+	pair canonical.Pair,
+	from, to, afterTs time.Time,
+	afterLedger uint32,
+	afterTxHash, afterSource string,
+	afterOpIndex uint32,
+	limit int,
+) ([]canonical.Trade, error) {
+	for _, b := range assetAliases(pair.Base) {
+		for _, q := range assetAliases(pair.Quote) {
+			ap, perr := canonical.NewPair(b, q)
+			if perr != nil {
+				continue // degenerate alias combination (identity pair)
+			}
+			trades, err := reader.TradesInRangeAfter(ctx, ap, from, to,
+				afterTs, afterLedger, afterTxHash, afterSource, afterOpIndex, limit)
+			if err != nil || len(trades) > 0 {
+				return trades, err
+			}
+		}
+	}
+	return nil, nil
 }
 
 // historyPointsWithAliases reads the point series trying each XLM

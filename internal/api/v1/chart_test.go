@@ -550,16 +550,81 @@ func TestChart_StablecoinFallback(t *testing.T) {
 	if !env.Flags.Triangulated {
 		t.Error("flags.triangulated = false, want true on stablecoin-proxy fallback")
 	}
-	// Reader must have been called twice: literal pair first
-	// (returns 0 points), then fallback to USDC.
+	// Read order: the literal pair, then XLM's other canonical spellings
+	// against the SAME quote (an alias form is the same asset, not a
+	// proxy), and only once those come back empty the USDC proxy.
 	if len(reader.calls) < 2 {
 		t.Fatalf("reader saw %d calls, want at least 2 (literal + fallback)", len(reader.calls))
 	}
 	if reader.calls[0] != "native/fiat:USD" {
 		t.Errorf("first call = %q, want native/fiat:USD", reader.calls[0])
 	}
-	if reader.calls[1] != "native/USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN" {
-		t.Errorf("fallback call = %q, want native/USDC-…", reader.calls[1])
+	const proxyPair = "native/USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
+	aliasAt, proxyAt := -1, -1
+	for i, c := range reader.calls {
+		switch c {
+		case "crypto:XLM/fiat:USD":
+			aliasAt = i
+		case proxyPair:
+			proxyAt = i
+		}
+	}
+	if aliasAt < 0 {
+		t.Errorf("crypto:XLM/fiat:USD never read; calls=%v", reader.calls)
+	}
+	if proxyAt < 0 {
+		t.Fatalf("proxy pair native/USDC-… never read; calls=%v", reader.calls)
+	}
+	if aliasAt > proxyAt {
+		t.Errorf("proxied the quote before trying the crypto:XLM spelling; calls=%v", reader.calls)
+	}
+}
+
+// TestChart_NativeReadsCryptoXLMAlias is the chart-side half of the
+// alias-blind regression: the literal-keyed CAGG read left
+// `?asset=native` unable to see the series stored under `crypto:XLM`.
+// chartStablecoinFallback did not cover it — it crosses the base aliases
+// with PROXY quotes only and skips the requested quote, so
+// crypto:XLM/fiat:USD was the one combination never read.
+//
+// An alias form is the same asset in another canonical spelling, so the
+// response must NOT be stamped triangulated and must echo the id the
+// client asked for.
+func TestChart_NativeReadsCryptoXLMAlias(t *testing.T) {
+	t0 := time.Unix(1_770_000_000, 0).UTC()
+	reader := &pairKeyedHistoryReader{
+		byPair: map[string][]v1.HistoryPoint{
+			"crypto:XLM/fiat:USD": {
+				{Bucket: t0, VWAP: "0.16"},
+				{Bucket: t0.Add(time.Hour), VWAP: "0.161"},
+			},
+		},
+	}
+	srv := v1.New(v1.Options{History: reader})
+	ts := httpTestServer(t, srv)
+
+	resp := mustGet(t, ts.URL+"/v1/chart?asset=native&quote=fiat:USD&timeframe=24h&granularity=1h")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status=%d", resp.StatusCode)
+	}
+	var env struct {
+		Data  v1.ChartSeries `json:"data"`
+		Flags v1.Flags       `json:"flags"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&env); err != nil {
+		t.Fatal(err)
+	}
+	if len(env.Data.Points) != 2 {
+		t.Fatalf("got %d points, want 2 — ?asset=native must reach the crypto:XLM series", len(env.Data.Points))
+	}
+	if env.Flags.Triangulated {
+		t.Error("flags.triangulated = true; an alias spelling is the same asset, not a proxy")
+	}
+	if env.Data.AssetID != "native" {
+		t.Errorf("asset_id = %q, want native (echo the requested form)", env.Data.AssetID)
+	}
+	if reader.calls[0] != "native/fiat:USD" {
+		t.Errorf("first call = %q, want native/fiat:USD (the literal form leads)", reader.calls[0])
 	}
 }
 

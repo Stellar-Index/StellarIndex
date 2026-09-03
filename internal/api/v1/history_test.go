@@ -19,6 +19,11 @@ import (
 // stubHistoryReader implements v1.HistoryReader with a static slice.
 type stubHistoryReader struct {
 	trades []canonical.Trade
+	// tradesByPair, when non-nil, overrides `trades` for
+	// TradesInRangeAfter based on the queried pair; tradesPairs records
+	// every pair that method was asked for, in order. See its godoc.
+	tradesByPair map[string][]canonical.Trade
+	tradesPairs  []string
 	// observations is the per-source fixture returned by
 	// LatestTradePerSource. Distinct from `trades` so observations
 	// tests don't have to share state with TradesInRange tests.
@@ -105,8 +110,14 @@ func tradesForPair(trades []canonical.Trade, pair canonical.Pair) []canonical.Tr
 
 // TradesInRangeAfter: the stub ignores the cursor (tests construct
 // their own trade slices per-assertion) but records it so cursor
-// tests can verify the handler forwarded it.
-func (r *stubHistoryReader) TradesInRangeAfter(_ context.Context, _ canonical.Pair, from, to, afterTs time.Time, afterLedger uint32, afterTxHash, afterSource string, afterOpIndex uint32, limit int) ([]canonical.Trade, error) {
+// tests can verify the handler forwarded it. Every queried pair is
+// appended to tradesPairs so alias tests can pin the read order.
+//
+// tradesByPair, when non-nil, keys the fixture on the requested pair —
+// the trades twin of pointsByPair, used by the alias regression test
+// where the literal pair is empty and the crypto:XLM spelling carries
+// the rows.
+func (r *stubHistoryReader) TradesInRangeAfter(_ context.Context, pair canonical.Pair, from, to, afterTs time.Time, afterLedger uint32, afterTxHash, afterSource string, afterOpIndex uint32, limit int) ([]canonical.Trade, error) {
 	r.lastCall.from = from
 	r.lastCall.to = to
 	r.lastCall.limit = limit
@@ -115,8 +126,12 @@ func (r *stubHistoryReader) TradesInRangeAfter(_ context.Context, _ canonical.Pa
 	r.lastCall.afterTxHash = afterTxHash
 	r.lastCall.afterSource = afterSource
 	r.lastCall.afterOpIndex = afterOpIndex
+	r.tradesPairs = append(r.tradesPairs, pair.String())
 	if r.err != nil {
 		return nil, r.err
+	}
+	if r.tradesByPair != nil {
+		return r.tradesByPair[pair.String()], nil
 	}
 	return r.trades, nil
 }
@@ -580,6 +595,63 @@ func TestHistory_EmptyListReturnsEmptyArray(t *testing.T) {
 	}
 	if parsed.Data == nil {
 		t.Error("empty result should be [] not null")
+	}
+}
+
+// TestHistory_NativeReadsCryptoXLMAlias pins the alias fan-in on the raw
+// trade feed. The handler keyed its trades scan on the LITERAL pair, so
+// `?base=native&quote=fiat:USD` served an empty page while the identical
+// window under `?base=crypto:XLM` returned a full one and /v1/vwap, which
+// loops the aliases, reported a live trade population for the pair the
+// same hour. XLM's three canonical spellings are disjoint venue
+// populations (the on-chain decoders stamp `native`, the CEX parsers
+// `crypto:XLM`), and every sibling read path already loops
+// canonical.AssetAliases.
+//
+// The literal form must still be read FIRST — a populated pair must not
+// be overtaken by an alias — and the rows carry the spelling they were
+// stored under, so a client can always see which form answered.
+func TestHistory_NativeReadsCryptoXLMAlias(t *testing.T) {
+	xlm, err := canonical.ParseAsset("crypto:XLM")
+	if err != nil {
+		t.Fatal(err)
+	}
+	usd, err := canonical.ParseAsset("fiat:USD")
+	if err != nil {
+		t.Fatal(err)
+	}
+	aliasPair, err := canonical.NewPair(xlm, usd)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cex := mkHistTrade(100)
+	cex.Source = "coinbase"
+	cex.Pair = aliasPair
+
+	// Only the crypto:XLM spelling has rows; native/fiat:USD is empty.
+	reader := &stubHistoryReader{tradesByPair: map[string][]canonical.Trade{
+		aliasPair.String(): {cex},
+	}}
+	srv := v1.New(v1.Options{History: reader})
+	ts := httpTestServer(t, srv)
+
+	resp := mustGet(t, ts.URL+"/v1/history?base=native&quote=fiat:USD&limit=50")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d", resp.StatusCode)
+	}
+	var env struct {
+		Data []v1.TradeRow `json:"data"`
+	}
+	mustDecode(t, resp, &env)
+	if len(env.Data) != 1 {
+		t.Fatalf("got %d rows, want 1 — ?base=native must reach the crypto:XLM trades", len(env.Data))
+	}
+	if env.Data[0].BaseAsset != "crypto:XLM" || env.Data[0].QuoteAsset != "fiat:USD" {
+		t.Errorf("row pair = %s/%s, want crypto:XLM/fiat:USD (the spelling it was stored under)",
+			env.Data[0].BaseAsset, env.Data[0].QuoteAsset)
+	}
+	if len(reader.tradesPairs) == 0 || reader.tradesPairs[0] != "native/fiat:USD" {
+		t.Errorf("first scan = %v, want native/fiat:USD (the literal form leads)", reader.tradesPairs)
 	}
 }
 
