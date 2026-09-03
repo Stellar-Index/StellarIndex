@@ -214,8 +214,8 @@ func xlmBaseRestampFollowUp(from, to time.Time) string {
 	b.WriteString("twap_1h/twap_1d are built ON prices_1m, so prices_1m goes first.\n\n")
 	for _, c := range xlmBaseRestampCAGGs {
 		pf, pt := timescale.PadRefreshWindow(lo, hi, c.MinWindow)
-		b.WriteString(fmt.Sprintf("  CALL refresh_continuous_aggregate('%s', '%s', '%s');\n",
-			c.Name, pf.Format(time.RFC3339), pt.Format(time.RFC3339)))
+		fmt.Fprintf(&b, "  CALL refresh_continuous_aggregate('%s', '%s', '%s');\n",
+			c.Name, pf.Format(time.RFC3339), pt.Format(time.RFC3339))
 	}
 	b.WriteString("\nThen force the asset_volume_24h rollup (it re-sums prices_1m.volume_usd; it also\n")
 	b.WriteString("self-heals on its own cadence, so verify rather than assume).\n")
