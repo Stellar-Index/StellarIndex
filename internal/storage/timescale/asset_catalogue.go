@@ -358,14 +358,16 @@ const adjustedVolume24hExpr = `(COALESCE(vol.vol_usd, 0) * ` +
 // wire rounding — extracted from the price_usd column so the rank-tier
 // expression can ask "does this row have a price at all?" without a
 // second, drifting copy of the direct-or-XLM-triangulated chain.
-const listingPriceUSDExpr = `COALESCE(
-		      CASE WHEN ca.asset_id = 'native'
-		           THEN (SELECT vwap FROM xlm_usd)
-		           ELSE NULL
-		      END,
-		      direct.vwap,
-		      vs_xlm.vwap * (SELECT vwap FROM xlm_usd)
-		    )`
+//
+// Since #331 F1 that chain is not evaluated here: it is
+// [snapshotPriceUSDExpr], resolved once per aggregator pass into
+// asset_price_snapshot, and this is the rollup column the listing reads.
+// The indirection still earns its keep — listingRankTierExpr splices it
+// into the SELECT, the ORDER BY and the keyset WHERE, and the join that
+// supplies `aps` carries the staleness ceiling, so "unpriced" and
+// "priced too long ago to serve" resolve to the same tier through one
+// expression instead of three copies.
+const listingPriceUSDExpr = `aps.price_usd`
 
 // scamFlagTagsSQLArray inlines [DirectoryScamFlagTags] as a SQL array
 // LITERAL rather than a bind parameter. Deliberate: the predicate below
@@ -375,7 +377,7 @@ const listingPriceUSDExpr = `COALESCE(
 // adjustedVolume24hExpr is a const). The values are a compile-time
 // vocabulary, never caller input, and mustSQLTextArrayLiteral panics at
 // package init on anything outside [a-z], matching
-// listAssetsBaseSelectSQL's fail-loud posture on its pushdown anchor.
+// listAssetsBaseSelectSQL's fail-loud posture on its rank-tier marker.
 var scamFlagTagsSQLArray = mustSQLTextArrayLiteral(DirectoryScamFlagTags)
 
 // mustSQLTextArrayLiteral renders a lowercase-ASCII word list as a
@@ -418,8 +420,9 @@ var directoryScamFlaggedExpr = `EXISTS (SELECT 1 FROM unnest(dir.tags) t ` +
 // rankTierMarker is replaced with [listingRankTierExpr] for the active
 // order when [listAssetsBaseSelectSQL] renders the base SELECT. The
 // SELECT is one const shared by both orders but the tier is not, so the
-// substitution happens at render time — same marker idiom as the
-// /*PUSHDOWN_…*/ comments.
+// substitution happens at render time. It is the last marker left in
+// this SELECT: the /*PUSHDOWN_…*/ pair went with the price CTEs in
+// #331 F1.
 const rankTierMarker = "/*RANK_TIER*/"
 
 // listingRankTierExpr is the PRIMARY, ASCENDING sort key of the
@@ -454,26 +457,36 @@ func listingRankTierExpr(order AssetsOrder) string {
 	return `(CASE WHEN ` + directoryScamFlaggedExpr + ` THEN 2 ELSE 0 END)`
 }
 
-// listAssetsBaseSelect is the CTE-laden SELECT shared by every
-// permutation of WHERE-clause buildAssetsQuery composes. Pulled
-// out of the function body so buildAssetsQuery stays under the
-// funlen threshold and the SQL is editable as a single block.
+// listAssetsBaseSelect is the SELECT shared by every permutation of
+// WHERE-clause buildAssetsQuery composes. Pulled out of the function
+// body so buildAssetsQuery stays under the funlen threshold and the SQL
+// is editable as a single block.
+//
+// It reads NO hypertable and NO continuous aggregate. Both money columns
+// come from worker-maintained rollups keyed on asset_id — volume from
+// asset_volume_24h (migration 0087, #43) and price/change/source_count
+// from asset_price_snapshot (migration 0154, #331 F1) — so the cost of
+// a listing page is the spine plus three small hash joins, whatever the
+// limit / cursor / filter. Before #331 F1 this query materialised twelve
+// `DISTINCT ON … FROM prices_1m` CTEs per call for every asset in the
+// catalogue: 8,019 calls at mean 2,400 ms on r1 (`pg_stat_statements`,
+// 2026-07-06 → 2026-09-02), 380,324 shared buffers each, to return ~116
+// rows. Keep it that way — if you find yourself adding a prices_1m read
+// here, the answer is another column on a rollup.
 //
 // Volume aggregation: prices_1m.volume_usd summed across the
-// trailing 24h, where the asset participates as base OR quote.
+// trailing 24h, where the asset participates as base OR quote —
+// computed by internal/aggregate/assetvolrollup.
 // classic_asset_stats_5m used to be the intended source; it never
 // got a writer and migration 0152 dropped it (#358). Most classic
 // assets have no direct fiat:USD pair either. The CTE-with-UNION
-// sidesteps both.
+// in the refresh sidesteps both.
 //
-// Price + 24h change: latest + 24h-ago snapshots, with XLM
-// triangulation when no direct USD-quote pair (fiat:USD or the
-// USDC stablecoin proxy — see the direct_usd CTE comment)
-// exists. DISTINCT ON gives one "latest per asset" row without a
-// window function. ±30min tolerance on 24h-ago so sparse-trade
-// assets still produce a change %. Change is computed as
-// (latest / ago - 1) * 100 to two fractional digits; NULL when
-// either side is missing.
+// Price + 1h/24h/7d change: latest + lookback snapshots, with XLM
+// triangulation when no direct USD-quote pair (fiat:USD or the USDC
+// stablecoin proxy) exists — the derivation is unchanged and now lives
+// in refreshAssetPriceSnapshotUpsert (asset_price_snapshot.go), which
+// also documents the staleness contract this query's join enforces.
 //
 // market_cap_usd + circulating_supply remain NULL — their proper
 // sources (asset_supply_history) aren't running for the long
@@ -545,272 +558,6 @@ const listAssetsBaseSelect = `
 		  -- cheap regardless of the caller's asset filter.
 		  SELECT asset_id, vol_usd
 		    FROM asset_volume_24h
-		),
-		direct_usd AS (
-		  -- "Direct USD" = quoted in fiat:USD (CEX feeds) OR in
-		  -- USDC — the same stablecoin-proxy policy the xlm_usd
-		  -- CTEs below already apply (CLAUDE.md: "stablecoin
-		  -- fiat-proxy is aggregator policy" — USDC ≈ USD, ~0.1%
-		  -- peg error accepted). A USDC-quoted vwap is taken AS
-		  -- the USD price. Without the USDC member, assets whose
-		  -- only markets quote in USDC (AUDD, EURC, every *allow
-		  -- variant…) had 24h volume but a NULL price_usd — 473 of
-		  -- 500 listing rows priceless (2026-08-24 operator
-		  -- report). USDC counts in BOTH identity forms: the
-		  -- classic G-issuer line AND its SAC contract (CCW67T… —
-		  -- Soroban-venue trades carry the SAC id; the
-		  -- AliasRegistry in internal/canonical/alias.go unifies
-		  -- these on serving paths, but this SQL joins literal
-		  -- strings, and USDC↔SAC is one of the two compile-time-
-		  -- known wrapper families, operator-pinned via r1's
-		  -- [supply.sac_wrappers]). DISTINCT ON + bucket DESC
-		  -- keeps the freshest row across all quote forms.
-		  SELECT DISTINCT ON (base_asset) base_asset AS asset_id, vwap,
-		         array_length(sources, 1) AS source_count
-		    FROM prices_1m
-		   WHERE quote_asset IN (
-		     'USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN',
-		     'CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75',
-		     'fiat:USD'
-		   )
-		     AND bucket >= now() - INTERVAL '7 days'
-		     AND vwap IS NOT NULL /*PUSHDOWN_BASE*/
-		   ORDER BY base_asset, bucket DESC
-		),
-		direct_usd_1h AS (
-		  SELECT DISTINCT ON (base_asset) base_asset AS asset_id, vwap
-		    FROM prices_1m
-		   WHERE quote_asset IN (
-		     'USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN',
-		     'CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75',
-		     'fiat:USD'
-		   )
-		     AND bucket BETWEEN now() - INTERVAL '90 minutes'
-		                   AND now() - INTERVAL '55 minutes'
-		     AND vwap IS NOT NULL /*PUSHDOWN_BASE*/
-		   ORDER BY base_asset, bucket DESC
-		),
-		direct_usd_24h AS (
-		  SELECT DISTINCT ON (base_asset) base_asset AS asset_id, vwap
-		    FROM prices_1m
-		   WHERE quote_asset IN (
-		     'USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN',
-		     'CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75',
-		     'fiat:USD'
-		   )
-		     AND bucket BETWEEN now() - INTERVAL '26 hours'
-		                   AND now() - INTERVAL '23 hours 30 minutes'
-		     AND vwap IS NOT NULL /*PUSHDOWN_BASE*/
-		   ORDER BY base_asset, bucket DESC
-		),
-		direct_usd_7d AS (
-		  SELECT DISTINCT ON (base_asset) base_asset AS asset_id, vwap
-		    FROM prices_1m
-		   WHERE quote_asset IN (
-		     'USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN',
-		     'CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75',
-		     'fiat:USD'
-		   )
-		     AND bucket BETWEEN now() - INTERVAL '7 days 12 hours'
-		                   AND now() - INTERVAL '6 days 22 hours'
-		     AND vwap IS NOT NULL /*PUSHDOWN_BASE*/
-		   ORDER BY base_asset, bucket DESC
-		),
-		asset_vs_xlm AS (
-		  -- XLM leg in BOTH identity forms: 'native' AND its SAC
-		  -- contract (CAS3J7… = canonical.XLMSacContractID,
-		  -- alias.go) — soroswap/phoenix/aquarius trades quote in
-		  -- the SAC form, which the AliasRegistry unifies on
-		  -- serving paths but literal-string SQL must list
-		  -- explicitly. Both legs multiply by the same xlm_usd.
-		  -- BASE-side identity folding (a SAC-form base_asset row
-		  -- surfacing alongside its classic twin — "USDC shows
-		  -- twice") is now done in the API listing handler by
-		  -- v1.Server.foldAliasTwins, which collapses each
-		  -- non-canonical alias row onto its canonical row via the
-		  -- same AliasRegistry (task #28 Part A).
-		  --
-		  -- ...and in BOTH stored DIRECTIONS. Sources that write swap
-		  -- direction (aquarius: base = token_in, no canonical.Orient)
-		  -- store a token bought with XLM as (XLM-SAC, token) — XLM as
-		  -- BASE. Reading only quote_asset IN (XLM forms) left that
-		  -- whole market invisible: r1 2026-08-28, CBIJ… had $730k/7d
-		  -- against the XLM SAC and served price_usd null with no
-		  -- withheld verdict. The inverted arm reads (XLM, token) and
-		  -- inverts (vwap is "XLM priced in token", so 1/vwap is the
-		  -- token in XLM). The volume path already read both
-		  -- directions (soroban_volume.go) — which is exactly why the
-		  -- asset had volume and no price.
-		  --
-		  -- Base-side rows are preferred over inverted ones (ORDER BY
-		  -- inverted BEFORE bucket) so every asset that already priced
-		  -- keeps byte-identical output; the inverted arm only fills
-		  -- assets that had NO base-side row in the window.
-		  SELECT DISTINCT ON (asset_id) asset_id, vwap, source_count
-		    FROM (
-		      SELECT base_asset AS asset_id, vwap,
-		             array_length(sources, 1) AS source_count,
-		             bucket, 0 AS inverted
-		        FROM prices_1m
-		       WHERE quote_asset IN ('native', 'CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA')
-		         AND bucket >= now() - INTERVAL '7 days'
-		         AND vwap IS NOT NULL /*PUSHDOWN_BASE*/
-		      UNION ALL
-		      SELECT quote_asset AS asset_id, 1::numeric / vwap,
-		             array_length(sources, 1),
-		             bucket, 1
-		        FROM prices_1m
-		       WHERE base_asset IN ('native', 'CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA')
-		         AND bucket >= now() - INTERVAL '7 days'
-		         AND vwap > 0 /*PUSHDOWN_QUOTE*/
-		    ) u
-		   ORDER BY asset_id, inverted, bucket DESC
-		),
-		asset_vs_xlm_1h AS (
-		  -- Both directions, base-side preferred — see asset_vs_xlm.
-		  SELECT DISTINCT ON (asset_id) asset_id, vwap
-		    FROM (
-		      SELECT base_asset AS asset_id, vwap, bucket, 0 AS inverted
-		        FROM prices_1m
-		       WHERE quote_asset IN ('native', 'CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA')
-		         AND bucket BETWEEN now() - INTERVAL '90 minutes'
-		                   AND now() - INTERVAL '55 minutes'
-		         AND vwap IS NOT NULL /*PUSHDOWN_BASE*/
-		      UNION ALL
-		      SELECT quote_asset AS asset_id, 1::numeric / vwap, bucket, 1
-		        FROM prices_1m
-		       WHERE base_asset IN ('native', 'CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA')
-		         AND bucket BETWEEN now() - INTERVAL '90 minutes'
-		                   AND now() - INTERVAL '55 minutes'
-		         AND vwap > 0 /*PUSHDOWN_QUOTE*/
-		    ) u
-		   ORDER BY asset_id, inverted, bucket DESC
-		),
-		asset_vs_xlm_24h AS (
-		  -- Both directions, base-side preferred — see asset_vs_xlm.
-		  SELECT DISTINCT ON (asset_id) asset_id, vwap
-		    FROM (
-		      SELECT base_asset AS asset_id, vwap, bucket, 0 AS inverted
-		        FROM prices_1m
-		       WHERE quote_asset IN ('native', 'CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA')
-		         AND bucket BETWEEN now() - INTERVAL '26 hours'
-		                   AND now() - INTERVAL '23 hours 30 minutes'
-		         AND vwap IS NOT NULL /*PUSHDOWN_BASE*/
-		      UNION ALL
-		      SELECT quote_asset AS asset_id, 1::numeric / vwap, bucket, 1
-		        FROM prices_1m
-		       WHERE base_asset IN ('native', 'CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA')
-		         AND bucket BETWEEN now() - INTERVAL '26 hours'
-		                   AND now() - INTERVAL '23 hours 30 minutes'
-		         AND vwap > 0 /*PUSHDOWN_QUOTE*/
-		    ) u
-		   ORDER BY asset_id, inverted, bucket DESC
-		),
-		asset_vs_xlm_7d AS (
-		  -- Both directions, base-side preferred — see asset_vs_xlm.
-		  SELECT DISTINCT ON (asset_id) asset_id, vwap
-		    FROM (
-		      SELECT base_asset AS asset_id, vwap, bucket, 0 AS inverted
-		        FROM prices_1m
-		       WHERE quote_asset IN ('native', 'CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA')
-		         AND bucket BETWEEN now() - INTERVAL '7 days 12 hours'
-		                   AND now() - INTERVAL '6 days 22 hours'
-		         AND vwap IS NOT NULL /*PUSHDOWN_BASE*/
-		      UNION ALL
-		      SELECT quote_asset AS asset_id, 1::numeric / vwap, bucket, 1
-		        FROM prices_1m
-		       WHERE base_asset IN ('native', 'CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA')
-		         AND bucket BETWEEN now() - INTERVAL '7 days 12 hours'
-		                   AND now() - INTERVAL '6 days 22 hours'
-		         AND vwap > 0 /*PUSHDOWN_QUOTE*/
-		    ) u
-		   ORDER BY asset_id, inverted, bucket DESC
-		),
-		xlm_usd AS (
-		  -- prices_1m doesn't carry (native, fiat:USD) rows — XLM's
-		  -- USD price is computed by the aggregator's triangulation
-		  -- worker and lives in Redis, not the materialised view.
-		  -- Mirror the aggregator's stablecoin-proxy policy in SQL
-		  -- (CLAUDE.md: "stablecoin fiat-proxy is aggregator policy"
-		  -- — USDC ≈ USD): use the latest on-chain XLM/USDC vwap as
-		  -- the XLM/USD price. Circle's USDC issuer G-strkey is
-		  -- hardcoded; a future revision pulls the list from
-		  -- [trades].usd_pegged_classic_assets.
-		  --
-		  -- The 24h floor on bucket is REQUIRED, not just an
-		  -- optimisation. With no time predicate TimescaleDB cannot
-		  -- chunk-prune, so ORDER BY bucket DESC LIMIT 1 across the
-		  -- 3 quote_assets must consider EVERY prices_1m chunk
-		  -- (thousands post-backfill). Warm + idle that is ~13ms,
-		  -- but the all-chunks access pattern degrades badly under
-		  -- concurrent load + cold buffers -- observed ~40s in
-		  -- pg_stat_activity during /v1/assets/{id} fan-out, the
-		  -- dominant tax on every native to USD price path
-		  -- (this query is #18 == #21). Bounded to 24h it touches
-		  -- ~1 day of chunks (~2-3ms) and stays resilient under
-		  -- load. It is also MORE correct: the unbounded form could
-		  -- surface a days-stale vwap as the *current* price.
-		  -- XLM/USDC is among the highest-volume pairs (trades
-		  -- every minute) so a 24h floor never realistically misses
-		  -- the latest. Mirrors the already-bounded
-		  -- sources_stats.go xlm_usd CTE.
-		  SELECT vwap
-		    FROM prices_1m
-		   WHERE base_asset = 'native'
-		     AND quote_asset IN (
-		       'USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN',
-		       'fiat:USD'
-		     )
-		     AND vwap IS NOT NULL
-		     AND bucket >= now() - INTERVAL '24 hours'
-		   ORDER BY bucket DESC
-		   LIMIT 1
-		),
-		xlm_usd_1h AS (
-		  -- 1h-ago XLM/USD via the same stablecoin-proxy policy.
-		  SELECT vwap
-		    FROM prices_1m
-		   WHERE base_asset = 'native'
-		     AND quote_asset IN (
-		       'USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN',
-		       'fiat:USD'
-		     )
-		     AND bucket BETWEEN now() - INTERVAL '90 minutes'
-		                   AND now() - INTERVAL '55 minutes'
-		     AND vwap IS NOT NULL
-		   ORDER BY bucket DESC
-		   LIMIT 1
-		),
-		xlm_usd_24h AS (
-		  -- 24h-ago XLM/USD via the same stablecoin-proxy policy
-		  -- as xlm_usd above.
-		  SELECT vwap
-		    FROM prices_1m
-		   WHERE base_asset = 'native'
-		     AND quote_asset IN (
-		       'USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN',
-		       'fiat:USD'
-		     )
-		     AND bucket BETWEEN now() - INTERVAL '26 hours'
-		                   AND now() - INTERVAL '23 hours 30 minutes'
-		     AND vwap IS NOT NULL
-		   ORDER BY bucket DESC
-		   LIMIT 1
-		),
-		xlm_usd_7d AS (
-		  -- 7d-ago XLM/USD via the same stablecoin-proxy policy.
-		  SELECT vwap
-		    FROM prices_1m
-		   WHERE base_asset = 'native'
-		     AND quote_asset IN (
-		       'USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN',
-		       'fiat:USD'
-		     )
-		     AND bucket BETWEEN now() - INTERVAL '7 days 12 hours'
-		                   AND now() - INTERVAL '6 days 22 hours'
-		     AND vwap IS NOT NULL
-		   ORDER BY bucket DESC
-		   LIMIT 1
 		)
 		SELECT
 		    -- asset_id is the LAST resort here, and it is load-bearing.
@@ -843,89 +590,30 @@ const listAssetsBaseSelect = `
 		    -- preserves full precision (36+ digits) which is just
 		    -- noise for a display value. 10 dp covers sub-millicent
 		    -- precision (1e-10) which is finer than any asset's
-		    -- meaningful tick size.
-		    -- XLM itself (asset_id='native') has no rows in
-		    -- asset_vs_xlm — (native, native) never exists — and
-		    -- its 24h-bounded USD price lives in the xlm_usd CTE:
-		    -- use that first. Since the USDC quote joined
-		    -- direct_usd, native CAN pick up a direct row
-		    -- (XLM/USDC, 7d window); it only surfaces when the 24h
-		    -- xlm_usd is empty — the same 7d staleness tolerance
-		    -- every other asset gets.
+		    -- meaningful tick size. Rendering is UNCHANGED by #331 F1:
+		    -- asset_price_snapshot stores the same unrounded NUMERIC the
+		    -- inline COALESCE chain produced (snapshotPriceUSDExpr), so
+		    -- the wire string is the string it always was — the rollup
+		    -- moved the compute, not the value.
 		    ROUND(` + listingPriceUSDExpr + `, 10)::text  AS price_usd,
 		    vol.vol_usd                           AS volume_24h_usd,
 		    NULL::numeric                         AS market_cap_usd,
 		    NULL::numeric                         AS circulating_supply,
-		    CASE
-		      WHEN ca.asset_id = 'native'
-		           AND (SELECT vwap FROM xlm_usd) IS NOT NULL
-		           AND (SELECT vwap FROM xlm_usd_1h) IS NOT NULL
-		           AND (SELECT vwap FROM xlm_usd_1h) > 0
-		      THEN to_char(((SELECT vwap FROM xlm_usd)
-		                  / (SELECT vwap FROM xlm_usd_1h) - 1) * 100,
-		                  'FM999999990.00')
-		      WHEN direct.vwap IS NOT NULL AND direct_1h.vwap IS NOT NULL
-		           AND direct_1h.vwap > 0
-		      THEN to_char((direct.vwap / direct_1h.vwap - 1) * 100, 'FM999999990.00')
-		      WHEN vs_xlm.vwap IS NOT NULL AND vs_xlm_1h.vwap IS NOT NULL
-		           AND vs_xlm_1h.vwap > 0
-		           AND (SELECT vwap FROM xlm_usd) IS NOT NULL
-		           AND (SELECT vwap FROM xlm_usd_1h) IS NOT NULL
-		           AND (SELECT vwap FROM xlm_usd_1h) > 0
-		      THEN to_char(((vs_xlm.vwap    * (SELECT vwap FROM xlm_usd))
-		                  / (vs_xlm_1h.vwap * (SELECT vwap FROM xlm_usd_1h))
-		                  - 1) * 100, 'FM999999990.00')
-		      ELSE NULL
-		    END                                   AS change_1h_pct,
-		    CASE
-		      WHEN ca.asset_id = 'native'
-		           AND (SELECT vwap FROM xlm_usd) IS NOT NULL
-		           AND (SELECT vwap FROM xlm_usd_24h) IS NOT NULL
-		           AND (SELECT vwap FROM xlm_usd_24h) > 0
-		      THEN to_char(((SELECT vwap FROM xlm_usd)
-		                  / (SELECT vwap FROM xlm_usd_24h) - 1) * 100,
-		                  'FM999999990.00')
-		      WHEN direct.vwap IS NOT NULL AND direct_24h.vwap IS NOT NULL
-		           AND direct_24h.vwap > 0
-		      THEN to_char((direct.vwap / direct_24h.vwap - 1) * 100, 'FM999999990.00')
-		      WHEN vs_xlm.vwap IS NOT NULL AND vs_xlm_24h.vwap IS NOT NULL
-		           AND vs_xlm_24h.vwap > 0
-		           AND (SELECT vwap FROM xlm_usd) IS NOT NULL
-		           AND (SELECT vwap FROM xlm_usd_24h) IS NOT NULL
-		           AND (SELECT vwap FROM xlm_usd_24h) > 0
-		      THEN to_char(((vs_xlm.vwap     * (SELECT vwap FROM xlm_usd))
-		                  / (vs_xlm_24h.vwap * (SELECT vwap FROM xlm_usd_24h))
-		                  - 1) * 100, 'FM999999990.00')
-		      ELSE NULL
-		    END                                   AS change_24h_pct,
-		    CASE
-		      WHEN ca.asset_id = 'native'
-		           AND (SELECT vwap FROM xlm_usd) IS NOT NULL
-		           AND (SELECT vwap FROM xlm_usd_7d) IS NOT NULL
-		           AND (SELECT vwap FROM xlm_usd_7d) > 0
-		      THEN to_char(((SELECT vwap FROM xlm_usd)
-		                  / (SELECT vwap FROM xlm_usd_7d) - 1) * 100,
-		                  'FM999999990.00')
-		      WHEN direct.vwap IS NOT NULL AND direct_7d.vwap IS NOT NULL
-		           AND direct_7d.vwap > 0
-		      THEN to_char((direct.vwap / direct_7d.vwap - 1) * 100, 'FM999999990.00')
-		      WHEN vs_xlm.vwap IS NOT NULL AND vs_xlm_7d.vwap IS NOT NULL
-		           AND vs_xlm_7d.vwap > 0
-		           AND (SELECT vwap FROM xlm_usd) IS NOT NULL
-		           AND (SELECT vwap FROM xlm_usd_7d) IS NOT NULL
-		           AND (SELECT vwap FROM xlm_usd_7d) > 0
-		      THEN to_char(((vs_xlm.vwap    * (SELECT vwap FROM xlm_usd))
-		                  / (vs_xlm_7d.vwap * (SELECT vwap FROM xlm_usd_7d))
-		                  - 1) * 100, 'FM999999990.00')
-		      ELSE NULL
-		    END                                   AS change_7d_pct,
+		    -- 1h / 24h / 7d change, rendered from the rollup's stored
+		    -- NUMERIC ratio with the SAME to_char format the inline
+		    -- three-arm CASE used (native-XLM arm, direct-USD arm,
+		    -- XLM-triangulated arm — all three now resolved once per
+		    -- refresh pass in refreshAssetPriceSnapshotUpsert). NULL in,
+		    -- NULL out: an asset with no comparable lookback renders no
+		    -- change, exactly as before.
+		    to_char(aps.change_1h_pct,  'FM999999990.00') AS change_1h_pct,
+		    to_char(aps.change_24h_pct, 'FM999999990.00') AS change_24h_pct,
+		    to_char(aps.change_7d_pct,  'FM999999990.00') AS change_7d_pct,
 		    -- Distinct venues backing price_usd (the latest per-asset bucket's
 		    -- prices_1m.sources) — the liquidity signal the API's market-cap
 		    -- valuation guard reads. NULL for native XLM (triangulated price,
 		    -- always liquid) and for any asset with no per-asset bucket.
-		    CASE WHEN ca.asset_id = 'native' THEN NULL::int
-		         ELSE COALESCE(direct.source_count, vs_xlm.source_count)
-		    END                                   AS source_count,
+		    aps.source_count                      AS source_count,
 		    avc.character                         AS volume_character,
 		    ` + adjustedVolume24hExpr + ` AS sort_vol_usd,
 		    -- Leading (ascending) sort key — see listingRankTierExpr. The
@@ -935,14 +623,23 @@ const listAssetsBaseSelect = `
 		    ` + rankTierMarker + ` AS rank_tier
 		  FROM catalogue_assets ca
 		  LEFT JOIN per_asset_24h_vol vol         ON vol.asset_id        = ca.asset_id
-		  LEFT JOIN direct_usd        direct      ON direct.asset_id     = ca.asset_id
-		  LEFT JOIN direct_usd_1h     direct_1h   ON direct_1h.asset_id  = ca.asset_id
-		  LEFT JOIN direct_usd_24h    direct_24h  ON direct_24h.asset_id = ca.asset_id
-		  LEFT JOIN direct_usd_7d     direct_7d   ON direct_7d.asset_id  = ca.asset_id
-		  LEFT JOIN asset_vs_xlm      vs_xlm      ON vs_xlm.asset_id     = ca.asset_id
-		  LEFT JOIN asset_vs_xlm_1h   vs_xlm_1h   ON vs_xlm_1h.asset_id  = ca.asset_id
-		  LEFT JOIN asset_vs_xlm_24h  vs_xlm_24h  ON vs_xlm_24h.asset_id = ca.asset_id
-		  LEFT JOIN asset_vs_xlm_7d   vs_xlm_7d   ON vs_xlm_7d.asset_id  = ca.asset_id
+		  -- Headline price + 1h/24h/7d change + backing source count
+		  -- (migration 0154, #331 F1). Replaces the twelve
+		  -- DISTINCT-ON-over-prices_1m CTEs this query used to
+		  -- materialise for every asset on every uncached variant
+		  -- (1,353ms of a measured 1,830ms, 51MB of temp spill); the
+		  -- derivation itself is unchanged and now runs once per
+		  -- aggregator pass in refreshAssetPriceSnapshotUpsert.
+		  --
+		  -- The computed_at floor is the STALENESS CEILING, enforced in
+		  -- SQL rather than by convention: a wedged or dead aggregator
+		  -- makes the join MISS instead of serving an indefinitely-old
+		  -- price, and the row then renders exactly as an asset with no
+		  -- price does (price_usd absent, rank tier 1). Fail-closed —
+		  -- see assetPriceSnapshotMaxAge for the contract and the
+		  -- reasoning about /v1/price.
+		  LEFT JOIN asset_price_snapshot   aps    ON aps.asset_id        = ca.asset_id
+		                                        AND aps.computed_at > now() - INTERVAL '` + assetPriceSnapshotMaxAge + `'
 		  LEFT JOIN asset_volume_character avc    ON avc.asset_id        = ca.asset_id
 		  -- Curated third-party issuer labels (account_directory, migration
 		  -- 0136). Read ONLY by listingRankTierExpr's scam-flag demotion —
@@ -957,76 +654,31 @@ const listAssetsBaseSelect = `
 		  LEFT JOIN account_directory      dir    ON dir.address         = ca.issuer_g_strkey
 `
 
-// listAssetsBaseSelectSQL renders [listAssetsBaseSelect] with optional
-// asset-filter pushdown into each per-asset CTE (#27). When
-// pushdownPredicate is empty, the function strips the
-// /*PUSHDOWN_BASE*/ + /*PUSHDOWN_QUOTE*/ marker comments and
-// returns the SQL unchanged (each CTE materialises stats for
-// every asset). When non-empty, it prepends a `chosen_assets`
-// CTE that holds the asset_id list matching pushdownPredicate
-// (which the caller must construct using positional args that
-// match the rest of the query) and replaces each marker with
-// `AND <side>_asset IN (SELECT asset_id FROM chosen_assets)`.
+// listAssetsBaseSelectSQL renders [listAssetsBaseSelect] for the active
+// order, substituting the one /*RANK_TIER*/ marker.
 //
-// Measured impact (2026-05-20 on r1, /v1/assets?issuer=GA5Z…):
-// each per-asset price CTE without pushdown reads 256k rows
-// for a 1-row result (1.3M buffer hits); with pushdown it reads
-// ~9 rows. Applies to the eight direct_usd* / asset_vs_xlm* CTEs.
-// per_asset_24h_vol no longer takes part: since #43 it reads the
-// asset_volume_24h rollup (migration 0087), which is a small
-// keyed-on-PK table regardless of the caller's filter, so it carries
-// no PUSHDOWN markers. The four xlm_usd CTEs deliberately stay
-// unfiltered — they look up XLM specifically, not the caller-supplied
-// asset.
-//
-// pushdownPredicate is the WHERE-expression body for the
-// chosen_assets CTE — e.g. "issuer_g_strkey = $1" or any
-// combination using positional args $N matching the caller's
-// args slice. buildAssetsQuery owns the arg-numbering contract
-// (issuer is $1 when set, so the predicate is the literal
-// string "issuer_g_strkey = $1").
-func listAssetsBaseSelectSQL(pushdownPredicate string, order AssetsOrder) string {
-	// The rank-tier marker is substituted FIRST and unconditionally: the
-	// SELECT is one const shared by both orders but the tier is not, and
-	// leaving the marker in place would ship `/*RANK_TIER*/ AS rank_tier`
-	// — a syntax error, not a harmless comment. Exactly one occurrence.
+// It used to take a pushdownPredicate as well (#27): a `chosen_assets`
+// CTE prepended ahead of the spine, narrowing the eight per-asset price
+// CTEs to one issuer's assets so a FILTERED listing did not read 256k
+// prices_1m rows for a 1-row result. #331 F1 removed the thing it
+// narrowed — those CTEs now live in refreshAssetPriceSnapshotUpsert and
+// the listing reads the rollup — so the pushdown had nothing left to
+// push into and is gone with them. A filtered listing is now narrowed by
+// the outer WHERE on `ca` alone, over a spine whose price side is a
+// keyed-on-PK lookup, which is the cheap shape pushdown existed to
+// approximate. Measured on r1 2026-09-02, the filtered shapes were
+// already the fast ones (mean 39-76 ms vs 1.5-2.4 s unfiltered); it is
+// the unfiltered path that paid.
+func listAssetsBaseSelectSQL(order AssetsOrder) string {
+	// The rank-tier marker is substituted unconditionally: the SELECT is
+	// one const shared by both orders but the tier is not, and leaving
+	// the marker in place would ship `/*RANK_TIER*/ AS rank_tier` - a
+	// syntax error, not a harmless comment. Exactly one occurrence.
 	base := strings.Replace(listAssetsBaseSelect, rankTierMarker, listingRankTierExpr(order), 1)
 	if strings.Contains(base, rankTierMarker) {
 		panic("listAssetsBaseSelectSQL: more than one " + rankTierMarker + " marker in the base SELECT")
 	}
-	if pushdownPredicate == "" {
-		// No pushdown — strip the marker comments. Leaving them
-		// in is harmless (they're valid SQL comments) but stripping
-		// keeps EXPLAIN output and pg_stat_statements normalised.
-		s := strings.ReplaceAll(base, "/*PUSHDOWN_BASE*/", "")
-		s = strings.ReplaceAll(s, "/*PUSHDOWN_QUOTE*/", "")
-		return s
-	}
-	chosenCTE := "\n\t\tWITH chosen_assets AS (SELECT asset_id FROM classic_assets WHERE " + pushdownPredicate + "),\n\t\t"
-	// Prepend the chosen_assets CTE (chosen first so its asset_id pool is
-	// materialised once and reused by every downstream CTE).
-	//
-	// The anchor is the query's FIRST CTE, which is catalogue_assets.
-	// It used to be per_asset_24h_vol; when catalogue_assets was added in
-	// front of it this Replace silently became a NO-OP — strings.Replace
-	// does not error on a missing needle — so every filtered listing lost
-	// its pushdown and fell back to a full scan. The pushdown tests caught
-	// it. Keep this anchor in step with whatever CTE comes first.
-	s := strings.Replace(
-		base,
-		"\n\t\tWITH catalogue_assets AS (",
-		chosenCTE+"catalogue_assets AS (",
-		1,
-	)
-	if !strings.Contains(s, "chosen_assets AS (") {
-		// Fail loud rather than serve an un-pushed-down query: a silent
-		// miss here is a latency regression on the filtered paths, which
-		// is exactly what the anchor drift above would have caused.
-		panic("listAssetsBaseSelectSQL: pushdown anchor not found — the first CTE was renamed")
-	}
-	s = strings.ReplaceAll(s, "/*PUSHDOWN_BASE*/", "AND base_asset IN (SELECT asset_id FROM chosen_assets)")
-	s = strings.ReplaceAll(s, "/*PUSHDOWN_QUOTE*/", "AND quote_asset IN (SELECT asset_id FROM chosen_assets)")
-	return s
+	return base
 }
 
 // refreshAssetVolumeUpsert recomputes the trailing-24h per-asset USD
@@ -1066,32 +718,22 @@ ON CONFLICT (asset_id) DO UPDATE
 // and are dropped.
 const refreshAssetVolumePrune = `DELETE FROM asset_volume_24h WHERE computed_at < now()`
 
-// RefreshAssetVolume24h recomputes the asset_volume_24h rollup from the
-// live trailing-24h prices_1m sum and atomically replaces its contents.
-// Called on a slow cadence by the aggregator's assetvolrollup worker so
-// the /v1/assets listing (per_asset_24h_vol CTE) never runs the
-// all-asset ~256k-row SUM per request (2026-07-06 latency incident, #43).
+// RefreshAssetVolume24h is the aggregator's wired entry point into the
+// /v1/assets rollup refresh. It delegates to
+// [Store.RefreshAssetListingRollups], which refreshes asset_volume_24h
+// (this method's historical job, #43) AND asset_price_snapshot (#331
+// F1) in one transaction.
 //
-// Upsert + prune run in one transaction (row-level locks only — no
-// ACCESS EXCLUSIVE table lock that would stall concurrent listing reads
-// on the customer-facing endpoint).
+// The name is narrower than the behaviour on purpose, and only for as
+// long as it takes to land the rename: it is the method
+// assetvolrollup.Refresher names, and #331 F1 was scoped to
+// internal/storage/timescale + migrations, so widening the seam here was
+// the way to get the price rollup refreshed without reaching into
+// internal/aggregate and cmd/. Follow-up (named in the fix report):
+// rename the worker package + its Refresher interface to the listing
+// rollups it actually drives, then delete this shim.
 func (s *Store) RefreshAssetVolume24h(ctx context.Context) error {
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("timescale: RefreshAssetVolume24h begin: %w", err)
-	}
-	defer func() { _ = tx.Rollback() }()
-
-	if _, err := tx.ExecContext(ctx, refreshAssetVolumeUpsert); err != nil {
-		return fmt.Errorf("timescale: RefreshAssetVolume24h upsert: %w", err)
-	}
-	if _, err := tx.ExecContext(ctx, refreshAssetVolumePrune); err != nil {
-		return fmt.Errorf("timescale: RefreshAssetVolume24h prune: %w", err)
-	}
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("timescale: RefreshAssetVolume24h commit: %w", err)
-	}
-	return nil
+	return s.RefreshAssetListingRollups(ctx)
 }
 
 // buildAssetsQuery composes the WHERE + ORDER + LIMIT around
@@ -1101,50 +743,27 @@ func (s *Store) RefreshAssetVolume24h(ctx context.Context) error {
 // switch; use a slice + numbered placeholders.
 func buildAssetsQuery(limit int, issuer, code, cursor, q string, order AssetsOrder) (string, []any) {
 	var (
-		conds         []string
-		args          []any
-		pushdownConds []string
+		conds []string
+		args  []any
 	)
 	if issuer != "" {
 		args = append(args, issuer)
 		conds = append(conds, fmt.Sprintf("ca.issuer_g_strkey = $%d", len(args)))
-		// #27 pushdown: the issuer filter narrows the asset set
-		// drastically (a single G-strkey typically issues handfuls
-		// of assets, not thousands). chosen_assets materialises that
-		// set once and every per-asset CTE filters against it,
-		// dropping per_asset_24h_vol's row count from ~256k to ~9
-		// in the GA5Z… case measured 2026-05-20. Reuses $1 (the
-		// issuer arg) so no additional placeholder is needed.
-		pushdownConds = append(pushdownConds, fmt.Sprintf("issuer_g_strkey = $%d", len(args)))
 	}
 	if code != "" {
 		// BACKLOG #54: exact, case-sensitive code equality on the
 		// indexed classic_assets.code column (classic_assets_code_idx).
 		// A bare code is not unique (many issuers mint "USDC"), so it
 		// only narrows to a handful of rows — but combined with issuer
-		// it pins a single asset. Same chosen_assets pushdown as issuer:
-		// reuses the outer-WHERE placeholder so no extra arg is bound.
+		// it pins a single asset.
 		args = append(args, code)
 		conds = append(conds, fmt.Sprintf("ca.code = $%d", len(args)))
-		pushdownConds = append(pushdownConds, fmt.Sprintf("code = $%d", len(args)))
 	}
-	// The chosen_assets pushdown predicate ANDs whatever narrowing
-	// filters are active (issuer, code, or both). Empty when neither
-	// is set — listAssetsBaseSelectSQL then skips the CTE entirely.
-	pushdownPredicate := strings.Join(pushdownConds, " AND ")
 	if q != "" {
 		args = append(args, "%"+q+"%")
 		conds = append(conds, fmt.Sprintf(
 			"(LOWER(ca.code) LIKE LOWER($%d) OR LOWER(COALESCE(ca.slug, ca.code)) LIKE LOWER($%d) OR LOWER(ca.issuer_g_strkey) LIKE LOWER($%d))",
 			len(args), len(args), len(args)))
-		// q-search pushdown intentionally NOT added — LIKE patterns
-		// on three columns combined with the outer SELECT's
-		// `ca.code LIKE` rule don't reduce as predictably as the
-		// issuer case, and adding the same chosen_assets predicate
-		// in WHERE would double-evaluate the same LIKE for no win.
-		// If profiling later shows the q-only path is hot, add a
-		// q-side chosen_assets variant. For now the SWR cache covers
-		// the small filtered-LIST traffic.
 	}
 	args = append(args, assetsCursorArgs(cursor, order)...)
 	if cursor != "" {
@@ -1157,7 +776,7 @@ func buildAssetsQuery(limit int, issuer, code, cursor, q string, order AssetsOrd
 	if len(conds) > 0 {
 		where = " WHERE " + strings.Join(conds, " AND ")
 	}
-	return listAssetsBaseSelectSQL(pushdownPredicate, order) + where + assetsOrderBy(order) + " LIMIT " + limitPlaceholder, args
+	return listAssetsBaseSelectSQL(order) + where + assetsOrderBy(order) + " LIMIT " + limitPlaceholder, args
 }
 
 // assetsCursorArgs returns the positional args appended for the

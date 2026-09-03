@@ -14,11 +14,19 @@ import (
 //
 // The lists live in: the coverage tripwire (coverageQuoteProxies), the
 // transitive resolver (usdProxyQuotes + xlmQuotes), and the two
-// catalogue queries' literal IN-lists (listAssetsBaseSelect +
+// catalogue price derivations' literal IN-lists (assetPriceCTEs +
 // getAssetBySlugSQL). An asset "priced" by one and "priceless" by
 // another is exactly how the popular-priceless alert fires forever on
 // an asset the catalogue could price — or, as on r1 2026-08-28, how an
 // asset the volume path valued at $730k/7d served no price at all.
+//
+// The LISTING entry is assetPriceCTEs, not listAssetsBaseSelect: #331 F1
+// moved the derivation out of the per-request SELECT and into the
+// asset_price_snapshot refresh, so that is where the IN-lists now live.
+// The property under test is unchanged — the listing's price still comes
+// from exactly these quote forms in both stored directions — and
+// TestListAssetsBaseSelect_NoPerRequestPriceScan pins that the listing
+// SELECT does not grow a second, drifting copy.
 func TestProxyQuoteLists_Lockstep(t *testing.T) {
 	t.Parallel()
 
@@ -41,8 +49,8 @@ func TestProxyQuoteLists_Lockstep(t *testing.T) {
 		if !strings.Contains(coverageQuoteProxies, member) {
 			t.Errorf("coverageQuoteProxies lacks %s", member)
 		}
-		// Every catalogue direct_usd* CTE (4 per query) lists it.
-		for name, sql := range map[string]string{"listing": listAssetsBaseSelect, "detail": getAssetBySlugSQL} {
+		// Every catalogue direct_usd* CTE (4 per derivation) lists it.
+		for name, sql := range map[string]string{"listing": assetPriceCTEs, "detail": getAssetBySlugSQL} {
 			if got := strings.Count(sql, member); got < 4 {
 				t.Errorf("%s SQL mentions %s %d times, want >= 4 (one per direct_usd* CTE)", name, member, got)
 			}
@@ -57,7 +65,7 @@ func TestProxyQuoteLists_Lockstep(t *testing.T) {
 	// (base_asset IN xlm). Counting the INVERTED arm is what makes this
 	// test red against the pre-fix catalogue: it had 4 base-side arms
 	// per query and zero inverted ones.
-	for name, sql := range map[string]string{"listing": listAssetsBaseSelect, "detail": getAssetBySlugSQL} {
+	for name, sql := range map[string]string{"listing": assetPriceCTEs, "detail": getAssetBySlugSQL} {
 		// The detail query column-aligns its predicates ("base_asset  IN");
 		// fold runs of spaces so the count is about the predicate, not
 		// the indentation.

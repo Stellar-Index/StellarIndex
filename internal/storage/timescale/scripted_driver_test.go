@@ -63,13 +63,34 @@ type scriptedConn struct {
 	script []scriptedResult
 	n      int
 	stmts  []recordedStmt
+	// Transaction bookkeeping. Store methods that replace a rollup
+	// atomically (RefreshAssetListingRollups) have their contract IN the
+	// transaction boundary — "these four statements commit together or
+	// not at all" — which is unassertable without recording it.
+	commits   int
+	rollbacks int
 }
 
 func (c *scriptedConn) Prepare(string) (driver.Stmt, error) {
 	return nil, errors.New("not implemented")
 }
-func (c *scriptedConn) Close() error              { return nil }
-func (c *scriptedConn) Begin() (driver.Tx, error) { return nil, errors.New("not implemented") }
+func (c *scriptedConn) Close() error { return nil }
+
+func (c *scriptedConn) Begin() (driver.Tx, error) {
+	return c.BeginTx(context.Background(), driver.TxOptions{})
+}
+
+// BeginTx hands back a tx that records its own outcome. database/sql
+// swallows the deferred Rollback after a successful Commit, so
+// [scriptedConn.committed] reads exactly what the store decided.
+func (c *scriptedConn) BeginTx(context.Context, driver.TxOptions) (driver.Tx, error) {
+	return &scriptedTx{c: c}, nil
+}
+
+type scriptedTx struct{ c *scriptedConn }
+
+func (t *scriptedTx) Commit() error   { t.c.commits++; return nil }
+func (t *scriptedTx) Rollback() error { t.c.rollbacks++; return nil }
 
 // CheckNamedValue passes every value through unconverted — what pgx's
 // stdlib driver does.
@@ -149,6 +170,19 @@ func newScriptedStore(t *testing.T, script ...scriptedResult) (*Store, *scripted
 	t.Cleanup(func() { _ = store.db.Close() })
 	return store, conn
 }
+
+// statements returns the SQL of every statement the store issued, in
+// order.
+func (c *scriptedConn) statements() []string {
+	out := make([]string, len(c.stmts))
+	for i, s := range c.stmts {
+		out[i] = s.sql
+	}
+	return out
+}
+
+// committed reports whether the store COMMITted a transaction.
+func (c *scriptedConn) committed() bool { return c.commits > 0 }
 
 // only returns the single statement the store was expected to issue.
 func (c *scriptedConn) only(t *testing.T) recordedStmt {

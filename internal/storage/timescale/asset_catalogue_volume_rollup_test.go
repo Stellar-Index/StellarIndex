@@ -21,30 +21,25 @@ func TestListAssets_readsAssetVolumeRollup(t *testing.T) {
 	}
 }
 
-// TestListAssetsBaseSelectSQL_pushdownStillRenders guards the
-// strings.Replace anchor: both the unfiltered and issuer-pushdown
-// renderings must still produce a query that reads the rollup, and the
-// pushdown path must still prepend the chosen_assets CTE (used by the
-// price CTEs).
-func TestListAssetsBaseSelectSQL_pushdownStillRenders(t *testing.T) {
-	plain := listAssetsBaseSelectSQL("", AssetsOrderVolume24hUSDDesc)
-	if !strings.Contains(plain, "FROM asset_volume_24h") {
-		t.Errorf("unfiltered render lost the rollup read")
-	}
-	if strings.Contains(plain, "/*PUSHDOWN_") {
-		t.Errorf("unfiltered render should have stripped PUSHDOWN markers")
-	}
-
-	pushed := listAssetsBaseSelectSQL("issuer_g_strkey = $1", AssetsOrderVolume24hUSDDesc)
-	if !strings.Contains(pushed, "WITH chosen_assets AS") {
-		t.Errorf("pushdown render must prepend chosen_assets CTE")
-	}
-	if !strings.Contains(pushed, "FROM asset_volume_24h") {
-		t.Errorf("pushdown render lost the rollup read")
-	}
-	// The price CTEs still pushdown against chosen_assets.
-	if !strings.Contains(pushed, "AND base_asset IN (SELECT asset_id FROM chosen_assets)") {
-		t.Errorf("pushdown render must filter the price CTEs against chosen_assets")
+// TestListAssetsBaseSelectSQL_rendersForBothOrders guards the one
+// remaining render-time substitution: every ordering must produce a
+// query that reads the volume rollup and carries no leftover marker.
+// (This used to also guard the /*PUSHDOWN_*/ machinery's strings.Replace
+// anchor; #331 F1 removed the pushdown along with the price CTEs it
+// narrowed, so the only marker left is /*RANK_TIER*/, whose absence
+// listAssetsBaseSelectSQL panics on rather than shipping a syntax error.)
+func TestListAssetsBaseSelectSQL_rendersForBothOrders(t *testing.T) {
+	for _, order := range []AssetsOrder{AssetsOrderVolume24hUSDDesc, AssetsOrderObservationCountDesc} {
+		sql := listAssetsBaseSelectSQL(order)
+		if !strings.Contains(sql, "FROM asset_volume_24h") {
+			t.Errorf("order %v: render lost the volume rollup read", order)
+		}
+		if strings.Contains(sql, "/*PUSHDOWN_") || strings.Contains(sql, "chosen_assets") {
+			t.Errorf("order %v: pushdown machinery is back — it has nothing left to narrow", order)
+		}
+		if strings.Contains(sql, rankTierMarker) {
+			t.Errorf("order %v: unsubstituted rank-tier marker would ship as a syntax error", order)
+		}
 	}
 }
 

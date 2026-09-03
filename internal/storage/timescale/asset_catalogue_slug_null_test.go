@@ -32,11 +32,13 @@ import (
 func TestCatalogueSlugProjection_FallsBackToAssetID(t *testing.T) {
 	t.Parallel()
 
-	// Both the LIST projection and the single-row lookup share the
-	// defect and the fix; assert on each rendering the store uses.
+	// Both orderings share the defect and the fix; assert on each
+	// rendering the store uses. (There used to be a third rendering here,
+	// the issuer-pushdown one; #331 F1 removed the pushdown along with
+	// the per-request price CTEs it narrowed.)
 	for name, sql := range map[string]string{
-		"list":          listAssetsBaseSelectSQL("", AssetsOrderVolume24hUSDDesc),
-		"list_pushdown": listAssetsBaseSelectSQL("ca.asset_id IN ('native')", AssetsOrderVolume24hUSDDesc),
+		"list_volume": listAssetsBaseSelectSQL(AssetsOrderVolume24hUSDDesc),
+		"list_obs":    listAssetsBaseSelectSQL(AssetsOrderObservationCountDesc),
 	} {
 		t.Run(name, func(t *testing.T) {
 			if strings.Contains(sql, "COALESCE(ca.slug, ca.code)") {

@@ -17,7 +17,7 @@ func TestListingRankTierExpr_ThreeCallSitesStayInStep(t *testing.T) {
 	t.Parallel()
 	for _, order := range []AssetsOrder{AssetsOrderVolume24hUSDDesc, AssetsOrderObservationCountDesc} {
 		tier := listingRankTierExpr(order)
-		sel := listAssetsBaseSelectSQL("", order)
+		sel := listAssetsBaseSelectSQL(order)
 		if strings.Contains(sel, rankTierMarker) {
 			t.Errorf("order %v: rendered SELECT still holds the %s marker — that is a syntax error, not a comment", order, rankTierMarker)
 		}
@@ -26,6 +26,14 @@ func TestListingRankTierExpr_ThreeCallSitesStayInStep(t *testing.T) {
 		}
 		if !strings.Contains(sel, "LEFT JOIN account_directory") {
 			t.Errorf("order %v: SELECT is missing the account_directory join the tier reads", order)
+		}
+		// Since #331 F1 the tier's price arm reads asset_price_snapshot
+		// (listingPriceUSDExpr == aps.price_usd) instead of the inline
+		// COALESCE chain, so the tier now depends on that join too — and
+		// on its staleness floor, which is what makes "priced too long
+		// ago to serve" resolve to the same tier as "never priced".
+		if !strings.Contains(sel, "LEFT JOIN asset_price_snapshot") {
+			t.Errorf("order %v: SELECT is missing the asset_price_snapshot join the tier reads", order)
 		}
 		orderBy := assetsOrderBy(order)
 		if !strings.HasPrefix(orderBy, " ORDER BY "+tier+" ASC,") {
