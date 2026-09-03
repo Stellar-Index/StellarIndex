@@ -33,6 +33,8 @@ import (
 //   - soroswap_skim_events (ledger_close_time) — added into 'soroswap'.
 //   - defindex_flows + defindex_fees (ledger_close_time) — summed as
 //     'defindex'.
+//   - credit_positions + credit_statements + credit_settlements +
+//     credit_events (ledger_close_time) — summed as 'sorocredit'.
 //   - cctp_events / rozo_events (ts) — 'cctp' / 'rozo'.
 //   - soroswap_router_swaps (ledger_close_time) — 'soroswap-router'.
 //   - oracle_updates (ts, GROUP BY source) — reflector-dex /
@@ -81,6 +83,18 @@ const countRecentEventsQuery = `
 	 WHERE ledger_close_time >= now() - interval '24 hours'
 	UNION ALL
 	SELECT 'defindex', count(*) FROM defindex_fees
+	 WHERE ledger_close_time >= now() - interval '24 hours'
+	UNION ALL
+	SELECT 'sorocredit', count(*) FROM credit_positions
+	 WHERE ledger_close_time >= now() - interval '24 hours'
+	UNION ALL
+	SELECT 'sorocredit', count(*) FROM credit_statements
+	 WHERE ledger_close_time >= now() - interval '24 hours'
+	UNION ALL
+	SELECT 'sorocredit', count(*) FROM credit_settlements
+	 WHERE ledger_close_time >= now() - interval '24 hours'
+	UNION ALL
+	SELECT 'sorocredit', count(*) FROM credit_events
 	 WHERE ledger_close_time >= now() - interval '24 hours'
 	UNION ALL
 	SELECT 'cctp', count(*) FROM cctp_events
