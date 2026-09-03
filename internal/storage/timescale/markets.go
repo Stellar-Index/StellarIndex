@@ -812,6 +812,113 @@ func buildDistinctPairsQuery(since time.Time, source, asset, cursor string, limi
 	}
 }
 
+// pairMarketQuery is the single-pair activity summary behind /v1/pairs.
+// $1 is the MarketsRecencyWindow lower bound, $2/$3 the requested base
+// and quote.
+//
+// LastTradeAt is sourced from trades (exact, second-precision) rather
+// than from a CAGG bucket — that is the documented difference between
+// this endpoint and /v1/markets, whose directory rows round to the
+// minute, and it is preserved here. BucketCloseAt is recomputed from
+// the same value in Go so the wire shape still matches /v1/markets.
+//
+// Combine BOTH stored directions of the market (the SDEX decoder
+// records XLM/USDC and USDC/XLM as separate rows) into the requested
+// ($2, $3) orientation, matching /v1/markets (canonOrientSQL) and
+// LatestClosedVWAP1mForPair. count_24h + vol_24h_usd sum across
+// directions (USD volume is orientation-independent); last_price is the
+// most-recent bucket's price re-expressed in the requested orientation
+// (inverted for the flipped direction). See canonical.Orient.
+//
+// Shape. Every both-directions read here is a UNION ALL of two
+// single-direction branches, and each aggregate is bounded by the
+// SMALLEST window that can produce it — never one wide scan reused for
+// several answers. Both rules exist because their absence was measured:
+//
+//   - The `(A AND B) OR (B AND A)` disjunction cannot drive
+//     trades_pair_ts_idx / prices_1m_pair_bucket_idx (base_asset,
+//     quote_asset, ts|bucket DESC), so the planner falls back to the
+//     bare time index with the pair as a post-index filter. This is the
+//     same defect [closedVWAP1mAtOrBeforeQuery] carries the measurement
+//     for (#441).
+//   - The old form asked ONE 14-day aggregate for two answers that need
+//     far less: MAX(ts) needs a single backwards index probe per
+//     direction, and count_24h needs 24 hours. Reading 14 days for both
+//     meant crypto:BTC/crypto:USDT materialised 17.2 MILLION rows to
+//     return a timestamp and a count.
+//
+// Measured on r1 (2026-09-03) on an idle box, trades at 140 GB. Two
+// runs per form, so the first column is a cold buffer pool and the
+// second a warm one:
+//
+//	pair                        OLD                NEW
+//	crypto:BTC/crypto:USDT   95727.9 / 4324.3   120.3 / 107.0 ms
+//	crypto:XLM/fiat:USD       1168.6 / 1202.8    22.0 /  13.6 ms
+//	native/USDC-GA5Z…         2999.3 /  741.6    26.1 /  19.5 ms
+//	native/fiat:USD (empty)     74.5 /   63.3     2.3 /   2.4 ms
+//
+// The 95.7-second cold read is past the API's 8-second handler
+// ceiling: that request could not complete at all.
+//
+// Verified set-identical against the old form over 40 sampled live
+// pairs — same last_trade_at, count_24h, vol_24h_usd and last_price.
+// The one deliberate difference is the `, base_asset` tiebreaker on the
+// last_price sort: `bucket DESC` alone is not a total order once a
+// bucket holds both orientations (native/USDC has 1,270 such buckets in
+// a day on r1), so which leg won was planner-defined. Same reasoning and
+// same tiebreaker as #441. Guarded by TestPairMarketQueryShape.
+const pairMarketQuery = `
+        WITH last_trade AS (
+            SELECT MAX(ts) AS ts FROM (
+                (SELECT t.ts FROM trades t
+                  WHERE t.base_asset = $2 AND t.quote_asset = $3
+                    AND t.ts >= $1
+                  ORDER BY t.ts DESC LIMIT 1)
+                UNION ALL
+                (SELECT t.ts FROM trades t
+                  WHERE t.base_asset = $3 AND t.quote_asset = $2
+                    AND t.ts >= $1
+                  ORDER BY t.ts DESC LIMIT 1)
+            ) AS both_directions
+        )
+        SELECT lt.ts AS last_trade_at,
+               CASE WHEN lt.ts IS NULL THEN 0 ELSE
+                   (SELECT count(*) FROM trades t
+                     WHERE t.base_asset = $2 AND t.quote_asset = $3
+                       AND t.ts > NOW() - INTERVAL '24 hours')
+                 + (SELECT count(*) FROM trades t
+                     WHERE t.base_asset = $3 AND t.quote_asset = $2
+                       AND t.ts > NOW() - INTERVAL '24 hours')
+               END AS count_24h,
+               (SELECT SUM(volume_usd)::text FROM (
+                    SELECT volume_usd FROM prices_1m
+                     WHERE base_asset = $2 AND quote_asset = $3
+                       AND bucket >= NOW() - INTERVAL '24 hours'
+                       AND volume_usd IS NOT NULL
+                    UNION ALL
+                    SELECT volume_usd FROM prices_1m
+                     WHERE base_asset = $3 AND quote_asset = $2
+                       AND bucket >= NOW() - INTERVAL '24 hours'
+                       AND volume_usd IS NOT NULL
+                ) AS both_directions) AS vol_24h_usd,
+               (SELECT (CASE WHEN base_asset = $2 THEN last_price
+                             ELSE 1.0 / NULLIF(last_price, 0) END)::text FROM (
+                    (SELECT bucket, base_asset, last_price FROM prices_1m
+                      WHERE base_asset = $2 AND quote_asset = $3
+                        AND bucket >= NOW() - INTERVAL '24 hours'
+                        AND last_price IS NOT NULL
+                      ORDER BY bucket DESC LIMIT 1)
+                    UNION ALL
+                    (SELECT bucket, base_asset, last_price FROM prices_1m
+                      WHERE base_asset = $3 AND quote_asset = $2
+                        AND bucket >= NOW() - INTERVAL '24 hours'
+                        AND last_price IS NOT NULL
+                      ORDER BY bucket DESC LIMIT 1)
+                ) AS both_directions
+                 ORDER BY bucket DESC, base_asset LIMIT 1) AS last_price
+          FROM last_trade lt
+    `
+
 // PairMarket returns the activity summary for a single (base, quote)
 // pair. The bool result is false when the pair hasn't traded inside
 // MarketsRecencyWindow; callers translate that to an empty list
@@ -824,46 +931,13 @@ func buildDistinctPairsQuery(since time.Time, source, asset, cursor string, limi
 // pair that DistinctPairs hides should also be hidden here).
 func (s *Store) PairMarket(ctx context.Context, base, quote canonical.Asset) (Market, bool, error) {
 	since := time.Now().UTC().Add(-MarketsRecencyWindow)
-	// PairMarket already sources LastTradeAt from MAX(trades.ts) —
-	// exact (second-precision) since it scans the trades hypertable
-	// directly for one pair. BucketCloseAt is recomputed from the
-	// same value via time_bucket('1 day', …) so the wire shape
-	// matches /v1/markets (which sources it from prices_1d).
-	// Combine BOTH stored directions of the market (the SDEX decoder
-	// records XLM/USDC and USDC/XLM as separate rows) into the requested
-	// ($2, $3) orientation, matching /v1/markets (canonOrientSQL) and
-	// LatestClosedVWAP1mForPair. count_24h + vol_24h_usd sum across
-	// directions (USD volume is orientation-independent); last_price is
-	// the most-recent bucket's price re-expressed in the requested
-	// orientation (inverted for the flipped direction). See
-	// canonical.Orient.
-	const q = `
-        SELECT MAX(t.ts) AS last_trade_at,
-               count(*) FILTER (WHERE t.ts > NOW() - INTERVAL '24 hours') AS count_24h,
-               (SELECT SUM(volume_usd)::text FROM prices_1m
-                 WHERE ((base_asset = $2 AND quote_asset = $3)
-                     OR (base_asset = $3 AND quote_asset = $2))
-                   AND bucket >= NOW() - INTERVAL '24 hours'
-                   AND volume_usd IS NOT NULL) AS vol_24h_usd,
-               (SELECT (CASE WHEN base_asset = $2 THEN last_price
-                             ELSE 1.0 / NULLIF(last_price, 0) END)::text FROM prices_1m
-                 WHERE ((base_asset = $2 AND quote_asset = $3)
-                     OR (base_asset = $3 AND quote_asset = $2))
-                   AND bucket >= NOW() - INTERVAL '24 hours'
-                   AND last_price IS NOT NULL
-                 ORDER BY bucket DESC LIMIT 1) AS last_price
-          FROM trades t
-         WHERE t.ts >= $1
-           AND ((t.base_asset = $2 AND t.quote_asset = $3)
-             OR (t.base_asset = $3 AND t.quote_asset = $2))
-    `
 	var (
 		lastAt    *time.Time
 		count24h  *int64
 		vol24hUSD sql.NullString
 		lastPx    sql.NullString
 	)
-	if err := s.db.QueryRowContext(ctx, q, since, base.String(), quote.String()).Scan(&lastAt, &count24h, &vol24hUSD, &lastPx); err != nil {
+	if err := s.db.QueryRowContext(ctx, pairMarketQuery, since, base.String(), quote.String()).Scan(&lastAt, &count24h, &vol24hUSD, &lastPx); err != nil {
 		return Market{}, false, fmt.Errorf("timescale: PairMarket: %w", err)
 	}
 	if lastAt == nil {
