@@ -58,7 +58,13 @@ export default function ResearchPage() {
             Architecture narratives
           </h2>
           <span className="text-xs text-ink-muted">
-            {archDocs.length} docs ·{' '}
+            {/* The index page's only inbound link. /research cards each
+                narrative individually, so /research/architecture itself
+                had none. */}
+            <Link href="/research/architecture" className="hover:text-brand-600">
+              {archDocs.length} docs
+            </Link>{' '}
+            ·{' '}
             <a
               href="https://github.com/Stellar-Index/StellarIndex/tree/main/docs/architecture"
               target="_blank"
@@ -104,7 +110,10 @@ export default function ResearchPage() {
             Operations runbooks
           </h2>
           <span className="text-xs text-ink-muted">
-            {opsDocs.length} guides ·{' '}
+            <Link href="/research/operations" className="hover:text-brand-600">
+              {opsDocs.length} guides
+            </Link>{' '}
+            ·{' '}
             <a
               href="https://github.com/Stellar-Index/StellarIndex/tree/main/docs/operations"
               target="_blank"

@@ -83,6 +83,12 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     '/company',
     '/careers',
     '/status',
+    '/sla',
+    // The two research index pages. /research cards the individual
+    // narratives and runbooks but never linked its own indexes, so both
+    // were crawl-dark as well as click-dark.
+    '/research/architecture',
+    '/research/operations',
     // NOTE: auth/app routes (/signin, /signup, /account) are deliberately
     // NOT listed — they're robots:noindex (no SEO value / private), and a
     // noindex URL in the sitemap is a Search Console error

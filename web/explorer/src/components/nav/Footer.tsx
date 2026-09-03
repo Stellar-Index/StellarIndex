@@ -58,6 +58,11 @@ export function Footer() {
               { label: 'Careers', href: '/careers' },
               { label: 'Contact', href: '/contact' },
               { label: 'API status', href: '/status' },
+              // /sla had zero inbound links anywhere in the site — not
+              // the rail, not search, not here, not the sitemap. It is
+              // the commitment behind /pricing, so it belongs next to
+              // the status page a reader checks it against.
+              { label: 'Service level', href: '/sla' },
             ]}
           />
           <FooterColumn
@@ -143,9 +148,14 @@ function FooterColumn({
   const visible = availableRoutes(links);
   return (
     <div className="space-y-2">
-      <h4 className="text-[11px] font-medium uppercase tracking-wider text-ink-faint">
+      {/* h2, not h4: the footer renders after the page content on EVERY
+          route, so a level-4 column title turns each page's outline into
+          an h1 → h4 jump — the WCAG 1.3.1 defect lib/heading-order.ts
+          guards. h2 is also the honest level for a top-level section of
+          the footer landmark. Size is styling, not structure. */}
+      <h2 className="text-[11px] font-medium uppercase tracking-wider text-ink-faint">
         {title}
-      </h4>
+      </h2>
       <ul className="space-y-1">
         {visible.map((l) =>
           l.external ? (
