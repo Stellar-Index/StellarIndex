@@ -8,7 +8,7 @@ import { Panel } from '@/components/reveal';
 import { AssetLink } from '@/components/AssetLink';
 import { apiGet, asExample } from '@/api/client';
 import { isRawOracleAsset, rawOracleSymbol } from '@/lib/asset-label';
-import { formatRelative , formatSubunitPrice } from '@/lib/format';
+import { formatOraclePrice, formatRelative } from '@/lib/format';
 import { sourceToneClass } from '@/lib/pillTone';
 
 // Wire shapes from the generated OpenAPI contract: /v1/sources rows via
@@ -247,7 +247,7 @@ export function OraclesView() {
                     </Td>
                     <Td align="right">
                       <span className="font-mono tabular-nums text-ink-body">
-                        {formatPrice(s.price)}
+                        {formatOraclePrice(s.price)}
                       </span>
                     </Td>
                     <Td align="right">
@@ -341,7 +341,7 @@ export function OraclesView() {
                       </Td>
                       <Td align="right">
                         <span className="font-mono tabular-nums text-ink-body">
-                          {formatPrice(s.price)}
+                          {formatOraclePrice(s.price)}
                         </span>
                       </Td>
                       <Td align="right">
@@ -396,13 +396,4 @@ function Td({ children, align }: { children: React.ReactNode; align?: 'left' | '
   return (
     <td className={`px-4 py-2 ${align === 'right' ? 'text-right' : 'text-left'}`}>{children}</td>
   );
-}
-
-function formatPrice(p: string): string {
-  const n = Number(p);
-  if (!Number.isFinite(n)) return p;
-  if (n === 0) return '0';
-  if (n >= 1) return n.toFixed(4);
-  if (n >= 0.01) return n.toFixed(6);
-  return formatSubunitPrice(n);
 }

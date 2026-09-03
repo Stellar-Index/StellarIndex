@@ -24,6 +24,7 @@ import {
   headingOrderViolations,
 } from '@/lib/heading-order';
 
+import { AssetOraclesPanel } from './assets/[slug]/AssetOraclesPanel';
 import { AssetSwap } from './assets/[slug]/AssetSwap';
 import { HoldersTabPanel } from './assets/[slug]/HoldersTabPanel';
 import { IssuerPanel } from './assets/[slug]/IssuerPanel';
@@ -84,6 +85,25 @@ describe('page-level sections do not skip a heading level', () => {
     [
       '/assets/[slug] — supply tab',
       <SupplyTabPanel key="supply" assetID="USDC-G…" />,
+    ],
+    [
+      '/assets/[slug] — oracles tab',
+      <AssetOraclesPanel key="oracles" assetID="USDC-G…" symbol="USDC" />,
+    ],
+    [
+      '/assets/[slug] — oracles tab (ticker collision)',
+      <AssetOraclesPanel
+        key="oracles-collision"
+        assetID="USDC-G…"
+        symbol="USDC"
+        tickerCollision={{
+          verified_slug: 'usdc',
+          verified_asset_id: `USDC-${G}`,
+          verified_name: 'USD Coin',
+          verified_issuer: 'Circle (centre.io)',
+          note: 'Exercise caution …',
+        }}
+      />,
     ],
     [
       '/assets/[slug] — holders tab',

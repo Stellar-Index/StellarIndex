@@ -32,6 +32,7 @@ import { IssuerPanel } from './IssuerPanel';
 import { LiquidityTabPanel } from './LiquidityTabPanel';
 import { HoldersTabPanel } from './HoldersTabPanel';
 import { MarketsTabPanel } from './MarketsTabPanel';
+import { AssetOraclesPanel } from './AssetOraclesPanel';
 import { HistoryTabPanel } from './HistoryTabPanel';
 import { SupplyTabPanel } from './SupplyTabPanel';
 import {
@@ -1036,6 +1037,24 @@ export default async function AssetDetailPage({ params }: { params: Params }) {
               }
               liquidity={
                 <LiquidityTabPanel assetID={coin.asset_id} code={assetSymbol(coin)} />
+              }
+              oracles={
+                <AssetOraclesPanel
+                  assetID={coin.asset_id}
+                  symbol={assetSymbol(coin)}
+                  // Same CURRENT_NETWORK.pricing gate as the header
+                  // banner above: the verified catalogue is a MAINNET
+                  // curation, and on a lean test net it stamps genuine
+                  // test-net assets as impostors of mainnet issuers that
+                  // do not exist there. Off a pricing network there is no
+                  // basis for the non-attribution claim, so the panel
+                  // falls through to its ordinary empty state.
+                  tickerCollision={
+                    CURRENT_NETWORK.pricing
+                      ? (detail?.unverified_warning ?? null)
+                      : null
+                  }
+                />
               }
             />
           </Suspense>

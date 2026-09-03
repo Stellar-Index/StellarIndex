@@ -81,6 +81,31 @@ export function formatPairPrice(n: number): string {
         : formatSubunitPrice(n);
 }
 
+// formatOraclePrice — the oracle-reading price column (/oracles and the
+// per-asset oracle panel, #336). Takes the wire STRING so a value the
+// API sent but JS cannot parse renders verbatim rather than as '—': an
+// oracle reading is evidence, and dropping it because our formatter
+// dislikes it is the one thing this column must not do.
+//
+// Sits beside formatPriceSmall rather than reusing it because oracle
+// decimals go to 14 (Reflector) and the interesting reading is often
+// well below a cent: the plain-decimal significant-digits tail starts at
+// 0.01 here rather than formatPriceSmall's 0.001, and there is no
+// >=100 → 2dp band, because an oracle's 4-decimal tail on a large
+// number is exactly the digit a cross-check compares.
+export function formatOraclePrice(p: string): string {
+  // Number('') and Number(' ') are both 0, so a blank price would render
+  // as the bare "0" — an oracle quoting the asset at zero. Blank is
+  // absence, not a reading; report it as it arrived.
+  if (!p.trim()) return p;
+  const n = Number(p);
+  if (!Number.isFinite(n)) return p;
+  if (n === 0) return '0';
+  if (n >= 1) return n.toFixed(4);
+  if (n >= 0.01) return n.toFixed(6);
+  return formatSubunitPrice(n);
+}
+
 // AGT-06: formatPctChange and formatLedger were removed as dead code —
 // grep confirmed zero callers outside their own tests. formatPctChange in
 // particular was a footgun: it takes a FRACTION (0.0123 → "+1.23%"), but

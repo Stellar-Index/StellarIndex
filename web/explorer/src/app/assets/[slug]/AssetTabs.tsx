@@ -12,7 +12,8 @@ export type AssetTab =
   | 'supply'
   | 'holders'
   | 'issuer'
-  | 'liquidity';
+  | 'liquidity'
+  | 'oracles';
 
 /**
  * Client tab strip for /assets/[slug]. Reads `?tab=` from URL state;
@@ -39,6 +40,7 @@ export function AssetTabs({
     { key: 'holders', label: 'Holders' },
     { key: 'liquidity', label: 'Liquidity' },
     { key: 'supply', label: 'Supply' },
+    { key: 'oracles', label: 'Oracles' },
     ...(hasIssuer ? ([{ key: 'issuer', label: 'Issuer' }] as const) : []),
     { key: 'overview', label: 'About' },
   ];
@@ -67,6 +69,7 @@ export function ActiveTabSlot({
   holders,
   issuer,
   liquidity,
+  oracles,
 }: {
   overview: React.ReactNode;
   chart: React.ReactNode;
@@ -76,6 +79,7 @@ export function ActiveTabSlot({
   holders?: React.ReactNode;
   issuer?: React.ReactNode;
   liquidity?: React.ReactNode;
+  oracles?: React.ReactNode;
 }) {
   return (
     <ActiveBody
@@ -87,6 +91,7 @@ export function ActiveTabSlot({
       holders={holders}
       issuer={issuer}
       liquidity={liquidity}
+      oracles={oracles}
     />
   );
 }
@@ -100,6 +105,7 @@ function ActiveBody({
   holders,
   issuer,
   liquidity,
+  oracles,
 }: {
   overview: React.ReactNode;
   chart: React.ReactNode;
@@ -109,6 +115,7 @@ function ActiveBody({
   holders?: React.ReactNode;
   issuer?: React.ReactNode;
   liquidity?: React.ReactNode;
+  oracles?: React.ReactNode;
 }) {
   const params = useSearchParams();
   const tab = (params.get('tab') as AssetTab) || 'chart';
@@ -119,5 +126,6 @@ function ActiveBody({
   if (tab === 'holders' && holders) return <>{holders}</>;
   if (tab === 'issuer' && issuer) return <>{issuer}</>;
   if (tab === 'liquidity' && liquidity) return <>{liquidity}</>;
+  if (tab === 'oracles' && oracles) return <>{oracles}</>;
   return <>{chart}</>;
 }

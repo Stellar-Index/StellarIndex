@@ -11,6 +11,7 @@ import {
   formatDurationShort,
   formatDurationLong,
   formatRelativeLong,
+  formatOraclePrice,
 } from './format';
 import { truncateMiddle } from '@/components/ui';
 
@@ -61,6 +62,39 @@ describe('formatPriceSmall / formatPairPrice', () => {
     // distinguishably (and not identically to a healthy zero-price row).
     expect(formatPriceSmall(-0.5)).not.toBe('0');
     expect(formatPriceSmall(-0.5)).toBe('-0.5'); // plain decimal since 2026-08-06
+  });
+});
+
+describe('formatOraclePrice', () => {
+  // Extracted from oracles/OraclesView (#336) so the /oracles table and
+  // the per-asset oracle panel cannot drift apart. These pin the exact
+  // pre-extraction behaviour.
+  it('keeps 4 digits at/above 1 and 6 below, on the real oracle shapes', () => {
+    // Reflector USDC at 14 decimals, Band USDC at 9 (r1, 2026-09-03).
+    expect(formatOraclePrice('1.00003382630191')).toBe('1.0000');
+    expect(formatOraclePrice('0.999822000')).toBe('0.999822');
+    expect(formatOraclePrice('0.17892015847842')).toBe('0.178920');
+  });
+
+  it('drops to significant digits below a cent rather than to 0.000000', () => {
+    expect(formatOraclePrice('0.0000034521')).toBe('0.000003452');
+    expect(formatOraclePrice('0')).toBe('0');
+  });
+
+  // An oracle reading is evidence. A value we cannot parse is reported
+  // verbatim, never swallowed into an em-dash.
+  it('renders an unparseable wire value verbatim', () => {
+    expect(formatOraclePrice('not-a-number')).toBe('not-a-number');
+  });
+
+  // Number('') is 0, so the naive form rendered a blank price as an
+  // oracle quoting the asset at ZERO. Blank is absence, not a reading.
+  it('does not turn a blank price into a zero quote', () => {
+    expect(formatOraclePrice('')).toBe('');
+    expect(formatOraclePrice('   ')).toBe('   ');
+    // A real zero still renders as one.
+    expect(formatOraclePrice('0')).toBe('0');
+    expect(formatOraclePrice('0.00000000')).toBe('0');
   });
 });
 
