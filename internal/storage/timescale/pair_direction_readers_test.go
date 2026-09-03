@@ -55,11 +55,11 @@ func TestRecentClosedVWAP1mForPair_FoldsBothDirections(t *testing.T) {
 		b := base.Add(-time.Duration(i) * time.Minute) // newest first
 		rows = append(rows, dirRows(b, pair.Base.String(), pair.Quote.String())...)
 	}
-	conn := &cannedConn{plan: []cannedResult{{
+	script := []scriptedResult{{
 		cols: []string{"bucket", "base_asset", "vwap", "volume", "trade_count", "sources"},
 		rows: rows,
-	}}}
-	store := &Store{db: sql.OpenDB(&cannedConnector{conn: conn})}
+	}}
+	store, _ := newScriptedStore(t, script...)
 	defer func() { _ = store.db.Close() }()
 
 	got, err := store.RecentClosedVWAP1mForPair(context.Background(), pair, 3)
@@ -98,14 +98,14 @@ func TestRecentClosedVWAP1mForPair_FlippedOnlyBucketIsServed(t *testing.T) {
 	pair := testXLMUSDCPair(t)
 	b := time.Date(2026, 8, 31, 12, 0, 0, 0, time.UTC)
 
-	conn := &cannedConn{plan: []cannedResult{{
+	script := []scriptedResult{{
 		cols: []string{"bucket", "base_asset", "vwap", "volume", "trade_count", "sources"},
 		rows: [][]driver.Value{
 			// Only the flipped leg: 10 USDC traded for 40 XLM.
 			{b, pair.Quote.String(), "4", "10", int64(3), nil},
 		},
-	}}}
-	store := &Store{db: sql.OpenDB(&cannedConnector{conn: conn})}
+	}}
+	store, _ := newScriptedStore(t, script...)
 	defer func() { _ = store.db.Close() }()
 
 	got, err := store.RecentClosedVWAP1mForPair(context.Background(), pair, 10)
@@ -130,11 +130,11 @@ func TestClosedVWAP1mAtOrBefore_FoldsBothDirections(t *testing.T) {
 	pair := testXLMUSDCPair(t)
 	b := time.Date(2026, 8, 31, 12, 0, 0, 0, time.UTC)
 
-	conn := &cannedConn{plan: []cannedResult{{
+	script := []scriptedResult{{
 		cols: []string{"bucket", "base_asset", "vwap", "volume", "trade_count", "sources"},
 		rows: dirRows(b, pair.Base.String(), pair.Quote.String()),
-	}}}
-	store := &Store{db: sql.OpenDB(&cannedConnector{conn: conn})}
+	}}
+	store, _ := newScriptedStore(t, script...)
 	defer func() { _ = store.db.Close() }()
 
 	got, err := store.ClosedVWAP1mAtOrBefore(context.Background(), pair, b.Add(time.Hour))
@@ -160,14 +160,14 @@ func TestClosedVWAP1mAtOrBefore_TrimsTheOlderBucket(t *testing.T) {
 	newest := time.Date(2026, 8, 31, 12, 0, 0, 0, time.UTC)
 	older := newest.Add(-time.Minute)
 
-	conn := &cannedConn{plan: []cannedResult{{
+	script := []scriptedResult{{
 		cols: []string{"bucket", "base_asset", "vwap", "volume", "trade_count", "sources"},
 		rows: [][]driver.Value{
 			{newest, pair.Base.String(), "0.5", "100", int64(1), nil},
 			{older, pair.Base.String(), "9.9", "100", int64(1), nil},
 		},
-	}}}
-	store := &Store{db: sql.OpenDB(&cannedConnector{conn: conn})}
+	}}
+	store, _ := newScriptedStore(t, script...)
 	defer func() { _ = store.db.Close() }()
 
 	got, err := store.ClosedVWAP1mAtOrBefore(context.Background(), pair, newest.Add(time.Hour))
@@ -187,11 +187,11 @@ func TestClosedVWAP1mAtOrBefore_TrimsTheOlderBucket(t *testing.T) {
 // caller branches on must survive the rewrite from QueryRow to Query.
 func TestClosedVWAP1mAtOrBefore_NoRowsIsErrNoRows(t *testing.T) {
 	pair := testXLMUSDCPair(t)
-	conn := &cannedConn{plan: []cannedResult{{
+	script := []scriptedResult{{
 		cols: []string{"bucket", "base_asset", "vwap", "volume", "trade_count", "sources"},
 		rows: nil,
-	}}}
-	store := &Store{db: sql.OpenDB(&cannedConnector{conn: conn})}
+	}}
+	store, _ := newScriptedStore(t, script...)
 	defer func() { _ = store.db.Close() }()
 
 	_, err := store.ClosedVWAP1mAtOrBefore(context.Background(), pair, time.Now())
@@ -215,11 +215,11 @@ func TestTimedVWAPs1mForChangeSummary_FoldsBothDirections(t *testing.T) {
 		b := start.Add(time.Duration(i) * time.Minute) // oldest first
 		rows = append(rows, dirRows(b, pair.Base.String(), pair.Quote.String())...)
 	}
-	conn := &cannedConn{plan: []cannedResult{{
+	script := []scriptedResult{{
 		cols: []string{"bucket", "base_asset", "vwap", "volume", "trade_count", "sources"},
 		rows: rows,
-	}}}
-	store := &Store{db: sql.OpenDB(&cannedConnector{conn: conn})}
+	}}
+	store, _ := newScriptedStore(t, script...)
 	defer func() { _ = store.db.Close() }()
 
 	got, err := store.TimedVWAPs1mForChangeSummary(

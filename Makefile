@@ -112,10 +112,15 @@ test: ## Run unit tests with race detector
 	$(GO) test -race -timeout 2m ./...
 
 .PHONY: test-cover
-test-cover: ## Unit tests + coverage report
+test-cover: ## Unit tests + coverage report + floor check (report-only)
 	$(GO) test -race -coverprofile=coverage.txt -covermode=atomic ./...
 	$(GO) tool cover -html=coverage.txt -o coverage.html
 	@echo "Coverage report: coverage.html"
+	@# Same check CI runs on the same profile, so a coverage drop is
+	@# visible before the push rather than in a PR comment. Report-only
+	@# for the verdict; hard-fails if the profile is unreadable or the
+	@# measured scope collapsed. See scripts/ci/coverage-floor.sh.
+	bash scripts/ci/coverage-floor.sh
 
 .PHONY: test-integration
 test-integration: ## Integration tests (requires Docker; spins its own containers via testcontainers-go)

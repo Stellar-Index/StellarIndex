@@ -7,8 +7,6 @@ import (
 	"context"
 	"database/sql"
 	"database/sql/driver"
-	"errors"
-	"io"
 	"strings"
 	"testing"
 	"time"
@@ -253,14 +251,14 @@ func TestHistoryPoints_CombinesBothStoredDirections(t *testing.T) {
 	pair := testXLMUSDCPair(t)
 	bucket := time.Date(2026, 7, 23, 12, 0, 0, 0, time.UTC)
 
-	conn := &cannedConn{plan: []cannedResult{{
+	script := []scriptedResult{{
 		cols: []string{"bucket", "base_asset", "vwap", "volume", "volume_usd"},
 		rows: [][]driver.Value{
 			{bucket, pair.Base.String(), "0.5", "100", "1000.50"},
 			{bucket, pair.Quote.String(), "5", "10", "2500.25"},
 		},
-	}}}
-	store := &Store{db: sql.OpenDB(&cannedConnector{conn: conn})}
+	}}
+	store, conn := newScriptedStore(t, script...)
 	defer func() { _ = store.db.Close() }()
 
 	pts, err := store.HistoryPoints(context.Background(), pair, Granularity1m, 10)
@@ -279,7 +277,7 @@ func TestHistoryPoints_CombinesBothStoredDirections(t *testing.T) {
 		t.Errorf("served volume_usd = %v, want 3500.75 (both directions summed)", pts[0].VolumeUSD)
 	}
 	// The read must actually ASK for both orientations.
-	q := conn.queries[0]
+	q := conn.statements()[0]
 	if !strings.Contains(q, "base_asset = $1 AND quote_asset = $2") ||
 		!strings.Contains(q, "base_asset = $2 AND quote_asset = $1") {
 		t.Errorf("HistoryPoints query reads only one stored orientation:\n%s", q)
@@ -295,14 +293,14 @@ func TestHistoryPoints_FlippedOnlyBucketIsServed(t *testing.T) {
 	pair := testXLMUSDCPair(t)
 	bucket := time.Date(2026, 7, 23, 12, 0, 0, 0, time.UTC)
 
-	conn := &cannedConn{plan: []cannedResult{{
+	script := []scriptedResult{{
 		cols: []string{"bucket", "base_asset", "vwap", "volume", "volume_usd"},
 		rows: [][]driver.Value{
 			// Only the USDC/XLM orientation traded this minute.
 			{bucket, pair.Quote.String(), "4", "10", "500.00"},
 		},
-	}}}
-	store := &Store{db: sql.OpenDB(&cannedConnector{conn: conn})}
+	}}
+	store, _ := newScriptedStore(t, script...)
 	defer func() { _ = store.db.Close() }()
 
 	pts, err := store.HistoryPoints(context.Background(), pair, Granularity1m, 10)
@@ -327,7 +325,7 @@ func TestLatestClosedVWAP1mForPair_VolumeWeightedUnion(t *testing.T) {
 	pair := testXLMUSDCPair(t)
 	bucket := time.Date(2026, 7, 23, 12, 0, 0, 0, time.UTC)
 
-	conn := &cannedConn{plan: []cannedResult{
+	script := []scriptedResult{
 		// 1. the cheap recent-existence gate
 		{cols: []string{"?column?"}, rows: [][]driver.Value{{int64(1)}}},
 		// 2. the latest closed bucket's raw per-direction rows
@@ -338,8 +336,8 @@ func TestLatestClosedVWAP1mForPair_VolumeWeightedUnion(t *testing.T) {
 				{bucket, pair.Quote.String(), "5", "10", int64(9), []byte("{soroswap,sdex}")},
 			},
 		},
-	}}
-	store := &Store{db: sql.OpenDB(&cannedConnector{conn: conn})}
+	}
+	store, _ := newScriptedStore(t, script...)
 	defer func() { _ = store.db.Close() }()
 
 	row, err := store.LatestClosedVWAP1mForPair(context.Background(), pair)
@@ -373,14 +371,14 @@ func TestClosedVWAPAtOrBefore_VolumeWeightedUnion(t *testing.T) {
 	ts := time.Now().UTC().Add(-30 * time.Minute)
 	bucket := ts.Truncate(time.Minute).Add(-time.Minute)
 
-	conn := &cannedConn{plan: []cannedResult{{
+	script := []scriptedResult{{
 		cols: []string{"bucket", "base_asset", "vwap", "volume"},
 		rows: [][]driver.Value{
 			{bucket, pair.Base.String(), "0.5", "100"},
 			{bucket, pair.Quote.String(), "5", "10"},
 		},
-	}}}
-	store := &Store{db: sql.OpenDB(&cannedConnector{conn: conn})}
+	}}
+	store, _ := newScriptedStore(t, script...)
 	defer func() { _ = store.db.Close() }()
 
 	got, err := store.ClosedVWAPAtOrBefore(context.Background(), pair, ts, time.Hour)
@@ -406,7 +404,7 @@ func TestRecentClosedVWAP1mCombined_PerBucketUnion(t *testing.T) {
 	newer := time.Date(2026, 7, 23, 12, 1, 0, 0, time.UTC)
 	older := time.Date(2026, 7, 23, 12, 0, 0, 0, time.UTC)
 
-	conn := &cannedConn{plan: []cannedResult{{
+	script := []scriptedResult{{
 		cols: []string{"bucket", "base_asset", "vwap", "volume", "trade_count", "sources"},
 		rows: [][]driver.Value{
 			// newest bucket: two-sided → 0.4
@@ -415,8 +413,8 @@ func TestRecentClosedVWAP1mCombined_PerBucketUnion(t *testing.T) {
 			// older bucket: flipped-only → exact inverse, 0.25
 			{older, pair.Quote.String(), "4", "10", int64(3), []byte("{soroswap}")},
 		},
-	}}}
-	store := &Store{db: sql.OpenDB(&cannedConnector{conn: conn})}
+	}}
+	store, _ := newScriptedStore(t, script...)
 	defer func() { _ = store.db.Close() }()
 
 	rows, err := store.RecentClosedVWAP1mCombined(context.Background(), pair, 5)
@@ -456,11 +454,11 @@ func TestHistoryPoints_BucketLimitCountsBuckets(t *testing.T) {
 			[]driver.Value{b, pair.Quote.String(), "5", "10", nil},
 		)
 	}
-	conn := &cannedConn{plan: []cannedResult{{
+	script := []scriptedResult{{
 		cols: []string{"bucket", "base_asset", "vwap", "volume", "volume_usd"},
 		rows: rows,
-	}}}
-	store := &Store{db: sql.OpenDB(&cannedConnector{conn: conn})}
+	}}
+	store, _ := newScriptedStore(t, script...)
 	defer func() { _ = store.db.Close() }()
 
 	pts, err := store.HistoryPoints(context.Background(), pair, Granularity1m, 3)
@@ -493,61 +491,3 @@ func testXLMUSDCPair(t *testing.T) canonical.Pair {
 	}
 	return pair
 }
-
-// -----------------------------------------------------------------
-// Canned driver — replays a fixed result per query, in order, and
-// records the SQL it was asked to run. Enough of database/sql's driver
-// surface to exercise a Store read end-to-end without a database (the
-// same "money math must be testable without a DB" discipline as
-// bridgeRate / xlmLegRate in usd_fx_resolver.go).
-// -----------------------------------------------------------------
-
-type cannedResult struct {
-	cols []string
-	rows [][]driver.Value
-}
-
-type cannedRows struct {
-	res cannedResult
-	i   int
-}
-
-func (r *cannedRows) Columns() []string { return r.res.cols }
-func (r *cannedRows) Close() error      { return nil }
-func (r *cannedRows) Next(dest []driver.Value) error {
-	if r.i >= len(r.res.rows) {
-		return io.EOF
-	}
-	copy(dest, r.res.rows[r.i])
-	r.i++
-	return nil
-}
-
-type cannedConn struct {
-	plan    []cannedResult
-	n       int
-	queries []string
-}
-
-func (c *cannedConn) Prepare(string) (driver.Stmt, error) { return nil, errors.New("not implemented") }
-func (c *cannedConn) Close() error                        { return nil }
-func (c *cannedConn) Begin() (driver.Tx, error)           { return nil, errors.New("not implemented") }
-
-func (c *cannedConn) QueryContext(_ context.Context, q string, _ []driver.NamedValue) (driver.Rows, error) {
-	c.queries = append(c.queries, q)
-	if c.n >= len(c.plan) {
-		return nil, errors.New("cannedConn: unexpected extra query: " + q)
-	}
-	res := c.plan[c.n]
-	c.n++
-	return &cannedRows{res: res}, nil
-}
-
-type cannedDriver struct{}
-
-func (cannedDriver) Open(string) (driver.Conn, error) { return nil, errors.New("not implemented") }
-
-type cannedConnector struct{ conn *cannedConn }
-
-func (c *cannedConnector) Connect(context.Context) (driver.Conn, error) { return c.conn, nil }
-func (c *cannedConnector) Driver() driver.Driver                        { return cannedDriver{} }

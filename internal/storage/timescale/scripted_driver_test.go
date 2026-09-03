@@ -18,14 +18,15 @@ import (
 // order, and records BOTH the SQL text and the bound arguments of every
 // statement it was asked to run.
 //
-// It is the exec-aware, argument-recording sibling of [cannedConn] (see
-// vwap_direction_combine_test.go), which covers query-only reads and does
-// not surface the args. Store methods whose contract lives in the
-// PLACEHOLDER BINDING — "$1 is the kind, $2 is the limit", "the ON CONFLICT
-// guard gets this store's derive_generation", "the window bound is
-// since.UTC()" — cannot be pinned without them, and the write paths
-// (INSERT/DELETE) need ExecContext at all. New no-database store tests
-// should use this one; folding cannedConn into it is a follow-up.
+// It is the ONLY no-database driver double in this package. It replaced
+// the query-only `cannedConn` (formerly in vwap_direction_combine_test.go),
+// which recorded the SQL but not the bound arguments and could not Exec at
+// all; every one of its call sites now uses [newScriptedStore]. Store
+// methods whose contract lives in the PLACEHOLDER BINDING — "$1 is the
+// kind, $2 is the limit", "the ON CONFLICT guard gets this store's
+// derive_generation", "the window bound is since.UTC()" — cannot be pinned
+// without the args, and the write paths (INSERT/DELETE) need ExecContext.
+// New no-database store tests use this one; do not add a second double.
 //
 // Faithfulness to production: [scriptedConn.CheckNamedValue] accepts every
 // Go value unconverted, exactly as pgx v5's stdlib driver does (pgx encodes

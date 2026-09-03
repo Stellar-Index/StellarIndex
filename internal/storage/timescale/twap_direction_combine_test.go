@@ -5,7 +5,6 @@ package timescale
 
 import (
 	"context"
-	"database/sql"
 	"database/sql/driver"
 	"math/big"
 	"strings"
@@ -188,7 +187,7 @@ func TestTWAPPointsInRange_CoverageWeightedUnion(t *testing.T) {
 	pair := testXLMUSDCPair(t)
 	bucket := time.Date(2026, 7, 23, 12, 0, 0, 0, time.UTC)
 
-	conn := &cannedConn{plan: []cannedResult{{
+	script := []scriptedResult{{
 		cols: []string{"bucket", "base_asset", "twap", "sample_count", "volume_usd"},
 		rows: [][]driver.Value{
 			// flipped USDC/XLM: stored 2 → oriented 0.5, coverage 50
@@ -196,8 +195,8 @@ func TestTWAPPointsInRange_CoverageWeightedUnion(t *testing.T) {
 			// XLM/USDC: stored 0.6, coverage 5
 			{bucket, pair.Base.String(), "0.6", int64(5), "2000.00"},
 		},
-	}}}
-	store := &Store{db: sql.OpenDB(&cannedConnector{conn: conn})}
+	}}
+	store, conn := newScriptedStore(t, script...)
 	defer func() { _ = store.db.Close() }()
 
 	pts, err := store.TWAPPointsInRange(context.Background(), pair, Granularity1h, time.Time{}, time.Time{}, 0)
@@ -222,7 +221,7 @@ func TestTWAPPointsInRange_CoverageWeightedUnion(t *testing.T) {
 		t.Errorf("served volume_usd = %v, want 3000.00 (both directions summed)", pts[0].VolumeUSD)
 	}
 	// The read must ask for BOTH orientations and select the coverage column.
-	q := conn.queries[0]
+	q := conn.statements()[0]
 	if !strings.Contains(q, "base_asset = $1 AND quote_asset = $2") ||
 		!strings.Contains(q, "base_asset = $2 AND quote_asset = $1") {
 		t.Errorf("TWAPPointsInRange query reads only one stored orientation:\n%s", q)
@@ -243,13 +242,13 @@ func TestTWAPPointsInRange_FlippedOnlyBucketIsServed(t *testing.T) {
 	pair := testXLMUSDCPair(t)
 	bucket := time.Date(2026, 7, 23, 12, 0, 0, 0, time.UTC)
 
-	conn := &cannedConn{plan: []cannedResult{{
+	script := []scriptedResult{{
 		cols: []string{"bucket", "base_asset", "twap", "sample_count", "volume_usd"},
 		rows: [][]driver.Value{
 			{bucket, pair.Quote.String(), "4", int64(7), "500.00"},
 		},
-	}}}
-	store := &Store{db: sql.OpenDB(&cannedConnector{conn: conn})}
+	}}
+	store, _ := newScriptedStore(t, script...)
 	defer func() { _ = store.db.Close() }()
 
 	pts, err := store.TWAPPointsInRange(context.Background(), pair, Granularity1d, time.Time{}, time.Time{}, 0)

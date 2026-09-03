@@ -2,7 +2,6 @@ package timescale
 
 import (
 	"context"
-	"database/sql"
 	"database/sql/driver"
 	"strings"
 	"testing"
@@ -36,22 +35,22 @@ import (
 // reintroducing the `$N || ' days'` pattern.
 func TestListDivergenceLatest_DaysFilterUsesMakeInterval(t *testing.T) {
 	// 9-column empty result matching the SELECT; 0 rows so Scan never runs.
-	conn := &cannedConn{plan: []cannedResult{{
+	script := []scriptedResult{{
 		cols: []string{
 			"asset_id", "quote_id", "reference", "observed_at",
 			"observed_at_ledger", "our_price", "ref_price", "delta_pct", "status",
 		},
 		rows: [][]driver.Value{},
-	}}}
-	s := &Store{db: sql.OpenDB(&cannedConnector{conn: conn})}
+	}}
+	s, conn := newScriptedStore(t, script...)
 
 	if _, err := s.ListDivergenceLatest(context.Background(), 7, false, 100); err != nil {
 		t.Fatalf("ListDivergenceLatest: %v", err)
 	}
-	if len(conn.queries) != 1 {
-		t.Fatalf("expected exactly 1 query, got %d", len(conn.queries))
+	if len(conn.statements()) != 1 {
+		t.Fatalf("expected exactly 1 query, got %d", len(conn.statements()))
 	}
-	q := conn.queries[0]
+	q := conn.statements()[0]
 	if !strings.Contains(q, "make_interval(days => $1)") {
 		t.Errorf("days window must use make_interval(days => $1) so $1 types as int; got:\n%s", q)
 	}
