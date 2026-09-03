@@ -316,7 +316,15 @@ func seedDirectoryAsset(t *testing.T, ctx context.Context, db *sql.DB, assetID, 
 func seedRawVolume(t *testing.T, ctx context.Context, db *sql.DB, assetID, volUSD string) {
 	t.Helper()
 	if _, err := db.ExecContext(ctx,
-		`INSERT INTO asset_volume_24h (asset_id, vol_usd, computed_at) VALUES ($1, $2, now())`,
+		// Upsert, not a bare insert: a fixture that runs
+		// RefreshAssetListingRollups first (assets_listing_rank_test.go
+		// does, because the listing's price column now comes from
+		// asset_price_snapshot) already has a derived row here, and this
+		// helper's job is to OVERRIDE it with the control value.
+		`INSERT INTO asset_volume_24h (asset_id, vol_usd, computed_at)
+		 VALUES ($1, $2, now())
+		 ON CONFLICT (asset_id) DO UPDATE
+		   SET vol_usd = EXCLUDED.vol_usd, computed_at = EXCLUDED.computed_at`,
 		assetID, volUSD,
 	); err != nil {
 		t.Fatalf("seed asset_volume_24h %s: %v", assetID, err)

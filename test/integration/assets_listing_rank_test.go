@@ -86,14 +86,26 @@ func seedUSDPrice(t *testing.T, ctx context.Context, db *sql.DB, nonce int, asse
 
 // seedRankFixture materialises the shared scenario and returns the
 // canonical asset_id per code.
-func seedRankFixture(t *testing.T, ctx context.Context, db *sql.DB, assets []rankAsset) map[string]string {
+// derefOr renders a *string for an error message. The assertions below
+// compare through the pointer but used to PRINT the pointer, so a real
+// failure read "volume_24h_usd = 0x14000a6ed70" and told the reader
+// nothing about the value that was actually wrong.
+func derefOr(p *string) string {
+	if p == nil {
+		return "<nil>"
+	}
+	return *p
+}
+
+func seedRankFixture(t *testing.T, ctx context.Context, store *timescale.Store, assets []rankAsset) map[string]string {
+	db := store.DB()
 	t.Helper()
 	ids := make(map[string]string, len(assets))
 	for i, a := range assets {
 		id := mustClassicID(t, a.code, a.issuer)
 		ids[a.code] = id
 		seedRankAsset(t, ctx, db, id, a.code, a.issuer, a.obsCount)
-		seedRawVolume(t, ctx, db, id, a.volUSD)
+		// Volume is seeded AFTER the rollup refresh below — see there.
 		// Every asset is an honest `market` so the §4-B concentration
 		// demote is a no-op here and rank_tier is the only thing moving
 		// rows — otherwise a passing test could be crediting the wrong
@@ -109,6 +121,34 @@ func seedRankFixture(t *testing.T, ctx context.Context, db *sql.DB, assets []ran
 	if _, err := db.ExecContext(ctx,
 		"CALL refresh_continuous_aggregate('prices_1m', NULL, NULL)"); err != nil {
 		t.Fatalf("refresh prices_1m: %v", err)
+	}
+	// The listing no longer derives price inside the request (#331 F1):
+	// price_usd, the three change columns and source_count come from
+	// asset_price_snapshot (migration 0154), refreshed alongside
+	// asset_volume_24h by the aggregator's 2-minute worker. Refreshing
+	// prices_1m alone leaves that rollup EMPTY, which makes every asset
+	// unpriced — and an all-unpriced board collapses tier 0 into tier 1,
+	// so the unpriced-demotion this file exists to prove silently stops
+	// being observable. Same posture as RefreshAssetVolume24h in
+	// asset_volume_rollup_test.go: the test has to do the worker's job.
+	if err := store.RefreshAssetListingRollups(ctx); err != nil {
+		t.Fatalf("RefreshAssetListingRollups: %v", err)
+	}
+	// Volume goes in LAST, and that ordering is load-bearing. This
+	// fixture uses two different kinds of input on purpose: price is
+	// REAL (seeded trades, materialised through prices_1m into
+	// asset_price_snapshot, so it exercises the production derivation)
+	// while 24h volume is SYNTHETIC — a control value chosen to put the
+	// flagged asset at the TOP of the raw ordering, which is the only
+	// way the demotion is worth proving. RefreshAssetListingRollups
+	// refreshes both rollups in one transaction, so running it after
+	// seedRawVolume recomputes vol_usd from the trades and discards the
+	// control values (FLAGA's 500000 became a derived figure and the
+	// ordering stopped testing anything). Seeding volume afterwards
+	// keeps the control, and the assertion that the raw chain fact is
+	// unaltered stays meaningful.
+	for _, a := range assets {
+		seedRawVolume(t, ctx, db, ids[a.code], a.volUSD)
 	}
 	return ids
 }
@@ -193,9 +233,8 @@ func TestAssetsListing_FlaggedAndUnpricedDemotion(t *testing.T) {
 		t.Fatalf("store open: %v", err)
 	}
 	t.Cleanup(func() { _ = store.Close() })
-	db := store.DB()
 
-	seedRankFixture(t, ctx, db, rankFixture)
+	seedRankFixture(t, ctx, store, rankFixture)
 
 	rows := listRankOrder(t, ctx, store, timescale.AssetsOrderVolume24hUSDDesc, 100)
 	got := codesOf(rows)
@@ -245,10 +284,10 @@ func TestAssetsListing_FlaggedAndUnpricedDemotion(t *testing.T) {
 	}
 	// The raw chain fact is untouched — we demote the RANK, never the data.
 	if byCode["FLAGA"].Volume24hUSD == nil || *byCode["FLAGA"].Volume24hUSD != "500000" {
-		t.Errorf("FLAGA volume_24h_usd = %v, want the unaltered raw 500000", byCode["FLAGA"].Volume24hUSD)
+		t.Errorf("FLAGA volume_24h_usd = %s, want the unaltered raw 500000", derefOr(byCode["FLAGA"].Volume24hUSD))
 	}
 	if byCode["FLAGA"].PriceUSD == nil || *byCode["FLAGA"].PriceUSD != "2.5000000000" {
-		t.Errorf("FLAGA price_usd = %v, want the unaltered 2.5 (the API layer, not the query, withholds it)", byCode["FLAGA"].PriceUSD)
+		t.Errorf("FLAGA price_usd = %s, want the unaltered 2.5 (the API layer, not the query, withholds it)", derefOr(byCode["FLAGA"].PriceUSD))
 	}
 
 	// The observation-count order demotes flagged rows too ("whatever the
@@ -281,12 +320,11 @@ func TestAssetsListing_KeysetPaginationCoversEveryRow(t *testing.T) {
 		t.Fatalf("store open: %v", err)
 	}
 	t.Cleanup(func() { _ = store.Close() })
-	db := store.DB()
 
 	// tieFixture, not rankFixture: the walk must cross a TIE in the sort
 	// key, which is where a mixed-direction keyset predicate goes wrong
 	// and where the long tail actually lives. See tieFixture's comment.
-	seedRankFixture(t, ctx, db, tieFixture)
+	seedRankFixture(t, ctx, store, tieFixture)
 
 	for _, tc := range []struct {
 		name  string

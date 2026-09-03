@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -20,13 +21,29 @@ import (
 // other v1.AssetsReader method is an inert stub — none is on this
 // path.
 type snapshotStubReader struct {
+	// The cached reader single-flights a cold miss, so concurrent
+	// readers can reach this stub on different goroutines. A bare
+	// int++ here is a data race that `go test -race` fails on — and
+	// the race is in the TEST, which makes it the worst kind: it
+	// reddens CI for a defect that does not exist in the code under
+	// test.
+	mu    sync.Mutex
 	calls int
+}
+
+// callCount reads the counter under the same lock that increments it.
+func (s *snapshotStubReader) callCount() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.calls
 }
 
 func (s *snapshotStubReader) ListAssetsExt(
 	_ context.Context, opts timescale.ListAssetsOptions,
 ) ([]timescale.AssetRow, error) {
+	s.mu.Lock()
 	s.calls++
+	s.mu.Unlock()
 	n := opts.Limit
 	if n > 3 {
 		n = 3
@@ -181,9 +198,9 @@ func TestSeedAssetListingsFromSnapshotsRemovesTheColdRead(t *testing.T) {
 			t.Errorf("limit=%d: observedAt = %v, want the snapshot's %v", o.Limit, at, observedAt)
 		}
 	}
-	if up.calls != 0 {
+	if got := up.callCount(); got != 0 {
 		t.Fatalf("upstream was queried %d times despite a complete boot seed — the seed addressed keys "+
-			"the reader does not look up", up.calls)
+			"the reader does not look up", got)
 	}
 }
 
