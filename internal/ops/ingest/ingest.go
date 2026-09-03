@@ -3,7 +3,8 @@
 
 // Package ingest holds the stellarindex-ops ingest / backfill
 // subcommands: `backfill`, `backfill-external`, `backfill-chainlink`,
-// `backfill-router`, `detect-gaps`, `list-cursors`, `resume-stalled`,
+// `backfill-router`, `detect-gaps`, `list-cursors`, `reap-cursors`,
+// `resume-stalled`,
 // `find-data-gaps`, `census-backfill`, `tag-routed-via`,
 // `seed-soroswap-pairs`, `seed-protocol-contracts`,
 // `seed-entry-counts`, `projector-replay`, `scan-soroban-events`,
@@ -34,6 +35,8 @@ func Run(args []string) error { //nolint:gocyclo // flat command-dispatch switch
 		return detectGaps(args[1:])
 	case "list-cursors":
 		return listCursors(args[1:])
+	case "reap-cursors":
+		return reapCursors(args[1:])
 	case "resume-stalled":
 		return resumeStalled(args[1:])
 	case "find-data-gaps":

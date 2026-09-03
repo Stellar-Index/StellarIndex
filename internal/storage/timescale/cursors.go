@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"slices"
 	"time"
 )
 
@@ -38,6 +39,31 @@ type Cursor struct {
 	FirstLedger uint32
 	LastLedger  uint32
 	UpdatedAt   time.Time
+}
+
+// liveCursorSources are the ingestion_cursors `source` namespaces that
+// hold LIVE resume state — a position something is still expected to
+// advance — rather than a record of a one-shot job that has ended.
+// `ledgerstream` is the live indexer's position (cmd/stellarindex-indexer)
+// and `projector` the ADR-0032 per-domain projection position.
+//
+// One list, because two consumers draw opposite conclusions from the
+// same fact and must not disagree about which rows it covers:
+// `stellarindex-ops reap-cursors` refuses to DELETE these rows at any
+// age, and /v1/diagnostics/cursors refuses to classify them
+// `abandoned`. Both follow from one property — an old row here means
+// ingest is STUCK, an incident, so it is the row an operator most needs
+// to see and least wants deleted. A sharded one-shot job's namespace
+// has the opposite property: its rows outlive the work by design.
+var liveCursorSources = []string{"ledgerstream", "projector"}
+
+// LiveCursorSources returns a copy of the live cursor namespaces.
+func LiveCursorSources() []string { return slices.Clone(liveCursorSources) }
+
+// IsLiveCursorSource reports whether an ingestion_cursors `source`
+// names a live position rather than a one-shot job's shards.
+func IsLiveCursorSource(source string) bool {
+	return slices.Contains(liveCursorSources, source)
 }
 
 // GetCursor returns the stored cursor or ErrNotFound. Callers on
@@ -193,4 +219,53 @@ func (s *Store) RewindCursor(ctx context.Context, source, sub string, lastLedger
 		return fmt.Errorf("timescale: RewindCursor (%s,%s): no row rewound — cursor missing or already at/below ledger %d", source, sub, lastLedger)
 	}
 	return nil
+}
+
+// ReapCursors deletes ingestion_cursors rows whose last_updated is
+// strictly older than cutoff, skipping any row whose source is in
+// `protected` and — when `source` is non-empty — any row outside that
+// one source. Returns the number of rows deleted. The `stellarindex-ops
+// reap-cursors` subcommand is the only caller; it previews first and
+// passes the same arguments to the apply run, with
+// [LiveCursorSources] as `protected`.
+//
+// `protected` is a parameter rather than read from [liveCursorSources]
+// here so the SQL guard is exercisable in a test against a list the
+// test controls; the caller's Go-side planner applies the same
+// exclusion, and the two agreeing is the point of the second guard.
+//
+// Why the table needs reaping at all: ingestion_cursors carries one
+// permanent row per (source, sub_source), and every sharded one-shot
+// job mints a row per shard that nothing ever removes — one abandoned
+// SDEX backfill left 91 rows behind in May 2026, projected-rebuild
+// 4,523. They are a record of past work, not state anything reads: the
+// live pipeline looks up its own (source, sub) key, so a deleted
+// historical row changes no ingest decision. What it does change is
+// every consumer that LISTS cursors, which is why this exists rather
+// than the rows being left to accumulate forever.
+//
+// A cutoff-predicated DELETE (rather than one statement per previewed
+// key) is exact here because last_updated only ever moves FORWARD:
+// UpsertCursor stamps now(), so no row can enter the `< cutoff` set
+// between the preview and the apply. A row can only leave it — by being
+// written to, which is precisely the row an operator would want spared.
+func (s *Store) ReapCursors(ctx context.Context, cutoff time.Time, source string, protected []string) (int64, error) {
+	const q = `
+        DELETE FROM ingestion_cursors
+         WHERE last_updated < $1
+           AND ($2 = '' OR source = $2)
+           AND source <> ALL($3)
+    `
+	if protected == nil {
+		protected = []string{}
+	}
+	res, err := s.db.ExecContext(ctx, q, cutoff.UTC(), source, protected)
+	if err != nil {
+		return 0, fmt.Errorf("timescale: ReapCursors: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("timescale: ReapCursors rows: %w", err)
+	}
+	return n, nil
 }

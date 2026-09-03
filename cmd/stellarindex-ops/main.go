@@ -12,7 +12,7 @@
 //
 //   - Ingest / backfill (internal/ops/ingest): `backfill`,
 //     `backfill-external`, `backfill-chainlink`, `backfill-router`,
-//     `detect-gaps`, `list-cursors`, `resume-stalled`,
+//     `detect-gaps`, `list-cursors`, `reap-cursors`, `resume-stalled`,
 //     `find-data-gaps`, `census-backfill`, `tag-routed-via`,
 //     `seed-soroswap-pairs`, `seed-protocol-contracts`,
 //     `seed-entry-counts`, `projector-replay`, `scan-soroban-events`,
@@ -130,6 +130,7 @@ var subcommands = map[string]func(args []string) error{
 	"backfill-router":         ingest.Run,
 	"detect-gaps":             ingest.Run,
 	"list-cursors":            ingest.Run,
+	"reap-cursors":            ingest.Run,
 	"resume-stalled":          ingest.Run,
 	"find-data-gaps":          ingest.Run,
 	"census-backfill":         ingest.Run,
@@ -269,6 +270,17 @@ Subcommands:
                           Default: http://127.0.0.1:8000.
   list-cursors -config PATH
                           Print every source's last-indexed ledger + age.
+  reap-cursors -config PATH [-older-than DUR] [-source NAME] [-write]
+                          Delete the ingestion_cursors rows left behind by
+                          finished or abandoned one-shot jobs (default:
+                          older than 168h — the same boundary
+                          /v1/diagnostics/cursors calls 'abandoned').
+                          Previews by default; -write applies. The live
+                          namespaces (ledgerstream, projector) are never
+                          reaped — an old row there is a stuck-ingest
+                          incident, not garbage. Check what a shard still
+                          owes with resume-stalled -dry-run first: a reaped
+                          row deletes the resume point, never data.
   detect-gaps -config PATH [-threshold N]
                           Report sources lagging more than N ledgers (default 100)
                           behind the stellar-rpc network tip. Exit code 1 if any
