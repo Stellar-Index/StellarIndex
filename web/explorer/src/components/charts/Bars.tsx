@@ -30,7 +30,13 @@ export type HBarItem = {
   title?: string;
 };
 
-const HATCH_BG =
+/**
+ * The lower-bound hatch fill. Exported so a surface that shows a
+ * lower-bound FIGURE outside a bar (the DEX TVL headline) carries the
+ * same mark as the bars it sums, instead of forking the gradient into a
+ * second, free-to-drift copy.
+ */
+export const HATCH_BG =
   'repeating-linear-gradient(135deg, currentColor 0, currentColor 2px, transparent 2px, transparent 5px)';
 
 /**

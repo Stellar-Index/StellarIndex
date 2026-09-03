@@ -134,6 +134,38 @@ describe('scaleBaseUnits / formatBaseUnits', () => {
   });
 });
 
+describe('formatDecimalAmount', () => {
+  it('groups a headline money string exactly, at every magnitude', () => {
+    expect(format.formatDecimalAmount('40538494.54')).toBe('40,538,494.54');
+    expect(format.formatDecimalAmount('1569.77')).toBe('1,569.77');
+    expect(format.formatDecimalAmount('0.01')).toBe('0.01');
+    // Bare integer / short fraction on the wire still renders 2 places.
+    expect(format.formatDecimalAmount('1000')).toBe('1,000.00');
+    expect(format.formatDecimalAmount('1000.5')).toBe('1,000.50');
+    expect(format.formatDecimalAmount('-12.30')).toBe('-12.30');
+  });
+
+  it('keeps every digit past 2^53 — the whole reason it is not Number()', () => {
+    // 9007199254740993 = 2^53 + 1: Number() renders this as
+    // 9,007,199,254,740,992 (the odd unit is unrepresentable), so a
+    // parse-first formatter is off by a dollar before it starts.
+    expect(format.formatDecimalAmount('9007199254740993.07')).toBe(
+      '9,007,199,254,740,993.07',
+    );
+    expect(format.formatDecimalAmount('123456789012345678901234.99')).toBe(
+      '123,456,789,012,345,678,901,234.99',
+    );
+  });
+
+  it('returns null (never a zero-looking placeholder) for absence/garbage', () => {
+    expect(format.formatDecimalAmount(undefined)).toBeNull();
+    expect(format.formatDecimalAmount(null)).toBeNull();
+    expect(format.formatDecimalAmount('')).toBeNull();
+    expect(format.formatDecimalAmount('NaN')).toBeNull();
+    expect(format.formatDecimalAmount('1e6')).toBeNull();
+  });
+});
+
 describe('truncateMiddle', () => {
   it('keeps short strings whole', () => {
     expect(truncateMiddle('short')).toBe('short');

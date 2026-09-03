@@ -255,6 +255,40 @@ export function formatBaseUnits(
 }
 
 /**
+ * formatDecimalAmount — a FIXED-POINT DECIMAL STRING (the wire shape of
+ * every money field, ADR-0003) → a grouped display string, without the
+ * value ever touching a JS number. `Number('40538494.54')` is harmless;
+ * `Number()` on this column's larger siblings is not — above 2^53 the
+ * integer part rounds silently and the figure shown stops being the
+ * figure served. So the integer part is grouped by Intl over a **BigInt**
+ * (`Intl.NumberFormat` formats BigInt exactly — the same divide-first
+ * idiom as `formatBaseUnits` above), and the fraction is carried as
+ * digits rather than as arithmetic.
+ *
+ * The fraction is TRUNCATED to `frac` places, never rounded: these are
+ * published lower bounds (internal/api/v1/dex_tvl_total.go), and
+ * truncation can only understate. Wire values already carry exactly
+ * `frac` places today, so nothing is actually dropped.
+ *
+ * Returns `null` — not '—' — for an absent or non-decimal value, so each
+ * caller has to decide what absence looks like on its own surface. A
+ * shared placeholder here is precisely how an absent money total becomes
+ * a dash that reads as zero.
+ */
+export function formatDecimalAmount(
+  raw: string | null | undefined,
+  frac = 2,
+): string | null {
+  if (raw == null) return null;
+  const m = /^(-?)(\d+)(?:\.(\d+))?$/.exec(raw.trim());
+  if (!m) return null;
+  const [, sign, whole, tail = ''] = m;
+  const grouped = BigInt(whole).toLocaleString('en-US');
+  if (frac <= 0) return sign + grouped;
+  return `${sign}${grouped}.${tail.slice(0, frac).padEnd(frac, '0')}`;
+}
+
+/**
  * Truncate a long identifier (G-strkey, C-id, tx hash) to `head…tail`.
  * THE canonical for the whole app (FEC audit A2-06): server-safe here in
  * lib — the previous home (ui/Mono.tsx) is a 'use client' module, so

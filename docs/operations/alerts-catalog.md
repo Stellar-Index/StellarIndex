@@ -27,7 +27,7 @@ enforced 2026-04-23 onward).
   | Severity | Rules | AlertManager route | Delivery |
   | --- | --- | --- | --- |
   | `page` | 50 | `receiver: chat-page` | Discord **#stellarindex-pages**, `repeat_interval` 12 h. There is **no** PagerDuty leg — `pagerduty_configs` is unset, so nothing wakes anyone up. |
-  | `ticket` | 136 | `receiver: chat-default` | Discord **#stellarindex-alerts**, `repeat_interval` 24 h. |
+  | `ticket` | 137 | `receiver: chat-default` | Discord **#stellarindex-alerts**, `repeat_interval` 24 h. |
   | `informational` | 21 | `receiver: silent` | **Delivered to nobody, deliberately.** `silent` is declared with no `*_configs` block at all, which in Alertmanager means the alert is accepted and then dropped. It accumulates in the AlertManager UI and nothing else happens. |
 
   **`informational` is not "a low-priority ticket".** There is no
@@ -491,6 +491,7 @@ auto-unfreeze at all. Rules in
 | `stellarindex_customer_webhook_fanout_failing` | `sum by (event_type, reason) (increase(stellarindex_customer_webhook_fanout_failures_total[1h]))` | > 0 for ≥ 5 min (a subscribed customer never got a delivery ROW — no retry exists) | ticket | [customer-webhook-fanout-failing](runbooks/customer-webhook-fanout-failing.md) |
 | `stellarindex_usage_rollup_failing` | `rate(stellarindex_usage_rollup_sweeps_total{outcome=~"scan_error\|sink_error"}[15m])` | > 0 for ≥ 30 min | informational | [usage-rollup-failing](runbooks/usage-rollup-failing.md) |
 | `stellarindex_dex_tvl_refresh_failing` | `rate(stellarindex_dex_tvl_refresh_total{outcome="error"}[15m])` > 0 **and** `rate(...{outcome="ok"}[15m])` == 0 | for > 30 min (served TVL is a carried-forward snapshot aging silently) | ticket | [dex-tvl-refresh-failing](runbooks/dex-tvl-refresh-failing.md) |
+| `stellarindex_dex_tvl_total_divergent` | `rate(stellarindex_dex_tvl_reconcile_total{outcome="divergent"}[30m])` > 0 **and** `rate(...{outcome="ok"}[30m])` == 0 | for > 1h (the published headline `tvl_total` excludes a protocol — or is absent — while the per-protocol figures still serve) | ticket | [dex-tvl-total-divergent](runbooks/dex-tvl-total-divergent.md) |
 | `stellarindex_sdex_orderbook_maintain_failing` | `rate(stellarindex_sdex_orderbook_maintain_total{outcome=~"load_error\|advance_error"}[15m])` | > 0 for ≥ 30 min (load_error = endpoint stuck warming; advance_error = book drifting from tip) | ticket | [sdex-orderbook-maintain-failing](runbooks/sdex-orderbook-maintain-failing.md) |
 | `stellarindex_protocol_events_rollup_failing` | `rate(stellarindex_protocol_events_rollup_sweeps_total{outcome="refresh_error"}[15m])` | > 0 for ≥ 30 min | informational | [protocol-events-rollup-failing](runbooks/protocol-events-rollup-failing.md) |
 | `stellarindex_asset_volume_rollup_failing` | `rate(stellarindex_asset_volume_rollup_sweeps_total{outcome="refresh_error"}[15m])` | > 0 for ≥ 30 min | informational | [asset-volume-rollup-failing](runbooks/asset-volume-rollup-failing.md) |

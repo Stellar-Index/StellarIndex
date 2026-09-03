@@ -18,7 +18,11 @@ import {
 } from '@/components/ui';
 import { DonutChart } from '@/components/charts/DonutChart';
 import { categoryTone, protocolMeta, PROTOCOLS } from './registry';
-import { ProtocolTvlPanel, type ProtocolTvl } from './ProtocolTvlPanel';
+import {
+  ProtocolTvlPanel,
+  type DexTvlTotal,
+  type ProtocolTvl,
+} from './ProtocolTvlPanel';
 
 // Mirrors internal/api/v1/protocols.go ProtocolView.
 interface ProtocolCard {
@@ -76,17 +80,29 @@ export function ProtocolsIndex({
   const poolsBySource = new Map((sourceStats ?? []).map((s) => [s.name ?? '', s.markets_count_24h ?? 0]));
   const [filter, setFilter] = useState<string>(lockedCategory ?? '');
 
-  const { data, isError } = useQuery<ProtocolCard[]>({
+  // The envelope carries the headline `tvl_total` ALONGSIDE `protocols[]`;
+  // returning only the array here (as this query used to) discarded it.
+  // `tvl_total` is `omitempty` server-side — undefined is a real state
+  // (nothing could be admitted into the sum), not a fetch failure, and is
+  // rendered as absence rather than as a zero. See DexTvlHeadline.
+  const { data: envelope, isError } = useQuery<{
+    protocols: ProtocolCard[];
+    tvlTotal?: DexTvlTotal;
+  }>({
     queryKey: ['/v1/protocols'],
     retry: false,
     staleTime: 60_000,
     queryFn: async () => {
-      const env = await apiGet<{ data: { protocols: ProtocolCard[] } }>(
-        '/v1/protocols',
-      );
-      return env.data?.protocols ?? [];
+      const env = await apiGet<{
+        data: { protocols: ProtocolCard[]; tvl_total?: DexTvlTotal };
+      }>('/v1/protocols');
+      return {
+        protocols: env.data?.protocols ?? [],
+        tvlTotal: env.data?.tvl_total,
+      };
     },
   });
+  const data = envelope?.protocols;
 
   // Fall back to the static registry so the grid renders even if the API
   // is down (the cards + links still work). Live stats are NOT fabricated
@@ -183,7 +199,7 @@ export function ProtocolsIndex({
       {/* TVL bar — renders only when a visible protocol carries a served
           TVL (the AMMs); the static-registry fallback and TVL-less
           categories get NO chart rather than fabricated zeros. */}
-      <ProtocolTvlPanel rows={visible} />
+      <ProtocolTvlPanel rows={visible} total={envelope?.tvlTotal} />
 
       {!lockedCategory && categories.length > 0 && (
         <div className="flex flex-wrap items-center gap-2 text-xs">

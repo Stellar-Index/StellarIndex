@@ -82,7 +82,13 @@ investigation in `docs/operations/v1-launch-plan.md`).
   (same binary, same lake dependency).
 - Cache design: `internal/api/v1/dex_tvl_cache.go` (CoverageCache
   pattern — carried-forward per-protocol entries on failure).
+- Downstream consequence of the same failure:
+  [`dex-tvl-total-divergent`](dex-tvl-total-divergent.md). A protocol
+  carried forward here is REFUSED admission to the headline `tvl_total`,
+  so that alert fires on single-protocol failure — the case this one
+  structurally cannot see, since it requires zero successful refreshes.
 
 ## Changelog
 
+- 2026-09-03: cross-linked the headline-total divergence alert (#338).
 - 2026-07-29: created with the v0.21.4 background-worker metrics.

@@ -518,6 +518,42 @@ groups:
             causes: lake reserve reads failing (ClickHouse down / part
             churn) or the served-tier prices_1m reads failing.
 
+      # #338: the headline `tvl_total` on /v1/protocols admits a
+      # per-protocol figure only when that figure's own claims hold, and
+      # DROPS one that does not (naming it in the response's `excluded`).
+      # The result is honest — narrower, never wrong — which is exactly
+      # why nothing else surfaces it: no 5xx, no stale flag, and the
+      # sibling refresh alert above cannot fire while OTHER protocols
+      # keep succeeding. Sustained `divergent` with zero `ok` means the
+      # published money figure has been understating by a whole protocol
+      # (or, when nothing at all is admitted, is ABSENT) for as long as
+      # the rate has been non-zero. Window is three refresh cycles; the
+      # 1h `for:` needs six more, so a merge-window blip cannot fire it.
+      - alert: stellarindex_dex_tvl_total_divergent
+        expr: |
+          sum(rate(stellarindex_dex_tvl_reconcile_total{outcome="divergent"}[30m])) > 0
+            and
+          sum(rate(stellarindex_dex_tvl_reconcile_total{outcome="ok"}[30m])) == 0
+        for: 1h
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: api
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/dex-tvl-total-divergent.md
+          summary: "DEX TVL headline total is refusing a protocol — the published figure understates"
+          description: |
+            Every DEX TVL reconciliation in the last 30 min refused at
+            least one protocol, sustained 1h+, with zero clean cycles
+            interleaved. The `tvl_total` served on /v1/protocols (and the
+            explorer's headline) excludes that protocol and names it in
+            `excluded`; if NOTHING was admitted, `tvl_total` is omitted
+            entirely and the explorer shows no headline. Usual cause is a
+            single protocol's reserve read failing every cycle, so its
+            figure is carried forward and cannot be published under this
+            snapshot's as_of. Read `excluded[].reason` on /v1/protocols
+            first — it names the protocol and the rule it failed.
+
       # The in-process SDEX order book behind /v1/sdex/orderbook.
       # load_error repeating means the endpoint is stuck on its 503
       # warming problem (user-visible); advance_error sustained means

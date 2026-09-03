@@ -3116,7 +3116,14 @@ move: `divergent` tracks `stellarindex_dex_tvl_refresh_total{outcome="error"}`
 closely, because a failed read is the usual way a protocol ends up
 carried forward. Sustained `divergent` with no `ok` means the
 headline has been understating by a whole protocol for as long as
-the rate has been non-zero.
+the rate has been non-zero — and is what the
+`stellarindex_dex_tvl_total_divergent` alert fires on (ticket, 1h).
+It is the ONLY signal for a SINGLE protocol failing permanently:
+`stellarindex_dex_tvl_refresh_failing` requires zero successful
+refreshes, so it stays silent while the other protocols keep
+refreshing and the public money figure sits a whole protocol low.
+Both children are zero-seeded at process start, so the `ok == 0`
+conjunct reads a real zero rather than no-data.
 
 ### `stellarindex_sdex_orderbook_maintain_total`
 

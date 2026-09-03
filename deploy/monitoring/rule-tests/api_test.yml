@@ -345,3 +345,77 @@ tests:
       - eval_time: 45m
         alertname: stellarindex_customer_webhook_mark_errors
         exp_alerts: []
+
+  # ── #338: a permanently-refused protocol tickets ─────────────────
+  # One protocol's reserve read fails every cycle, so its figure is
+  # carried forward and the reconciliation refuses it every 10 min:
+  # `divergent` ticks, `ok` never does. The published tvl_total has
+  # been understating by a whole protocol for 2h.
+  - interval: 1m
+    name: a persistently divergent dex tvl total tickets
+    input_series:
+      - series: 'stellarindex_dex_tvl_reconcile_total{job="stellarindex_api",instance="r1:8080",outcome="divergent"}'
+        values: '0+0.1x180'
+      - series: 'stellarindex_dex_tvl_reconcile_total{job="stellarindex_api",instance="r1:8080",outcome="ok"}'
+        values: '0x180'
+
+    alert_rule_test:
+      - eval_time: 120m
+        alertname: stellarindex_dex_tvl_total_divergent
+        exp_alerts:
+          - exp_labels:
+              severity: ticket
+              team: stellarindex
+              component: api
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/dex-tvl-total-divergent.md
+              summary: "DEX TVL headline total is refusing a protocol — the published figure understates"
+              description: |
+                Every DEX TVL reconciliation in the last 30 min refused at
+                least one protocol, sustained 1h+, with zero clean cycles
+                interleaved. The `tvl_total` served on /v1/protocols (and the
+                explorer's headline) excludes that protocol and names it in
+                `excluded`; if NOTHING was admitted, `tvl_total` is omitted
+                entirely and the explorer shows no headline. Usual cause is a
+                single protocol's reserve read failing every cycle, so its
+                figure is carried forward and cannot be published under this
+                snapshot's as_of. Read `excluded[].reason` on /v1/protocols
+                first — it names the protocol and the rule it failed.
+
+  # ── #338: a SINGLE divergent refresh is absorbed ─────────────────
+  # One refusal at t=0 (a ClickHouse merge window), then clean cycles.
+  # `rate(divergent[30m])` stays non-zero for half an hour afterwards,
+  # so only the `ok == 0` conjunct and the 1h `for:` keep this quiet —
+  # which is the blip case the `for:` exists for. Checked inside the
+  # divergent rate window (30m) and well after it (90m).
+  - interval: 1m
+    name: a single divergent refresh does not ticket
+    input_series:
+      - series: 'stellarindex_dex_tvl_reconcile_total{job="stellarindex_api",instance="r1:8080",outcome="divergent"}'
+        values: '0 1 1+0x180'
+      - series: 'stellarindex_dex_tvl_reconcile_total{job="stellarindex_api",instance="r1:8080",outcome="ok"}'
+        values: '0 0 0+0.1x180'
+
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: stellarindex_dex_tvl_total_divergent
+        exp_alerts: []
+      - eval_time: 90m
+        alertname: stellarindex_dex_tvl_total_divergent
+        exp_alerts: []
+
+  # ── #338: a clean reconciliation is SILENT ───────────────────────
+  # Every cycle admits every protocol; the zero-seeded `divergent`
+  # child (obs/metrics.go seeds both) must not read as "no data".
+  - interval: 1m
+    name: a clean dex tvl reconciliation stays silent
+    input_series:
+      - series: 'stellarindex_dex_tvl_reconcile_total{job="stellarindex_api",instance="r1:8080",outcome="divergent"}'
+        values: '0x180'
+      - series: 'stellarindex_dex_tvl_reconcile_total{job="stellarindex_api",instance="r1:8080",outcome="ok"}'
+        values: '0+0.1x180'
+
+    alert_rule_test:
+      - eval_time: 120m
+        alertname: stellarindex_dex_tvl_total_divergent
+        exp_alerts: []
