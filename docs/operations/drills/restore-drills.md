@@ -1,6 +1,6 @@
 ---
 title: Restore-drill evidence log
-last_verified: 2026-08-29
+last_verified: 2026-09-03
 status: living
 ---
 
@@ -95,6 +95,42 @@ repo1); `pg_start` failed per the modes above.
 CS-110's answer: the repo1 backup restores, recovers, and matches the
 live database bit-for-bit on an immutable window. RTO evidence:
 ~15 min restore + WAL replay (scales with time-since-last-diff).
-Next: the same drill against **repo2** once the offsite bucket exists
-(operator), which proves the copy that matters in a real disaster.
+
+---
+
+## Runs 6-9 — reconciled from r1 on 2026-09-03
+
+**This log was stale by construction, and that is the finding.** BDR-03
+moved the drill's evidence write to `/var/lib/stellarindex/restore-drills/`
+ON THE BOX, so the in-repo copy stopped at Run 5 while four more passing
+runs accumulated where nobody reading the repository would ever see them.
+Anyone opening this file between July and now concluded the drill had not
+run since 2026-07-03. It had, four times.
+
+| run | date | repo | restore | tip lag | hash-chain breaks | trades window | failures |
+|---|---|---|---|---|---|---|---|
+| 6 | 2026-08-16 | repo1 | 496 s | 12,527 ledgers | 0 | 2,891,421 = 2,891,421 | 1 |
+| 7 | 2026-08-19 | repo1 | 532 s | 13,392 ledgers | 0 | 5,416,797 = 5,416,797 | 1 |
+| 8 | 2026-08-19 | repo1 | 539 s | 206 ledgers | 0 | 5,905,148 = 5,905,148 | **0** |
+| 9 | 2026-08-24 | repo1 | 535 s | 17 ledgers | 0 | 4,601,258 = 4,601,258 | **0** |
+
+Restore time is stable at 496-539 s across all four. Every run had **zero
+hash-chain breaks** and an **exact** trades-window match, which are the two
+checks that would catch a corrupt or partial copy — so the failures in runs
+6 and 7 are not data-integrity failures. The tip lag tells that story: 12.5k
+and 13.4k ledgers behind on the two runs that failed a check, against 206
+and 17 on the two that passed. That is WAL that had not yet been archived
+when the drill ran, not a bad backup.
+
+**Reconciling this file is not the fix.** It will go stale again the next
+time the drill runs, for exactly the same reason. Either the drill should
+write its evidence back into the repository, or this file should stop
+pretending to be the log and instead point at the on-box path as the
+authority. Until one of those happens, treat
+`/var/lib/stellarindex/restore-drills/restore-drills.md` on r1 as the truth
+and this file as a snapshot of it.
+
+**Still outstanding, and it is the one that matters:** every run above is
+`repo1`, the LOCAL copy. The off-site copy (`repo2`, encrypted, S3
+eu-central-1) has never been restored — see the run below.
 
