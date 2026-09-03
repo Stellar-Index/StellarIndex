@@ -23,7 +23,7 @@ ENV PATH="/root/.local/bin:/go/bin:/pnpm:${PATH}" \
 COPY --from=node /usr/local/ /usr/local/
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-      ca-certificates curl git jq make openssh-client pipx python3 rsync shellcheck xz-utils \
+      ca-certificates curl git jq make openssh-client pipx python3 python3-yaml rsync shellcheck xz-utils \
     && rm -rf /var/lib/apt/lists/* \
     && corepack enable pnpm \
     && corepack prepare pnpm@10.33.0 --activate
