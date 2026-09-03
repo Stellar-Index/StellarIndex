@@ -46,6 +46,10 @@ echo "=== Agents file ===" && ./scripts/ci/lint-agents-file.sh
 echo "=== Agents file self-test ===" && ./scripts/ci/lint-agents-file-test.sh
 echo "=== Doc links ===" && ./scripts/ci/lint-doc-links.sh
 echo "=== Doc links self-test ===" && ./scripts/ci/lint-doc-links-test.sh
+echo "=== Actions pinning ===" && ./scripts/ci/lint-actions-pinning.sh
+echo "=== Ansible galexie-restart self-test ===" && ./scripts/ci/ansible-galexie-restart-test.sh
+echo "=== Archive tier-D self-test ===" && ./scripts/ci/verify-archive-tier-d-test.sh
+echo "=== Coverage floor self-test ===" && ./scripts/ci/coverage-floor-test.sh
 echo "=== Imports ==="       && ./scripts/ci/lint-imports.sh
 echo "=== Imports self-test ===" && ./scripts/ci/lint-imports-test.sh
 echo "=== Protocol registry sync ===" && ./scripts/ci/lint-protocol-registry-sync.sh

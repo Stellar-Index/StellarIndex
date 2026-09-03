@@ -40,21 +40,36 @@ extract_invoked() {
     | sed -E 's#^(\./|bash +)##' | sort -u
 }
 
-# Isolate the import-checks job block: from its 2-space-indented job key to
-# the next 2-space-indented job key (step/env keys sit at ≥4 spaces, so they
-# never match). Then pull the invoked gate scripts out of it.
-ci_scripts="$(
-  awk '/^  [A-Za-z0-9_-]+:/ { inblock = ($0 ~ /^  import-checks:/) } inblock' "$CI_YML" \
-    | extract_invoked || true
-)"
+# Every gate CI invokes, in ANY job. Reading one job is how two gates added
+# to `doc-checks` passed parity in 2026-09 without being looked at.
+# Gates that cannot do useful work in a local pre-push run. Each is listed
+# with WHY, so an exemption is a visible decision rather than an accident of
+# which CI job a gate happened to land in. Anything not here must be in
+# verify.sh.
+#
+#   govulncheck-gated.sh  reached via `make vuln`, which verify.sh runs behind
+#                         a graceful-skip; this extractor only sees direct
+#                         ./scripts/ci invocations, not ones through make.
+#   integration-shard.sh  runs ONE slice of the Docker matrix by shard index;
+#                         verify.sh runs the compile-only integration smoke,
+#                         and `make test-integration` runs the whole suite.
+#   coverage-floor.sh     hard-fails without the coverage profile CI produces
+#                         as an artifact. Its SELF-TEST is in verify.sh and is
+#                         what actually guards the logic.
+#   fuzz-smoke.sh         30s per target is ~2 min of wall clock on a gate
+#                         people run before every push. Its targets are also
+#                         exercised as plain seed-corpus tests by `make test`.
+LOCAL_EXEMPT="govulncheck-gated.sh integration-shard.sh coverage-floor.sh fuzz-smoke.sh"
+
+ci_scripts="$(extract_invoked <"$CI_YML" || true)"
 
 # NB: the `|| true` above matters — extract_invoked's grep exits non-zero when
 # it matches NOTHING, and under `set -e` an unguarded `x="$(pipeline)"` would
 # abort the script there, silently, before the non-vacuous guard below could
 # report it. Swallow the no-match status here; the guard turns it into a fault.
 if [ -z "$ci_scripts" ]; then
-  echo "check-verify-parity: FAIL — no scripts/ci/*.sh invocations found in the import-checks job of ${CI_YML}." >&2
-  echo "  (Did the job rename, or did the extraction pattern drift? This check must not pass vacuously.)" >&2
+  echo "check-verify-parity: FAIL — no scripts/ci/*.sh invocations found anywhere in ${CI_YML}." >&2
+  echo "  (Did the extraction pattern drift? This check must not pass vacuously.)" >&2
   exit 1
 fi
 
@@ -63,13 +78,14 @@ verify_scripts="$(extract_invoked <"$VERIFY_SH" || true)"
 missing=""
 while IFS= read -r s; do
   [ -z "$s" ] && continue
+  case " $LOCAL_EXEMPT " in *" $(basename "$s") "*) continue ;; esac
   if ! grep -qxF "$s" <<<"$verify_scripts"; then
     missing="${missing}${s}"$'\n'
   fi
 done <<<"$ci_scripts"
 
 if [ -n "$missing" ]; then
-  echo "check-verify-parity: FAIL — CI's import-checks job runs gate scripts that ${VERIFY_SH} does NOT:" >&2
+  echo "check-verify-parity: FAIL — CI runs gate scripts that ${VERIFY_SH} does NOT:" >&2
   while IFS= read -r s; do
     [ -n "$s" ] && echo "  - $s" >&2
   done <<<"$missing"
@@ -84,4 +100,4 @@ EOF
   exit 1
 fi
 
-echo "check-verify-parity: OK — all $(printf '%s\n' "$ci_scripts" | grep -c .) import-checks gate scripts are mirrored in ${VERIFY_SH}."
+echo "check-verify-parity: OK — all $(printf '%s\n' "$ci_scripts" | grep -c .) CI gate scripts are mirrored in ${VERIFY_SH} or explicitly exempt."
