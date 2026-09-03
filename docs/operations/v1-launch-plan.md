@@ -1,6 +1,6 @@
 ---
 title: v1 launch plan — THE single source of truth
-last_verified: 2026-08-31
+last_verified: 2026-09-03
 status: active
 severity: P1
 ---
@@ -21,6 +21,88 @@ severity: P1
 > (the adversarial proof harness — its E-gate is §2.6 here) and the
 > gitignored `production-remediation-ledger-2026-07-23.md` (finding-status
 > authority). Runbooks under `runbooks/` remain the execution recipes.
+
+## THE PLAN — refreshed 2026-09-03 (this section supersedes every section below it)
+
+> **Read this and nothing else, unless you need a recipe.** Every row was
+> re-derived against HEAD and live r1 on 2026-09-03 by an audit whose whole
+> job was to disbelieve this document. Where anything below disagrees with
+> this section, this section is right.
+>
+> The audit's headline was that **the three facts dominating the launch
+> answer appeared nowhere in this plan**: `main` was red, the public status
+> page reads `degraded`, and `/v1/coverage` publicly serves 20 of 21 rather
+> than the 17/17 the go-live gate still claimed. A plan that tracks
+> workstreams but not "is main green" and not "what does a customer see
+> first" is measuring the wrong things.
+
+### Tier 0 — cannot announce 1.0 without these
+
+| # | item | owner | state on 2026-09-03 |
+|---|---|---|---|
+| 0.1 | **`main` must be green** | agent | **DONE** (`fb73da9e5`). It had been red since `8b66519ae`: #331 F1 moved the listing's price derivation into a worker-maintained rollup and two integration tests still refreshed only the old continuous aggregate, so every asset came back unpriced. An all-unpriced board COLLAPSES rank tier 0 into tier 1, which is why the visible symptom was a wrong sort order rather than a missing price. `make verify` cannot see this class — it does not run integration tests. |
+| 0.2 | **`/terms` + `/privacy`** | **ASH — legal read only** | **BLOCKED ON ASH.** Both URLs 404 today. PR #237 has the code and the tests; it needs wording signed off, nothing else. |
+| 0.3 | **Stop the status page saying `degraded`** | agent, then Ash signs the number | **IN PROGRESS.** `overall` is forced by `latencyBreached` alone: live p99 3,537 / 3,125 / 1,060 ms against a published 500 ms target. Two of the three worst routes are already fixed on main and not yet deployed — `/v1/accounts/{g}/operations` (`7c051edeb`) and `/v1/pools` (`d22e5409d`). `/v1/pairs` is the one nothing has touched. If the tail cannot clear 500 ms, moving the PUBLISHED target is the alternative and it is Ash's call, not an agent's. |
+| 0.4 | **Email/DNS perimeter (#334)** | agent + **2 clicks from Ash** | **RECORDS LIVE** (`91d0e469d`). MX, SPF (`-all`), DMARC (`p=quarantine`), a second DKIM selector and CAA are published and verified against the authoritative nameservers, with a drift check (`scripts/ops/dns-perimeter-check.sh`) and a weekly workflow. Two steps need Ash: click Cloudflare's destination-verification link so `security@` can forward, and publish the DS record at the registrar. Both are on #334. |
+
+### Tier 1 — do before announcing; cheap; does not strictly block
+
+| # | item | owner |
+|---|---|---|
+| 1.1 | **#478** — decide what `oracle_stale` should MEAN on a change-driven oracle. It is the only non-heartbeat alert firing on r1, and it is why `/v1/status` reports an active incident. | **Ash decides the semantics**; agent implements |
+| 1.2 | **Sign the accepted-risk register (W6.5).** 15 candidates in `docs/audit/audit-2026-07-23/tail-triage-2026-07-26.md`; no signed register exists anywhere. | **Ash signs**; agent drafts |
+| 1.3 | **Drill the OFF-SITE restore once.** repo2 writes nightly and has NEVER been restored — every entry in the on-box drill log says `(repo1)`. `DRILL_REPO=2` already exists in the script. | operator on r1 |
+| 1.4 | One live SEV drill + one rollback rehearsal. Scenarios are written and paging is now real; neither has been executed against wired paging. | agent + Ash |
+| 1.5 | Wire the five `HEALTHCHECKS_URL_*` on r1 so a stopped binary is detectable independently of Prometheus. | **Ash supplies URLs** |
+| 1.6 | **Re-frame the `recognition` axis on `/v1/coverage`.** It is a system audit signal, not a source, and as framed it can NEVER read complete (`coverage_pct 0.00748`, "23,945 unrecognized shapes on unowned contracts"). The public headline is 20/21 with no explanation, while the go-live gate below still says 17/17. | agent |
+| 1.7 | **Test nets are a release and three migrations behind again** — `v0.57.0`/schema 150 against r1's `v0.58.0`/schema 153, ONE DAY after being caught up. Migrations 0151-0153 have run only in production. The drift has no automatic prevention, and that is the actual finding. | agent |
+| 1.8 | `gh variable delete DEPLOY_APPROVAL_RELAXED` + r1 required-reviewers, at the flip. | **Ash** |
+| 1.9 | **D7** — the thin-pool third-alias VWAP review this plan says is owed "before public traffic". Never done, no artefact. | agent |
+
+### Tier 2 — real work that does NOT gate the announcement
+
+Named explicitly, because all of them are carried below as if they did:
+**W3.4** (contract-tx index), **W5.4** (13 supply-rollup resets — verify with
+`supply verify-rollup` first; there is no live drift signal), **W5.6**
+(`contract_events_daily` v2 — the branch is not even on origin), **W5.7 /
+W5.8** (CEX dust delete, galexie trim, `soroban_events` decommission #39 —
+destructive, should be last), **W8-9b**, **W8-10a**, **W8-12**, **#340**
+items 6-9, **#349-#352** (correctly labelled post-v1), **#372**, the decks,
+the CoinGecko Pro purchase, enabling hashdb, and IP rotation. **HA / R2+R3
+is superseded by D2** (single box with tested restore for v1); the
+2026-08-28 "second public host into the launch gate" line is stale.
+
+### Corrections to this document, verified on 2026-09-03
+
+- **W8-1a, W8-6c, W8-9c, W8-14a are all FIXED.** All four are recorded below
+  as "CONFIRMED-OPEN". Both `verify-archive` tiers run daily with zero
+  mismatches.
+- **W2's r1 `sac_wrappers` gate is CLOSED** — `[supply.sac_wrappers]` on r1 is
+  populated (USDC, AQUA, yXLM, BLND).
+- **"Runbooks: 79 of 149 more than 90 days stale" is wrong** — 161 of 162 are
+  within 90 days.
+- **W4 failed units, the W4.1 drill, D8 SolvBTC, C2-016 and C3-030/031 are
+  done.**
+- **W5.2 (dfees) is COMPLETE.** This document says so in one place and
+  "genuinely unstarted" in another; the first is right. **W5.8** has the same
+  self-contradiction and #39 is open.
+- **#371 F2 is complete, not metric-only.** `stellarindex_dependency_up` is
+  exported and `stellarindex_dependency_down` is a page rule in BOTH trees
+  with a runbook. An audit nearly re-filed this as a high because ClickHouse
+  is not a scrape target and no rule string-matches it.
+- **`docs/operations/drills/restore-drills.md` is stale BY CONSTRUCTION.**
+  BDR-03 moved the evidence write onto the box, so the in-repo log stops at
+  "Run 5 — 2026-07-03" while four later passing runs exist only on r1.
+  Anyone reading the repo concludes the drill has not run since July.
+- **`docs/audit/audit-2026-07-23/tail-triage-2026-07-26.md` holds ~50 OPEN
+  rows with no home in this plan.** Several spot-checked rows are already
+  fixed. Reconcile it once and close it, or carry its live rows here.
+- **This document is 4,086 lines and roughly 70% of it is superseded
+  history**, with at least four places where two non-superseded boxes
+  disagree. Before v1 it is worth cutting to the ~200 outstanding lines and
+  archiving the rest.
+
+---
 
 ## THE PLAN — refreshed 2026-08-15 (supersedes the old inbox + §2 ordering)
 
