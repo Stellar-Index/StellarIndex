@@ -1,6 +1,6 @@
 ---
 title: Alerts Catalogue
-last_verified: 2026-05-02
+last_verified: 2026-09-02
 status: ratified — incremental growth
 ---
 
@@ -26,12 +26,29 @@ enforced 2026-04-23 onward).
 
   | Severity | Rules | AlertManager route | Delivery |
   | --- | --- | --- | --- |
-  | `page` | 48 | `receiver: chat-page` | Discord **#stellarindex-pages**, `repeat_interval` 12 h. There is **no** PagerDuty leg — `pagerduty_configs` is unset, so nothing wakes anyone up. |
+  | `page` | 49 | `receiver: chat-page` | Discord **#stellarindex-pages**, `repeat_interval` 12 h. There is **no** PagerDuty leg — `pagerduty_configs` is unset, so nothing wakes anyone up. |
   | `ticket` | 134 | `receiver: chat-default` | Discord **#stellarindex-alerts**, `repeat_interval` 24 h. |
-  | `informational` | 21 | `receiver: silent` | **No delivery at all.** The receiver has no webhook; the alert accumulates in the AlertManager UI and nothing else happens. |
+  | `informational` | 21 | `receiver: silent` | **Delivered to nobody, deliberately.** `silent` is declared with no `*_configs` block at all, which in Alertmanager means the alert is accepted and then dropped. It accumulates in the AlertManager UI and nothing else happens. |
 
-  (`stellarindex_deadmansswitch` is routed by alertname to
-  Healthchecks.io ahead of the severity matchers — see its runbook.)
+  **`informational` is not "a low-priority ticket".** There is no
+  low-priority queue and nothing files a ticket: an `informational`
+  alert reaches a human only if that human independently opens the
+  AlertManager UI. Read the Delivery column literally — the empty
+  `silent` stanza in
+  [`configs/alertmanager/alertmanager.r1.yml`](../../configs/alertmanager/alertmanager.r1.yml)
+  is a deliberate black hole, not an unfinished config, and there is
+  no `pagerduty_configs` anywhere in the file for any severity. Which
+  of the 21 rules *should* be delivered is an open policy question
+  (issue #485); the per-alert triage that feeds that decision is the
+  [informational-alerts delivery register](#informational-alerts--delivery-register)
+  below, and `scripts/ci/lint-alerts-catalog.py` requires a register
+  row for every `informational` rule so a new one cannot join the
+  bucket unnoticed.
+
+  (`stellarindex_deadmansswitch` is the one exception: it carries
+  `severity: informational` but is routed by ALERTNAME to
+  Healthchecks.io ahead of the severity matchers, with
+  `continue: false`, so it never reaches `silent` — see its runbook.)
   A `page` inhibits the `ticket`/`informational` alerts sharing its
   `component` label. Routing:
   [`configs/alertmanager/alertmanager.r1.yml`](../../configs/alertmanager/alertmanager.r1.yml).
@@ -548,12 +565,75 @@ systemd unit's `Restart=on-abnormal` doesn't auto-recover from it.
 
 ---
 
+## Informational alerts — delivery register
+
+**Every rule labelled `severity: informational` must have a row
+here.** `scripts/ci/lint-alerts-catalog.py` fails CI if one is
+missing, if a row names a rule that is no longer `informational`, or
+if a row's Triage cell does not begin with one of the two tokens
+below. The register exists because `informational` routes to
+`receiver: silent`, which has no `*_configs` block and therefore
+delivers to **nobody** — so putting a rule in this bucket is a
+decision to have no human hear it, and that decision should be
+written down rather than inherited from a copied YAML block.
+
+Triage tokens:
+
+- `silent-correct` — genuinely dashboard-only. Nobody needs to be
+  told; the condition is unactionable, self-healing, structurally
+  unable to fire, or its consequence already has a delivered
+  (`ticket` / `page`) alert.
+- `needs-delivery` — this should reach a human. It reports data
+  loss, a stuck worker, a monitoring blind spot, or a
+  customer-visible failure, and no delivered alert covers it.
+
+`needs-delivery` here is a **recommendation, not a routing change**:
+nothing in this repo re-routes on these tokens. Deciding what
+`informational` should route to (and whether some of these rules
+should simply be `ticket`) is issue **#485**, and is deliberately not
+settled by this table. Counts as of 2026-09-02: 21 rules —
+10 `silent-correct`, 11 `needs-delivery`.
+
+<!-- informational-register:begin -->
+
+| Alert | Component | What a firing tells an operator | Triage (#485) |
+| ----- | --------- | ------------------------------- | ------------- |
+| `stellarindex_anomaly_freeze_active` | aggregator | At least one ADR-0019 price freeze has been held for 5 min; the affected pairs serve last-known-good with `flags.frozen=true`. | `silent-correct` — a three-tier ladder already delivers around it: `stellarindex_anomaly_freeze_escalated` (page) and `stellarindex_anomaly_freeze_extension_rate` (ticket) cover the abnormal cases. A freeze inside its expected duration is a state, not a fault. |
+| `stellarindex_archive_repair_source_degraded` | archive | One archive source failed more than 10% of its repair attempts over the last 25 h verify cycle; the fallback chain is still covering it. | `silent-correct` — the consequence has a delivered escalation (`stellarindex_archive_files_missing`). Caveat for whoever settles #485: the rule's own description says "ticket if the degradation persists > 24 h", which nobody can act on while delivery is nil — if it stays silent, that sentence should go. |
+| `stellarindex_asset_volume_rollup_failing` | aggregator | The aggregator's asset-volume rollup worker has been failing its refresh for 30+ min; `/v1/assets` `volume_24h_usd` freezes at its last-good values. | `needs-delivery` — a stuck worker with no sibling at any severity, and the failure mode is stale-served-as-live: the column keeps returning a number that reads as current. Producer is live on r1. |
+| `stellarindex_customer_webhook_delivery_exhausted` | api | A customer webhook hit the 15-attempt (~8 h) retry budget and was marked terminally failed; that customer never received the event. | `needs-delivery` — terminal, customer-visible delivery loss, and the rule's own description instructs an operator to contact the customer before they notice. The ticket sibling `stellarindex_customer_webhook_delivery_failing` needs more than 0.1 attempts/s sustained 15 min, which one low-volume customer endpoint never reaches, so this is the only signal for the permanent case. |
+| `stellarindex_deadmansswitch` | meta | Fires constantly; the alarm is when it STOPS. | `silent-correct` — not actually silent. The alertname-matched route runs ahead of the severity matchers with `continue: false`, so this one reaches Healthchecks.io and never touches `receiver: silent`. It appears here only because its label is `informational`. No change wanted. |
+| `stellarindex_external_poller_error_rate_high` | external-poller | More than half of one external poller's polls errored over 15 min; data is still flowing on the successes. | `silent-correct` — early-warning tier of a delivered alert: if it tips into full staleness, `stellarindex_external_poller_stale` (ticket) fires within 30 min. |
+| `stellarindex_external_poller_stale_ecb` | external-poller | The ECB FX poller has not succeeded in 12+ h, i.e. it has missed a whole 6 h cycle. | `needs-delivery` — the generic `stellarindex_external_poller_stale` ticket carves ECB out explicitly (`source!="ecb"`), so this rule is ECB's ONLY coverage and ECB can be dead indefinitely with zero signal. ECB is the authority-sanity cross-check rather than a served price, so this is the lowest-stakes member of the set; but "silent AND carved out of the delivered rule" is a hole, not a decision. |
+| `stellarindex_host_cpu_high` | infra | One host has been above 90% CPU for 10 min — either a runaway process or an undersized box; dashboards show the top consumer. | `silent-correct` — expected during backfills and heavy jobs, and the consequences that matter are delivered: `stellarindex_host_down` (ticket), `stellarindex_systemd_unit_failed` (ticket), `stellarindex_worker_panicked` (page). Delivering this would be pure noise. |
+| `stellarindex_host_memory_high` | infra | One host has been above 90% memory for 10 min, so the next allocation spike risks an OOMKill; Postgres `shared_buffers` is the usual culprit on a shared box. | `silent-correct` — same ladder as CPU: an actual OOMKill surfaces as `stellarindex_systemd_unit_failed` (ticket) or `stellarindex_worker_panicked` (page), both delivered. Revisit only if a memory-pressure incident is ever missed. |
+| `stellarindex_ingestion_decode_error` | ingestion | A source failed to decode more than 1 event/s for 5 min — usually a contract-event-schema change or a decoder regression. | `needs-delivery` — decode failures are silent DATA LOSS: the event is never recorded and no backfill knows to look for it. Nothing else covers them (`stellarindex_decoder_panicked` is for panics, not decode errors). r1 has already accumulated 41,118 decode errors on `sdex` and 3 on `bitstamp`; the counter is real and nobody has ever been told. |
+| `stellarindex_ingestion_discovery_drops` | ingestion | The SEP-41 discovery sink dropped hits for 10 min under recorder pressure or buffer saturation. | `silent-correct` — saturation, not loss: a dropped contract re-appears on its next event, so the condition is self-healing. Its hard-failure twin `stellarindex_ingestion_discovery_record_failures` is the one that needs an answer. |
+| `stellarindex_ingestion_discovery_record_failures` | ingestion | Writes to `discovered_assets` failed for 10 min; the table stops growing while it persists. | `needs-delivery` — the description's second cause, a `discovered_assets` schema or constraint fault, produces no other signal and stops asset discovery indefinitely. Only the first cause (a Postgres outage) lights other tickets. A stuck writer with a silent failure mode. |
+| `stellarindex_ingestion_orphan_events` | ingestion | Events are arriving without their correlation partner (Soroswap swap-without-sync, a partial Phoenix 8-field swap) above 10/min for 15 min. | `needs-delivery` — an orphan is a trade that is never reconstructed, i.e. data loss, and it is the leading indicator of the in-place contract-upgrade class CLAUDE.md warns about. No sibling at any severity. Producer live on r1 for `source="soroswap"`. |
+| `stellarindex_metrics_registry_absent` | observability | A component started WITHOUT a Prometheus Registry, so the metrics it would export are unregistered and every alert built on them can never fire. | `needs-delivery` — this is the meta-alert for monitoring blindness, and routing it to a receiver with no delivery is the defect describing itself. Nothing else detects the condition. It is inert on r1 today (the only `stellarindex_metrics_registry_present` series is the known `component="ledgerstream"` one the expr excludes), which means it fires only on a NEW regression — exactly when someone must hear it. |
+| `stellarindex_price_divergence_warning` | divergence | Our aggregated price is more than 5% from the reference source, sustained 2 min. | `silent-correct` — two-tier by design: `stellarindex_price_divergence_critical` (ticket, 10%) is delivered. Both are inert anyway, because `stellarindex_our_price` and `stellarindex_reference_price` have no producer (no series on r1) — a separate defect from #485, already recorded in the rule file. |
+| `stellarindex_prometheus_scrape_failing` | meta | A scrape target has been down 2+ min; visibility into that subsystem is gone until it returns. | `needs-delivery` — on r1 this is the ONLY `up == 0` rule covering `stellarindex-indexer`, `stellarindex-aggregator`, `galexie`, `caddy` and `prometheus` (the API has a page, `node_exporter` a ticket, the four exporters their own pages). A dead scrape target silently stops every alert built on that target's metrics: the same blindness class as `stellarindex_metrics_registry_absent`. Noted in passing for whoever picks this up — r1 also scrapes an `alertmanager` job that no `up == 0` rule covers at any severity. |
+| `stellarindex_protocol_events_rollup_failing` | aggregator | The protocol-events rollup worker has been failing for 30+ min; `/v1/protocols` `events_24h` freezes at its last-good values. | `needs-delivery` — same shape as the asset-volume rollup: stuck worker, no sibling, stale numbers served as current. |
+| `stellarindex_stellar_archive_publish_fail` | stellar | stellar-core failed to publish a checkpoint to our history archive. | `silent-correct` — structurally inert: nothing in the tree emits `stellarindex_stellar_archive_publish_errors_total` (allow-listed as known-inert in `lint-metric-refs.sh`; no series on r1) and r1 publishes no history archive. It cannot fire, so delivery is moot. Re-triage when the emitter lands with Phase-3 (ADR-0004). |
+| `stellarindex_timescale_compression_lag` | storage | Chunks older than 7 days are still uncompressed after 24 h; the compression policy or the TimescaleDB job scheduler is misfiring. | `silent-correct` — conditional on the row below. The consequence is delivered (`stellarindex_zfs_pool_low_space` ticket, `stellarindex_zfs_pool_critical_space` page) and the root cause is `stellarindex_timescale_job_failures_climbing`, which this register recommends delivering. If that one stays silent, this one must not. |
+| `stellarindex_timescale_job_failures_climbing` | storage | More than 10 failed TimescaleDB background-job runs in 6 h on one hypertable. | `needs-delivery` — the rule's own description says the caggs still look fresh and no staleness ticket will fire, and that "this is exactly how the 2026 background-worker starvation stayed invisible". An alert written specifically to make a silent failure mode visible, then delivered nowhere. 72 series live on r1. |
+| `stellarindex_usage_rollup_failing` | api | The API's 5-minute usage-rollup sweeps (Redis scan or Timescale upsert) have failed for 30+ min; per-endpoint analytics and `/v1/account/usage` stop advancing. | `needs-delivery` — a stuck worker with a hard deadline: the counters survive in Redis on a 35-day TTL, after which the loss is permanent, and this is the per-customer usage surface. No sibling at any severity. |
+
+<!-- informational-register:end -->
+
+---
+
 ## Rules of thumb
 
 - **Every alert has a runbook.** No exceptions. CI check enforces.
 - **Alerts that page oncall must be actionable.** If the runbook
   is "wake up, check the dashboard, probably go back to bed", the
-  alert belongs in P3 / tickets, not P1.
+  alert belongs at `ticket`, not `page`. It does **not** belong at
+  `informational` unless nobody needs to see it at all —
+  `informational` is not a quieter ticket, it is no delivery (see
+  the Severity legend and the
+  [delivery register](#informational-alerts--delivery-register)).
 - **Alerts fire on meaningful windows.** A 5-second blip that
   self-resolves should not page someone; the `for:` clause is
   mandatory on every rule.

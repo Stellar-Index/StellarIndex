@@ -138,7 +138,30 @@ receivers:
     # visible only in the Alertmanager UI. Set the webhook to fan out.
 {% endif %}
 
-  # Silent — informational alerts accumulate in the Alertmanager UI
-  # without fanout. No receiver config = no delivery; AM still
-  # tracks alert state for inspection.
+  # ─── silent — A BLACK HOLE, ON PURPOSE ─────────────────────────
+  #
+  # READ THIS BEFORE ASSUMING THE EMPTY STANZA IS AN OVERSIGHT.
+  #
+  # `- name: silent` has no webhook_configs, no discord_configs and
+  # no pagerduty_configs, and that is DELIBERATE: an Alertmanager
+  # receiver with no *_configs block accepts the alert and delivers
+  # it to NOBODY. Every `severity: informational` rule routes here,
+  # so a firing informational alert reaches a human only if someone
+  # happens to open the Alertmanager UI. It does not reach Discord,
+  # it does not reach Healthchecks, and there is no PagerDuty leg
+  # anywhere in this file for any severity.
+  #
+  # Do NOT "repair" this by adding a webhook. Whether each of those
+  # rules should be delivered is an open POLICY question tracked in
+  # issue #485; the per-alert triage that decides it lives in
+  # docs/operations/alerts-catalog.md, section "Informational alerts
+  # — delivery register", and `scripts/ci/lint-alerts-catalog.py`
+  # requires a register row for every informational rule so a new one
+  # cannot land in this bucket by accident.
+  #
+  # The one exception to "informational goes nowhere" is
+  # stellarindex_deadmansswitch: it carries severity=informational
+  # but the alertname-matched route above it fires first
+  # (`continue: false`), so it reaches Healthchecks.io and never
+  # reaches this receiver.
   - name: silent
