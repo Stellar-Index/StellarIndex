@@ -635,6 +635,13 @@ export async function generateMetadata({
       title: 'Asset',
       description:
         'Stellar asset detail, rendered live from the Stellar Index API.',
+      // This one document answers 200 for EVERY unmatched /assets/*
+      // path, garbage included, so indexing it files a soft-404 under
+      // whatever URL the crawler happened to try. noindex is the same
+      // posture the other long-tail shells take route-wide
+      // (/accounts, /contracts, /ledgers, /transactions); follow stays
+      // on so the crawler still walks out through the nav.
+      robots: { index: false, follow: true },
     };
   }
   const metaResults = await Promise.all([
