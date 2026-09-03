@@ -348,20 +348,24 @@ export interface AdminLookupResult {
 }
 
 /**
- * GET /v1/account/admin/lookup?email=|slug= — staff customer look-up.
+ * POST /v1/account/admin/lookup — staff customer look-up.
  * Resolves an account by a user's email or by account slug and returns
  * its tier/status plus the users on it. Staff-only (403 for non-staff);
  * throws ApiError (404 when nothing matches, surfaced via `.detail`).
+ *
+ * POST, though the call is read-only: the look-up term is a customer email
+ * address, and a URL is recorded by every access log, proxy log, browser
+ * history entry and Referer header along the way (PRV F2, #346). The term
+ * goes in the body so it is never written down anywhere. Do not "helpfully"
+ * append it as a query parameter — the API ignores the query string and 400s.
  */
 export async function adminLookup(
   query: { email?: string; slug?: string },
   signal?: AbortSignal,
 ): Promise<AdminLookupResult> {
-  const params = new URLSearchParams();
-  if (query.email) params.set('email', query.email);
-  if (query.slug) params.set('slug', query.slug);
-  return accountFetch<AdminLookupResult>(
-    `/account/admin/lookup?${params.toString()}`,
-    { signal },
-  );
+  return accountFetch<AdminLookupResult>('/account/admin/lookup', {
+    method: 'POST',
+    body: query,
+    signal,
+  });
 }

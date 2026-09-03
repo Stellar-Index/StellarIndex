@@ -20,7 +20,7 @@ import (
 
 // C3-056 (audit-2026-07-23).
 //
-// `GET /v1/account/admin/lookup` hands a staff member another customer's
+// `POST /v1/account/admin/lookup` hands a staff member another customer's
 // billing email, tier, status and EVERY user's email + last-login. Pre-fix
 // the only record that the access happened was one `Logger.Info` line,
 // while every sibling admin surface (account override, key mint/revoke,
@@ -73,6 +73,7 @@ func (f *fakeAuditSink) all() []platform.AuditEntry {
 // adminLookupFixture seeds one customer account with two users plus a
 // separate staff user, and returns a rig whose Audit sink is `sink`.
 type adminLookupFixture struct {
+	t        *testing.T
 	rig      *testRig
 	sink     *fakeAuditSink
 	customer platform.Account
@@ -126,20 +127,47 @@ func newAdminLookupFixture(t *testing.T, sink *fakeAuditSink) *adminLookupFixtur
 		t.Fatalf("create staff session: %v", err)
 	}
 	return &adminLookupFixture{
-		rig: rig, sink: sink, customer: customer, staff: staff,
+		t: t, rig: rig, sink: sink, customer: customer, staff: staff,
 		staffSC: SessionContext{Session: sess, User: staff, Account: staffAcct},
 	}
 }
 
-// lookup drives the handler as `sc` with the given query string.
-func (f *adminLookupFixture) lookup(sc SessionContext, query string) *httptest.ResponseRecorder {
-	req := httptest.NewRequest(http.MethodGet, "/v1/account/admin/lookup?"+query, nil)
+// lookup drives the handler as `sc` looking up the given dimension. `term` is
+// written in the familiar "email=…" / "slug=…" shorthand, but it is marshalled
+// into the request BODY and the URL is left bare — the look-up term is
+// customer PII and must never appear in a URL (PRV F2, #346). Nothing here
+// may put it back in the query string.
+func (f *adminLookupFixture) lookup(sc SessionContext, term string) *httptest.ResponseRecorder {
+	f.t.Helper()
+	key, value, _ := strings.Cut(term, "=")
+	body, err := json.Marshal(adminLookupRequest{
+		Email: valueIf(key == "email", value),
+		Slug:  valueIf(key == "slug", value),
+	})
+	if err != nil {
+		f.t.Fatalf("marshal lookup body: %v", err)
+	}
+	return f.post(sc, "/v1/account/admin/lookup", body)
+}
+
+// post drives HandleAdminLookup with an explicit URI and body, so a test can
+// assert on what the URI does (and does not) carry.
+func (f *adminLookupFixture) post(sc SessionContext, uri string, body []byte) *httptest.ResponseRecorder {
+	req := httptest.NewRequest(http.MethodPost, uri, bytes.NewReader(body))
 	req.RemoteAddr = "198.51.100.7:44321"
 	req.Header.Set("User-Agent", "staff-console/1.0")
+	req.Header.Set("Content-Type", "application/json")
 	req = req.WithContext(WithSession(req.Context(), sc))
 	rec := httptest.NewRecorder()
 	f.rig.h.HandleAdminLookup(rec, req)
 	return rec
+}
+
+func valueIf(cond bool, v string) string {
+	if cond {
+		return v
+	}
+	return ""
 }
 
 func auditWriteFailures(t *testing.T) float64 {
@@ -365,5 +393,71 @@ func TestAdminLookup_NilAuditSinkStillServes(t *testing.T) {
 	}
 	if resp.Account.ID != f.customer.ID.String() {
 		t.Errorf("account id = %q, want %q", resp.Account.ID, f.customer.ID)
+	}
+}
+
+// PRV F2 (#346) — the look-up term must not be reachable via the URL.
+//
+// The pre-fix handler read `r.URL.Query()`, so a staff member's browser
+// history, the edge proxy, every intermediate CDN and the Referer header on
+// the next navigation each recorded a real customer's email address verbatim.
+// The 7843f129 Caddy filter masks that in OUR access log only; it cannot
+// reach a browser's history or a third party's log. The address therefore has
+// to stop travelling in the URL at all.
+//
+// This pins the corrected behaviour from both sides, which is what makes it
+// non-vacuous: the query string must NOT resolve an account (it is no longer
+// an input channel), and the body MUST resolve the same one.
+func TestAdminLookup_QueryStringIsNotAnInputChannel(t *testing.T) {
+	f := newAdminLookupFixture(t, &fakeAuditSink{})
+
+	// The email in the URL and nowhere else. Pre-fix this returned 200 plus
+	// the customer's account; it must now be refused outright.
+	rec := f.post(f.staffSC, "/v1/account/admin/lookup?email=ceo@acme.example", []byte(`{}`))
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("query-string email: status = %d, want 400 — the query string must not resolve an account; body = %s",
+			rec.Code, rec.Body.String())
+	}
+	if body := rec.Body.String(); strings.Contains(body, f.customer.ID.String()) ||
+		strings.Contains(body, "billing@acme.example") {
+		t.Errorf("query-string email leaked customer data into the response: %s", body)
+	}
+
+	// The same term in the BODY resolves the very same account, so this
+	// cannot pass merely by the handler being broken.
+	rec = f.post(f.staffSC, "/v1/account/admin/lookup", []byte(`{"email":"ceo@acme.example"}`))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("body email: status = %d, want 200; body = %s", rec.Code, rec.Body.String())
+	}
+	var resp AdminLookupResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if resp.Account.Slug != "acme" {
+		t.Errorf("Account.Slug = %q, want %q — the body must be the input channel", resp.Account.Slug, "acme")
+	}
+	if len(resp.Users) != 2 {
+		t.Errorf("Users = %d, want 2", len(resp.Users))
+	}
+}
+
+// The route must be mounted as a POST. A GET mounting is what puts the
+// address in the URL in the first place, so the verb is part of the fix and a
+// future edit that restores `GET` has to fail here.
+func TestAdminLookup_MountedAsPostOnly(t *testing.T) {
+	rig := newTestRig(t)
+	mux := http.NewServeMux()
+	rig.h.Mount(mux)
+
+	if _, pattern := mux.Handler(httptest.NewRequest(http.MethodPost,
+		"/v1/account/admin/lookup", nil)); pattern != "POST /v1/account/admin/lookup" {
+		t.Errorf("POST pattern = %q, want %q", pattern, "POST /v1/account/admin/lookup")
+	}
+
+	// GET must reach Go's 405 handler, not a registered one.
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/v1/account/admin/lookup", nil))
+	if rec.Code != http.StatusMethodNotAllowed {
+		t.Errorf("GET status = %d, want 405 — a GET mounting would put the email back in the URL", rec.Code)
 	}
 }

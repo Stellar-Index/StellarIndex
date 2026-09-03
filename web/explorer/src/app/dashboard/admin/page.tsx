@@ -29,7 +29,7 @@ import { AccountGate } from '../AccountGate';
 /**
  * /dashboard/admin — staff-only cockpit. Gated on the magic-link session
  * (AccountGate) and then on `me.user.is_staff`. The Customer look-up tool
- * is live (GET /v1/account/admin/lookup); tier overrides + incident tooling
+ * is live (POST /v1/account/admin/lookup); tier overrides + incident tooling
  * are still Phase 1.5 (they need write/impersonation endpoints).
  */
 export default function AdminPage() {

@@ -251,8 +251,14 @@ func (h *Handlers) Mount(mux *http.ServeMux) {
 	mux.Handle("POST /v1/auth/logout", sameSite(http.HandlerFunc(h.HandleLogout)))
 	// Staff customer look-up — session-gated (RequireSession) AND staff-gated
 	// (HandleAdminLookup checks IsStaff). Backs /dashboard/admin's first tool.
-	mux.Handle("GET /v1/account/admin/lookup",
-		RequireSession(h.cfg)(http.HandlerFunc(h.HandleAdminLookup)))
+	//
+	// POST, not GET, and read-only regardless: the look-up term is a customer
+	// EMAIL ADDRESS, which must not travel in a URL (PRV F2, #346 — see
+	// [adminLookupRequest]). It carries the same same-site write gate as the
+	// other session-cookie POSTs here, which costs nothing and keeps a
+	// cross-site page from driving a staff session's PII reads.
+	mux.Handle("POST /v1/account/admin/lookup",
+		RequireSession(h.cfg)(sameSite(http.HandlerFunc(h.HandleAdminLookup))))
 
 	// Passkey (WebAuthn) routes — only when a credential store is
 	// wired. Registration + management are session-gated (adding a

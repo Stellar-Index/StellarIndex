@@ -2618,12 +2618,22 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
+        get?: never;
+        put?: never;
         /**
          * Staff — customer look-up by user email or account slug.
          * @description Staff "Customer look-up" tool (platform-spec §6): resolve an
          *     account by one of its users' email address OR by account slug,
          *     and return the account's tier/status plus the users on it.
-         *     Read-only.
+         *
+         *     **`POST` but read-only.** Nothing is created or mutated. The verb
+         *     is chosen so the look-up term — a customer's EMAIL ADDRESS —
+         *     travels in the request body rather than the URL. A URL is copied
+         *     verbatim into every access log, proxy log, browser-history entry
+         *     and `Referer` header along the path, and edge-side redaction can
+         *     only ever cover the one hop we operate (PRV F2). The query string
+         *     is NOT a fallback input: an `?email=` on this route is ignored and
+         *     the request 400s.
          *
          *     Auth is a dashboard SESSION cookie, NOT an API key: the route is
          *     wrapped in `RequireSession` (401 without a session) and the
@@ -2635,14 +2645,12 @@ export interface paths {
          *     instead.) Every successful look-up lands a `staff.customer.lookup`
          *     audit row.
          *
-         *     Supply EXACTLY ONE of `email` or `slug`. Supplying neither is a
-         *     400 (`provide ?email= or ?slug=`). The response carries
-         *     `Cache-Control: no-store` because the body is staff-only customer
-         *     PII.
+         *     Supply EXACTLY ONE of `email` or `slug` in the body. Supplying
+         *     neither is a 400 (`provide email or slug in the request body`).
+         *     The response carries `Cache-Control: no-store` because the body is
+         *     staff-only customer PII.
          */
-        get: operations["adminLookupCustomer"];
-        put?: never;
-        post?: never;
+        post: operations["adminLookupCustomer"];
         delete?: never;
         options?: never;
         head?: never;
@@ -6890,7 +6898,27 @@ export interface components {
             data: components["schemas"]["AdminAccountView"];
         };
         /**
-         * @description Staff customer look-up result (`GET /v1/account/admin/lookup`):
+         * @description Staff customer look-up term. Exactly one of `email` or `slug`.
+         *
+         *     Carried in the request BODY rather than the query string because
+         *     `email` is customer PII and a URL is logged by every hop it
+         *     crosses (PRV F2).
+         */
+        AdminLookupRequest: {
+            /**
+             * Format: email
+             * @description Resolve the account via one of its users' email address
+             *     (case-insensitive). Mutually exclusive with `slug`.
+             */
+            email?: string;
+            /**
+             * @description Resolve the account by its slug (case-insensitive). Mutually
+             *     exclusive with `email`.
+             */
+            slug?: string;
+        };
+        /**
+         * @description Staff customer look-up result (`POST /v1/account/admin/lookup`):
          *     the resolved account plus the users on it. NOT enveloped — a bare
          *     `{account, users}` object, served with `Cache-Control: no-store`
          *     (staff-only customer PII).
@@ -13477,24 +13505,16 @@ export interface operations {
     };
     adminLookupCustomer: {
         parameters: {
-            query?: {
-                /**
-                 * @description Resolve the account via one of its users' email address
-                 *     (case-insensitive). Mutually exclusive with `slug` — supply
-                 *     exactly one.
-                 */
-                email?: string;
-                /**
-                 * @description Resolve the account by its slug (case-insensitive). Mutually
-                 *     exclusive with `email` — supply exactly one.
-                 */
-                slug?: string;
-            };
+            query?: never;
             header?: never;
             path?: never;
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AdminLookupRequest"];
+            };
+        };
         responses: {
             /**
              * @description Matched customer. Served with `Cache-Control: no-store`

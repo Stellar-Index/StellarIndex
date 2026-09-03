@@ -6289,7 +6289,7 @@ paths:
           description: Account store not configured.
 
   /account/admin/lookup:
-    get:
+    post:
       operationId: adminLookupCustomer
       tags: [admin]
       summary: Staff — customer look-up by user email or account slug.
@@ -6297,7 +6297,15 @@ paths:
         Staff "Customer look-up" tool (platform-spec §6): resolve an
         account by one of its users' email address OR by account slug,
         and return the account's tier/status plus the users on it.
-        Read-only.
+
+        **`POST` but read-only.** Nothing is created or mutated. The verb
+        is chosen so the look-up term — a customer's EMAIL ADDRESS —
+        travels in the request body rather than the URL. A URL is copied
+        verbatim into every access log, proxy log, browser-history entry
+        and `Referer` header along the path, and edge-side redaction can
+        only ever cover the one hop we operate (PRV F2). The query string
+        is NOT a fallback input: an `?email=` on this route is ignored and
+        the request 400s.
 
         Auth is a dashboard SESSION cookie, NOT an API key: the route is
         wrapped in `RequireSession` (401 without a session) and the
@@ -6309,28 +6317,17 @@ paths:
         instead.) Every successful look-up lands a `staff.customer.lookup`
         audit row.
 
-        Supply EXACTLY ONE of `email` or `slug`. Supplying neither is a
-        400 (`provide ?email= or ?slug=`). The response carries
-        `Cache-Control: no-store` because the body is staff-only customer
-        PII.
+        Supply EXACTLY ONE of `email` or `slug` in the body. Supplying
+        neither is a 400 (`provide email or slug in the request body`).
+        The response carries `Cache-Control: no-store` because the body is
+        staff-only customer PII.
       security:
         - SessionCookie: []
-      parameters:
-        - name: email
-          in: query
-          required: false
-          schema: { type: string, format: email }
-          description: |
-            Resolve the account via one of its users' email address
-            (case-insensitive). Mutually exclusive with `slug` — supply
-            exactly one.
-        - name: slug
-          in: query
-          required: false
-          schema: { type: string }
-          description: |
-            Resolve the account by its slug (case-insensitive). Mutually
-            exclusive with `email` — supply exactly one.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AdminLookupRequest" }
       responses:
         "200":
           description: |
@@ -13160,10 +13157,31 @@ components:
             data: { $ref: "#/components/schemas/AdminAccountView" }
           required: [data]
 
+    AdminLookupRequest:
+      type: object
+      description: |
+        Staff customer look-up term. Exactly one of `email` or `slug`.
+
+        Carried in the request BODY rather than the query string because
+        `email` is customer PII and a URL is logged by every hop it
+        crosses (PRV F2).
+      properties:
+        email:
+          type: string
+          format: email
+          description: |
+            Resolve the account via one of its users' email address
+            (case-insensitive). Mutually exclusive with `slug`.
+        slug:
+          type: string
+          description: |
+            Resolve the account by its slug (case-insensitive). Mutually
+            exclusive with `email`.
+      additionalProperties: false
     AdminLookupResponse:
       type: object
       description: |
-        Staff customer look-up result (`GET /v1/account/admin/lookup`):
+        Staff customer look-up result (`POST /v1/account/admin/lookup`):
         the resolved account plus the users on it. NOT enveloped — a bare
         `{account, users}` object, served with `Cache-Control: no-store`
         (staff-only customer PII).
