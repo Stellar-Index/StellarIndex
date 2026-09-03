@@ -1,8 +1,8 @@
 blank_issues_enabled: false
 contact_links:
   - name: Question about using the API
-    url: https://github.com/Stellar-Index/StellarIndex/discussions
-    about: How do I query X, what does this field mean, why is this number what it is. Questions get better answers in Discussions than in the issue tracker.
+    url: https://github.com/Stellar-Index/StellarIndex/blob/main/SUPPORT.md
+    about: How do I query X, what does this field mean, why is this number what it is. SUPPORT.md points at the reference and methodology pages that answer most of these.
   - name: Security vulnerability
     url: https://github.com/Stellar-Index/StellarIndex/blob/main/SECURITY.md
     about: Do NOT open a public issue. Follow the disclosure process in SECURITY.md.

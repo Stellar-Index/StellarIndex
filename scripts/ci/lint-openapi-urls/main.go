@@ -26,6 +26,16 @@
 // Single-value enums and unrelated enums (e.g. `vwap|twap`,
 // `native|classic|soroban|fiat`) pass cleanly.
 //
+// A third rule guards the other half of the spec's URLs — the
+// `servers:` block:
+//
+//  3. Every server entry must name a host this project actually
+//     serves. A server entry is not prose: every generated client,
+//     Postman import and try-it console offers it as a selectable
+//     target. `https://api.staging.stellarindex.io/v1` shipped here
+//     with no DNS record whatsoever, so anyone importing the spec got
+//     a dead entry in their picker.
+//
 // Usage:
 //
 //	go run ./scripts/ci/lint-openapi-urls openapi/stellar-index.v1.yaml
@@ -36,6 +46,7 @@ package main
 
 import (
 	"fmt"
+	"net/url"
 	"os"
 	"sort"
 	"strings"
@@ -60,6 +71,15 @@ var (
 		"bucketed":     true,
 		"live":         true,
 	}
+
+	// servedHosts is the set of public hosts a `servers:` entry may
+	// name. Adding one is a deliberate edit here, which is the point:
+	// declaring a server promises every importer of this spec that the
+	// host answers. Loopback entries (see isLoopback) are exempt —
+	// they are meant to be edited by the reader, not called as-is.
+	servedHosts = map[string]bool{
+		"api.stellarindex.io": true,
+	}
 )
 
 // param is the subset of an OpenAPI 3.1 parameter object we need to
@@ -80,8 +100,15 @@ type operation struct {
 	Parameters []param `yaml:"parameters"`
 }
 
+// server is one entry of the top-level `servers:` block.
+type server struct {
+	URL         string `yaml:"url"`
+	Description string `yaml:"description"`
+}
+
 // spec is the trimmed view we walk.
 type spec struct {
+	Servers    []server                        `yaml:"servers"`
 	Paths      map[string]map[string]operation `yaml:"paths"`
 	Components struct {
 		Parameters map[string]param `yaml:"parameters"`
@@ -114,14 +141,23 @@ func main() {
 		os.Exit(2)
 	}
 
+	// Same guard for `servers:`. Losing the block does not fail any
+	// consumer loudly — clients fall back to the spec's own location or
+	// to a relative base — so it would go unnoticed, and rule 3 would
+	// pass over zero entries while doing so.
+	if len(s.Servers) == 0 {
+		fmt.Fprintf(os.Stderr, "openapi-urls: %s declared zero servers — refusing to pass vacuously (missing `servers:` block?)\n", specPath)
+		os.Exit(2)
+	}
+
 	violations := lint(&s)
 	if len(violations) == 0 {
-		fmt.Println("openapi-urls: all query parameters comply with ADR-0018 URL discipline")
+		fmt.Println("openapi-urls: servers and query parameters both comply")
 		os.Exit(0)
 	}
 
 	sort.Strings(violations)
-	fmt.Fprintln(os.Stderr, "openapi-urls: ADR-0018 URL-discipline violations found:")
+	fmt.Fprintln(os.Stderr, "openapi-urls: URL violations found:")
 	fmt.Fprintln(os.Stderr)
 	for _, v := range violations {
 		fmt.Fprintln(os.Stderr, "  "+v)
@@ -130,6 +166,7 @@ func main() {
 	fmt.Fprintln(os.Stderr, "Query parameters MUST NOT change a surface's consistency contract.")
 	fmt.Fprintln(os.Stderr, "Use a separate URL (/v1/price vs /v1/price/tip vs /v1/observations) instead.")
 	fmt.Fprintln(os.Stderr, "See docs/adr/0018-api-consistency-surfaces.md.")
+	fmt.Fprintln(os.Stderr, "A `servers:` entry must name a host that answers — see servedHosts in this linter.")
 	os.Exit(1)
 }
 
@@ -137,6 +174,8 @@ func main() {
 // slice of human-readable violation strings.
 func lint(s *spec) []string {
 	var violations []string
+
+	violations = append(violations, checkServers(s.Servers)...)
 
 	for path, verbs := range s.Paths {
 		for verb, op := range verbs {
@@ -160,6 +199,39 @@ func lint(s *spec) []string {
 		}
 	}
 	return violations
+}
+
+// checkServers runs rule 3 over the `servers:` block: one violation
+// per entry naming a host outside servedHosts.
+func checkServers(servers []server) []string {
+	var violations []string
+	for _, srv := range servers {
+		u, err := url.Parse(srv.URL)
+		if err != nil || u.Host == "" {
+			violations = append(violations,
+				fmt.Sprintf("servers — %q is not a parseable absolute URL; a client cannot dial it", srv.URL))
+			continue
+		}
+		host := u.Hostname()
+		if isLoopback(host) || servedHosts[strings.ToLower(host)] {
+			continue
+		}
+		violations = append(violations,
+			fmt.Sprintf("servers — %q names host %q, which this project does not serve; a server entry is offered as a selectable target by every generated client, so an unserved host hands each importer a dead endpoint. Deploy it and add the host to servedHosts, or drop the entry",
+				srv.URL, host))
+	}
+	return violations
+}
+
+// isLoopback reports whether host is the self-hosted/dev placeholder
+// shape. These entries exist to be edited by the reader, so they are
+// exempt from the served-host list.
+func isLoopback(host string) bool {
+	switch strings.ToLower(host) {
+	case "localhost", "127.0.0.1", "::1":
+		return true
+	}
+	return false
 }
 
 // resolve handles inline params (returned as-is) and `$ref` params

@@ -22,9 +22,9 @@ func ExampleNew() {
 	})
 	_ = c // silence "declared and not used" in this snippet
 
-	// For self-hosted or staging, point BaseURL at the deployment:
-	staging := client.New(client.Options{BaseURL: "https://api.staging.stellarindex.io"})
-	_ = staging
+	// For a self-hosted deployment, point BaseURL at it:
+	selfHosted := client.New(client.Options{BaseURL: "http://localhost:3000"})
+	_ = selfHosted
 }
 
 // ExampleClient_Price demonstrates a current-price lookup. The

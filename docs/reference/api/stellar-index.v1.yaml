@@ -43,8 +43,6 @@ info:
 servers:
   - url: https://api.stellarindex.io/v1
     description: Production
-  - url: https://api.staging.stellarindex.io/v1
-    description: Staging
   - url: http://localhost:3000/v1
     description: Self-hosted / dev
 
