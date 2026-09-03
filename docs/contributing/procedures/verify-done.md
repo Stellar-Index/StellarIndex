@@ -10,16 +10,20 @@ Every other skill's "verify" step is this skill. Do not shortcut it —
 each rule below exists because its absence shipped a real breakage
 (the incident is cited).
 
-## 1. The gate stack (run in order, ALL foreground)
+## 1. The gate stack
 
 ```sh
-# 1. The canonical gate. NEVER pipe through tail/head — the pipe's
-#    exit code masks failures (shipped a lint break twice this way).
-bash scripts/dev/verify.sh > /tmp/verify.out 2>&1; EXIT=$?
-echo "exit=$EXIT"; grep "ALL CHECKS PASSED" /tmp/verify.out
-# exit MUST be 0 AND the string MUST be present. A backgrounded run's
-# "exit 0" task-notification can lie — always check the string.
+# Commit the candidate first: prepush refuses dirty trees and judges HEAD.
+make prepush > /tmp/prepush.out 2>&1 & PID=$!
+wait "$PID"; EXIT=$?
+echo "exit=$EXIT"
+grep "ALL REQUIRED CHECKS PASSED" /tmp/prepush.out
+# Exit MUST be 0 AND the literal marker MUST be present.
 ```
+
+Never pipe the gate through `tail`, `head`, `sed` or `tee`; that reads the
+pipe's status instead of the gate. Profile and platform behavior is documented
+in [local verification before CI](../local-verification.md).
 
 If the diff touched any of these surfaces, ALSO run its generator and
 commit the regenerated output (two of the three have silently drifted
