@@ -85,8 +85,19 @@ head -n 1 "$PROFILE" | grep -q '^mode:' ||
 #
 # Field 2 is the statement count for the block, field 3 the hit count.
 read -r TOTAL COVERED STATEMENTS <<EOF
-$(awk 'NR > 1 { tot += $2; if ($3 > 0) cov += $2 }
-	END { printf "%.1f %d %d\n", (tot ? 100 * cov / tot : 0), cov + 0, tot + 0 }' "$PROFILE")
+$(awk 'NR > 1 {
+		# A profile merged across packages lists a shared block once per
+		# package that exercised it. `go tool cover -func` aggregates by
+		# block identity (file:start,end) and counts a block covered if
+		# any entry hit it; summing raw lines double-counts those blocks
+		# and drifted from the tool by a rounding step. Aggregate the
+		# same way so the cross-check below compares like with like.
+		key = $1; if (!(key in stmts)) stmts[key] = $2; if ($3 > 0) hit[key] = 1
+	}
+	END {
+		for (k in stmts) { tot += stmts[k]; if (k in hit) cov += stmts[k] }
+		printf "%.1f %d %d\n", (tot ? 100 * cov / tot : 0), cov + 0, tot + 0
+	}' "$PROFILE")
 EOF
 
 [ -n "$TOTAL" ] ||
