@@ -53,10 +53,7 @@ func BackfillContractInstanceChanges(ctx context.Context, addr string, from, to,
 
 	start := time.Now()
 	for lo := from; ; {
-		hi := to
-		if rem := to - lo; rem >= window {
-			hi = lo + window - 1
-		}
+		hi := ledgerWindowHi(lo, to, window)
 		wStart := time.Now()
 		if err := conn.Exec(ctx, contractInstanceBackfillQuery, lo, hi); err != nil {
 			return fmt.Errorf("clickhouse: instance-changes window [%d,%d]: %w — resume with -from %d", lo, hi, err, lo)

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 	"github.com/stellar/go-stellar-sdk/xdr"
 )
 
@@ -46,12 +47,31 @@ func StreamContractCallOps(ctx context.Context, addr, contractHex string, from, 
 	}
 	defer func() { _ = conn.Close() }()
 
-	// The successful-tx restriction is a grace_hash INNER JOIN, not an
-	// IN-subquery: IN builds the whole window's tx-hash set in memory
-	// (CreatingSetsTransform blew the 10 GiB query budget on a dense
-	// 250k-ledger window, 2026-07-11). grace_hash spills join buckets
-	// to disk — the same rationale as StreamSDEXOps/StreamClassicOps.
-	const query = `
+	rows, err := conn.Query(ctx, contractCallOpsQuery, from, to, from, to, contractHex)
+	if err != nil {
+		return fmt.Errorf("clickhouse: query contract-call ops [%d,%d]: %w", from, to, err)
+	}
+	defer func() { _ = rows.Close() }()
+	return streamContractCallOpRows(rows, fn)
+}
+
+// contractCallOpsQuery is StreamContractCallOps' SQL, at package level so its
+// text stays independently assertable (StreamContractCallOps dials its own
+// connection via openRead — see sdexOpsQuery's note on the same seam).
+//
+// The successful-tx restriction is a grace_hash INNER JOIN, not an
+// IN-subquery: IN builds the whole window's tx-hash set in memory
+// (CreatingSetsTransform blew the 10 GiB query budget on a dense
+// 250k-ledger window, 2026-07-11). grace_hash spills join buckets
+// to disk — the same rationale as StreamSDEXOps/StreamClassicOps.
+//
+// The FIVE bind parameters are, in order: the successful-tx SUBQUERY's from +
+// to (the joined derived table is written FIRST, so its window binds first),
+// then the outer scan's from + to, then contractHex. Note this is the reverse
+// nesting of sdexOpsQuery, where the subquery trails — which is exactly why the
+// order is pinned by test: swapping the pairs is invisible when from/to are the
+// same values and catastrophic when a caller ever windows them apart.
+const contractCallOpsQuery = `
 		SELECT o.ledger_seq, o.close_time, o.tx_hash, o.op_index, o.source_account, o.body_xdr
 		FROM stellar.operations AS o FINAL
 		INNER JOIN (
@@ -64,12 +84,12 @@ func StreamContractCallOps(ctx context.Context, addr, contractHex string, from, 
 		ORDER BY o.ledger_seq, o.tx_hash, o.op_index
 		SETTINGS join_algorithm = 'grace_hash', grace_hash_join_initial_buckets = 32,
 		         max_memory_usage = 8000000000, max_bytes_before_external_sort = 2000000000`
-	rows, err := conn.Query(ctx, query, from, to, from, to, contractHex)
-	if err != nil {
-		return fmt.Errorf("clickhouse: query contract-call ops [%d,%d]: %w", from, to, err)
-	}
-	defer func() { _ = rows.Close() }()
 
+// streamContractCallOpRows decodes an open contractCallOpsQuery result set and
+// invokes fn once per row, in the order ClickHouse returned them. Split out of
+// StreamContractCallOps so the decode + fan-out half is drivable against a stub
+// driver.Rows. fn's error aborts the stream and is returned VERBATIM.
+func streamContractCallOpRows(rows driver.Rows, fn func(ContractCallOp) error) error {
 	for rows.Next() {
 		var (
 			ledger    uint32

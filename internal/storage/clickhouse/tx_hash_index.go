@@ -47,10 +47,7 @@ func BackfillTxHashIndex(ctx context.Context, addr string, from, to, window uint
 
 	start := time.Now()
 	for lo := from; ; {
-		hi := to
-		if rem := to - lo; rem >= window { // window fits without overflow
-			hi = lo + window - 1
-		}
+		hi := ledgerWindowHi(lo, to, window)
 		wStart := time.Now()
 		if err := conn.Exec(ctx, txHashIndexBackfillQuery, lo, hi); err != nil {
 			return fmt.Errorf("clickhouse: tx-hash-index window [%d,%d]: %w — resume with -from %d", lo, hi, err, lo)

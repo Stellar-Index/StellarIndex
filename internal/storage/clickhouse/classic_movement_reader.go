@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 	"github.com/stellar/go-stellar-sdk/xdr"
 )
 
@@ -75,7 +76,23 @@ func StreamClassicOps(ctx context.Context, addr string, from, to uint32, opTypes
 	}
 	defer func() { _ = conn.Close() }()
 
-	query := fmt.Sprintf(`
+	rows, err := conn.Query(ctx, classicOpsQuery(opTypes), from, to, from, to)
+	if err != nil {
+		return fmt.Errorf("clickhouse: query classic ops [%d,%d]: %w", from, to, err)
+	}
+	defer func() { _ = rows.Close() }()
+	return streamClassicOpRows(rows, fn)
+}
+
+// classicOpsQuery is StreamClassicOps' SQL, built here rather than inline so
+// its text stays independently assertable (StreamClassicOps dials its own
+// connection via openRead — see sdexOpsQuery's note on the same seam).
+//
+// The FOUR bind parameters are, in order: the outer ledger window's from + to,
+// then the successful-tx subquery's from + to. opTypes is INTERPOLATED — see
+// classicOpTypeInList's compile-time-constants-only contract.
+func classicOpsQuery(opTypes []string) string {
+	return fmt.Sprintf(`
 		SELECT o.ledger_seq, o.close_time, o.tx_hash, o.op_index, o.source_account,
 		       o.body_xdr, r.result_xdr
 		FROM stellar.operations AS o
@@ -89,12 +106,13 @@ func StreamClassicOps(ctx context.Context, addr string, from, to uint32, opTypes
 		  )
 		ORDER BY o.ledger_seq, o.tx_hash, o.op_index
 		SETTINGS join_algorithm = 'grace_hash', grace_hash_join_initial_buckets = 32`, classicOpTypeInList(opTypes))
-	rows, err := conn.Query(ctx, query, from, to, from, to)
-	if err != nil {
-		return fmt.Errorf("clickhouse: query classic ops [%d,%d]: %w", from, to, err)
-	}
-	defer func() { _ = rows.Close() }()
+}
 
+// streamClassicOpRows decodes an open classicOpsQuery result set and invokes fn
+// once per row, in the order ClickHouse returned them. Split out of
+// StreamClassicOps so the decode + fan-out half is drivable against a stub
+// driver.Rows. fn's error aborts the stream and is returned VERBATIM.
+func streamClassicOpRows(rows driver.Rows, fn func(ClassicOp) error) error {
 	for rows.Next() {
 		var (
 			ledger    uint32

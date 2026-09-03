@@ -15,10 +15,18 @@ import (
 
 // stubRows is a minimal driver.Rows over in-memory rows. The embedded
 // interface panics on any method the fast path should never touch.
+//
+// streamErr, when set, is what Err() reports once the rows are exhausted —
+// modelling a stream that TRUNCATES mid-flight (a dropped connection, a
+// server-side memory limit). A reader that returns rows.Err()'s nil-by-default
+// without checking it reports a partial result as a complete one, which for a
+// backfill or reconcile is a silent under-count; leaving this field zero is
+// byte-for-byte the original always-nil behaviour.
 type stubRows struct {
 	driver.Rows
-	data [][]any
-	i    int
+	data      [][]any
+	i         int
+	streamErr error
 }
 
 func (r *stubRows) Next() bool {
@@ -41,7 +49,7 @@ func (r *stubRows) Scan(dest ...any) error {
 }
 
 func (r *stubRows) Close() error { return nil }
-func (r *stubRows) Err() error   { return nil }
+func (r *stubRows) Err() error   { return r.streamErr }
 
 // stubConn records every query (and its bound args, positionally aligned with
 // queries) and routes it to a per-shape responder. The embedded driver.Conn

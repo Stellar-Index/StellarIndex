@@ -126,10 +126,7 @@ func BackfillOperationParticipants(ctx context.Context, addr string, from, to, w
 	}
 	start := time.Now()
 	for lo := from; ; {
-		hi := to
-		if rem := to - lo; rem >= window { // window fits without uint overflow
-			hi = lo + window - 1
-		}
+		hi := ledgerWindowHi(lo, to, window)
 		wStart := time.Now()
 		ws, werr := backfillParticipantWindow(ctx, readConn, writeConn, lo, hi, dryRun)
 		stats.OpsScanned += ws.OpsScanned

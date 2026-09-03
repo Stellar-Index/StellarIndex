@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 	"github.com/stellar/go-stellar-sdk/xdr"
 )
 
@@ -83,7 +84,28 @@ func StreamSDEXOps(ctx context.Context, addr string, from, to uint32, fn func(SD
 	}
 	defer func() { _ = conn.Close() }()
 
-	query := fmt.Sprintf(`
+	rows, err := conn.Query(ctx, sdexOpsQuery(), from, to, from, to)
+	if err != nil {
+		return fmt.Errorf("clickhouse: query sdex ops [%d,%d]: %w", from, to, err)
+	}
+	defer func() { _ = rows.Close() }()
+	return streamSDEXOpRows(rows, fn)
+}
+
+// sdexOpsQuery is StreamSDEXOps' SQL, built here rather than inline so its
+// text stays independently assertable: StreamSDEXOps dials its own connection
+// via openRead, so it cannot be driven end-to-end by this package's stubConn
+// harness — the same seam, for the same reason, as txHashIndexBackfillQuery.
+//
+// The FOUR bind parameters are, in order: the outer ledger window's from + to,
+// then the successful-tx subquery's from + to. A clause reorder that does not
+// move the caller's argument list with it is a silent wrong-window read, which
+// is why the order is pinned by test rather than left to review.
+//
+// The op-type filter is INTERPOLATED, not bound — see tradeOpTypeInList for
+// why that carries no injection risk (compile-time constants only).
+func sdexOpsQuery() string {
+	return fmt.Sprintf(`
 		SELECT o.ledger_seq, o.close_time, o.tx_hash, o.op_index, o.source_account,
 		       o.body_xdr, r.result_xdr
 		FROM stellar.operations AS o
@@ -97,12 +119,16 @@ func StreamSDEXOps(ctx context.Context, addr string, from, to uint32, fn func(SD
 		  )
 		ORDER BY o.ledger_seq, o.tx_hash, o.op_index
 		SETTINGS join_algorithm = 'grace_hash', grace_hash_join_initial_buckets = 32`, tradeOpTypeInList())
-	rows, err := conn.Query(ctx, query, from, to, from, to)
-	if err != nil {
-		return fmt.Errorf("clickhouse: query sdex ops [%d,%d]: %w", from, to, err)
-	}
-	defer func() { _ = rows.Close() }()
+}
 
+// streamSDEXOpRows decodes an open sdexOpsQuery result set and invokes fn once
+// per row, in the order ClickHouse returned them. Split out of StreamSDEXOps so
+// the decode + fan-out half is drivable against a stub driver.Rows (the
+// scanOpParticipants precedent in participant_backfill.go).
+//
+// fn's error aborts the stream and is returned VERBATIM: callers use a sentinel
+// from fn as a stop signal, so it must not be wrapped.
+func streamSDEXOpRows(rows driver.Rows, fn func(SDEXOp) error) error {
 	for rows.Next() {
 		var (
 			ledger    uint32

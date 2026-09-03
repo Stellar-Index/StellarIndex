@@ -5,6 +5,34 @@ import (
 	"fmt"
 )
 
+// classicCirculatingSupplyQuery is the trustline GROUP BY behind
+// [ExplorerReader.ClassicCirculatingSupply].
+//
+// It carries explorerScanSettings because it is SCAN-SHAPED over
+// ledger_entries_current, and it was the only such read in this package
+// that did not. Its byte-identical sibling in asset_holders_rollup.go has
+// always had the pin. Measured on r1 (system.query_log, 14 days): ~130
+// runs/day, 127.8M rows, avg 24-27s, max 75.5s, peak 1.85 GiB — 86% of
+// the api_serving profile's 2 GiB ceiling, and 2.564 GiB on the one run
+// that went through the unbounded default user. Capping max_threads at 4
+// is what collapses that footprint; the memory number is a backstop, not
+// a target.
+//
+// max_execution_time is set explicitly for the same reason
+// accountsByWealthQuery sets it: the Go client pins the connection
+// default to 30s, which is BELOW this query's observed runtime, so it
+// only survives because r1's api_serving profile happens to override the
+// value to 184. A deployment without that override would kill this query
+// every time, silently, and the classic-supply fallback would simply
+// stop having answers. 150s sits above the 75.5s observed maximum and
+// inside the caller's own 3-minute detached-refresh budget
+// (classicSupplyRefreshBudget) — it must never exceed that, or the
+// server would keep working on a query nobody is waiting for.
+const classicCirculatingSupplyQuery = `SELECT asset, toString(sum(toInt128(balance))) AS circ
+		FROM stellar.ledger_entries_current FINAL
+		WHERE entry_type = 'trustline' AND change_type != 'removed' AND balance > 0
+		GROUP BY asset` + explorerScanSettings + `, max_execution_time = 150`
+
 // ClassicCirculatingSupply returns per-asset circulating supply derived
 // from the current trustline set: sum(balance) over every non-removed,
 // positive trustline for each classic asset. The map key is the canonical
@@ -26,11 +54,7 @@ import (
 // MUST cache the result (it changes slowly) rather than run it per
 // request — it is far too heavy for an API hot path uncached.
 func (r *ExplorerReader) ClassicCirculatingSupply(ctx context.Context) (map[string]string, error) {
-	const q = `SELECT asset, toString(sum(toInt128(balance))) AS circ
-		FROM stellar.ledger_entries_current FINAL
-		WHERE entry_type = 'trustline' AND change_type != 'removed' AND balance > 0
-		GROUP BY asset`
-	rows, err := r.conn.Query(ctx, q)
+	rows, err := r.conn.Query(ctx, classicCirculatingSupplyQuery)
 	if err != nil {
 		return nil, fmt.Errorf("clickhouse: classic circulating supply: %w", err)
 	}

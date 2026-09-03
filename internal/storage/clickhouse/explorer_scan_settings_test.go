@@ -53,6 +53,7 @@ func TestExplorerScanQueries_CarryBoundedSettings(t *testing.T) {
 		"nativeHoldersQuery":                                    nativeHoldersQuery,
 		"nativeHoldersCountQuery":                               nativeHoldersCountQuery,
 		"accountsUnspendableQuery":                              accountsUnspendableQuery,
+		"classicCirculatingSupplyQuery":                         classicCirculatingSupplyQuery,
 		"accountMovementsQuery(bare)":                           accountMovementsQuery(AccountMovementFilter{}, false),
 		"accountMovementsQuery(filter+cursor)": accountMovementsQuery(AccountMovementFilter{
 			Kind: "payment", Direction: AccountMovementSent, Asset: "native",
@@ -69,6 +70,32 @@ func TestAccountsByWealthQuery_Bounds(t *testing.T) {
 	requireScanSettings(t, "accountsByWealthQuery", accountsByWealthQuery)
 	if !strings.Contains(accountsByWealthQuery, "max_execution_time = 150") {
 		t.Errorf("accountsByWealthQuery missing its 150s execution ceiling:\n%s", accountsByWealthQuery)
+	}
+}
+
+// TestClassicCirculatingSupplyQuery_Bounds — this one additionally
+// carries an explicit execution ceiling, and the reason is the same as
+// accountsByWealthQuery's: the Go client pins the connection default to
+// 30s, which is BELOW this query's measured runtime (avg 24-27s, max
+// 75.5s on r1 over 14 days). It survives today only because r1's
+// api_serving profile overrides the value to 184 — a deployment without
+// that override would kill it every time, and the classic-supply
+// fallback would just stop having answers with no error anyone reads.
+// The ceiling must also stay INSIDE the caller's 3-minute detached
+// refresh budget (classicSupplyRefreshBudget), or ClickHouse keeps
+// working on a query nobody is waiting for.
+func TestClassicCirculatingSupplyQuery_Bounds(t *testing.T) {
+	requireScanSettings(t, "classicCirculatingSupplyQuery", classicCirculatingSupplyQuery)
+	if !strings.Contains(classicCirculatingSupplyQuery, "max_execution_time = 150") {
+		t.Errorf("classicCirculatingSupplyQuery missing its 150s execution ceiling:\n%s",
+			classicCirculatingSupplyQuery)
+	}
+	// ADR-0003: the sum must be taken in i128, not the column's native
+	// width. Losing toInt128 here does not error — it silently wraps on
+	// a large-supply asset.
+	if !strings.Contains(classicCirculatingSupplyQuery, "sum(toInt128(balance))") {
+		t.Errorf("classicCirculatingSupplyQuery lost its i128 sum (ADR-0003):\n%s",
+			classicCirculatingSupplyQuery)
 	}
 }
 

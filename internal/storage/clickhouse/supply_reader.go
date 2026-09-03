@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"time"
+
+	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 )
 
 // MintBurnFlow is one supply-affecting token event from the lake: a CAP-67
@@ -42,20 +44,39 @@ func StreamMintBurnFlows(ctx context.Context, addr string, from, to uint32, useF
 	}
 	defer func() { _ = conn.Close() }()
 
-	final := ""
-	if useFinal {
-		final = "FINAL"
-	}
-	rows, err := conn.Query(ctx, fmt.Sprintf(`
-		SELECT ledger_seq, close_time, contract_id, tx_hash, op_index, event_index, topic_0_sym, data_xdr
-		FROM stellar.contract_events %s
-		WHERE ledger_seq BETWEEN ? AND ?
-		  AND topic_0_sym IN ('mint','burn','clawback')`, final), from, to)
+	rows, err := conn.Query(ctx, mintBurnFlowsQuery(useFinal), from, to)
 	if err != nil {
 		return fmt.Errorf("clickhouse: query mint/burn flows [%d,%d]: %w", from, to, err)
 	}
 	defer func() { _ = rows.Close() }()
+	return streamMintBurnFlowRows(rows, fn)
+}
 
+// mintBurnFlowsQuery is StreamMintBurnFlows' SQL, built here rather than inline
+// so its text stays independently assertable (StreamMintBurnFlows dials its own
+// connection via openRead — see sdexOpsQuery's note on the same seam).
+//
+// TWO bind parameters: the ledger window's from + to. useFinal is a SHAPE
+// toggle, not a bound value — it selects the ReplacingMergeTree dedup at the
+// ~40x read cost documented on StreamMintBurnFlows, so the two variants differ
+// ONLY by the FINAL keyword and must not diverge in predicate or column list.
+func mintBurnFlowsQuery(useFinal bool) string {
+	final := ""
+	if useFinal {
+		final = "FINAL"
+	}
+	return fmt.Sprintf(`
+		SELECT ledger_seq, close_time, contract_id, tx_hash, op_index, event_index, topic_0_sym, data_xdr
+		FROM stellar.contract_events %s
+		WHERE ledger_seq BETWEEN ? AND ?
+		  AND topic_0_sym IN ('mint','burn','clawback')`, final)
+}
+
+// streamMintBurnFlowRows decodes an open mintBurnFlowsQuery result set and
+// invokes fn once per row, in the order ClickHouse returned them. Split out of
+// StreamMintBurnFlows so the decode + fan-out half is drivable against a stub
+// driver.Rows. fn's error aborts the stream and is returned VERBATIM.
+func streamMintBurnFlowRows(rows driver.Rows, fn func(MintBurnFlow) error) error {
 	for rows.Next() {
 		var (
 			ledger     uint32
