@@ -197,14 +197,17 @@ var uncoveredOperations = map[string]string{
 	"POST /dashboard/price-alerts":            "session-cookie dashboard surface",
 	"PATCH /dashboard/price-alerts/{id}":      "session-cookie dashboard surface",
 	"DELETE /dashboard/price-alerts/{id}":     "session-cookie dashboard surface",
-	"GET /account/admin/lookup":               "session-cookie dashboard surface — staff-only customer look-up",
-	"GET /livez/lake":                         "load-balancer lake-health probe (ADR-0050 §7.3) — infrastructure surface, not an SDK data call",
-	"POST /auth/login":                        "magic-link browser flow",
-	"GET /auth/callback":                      "magic-link browser flow",
-	"POST /auth/verify-code":                  "magic-link browser flow",
-	"POST /auth/logout":                       "magic-link browser flow",
-	"GET /auth/sep10/challenge":               "SEP-10 wallet flow — wallet SDKs handle this",
-	"POST /auth/sep10/token":                  "SEP-10 wallet flow — wallet SDKs handle this",
+	// POST rather than GET, and read-only despite the verb: the look-up
+	// term is a customer email address, which must not travel in a URL
+	// (#346). See dashboardauth.adminLookupRequest.
+	"POST /account/admin/lookup": "session-cookie dashboard surface — staff-only customer look-up",
+	"GET /livez/lake":            "load-balancer lake-health probe (ADR-0050 §7.3) — infrastructure surface, not an SDK data call",
+	"POST /auth/login":           "magic-link browser flow",
+	"GET /auth/callback":         "magic-link browser flow",
+	"POST /auth/verify-code":     "magic-link browser flow",
+	"POST /auth/logout":          "magic-link browser flow",
+	"GET /auth/sep10/challenge":  "SEP-10 wallet flow — wallet SDKs handle this",
+	"POST /auth/sep10/token":     "SEP-10 wallet flow — wallet SDKs handle this",
 
 	// Operator/admin surfaces (admin Phase 1.5) — staff-issued
 	// operator-tier credentials only; not a machine-SDK surface.
