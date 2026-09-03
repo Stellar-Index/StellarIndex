@@ -171,7 +171,7 @@ func installStderrFilterTo(consume func(r io.Reader, realStderr *os.File)) (func
 	// reference to fd 2 (including the aws-sdk-go-v2 default
 	// logger bound to os.Stderr) is redirected through us from
 	// here on.
-	if err := syscall.Dup2(int(pw.Fd()), int(os.Stderr.Fd())); err != nil {
+	if err := dupOnto(int(pw.Fd()), int(os.Stderr.Fd())); err != nil {
 		_ = pr.Close()
 		_ = pw.Close()
 		_ = syscall.Close(savedFD)
@@ -206,7 +206,7 @@ func installStderrFilterTo(consume func(r io.Reader, realStderr *os.File)) (func
 			// installed in installStderrFilterTo. That close is
 			// what signals EOF to the reader, *provided* pw (the
 			// remaining handle) is also closed; do that next.
-			_ = syscall.Dup2(savedFD, int(os.Stderr.Fd()))
+			_ = dupOnto(savedFD, int(os.Stderr.Fd()))
 			_ = pw.Close()
 			// Wait for the consumer goroutine to drain whatever
 			// was buffered in the pipe before we returned to the
