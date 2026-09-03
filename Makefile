@@ -109,7 +109,8 @@ test-integration-local: ## Run Docker-backed integration tests in parallel local
 .PHONY: dev
 dev: ## Start the local dev stack — Postgres/Timescale + Redis + MinIO (deploy/docker-compose/dev.yaml). stellar-core/Galexie/stellar-rpc run on a remote box (r1), not in compose.
 	@docker compose -f deploy/docker-compose/dev.yaml up -d
-	@echo "Stack up. API at http://localhost:3000; docs at http://localhost:8080"
+	@echo "Dependencies up: Postgres/Timescale :5432, Redis :6379, MinIO S3 :9000 (console http://localhost:9001)."
+	@echo "The API, indexer and aggregator are your own binaries — 'make build', then docs/operations/self-hosting.md."
 
 .PHONY: dev-teardown
 dev-teardown: ## Stop the local stack and remove volumes

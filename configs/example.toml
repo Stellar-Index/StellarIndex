@@ -93,6 +93,27 @@ s3_bucket_live     = "galexie-live"
 s3_access_key_env  = "STELLARINDEX_S3_ACCESS_KEY"
 s3_secret_key_env  = "STELLARINDEX_S3_SECRET_KEY"
 
+# ClickHouse Tier-1 raw lake (ADR-0034 / ADR-0041). Both switches
+# below are ON by default, so a deployment that stands up no
+# ClickHouse must turn them OFF here — the indexer dials
+# clickhouse_addr on the NATIVE protocol port at boot and refuses to
+# start when nothing answers. The values shown are the built-in
+# defaults; commented out, they are exactly what you get.
+#
+# Turning them off costs the raw-lake completeness verdict and
+# lake-derived supply figures; the pricing path is unaffected.
+# See docs/operations/self-hosting.md §4.5 for the bring-up.
+# clickhouse_addr              = "127.0.0.1:9300"   # native port, NOT 8123 (HTTP)
+# clickhouse_live_sink         = true               # indexer writes each ledger's extract to CH inline
+# clickhouse_projector_source  = true               # projector reads forward events from CH, not soroban_events
+#
+# Serving-query isolation (ADR-0048 D4): point the API's per-request
+# CH reads at a dedicated bounded settings profile instead of CH's
+# unauthenticated `default` user. Empty (the default) is the pre-D4
+# behavior. The password is injected via the
+# STELLARINDEX_CLICKHOUSE_SERVING_PASSWORD env var, never this file.
+# clickhouse_serving_user      = "api_serving"
+
 # ──────────────────────────────────────────────────────────────────
 # Ingestion — which on-chain source connectors to run on this
 # indexer replica. Each name must exist in internal/sources/<name>/
@@ -107,6 +128,12 @@ enabled_sources       = ["soroswap"]    # expand as connectors land
 backfill_from_ledger  = 0                # 0 = resume from persisted cursor
 backfill_batch_size   = 64
 cursor_store_scheme   = "postgres"
+
+# First ledger in the live bucket: below it the indexer reads from
+# s3_bucket_archive instead. 0 (the default) means there is no
+# archive bucket at all — recent-window-only deployments leave it
+# alone. See docs/operations/self-hosting.md § light mode.
+# live_seam_ledger      = 0
 
 # Enable reflector-dex / reflector-cex / reflector-fx by adding
 # them to enabled_sources. Each requires its contract address set

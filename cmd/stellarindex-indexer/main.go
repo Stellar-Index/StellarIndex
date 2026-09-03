@@ -449,7 +449,9 @@ func run(cfgPath string, dryRun bool) error {
 	// inline (non-blocking), keeping the Tier-1 lake within ~seconds of the
 	// chain for the real-time block explorer — vs the ~10-min ch-live-catchup
 	// timer (which stays as the completeness backstop for anything this sink
-	// drops under CH pressure). Off by default; the sink never blocks ingest.
+	// drops under CH pressure). ON since ADR-0041, so a host with no
+	// ClickHouse must set clickhouse_live_sink = false or NewLiveSink below
+	// fails the boot. The sink itself never blocks ingest.
 	var chLiveSink *clickhouse.LiveSink
 	if cfg.Storage.ClickHouseLiveSink {
 		// The struct-tag default is example/docs-only (not applied at runtime),
@@ -579,7 +581,8 @@ func run(cfgPath string, dryRun bool) error {
 		proj := projector.New(store, registry, sinkFn, logger.With("component", "projector"))
 		// Feed-switch (ADR-0034 #10): read forward events from the CH lake
 		// (dual-sink-fed) instead of Postgres soroban_events, so the latter can
-		// be decommissioned. Off by default; requires the dual-sink running.
+		// be decommissioned. ON since ADR-0041; requires the dual-sink running,
+		// so it goes off wherever clickhouse_live_sink does.
 		if cfg.Storage.ClickHouseProjectorSource {
 			chAddr := cfg.Storage.ClickHouseAddr
 			if chAddr == "" {

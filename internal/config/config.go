@@ -932,14 +932,16 @@ type StorageConfig struct {
 	// lake within ~seconds of the chain (real-time, for the block explorer) vs
 	// the ~10-min ch-live-catchup timer. The sink is non-blocking (drops under
 	// CH pressure rather than stalling ingest); the catch-up timer backstops
-	// drops. Off by default — flipping it on is the real-time activation.
+	// drops. ON since ADR-0041: the lake is substrate, not an add-on, so a
+	// deployment that cannot run ClickHouse opts OUT here rather than in.
 	ClickHouseAddr     string `toml:"clickhouse_addr" doc:"ClickHouse native address host:port for the Tier-1 lake (ADR-0034); used by the indexer real-time dual-sink." default:"127.0.0.1:9300"`
 	ClickHouseLiveSink bool   `toml:"clickhouse_live_sink" doc:"Enable the real-time ClickHouse dual-sink: the indexer writes each ledger's structural extract to CH inline (non-blocking), keeping the lake within ~seconds of the chain. ON by default (ADR-0041): the certified-lake substrate backs the coverage claim, the CH completeness path, and lake-derived supply — opt out only on deployments that cannot run ClickHouse, accepting the loss of all three." default:"true"`
 	// ClickHouseProjectorSource feed-switch (ADR-0034 #10): when true, the
 	// projector reads forward events from the CH lake's contract_events instead
 	// of the Postgres soroban_events landing zone, so soroban_events can be
 	// decommissioned. Requires the dual-sink (ClickHouseLiveSink) so CH is
-	// authoritative for forward events. Off by default.
+	// authoritative for forward events. ON since ADR-0041, matching the
+	// production topology; turn it off wherever the dual-sink is off.
 	ClickHouseProjectorSource bool `toml:"clickhouse_projector_source" doc:"Feed-switch: the projector reads forward events from the ClickHouse lake (contract_events) instead of Postgres soroban_events, enabling soroban_events decommission. Requires clickhouse_live_sink. ON by default (ADR-0041), matching the production topology." default:"true"`
 
 	// ClickHouse serving-query isolation (ADR-0048 D4). The API's

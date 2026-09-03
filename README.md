@@ -87,9 +87,14 @@ See **[AGENTS.md](AGENTS.md)**. It's your orientation map.
   (regenerate via `make docs-api`); also published to
   <https://docs.stellarindex.io> (Cloudflare Pages) by the
   [`docs-deploy` workflow](.github/workflows/docs-deploy.yml).
-- **Self-hosting:** `make dev` boots the full local stack
-  (TimescaleDB + Redis + MinIO). See
-  [deploy/docker-compose/dev.yaml](deploy/docker-compose/dev.yaml).
+- **Self-hosting:** [`docs/operations/self-hosting.md`](docs/operations/self-hosting.md)
+  is the end-to-end guide — hardware and disk expectations, the
+  full-history and recent-window-only shapes, and a step-by-step
+  bring-up from a bare host to a serving `/v1/price`. For local
+  evaluation, `make dev` boots the dependencies only (TimescaleDB +
+  Redis + MinIO; see
+  [deploy/docker-compose/dev.yaml](deploy/docker-compose/dev.yaml)) —
+  the indexer, aggregator and API are binaries you build and run.
 - **Contributors:** [CONTRIBUTING.md](CONTRIBUTING.md).
 - **Architecture / design:** [docs/architecture/](docs/architecture/)
   (narrative designs) and [docs/adr/](docs/adr/) (Architecture Decision
