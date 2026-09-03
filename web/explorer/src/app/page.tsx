@@ -139,9 +139,10 @@ export default function HomePage() {
               VWAP, TWAP, and OHLC computed from every CEX, DEX, and oracle we
               index, served over REST + SSE with deterministic closed-bucket
               semantics, alongside the ledger, contract, asset, supply and
-              history endpoints. Anonymous reads are free forever; an API key
-              raises your rate limit from 60 to 1,000+ requests a minute, with
-              tiers and SLAs beyond that.
+              history endpoints. Anonymous reads are free forever at 6,000
+              requests a minute per IP; an API key is a per-key budget of
+              1,000 a minute — yours alone rather than shared with every
+              client on your IP — with staff-set partner limits above that.
             </p>
             <div className="flex flex-wrap items-center gap-3 pt-1">
               <ButtonLink href="/signup">
@@ -163,7 +164,10 @@ export default function HomePage() {
             {[
               ['GET /v1/price', 'Latest closed-bucket VWAP for any pair.'],
               ['GET /v1/price/tip', 'Rolling live price, sub-minute freshness.'],
-              ['GET /v1/ohlc', 'Candles — daily history back to 2015.'],
+              [
+                'GET /v1/ohlc',
+                'Candles — daily bars from 2018; coverage not yet continuous.',
+              ],
               ['GET /v1/price/stream', 'Server-Sent Events push feed.'],
             ].map(([ep, desc]) => (
               <div

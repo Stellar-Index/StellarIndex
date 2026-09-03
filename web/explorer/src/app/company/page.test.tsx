@@ -37,4 +37,18 @@ describe('CompanyPage', () => {
       );
     }
   });
+
+  // The "honest about what we don't have" bullet pointed readers at
+  // /methodology for "every gap and the path to closing each".
+  // /methodology has eight sections — sources, VWAP, stablecoin proxy,
+  // freeze, closed-bucket, latency, precision, audit — and no gap list
+  // anywhere. The gaps are enumerated in this bullet itself, so the
+  // link must describe what /methodology actually carries.
+  it('does not claim /methodology lists every gap', () => {
+    render(<CompanyPage />);
+    expect(screen.queryByText(/lists every gap/i)).not.toBeInTheDocument();
+    expect(
+      screen.getByText(/documents how each number is computed/i),
+    ).toBeInTheDocument();
+  });
 });

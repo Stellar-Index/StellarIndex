@@ -12,8 +12,9 @@ and Soroban.
 
 Its flagship product is the **Stellar Index API**: one publicly-accessible
 read surface over the whole network — ledgers, transactions, operations
-and contracts; the asset catalogue with supply and holders; complete
-since-inception history and OHLC; MEV / anomaly / divergence analytics;
+and contracts; the asset catalogue with supply and holders; price
+history and OHLC (CEX-sourced from 2018; on-chain SDEX from March
+2026 — not since-inception); MEV / anomaly / divergence analytics;
 and aggregated, real-time and historical prices for every Stellar asset,
 classic and SEP-41 Soroban token. On-chain trades + oracle feeds +
 CEX/FX/reference aggregators fused into one VWAP-first pricing layer
@@ -26,7 +27,7 @@ supply pipeline). A live deployment serves [stellarindex.io](https://stellarinde
 [docs.stellarindex.io](https://docs.stellarindex.io), and a public
 [status page](https://stellarindex.io/status).
 **License:** Apache-2.0.
-**Tested against:** Stellar pubnet protocol 23 (post-P23 / CAP-67 unified events).
+**Tested against:** Stellar pubnet protocol 27 (CAP-67 unified events since P23).
 
 ---
 
@@ -147,10 +148,13 @@ These are the architectural commitments that bind every PR. See
   `/observations`), historical (`/history`, `/history/since-inception`,
   `/ohlc`, `/chart`), catalogue (`/assets`, `/assets/{id}`, `/markets`,
   `/pairs`, `/sources`), oracle passthrough, account self-service,
-  SEP-10 web auth, SSE streams, plus operator endpoints
-  (`/healthz`, `/readyz`, `/version`, `/metrics`). Behind CORS, a
-  subject-aware rate limit (anon-IP + key-tier), a trusted-proxy CIDR
-  allow-list, and per-route Cache-Control with CDN-tier `s-maxage`.
+  SSE streams, plus operator endpoints (`/v1/healthz`, `/v1/readyz`,
+  `/v1/version`; `/metrics` is loopback-only, never public).
+  SEP-10 web auth (`/v1/auth/sep10/*`) is code-shipped but not enabled
+  on the hosted deployment — without a server signing seed it answers
+  503. Behind CORS, a subject-aware rate limit (anon-IP + key-tier), a
+  trusted-proxy CIDR allow-list, and per-route Cache-Control with
+  CDN-tier `s-maxage`.
 - **Aggregation engine** — VWAP/TWAP orchestrator with closed-bucket
   Redis cache, cross-pair triangulation, anomaly response, a
   multi-factor confidence score, and a freeze policy.

@@ -80,10 +80,13 @@ export function HomeCurrencies() {
             World currencies
           </h2>
           <p className="text-ink-body text-sm">
-            Live USD-base rates for the major fiat currencies — full ~200-ticker
-            coverage at{' '}
-            <Link href="/assets" className="text-brand-600 hover:underline">
-              /assets
+            Live USD-base rates for the major fiat currencies — the full
+            reference set (19 fiat plus 15 reference coins) at{' '}
+            <Link
+              href="/external/assets"
+              className="text-brand-600 hover:underline"
+            >
+              /external/assets
             </Link>
             .
           </p>
