@@ -777,7 +777,26 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 		return nil
 	}
 
+	// bgWG tracks every detached background worker started below so
+	// shutdown can wait for them instead of vanishing underneath them
+	// (#368 LOW). Before this, run() returned as soon as httpSrv.Shutdown
+	// came back and the process exited with workers mid-flight — the
+	// customer-webhook sender could be between "customer accepted the
+	// POST" and "MarkDelivered", which is exactly how a delivery gets
+	// repeated on the next boot. The wait is bounded by the same
+	// shutdown budget as the listener drain, so a wedged worker delays
+	// exit but cannot prevent it.
+	//
+	// The three warmers started as named functions (prewarmCaches,
+	// selfPrewarmAssetEndpoints, runSubscriberSupervised) deliberately
+	// do NOT join: they hold no durable write to finish — cache fills
+	// and self-issued GETs — so waiting on them would lengthen every
+	// deploy's downtime for nothing.
+	var bgWG sync.WaitGroup
+
+	bgWG.Add(1)
 	go func() {
+		defer bgWG.Done()
 		defer recoverBackgroundWorker(logger, "forex-worker")
 		if err := forexWorker.Run(rootCtx); err != nil && !errors.Is(err, context.Canceled) {
 			logger.Error("forex worker exited", "err", err)
@@ -890,7 +909,9 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 	// 6h cadence; the matching alert in
 	// deploy/monitoring/rules/api.yml fires at < 14 days remaining.
 	if len(cfg.API.TLSCertProbeHosts) > 0 {
+		bgWG.Add(1)
 		go func() {
+			defer bgWG.Done()
 			defer recoverBackgroundWorker(logger, "tls-cert-probe")
 			if err := v1.RunTLSCertProbe(rootCtx, cfg.API.TLSCertProbeHosts, logger.With("component", "tls-cert-probe")); err != nil && !errors.Is(err, context.Canceled) {
 				logger.Warn("tls cert probe exited", "err", err)
@@ -908,7 +929,9 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 	// until it completes (within ~5s of process start). Subsequent
 	// refreshes happen on the v1.CoverageRefreshInterval cadence.
 	backfillCoverageCache := v1.NewCoverageCache(store, logger.With("component", "backfill-coverage"))
+	bgWG.Add(1)
 	go func() {
+		defer bgWG.Done()
 		defer recoverBackgroundWorker(logger, "backfill-coverage-cache")
 		// Refresh timeout is 2 min: the per-source coverage query
 		// (BackfillCoverageStats) does ~13 sources × (ts-ordered
@@ -959,7 +982,9 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 	// full read is cheap; refresh cadence controls how quickly a fix
 	// (row removed) or a new confirmation propagates.
 	nonstandardDecimalsCache := v1.NewNonstandardDecimalsCache(store, logger.With("component", "nonstandard-decimals-cache"))
+	bgWG.Add(1)
 	go func() {
+		defer bgWG.Done()
 		defer recoverBackgroundWorker(logger, "nonstandard-decimals-cache")
 		const refreshTimeout = 30 * time.Second
 
@@ -1114,7 +1139,9 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 		}
 	}
 	dexTVLCache := v1.NewDEXTVLCache(dexTVLSources)
+	bgWG.Add(1)
 	go func() {
+		defer bgWG.Done()
 		defer recoverBackgroundWorker(logger, "dex-tvl-cache")
 		// 3 min per refresh sits well below the 10-min interval so
 		// refreshes never stack; a refresh is one lake lookup + one
@@ -1151,7 +1178,9 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 	var sdexOrderBook *v1.SDEXOrderBookCache
 	if sdexOfferBook != nil {
 		sdexOrderBook = v1.NewSDEXOrderBookCache(sdexOfferBook, logger.With("component", "sdex-orderbook"))
+		bgWG.Add(1)
 		go func() {
+			defer bgWG.Done()
 			defer recoverBackgroundWorker(logger, "sdex-orderbook-cache")
 			// The initial full-slice load is minutes of streaming IO on a
 			// populated lake; 30 min is a hard stop against a wedged scan,
@@ -1463,7 +1492,9 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 	// refresh at its own 60s TTL — so this cadence is a
 	// never-cold/repair guarantee, not the freshness mechanism, and the
 	// call is a no-op whenever the entry is already warm.
+	bgWG.Add(1)
 	go func() {
+		defer bgWG.Done()
 		defer recoverBackgroundWorker(logger, "prewarm-supply-wealth")
 		const cadence = 5 * time.Minute
 		apiSrv.PrewarmClassicSupply(rootCtx)
@@ -1500,7 +1531,9 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 	// overlap); with a measured sweep cost of ~3–6 min that refreshes
 	// every entry every ~13–16 min, comfortably inside the cache's
 	// 20-minute stale horizon (protocolDetailTTL).
+	bgWG.Add(1)
 	go func() {
+		defer bgWG.Done()
 		defer recoverBackgroundWorker(logger, "prewarm-protocol-details")
 		const betweenSweeps = 10 * time.Minute
 		for {
@@ -1528,7 +1561,9 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 	}
 	if len(streamPairs) > 0 {
 		pub := streampublish.New(hub, priceReader, cfg.API.Streaming.PollInterval, logger.With("component", "stream-publisher"))
+		bgWG.Add(1)
 		go func() {
+			defer bgWG.Done()
 			defer recoverBackgroundWorker(logger, "stream-publisher")
 			if err := pub.Run(rootCtx, streamPairs); err != nil && !errors.Is(err, context.Canceled) {
 				logger.Error("stream publisher exited", "err", err)
@@ -1545,7 +1580,18 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 	// status-page tile polls every 15-30s and this turns it into a
 	// near-zero-cost endpoint). Inline-build remains as the
 	// not-yet-warm fallback inside the handler.
-	go apiSrv.StartIngestionSnapshotRefresh(rootCtx)
+	// Wrapped in a literal rather than started as `go apiSrv.Start…`
+	// because the guard has to live on this goroutine's stack and the
+	// callee is a method on internal/api/v1's Server, shared with other
+	// entry points (#368 M1). The refresher is a cache filler: if it
+	// stops, the handler falls back to its inline build, which is the
+	// pre-#16 behaviour — 200-500ms per request, not an outage.
+	bgWG.Add(1)
+	go func() {
+		defer bgWG.Done()
+		defer recoverBackgroundWorker(logger, "ingestion-snapshot-refresh")
+		apiSrv.StartIngestionSnapshotRefresh(rootCtx)
+	}()
 
 	httpSrv := &http.Server{
 		Addr:              cfg.API.ListenAddr,
@@ -1591,7 +1637,9 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 		worker := customerwebhook.New(dashboardBundle.webhookStore, customerwebhook.Options{
 			Logger: logger.With("component", "customer-webhook"),
 		})
+		bgWG.Add(1)
 		go func() {
+			defer bgWG.Done()
 			defer recoverBackgroundWorker(logger, "customer-webhook")
 			if err := worker.Run(rootCtx); err != nil && !errors.Is(err, context.Canceled) {
 				logger.Error("customer-webhook worker exited",
@@ -1610,7 +1658,9 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 	// per-day-total posture.
 	if rollup := usage.NewRollup(usageCounter, store, usage.DefaultRollupInterval,
 		logger.With("component", "usage-rollup")); rollup != nil {
+		bgWG.Add(1)
 		go func() {
+			defer bgWG.Done()
 			defer recoverBackgroundWorker(logger, "usage-rollup")
 			if err := rollup.Run(rootCtx); err != nil && !errors.Is(err, context.Canceled) {
 				logger.Error("usage-rollup worker exited", "err", err)
@@ -1632,7 +1682,9 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 				MinAge:   time.Duration(cfg.SignupReaper.MinAgeMinutes) * time.Minute,
 				Logger:   logger.With("component", "signup-reaper"),
 			})
+			bgWG.Add(1)
 			go func() {
+				defer bgWG.Done()
 				defer recoverBackgroundWorker(logger, "signup-reaper")
 				if err := reaper.Run(rootCtx); err != nil && !errors.Is(err, context.Canceled) {
 					logger.Error("signup-reaper worker exited", "err", err)
@@ -1661,7 +1713,9 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 		lockoutReaper := logincodereaper.New(lockouts, logincodereaper.Options{
 			Logger: logger.With("component", "login-code-lockout-reaper"),
 		})
+		bgWG.Add(1)
 		go func() {
+			defer bgWG.Done()
 			defer recoverBackgroundWorker(logger, "login-code-lockout-reaper")
 			if err := lockoutReaper.Run(rootCtx); err != nil && !errors.Is(err, context.Canceled) {
 				logger.Error("login-code-lockout-reaper worker exited", "err", err)
@@ -1686,7 +1740,9 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 		linkReaper := magiclinkreaper.New(links, magiclinkreaper.Options{
 			Logger: logger.With("component", "magic-link-token-reaper"),
 		})
+		bgWG.Add(1)
 		go func() {
+			defer bgWG.Done()
 			defer recoverBackgroundWorker(logger, "magic-link-token-reaper")
 			if err := linkReaper.Run(rootCtx); err != nil && !errors.Is(err, context.Canceled) {
 				logger.Error("magic-link-token-reaper worker exited", "err", err)
@@ -1739,6 +1795,31 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 		logger.Warn("http server shutdown", "err", err)
 	} else {
 		logger.Info("clean shutdown")
+	}
+
+	// Now let the background workers finish (#368 LOW). rootCtx is
+	// already cancelled — that is the only reason we reached this line —
+	// so each worker is unwinding; this waits for the unwind instead of
+	// exiting on top of it. Bounded by the same 30s budget as the
+	// listener drain, and deliberately AFTER httpSrv.Shutdown so serving
+	// stops first: a worker that outlives its budget delays the exit, it
+	// does not hold requests open.
+	workersDone := make(chan struct{})
+	go func() {
+		// Guarded like every other detached goroutine here. The only way
+		// bgWG.Wait() panics is an Add/Done imbalance in this file, and
+		// on that path workersDone stays OPEN on purpose: the select
+		// below then reports "did not drain" rather than claiming a
+		// drain that never happened.
+		defer recoverBackgroundWorker(logger, "background-worker-drain")
+		bgWG.Wait()
+		close(workersDone)
+	}()
+	select {
+	case <-workersDone:
+		logger.Info("background workers drained")
+	case <-shutdownCtx.Done():
+		logger.Warn("background workers did not drain within the shutdown budget — exiting anyway")
 	}
 	return nil
 }
@@ -3991,7 +4072,14 @@ type subscriberRunner interface {
 // (heartbeats only, no price_update events) for the rest of the
 // process lifetime after a single Redis pubsub hiccup. This
 // fulfils the documented retry contract.
+//
+// The supervisor restarts sub.Run on ERRORS; it cannot restart it after a
+// PANIC, because the panic unwinds past the loop. So the guard sits here,
+// on the goroutine's own stack, and the trade-off is the usual one: the
+// subscriber stops (SSE falls back to heartbeats) instead of the API
+// process dying with every in-flight request on it (#368 M1/M4).
 func runSubscriberSupervised(ctx context.Context, sub subscriberRunner, logger *slog.Logger) {
+	defer recoverBackgroundWorker(logger, "stream-subscriber")
 	runSubscriberSupervisedWithBackoff(ctx, sub, logger, subscriberRestartMinBackoff, subscriberRestartMaxBackoff)
 }
 
@@ -4587,6 +4675,12 @@ func (a *forexAdapter) Latest() *v1.CurrenciesSnapshot {
 //
 // Errors get logged at debug level — a transient warmup failure
 // is rare and the next cycle retries. Stops on ctx cancel.
+//
+// The guard is registered HERE rather than at the `go prewarmCaches(…)`
+// call site because it is the callee that runs on the detached
+// goroutine's stack, and a guard that travels with the function stays
+// correct if it is ever started from a second place. Started as a named
+// function, so the panic-guard test resolves this declaration (#368 M1).
 func prewarmCaches(
 	ctx context.Context,
 	logger *slog.Logger,
@@ -4596,6 +4690,7 @@ func prewarmCaches(
 	issuers *v1.CachedIssuersReader,
 	verifiedAssetIDs []string,
 ) {
+	defer recoverBackgroundWorker(logger, "prewarm-caches")
 	heavyCadence := 5 * time.Minute
 	lightCadence := 60 * time.Second
 
@@ -5102,6 +5197,11 @@ func prewarmAssetCall(ctx context.Context, logger *slog.Logger, name, assetID st
 // first warm hit reflects steady state, not the
 // boot-sequence-race window).
 func selfPrewarmAssetEndpoints(ctx context.Context, logger *slog.Logger, listenAddr string, verifiedAssetIDs []string) {
+	// Guarded on the callee side for the same reason as prewarmCaches:
+	// this runs on a detached goroutine, and every request it issues
+	// travels the full /v1/assets/{id} handler fan-out, so it exercises
+	// more code than any other warmer here (#368 M1).
+	defer recoverBackgroundWorker(logger, "self-prewarm")
 	select {
 	case <-time.After(3 * time.Second):
 	case <-ctx.Done():

@@ -193,7 +193,16 @@ func (s *Server) applyF2Fields(ctx context.Context, detail *AssetDetail, asset c
 		// physically-impossible reading. We deliberately do NOT clamp to 0 —
 		// that would read as a real "fully burned" supply and understate the
 		// token (ADR-0003; migration 0005's total_supply >= 0).
-		if ts, terr := s.tokenSupply.TokenSupply(ctx, asset.ContractID); terr == nil && ts.Total != nil && !ts.Incomplete {
+		//
+		// Bounded by tokenMetadataReadTimeout, like every other best-effort
+		// token-metadata read (#371 F9). This one runs AFTER the wg.Wait
+		// barrier, on the handler goroutine, so pre-fix a slow supply_flows
+		// sum extended /v1/assets/{id} by its full duration on top of the
+		// parallel phase — for an overlay whose failure mode is simply a null
+		// total_supply.
+		sctx, scancel := context.WithTimeout(ctx, tokenMetadataReadTimeout)
+		defer scancel()
+		if ts, terr := s.tokenSupply.TokenSupply(sctx, asset.ContractID); terr == nil && ts.Total != nil && !ts.Incomplete {
 			snap = supply.Supply{
 				AssetKey:          asset.ContractID,
 				TotalSupply:       ts.Total,

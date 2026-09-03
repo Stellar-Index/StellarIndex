@@ -25,6 +25,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
@@ -85,7 +86,50 @@ func retryableColdMiss(callCtx context.Context, err error) bool {
 	// /accounts/{g}/operations served exactly that during a refresh
 	// storm).
 	var ne net.Error
-	return errors.As(err, &ne) && ne.Timeout()
+	if errors.As(err, &ne) && ne.Timeout() {
+		return true
+	}
+	return lakeUnreachable(err)
+}
+
+// lakeUnreachable reports whether err is a TRANSPORT-layer failure below
+// the query layer: the ClickHouse server refused the connection, the
+// socket died mid-query, or its host stopped resolving. None of these can
+// be provoked by the query, so none is a bug in this process — they are
+// "the dependency is down, retry", the same class as the saturation
+// sentinels above.
+//
+// #371 F4: pre-fix retryableColdMiss matched only net.Error values whose
+// Timeout() is TRUE, and a hard-down lake does not time out — it answers
+// instantly with `dial tcp 127.0.0.1:9300: connect: connection refused`,
+// a *net.OpError whose Timeout() is false. That fell through to
+// `errors/internal` 500 on 20+ unauthenticated explorer routes, so a
+// ClickHouse outage was indistinguishable from a code bug in the logs,
+// in the 5xx SLA probe, and in every alert built on them.
+//
+// The rule ("any error from below the query layer is transient") is the
+// one package v1 already applies to its two other storage seams:
+// IsCacheUnavailable treats any *net.OpError from Redis as 503
+// (cache_errors.go), and transientStorageErr does the same for Postgres
+// (envelope.go) — keep the three in step.
+//
+// *net.OpError covers dial/read/write on a live conn; *net.DNSError
+// covers "no such host" (a DNSError reached bare is NOT wrapped in an
+// OpError, and its Timeout() is false); the bare errno arms catch a
+// driver that re-wrapped only the underlying syscall error and dropped
+// the *net.OpError on the way up.
+func lakeUnreachable(err error) bool {
+	var opErr *net.OpError
+	if errors.As(err, &opErr) {
+		return true
+	}
+	var dnsErr *net.DNSError
+	if errors.As(err, &dnsErr) {
+		return true
+	}
+	return errors.Is(err, syscall.ECONNREFUSED) ||
+		errors.Is(err, syscall.ECONNRESET) ||
+		errors.Is(err, syscall.EPIPE)
 }
 
 // writeReadTimeout writes the standard response for a lake read that blew
@@ -118,14 +162,47 @@ func (h *Handler) writeReadTimeout(w http.ResponseWriter, r *http.Request, typeU
 // only the detail tells the truth about which condition occurred.
 func (h *Handler) writeRetryable(w http.ResponseWriter, r *http.Request, err error, typeURL, title string) {
 	if errors.Is(err, errRefreshSaturated) || errors.Is(err, clickhouse.ErrRefreshSaturated) {
+		w.Header().Set("Retry-After", retryAfterBusy)
 		h.WriteProblem(w, r, typeURL, title, http.StatusServiceUnavailable,
 			"the server's shared cold-page refresh capacity is saturated (many distinct cold pages "+
 				"are being computed right now); this page's data was NOT computed on this request — "+
 				"retry in a few seconds")
 		return
 	}
+	// Third cause, same 503: the lake itself is unreachable (#371 F4).
+	// Saying "timed out" here would be the same category of lie the
+	// saturation split above exists to prevent — a refused dial answers
+	// in microseconds, so an operator reading "didn't return within the
+	// 8s budget" goes looking for a slow query that never ran. The
+	// underlying error is logged here rather than at the call sites: they
+	// all log a fixed "deadline exceeded" line WITHOUT err (it used to be
+	// unreachable for this class, which fell through to their Error log),
+	// so without this the dial failure would leave no trace of its cause.
+	if lakeUnreachable(err) {
+		h.Logger.Warn("explorer lake unreachable", "err", err, "path", r.URL.Path)
+		w.Header().Set("Retry-After", retryAfterDependencyDown)
+		h.WriteProblem(w, r, typeURL, title, http.StatusServiceUnavailable,
+			"the ClickHouse lake is unreachable from the API right now (transport-level failure, "+
+				"not a slow query); this is a dependency outage, not a bad request — retry shortly. "+
+				"See https://api.stellarindex.io/v1/readyz for live health.")
+		return
+	}
+	w.Header().Set("Retry-After", retryAfterBusy)
 	h.writeReadTimeout(w, r, typeURL, title)
 }
+
+// Retry-After hints on the retryable 503s. A 503 whose body says "retry
+// shortly" but carries no Retry-After makes every client guess, and the
+// guess is usually "immediately" — which is exactly the retry storm a
+// saturated refresh gate or a downed dependency must not receive. Values
+// mirror the two existing precedents in package v1: 30s for a dependency
+// outage (writeCacheUnavailableProblem, sized to a Redis/CH fail-over
+// window) and a few seconds for in-process busy-ness, which is what the
+// saturation + read-budget details already promise in prose.
+const (
+	retryAfterBusy           = "5"
+	retryAfterDependencyDown = "30"
+)
 
 // ExplorerReader is the seam the network-explorer endpoints (ADR-0038) read
 // through: the certified Tier-1 ClickHouse lake (the full chain to genesis —

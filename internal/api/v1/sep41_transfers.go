@@ -52,6 +52,19 @@ type SEP41TransfersResponse struct {
 // classic/native stroops and the SAC default.
 const defaultTokenDecimals = 7
 
+// tokenMetadataReadTimeout bounds EVERY best-effort token-metadata read
+// this package makes against the ClickHouse lake (decimals() and the
+// SEP-41 supply overlay). These reads are overlays: their failure mode is
+// a documented default or a null field, so blocking a whole request on
+// one is never the right trade. Without a sub-budget they inherit the
+// request context and a slow lake stalls the caller for the FULL request
+// budget to produce a field that was optional anyway (#371 F9).
+//
+// 2s is what resolveTokenDecimals has always used; naming it is what
+// keeps the sibling call sites from drifting apart again — the F9 finding
+// was precisely that two of the three had no bound at all.
+const tokenMetadataReadTimeout = 2 * time.Second
+
 // resolveTokenDecimals best-effort reads a token contract's on-chain
 // decimals() via the tokenDecimals reader, falling back to 7 on a nil
 // reader, a read error, or an uncaptured/non-standard token. Bounded
@@ -61,7 +74,7 @@ func (s *Server) resolveTokenDecimals(ctx context.Context, contractID string) in
 	if s.tokenDecimals == nil {
 		return defaultTokenDecimals
 	}
-	dctx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	dctx, cancel := context.WithTimeout(ctx, tokenMetadataReadTimeout)
 	defer cancel()
 	d, found, err := s.tokenDecimals.TokenDecimals(dctx, contractID)
 	if err != nil || !found {

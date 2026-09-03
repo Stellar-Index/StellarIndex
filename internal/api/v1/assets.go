@@ -2555,12 +2555,22 @@ func (s *Server) resolveAssetDetail(w http.ResponseWriter, r *http.Request, pars
 // Soroban assets are consulted: classic + native assets ARE 7 by protocol
 // (stroops), so their default is already correct, not an approximation.
 // Best-effort: an uncaptured instance, a non-standard token with no stored
-// metadata, or a read error all leave the documented default of 7 in place.
+// metadata, a read error OR a read that blows tokenMetadataReadTimeout all
+// leave the documented default of 7 in place.
+//
+// The sub-budget is the point (#371 F9): pre-fix this ran on the raw
+// request context, so a slow lake held GET /v1/assets/{id} for the whole
+// request budget — and then still served the default it would have served
+// in 2s. The sibling resolveTokenDecimals (sep41_transfers.go) always had
+// the bound; this call site and the SEP-41 supply overlay in assets_f2.go
+// did not.
 func (s *Server) applyTokenDecimals(ctx context.Context, detail *AssetDetail, a canonical.Asset) {
 	if s.tokenDecimals == nil || a.Type != canonical.AssetSoroban || a.ContractID == "" {
 		return
 	}
-	d, found, err := s.tokenDecimals.TokenDecimals(ctx, a.ContractID)
+	dctx, cancel := context.WithTimeout(ctx, tokenMetadataReadTimeout)
+	defer cancel()
+	d, found, err := s.tokenDecimals.TokenDecimals(dctx, a.ContractID)
 	if err != nil {
 		s.logger.Debug("token decimals overlay failed; keeping default", "contract_id", a.ContractID, "err", err)
 		return

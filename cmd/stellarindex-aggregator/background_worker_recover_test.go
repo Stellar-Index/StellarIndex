@@ -1,10 +1,9 @@
 package main
 
 import (
-	"go/ast"
-	"go/parser"
-	"go/token"
 	"testing"
+
+	"github.com/Stellar-Index/StellarIndex/internal/worker/guardscan"
 )
 
 // TestBackgroundWorkersRecover is a guard-coverage test: every detached
@@ -29,6 +28,12 @@ import (
 // guard's own recover-and-log behaviour is proven separately in
 // internal/worker (TestRecover_ContainsPanicAndLogs).
 //
+// The walk lives in internal/worker/guardscan, shared with the indexer and
+// API guards (#368 M1). Every `go` statement here is a literal today, but
+// the shared scanner also resolves `go namedFunc(…)` — the spelling that
+// used to be invisible to the per-binary copies of this test — and fails on
+// any callee it cannot follow.
+//
 // The metrics HTTP-server goroutine is the one deliberate exemption: if the
 // listener dies the process has no reason to live, and recovering would leave
 // a running process serving nothing. It is allow-listed BY ITS CONTENT (it
@@ -38,45 +43,43 @@ import (
 // Proven red: deleting any one `defer worker.Recover(...)` fails this test
 // naming the enclosing worker's line.
 func TestBackgroundWorkersRecover(t *testing.T) {
-	fset := token.NewFileSet()
-	f, err := parser.ParseFile(fset, "main.go", nil, 0)
+	sites, err := guardscan.ScanFile("main.go", guardscan.Config{
+		Guards: []string{"worker.Recover", "worker.Report"},
+	})
 	if err != nil {
-		t.Fatalf("parse main.go: %v", err)
+		t.Fatalf("scan main.go: %v", err)
 	}
 
 	var checked, exempt int
-	ast.Inspect(f, func(n ast.Node) bool {
-		g, ok := n.(*ast.GoStmt)
-		if !ok {
-			return true
+	for _, s := range sites {
+		if s.Kind == guardscan.KindUnresolved {
+			t.Errorf("go %s at main.go:%d could not be resolved to a function body (%s). "+
+				"Wrap it in `go func(){ defer worker.Recover(logger, \"<name>\"); … }()` "+
+				"so the guard is visible where the goroutine starts.", s.Target, s.Line, s.Reason)
+			continue
 		}
-		lit, ok := g.Call.Fun.(*ast.FuncLit)
-		if !ok || lit.Body == nil {
-			return true
-		}
-		line := fset.Position(g.Pos()).Line
 
-		if bodyServesHTTP(lit.Body) {
+		if s.Calls("ListenAndServe") || s.Calls("Serve") {
 			// The metrics-listener goroutine — see the doc comment. Assert
 			// it is genuinely the listener rather than trusting a position.
 			exempt++
-			if bodyRecoversWorker(lit.Body) {
+			if s.Recovers {
 				t.Errorf("go func() at main.go:%d serves HTTP but registers "+
 					"worker.Recover — recovering the listener leaves a live "+
-					"process with nothing listening, which is worse than crashing", line)
+					"process with nothing listening, which is worse than crashing", s.Line)
 			}
-			return true
+			continue
 		}
 
 		checked++
-		if !bodyRecoversWorker(lit.Body) {
-			t.Errorf("detached goroutine at main.go:%d does not "+
+		if !s.Recovers {
+			t.Errorf("detached goroutine at main.go:%d (go %s, body at %s) does not "+
 				"`defer worker.Recover(logger, \"<name>\")`. An unrecovered "+
 				"panic in a goroutine terminates the WHOLE process, crash-looping "+
-				"the aggregator over a single non-serving background worker.", line)
+				"the aggregator over a single non-serving background worker.",
+				s.Line, s.Target, s.Origin)
 		}
-		return true
-	})
+	}
 
 	// Guard against the guard covering nothing (e.g. the spawn idiom
 	// changes and the AST match stops finding anything). 14 detached
@@ -90,44 +93,4 @@ func TestBackgroundWorkersRecover(t *testing.T) {
 		t.Errorf("found %d HTTP-listener goroutine(s), want exactly 1 — if the metrics "+
 			"listener was restructured, re-check that the exemption still applies to it alone", exempt)
 	}
-}
-
-// bodyRecoversWorker reports whether the body defers worker.Recover. It
-// matches the qualified call `worker.Recover(...)` so a bare inline
-// `recover()` that merely swallows the panic without logging does not satisfy
-// the guard — the whole point is the Error-level log plus stack.
-func bodyRecoversWorker(body *ast.BlockStmt) bool {
-	found := false
-	ast.Inspect(body, func(n ast.Node) bool {
-		d, ok := n.(*ast.DeferStmt)
-		if !ok {
-			return true
-		}
-		sel, ok := d.Call.Fun.(*ast.SelectorExpr)
-		if !ok {
-			return true
-		}
-		pkg, ok := sel.X.(*ast.Ident)
-		if ok && pkg.Name == "worker" && sel.Sel.Name == "Recover" {
-			found = true
-		}
-		return true
-	})
-	return found
-}
-
-// bodyServesHTTP reports whether the body runs an http.Server's accept loop.
-func bodyServesHTTP(body *ast.BlockStmt) bool {
-	found := false
-	ast.Inspect(body, func(n ast.Node) bool {
-		sel, ok := n.(*ast.SelectorExpr)
-		if !ok || sel.Sel == nil {
-			return true
-		}
-		if sel.Sel.Name == "ListenAndServe" || sel.Sel.Name == "Serve" {
-			found = true
-		}
-		return true
-	})
-	return found
 }

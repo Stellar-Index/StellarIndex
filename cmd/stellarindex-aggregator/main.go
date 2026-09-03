@@ -483,15 +483,26 @@ func run(cfgPath string, dryRun bool) error {
 	// the orchestrator can scale a window's raw VWAP by the correct
 	// 10^(base_decimals-quote_decimals) factor before publishing — see
 	// aggregate.AdjustPrice and docs/operations/runbooks/
-	// dex-nonstandard-decimals.md. One blocking best-effort refresh here
-	// so the very first Tick (fired synchronously by orchestrator.Run,
-	// before this cache's own background loop gets a chance to run) isn't
-	// working from an empty snapshot; failure just means a confirmed
-	// offender's normalization phases in on the first background refresh
-	// instead of immediately — never fatal to startup.
+	// dex-nonstandard-decimals.md. One blocking refresh here so the very
+	// first Tick (fired synchronously by orchestrator.Run, before this
+	// cache's own background loop gets a chance to run) isn't working
+	// from an empty snapshot.
+	//
+	// FATAL on failure (#368 M9). The cache is fail-open by design, and
+	// that is right for a REFRESH: a blip leaves the last-good snapshot
+	// in place and one new offender's normalization phases in late. It
+	// is wrong at BOOT, where there is no last-good snapshot — an empty
+	// map makes Lookup answer "nothing is flagged" for EVERY confirmed
+	// offender, so the aggregator publishes each of their windows
+	// unnormalized, wrong by 10^(7-decimals), to prices_1m and onward to
+	// every price surface. A wrong published price is not a degraded
+	// service; it is a false statement about the market, and it
+	// propagates into continuous aggregates that outlive the outage.
+	// Refusing to start is recoverable and loud: systemd restarts, and
+	// the aggregator needs this same store for everything else anyway.
 	decimalsLookup := newDecimalsCache(store, logger.With("component", "decimals-cache"))
 	if err := decimalsLookup.Refresh(rootCtx); err != nil {
-		logger.Warn("decimals-cache: initial refresh failed — VWAP normalization starts from an empty snapshot", "err", err)
+		return fmt.Errorf("decimals-cache initial refresh (refusing to publish unnormalized VWAP): %w", err)
 	}
 
 	orch := orchestrator.New(store, rdb, orchestrator.Config{
@@ -604,7 +615,16 @@ func run(cfgPath string, dryRun bool) error {
 	go func() {
 		defer worker.Recover(logger, "change-summary")
 		defer refresherWG.Done()
-		_ = changeSummaryWorker.Run(rootCtx)
+		// Surface the exit reason like every sibling rollup worker
+		// below (#368 M8). Discarding it meant a change-summary worker
+		// that gave up — its own Run returns on a non-retryable error —
+		// left the explorer's delta strips frozen at their last values
+		// with nothing in the journal saying why. The rollup package
+		// carries no metrics of its own yet, so this log line is the
+		// only signal until one is added.
+		if err := changeSummaryWorker.Run(rootCtx); err != nil && !errors.Is(err, context.Canceled) {
+			logger.Error("change-summary worker exited with error", "err", err)
+		}
 	}()
 
 	// ─── Protocol-events rollup worker (#43) ────────────────────

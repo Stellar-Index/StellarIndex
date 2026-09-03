@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net"
 	"net/http"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/api/v1/middleware"
@@ -291,6 +293,22 @@ func transientStorageErr(err error) bool {
 	if err == nil {
 		return false
 	}
+	// Postgres UNREACHABLE, not merely slow (#371 F8). Every substring
+	// arm below describes a connection that EXISTED and then misbehaved;
+	// none of them matches pgx's failure to establish one in the first
+	// place, which is what a restarting/downed/failed-over Postgres
+	// actually produces:
+	//
+	//	failed to connect to `host=127.0.0.1 user=si database=si`:
+	//	  dial error (dial tcp 127.0.0.1:5432: connect: connection refused)
+	//
+	// So the ONE dependency-outage shape most likely to hit every handler
+	// at once was the one shape that fell through to a 500 "Internal
+	// error" — an outage indistinguishable from a bug in the logs, in the
+	// 5xx SLA probe, and in every alert built on them.
+	if unreachableStorageErr(err) {
+		return true
+	}
 	s := err.Error()
 	// SQLSTATE 57014 from postgres-side cancellations (not the
 	// client-side context cancellation flavour, which clientAborted
@@ -309,4 +327,42 @@ func transientStorageErr(err error) bool {
 		return true
 	}
 	return false
+}
+
+// unreachableStorageErr reports whether err is a failure to REACH the
+// storage dependency — the dial was refused, the socket died, or the host
+// stopped resolving. Structural first, substrings second:
+//
+//   - Structural (errors.As/Is) is exact and survives rewording. pgx
+//     v5 wraps its dial failure in *pgconn.ConnectError, which Unwraps to
+//     the *net.OpError, so errors.As reaches it through the chain.
+//   - The substrings are the belt to that braces: a driver, a pool
+//     wrapper or an aggregating multi-error is free to render the cause
+//     into a string instead of preserving the chain, and pgx's own
+//     "failed to connect to …: dial error (…)" text is stable enough to
+//     match on. Matching both ways is what the sibling classifiers do
+//     (IsCacheUnavailable in cache_errors.go pairs a *net.OpError check
+//     with a MISCONF substring for exactly this reason).
+//
+// Kept in step with the ClickHouse-side lakeUnreachable
+// (internal/api/v1/explorer/reader.go) — same rule, different dependency;
+// that package can't import this one (v1.Server embeds its Handler).
+func unreachableStorageErr(err error) bool {
+	var opErr *net.OpError
+	if errors.As(err, &opErr) {
+		return true
+	}
+	var dnsErr *net.DNSError
+	if errors.As(err, &dnsErr) {
+		return true
+	}
+	if errors.Is(err, syscall.ECONNREFUSED) || errors.Is(err, syscall.ECONNRESET) ||
+		errors.Is(err, syscall.EPIPE) {
+		return true
+	}
+	s := err.Error()
+	return strings.Contains(s, "connection refused") ||
+		strings.Contains(s, "failed to connect") ||
+		strings.Contains(s, "dial error") ||
+		strings.Contains(s, "no such host")
 }

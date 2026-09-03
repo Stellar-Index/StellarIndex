@@ -111,7 +111,14 @@ func shutdownSpan(t *testing.T) []string {
 		if start < 0 && strings.Contains(line, "case err := <-streamErr:") {
 			start = i
 		}
-		if start >= 0 && strings.TrimSpace(line) == "externalWait()" {
+		// The drain call's spelling changes as the shutdown path is
+		// hardened — it was a bare externalWait(), and #368 wrapped it in
+		// waitBounded so a stuck connector cannot hang the exit. Match the
+		// CALL SITE by the function it drains, not by an exact line, or
+		// this guard silently stops finding the span (which is what it did
+		// when waitBounded landed: span end -1, both guards failed loudly
+		// — the good outcome, but only because they fail closed).
+		if start >= 0 && strings.Contains(line, "externalWait") && !strings.Contains(line, ":=") {
 			end = i
 			break
 		}

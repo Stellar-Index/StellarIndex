@@ -158,20 +158,20 @@ func (c *CachedOracleReader) LatestOracleUpdatesForAssets(ctx context.Context, a
 	})
 }
 
-// LatestOracleStreams — pass-through. The handler at
-// /v1/oracles/streams is low-frequency (explorer status page) and
-// returns the entire trailing-7d stream catalogue, which has its
-// own coarser cache requirements (operators eyeball changes; sub-
-// second freshness isn't critical). Wrapping it would scatter the
-// working set without a meaningful throughput win.
+// LatestOracleStreams — cached like its siblings (#332 F5, 2026-09-02).
+//
+// This was the reader's one pass-through, on the theory that the endpoint
+// was low-frequency enough not to be worth a cache slot. Measurement
+// refuted it: /v1/oracle/streams is fetched by BOTH /oracles and the home
+// page, and every hit re-ran the oracle_updates scan and rebuilt ~34 KB —
+// 0.43–0.46 s per request WARM on production. (The superseded reasoning is
+// recorded rather than deleted because "wrapping it would scatter the
+// working set" is the right instinct in general; what made it wrong here
+// is that this call has no per-request dimensions, so it occupies exactly
+// one slot.)
 func (c *CachedOracleReader) LatestOracleStreams(ctx context.Context) ([]canonical.OracleUpdate, error) {
-	// Cached like its siblings (#332 F5, 2026-09-02). This was the one
-	// pass-through on the reader: every hit on /v1/oracle/streams — fetched
-	// by /oracles and the home page — re-ran the oracle_updates scan and
-	// rebuilt ~34 KB, measured 0.43–0.46 s per request WARM on production.
-	// The stream set has no per-request dimensions, so a single key under
-	// the same 3 s TTL + single-flight the other reads already use is
-	// exactly right: one scan per TTL window, concurrent callers coalesce,
+	// A single key under the same 3 s TTL + single-flight the other reads
+	// already use: one scan per TTL window, concurrent callers coalesce,
 	// and errors are never cached (fetch drops the entry on failure).
 	return c.fetch(ctx, "latest_oracle_streams", "", func(ctx context.Context) ([]canonical.OracleUpdate, error) {
 		return c.upstream.LatestOracleStreams(ctx)
