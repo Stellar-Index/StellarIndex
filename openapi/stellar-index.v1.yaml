@@ -18,7 +18,7 @@
 openapi: 3.1.0
 info:
   title: Stellar Index API
-  version: "1.19.0"
+  version: "1.20.0"
   summary: The Stellar network — explorer, history, supply, analytics, and prices.
   description: |
     The Stellar Index API exposes the Stellar network as one
@@ -4580,6 +4580,20 @@ paths:
         `lake_complete: true, complete: false`: the archive is proven
         genesis-complete even though the served tier only reconciles
         within its retention window.
+
+        **`sources` holds sources only.** The ADR-0033 recognition audit
+        also produces a SYSTEM-wide census — event shapes in the lake on
+        contracts no indexed source owns, i.e. Soroban protocols we have
+        not integrated — which is reported in its own top-level
+        `recognition` object, NOT as a row in `sources` and NOT in
+        `complete_sources` / `total_sources`. It is a discovery backlog,
+        not missing data, and it can never reach zero on a public
+        network, so counting it as a failed source made the headline
+        permanently and unfixably red. A source silently dropping its
+        OWN events is the opposite case: that appears as
+        `recognition_ok: false` on that source's row in `sources`, and
+        it does fail the headline. `total_sources` always equals
+        `sources.length`.
       responses:
         "200":
           description: Latest verdict per source, source-sorted.
@@ -4612,6 +4626,25 @@ paths:
                     coverage_pct: 1
                     detail: 'projection: 3 mismatched ledger(s) outside the served retention window'
                     computed_at: '2026-07-03T05:30:21.937134Z'
+                  recognition:
+                    all_shapes_recognized: false
+                    unrecognized_shapes: 23945
+                    unrecognized_contracts: 4172
+                    earliest_ledger: 50560486
+                    scanned_from_ledger: 50457424
+                    tip_ledger: 64234754
+                    meaning: >-
+                      Event shapes on Soroban contracts that no indexed source owns —
+                      protocols Stellar Index has not integrated. This is a DISCOVERY
+                      BACKLOG (which decoder to build next), not missing data: no source
+                      we publish is dropping events because of it, and it can never reach
+                      zero on a public network, so it is reported as its own audit axis
+                      and is excluded from complete_sources / total_sources. A source
+                      silently dropping its OWN events is the opposite case and appears as
+                      recognition_ok=false on that source's row in `sources`, where it
+                      does fail the headline.
+                    detail: '23945 unrecognized shape(s) on 4172 unowned contract(s) (earliest ledger 50560486) — events on contracts no indexed source owns (foreign Soroban protocols); a discovery backlog, not missing data — run verify-recognition'
+                    computed_at: '2026-07-03T05:30:21.937134Z'
                   complete_sources: 14
                   lake_complete_sources: 15
                   network: pubnet
@@ -4631,7 +4664,7 @@ paths:
                     properties:
                       data:
                         type: object
-                        required: [sources, complete_sources, lake_complete_sources, total_sources, network, not_applicable_sources]
+                        required: [sources, recognition, complete_sources, lake_complete_sources, total_sources, network, not_applicable_sources]
                         properties:
                           sources:
                             type: array
@@ -4683,13 +4716,80 @@ paths:
                                 first_problem_ledger: { type: integer, format: int64 }
                                 detail: { type: string }
                                 computed_at: { type: string, format: date-time }
+                          recognition:
+                            type: [object, "null"]
+                            description: |
+                              The ADR-0033 RECOGNITION audit axis — a SYSTEM-wide census,
+                              not a source: distinct (contract, topic) event shapes in the
+                              certified lake that sit on contracts NO indexed source owns.
+
+                              This is a **discovery backlog** (which decoder to build
+                              next), **not missing data**: no source published in `sources`
+                              is dropping events because of it. It can only read clean if
+                              no un-indexed Soroban contract exists anywhere on the
+                              network, so it is reported here with its own vocabulary
+                              rather than as a permanently-failed row in `sources`, and it
+                              is excluded from `complete_sources` / `total_sources`.
+
+                              `null` when the completeness audit has not produced a census
+                              on this deployment — the key is always present so that
+                              absence is visible rather than silent.
+                            required:
+                              [all_shapes_recognized, scanned_from_ledger, tip_ledger, meaning, computed_at]
+                            properties:
+                              all_shapes_recognized:
+                                type: boolean
+                                description: >-
+                                  True when every event shape in the audited lake belongs to a
+                                  contract some indexed source owns. False is the expected steady
+                                  state on a public network.
+                              unrecognized_shapes:
+                                type: integer
+                                description: >-
+                                  Distinct unattributed (contract, topic) event shapes. OMITTED —
+                                  never zeroed — when it cannot be read from the audit's stored
+                                  detail, since "0 unrecognized shapes" is a claim of cleanliness
+                                  that must not be invented from a parse failure. `detail` is
+                                  still served.
+                              unrecognized_contracts:
+                                type: integer
+                                description: >-
+                                  Distinct contracts those shapes sit on. Same omission rule as
+                                  `unrecognized_shapes`. 23,945 shapes across 12 contracts and
+                                  across 12,000 are very different backlogs.
+                              earliest_ledger:
+                                type: integer
+                                format: int64
+                                description: Lowest ledger an unattributed shape was first seen at. Absent when the census is empty.
+                              scanned_from_ledger:
+                                type: integer
+                                format: int64
+                                description: The audit's floor — the start of the Soroban era, before which no contract events existed.
+                              tip_ledger: { type: integer, format: int64 }
+                              meaning:
+                                type: string
+                                description: >-
+                                  Plain-language statement of what this axis is and is not, served
+                                  on the wire rather than only here: a consumer charting this JSON
+                                  never reads the spec, and the number is easy to mistake for a
+                                  data gap.
+                              detail:
+                                type: string
+                                description: The audit's own description, verbatim.
+                              computed_at: { type: string, format: date-time }
                           complete_sources:
                             type: integer
-                            description: Count of sources with complete=true (served/combined axis).
+                            description: >-
+                              Count of SOURCES with complete=true (served/combined axis). System
+                              audit axes are not sources and are not counted — see `recognition`.
                           lake_complete_sources:
                             type: integer
-                            description: Count of sources with lake_complete=true (lake/archive axis).
-                          total_sources: { type: integer }
+                            description: >-
+                              Count of SOURCES with lake_complete=true (lake/archive axis). Same
+                              exclusion as `complete_sources`.
+                          total_sources:
+                            type: integer
+                            description: Always equals `sources.length`. Excludes system audit axes — see `recognition`.
                           network:
                             type: string
                             enum: [pubnet, testnet, futurenet]

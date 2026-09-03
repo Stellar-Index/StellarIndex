@@ -903,6 +903,14 @@ export function useCursors() {
 // generated property is optional even though the handler always sets it.
 export type CoverageVerdicts = NonNullable<GetJSON<'/coverage'>['data']>;
 export type CoverageVerdict = CoverageVerdicts['sources'][number];
+/**
+ * RecognitionAxis — the ADR-0033 recognition census. NOT a source:
+ * event shapes on contracts no indexed source owns, excluded from the
+ * `complete_sources`/`total_sources` headline and reported on its own.
+ * `null` when the audit has not produced one, which is an absent
+ * result, not a clean one.
+ */
+export type RecognitionAxis = CoverageVerdicts['recognition'];
 
 /**
  * useCoverage — fetches the per-source ADR-0033 completeness verdicts

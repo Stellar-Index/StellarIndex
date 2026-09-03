@@ -630,27 +630,34 @@ func computeCompleteness(args []string) error { //nolint:funlen,gocognit,gocyclo
 	// `-source` filter still governs which PER-SOURCE rows are written; it must
 	// not silence the system-wide recognition verdict.
 	if !*skipRecognition {
-		var earliest uint32
+		// The census is what /v1/coverage publishes as typed numbers on
+		// its `recognition` audit axis. The DISTINCT-CONTRACT count was
+		// computed and discarded here until now, so the public surface
+		// could say how many shapes were unattributed but not how
+		// concentrated they were — 23,945 shapes across 12 contracts and
+		// across 12,000 are very different discovery backlogs.
+		census := completeness.RecognitionCensus{Shapes: len(unattributed)}
+		contracts := make(map[string]struct{}, len(unattributed))
 		for _, g := range unattributed {
-			if earliest == 0 || g.MinLedger < earliest {
-				earliest = g.MinLedger
+			if census.EarliestLedger == 0 || g.MinLedger < census.EarliestLedger {
+				census.EarliestLedger = g.MinLedger
 			}
+			contracts[g.ContractID] = struct{}{}
 		}
-		recW := completeness.ComputeWatermark(sorobanEraGenesis, tip, nilOrOne(earliest))
-		detail := "no unrecognized event shapes on unowned contracts"
-		if len(unattributed) > 0 {
-			detail = fmt.Sprintf("%d unrecognized shape(s) on unowned contracts (earliest ledger %d) — run verify-recognition", len(unattributed), earliest)
-		}
+		census.Contracts = len(contracts)
+		recW := completeness.ComputeWatermark(sorobanEraGenesis, tip, nilOrOne(census.EarliestLedger))
+		detail := completeness.FormatRecognitionDetail(census)
 		if err := store.UpsertCompletenessSnapshot(ctx, timescale.CompletenessSnapshot{
-			Source: "recognition", Genesis: sorobanEraGenesis, Tip: tip,
+			Source: completeness.SystemRecognitionSource, Genesis: sorobanEraGenesis, Tip: tip,
 			Watermark: recW.Ledger, CoveragePct: recW.CoveragePct, Complete: recW.Complete,
 			LakeComplete: recW.Complete, // no projection axis on this system snapshot
-			FirstProblem: recW.FirstProblem, SubstrateOK: true, RecognitionOK: len(unattributed) == 0, ProjectionOK: true,
+			FirstProblem: recW.FirstProblem, SubstrateOK: true, RecognitionOK: census.Shapes == 0, ProjectionOK: true,
 			Detail: detail,
 		}); err != nil {
 			return fmt.Errorf("upsert recognition snapshot: %w", err)
 		}
-		fmt.Fprintf(os.Stderr, "compute-completeness: recognition  unattributed=%d coverage=%.4f\n", len(unattributed), recW.CoveragePct)
+		fmt.Fprintf(os.Stderr, "compute-completeness: recognition  unattributed=%d contracts=%d coverage=%.4f\n",
+			census.Shapes, census.Contracts, recW.CoveragePct)
 	}
 
 	// #483: on a non-pubnet network, rows written for pubnet-only sources

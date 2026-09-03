@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 
-import { useCoverage, type CoverageVerdict } from '@/api/hooks';
+import { useCoverage, type CoverageVerdict, type RecognitionAxis } from '@/api/hooks';
 
 /**
  * CoveragePanel — the decoder-coverage panel on /diagnostics.
@@ -23,6 +23,14 @@ import { useCoverage, type CoverageVerdict } from '@/api/hooks';
  * certified ClickHouse lake, independent of served-tier retention).
  * A source can be `lake_complete: true, complete: false` — the full
  * history is proven, the served tier just hasn't reconciled it all.
+ *
+ * The ADR-0033 RECOGNITION axis is rendered separately, below the
+ * table, by {@link RecognitionAxisCard}. It is a system-wide census —
+ * event shapes on contracts no indexed source owns — not a source, and
+ * it used to arrive as a 21st row here that read permanently
+ * incomplete by construction, making the headline "20/21" unfixable.
+ * It is a discovery backlog, not missing data, so it gets its own card
+ * with its own numbers rather than a red row in a completeness table.
  */
 export function CoveragePanel() {
   const { data, isLoading, error } = useCoverage();
@@ -118,6 +126,8 @@ export function CoveragePanel() {
         </table>
       </div>
 
+      <RecognitionAxisCard rec={data.recognition} />
+
       {data.not_applicable_sources && data.not_applicable_sources.length > 0 && (
         <p className="mt-3 text-xs text-ink-faint">
           <span className="text-ink-body">
@@ -130,6 +140,101 @@ export function CoveragePanel() {
         </p>
       )}
     </section>
+  );
+}
+
+/**
+ * RecognitionAxisCard — the ADR-0033 recognition census.
+ *
+ * Deliberately NOT a row in the verdict table and deliberately not
+ * hidden: it is excluded from the "N/N" headline above because it is
+ * an audit axis rather than a source, so it has to be MORE visible
+ * here, not less, or the headline change is just flattery. It states
+ * the numbers and, in plain language, what it does and does not mean.
+ */
+function RecognitionAxisCard({ rec }: { rec: RecognitionAxis }) {
+  if (!rec) {
+    return (
+      <p className="mt-3 rounded-md border border-line bg-surface-subtle p-3 text-xs text-ink-faint">
+        <span className="text-ink-body">Recognition axis:</span> no census
+        published yet — the completeness audit has not produced one on this
+        deployment. This is not a clean result; it is an absent one.
+      </p>
+    );
+  }
+  const shapes = rec.unrecognized_shapes;
+  const contracts = rec.unrecognized_contracts;
+  return (
+    <div className="mt-3 rounded-md border border-line bg-surface-subtle p-3">
+      <div className="mb-1 flex flex-wrap items-baseline gap-3">
+        <h4 className="text-xs font-semibold uppercase tracking-wider text-ink-body">
+          Recognition axis — unclaimed contracts
+        </h4>
+        <span
+          className={`rounded-sm px-2 py-0.5 font-mono text-xs tabular-nums ${
+            rec.all_shapes_recognized
+              ? 'bg-up-subtle text-up'
+              : 'bg-surface text-ink-muted'
+          }`}
+          title="A system-wide census, not a source verdict: it is excluded from the N/N headline above."
+        >
+          {rec.all_shapes_recognized
+            ? 'every shape claimed'
+            : 'discovery backlog'}
+        </span>
+      </div>
+      <p className="text-xs text-ink-muted">
+        {shapes != null ? (
+          <>
+            <strong className="font-mono tabular-nums text-ink-body">
+              {shapes.toLocaleString('en-US')}
+            </strong>{' '}
+            distinct event shape{shapes === 1 ? '' : 's'}
+            {contracts != null && (
+              <>
+                {' '}on{' '}
+                <strong className="font-mono tabular-nums text-ink-body">
+                  {contracts.toLocaleString('en-US')}
+                </strong>{' '}
+                contract{contracts === 1 ? '' : 's'}
+              </>
+            )}{' '}
+            that no indexed source owns
+            {rec.earliest_ledger != null && rec.earliest_ledger > 0 && (
+              <>
+                , first seen at ledger{' '}
+                <span className="font-mono tabular-nums">
+                  #{rec.earliest_ledger.toLocaleString('en-US')}
+                </span>
+              </>
+            )}
+            .
+          </>
+        ) : (
+          // Counts omitted rather than zeroed when the audit's detail
+          // does not parse — never render an unverified "0".
+          <>Census counts unavailable for this snapshot; the audit&apos;s own
+          detail is below.</>
+        )}
+      </p>
+      <p className="mt-1 text-xs text-ink-faint">
+        These are Soroban protocols Stellar Index has not integrated —{' '}
+        <strong className="font-medium text-ink-muted">
+          a discovery backlog, not missing data
+        </strong>
+        . No source in the table above is dropping events because of it, and
+        this number can never reach zero while contracts we do not index keep
+        being deployed, which is why it is not counted in the headline. A
+        source silently dropping its <em>own</em> events is the opposite case:
+        that shows as a red <code className="font-mono">recognition</code>{' '}
+        claim on that source&apos;s row, and it does fail the headline.
+      </p>
+      {rec.detail && (
+        <p className="mt-1 font-mono text-[11px] leading-relaxed text-ink-faint">
+          {rec.detail}
+        </p>
+      )}
+    </div>
   );
 }
 

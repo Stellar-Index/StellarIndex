@@ -194,8 +194,13 @@ SELECT 'stellarindex_recognition_ok{source="'||source||'"} '||recognition_ok::in
 SQL
 
 # System recognition census count, parsed from the snapshot's detail text
-# ("<N> unrecognized shape(s) on unowned contracts (earliest ledger L) — run
-# verify-recognition"; the clean state has no leading digits → 0).
+# ("<N> unrecognized shape(s) on <M> unowned contract(s) (earliest ledger L) —
+# …"; the clean state leads with a literal "0"). The leading-digits contract is
+# OWNED by completeness.FormatRecognitionDetail (internal/completeness/audit_axis.go)
+# and pinned by TestFormatRecognitionDetail_leadsWithTheShapeCount, because a
+# reword that dropped the numeric prefix would make this substring() report 0
+# shapes silently — the under-reporting direction. The COALESCE is kept as a
+# belt-and-braces fallback for a row written before that format existed.
 "$PSQL" "$STELLARINDEX_POSTGRES_DSN" -tA -F$'\t' >> "$TMP" <<'SQL'
 SELECT 'stellarindex_recognition_unattributed_shapes '||
        COALESCE(substring(detail FROM '^[0-9]+'), '0')
