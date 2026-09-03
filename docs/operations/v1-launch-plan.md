@@ -29,12 +29,24 @@ severity: P1
 > job was to disbelieve this document. Where anything below disagrees with
 > this section, this section is right.
 >
-> The audit's headline was that **the three facts dominating the launch
-> answer appeared nowhere in this plan**: `main` was red, the public status
-> page reads `degraded`, and `/v1/coverage` publicly serves 20 of 21 rather
-> than the 17/17 the go-live gate still claimed. A plan that tracks
-> workstreams but not "is main green" and not "what does a customer see
-> first" is measuring the wrong things.
+> The audit's headline was that **three facts dominating the launch answer
+> appeared nowhere in this plan**: `main` was red, the public status page was
+> reading `degraded`, and `/v1/coverage` publicly serves 20 of 21 rather than
+> the 17/17 the go-live gate still claimed. A plan that tracks workstreams but
+> not "is main green" and not "what does a customer see first" is measuring
+> the wrong things.
+>
+> **One correction to the audit itself, and it is the more useful lesson.**
+> Its `degraded` finding was real at the moment it sampled and WRONG as a
+> conclusion: it measured while ten of our own subagents were saturating r1
+> with cold scans. A read-only agent wave moved the API's 6-hour p99 from
+> **48.6 ms to 566.2 ms**, which reads exactly like a chronic regression and
+> is not one. **Do not measure production latency from a box your own agents
+> are working.** The genuine SLA-contract defect is a different one and is
+> now #487: the public page promises 99.9 % availability while ADR-0008 and
+> the wired burn-rate budget both operationalise 99.99 % — a ten-fold
+> disagreement on a commercial commitment, where nobody can say which number
+> governs a customer's breach claim.
 
 ### Tier 0 — cannot announce 1.0 without these
 
@@ -42,7 +54,7 @@ severity: P1
 |---|---|---|---|
 | 0.1 | **`main` must be green** | agent | **DONE** (`fb73da9e5`). It had been red since `8b66519ae`: #331 F1 moved the listing's price derivation into a worker-maintained rollup and two integration tests still refreshed only the old continuous aggregate, so every asset came back unpriced. An all-unpriced board COLLAPSES rank tier 0 into tier 1, which is why the visible symptom was a wrong sort order rather than a missing price. `make verify` cannot see this class — it does not run integration tests. |
 | 0.2 | **`/terms` + `/privacy`** | **ASH — legal read only** | **BLOCKED ON ASH.** Both URLs 404 today. PR #237 has the code and the tests; it needs wording signed off, nothing else. |
-| 0.3 | **Stop the status page saying `degraded`** | agent, then Ash signs the number | **IN PROGRESS.** `overall` is forced by `latencyBreached` alone: live p99 3,537 / 3,125 / 1,060 ms against a published 500 ms target. Two of the three worst routes are already fixed on main and not yet deployed — `/v1/accounts/{g}/operations` (`7c051edeb`) and `/v1/pools` (`d22e5409d`). `/v1/pairs` is the one nothing has touched. If the tail cannot clear 500 ms, moving the PUBLISHED target is the alternative and it is Ash's call, not an agent's. |
+| 0.3 | ~~Stop the status page saying `degraded`~~ | — | **NOT A BLOCKER — the measurement was contaminated, and the contamination was ours.** The audit sampled `/v1/status` and a 1-hour Prometheus window while TEN subagents were running cold ClickHouse and Postgres scans against r1. Two 6-hour windows from r1's own Prometheus settle it: ending **2026-09-02T20:00Z, before that load, p99 = 48.6 ms and p95 = 20.5 ms**; ending 2026-09-03T07:00Z, during it, p99 = 566.2 ms and p95 = 82.1 ms. Targets are 500 ms and 200 ms, so the steady state sits inside both by an order of magnitude. With the agents drained, live `/v1/status` reads `overall: ok`, p50 1 / p95 21 / p99 34 ms, zero active incidents. The per-route figures the audit quoted (`/v1/pairs` 4,975 ms, `/v1/accounts/{g}/operations` 4,966 ms, `/v1/pools` 4,700 ms) are load artefacts. **Neither of the audit's two options — 2-4 days of optimisation, or renegotiating the published target — is needed.** Two of those three routes were independently fixed anyway (`7c051edeb`, `d22e5409d`); `/v1/pairs` is being re-measured cleanly for cold-variant cost, which is a different and much smaller question. |
 | 0.4 | **Email/DNS perimeter (#334)** | agent + **2 clicks from Ash** | **RECORDS LIVE** (`91d0e469d`). MX, SPF (`-all`), DMARC (`p=quarantine`), a second DKIM selector and CAA are published and verified against the authoritative nameservers, with a drift check (`scripts/ops/dns-perimeter-check.sh`) and a weekly workflow. Two steps need Ash: click Cloudflare's destination-verification link so `security@` can forward, and publish the DS record at the registrar. Both are on #334. |
 
 ### Tier 1 — do before announcing; cheap; does not strictly block
