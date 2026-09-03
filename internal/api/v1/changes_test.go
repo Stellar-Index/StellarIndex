@@ -106,10 +106,9 @@ func TestHandleChangeSummary_503WhenReaderNil(t *testing.T) {
 	}
 }
 
-// TestHandleChangeSummary_InvalidEntityType400 — reject the
-// {coin,protocol,pair,source} alternatives anywhere upstream of
-// the storage layer. Mirrors the CHECK constraint on
-// change_summary_5m so an operator typo gets a clean 400.
+// TestHandleChangeSummary_InvalidEntityType400 — reject anything
+// outside the served {coin,pair} families upstream of the storage
+// layer, so an operator typo gets a clean 400.
 func TestHandleChangeSummary_InvalidEntityType400(t *testing.T) {
 	srv := v1.New(v1.Options{ChangeSummary: &stubChangeSummaryReader{}})
 	ts := startHTTPTest(t, srv.Handler())
@@ -121,6 +120,79 @@ func TestHandleChangeSummary_InvalidEntityType400(t *testing.T) {
 	body, _ := readAll(resp)
 	if !strings.Contains(body, "invalid-entity-type") {
 		t.Errorf("expected invalid-entity-type tag: %s", body)
+	}
+}
+
+// TestHandleChangeSummary_UnservedEntityType400 — `protocol` and
+// `source` are reserved by the change_summary_5m CHECK but no worker
+// computes them (a protocol sums across pools, a source across
+// assets; neither reduces to the single canonical pair the rollup
+// keys on). Accepting them returned 404 "the worker hasn't computed
+// a row for this entity yet" — indistinguishable from worker lag, on
+// families that will never have a row. They must be rejected at the
+// boundary, and the 400 detail must not advertise them back.
+func TestHandleChangeSummary_UnservedEntityType400(t *testing.T) {
+	cases := map[string]string{"protocol": "soroswap", "source": "binance"}
+	for entityType, entityID := range cases {
+		t.Run(entityType, func(t *testing.T) {
+			reader := &stubChangeSummaryReader{err: sql.ErrNoRows}
+			srv := v1.New(v1.Options{ChangeSummary: reader})
+			ts := startHTTPTest(t, srv.Handler())
+
+			resp := mustGet(t, ts.URL+"/v1/changes/"+entityType+"/"+entityID)
+			if resp.StatusCode != http.StatusBadRequest {
+				t.Errorf("status = %d, want 400", resp.StatusCode)
+			}
+			body, _ := readAll(resp)
+			var problem struct {
+				Type   string `json:"type"`
+				Detail string `json:"detail"`
+			}
+			if err := json.Unmarshal([]byte(body), &problem); err != nil {
+				t.Fatalf("decode problem: %v (body=%s)", err, body)
+			}
+			if problem.Type != "https://api.stellarindex.io/errors/invalid-entity-type" {
+				t.Errorf("problem type = %q, want invalid-entity-type", problem.Type)
+			}
+			// The detail is the only place a caller learns the served
+			// set; naming a family with no producer sends them back
+			// down the same dead end.
+			if strings.Contains(problem.Detail, "protocol") || strings.Contains(problem.Detail, "source") {
+				t.Errorf("400 detail advertises an unserved family: %q", problem.Detail)
+			}
+			if reader.lastEntityType != "" {
+				t.Errorf("storage was queried for an unserved family: %q", reader.lastEntityType)
+			}
+		})
+	}
+}
+
+// TestHandleChangeSummary_PairIDPercentEncoded — a `pair` entity_id
+// carries a `/` inside it (`base/quote`), so the whole id has to
+// arrive percent-encoded in one path segment. Pins that the router
+// hands the handler the DECODED id, which is what the worker keyed
+// the row under; without the encoding the request would split across
+// two segments and match no route, and the SDK relies on this by
+// escaping the id for callers.
+func TestHandleChangeSummary_PairIDPercentEncoded(t *testing.T) {
+	reader := &stubChangeSummaryReader{
+		row: timescale.ChangeSummaryRow{
+			EntityType:   "pair",
+			EntityID:     "crypto:XLM/fiat:USD",
+			RefreshedAt:  time.Now().UTC(),
+			CurrentValue: 0.1675,
+		},
+	}
+	srv := v1.New(v1.Options{ChangeSummary: reader})
+	ts := startHTTPTest(t, srv.Handler())
+
+	resp := mustGet(t, ts.URL+"/v1/changes/pair/crypto%3AXLM%2Ffiat%3AUSD")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	if reader.lastEntityType != "pair" || reader.lastEntityID != "crypto:XLM/fiat:USD" {
+		t.Errorf("reader saw (%q, %q), want (pair, crypto:XLM/fiat:USD)",
+			reader.lastEntityType, reader.lastEntityID)
 	}
 }
 

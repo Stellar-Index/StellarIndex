@@ -76,14 +76,19 @@ func moneyStrPtr(v *float64) *string {
 }
 
 // allowedChangeSummaryEntityTypes pins the set of entity_type values
-// the API accepts. Mirrors the CHECK constraint on change_summary_5m
-// — having both means an operator hitting a fresh deployment with a
-// new type sees a clean 400 rather than an ambiguous 404.
+// the API accepts: the families a change-summary worker actually
+// writes. Both are computed off one aggregator pair's 1-minute VWAP
+// (see buildChangeSummaryEntities in cmd/stellarindex-aggregator).
+//
+// The change_summary_5m CHECK is wider — it reserves 'protocol' and
+// 'source' as well — but no worker computes those, so accepting them
+// here bought only a 404 saying "the worker hasn't computed a row
+// yet" for entities no worker will ever compute. The API advertises
+// what it can serve; re-opening a family means landing its worker,
+// this set, and the OpenAPI enum together.
 var allowedChangeSummaryEntityTypes = map[string]struct{}{
-	"coin":     {},
-	"protocol": {},
-	"pair":     {},
-	"source":   {},
+	"coin": {},
+	"pair": {},
 }
 
 // changeSummaryCoinCandidates returns the entity_id forms to try
@@ -97,7 +102,7 @@ var allowedChangeSummaryEntityTypes = map[string]struct{}{
 // short-circuits; subsequent entries are best-effort translations.
 //
 // For non-coin entity_types, returns just the literal input — the
-// pair / protocol / source forms are documented as exact strings.
+// pair form is documented as an exact `base/quote` string.
 func changeSummaryCoinCandidates(entityType, entityID string) []string {
 	if entityType != "coin" {
 		return []string{entityID}
@@ -184,7 +189,7 @@ func (s *Server) handleChangeSummary(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, r,
 			"https://api.stellarindex.io/errors/invalid-entity-type",
 			"Invalid entity_type", http.StatusBadRequest,
-			"entity_type must be one of: coin, protocol, pair, source")
+			"entity_type must be one of: coin, pair")
 		return
 	}
 	entityID := r.PathValue("id")
