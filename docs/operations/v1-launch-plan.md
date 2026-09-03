@@ -305,7 +305,7 @@ own census had missed.
 - **#368 M2 — an ingest error discarded up to 256 already-cursored
   events** by returning before the drain, so the next start resumed past
   them. Silent and permanent, on the exact path a decoder fault takes.
-- **CLAUDE.md described a removed poisoning vector as a live feature** —
+- **AGENTS.md described a removed poisoning vector as a live feature** —
   DeFindex strategy self-registration, deleted 2026-08-25 precisely
   because the factory is public and the address field caller-supplied.
   The worst file to carry that claim, since it is what every agent reads
@@ -1680,7 +1680,7 @@ one — they are lead-time items, not sequenced work.
   **verified byte-exact — the surviving price equals BTC's median of
   three signer values**. Ambiguity refuses the event (honest-blind).
   Fixture-driven tests (real lake event + adversarial synthetic
-  payloads), CLAUDE.md + protocol page updated, verify green. **Needs
+  payloads), AGENTS.md + protocol page updated, verify green. **Needs
   v0.21.5 cut+deploy + projector-replay from 59,258,375 + full verify
   to flip 17/17 — fourth tag, needs Ash's word (inbox #4 updated).**
   En route, also proven: the "legacy shape" hypothesis was WRONG — the
@@ -3718,7 +3718,7 @@ Order matters; each gates the next check. The DO-NOTHING trap applies:
     SAC component is 40.13M vs Horizon's 40.26M — 0.3%. So this is not
     a systematic SAC bug; PHO is specifically anomalous.
   - The PHO holders' latest lake change is ledger **54.4–56.4M**, i.e.
-    the dormant pre-floor pool balances CLAUDE.md describes, and the
+    the dormant pre-floor pool balances AGENTS.md describes, and the
     rows carry `intra_ledger_seq=4294967295` (the seed sentinel), so
     they came from today's full-history seed reading the lake's latest
     state for those keys.
@@ -4058,7 +4058,7 @@ are obsolete — repo has been public since 2026-07-03):
 > THE PLAN is right.
 
 
-1. **Vault password re-entry** (blocks §2.2). In a Claude Code session run:
+1. **Vault password re-entry** (blocks §2.2). In an agent session run:
    `! mkdir -p ~/.ansible && read -s VP && echo -n "$VP" > ~/.ansible/r1_vault_pass && chmod 600 ~/.ansible/r1_vault_pass && unset VP`
    …then have the agent verify decrypt + set the two GH secrets.
 2. CoinGecko Pro purchase → `COINGECKO_API_KEY` on r1 + indexer restart.

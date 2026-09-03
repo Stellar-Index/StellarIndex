@@ -12,7 +12,7 @@
 # Documentation
 /docs/                          @ash
 /docs/adr/                      @ash
-/CLAUDE.md                      @ash
+/AGENTS.md                      @ash
 /README.md                      @ash
 /CONTRIBUTING.md                @ash
 /CODE_OF_CONDUCT.md             @ash

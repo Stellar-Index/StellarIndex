@@ -134,7 +134,7 @@ const (
 // floor; the raw substrate is complete, only the projection of it is not.
 //
 // Cost. This walks the whole chain over a 150-billion-row table and MUST run
-// under run-heavy-job.sh on r1 (CLAUDE.md heavy-job doctrine). Expect several
+// under run-heavy-job.sh on r1 (AGENTS.md heavy-job doctrine). Expect several
 // hours and NO output until the end: the reduction can only emit once the last
 // window has been folded, so every insert lands after the scan rather than
 // interleaved with it. Silence is not a hang.

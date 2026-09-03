@@ -80,7 +80,7 @@ psql "$PG" -c \
 #    check the decoder's amount field mapping against the contract's
 #    ACTUAL event definition — the 2026-07-07 root cause was exactly
 #    this class of bug (a field-mapping swap/collapse in decode.go).
-#    Soroban contracts upgrade in place (CLAUDE.md) — verify against
+#    Soroban contracts upgrade in place (AGENTS.md) — verify against
 #    the currently-deployed WASM, not stale docs.
 grep -n "BaseAmount\|QuoteAmount" internal/sources/<source>/decode.go
 ```
@@ -145,7 +145,7 @@ recomputation after the re-derive.
   liquid pair.
 - ADR-0033 (completeness verification) — what this alert complements:
   completeness proves row presence, not economic correctness.
-- CLAUDE.md "Soroban DeFi contracts upgrade in place" — the schema-drift
+- AGENTS.md "Soroban DeFi contracts upgrade in place" — the schema-drift
   trap that most often produces this class of decoder bug.
 
 ## Changelog

@@ -290,13 +290,13 @@ Prevents the "we were surprised by growth" class of incident.
 ## 4. Agent-readability
 
 New constraint from the modern reality of AI-assisted coding. The
-repo must be navigable by an LLM (Claude, an agent framework,
+repo must be navigable by an LLM (an agent framework,
 a GPT-derived assistant) without that assistant needing tribal
 knowledge.
 
-### 4.1. `CLAUDE.md` at repo root
+### 4.1. `AGENTS.md` at repo root
 
-File name is `CLAUDE.md` (matches withObsrvr and others' convention
+File name is `AGENTS.md` (matches withObsrvr and others' convention
 — we've seen it read by agents in the wild). Its job:
 
 > "If an AI agent opens this repo cold, this file tells them
@@ -305,7 +305,7 @@ File name is `CLAUDE.md` (matches withObsrvr and others' convention
 Contents:
 
 ```markdown
-# CLAUDE.md — repo orientation for AI agents
+# AGENTS.md — repo orientation for AI agents
 
 ## What this repo is
 
@@ -372,7 +372,7 @@ openapi/            the API spec (source of truth for reference docs)
 This file is maintained by hand; its freshness is checked in CI
 (same 90-day rule).
 
-### 4.2. Package-level `doc.go` with `CLAUDE.md`-style intro
+### 4.2. Package-level `doc.go` with `AGENTS.md`-style intro
 
 Every `internal/` package has a `doc.go` file (Go-native equivalent
 of README) with:
@@ -636,7 +636,7 @@ mechanism in the codebase.
 | `canonical.AssetType` switch exhaustiveness | `go test` (go/types AST walk, scoped to one enum) | `internal/canonical/asset_type_exhaustive_guard_test.go` |
 | Never two sources of truth | Generated-file regen on release | `release.yml` |
 | Generated-file banner | CI scan for banner | `scripts/ci/check-generated-banner.sh` |
-| Agent orientation | `CLAUDE.md` + `doc.go` per package | convention + CI |
+| Agent orientation | `AGENTS.md` + `doc.go` per package | convention + CI |
 | Structured log fields | Grep-based check in CI | `scripts/ci/check-log-fields.sh` |
 
 If a mechanism doesn't exist, it's a gap to be filled — we don't
@@ -780,7 +780,7 @@ unchecked, pause.
 If you are an AI agent reading this file cold, the **fastest
 orientation** to actual work is:
 
-1. Read `CLAUDE.md` at repo root. (Not this file — that one.)
+1. Read `AGENTS.md` at repo root. (Not this file — that one.)
 2. Run `make help` — list of targets.
 3. Look at `docs/architecture/overview.md` + the most recent ADR.
 4. Identify the package you'll modify; read its `doc.go` first.
@@ -789,7 +789,7 @@ orientation** to actual work is:
 6. Write the smallest possible PR. Consult this doc only when
    uncertain.
 
-This doc (`engineering-standards.md`) is the **policy**. `CLAUDE.md`
+This doc (`engineering-standards.md`) is the **policy**. `AGENTS.md`
 is the **map**. Use the map first; consult the policy when the
 map isn't enough.
 
@@ -988,7 +988,7 @@ failure surfaces. Binding detail:
 
 ## 15. Related docs
 
-- [CLAUDE.md](../CLAUDE.md) — the repo orientation map this policy
+- [AGENTS.md](../AGENTS.md) — the repo orientation map this policy
   operates over.
 - [docs/architecture/lexicon.md](architecture/lexicon.md) — the
   domain lexicon §13 summarises.

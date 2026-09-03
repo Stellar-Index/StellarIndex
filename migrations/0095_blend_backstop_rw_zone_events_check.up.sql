@@ -13,7 +13,7 @@
 --                    end-to-end.
 --   rw_zone_remove — the V2-only pool-removal counterpart to
 --                    rw_zone_add; zero lake occurrences ever, added
---                    per the EVERY-event principle (CLAUDE.md) so a
+--                    per the EVERY-event principle (AGENTS.md) so a
 --                    future occurrence doesn't silently fall through.
 --
 -- Same pattern as 0092/0094 (cctp_events): DROP + re-ADD the CHECK

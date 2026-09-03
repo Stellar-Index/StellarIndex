@@ -374,7 +374,7 @@ func TestProjectedSourcesInRun_SplitsProjectedFromNot(t *testing.T) {
 		{name: "band", callDec: band.NewDecoder("CBANDCONTRACT")}, // ContractCall source, not projected
 		// A decoder-bearing entry whose NAME the projector does not own.
 		// soroswap-router is ContractCall-derived and explicitly excluded
-		// from pipeline.IsProjectedEvent (CLAUDE.md invariant 7), so its
+		// from pipeline.IsProjectedEvent (AGENTS.md invariant 7), so its
 		// presence in the event catalogue must not arm the guard: only
 		// the registry lookup can tell these apart, a name list cannot.
 		{name: soroswap_router.SourceName, dec: soroswap.NewDecoder()},

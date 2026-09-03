@@ -32,7 +32,7 @@ cause a bug; **M1** = real gap, partial mitigation; **M2** = latent/safe-by-acci
    (golden topic-set per source vs `classify()`) + scale the volume gate by per-trade
    Decimals with a test.
 
-## The 8 CLAUDE.md invariants — enforcement status
+## The 8 AGENTS.md invariants — enforcement status
 - ①i128-no-truncate: **M1** — ADR claims a golangci analyzer + BIGINT lint that **don't
   exist** (CS-007); runtime discipline real, but a future `int64(parts.Lo)` ships green.
 - ②no-Horizon: **solid** (import-lint rule C, empty allowlist).
@@ -49,7 +49,7 @@ cause a bug; **M1** = real gap, partial mitigation; **M2** = latent/safe-by-acci
 ## Meta-guards (the layer that guards the guards)
 - **M1:** gates self-editable (violation + allowlist edit in one commit → green, CS-098);
   route lint greps `HandleFunc(` only → misses `mux.Handle()` (CS-052, let the admin-PII
-  route slip); CLAUDE.md has no frontmatter → the freshness check **skips it entirely**,
+  route slip); AGENTS.md has no frontmatter → the freshness check **skips it entirely**,
   so its false ADR-0035 claim (CS-127) is unguarded ("checked in CI" is itself partly false).
 - **M2:** config round-trip regex skips digit tags (CS-131); actions-pinning hard-fail is
   a no-op on push-to-main; **Postman collection NOT drift-guarded** (types.ts IS).

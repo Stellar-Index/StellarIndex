@@ -106,7 +106,7 @@ curl -fsS "https://history.stellar.org/prd/core-live/core_live_001/ledger/<XX>/<
       (trades, prices, completeness snapshots) derived from the
       affected ledger(s) and decide with the team whether a targeted
       re-derive is warranted. Do NOT run a wide unwindowed re-derive
-      without the `run-heavy-job.sh` wrapper (CLAUDE.md).
+      without the `run-heavy-job.sh` wrapper (AGENTS.md).
 - [ ] There is no automatic "resolve" for this alert — `[hashdb]`'s
       drift counter is a lifetime total for the process. Acknowledge
       the ticket once triage is complete; the alert clears on the

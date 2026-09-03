@@ -8,7 +8,7 @@ status: current — re-scoped 2026-08-29
 
 > **Canonical bring-up recipe:
 > [archival-node-bringup.md](../archival-node-bringup.md)**
-> (CLAUDE.md-designated). This runbook remains for the
+> (AGENTS.md-designated). This runbook remains for the
 > hardware-inventory + vault-bootstrap detail; sections below were
 > re-scoped 2026-08-29 to match what the `archival-node` ansible
 > role actually deploys today (no stellar-core / stellar-rpc units

@@ -13,7 +13,7 @@ superseded_by: null
 
 Stellar Index began as a pricing API and grew a protocol explorer
 (coins / markets / DEXes / oracles / lending / issuers). The standing
-product vision (CLAUDE.md) is a **comprehensive blockchain explorer**
+product vision (AGENTS.md) is a **comprehensive blockchain explorer**
 — classic/native *and* Soroban. This ADR commits to that and records
 the architecture + phased build, because a one-time discovery changed
 the cost calculus dramatically.

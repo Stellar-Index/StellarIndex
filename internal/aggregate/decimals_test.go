@@ -108,7 +108,7 @@ func TestAdjustPrice_NilInputReturnsNil(t *testing.T) {
 // constraint #5 asks for: a real-shaped trade of an 18-decimal bridged
 // token (base leg) quoted against a 7-decimal SAC/classic asset (quote
 // leg), showing the OLD unadjusted ratio is off by exactly 10^11 — the
-// |18-7| skew CLAUDE.md and the runbook describe — and that AdjustPrice
+// |18-7| skew AGENTS.md and the runbook describe — and that AdjustPrice
 // corrects it exactly.
 //
 // Trade shape: base_amount = 2_500_000_000_000_000_000 (2.5 whole tokens
@@ -130,7 +130,7 @@ func TestAdjustPrice_Golden18DecimalToken(t *testing.T) {
 
 	// Show exactly how wrong the OLD (unadjusted) served value was:
 	// rawRatio should equal truePrice / 10^11 — the "served skewed by
-	// 10^(7-decimals)" landmine CLAUDE.md and the runbook describe.
+	// 10^(7-decimals)" landmine AGENTS.md and the runbook describe.
 	tenToThe11 := new(big.Int).Exp(big.NewInt(10), big.NewInt(11), nil)
 	expectedRaw := new(big.Rat).Quo(truePrice, new(big.Rat).SetInt(tenToThe11))
 	if rawRatio.Cmp(expectedRaw) != 0 {

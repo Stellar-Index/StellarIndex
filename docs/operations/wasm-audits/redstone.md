@@ -77,7 +77,7 @@ alone.
 
 ### The "feed IDs are in op args, not event body" trap
 
-CLAUDE.md flags this:
+AGENTS.md flags this:
 
 > **Redstone's event body carries no feed_id.** `WritePrices
 > { updater, updated_feeds: Vec<PriceData> }` gives prices +
@@ -114,7 +114,7 @@ defends against decoding an unrelated call's args as feed IDs.
 
 ### Known-feeds allow-list
 
-Per CLAUDE.md, Redstone has **19 mainnet feeds** (at audit time —
+Per AGENTS.md, Redstone has **19 mainnet feeds** (at audit time —
 the relayer expanded to 30 feeds on 2026-07-24; the live list is
 `internal/sources/redstone/feeds.go`, per-feed evidence in
 `docs/protocols/redstone.md`). Feed IDs from op

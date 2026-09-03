@@ -29,7 +29,7 @@ These landed by clearing the strongest verification; they are already committed.
 | M1 / INV-3 (keystone) | `2e5c7c0c` | generation-guarded corrective upsert + migration 0109 (3 core money tables) |
 | — | `1bd8af63` | R1 disk/storage assessment (RAID/ZFS verification + runway) — docs |
 | C3-1,C3-2,P1,P2,R1 | `fde6727f` | request-timeout middleware + serving statement_timeout + id validation (unauth DoS) |
-| C4-8,C4-9 | `60997eb9` | correct audit-confirmed false claims in CLAUDE.md + arch docs |
+| C4-8,C4-9 | `60997eb9` | correct audit-confirmed false claims in AGENTS.md + arch docs |
 | C4-2 | `8fa8346a` | run-ch-supply.sh reports failure to systemd (stops masking supply-seed failures) |
 | C2-1,D1,C4-14 | `6efc8565` | projector durability-honest cursor (transient hold / permanent skip) + metric fix |
 | C4-1,C4-11,C4-15 | `a03c3f86` | runbook_url labels→annotations (270 alerts) + YAML guard + inhibit-rule fix |

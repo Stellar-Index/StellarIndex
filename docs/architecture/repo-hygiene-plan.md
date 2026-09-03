@@ -349,7 +349,7 @@ per-source under `test/fixtures/<source>/` rather than in a separate
 `protocol-boundary/` tree, so a decoder's pre-/post-protocol-bump
 fixtures live next to the source they exercise. The unified
 `transfer/mint/burn` (CAP-67 / P23) handling is exercised through
-each source's golden files; CLAUDE.md "Things that will surprise
+each source's golden files; AGENTS.md "Things that will surprise
 you" calls out the post-P23 4th-topic shape.
 
 ---
@@ -533,19 +533,19 @@ When code or a doc is removed:
 
 ## 18. Agent-readability
 
-**Rule:** AI agents (Claude, Copilot, Cursor, ...) are first-class
+**Rule:** AI agents (Copilot, Cursor, and the rest) are first-class
 readers. The repo must be navigable cold.
 
 Mechanics:
 
-- [CLAUDE.md](../../CLAUDE.md) is the orientation map. Aggressively
+- [AGENTS.md](../../AGENTS.md) is the orientation map. Aggressively
   updated with each architectural shift.
 - [AGENTS.md](../../AGENTS.md) is an alias (symlink-style pointer).
 - Every package has a `doc.go` or `README.md` describing its role in
   one paragraph.
 - Naming conventions (§11) matter more for machine readers than
   humans.
-- Invariants in [CLAUDE.md](../../CLAUDE.md) Invariants section are
+- Invariants in [AGENTS.md](../../AGENTS.md) Invariants section are
   duplicated as ADR frontmatter so agents can grep either place.
 
 **Enforced by:** reviewer. A package with no `doc.go` and no obvious

@@ -249,5 +249,5 @@ git, full stop.
   Cloudflare Pages stub whose dispatch-only workflow cannot publish
   an incident) onto the explorer at `web/explorer/src/app/status/`;
   every pointer, both deploy sentences and the frontmatter `related:`
-  entry updated, and the same drift fixed in CLAUDE.md's tree map.
+  entry updated, and the same drift fixed in AGENTS.md's tree map.
   Host shapes → r1's IP.

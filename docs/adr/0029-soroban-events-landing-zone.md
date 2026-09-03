@@ -236,7 +236,7 @@ captures the data we don't yet know we'll want.
 - Package: `internal/sources/sorobanevents/`
 - Dispatcher hook: `internal/dispatcher/dispatcher.go::RawEventSink`
 - Storage writer: `internal/storage/timescale/soroban_events.go`
-- CLAUDE.md "Soroban DeFi contracts upgrade in place" — the
+- AGENTS.md "Soroban DeFi contracts upgrade in place" — the
   per-WASM-version decoder concern future per-source backfills
   will need to satisfy when interpreting these raw rows.
 - ADR-0003 — i128/u128 no-truncation. The raw XDR storage preserves

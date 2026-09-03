@@ -26,7 +26,7 @@ import (
 //     ledger with tx_count>0 should have at least one entry_changes row,
 //     ABOVE the live-ingest floor (-ec-floor, default 63,050,000 — coverage
 //     below the floor is backfill-in-progress and expected to be partial;
-//     see CLAUDE.md's "entry_changes coverage seam" note).
+//     see AGENTS.md's "entry_changes coverage seam" note).
 //
 // Exit code = (ledger gaps) + (entry-change deficiencies at/above
 // -ec-floor), capped at 255, mirroring reconcile-balances' and
@@ -111,7 +111,7 @@ func verifyContiguity(args []string) error {
 }
 
 // defaultCHAddr / defaultECFloor are verify-contiguity's flag defaults.
-// defaultECFloor is the known live-ingest floor documented in CLAUDE.md's
+// defaultECFloor is the known live-ingest floor documented in AGENTS.md's
 // "entry_changes coverage seam" note (2026-07-16): coverage is 100% from
 // this ledger to tip and partial below it (backfill in progress).
 const (

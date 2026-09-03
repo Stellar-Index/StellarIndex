@@ -75,6 +75,6 @@ half of the board-#31 finding.
 
 **Coverage status:** complete as of 2026-07-09 (ROADMAP #89c). Re-run
 the same full `topic_0_sym` census periodically (or after any Circle
-contract upgrade — CLAUDE.md "Soroban DeFi contracts upgrade in
+contract upgrade — AGENTS.md "Soroban DeFi contracts upgrade in
 place") to catch a genuinely new topic; there is no currently-known
 gap.

@@ -410,7 +410,7 @@ that path is `stellarindex-ops backfill -resume` only.
   re-decodes from XDR which is much heavier.
 - **Source whose `BackfillSafe=false`.** Audit first (see
   `wasm-audits/README.md`). Skipping the audit risks
-  silently-bad historical data per CLAUDE.md "Soroban DeFi
+  silently-bad historical data per AGENTS.md "Soroban DeFi
   contracts upgrade in place".
 
 ## Cross-references

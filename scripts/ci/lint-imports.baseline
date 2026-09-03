@@ -57,7 +57,7 @@
 #     would require touching every one of them.
 #   - trades.go: calls aggregate.FiatProxy(...) and
 #     external.Lookup(...)/external.FXSources() — genuine aggregator
-#     / source-registry POLICY functions (CLAUDE.md: "Stablecoin
+#     / source-registry POLICY functions (AGENTS.md: "Stablecoin
 #     fiat-proxy is aggregator policy, not decoder policy"), not
 #     persisted structs.
 L/storage-below-compute internal/storage/clickhouse/blend_pool_state_reader.go

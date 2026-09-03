@@ -9,7 +9,7 @@ import { formatSubunitPrice } from '@/lib/format';
  * One aggregated order-book level, as served by GET /v1/sdex/orderbook
  * (`SDEXOrderBookLevel`). Prices and amounts are exact decimal strings;
  * this chart converts to Number for LAYOUT ONLY — the tables alongside
- * keep the exact strings (CLAUDE.md invariant #1 is about arithmetic and
+ * keep the exact strings (AGENTS.md invariant #1 is about arithmetic and
  * storage, not pixel positioning).
  */
 export type DepthLevel = {

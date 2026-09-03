@@ -6,7 +6,7 @@ status: current
 
 # Checklist — add an on-chain source (Soroban DEX / event decoder)
 
-Reference implementation: `internal/sources/soroswap/`. Binding rules: CLAUDE.md
+Reference implementation: `internal/sources/soroswap/`. Binding rules: AGENTS.md
 invariants #6 (ingest path), #7 (one writer per domain), ADR-0035 (gating).
 **Before writing any helper, check `/CAPABILITY-INVENTORY.md` — reuse `internal/scval`,
 `canonical.Amount/Trade/Asset`.**

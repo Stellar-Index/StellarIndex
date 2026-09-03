@@ -130,7 +130,7 @@ const assetPriceCTEs = `
 		direct_usd AS (
 		  -- "Direct USD" = quoted in fiat:USD (CEX feeds) OR in
 		  -- USDC — the same stablecoin-proxy policy the xlm_usd
-		  -- CTEs below already apply (CLAUDE.md: "stablecoin
+		  -- CTEs below already apply (AGENTS.md: "stablecoin
 		  -- fiat-proxy is aggregator policy" — USDC ≈ USD, ~0.1%
 		  -- peg error accepted). A USDC-quoted vwap is taken AS
 		  -- the USD price. Without the USDC member, assets whose
@@ -312,7 +312,7 @@ const assetPriceCTEs = `
 		  -- USD price is computed by the aggregator's triangulation
 		  -- worker and lives in Redis, not the materialised view.
 		  -- Mirror the aggregator's stablecoin-proxy policy in SQL
-		  -- (CLAUDE.md: "stablecoin fiat-proxy is aggregator policy"
+		  -- (AGENTS.md: "stablecoin fiat-proxy is aggregator policy"
 		  -- — USDC ≈ USD): use the latest on-chain XLM/USDC vwap as
 		  -- the XLM/USD price. Circle's USDC issuer G-strkey is
 		  -- hardcoded; a future revision pulls the list from

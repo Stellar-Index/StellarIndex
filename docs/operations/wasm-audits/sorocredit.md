@@ -27,7 +27,7 @@ publishes no price and emits no trades — `BackfillSafe` gates only the
 operator-triggered `projector-replay` / `backfill` path; aggregator
 output is unaffected either way. See
 [`internal/sources/sorocredit/README.md`](../../../internal/sources/sorocredit/README.md)
-and the CLAUDE.md "Liquidation = scheduled settlement, not distress"
+and the AGENTS.md "Liquidation = scheduled settlement, not distress"
 note.
 
 ## Source identity
@@ -260,7 +260,7 @@ unblocked:
   stellarindex-ops projector-replay -source sorocredit -from 61620822
 ```
 
-(under the heavy-job wrapper per CLAUDE.md; never a bespoke
+(under the heavy-job wrapper per AGENTS.md; never a bespoke
 `sorocredit-backfill` subcommand).
 
 ### Re-audit triggers

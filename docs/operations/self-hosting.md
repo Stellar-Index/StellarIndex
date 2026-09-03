@@ -67,7 +67,7 @@ and `stellarindex-api`. `stellarindex-migrate` applies schema once;
 one-shot jobs; `stellarindex-sla-probe` is an optional latency/
 freshness proof harness. There is no Horizon and no `stellar-rpc` in
 the production ingest path — see
-[ADR-0001](../adr/0001-horizon-deprecated.md) and CLAUDE.md invariant
+[ADR-0001](../adr/0001-horizon-deprecated.md) and AGENTS.md invariant
 6; ingest reads Galexie's MinIO output directly.
 
 ClickHouse (the Tier-1 raw lake,
@@ -494,7 +494,7 @@ never do; that's expected, not broken.
   `stellarindex-ops projector-replay -source <name> -from <ledger> -write`
   (fail-closed: without `-write` it reports and writes nothing)
   (never a bespoke `<source>-backfill` command — those were removed;
-  see CLAUDE.md invariant 7).
+  see AGENTS.md invariant 7).
 
 ---
 

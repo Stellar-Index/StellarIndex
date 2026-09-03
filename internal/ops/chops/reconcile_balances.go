@@ -193,7 +193,7 @@ type reconcileResult struct {
 }
 
 // reconcileOneAccount runs the full three-step reconciliation
-// (CLAUDE.md task doc "What it does" #1-3) for a single account:
+// (AGENTS.md task doc "What it does" #1-3) for a single account:
 // read our balance from ClickHouse, fetch Horizon's current native
 // balance, classify. Never returns an error itself — every failure
 // mode is folded into the returned reconcileResult's Outcome/Err so

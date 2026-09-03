@@ -175,7 +175,7 @@ N <= M.** Same fanout pattern as Reflector.
 ### Band
 
 **Not applicable.** Band's Soroban contract emits zero events
-(CLAUDE.md "Band's Soroban contract emits zero events"). Decoder
+(AGENTS.md "Band's Soroban contract emits zero events"). Decoder
 operates on InvokeContract op args via the
 `ContractCallDecoder` hook. There's no event count to cross-check
 against. Per-WASM-hash decoder audit is the only safety net.

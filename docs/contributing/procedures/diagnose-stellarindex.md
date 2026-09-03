@@ -1,10 +1,10 @@
 ---
-name: diagnose-stellarindex
-description: Incident-diagnosis decision trees for Stellar Index production (r1) — frozen ingest cursor, stale/diverging prices, completeness-verdict red, alert triage — with the exact commands and the wrong-turns previous incidents took. Use when r1 looks unhealthy, an alert fires, data looks stale, or the verdict goes incomplete.
+title: Diagnose a live incident
+last_verified: 2026-09-03
+status: living doc
 ---
 
-# /diagnose-stellarindex
-
+# Diagnose a live incident
 r1 access: `ssh root@136.243.90.96` (hostname doesn't resolve; login
 root). SQL: file+scp then `sudo -u postgres psql -d stellarindex -f`
 — NEVER inline `$$` over ssh (expands to shell PID, silently corrupts

@@ -49,7 +49,7 @@ library. (Upstream DOES ship a factory contract emitting
 `("LOG", "NEW_POOL")` with the new pool's address — see
 `factory.rs` in the vendored source — but no mainnet deployment of
 it is known; if one appears, factory anchoring per ADR-0035 becomes
-available.) CLAUDE.md flagged the wire-level ambiguity:
+available.) AGENTS.md flagged the wire-level ambiguity:
 
 > **Comet uses a shared `("POOL", <event>)` topic across every pool
 > contract**, not a per-protocol namespace. The decoder matches by

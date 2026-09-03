@@ -362,7 +362,7 @@ comet:
   provenance: |
     Hand-curated; only one known mainnet pool (Blend backstop). Add as discovered.
   notes: |
-    Comet is Balancer-v1; (POOL, swap) topic is shared per CLAUDE.md.
+    Comet is Balancer-v1; (POOL, swap) topic is shared per AGENTS.md.
   contracts:  # 1 total
     - CAS3FL6TLZKDGGSISDBWGGPXT3NRR4DYTZD7YOD3HMYO6LTJUVGRVEAM
 

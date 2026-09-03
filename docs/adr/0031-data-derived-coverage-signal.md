@@ -111,7 +111,7 @@ The source's "claimed topic-0 symbols" come from a new
 `sources.Source.TopicSymbols()` interface method that every
 decoder package implements (already implicit in their `classify()`
 functions; ADR-0030's EVERY-event policy means the symbol set is
-exhaustive). For sources that emit no events (Band — see CLAUDE.md
+exhaustive). For sources that emit no events (Band — see AGENTS.md
 surprise list), coverage signal is instead derived from the
 `oracle_updates` table filtered by `source = '<name>'`.
 

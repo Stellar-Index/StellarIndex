@@ -47,7 +47,7 @@ Each fix landed as its own commit on `main` (see `git log`).
 | CS-100 | High | issuer detail dropped `org_verified` (impersonation) → thread through API + Verified/Unverified chip |
 | CS-055 | Med | webhook HMAC replayable (body-only) → timestamp-bound signature + `X-StellarIndex-Timestamp` |
 | CS-040 | Med | USD-volume gate assumed 1e8 (FX is 1e6, ~100× off) → per-source `AmountDecimals` |
-| CS-127/007/128 | — | CLAUDE.md false ADR-0035/storage claims, ADR-0003 fictional analyzer, recipe drift |
+| CS-127/007/128 | — | AGENTS.md false ADR-0035/storage claims, ADR-0003 fictional analyzer, recipe drift |
 
 ### Logic / UX / a11y (LC-###)
 | ID | Sev | What |
@@ -61,7 +61,7 @@ Each fix landed as its own commit on `main` (see `git log`).
 | Dim | What |
 |-----|------|
 | D4 | `/CAPABILITY-INVENTORY.md` (intent→symbol index) at repo root |
-| D9 | `docs/contributing/` — 6 copy-followable checklists, CLAUDE.md points at them |
+| D9 | `docs/contributing/` — 6 copy-followable checklists, AGENTS.md points at them |
 | D3 | `internal/nettools` (SSRF union) + `internal/sources/external/scale` (10 dup helper copies → 1, −335 LoC) |
 
 > **Staleness note (2026-07-02):** several rows below shipped in

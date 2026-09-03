@@ -54,7 +54,7 @@
 -- Historical fill: live ingest writes here from deploy onward; the
 -- back-window is re-derived from the lake with
 --   stellarindex-ops projector-replay -source sorocredit -from 61620822
--- run under /usr/local/sbin/run-heavy-job.sh (CLAUDE.md heavy-job doctrine).
+-- run under /usr/local/sbin/run-heavy-job.sh (AGENTS.md heavy-job doctrine).
 -- BackfillSafe stays false until a WASM-history audit lands.
 
 BEGIN;

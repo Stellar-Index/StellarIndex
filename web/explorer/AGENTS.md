@@ -1,4 +1,4 @@
-# CLAUDE.md — web/explorer (design & frontend brief)
+# AGENTS.md — web/explorer (design & frontend brief)
 
 Auto-loaded when working under `web/explorer`. If you're doing a **design
 refresh or restructure**, read this first, then the two references at the

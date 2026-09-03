@@ -406,7 +406,7 @@ type AssetHolderV struct {
 // XLM in its AccountEntry balance — so the board is computed from the
 // account-balance ranking under the single key "native", and every non-SAC
 // member of XLM's alias family (`native`, `crypto:XLM`, plus ParseAsset's
-// "XLM" shorthand — the CLAUDE.md native ↔ crypto:XLM dual-form rule) folds
+// "XLM" shorthand — the AGENTS.md native ↔ crypto:XLM dual-form rule) folds
 // down to it: one cache entry, one detached flight, one reader arm.
 //
 // The family's THIRD member — the SAC wrapper C-address (CAS3J7GY…) — is

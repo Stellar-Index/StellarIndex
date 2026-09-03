@@ -6,7 +6,7 @@ title: D3 — DRY / duplication register (FLAGSHIP)
 
 **Headline:** the flagship maintainability debt is **~50+ near-identical helper copies
 concentrated in `internal/sources/external/`, driven by an institutionalized "copy the
-binance package" workflow** (the CLAUDE.md CEX recipe literally says to). Every claimed
+binance package" workflow** (the AGENTS.md CEX recipe literally says to). Every claimed
 duplicate verified by reading both copies. **M0** = will be re-duplicated / has caused rework.
 
 | # | Cluster | Copies | Canonical | Rate |

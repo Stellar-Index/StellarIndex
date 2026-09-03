@@ -40,14 +40,14 @@ findings (M0/M1/M2) + a "what's already good" note. Inputs reused from the
 - **Method:** build the **capability inventory** — an intent-keyed index: "need to
   X → it's in Y" for every reusable capability (price a pair, fetch SEP-1, sign a
   webhook, a Redis counter, a token bucket, parse an SCVal, emit a metric, add a
-  cache key…). Then audit CLAUDE.md AS AN AGENT ONBOARDING DOC: does it let an
+  cache key…). Then audit AGENTS.md AS AN AGENT ONBOARDING DOC: does it let an
   agent *find* existing functionality before writing new? (It already has drift:
   CS-127 false ADR-0035 claim, CS-005 3× package undercount.) Produce a redesign
-  spec (what CLAUDE.md should contain to prevent the rebuild-what-exists failure).
+  spec (what AGENTS.md should contain to prevent the rebuild-what-exists failure).
 - **Good =** an agent can answer "does this exist?" in one lookup.
 
 ## D5 — Guardrails against regression
-- **Method:** enumerate every INVARIANT the project claims (ADRs, CLAUDE.md, the 8
+- **Method:** enumerate every INVARIANT the project claims (ADRs, AGENTS.md, the 8
   invariants) and for EACH: is it machine-enforced (lint/test/CI), and does the
   guard actually fire? Build the guardrail matrix. The correctness audit already
   found the big gaps (CS-070 tests-not-run, CS-097 unprotected-main, CS-007 missing
@@ -81,7 +81,7 @@ findings (M0/M1/M2) + a "what's already good" note. Inputs reused from the
 - **Good =** acyclic, layered, and the lint provably enforces the layering.
 
 ## D9 — Convention docs as checklists
-- **Method:** inventory the "how to add X" guidance (CLAUDE.md "Common task recipes"
+- **Method:** inventory the "how to add X" guidance (AGENTS.md "Common task recipes"
   are prose). For the top recipes (new on-chain source, new CEX connector, new
   endpoint, new metric, new migration, new supply observer) produce an actionable
   **numbered checklist**: exact files to touch, the existing helper to reuse, the

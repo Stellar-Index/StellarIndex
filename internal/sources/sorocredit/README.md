@@ -150,7 +150,7 @@ re-derived from the lake:
 stellarindex-ops projector-replay -source sorocredit -from 61620822
 ```
 
-Run it under `/usr/local/sbin/run-heavy-job.sh` (CLAUDE.md heavy-job
+Run it under `/usr/local/sbin/run-heavy-job.sh` (AGENTS.md heavy-job
 doctrine). **Never** a bespoke `sorocredit-backfill` subcommand.
 
 ## Future /v1 surface (follow-up, out of scope here)

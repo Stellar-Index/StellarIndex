@@ -304,7 +304,7 @@ function Metric({
 // (stroops for classic / native; contract-defined for SEP-41) to
 // a number for display. Returns null when the string is missing
 // or not finite. Display-only — never used for further arithmetic
-// (CLAUDE.md invariant #1: precision lives in the string).
+// (AGENTS.md invariant #1: precision lives in the string).
 function parseSmallest(s: string | null | undefined, decimals: number): number | null {
   if (s == null) return null;
   const n = Number(s);

@@ -139,7 +139,7 @@ func TestDecodeOwnershipTransferCompleted_MissingBodyField(t *testing.T) {
 // 5b53d56d4950a854bd39e3bc806478fd2aafffa5bcbfb86c19ca51eef8b90b7a,
 // MessageTransmitter. old_admin is ScvVoid on the real mainnet
 // bootstrap event — the schema-evolution trap this decoder guards
-// against (CLAUDE.md "Type-test before MustI128").
+// against (AGENTS.md "Type-test before MustI128").
 func TestDecodeAdminChanged_BootstrapVoidOldAdmin(t *testing.T) {
 	t.Parallel()
 	ev := &events.Event{

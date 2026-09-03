@@ -118,7 +118,7 @@ func TestBuildReconciliationCatalogue_NoSEP41WithoutWatchedSet(t *testing.T) {
 
 // TestBuildSEP41ReconSources_OptIn asserts the opt-in variant produces
 // both sep41 sources with the documented kind + genesis + prefilter
-// wiring (CLAUDE.md recipe: cfg.Supply.WatchedSEP41Contracts +
+// wiring (AGENTS.md recipe: cfg.Supply.WatchedSEP41Contracts +
 // contractIDs prefilter; kinds "sep41_transfers.event" /
 // "sep41_supply.event"; genesis 50_457_424).
 func TestBuildSEP41ReconSources_OptIn(t *testing.T) {

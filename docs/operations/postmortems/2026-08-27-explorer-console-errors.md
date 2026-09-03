@@ -3,7 +3,7 @@ title: Investigation — explorer console errors ("tons of errors while navigati
 date: 2026-08-27
 status: in-progress
 severity: P3 (no data loss; failed prefetch requests + one auth probe)
-author: ops (Claude-assisted)
+author: ops
 ---
 
 # Explorer console errors — investigation

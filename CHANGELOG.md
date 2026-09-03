@@ -213,13 +213,13 @@ against.
 - **api:** shutdown returned while background workers were still mid-write (#368 LOW). `run()` exited as soon as `httpSrv.Shutdown` came back, so the customer-webhook sender could be between "the customer accepted the POST" and `MarkDelivered` — which is exactly how a delivery gets repeated on the next boot. Fifteen workers now join a WaitGroup that shutdown waits on, bounded by the same 30s budget as the listener drain and taken AFTER it so serving stops first. The three named warmers stay out by design: they hold no durable write, so waiting on them would lengthen every deploy for nothing. A guard test fails if a new literal worker in `run()` skips the group, or if `Add`/`Done` stop balancing.
 - **ingest:** Band's genesis ledger disagreed across four constants — `reconciliation_catalogue.go` and `protocols_registry.go` said 60,000,000 while `per_source_gaps.go` and `diagnostics_ingestion.go` said 50,842,736 (#361/#363). The 9.16M-ledger difference silently shortened the range every completeness and gap check evaluated, so the source read clean over a window that excluded most of its history. All four now agree on 50,842,736. The value is awkward to derive, which is how it drifted: Band's contract emits **zero events**, so the obvious `contract_events` probe returns 0 rows and reads as absence rather than as the wrong table. It comes from `contract_instance_changes` (whose own floor is 50,457,429, so it is not a coverage artifact), corroborated by 4,210 `contract_data` writes from the same ledger and by the WASM audit. **Expect band to go red until a catch-up runs** — `oracle_updates` starts at 60,000,414, so the gap between true genesis and the first projected row is real and was being hidden.
 - **docs:** the public docs told the DeFindex team a registry-poisoning vector was a feature (#359). Three body sections of `docs/protocols/defindex.md` still described the live strategy self-registration from factory `create` bodies that `76418937` REMOVED on 2026-08-25 precisely because the field is attacker-controlled — the factory is permissionless, so anyone could name arbitrary addresses and register them as DeFindex strategies. The header had been corrected; the body, the operator-rollout step and the "gate wiring shipped" section had not, and they cited a golden test (`TestDecode_factoryCreate_seedsStrategiesFromRealLakeBytes`) that no longer exists — the tests now assert the OPPOSITE. All three now record the revert and why, and point at `TestDecode_factoryCreate_doesNotSeedFromBody`.
-- **docs:** 24 further stale claims across the public tree, each corrected to the code (#359). `methodology/vwap-aggregation.md` was wrong in six places despite a fresh `last_verified` — the outlier row described the whole-window filter when the served path is the time-local layer (`orchestrator.go` calls `FilterOutliersLocal`), the freeze row omitted #288's current-bucket composite reference, triangulation credited `triangulate.go` (zero non-test callers; the live math is the graph router), MAD-zero was said to need *identical* prices (a strict majority suffices), thin-history was said to fail open (only an EMPTY baseline does), and `prices_*.twap` was called unread (`twap_1h`/`twap_1d` are `avg(prices_1m.twap)`). `methodology/twap-ohlc.md` called `/v1/price` a tip endpoint — it is the closed-bucket surface, the tip is `/v1/price/tip` — and documented a first-non-empty stablecoin retry through a function C1-024 deleted; the handler COMBINES every peg constituent. Rate-limit tables said anon 60/min and free 1000/min: measured live, the hosted API answers `X-RateLimit-Limit: 6000` to an anonymous IP while a free key is stamped 1000 at mint, so the anon tier is currently the *higher* one and both docs now say so. Also: Rozo has four Payment contracts not three; `blend_emitter.md` was never linked from the protocol index (now is) and cited migration 0095 for a table created by 0096; `sorocredit.md` said `BackfillSafe ❌` where the registry says `true` (audited 2026-07-07) and listed 7 events where the code has 8 (`TreasuryUpdated`, found by the 2026-08-18 recognition audit); `sdex.md` said V0 claim atoms are a hard error when F-1233 made them decode as the legacy order-book shape; plus aquarius (migrations 0128-0130), band (the sink increments the events counter, not `dispatchContractCall`), blend (a leftover half-paragraph), comet (no per-source orphan reporter exists; self-pair swaps), phoenix (a 13th Map-schema pool, the single-event swap schema, migrations 0131/0132, and "no create events in the lake" which its own factory ledgers contradict), `sep41-supply.md`, `supply-observers.md` (`[supply] sdf_reserve_accounts`, and the Removed-variant fix has SHIPPED), `getting-started.md`, `agent-onboarding.md`, `SECURITY.md`, `CONTRIBUTING.md`, `web/explorer/CLAUDE.md`, `examples/curl/04-assets.sh` (the handler reads `order_by`, so `order=` silently returned the wrong ranking), and three package `doc.go` files naming functions that do not exist.
+- **docs:** 24 further stale claims across the public tree, each corrected to the code (#359). `methodology/vwap-aggregation.md` was wrong in six places despite a fresh `last_verified` — the outlier row described the whole-window filter when the served path is the time-local layer (`orchestrator.go` calls `FilterOutliersLocal`), the freeze row omitted #288's current-bucket composite reference, triangulation credited `triangulate.go` (zero non-test callers; the live math is the graph router), MAD-zero was said to need *identical* prices (a strict majority suffices), thin-history was said to fail open (only an EMPTY baseline does), and `prices_*.twap` was called unread (`twap_1h`/`twap_1d` are `avg(prices_1m.twap)`). `methodology/twap-ohlc.md` called `/v1/price` a tip endpoint — it is the closed-bucket surface, the tip is `/v1/price/tip` — and documented a first-non-empty stablecoin retry through a function C1-024 deleted; the handler COMBINES every peg constituent. Rate-limit tables said anon 60/min and free 1000/min: measured live, the hosted API answers `X-RateLimit-Limit: 6000` to an anonymous IP while a free key is stamped 1000 at mint, so the anon tier is currently the *higher* one and both docs now say so. Also: Rozo has four Payment contracts not three; `blend_emitter.md` was never linked from the protocol index (now is) and cited migration 0095 for a table created by 0096; `sorocredit.md` said `BackfillSafe ❌` where the registry says `true` (audited 2026-07-07) and listed 7 events where the code has 8 (`TreasuryUpdated`, found by the 2026-08-18 recognition audit); `sdex.md` said V0 claim atoms are a hard error when F-1233 made them decode as the legacy order-book shape; plus aquarius (migrations 0128-0130), band (the sink increments the events counter, not `dispatchContractCall`), blend (a leftover half-paragraph), comet (no per-source orphan reporter exists; self-pair swaps), phoenix (a 13th Map-schema pool, the single-event swap schema, migrations 0131/0132, and "no create events in the lake" which its own factory ledgers contradict), `sep41-supply.md`, `supply-observers.md` (`[supply] sdf_reserve_accounts`, and the Removed-variant fix has SHIPPED), `getting-started.md`, `agent-onboarding.md`, `SECURITY.md`, `CONTRIBUTING.md`, `web/explorer/AGENTS.md`, `examples/curl/04-assets.sh` (the handler reads `order_by`, so `order=` silently returned the wrong ranking), and three package `doc.go` files naming functions that do not exist.
 - **docs(ci):** the freshness gate never scanned the public tree, and widening it alone would have been a no-op (#359). `lint-docs.sh` §6 walked only `docs/architecture|operations|adr|contributing`, and it `continue`d silently on any file with no `last_verified` — so `docs/protocols` and `docs/methodology` were unwatched, and 15 of 17 protocol pages plus 2 of 5 methodology pages carried no frontmatter to age out. `docs/protocols/README.md` meanwhile promised each protocol team that "each page states … the `last_verified` date". Both roots are now scanned AND presence-checked (a missing `last_verified` is an error there, as it already is under operations/ and contributing/), and the 17 pages carry frontmatter dated from each page's own verification line — not from today, which would assert a lake re-census that did not happen. `docs/methodology/README.md` also gains the `local-currency-pricing.md` row it shipped without.
 - **api(spec):** `/v1/assets` omitted the `code` and `type` filters the handler reads, and the `/v1/signup` response omitted `key_prefix` and `email_verification_sent` that `signup.go` emits (#359). Spec plus all three generated artifacts regenerated.
 - **ops:** `ch-rebuild -write` could run as a SECOND writer inside the live projector's committed range (#333). `projected-rebuild` has refused that overlap since ADR-0048 D3, but its sibling bulk path had no cursor check at all (grep `cursor` in `ch_rebuild.go`: zero hits) — so `ch-rebuild -sources <projected> -to <tip> -write` re-derived rows the projector was still writing and re-stamped their `derive_generation`, violating invariant 7's one-writer rule by construction. `-write` now reads the live projector's cursor for every PROJECTED source in the run (resolved through `projector.BuildRegistry`, not a list kept in the tool) and refuses if any is still inside `[-from,-to]`, with the same semantics, boundary and `-allow-live-overlap` override as `projected-rebuild`; the shared predicate lives in one function so the two cannot drift. Dry runs write nothing and are not guarded, and the non-projected passes (`-sdex`, `-contract-calls`, band / soroswap-router) are untouched. The sanctioned projected use — `scripts/ops/ch-rebuild-projected.sh`'s DELETE-then-re-derive key repair, scoped below the live tail — passes the guard unchanged.
 - **ci:** the integration shard executed a package set it merely *hoped* matched the Makefile's (#333 F1). `scripts/ci/integration-shard.sh` carried a hand-copied `EXTRA_PKGS` guarded by a "keep in lockstep" comment and nothing ran the full suite, so a package added to `INT_TEST_PKGS` ran under `make test-integration`, compiled under `make test-integration-build`, and was executed by NO shard — a failing test there shipped green. The list is now DERIVED at run time from a new `make print-int-test-pkgs` target (`INT_TEST_PKGS` minus the sharded package) and fails closed when the makefile is unreadable, resolves empty, or no longer lists `./test/integration/...`. Fixture makefiles in `integration-shard-test.sh` pin that it TRACKS an addition rather than merely matching today's list.
 - **ci:** the shard's test-name filter dropped Unicode-named tests entirely (#333). `grep -E '^Test[A-Za-z0-9_]*$'` cannot match a Go identifier containing a Unicode letter, so `TestÜberweisung…` was listed by `go test -list`, removed by the filter, placed in no shard's `-run` regex, and never executed — green. The filter is now `'^Test[^[:space:]]*$'` (every non-test line `go test -list` emits contains whitespace), and `TestÜber` is in the self-test's stub listing so the existing partition assertion catches a regression.
-- **docs/ci:** one replay decision rule replaces three contradicting prescriptions (#333 F2). A `Replay-Plan:` commit trailer, `docs/operations/runbooks/oracle-unknown-symbols.md` and `scripts/ci/lint-replay-plan.sh`'s own FAIL example each named a DIFFERENT command for "a decoder changed, replay its history" — and the lint's example named `backfill`, a MinIO walk invariant 8 rules out that writes ZERO rows on a gated projected source. The rule now lives once, in `docs/architecture/ingest-pipeline.md` ("The replay decision rule": projected → `projector-replay` / `projected-rebuild`; non-projected lake passes → `ch-rebuild`; `backfill` never), and the runbook step, the lint's FAIL text and CLAUDE.md invariant 8 point at it. `lint-replay-plan.sh` also gained a warn-only advisory (never a failure) when a declared plan replays a projected source with `backfill`/`ch-rebuild`, with the source names derived from `internal/projector/registry.go` and the resolved count printed so a silent zero is visible.
+- **docs/ci:** one replay decision rule replaces three contradicting prescriptions (#333 F2). A `Replay-Plan:` commit trailer, `docs/operations/runbooks/oracle-unknown-symbols.md` and `scripts/ci/lint-replay-plan.sh`'s own FAIL example each named a DIFFERENT command for "a decoder changed, replay its history" — and the lint's example named `backfill`, a MinIO walk invariant 8 rules out that writes ZERO rows on a gated projected source. The rule now lives once, in `docs/architecture/ingest-pipeline.md` ("The replay decision rule": projected → `projector-replay` / `projected-rebuild`; non-projected lake passes → `ch-rebuild`; `backfill` never), and the runbook step, the lint's FAIL text and AGENTS.md invariant 8 point at it. `lint-replay-plan.sh` also gained a warn-only advisory (never a failure) when a declared plan replays a projected source with `backfill`/`ch-rebuild`, with the source names derived from `internal/projector/registry.go` and the resolved count printed so a silent zero is visible.
 - **aggregator:** the composite-reference verdict gauges outlived the evaluated set (#333). `stellarindex_aggregator_composite_corroboration` and the two leg gauges were only ever `Set`, never deleted, so once a pair gained a second venue and stopped being evaluated, the last eligible tick's `verdict="corroborated"` stood until process restart — a dashboard or alert reading it would report a verdict that bucket's freeze never consulted. The ineligible branch now retires all three series for that `(pair, window)`, matching `recordVenueVWAPs`' delete-then-set discipline.
 - **ops:** `scripts/ops/zfs-snapshot.sh` leaked its metrics temp file whenever a property read failed (#333). `write_metrics` builds `zfs_snapshot.prom.tmp.$$` inside a redirected brace group whose `die` on a failing `zfs get usedbysnapshots` exits straight past the `mv`, so every timer run left one file behind (node_exporter ignores non-`.prom` files, so no metric corrupted — the directory just filled). An EXIT trap now removes the in-flight temp file on any exit path, and the self-test injects a per-dataset `zfs get` failure to prove it.
 - **observability:** the API binary's 16 background-worker guards logged a panic and moved no metric (#368 M4). `stellarindex_worker_panicked` therefore never fired for a dead webhook sender, reaper or prewarm loop — the one thing that makes a silently-stopped worker visible. `recoverBackgroundWorker` now delegates to a new `worker.Report`, so every binary moves the same counter that the page rule reads. (`recover()` only works one frame deep, which is why the API helper cannot simply call `worker.Recover` and needs the recovered value handed to a shared reporter instead.)
@@ -228,7 +228,7 @@ against.
 - **migrations:** twelve stored `COMMENT ON` strings said something false and could not be corrected by editing the file that issued them — migration **0151** re-issues them (#357 F4/F5/F6, #358, #346 F9). A comment lives in the DATABASE catalog, so editing the original migration changes only what a FRESH database gets and leaves what an operator reads through `\d+` wrong forever. Corrected: `soroban_events.topics_xdr` pointed at a "ClickHouse-lake re-project" recovery that does not exist (the projector reads that table and writes the per-source tables; nothing writes the column back); `aquarius_protocol_fee.recipient` still told readers to join a trade to find the claimed token that 0139's `token` column carries from topic[1], which mis-attributes a two-token sweep; `aquarius_rewards_events` said "11 kinds" where the CHECK admits twelve (`config_rewards` was missing); `trades.usd_volume` said "derived by the aggregator post-insert; null until that run completes" when it is valued AT INSERT and a NULL means *no route*, so a consumer waiting for the value waits forever; `oracle_updates.contract_id` named `coinmarketcap` and the retired `chainlink-http` (measured on r1: chainlink, coingecko, ecb); `decoder_stats_5m` cited a `/v1/diagnostics/decoders` route that is not in the spec and named the aggregator as its writer instead of the indexer's statsflush worker; `completeness_snapshots` cited a gitignored `notes/` file; four table comments cited `docs/discovery/dexes-amms/*` and `showcase-site-data-inventory.md`, neither of which is in the tree. `customer_webhooks.secret_hash` gets its first comment, recording that it stores the RAW HMAC signing key, not a hash. Catalog-only; the down restores all eleven previous strings verbatim.
 - **migrations:** six never-wired scaffold tables and four orphaned Stripe columns dropped in **0152** (#358 items 2-6, #357 F8). `wasm_versions` + `contract_wasm_history` (0017), `tvl_observations` (0021), `anchors` (0023), `classic_asset_stats_5m` (0024) and `aggregator_exposures` (0025) shipped as schema for capabilities whose writer was never built; each had ZERO Go readers and writers at HEAD *and* in the released v0.57.0 tree, and `count(*) = 0` on r1. `\dt` showing a table is a claim that the capability exists and the data is merely sparse. Same for the `stripe_event_log` dead-letter (0118) and claim (0121) columns + their two partial indexes, whose writers were deleted in `d2185560`; the table itself stays, tombstoned with a comment. The up REFUSES with an exception if any table holds a row — loud, not silent. Ships with the two sibling enumerations that would otherwise break: `scripts/ops/add-missing-compression-policies.sql` (`ON_ERROR_STOP` + a policy call on a dropped table aborts the rest of the list) and `scripts/ops/config-assertions.sh` (`compression_policies_applied` would fail on r1 forever).
 - **migrations:** the repo carried two contradictory precedents for editing a shipped migration and now carries one written rule (#357 process finding). `lint-docs.sh` recorded that even a comment-only edit "CANNOT BE CORRECTED" and froze two wrong self-citations permanently, while `febf720a` edited nine shipped downs and refreshed the checksum baseline under `lint-migration-immutability.sh`'s own "deliberately editing → refresh the baseline" header. The rule, now in `migrations/README.md` "Amending a shipped migration" and quoted in both lints: *a shipped migration's UP body is immutable; its DOWN body and its header COMMENTS may be corrected through the baseline-refresh path with a CHANGELOG line; anything stored in the database needs a new migration.* `lint-docs.sh`'s exemption list is deleted — every `up.sql` must now cite its own number, with no grandfathered set to grow.
-- **migrations:** twenty header/down corrections applied under that rule. `0096` said "0095 up" and `0125` said "0124 up" (#357 F2/F3); `0087` cited a deleted `coins.go` (F13); `0134` said "three deterministic tiers" and enumerated two (F10); `0135.down` recomputed 0134's slugs WITHOUT the `taken` EXISTS branch — correct today only because the `SET slug = NULL` above it happens to make the EXISTS always false, which is statement order, not the tier rule (F10); `0148.down` cited "the 0101/0092 decompress convention" when 0092 has an explicit `BEGIN;` and calls no `decompress_chunk` (F11); `0041` shipped an un-finished "— wait, actually" draft paragraph describing a column layout that was never true; `0057` cited a CLAUDE.md statement that is no longer there; and eleven citations pointed at files removed from the tree (`showcase-site-data-inventory.md`, `docs/discovery/dexes-amms/*`, `docs/audit-2026-04-29/`, `internal/sources/forex/`, the gitignored `notes/`, and `feedback_no_unbounded_trade_scan.md`, an agent auto-memory note that has never been in this repo).
+- **migrations:** twenty header/down corrections applied under that rule. `0096` said "0095 up" and `0125` said "0124 up" (#357 F2/F3); `0087` cited a deleted `coins.go` (F13); `0134` said "three deterministic tiers" and enumerated two (F10); `0135.down` recomputed 0134's slugs WITHOUT the `taken` EXISTS branch — correct today only because the `SET slug = NULL` above it happens to make the EXISTS always false, which is statement order, not the tier rule (F10); `0148.down` cited "the 0101/0092 decompress convention" when 0092 has an explicit `BEGIN;` and calls no `decompress_chunk` (F11); `0041` shipped an un-finished "— wait, actually" draft paragraph describing a column layout that was never true; `0057` cited a AGENTS.md statement that is no longer there; and eleven citations pointed at files removed from the tree (`showcase-site-data-inventory.md`, `docs/discovery/dexes-amms/*`, `docs/audit-2026-04-29/`, `internal/sources/forex/`, the gitignored `notes/`, and `feedback_no_unbounded_trade_scan.md`, an agent auto-memory note that has never been in this repo).
 - **explorer(a11y):** fifteen accessibility, i18n and reflow defects from the
   #335 audit. Headline (F1): the `/divergences` chart series could be picked
   **only** by clicking a `<tr>` — no `tabIndex`, no key handler, no role — so
@@ -876,14 +876,14 @@ against.
 
 ### Changed
 
-- **CLAUDE.md is now about the project, not about one deployment.** 133
+- **AGENTS.md is now about the project, not about one deployment.** 133
   lines describing how the reference deployment (`r1`) is operated —
   ansible-managed host config, the `run-heavy-job.sh` wrapper, cutting a
   release, deploying, and the long-session working cadence — moved to
   `docs/operations/maintainer-workflow.md`. What stays is true for
   anyone who clones or forks the repo: the invariants, the repo map, the
   domain traps, and the contributor recipes. Also corrects two stale
-  claims: CLAUDE.md referenced a `/v1/currencies` route that does not
+  claims: AGENTS.md referenced a `/v1/currencies` route that does not
   exist in the spec (removed; only the in-process `CurrenciesReader`
   seam survives), and the repo map described the projector as reading
   from `soroban_events` without noting that the ClickHouse
@@ -1920,7 +1920,7 @@ read this section rather than skim it:
   available" in a register that marks its dead levers explicitly.
   Trades retention is **forbidden**: migration 0031 removed it, 0031's
   own `.down.sql` names re-adding one as "the EXACT mechanism of the
-  recurring 'rogue retention on trades' data-loss drift", CLAUDE.md
+  recurring 'rogue retention on trades' data-loss drift", AGENTS.md
   carries it as a standing invariant, Ash re-signed it as launch
   decision D5, and `test/integration/migrations_test.go` pins it.
   Arming it would also trip the completeness verifier immediately —
@@ -2279,7 +2279,7 @@ read this section rather than skim it:
   `gh pr list --state all --search`, `git branch -r`, backlog + runbook
   grep; PR names the alert and root cause vs symptom; supersede by
   closing with a comment) and cross-referenced from CONTRIBUTING.md and
-  CLAUDE.md. The PR template gains **Alert / finding** and **Prior
+  AGENTS.md. The PR template gains **Alert / finding** and **Prior
   art** fields. `.github/workflows/orphan-branches.yml` (daily +
   `workflow_dispatch`, `contents:read` / `pull-requests:read` /
   `issues:write`) lists every remote branch other than `main` /
@@ -2710,7 +2710,7 @@ read this section rather than skim it:
   and a redstone length-mismatch that refuses without recovery.
   `sev-status-page-update.md` still pointed at `web/status/`, now a
   redirect-only stub — the live page is the explorer's
-  `web/explorer/src/app/status/` (CLAUDE.md's copy of the same drift
+  `web/explorer/src/app/status/` (AGENTS.md's copy of the same drift
   is fixed by #326, above). `exporter-down.md`
   attributed r1's exporters to the redis-sentinel role, which r1 never
   runs. Guard: `lint-docs.sh` §11's runbook metric-name check was
@@ -3049,7 +3049,7 @@ read this section rather than skim it:
   pinned by `TestListMEVEvents_LimitNormalisation`; behaviour unchanged.
 - **Agent-orientation docs re-swept against HEAD; the two claims a
   machine can re-derive are now CI-enforced (`lint-docs.sh` §18,
-  issue #326).** CLAUDE.md's repo map still located the shipped status
+  issue #326).** AGENTS.md's repo map still located the shipped status
   page at `web/status/` — it lives in the explorer at
   `web/explorer/src/app/status/` (stellarindex.io/status) and
   `web/status/` is a redirect-only Cloudflare Pages stub 301-ing to it
@@ -3057,8 +3057,8 @@ read this section rather than skim it:
   full stack"; `dev.yaml` has only Timescale/Redis/MinIO) and
   `make docs-all` ("+ obs/*.go metric Name: fields"; `docs-metrics` is
   an explicit no-op) descriptions that #259 had already corrected in
-  CLAUDE.md. New §18a asserts AGENTS.md's quick-start block is a
-  VERBATIM subset of CLAUDE.md's — duplicated prose is what drifts, so
+  AGENTS.md. New §18a asserts AGENTS.md's quick-start block is a
+  VERBATIM subset of AGENTS.md's — duplicated prose is what drifts, so
   shorten by dropping a line, never by rewording one — and §18b asserts
   that an orientation doc naming `web/status` also names where the page
   actually lives, self-disarming if the stub redirect ever goes away.
@@ -3066,7 +3066,7 @@ read this section rather than skim it:
   (reflector/redstone/band record an unmapped symbol VERBATIM as a
   record-layer `raw:<symbol>` row instead of dropping the slot), and a
   note that an explicit issues-only / one-batch-PR agreement overrides
-  CLAUDE.md's default long-session commit→merge→next cadence.
+  AGENTS.md's default long-session commit→merge→next cadence.
 - **One unrepresentable RedStone `feed_id` no longer discards the entire
   `write_prices` batch.** Since the oracle capture-totality change an
   unregistered feed_id becomes a `raw:<feed_id>` row, and the raw
@@ -11306,7 +11306,7 @@ Tested against Stellar protocol v23.
   packages now apt-mark held, install gated, three new assertions).
   Guardrails: weekly `ansible-drift.yml` (fails on divergence), CI ansible
   syntax+lint job, hourly config-assertions (now 12 checks), and the
-  CLAUDE.md rule: every r1 host change lands in configs/ansible in the
+  AGENTS.md rule: every r1 host change lands in configs/ansible in the
   same PR.
 - **r1 ↔ ansible drift audit + config-assertion watchdog.** Follow-up to the
   rsyslog apply-gap finding: audited BOTH directions between r1's live state
@@ -11389,7 +11389,7 @@ Tested against Stellar protocol v23.
   precedence); Business tier consistently 60,000 req/min (backend truth);
   billing copy no longer promises self-service that doesn't exist.
 
-- **The agent skill library** (`.claude/skills/`, indexed in CLAUDE.md): nine
+- **The agent skill library** (`docs/contributing/procedures/`, indexed in AGENTS.md): nine
   executable skills encoding this repo's procedures AND its incident-corpus
   judgment so sonnet-class agents (and humans) work at standard without
   tribal knowledge. Construction skills (`/add-onchain-source`,
@@ -11666,7 +11666,7 @@ Tested against Stellar protocol v23.
 
 ### Documentation
 - **Docs-integrity sweep: the institutional-knowledge layer agrees with
-  itself again.** `docs/architecture/overview.md` now EXISTS (CLAUDE.md and
+  itself again.** `docs/architecture/overview.md` now EXISTS (AGENTS.md and
   engineering-standards.md cited it for months; it routes to the real docs);
   the CS-129 kubectl-on-a-systemd-fleet commands in insert-errors +
   all-ingestion-down are systemd/psql; the CS-008 finding-ID collision is
@@ -13372,7 +13372,7 @@ Pre-deploy operator note: api + ops binary restart. Indexer + aggregator unchang
   documentation contract — three ADRs now describe the single
   writer per data domain (projector for Soroban-derived, direct
   for trades), the single data-derived coverage signal, and the
-  raw `soroban_events` landing zone they share. CLAUDE.md gains
+  raw `soroban_events` landing zone they share. AGENTS.md gains
   Invariant 7 ("One writer per data domain") summarising the
   contract for future agents.
 
@@ -13549,7 +13549,7 @@ Tested against Stellar Protocol 23 (Whisk).
 - DeFindex decoder enumerates the full upstream event surface (EVERY-event policy). `classify()` (strategy layer) adds `harvest`; `classifyVault()` adds the nine governance / admin / multiplexed-rebalance topics from the audit doc: `rescue`, `paused`, `unpaused`, `nreceiver`, `nmanager`, `nemanager`, `rbmanager`, `dfees`, `rebalance`. Classification only — no canonical Trade or VaultFlow produced for these yet; the goal is closed-set completeness so future per-event decoders (or the `soroban_events` landing zone, ADR-0029) can route on them. Test fixtures updated: the previous "harvest (not Phase A) → " case flips to a positive classification, and every new vault topic gains a per-name subtest.
 - Phoenix decoder's `classifyAny()` now enumerates the six previously-unclassified governance/lifecycle topics published by `phoenix-contracts/contracts/pool/src/contract.rs`: the four admin variants under topic[0]=`"XYK Pool: "` (admin-replacement-requested, replace-with-new-admin, undo-admin-change, accepted-new-admin) plus the two `"initialize"` variants (XYK LP token_a / token_b). Same EVERY-event policy rationale as the aquarius change below — these topics were silently dropped at the classification step despite Phoenix being `BackfillSafe=true`. Classification only; only swap continues to produce a `canonical.Trade`. `actionAdmin` + `actionInitialize` enum values added so future per-event decoders or the `soroban_events` landing zone (ADR-0029) can route on them.
 - Aquarius decoder's `classify()` now enumerates every topic published by `aquarius-amm/liquidity_pool_events/src/lib.rs` (verified 2026-05-27 against the upstream Rust). Eleven previously-unclassified topics (`reserves_sync`, `set_protocol_fee`, `claim_protocol_fee`, `kill_deposit`/`unkill_deposit`, `kill_swap`/`unkill_swap`, `kill_claim`/`unkill_claim`, `kill_gauges_claim`/`unkill_gauges_claim`) are now recognised. Per the EVERY-event policy (`project_every_event_principle`, 2026-05-25 — `classify()` is the authoritative completeness gate before flipping `BackfillSafe`), this closes a latent invariant violation: aquarius was already `BackfillSafe=true` but eleven event topics were silently dropped at the classification step. Only `trade` produces a `canonical.Trade` today; the new classifications make the topics visible to the `soroban_events` landing zone (ADR-0029) and any future per-event decoder. A `TestClassify_completenessVsUpstream` forcing function fails CI if a future `Event*` constant is added without wiring its `TopicSymbol*` into `classify()`.
-- SEP-41 transfer projection: new `sep41_transfers` hypertable (migration 0047) materialises every `transfer` / `approve` / `set_admin` / `set_authorized` event for a watched SEP-41 contract via a sibling-of-`sep41_supply` decoder at `internal/sources/sep41_transfers/`. New endpoint `GET /v1/contracts/{contract_id}/transfers?from=&to=&limit=` exposes the per-account audit trail with per-(contract, from) and per-(contract, to) indexes backing sub-100ms scans. `stellarindex-ops sep41-transfers-backfill -from -to` subcommand replays the soroban_events landing zone (ADR-0029) through the live decoder for historical coverage. Closes F-0021 partial-scope (audit-2026-05-26) and unlocks the per-account net-position Stellar moat that CG/CMC structurally cannot do (their data ingest doesn't observe on-chain transfers). Operator must apply migration 0047 manually (CLAUDE.md migrations-not-auto-deployed).
+- SEP-41 transfer projection: new `sep41_transfers` hypertable (migration 0047) materialises every `transfer` / `approve` / `set_admin` / `set_authorized` event for a watched SEP-41 contract via a sibling-of-`sep41_supply` decoder at `internal/sources/sep41_transfers/`. New endpoint `GET /v1/contracts/{contract_id}/transfers?from=&to=&limit=` exposes the per-account audit trail with per-(contract, from) and per-(contract, to) indexes backing sub-100ms scans. `stellarindex-ops sep41-transfers-backfill -from -to` subcommand replays the soroban_events landing zone (ADR-0029) through the live decoder for historical coverage. Closes F-0021 partial-scope (audit-2026-05-26) and unlocks the per-account net-position Stellar moat that CG/CMC structurally cannot do (their data ingest doesn't observe on-chain transfers). Operator must apply migration 0047 manually (AGENTS.md migrations-not-auto-deployed).
 - `/v1/ohlc` now supports multi-bar series via `interval=1m|5m|15m|30m|1h|4h|1d|1w` + `limit=N` (max 1000, default 100). Closes the CG/CMC parity gap where consumers expected a series response instead of a single bar (F-0071). Single-bar behaviour preserved when `interval` is unset. Multi-bar mode reads the closed-bucket `prices_<N>` CAGGs (with re-bucketing via `time_bucket` for 5m/30m ← `prices_1m` and 4h ← `prices_1h`); the in-progress bucket is excluded per ADR-0015. Empty series returns 200 + `intervals: []` (NOT 404 — series clients expect a stable shape). Wire fields are compact (`t/o/h/l/c/v_base/v_quote/n`) matching CoinGecko / CoinMarketCap conventions.
 - Density coverage calc (`/v1/diagnostics/ingestion`) now includes the live ledgerstream cursor's coverage from `first_ledger` (newly persisted via migration 0046). Density_pct can now hit 1.0 on a perfectly-backfilled-plus-live-tail source. Previously the calc was backfill-cursor-only and capped at ~0.98 even at perfect ingestion (per `project_density_100pct_goal` mission). The `ingestion_cursors` table gains a `first_ledger` column populated for existing backfill cursors by parsing `from` out of `sub_source`; the live cursor's `first_ledger` is captured by `UpsertCursor`'s INSERT branch and preserved across every advance by the ON CONFLICT DO UPDATE clause. NULL `first_ledger` (pre-migration rows) falls back to `sourceGenesisLedger` so the live span is credited [genesis, last_ledger] until the indexer re-inserts.
 - docs-lint check that fails CI when any /v1/incidents entry has unchecked `[ ]` follow-up checkboxes AND the incident is older than 30 days (F-0099 forcing function). Closes the meta-failure-mode of post-mortem action items rotting indefinitely between recurrences of the same cascade — the 2026-05-10 SEV-2 shipped with 4 `[ ]` items and the same cascade recurred on 2026-05-26 with all four still unchecked.
@@ -14795,7 +14795,7 @@ cascade surfaces in minutes instead of hours.
   `ClassExchange` — no trades, no price signal — or the existing
   `ClassRouter` semantic, which elides the cross-chain
   dimension). Implementation lands after class-design sign-off
-  (per CLAUDE.md "Add a new on-chain Soroban DEX" + WASM-history
+  (per AGENTS.md "Add a new on-chain Soroban DEX" + WASM-history
   walk before `BackfillSafe: true`). The user direction was
   "CCTP shouldn't have any history because it is brand new" —
   so initial implementation is live-only ingest from current
@@ -16230,7 +16230,7 @@ cascade surfaces in minutes instead of hours.
   additional codex findings?" was a real question, not a
   rhetorical one):
     - **F-1211 reopened** (the wave-57 fix missed 4 surfaces).
-      Updated `CLAUDE.md` repo-map, `launch-readiness-backlog.md`
+      Updated `AGENTS.md` repo-map, `launch-readiness-backlog.md`
       L4.11 row, `launch-task-list.md` G4 entry, and
       `deploy/comms/{README,incident-update}.md` to describe the
       shipped `web/status/` + `internal/incidents/data/` Markdown
@@ -16437,7 +16437,7 @@ cascade surfaces in minutes instead of hours.
 - `web/explorer/README.md` factually corrected. Two real bugs:
   (1) the README claimed the explorer lives at
   `app.stellarindex.io` — wrong; that's the dashboard's
-  hostname (per CLAUDE.md, the OpenAPI generated comment, and
+  hostname (per AGENTS.md, the OpenAPI generated comment, and
   `web/dashboard/README.md`). Explorer lives at
   `stellarindex.io`. (2) The README's "scaffold + everything is
   a stub; real panels arrive at Phase 7" framing was three
@@ -16462,7 +16462,7 @@ cascade surfaces in minutes instead of hours.
   noting that the rc.48 cut removed both `/v1/coins` and
   `/v1/currencies` entirely. Adds a pointer to the OpenAPI spec
   + the GlobalAssetView vs AssetDetail discriminator pattern
-  (CLAUDE.md surprise list) for readers landing here looking for
+  (AGENTS.md surprise list) for readers landing here looking for
   the current contract. The doc is preserved as a record of how
   the migration was done.
 - Four alert runbooks normalised to the wave-78 template shape
@@ -16571,7 +16571,7 @@ cascade surfaces in minutes instead of hours.
   fiat fix. Cross-references the wave-70 CG runbook section.
 - `runbooks/decode-errors.md` adds a new "Per-source quick
   reference" section pulling the per-source decode-regression
-  surprises from CLAUDE.md and the per-protocol decode notes into a
+  surprises from AGENTS.md and the per-protocol decode notes into a
   single operator-facing matrix.
   Covers the seven sources whose ingest path has a known wire-
   level surprise that operators routinely re-discover the hard way
@@ -17060,7 +17060,7 @@ rc.48 deploy to R1.
     negative case so a future change can't make the warning fire
     on the steady state.
 
-- **Guard tests for two CLAUDE.md surprises (F-1242).**
+- **Guard tests for two AGENTS.md surprises (F-1242).**
   Locks behaviours that no production test previously asserted:
   - `comet.TestDecodeSwap_DispatchIsByTopicNotContract` proves
     that two events with different `ContractID`s but the same
@@ -17213,7 +17213,7 @@ rc.48 deploy to R1.
 - **`internal/sources/comet/adapter_test.go`: pin
   topic-vs-contract-id contract (F-1242).** New
   `TestDecoder_Decode_NoContractIDDiscrimination` makes the
-  CLAUDE.md surprise-list claim ("Comet decoder matches by
+  AGENTS.md surprise-list claim ("Comet decoder matches by
   topic, not contract address") executable. Any future change
   adding a contract-id allow-list at the decoder layer (instead
   of downstream filtering) MUST flip the assertion.
@@ -18114,7 +18114,7 @@ rc.48 deploy to R1.
   byte-identical contract this introduces (every region
   ships the SAME peg list; cross-region monitor verifies
   config hash). The policy was previously documented only
-  in CLAUDE.md "things that will surprise you" + scattered
+  in AGENTS.md "things that will surprise you" + scattered
   PR descriptions.
 - **Three new Prometheus alert rules backing the 2026-05-10 incident
   postmortem** (#1228 ships the runbook + customer-facing post;
@@ -21822,9 +21822,9 @@ pipeline itself is what's being tested.
 
 ### Documentation
 
-- **README + CLAUDE.md mention `web/explorer/`.** Adds a "Hosted
+- **README + AGENTS.md mention `web/explorer/`.** Adds a "Hosted
   UI / explorer" entry to the README's Start-here list and a
-  one-line entry in the CLAUDE.md repo map. Both files knew
+  one-line entry in the AGENTS.md repo map. Both files knew
   about the API + reference docs but not the showcase site that
   visitors actually land on first.
 
@@ -22170,7 +22170,7 @@ pipeline itself is what's being tested.
   comprehensive scan across all 251 markdown files. Outcomes:
   - **66 docs had `last_verified` dates older than their git
     mtime** — bumped to 2026-05-03 in bulk so the
-    "freshness checked in CI" claim from CLAUDE.md actually
+    "freshness checked in CI" claim from AGENTS.md actually
     holds.
   - **10 broken cross-doc links fixed** —
     getting-started's ADR-0019 typo (`anomaly-detection-and-freeze-policy`
@@ -22184,11 +22184,11 @@ pipeline itself is what's being tested.
     one-level-too-shallow ADR refs. **1,227 of 1,228 relative
     `.md` links now resolve** (the 1 remaining is a literal
     `<<file>>.md` template placeholder).
-  - **CLAUDE.md repo tree** updated to include the audit
+  - **AGENTS.md repo tree** updated to include the audit
     workspace that was missing.
   - The internal research-notes index gains an explicit
     "read-only since 2026-04-22" banner pointing at the
-    closure doc, removing the contradiction with CLAUDE.md.
+    closure doc, removing the contradiction with AGENTS.md.
   - **README.md status line** refreshed to reflect r1 live +
     multi-region as the remaining launch blocker.
   - ADR statuses spot-checked: 23 Accepted, ADR-0012 explicitly
@@ -22959,7 +22959,7 @@ pipeline itself is what's being tested.
   pkg/client/types.go decision** — said `pkg/types` was a
   Planned package, "deferred until refactor", with the SDK
   "deliberately duplicating types to keep the skeleton
-  focused". CLAUDE.md captures the architectural decision
+  focused". AGENTS.md captures the architectural decision
   ("types live alongside the client in pkg/client/types.go
   rather than a separate pkg/types directory") and
   `pkg/client/types.go` is shipped today. Doc rewritten to
@@ -22980,7 +22980,7 @@ pipeline itself is what's being tested.
   ADR-0019 implementation** — the table marked Phase 1
   ("Not yet shipped"), Phase 2 ("Not yet shipped"), and the
   `internal/divergence/` cross-reference ("Planned package per
-  CLAUDE.md"). All three are live: Phase 1 in
+  AGENTS.md"). All three are live: Phase 1 in
   `internal/aggregate/anomaly/`, Phase 2 in
   `internal/aggregate/baseline/` + `internal/aggregate/confidence/`,
   and the divergence package writes
@@ -23447,7 +23447,7 @@ pipeline itself is what's being tested.
   `factory_seed.go` (Soroswap / Aquarius factory-deploys-pair
   contracts). The CEX shape sometimes splits `consumer.go` into
   `streamer.go` + `backfill.go` (binance). Both docs now name
-  `consumer.go` as the canonical fourth file (matching CLAUDE.md
+  `consumer.go` as the canonical fourth file (matching AGENTS.md
   §"Add a new CEX connector") and mention the per-shape extras.
   Continuation of the L6.5 doc-sweep.
 - **`README.md` no longer claims a non-existent Stellar
@@ -23455,7 +23455,7 @@ pipeline itself is what's being tested.
   line at the top of the README pointed at a network protocol
   that doesn't exist (the only "protocol 25" in the repo is in a
   hypothetical SEV-2 drill scenario explicitly marked
-  `(hypothetical)`). Real protocol per CLAUDE.md +
+  `(hypothetical)`). Real protocol per AGENTS.md +
   contract-schema-evolution.md + semver-policy.md is **23**
   (Whisk, mainnet 2025-09-03, CAP-67 unified events). README
   now matches. Also fixed README's repo-layout block: `cmd/`
@@ -23463,7 +23463,7 @@ pipeline itself is what's being tested.
   "k8s / baremetal" instead of the actual
   docker-compose/systemd/monitoring/status-page subdirs;
   `configs/` description tightened to call out the ansible
-  shape. Same drift family as #470 (CLAUDE.md tree). L6.5
+  shape. Same drift family as #470 (AGENTS.md tree). L6.5
   doc-sweep continuation.
 - **`lint-docs.sh` no longer exempts `/v1/price/stream` from the
   "spec ↔ handler" check** — the planned_regex allow-list was
@@ -23476,20 +23476,20 @@ pipeline itself is what's being tested.
   with a comment on what to do if a future doc-but-stub endpoint
   lands. Closes a small drift in CI strictness. L6.5 doc-sweep
   continuation.
-- **`AGENTS.md` and `CLAUDE.md` quick-reference make-targets are
+- **`AGENTS.md` and `AGENTS.md` quick-reference make-targets are
   accurate** — `AGENTS.md` claimed `make lint` runs "gofumpt +
   golangci-lint + archlint"; the actual `lint` target only runs
   golangci-lint (gofumpt is a golangci formatter), and the
   architectural import-boundary check is the separate
   `lint-imports` target. `make verify` was missing from
-  `CLAUDE.md`'s build-and-test quick-reference even though
+  `AGENTS.md`'s build-and-test quick-reference even though
   `verify.sh` is the canonical pre-push gate (fmt+vet+lint+
   docs+test); operators reading just the top quick-reference
   would miss it. Both files now describe `make verify` with the
   same definition the Makefile uses, and the docs-all line on
   both files mentions metric Name: regen alongside OpenAPI +
   struct tags. Continuation of the L6.5 doc-sweep.
-- **`CLAUDE.md` repo-tree is now accurate** — the orientation
+- **`AGENTS.md` repo-tree is now accurate** — the orientation
   file every AI agent reads cold claimed `cmd/ binary entry
   points (four in total)` while listing 5 entries; reality is 6
   (the `stellarindex-sla-probe` binary that ships the SLA-evidence
@@ -23788,7 +23788,7 @@ pipeline itself is what's being tested.
   (`dex` / `cex` / `fx`, omitted for non-exchange classes) lets UI
   consumers group exchange venues without reverse-engineering the
   name prefix. `backfill_safe` surfaces the per-WASM-hash audit
-  state that gates `stellarindex-ops backfill` (CLAUDE.md "Soroban
+  state that gates `stellarindex-ops backfill` (AGENTS.md "Soroban
   DeFi contracts upgrade in place"): operators can now read it
   off the API instead of grepping
   `internal/sources/external/registry.go`. Additive — no existing
@@ -24564,9 +24564,9 @@ pipeline itself is what's being tested.
 
 - **Public-flip checklist is 16/16 verified (#342)**: the two
   rows in `docs/operations/public-flip.md` that required
-  human-in-the-loop review (the `CLAUDE.md` private-archive
+  human-in-the-loop review (the `AGENTS.md` private-archive
   check and the internal research-notes sensitive-content check) are
-  now ☑ with citations. CLAUDE.md got a pattern scan + manual
+  now ☑ with citations. AGENTS.md got a pattern scan + manual
   spot-checks — 0 private references, 2 non-blocking editorial
   recs noted; the research notes got a 9-pattern sensitivity scan
   across all 48 files — 0 hits in credential/PII categories,
@@ -24665,7 +24665,7 @@ pipeline itself is what's being tested.
   references would have surfaced at Prometheus reload time on
   a production node. Closes the gap.
 
-- **`CLAUDE.md` "Add a new supply observer" recipe (#323)**: the
+- **`AGENTS.md` "Add a new supply observer" recipe (#323)**: the
   six supply observers shipped through Tasks #54–#56 follow a
   pattern (`doc.go` + `dispatcher_adapter.go`, three possible
   dispatcher hooks per the LCM/Op/Event split) that has no entry
@@ -24816,7 +24816,7 @@ pipeline itself is what's being tested.
   been via `dispatcher.Decoder` for a while; the only remaining
   consumer of `consumer.Source` is the legacy orchestrator's own
   test file. Future agents reading these would be told to follow
-  the legacy pattern that CLAUDE.md invariant #6 explicitly
+  the legacy pattern that AGENTS.md invariant #6 explicitly
   forbids.
 
 - **`configs/example.toml` `[stellar]` section explains the
@@ -27193,11 +27193,11 @@ pipeline itself is what's being tested.
   be WASM-version-aware, what's known per source, handling
   strategy (Map-field-by-name, topic-dispatch, WASM-hash column
   on ingest rows, gated backfill).
-- CLAUDE.md "Things that will surprise you" entry linking to the
+- AGENTS.md "Things that will surprise you" entry linking to the
   new architecture doc.
 
 - Repository foundation: `LICENSE` (Apache-2.0), `README.md`,
-  `CLAUDE.md`, `CHANGELOG.md`, `CONTRIBUTING.md`,
+  `AGENTS.md`, `CHANGELOG.md`, `CONTRIBUTING.md`,
   `CODE_OF_CONDUCT.md`, `SECURITY.md`, `CODEOWNERS`.
 - ADRs 0001–0007 + 0010: Horizon deprecated, MinIO S3-compat,
   i128 no-truncation, Tier-1 validator aspiration, monorepo,
@@ -27507,7 +27507,7 @@ pipeline itself is what's being tested.
   decoder). Replaces the earlier "RPC-based source
   `BackfillRange`/`StreamLive`" pattern; documents that
   stellar-rpc was removed from r1 on 2026-04-23.
-- CLAUDE.md **Invariant #6** — no stellar-rpc in production
+- AGENTS.md **Invariant #6** — no stellar-rpc in production
   ingest. Pointer to the ingest-pipeline doc.
 - **`scripts/ci/lint-imports.sh`** + `lint-imports.baseline` —
   build-time enforcement of three architectural boundaries:

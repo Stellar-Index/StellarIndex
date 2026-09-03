@@ -3,7 +3,7 @@ title: Post-mortem — mainnet "Degraded performance" alert cluster
 date: 2026-08-27
 status: in-progress
 severity: P3 (all tickets — zero customer impact; the API served correct data throughout)
-author: ops (Claude-assisted)
+author: ops
 ---
 
 # Post-mortem — 2026-08-27 mainnet alert cluster

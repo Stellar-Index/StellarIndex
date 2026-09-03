@@ -15,7 +15,7 @@ import (
 // double-check for the (rare) case where the dispatcher gets a
 // topic-bytes match against a different protocol that happens to
 // use the same symbol (Soroban's symbol_short! gives no protocol
-// namespace, so collisions are possible — see CLAUDE.md's
+// namespace, so collisions are possible — see AGENTS.md's
 // "Comet uses a shared ('POOL', <event>) topic" warning).
 var ErrUnknownEvent = errors.New("rozo: unknown event topic")
 

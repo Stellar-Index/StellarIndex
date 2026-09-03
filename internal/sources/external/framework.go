@@ -170,7 +170,7 @@ type Metadata struct {
 	// event body schemas can vary across the same contract over time.
 	// Live ingest only ever sees current WASM; backfill sees every
 	// prior version. Decoding old events with a current-only decoder
-	// produces silently wrong trades. See CLAUDE.md "Soroban DeFi
+	// produces silently wrong trades. See AGENTS.md "Soroban DeFi
 	// contracts upgrade in place" + docs/architecture/contract-
 	// schema-evolution.md for the full picture.
 	//

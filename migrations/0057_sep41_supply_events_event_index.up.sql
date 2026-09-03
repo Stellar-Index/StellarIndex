@@ -14,8 +14,8 @@
 --
 -- Existing rows get event_index=0 (column default). The watched-set was
 -- restricted when this shipped (2026-05) so the table was effectively empty and
--- the ADD-PK succeeded directly. (This cited CLAUDE.md for the "SEP-41 observer
--- not enabled on r1" claim; CLAUDE.md no longer says that, and the live source
+-- the ADD-PK succeeded directly. (This cited AGENTS.md for the "SEP-41 observer
+-- not enabled on r1" claim; AGENTS.md no longer says that, and the live source
 -- of truth is the deployment's `supply.watched_sep41_contracts` — empty leaves
 -- the pipeline off. Corrected 2026-09-02, #358.) On a populated host, DELETE
 -- the rows before the ADD-PK and re-derive with the event_index-aware sink (the

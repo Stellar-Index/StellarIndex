@@ -112,7 +112,7 @@ func QueryHashChainWindowLinks(ctx context.Context, addr string, from, to, strid
 // SeqPresent / PredecessorPresent let the caller distinguish "a genuine
 // substrate gap at the seam" (one or both ledgers absent — verify-contiguity
 // is the tool that reports gaps precisely; this tool still counts it as a
-// broken link per ADR-0034 CLAUDE.md guidance: a missing predecessor IS a
+// broken link per ADR-0034 AGENTS.md guidance: a missing predecessor IS a
 // real chain break) from "both present but the hash doesn't match" (a true
 // corruption). Linked is true only when both are present AND the hashes
 // agree.

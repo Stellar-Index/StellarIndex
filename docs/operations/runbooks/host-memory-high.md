@@ -84,7 +84,7 @@ ssh root@136.243.90.96 'systemctl status "run-heavy-*.scope" --no-pager'
    nowhere in the ansible role, so ARC follows the ZFS default
    (up to ~half of RAM, shrinking under pressure).
    `TODO(ash): if a hand-set ARC cap exists live on r1, codify it
-   in the role (CLAUDE.md ansible-drift rule); if not, decide
+   in the role (AGENTS.md ansible-drift rule); if not, decide
    whether one is wanted.`
    - Signal: `arcstat` / `/proc/spl/kstat/zfs/arcstats` shows ARC
      size close to RAM size.

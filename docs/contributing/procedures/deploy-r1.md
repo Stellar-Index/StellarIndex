@@ -1,10 +1,10 @@
 ---
-name: deploy-r1
-description: Deploy a released Stellar Index version to the r1 production host — the workflow invocation, migration semantics, post-deploy verification battery, and rollback. Use when asked to deploy, roll out, or roll back on r1.
+title: Deploy to the reference deployment (r1)
+last_verified: 2026-09-03
+status: living doc
 ---
 
-# /deploy-r1
-
+# Deploy to the reference deployment (r1)
 Full runbook: `docs/operations/deploy-workflow.md`. Deploys are
 operator-triggered, never automatic on tag. Confirm with @ash before
 deploying anything he hasn't asked to ship.
@@ -69,7 +69,7 @@ Then watch for 10–15 min: the freshness watchdog + verdict
 (`/v1/coverage`, `/v1/status`) and the cursor advancing — a restart
 once reset the ledgerstream cursor 65k ledgers back (2026-06-01);
 first stuck-cursor hypothesis is ALWAYS `mc stat` the bucket for
-cursor+1 (see /diagnose-stellarindex).
+cursor+1 (see docs/contributing/procedures/diagnose-stellarindex.md).
 
 ## Rollback
 

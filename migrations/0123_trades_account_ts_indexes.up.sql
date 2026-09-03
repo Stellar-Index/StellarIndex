@@ -11,7 +11,7 @@
 -- (internal/storage/timescale/account_trades.go). `trades` carries NO
 -- account-leading index — every existing index leads with asset, pair,
 -- or source (0001/0025/0037) — so without these two the read is a
--- full hypertable scan, the exact class CLAUDE.md's "No unbounded
+-- full hypertable scan, the exact class AGENTS.md's "No unbounded
 -- trade-scan queries" rule exists for.
 --
 -- WHY taker/maker, NOT a source_account column: `trades` has never

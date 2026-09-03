@@ -25,7 +25,7 @@ status: COMPLETE — all 34 system areas + 7 cross-cutting hunts + full Audit-2 
 > CS-087 divergence silently passes when references are down (XLM/USD can never
 > fire) · CS-088 the divergence alert can't see reference outages.
 > **Decoder trust:** CS-026 comet/aquarius/phoenix/defindex gate on topic bytes →
-> look-alike contracts inject fabricated trades · CS-127 CLAUDE.md falsely claims
+> look-alike contracts inject fabricated trades · CS-127 AGENTS.md falsely claims
 > only Comet is ungated.
 > **Security:** CS-009 CF OG-function SSRF · CS-100 `org_verified` computed but not
 > enforced → issuer impersonation · CS-124 dashboard CSRF (SameSite=None, no token).
@@ -90,7 +90,7 @@ refutation pass.
 | CS-001 | Med | Live GCP service-account key in the working tree (gitignored/untracked footgun). | New |
 | CS-016/018/023/024 | Low | redispub no-restart silent-degrade; SEP-40 depeg not flagged; CH non-FINAL chart double-count; CH UInt32 underflow + IN-list concat footgun. | New |
 | CS-007 | Low | ADR-0003 claims a golangci i128 analyzer + migration BIGINT lint that don't exist (runtime discipline holds). | Confirms D2-10 |
-| CS-003/005/006/011/019/020 | Low | postgresstore ~0 tests; CLAUDE.md 3× package undercount; hashdb dead; `/assets/xlm` omits mcap; 2 plan-time non-sargable queries; batch identity-id aborts whole batch. | New/minor |
+| CS-003/005/006/011/019/020 | Low | postgresstore ~0 tests; AGENTS.md 3× package undercount; hashdb dead; `/assets/xlm` omits mcap; 2 plan-time non-sargable queries; batch identity-id aborts whole batch. | New/minor |
 
 ## Re-verified GOOD (recorded to prevent re-litigation — the system is largely sound)
 
@@ -155,7 +155,7 @@ live data-correctness) — exactly where a fresh pass adds the most.
 6. The cheap IA fixes (LC-020 sidebar, LC-014 dead routes, LC-021/022/023 nav).
 
 **Hygiene / guard-rails:**
-7. CS-007 (build the i128 analyzer or fix the ADR), CS-005 (CLAUDE.md map),
+7. CS-007 (build the i128 analyzer or fix the ADR), CS-005 (AGENTS.md map),
    CS-003 (store tests), Wave-2 data reconciliation, a11y (pending).
 
 ## Coverage honesty (read-fraction)

@@ -334,7 +334,7 @@ per-method payloads are still unmodelled (see below).
 `BackfillSafe: true` flipped in
 `internal/sources/external/registry.go`.
 `stellarindex-ops backfill --source=defindex` is now unblocked.
-Per CLAUDE.md's "Soroban DeFi contracts upgrade in place" rule,
+Per AGENTS.md's "Soroban DeFi contracts upgrade in place" rule,
 any future `update_contract` on the strategy contracts must
 trigger a new audit cycle (re-check the new hash's data section).
 

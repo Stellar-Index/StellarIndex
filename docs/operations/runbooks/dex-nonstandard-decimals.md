@@ -387,7 +387,7 @@ skew was live before normalization/suppression.
   mirrored in `configs/prometheus/rules.r1/aggregator.yml`; both are
   catalogued in `docs/operations/alerts-catalog.md`.
 - The correctness invariant it protects: ADR-0003 (i128/decimals discipline)
-  and the "external-source amount scaling is NOT uniform" note in `CLAUDE.md`.
+  and the "external-source amount scaling is NOT uniform" note in `AGENTS.md`.
 - Companion serving-sanity guard: `internal/pricingguard` (guards the raw
   closed-bucket `prices_1m` serving path against a different failure mode —
   gross single-bucket manipulation, not a per-asset decimals mismatch).

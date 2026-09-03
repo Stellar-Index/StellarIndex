@@ -30,7 +30,7 @@ deployment  = "production"        # production | testnet | futurenet | staging
 # Stellar — where does my ledger data come from?
 #
 # Production ingest reads Galexie's MinIO output directly via
-# go-stellar-sdk/ingest.ApplyLedgerMetadata (ADR-0001 / CLAUDE.md
+# go-stellar-sdk/ingest.ApplyLedgerMetadata (ADR-0001 / AGENTS.md
 # invariant #6); the fields below are for the diagnostic + bootstrap
 # paths that still talk to a stellar-rpc node.
 #

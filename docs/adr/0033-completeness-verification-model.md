@@ -34,7 +34,7 @@ superseded_by: null
 
 > **Reality note update (2026-07-24, audit-2026-07-23 wave5 RFC-7).**
 > The note above is itself now stale. `internal/hashdb` was wired into
-> production on 2026-07-09 (see `CLAUDE.md` §repo-map): the indexer's
+> production on 2026-07-09 (see `AGENTS.md` §repo-map): the indexer's
 > live LCM read loop appends on ingest, and a periodic sweep (also in
 > the indexer) re-verifies a trailing window, alerting on
 > `stellarindex_hashdb_drift_detected`

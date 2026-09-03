@@ -62,7 +62,7 @@ const SorobanEventsPseudoSource = "soroban-events"
 //  3. BackfillSafe gate. internal/sources/external.Registry marks
 //     every on-chain Soroban source `BackfillSafe=false` until its
 //     decoder has been audited against every WASM version that ran
-//     for the replay range (CLAUDE.md "Soroban DeFi contracts
+//     for the replay range (AGENTS.md "Soroban DeFi contracts
 //     upgrade in place"). Backfill refuses to run an unsafe source.
 //
 // Trade-row idempotency is the storage layer's responsibility — the
@@ -338,7 +338,7 @@ func buildChunkDispatcher(
 	//
 	// Warming the gate here is deliberately NOT done as a drive-by: it
 	// would make this command write directly into the projector's
-	// exclusive tables (ADR-0031/0032, CLAUDE.md invariant 7). The
+	// exclusive tables (ADR-0031/0032, AGENTS.md invariant 7). The
 	// ADR-consistent catch-up for projected sources is
 	// `stellarindex-ops projector-replay` / `projected-rebuild`, which
 	// warms the gate correctly. Refusing projected sources outright here
@@ -903,7 +903,7 @@ func checkBackfillSources(sources []string, fromLedger, toLedger uint32) error {
 		"refusing to backfill — sources not BackfillSafe (per-WASM-hash audit pending): %v; "+
 			"run stellarindex-ops wasm-history -from %d -to %d -contracts <CID> for each on-chain source, "+
 			"review every emitted WASM hash against the current decoder, then flip BackfillSafe=true in "+
-			"internal/sources/external/registry.go in the same PR (see CLAUDE.md \"Soroban DeFi contracts "+
+			"internal/sources/external/registry.go in the same PR (see AGENTS.md \"Soroban DeFi contracts "+
 			"upgrade in place\")",
 		sorobanPending, fromLedger, toLedger)
 }

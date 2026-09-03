@@ -1,5 +1,5 @@
 ---
-title: D4 — Documentation for agents / discoverability — findings + CLAUDE.md redesign
+title: D4 — Documentation for agents / discoverability — findings + AGENTS.md redesign
 ---
 
 # D4 — Agent docs / discoverability
@@ -8,7 +8,7 @@ title: D4 — Documentation for agents / discoverability — findings + CLAUDE.m
 artifact ([CAPABILITY-INVENTORY.md](CAPABILITY-INVENTORY.md)) is now drafted; findings below.
 
 ## M0 — directly causes rebuild-what-exists
-- **M0-1 — NO intent→capability index exists anywhere.** CLAUDE.md is keyed by *package name*
+- **M0-1 — NO intent→capability index exists anywhere.** AGENTS.md is keyed by *package name*
   and organized around *decisions/why*, not *"what am I trying to do."* An agent wanting to
   "SSRF-guard an outbound fetch" has no path to the code. Root cause of the pain.
 - **M0-2 — SSRF guarding is ALREADY DUPLICATED, both copies unexported** — `metadata/sep1.go`
@@ -29,12 +29,12 @@ against reusability** — the packages with NEITHER doc.go nor README are exactl
 trusting a pointer.
 
 ## M2
-doc.go quality varies + no see-also cross-links (ratelimit↔cachekeys.RateLimitKey↔usage); CLAUDE.md
+doc.go quality varies + no see-also cross-links (ratelimit↔cachekeys.RateLimitKey↔usage); AGENTS.md
 front-loads philosophy over lookup.
 
-## CLAUDE.md redesign spec (the D4 deliverable)
+## AGENTS.md redesign spec (the D4 deliverable)
 1. **Add a top-of-file "Before you build anything — capability index"** + check in
-   `CAPABILITY-INVENTORY.md` at repo root, linked from CLAUDE.md, with the top ~20 most-rebuilt
+   `CAPABILITY-INVENTORY.md` at repo root, linked from AGENTS.md, with the top ~20 most-rebuilt
    primitives inlined so an agent that never opens the file still gets caught.
 2. **Fix the repo map** — state the real count ("90 leaf pkgs; see the inventory for the full
    surface"), add the missing lines (xdrjson/usage/redisclient/…), change each gloss from

@@ -101,7 +101,7 @@ func (s *Store) BuildProtocolBespoke(ctx context.Context, source, category strin
 //
 // Amount scales are per-bridge and DIFFERENT — both ground-truthed
 // 2026-07-30 against the USDC SAC leg of a real tx (the external-scaling
-// trap class, CLAUDE.md):
+// trap class, AGENTS.md):
 //   - cctp_events.amount is CANONICAL 6-decimal USDC (event 172,719,938 vs
 //     SAC mint 1,727,199,380 — exactly 10× — matching the on-chain
 //     token_decimal_config {canonical:6, local:7} fixture) — EXCEPT

@@ -28,7 +28,7 @@ to another.
 | D1 | **Structural soundness** (module decomposition, cohesion/coupling, god-packages, growth-readiness) | package-structure findings + target decomposition |
 | D2 | **Semantic naming & consistency** (domain lexicon, plural/singular, type/func/package naming) | a **naming lexicon** + inconsistency register |
 | D3 | **DRY — adversarial duplication sweep** (multiple impls of the same capability) | a **duplication register** with the canonical choice per cluster |
-| D4 | **Documentation for agents** (CLAUDE.md as onboarding, "where is X", discoverability) | a **capability inventory** ("does this exist? where?") + CLAUDE.md redesign spec |
+| D4 | **Documentation for agents** (AGENTS.md as onboarding, "where is X", discoverability) | a **capability inventory** ("does this exist? where?") + AGENTS.md redesign spec |
 | D5 | **Guardrails against regression** (machine-enforced invariants vs prose; CI coverage) | a **guardrail matrix** (invariant → is it enforced? how? gap) |
 | D6 | **Style / idiom consistency** (error handling, options, constructors, ctx, logging) | idiom-convention findings + a canonical-idiom list |
 | D7 | **Type-modeling quality** (primitive obsession, invariants-in-types, stringly-typed, wire shapes) | type-design review + refactor recommendations |

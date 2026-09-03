@@ -6,7 +6,7 @@ status: current
 
 # Architecture overview
 
-This is the orientation page CLAUDE.md and engineering-standards.md
+This is the orientation page AGENTS.md and engineering-standards.md
 point at (it did not exist until 2026-07-02 — both cited it anyway).
 It deliberately says nothing the deeper docs don't; its job is to
 route you.
@@ -29,7 +29,7 @@ and serves it all through a public **REST + SSE API** and a static
 | Flow | Path | Deep doc |
 |---|---|---|
 | On-chain ingest | Galexie MinIO → `ledgerstream` → `dispatcher` → decoders → sink/projector → Timescale (+ CH dual-sink) | [ingest-pipeline.md](ingest-pipeline.md) |
-| Off-chain ingest | CEX/FX connectors (`sources/external`) → same event channel | CLAUDE.md "Add a new CEX connector" |
+| Off-chain ingest | CEX/FX connectors (`sources/external`) → same event channel | AGENTS.md "Add a new CEX connector" |
 | Aggregation | trades → outlier filter → class gating → VWAP → freeze/confidence → Redis + CAGGs | [aggregation-plan.md](aggregation-plan.md) |
 | Verification | lake substrate + recognition + per-ledger projection reconcile → `completeness_snapshots` | ADR-0033, ADR-0041 |
 | Serving | Timescale CAGGs + Redis + CH explorer reads → `internal/api/v1` → REST/SSE | ADR-0015/0018, [platform-spec.md](platform-spec.md) |
@@ -53,7 +53,7 @@ and serves it all through a public **REST + SSE API** and a static
 
 ## Reading order for a new engineer/agent
 
-1. `CLAUDE.md` (the map — includes the invariants and the traps)
+1. `AGENTS.md` (the map — includes the invariants and the traps)
 2. This page
 3. [ingest-pipeline.md](ingest-pipeline.md) — the binding ingest rules
 4. ADR-0033 + ADR-0034 — the trust story

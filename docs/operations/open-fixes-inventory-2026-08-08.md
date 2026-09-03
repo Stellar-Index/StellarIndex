@@ -54,7 +54,7 @@ Compiled on operator request ("we need to fix all of them"): every known
 sidelined item from the 2026-08-03/04 cold-audit sweep, the 2026-08-07/08
 site audits, and session findings — deduplicated, with what already
 shipped removed. Sources of detail: the per-area audit memory files
-(`~/.claude/projects/.../memory/project_*_audit_*.md`, one per area) and
+(the agent memory store, one file per area) and
 `docs/operations/v1-launch-plan.md` (still the launch source of truth;
 this is the defect-side companion).
 

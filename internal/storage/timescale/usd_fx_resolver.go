@@ -811,7 +811,7 @@ const pegQuoteScaleDenominator = 10_000_000
 // # Why this is a loop and not one query
 //
 // It binds one asset id, so before the loop it could only ever see the
-// ONE spelling the caller happened to hold — CLAUDE.md's dual-form rule
+// ONE spelling the caller happened to hold — AGENTS.md's dual-form rule
 // ("every asset-id read path MUST loop assetAliases()") applied to the
 // tier-3/4 USD anchor. XLM is where that bites: it has three canonical
 // identities (`native`, `crypto:XLM`, its SAC) and its USD markets are

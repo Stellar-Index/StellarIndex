@@ -67,7 +67,7 @@ const claimableSeedBatchSize = 2000
 // # Cost
 //
 // This walks the whole chain over a ~150-billion-row table and MUST run under
-// run-heavy-job.sh on r1 (CLAUDE.md heavy-job doctrine). Expect several hours
+// run-heavy-job.sh on r1 (AGENTS.md heavy-job doctrine). Expect several hours
 // and NO output until the end — the latest-write-wins reduction can only emit
 // once the last ledger window has been folded, so every insert lands after the
 // scan rather than interleaved with it. Silence is not a hang.

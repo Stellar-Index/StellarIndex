@@ -1,10 +1,10 @@
 ---
-name: add-cex-connector
-description: Add a new off-chain CEX or FX venue to Stellar Index via the external.Connector framework — streamer/poller/backfiller shape, scaling rules, registry metadata, VWAP-eligibility. Use when integrating an exchange or FX feed, or when external trades arrive mis-scaled.
+title: Add a CEX or FX connector
+last_verified: 2026-09-03
+status: living doc
 ---
 
-# /add-cex-connector
-
+# Add a CEX or FX connector
 Canonical checklist: `docs/contributing/add-cex-connector.md`. This
 skill adds the traps and the checks.
 
@@ -61,4 +61,4 @@ Vendor ToS note: raw per-trade redistribution is restricted by most
 CEX terms (CS-115) — blended outputs are fine; check before wiring
 the venue into `/v1/observations`.
 
-Finish with **/verify-done**.
+Finish with **docs/contributing/procedures/verify-done.md**.

@@ -59,7 +59,7 @@ contract calls) — none observe ledger-entry deltas directly.
 
 Per ADR-0001 (Horizon-not-in-our-architecture) we cannot fall
 back to Horizon's pre-computed `accounts` table. Per the
-"stellar-rpc not in production ingest path" rule (CLAUDE.md
+"stellar-rpc not in production ingest path" rule (AGENTS.md
 "Things that will surprise you"), we cannot fall back to
 per-request RPC. The path forward is in-house observation from
 the LCM stream we already consume.

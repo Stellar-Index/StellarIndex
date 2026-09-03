@@ -6,7 +6,7 @@ status: accepted
 
 # Migration plan: galexie → ClickHouse → protocol decoders → Postgres
 
-> **Status (2026-09-02): EXECUTED — read the phases below as the historical plan.** Phases 0-7 shipped between 2026-06-05 and 2026-07: the ClickHouse lake is the certified raw history (ADR-0034), the projector reads `contract_events` from it by default (`internal/config/config.go:943`, `clickhouse_projector_source` default `true`), the completeness verdict ships (ADR-0033), and the explorer + per-protocol pages are live. **Phase 8 — decommission the Postgres `soroban_events` landing zone — is the only open phase** (BACKLOG #39). One section is not merely historical but *wrong* against the invariant that replaced it: §10a's "`trades` → DROP + rebuild … + retention" was overtaken by `migrations/0031_remove_trades_retention.up.sql:31` (`remove_retention_policy('trades')`, 2026-05-14) and CLAUDE.md invariant 8 — **raw `trades` are kept forever**; a retention policy on `trades` is drift to be removed, not a plan to execute.
+> **Status (2026-09-02): EXECUTED — read the phases below as the historical plan.** Phases 0-7 shipped between 2026-06-05 and 2026-07: the ClickHouse lake is the certified raw history (ADR-0034), the projector reads `contract_events` from it by default (`internal/config/config.go:943`, `clickhouse_projector_source` default `true`), the completeness verdict ships (ADR-0033), and the explorer + per-protocol pages are live. **Phase 8 — decommission the Postgres `soroban_events` landing zone — is the only open phase** (BACKLOG #39). One section is not merely historical but *wrong* against the invariant that replaced it: §10a's "`trades` → DROP + rebuild … + retention" was overtaken by `migrations/0031_remove_trades_retention.up.sql:31` (`remove_retention_policy('trades')`, 2026-05-14) and AGENTS.md invariant 8 — **raw `trades` are kept forever**; a retention policy on `trades` is drift to be removed, not a plan to execute.
 
 **Status: accepted (ADR-0034, 2026-06-05).** A comprehensive, phased migration to the storage
 architecture that supports BOTH the pricing product AND a full,
@@ -210,7 +210,7 @@ removal in §10: drop the old/oversized tables (`soroban_events`,
 old `trades`, `ledger_ingest_log`, superseded protocol tables), purge
 orphan cursors, delete the superseded code paths + systemd units, revert
 the oversize tuning, and mark the affected ADRs superseded/amended +
-update CLAUDE.md. Reclaim disk; end the scale pain. Nothing dead left
+update AGENTS.md. Reclaim disk; end the scale pain. Nothing dead left
 behind.
 
 ## 7. Pricing vs. explorer — sequencing (don't block the pricing product)
@@ -299,7 +299,7 @@ re-derivable from ClickHouse ← galexie, so this is safe.
   gap-detector (`per_source_gaps.go`, `RunGapDetector` over soroban_events +
   per-source hypertables) → CH/census-based.
 - **Audit for orphans:** the deleted `*-backfill` family references; retired
-  web scaffolds (CLAUDE.md wave-57); the gap-detector `excludedFrom*`
+  web scaffolds (AGENTS.md wave-57); the gap-detector `excludedFrom*`
   tables (`freeze_events`, `mev_events`, `api_usage_events` — confirm live
   vs orphan); any `soroban_events`-specific config/docs.
 
@@ -312,7 +312,7 @@ re-derivable from ClickHouse ← galexie, so this is safe.
 ### 10d. Docs/ADRs to mark superseded (so dead decisions don't mislead)
 - ADR-0029 → Superseded. ADR-0030/0031/0032 → Amended (coverage signal is
   CH/census-based; projector reads CH). ADR-0033 Claim 3 → Amended (oracle).
-  Update `CLAUDE.md` invariants (#6 ingest path, #7 one-writer/landing-zone)
+  Update `AGENTS.md` invariants (#6 ingest path, #7 one-writer/landing-zone)
   + the "Things that will surprise you" entries that reference
   `soroban_events`-in-Postgres. Retire/repoint the recovery runbook
   (`docs/operations/adr-0033-data-recovery.md`) which assumed the Postgres

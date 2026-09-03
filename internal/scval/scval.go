@@ -426,7 +426,7 @@ func AsAddressStrkey(sv xdr.ScVal) (string, error) {
 // FIRST time the event fires (e.g. an "old admin" before any admin
 // was ever set — observed on Circle's CCTP contracts,
 // internal/sources/cctp). Callers must type-test rather than assume
-// Address (CLAUDE.md "Type-test before MustI128" — the same
+// Address (AGENTS.md "Type-test before MustI128" — the same
 // schema-evolution stance the SEP-41 transfer decoder's
 // `to_muxed_id` field type-test follows).
 func AsAddressOrVoid(sv xdr.ScVal) (string, error) {

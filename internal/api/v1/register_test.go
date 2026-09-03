@@ -244,7 +244,7 @@ func TestRegister_HappyPath(t *testing.T) {
 	ts := newRegisterTestServer(t, accounts, keys, throttle)
 
 	resp := postRegister(t, ts.URL, "application/json",
-		`{"name":"claude-agent","email":"Agent@Example.com"}`)
+		`{"name":"test-agent","email":"agent@example.com"}`)
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
 		t.Fatalf("status = %d, want 200; body=%s", resp.StatusCode, body)
@@ -280,7 +280,7 @@ func TestRegister_HappyPath(t *testing.T) {
 	if acct.Tier != platform.TierFree || acct.Status != platform.AccountActive {
 		t.Errorf("account tier/status = %s/%s, want free/active", acct.Tier, acct.Status)
 	}
-	if acct.Name != "claude-agent" {
+	if acct.Name != "test-agent" {
 		t.Errorf("account name = %q", acct.Name)
 	}
 	if acct.BillingEmail != "agent@example.com" {

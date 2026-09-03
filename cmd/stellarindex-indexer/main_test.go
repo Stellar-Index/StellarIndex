@@ -182,7 +182,7 @@ func TestRecordHashdb_OK(t *testing.T) {
 }
 
 // TestRecordHashdb_AppendErrorIsFailureTolerant is the load-bearing
-// test for the CLAUDE.md-mandated contract: a hashdb write failure
+// test for the AGENTS.md-mandated contract: a hashdb write failure
 // must log + count, and MUST NOT propagate or otherwise stall/fail
 // ingest. Forces hashdb.Append to fail with ErrOutOfRange (ledger
 // below the file's startLedger) and confirms recordHashdb returns

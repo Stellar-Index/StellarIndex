@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # ch-backfill-monitor.sh — poll the Phase-3 full backfill and emit one status
 # line per interval plus alert/terminal signals. Designed to be driven by the
-# Claude Monitor tool (each stdout line becomes a notification) or run standalone.
+# a line-oriented monitor (each stdout line becomes a notification) or run standalone.
 #
 # Emits:
 #   PROGRESS  windows=W/T  ledger=N  lake=X  pool_free=Y  rate=R/s

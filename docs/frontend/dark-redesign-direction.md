@@ -156,6 +156,6 @@ Because the system is **semantic-token-based**, most of the flip happens in
 3. **Nav** — dark rail, tuned line icons, sentence-case items, thin active marker.
 4. **One exemplar page + the combined chart** — build, **screenshot**, get a read.
 5. **Roll out** across routes (mostly free from step 1), gating on
-   `pnpm test && pnpm typecheck`; update `design-system.md` + the CLAUDE brief.
+   `pnpm test && pnpm typecheck`; update `design-system.md` + the frontend brief.
 
 Validate every step **rendered** (screenshots) — a picture beats a plan.

@@ -85,7 +85,7 @@ WHERE entry_type = 'ttl'
 
 -- ── Step 2: windowed historical backfill ─────────────────────────────────────
 -- ***Heavy op.*** Run under run-heavy-job.sh on r1, ONE window at a time
--- (CLAUDE.md heavy-job doctrine). ledger_entry_changes is PARTITION BY
+-- (AGENTS.md heavy-job doctrine). ledger_entry_changes is PARTITION BY
 -- intDiv(ledger_seq, 1000000), so bounding every window by ledger_seq prunes
 -- partitions instead of scanning the whole append-log. TTL entries are Soroban
 -- state and cannot predate protocol 20 (~ledger 50.45M), so start at

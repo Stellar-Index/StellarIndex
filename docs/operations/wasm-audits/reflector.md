@@ -47,7 +47,7 @@ SDK-family are identical, so the wire format is preserved.
 
 ## Contracts under audit
 
-Per CLAUDE.md "Reflector is three separate contracts (DEX / CEX /
+Per AGENTS.md "Reflector is three separate contracts (DEX / CEX /
 FX), not one." Each variant maps to a distinct mainnet contract:
 
 | variant | source name | mainnet contract |

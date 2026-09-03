@@ -90,7 +90,7 @@ type Source struct {
 	Paid              bool   `json:"paid"`
 	BackfillAvailable bool   `json:"backfill_available"`
 	// BackfillSafe gates the `stellarindex-ops backfill` subcommand
-	// per CLAUDE.md "Soroban DeFi contracts upgrade in place".
+	// per AGENTS.md "Soroban DeFi contracts upgrade in place".
 	// On-chain Soroban sources start `false` and only flip `true`
 	// after a per-WASM-hash audit
 	// (`docs/operations/wasm-audits/`). Off-chain CEX/FX sources

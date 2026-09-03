@@ -45,7 +45,7 @@ The backstop's `claim` / `withdraw` / `queue_withdrawal` /
 `Matches()` therefore gates on `IsBackstopContract(contract_id)` AND
 `Classify() != ""` — never on the symbol alone. This is the
 ADR-0035 factory-anchored gating model + the "Comet uses a shared
-topic" trap in CLAUDE.md: a look-alike symbol from a non-backstop
+topic" trap in AGENTS.md: a look-alike symbol from a non-backstop
 contract must never mint a backstop row.
 
 ## Topic census re-confirmation (ROADMAP #89, 2026-07-10)
@@ -62,7 +62,7 @@ census — the six-bug fix landed the same week is holding.
 
 ## Robustness
 
-Per CLAUDE.md "EVERY-event" + "decode by field, degrade gracefully":
+Per AGENTS.md "EVERY-event" + "decode by field, degrade gracefully":
 
 - A **promoted** field whose SCVal shape doesn't match (e.g. a
   `donate` `from` topic that isn't an Address) is left empty and the

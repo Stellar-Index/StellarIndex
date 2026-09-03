@@ -73,7 +73,7 @@ type Decoder struct {
 // a hex balance_id key plus a claimableBalanceInfo of two short
 // strings and a *big.Int amount, ~400 bytes all-in with map overhead —
 // so 8,000,000 entries is ~3 GB, sized against a heavy job's
-// MemoryMax=20G ceiling (CLAUDE.md "Heavy one-shot jobs on r1").
+// MemoryMax=20G ceiling (AGENTS.md "Heavy one-shot jobs on r1").
 //
 // Why 8M and not less: the 2021 claimable-balance spam era (ledgers
 // ~49M+) creates 2–3 MILLION balances per 10k-ledger backfill window.

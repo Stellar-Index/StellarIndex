@@ -69,7 +69,7 @@ as of 2026-04-27. **Phoenix's event shape is the most unusual of
 any of our Soroban sources** and the decoder is correspondingly
 fragile.
 
-### The 8-events-per-swap quirk (CLAUDE.md "Phoenix emits 8 events per swap")
+### The 8-events-per-swap quirk (AGENTS.md "Phoenix emits 8 events per swap")
 
 Verified against `phoenix-contracts/contracts/pool/src/contract.rs:1172-1185`.
 A single Phoenix swap publishes **8 distinct contract events** — one
@@ -210,7 +210,7 @@ info interface` + `strings`:
    `PoolResponse`, etc.). The binary differences (37047 vs 36810
    bytes) are constants / build metadata, not interface.
 2. **All 8 expected field-name strings appear in both binaries.**
-   The decoder requires 8 string topics per swap (CLAUDE.md
+   The decoder requires 8 string topics per swap (AGENTS.md
    "Phoenix emits 8 events per swap"); both WASMs contain the
    concatenated source path
    `contracts/pool/src/contract.rs` followed by exactly:

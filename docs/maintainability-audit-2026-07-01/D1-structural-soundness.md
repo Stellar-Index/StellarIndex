@@ -8,7 +8,7 @@ title: D1 — Structural soundness — findings + target decomposition
 projector single-writer, external framework, storage tiering), but with **2
 "ambiguous home" hazards** (FX feeds; supply observers) and **3 flat god-packages**
 whose insertion points are obvious but whose internal decomposition hasn't kept
-pace. **96 packages exist; CLAUDE.md names ~33 (3× undercount).**
+pace. **96 packages exist; AGENTS.md names ~33 (3× undercount).**
 
 ## M0 — causes rework
 - **M0-1 — FX/fiat feeds have TWO homes + TWO frameworks (an existing duplication).**
@@ -46,14 +46,14 @@ pace. **96 packages exist; CLAUDE.md names ~33 (3× undercount).**
   is the obvious next extraction.
 
 ## M2 — polish
-- **M2-8** CLAUDE.md map 3× undercount + documents the drifted convention (ties D4).
+- **M2-8** AGENTS.md map 3× undercount + documents the drifted convention (ties D4).
 - **M2-9** `childgate` (shared contract-id registry) misfiled under `sources/` → belongs
   in `internal/contractid`.
 
 ## Target decomposition (worst offenders)
 1. Fold `forex`+`frankfurter` into `external/`, one FX framework (M0-1).
 2. `childgate` → `internal/contractid` (M2-9).
-3. Ratify ONE doc convention (`doc.go`) + the real per-sub-kind template in CLAUDE.md (M1-4).
+3. Ratify ONE doc convention (`doc.go`) + the real per-sub-kind template in AGENTS.md (M1-4).
 4. `cmd/stellarindex-ops` → `internal/ops/{ingest,archive,discovery,supply,diagnostics,clickhouse}` each `Run(ctx,args)`; main.go = thin router (M1-5).
 5. Extract `api/v1/explorer_*` → `internal/api/v1/explorer` (M1-7).
 6. (low priority) split `timescale.*Store` only if compile-time isolation becomes valuable (M1-6).

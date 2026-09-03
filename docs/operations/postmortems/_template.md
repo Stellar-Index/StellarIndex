@@ -104,7 +104,7 @@ Format:
 
 <!-- 1-3 bullets, the takeaways someone should remember even
 without reading the full postmortem. The kind of thing that
-makes it into a CLAUDE.md "Things that will surprise you"
+makes it into a AGENTS.md "Things that will surprise you"
 entry, or into the SEV playbook's checklist. -->
 
 -

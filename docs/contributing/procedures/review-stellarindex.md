@@ -1,10 +1,10 @@
 ---
-name: review-stellarindex
-description: Adversarial code-review checklists for Stellar Index diffs, distilled from the repo's real incident corpus (F-####/CS-### findings) — per-subsystem failure modes a generic review misses. Use when reviewing a diff/PR touching pricing SQL, ingest/decoders, API handlers, the explorer, or ops/config.
+title: Adversarial subsystem review
+last_verified: 2026-09-03
+status: living doc
 ---
 
-# /review-stellarindex
-
+# Adversarial subsystem review
 Generic review finds generic bugs. Each check below is a failure
 mode THIS repo has actually shipped — review the diff against the
 sections its files touch. Every check cites its incident so you can

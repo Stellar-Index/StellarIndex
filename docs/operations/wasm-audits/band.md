@@ -53,7 +53,7 @@ contract.
 Captured from `internal/sources/band/{events,decode}.go` at HEAD as
 of 2026-04-29. Re-verified 2026-04-24 against pinned source.
 
-Per CLAUDE.md:
+Per AGENTS.md:
 
 > **Band's Soroban contract emits zero events.** A conventional
 > topic-match Decoder never fires on Band. We observe the

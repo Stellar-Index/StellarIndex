@@ -10,7 +10,7 @@ Copy-followable checklists for the recurring "add an X" tasks. Each names the ex
 files to touch, the existing helper to **reuse** (so you don't rebuild what exists —
 see `/CAPABILITY-INVENTORY.md`), the guard that catches mistakes, and the "done when."
 
-CLAUDE.md's "Common task recipes" section points here rather than duplicating steps.
+AGENTS.md's "Common task recipes" section points here rather than duplicating steps.
 
 | Task | Checklist |
 |------|-----------|

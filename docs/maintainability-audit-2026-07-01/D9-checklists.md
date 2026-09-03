@@ -4,7 +4,7 @@ title: D9 — Convention docs as checklists — findings + drop-in checklists
 
 # D9 — Convention docs as checklists
 
-## Findings on the existing recipes (CLAUDE.md "Common task recipes")
+## Findings on the existing recipes (AGENTS.md "Common task recipes")
 - **M0 — "Add a new on-chain Soroban DEX" misleads → a source that registers nowhere +
   emits nothing.** The recipe says "five-file convention" but omits **`dispatcher_adapter.go`
   (the production seam — the actual `dispatcher.Decoder`)** and lists **zero of the 6 wiring
@@ -21,7 +21,7 @@ title: D9 — Convention docs as checklists — findings + drop-in checklists
 
 ## Recommendation
 Move the checklists into **`docs/contributing/`** (one file per recipe), each co-located with
-its CI guard; **CLAUDE.md keeps only the invariants (#6/#7/#8) + a one-line pointer per recipe**
+its CI guard; **AGENTS.md keeps only the invariants (#6/#7/#8) + a one-line pointer per recipe**
 (replace the prose bodies with links so they can't rot below the fold). Immediate fixes
 regardless of location: correct the "five-file" line to name `dispatcher_adapter.go`+invariant #7,
 and the `init()`/`docs-all` metric claims — those are the 3 active mislead vectors.

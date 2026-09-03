@@ -10,7 +10,7 @@ import (
 
 // These tests cover the Insert*Observation defensive guards —
 // the Sum* methods need a real DB and live in test/integration/
-// (per the Test conventions in CLAUDE.md, integration tests run
+// (per the Test conventions in AGENTS.md, integration tests run
 // via testcontainers-go).
 
 func TestInsertTrustlineObservation_RejectsEmptyAccountID(t *testing.T) {

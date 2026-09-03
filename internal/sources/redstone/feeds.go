@@ -25,7 +25,7 @@ type feedEntry struct {
 	// already emitted as value-in-USD. Post-invert MXNe reads
 	// ~0.0575, matching reflector-fx MXN (~0.0573). Verified against
 	// live r1 rows 2026-07-07. See docs/adr/0028 + the reflector
-	// stablecoin-proxy note in CLAUDE.md (normalise orientation here,
+	// stablecoin-proxy note in AGENTS.md (normalise orientation here,
 	// NOT the asset identity — a MXNe depeg still shows through 1/x).
 	Invert bool
 }

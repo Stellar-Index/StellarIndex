@@ -75,7 +75,7 @@ func decodeAmount(ev *events.Event) (*big.Int, error) {
 // account — or, as several watched SEP-41 tokens do, when the issuer
 // stamps a memo string into `to_muxed_id` (e.g. "Auto recharge
 // transaction"). The amount then moves OUT of the body and INTO the
-// map's `amount` field, exactly as CLAUDE.md warns: "SEP-41 transfer
+// map's `amount` field, exactly as AGENTS.md warns: "SEP-41 transfer
 // data can be EITHER a simple i128 OR a map containing amount +
 // to_muxed_id — type-test before MustI128()."
 //

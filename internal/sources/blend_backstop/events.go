@@ -20,7 +20,7 @@ const SourceName = "blend_backstop"
 // symbols, so the contract-id gate — not the topic symbol — is what
 // disambiguates a backstop event from a pool event. See ADR-0035
 // (factory-anchored contract gating) + the "Comet uses a shared
-// topic" trap in CLAUDE.md.
+// topic" trap in AGENTS.md.
 //
 //   - MainnetBackstopV2 is the Backstop V2 singleton (current).
 //   - MainnetBackstopV1 (the V1 const) is read from the sibling

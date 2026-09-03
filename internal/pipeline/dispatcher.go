@@ -67,7 +67,7 @@ import (
 //   - reflector-{dex,cex,fx} / redstone     — event Decoder (oracle)
 //   - band                                  — ContractCallDecoder
 //     (Band's Soroban contract emits zero events; we observe the
-//     relay() InvokeContract call instead — see CLAUDE.md "Band's
+//     relay() InvokeContract call instead — see AGENTS.md "Band's
 //     Soroban contract emits zero events")
 //   - sdex                                  — OpDecoder (classic
 //     pre-Soroban; we read ManageOffer ops, not events)

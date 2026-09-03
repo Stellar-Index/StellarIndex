@@ -210,7 +210,7 @@ func (h *Handler) parseMovementCursor(w http.ResponseWriter, r *http.Request) (m
 // future regression elsewhood.
 //
 // Honest empty-state: classic-movements-backfill is a historical-only,
-// operator-run job (CLAUDE.md "Heavy one-shot jobs on r1"), so
+// operator-run job (AGENTS.md "Heavy one-shot jobs on r1"), so
 // stellar.account_movements is EMPTY on every deployment until an
 // operator runs it — before that, this endpoint serves only the
 // Postgres tail, and CoverageNote says so explicitly rather than

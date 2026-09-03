@@ -1,10 +1,10 @@
 ---
-name: cut-release
-description: Cut a Stellar Index release (vX.Y.Z tag) — CHANGELOG curation, the promote commit, the guard-rail script, and the one-RC-per-session discipline. Use when asked to release, tag, or promote the CHANGELOG.
+title: Cut a release
+last_verified: 2026-09-03
+status: living doc
 ---
 
-# /cut-release
-
+# Cut a release
 Full runbook: `docs/operations/release-process.md`;
 SemVer policy: `docs/architecture/semver-policy.md`.
 
@@ -14,7 +14,7 @@ SemVer policy: `docs/architecture/semver-policy.md`.
   (6 binaries × cross-compile); bundle the session's fixes into ONE
   tag, never four.
 - Releases are tags; deploys are separate and operator-triggered
-  (see /deploy-r1). Never assume a tag reaches r1.
+  (see docs/contributing/procedures/deploy-r1.md). Never assume a tag reaches r1.
 
 ## Steps
 
@@ -45,7 +45,7 @@ Non-interactive runs (agents, CI, `nohup`): pass `--yes` — the script refuses 
 
 ## After
 
-If the release is meant for r1, hand off to **/deploy-r1**. If any
+If the release is meant for r1, hand off to **docs/contributing/procedures/deploy-r1.md**. If any
 release-notes step fails, the manual fallback is in
 release-process.md — do not hand-craft a GitHub release without
 SHA256SUMS.

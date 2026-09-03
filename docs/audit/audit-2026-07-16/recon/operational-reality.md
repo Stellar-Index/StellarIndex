@@ -22,7 +22,7 @@ Deployment docs are stale (r1-deployment-state.md last_verified 2026-05-12, snap
 - `feat/ced-v2-rebuild` (98728bcf) — 0 commits ahead of main (stale; ced-v2 work appears merged or superseded).
 - `verify-org-migration` (33d98043) — 1 orphan commit, far behind main.
 - `worktree-agent-a1180d8d5b264ffe7` (f665c227) — 1 orphan commit, far behind main.
-- `worktree-agent-acb2c028516fe7194` (9394d7a4) — 1 orphan commit "fix(test): chaos/k6 harness no longer masks teardown+setup failures", far behind main. Registered git worktree at .claude/worktrees/.
+- `worktree-agent-acb2c028516fe7194` (9394d7a4) — 1 orphan commit "fix(test): chaos/k6 harness no longer masks teardown+setup failures", far behind main. Registered git worktree under the agent-tool worktree directory.
 - **These carry ~1 unmerged commit each on a very old base. Low risk (test/infra), but the single commits should be checked for a lost fix, then the stale branches pruned.**
 ### 7 stashes (loose UNCOMMITTED work — the "uncommitted code" to consider)
 - STALE cross-repo cruft (pre-rename ratesengine paths — safe to drop): stash@{2} `cmd/ratesengine-api/main.go`; likely stash@{1}, stash@{6} (F-#### era).

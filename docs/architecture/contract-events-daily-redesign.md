@@ -223,7 +223,7 @@ writing this doc, including the exact cutover DDL sequence and its
 failure mode if done wrong (§ 7.4). This is not a theoretical plan.
 
 Run every step under `/usr/local/sbin/run-heavy-job.sh <name> <cmd>`
-per CLAUDE.md's heavy-job discipline — the backfill in particular reads
+per AGENTS.md's heavy-job discipline — the backfill in particular reads
 a partition-pruned slice of a multi-billion-row table.
 
 ### 7.1 Create v2 (starts live capture immediately)

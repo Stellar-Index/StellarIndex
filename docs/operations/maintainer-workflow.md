@@ -11,7 +11,7 @@ operated: how its configuration is applied, how heavy jobs are run on
 it, how releases are cut and deployed, and the working cadence a
 long-running agent session follows.
 
-It is deliberately separate from [CLAUDE.md](../../CLAUDE.md) and
+It is deliberately separate from [AGENTS.md](../../AGENTS.md) and
 [AGENTS.md](../../AGENTS.md). Those two describe the **project** —
 its invariants, its architecture, the traps in the domain — and are
 true for anyone who clones or forks this repo. What is below is true
@@ -142,7 +142,7 @@ going`), the default cadence is **one PR → one merge → next PR**.
 Do NOT accumulate multiple narrative PRs of uncommitted work in the
 tree and try to split them later — shared files
 (`cmd/stellarindex-indexer/main.go`, `internal/config/*`,
-`CHANGELOG.md`, `CLAUDE.md`) will be touched by several narrative
+`CHANGELOG.md`, `AGENTS.md`) will be touched by several narrative
 PRs and cannot be cleanly split into per-PR commits without hunk
 surgery.
 

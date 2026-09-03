@@ -32,17 +32,17 @@ const VALUES = [
 const CONTRIBUTING_PATHS = [
   {
     label: 'Decoder for a new on-chain DEX',
-    href: 'https://github.com/Stellar-Index/StellarIndex/blob/main/CLAUDE.md#add-a-new-on-chain-soroban-dex',
+    href: 'https://github.com/Stellar-Index/StellarIndex/blob/main/AGENTS.md#add-a-new-on-chain-soroban-dex',
     description: 'Five-file convention: README + events + decode + consumer + tests. Templates exist for Soroswap / Phoenix / Aquarius / Comet.',
   },
   {
     label: 'CEX connector',
-    href: 'https://github.com/Stellar-Index/StellarIndex/blob/main/CLAUDE.md#add-a-new-cex-connector',
+    href: 'https://github.com/Stellar-Index/StellarIndex/blob/main/AGENTS.md#add-a-new-cex-connector',
     description: 'WebSocket / REST poller against vendor APIs. Same five-file convention; reference implementations for Binance / Coinbase / Kraken / Bitstamp.',
   },
   {
     label: 'Supply observer',
-    href: 'https://github.com/Stellar-Index/StellarIndex/blob/main/CLAUDE.md#add-a-new-supply-observer',
+    href: 'https://github.com/Stellar-Index/StellarIndex/blob/main/AGENTS.md#add-a-new-supply-observer',
     description: 'Per-domain observer (Algorithm 1 XLM / Algorithm 2 classic / Algorithm 3 SEP-41). Plug into the dispatcher hook matching what the source emits.',
   },
   {

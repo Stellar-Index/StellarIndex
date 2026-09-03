@@ -65,7 +65,7 @@ satisfies it.
 | ☑ | `LICENSE` is Apache-2.0 | `LICENSE` (Apache 2.0, verified 2026-04-30) |
 | ☑ | `.github/dependabot.yml` has no internal-registry references | `.github/dependabot.yml` (verified 2026-04-30 — only public registries) |
 | ☑ | Every CI workflow in `.github/workflows/` runs on the public repo without internal secrets | `.github/workflows/{ci,api-docs}.yml` (verified 2026-04-30 — no `secrets.` references) |
-| ☑ | `CLAUDE.md` reads cleanly without referencing private internal-archive paths or internal-only operator names | `CLAUDE.md` (reviewed 2026-04-30 — pattern scan + manual spot-checks; 0 private references; 2 non-blocking editorial recs noted) |
+| ☑ | `AGENTS.md` reads cleanly without referencing private internal-archive paths or internal-only operator names | `AGENTS.md` (reviewed 2026-04-30 — pattern scan + manual spot-checks; 0 private references; 2 non-blocking editorial recs noted) |
 | ☑ | `docs/operations/r1-deployment-state.md` does not include credentials, API keys, or unredacted IPs | `docs/operations/r1-deployment-state.md` (verified 2026-04-30 — credentials are pointers only, no IPs in file) |
 | ☑ | Every ADR's "Status" reflects current state (no stale "Proposed" on accepted ADRs) | `docs/adr/` (all 0001-0024 are `Accepted`, verified 2026-05-02; 0012 is reserved-future per multi-region-topology.md). Initial sweep covered 0001-0021 on 2026-04-30; 0022 (classic supply observers, PR #302), 0023 (SEP-41 supply, PR #308), 0024 (Redis HA via Sentinel, PR #343) merged after that and confirmed `Accepted` in this re-verification. |
 | ☑ | Final secret scan with `gitleaks detect --source .` returns clean | `gitleaks 8.30.1` — 0 leaks across 553 commits, scanned 2026-04-30 |
@@ -92,7 +92,7 @@ PRs land between checklist verification and launch day. **Do this
 3. **`make test && make test-integration`** — the green build
    that gets tagged v1.0 must pass both. A flake counts as
    not-green; rerun after the flake is fixed.
-4. **Spot-check `CLAUDE.md` and `docs/architecture/*.md` for
+4. **Spot-check `AGENTS.md` and `docs/architecture/*.md` for
    `last_verified` dates.** Anything older than 90 days is a
    doc-rot candidate; flag for the L6.5 documentation sweep.
 5. **CI baseline freshness.** Check that `.github/workflows/ci.yml`

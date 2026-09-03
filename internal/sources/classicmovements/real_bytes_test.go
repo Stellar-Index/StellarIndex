@@ -12,7 +12,7 @@ import (
 
 // Real pre-P23 mainnet bytes, pulled read-only from r1's ClickHouse
 // lake (HTTP :8123, stellar.operations JOIN stellar.operation_results,
-// windowed + LIMIT'd queries per CLAUDE.md's heavy-job discipline;
+// windowed + LIMIT'd queries per AGENTS.md's heavy-job discipline;
 // see the ADR-0047 implementation session for the exact SELECTs) —
 // NOT synthetic fixtures. Each case pins the decoder against actual
 // on-chain data around ledger 40,000,000 (2022-03-12), long before

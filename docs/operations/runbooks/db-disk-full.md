@@ -88,7 +88,7 @@ du -sh /var/lib/pgbackrest
 
 5. **Someone loaded a large dataset** (backfill, import) beyond the
    pool's headroom. Heavy one-shots must run under
-   `/usr/local/sbin/run-heavy-job.sh` (CLAUDE.md rule) precisely to
+   `/usr/local/sbin/run-heavy-job.sh` (AGENTS.md rule) precisely to
    keep this survivable.
 
 ## Mitigation (fastest paths first)

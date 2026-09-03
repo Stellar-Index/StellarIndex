@@ -136,7 +136,7 @@ archival-node defaults — 819,200 entries with `max_connections=200`).
 The fix for sustained pressure is bumping
 `postgres_max_locks_per_transaction` in the archival-node ansible
 role and reapplying (`--check --diff` first) — **never** a live-only
-`ALTER SYSTEM` edit, which the next ansible run reverts (CLAUDE.md
+`ALTER SYSTEM` edit, which the next ansible run reverts (AGENTS.md
 "codify every host change"). The bump needs a Postgres restart.
 
 ## Mitigation

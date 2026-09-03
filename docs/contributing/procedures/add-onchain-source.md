@@ -1,10 +1,10 @@
 ---
-name: add-onchain-source
-description: Add a new on-chain Soroban source (DEX/lending/bridge/oracle) to Stellar Index — the six-file package, the six wiring edits, contract gating, and the executable checks that catch a missed edit. Use when integrating a new Stellar protocol, adding a decoder, or when a source "compiles but emits nothing".
+title: Add an on-chain Soroban source
+last_verified: 2026-09-03
+status: living doc
 ---
 
-# /add-onchain-source
-
+# Add an on-chain Soroban source
 The canonical checklist is `docs/contributing/add-onchain-source.md`
 — READ IT FIRST; this skill adds the execution order, the gating
 decision, and the machine checks. Template package:
@@ -76,4 +76,4 @@ topic shape must NOT match (this is the gate working).
 ## 4. Finish
 
 CHANGELOG entry in the same commit; `docs/protocols/<name>.md` page;
-then run **/verify-done**.
+then run **docs/contributing/procedures/verify-done.md**.

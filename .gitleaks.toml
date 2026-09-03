@@ -23,7 +23,6 @@ useDefault = true
 description = "Gitignored local-dev bulk (working-tree scan only)"
 paths = [
   '''^\.discovery-repos/''',
-  '''^\.claude/worktrees/''',
   '''(^|/)node_modules/''',
   '''^web/[^/]+/(\.next|out)/''',
   '''^docs/archive/''',

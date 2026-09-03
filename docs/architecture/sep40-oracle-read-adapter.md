@@ -49,7 +49,7 @@ Key facts that drive the design:
    contract state**, which is architecturally different from the
    event-decode path all our on-chain sources use today.
 2. **`x_*` and TWAP are not universal.** Reflector v3 has no on-chain
-   `twap`/`x_*` methods (CLAUDE.md "Reflector v3 has no on-chain
+   `twap`/`x_*` methods (AGENTS.md "Reflector v3 has no on-chain
    `twap`"); we compute those locally. A generic adapter cannot assume
    the richer methods exist — only `lastprice` / `prices` / `assets` /
    `decimals` are safe to depend on.
@@ -95,7 +95,7 @@ us **read-time decode of current contract state from the lake** (used
 for Blend pool state, Soroswap pair reserves). SEP-40 `PriceData` lives
 in contract storage; a SEP-40 read adapter is a natural consumer of the
 same reader rather than a new ingest goroutine or an RPC client
-(ADR-0001/CLAUDE.md invariant: no stellar-rpc in the ingest path).
+(ADR-0001/AGENTS.md invariant: no stellar-rpc in the ingest path).
 
 ## Why a generic SEP-40 adapter is a *new* thing (and non-trivial)
 

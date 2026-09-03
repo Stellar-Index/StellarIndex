@@ -285,7 +285,7 @@ func TestStartExternalConnectors_NothingEnabledStartsNothing(t *testing.T) {
 //
 // Lookup FAILS OPEN on shape but CLOSED on inclusion: an unregistered
 // name yields Metadata{Class: Exchange, IncludeInVWAP: false,
-// AmountDecimals: 0}. AmountDecimals 0 is the dangerous one — CLAUDE.md
+// AmountDecimals: 0}. AmountDecimals 0 is the dangerous one — AGENTS.md
 // is explicit that external scaling is NOT uniform (CEX 10^8, FX 10^6),
 // so a name that misses the registry is read at 10^0 and its amounts
 // are wrong by eight orders of magnitude.

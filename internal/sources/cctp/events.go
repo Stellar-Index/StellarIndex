@@ -18,7 +18,7 @@
 // Governance/admin events (all three contracts unless noted; verified
 // against real mainnet events 2026-07-08, ROADMAP #89b topic-match
 // audit; the trailing 16 completed the census 2026-07-09, ROADMAP #89c
-// — closing the "EVERY event for EVERY Soroban protocol" gap CLAUDE.md
+// — closing the "EVERY event for EVERY Soroban protocol" gap AGENTS.md
 // requires):
 //
 //	ownership_transfer             — 2-step ownership transfer initiated
@@ -277,7 +277,7 @@ type MintAndForward struct {
 // 62211209 (CctpForwarder) — one per contract, `old_owner` populated
 // in all three observed instances. No genesis-time void case has
 // been seen on mainnet, but the decoder still type-tests `old_owner`
-// (contract-schema-evolution stance, CLAUDE.md "Type-test before
+// (contract-schema-evolution stance, AGENTS.md "Type-test before
 // MustI128") in case a future upgrade emits it from an unset state.
 //
 // Wire shape (single-topic event; body ScMap):
@@ -476,7 +476,7 @@ type MessageReceived struct {
 // 62211210 (CctpForwarder) — `old_admin` populated in all three
 // observed instances, but type-tested via [scval.AsAddressOrVoid]
 // anyway (same field as `admin_changed`'s `old_admin`, which IS void
-// at bootstrap — CLAUDE.md "Type-test before MustI128").
+// at bootstrap — AGENTS.md "Type-test before MustI128").
 //
 // Body: { new_admin: Address, old_admin: Address | Void }.
 type AdminChangeStarted struct {

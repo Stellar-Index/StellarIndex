@@ -30,7 +30,7 @@ status: living document
 
 ## Audience
 
-If you (Claude, human, future agent) are about to:
+If you (human or agent) are about to:
 
 - Recommend trimming, deleting, or moving a multi-TB dataset on r1
 - Change which storage tier serves which read path
@@ -318,7 +318,7 @@ deliberately live.
 Raw `trades` are kept **forever**. Migration 0031 removed the old
 90-day retention, and its own `.down.sql` names re-adding one as "the
 EXACT mechanism of the recurring 'rogue retention on trades' data-loss
-drift". CLAUDE.md carries it as a standing invariant: "If you see a
+drift". AGENTS.md carries it as a standing invariant: "If you see a
 `drop_after` retention policy on `trades`, it's drift — remove it."
 Ash signed it again as launch decision D5 (2026-08-29).
 

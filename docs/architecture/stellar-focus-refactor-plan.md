@@ -174,7 +174,7 @@ for pricing. Grouped by artifact, with the auditor's verdict.
 - `multi-network-assets-migration.md` — mark superseded; remove "until we
   light up indexing on that chain"; reframe `networks[]` as identity/reference
   anchoring, not a multi-chain-indexing roadmap.
-- CLAUDE.md "comprehensive blockchain explorer" → "comprehensive **Stellar**
+- AGENTS.md "comprehensive blockchain explorer" → "comprehensive **Stellar**
   explorer (classic/native + Soroban)" (match README's clearer phrasing).
 - `explorer-ux-plan.md`, `coins-to-assets-migration.md` — track the re-scope
   (keep all "price anything" pricing language).
@@ -252,7 +252,7 @@ deliberately sequenced after the UI stops consuming the fields.
   bump.** Regenerate `web/explorer/src/api/types.ts`.
 
 ### Tier 4 — docs / positioning sweep
-- **T4.1** Reword CLAUDE.md / README / migration docs per §3g; mark
+- **T4.1** Reword AGENTS.md / README / migration docs per §3g; mark
   `multi-network-assets-migration.md` superseded; CHANGELOG entry.
 
 ### Optional follow-up

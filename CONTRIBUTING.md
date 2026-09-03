@@ -5,7 +5,7 @@ Thanks for your interest in contributing.
 This project takes enterprise-grade engineering standards seriously.
 Before you write a line of code, please skim:
 
-1. **[CLAUDE.md](CLAUDE.md)** — repo orientation, layout, invariants.
+1. **[AGENTS.md](AGENTS.md)** — repo orientation, layout, invariants.
 2. **[docs/engineering-standards.md](docs/engineering-standards.md)** — the policy.
 3. **[docs/architecture/semver-policy.md](docs/architecture/semver-policy.md)** — the versioning + layout rationale.
 
@@ -130,7 +130,7 @@ Full rules: [engineering-standards.md §2.1](docs/engineering-standards.md).
 
 CEX, DEX, AMM, FX, oracle — same pattern. See:
 
-- [CLAUDE.md](CLAUDE.md) → "Common task recipes."
+- [AGENTS.md](AGENTS.md) → "Common task recipes."
 - [docs/architecture/ingest-pipeline.md](docs/architecture/ingest-pipeline.md)
   — the binding rules for source packages (pure decoders, no
   goroutines, no RPC clients, dispatcher owns routing).

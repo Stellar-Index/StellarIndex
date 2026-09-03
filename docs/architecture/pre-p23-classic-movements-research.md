@@ -29,7 +29,7 @@ solved the same problem without Horizon, a rough sense of scale, and
 a phasing shape. Every factual claim below was checked against either
 the XDR definitions in `go-stellar-sdk@v0.6.0`, our own code, or a
 scoped read-only query against r1's ClickHouse lake (`stellar` DB,
-HTTP `:8123`, all queries `LIMIT`/window-bounded per CLAUDE.md's
+HTTP `:8123`, all queries `LIMIT`/window-bounded per AGENTS.md's
 heavy-job discipline). No writes were made to any table; no r1
 filesystem state was touched.
 
@@ -324,7 +324,7 @@ It's idempotent (`ReplacingMergeTree`), so overlapping/re-run windows
 are safe, and it already supports `-parallel` chunking. Running it
 over `[2, 58762517]` (or further, to close the small remaining
 61,995,000–61,999,000 sliver too) is squarely the kind of multi-day,
-`run-heavy-job.sh`-wrapped, operator-gated job CLAUDE.md already has
+`run-heavy-job.sh`-wrapped, operator-gated job AGENTS.md already has
 a runbook shape for — no new decoder, no schema change, no XDR work.
 This should be scheduled **ahead of or in parallel with** any new
 decoder work in §7, since it's on the critical path for the
@@ -346,7 +346,7 @@ entries) and the extractor already knows how to read it.
 
 Per `VERSIONS.md`, `stellar/stellar-etl` (`v2.8.18`) and
 `withObsrvr/cdp-pipeline-workflow` are already pinned reference-only
-snapshots; `withObsrvr/cdp-pipeline-workflow` carries CLAUDE.md's
+snapshots; `withObsrvr/cdp-pipeline-workflow` carries AGENTS.md's
 standing "known bugs in i128 decoding and SDEX trade extraction" flag
 — nothing below changes that; it stays out of consideration entirely.
 
@@ -367,7 +367,7 @@ historically the same monorepo `stellar-etl` was extracted from.
 That package is (a) under Horizon's own `internal/` path — not
 importable outside its module even if we wanted to — and (b)
 part of the archived `stellar/go` monorepo (archived 2025-12-16 per
-CLAUDE.md). **Borrowing `stellar-etl`'s effects-derivation *code*
+AGENTS.md). **Borrowing `stellar-etl`'s effects-derivation *code*
 would be a soft violation of ADR-0001's spirit** (Horizon-originated
 ingest logic re-entering our path by another name), even though
 `stellar-etl` itself never calls a live Horizon *server*. The safe
@@ -451,7 +451,7 @@ pre-P23 range) spread across ledgers 3,000,000 / 10,000,000 /
 to span eras rather than to be statistically representative. Each
 window query ran in well under a second (`GROUP BY op_type` is a
 columnar scan over a `LowCardinality` column, not row materialization)
-— the raw-scan cost CLAUDE.md warns about is in `SELECT *`-shaped or
+— the raw-scan cost AGENTS.md warns about is in `SELECT *`-shaped or
 unindexed cross-column queries, not this kind of aggregate.
 
 Combined sample (140,000 ledgers, excluding `InvokeHostFunction`/
@@ -512,7 +512,7 @@ with Phase 1 design work.**
 `[38115806, 61999000]` if the ADR decides pre-P18 history isn't a
 priority target) to close the `ledger_entry_changes` gap identified
 in §3.2. No new code. Multi-day, `run-heavy-job.sh`-wrapped,
-one-job-at-a-time per CLAUDE.md. This unblocks Phase 4 and gives every
+one-job-at-a-time per AGENTS.md. This unblocks Phase 4 and gives every
 other phase a free cross-check (derived amount vs actual balance
 delta).
 
@@ -566,7 +566,7 @@ column, don't materialize a per-tx movement row" rather than adding
 8.8B rows for a feature nobody's asked for yet.
 
 **Cross-cutting, applies to every phase:** the recognition-completeness
-principle from CLAUDE.md's "EVERY event for EVERY Soroban protocol"
+principle from AGENTS.md's "EVERY event for EVERY Soroban protocol"
 binding applies identically here — the classic `OperationType` enum
 is closed and fully known (27 values, no "unknown future contract"
 problem the way Soroban gating has), so there's no excuse for a
@@ -597,7 +597,7 @@ disjoint writers into one shared destination today.
 
 Every reconstruction path in §2 reads from `stellar.operations`/
 `operation_results`/`ledger_entry_changes` — never a fresh MinIO/
-Galexie walk. This is exactly the `ch-rebuild`-style shape CLAUDE.md
+Galexie walk. This is exactly the `ch-rebuild`-style shape AGENTS.md
 already prescribes ("Decoder backfills re-derive from the lake…not
 MinIO walks"). Phase 0 (§6) is itself a `ch-backfill` run, which *does*
 walk galexie — but that's populating the lake's own substrate, the
@@ -634,7 +634,7 @@ Arguments against literally writing into `sep41_transfers`:
   represents.
 - `sep41_transfers` is *exclusively* projector-written today (ADR-0031
   domain). Reusing it for a lake-derived, non-projected writer blurs
-  a boundary CLAUDE.md is explicit about, even though the ledger
+  a boundary AGENTS.md is explicit about, even though the ledger
   ranges are provably disjoint (pre-P23 classic-derived vs post-P23
   event-derived) and there's no real double-write race.
 

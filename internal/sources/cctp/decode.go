@@ -10,7 +10,7 @@ import (
 )
 
 // ErrUnknownEvent flags an event whose topic[0] symbol isn't one
-// of CCTP's four. Per CLAUDE.md ("Comet uses a shared topic")
+// of CCTP's four. Per AGENTS.md ("Comet uses a shared topic")
 // the dispatcher matches by topic bytes; another protocol could
 // in theory emit the same symbol. Consumer should drop by
 // ContractID before invoking the decoder.
@@ -18,7 +18,7 @@ var ErrUnknownEvent = errors.New("cctp: unknown event topic")
 
 // ErrMalformedBody surfaces a schema drift — body Map missing a
 // field the contract source declares, or a field with the wrong
-// SCVal kind. Per CLAUDE.md ("Soroban DeFi contracts upgrade in
+// SCVal kind. Per AGENTS.md ("Soroban DeFi contracts upgrade in
 // place"), a contract upgrade could change field shapes; this
 // error is the canary.
 var ErrMalformedBody = errors.New("cctp: malformed event body")

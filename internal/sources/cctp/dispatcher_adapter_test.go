@@ -64,7 +64,7 @@ func TestDecoder_Matches(t *testing.T) {
 	t.Run("CCTP topic from non-CCTP contract", func(t *testing.T) {
 		t.Parallel()
 		// Same topic bytes, foreign emitter — must be rejected so a
-		// look-alike contract can't inject rows (CLAUDE.md "Comet
+		// look-alike contract can't inject rows (AGENTS.md "Comet
 		// uses a shared topic").
 		impostor := makeContractStrkey(t, 0x99)
 		if d.Matches(depositForBurnEvent(t, impostor)) {

@@ -264,7 +264,7 @@ contracts go live.
 5. WASM-history audit on v1 contract (single hash expected —
    v1 hasn't upgraded since deployment per the README being
    "v1, simplified version focused on Stellar").
-6. Per CLAUDE.md "Soroban DeFi contracts upgrade in place":
+6. Per AGENTS.md "Soroban DeFi contracts upgrade in place":
    verify v1's upgrade path before flipping
    `BackfillSafe: true`.
 
@@ -277,5 +277,5 @@ contracts go live.
   https://github.com/RozoAI/rozo-intents-contracts/tree/main/v2/docs
 - Companion design: [[docs/architecture/cctp-stellar-coverage]]
 - Class taxonomy: `internal/sources/external/framework.go`
-- Existing source playbook: CLAUDE.md "Add a new on-chain
+- Existing source playbook: AGENTS.md "Add a new on-chain
   Soroban DEX"

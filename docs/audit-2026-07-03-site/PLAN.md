@@ -140,7 +140,7 @@ one-PR-one-merge cadence:
    recurring guards — a scheduled crawl (dead links + console errors +
    placeholder text as CI/cron), census drift checks (assets page
    count vs API census), and a "new page checklist" in
-   CONTRIBUTING/CLAUDE.md so new pages ship against the Pass-B list.
+   CONTRIBUTING/AGENTS.md so new pages ship against the Pass-B list.
 
 ## Register
 

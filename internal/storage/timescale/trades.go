@@ -18,7 +18,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/sources/external"
 )
 
-// Off-chain amount scaling is NOT uniform (CLAUDE.md; CS-040): CEX and
+// Off-chain amount scaling is NOT uniform (AGENTS.md; CS-040): CEX and
 // reference-aggregator sources stamp amounts at 10^8, but the FX pollers
 // (ecb / exchangeratesapi / massive) stamp 10^6. The
 // per-source authority is external.Registry's AmountDecimals, read via
@@ -744,7 +744,7 @@ var ErrNoFXQuote = errors.New("timescale: no FX quote at or before cutoff")
 // connector deliberately stamps (migration
 // 0004_relax_trades_ledger_for_offchain); those trades are excluded
 // because their amounts are normalised onto a fixed integer scale
-// (CLAUDE.md "External-source amount scaling is NOT uniform") where
+// (AGENTS.md "External-source amount scaling is NOT uniform") where
 // an equal-value reading doesn't carry the same "decoder is broken"
 // signal an on-chain 1:1 does. canonical.Trade.Validate() already
 // requires both amounts to be strictly positive before a trade can

@@ -6,7 +6,7 @@ status: working note — pass 1.5
 # Independent area decomposition — Audit 1
 
 A second, independent decomposition drafted from the auditor's own model of the
-system (CLAUDE.md repo map + session context), deliberately produced BEFORE
+system (AGENTS.md repo map + session context), deliberately produced BEFORE
 folding in the surface-inventory mapper, so the union catches blind spots in
 either list. Each area carries an **attack list** — the concrete things an
 adversary/skeptic probes. Reconcile + renumber into PLAN-1 once the mapper lands.
@@ -118,7 +118,7 @@ adversary/skeptic probes. Reconcile + renumber into PLAN-1 once the mapper lands
 - **A22 — Explorer correctness/build** (`web/explorer`, `web/status`). Attack:
   API-type drift (web-generate-api not drift-guarded); next/font build-time
   fetch; SSG fallback routes; broken links; embed/widget XSS.
-- **A23 — Documentation integrity** (`docs/`, `CLAUDE.md`, ADRs, runbooks).
+- **A23 — Documentation integrity** (`docs/`, `AGENTS.md`, ADRs, runbooks).
   Attack: docs that lie about current behavior (the doc-hygiene class — just
   found 6); last_verified staleness; ADR invariants claimed-but-unenforced
   (i128 analyzer doesn't exist); reference/ generated-doc drift.

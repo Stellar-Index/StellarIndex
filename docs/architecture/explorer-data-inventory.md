@@ -1324,7 +1324,7 @@ What the Go side has to add. Roughly grouped by feature.
 - **Backfill**: walk historical txs that invoked any known router contract, tag the trades they generated. Walk Blend / Aquarius / etc. state-change events from any known vault, write `aggregator_exposures` rows.
 
 **Gotchas:**
-- Router contract WASM versioning: a router can be upgraded; function names / signatures may change. Per-WASM-hash decoder audit (the existing CLAUDE.md "Soroban DeFi contracts upgrade in place" rule) applies. Gate backfill against unaudited router WASM.
+- Router contract WASM versioning: a router can be upgraded; function names / signatures may change. Per-WASM-hash decoder audit (the existing AGENTS.md "Soroban DeFi contracts upgrade in place" rule) applies. Gate backfill against unaudited router WASM.
 - DeFindex vault discovery is open-ended; ship at v1 with a curated allowlist, add auto-discovery heuristic in a follow-up.
 - "Routing through a router that itself routes through another router" (nested routers) — at v1, attribute to the outermost router only. Don't try to support arbitrary nesting until we see it in the wild.
 

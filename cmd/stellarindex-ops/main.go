@@ -692,7 +692,7 @@ Subcommands:
                           internal/sources/external/registry.go — for
                           on-chain Soroban sources that means the
                           per-WASM-hash audit (stellarindex-ops
-                          wasm-history) must land first per CLAUDE.md
+                          wasm-history) must land first per AGENTS.md
                           "Soroban DeFi contracts upgrade in place".
                           Idempotent: the trades hypertable's unique
                           index on (source, ledger, tx_hash, op_index)

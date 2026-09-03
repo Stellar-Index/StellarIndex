@@ -1,12 +1,12 @@
 ---
-name: add-metric
-description: Add a Prometheus metric, alert, and runbook to Stellar Index — the paired counter/histogram pattern, BOTH rule trees, the doc-code link chain, and the guards that fail CI when any piece is missing. Use when instrumenting a worker, adding an alert, or when a metric/alert/runbook lint fails.
+title: Add a Prometheus metric
+last_verified: 2026-09-03
+status: living doc
 ---
 
-# /add-metric
-
+# Add a Prometheus metric
 Canonical checklist: `docs/contributing/add-metric.md` + the recipe
-in CLAUDE.md. This skill is the execution order + the full guard
+in AGENTS.md. This skill is the execution order + the full guard
 chain (five different lints care about this change).
 
 ## 1. The metric
@@ -64,4 +64,4 @@ Probe the alert once if feasible: fire the condition (or promtool
 unit test), see it evaluate. An alert that has never evaluated true
 is decorative (the F-1329 dead-alert class).
 
-Finish with **/verify-done**.
+Finish with **docs/contributing/procedures/verify-done.md**.

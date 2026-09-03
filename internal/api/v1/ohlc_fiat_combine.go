@@ -23,7 +23,7 @@ import (
 // — using the SAME constituent set the live aggregator computes its VWAP
 // over (aggregate.ExpandTargetPairWithClassicPegs) — yields the full
 // multi-year series and keeps the historical bars methodologically
-// consistent with the live /v1/price path (CLAUDE.md "stablecoins-as-fiat
+// consistent with the live /v1/price path (AGENTS.md "stablecoins-as-fiat
 // is aggregator policy, late-bound at compute time").
 //
 // Combine math per bucket (exact in NUMERIC/big.Rat):

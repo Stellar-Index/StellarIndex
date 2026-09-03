@@ -47,7 +47,7 @@
 --   stellarindex-ops projector-replay -source aquarius -from <genesis>
 -- (re-deriving trades is a no-op via ON CONFLICT DO NOTHING; only the
 -- new reserves/liquidity rows land). Run it under
--- /usr/local/sbin/run-heavy-job.sh (CLAUDE.md heavy-job doctrine).
+-- /usr/local/sbin/run-heavy-job.sh (AGENTS.md heavy-job doctrine).
 
 BEGIN;
 

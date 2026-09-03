@@ -78,7 +78,7 @@ an ADR-0033 recognition gap until curated.
    genuinely absent; recording that honestly (vs. silently closing) is
    the point of this ADR.
 3. **Poll oracles over stellar-rpc** — rejected: violates the ADR-0001
-   / CLAUDE.md invariant that stellar-rpc is not in the ingest path;
+   / AGENTS.md invariant that stellar-rpc is not in the ingest path;
    the lake + ADR-0039 state reader is the sanctioned substrate.
 
 ## References

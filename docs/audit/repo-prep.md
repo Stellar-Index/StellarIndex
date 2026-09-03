@@ -41,7 +41,7 @@ correctness, VWAP/aggregation math, and completeness verdicts are the
 
 ## Worktrees + dependency seeding
 
-- Worktrees go INSIDE this repo: `/Users/ash/code/stellarindex/.claude/worktrees/<name>`
+- Worktrees go INSIDE this repo: a gitignored worktree directory inside this repo
   (dir exists). Base them on synced main (`git rev-parse origin/main`) —
   keep main synced first.
 - **Go:** single module; the module cache is machine-global — worktrees need
@@ -172,7 +172,7 @@ Run/heed these locally before pushing so PRs are green on first push:
   backfill subcommand.
 - PR cadence: one PR → squash-merge on green → pull main → next. Never stack
   parallel narrative PRs that share `cmd/*/main.go`, `internal/config`,
-  `CHANGELOG.md`, `CLAUDE.md`.
-- The repo has its own project skills in `.claude/skills/`
+  `CHANGELOG.md`, `AGENTS.md`.
+- The repo has its own project skills in `docs/contributing/procedures/`
   (`/review-stellarindex`, `/verify-done`, `/add-metric`, …) — fixers should
   read the relevant skill file for procedure-shaped tasks.

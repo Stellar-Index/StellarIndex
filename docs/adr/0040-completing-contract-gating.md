@@ -134,7 +134,7 @@ missing piece), then mechanism #2.
 
 ### 4. What stays out of scope
 
-- Narrow-coverage downstream filtering (the CLAUDE.md workaround) stays
+- Narrow-coverage downstream filtering (the AGENTS.md workaround) stays
   documented until each gate lands, then is deleted per source.
 - sep41 firehose gating — different domain (watched-set, ADR-0031).
 - The CH-native childgate preseed (CS-085) — tracked separately.

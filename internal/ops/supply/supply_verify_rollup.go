@@ -61,7 +61,7 @@ type rollupTruthReader interface {
 //   - -timeout bounds the whole run (default 2h).
 //
 // On r1, run it under the heavy-job wrapper so a runaway scan can't
-// starve galexie's captive core (CLAUDE.md "Heavy one-shot jobs"):
+// starve galexie's captive core (AGENTS.md "Heavy one-shot jobs"):
 //
 //	run-heavy-job.sh verify-rollup stellarindex-ops supply verify-rollup -config /etc/stellarindex/stellarindex.toml
 //

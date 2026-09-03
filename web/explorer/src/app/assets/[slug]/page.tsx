@@ -331,7 +331,7 @@ async function fetchVerifiedSlugsForStaticParams(): Promise<string[]> {
 // (fail-hard) instead of the old return-null-and-bake-not-found.
 //
 // Shape discriminator: /v1/assets/{slug} returns TWO different
-// wire shapes (per CLAUDE.md "Things that will surprise you"):
+// wire shapes (per AGENTS.md "Things that will surprise you"):
 //   - GlobalAssetView (catalogue slug like "usdc", "us-dollar",
 //     "btc"): keys are ticker/slug/name/class, kind="catalogue".
 //     NO asset_id, NO code.

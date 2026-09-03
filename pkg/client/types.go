@@ -577,7 +577,7 @@ type OHLCBar struct {
 // Subclass refines `class=exchange` into `dex` / `cex` / `fx`.
 // Empty for non-exchange classes.
 //
-// BackfillSafe gates `stellarindex-ops backfill` per CLAUDE.md
+// BackfillSafe gates `stellarindex-ops backfill` per AGENTS.md
 // "Soroban DeFi contracts upgrade in place". On-chain Soroban
 // sources start `false` and only flip `true` after a per-WASM-
 // hash audit (`docs/operations/wasm-audits/`). Off-chain CEX/FX

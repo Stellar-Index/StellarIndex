@@ -121,10 +121,6 @@ service-account*.json
 /.discovery-repos/
 
 # Agent session state — local only
-# Claude Code session-local state stays ignored, but the shared
-# agent skill library is versioned.
-/.claude/*
-!/.claude/skills/
 /docs/reference/api/postman-collection.json
 /.wrangler/
 
@@ -160,3 +156,12 @@ gcp-key*.json
 /docs/audit/audit-2026-08-14/
 /docs/audit/audit-2026-08-24-fec/
 /docs/audit/audit-2026-09-02/
+
+# Agent-tool loader directories — session-local state only, and one rule
+# rather than a list of vendor names, so a new tool needs no edit here.
+# The PROCEDURES these used to hold now live in
+# docs/contributing/procedures/ as plain docs, which is where they belong:
+# they are useful to anyone reading the repo, not just to one vendor's
+# tooling. .github is the only tracked top-level dot-directory.
+/.*/
+!/.github/

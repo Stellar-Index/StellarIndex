@@ -136,7 +136,7 @@ either down or r1 has lost outbound HTTPS.
   #
   # 2. Commit — note the -write; without it you just re-run step 1 and
   #    get a success-shaped report having rehydrated nothing. Heavy
-  #    one-shots on r1 go through the wrapper (CLAUDE.md r1 rule):
+  #    one-shots on r1 go through the wrapper (AGENTS.md r1 rule):
   sudo /usr/local/sbin/run-heavy-job.sh rehydrate \
     /usr/local/bin/stellarindex-ops rehydrate-galexie-archive \
       -config /etc/stellarindex.toml -from <SEQ> -to <SEQ_END> -write

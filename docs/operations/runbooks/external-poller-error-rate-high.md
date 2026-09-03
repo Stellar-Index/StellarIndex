@@ -69,7 +69,7 @@ Key signals:
 - **HTTP 401/403** → API key rotated or revoked; check the env var the binary reads (per `internal/sources/external/<vendor>/poller.go`). For CoinGecko specifically a 403 often means the public-no-auth tier was hit — see [§ Vendor-specific 429 patterns](#vendor-specific-429-patterns).
 - **HTTP 5xx** → vendor outage; check their status page.
 - **Connect timeout** → DNS or network egress issue; if *every* poller is erroring at once this is a host problem, not a vendor problem ([host-down](host-down.md) / [all-ingestion-down](all-ingestion-down.md)).
-- **Schema parse error** → vendor changed their response shape; per CLAUDE.md "external sources" surprise list, this is recoverable but requires a code update.
+- **Schema parse error** → vendor changed their response shape; per AGENTS.md "external sources" surprise list, this is recoverable but requires a code update.
 
 ### Vendor-specific 429 patterns
 
@@ -157,7 +157,7 @@ For postmortem capture:
 - `external-poller-stale.md` — adjacent alert when a poller stops producing entirely. Until 2026-08-29 **this** alert's `runbook_url` pointed there instead of here; both trees now point at this file.
 - `aggregator-fx-snap-fallback-dominant.md` — fires when an FX vendor's failures push us to the snap fallback path.
 - ADR-0008 — HA topology + reduced-redundancy flag semantics.
-- CLAUDE.md "External sources" surprise list — vendor-specific schema quirks.
+- AGENTS.md "External sources" surprise list — vendor-specific schema quirks.
 
 ## Changelog
 

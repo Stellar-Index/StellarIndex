@@ -3,7 +3,7 @@ title: Frontend redesign-readiness map — web/explorer
 date: 2026-07-20
 status: active
 last_verified: 2026-07-20
-audience: whoever drives the upcoming design refresh (human pointers + Claude design pass)
+audience: whoever drives the upcoming design refresh (human pointers + an agent design pass)
 companion: docs/architecture/design-system.md
 ---
 

@@ -11,7 +11,7 @@ import "github.com/Stellar-Index/StellarIndex/internal/canonical"
 // every downstream consumer. We store the raw pair (`XLM/USDT`,
 // `XLM/USDC`) on the way in, and the aggregator rewrites
 // quote-side stablecoins to their target fiat at VWAP compute
-// time only. See CLAUDE.md § "stablecoins-as-fiat is aggregator
+// time only. See AGENTS.md § "stablecoins-as-fiat is aggregator
 // policy" and ADR-0014's stablecoin-code notes.
 //
 // Extension is a one-line amendment — add the new ticker here and

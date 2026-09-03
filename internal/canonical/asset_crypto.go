@@ -32,7 +32,7 @@ var knownCryptoCodes = map[string]struct{}{
 	// Stellar adapter (2026-04-24). Kept here as crypto (not fiat) so
 	// the decoder stays fiat-proxy-agnostic — the aggregator converts
 	// stablecoins → fiat at VWAP time per the "stablecoin-as-fiat is
-	// aggregator policy" rule in CLAUDE.md.
+	// aggregator policy" rule in AGENTS.md.
 	"DAI": {}, "PYUSD": {}, "USDP": {},
 	// USDT0 — the omnichain USDT representation, published by RedStone's
 	// Stellar adapter. A DISTINCT asset from `USDT`, deliberately: it is

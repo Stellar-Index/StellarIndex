@@ -16,7 +16,7 @@ import (
 // and BY CONSTRUCTION, because the holders read was trustline-shaped and
 // native has no trustlines — every account holds XLM in its AccountEntry
 // balance. The handler now folds every non-SAC XLM alias form (native,
-// crypto:XLM, the "XLM" shorthand — the CLAUDE.md dual-form rule) down to
+// crypto:XLM, the "XLM" shorthand — the AGENTS.md dual-form rule) down to
 // the single "native" board key, so the reader's account-balance arm runs
 // once and every spelling shares one SWR cache entry.
 

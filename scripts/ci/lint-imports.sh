@@ -296,7 +296,7 @@ def imports_in(path):
                 yield m.group(1)
 
 
-SKIP_DIRS = {".git", "vendor", ".discovery-repos", "node_modules", ".claude"}
+SKIP_DIRS = {".git", "vendor", ".discovery-repos", "node_modules"}
 
 
 def walk_go_files(root):
@@ -339,7 +339,7 @@ def main():
 
     # Structural check: internal/storage/ is subpackage-only
     # (timescale/ clickhouse/ redisclient/) — no top-level adapter
-    # files (CLAUDE.md repo map; ADR-0034 tiering). A stray
+    # files (AGENTS.md repo map; ADR-0034 tiering). A stray
     # internal/storage/*.go is the start of a new grab-bag layer.
     strays = sorted(
         p.name for p in (REPO / "internal/storage").glob("*.go"))

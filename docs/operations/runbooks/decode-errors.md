@@ -72,7 +72,7 @@ In decreasing order of frequency:
 If the alert label points at one of these sources, the listed
 surprise is the single most common cause of decode regressions —
 worth checking BEFORE deeper diagnosis. This table is the
-operator-facing summary derived from the CLAUDE.md "Things that
+operator-facing summary derived from the AGENTS.md "Things that
 will surprise you" list.
 
 | Source | Most common decode-regression cause | First place to look |

@@ -278,7 +278,7 @@ contracts have EVER emitted on mainnet, cross-checked against
 topic is a `Symbol`) — found 26 distinct topics across 9,496 total
 events, exactly reconciled against a plain `count()` over the same
 contract set. All 26 are classified and decoded. Re-run the same
-census periodically (or after any Circle contract upgrade — CLAUDE.md
+census periodically (or after any Circle contract upgrade — AGENTS.md
 "Soroban DeFi contracts upgrade in place") to catch a genuinely new
 topic; there is no currently-known gap.
 

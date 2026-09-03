@@ -172,7 +172,7 @@ two decoders:
 The dispatcher matches by topic[0] symbol bytes. Per-source
 filtering by contract_id happens downstream (drop events from
 contracts we don't track even if topic matches — Comet pattern,
-per CLAUDE.md).
+per AGENTS.md).
 
 This option mirrors how Soroswap / Phoenix / Aquarius work and
 needs the least new code.
@@ -272,14 +272,14 @@ history because it is brand new". Initial implementation:
    §Open #1 ClassBridge).
 2. Implement `internal/sources/cctp/{README.md, events.go,
    decode.go, consumer.go, source_test.go}` following the
-   five-file convention (CLAUDE.md "Add a new on-chain Soroban
+   five-file convention (AGENTS.md "Add a new on-chain Soroban
    DEX").
 3. Add migration `0037_create_cctp_events.up.sql` per §Storage.
 4. Register in `internal/sources/external/registry.go` with the
    confirmed class.
 5. Add an alert for "CCTP decoder silent for >24h" to catch
    contract-upgrade drift.
-6. Per CLAUDE.md "Soroban DeFi contracts upgrade in place": run
+6. Per AGENTS.md "Soroban DeFi contracts upgrade in place": run
    a WASM-history walk over the CCTP contracts before flipping
    `BackfillSafe: true`. The contracts are brand new so a single
    hash is expected, but the audit is required program work.
@@ -288,7 +288,7 @@ history because it is brand new". Initial implementation:
 
 - Circle Stellar contracts: https://developers.circle.com/cctp/references/stellar-contracts
 - Source repo: https://github.com/circlefin/stellar-cctp
-- Existing source playbook: CLAUDE.md "Add a new on-chain
+- Existing source playbook: AGENTS.md "Add a new on-chain
   Soroban DEX" / `internal/sources/soroswap/` template
 - Class taxonomy: `internal/sources/external/framework.go`
 - WASM audit playbook: `docs/operations/wasm-audits/README.md`

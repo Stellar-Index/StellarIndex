@@ -40,11 +40,11 @@ surface mapper's concrete flags had a ~50% false-positive rate).
 - **Next:** A18 execution — confirm the ratio, then read the store for tenant-
   scoping on every query + the zero-time guard class.
 
-### CS-005 — CLAUDE.md repo-map under-counts `internal/` ~3× — **Low (doc drift)**
-- **Location:** `CLAUDE.md` "Repo map" (~30 packages) vs actual ~95
+### CS-005 — AGENTS.md repo-map under-counts `internal/` ~3× — **Low (doc drift)**
+- **Location:** `AGENTS.md` "Repo map" (~30 packages) vs actual ~95
   packages/subpackages (`internal/api/*`, `aggregate/*`, `sources/*`, `storage/*`
   subpkgs, `xdrjson`, `platform/postgresstore`, `dispatcher/statsflush` undocumented).
-- **Why it matters:** CLAUDE.md is the AI-agent entry point + freshness-checked in
+- **Why it matters:** AGENTS.md is the AI-agent entry point + freshness-checked in
   CI, yet materially incomplete — agents (and auditors) under-scope.
 - **Fix:** regenerate the map or note it's a curated subset; ideally a CI check
   that every `internal/*` package appears.
@@ -63,7 +63,7 @@ surface mapper's concrete flags had a ~50% false-positive rate).
   the ADR's claim to match reality. (Doc-vs-code drift, CC-7.)
 
 ### CS-006 — `internal/hashdb` shipped with zero production callers — **Info**
-- **Location:** `internal/hashdb` (226 src LOC). CLAUDE.md itself admits "LIBRARY
+- **Location:** `internal/hashdb` (226 src LOC). AGENTS.md itself admits "LIBRARY
   ONLY — currently has zero production callers; the ADR-0033 'feeder' role is
   aspirational." So this is *acknowledged*, but it's dead weight that implies a
   completeness guarantee (drift-detection-vs-upstream-rewrites) the system does
@@ -314,7 +314,7 @@ No finding. (The earlier "0031/0040 down re-adds retention" mapper flag remains 
   `Trade{Source:"phoenix"}` enters the trades hypertable → the pricing substrate.
   Decode-shape strictness can't block it (attacker controls the body); residual
   bound is only aggregator class-policy + outlier layer. **Already tracked**
-  (CLAUDE.md flags Comet; phoenix/defindex/aquarius gates pending) — but real.
+  (AGENTS.md flags Comet; phoenix/defindex/aquarius gates pending) — but real.
   **Fix:** finish the factory/WASM-hash gates for these 4.
 - **CS-027 — 3 ops-CLI paths bypass the panic-recover wrapper — Low.**
   `verifyDecoders`, `scanSorobanEvents`, `backfillRouter` call `disp.ProcessLedger`
@@ -630,7 +630,7 @@ No finding. (The earlier "0031/0040 down re-adds retention" mapper flag remains 
   class). **Fix:** wire `make test-integration` into a Docker-enabled nightly/CI job.
 - *Cleared (strong):* **all 33 `consumer.Event` types have a sink arm** + the sink
   `default` is LOUD (`SourceInsertErrorsTotal{unhandled}` + Warn) not silent — the
-  CLAUDE.md "silent drop" trap is structurally prevented; `IsProjectedEvent` ↔ registry
+  AGENTS.md "silent drop" trap is structurally prevented; `IsProjectedEvent` ↔ registry
   lockstep is unit-tested + CI-run; canonical Amount/Asset/Pair round-trip as decimal
   strings (no int64/float on the money path; `ChangeSummary`/`usd_volume` float is
   derived-analytics, ≤2^53-safe); k6 hits only current routes (`/coins` is comment-only,
@@ -754,7 +754,7 @@ No finding. (The earlier "0031/0040 down re-adds retention" mapper flag remains 
   UNIMPLEMENTED anywhere — Medium (doc/trust honesty).** `verify-archive` + the CH
   substrate cover gaps + chain-breaks but NOT silent byte-rewrites of already-fetched,
   still-chain-valid objects; the ADR-0016 trust story is partly notional. R2/R3 deferred
-  (latent). **Fix:** mark ADR-0016 "not yet implemented," matching ADR-0033/CLAUDE.md honesty.
+  (latent). **Fix:** mark ADR-0016 "not yet implemented," matching ADR-0033/AGENTS.md honesty.
 - *Cleared:* `ComputeWatermark` reduction logic sound (no false-complete branch);
   `RecognitionGap` correct; env `rpc_url` split FIXED (`CHAINLINK_RPC_URL` now sets both
   ingest + divergence — caveat: unset → `cloudflare-eth.com` JS-challenge → silent fail;
@@ -781,7 +781,7 @@ No finding. (The earlier "0031/0040 down re-adds retention" mapper flag remains 
   the no-RPC-in-ingest rule (invariant #6 hole); actions-pinning hard-fail is a no-op
   on push-to-main; CI concurrency cancels in-flight main runs (intermediate commits
   unverified); **Postman collection NOT drift-guarded** (silent drift — types.ts IS
-  guarded, CLAUDE.md stale); no artifact **signing** (SHA256SUMS = integrity not
+  guarded, AGENTS.md stale); no artifact **signing** (SHA256SUMS = integrity not
   authenticity, unsigned, same-release); multi-binary deploy not atomic (mixed-version
   fleet); `creates:` guard can silently skip install + report SUCCESS; rollback
   corrupts state if the backup `mv` itself fails; billing-capped runs indistinguishable
@@ -980,14 +980,14 @@ No finding. (The earlier "0031/0040 down re-adds retention" mapper flag remains 
   correct; RequireEmailVerified not bypassable.
 
 ### A32 — Docs/ADR integrity (LAST area) — well-maintained; drift in 3 clusters
-- **CS-127 — CLAUDE.md's ADR-0035 claim is a FALSE SAFETY PROPERTY — High.**
-  CLAUDE.md:271 says decoders "gate `Matches()` on contract identity, not topic bytes
+- **CS-127 — AGENTS.md's ADR-0035 claim is a FALSE SAFETY PROPERTY — High.**
+  AGENTS.md:271 says decoders "gate `Matches()` on contract identity, not topic bytes
   … Comet is **the one open case** … the other Soroban decoders use [factory-fan-out]."
   Reality: only **blend + soroswap** gate on identity; **phoenix, aquarius, AND defindex
   also gate on topic symbol only** → **four** decoders ungated, not one (ADR-0035's own
   checklist marks all four `[ ] NEEDS WORK`). The agent entry point asserts a
   mis-attribution-can't-happen property that's false (reinforces CS-026/CS-043). **Fix:**
-  correct CLAUDE.md to match the ADR checklist.
+  correct AGENTS.md to match the ADR checklist.
 - **CS-128 — 5 incident runbooks use the wrong config path `/etc/stellarindex/config.toml`
   (real: `/etc/stellarindex.toml`) → file-not-found mid-incident — High.** `cursor-stuck.md`,
   `source-stopped.md`, `insert-errors.md`, + 2 archived. Single find-replace.
@@ -996,7 +996,7 @@ No finding. (The earlier "0031/0040 down re-adds retention" mapper flag remains 
   High.** Plus `db-disk-full.md` k8s PVC-expansion on the ZFS fleet.
 - **CS-130 — Medium:** ADR-0003 body still claims the (nonexistent) golangci analyzer +
   BIGINT migration check despite a reality-note bolted on top → self-contradictory
-  (confirms CS-007); CLAUDE.md map says MinIO adapter is in `internal/storage` (it's in
+  (confirms CS-007); AGENTS.md map says MinIO adapter is in `internal/storage` (it's in
   `internal/pipeline`) + omits `internal/xdrjson`; runbook metric/alert name errors
   (`postgres_connections_high`, `cagg_last_refresh_unix` INERT, stale `stellar-rpc`
   narration); `/v1/account/admin/lookup` undocumented + the `.Handle(` drift-guard blind

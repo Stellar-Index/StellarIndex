@@ -99,7 +99,7 @@ The key belongs in `/etc/default/stellarindex` — that is the
 `configs/ansible/roles/archival-node/templates/stellarindex.env.j2`,
 which already carries `COINGECKO_DEMO_API_KEY`).
 
-**Codify it, don't hand-edit it.** Per the r1 rule in CLAUDE.md, a
+**Codify it, don't hand-edit it.** Per the r1 rule in AGENTS.md, a
 hand fix is overwritten by the next playbook run:
 
 ```sh

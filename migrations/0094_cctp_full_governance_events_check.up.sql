@@ -25,7 +25,7 @@
 -- set. Additive + old-binary-safe per rule 9 — the previous binary
 -- never writes these event_type values, so widening what's ALLOWED
 -- doesn't change its behavior; only the new binary emits rows using
--- the new values. This closes CLAUDE.md's "EVERY event for EVERY
+-- the new values. This closes AGENTS.md's "EVERY event for EVERY
 -- Soroban protocol" gap for CCTP — docs/protocols/cctp.md's
 -- known-gap note is retired in the same change.
 BEGIN;

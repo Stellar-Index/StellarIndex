@@ -43,7 +43,7 @@
   follow-ups?" is now standing recon); dual-store auth mirror field-drop; validate-only-
   when-present header gate (CORS simple-request); perf-window-narrowing changes served
   numbers; "can this gate fail at all?"; empty-registry gated backfill = silent no-op;
-  re-derive tool that counts success while dropping rows; `.claude/worktrees/` contaminates
+  re-derive tool that counts success while dropping rows; agent worktree directories contaminate
   repo-wide greps. **Added by the audit-2026-08-14 finding waves (all generic, hunt these
   next time):** (a) **fixed-precision serialization of a big.Rat/big.Int money value can round
   a strictly-positive price to a string that reparses as zero** — and a zero price fed back as
@@ -82,7 +82,7 @@
   SWR/prewarm layer, + in-process order book); (7) ADR-0032 runs at **Phase-3
   dual-write** (persist_per_source=true), not the "sole writer" end-state — safe
   under deterministic decode; (8) all three OpenAPI generators are NOW CI-drift-gated
-  (**CLAUDE.md's OpenAPI section is factually stale**); (9) 46 web/explorer vitest
+  (**AGENTS.md's OpenAPI section is factually stale**); (9) 46 web/explorer vitest
   files **never run in CI** — dead security-regression gates. NEW traps to add: a
   PK-discriminator migration with `DEFAULT 0` saying "no DELETE needed" arms a twin
   for the next re-derive (0112 fired; 0059/0060 loaded but caught by strict
@@ -218,7 +218,7 @@ Stellar Index moves no *user* money, but **served prices/amounts/supply/market-c
 | CFG | env-override trap (STELLARINDEX_POSTGRES_DSN); two conflicting *_env conventions (name vs value); dangerous defaults (0.0.0.0 bind, [] CIDR, ["*"] CORS, region.id=r1); feature-flag matrix | | |
 | TST | proven-red DB-backed tests for money/auth (testcontainers `make test-integration`); lockstep AST tests; failure-case assertions (not just happy-path) | | |
 | OBS | /metrics loopback asymmetry; ansible-drift ≤13-change allowance; two divergent systemd-unit copies; runbook-per-alert requirement | | |
-| HLT | dead code (api_usage_events, cache-prime, tmpxdrdump, windowUSDVolume, PG classic_movements store); doc-drift (6 CLAUDE.md/arch-doc false claims); stale ROADMAP rows | | |
+| HLT | dead code (api_usage_events, cache-prime, tmpxdrdump, windowUSDVolume, PG classic_movements store); doc-drift (6 AGENTS.md/arch-doc false claims); stale ROADMAP rows | | |
 | DOC | plan validity (ADRs/ROADMAP/perf-todo vs code); the two-axis verdict API-done/UI-missing split; #34 site promises vs backend; Alg-2 readers trap; #39 reader-inventory gap | | **the whole plan surface — explicit audit target this run** |
 | ACC | explorer keyboard/focus-trap/screen-reader (prior LC-050/051/052); dashboard form-error announcement | | |
 | I18N | fiat/currency/locale handling in pricing; the fiat-as-asset product-coherence issue (prior LC-001) | | |
@@ -266,7 +266,7 @@ Stellar Index moves no *user* money, but **served prices/amounts/supply/market-c
 - **RFC-4 — Watermark/verdict overwrite → false "complete".** CS-083 (stale-tip complete=true), CS-084 (reconcile nets to 0), retentionStart floor. Detect: can the verdict read "complete" while a real hole exists below the reconcile floor?
 - **RFC-5 — Gate on topic bytes → look-alike injection.** CS-026 (comet/aquarius/etc. matched on topic alone). Detect: any `Matches()` without a contract-identity gate + foreign-contract-reject test.
 - **RFC-6 — Newest surface holds the security/availability bugs.** CF edge functions + SSE held the only prior Highs (CS-009 SSRF, CS-012 crash, CS-013 FD-exhaust); the 2026-07-10 push was the 2026-07-16 run's newest surface. **For the NEXT run the newest surface is the audit-2026-07-23 remediation itself** — 743 files, largely agent-written, much of it in the money and completeness paths, merged over roughly one day. By this rule that diff is the highest-risk code in the repo and should be audited FIRST, not treated as settled because it was written to fix findings. The campaign already found three defects inside its own remediation (an over-broad A-CRIT-1 guard that broke CI, a DAT-10 restructure that dropped a documented ordering, and an import-boundary fix that made another agent's test vacuous), which is the rate to expect.
-- **RFC-7 — Doc/plan drift as a first-class finding.** 6 CLAUDE.md/arch-doc false claims; ROADMAP rows contradicting code (Alg-2 readers, #72 PROJECTION, #34, #16 endpoint); a stale public-linked backlog. A plan that prescribes obsolete work wastes the next campaign. Detect: reconcile every ADR/ROADMAP/perf-todo claim against code.
+- **RFC-7 — Doc/plan drift as a first-class finding.** 6 AGENTS.md/arch-doc false claims; ROADMAP rows contradicting code (Alg-2 readers, #72 PROJECTION, #34, #16 endpoint); a stale public-linked backlog. A plan that prescribes obsolete work wastes the next campaign. Detect: reconcile every ADR/ROADMAP/perf-todo claim against code.
 - **RFC-8 — Fail-open abuse/DoS windows.** Missing query timeouts, validation-skipping scans, rate-limit-if-Redis-down, CoinGecko divergence with no staleness gate. Detect: what happens to each guard when its dependency is absent or the input is adversarially sparse?
 
 - **RFC-9 — A property fix that changes the complexity class of the hot path.** #268 fixed a real property (rsync ignores ProxyJump) by swapping `synchronize` for a directory-`copy` — O(1)→O(files); the first mainnet deploy sat >16 min on one task (2026-08-29). Detect: any transport/module swap on deploy/ops paths must state per-file vs single-transfer and the expected runtime on production-sized inputs; `profile_tasks` in deploy logs.

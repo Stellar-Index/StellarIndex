@@ -42,7 +42,7 @@ const tradesRateLimit = 1100 * time.Millisecond
 // The venue timestamp is fractional seconds; the cursor is
 // nanoseconds. Fills are converted with the same fixed 10^8 external
 // scale as the streaming path (see externalAmountDecimals — the
-// CLAUDE.md scaling trap).
+// AGENTS.md scaling trap).
 func (s *Streamer) BackfillTrades(ctx context.Context, pair canonical.Pair, from, to time.Time) ([]canonical.Trade, error) {
 	if !from.Before(to) {
 		return nil, fmt.Errorf("kraken.BackfillTrades: from %v must be before to %v", from, to)

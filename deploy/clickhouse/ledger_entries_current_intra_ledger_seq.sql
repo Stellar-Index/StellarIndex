@@ -38,7 +38,7 @@
 --
 -- ***Heavy op.*** The Step-2 reproject rewrites the entire current-state
 -- projection from the multi-billion-row ledger_entry_changes append-log. Run it
--- windowed, under run-heavy-job.sh on r1, off-peak (CLAUDE.md heavy-job
+-- windowed, under run-heavy-job.sh on r1, off-peak (AGENTS.md heavy-job
 -- doctrine) — never in one statement.
 
 -- ── Step 0: add intra_ledger_seq to the source append-log ────────────────────

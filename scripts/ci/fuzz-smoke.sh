@@ -49,18 +49,23 @@ cd "$(dirname "$0")/../.."
 HITS_FILE="$(mktemp)"
 trap 'rm -f "$HITS_FILE"' EXIT
 
-# --exclude-dir is why this greps rather than using `go list ./...`:
-# .claude/worktrees holds live agent worktrees, each a full copy of this
-# repo. Without the exclusion a maintainer with ten agents running
-# discovers 4 real targets plus 40 duplicates from throwaway checkouts,
-# burns 30s on each, and reports a failure naming paths that are not part
-# of the build. CI never has them, so this would only ever break locally
-# — which is exactly the kind of gate nobody trusts afterwards. vendor
-# and node_modules are excluded for the same reason.
-grep -rl --include='*_test.go' \
-	--exclude-dir=.claude --exclude-dir=.git \
-	--exclude-dir=vendor --exclude-dir=node_modules \
-	-E '^func Fuzz[A-Za-z0-9_]*\(f \*testing\.F\)' . |
+# Discovery is driven by `git ls-files`, not a filesystem walk, and that
+# is the whole trick: it lists only TRACKED files, so every ignored
+# directory is invisible by construction. Agent tooling keeps live
+# worktrees in an ignored dot-directory, each a full copy of this repo —
+# a filesystem walk found 4 real targets plus 52 duplicates from throwaway
+# checkouts, burned 30s on each, and failed naming paths that are not part
+# of the build. That would only ever break on a maintainer's machine,
+# which is exactly the kind of gate nobody trusts afterwards. It also
+# retires a brittle --exclude-dir glob whose behaviour differed between
+# GNU and BSD grep (the BSD form silently matched nothing, so the gate
+# failed closed on a clean tree).
+#
+# Deliberately POSIX-portable below (no mapfile, no process substitution):
+# this has to run on a maintainer's macOS bash 3.2 as well as on the
+# ubuntu runner, or the only place it is ever exercised is CI.
+git ls-files -z '*_test.go' |
+	xargs -0 grep -l -E '^func Fuzz[A-Za-z0-9_]*\(f \*testing\.F\)' |
 	sed 's#^\./##' |
 	while IFS= read -r file; do
 		dir="$(dirname "$file")"

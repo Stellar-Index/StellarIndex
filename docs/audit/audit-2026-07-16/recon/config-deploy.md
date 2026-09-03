@@ -37,7 +37,7 @@
 | Invariant | Enforcement | Tier |
 |---|---|---|
 | r1 config codified in ansible | weekly ansible-drift --check --diff, fails changed>13 | **automated-weekly, but ≤13-change allowance + weekly cadence = drift window** |
-| One heavy job at a time | run-heavy-job.sh caps resources; unit name `heavy-<name>-$$` — **NO lock, concurrency NOT prevented** | **CONVENTION-ONLY** (prose in CLAUDE.md:437) ← weak link |
+| One heavy job at a time | run-heavy-job.sh caps resources; unit name `heavy-<name>-$$` — **NO lock, concurrency NOT prevented** | **CONVENTION-ONLY** (prose in AGENTS.md:437) ← weak link |
 | Heavy jobs can't starve galexie | MemoryMax + galexie MemoryLow + root watchdog | automated (cgroups) |
 | Migrations before swap, never rolled back | deploy playbook + CS-099 | automated on workflow path; migrations_skip bypass |
 | Migrate needs explicit DSN | hard fail no default | automated |

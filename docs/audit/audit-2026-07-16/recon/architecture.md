@@ -33,8 +33,8 @@
 ## DOC-DRIFT / FALSE-CLAIMS (audit DOC dimension leads)
 1. `docs/architecture/infrastructure/multi-region-topology.md` status:ratified reads as live 3-region; only R1 deployed.
 2. `docs/architecture/ha-plan.md` status:ratified (ADR-0008) describes HAProxy/Patroni/Sentinel infra; NO playbook invokes those roles. Prior audit caught same for backup runbook.
-3. CLAUDE.md ~216: projector writes "from soroban_events landing zone" — actually reads ClickHouse contract_events by default now.
-4. CLAUDE.md:103 calls ratelimit "token bucket" — it's FixedWindowCounter (INCR+EXPIRE Lua), different algorithm.
+3. AGENTS.md ~216: projector writes "from soroban_events landing zone" — actually reads ClickHouse contract_events by default now.
+4. AGENTS.md:103 calls ratelimit "token bucket" — it's FixedWindowCounter (INCR+EXPIRE Lua), different algorithm.
 5. `docs/architecture/storage-layering-spec.md` status:current says team decided NOT to create internal/domain — but internal/domain/* was created 2026-07-10 doing exactly that.
 6. `docs/maintainability-audit-2026-07-01/D8-dependency-direction.md` claims lint-imports enforces "essentially none" — no longer true (4 rule families live).
 7. DEAD SCHEMA: `api_usage_events` (migrations/0027:227) promises async Redis-stream→worker path; no consumer implemented anywhere (`grep AppendEvent` → zero).

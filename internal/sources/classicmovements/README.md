@@ -278,7 +278,7 @@ consumer of its own; its only caller is the backfill command.)
   (ReplacingMergeTree). No `-config` flag — this command opens no
   Postgres connection at all (ADR-0048 D2). Always run under
   `/usr/local/sbin/run-heavy-job.sh` for anything beyond a small range
-  (CLAUDE.md heavy-job doctrine).
+  (AGENTS.md heavy-job doctrine).
 - **Serving**: none yet — write-path only (see `doc.go`).
 
 ## References

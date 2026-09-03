@@ -2357,7 +2357,7 @@ var TradeInsertOutcomeTotal = prometheus.NewCounterVec(
 //
 // Off-chain (CEX/FX) trades are EXCLUDED: those sources normalise
 // amounts onto a fixed integer scale (10^8 for CEX/reference-
-// aggregator sources, 10^6 for the FX pollers — CLAUDE.md
+// aggregator sources, 10^6 for the FX pollers — AGENTS.md
 // "External-source amount scaling is NOT uniform") where a base==quote
 // reading doesn't carry the same "the decoder is broken" signal an
 // on-chain 1:1 does, and an occasional genuine equal-value

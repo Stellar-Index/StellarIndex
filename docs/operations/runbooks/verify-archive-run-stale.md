@@ -148,7 +148,7 @@ trap 'gzip -9 "$LOGFILE" >/dev/null 2>&1; mv "${LOGFILE}.gz" /var/log/stellarind
 ```
 
 (Manual long-range scans are heavy jobs — always go through
-`/usr/local/sbin/run-heavy-job.sh` per the CLAUDE.md heavy-job rule.)
+`/usr/local/sbin/run-heavy-job.sh` per the AGENTS.md heavy-job rule.)
 
 That way the log either lands under `/var/log/stellarindex/` (where
 the rc.83-era logrotate config picks it up — F-0009 closure) or is

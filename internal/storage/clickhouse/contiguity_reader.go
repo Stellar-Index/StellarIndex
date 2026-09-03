@@ -219,7 +219,7 @@ func ecWindowCoverageQuery() string {
 // query per stride-wide window (see forEachLedgerWindow): the tx-bearing
 // ledger count from stellar.ledgers alongside how many of those same ledgers
 // stellar.ledger_entry_changes covers. Adapted from the ad hoc query run by
-// hand to first find the ledger 63,050,000 live-ingest floor (see CLAUDE.md);
+// hand to first find the ledger 63,050,000 live-ingest floor (see AGENTS.md);
 // windowing bounds per-query cost to one lake partition regardless of the
 // overall range's size.
 func QueryECWindowCoverage(ctx context.Context, addr string, from, to, stride uint32) ([]ECWindowCoverage, error) {

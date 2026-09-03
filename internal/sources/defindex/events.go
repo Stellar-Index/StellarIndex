@@ -217,7 +217,7 @@ const (
 // defindex.md (surprising-gotcha #3) they are discriminated by a
 // `rebalance_method` Symbol field inside the event body.
 //
-// SCOPE / HONESTY (do-not-invent; CLAUDE.md "Soroban DeFi contracts
+// SCOPE / HONESTY (do-not-invent; AGENTS.md "Soroban DeFi contracts
 // upgrade in place"): the discriminator FIELD NAME + method values
 // below come from upstream research, NOT from an observed on-chain
 // sample — the r1 lake has ZERO ("DeFindexVault","rebalance") emits

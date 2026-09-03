@@ -160,7 +160,7 @@ See [runbooks/exporter-down.md](runbooks/exporter-down.md#per-exporter-notes)
 for the day-to-day symptom (`minio_exporter_down`) and
 [runbooks/minio-metrics-403.md](runbooks/minio-metrics-403.md) for
 the companion 403 case. This step is **not yet codified in
-ansible** — it was applied by hand on 2026-07-03 (CLAUDE.md's "codify
+ansible** — it was applied by hand on 2026-07-03 (AGENTS.md's "codify
 every host change" rule is violated here until a task lands in
 `09-minio.yml` to template `/etc/prometheus/minio.token` from a
 `mc admin prometheus generate` run; tracked as a follow-up, not done

@@ -253,7 +253,7 @@ type AquariusPoolReserve struct {
 // ledger/op_index/event_index), so a multi-token stableswap pool comes
 // back with all its legs. Token addresses are resolved positionally from
 // the pool's most recent deposit/withdraw in the window (update_reserves
-// carries no token address — CLAUDE.md / migration 0089); a leg with no
+// carries no token address — AGENTS.md / migration 0089); a leg with no
 // observed liquidity event keeps an empty Token.
 //
 // This is the READ side of the Aquarius TVL / liquidity-depth signal that

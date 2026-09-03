@@ -1,7 +1,7 @@
 # Recon: web/explorer frontend + PLANS/ROADMAP validity (HEAD f84e2d0b)
 
 ## Frontend
-- **Next 16.2.10 / React 19.2.7** (NOT "Next.js 15" — CLAUDE.md/repo-prep stale; ADR-0044 documents 15→16). output:'export' static (OPEN_NEXT=1 switches to Workers SSR spike). ~70 route dirs, 59 generateStaticParams.
+- **Next 16.2.10 / React 19.2.7** (NOT "Next.js 15" — AGENTS.md/repo-prep stale; ADR-0044 documents 15→16). output:'export' static (OPEN_NEXT=1 switches to Workers SSR spike). ~70 route dirs, 59 generateStaticParams.
 - Two data layers: build-time buildFetch.ts (FAIL-HARD — transport failure throws & fails build; null only for authoritative 4xx / CI stub); client-time TanStack Query hooks. Generated types src/api/types.ts (openapi-typescript, CI drift-gated).
 - web/status = redirect stub only (301 + window.location.replace). Real status page = web/explorer/src/app/status/StatusPageClient.tsx (live 20-endpoint probe matrix every 30-120s).
 - Protocol registry.ts mirrors Go protocols_registry.go (16 each, CI lint-protocol-registry-sync enforces).

@@ -31,7 +31,7 @@ import (
 // internal/ops/chops/clickhouse_serving_profile_test.go.
 //
 // Both trees are asserted: the ansible template is the authority for
-// r1 (CLAUDE.md — r1 config is ansible-managed) and the
+// r1 (AGENTS.md — r1 config is ansible-managed) and the
 // deploy/systemd copy is the operator-facing reference. A fix in one
 // and not the other is how they drift.
 

@@ -32,7 +32,7 @@
 -- Historical fill: live ingest writes here from deploy onward; the
 -- back-window is re-derived from the raw lake with
 --   stellarindex-ops projector-replay -source aquarius -from 52728375
--- Run under /usr/local/sbin/run-heavy-job.sh (CLAUDE.md heavy-job
+-- Run under /usr/local/sbin/run-heavy-job.sh (AGENTS.md heavy-job
 -- doctrine).
 
 BEGIN;

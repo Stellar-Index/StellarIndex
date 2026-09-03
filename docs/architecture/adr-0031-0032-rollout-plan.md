@@ -271,7 +271,7 @@ close the loop.
 - `docs/adr/0030-per-source-coverage-invariant.md` — note that
   it's now implemented via ADR-0031 (the lint guard remains; the
   data-derived signal it required is now in place).
-- `CLAUDE.md` § Invariants — add ADR-0031 + ADR-0032 entries.
+- `AGENTS.md` § Invariants — add ADR-0031 + ADR-0032 entries.
 - Memory: write a new entry
   `project_projection_architecture` summarising the post-rollout
   model (soroban_events = truth, per-source = projection).

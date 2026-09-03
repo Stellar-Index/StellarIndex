@@ -56,7 +56,7 @@ firing ×15). The steps below recover those rows.
 - The **forward decoder fix is deployed** to r1 (otherwise the re-derive
   re-drops the same rows — verify the running `stellarindex-indexer` /
   `stellarindex-ops` binary post-dates the fix).
-- One heavy job at a time (CLAUDE.md): confirm nothing else heavy is
+- One heavy job at a time (AGENTS.md): confirm nothing else heavy is
   running — `pgrep -af "stellarindex-ops (backfill|ch-rebuild|census)"`.
 - Source the runtime env on r1 (provides `$STELLARINDEX_POSTGRES_DSN` +
   the S3 / ClickHouse creds):

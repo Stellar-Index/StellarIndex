@@ -84,7 +84,7 @@
 -- ON CONFLICT DO NOTHING makes a re-run over an already-written window
 -- a no-op. -to is hard-clamped below the P23 boundary regardless of
 -- what the operator passes (ADR-0047 D2) — always run under
--- run-heavy-job.sh per CLAUDE.md's heavy-job doctrine.
+-- run-heavy-job.sh per AGENTS.md's heavy-job doctrine.
 
 BEGIN;
 

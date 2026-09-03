@@ -8,7 +8,7 @@ import (
 
 // These tests cover the Upsert/Read defensive guards — the real
 // round-trip against Postgres needs testcontainers-go and lives in
-// test/integration/ (per the Test conventions in CLAUDE.md).
+// test/integration/ (per the Test conventions in AGENTS.md).
 
 func TestUpsertSACBalanceSeedProvenance_RejectsEmptyContractID(t *testing.T) {
 	s := &Store{}

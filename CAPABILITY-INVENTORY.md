@@ -36,7 +36,7 @@ Intent-keyed: *Need to X → use `package.Symbol`*. Every symbol verified presen
 - map/vec/tuple/address/symbol/… → `AsMap`, `MapField`, `MustMapField` (decode-by-NAME, schema-safe), `AsVec`, `AsTupleN`, `AsAddressStrkey`, `AsSymbol`, `AsString`, `AsU32/U64`, `AsBytes`, `AsBool`
 - Encode call args → `EncodeArgsAsScVec`, `DecodeScVecToArgs`
 
-## XDR ledger/op JSON — `internal/xdrjson`  ⚠ (was absent from CLAUDE.md)
+## XDR ledger/op JSON — `internal/xdrjson`  ⚠ (was absent from AGENTS.md)
 - Decode classic op body → `xdrjson.DecodeOperationBody(bodyB64)`
 - Participant accounts → `xdrjson.ParticipantAccounts(bodyB64)`
 - SAC contract id for a classic asset → `xdrjson.SACContractID(assetID, passphrase)`
@@ -57,7 +57,7 @@ Intent-keyed: *Need to X → use `package.Symbol`*. Every symbol verified presen
 ## Rate limiting / usage — Redis
 - Token-bucket → `ratelimit.New(rdb, limit, window, opts...).Take(ctx, key)` / `TakeN` (atomic Lua, fail-open w/ dwell)
 - N-per-window abuse cap → `ratelimit.NewFixedWindowCounter(rdb, window, nowFn).Incr(ctx, keyBase)` (INCR + drain TTL; the primitive under the auth throttles — never hand-roll INCR/EXPIRE)
-- Per-subject daily / MTD counter → `usage.New(rdb, opts...).Increment/MonthToDate/Read` ⚠ (not in CLAUDE.md)
+- Per-subject daily / MTD counter → `usage.New(rdb, opts...).Increment/MonthToDate/Read` ⚠ (not in AGENTS.md)
 - **A full throttle family already exists** (`auth.NewRedisLoginThrottle`, `NewRedisSignupIPThrottle`, …) — don't hand-roll a Redis throttle
 
 ## HTTP response writers
@@ -75,7 +75,7 @@ Intent-keyed: *Need to X → use `package.Symbol`*. Every symbol verified presen
 ## Storage connectors
 - Served tier (Timescale/PG) → `timescale.Open(ctx, dsn)` → `*Store`
 - ClickHouse lake → `clickhouse.NewExplorerReader`, `NewSupplyReader`, `clickhouse.Open` (sink), `NewLiveSink`
-- Redis client from config → `redisclient.Build(cfg)`, `redisclient.Mode(cfg)` ⚠ (not in CLAUDE.md; handles sentinel vs single)
+- Redis client from config → `redisclient.Build(cfg)`, `redisclient.Mode(cfg)` ⚠ (not in AGENTS.md; handles sentinel vs single)
 
 ## Ingest / decode — `ledgerstream`, `dispatcher`, `pipeline`, `projector`
 - Stream archive/live LCM → `ledgerstream.Stream`, `StreamArchiveThenLive`, `NewTieredDataStore` (Galexie→MinIO only, never rpc)

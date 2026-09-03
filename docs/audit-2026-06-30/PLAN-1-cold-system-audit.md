@@ -89,7 +89,7 @@ checklist of unprobed surfaces).
 34 areas. Built by **merging two independent decompositions** — the surface-
 inventory mapper's 32 + the auditor's own list (`_auditor-independent-areas.md`)
 — then adding the angles neither covered alone. Real counts from the mapper:
-~95 internal packages (CLAUDE.md lists ~30 — see CS-005), 100 route registrations
+~95 internal packages (AGENTS.md lists ~30 — see CS-005), 100 route registrations
 vs 88 OpenAPI paths, 69 migrations, 6 ansible roles, 23 systemd units, 75 explorer
 routes, 10 CI workflows. **Coverage map** (every dir → ≥1 area) at the end.
 
@@ -139,7 +139,7 @@ needs a failing input).
 ### Frontend / API contract / docs / resilience
 - **A30 — Explorer frontend security.** `web/explorer` (75 routes), `/dashboard/admin`, `/embed/*`. *Attack:* JSON-LD/stored-XSS via SEP-1 fields, client-side admin/auth gating, embed iframe XSS + clickjacking, API keys in static bundle, /auth/callback open-redirect, CF Pages Function SSRF. **P0**
 - **A31 — API contract & spec drift.** `openapi/…v1.yaml` (88) vs 100 code routes, `pkg/client`, dual-shape `/v1/assets/{slug}`. *Attack:* undocumented/auth-missing routes, shape-discriminator confusion, generator drift (types.ts/postman not drift-guarded). **P1**
-- **A32 — Docs/ADR integrity.** `docs/`, CLAUDE.md (3× package undercount, CS-005), ADRs. *Attack:* docs that lie about current behavior (doc-hygiene class — 6 found this session), last_verified staleness, ADR invariants claimed-but-unenforced (i128 analyzer). **P1**
+- **A32 — Docs/ADR integrity.** `docs/`, AGENTS.md (3× package undercount, CS-005), ADRs. *Attack:* docs that lie about current behavior (doc-hygiene class — 6 found this session), last_verified staleness, ADR invariants claimed-but-unenforced (i128 analyzer). **P1**
 - **A33 — Pricing read-paths & query performance.** `api/v1/{price*,vwap,twap,oracle,observations,chart,ohlc}`. *Attack:* non-sargable WHERE (`func(col)` — the 50→400ms incident), fallback serving stale as fresh (`flags.stale`), prewarm cache-key drift, alias resolution. **P0**
 - **A34 — Cross-package data-flow & resilience.** end-to-end `consumer.Event`→sink arms, canonical round-trips storage→API→SDK; `test/{integration,load,chaos}` adequacy. *Attack:* an Event type with no sink arm (silent drop), precision loss at a boundary, thin chaos coverage of real failure modes. **P1**
 
@@ -201,7 +201,7 @@ self-review, and are where a new model should out-find the prior audits:
   galexie-archive + ClickHouse lake recovery, not just Postgres. **P1**
 - **A36 — Licensing / data-redistribution compliance.** *Attack:* Apache-2.0 dep
   license compatibility (scan go.mod); CEX/vendor data redistribution
-  restrictions (CLAUDE.md notes some venues restrict redistribution) — are we
+  restrictions (AGENTS.md notes some venues restrict redistribution) — are we
   re-serving data we're not licensed to? **P2**
 - **Accessibility (a11y)** of the explorer is logged to **Audit 2** (product
   quality), not here — but flagged so it isn't lost.

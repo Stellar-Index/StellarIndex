@@ -39,7 +39,7 @@ func classify(ev *events.Event) string {
 }
 
 // decodeTransfer parses ("transfer", from, to[, sep0011_asset]) +
-// i128 OR map{amount, to_muxed_id} body. Per CLAUDE.md SEP-41
+// i128 OR map{amount, to_muxed_id} body. Per AGENTS.md SEP-41
 // "transfer data EITHER simple i128 OR map" — type-test before
 // MustI128.
 func decodeTransfer(ev *events.Event) (string, string, *big.Int, error) {

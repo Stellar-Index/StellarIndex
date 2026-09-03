@@ -1,10 +1,10 @@
 ---
-name: add-endpoint
-description: Add or change a Stellar Index API endpoint — handler + Options wiring + OpenAPI + the three generated artifacts + SDK triage + caching/consistency contracts. Use when adding a route, changing a response shape, or when the spec/SDK/explorer drift after an API change.
+title: Add or change an API endpoint
+last_verified: 2026-09-03
+status: living doc
 ---
 
-# /add-endpoint
-
+# Add or change an API endpoint
 Canonical checklist: `docs/contributing/add-api-endpoint.md`. This
 skill adds the contract-gate ecosystem that now surrounds an
 endpoint change.
@@ -56,4 +56,4 @@ Then curl the endpoint (local stack or read-only prod) and READ the
 payload — including one error case (bad param → problem+json with
 `no-store`).
 
-Finish with **/verify-done**.
+Finish with **docs/contributing/procedures/verify-done.md**.

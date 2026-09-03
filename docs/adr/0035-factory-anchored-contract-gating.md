@@ -34,7 +34,7 @@ true. Historically, most event-based decoders gated `Matches()` on the
 `withdraw`, `borrow`, `repay`, `gulp`, …), Phoenix/Comet/Aquarius/
 DeFindex similarly.
 
-This was a deliberate early policy, recorded in `CLAUDE.md` as
+This was a deliberate early policy, recorded in `AGENTS.md` as
 "match broadly, filter downstream": the Comet note in particular said
 operators "filter downstream by `Trade.Source = "comet"` +
 contract-address context rather than at dispatch time."
@@ -110,7 +110,7 @@ Concretely, per protocol:
      RPC walk of the factory for tooling that runs without DB access
      (the reconcile uses this).
 
-This **reverses** the `CLAUDE.md` "match broadly, filter downstream"
+This **reverses** the `AGENTS.md` "match broadly, filter downstream"
 policy for protocol attribution. Filtering happens **at dispatch
 time**, anchored at the factory — not downstream by source tag.
 
@@ -296,4 +296,4 @@ order; each is its own change with the blocker resolved first.
   already WASM-version-aware for backfill; this adds contract-identity
   awareness for attribution.
 - Reverses the "match broadly, filter downstream" guidance in
-  `CLAUDE.md` (updated in the same change).
+  `AGENTS.md` (updated in the same change).

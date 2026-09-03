@@ -297,9 +297,9 @@ without auditing whether that code was still the production path.
 
 Preventive controls put in place:
 
-- **CLAUDE.md** "Invariants — never violate these" now has a
+- **AGENTS.md** "Invariants — never violate these" now has a
   dedicated rule #6 pointing at this doc.
-- **CLAUDE.md** "Things that will surprise you" highlights the 2026-
+- **AGENTS.md** "Things that will surprise you" highlights the 2026-
   04-23 RPC removal.
 - **This doc** is binding (status: binding, not "living"); it gets
   linked from every PR description that touches the ingest path.
@@ -344,7 +344,6 @@ in a per-source poll loop.
   served tier.
 - [r1-deployment-state.md](../operations/r1-deployment-state.md) —
   what's actually running on r1.
-- [architecture_cdp.md memory](../../../../.claude/projects/-Users-ash-code-stellarindex/memory/architecture_cdp.md) —
   the CDP pattern.
 - [contract-schema-evolution.md](contract-schema-evolution.md) —
   per-contract WASM versioning (unrelated to transport; still

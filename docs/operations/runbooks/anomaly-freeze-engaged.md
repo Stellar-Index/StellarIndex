@@ -168,7 +168,7 @@ Decision tree:
     -write   # fail-closed: without -write this only previews the unfreeze
   ```
   Any r1 config change lands in `configs/ansible/` in the same PR
-  (CLAUDE.md rule) — a hand-edited TOML will page Monday morning.
+  (AGENTS.md rule) — a hand-edited TOML will page Monday morning.
 
 - [ ] **Step 3 — cold-baseline false-fire pattern** (most common in
       practice — see `_sustained` alert annotation): if MANY pairs

@@ -44,7 +44,7 @@ func classify(e *events.Event) string {
 // AssetAmount is one (asset, amount) pair from an AuctionData
 // `bid` or `lot` map. Amounts are i128 in the Blend contract; we
 // surface them as *big.Int for canonical-types parity with the
-// rest of the indexer (per CLAUDE.md i128-never-truncates).
+// rest of the indexer (per AGENTS.md i128-never-truncates).
 type AssetAmount struct {
 	// Asset is the canonical asset (Soroban contract address) for
 	// the entry. Native-XLM SAC contracts surface as a SorobanAsset

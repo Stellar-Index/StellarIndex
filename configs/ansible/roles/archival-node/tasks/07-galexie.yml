@@ -262,7 +262,7 @@
 
 - name: Assert galexie matches the ansible-pinned installed-version stamp
   # A hard assert, not a warning: ansible-drift.yml's entire purpose is
-  # to fail loudly on exactly this class of drift (CLAUDE.md "r1
+  # to fail loudly on exactly this class of drift (AGENTS.md "r1
   # configuration is ansible-managed — codify every host change"). If
   # this fires because of a DELIBERATE upgrade, update
   # galexie_expected_version_string (and galexie_version, and

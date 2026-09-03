@@ -24,7 +24,7 @@ a single coherent thread:
 2. **D3** — so it **copies**: ~50+ near-identical helper copies, concentrated in
    `internal/sources/external/` (scaling ×10, tx-hash ×15, WS-reconnect ×4) — plus SSRF
    guarding duplicated with *divergent* coverage, and ClaimAtom counting forked 3×.
-3. **D9** — the **recipe institutionalizes it**: the CLAUDE.md "Add a CEX connector"
+3. **D9** — the **recipe institutionalizes it**: the AGENTS.md "Add a CEX connector"
    recipe says "copy the binance package," and the "Add an on-chain source" recipe omits
    the production seam + all 6 wiring edits.
 4. **D1** — the **structural ambiguity** is where the next duplication lands: FX feeds
@@ -41,7 +41,7 @@ pointing at the shared helpers (D9). Do that and the copy-paste engine stops.
 1. **No discoverability → copy-paste** (D4→D3→D9→D1).
 2. **Guards are advisory** — unprotected `main`, integration suite compiled-but-never-run,
    self-editable lint allowlists, missing DRY/exhaustive/layering lints (D5, D10, D7, D8).
-3. **Docs drift / mislead** — CLAUDE.md package undercount + false ADR-0035 claim, recipes
+3. **Docs drift / mislead** — AGENTS.md package undercount + false ADR-0035 claim, recipes
    that mislead, test-convention docs that document CI gates that don't exist, ADR-0003's
    fictional analyzer (D4, D9, D10, D5, D7).
 4. **The type system isn't asked to enforce invariants** — no `exhaustive` lint (ADR-0010
@@ -70,7 +70,7 @@ test practice + one testcontainers harness (D10); the projector one-writer + ext
 2. **Wire the integration suite into CI** (D5/D10 CS-070) — a `workflow_dispatch`+label job
    running `make test-integration` (reuses the harness) resurrects a whole tier of tests incl.
    the ADR-0034 retention guard.
-3. **Fix the misleading docs** (D4/D9/D10) — CLAUDE.md's false ADR-0035 + storage claims, the
+3. **Fix the misleading docs** (D4/D9/D10) — AGENTS.md's false ADR-0035 + storage claims, the
    "copy the binance package" recipe, the test-convention fiction (`make fixtures`, nightly).
    Cheap; stops active mislead today.
 

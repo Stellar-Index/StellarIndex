@@ -262,7 +262,7 @@ func emitLiveSeeds(
 // Cost. ledger_entry_changes holds every historical write, not just the
 // latest per key — this scan is substantially heavier than
 // [StreamSACBalanceSeeds]'s current-state read and MUST run under
-// run-heavy-job.sh on r1 (CLAUDE.md heavy-job doctrine), same discipline as
+// run-heavy-job.sh on r1 (AGENTS.md heavy-job doctrine), same discipline as
 // the existing seed. It is intended for the small `[supply.sac_wrappers]`
 // watched-set (a handful of contracts), never a routine/scheduled job.
 //
@@ -291,7 +291,7 @@ func emitLiveSeeds(
 // keys (98% of the GROUP BY's cardinality), so a per-contract split leaves
 // essentially the whole aggregation intact for USDC while multiplying the
 // scan by 38 — hours of saturated I/O on the host that also runs galexie's
-// captive core (CLAUDE.md heavy-job doctrine). Windowing bounds the footprint
+// captive core (AGENTS.md heavy-job doctrine). Windowing bounds the footprint
 // on the axis it actually grows along; splitting by contract does not.
 func StreamSACBalanceSeedsFullHistory(ctx context.Context, addr string, watched map[string]string, fn func(SACBalanceSeed) error) error {
 	if len(watched) == 0 {

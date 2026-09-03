@@ -65,7 +65,7 @@
 --   stellarindex-ops projector-replay -source aquarius -from 52728375
 -- (re-deriving trade/liquidity/reserves rows is a no-op via
 -- ON CONFLICT DO NOTHING; only the new rewards rows land). Run under
--- /usr/local/sbin/run-heavy-job.sh (CLAUDE.md heavy-job doctrine).
+-- /usr/local/sbin/run-heavy-job.sh (AGENTS.md heavy-job doctrine).
 
 BEGIN;
 

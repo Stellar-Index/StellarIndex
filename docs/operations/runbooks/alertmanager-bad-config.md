@@ -105,7 +105,7 @@ ssh root@136.243.90.96 "amtool check-config /etc/prometheus/alertmanager.yml"
       `bash configs/alertmanager/apply.sh` (renders + amtool-
       validates + installs `0640 root:prometheus` + reloads).
       Don't hand-edit `/etc/prometheus/alertmanager.yml` — the
-      next apply will overwrite it, and per CLAUDE.md every r1
+      next apply will overwrite it, and per AGENTS.md every r1
       config change lands in the repo in the same PR.
 - [ ] Step 4 — manual reload if needed:
       `systemctl reload prometheus-alertmanager` (what `apply.sh`

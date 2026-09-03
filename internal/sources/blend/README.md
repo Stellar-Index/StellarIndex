@@ -145,7 +145,7 @@ handler.
 ## i128 handling
 
 Every amount in Blend events is `i128`. We honor the i128-never-
-truncates invariant (CLAUDE.md): amounts surface as `*big.Int`
+truncates invariant (AGENTS.md): amounts surface as `*big.Int`
 inside `AuctionData.Bid[i].Amount` / `Lot[i].Amount` and as
 `*big.Int` for `FillAuctionEvent.FillPercent`.
 

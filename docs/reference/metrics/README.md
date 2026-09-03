@@ -1015,7 +1015,7 @@ regardless of whether it arrived via the dispatcher's live batch path,
 the projector's per-event sink, or a `stellarindex-ops ch-rebuild` /
 backfill re-derive. Bumps once per landed **on-chain** trade
 (`ledger != 0` — CEX/FX trades are excluded because they normalise
-amounts onto a different fixed scale, CLAUDE.md "External-source
+amounts onto a different fixed scale, AGENTS.md "External-source
 amount scaling is NOT uniform") whose `base_amount` exactly equals its
 `quote_amount`, both nonzero.
 

@@ -14,7 +14,7 @@ import (
 // smallest-unit magnitude.
 //
 // Why this exists: canonical.Trade amounts are stamped at a per-SOURCE
-// fixed-point scale (CLAUDE.md / CS-040 — on-chain DEX legs are 7-decimal
+// fixed-point scale (AGENTS.md / CS-040 — on-chain DEX legs are 7-decimal
 // stroops, CEX 8, the FX pollers 6). A trade's implied PRICE
 // (QuoteAmount/BaseAmount) is scale-invariant, but its WEIGHT in a
 // Σquote/Σbase mean is its raw BaseAmount = real_volume × 10^source_decimals.

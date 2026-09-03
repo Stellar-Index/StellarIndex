@@ -58,7 +58,7 @@ Depends on W1 (so the corrective re-derive is incremental). PROTECTED (money).
 - Divergent systemd-unit copies: reconcile deploy/systemd vs ansible templates (C4, CID-17).
 
 ## Wave 8 — Plans/docs truth-up (chunk-4 DOC/DOM)
-- Correct ROADMAP stale rows (Alg-2 readers SUPERSEDED, #72 PROJECTION rejected, #34 self-contradiction, #16 endpoint exists, two-axis DONE, #66 Alchemy re-scope); fix the 6 CLAUDE.md/arch-doc false claims (projector-reads-CH, ratelimit-fixed-window, multi-region, ha-plan, storage-layering-spec, D8); write the missing migration-0105 cleanup migration (serialised owner); enumerate #39's live `soroban_events` readers in the decommission plan; un-link the stale launch-readiness-backlog from the public site or refresh it.
+- Correct ROADMAP stale rows (Alg-2 readers SUPERSEDED, #72 PROJECTION rejected, #34 self-contradiction, #16 endpoint exists, two-axis DONE, #66 Alchemy re-scope); fix the 6 AGENTS.md/arch-doc false claims (projector-reads-CH, ratelimit-fixed-window, multi-region, ha-plan, storage-layering-spec, D8); write the missing migration-0105 cleanup migration (serialised owner); enumerate #39's live `soroban_events` readers in the decommission plan; un-link the stale launch-readiness-backlog from the public site or refresh it.
 
 ## Business-VALUE decisions (safe default applied + logged; NOT blocking — user away)
 Per the user's away-directive, I apply the conservative default, implement it, and log for post-hoc review:

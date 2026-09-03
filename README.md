@@ -32,7 +32,7 @@ supply pipeline). A live deployment serves [stellarindex.io](https://stellarinde
 
 ## If you are an AI agent reading this for the first time
 
-See **[CLAUDE.md](CLAUDE.md)**. It's your orientation map.
+See **[AGENTS.md](AGENTS.md)**. It's your orientation map.
 
 ---
 

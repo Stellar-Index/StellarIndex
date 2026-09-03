@@ -27,4 +27,4 @@ key by POSTing to `/v1/signup` (see
 - Streaming endpoints use Server-Sent Events (`text/event-stream`).
 - Errors follow [RFC 9457 problem+json](https://datatracker.ietf.org/doc/html/rfc9457).
 - Money values are JSON strings to avoid IEEE 754 precision loss
-  on i128/u128 amounts (see CLAUDE.md invariant #1).
+  on i128/u128 amounts (see AGENTS.md invariant #1).

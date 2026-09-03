@@ -97,7 +97,7 @@ Defined in `pair/src/event.rs` as:
     }
 
 On the wire this serialises to ScvMap with 5 entries. Decoder pulls
-**by name** (per CLAUDE.md "decode by Map-field-name not position"):
+**by name** (per AGENTS.md "decode by Map-field-name not position"):
 
 | field | extracted by | invariant the decoder relies on |
 | --- | --- | --- |

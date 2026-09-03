@@ -1,9 +1,10 @@
 ---
-name: verify-done
-description: The pre-completion discipline harness for Stellar Index — run before claiming ANY change is done, committing a batch, or pushing. Executes the full gate stack (verify.sh foreground, drift generators for touched surfaces, contract tests, staged-content check) and encodes the session-learned failure modes that have shipped broken changes before. Use when finishing a task, before git push, or when asked "is this done?".
+title: The pre-completion gate stack
+last_verified: 2026-09-03
+status: living doc
 ---
 
-# /verify-done — the discipline layer
+# docs/contributing/procedures/verify-done.md — the discipline layer
 
 Every other skill's "verify" step is this skill. Do not shortcut it —
 each rule below exists because its absence shipped a real breakage

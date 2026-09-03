@@ -14,7 +14,7 @@ audit log is the evidence trail for a single
 the decoder handles every WASM version that ran for the replay
 range, the flag flips in the same PR.
 
-The constraint behind all of this is the trap CLAUDE.md flags as
+The constraint behind all of this is the trap AGENTS.md flags as
 "Soroban DeFi contracts upgrade in place" — Soroswap, Aquarius,
 Phoenix, Comet, Reflector\*, Redstone, and Band can each
 `update_contract` at the same address, and event body schemas /

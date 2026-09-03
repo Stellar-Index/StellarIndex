@@ -218,7 +218,7 @@ func TestDecodeSwap_WrongTopic_Rejects(t *testing.T) {
 	}
 }
 
-// TestDecodeSwap_DispatchIsByTopicNotContract pins the CLAUDE.md
+// TestDecodeSwap_DispatchIsByTopicNotContract pins the AGENTS.md
 // surprise: the Comet decoder matches by (POOL, swap) topic shape,
 // not by contract address. Any pubnet contract that deploys
 // Balancer-v1 Comet bytecode emits the same wire shape and is

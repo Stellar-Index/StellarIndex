@@ -11,7 +11,7 @@
 # unbounded, unchanged by this task.
 #
 # NOT applied to r1 by the PR that added this file — codify-only, per
-# CLAUDE.md's ansible-drift rule ("any config change on r1 lands in
+# AGENTS.md's ansible-drift rule ("any config change on r1 lands in
 # configs/ansible/ in the same PR" — the CODIFICATION is the same PR;
 # the APPLY is a separate, deliberate operator step). Operator apply
 # command (run --check --diff FIRST):

@@ -3,7 +3,7 @@ title: Post-mortem — r1 ingestion outage from a raw-apt captive-core upgrade
 date: 2026-08-27
 status: resolved
 severity: P1 (~22 min of halted mainnet ingestion; no served-data loss — API/prices served from cache throughout)
-author: ops (Claude-assisted)
+author: ops
 ---
 
 # r1 P28 captive-core upgrade → ingestion outage (2026-08-27)
