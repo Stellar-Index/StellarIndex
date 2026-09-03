@@ -5255,6 +5255,17 @@ export interface components {
                 /** @description Pools with at least one unpriceable reserve leg (their priceable legs still contribute). */
                 unpriced_pools: number;
                 /**
+                 * Format: int64
+                 * @description Highest ledger at which any contributing pool's reserves
+                 *     changed — this protocol's chain high-water, the same
+                 *     convention `/liquidity-pools` stamps per pool. A pool
+                 *     untouched since an earlier ledger is EQUALLY current:
+                 *     each reserve reader's contract is "current as of this
+                 *     ledger and unchanged since". Absent when no contributing
+                 *     pool carried a ledger.
+                 */
+                as_of_ledger?: number;
+                /**
                  * Format: date-time
                  * @description When the snapshot was computed.
                  */
@@ -5262,6 +5273,85 @@ export interface components {
                 /** @description One-line provenance of what was measured and how it was valued. */
                 basis: string;
             };
+        };
+        /**
+         * @description Reconciled headline pooled-liquidity total across the protocols
+         *     carrying a `tvl` block on the same response.
+         *
+         *     `tvl_usd` is the EXACT sum of those rows' own `tvl_usd` strings
+         *     — add up what you can see and you land on this number. A total
+         *     derived from the underlying rationals would round-trip to a
+         *     different figure than the published parts, leaving no way to
+         *     tell which was wrong.
+         *
+         *     A per-protocol figure is admitted only when its own claims hold:
+         *     a protocol whose reserve read failed this cycle is serving a
+         *     CARRIED-FORWARD figure and cannot be published under this
+         *     snapshot's `as_of`, and a protocol whose pool counts do not
+         *     balance has no provable coverage. A refused protocol is dropped
+         *     from the sum and named in `excluded` with the reason — the total
+         *     narrows and says so rather than absorbing a figure it cannot
+         *     stand behind.
+         *
+         *     It is deliberately NOT a whole-network figure. `excluded` always
+         *     enumerates the pooled- or locked-value surfaces this total omits
+         *     (classic CAP-38 liquidity pools, the SDEX order book, lending
+         *     supplied-value, vault AUM) with the reason for each. Absent on
+         *     cold start and when no protocol has a TVL derivation. Full rules:
+         *     docs/methodology/dex-tvl.md.
+         */
+        DEXTVLTotal: {
+            /**
+             * @description Exact sum of the included protocols' published tvl_usd (decimal string — ADR-0003).
+             * @example 40538494.54
+             */
+            tvl_usd: string;
+            /**
+             * @description Exactly which protocols' figures are summed, sorted.
+             * @example [
+             *       "aquarius",
+             *       "comet",
+             *       "phoenix",
+             *       "soroswap"
+             *     ]
+             */
+            protocols: string[];
+            /**
+             * @description True when an included protocol has unpriced pools, or a
+             *     protocol was refused admission — the named protocols' true
+             *     pooled value is at least `tvl_usd`. Says nothing about
+             *     `excluded`, which is a SCOPE statement rather than a
+             *     valuation gap.
+             */
+            lower_bound: boolean;
+            /** @description Summed pool count across the included protocols. */
+            pools_total: number;
+            /** @description Summed count of pools whose every reserve leg priced. */
+            pools_priced: number;
+            /** @description Summed count of pools with at least one unpriceable leg. */
+            unpriced_pools: number;
+            /**
+             * Format: int64
+             * @description Highest chain high-water across the included protocols. Absent when none carried a ledger.
+             */
+            as_of_ledger?: number;
+            /**
+             * Format: date-time
+             * @description When the snapshot the total was reconciled from was computed.
+             */
+            as_of: string;
+            /** @description One-line provenance for the total, naming the protocols summed. */
+            basis: string;
+            /**
+             * @description Every pooled-value surface NOT in `tvl_usd`, with its reason —
+             *     the standing scope decisions plus any protocol refused this
+             *     cycle. Never empty.
+             */
+            excluded: {
+                /** @description Protocol name where one applies, otherwise a short noun phrase for the surface. */
+                subject: string;
+                reason: string;
+            }[];
         };
         SDEXOrderBook: {
             /** @description Base asset (what asks sell). */
@@ -12026,7 +12116,12 @@ export interface operations {
                     "application/json": components["schemas"]["EnvelopeMeta"] & {
                         data?: {
                             protocols: components["schemas"]["ProtocolRow"][];
+                            /**
+                             * @description Count of directory ROWS (not a money figure —
+                             *     the headline TVL is `tvl_total`).
+                             */
                             total_protocols: number;
+                            tvl_total?: components["schemas"]["DEXTVLTotal"];
                             /**
                              * @description Honest-degrade signal (mirrors the
                              *     `coverage_note` on `/accounts/{id}/movements`

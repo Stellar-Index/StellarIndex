@@ -395,8 +395,13 @@ type ProtocolsView struct {
 	// Protocols lists every indexed protocol in registry order.
 	Protocols []ProtocolView `json:"protocols"`
 	// TotalProtocols is len(protocols), for symmetric pagination-free
-	// consumers.
+	// consumers. It is a COUNT of directory rows — the headline money
+	// figure is TVLTotal, which is a different thing entirely.
 	TotalProtocols int `json:"total_protocols"`
+	// TVLTotal is the reconciled headline pooled-liquidity total across
+	// the protocols carrying a `tvl` block on this same response (#338).
+	// Absent on cold start and when no protocol has a TVL derivation.
+	TVLTotal *DEXTVLTotalView `json:"tvl_total,omitempty"`
 	// CoverageNote is an honest-degrade signal (mirrors AccountMovements'
 	// coverage_note / tx.go): non-empty when a source's contract-roster read
 	// failed and no last-good count was cached, so the source is OMITTED from
@@ -655,6 +660,7 @@ func (s *Server) handleProtocolsList(w http.ResponseWriter, r *http.Request) {
 		view.Protocols = append(view.Protocols, row)
 	}
 	view.TotalProtocols = len(view.Protocols)
+	view.TVLTotal = s.protocolTVLTotal()
 	view.CoverageNote = protocolsCoverageNote(degraded)
 
 	w.Header().Set("Cache-Control", "public, max-age=60")
@@ -1147,6 +1153,17 @@ func (s *Server) protocolTVLs() map[string]ProtocolTVLView {
 	}
 	snap, _ := s.dexTVL.Snapshot()
 	return snap
+}
+
+// protocolTVLTotal reads the reconciled headline total, degrading to
+// nil (the tvl_total field stays absent) when the cache isn't wired or
+// hasn't completed its first refresh — the same degradation contract as
+// every other dynamic join on this directory.
+func (s *Server) protocolTVLTotal() *DEXTVLTotalView {
+	if s.dexTVL == nil {
+		return nil
+	}
+	return s.dexTVL.Total()
 }
 
 // attachProtocolTVL joins the snapshot's TVL entry (if any) onto a

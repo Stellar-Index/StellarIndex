@@ -3057,6 +3057,27 @@ a creeping value is the early warning that a reserve read lost its
 thread/memory pin (the 2026-07-29 40× read-amplification class)
 before it starts erroring at the 3-min timeout.
 
+### `stellarindex_dex_tvl_reconcile_total`
+
+Counter. Labels: `outcome` (`ok` | `divergent`).
+
+One increment per refresh, recording whether the headline
+`tvl_total` on `/v1/protocols` could admit every protocol in the
+snapshot. A per-protocol figure is admitted only when its own claims
+hold: a protocol whose reserve read failed this cycle is serving a
+carried-forward figure and cannot be published under this snapshot's
+`as_of`, and a protocol whose pool counts do not balance has no
+provable coverage. `divergent` means at least one was REFUSED — it
+was dropped from the sum and named in the response's `excluded`
+list, so the served total is narrower but never wrong.
+
+Look at this when the headline TVL steps down without a market
+move: `divergent` tracks `stellarindex_dex_tvl_refresh_total{outcome="error"}`
+closely, because a failed read is the usual way a protocol ends up
+carried forward. Sustained `divergent` with no `ok` means the
+headline has been understating by a whole protocol for as long as
+the rate has been non-zero.
+
 ### `stellarindex_sdex_orderbook_maintain_total`
 
 Counter. Labels: `outcome` (`load_ok` | `load_error` | `advance_ok` |

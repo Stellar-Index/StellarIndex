@@ -271,6 +271,7 @@ func registerAppMetricsTail() {
 
 		DEXTVLRefreshTotal,
 		DEXTVLRefreshDurationSeconds,
+		DEXTVLReconcileTotal,
 		SDEXOrderBookMaintainTotal,
 		SDEXOrderBookMaintainDurationSeconds,
 		SDEXOrderBookCrossedPairs,
@@ -502,6 +503,9 @@ func seedBoundedLabelSeriesTail() {
 	// a healthy one without the zero series.
 	for _, outcome := range []string{"ok", "error"} {
 		DEXTVLRefreshTotal.WithLabelValues(outcome)
+	}
+	for _, outcome := range []string{"ok", "divergent"} {
+		DEXTVLReconcileTotal.WithLabelValues(outcome)
 	}
 	for _, outcome := range []string{"load_ok", "load_error", "advance_ok", "advance_error"} {
 		SDEXOrderBookMaintainTotal.WithLabelValues(outcome)
@@ -3980,6 +3984,32 @@ var DEXTVLRefreshDurationSeconds = prometheus.NewHistogramVec(
 		Name:    "stellarindex_dex_tvl_refresh_duration_seconds",
 		Help:    "Per-refresh latency of the DEX TVL snapshot cache, labelled by outcome (ok|error).",
 		Buckets: []float64{0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30, 60, 180},
+	},
+	[]string{"outcome"},
+)
+
+// DEXTVLReconcileTotal — per-refresh outcome of the headline DEX TVL
+// total's admission check (internal/api/v1.reconcileDEXTVLTotal, #338),
+// which admits a per-protocol figure into the published total only when
+// that figure's own claims hold. Labels:
+//
+//   - `ok`        — every protocol in the snapshot was admitted, so the
+//     published total is the exact sum of every published part.
+//   - `divergent` — at least one protocol was REFUSED and left out. The
+//     served total is correspondingly smaller and names the refusal in
+//     its `excluded` list, so this is a narrowed-scope total, never a
+//     wrong one — but it means a component is stale or internally
+//     inconsistent and the headline is understating.
+//
+// In practice `divergent` tracks stellarindex_dex_tvl_refresh_failing:
+// a protocol whose reserve read fails carries its previous entry
+// forward, and a carried-forward figure cannot be published under this
+// refresh's as_of. A sustained `divergent` rate with no `ok` means the
+// headline has silently shrunk by a whole protocol.
+var DEXTVLReconcileTotal = prometheus.NewCounterVec(
+	prometheus.CounterOpts{
+		Name: "stellarindex_dex_tvl_reconcile_total",
+		Help: "DEX TVL headline-total admission outcomes (ok|divergent). `divergent` means >=1 protocol was refused admission and the total excludes it.",
 	},
 	[]string{"outcome"},
 )

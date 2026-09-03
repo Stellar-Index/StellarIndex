@@ -43,6 +43,14 @@ type ProtocolTVLView struct {
 	// shape was unrecognised; their priceable legs (if any) still
 	// contribute to TVLUSD (honest lower bound, never silent).
 	UnpricedPools int `json:"unpriced_pools"`
+	// AsOfLedger is the highest ledger at which any contributing pool's
+	// reserves changed — this protocol's chain high-water, the same
+	// convention /v1/liquidity-pools stamps per pool and SDEXOrderBook
+	// stamps for its book. A pool untouched since an earlier ledger is
+	// EQUALLY current: every reserve reader's contract is "current as of
+	// this ledger and unchanged since". 0 (field omitted) when no
+	// contributing pool carried a ledger — never a guess.
+	AsOfLedger uint32 `json:"as_of_ledger,omitempty"`
 	// AsOf is when the snapshot was computed (RFC3339).
 	AsOf string `json:"as_of"`
 	// Basis is a one-line provenance statement of what was measured
@@ -207,6 +215,7 @@ type DEXTVLSources struct {
 type DEXTVLCache struct {
 	mu        sync.RWMutex
 	snapshot  map[string]ProtocolTVLView
+	total     *DEXTVLTotalView
 	fetchedAt time.Time
 	src       DEXTVLSources
 }
@@ -238,6 +247,12 @@ func (c *DEXTVLCache) Refresh(ctx context.Context) error {
 	next := make(map[string]ProtocolTVLView, 4)
 	prev, _ := c.Snapshot()
 	var errs []error
+	// carried names the protocols serving a PREVIOUS cycle's figure
+	// because this cycle's read failed. Tracked explicitly rather than
+	// inferred from the entry's as_of: RFC3339 is second-resolution and
+	// two refreshes can share a stamp, so a value that merely LOOKS
+	// current would silently pass an equality test.
+	var carried []string
 
 	for _, p := range []struct {
 		name    string
@@ -250,14 +265,24 @@ func (c *DEXTVLCache) Refresh(ctx context.Context) error {
 	} {
 		if view, err := p.refresh(ctx, valuer, now); err != nil {
 			errs = append(errs, fmt.Errorf("%s tvl: %w", p.name, err))
-			carryPrev(next, prev, p.name)
+			if carryPrev(next, prev, p.name) {
+				carried = append(carried, p.name)
+			}
 		} else if view != nil {
 			next[p.name] = *view
 		}
 	}
 
+	// Reconcile the headline total from the figures we are about to
+	// publish, not from the rationals they were rounded out of — see
+	// reconcileDEXTVLTotal. It runs here, once per refresh, so the
+	// divergence verdict is computed against the refresh instant that
+	// produced the parts rather than re-derived per request.
+	total := reconcileDEXTVLTotal(next, now, carried)
+
 	c.mu.Lock()
 	c.snapshot = next
+	c.total = total
 	c.fetchedAt = now
 	c.mu.Unlock()
 
@@ -318,11 +343,15 @@ func (c *DEXTVLCache) basisTail() string {
 }
 
 // carryPrev keeps a protocol's previous snapshot entry across a failed
-// per-protocol refresh.
-func carryPrev(next, prev map[string]ProtocolTVLView, name string) {
-	if v, ok := prev[name]; ok {
+// per-protocol refresh, reporting whether it actually carried one (a
+// first-cycle failure has no previous entry to keep, and the protocol
+// is simply absent).
+func carryPrev(next, prev map[string]ProtocolTVLView, name string) bool {
+	v, ok := prev[name]
+	if ok {
 		next[name] = v
 	}
+	return ok
 }
 
 // refreshSoroswap computes Soroswap TVL from CURRENT pair reserves in
@@ -356,6 +385,7 @@ func (c *DEXTVLCache) refreshSoroswap(ctx context.Context, valuer *tvlValuer, no
 	}
 	for _, st := range states {
 		view.PoolsTotal++
+		view.AsOfLedger = max(view.AsOfLedger, st.Ledger)
 		priced := true
 		for _, leg := range []struct {
 			token string
@@ -401,6 +431,7 @@ func (c *DEXTVLCache) refreshAquarius(ctx context.Context, valuer *tvlValuer, no
 	}
 	for _, p := range pools {
 		view.PoolsTotal++
+		view.AsOfLedger = max(view.AsOfLedger, p.Ledger)
 		priced := true
 		for _, leg := range p.Legs {
 			if leg.Token == "" {
@@ -451,6 +482,7 @@ func (c *DEXTVLCache) refreshPhoenix(ctx context.Context, valuer *tvlValuer, now
 	}
 	for _, st := range states {
 		view.PoolsTotal++
+		view.AsOfLedger = max(view.AsOfLedger, st.Ledger)
 		priced := true
 		for _, leg := range []struct {
 			token string
@@ -496,6 +528,7 @@ func (c *DEXTVLCache) refreshComet(ctx context.Context, valuer *tvlValuer, now t
 	}
 	for _, st := range states {
 		view.PoolsTotal++
+		view.AsOfLedger = max(view.AsOfLedger, st.Ledger)
 		priced := true
 		for _, leg := range st.Legs {
 			usd, ok := valuer.legUSD(ctx, leg.Token, leg.Balance)

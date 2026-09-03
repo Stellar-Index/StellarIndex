@@ -29,6 +29,19 @@ const (
 	tvlTestCometPool  = "CAS3FL6TLZKDGGSISDBWGGPXT3NRR4DYTZD7YOD3HMYO6LTJUVGRVEAM"
 )
 
+// Per-pool last-change ledgers on the shared fixture. Deliberately
+// unequal and interleaved across protocols so a snapshot's as_of_ledger
+// can only be right if it takes the MAX over that protocol's own pools
+// (pairB > pairA within soroswap; phoenix is the global high-water and
+// comet the global low), never a first/last/any-pool ledger.
+const (
+	tvlTestLedgerPairA    uint32 = 63_000_001
+	tvlTestLedgerPairB    uint32 = 63_000_050
+	tvlTestLedgerAquarius uint32 = 62_900_000
+	tvlTestLedgerPhoenix  uint32 = 63_100_000
+	tvlTestLedgerComet    uint32 = 62_000_000
+)
+
 type stubTVLPairsReader struct {
 	pairs []timescale.SoroswapPair
 	err   error
@@ -106,6 +119,7 @@ func tvlTestSources() DEXTVLSources {
 				Pair:   tvlTestPairA,
 				Token0: canonical.XLMSacContractID, Reserve0: big.NewInt(200_000_000),
 				Token1: tvlTestUSDCSAC, Reserve1: big.NewInt(105_000_000),
+				Ledger: tvlTestLedgerPairA,
 			},
 			// One unpriceable leg + 10 XLM-SAC → $5 lower-bound
 			// contribution, pool counted unpriced.
@@ -113,11 +127,13 @@ func tvlTestSources() DEXTVLSources {
 				Pair:   tvlTestPairB,
 				Token0: tvlTestUnpriced, Reserve0: big.NewInt(999),
 				Token1: canonical.XLMSacContractID, Reserve1: big.NewInt(100_000_000),
+				Ledger: tvlTestLedgerPairB,
 			},
 		}},
 		AquariusReserves: &stubAquariusReserveReader{pools: []timescale.AquariusPoolReserve{{
 			ContractID: tvlTestAqPool,
 			ObservedAt: time.Now(),
+			Ledger:     tvlTestLedgerAquarius,
 			Legs: []timescale.AquariusReserveLeg{
 				{TokenIndex: 0, Token: canonical.XLMSacContractID, Reserve: canonical.NewAmount(big.NewInt(10_000_000))},
 				{TokenIndex: 1, Token: "", Reserve: canonical.NewAmount(big.NewInt(42))},
@@ -132,6 +148,7 @@ func tvlTestSources() DEXTVLSources {
 					Pool:   tvlTestPhxPool,
 					TokenA: canonical.XLMSacContractID, ReserveA: big.NewInt(200_000_000),
 					TokenB: tvlTestUSDCSAC, ReserveB: big.NewInt(105_000_000),
+					Ledger: tvlTestLedgerPhoenix,
 				},
 			},
 			// A pool whose captured storage shape the reader refused
@@ -148,6 +165,7 @@ func tvlTestSources() DEXTVLSources {
 						{Token: canonical.XLMSacContractID, Balance: big.NewInt(100_000_000)},
 						{Token: tvlTestUSDCSAC, Balance: big.NewInt(21_000_000)},
 					},
+					Ledger: tvlTestLedgerComet,
 				},
 			},
 		},
