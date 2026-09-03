@@ -4141,8 +4141,14 @@ are obsolete — repo has been public since 2026-07-03):
     record — confirm once, then strike.
   - **Untracked and in no plan** (re-measure or drop): `changesummary` 25%
     silent failures + `d30` NULL; VWAP volume-unit window dependence + the
-    24 h VWAP blending 6.43 h/21.39 h legs; `lint-actions-pinning` being a
-    no-op on push-to-main.
+    24 h VWAP blending 6.43 h/21.39 h legs. ~~`lint-actions-pinning` being a
+    no-op on push-to-main~~ **DONE (2026-09-03)** — its hard-fail arm read
+    `git diff origin/main`, which is empty on a push-to-main checkout, so the
+    SHA-pinning guard passed every commit landing under the direct-to-main
+    cadence. It now scans the workflow tree (both `.yml` and `.yaml`), fails
+    on any un-SHA-pinned third-party action, fails rather than passes on an
+    empty root, and carries a fixture self-test
+    (`scripts/ci/lint-actions-pinning-test.sh`) run by CI and `verify.sh`.
 
 _Update this file in the same commit as any change that lands or
 invalidates an item. One plan; no forks._

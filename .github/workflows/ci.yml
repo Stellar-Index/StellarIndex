@@ -807,15 +807,26 @@ jobs:
         with:
           persist-credentials: false
           fetch-depth: 0
+      - name: lint-actions-pinning self-test
+        # Pins the gate non-vacuous: it must CATCH an unpinned and a
+        # tag-pinned third-party action and PASS a SHA-pinned one, keep
+        # actions/*+github/* exempt, read `.yaml` as well as `.yml`, not
+        # mistake prose ending in "causes:" for a `uses:` key, and FAIL
+        # rather than pass on a root with no workflows or no steps. Runs
+        # BEFORE the restore below — as import-checks orders its own
+        # self-tests — because the fixtures must exercise the PROPOSED
+        # gate; judging them by the base-ref copy would redden every
+        # commit that changes the gate and its fixtures together.
+        run: bash scripts/ci/lint-actions-pinning-test.sh
       - name: Restore trusted lint-actions-pinning.sh from the base ref
         # CID-03 (audit-2026-07-23): same class as import-checks'
-        # equivalent step — a PR could weaken this script's PR_DIFF
+        # equivalent step — a change could weaken this script's
         # hard-fail (e.g. widen SHA_RE, or exempt a namespace) and
-        # introduce a new tag-pinned third-party action in the same
-        # diff, and be judged by its own weakened copy. Restore the
-        # base-ref (un-modified) script before it runs; its own
-        # internal `git diff origin/main` logic is unaffected and still
-        # evaluates the PR-head `.github/workflows/*.yml` content.
+        # introduce an unpinned third-party action in the same diff,
+        # and be judged by its own weakened copy. Restore the base-ref
+        # (un-modified) script before it runs; it scans the workflow
+        # tree on disk, so it still judges the PR-head
+        # `.github/workflows/` content.
         env:
           BASE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
         run: |
@@ -839,12 +850,12 @@ jobs:
             echo "::notice::$f did not exist at base ${BASE_SHA} (new gate) — running the PR-head version."
           fi
       - name: lint-actions-pinning
-        # F-1216 (codex audit-2026-05-12): warns on existing
-        # tag-pinned third-party actions and HARD-FAILS when a
-        # PR introduces a new tag-pinned third-party use. Existing
-        # tag pins are bumped to SHA via Dependabot PRs over time.
-        env:
-          PR_DIFF: "1"
+        # F-1216 (codex audit-2026-05-12): HARD-FAILS on any third-party
+        # action in the workflow tree that is not pinned to a commit SHA.
+        # It used to hard-fail only on `git diff origin/main`, which is
+        # empty on a push-to-main checkout — inert for every commit that
+        # lands here under the direct-to-main cadence. The scan reads the
+        # tree, so there is no diff base left to be wrong about.
         run: bash scripts/ci/lint-actions-pinning.sh
 
   monitoring-rules:
