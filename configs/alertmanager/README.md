@@ -47,9 +47,25 @@ channel, catching outages of Prometheus or Alertmanager itself.
    DISCORD_WEBHOOK_URL_ALERTS='https://discord.com/api/webhooks/<id>/<token>'
    ```
 
-   Any URL can be left empty — the matching receiver's config block
-   is dropped and it degrades silently (alerts still accumulate in
-   the Alertmanager UI).
+   **None of these may be empty.** An empty URL makes the renderer
+   drop that receiver's config block, and the receiver then accepts
+   alerts and delivers them to nobody — identical to `silent`, with a
+   *successful* reload and every self-check green. That is precisely
+   what happened between 2026-07-29 and 2026-08-29: all three URLs
+   were unset, every path including the deadman's switch was a black
+   hole, and nothing reported it for 31 days.
+
+   `apply.sh` therefore refuses to install a config whose receivers
+   deliver to nobody, probes each URL for a live 2xx first (a revoked
+   webhook fails as silently as an empty one), and reads the running
+   config back afterwards to confirm the delivery blocks are really
+   there. Deliberately running a receiver dark is possible but has to
+   be named: `ALERTMANAGER_ALLOW_EMPTY=pages`. Pointing both Discord
+   URLs at the same webhook is the better answer.
+
+   If the guard ever fails open, `configs/alertmanager/apply-test.sh`
+   is the self-test that proves it still fails closed; it runs in
+   `verify.sh` and in CI.
 
 2. **Run apply.sh** as root on R1:
 

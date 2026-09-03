@@ -12,10 +12,26 @@
 #   DISCORD_WEBHOOK_URL_PAGES       — e.g. https://discord.com/api/webhooks/<id>/<token>
 #   DISCORD_WEBHOOK_URL_ALERTS      — e.g. https://discord.com/api/webhooks/<id>/<token>
 #
-# Any may be empty — the corresponding receiver's *_configs block is
-# dropped, so the receiver becomes a no-op stub (alerts accumulate in
-# the Alertmanager UI but don't fan out). Point both Discord URLs at
-# the same webhook if you only want one channel.
+# An empty URL makes the renderer drop that receiver's *_configs block,
+# leaving a no-op stub: the receiver accepts alerts and delivers them to
+# nobody, exactly like `silent`. That is a legitimate rendering branch
+# (it keeps the config valid), but it is NEVER a legitimate thing to
+# INSTALL unasked — so applying with an empty URL is a hard error.
+#
+# Why it is fatal rather than a warning: between 2026-07-29 06:24 and
+# 2026-08-29 22:14 the secrets file supplied none of the three URLs.
+# Every delivery path — page, ticket, default AND the deadman's switch —
+# was a black hole for 31 days. The config reloaded SUCCESSFULLY the
+# whole time, so alertmanager_config_last_reload_successful stayed 1 and
+# stellarindex_alertmanager_config_bad never fired. Nothing in the system
+# could report it, because the thing that reports things was the thing
+# that was broken. A warning would have scrolled past; this exits 1.
+#
+# Deliberately running one channel (e.g. no separate pages webhook) is
+# still possible, but it has to be said out loud, per receiver:
+#   ALERTMANAGER_ALLOW_EMPTY=pages bash apply.sh
+# Point both Discord URLs at the same webhook if you only want one
+# channel — that is the better answer than waiving one.
 
 set -euo pipefail
 
@@ -41,6 +57,56 @@ fi
 
 # shellcheck disable=SC1090
 [ -f "$ENV_FILE" ] && . "$ENV_FILE"
+
+# ── fail closed on an unset delivery URL ───────────────────────────
+# Keyed by the waiver name an operator would type, so the error message
+# and ALERTMANAGER_ALLOW_EMPTY use the same vocabulary.
+am_url_for() {
+  case "$1" in
+    deadmansswitch) printf '%s' "${HEALTHCHECKS_DEADMANSSWITCH_URL:-}" ;;
+    pages)          printf '%s' "${DISCORD_WEBHOOK_URL_PAGES:-}" ;;
+    alerts)         printf '%s' "${DISCORD_WEBHOOK_URL_ALERTS:-}" ;;
+  esac
+}
+am_var_for() {
+  case "$1" in
+    deadmansswitch) printf 'HEALTHCHECKS_DEADMANSSWITCH_URL' ;;
+    pages)          printf 'DISCORD_WEBHOOK_URL_PAGES' ;;
+    alerts)         printf 'DISCORD_WEBHOOK_URL_ALERTS' ;;
+  esac
+}
+AM_RECEIVERS="deadmansswitch pages alerts"
+
+# --check-only is a RENDERER test: CI drives it with every URL empty on
+# purpose, to exercise the block-stripper. The fail-closed guard is an
+# INSTALL-time policy, so it is deliberately not applied in that mode.
+if [ "$CHECK_ONLY" = false ]; then
+  ALLOW="${ALERTMANAGER_ALLOW_EMPTY:-}"
+  missing=""
+  for r in $AM_RECEIVERS; do
+    [ -n "$(am_url_for "$r")" ] && continue
+    case ",${ALLOW//[[:space:]]/}," in
+      *",$r,"*)
+        echo "alertmanager: WAIVED — receiver '$r' will deliver to nobody (ALERTMANAGER_ALLOW_EMPTY)" >&2
+        continue ;;
+    esac
+    missing="$missing $r"
+  done
+  if [ -n "$missing" ]; then
+    {
+      echo "error: refusing to install a config whose receivers deliver to nobody."
+      for r in $missing; do
+        echo "  receiver '$r' has no URL — set $(am_var_for "$r") in $ENV_FILE"
+      done
+      echo
+      echo "An empty URL is not a no-op: the receiver's *_configs block is dropped and"
+      echo "it becomes a black hole identical to 'silent'. This is what caused the"
+      echo "2026-07-29 → 2026-08-29 alerting outage, deadman's switch included."
+      echo "If a receiver is meant to be dark, name it: ALERTMANAGER_ALLOW_EMPTY=${missing// /,}"
+    } >&2
+    exit 1
+  fi
+fi
 
 RENDERED="$(mktemp)"
 trap 'rm -f "$RENDERED"' EXIT
@@ -115,6 +181,34 @@ if [ "$CHECK_ONLY" = true ]; then
   exit 0
 fi
 
+# ── prove the credentials are LIVE, not merely non-empty ───────────
+# amtool validates syntax; it cannot tell a current webhook from a
+# revoked one. A stale-but-well-formed URL fails exactly like an empty
+# one — silently, at the moment it is needed. Both probes are read-only:
+# a Healthchecks ping URL records a heartbeat (the same thing
+# Alertmanager does every minute), and a GET on a Discord webhook
+# returns the webhook object without posting a message.
+# ALERTMANAGER_SKIP_PROBE=1 for an offline or air-gapped apply.
+if [ "${ALERTMANAGER_SKIP_PROBE:-0}" != "1" ]; then
+  probe_failed=""
+  for r in $AM_RECEIVERS; do
+    url="$(am_url_for "$r")"
+    [ -z "$url" ] && continue
+    if curl -fsS --max-time 10 -o /dev/null "$url"; then
+      echo "alertmanager: probe OK — $r"
+    else
+      echo "alertmanager: probe FAILED — $r ($(am_var_for "$r") is set but did not answer 2xx)" >&2
+      probe_failed="$probe_failed $r"
+    fi
+  done
+  if [ -n "$probe_failed" ]; then
+    echo "error: refusing to install — these receivers have a URL that does not work:$probe_failed" >&2
+    echo "       a revoked or mistyped webhook fails as silently as an empty one." >&2
+    echo "       Set ALERTMANAGER_SKIP_PROBE=1 only if you know the host cannot reach them." >&2
+    exit 1
+  fi
+fi
+
 # CS-121: 0640 (not 0644) so the rendered config — which embeds the Discord
 # webhook URLs + the Healthchecks deadman URL (bearer capabilities) — is not
 # world-readable. Group is the alertmanager service user's group (prometheus on
@@ -122,3 +216,38 @@ fi
 install -m 0640 -o root -g "${AM_GROUP:-prometheus}" "$RENDERED" "$TARGET"
 systemctl reload prometheus-alertmanager
 echo "alertmanager: applied $TARGET, reload OK"
+
+# ── assert what Alertmanager actually LOADED still delivers ────────
+# A successful reload is not evidence of delivery: the 31-day outage
+# reloaded successfully every time. Read the running config back and
+# require the delivery blocks to be present in it. This is the step
+# that turns "the file I wrote looks right" into "the process I just
+# reloaded will fan out".
+AM_API="${AM_API:-http://localhost:9093}"
+for attempt in 1 2 3 4 5; do
+  loaded="$(curl -fsS --max-time 5 "$AM_API/api/v2/status" 2>/dev/null \
+            | python3 -c 'import sys,json; print(json.load(sys.stdin)["config"]["original"])' 2>/dev/null)" && break
+  sleep 1
+  loaded=""
+done
+if [ -z "$loaded" ]; then
+  echo "alertmanager: WARNING — could not read back the running config from $AM_API;" >&2
+  echo "              the file is installed but delivery is UNVERIFIED." >&2
+else
+  want_webhook=0; want_discord=0
+  for r in $AM_RECEIVERS; do
+    [ -z "$(am_url_for "$r")" ] && continue
+    case "$r" in deadmansswitch) want_webhook=1 ;; *) want_discord=$((want_discord + 1)) ;; esac
+  done
+  got_webhook=$(printf '%s' "$loaded" | grep -c 'webhook_configs:' || true)
+  got_discord=$(printf '%s' "$loaded" | grep -c 'discord_configs:' || true)
+  bad=""
+  [ "$want_webhook" -gt 0 ] && [ "$got_webhook" -lt 1 ] && bad="$bad deadmansswitch"
+  [ "$got_discord" -lt "$want_discord" ] && bad="$bad discord($got_discord/$want_discord)"
+  if [ -n "$bad" ]; then
+    echo "error: the RUNNING config is missing delivery blocks:$bad" >&2
+    echo "       alerts would be accepted and dropped. Investigate before walking away." >&2
+    exit 1
+  fi
+  echo "alertmanager: running config verified — webhook_configs=$got_webhook discord_configs=$got_discord"
+fi

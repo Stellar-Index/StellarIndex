@@ -923,6 +923,7 @@ jobs:
           S=$(mktemp)
           printf 'HEALTHCHECKS_DEADMANSSWITCH_URL=https://hc-ping.com/x\nDISCORD_WEBHOOK_URL_PAGES=https://discord.com/api/webhooks/1/a\nDISCORD_WEBHOOK_URL_ALERTS=https://discord.com/api/webhooks/2/b\n' > "$S"
           ALERTMANAGER_SECRETS="$S" bash configs/alertmanager/apply.sh --check-only
+          bash configs/alertmanager/apply-test.sh
       - name: validate the rules-apply script (and that it still counts alerts)
         # apply-rules.sh verifies a deploy by asserting every alert it
         # extracted from the repo actually loaded on the host. That check

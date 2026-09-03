@@ -44,6 +44,91 @@ groups:
             good reload are NOT live. Investigate with
             `amtool check-config`.
 
+
+      # ─── the notification layer watches ITSELF ────────────────────
+      # Added after the 2026-07-29 → 2026-08-29 outage: Alertmanager
+      # delivered ZERO notifications for 31 days and nothing reported it.
+      # The reload had succeeded, so stellarindex_alertmanager_config_bad
+      # (above) stayed silent — an empty URL variable makes Alertmanager
+      # DROP a receiver's config block rather than error, so every path,
+      # deadman's switch included, became a black hole that looks exactly
+      # like a healthy quiet system.
+      #
+      # These three close the three ways that can happen: the process is
+      # gone, the process is up but fanning out to nobody, or it is
+      # trying and being refused.
+
+      - alert: stellarindex_alertmanager_down
+        # `sum()` is deliberately NOT used here: sum() over an empty
+        # vector returns empty, not 0, so a target dropped from service
+        # discovery would make this unfireable — the same latent shape
+        # stellarindex_api_down still carries. The absent_over_time arm
+        # is what covers the target disappearing entirely.
+        expr: |
+          up{job="alertmanager_pair"} == 0
+          or absent_over_time(up{job="alertmanager_pair"}[10m]) == 1
+        for: 5m
+        labels:
+          severity: page
+          team: stellarindex
+          component: meta
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/alertmanager-down.md
+          summary: "AlertManager is down or unscraped"
+          description: |
+            Alertmanager is not answering its scrape. Every alert in the
+            system is undeliverable while this is true, including this
+            one — treat the Prometheus UI, not Discord, as the source of
+            truth until it clears.
+
+      - alert: stellarindex_alertmanager_not_notifying
+        # THE CANARY. stellarindex_deadmansswitch fires permanently with
+        # repeat_interval 1m, so the webhook integration must tick ~30x
+        # an hour forever. Zero notifications over 15m therefore means
+        # the fan-out is dead, NOT that the estate is quiet. This is the
+        # rule that would have caught the 31-day outage on day one: the
+        # webhook counter sat at exactly 0 the entire time.
+        #
+        # Both arms are needed. During the outage the webhook series was
+        # PRESENT and flat at 0 (first arm), while the discord series was
+        # entirely ABSENT (the shape the second arm catches).
+        expr: |
+          increase(alertmanager_notifications_total{job="alertmanager_pair",integration="webhook"}[15m]) == 0
+          or absent_over_time(alertmanager_notifications_total{job="alertmanager_pair",integration="webhook"}[15m]) == 1
+        for: 10m
+        labels:
+          severity: page
+          team: stellarindex
+          component: meta
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/alertmanager-not-notifying.md
+          summary: "AlertManager has sent no notifications in 15m — the fan-out is dead"
+          description: |
+            The deadman's switch alone should produce ~30 webhook
+            notifications an hour. Zero means notifications are not
+            leaving the process. Most likely a receiver's *_configs block
+            was dropped because its URL env var is empty — check
+            /etc/default/alertmanager-secrets, then re-run
+            configs/alertmanager/apply.sh, which now refuses to install
+            a config whose receivers deliver to nobody.
+
+      - alert: stellarindex_alertmanager_notifications_failing
+        expr: increase(alertmanager_notifications_failed_total{job="alertmanager_pair"}[15m]) > 0
+        for: 5m
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: meta
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/alertmanager-notifications-failing.md
+          summary: "AlertManager notifications to {{ $labels.integration }} are failing"
+          description: |
+            Alertmanager is attempting delivery and being refused
+            ({{ $labels.reason }}). A revoked Discord webhook or a deleted
+            Healthchecks check presents exactly this way. Unlike
+            not_notifying, the pipeline is alive — the far end is
+            rejecting it.
+
       # ─── F-0085 (audit-2026-05-26): exporter-down meta-alerts ─────
       # The 2026-05-10 SEV-2 cascade exposed a blindness pattern: the
       # `stellarindex_redis_writes_blocked` alert watches

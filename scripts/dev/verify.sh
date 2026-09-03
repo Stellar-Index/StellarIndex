@@ -150,6 +150,11 @@ if command -v amtool >/dev/null 2>&1; then
     printf 'HEALTHCHECKS_DEADMANSSWITCH_URL=https://hc-ping.com/x\nDISCORD_WEBHOOK_URL_PAGES=https://discord.com/api/webhooks/1/a\nDISCORD_WEBHOOK_URL_ALERTS=https://discord.com/api/webhooks/2/b\n' > "$AM_DUMMY_ENV"
     ALERTMANAGER_SECRETS="$AM_DUMMY_ENV" bash configs/alertmanager/apply.sh --check-only
     rm -f "$AM_DUMMY_ENV"
+    # And the fail-closed guard's SELF-test: an empty URL must be
+    # refused at apply time. Renders green either way without this —
+    # the 31-day outage installed a receiver-less config through a
+    # fully-passing gate.
+    bash configs/alertmanager/apply-test.sh
 else
     echo "=== Alertmanager config (skipped — amtool not installed; get it from the Alertmanager GH release) ==="
 fi

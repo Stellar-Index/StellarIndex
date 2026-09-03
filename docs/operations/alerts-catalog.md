@@ -26,8 +26,8 @@ enforced 2026-04-23 onward).
 
   | Severity | Rules | AlertManager route | Delivery |
   | --- | --- | --- | --- |
-  | `page` | 50 | `receiver: chat-page` | Discord **#stellarindex-pages**, `repeat_interval` 12 h. There is **no** PagerDuty leg — `pagerduty_configs` is unset, so nothing wakes anyone up. |
-  | `ticket` | 137 | `receiver: chat-default` | Discord **#stellarindex-alerts**, `repeat_interval` 24 h. |
+  | `page` | 52 | `receiver: chat-page` | Discord **#stellarindex-pages**, `repeat_interval` 12 h. There is **no** PagerDuty leg — `pagerduty_configs` is unset, so nothing wakes anyone up. |
+  | `ticket` | 138 | `receiver: chat-default` | Discord **#stellarindex-alerts**, `repeat_interval` 24 h. |
   | `informational` | 21 | `receiver: silent` | **Delivered to nobody, deliberately.** `silent` is declared with no `*_configs` block at all, which in Alertmanager means the alert is accepted and then dropped. It accumulates in the AlertManager UI and nothing else happens. |
 
   **`informational` is not "a low-priority ticket".** There is no
@@ -546,6 +546,9 @@ auto-unfreeze at all. Rules in
 | `stellarindex_prometheus_scrape_failing` | `up{job=~"api\|indexer\|aggregator"}` | == 0 for any target > 2 min | informational | [scrape-failing](runbooks/scrape-failing.md) |
 | `stellarindex_alertmanager_config_bad` | `alertmanager_config_last_reload_successful` | == 0 | ticket | [alertmanager-bad-config](runbooks/alertmanager-bad-config.md) |
 | `stellarindex_deadmansswitch` | `vector(1)` constant | MUST fire every minute | informational | [deadmansswitch](runbooks/deadmansswitch.md) |
+| `stellarindex_alertmanager_down` | `up{job="alertmanager"}` | == 0 for > 5 min OR series absent for 10 min | page | [alertmanager-down](runbooks/alertmanager-down.md) |
+| `stellarindex_alertmanager_not_notifying` | `alertmanager_notifications_total{integration="webhook"}` | no increase over 15 min (the deadman alone should give ~30/h) | page | [alertmanager-not-notifying](runbooks/alertmanager-not-notifying.md) |
+| `stellarindex_alertmanager_notifications_failing` | `alertmanager_notifications_failed_total` | increase > 0 over 15 min | ticket | [alertmanager-notifications-failing](runbooks/alertmanager-notifications-failing.md) |
 | `prometheus_down` (TSDB corruption) | systemd `prometheus.service` failed | exit-code != 0; runs ad-hoc, not a rule | **P1** | [prometheus-tsdb-corruption](runbooks/prometheus-tsdb-corruption.md) |
 | `stellarindex_redis_exporter_down` | `up{job="redis_exporter"}` | == 0 for > 2 min OR series absent for 5 min | page | [exporter-down](runbooks/exporter-down.md) |
 | `stellarindex_postgres_exporter_down` | `up{job="postgres_exporter"}` | == 0 for > 2 min OR series absent for 5 min | page | [exporter-down](runbooks/exporter-down.md) |

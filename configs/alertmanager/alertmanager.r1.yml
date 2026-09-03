@@ -89,7 +89,8 @@ receivers:
         send_resolved: false
 
   # Page-severity fanout → Discord #stellarindex-pages webhook.
-  # Degrades silently if the URL isn't set.
+  # An unset URL still RENDERS as a stub (that keeps this file valid),
+  # but apply.sh refuses to install it — see its header for why.
   - name: chat-page
     discord_configs:
       - webhook_url: ${DISCORD_WEBHOOK_URL_PAGES}
