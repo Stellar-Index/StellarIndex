@@ -316,18 +316,20 @@ func TestObservations_InternalError(t *testing.T) {
 	}
 }
 
-// observationsCallTracker is a HistoryReader that records calls to
-// LatestTradePerSource and returns an error if called. Used to prove
-// the #29 fiat:*/crypto:* short-circuit does NOT touch storage —
-// pre-fix the handler called LatestTradePerSource for fiat:USD,
-// which on r1 ran an unbounded per-chunk scan over the trades
-// hypertable (>60s measured, blowing the 8s ceiling → 503). The
-// short-circuit returns the canonical empty result without storage.
-type observationsCallTracker struct{ calls atomic.Int64 }
+// observationsCallTracker is a HistoryReader that counts
+// LatestTradePerSource calls and serves `rows` back. The call count is
+// the assertion vehicle for the #29 fast-path regressions: that
+// short-circuit answered whole quote families from memory, so a quote
+// that never reaches storage can never return the observation a venue
+// actually recorded for it.
+type observationsCallTracker struct {
+	calls atomic.Int64
+	rows  []canonical.Trade
+}
 
 func (h *observationsCallTracker) LatestTradePerSource(_ context.Context, _ canonical.Pair, _ string) ([]canonical.Trade, error) {
 	h.calls.Add(1)
-	return nil, errors.New("LatestTradePerSource MUST NOT be called for fiat:/crypto: quotes (#29 short-circuit)")
+	return h.rows, nil
 }
 
 func (h *observationsCallTracker) TradesInRange(_ context.Context, _ canonical.Pair, _, _ time.Time, _ int) ([]canonical.Trade, error) {
@@ -354,27 +356,35 @@ func (h *observationsCallTracker) OHLCSeries(_ context.Context, _ canonical.Pair
 	return nil, nil
 }
 
-// TestObservations_FiatUSDQuoteShortCircuit — #29 / F-1325. Only the
-// synthesized USD reference quote (`fiat:USD`, ADR-0010) is never a
-// stored trade quote, so LatestTradePerSource for it does an unbounded
-// emptiness-proving scan (>60s on r1 → 503). The short-circuit returns
-// the canonical empty result without touching storage; this pins it via
-// a History stub that errors if called.
-func TestObservations_FiatUSDQuoteShortCircuit(t *testing.T) {
-	hist := &observationsCallTracker{}
+// TestObservations_FiatUSDQuoteReachesStorage — `fiat:USD` is this
+// endpoint's DEFAULT quote AND a real stored trade quote: the CEX
+// connectors write XLM-USD / BTC-USD / ETH-USD straight against it, so
+// trades carrying quote_asset "fiat:USD" exist and /v1/observations/stream
+// (same computeObservations, no short-circuit) serves them. The residual
+// #29 fast-path answered the request endpoint from memory instead, making
+// the default quote the one quote that could never return an observation.
+func TestObservations_FiatUSDQuoteReachesStorage(t *testing.T) {
+	hist := &observationsCallTracker{
+		rows: []canonical.Trade{
+			mkObservationTrade("coinbase", time.Unix(1_772_000_000, 0).UTC(), 100, 18),
+		},
+	}
 	srv := v1.New(v1.Options{History: hist})
 	tsv := startHTTPTest(t, srv.Handler())
 
 	resp := mustGet(t, tsv.URL+"/v1/observations?asset=native&quote=fiat:USD")
 	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("fiat:USD status=%d, want 200 (short-circuit)", resp.StatusCode)
+		t.Fatalf("fiat:USD status=%d, want 200", resp.StatusCode)
+	}
+	if n := hist.calls.Load(); n == 0 {
+		t.Fatal("storage NOT queried for the default fiat:USD quote — the #29 short-circuit is back")
 	}
 	body, _ := readAll(resp)
-	if !strings.Contains(body, `"data":[]`) {
-		t.Errorf("fiat:USD: want empty data array, got: %s", body)
+	if strings.Contains(body, `"data":[]`) {
+		t.Fatalf("fiat:USD returned an empty array despite a stored observation: %s", body)
 	}
-	if n := hist.calls.Load(); n != 0 {
-		t.Fatalf("LatestTradePerSource called %d times; fiat:USD must NOT touch storage", n)
+	if !strings.Contains(body, `"source":"coinbase"`) {
+		t.Errorf("coinbase observation missing from the fiat:USD response: %s", body)
 	}
 }
 
@@ -389,10 +399,10 @@ func TestObservations_RealCexQuotesHitStorage(t *testing.T) {
 		srv := v1.New(v1.Options{History: hist})
 		tsv := startHTTPTest(t, srv.Handler())
 
-		// observationsCallTracker errors on LatestTradePerSource; we only
-		// assert that the handler ACTUALLY reached storage (a non-zero
-		// call count), proving the suppression is gone. The resulting
-		// status is irrelevant to the regression.
+		// A non-zero call count is the whole assertion: it proves the
+		// handler consulted storage rather than answering the quote
+		// family from memory. What storage happens to hold is the
+		// separate concern this regression does not fix.
 		_ = mustGet(t, tsv.URL+"/v1/observations?asset=native&quote="+q)
 		if n := hist.calls.Load(); n == 0 {
 			t.Errorf("quote=%s: storage NOT queried — real CEX quote is still being short-circuited (F-1325)", q)
