@@ -108,7 +108,7 @@ func (s *stubExplorerReader) OperationResultsByTx(_ context.Context, _ uint32, _
 	return s.opResults, s.err
 }
 
-func (s *stubExplorerReader) TxOutcomesByHash(_ context.Context, _, _ uint32, _ []string) (map[string]clickhouse.TxOutcome, error) {
+func (s *stubExplorerReader) TxOutcomesByHash(_ context.Context, _ []uint32, _ []string) (map[string]clickhouse.TxOutcome, error) {
 	return nil, nil
 }
 

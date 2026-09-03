@@ -229,7 +229,9 @@ type ExplorerReader interface {
 	// TxOutcomesByHash batch-reads parent-transaction outcomes (applied verdict
 	// + result code) keyed by tx_hash, so the operation list views can mark a
 	// failed transaction's operations FAILED rather than show them as applied.
-	TxOutcomesByHash(ctx context.Context, ledgerLo, ledgerHi uint32, hashes []string) (map[string]clickhouse.TxOutcome, error)
+	// `ledgers` is the EXACT set of ledgers the page's operations sit in, not a
+	// span across them — see the implementation for why that is load-bearing.
+	TxOutcomesByHash(ctx context.Context, ledgers []uint32, hashes []string) (map[string]clickhouse.TxOutcome, error)
 	EventsByTx(ctx context.Context, seq uint32, hash string) ([]clickhouse.EventSummary, error)
 	ContractEventsRecent(ctx context.Context, contractID string, limit int, cur clickhouse.ContractEventsCursor) ([]clickhouse.ContractActivityRow, error)
 	ContractWasm(ctx context.Context, contractID string) (clickhouse.ContractWasmInfo, error)

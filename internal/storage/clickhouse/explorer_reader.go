@@ -1906,19 +1906,59 @@ type TxOutcome struct {
 // TxOutcomesByHash batch-reads the applied verdict + result code for a page's
 // worth of transactions, keyed by tx_hash. The operation list views fetch
 // operations WITHOUT their parent transaction, so they call this to stamp each
-// op with its tx's outcome (transaction_successful + the tx result). Bounded
-// to the caller's page (≤ a few hundred distinct hashes): the tx_hash bloom
-// skip-index serves the filter and [ledgerLo, ledgerHi] prunes partitions.
-// FINAL because stellar.transactions is a ReplacingMergeTree — a re-ingested
-// row must not surface a stale/duplicate verdict. Empty input returns an
-// empty (non-nil) map.
-func (r *ExplorerReader) TxOutcomesByHash(ctx context.Context, ledgerLo, ledgerHi uint32, hashes []string) (map[string]TxOutcome, error) {
-	if len(hashes) == 0 {
+// op with its tx's outcome (transaction_successful + the tx result).
+//
+// The predicate is the EXACT SET of ledgers the page's operations sit in —
+// never a [lo,hi] range across them. That distinction is the whole cost of
+// this query, because an operation-list page is not contiguous: a sparse
+// account's 50 most recent operations can straddle millions of ledgers, so a
+// range predicate makes the scan scale with how IDLE the account is instead
+// of with the page size. `ledger_seq` is the leading primary-key column AND
+// the partition key (PARTITION BY intDiv(ledger_seq, 1000000), ORDER BY
+// (ledger_seq, tx_index)), so an IN-set of ~50 values prunes to ~50 point
+// ranges; a range predicate selects every granule between them and leaves the
+// tx_hash bloom skip-index as the only filter — which cannot carry it: at
+// bloom_filter(0.01), probing 50 hashes against ~124k candidate granules
+// false-positives on ~1-(1-0.01)^50 ≈ 39% of them. Measured on r1
+// (2026-09-03, cold, use_query_condition_cache=0, three real 50-op pages of
+// idle accounts): the range form read 1.69-2.04 BILLION rows / 122-147 GiB
+// and did not finish inside 60s; the exact-set form reads 319k-508k rows /
+// 24-38 MiB in 32-61 ms — same rows, byte-identical. Passing the ledger set
+// is also why this is safe to leave on the request path at all: cost is now
+// bounded by the caller's page size, which ParseLimit bounds.
+//
+// The set is lossless by construction: an operation's parent transaction is
+// in the operation's own ledger, so the ledgers of a page's ops are exactly
+// the ledgers of their txs.
+//
+// FINAL stays. stellar.transactions is ReplacingMergeTree(ingested_at) and the
+// duplicates are real, not theoretical — r1's partition 63 carries 183.5M
+// duplicated (ledger_seq, tx_index) key-groups. It is deliberately NOT rewritten
+// to `ORDER BY ingested_at DESC LIMIT 1 BY tx_hash`: `ingested_at` is DateTime
+// (ONE-SECOND resolution), so a re-ingest batch that rewrites many rows within
+// one wall-clock second TIES on the version column and a bare SELECT has no way
+// to break that tie — it would silently serve the STALE pre-fix verdict. That is
+// audit DAT-10, and txByLedgerAndHash above documents the same trap on this same
+// table. FINAL resolves the tie using real insertion order. It is cheap here for
+// exactly the reason it is cheap there: once ledger_seq is a primary-key point
+// set, FINAL only merges the handful of parts touching those ledgers, so there
+// is no PrimaryKeyExpand blow-up (the expand is what makes FINAL ruinous over a
+// bloom-probed WIDE range: 32,930 skip-index granules re-expanded to 74,938).
+// Measured premium of keeping it, same pages: 32-61 ms vs 17-18 ms without.
+// Correctness at 2x of ~40 ms is the right trade; a stale verdict is not.
+//
+// Empty input returns an empty (non-nil) map.
+//
+// The SQL is a package-level const so explorer_tx_outcomes_test.go can pin the
+// two clauses whose loss is silent and expensive (the ledger IN-set, and FINAL).
+const txOutcomesByHashQuery = `SELECT tx_hash, successful, result_code FROM stellar.transactions FINAL
+		WHERE ledger_seq IN (?) AND tx_hash IN (?)`
+
+func (r *ExplorerReader) TxOutcomesByHash(ctx context.Context, ledgers []uint32, hashes []string) (map[string]TxOutcome, error) {
+	if len(hashes) == 0 || len(ledgers) == 0 {
 		return map[string]TxOutcome{}, nil
 	}
-	const q = `SELECT tx_hash, successful, result_code FROM stellar.transactions FINAL
-		WHERE ledger_seq >= ? AND ledger_seq <= ? AND tx_hash IN (?)`
-	rows, err := r.conn.Query(ctx, q, ledgerLo, ledgerHi, hashes)
+	rows, err := r.conn.Query(ctx, txOutcomesByHashQuery, ledgers, hashes)
 	if err != nil {
 		return nil, fmt.Errorf("clickhouse: tx outcomes: %w", err)
 	}

@@ -28,8 +28,8 @@ const opsDirTTL = 10 * time.Second
 
 // opsDirRefreshTimeout bounds one detached first-page rebuild. The read
 // itself is a tail-window-bounded page plus the batched parent-transaction
-// outcome read (its own 3s budget), so 30s is contention headroom, not an
-// expectation.
+// outcome read (its own txOutcomeStitchBudget), so 30s is contention
+// headroom, not an expectation.
 const opsDirRefreshTimeout = 30 * time.Second
 
 // opsDirCache is a tiny SWR cache for the network-wide /v1/operations
@@ -219,28 +219,36 @@ func normalizeLakeOpType(s string) string {
 const opsOutcomeCoverageNote = "transaction outcomes are temporarily unavailable; operations shown without " +
 	"transaction_successful are of UNKNOWN outcome and may belong to a FAILED transaction, not applied"
 
-// opRowTxKeys returns the [lo,hi] ledger span and the distinct tx hashes across
-// a page of operation rows — the partition-pruning bounds + IN-list for a
-// batched TxOutcomesByHash read.
-func opRowTxKeys(rows []clickhouse.OpRow) (lo, hi uint32, hashes []string) {
+// txOutcomeStitchBudget bounds the detached parent-transaction outcome read.
+// See stampTxOutcomes for how it is sized (r1-measured worst case × ~16).
+const txOutcomeStitchBudget = time.Second
+
+// opRowTxKeys returns the distinct ledgers and the distinct tx hashes across a
+// page of operation rows — the two IN-lists for a batched TxOutcomesByHash read.
+//
+// The ledger SET, not a [lo,hi] span: an operation-list page is not contiguous
+// (a sparse account's 50 newest ops can straddle millions of ledgers), and a
+// span predicate makes the outcome read scale with the account's idleness
+// rather than with the page. See TxOutcomesByHash for the measurement — the
+// span form read >1.6B rows and blew this stitch's budget, so every op on
+// every idle account's page rendered with an UNKNOWN outcome.
+func opRowTxKeys(rows []clickhouse.OpRow) (ledgers []uint32, hashes []string) {
 	if len(rows) == 0 {
-		return 0, 0, nil
+		return nil, nil
 	}
-	lo, hi = rows[0].Seq, rows[0].Seq
-	seen := make(map[string]struct{}, len(rows))
+	seenLedger := make(map[uint32]struct{}, len(rows))
+	seenHash := make(map[string]struct{}, len(rows))
 	for _, o := range rows {
-		if o.Seq < lo {
-			lo = o.Seq
+		if _, ok := seenLedger[o.Seq]; !ok {
+			seenLedger[o.Seq] = struct{}{}
+			ledgers = append(ledgers, o.Seq)
 		}
-		if o.Seq > hi {
-			hi = o.Seq
-		}
-		if _, ok := seen[o.TxHash]; !ok {
-			seen[o.TxHash] = struct{}{}
+		if _, ok := seenHash[o.TxHash]; !ok {
+			seenHash[o.TxHash] = struct{}{}
 			hashes = append(hashes, o.TxHash)
 		}
 	}
-	return lo, hi, hashes
+	return ledgers, hashes
 }
 
 // stitchTxOutcomes stamps each op view with its parent transaction's outcome
@@ -266,7 +274,7 @@ func stitchTxOutcomes(ops []OpView, outcomes map[string]clickhouse.TxOutcome) {
 // success) rather than failing the request: a transient transactions-read blip
 // degrades to "outcome unknown" (honest), not to a misleading unmarked op.
 func (h *Handler) stampTxOutcomes(ctx context.Context, ops []OpView, rows []clickhouse.OpRow) string {
-	lo, hi, hashes := opRowTxKeys(rows)
+	ledgers, hashes := opRowTxKeys(rows)
 	if len(hashes) == 0 {
 		return ""
 	}
@@ -281,9 +289,20 @@ func (h *Handler) stampTxOutcomes(ctx context.Context, ops []OpView, rows []clic
 	// (nearly spent) request deadline but still cancel-aware via values;
 	// WithoutCancel keeps tracing/session values without inheriting the
 	// exhausted deadline. The honest-degrade note remains the fallback.
-	octx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 3*time.Second)
+	//
+	// 1s, resized down from 3s (2026-09-03). The 3s was sized around a read
+	// that could not fit any budget: keyed on a [lo,hi] SPAN it took >60s on
+	// a real 50-op page and timed out EVERY time on an idle account, so the
+	// budget bought nothing but 3s of added latency before serving the
+	// coverage note. Now that TxOutcomesByHash is keyed on the exact ledger
+	// SET it measures 32-61ms cold on r1 for the same pages, so 1s is ~16x
+	// the observed worst case — enough headroom for a cold cache or a busy
+	// lake, while capping what this stitch can add to an unauthenticated
+	// request. Beyond 1s ClickHouse is degraded well past this query, and
+	// shedding to the honest note beats holding the client for another 2s.
+	octx, cancel := context.WithTimeout(context.WithoutCancel(ctx), txOutcomeStitchBudget)
 	defer cancel()
-	outcomes, err := h.Reader.TxOutcomesByHash(octx, lo, hi, hashes)
+	outcomes, err := h.Reader.TxOutcomesByHash(octx, ledgers, hashes)
 	if err != nil {
 		// Non-fatal: serve the operations with UNKNOWN outcome and disclose it
 		// (a client abort lands here too, in which case the response is moot).

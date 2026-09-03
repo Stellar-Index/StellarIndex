@@ -125,7 +125,7 @@ func (r *capReader) OperationResultsByTx(ctx context.Context, _ uint32, _ string
 	return nil, nil
 }
 
-func (r *capReader) TxOutcomesByHash(ctx context.Context, _, _ uint32, _ []string) (map[string]clickhouse.TxOutcome, error) {
+func (r *capReader) TxOutcomesByHash(ctx context.Context, _ []uint32, _ []string) (map[string]clickhouse.TxOutcome, error) {
 	r.probe.record(ctx)
 	return nil, nil
 }
