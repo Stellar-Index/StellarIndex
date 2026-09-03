@@ -48,6 +48,8 @@ against.
 
 - **development,ci:** a capability-aware local verification workflow: fast read-only edit-loop checks, strict clean-HEAD pre-push clearance, a pinned native-architecture Linux verifier for Docker Desktop/Engine, and parallel integration shards selected from storage, migration, fixture and ingest changes. Deferred tools can no longer produce `ALL CHECKS PASSED`; portable machines retain useful partial checks without making a false CI-parity claim.
 
+- **pipeline:** the stderr filter now uses `x/sys/unix.Dup2`, preserving its atomic descriptor replacement on Linux arm64 where `syscall.Dup2` is unavailable. The native Apple Silicon verifier found the prior compile failure before its first push.
+
 ## [v0.59.1] — 2026-09-03
 
 ### Fixed
