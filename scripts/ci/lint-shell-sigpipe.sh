@@ -26,6 +26,10 @@
 #     mc ls … | sort > /tmp/x.txt
 #     head -n 4 /tmp/x.txt > out
 #
+# A consumer that reads to EOF is as safe and usually shorter: `sed -n 1p`,
+# `sed -n '1,12p'`, `awk 'NR==1'` with no `exit`, or slicing a captured
+# value with "${var%%$'\n'*}" / "${var:0:200}".
+#
 # ESCAPE HATCH: put `# sigpipe-ok: <reason>` on the line, or anywhere in
 # the comment block directly above it, when the producer provably writes
 # less than a pipe buffer
@@ -33,7 +37,12 @@
 # fine" is not one.
 set -uo pipefail
 
-roots=("${@:-configs/ansible/roles/archival-node/files scripts/ops scripts/dev}")
+# scripts/ci is a default root because the gate scripts and their self-tests
+# are themselves pipefail shell, and the lint never looked at its own
+# directory: a `printf … | head -1` in check-public-dataset-test.sh took down
+# a full local verify with "printf: write error: Broken pipe" on 2026-09-03,
+# while this gate reported OK over the three roots it did scan.
+roots=("${@:-configs/ansible/roles/archival-node/files scripts/ops scripts/dev scripts/ci}")
 # shellcheck disable=SC2206
 read -r -a roots <<<"${roots[*]}"
 

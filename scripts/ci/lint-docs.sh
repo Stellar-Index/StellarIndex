@@ -254,7 +254,9 @@ for mig in migrations/[0-9][0-9][0-9][0-9]_*.up.sql; do
   # 0048_source_coverage_snapshots.up.sql, whose header opens "ADR-0031:",
   # and a lint that flags correct files gets disabled.
   cited=$(printf '%s' "$first" | sed -E 's/(ADR|CS|F)-[0-9]+//g' \
-          | grep -oE '\b[0-9]{4}\b' | head -1 || true)
+          | grep -oE '\b[0-9]{4}\b' || true)
+  cited="${cited%%$'\n'*}"   # first token; slicing a captured value cannot
+                             # close the pipe on the greps that filled it
   if [ -n "$cited" ] && [ "$cited" != "$num" ]; then
     err "$mig: header cites migration $cited but this file IS $num — a reader following that reference lands on a different migration. Fix the header (a header comment IS correctable on a shipped migration — see migrations/README.md 'Amending a shipped migration' — then run scripts/ci/lint-migration-immutability.sh --write in the same commit)."
   fi

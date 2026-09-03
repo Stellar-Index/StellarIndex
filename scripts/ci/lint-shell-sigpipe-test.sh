@@ -16,7 +16,14 @@
 #   - a comment merely QUOTING the bad shape is not an instance of it;
 #   - a script WITHOUT pipefail/-e is ignored (it cannot be killed by this);
 #   - a clean tree passes;
-#   - a root with no pipefail scripts FAILS rather than passing vacuously.
+#   - a root with no pipefail scripts FAILS rather than passing vacuously;
+#   - a gate script under scripts/ci is caught (the root that was missing).
+#
+# A fixture has to CONTAIN the shape the gate hunts for, which makes this
+# file its own offender now that scripts/ci is a default root. Those bodies
+# are therefore written on ONE line — $'…\n…' — so the `# sigpipe-ok:` marker
+# can sit on the source line OUTSIDE the quoted body: it silences the gate
+# for this file without disarming the fixture the gate is tested against.
 #
 # Run: bash scripts/ci/lint-shell-sigpipe-test.sh
 set -uo pipefail
@@ -49,8 +56,7 @@ mk() { # mk <dir> <file> <body>
 
 echo "lint-shell-sigpipe-test: detection"
 
-mk bad offender.sh 'set -euo pipefail
-mc ls bucket/ | sort | head -n 4 > /tmp/out.txt'
+mk bad offender.sh $'set -euo pipefail\nmc ls bucket/ | sort | head -n 4 > /tmp/out.txt'   # sigpipe-ok: fixture text, scanned by the gate and never executed
 check "pipe into head under pipefail is caught" 1 "$TMP/bad"
 
 mk fixed fixed.sh 'set -euo pipefail
@@ -58,16 +64,13 @@ mc ls bucket/ | sort > /tmp/all.txt
 head -n 4 /tmp/all.txt > /tmp/out.txt'
 check "write-then-slice passes" 0 "$TMP/fixed"
 
-mk awkexit offender.sh 'set -euo pipefail
-printf "%s\\n" "$big" | awk "/x/{print; exit}" > /tmp/out.txt'
+mk awkexit offender.sh $'set -euo pipefail\nprintf "%s\\n" "$big" | awk "/x/{print; exit}" > /tmp/out.txt'   # sigpipe-ok: fixture text, scanned by the gate and never executed
 check "pipe into an early-exit awk is caught (not just head)" 1 "$TMP/awkexit"
 
-mk sedq offender.sh 'set -euo pipefail
-mc ls bucket/ | sed -n "1p;q" > /tmp/out.txt'
+mk sedq offender.sh $'set -euo pipefail\nmc ls bucket/ | sed -n "1p;q" > /tmp/out.txt'   # sigpipe-ok: fixture text, scanned by the gate and never executed
 check "pipe into sed with q is caught" 1 "$TMP/sedq"
 
-mk grepm offender.sh 'set -euo pipefail
-mc ls bucket/ | grep -m 1 thing > /tmp/out.txt'
+mk grepm offender.sh $'set -euo pipefail\nmc ls bucket/ | grep -m 1 thing > /tmp/out.txt'   # sigpipe-ok: fixture text, scanned by the gate and never executed
 check "pipe into grep -m is caught" 1 "$TMP/grepm"
 
 echo "lint-shell-sigpipe-test: escape hatch"
@@ -89,21 +92,45 @@ check "a comment quoting the bad shape is not an instance" 0 "$TMP/quoted"
 
 echo "lint-shell-sigpipe-test: scope"
 
-mk nopipefail loose.sh '#!/bin/bash
-mc ls bucket/ | sort | head -n 4 > /tmp/out.txt'
+mk nopipefail loose.sh $'#!/bin/bash\nmc ls bucket/ | sort | head -n 4 > /tmp/out.txt'   # sigpipe-ok: fixture text, scanned by the gate and never executed
 check "script without pipefail/-e is out of scope (and root is then vacuous)" 1 "$TMP/nopipefail"
 
 mk mixed guarded.sh 'set -o pipefail
 echo hi'
-mk mixed loose.sh '#!/bin/bash
-mc ls bucket/ | sort | head -n 4'
+mk mixed loose.sh $'#!/bin/bash\nmc ls bucket/ | sort | head -n 4'   # sigpipe-ok: fixture text, scanned by the gate and never executed
 check "a pipefail script present makes the root non-vacuous; loose file ignored" 0 "$TMP/mixed"
 
 mkdir -p "$TMP/empty"
 check "a root with no pipefail scripts FAILS rather than passing vacuously" 1 "$TMP/empty"
 
+echo "lint-shell-sigpipe-test: the gate's own directory"
+
+# The blind spot: scripts/ci was not a default root, so the 73 pipefail
+# scripts under it — every gate and every self-test — went unscanned for this
+# gate's whole life, and a `printf … | head -1` in check-public-dataset-test.sh
+# took down a full verify run before the roots were widened.
+mk scripts/ci gate.sh $'set -euo pipefail\nbig=$(git rev-parse HEAD)\nx=$(printf \'%s\\n\' "$big" | head -1)'   # sigpipe-ok: fixture text, scanned by the gate and never executed
+check "a gate script under a scripts/ci root is caught" 1 "$TMP/scripts/ci"
+
+mk okci gate.sh $'set -euo pipefail\nbig=$(git rev-parse HEAD)\nx=$(printf \'%s\\n\' "$big" | head -1)   # sigpipe-ok: rev-parse emits one 40-byte line'   # sigpipe-ok: fixture text, scanned by the gate and never executed
+check "the same gate line with a marker passes" 0 "$TMP/okci"
+
 echo "lint-shell-sigpipe-test: the real tree"
-check "the repo's own scripts are clean" 0 "configs/ansible/roles/archival-node/files scripts/ops scripts/dev"
+check "the repo's own scripts are clean" 0 "configs/ansible/roles/archival-node/files scripts/ops scripts/dev scripts/ci"
+
+# The DEFAULT roots are what CI runs; an explicit-root case cannot see them
+# narrow again. Pin that a no-argument run covers exactly the four roots.
+default_out="$(bash "$LINT" 2>&1)"
+explicit_out="$(bash "$LINT" "configs/ansible/roles/archival-node/files scripts/ops scripts/dev scripts/ci" 2>&1)"
+if [ "$default_out" = "$explicit_out" ]; then
+  echo "  ok   the default roots are the four documented roots (scripts/ci included)"
+  pass=$((pass + 1))
+else
+  echo "  FAIL the default roots drifted from the four documented roots"
+  echo "       default:  $default_out"
+  echo "       explicit: $explicit_out"
+  fail=$((fail + 1))
+fi
 
 echo "lint-shell-sigpipe-test: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]

@@ -181,13 +181,13 @@ expect() {
   local name="$1" want_rc="$2" want_sub="${3:-}"
   if [[ "$RC" -ne "$want_rc" ]]; then
     echo "FAIL: $name — rc=$RC want=$want_rc"
-    echo "$OUT" | sed 's/^/    | /' | head -12
+    echo "$OUT" | sed -n '1,12s/^/    | /p'
     fail=$((fail + 1))
     return
   fi
   if [[ -n "$want_sub" && "$OUT" != *"$want_sub"* ]]; then
     echo "FAIL: $name — output missing: $want_sub"
-    echo "$OUT" | sed 's/^/    | /' | head -12
+    echo "$OUT" | sed -n '1,12s/^/    | /p'
     fail=$((fail + 1))
     return
   fi
@@ -200,7 +200,7 @@ expect_missing() {
   local name="$1" nosub="$2"
   if [[ "$OUT" == *"$nosub"* ]]; then
     echo "FAIL: $name — output unexpectedly contains: $nosub"
-    echo "$OUT" | sed 's/^/    | /' | head -12
+    echo "$OUT" | sed -n '1,12s/^/    | /p'
     fail=$((fail + 1))
     return
   fi

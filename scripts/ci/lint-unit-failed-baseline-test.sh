@@ -49,7 +49,7 @@ while IFS= read -r u; do
 done <<< "$units"
 
 # 2. The rule's negative-match regex must list exactly the baseline.
-expr_line=$(grep -h 'node_systemd_unit_state{state="failed"' "$RULES"/infra.yml 2>/dev/null | head -1)
+expr_line=$(grep -h 'node_systemd_unit_state{state="failed"' "$RULES"/infra.yml 2>/dev/null | sed -n 1p)
 if [ -z "$expr_line" ]; then
   bad "stellarindex_systemd_unit_failed not found in $RULES/infra.yml"
 else
