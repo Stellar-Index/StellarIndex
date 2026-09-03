@@ -2009,6 +2009,14 @@ export interface paths {
          *     source is OMITTED from `protocols` and named in `coverage_note`
          *     rather than published with a fabricated `contract_count: 0` — a
          *     failed read is not a real zero.
+         *
+         *     A protocol whose instances outnumber that cap by orders of
+         *     magnitude is COUNTED rather than enumerated, so its
+         *     `contract_count` is the exact total and neither a zero nor the
+         *     cap (sorocredit deploys one collateral child contract per opened
+         *     position — 116k of them). Its `contracts` roster on
+         *     `/protocols/{name}` is then empty: the count is real, the
+         *     enumeration is simply not published.
          */
         get: operations["listProtocols"];
         put?: never;
@@ -5284,7 +5292,15 @@ export interface components {
             genesis_ledger: number;
             /** @description Verified factory / trust-root contract C-strkeys (ADR-0035); empty for factory-less sources. */
             factories: string[];
-            /** @description Registered contract instances (protocol_contracts; soroswap_pairs for soroswap). */
+            /**
+             * @description Registered contract instances (protocol_contracts;
+             *     soroswap_pairs for soroswap). Always the TRUE total: a
+             *     protocol whose instances exceed the roster query's LIMIT 5000
+             *     is counted instead of enumerated, so this figure can exceed
+             *     the length of `contracts` on `/protocols/{name}` — it is
+             *     never truncated to the cap and never a zero standing in for
+             *     an unenumerated set.
+             */
             contract_count: number;
             /**
              * Format: int64
@@ -12615,6 +12631,18 @@ export interface operations {
                             bespoke?: {
                                 [key: string]: unknown;
                             };
+                            /**
+                             * @description The protocol's registered instances. Empty
+                             *     for a source with no contract registry
+                             *     (SDEX, event-less oracles, factory-less
+                             *     bridges) AND for a source whose instances
+                             *     are counted rather than enumerated
+                             *     (sorocredit's per-position child
+                             *     contracts). An empty array therefore never
+                             *     contradicts a non-zero `contract_count`:
+                             *     it means "not enumerated here", and the
+                             *     count is still the true total.
+                             */
                             contracts: {
                                 /** @description Instance C-strkey. */
                                 contract_id: string;
