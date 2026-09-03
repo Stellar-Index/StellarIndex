@@ -110,6 +110,18 @@ export function IssuerPanel({ gStrkey }: { gStrkey: string }) {
           <FlagPill on={data.auth_immutable ?? undefined} label="auth_immutable" />
           <FlagPill on={data.auth_clawback ?? undefined} label="auth_clawback" />
         </div>
+        {data.auth_flags_source === 'last_known_before_removal' && (
+          // #374: recovered from the account's state at its REMOVAL ledger.
+          // Unlabelled pills would read as this issuer's current policy for
+          // an account that no longer exists.
+          <p className="text-ink-muted mt-2 text-xs">
+            Flags are the last known values before this account was removed
+            {data.auth_flags_as_of_ledger != null && (
+              <> (ledger {data.auth_flags_as_of_ledger.toLocaleString()})</>
+            )}
+            , not its current policy.
+          </p>
+        )}
       </Panel>
 
       <IssuedAssetsTable issuer={data} />

@@ -48,6 +48,11 @@ interface IssuerDetail {
   auth_revocable?: boolean;
   auth_immutable?: boolean;
   auth_clawback?: boolean;
+  // #374: where the four flags above came from. `last_known_before_removal`
+  // means the account has been REMOVED and these are its values at the
+  // removal ledger — historical, not current policy.
+  auth_flags_source?: 'live' | 'last_known_before_removal';
+  auth_flags_as_of_ledger?: number | null;
   sep1_resolved_at?: string;
   creation_ledger?: number;
   assets?: IssuedAsset[];
@@ -369,12 +374,29 @@ export default async function IssuerDetailPage({ params }: { params: Params }) {
               ledger-entry window yet.
             </p>
           ) : (
-            <ul className="space-y-1.5 text-xs">
-              <FlagRow label="auth_required" v={detail.auth_required} />
-              <FlagRow label="auth_revocable" v={detail.auth_revocable} />
-              <FlagRow label="auth_immutable" v={detail.auth_immutable} />
-              <FlagRow label="auth_clawback" v={detail.auth_clawback} />
-            </ul>
+            <>
+              <ul className="space-y-1.5 text-xs">
+                <FlagRow label="auth_required" v={detail.auth_required} />
+                <FlagRow label="auth_revocable" v={detail.auth_revocable} />
+                <FlagRow label="auth_immutable" v={detail.auth_immutable} />
+                <FlagRow label="auth_clawback" v={detail.auth_clawback} />
+              </ul>
+              {detail.auth_flags_source === 'last_known_before_removal' && (
+                // #374: these flags were recovered from the account's state
+                // at the ledger it was REMOVED. Rendering them unlabelled
+                // would present a dead account's configuration as its
+                // current policy — the exact thing the provenance column
+                // was added to prevent.
+                <p className="text-ink-muted mt-2 text-xs">
+                  Last known before the account was removed
+                  {detail.auth_flags_as_of_ledger != null && (
+                    <> (ledger {detail.auth_flags_as_of_ledger.toLocaleString()})</>
+                  )}
+                  . This account no longer exists on the ledger, so these are
+                  historical values, not its current policy.
+                </p>
+              )}
+            </>
           )}
         </Panel>
       </div>
