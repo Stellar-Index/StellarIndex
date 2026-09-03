@@ -105,7 +105,7 @@ func (s *Server) handleAssetSupply(w http.ResponseWriter, r *http.Request) {
 		coins, ledger, err := s.tokenSupply.NativeTotalCoins(ctx)
 		if err != nil {
 			s.logger.Warn("supply: native total_coins", "err", err)
-			writeProblem(w, r, "https://api.stellarindex.io/errors/supply-error",
+			writeProblemErr(w, r, err, "https://api.stellarindex.io/errors/supply-error",
 				"Supply read failed", http.StatusBadGateway, "Could not read native supply.")
 			return
 		}
@@ -132,7 +132,7 @@ func (s *Server) handleAssetSupply(w http.ResponseWriter, r *http.Request) {
 	sup, err := s.tokenSupply.TokenSupply(ctx, contractID)
 	if err != nil {
 		s.logger.Warn("supply: token supply", "contract_id", contractID, "err", err)
-		writeProblem(w, r, "https://api.stellarindex.io/errors/supply-error",
+		writeProblemErr(w, r, err, "https://api.stellarindex.io/errors/supply-error",
 			"Supply read failed", http.StatusBadGateway, "Could not read token supply.")
 		return
 	}

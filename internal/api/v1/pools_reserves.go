@@ -201,7 +201,7 @@ func (s *Server) poolReservesPairs(ctx context.Context, w http.ResponseWriter, r
 	if err != nil {
 		if !clientAborted(r, err) {
 			s.logger.Error("LoadSoroswapPairRegistry failed", "err", err)
-			writeProblem(w, r, "https://api.stellarindex.io/errors/internal",
+			writeProblemErr(w, r, err, "https://api.stellarindex.io/errors/internal",
 				"Internal error", http.StatusInternalServerError, "")
 		}
 		return nil, false

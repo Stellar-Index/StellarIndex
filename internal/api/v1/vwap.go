@@ -242,7 +242,7 @@ func (s *Server) fetchVWAPTrades(
 	s.logger.Error("TradesInRange failed for VWAP",
 		"err", err, "base", pair.Base.String(), "quote", pair.Quote.String(),
 		"from", from, "to", to)
-	writeProblem(w, r,
+	writeProblemErr(w, r, err,
 		"https://api.stellarindex.io/errors/internal",
 		"Internal error", http.StatusInternalServerError, "")
 	return nil, false, false

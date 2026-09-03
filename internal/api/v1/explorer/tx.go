@@ -61,13 +61,7 @@ func (h *Handler) TxDetail(w http.ResponseWriter, r *http.Request) {
 
 	tx, found, err := h.Reader.TransactionByHash(ctx, hash)
 	if err != nil {
-		if h.ClientAborted(r, err) {
-			return
-		}
-		if retryableColdMiss(ctx, err) {
-			h.Logger.Warn("explorer TransactionByHash deadline exceeded", "hash", hash)
-			h.writeRetryable(w, r, err, "https://api.stellarindex.io/errors/tx-detail-timeout",
-				"Transaction detail timed out")
+		if h.txReadFailed(w, r, ctx, err, "TransactionByHash", hash) {
 			return
 		}
 		h.Logger.Error("explorer TransactionByHash failed", "err", err)
@@ -84,13 +78,7 @@ func (h *Handler) TxDetail(w http.ResponseWriter, r *http.Request) {
 
 	ops, err := h.Reader.OperationsByTx(ctx, tx.Seq, hash)
 	if err != nil {
-		if h.ClientAborted(r, err) {
-			return
-		}
-		if retryableColdMiss(ctx, err) {
-			h.Logger.Warn("explorer OperationsByTx deadline exceeded", "hash", hash)
-			h.writeRetryable(w, r, err, "https://api.stellarindex.io/errors/tx-detail-timeout",
-				"Transaction detail timed out")
+		if h.txReadFailed(w, r, ctx, err, "OperationsByTx", hash) {
 			return
 		}
 		h.Logger.Error("explorer OperationsByTx failed", "err", err)
@@ -101,7 +89,7 @@ func (h *Handler) TxDetail(w http.ResponseWriter, r *http.Request) {
 	results, err := h.Reader.OperationResultsByTx(ctx, tx.Seq, hash)
 	resultsPartial := false
 	if err != nil {
-		if h.ClientAborted(r, err) {
+		if h.txReadFailed(w, r, ctx, err, "OperationResultsByTx", hash) {
 			return
 		}
 		// Non-fatal: serve ops without per-op result codes, but DISCLOSE it
@@ -114,7 +102,7 @@ func (h *Handler) TxDetail(w http.ResponseWriter, r *http.Request) {
 	events, err := h.Reader.EventsByTx(ctx, tx.Seq, hash)
 	eventsPartial := false
 	if err != nil {
-		if h.ClientAborted(r, err) {
+		if h.txReadFailed(w, r, ctx, err, "EventsByTx", hash) {
 			return
 		}
 		// Non-fatal: serve the tx without its contract events, but DISCLOSE it
@@ -137,6 +125,27 @@ func (h *Handler) TxDetail(w http.ResponseWriter, r *http.Request) {
 // movementsCoverageNote / AccountMovements' coverage_note): non-empty when a
 // non-fatal sub-read failed, so a degraded response is distinguishable on the
 // wire from a genuinely-empty one. Empty = every sub-read succeeded.
+// txReadFailed handles the two outcomes every read in TxDetail shares: a
+// client hangup writes nothing, and a blown budget answers retryable. The
+// budget belongs to the whole request, so once one read has exceeded it
+// every remaining sub-read is already doomed — a "partial" transaction
+// assembled out of failures is a 200 the caller would read as fact, which
+// is why a deadline is never treated as the disclosable-partial class the
+// callers fall through to. Returns true when the response has been
+// written.
+func (h *Handler) txReadFailed(w http.ResponseWriter, r *http.Request, ctx context.Context, err error, read, hash string) bool {
+	if h.ClientAborted(r, err) {
+		return true
+	}
+	if retryableColdMiss(ctx, err) {
+		h.Logger.Warn("explorer "+read+" deadline exceeded", "hash", hash)
+		h.writeRetryable(w, r, err, "https://api.stellarindex.io/errors/tx-detail-timeout",
+			"Transaction detail timed out")
+		return true
+	}
+	return false
+}
+
 func txCoverageNote(resultsFailed, eventsFailed bool) string {
 	switch {
 	case resultsFailed && eventsFailed:

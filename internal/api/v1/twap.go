@@ -113,7 +113,7 @@ func (s *Server) handleTWAP(w http.ResponseWriter, r *http.Request) {
 		}
 		s.logger.Error("TradesInRange failed for TWAP",
 			"err", err, "base", base.String(), "quote", quote.String())
-		writeProblem(w, r,
+		writeProblemErr(w, r, err,
 			"https://api.stellarindex.io/errors/internal",
 			"Internal error", http.StatusInternalServerError, "")
 		return

@@ -101,7 +101,7 @@ func (s *Server) handleLedgerStream(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.logger.Error("ledgerTip failed (stream prelude)", "err", err)
-		writeProblem(w, r,
+		writeProblemErr(w, r, err,
 			"https://api.stellarindex.io/errors/internal",
 			"Internal error", http.StatusInternalServerError, "")
 		return

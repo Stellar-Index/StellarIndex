@@ -35,6 +35,29 @@ func TestDefault_BackgroundStatementTimeoutIsGenerousBackstop(t *testing.T) {
 	}
 }
 
+// TestValidate_RequestTimeoutAboveHandlerBudgetAccepted is the other half
+// of the two rejection cases in the table below: the check must reject a
+// request_timeout that cannot outlive the handler budgets WITHOUT
+// rejecting the ones that can. A guard that refused everything would pass
+// the rejection cases just as well.
+//
+// The default (15s) is the value the API actually ships with, so it is the
+// case that matters most; one tick above the bound is the boundary.
+func TestValidate_RequestTimeoutAboveHandlerBudgetAccepted(t *testing.T) {
+	for _, d := range []time.Duration{
+		config.Default().API.RequestTimeout,
+		config.APIMaxHandlerBudget + time.Nanosecond,
+		0, // the middleware is disabled entirely — nothing to order
+	} {
+		c := config.Default()
+		c.API.RequestTimeout = d
+		if err := c.Validate(); err != nil {
+			t.Errorf("api.request_timeout = %v must validate (longest handler budget is %v), got: %v",
+				d, config.APIMaxHandlerBudget, err)
+		}
+	}
+}
+
 // withBad returns Default() with a mutator applied. Helper so each
 // test case is one line.
 func withBad(mut func(*config.Config)) config.Config {
@@ -142,6 +165,23 @@ func TestValidate_RejectsBadFields(t *testing.T) {
 		"statement timeout shorter than request timeout": {
 			func(c *config.Config) { c.API.ServingStatementTimeout = c.API.RequestTimeout / 2 },
 			"serving_statement_timeout",
+		},
+
+		// The same ordering rule one layer up: request_timeout must
+		// EXCEED the longest per-handler budget. At or below it the
+		// blanket deadline is what fires on every slow read, so the
+		// per-handler `…-timeout` 503 branches are unreachable and the
+		// ceilings they advertise are fiction — the operator-settable
+		// half of the bodyless-200 class, which the compile-time guard
+		// in internal/api/v1 cannot see because it only ever checks
+		// against the 15s DEFAULT.
+		"request timeout equals the longest handler budget": {
+			func(c *config.Config) { c.API.RequestTimeout = config.APIMaxHandlerBudget },
+			"request_timeout",
+		},
+		"request timeout below the longest handler budget": {
+			func(c *config.Config) { c.API.RequestTimeout = config.APIMaxHandlerBudget - time.Second },
+			"request_timeout",
 		},
 
 		// CFG-03 (audit-2026-07-23): the two conflicting `_env`

@@ -124,6 +124,12 @@ func (h *Handler) DirectoryLookup(w http.ResponseWriter, r *http.Request) {
 		if h.ClientAborted(r, err) {
 			return
 		}
+		if retryableColdMiss(ctx, err) {
+			h.Logger.Warn("explorer directory lookup deadline exceeded", "n", len(addresses))
+			h.writeRetryable(w, r, err, "https://api.stellarindex.io/errors/directory-timeout",
+				"Directory lookup timed out")
+			return
+		}
 		h.Logger.Error("directory batch lookup failed", "err", err, "n", len(addresses))
 		h.WriteProblem(w, r, "https://api.stellarindex.io/errors/internal",
 			"Internal error", http.StatusInternalServerError, "")
