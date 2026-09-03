@@ -185,6 +185,13 @@ func writeProblem(w http.ResponseWriter, r *http.Request, typeURL, title string,
 	if status == http.StatusUnauthorized {
 		w.Header().Set("WWW-Authenticate", `Bearer realm="stellarindex.io"`)
 	}
+	// Keyed on the TYPE, not the status: writeProblemErr rewrites its own
+	// upgrade before calling in, so by the time it reaches here the status
+	// is already 503 and only the type still identifies the condition.
+	// Both upgrade legs therefore carry the hint.
+	if typeURL == requestTimeoutType {
+		w.Header().Set("Retry-After", retryAfterRequestTimeout)
+	}
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(p)
 }
@@ -200,6 +207,14 @@ const (
 	// quote truthfully.
 	requestTimeoutDetail = "the request exceeded this server's request budget before " +
 		"the handler could answer; retry shortly."
+	// A 503 whose body says "retry shortly" but carries no Retry-After
+	// leaves every client to guess, and the guess is "immediately" —
+	// precisely the retry storm a server that just ran out of budget must
+	// not receive. 5s is the in-process busy-ness value the rest of the
+	// API already uses (the explorer's retryAfterBusy, writeChartTimeout);
+	// the 30s figure is reserved for a dependency outage
+	// (writeCacheUnavailableProblem), which a blown request budget is not.
+	retryAfterRequestTimeout = "5"
 )
 
 // requestDeadlineExpired reports whether the blanket

@@ -88,6 +88,10 @@ func TestWriteProblem_ExpiredRequestDeadlineUpgrades500To503(t *testing.T) {
 	if cc := rec.Header().Get("Cache-Control"); cc != "no-store" {
 		t.Errorf("Cache-Control = %q, want no-store (a transient timeout must not be cached and replayed)", cc)
 	}
+	if ra := rec.Header().Get("Retry-After"); ra != retryAfterRequestTimeout {
+		t.Errorf("Retry-After = %q, want %q — a 503 telling the client to retry without saying when "+
+			"is read as `retry now`, and the server has just run out of budget", ra, retryAfterRequestTimeout)
+	}
 	var p Problem
 	if err := json.Unmarshal(rec.Body.Bytes(), &p); err != nil {
 		t.Fatalf("decode problem: %v (body %s)", err, rec.Body.String())

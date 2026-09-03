@@ -77,6 +77,13 @@ func assertRequestTimeout(t *testing.T, rec *httptest.ResponseRecorder, endpoint
 	if cc := rec.Header().Get("Cache-Control"); cc != "no-store" {
 		t.Errorf("%s Cache-Control = %q, want no-store", endpoint, cc)
 	}
+	// The body promises "retry shortly" and the status is retryable; without
+	// a Retry-After the client picks the interval, and the usual pick is
+	// "now" — a server already out of budget then gets the retry storm. The
+	// explorer's retryable 503s hold this same standard.
+	if ra := rec.Header().Get("Retry-After"); ra != retryAfterRequestTimeout {
+		t.Errorf("%s Retry-After = %q, want %q", endpoint, ra, retryAfterRequestTimeout)
+	}
 	var p Problem
 	if err := json.Unmarshal(rec.Body.Bytes(), &p); err != nil {
 		t.Fatalf("%s decode problem: %v (body %s)", endpoint, err, rec.Body.String())
@@ -118,6 +125,38 @@ func TestHandlerOwnBudget_LiquidityPoolDeadlineOnLiveRequestIs503(t *testing.T) 
 	assertRequestTimeout(t, rec, "/v1/liquidity-pools")
 }
 
+// deadlineTokenSupplyReader fails the supply_flows sum the way the
+// handler's own 8s ceiling does.
+type deadlineTokenSupplyReader struct{ TokenSupplyReader }
+
+func (deadlineTokenSupplyReader) TokenSupply(
+	context.Context, string,
+) (clickhouse.TokenSupply, error) {
+	return clickhouse.TokenSupply{}, deadlineOnLiveRequestErr("sum supply_flows")
+}
+
+// The 502 leg of the same upgrade, and the only handler family that
+// raises one. /v1/assets/{asset_id}/supply reports a failed lake read as
+// StatusBadGateway — "our upstream broke" — so an 8s ceiling this process
+// imposed rendered as "Supply read failed" and sent the reader looking at
+// ClickHouse for a bound ClickHouse never set. Same reasoning as the 500
+// legs above: the deadline is neither this server's fault nor its
+// upstream's, and it clears on retry.
+func TestHandlerOwnBudget_AssetSupplyDeadlineOnLiveRequestIs503(t *testing.T) {
+	s := quietServer()
+	s.tokenSupply = deadlineTokenSupplyReader{}
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/assets/"+supplyContractID+"/supply", nil)
+	req.SetPathValue("asset_id", supplyContractID)
+	if err := req.Context().Err(); err != nil {
+		t.Fatalf("request context must be alive for this test to mean anything: %v", err)
+	}
+	rec := httptest.NewRecorder()
+	s.handleAssetSupply(rec, req)
+
+	assertRequestTimeout(t, rec, "/v1/assets/{asset_id}/supply")
+}
+
 // The other half of the contract, on the same two handlers: a plain
 // storage fault carrying NO deadline is still a 500. Without this the
 // upgrade above could be satisfied by relabelling every internal error,
@@ -141,5 +180,32 @@ func TestHandlerOwnBudget_NonDeadlineFaultStays500(t *testing.T) {
 	if rec.Code != http.StatusInternalServerError {
 		t.Fatalf("status = %d, want 500 — a storage fault with budget left is a real internal "+
 			"error (body %s)", rec.Code, rec.Body.String())
+	}
+}
+
+// And on the 502 leg: a lake read that genuinely failed still attributes
+// the failure upstream. Pins the supply upgrade to the DEADLINE rather
+// than to "any supply read error", which would erase the one status that
+// tells an operator to go look at ClickHouse.
+type brokenTokenSupplyReader struct{ TokenSupplyReader }
+
+func (brokenTokenSupplyReader) TokenSupply(
+	context.Context, string,
+) (clickhouse.TokenSupply, error) {
+	return clickhouse.TokenSupply{}, io.ErrUnexpectedEOF
+}
+
+func TestHandlerOwnBudget_AssetSupplyNonDeadlineFaultStays502(t *testing.T) {
+	s := quietServer()
+	s.tokenSupply = brokenTokenSupplyReader{}
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/assets/"+supplyContractID+"/supply", nil)
+	req.SetPathValue("asset_id", supplyContractID)
+	rec := httptest.NewRecorder()
+	s.handleAssetSupply(rec, req)
+
+	if rec.Code != http.StatusBadGateway {
+		t.Fatalf("status = %d, want 502 — a lake read that actually failed is an upstream fault "+
+			"(body %s)", rec.Code, rec.Body.String())
 	}
 }
