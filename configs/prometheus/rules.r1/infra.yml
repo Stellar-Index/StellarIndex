@@ -265,7 +265,16 @@ groups:
       # have dedicated alerts at their own severities. `for: 15m` rides
       # out a unit that is failed-then-restarted by its own timer.
       - alert: stellarindex_worker_panicked
-        expr: increase(stellarindex_worker_panics_total[10m]) > 0
+        # RAW value, not increase(). A recovered panic means that worker is
+        # STOPPED until the process restarts, so the alert must describe the
+        # DEAD STATE, not the moment of death. `increase(...[10m]) > 0`
+        # auto-resolved about ten minutes after the panic while the worker
+        # was still gone — an all-clear for a condition that had not
+        # cleared. The counter resets on process start, which is exactly the
+        # operator action that fixes it, so the raw form clears itself at the
+        # right moment and only then. Same treatment as
+        # stellarindex_decoder_panicked.
+        expr: stellarindex_worker_panics_total > 0
         for: 0m
         labels:
           severity: page

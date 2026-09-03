@@ -457,6 +457,9 @@ groups:
         expr: |
           (time() - stellarindex_auth_reaper_last_sweep_unix)
             > 3 * stellarindex_auth_reaper_interval_seconds
+          or
+          (stellarindex_auth_reaper_interval_seconds > 0
+            unless stellarindex_auth_reaper_last_sweep_unix)
         for: 15m
         labels:
           severity: ticket
