@@ -39,6 +39,12 @@ fi
 
 echo "=== Format ==="        && make fmt
 echo "=== Vet ==="           && make vet
+# The container verifier runs native arm64 on Apple-silicon Docker, and the
+# syscall table there differs from amd64: dup2 has no arm64 entry, so a
+# call that vets clean on amd64 CI and on the production host does not
+# compile in that lane. Cross-vet the one package that touches raw
+# syscalls, so the break surfaces here rather than in a Docker run.
+echo "=== Vet (linux/arm64 cross) ===" && GOOS=linux GOARCH=arm64 go vet ./internal/pipeline/
 echo "=== golangci config schema ===" && go run ./scripts/ci/lint-golangci-config
 echo "=== Lint ==="          && make lint
 echo "=== Docs ==="          && ./scripts/ci/lint-docs.sh

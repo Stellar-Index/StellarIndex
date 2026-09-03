@@ -148,6 +148,10 @@ jobs:
           verify: false
       - name: go vet
         run: go vet ./...
+      - name: go vet (linux/arm64 cross)
+        # dup2 has no arm64 syscall entry; amd64-only vetting hid a build
+        # break that the native-arm64 container verifier then exposed.
+        run: GOOS=linux GOARCH=arm64 go vet ./internal/pipeline/
 
   test:
     name: unit tests

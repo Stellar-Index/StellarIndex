@@ -101,7 +101,7 @@ func TestInstallStderrFilterTo(t *testing.T) {
 		t.Fatalf("dup original stderr: %v", err)
 	}
 	t.Cleanup(func() {
-		_ = syscall.Dup2(originalStderrCopy, int(os.Stderr.Fd()))
+		_ = dupOnto(originalStderrCopy, int(os.Stderr.Fd()))
 		_ = syscall.Close(originalStderrCopy)
 	})
 
@@ -159,7 +159,7 @@ func TestSilenceSDKChecksumWarnings_FlushDrainsPipe(t *testing.T) {
 		t.Fatalf("dup original stderr: %v", err)
 	}
 	t.Cleanup(func() {
-		_ = syscall.Dup2(originalStderrCopy, int(os.Stderr.Fd()))
+		_ = dupOnto(originalStderrCopy, int(os.Stderr.Fd()))
 		_ = syscall.Close(originalStderrCopy)
 	})
 
