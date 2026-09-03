@@ -56,6 +56,19 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     '/assets',
     '/markets',
     '/issuers',
+    // Chain-explorer hubs (ADR-0038). Each is indexable,
+    // canonical-tagged and content-rich, yet all seven were orphaned
+    // from the sitemap — reachable only from the nav rail, so the whole
+    // explorer half of the site was undiscoverable to a crawler that
+    // started at sitemap.xml. Their per-entity children stay out on
+    // purpose: those are unbounded long tails served as noindex shells.
+    '/network',
+    '/ledgers',
+    '/transactions',
+    '/operations',
+    '/accounts',
+    '/contracts',
+    '/protocols',
     '/sources',
     '/diagnostics',
     '/dexes',
