@@ -569,3 +569,120 @@ func TestAssetsUnknownTypeIsRefusedNotServedUnfiltered(t *testing.T) {
 		})
 	}
 }
+
+// leanListingAssets is the minimal AssetReader — the fallback the
+// listing drops to when no AssetsReader is configured. Its ListAssets
+// takes a cursor and a limit and NOTHING else, which is the whole
+// reason that path cannot honour a row filter: there is no argument to
+// pass one in.
+type leanListingAssets struct{}
+
+func (leanListingAssets) GetAsset(context.Context, canonical.Asset) (AssetDetail, error) {
+	return AssetDetail{}, ErrAssetNotFound
+}
+
+func (leanListingAssets) ListAssets(context.Context, string, int) ([]AssetDetail, string, error) {
+	return []AssetDetail{{AssetID: aquaCode + "-" + aquaIssuer, Code: aquaCode}}, "", nil
+}
+
+func decodeAssetFlags(t *testing.T, rec *httptest.ResponseRecorder) Flags {
+	t.Helper()
+	var env struct {
+		Flags Flags `json:"flags"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &env); err != nil {
+		t.Fatalf("decode envelope: %v (body %s)", err, rec.Body.String())
+	}
+	return env.Flags
+}
+
+// TestAssetsListNamesTheFiltersItIgnored — the two paths that serve
+// their page WITHOUT applying the row filters must name them in
+// `flags.filters_ignored`, and the paths that apply them must name
+// nothing.
+//
+// The drop itself is by design on both: the class-scoped catalogue
+// listings serve their whole class, and the lean reader has no filter
+// arguments to take. What was missing is the signal. The spec said so
+// in prose, but `asset_class=stablecoin&q=ZZZZ` returned the whole
+// class as a 200 byte-for-byte the shape of a matched search — so a
+// client re-filtering the page, and the person reading its results,
+// could not tell an ignored filter from a hit. Prose is for the
+// integrator; the flag is for the client.
+func TestAssetsListNamesTheFiltersItIgnored(t *testing.T) {
+	cat, err := currency.LoadEmbedded()
+	if err != nil {
+		t.Fatalf("LoadEmbedded: %v", err)
+	}
+	for _, tc := range []struct {
+		name   string
+		server *Server
+		target string
+		want   []string // nil → the response must carry no filters_ignored at all
+	}{
+		{
+			name:   "class-scoped listing ignores the search box",
+			server: New(Options{VerifiedCurrencies: cat}),
+			target: "/v1/assets?asset_class=stablecoin&q=ZZZZNOSUCH&limit=3",
+			want:   []string{"q"},
+		},
+		{
+			name:   "class-scoped listing ignores every row filter it is sent",
+			server: New(Options{VerifiedCurrencies: cat}),
+			target: "/v1/assets?asset_class=crypto&type=classic&code=" + aquaCode +
+				"&issuer=" + aquaIssuer + "&q=aqu&limit=3",
+			want: []string{"type", "code", "issuer", "q"},
+		},
+		{
+			name:   "lean AssetReader fallback ignores them too",
+			server: New(Options{Assets: leanListingAssets{}}),
+			target: "/v1/assets?code=" + aquaCode + "&q=ZZZZNOSUCH&limit=3",
+			want:   []string{"code", "q"},
+		},
+		{
+			// type=any disables the filter at parse time, so nothing was
+			// dropped — reporting it would cry wolf on the one value
+			// that means "do not narrow".
+			name:   "a disabled type filter is not a dropped one",
+			server: New(Options{VerifiedCurrencies: cat}),
+			target: "/v1/assets?asset_class=stablecoin&type=any&limit=3",
+		},
+		{
+			name:   "the unified listing applies them, so names none",
+			server: New(Options{AssetsReader: &filterCapturingAssets{}}),
+			target: "/v1/assets?asset_class=all&q=ZZZZNOSUCH&limit=3",
+		},
+		{
+			name:   "the default listing applies them, so names none",
+			server: New(Options{AssetsReader: &filterCapturingAssets{}}),
+			target: "/v1/assets?q=ZZZZNOSUCH&limit=3",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := serveAssets(t, tc.server, tc.target)
+			got := decodeAssetFlags(t, rec).FiltersIgnored
+			if tc.want == nil {
+				// Asserted on the RAW BODY: the field is omitempty, so a
+				// path that applied its filters must not emit the key at
+				// all — an empty array would read as a claim about
+				// nothing.
+				if strings.Contains(rec.Body.String(), "filters_ignored") {
+					t.Errorf("a listing that APPLIED its filters must not name any as "+
+						"ignored; body %s", rec.Body.String())
+				}
+				return
+			}
+			if strings.Join(got, ",") != strings.Join(tc.want, ",") {
+				t.Errorf("flags.filters_ignored = %v, want %v — an ignored filter with "+
+					"no machine-readable signal is a 200 the caller cannot question "+
+					"(body %s)", got, tc.want, rec.Body.String())
+			}
+			// The flag rides an OVER-BROAD page, which is the point: the
+			// rows the filter would have excluded are still served.
+			if rows := decodeAssetRows(t, rec); len(rows) == 0 {
+				t.Fatalf("%s served no rows — the fixture no longer exercises the "+
+					"ignored-filter path", tc.target)
+			}
+		})
+	}
+}

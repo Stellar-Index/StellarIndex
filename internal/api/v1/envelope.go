@@ -87,6 +87,20 @@ type Flags struct {
 	// the pointer to the verified asset. See R-018 /
 	// docs/architecture/multi-network-assets-migration.md.
 	UnverifiedTickerCollision bool `json:"unverified_ticker_collision,omitempty"`
+	// FiltersIgnored names the row-narrowing query parameters the
+	// response did NOT apply, spelled as the caller sent them
+	// ("type", "code", "issuer", "q"). Empty — and omitted — when
+	// everything supplied was applied.
+	//
+	// A listing that DROPPED a filter and one that genuinely matched
+	// on it are otherwise the same 200 over the same wire shape, so a
+	// client re-filtering the page, or a person reading a search
+	// result, has nothing to key on but the spec's prose. `/v1/assets`
+	// sets it where the rows come from a source that cannot narrow:
+	// the class-scoped catalogue listings
+	// (`asset_class=fiat|stablecoin|crypto`) and the lean AssetReader
+	// fallback.
+	FiltersIgnored []string `json:"filters_ignored,omitempty"`
 }
 
 // Pagination is present on list-returning endpoints only.
