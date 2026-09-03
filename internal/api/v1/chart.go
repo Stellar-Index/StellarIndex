@@ -452,9 +452,16 @@ func (s *Server) handleChartFiat(
 	defer cancel()
 	points, err := s.fxHistory.ListFXHistory(fxCtx, ticker, queryFrom, to)
 	if err != nil {
+		if clientAborted(r, err) {
+			return
+		}
+		if handlerTimedOut(fxCtx, err) {
+			s.writeChartTimeout(w, r, "ListFXHistory", ticker)
+			return
+		}
 		s.logger.Warn("chart fiat fx_quotes fetch failed",
 			"ticker", ticker, "err", err)
-		writeJSON(w, series, Flags{})
+		writeJSON(w, series, Flags{Stale: true})
 		return
 	}
 
@@ -519,16 +526,30 @@ func (s *Server) handleChartFiatCross(
 	defer cancel()
 	basePts, err := s.fxHistory.ListFXHistory(fxCtx, pair.Base.Code, queryFrom, to)
 	if err != nil {
+		if clientAborted(r, err) {
+			return
+		}
+		if handlerTimedOut(fxCtx, err) {
+			s.writeChartTimeout(w, r, "ListFXHistory", pair.Base.Code)
+			return
+		}
 		s.logger.Warn("chart fiat-cross fx_quotes fetch failed",
 			"ticker", pair.Base.Code, "err", err)
-		writeJSON(w, series, Flags{})
+		writeJSON(w, series, Flags{Stale: true})
 		return
 	}
 	quotePts, err := s.fxHistory.ListFXHistory(fxCtx, pair.Quote.Code, queryFrom, to)
 	if err != nil {
+		if clientAborted(r, err) {
+			return
+		}
+		if handlerTimedOut(fxCtx, err) {
+			s.writeChartTimeout(w, r, "ListFXHistory", pair.Quote.Code)
+			return
+		}
 		s.logger.Warn("chart fiat-cross fx_quotes fetch failed",
 			"ticker", pair.Quote.Code, "err", err)
-		writeJSON(w, series, Flags{})
+		writeJSON(w, series, Flags{Stale: true})
 		return
 	}
 
@@ -963,9 +984,7 @@ func (s *Server) handleChartMarketCap(
 	defer cancel()
 	points, err := s.fxHistory.ListFXHistory(fxCtx, pair.Base.Code, queryFrom, to)
 	if err != nil {
-		s.logger.Warn("market_cap: fx_quotes fetch failed",
-			"ticker", pair.Base.Code, "err", err)
-		writeJSON(w, emptyMarketCapSeries(pair, tfRaw, gran, from), Flags{})
+		s.marketCapReadFailed(w, r, fxCtx, err, "ListFXHistory", pair, tfRaw, gran, from, "market_cap: fx_quotes fetch failed", "ticker", pair.Base.Code, "err", err)
 		return
 	}
 
@@ -1009,11 +1028,68 @@ func (s *Server) handleChartMarketCap(
 	writeJSON(w, series, Flags{})
 }
 
+// writeChartTimeout answers a chart read that blew its own budget while
+// the request was still live. The fiat and fiat-cross legs used to fall
+// through to an empty series at 200 with no flag — the same shape the
+// market-cap leg had — and a deadline is retryable capacity, not an
+// absence of data.
+func (s *Server) writeChartTimeout(w http.ResponseWriter, r *http.Request, leg, ticker string) {
+	w.Header().Set("Retry-After", "5")
+	writeProblem(w, r, "https://api.stellarindex.io/errors/chart-timeout", "Chart query timed out",
+		http.StatusServiceUnavailable,
+		fmt.Sprintf("%s for %s did not return inside the request budget; retry shortly.", leg, ticker))
+}
+
+// marketCapReadFailed triages a failed market-cap leg read. A client hangup
+// writes nothing; a blown budget is retryable capacity and gets the
+// chart-timeout 503; anything else degrades to an empty series that is
+// flagged stale rather than presented as fact.
+func (s *Server) marketCapReadFailed(w http.ResponseWriter, r *http.Request, ctx context.Context, err error, leg string, pair canonical.Pair, tfRaw, gran string, from time.Time, msg string, kv ...any) {
+	if clientAborted(r, err) {
+		return
+	}
+	if handlerTimedOut(ctx, err) {
+		s.writeMarketCapTimeout(w, r, leg, pair, tfRaw, gran)
+		return
+	}
+	s.logger.Warn(msg, append(kv, "err", err)...)
+	writeJSON(w, emptyMarketCapSeries(pair, tfRaw, gran, from), Flags{Stale: true})
+}
+
+// writeMarketCapTimeout answers a market-cap read that blew its
+// deadline with the same `chart-timeout` 503 the vwap and twap chart
+// paths already use.
+//
+// The market-cap legs used to degrade to emptyMarketCapSeries at 200 on
+// ANY read error, deadline included. An empty series is a syntactically
+// valid answer, so a caller renders "market cap $0" for an asset with
+// real supply and has no way to tell that from a genuine no-data
+// window — the same wrong-answer-with-full-confidence failure as the
+// bodyless 200 this endpoint's own budget was supposed to prevent. A
+// deadline is retryable, and only a 5xx says so.
+//
+// Both legs share one writer because both are the same statement to the
+// caller ("this series is unavailable right now, retry"); which leg blew
+// is a server-side detail, carried in the log line.
+func (s *Server) writeMarketCapTimeout(w http.ResponseWriter, r *http.Request, leg string, pair canonical.Pair, tfRaw, gran string) {
+	s.logger.Warn("market_cap crypto: deadline exceeded",
+		"leg", leg, "asset", pair.Base.String(), "quote", pair.Quote.String(),
+		"timeframe", tfRaw, "granularity", gran)
+	writeProblem(w, r,
+		"https://api.stellarindex.io/errors/chart-timeout",
+		"Chart query timed out", http.StatusServiceUnavailable,
+		"the market-cap series' price + supply reads didn't both return inside the request budget; retry shortly.")
+}
+
 // emptyMarketCapSeries is the no-data response shape used when the
 // catalogue doesn't carry a supply for the asset or the FX feed has
 // no rows for the requested window. Keeping it as a helper means
 // every error path emits the same wire shape (empty points array,
 // not null).
+//
+// Callers reaching it from a read FAILURE must flag the envelope
+// Stale — an unflagged empty series claims "this asset has no market
+// cap", which is a different fact from "we could not compute one".
 func emptyMarketCapSeries(pair canonical.Pair, tfRaw, gran string, _ time.Time) ChartSeries {
 	return ChartSeries{
 		AssetID:     pair.Base.String(),
@@ -1073,9 +1149,13 @@ func (s *Server) handleChartMarketCapCrypto(
 		if clientAborted(r, err) {
 			return
 		}
+		if handlerTimedOut(ctx, err) {
+			s.writeMarketCapTimeout(w, r, "HistoryPointsInRange", pair, tfRaw, gran)
+			return
+		}
 		s.logger.Warn("market_cap crypto: price history failed",
 			"asset", pair.Base.String(), "err", err)
-		writeJSON(w, emptyMarketCapSeries(pair, tfRaw, gran, from), Flags{})
+		writeJSON(w, emptyMarketCapSeries(pair, tfRaw, gran, from), Flags{Stale: true})
 		return
 	}
 	triangulated := false
@@ -1104,9 +1184,13 @@ func (s *Server) handleChartMarketCapCrypto(
 		if clientAborted(r, err) {
 			return
 		}
+		if handlerTimedOut(ctx, err) {
+			s.writeMarketCapTimeout(w, r, "DailyCirculatingSupply", pair, tfRaw, gran)
+			return
+		}
 		s.logger.Warn("market_cap crypto: supply history failed",
 			"asset_key", supplyKey, "err", err)
-		writeJSON(w, emptyMarketCapSeries(pair, tfRaw, gran, from), Flags{})
+		writeJSON(w, emptyMarketCapSeries(pair, tfRaw, gran, from), Flags{Stale: true})
 		return
 	}
 

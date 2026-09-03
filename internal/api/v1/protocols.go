@@ -772,8 +772,10 @@ func (s *Server) handleProtocolDetail(w http.ResponseWriter, r *http.Request) {
 	// the build itself runs on protocolDetailRefreshTimeout, detached).
 	// The prewarm sweep keeps every key built, so hitting this is the
 	// exception (boot instant / brand-new deployment), and even then the
-	// detached build survives the 503 so the retry lands warm.
-	ctx, cancel := context.WithTimeout(r.Context(), 25*time.Second)
+	// detached build survives the 503 so the retry lands warm. Capped at
+	// the longest budget that still beats the blanket request deadline —
+	// the 25s this asked for could never elapse.
+	ctx, cancel := context.WithTimeout(r.Context(), maxHandlerBudget)
 	defer cancel()
 	// The cache key carries the bespoke window alongside the name — a
 	// name-only key would let a ?days=7 hit serve the cached 90d view (or

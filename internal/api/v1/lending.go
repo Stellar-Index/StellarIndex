@@ -163,10 +163,11 @@ func (s *Server) handleLendingPoolReserves(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	// 15s — the reserve lookup is a ledger-windowed scan over the lake's
-	// contract_data (key_xdr has no skip-index yet); ~6-7s on r1, so a
-	// generous ceiling with margin. See BlendPoolReserves.
-	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
+	// The reserve lookup is a ledger-windowed scan over the lake's
+	// contract_data (key_xdr has no skip-index yet); ~6-7s on r1, so this
+	// takes the longest budget that still fires ahead of the blanket
+	// request deadline. See BlendPoolReserves.
+	ctx, cancel := context.WithTimeout(r.Context(), maxHandlerBudget)
 	defer cancel()
 
 	assets, err := s.lending.BlendPoolAssets(ctx, pool)
@@ -244,7 +245,7 @@ func (s *Server) writeLendingReservesTimeout(w http.ResponseWriter, r *http.Requ
 	writeProblem(w, r,
 		"https://api.stellarindex.io/errors/lending-timeout",
 		"Lending reserves query timed out", http.StatusServiceUnavailable,
-		"the pool's reserve state didn't decode within 15s; retry shortly.")
+		"the pool's reserve state didn't decode within "+maxHandlerBudget.String()+"; retry shortly.")
 }
 
 // buildReserveView maps one decoded reserve state to its wire shape,

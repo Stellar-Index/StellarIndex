@@ -137,7 +137,7 @@ func (s *Server) handleLiquidityPools(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.logger.Error("NativeLiquidityPoolsRanked failed", "err", err)
-		writeProblem(w, r, "https://api.stellarindex.io/errors/internal",
+		writeProblemErr(w, r, err, "https://api.stellarindex.io/errors/internal",
 			"Internal error", http.StatusInternalServerError, "")
 		return
 	}
@@ -164,7 +164,7 @@ func (s *Server) serveOneLiquidityPool(ctx context.Context, w http.ResponseWrite
 			return
 		}
 		s.logger.Error("NativeLiquidityPoolReserves failed", "err", err)
-		writeProblem(w, r, "https://api.stellarindex.io/errors/internal",
+		writeProblemErr(w, r, err, "https://api.stellarindex.io/errors/internal",
 			"Internal error", http.StatusInternalServerError, "")
 		return
 	}

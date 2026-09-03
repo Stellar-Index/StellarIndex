@@ -800,6 +800,30 @@ type StellarConfig struct {
 	MovementsFloorLedger uint32 `toml:"movements_floor_ledger" doc:"P23 / CAP-67 boundary — at/above it the Postgres SEP-41 movements tail serves, below it the ClickHouse pre-P23 archive serves (ADR-0048 D5). Defaults to the pubnet value; set to 1 (genesis) on testnet/futurenet." default:"58762517"`
 }
 
+// APIMaxHandlerBudget is the longest per-handler
+// context.WithTimeout(r.Context(), …) budget any API handler asks for —
+// the value internal/api/v1 names `maxHandlerBudget`.
+// api.request_timeout must EXCEED it, which is what
+// [APIConfig.validate] enforces.
+//
+// Why the bound matters: a per-handler budget earns its keep by turning
+// an over-budget read into a specific, actionable 503 BEFORE the blanket
+// request deadline arrives. Set api.request_timeout at or below the
+// longest handler budget and that inverts — the blanket deadline reaches
+// every reader first, every handler's own timeout branch becomes
+// unreachable, and the ceilings the handlers advertise are fiction. That
+// is the configuration half of the bodyless-200 class: the compile-time
+// guard (v1's TestHandlerBudgets_StayInsideTheRequestTimeout) checks the
+// budgets against v1's 15s DEFAULT, which says nothing about a
+// deployment that sets api.request_timeout = 10s.
+//
+// It is declared here rather than in internal/api/v1 because
+// internal/config must not import internal/api (lint-imports
+// L/api-scope) and this is the value validation needs. v1's
+// TestMaxHandlerBudgetMatchesConfigBound asserts the two agree, so they
+// cannot drift apart silently.
+const APIMaxHandlerBudget = 12 * time.Second
+
 // Well-known Stellar network passphrases. Aliased from
 // internal/canonical (the single spelling every leaf package that
 // keys network-dependent constants off the passphrase — e.g. the
@@ -1231,7 +1255,7 @@ type APIConfig struct {
 	// statement_timeout is the defense-in-depth backstop for when Go-side
 	// ctx cancellation races. Keep statement_timeout LONGER than
 	// request_timeout so the app-layer deadline fires first.
-	RequestTimeout          time.Duration `toml:"request_timeout" doc:"Per-request context deadline applied to every non-streaming request by the API's RequestTimeout middleware, so every handler inherits a bound even when it forgets its own. Streaming (SSE) endpoints are exempt (they own their lifecycle via client-disconnect ctx cancellation). Should exceed the per-read 8s ceilings (so a per-read deadline surfaces its own error first) and stay under the 30s http.Server WriteTimeout. 0 disables the middleware." default:"15s"`
+	RequestTimeout          time.Duration `toml:"request_timeout" doc:"Per-request context deadline applied to every non-streaming request by the API's RequestTimeout middleware, so every handler inherits a bound even when it forgets its own. Streaming (SSE) endpoints are exempt (they own their lifecycle via client-disconnect ctx cancellation). HARD MINIMUM: it must EXCEED 12s, the longest per-handler budget (config.APIMaxHandlerBudget), or the API refuses to boot — at or below it the blanket deadline reaches every reader first, so each handler's own '…-timeout' 503 is unreachable and the ceilings they advertise are fiction. Keep it under the 30s http.Server WriteTimeout. 0 disables the middleware entirely (no deadline injected, and the minimum does not apply)." default:"15s"`
 	ServingStatementTimeout time.Duration `toml:"serving_statement_timeout" doc:"Session-level Postgres statement_timeout applied to every connection in the API's serving pool (via a post-connect SET), so a runaway request-path query is bounded SQL-side even if Go-side ctx cancellation races. Keep it LONGER than request_timeout so the app-layer deadline fires first (defense in depth). The indexer/aggregator pools are unaffected — their heavy batch scans set their own longer SET LOCAL statement_timeout inside a transaction, which overrides this session default. 0 disables it (plain Open, no session timeout)." default:"30s"`
 
 	// SignupRequireEmailVerification opts the deployment into
