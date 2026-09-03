@@ -12,7 +12,7 @@ import {
 export const metadata: Metadata = {
   title: 'Pricing — free access, quotas, SLAs',
   description:
-    'Stellar Index is free. Anonymous public reads plus free registered accounts for higher per-key rate limits — no payments, no card. Need more throughput? Talk to us about a partner limit.',
+    'Stellar Index is free. Anonymous public reads at 6,000 req/min per IP, plus free registered accounts for per-key attribution and usage analytics — no payments, no card. Need more per-key throughput? Talk to us about a partner limit.',
   alternates: { canonical: '/pricing' },
 };
 
@@ -33,7 +33,7 @@ const TIERS: Tier[] = [
     name: 'Anonymous',
     price: '$0',
     priceSubtitle: 'forever',
-    rateLimit: '60 req/min per IP',
+    rateLimit: '6,000 req/min per IP',
     cta: { label: 'Read the docs', href: 'https://docs.stellarindex.io' },
     description:
       'Anonymous public reads. Same data as every tier, just rate-limited per IP. Perfect for prototyping, low-traffic embeds, and read-only integrations.',
@@ -41,9 +41,9 @@ const TIERS: Tier[] = [
       'Every public endpoint',
       'No signup, no API key, no auth',
       'Same VWAP / freshness as every tier',
-      '60 requests / minute per source IP',
+      '6,000 requests / minute per source IP',
     ],
-    notFeatures: ['Per-key analytics', 'Higher per-key rate limit', 'Dedicated SLA'],
+    notFeatures: ['Per-key attribution', 'Usage history (30d)', 'Dedicated SLA'],
   },
   {
     name: 'Free account',
@@ -52,11 +52,11 @@ const TIERS: Tier[] = [
     rateLimit: '1,000 req/min per key',
     cta: { label: 'Create account', href: '/signup' },
     description:
-      'Register in one curl (POST /v1/register) or sign in with magic-link, mint an API key, get 1,000 req/min and per-key usage analytics. Designed for builders and agents shipping to customers.',
+      'Register in one curl (POST /v1/register) or sign in with magic-link, mint an API key, get per-key usage analytics and a budget that is yours rather than shared with every client on your IP. Designed for builders and agents shipping to customers.',
     highlight: true,
     features: [
-      'Everything in Anonymous',
-      '1,000 requests / minute per key',
+      'Every public endpoint, same data',
+      '1,000 requests / minute per key (a per-key budget, not a raise)',
       'One-curl onboarding: POST /v1/register',
       'Per-key usage history (30d)',
       'Mint & rotate keys at /account',
@@ -79,9 +79,12 @@ export default function PricingPage() {
         <p className="text-lg leading-relaxed text-ink-muted">
           Stellar Index is free — there are no paid plans. Anonymous
           reads work without an account; a free account (one curl:
-          POST /v1/register) unlocks a higher per-key rate limit and
-          usage analytics. Higher partner limits are set by our staff
-          on request.
+          POST /v1/register) adds per-key usage analytics and a budget
+          that is yours alone rather than shared with everything else
+          on your IP. It is not a throughput upgrade — on the hosted
+          deployment an anonymous IP&apos;s limit deliberately exceeds a
+          single free key&apos;s. Higher partner limits are set by our
+          staff on request.
         </p>
       </header>
 
@@ -96,13 +99,14 @@ export default function PricingPage() {
           <div className="space-y-2.5">
             <Badge tone="brand">Partner limits</Badge>
             <h2 className="text-h3 font-semibold text-ink">
-              Need more than 1,000 req/min?
+              Need a bigger per-key budget?
             </h2>
             <p className="max-w-2xl text-sm text-ink-muted">
-              Higher per-key throughput for wallets, exchanges, and
-              redistributors is granted as a staff-set partner limit —
-              there is nothing to buy. Email us with your use-case and
-              scale and we&apos;ll raise your key&apos;s limit.
+              A free key is stamped at 1,000 req/min. Wallets,
+              exchanges, and redistributors that need more get a
+              staff-set partner limit — there is nothing to buy. Email
+              us with your use-case and scale and we&apos;ll raise your
+              key&apos;s limit.
             </p>
           </div>
           <ButtonLink
@@ -130,8 +134,8 @@ export default function PricingPage() {
               Same data, every tier.
             </strong>{' '}
             We do not gate endpoints, freshness, or precision behind
-            any tier. The difference is rate limit, support model,
-            and SLA — never the data itself.
+            any tier. The difference is attribution, usage reporting,
+            support model, and SLA — never the data itself.
           </li>
           <li>
             <strong className="text-ink-body">

@@ -6,6 +6,19 @@ status: ratified but PARTIALLY STALE — §4.3/§8 refreshed 2026-07-18 for Clic
 
 > ⚠️ **Multi-region content superseded by ADR-0050 / [`multi-region-ha.md`](multi-region-ha.md) (2026-08-21).** This plan's multi-region framing (and its "active/active out of scope for v1" stance) is overturned. The **single-region HA design** below (HAProxy / Patroni / Redis-Sentinel) remains current and is **Phase 1** of the multi-region plan — read it for that, not for the multi-region shape.
 
+> **AVAILABILITY IS NOT EXTERNALLY MEASURED (2026-09-03, #345).** No
+> availability figure for any period can be produced today. All five
+> `HEALTHCHECKS_URL_*` heartbeat URLs on R1 are **empty**, so no
+> Healthchecks.io history exists for the indexer, aggregator, API,
+> smoke or SLA-probe checks; the only external signal is the
+> Alertmanager dead-man's-switch, which detects a hard outage but does
+> not compute a percentage. `stellarindex-sla-probe` runs **on the API
+> host against `http://localhost:3000/v1`** (`configs/healthchecks/sla-probe.sh:21`,
+> unset on R1), so its availability tally cannot see a Caddy, TLS, DNS
+> or network failure. Any published availability number must therefore
+> be stated as an objective, not a measurement, until an off-host probe
+> ships. See [`../operations/sla-probe.md`](../operations/sla-probe.md).
+
 > **DEPLOYMENT STATE (audit 2026-07-16):** the HAProxy/Patroni/Redis-Sentinel HA
 > below is a **ratified DESIGN, not deployed.** The roles exist under
 > `configs/ansible/roles/{haproxy,patroni,redis-sentinel}/` but **NO playbook
@@ -36,8 +49,16 @@ is the **umbrella** that binds them.
 The HA story is constrained by three non-negotiable service targets:
 
 - **p95 ≤ 200 ms, p99 ≤ 500 ms** (Performance SLA).
-- **≥ 99.9 % responsiveness** — we commit to **99.99 %**.
-- **≤ 30 s data freshness**.
+- **≥ 99.9 % availability** — the figure published to customers at
+  [stellarindex.io/sla](https://stellarindex.io/sla), an error budget
+  of ~43 min per 30-day month. The **99.99 %** number that appears in
+  [ADR-0008](../adr/0008-ha-topology.md) and the coverage matrix is
+  the *internal design target this topology was sized against* — it is
+  not a customer commitment, and nothing external measures it today
+  (see the availability-instrumentation banner at the top of this file).
+- **≤ 30 s data freshness** on `/v1/price/tip`. `/v1/price` serves the
+  last closed bucket per [ADR-0015](../adr/0015-last-closed-bucket-rate-serving.md)
+  and is structurally 30–150 s old.
 
 Every topology decision below is traced back to which of these numbers
 it protects.

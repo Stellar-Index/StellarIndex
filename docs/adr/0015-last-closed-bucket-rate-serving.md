@@ -20,6 +20,15 @@ superseded_by: null
 > (API consistency surfaces). The decision below is preserved as the
 > original record per the immutability rule.
 
+> **Amendment (2026-09-03, #345).** The Context paragraph below
+> describes a **deployed** three-region topology with Postgres
+> replication. That topology has never existed and is not what runs.
+> See the dated [Amendment](#amendment--2026-09-03-deployment-reality-345)
+> at the foot of this ADR for what is actually deployed. The decision
+> itself — serve the last *closed* bucket, never an in-progress one —
+> is unaffected and remains binding. The original text is preserved
+> per the immutability rule.
+
 ## Context
 
 Stellar Index deploys to three geographically-separated regions
@@ -171,3 +180,52 @@ the next closed row.
   reads from.
 - [`migrations/0002_create_price_aggregates.up.sql`](../../migrations/0002_create_price_aggregates.up.sql) —
   the closed-window aggregates this ADR depends on.
+
+## Amendment — 2026-09-03: deployment reality (#345)
+
+Recorded because this ADR is published at `/research/adr/0015` and a
+diligence reader treats its present tense as fact. **The decision is
+untouched; only the description of the environment is corrected.**
+
+**What the Context says.** "Stellar Index deploys to three
+geographically-separated regions (Frankfurt / US-East / Singapore)…
+Postgres replication is mixed: R1→R2 synchronous… R1→R3 asynchronous."
+
+**What is deployed (verified on the host, 2026-09-03).** One region.
+R1 is a single Hetzner FSN1 box in Falkenstein, Germany — not
+Frankfurt. There is no second or third region: `r2.example.yml` and
+`r3.example.yml` carry `X.X.X.X` placeholders. There is no Postgres
+replication of any kind, synchronous or asynchronous:
+`pg_stat_replication`, `pg_replication_slots` and `pg_publication` all
+return **0 rows**. ClickHouse has no `Replicated*` tables. The
+Patroni / HAProxy / Redis-Sentinel roles exist under
+`configs/ansible/roles/` but gate on inventory groups
+(`postgres_cluster`, `haproxy_lb`, `redis_cluster`) that appear in no
+inventory and are invoked by no playbook.
+
+**Why the decision still stands, and stands harder.**
+[ADR-0050](0050-multi-region-ha-architecture.md) (2026-08-21) ratifies
+multi-region as **Model B — independent per-region ingest, consistency
+by determinism, explicitly no cross-region Postgres replication and no
+stretched Patroni cluster.** Under Model B the closed-bucket rule is
+not a nicety layered on top of replication; it is the *entire*
+mechanism by which three regions agree. Note the consequence for this
+ADR's own §Alternatives: alternative 4 ("per-region indexers with no
+postgres replication, each computing its own rate"), rejected here, is
+what ADR-0050 adopts — because closed-bucket determinism removes the
+"actively different rates per region" failure this ADR rejected it
+for. ADR-0050's implementation is **deferred until after v1.0**
+(status note, 2026-08-29), so single-region is the posture through
+v1.0.
+
+**Related state of the docs it cites.** The Frankfurt/US-East/
+Singapore topology doc named in the Context —
+[`infrastructure/multi-region-topology.md`](../architecture/infrastructure/multi-region-topology.md)
+— is already banner-marked SUPERSEDED by ADR-0050 and carries its own
+"ratified DESIGN, not the deployed reality" note; so do
+[`r2-r3-bringup.md`](../architecture/r2-r3-bringup.md),
+[`infrastructure/validator-rollout.md`](../architecture/infrastructure/validator-rollout.md)
+and the [HA plan](../architecture/ha-plan.md). The authoritative
+architecture is
+[`multi-region-ha.md`](../architecture/multi-region-ha.md). This ADR
+was the last unbannered copy of the claim.

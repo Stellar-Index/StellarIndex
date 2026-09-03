@@ -15,11 +15,12 @@ export default function SLAPage() {
         <h1 className="text-3xl font-semibold tracking-tight">Service level</h1>
         <p className="text-base text-ink-body">
           Four targets bind the Stellar Index API. Each is measured
-          continuously by an independent probe that runs against the
-          public edge — the same path your requests take — and each
-          measurement is published as a metric, not asserted in prose.
-          This page states the targets, how they are measured, and
-          what they deliberately do not cover.
+          continuously by a probe that runs on the API host against
+          the service&apos;s own listener, and each measurement is
+          published as a metric, not asserted in prose. This page
+          states the targets, how they are measured, where that
+          measurement stops short, and what the targets deliberately
+          do not cover.
         </p>
       </header>
 
@@ -28,7 +29,7 @@ export default function SLAPage() {
       <Section
         id="targets"
         title="The targets"
-        subtitle="Measured on the public edge, continuously"
+        subtitle="Measured on the API host, continuously"
       >
         <div className="overflow-x-auto">
           {/* table-wave:allowlist prose — SLA targets table (operator
@@ -61,7 +62,8 @@ export default function SLAPage() {
                 <td className="py-2 pr-4 font-mono text-xs text-brand-600">Availability</td>
                 <td className="py-2 pr-4">&ge; 99.9 %</td>
                 <td className="py-2">
-                  Share of probe requests answered 2xx, per calendar month
+                  Share of probe requests answered 2xx, sampled per probe
+                  run on the API host
                 </td>
               </tr>
               <tr>
@@ -69,7 +71,8 @@ export default function SLAPage() {
                 <td className="py-2 pr-4">&le; 30 s</td>
                 <td className="py-2">
                   Age of <code className="rounded-sm bg-surface-subtle px-1 py-0.5 text-xs">observed_at</code>{' '}
-                  on the price endpoint at read time
+                  on <code className="rounded-sm bg-surface-subtle px-1 py-0.5 text-xs">/v1/price/tip</code>{' '}
+                  at read time — the rolling-window surface
                 </td>
               </tr>
             </tbody>
@@ -79,7 +82,21 @@ export default function SLAPage() {
           Freshness is the target most services quietly omit. A price
           endpoint that answers in 5 ms with a four-hour-old number is
           fast and useless, so staleness is bound explicitly rather
-          than left to the latency figure to imply.
+          than left to the latency figure to imply. The 30-second bound
+          binds{' '}
+          <code className="rounded-sm bg-surface-subtle px-1 py-0.5 text-xs">/v1/price/tip</code>.{' '}
+          <code className="rounded-sm bg-surface-subtle px-1 py-0.5 text-xs">/v1/price</code>{' '}
+          deliberately serves the last <em>closed</em> one-minute
+          bucket so that every replay and every region returns
+          byte-identical values, which makes its{' '}
+          <code className="rounded-sm bg-surface-subtle px-1 py-0.5 text-xs">observed_at</code>{' '}
+          30&ndash;150 s old by construction; it is held to that
+          structural 150-second bound instead, and a breach of it means
+          the closed-bucket pipeline has fallen behind its design. Read{' '}
+          <code className="rounded-sm bg-surface-subtle px-1 py-0.5 text-xs">/v1/price/tip</code>{' '}
+          when you need the tightest freshness and{' '}
+          <code className="rounded-sm bg-surface-subtle px-1 py-0.5 text-xs">/v1/price</code>{' '}
+          when you need reproducibility.
         </Aside>
       </Section>
 
@@ -113,12 +130,12 @@ export default function SLAPage() {
       <Section
         id="measurement"
         title="How it is measured"
-        subtitle="An independent probe, not self-reporting"
+        subtitle="An on-host probe — and what it therefore cannot see"
       >
         <p>
           A dedicated probe binary samples the public endpoints on a
           schedule and records per-endpoint p50/p95/p99 latency,
-          availability, and — for the price endpoint — freshness
+          availability, and — for the price endpoints — freshness
           computed from the response&apos;s own{' '}
           <code className="rounded-sm bg-surface-subtle px-1 py-0.5 text-xs">observed_at</code>{' '}
           timestamp. It writes results as metrics, so a target breach
@@ -126,10 +143,30 @@ export default function SLAPage() {
           ticket.
         </p>
         <p>
-          The probe runs against the same public edge external clients
-          use. It is deliberately not wired into the application it
-          measures: a service that grades its own homework can be
-          healthy and wrong at the same time.
+          The probe is a separate process from the API, but it runs{' '}
+          <strong>on the API host</strong> and calls the
+          service&apos;s own listener directly. Its latency figures are
+          therefore application time, isolated from network, TLS and
+          reverse-proxy time — which is what makes them useful for
+          spotting a regression in our code, and what makes them{' '}
+          <em>lower</em> than the number you will measure from your own
+          client.
+        </p>
+        <p>
+          The honest consequence: this probe{' '}
+          <strong>does not measure edge availability</strong>. It cannot
+          detect a reverse-proxy failure, an expired certificate, a DNS
+          fault or a datacentre-network outage — most of what an
+          availability objective exists to catch. Those are covered
+          today only by an external dead-man&apos;s-switch that alerts
+          when the host stops reporting, which detects a hard outage but
+          does not produce an availability percentage. No monthly
+          availability figure is published yet, and we will not publish
+          one computed this way. An independent off-host probe is the
+          work that makes the availability row above a measurement
+          rather than an objective; until it ships, treat the latency
+          numbers as application-level and the availability target as a
+          commitment we have not yet instrumented end-to-end.
         </p>
       </Section>
 

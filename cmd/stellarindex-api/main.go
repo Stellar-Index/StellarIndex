@@ -5009,7 +5009,7 @@ var assetListingPrewarmLimits = []int{1, 5, 10, 50, 100, 500}
 // The handler overfetches by one — `ListAssetsOptions{Limit: limit + 1}`
 // — so a `?limit=50` request looks up the key for 51. That +1 arrived
 // with F-1326, which fixed cursor pagination (before it, `len(rows) >
-// limit` was never true and only the first page of ~440K assets was
+// limit` was never true and only the first page of ~199K assets was
 // reachable). The prewarm was never updated to match, so /v1/assets has
 // had NO warm key of its own since.
 //

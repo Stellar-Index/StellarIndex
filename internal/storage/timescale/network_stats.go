@@ -16,10 +16,16 @@ type NetworkStats struct {
 	// Nil when prices_1m has no recent rows.
 	Volume24hUSD *string
 	// MarketsCount24h: distinct (base, quote) pairs that recorded
-	// any volume_usd in the trailing 24h. ~10× larger than the
-	// classic_assets count (each asset participates in many pairs).
+	// any volume_usd in the trailing 24h. This is an ORDER OF
+	// MAGNITUDE SMALLER than AssetsIndexed, not larger: it counts
+	// only pairs that TRADED in the window, while AssetsIndexed
+	// counts every classic asset ever seen, most of which never
+	// trade. Measured on 2026-09-03: 20,932 markets vs 198,636
+	// assets.
 	MarketsCount24h int64
-	// AssetsIndexed: total rows in classic_assets — ~440K today.
+	// AssetsIndexed: total rows in classic_assets — 198,636 on
+	// 2026-09-03 (measured via /v1/network/stats; the figure grows
+	// monotonically as issuers appear, so read it, don't quote it).
 	// Doesn't filter by recent activity; this is "what we know
 	// about", not "what's currently trading".
 	AssetsIndexed int64

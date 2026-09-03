@@ -338,7 +338,7 @@ const PUBLIC_ENDPOINTS: PublicEndpoint[] = [
     path: '/v1/assets',
     group: 'Catalogue',
     description:
-      'Asset directory (440K+ classic assets, with coin-overlay fields)',
+      'Asset directory (every classic asset, with coin-overlay fields)',
     probe: { kind: 'get', path: '/v1/assets?limit=1' },
   },
   {

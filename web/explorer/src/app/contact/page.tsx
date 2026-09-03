@@ -32,7 +32,7 @@ const CHANNELS: Channel[] = [
     icon: KeyRound,
     title: 'Partner limits',
     blurb:
-      'Need higher than the 1,000 req/min free rate-limit, named on-call, dedicated regional capacity, or a Slack channel? There is nothing to buy — partner limits are staff-set. Email us with your traffic profile and we’ll raise your account’s limits.',
+      'Need higher than the 1,000 req/min free rate-limit, named on-call, or a Slack channel? There is nothing to buy — partner limits are staff-set. Email us with your traffic profile and we’ll raise your account’s limits. (We serve from one region today, so dedicated regional capacity is not something we can offer yet — see ADR-0050.)',
     destination: 'sales@stellarindex.io',
     href: 'mailto:sales@stellarindex.io',
   },
@@ -67,7 +67,7 @@ const CHANNELS: Channel[] = [
 const FAQS: { q: string; a: string }[] = [
   {
     q: 'Is the public tier really free?',
-    a: 'Yes. 60 req/min per IP, no auth, no signup. The same data every tier serves, just rate-limited per-IP. Sign up only when you need the higher per-key rate limit and usage analytics.',
+    a: 'Yes. 6,000 req/min per IP on the hosted API, no auth, no signup. The same data every tier serves, just rate-limited per-IP. Sign up when you want a budget attributed to your key rather than your IP, plus usage analytics — a free key is stamped at 1,000 req/min, so it is attribution, not extra throughput. Ask us for a partner limit if you need more.',
   },
   {
     q: 'Do you redistribute paid CEX data?',
@@ -75,7 +75,7 @@ const FAQS: { q: string; a: string }[] = [
   },
   {
     q: 'Can I self-host this?',
-    a: 'The repo is Apache-2.0 — yes. The whole stack runs on one box with Docker Compose; the Makefile has the bring-up. See the archival-node-bringup runbook in /docs/operations for end-to-end setup.',
+    a: 'The repo is Apache-2.0 — yes. The whole stack runs on one box; `make dev` brings up the dependencies (TimescaleDB, Redis, MinIO) in Docker Compose and the binaries run on the host. See the self-hosting guide and the archival-node-bringup runbook in /docs/operations for end-to-end setup.',
   },
   {
     q: 'How do I become an early customer / design partner?',

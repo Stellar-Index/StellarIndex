@@ -279,9 +279,14 @@ stack — see
 [`docs/operations/self-hosting.md`](operations/self-hosting.md). The
 internal bring-up recipe it adapts is
 [`docs/operations/archival-node-bringup.md`](operations/archival-node-bringup.md),
-and the fastest path if you're comfortable with Ansible. The tier-1
-deployment runs three geographically-separated archival nodes per
-[ADR-0004](adr/0004-tier1-validator-aspiration.md).
+and the fastest path if you're comfortable with Ansible. The hosted
+deployment runs **one** archival node today (R1, Hetzner FSN1); the
+three-geographically-separated-validator shape is a target, not a
+deployment — see [ADR-0004](adr/0004-tier1-validator-aspiration.md)
+for the validator aspiration and
+[ADR-0050](adr/0050-multi-region-ha-architecture.md) for the
+multi-region architecture, whose implementation is deferred until
+after v1.0.
 
 ## Help
 

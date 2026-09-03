@@ -277,7 +277,7 @@ const SEARCH_SCOPES: {
  * protocols/pages.
  *
  * Non-empty query: hits `/v1/coins?q=…` server-side (debounced
- * 200ms) so any of the ~440K classic assets matches, not just
+ * 200ms) so any classic asset in the directory matches, not just
  * the top-100 default page. Falls back to client-side filter
  * across protocols + static pages.
  */

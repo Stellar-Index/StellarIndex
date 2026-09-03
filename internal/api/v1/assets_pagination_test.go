@@ -39,7 +39,7 @@ func (p *paginatingAssetsReader) ListAssetsExt(_ context.Context, opts timescale
 // catalogue holds more than `limit` rows, /v1/assets MUST emit a next
 // cursor. The previous handler passed `limit` (not limit+1) to the
 // store, so the overfetch sentinel never appeared and the listing was
-// stuck on its first page over a ~440K-asset directory.
+// stuck on its first page over a ~199K-asset directory.
 func TestAssetList_AssetsPaginationEmitsCursor(t *testing.T) {
 	srv := v1.New(v1.Options{AssetsReader: &paginatingAssetsReader{total: 1000}})
 	ts := httpTestServer(t, srv)

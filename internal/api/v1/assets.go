@@ -839,7 +839,7 @@ func (s *Server) handleAssetListFromAssets(
 	// a next page. `limit` is validated to [1,500] by the caller, so the
 	// store sees at most 501 (F-1326: previously this passed `limit`
 	// itself, so len(rows) > limit was never true and /v1/assets never
-	// emitted a next cursor — only the first page of ~440K assets was
+	// emitted a next cursor — only the first page of ~199K assets was
 	// reachable).
 	opts := timescale.ListAssetsOptions{
 		Limit:  limit + 1,

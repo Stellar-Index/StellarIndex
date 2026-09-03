@@ -25,9 +25,20 @@ The API is bound to four SLA targets:
 | Availability             | ≥ 99.9 %         | service SLA       |
 | Price freshness          | ≤ 30 s staleness | service SLA       |
 
+The ≤ 30 s freshness target binds `/v1/price/tip`, the rolling-window
+surface. `/v1/price` serves the last **closed** one-minute bucket
+(ADR-0015), so its `observed_at` is 30–150 s old by construction; the
+probe holds it to a separate structural bound
+(`defaultClosedBucketFreshTarget = 150s`,
+`cmd/stellarindex-sla-probe/main.go`) whose breach means the
+closed-bucket pipeline has fallen behind its design, not that the
+service SLA is violated. Measured on R1 2026-09-03:
+`stellarindex_sla_probe_freshness_sec{endpoint="price"} 95.2`,
+`{endpoint="price-tip"} 18.1`.
+
 The SLA probe drives synthetic load against the deployed API,
 measures per-endpoint p50/p95/p99 latency, parses `observed_at`
-on the price endpoint to compute freshness, and tallies 2xx vs
+on the price endpoints to compute freshness, and tallies 2xx vs
 non-2xx for availability. Each run emits a JSON report and exits
 with code 0 (pass) or 1 (any SLA violated).
 
@@ -48,7 +59,7 @@ sudo systemctl enable --now stellarindex-sla-probe.timer
 Override defaults via `/etc/default/stellarindex-healthchecks`:
 
 ```sh
-BASE_URL=https://api.stellarindex.io/v1     # default
+SLA_PROBE_BASE_URL=http://localhost:3000/v1  # default (see the note below)
 DURATION=30s                                 # default
 CONCURRENCY=4                                # default
 PAIRS="-pair native,fiat:USD -pair USDC-G…,fiat:USD"
@@ -57,10 +68,27 @@ STELLARINDEX_PROBE_API_KEY=sip_…              # vault-minted key; required (se
 EXTRA_FLAGS=""                               # default
 ```
 
+> **What the default target means.** `SLA_PROBE_BASE_URL` defaults to
+> `http://localhost:3000/v1` — both in
+> `configs/healthchecks/sla-probe.sh:21` and in the binary's own
+> `-base-url` flag — and R1 runs it unset. The probe therefore measures
+> the API process's **own listener**, bypassing Caddy, TLS, DNS and the
+> network. That is the right scope for latency (it isolates application
+> time, which is what a code regression moves) and the **wrong** scope
+> for availability: this probe cannot see a reverse-proxy failure, an
+> expired certificate, a DNS fault or a DC-network outage. Point it at
+> `https://api.stellarindex.io/v1` from a host **outside** the
+> deployment to get an edge measurement; running it against the public
+> URL from R1 itself still hairpins through the box's own stack and is
+> not an independent signal. Until an off-host probe exists, the
+> availability row above is an objective, not a measurement — say so
+> anywhere it is published.
+
 ### Why an API key is required
 
 Without `STELLARINDEX_PROBE_API_KEY` set, the probe hits the
-anonymous-tier rate limit (60 req/min per IP). At the documented 4
+anonymous-tier rate limit — `[api].anon_rate_limit_per_min`, whose
+shipped default is 60/min (R1 sets 6,000). At the documented 4
 workers × 30 s window that's ~1000 requests/sec/worker — every
 non-`/healthz` endpoint reads as `availability < 0.1 %` and the
 verdict comes back `fail` for reasons unrelated to actual SLA
@@ -146,7 +174,7 @@ Key fields:
 
 ```json
 {
-  "base_url": "https://api.stellarindex.io/v1",
+  "base_url": "http://localhost:3000/v1",
   "started_at": "2026-04-30T12:00:00Z",
   "duration_sec": 30.0,
   "concurrency": 4,
@@ -207,7 +235,9 @@ stellarindex-sla-probe \
 The text-format output is easier to scan during ad-hoc triage.
 A clean dry-run with `verdict: pass` confirms the endpoint set,
 the rate-limit headroom, and the freshness path all work end-to-
-end before the cron starts hitting them.
+end before the cron starts hitting them. Run from a laptop this
+*is* an edge measurement — TLS, DNS, Caddy and the network are all
+in the path — which the scheduled on-host run is not.
 
 ## Textfile-collector integration
 
@@ -245,7 +275,7 @@ runbook under `docs/operations/runbooks/sla-probe-*.md`:
 | Alert | Condition | Severity |
 |-------|-----------|----------|
 | `stellarindex_sla_probe_p95_breach` | per-endpoint p95 > 200 ms sustained 30 min | **P2** page |
-| `stellarindex_sla_probe_freshness_breach` | per-endpoint freshness > 30 s sustained 30 min | **P2** page |
+| `stellarindex_sla_probe_freshness_breach` | `price-tip` freshness > 30 s, or any other endpoint > 180 s, sustained 30 min | **P2** page |
 | `stellarindex_sla_probe_unit_failed_alert` | overall verdict gauge = 1 sustained 30 min | P3 ticket |
 | `stellarindex_sla_probe_stale` | `last_pass_timestamp` older than 90 min (6× 15-min cadence) | **P2** page |
 

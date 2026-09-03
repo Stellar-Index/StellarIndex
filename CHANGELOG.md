@@ -39,6 +39,64 @@ against.
 - **ops:** `usd-volume-restamp` now applies a live-overlap refusal to BOTH tiers. `trades.usd_volume` has exactly one live writer — the indexer at the `ledgerstream` cursor — and the command previously guarded only "not today". It now resolves the window's top on-chain ledger and refuses unless the live cursor has already passed it, naming `-allow-live-overlap` as the explicit override; the same one-writer contract `projected-rebuild` enforces for the projector. Passing an `xlm-base`-only flag (`-report`, `-sample`, `-batch`, `-min-rel-delta`, `-max-generation`) together with `-tier exact` is now an error rather than a silent no-op — an operator who typed `-report` and got a write run has been actively misled on a money column.
 
 ### Fixed
+- **docs,explorer:** false and misleading claims about our own system, on
+  seven published explorer pages and five tracked docs (#345). The worst
+  was on the page that exists to establish our honesty: `/sla` said *"the
+  probe runs against the same public edge external clients use … it is
+  deliberately not wired into the application it measures"*, while the
+  deployed probe hits `http://localhost:3000/v1`
+  (`configs/healthchecks/sla-probe.sh:21`, unset on R1) — the API's own
+  listener, past no Caddy, no TLS, no DNS and no network. It is exactly
+  the self-grading arrangement the sentence disclaimed, and it cannot see
+  a proxy failure, an expired certificate or a DNS fault, i.e. most of
+  what an availability objective is for. The page now says what the probe
+  measures, what it therefore cannot measure, and that no monthly
+  availability figure is published — the probe itself is **unchanged**,
+  because pointing it at the public edge is an operational change, not a
+  docs fix. The same page bound its ≤ 30 s freshness target to "the price
+  endpoint"; measured live, `/v1/price` runs **85–94 s** with
+  `flags.stale:false` every sample, because it serves the last *closed*
+  bucket per ADR-0015 and is 30–150 s old by construction. The target
+  binds `/v1/price/tip` (≈ 0 s), which is what the probe binary and the
+  alert rule already encode. Also corrected: `/company` and `/careers`
+  asserted **"three-region active-active … full validators per region"**
+  in the present tense (one Hetzner FSN1 box; `pg_stat_replication`,
+  `pg_replication_slots` and `pg_publication` all 0; no validator service
+  runs) — now stated as the ADR-0050 target with its post-v1.0 deferral,
+  so the roadmap survives without the claim. `/pricing`, `/signup` and
+  `/contact` published the anonymous limit as **60 req/min** when R1
+  serves **6,000** (measured header), and all three sold a key as "the
+  higher rate limit" when a free key is stamped at 1,000 — authenticating
+  *lowers* your ceiling 6×. That inversion is deliberate (keys buy
+  attribution and usage reporting, not headroom) and is now said that way,
+  matching `docs/getting-started.md`. `/contact` also claimed the whole
+  stack runs under Docker Compose; the compose file holds TimescaleDB,
+  Redis and MinIO and no application service. The status page's "440K+
+  classic assets" was **2.2× the truth** (live `/v1/network/stats` →
+  198,636) and is dropped in favour of the live figure the same page
+  already renders; the four Go comments and the search-modal comment
+  carrying the same number are corrected. `docs/getting-started.md` said
+  the tier-1 deployment "runs three geographically-separated archival
+  nodes"; **ADR-0015** — published at `/research/adr/0015` — opened by
+  asserting a deployed Frankfurt/US-East/Singapore topology with R1→R2
+  *synchronous* Postgres replication that has never existed. ADRs are
+  immutable, so its accepted text is untouched and a dated
+  `## Amendment — 2026-09-03` records what is deployed, notes that
+  ADR-0050 adopts the very alternative this ADR rejected (per-region
+  ingest, consistency by determinism), and observes that this was the last
+  unbannered copy of the claim. `sla-probe.md` documented
+  `BASE_URL=https://api.stellarindex.io/v1` as the default — wrong
+  variable name *and* wrong value — and `ha-plan.md` said "we commit to
+  99.99 %" against a published SLA of 99.9 %. Finally the in-repo
+  compliance table (`docs/audit-2026-07-03-rfp-compliance/README.md`) is
+  re-audited: its "every requirement … is met, most exceeded" headline is
+  withdrawn, six rows are regraded with the original grade preserved
+  in-cell (multi-zone ⚠️→❌, availability ✅→❌, all-time coverage ✅→❌ on a
+  measured 61-month hole in XLM/USD, HA/CDN/uptime ✅→❌, freshness scoped
+  to `/v1/price/tip`, "higher per-key" corrected), and a new §3b grades
+  the thirteen proposal claims it never graded at all — nine of them
+  false, including the aggregator's missing leader election, which
+  ADR-0008 §4 promises and no code implements.
 - **deploy:** #427's own remote snippet reopened the false green it closed, by a different door. `awk 1` was unchecked under an unconditional `exit 0`, so a sidecar that EXISTS but cannot be read contributed nothing and silently raised the baseline. The snippet now distinguishes three outcomes — sidecars read, directory absent (a genuine first deploy, fallback correct), and unreadable (exit 3, fatal) — and the test now executes the snippet itself against fixture directories, including a chmod-000 sidecar. The previous test used a fake `ssh` that never ran the snippet at all, which is precisely why the hole survived.
 - **alerting:** two alerts landed earlier today could not do their job. `stellarindex_worker_panicked` used `increase(...[10m]) > 0`, so it AUTO-RESOLVED about ten minutes after a panic while the worker was still dead — an all-clear for a condition that had not cleared. It now reads the raw counter, which resets on process start, i.e. exactly the operator action that fixes it. `stellarindex_auth_reaper_stalled` compared a last-sweep timestamp that a reaper which never completed a first sweep never publishes, so two of the three failure modes its own commit named could not fire; it now also alerts when the interval gauge exists without a sweep timestamp. Both trees.
 - **tests:** a368b5c4 claimed one test pinned Band's genesis across all four constants. It pinned one — reverting the other three left the whole suite green. Real in-package assertions added for the protocol registry, the diagnostics map and the gap-detector target, each proven to fail on revert.

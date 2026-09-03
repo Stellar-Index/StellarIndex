@@ -143,7 +143,7 @@ type ListAssetsOptions struct {
 	// Q, when non-empty, filters rows where code, slug, or
 	// issuer_g_strkey contains the substring (case-insensitive).
 	// Useful for the explorer's `/assets?q=…` search box —
-	// otherwise a 440K-asset directory is unsearchable.
+	// otherwise a six-figure asset directory is unsearchable.
 	Q string
 	// Order controls the sort + cursor scheme. Zero value is
 	// observation_count desc (preserves the historical contract).

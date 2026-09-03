@@ -21,7 +21,7 @@ const VALUES = [
   },
   {
     title: 'Production-grade from day one.',
-    body: '3-region active-active, full validators per region, pre-push verify gate, OpenAPI as the source of truth. No "we\'ll harden it later" debt.',
+    body: 'Pre-push verify gate, OpenAPI as the source of truth, reproducible builds, tested restore drills. We run one region today and say so — three-region active/active is ratified in ADR-0050 and scheduled after v1.0, not shipped. No "we\'ll harden it later" debt, and no claiming the roadmap as the deployment.',
   },
   {
     title: 'Public tier is permanent.',

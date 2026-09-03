@@ -71,27 +71,39 @@ export default function CompanyPage() {
             <span className="text-ink-faint">•</span>
             <span>
               <strong className="text-ink-body">
-                Three-region active-active.
+                One region today; three by design.
               </strong>{' '}
-              Per{' '}
+              Stellar Index runs from a{' '}
+              <strong className="text-ink-body">single region</strong>{' '}
+              (R1, Hetzner FSN1 in Falkenstein), with off-site encrypted
+              Postgres backups and a tested restore drill. Three-region
+              active/active for the pricing tier is ratified in{' '}
               <Link
-                href="/research/adr/0008"
+                href="/research/adr/0050"
                 className="text-brand-600 hover:underline"
               >
-                ADR-0008
-              </Link>
-              , Stellar Index runs in three geographically separate
-              regions (R1 Hetzner, R2 AWS, R3 Vultr), each with an
-              independent history archive and full validator. Every
-              region serves the same rate at the same wall-clock
-              time — see{' '}
+                ADR-0050
+              </Link>{' '}
+              and scheduled after v1.0 — the failover roles are written
+              but deployed nowhere, and we do not claim multi-region
+              availability today. The property that makes it work when
+              it lands is already in the serving contract: closed-bucket
+              determinism (
               <Link
                 href="/research/adr/0015"
                 className="text-brand-600 hover:underline"
               >
                 ADR-0015
               </Link>
-              .
+              ) means any region answering the same query returns the
+              same rate. The three-validator target is{' '}
+              <Link
+                href="/research/adr/0004"
+                className="text-brand-600 hover:underline"
+              >
+                ADR-0004
+              </Link>
+              ; we run no validator yet.
             </span>
           </li>
           <li className="flex gap-2">

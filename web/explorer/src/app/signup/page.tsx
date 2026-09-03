@@ -10,13 +10,13 @@ export const metadata: Metadata = {
   robots: { index: false, follow: false },
   title: 'Create account',
   description:
-    'Create your Stellar Index account. Magic-link email auth — no passwords. Accounts are free; higher partner rate limits are staff-set on request.',
+    'Create your Stellar Index account. Magic-link email auth — no passwords. Accounts are free; a key adds per-key attribution and usage analytics, and higher partner rate limits are staff-set on request.',
 };
 
 const TIERS = [
   {
     name: 'Anonymous',
-    rateLimit: '60 req/min per IP',
+    rateLimit: '6,000 req/min per IP',
     cost: '$0',
     notes: 'Public read of every endpoint. No account, no key, no auth.',
   },
@@ -25,7 +25,7 @@ const TIERS = [
     rateLimit: '1,000 req/min per key',
     cost: '$0',
     notes:
-      'Every registered account. Sign in with the form on the right (first sign-in creates the account), or register straight from the terminal: POST /v1/register returns an account + API key in one call.',
+      'Every registered account. A per-key budget and usage analytics, not extra throughput — it is lower than the anonymous per-IP limit by design. Sign in with the form on the right (first sign-in creates the account), or register straight from the terminal: POST /v1/register returns an account + API key in one call.',
     highlight: true,
   },
   {
@@ -140,10 +140,12 @@ export default function SignupPage() {
         <a href="https://docs.stellarindex.io" className="underline">
           the public endpoints
         </a>{' '}
-        directly — the 60 req/min IP-floor covers exploratory scripts
-        and low-traffic embeds. Create an account when you want the
-        higher per-key rate-limit + usage analytics, or when
-        you&rsquo;re ready to ship to customers.
+        directly — the 6,000 req/min per-IP budget covers exploratory
+        scripts and low-traffic embeds. Create an account when you want
+        a budget attributed to you rather than shared with your IP,
+        plus usage analytics — not for extra throughput, since a free
+        key is stamped at 1,000 req/min. Ask us for a partner limit
+        when you&rsquo;re ready to ship to customers at scale.
       </section>
 
       <p className="mt-8 text-xs text-ink-muted">
