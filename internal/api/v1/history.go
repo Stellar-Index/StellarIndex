@@ -808,38 +808,62 @@ func (s *Server) historyPointsWithAliases(
 	return nil, nil
 }
 
-// historySinceInceptionStablecoinFallback walks the operator's
-// USD-pegged classic allow-list when the literal X/fiat:USD pair
-// returned no points. Mirrors [chartStablecoinFallback] but uses
-// the since-inception variant (no `from` lower bound). Returns
-// ok=false when:
+// historySinceInceptionStablecoinFallback is the fiat fallback chain for
+// a since-inception series whose literal pair (and alias spellings)
+// returned no points. Mirrors [chartStablecoinFallback] but uses the
+// since-inception read (no `from` lower bound): for a `fiat:USD` quote
+// it walks the operator's USD-pegged allow-list, and when no peg answers
+// — or the fiat is not USD — it derives the series through XLM
+// ([Server.fiatSeriesThroughXLM]), which runs last so a directly
+// observed market always wins over a derived one. Returns ok=false when:
 //
-//   - quote is not fiat:USD,
-//   - no operator-declared pegs are wired,
-//   - every peg's CAGG read returns empty / errors out.
+//   - quote is not fiat,
+//   - every peg combination's CAGG read returns empty / errors out AND
+//     the XLM cross has no populated leg.
+//
+// Both sides of each proxied pair are alias-crossed, matching
+// [Server.chartFiatProxyPairs]: the base through assetAliases and the
+// peg through [Server.usdPegProxyQuotes]. The literal-spelling walk
+// above ([Server.historyPointsWithAliases]) already crosses the base
+// aliases, so a fallback keyed on the literal base and the classic peg
+// alone left the one combination Soroban depth is actually stored under
+// — SAC base quoted in the peg's SAC — unread, and answered a
+// since-inception request for such an asset with an empty series.
+// Priority order is preserved (literal base first; every classic peg
+// before any SAC form), so a pair that already answered still answers
+// on its first read; only pairs that previously came back empty reach
+// the new combinations.
 //
 // F-1225 (codex audit-2026-05-12).
 func (s *Server) historySinceInceptionStablecoinFallback(
 	ctx context.Context, pair canonical.Pair, gran string,
 ) ([]HistoryPoint, bool) {
-	if pair.Quote.Type != canonical.AssetFiat || pair.Quote.Code != "USD" {
+	if pair.Quote.Type != canonical.AssetFiat {
 		return nil, false
 	}
-	for _, peg := range s.usdPeggedClassics {
-		if peg.Equal(pair.Base) {
-			continue
-		}
-		proxied, err := canonical.NewPair(pair.Base, peg)
-		if err != nil {
-			continue
-		}
-		pp, err := s.history.HistoryPoints(ctx, proxied, gran, historyMaxPoints)
-		if err != nil || len(pp) == 0 {
-			continue
-		}
-		return pp, true
+	read := func(rc context.Context, p canonical.Pair) ([]HistoryPoint, error) {
+		return s.history.HistoryPoints(rc, p, gran, historyMaxPoints)
 	}
-	return nil, false
+	if pair.Quote.Code == "USD" {
+		pegs := s.usdPegProxyQuotes()
+		for _, base := range assetAliases(pair.Base) {
+			for _, peg := range pegs {
+				if sameAsset(peg, base) {
+					continue
+				}
+				proxied, err := canonical.NewPair(base, peg)
+				if err != nil {
+					continue
+				}
+				pp, err := read(ctx, proxied)
+				if err != nil || len(pp) == 0 {
+					continue
+				}
+				return pp, true
+			}
+		}
+	}
+	return s.fiatSeriesThroughXLM(ctx, pair, read)
 }
 
 // externalSourceAmountDecimals returns the amount scale an off-chain

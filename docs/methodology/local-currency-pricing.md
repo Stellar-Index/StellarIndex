@@ -84,6 +84,13 @@ have to defend. For those, use an execution venue's own quote.
 - **A price for an asset we cannot value in USD.** The USD leg is the
   anchor; without it there is nothing to convert.
 
+The series surfaces (`/v1/chart`, `/v1/history/since-inception`) carry
+one exception to the USD anchor: when no USD-quoted market exists under
+any spelling or declared-peg proxy, a series is derived through XLM —
+the asset's XLM series multiplied bucket by bucket by XLM's series in
+the requested fiat — and flagged `triangulated`. The USD peg's own USD
+series can only come from there.
+
 ## Currency coverage
 
 133 currency codes are accepted (the ADR-0010 allow-list); roughly

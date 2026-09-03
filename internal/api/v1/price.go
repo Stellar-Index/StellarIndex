@@ -751,6 +751,71 @@ func assetAliases(asset canonical.Asset) []canonical.Asset {
 	return canonical.AssetAliases(asset)
 }
 
+// sameAsset reports whether two canonical forms name the SAME asset —
+// the identical spelling, or two members of one alias family (`native`
+// ↔ `crypto:XLM` ↔ the XLM SAC; a classic ↔ its configured SAC
+// wrapper). [canonical.CanonicalAsset] is the family's stable fold key,
+// so the comparison holds whichever spelling each side arrived as.
+//
+// The proxy walks build one pair per (base, proxy-quote) combination,
+// and a pair whose two sides are one asset is not a market: it has no
+// rows, and reading for it spends a slot of the deadline every
+// combination shares.
+func sameAsset(a, b canonical.Asset) bool {
+	return canonical.CanonicalAsset(a).Equal(canonical.CanonicalAsset(b))
+}
+
+// usdPegProxyQuotes is the operator's `[trades].usd_pegged_classic_assets`
+// walk order with every canonical form of each peg folded in, in two
+// passes: first the priority-first (classic) form of EVERY declared peg
+// in config order, then the remaining forms (the SAC wrappers) of every
+// peg in that same order. Duplicates are dropped, first occurrence kept.
+//
+// A declared peg is an ASSET, not a spelling. Soroban AMMs trade the SAC
+// wrapper, so a token whose USD depth is an Aquarius / Phoenix /
+// Soroswap pool is stored quoted in the USDC SAC and never in
+// `USDC-GA5Z…`, and a proxy walk bound to the classic spelling alone
+// reads the one form the depth is not under. Measured on r1 2026-09-03:
+// a Soroban-only token returned 0 chart points and 0 since-inception
+// points against `fiat:USD` while the identical window quoted in the
+// USDC SAC returned 39 — hundreds of Soroban pairs are stored that way.
+//
+// Two passes rather than one pass per peg is what keeps the widening a
+// pure addition. The walks take the first form that answers, so every
+// form the old walk read (the classic pegs, in config order) must stay
+// ahead of every form it did not: interleaving [pegA classic, pegA SAC,
+// pegB classic, …] would read peg A's thin Soroban pool before peg B's
+// deep classic book and re-price a series the old walk already served
+// from that book. With the classic pass complete before the SAC pass
+// begins, the SAC forms are reached only when every classic peg came
+// back empty — the SAC-LAST money-safety ordering
+// [canonical.AssetAliases] documents, applied across the whole peg list
+// rather than within one peg.
+func (s *Server) usdPegProxyQuotes() []canonical.Asset {
+	out := make([]canonical.Asset, 0, 2*len(s.usdPeggedClassics))
+	seen := make(map[string]struct{}, 2*len(s.usdPeggedClassics))
+	add := func(form canonical.Asset) {
+		k := form.String()
+		if _, dup := seen[k]; dup {
+			return
+		}
+		seen[k] = struct{}{}
+		out = append(out, form)
+	}
+	// Pass 1: the family's priority-first form of each peg — the classic
+	// spelling however the operator wrote the entry.
+	for _, peg := range s.usdPeggedClassics {
+		add(canonical.CanonicalAsset(peg))
+	}
+	// Pass 2: the rest of each family, SAC wrapper last within it.
+	for _, peg := range s.usdPeggedClassics {
+		for _, form := range assetAliases(peg) {
+			add(form)
+		}
+	}
+	return out
+}
+
 // readPriceWithAliases is the alias-aware wrapper around
 // reader.LatestPrice. It tries each (assetAlias, quote) pair in
 // order and returns the FIRST result that:
