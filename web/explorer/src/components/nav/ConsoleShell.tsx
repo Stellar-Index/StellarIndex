@@ -9,14 +9,23 @@ import { StellarMark } from '@/components/StellarMark';
 import { useDialog } from '@/lib/useDialog';
 
 import { DegradedBanner } from './DegradedBanner';
+import { Footer } from './Footer';
 import { Sidebar, SidebarNav } from './Sidebar';
 
 /**
  * ConsoleShell is the app frame: a single persistent left Sidebar (logo →
- * search → grouped nav → account) over a scrolling content column — no top
- * bar. On small screens the sidebar collapses; a minimal mobile header
- * (logo + menu) opens it as a drawer. Embed routes (/embed/*) render
- * chrome-free for iframing.
+ * search → grouped nav → account) over a scrolling content column, closed by
+ * the Footer — no top bar. On small screens the sidebar collapses; a minimal
+ * mobile header (logo + menu) opens it as a drawer. Embed routes (/embed/*)
+ * render chrome-free for iframing.
+ *
+ * The Footer is mounted HERE, not per page. The rail is deliberately one
+ * screen tall (see Sidebar's NAV comment), so it defers a whole tier of
+ * surfaces — /amm, /yield, /liquidity-pools, /convert, /sla, /diagnostics —
+ * to "hubs, footer + search". While the footer component existed but nothing
+ * rendered it, that promise was half-false: those pages had no click path
+ * from anywhere in the site. lib/route-reachability.test.ts now fails if any
+ * route goes dark again.
  */
 export function ConsoleShell({ children }: { children: ReactNode }) {
   const pathname = usePathname();
@@ -74,6 +83,7 @@ export function ConsoleShell({ children }: { children: ReactNode }) {
         <main id="main" className="flex-1">
           {children}
         </main>
+        <Footer />
       </div>
 
       {/* Mobile drawer */}
