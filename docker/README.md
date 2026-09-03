@@ -1,5 +1,17 @@
 # Container packaging
 
+## Local verifier image
+
+`docker/verify/Dockerfile` is a development-only, multi-architecture image for
+`make prepush`. It pins the Go, Node, pnpm, lint, vulnerability, monitoring and
+Ansible toolchain used by the strict Linux lane. Docker builds its native
+platform, so Apple Silicon uses `linux/arm64` without emulation.
+
+Use `make prepush`, not a direct `docker run`: the wrapper verifies a clean
+committed snapshot, preserves access to real Git history for secret scanning,
+selects integration tests from the commit range and mounts persistent caches.
+The image is not a production artifact and is not published.
+
 One Dockerfile per binary — kept in-repo so a self-hoster can build
 their own images on demand. **The release workflow no longer builds
 or pushes these images to ghcr.io** (see the header comment in
