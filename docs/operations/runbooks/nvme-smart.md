@@ -1,6 +1,6 @@
 ---
 title: Runbook — nvme-smart
-last_verified: 2026-07-25
+last_verified: 2026-09-03
 status: draft
 severity: P2
 ---
@@ -12,7 +12,7 @@ drive, and how soon* — but which fire at very different points on that curve:
 
 | Alert | What it means | Urgency |
 | ----- | ------------- | ------- |
-| `stellarindex_nvme_smart_warn` | An IO error reached the kernel | P2 |
+| `stellarindex_nvme_smart_warn` | The controller logged a new error | P2 |
 | `stellarindex_nvme_wear_high` | >80% of rated write endurance consumed | P3 — procurement trigger |
 | `stellarindex_nvme_spare_low` | <20% reserve blocks left | **P1** — late-stage, moves shortly before failure |
 | `stellarindex_nvme_media_errors` | New uncorrected media errors in 24h | P2 |
@@ -44,13 +44,16 @@ to watch it.
 | ----- | ----- |
 | Alert | `stellarindex_nvme_smart_warn` |
 | Severity | P2 (ticket — schedule replacement, don't panic) |
-| Detected by | `deploy/monitoring/rules/infra.yml` |
+| Detected by | `deploy/monitoring/rules/infra.yml` (and the r1 twin in `configs/prometheus/rules.r1/infra.yml`) |
 | Typical MTTR | hours – days (replacement lead time) |
 | Impact | Not immediately customer-visible. An IO error is the drive saying "I'm starting to fail." The raidz1 `data` pool tolerates exactly ONE full drive failure; a single IO error is fine — until it isn't, and there is no second margin. |
 
 ## Symptoms
 
-- `increase(node_disk_io_errors_total[1h]) > 0` on some device.
+- `increase(nvme_num_err_log_entries_total[1h]) > 0` on some device —
+  the controller's own error-information log grew. That log records
+  command timeouts and transport errors as well as media faults, so it
+  moves before `nvme_media_errors_total` does.
 - Kernel dmesg shows `blk_update_request: I/O error` or the NVMe
   equivalent.
 - The drive's SMART attributes may not yet flag a failure.
@@ -128,4 +131,9 @@ ssh <host> 'zpool status -v'
 
 ## Changelog
 
+- 2026-09-03 — `smart_warn` repointed from `node_disk_io_errors_total`
+  (not a node_exporter metric, so the alert had never been able to fire)
+  to `nvme_num_err_log_entries_total`, from the same nvme collector
+  textfile as the three wear alerts. `for` 1 h → 5 min: it equalled the
+  `increase()` window, which an isolated error can never satisfy.
 - 2026-04-23 — initial draft.

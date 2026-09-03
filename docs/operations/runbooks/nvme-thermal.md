@@ -1,44 +1,35 @@
 ---
 title: Runbook — nvme-thermal
-last_verified: 2026-08-28
+last_verified: 2026-09-03
 status: current
-severity: P2
+severity: P1
 ---
 
 # Runbook — `stellarindex_nvme_thermal_throttle`
 
-> **INERT ALERT (re-verified 2026-08-28).** This alert **cannot fire
-> today**: its expr watches `node_nvme_temperature_celsius`, a metric
-> **nothing produces** — the rule carries a `NO PRODUCER` / `INERT`
-> comment in `deploy/monitoring/rules/infra.yml` and the metric is
-> listed in `scripts/ci/lint-metric-refs.sh`'s `KNOWN_INERT` set.
-> Thermal problems currently surface only via the manual
-> `smartctl`/`sensors` checks below, or downstream as latency.
-> Un-inerting: the packaged node-exporter-collectors nvme probe
-> already emits real `nvme_*` series on r1
-> (`nvme_percentage_used_ratio` etc. feed the live wear alerts in
-> `rules.r1/storage.yml`); if it also emits
-> `nvme_temperature_celsius` on r1, repoint the expr at that series
-> and drop the `KNOWN_INERT` entry.
-> TODO(maintainer): verify on r1 whether the nvme collector emits
-> `nvme_temperature_celsius`; if yes, repoint the expr in BOTH rule
-> trees and remove the `KNOWN_INERT` entry, then delete this TODO.
+> **This alert was inert until 2026-09-03.** Its expr watched
+> `node_nvme_temperature_celsius` — not a node_exporter metric, so
+> nothing ever produced it and a drive could sit above its ceiling
+> indefinitely with no notification. It now reads
+> `nvme_temperature_celsius`, the series the packaged
+> node-exporter-collectors nvme probe already writes to the scraped
+> textfile dir (the same source behind the wear alerts in
+> `rules.r1/storage.yml`), and its severity moved `ticket` → `page`.
 
 ## At a glance
 
 | Field | Value |
 | ----- | ----- |
-| Alert | `stellarindex_nvme_thermal_throttle` — **inert, see banner** |
-| Severity | P2 (`severity: ticket`) — if it could fire |
-| Detected by | `configs/prometheus/rules.r1/infra.yml` (group `stellarindex.infra`, `severity: ticket`, `for: 5m`); multi-host twin in `deploy/monitoring/rules/infra.yml`. Both carry the `INERT: node_nvme_temperature_celsius has no producer` comment. |
+| Alert | `stellarindex_nvme_thermal_throttle` |
+| Severity | P1 (`severity: page`) — a drive over its ceiling throttles live IO and wears faster for as long as it stays there |
+| Detected by | `configs/prometheus/rules.r1/infra.yml` (group `stellarindex.infra`, `severity: page`, `for: 5m`); multi-host twin in `deploy/monitoring/rules/infra.yml`. Fired-state coverage in `deploy/monitoring/rule-tests/infra_test.yml`. |
 | Typical MTTR | 15 min – days (airflow fix vs waiting for cooler weather) |
 | Impact | NVMe IO throttles to ~50 % of rated when over thermal limit. Postgres WAL flush slows, captive-core catchup slows, aggregator write throughput drops. Sustained thermal stress also accelerates drive wear — not immediate but not free. |
 
 ## Symptoms
 
-- (Would be) `node_nvme_temperature_celsius > 70` sustained 5 min on
-  some device — but see the banner: no series exists, so in practice
-  you arrive here from manual checks or downstream symptoms.
+- `nvme_temperature_celsius > 70` sustained 5 min on some device.
+  The series is per-device, so the alert names the drive.
 - Write IOPS / throughput drop visibly when temperature crosses
   threshold (compare IO panels with the manual temps below).
 - Latency alerts may follow (`api-latency.md`) if the throttle is
@@ -103,16 +94,26 @@ ssh root@136.243.90.96 'ipmitool sdr list | grep -iE "fan|temp"'
 ## Related
 
 - `nvme-smart.md` — thermal stress accelerates the SMART wear
-  indicators. Note that the three **live** NVMe alerts —
-  `stellarindex_nvme_wear_high`, `stellarindex_nvme_spare_low`,
-  `stellarindex_nvme_media_errors` (`rules.r1/storage.yml`, fed by
-  the packaged nvme collector) — are the working early-warning
-  substitutes while this thermal alert is inert.
+  indicators. `stellarindex_nvme_wear_high`,
+  `stellarindex_nvme_spare_low` and `stellarindex_nvme_media_errors`
+  (`rules.r1/storage.yml`) read the same nvme collector textfile and
+  are the longer-lead-time signals on the same drives.
 - `db-disk-full.md`, `compression-lag.md` — downstream effects
   when thermal throttle slows writes.
 
 ## Changelog
 
+- 2026-09-03 — un-inerted. `nvme_temperature_celsius` confirmed present
+  in r1's scrape (four series, one per device), expr repointed at it in
+  both rule trees, and fired-state coverage added to
+  `deploy/monitoring/rule-tests/infra_test.yml`. The invented
+  `node_nvme_temperature_celsius` is gone from `EXTERNAL_OK` in
+  `scripts/ci/lint-metric-refs.sh` — the 2026-08-28 banner below said
+  `KNOWN_INERT`, but it was listed as an expected third-party metric,
+  which is why no gate ever objected to it. Severity `ticket` →
+  `page` (P2 → P1): the wear alerts are the procurement-lead-time
+  signals; this one is live throttling and compounding wear, and
+  `ticket`'s 24 h repeat interval was the wrong latency for it.
 - 2026-08-28 — re-verified against HEAD. Added the INERT-ALERT banner:
   `node_nvme_temperature_celsius` has no producer (KNOWN_INERT in
   `scripts/ci/lint-metric-refs.sh`; NO PRODUCER comment in the rule
