@@ -18,6 +18,20 @@ CHECK="$PWD/scripts/ci/check-verify-parity.sh"
 
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
+# Every script a fixture names must exist under the fixture root, or the
+# gate's path-existence check (correctly) refuses the fixture itself.
+mkdir -p "$TMP/scripts/ci" "$TMP/scripts/dev"
+touch "$TMP/scripts/ci/check-verify-parity-test.sh"
+touch "$TMP/scripts/ci/check-verify-parity.sh"
+touch "$TMP/scripts/ci/fuzz-smoke.sh"
+touch "$TMP/scripts/ci/lint-a.sh"
+touch "$TMP/scripts/ci/lint-b.sh"
+touch "$TMP/scripts/ci/lint-alsorestored.sh"
+touch "$TMP/scripts/ci/lint-b.sh"
+touch "$TMP/scripts/ci/lint-docs.sh"
+touch "$TMP/scripts/ci/lint-newthing.sh"
+touch "$TMP/scripts/ci/lint-otherjob.sh"
+touch "$TMP/scripts/ci/lint-restored.sh"
 
 pass=0
 fail=0
@@ -80,7 +94,7 @@ write_verify() {
 }
 
 run() {  # run <ci.yml> <verify.sh>
-  OUT="$(CI_YML="$1" VERIFY_SH="$2" bash "$CHECK" 2>&1)"
+  OUT="$(CI_YML="$1" VERIFY_SH="$2" VERIFY_ROOT="$TMP" bash "$CHECK" 2>&1)"
   RC=$?
 }
 
@@ -156,5 +170,14 @@ run "$TMP/does-not-exist.yml" "$TMP/verify-ok.sh"
 expect 'missing ci.yml → FAIL' 1 'file not found'
 
 echo
+# ── A verify.sh step naming a script that does not exist → FAIL ─────
+# Same fixture pair as the ok case, plus one step invoking a path that is
+# absent from the fixture root.
+write_ci "$TMP/ci-phantom.yml" scripts/ci/lint-a.sh scripts/ci/lint-b.sh
+write_verify "$TMP/verify-phantom.sh" scripts/ci/lint-a.sh scripts/ci/lint-b.sh scripts/ci/lint-otherjob.sh
+printf 'echo "=== phantom ===" && ./scripts/dev/does-not-exist.sh\n' >> "$TMP/verify-phantom.sh"
+run "$TMP/ci-phantom.yml" "$TMP/verify-phantom.sh"
+expect 'verify.sh step naming a missing script → FAIL' 1 'does not exist'
+
 echo "check-verify-parity-test: ${pass} passed, ${fail} failed"
 [ "$fail" -eq 0 ] || exit 1
