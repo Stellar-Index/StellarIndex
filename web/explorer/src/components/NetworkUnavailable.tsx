@@ -46,12 +46,21 @@ const REASON: Record<NetworkCapability, string> = {
  * (/exchanges and /bridges are both in ROUTE_CAPABILITY with no
  * page-level gate) would have rendered "Not available on Mainnet" above
  * its real content, on mainnet.
+ *
+ * This is a whole-page state, rendered directly under the page's `<h1>`
+ * and never inside a panel, so its title is an `<h2>`. The page must
+ * keep that `<h1>` on its unavailable branch: the primary-nav gate
+ * (lib/nav-shell.built.test.ts) requires one on every network build,
+ * and a page that dropped it left this empty state's heading as the top
+ * of the outline — `/markets` kept its title and still tripped the
+ * heading-order gate on the test nets with h1 → h3.
  */
 export function NetworkUnavailable({ href }: { href: string }) {
   if (routeAvailable(href)) return null;
   const cap = routeCapability(href);
   return (
     <EmptyState
+      headingLevel={2}
       title={`Not available on ${CURRENT_NETWORK.label}`}
       description={cap ? REASON[cap] : undefined}
       action={

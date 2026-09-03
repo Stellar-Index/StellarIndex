@@ -107,15 +107,6 @@ export function AccountView({ id: idProp }: { id?: string } = {}) {
   const issuersQ = useIssuers(100);
   const isKnownIssuer = (issuersQ.data ?? []).some((iss) => iss.g_strkey === id);
 
-  if (id.length === 0) {
-    return (
-      <Container className="space-y-6 py-8">
-        <AccountsAnalytics />
-        <AccountsDirectory />
-      </Container>
-    );
-  }
-
   if (!looksValid) {
     return (
       <Shell id={id}>
@@ -246,8 +237,13 @@ const xlmFmt = new Intl.NumberFormat('en-US', {
   maximumFractionDigits: 0,
 });
 
-function AccountsDirectory() {
-  const q = useQuery<AccountsListResp>({
+/**
+ * GET /v1/accounts — the directory's one query. The header and the table
+ * both subscribe under this key, so react-query fetches once and the two
+ * flip to the served basis in the same render.
+ */
+function useAccountsDirectoryQuery() {
+  return useQuery<AccountsListResp>({
     queryKey: ['/v1/accounts', DIRECTORY_SIZE],
     retry: false,
     queryFn: async () => {
@@ -258,12 +254,71 @@ function AccountsDirectory() {
     },
     staleTime: 60_000,
   });
+}
 
-  // Basis comes from the response (ranked_by); before it loads, fall back to
-  // the network's pricing flag so the static copy is right on the lean nets.
-  const isNative = q.data
-    ? q.data.ranked_by === 'native_xlm'
-    : !CURRENT_NETWORK.pricing;
+/**
+ * Whether the directory is ranked in native XLM. The served `ranked_by`
+ * decides once the response lands; before that — and in the static
+ * export, which never fetches — the network's pricing flag stands in,
+ * so the lean-net copy is right from the first byte.
+ */
+function rankedInNative(data: AccountsListResp | undefined): boolean {
+  return data ? data.ranked_by === 'native_xlm' : !CURRENT_NETWORK.pricing;
+}
+
+/**
+ * The /accounts directory frame — heading + standing description.
+ *
+ * Split out of AccountsDirectory so the STATIC document can carry it:
+ * the body reads the URL through useSearchParams and so sits inside a
+ * Suspense boundary, and that boundary's fallback is all the export
+ * bakes. useQuery forces no such bailout, so the header subscribes to
+ * the same /v1/accounts query as the table below it. The export ships
+ * the network's pricing fallback — the copy the page metadata declares
+ * — and once the response lands the served `ranked_by` wins here and in
+ * the Panel at once: the API ranks by native XLM whenever its price
+ * catalogue degrades, mainnet included, and this sentence must never
+ * claim a USD ranking above a table titled "Ranked by XLM balance".
+ */
+export function AccountsDirectoryHeader() {
+  const q = useAccountsDirectoryQuery();
+  const isNative = rankedInNative(q.data);
+  return (
+    <header className="space-y-2">
+      <h1 className="text-2xl font-semibold tracking-tight">Accounts</h1>
+      <p className="max-w-3xl text-sm text-ink-body">
+        {isNative ? (
+          <>
+            The largest accounts on Stellar {CURRENT_NETWORK.label}, ranked by
+            native XLM balance, read straight from the certified lake&apos;s
+            current-state projection.
+          </>
+        ) : (
+          <>
+            The richest accounts on Stellar, ranked by the total USD value of
+            their holdings — native XLM plus every trustline asset we hold a
+            verified price for, summed straight from the certified lake&apos;s
+            current-state projection.
+          </>
+        )}
+      </p>
+    </header>
+  );
+}
+
+/** The /accounts directory body: the analytics strip + the ranked table. */
+export function AccountsDirectoryBody() {
+  return (
+    <>
+      <AccountsAnalytics />
+      <AccountsDirectory />
+    </>
+  );
+}
+
+function AccountsDirectory() {
+  const q = useAccountsDirectoryQuery();
+  const isNative = rankedInNative(q.data);
   const fmtWealth = (row: { value?: string; usd_value?: string }) => {
     const n = Number(row.value ?? row.usd_value ?? '0');
     if (!Number.isFinite(n)) return '—';
@@ -272,26 +327,6 @@ function AccountsDirectory() {
 
   return (
     <div className="space-y-6">
-      <header className="space-y-2">
-        <h1 className="text-2xl font-semibold tracking-tight">Accounts</h1>
-        <p className="max-w-3xl text-sm text-ink-body">
-          {isNative ? (
-            <>
-              The largest accounts on Stellar {CURRENT_NETWORK.label}, ranked by
-              native XLM balance, read straight from the certified lake&apos;s
-              current-state projection.
-            </>
-          ) : (
-            <>
-              The richest accounts on Stellar, ranked by the total USD value of
-              their holdings — native XLM plus every trustline asset we hold a
-              verified price for, summed straight from the certified lake&apos;s
-              current-state projection.
-            </>
-          )}
-        </p>
-      </header>
-
       <Panel
         title={isNative ? 'Ranked by XLM balance' : 'Ranked by USD wealth'}
         source={asExample('/v1/accounts', { limit: DIRECTORY_SIZE })}

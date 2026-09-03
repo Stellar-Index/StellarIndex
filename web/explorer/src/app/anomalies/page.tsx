@@ -53,9 +53,13 @@ export default function AnomaliesPage() {
   // with no aggregator. Nav/search/sitemap no longer offer it there, but
   // a direct URL or an old bookmark still lands here, and an empty table
   // with no explanation reads as an outage.
+  // The title stays on this branch: the document carries its <h1> on
+  // every network (lib/nav-shell.built.test.ts), and without it the
+  // empty state's own heading was the top of the outline.
   if (!routeAvailable('/anomalies')) {
     return (
       <Container className="space-y-6 py-8">
+        <h1 className="text-3xl font-semibold tracking-tight">Anomalies</h1>
         <NetworkUnavailable href="/anomalies" />
       </Container>
     );
