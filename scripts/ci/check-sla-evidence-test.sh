@@ -128,7 +128,7 @@ unset K6_TARGET STELLARINDEX_LOAD_API_KEY
 # reports clean by printing nothing. run_wiring therefore captures the
 # interpreter's exit status AND counts the assertions it actually emitted,
 # and the caller treats either a non-zero rc or a short count as a failure.
-WIRING_EXPECTED=8
+WIRING_EXPECTED=12
 
 # run_wiring <workflow-path> <makefile-path> <scenario-dir>
 # Sets WIRING_OUT / WIRING_RC / WIRING_SEEN.
@@ -232,6 +232,74 @@ check("the non-zero-verdict steps survive a failing k6 run (always())",
       bool(verdict_steps) and not missing_always,
       "step(s) %s carry an implicit success(): a failing `Run scenario` "
       "would suppress the sla-evidence issue" % missing_always)
+
+# NOTE: no apostrophes below. bash 3.2 (the macOS system bash) lexes quote
+# characters INSIDE a quoted-delimiter heredoc when that heredoc sits in a
+# $(...) command substitution, so an odd number of apostrophes in this block
+# silently swallows the following lines and `bash -n` reports a syntax error
+# a dozen lines away from the real cause.
+#
+# -- Evidence must actually be PRODUCED, not merely attempted (#378) -----
+# #316 made a run that measures nothing go red. It did not make a run that
+# DOES measure land anything: there was no --summary-export and no
+# handleSummary, so the only output was console text in a log that ages
+# out, and the upload step published the checked-in historical fixture
+# under the name of the run that did not produce it.
+upload_steps = [
+    st for job in jobs.values() for st in steps_of(job)
+    if "upload-artifact" in str(st.get("uses", ""))
+]
+k6_runs = [
+    (st.get("run") or "") for job in jobs.values() for st in steps_of(job)
+    if re.search(r"\bk6 run\b", st.get("run") or "")
+]
+
+check("the k6 run exports a machine-readable summary",
+      bool(k6_runs) and all("--summary-export" in r for r in k6_runs),
+      "no --summary-export and no handleSummary: the only output of the run "
+      "is console text in a log that ages out, so nothing can be promoted "
+      "to docs/operations/sla-proof-<YYYY-MM-DD>.md")
+
+# ADR-0009 promises p95 <= 200 ms AND p99 <= 500 ms. The default k6
+# exported trend stats are avg,min,med,max,p(90),p(95) -- p(99) is NOT
+# among them, so a naive export lands evidence that reads "n/a" for half
+# the SLA while looking complete. Confirmed against the real 2026-06-13
+# export, which has no p(99) key for exactly this reason.
+check("the summary export includes p(99), the second headline SLA number",
+      bool(k6_runs) and all("p(99)" in r for r in k6_runs),
+      "--summary-trend-stats does not request p(99): the landed evidence "
+      "cannot support the p99 <= 500 ms claim")
+
+# test/load/reports/ permanently contains checked-in historical evidence
+# (README.md + 2026-06-13/00-acceptance.json, kept by the .gitignore rule
+# `!/test/load/reports/2026-*/`). Uploading that directory wholesale
+# republished an eleven-week-old all-green summary as the artifact of the
+# current run: run 33299745709 had `Run scenario: skipped` and still
+# shipped k6-summary-33299745709 (1,691 B) asserting 30,600 passes, 0 fails.
+stale_uploads = [
+    str(st.get("name", "?")) for st in upload_steps
+    if str((st.get("with") or {}).get("path", "")).strip().rstrip("/")
+    == "test/load/reports"
+]
+check("the evidence artifact is run-scoped, not the checked-in fixture dir",
+      bool(upload_steps) and not stale_uploads,
+      "step(s) %s upload bare test/load/reports/, which republishes the "
+      "checked-in 2026-06-13 all-green k6 export as the artifact of a run "
+      "that measured nothing" % stale_uploads)
+
+# k6 defaults K6_PROMETHEUS_RW_SERVER_URL to http://localhost:9090 -- the
+# localhost of the runner itself -- so an unconditional --out against an
+# unset secret discards the whole run and looks identical to a working sink.
+unguarded_rw = [
+    r for r in k6_runs
+    if "experimental-prometheus-rw" in r
+    and "K6_PROMETHEUS_RW_SERVER_URL" not in r
+]
+check("the prometheus remote-write sink is conditional on its URL being set",
+      not unguarded_rw,
+      "`--out experimental-prometheus-rw` is passed unconditionally; with "
+      "K6_PROMETHEUS_RW_SERVER_URL unset k6 streams the run into the "
+      "localhost of the runner and discards it")
 
 # The compile gate is only worth making mandatory if it can pass. The
 # pinned k6 (0.50.0) transpiles with babel, which parses ARRAY spread but

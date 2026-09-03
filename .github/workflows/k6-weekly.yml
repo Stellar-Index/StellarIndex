@@ -43,6 +43,35 @@ name: k6-weekly
 #      success are no longer the same signal. The two jobs are INDEPENDENT
 #      (no `needs:`) so that neither can silence the other.
 #
+# 2026-09-03 (#378) — #316 made a run that measures NOTHING go red. It did
+# not make a run that DOES measure land anything, and it left a live
+# false-evidence surface. Three further changes, none of which presume an
+# answer to the staging-target question below:
+#
+#   1. The upload step was `if: always()` over the bare test/load/reports/,
+#      which is never empty — .gitignore deliberately keeps dated dirs, so
+#      it holds README.md + 2026-06-13/00-acceptance.json. Every weekly run
+#      therefore published `k6-summary-<run_id>` containing an eleven-week-
+#      old export reading "passes": 30600, "fails": 0, p(95) 54.4 ms, all
+#      thresholds green — for a run whose `Run scenario` step was SKIPPED
+#      (run 33299745709). Now scoped to $REPORT_DIR and gated on the
+#      scenario actually having run.
+#   2. There was no --summary-export and no handleSummary anywhere, so even
+#      WITH a target the only output was console text in a log that ages
+#      out. The run now exports summary.json and renders the headline
+#      numbers into $GITHUB_STEP_SUMMARY (the public-dataset-check.yml
+#      convention). That is the INPUT an operator promotes to
+#      docs/operations/sla-proof-<YYYY-MM-DD>.md, which stays the durable
+#      artefact check-sla-evidence.sh leg 2 measures.
+#   3. --summary-trend-stats now requests p(99) explicitly. k6 exports
+#      avg,min,med,max,p(90),p(95) by default, so the evidence would have
+#      read "n/a" for the p99 <= 500 ms half of ADR-0009 while looking
+#      complete — exactly what the real 2026-06-13 export does.
+#
+# Also: --out experimental-prometheus-rw is now conditional. k6 defaults
+# K6_PROMETHEUS_RW_SERVER_URL to the runner's own localhost, so passing it
+# with the secret unset silently discarded the run.
+#
 # Deliberately NOT done: pointing the run at r1. r1 is the single
 # production host, test/load/scenarios/lib/env.js refuses production
 # targets by design, and mixed-realistic is a 300 rps / 10 min soak.
@@ -145,6 +174,13 @@ jobs:
       SCENARIO: ${{ inputs.scenario || '06-mixed-realistic.js' }}
       ISSUE_LABEL: sla-evidence
       ISSUE_TITLE: "SLA evidence: the weekly k6 proof run is producing no evidence"
+      # Run-scoped, gitignored output dir. Deliberately NOT the bare
+      # test/load/reports/ — that directory permanently holds checked-in
+      # historical evidence (README.md + 2026-06-13/00-acceptance.json, kept
+      # by .gitignore's `!/test/load/reports/2026-*/`), and uploading it
+      # wholesale published an eleven-week-old all-green k6 summary under
+      # this run's name. See the "Upload" step below.
+      REPORT_DIR: test/load/reports/run-${{ github.run_id }}
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
@@ -186,21 +222,119 @@ jobs:
       - name: Run scenario
         if: steps.gate.outputs.target_ready == 'true'
         run: |
+          set -euo pipefail
+          mkdir -p "$REPORT_DIR"
+
+          # The remote-write sink is OPTIONAL and must be proven present.
+          # k6 defaults K6_PROMETHEUS_RW_SERVER_URL to
+          # http://localhost:9090/api/v1/write, so an unconditional
+          # `--out experimental-prometheus-rw` against an unset secret
+          # streams the whole run into the runner's own localhost and
+          # discards it — a silent black hole that looks identical to a
+          # working sink. Evidence therefore does NOT depend on it: the
+          # summary export below is the primary artefact.
+          out_args=()
+          if [ -n "${K6_PROMETHEUS_RW_SERVER_URL:-}" ]; then
+            out_args=(--out experimental-prometheus-rw)
+          else
+            echo "::warning::K6_PROMETHEUS_RW_SERVER_URL is unset — this run has no" \
+                 "remote-write sink; the summary export is its only durable evidence."
+          fi
+
+          # --summary-trend-stats: k6's default trend stats are
+          # avg,min,med,max,p(90),p(95) — p(99) is NOT among them, so a
+          # naive export would land evidence missing one of the two
+          # headline ADR-0009 numbers (p95 <= 200 ms AND p99 <= 500 ms)
+          # while still looking complete.
           k6 run \
-            --out experimental-prometheus-rw \
+            "${out_args[@]}" \
+            --summary-export "$REPORT_DIR/summary.json" \
+            --summary-trend-stats 'avg,min,med,max,p(90),p(95),p(99)' \
             --tag run_id=${{ github.run_id }} \
             --tag run_attempt=${{ github.run_attempt }} \
             "test/load/scenarios/$SCENARIO"
 
-      - name: Upload k6 console summary
-        if: always()
+      - name: Render the SLA evidence into the run summary
+        # Same house convention as public-dataset-check.yml's "Run summary":
+        # the headline numbers belong in $GITHUB_STEP_SUMMARY where an
+        # operator can read them without downloading an artifact. This is the
+        # INPUT an operator promotes to
+        # docs/operations/sla-proof-<YYYY-MM-DD>.md (the durable, in-git
+        # artefact check-sla-evidence.sh leg 2 measures) — an artifact and a
+        # run summary both age out, a committed report does not.
+        if: always() && steps.gate.outputs.target_ready == 'true'
+        run: |
+          set -euo pipefail
+          summary="$REPORT_DIR/summary.json"
+          if [ ! -s "$summary" ]; then
+            {
+              echo "## Weekly SLA evidence — \`$SCENARIO\`"
+              echo
+              echo "**No summary was exported.** The scenario did not complete, so"
+              echo "this run produced no evidence. See the job log."
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          python3 - "$summary" "$SCENARIO" >> "$GITHUB_STEP_SUMMARY" <<'PY'
+          import json
+          import sys
+
+          doc = json.load(open(sys.argv[1]))
+          metrics = doc.get("metrics", {})
+          dur = metrics.get("http_req_duration", {})
+          failed = metrics.get("http_req_failed", {})
+          reqs = metrics.get("http_reqs", {})
+
+
+          def ms(value):
+              return "n/a" if value is None else "%.1f ms" % value
+
+
+          print("## Weekly SLA evidence — `%s`" % sys.argv[2])
+          print()
+          print("| Metric | Measured | ADR-0009 target |")
+          print("| --- | --- | --- |")
+          print("| http_req_duration p95 | %s | <= 200 ms |" % ms(dur.get("p(95)")))
+          print("| http_req_duration p99 | %s | <= 500 ms |" % ms(dur.get("p(99)")))
+          print("| http_req_duration med | %s | — |" % ms(dur.get("med")))
+          print("| error rate | %.3f %% | < 0.1 %% |" % (failed.get("value", 0) * 100))
+          print("| requests | %d (%.1f/s) | 300 rps soak |"
+                % (reqs.get("count", 0), reqs.get("rate", 0)))
+          print()
+
+          # k6 serialises each threshold as {expression: LastFailed}, so a
+          # TRUE value means the threshold was BREACHED.
+          breached = sorted(
+              "`%s` %s" % (name, expr)
+              for name, metric in metrics.items()
+              if isinstance(metric, dict)
+              for expr, tripped in (metric.get("thresholds") or {}).items()
+              if tripped
+          )
+          if breached:
+              print("**Thresholds BREACHED:** " + ", ".join(breached))
+          else:
+              print("All declared thresholds passed.")
+          PY
+
+      - name: Upload the k6 summary export
+        # Scoped to $REPORT_DIR, and only when the scenario actually ran.
+        # The previous form (`if: always()`, `path: test/load/reports/`)
+        # uploaded the CHECKED-IN historical fixture on every run: run
+        # 33299745709 had `Run scenario: skipped` yet published
+        # `k6-summary-33299745709` (1,691 B) containing the 2026-06-13
+        # export — "passes": 30600, "fails": 0, p(95) 54.4 ms, all green.
+        # An artifact named after a run that measured nothing, asserting a
+        # pass, is worse than no artifact.
+        # if-no-files-found: error — if the scenario ran and produced no
+        # summary, that is a failure to make evidence, not a nothing.
+        if: always() && steps.gate.outputs.target_ready == 'true'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7
         with:
           name: k6-summary-${{ github.run_id }}
-          path: |
-            test/load/reports/
-          if-no-files-found: ignore
-          retention-days: 30
+          path: ${{ env.REPORT_DIR }}/
+          if-no-files-found: error
+          retention-days: 90
 
       - name: Open or update the tracking issue (no SLA evidence)
         # `always() && gate succeeded && ...`, not the implicit success():
