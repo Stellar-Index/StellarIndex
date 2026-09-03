@@ -57,6 +57,15 @@ WRAP="$TMP/run-heavy-job.sh"
 mkdir -p "$TMP/bin" "$TMP/lock"
 printf '#!/usr/bin/env bash\nexit 0\n' > "$TMP/bin/flock"   # macOS has no flock
 chmod +x "$TMP/bin/flock"
+cat > "$TMP/bin/id" <<'SH'
+#!/usr/bin/env bash
+if [[ "${1:-}" == "-u" ]]; then
+  printf '1000\n'
+  exit 0
+fi
+exec /usr/bin/id "$@"
+SH
+chmod +x "$TMP/bin/id"
 export PATH="$TMP/bin:$PATH"
 export HEAVY_JOB_LOCK_DIR="$TMP/lock"
 
