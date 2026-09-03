@@ -6,7 +6,9 @@ Twenty-two of these had accumulated before this gate existed, including four
 runbooks referenced by live alerts that had never been written, and three ADRs
 whose filenames had changed underneath the link.
 
-FILE SET — tracked files PLUS untracked, non-ignored ones. The tracked-only
+FILE SET — tracked files PLUS untracked, non-ignored ones. Link TARGETS are
+checked the same way: a target that exists locally but is gitignored counts as
+missing, because a fresh clone will not have it. The tracked-only
 version of this gate reported "OK across 581 files" while sixteen links were
 broken in three files that had just been created and not yet staged: it was
 blind to exactly the files being changed. CI checks out a tree where everything
@@ -36,6 +38,19 @@ HEAD = re.compile(r"^#{1,6}\s+(.*?)\s*$")
 def _git(*args):
     out = subprocess.run(["git", *args], capture_output=True, text=True).stdout
     return [f for f in out.split("\0") if f]
+
+
+def _ignored(path):
+    """True if git ignores this path.
+
+    A link target that exists on THIS machine but is gitignored does not
+    exist for anyone else. Checking the filesystem alone made this gate pass
+    locally and fail in CI on three links into `docs/archive/` and `notes/`,
+    which are ignored — the same "local green, CI red" class the gate was
+    written to kill, arrived at from the other direction.
+    """
+    return subprocess.run(["git", "check-ignore", "-q", path],
+                          capture_output=True).returncode == 0
 
 
 def _strip_spans(line):
@@ -121,6 +136,11 @@ def main():
                 dest = os.path.normpath(os.path.join(os.path.dirname(path), rel))
                 if not os.path.exists(dest):
                     fails.append((path, lineno, target, "target does not exist"))
+                    continue
+                if _ignored(dest):
+                    fails.append((path, lineno, target,
+                                  "target is GITIGNORED — it exists on this machine but not in a "
+                                  "fresh clone, so the link is broken for every other reader"))
                     continue
                 if frag and dest.endswith(".md"):
                     have = anchors_of(dest)

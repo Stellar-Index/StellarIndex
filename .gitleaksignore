@@ -52,3 +52,4 @@
 f9157d5dc84fb5bf5f8acdaefe4b5a6d5c5b0f1e:internal/storage/clickhouse/blend_pool_state_reader_test.go:generic-api-key:33
 f9157d5dc84fb5bf5f8acdaefe4b5a6d5c5b0f1e:internal/storage/clickhouse/blend_pool_state_reader_test.go:generic-api-key:34
 bd1e3b50c3d6e1bb58ad9b9b707d26c0440492c7:cmd/stellarindex-ops/usage_rollup_backfill_test.go:generic-api-key:73
+8c20079f7d2ccb5ecdebcfe0e2f1ddd27367819f:docs/agent-onboarding.md:generic-api-key:25

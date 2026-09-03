@@ -16,7 +16,7 @@ the pricing-scoped "decoder not needed" verdict from
 `.gitignore`) — that verdict predates the granular
 every-event-for-every-major-protocol mission and was always meant to
 be revisited with real numbers (see
-[`notes/DECISION-BRIEF-2026-07-06.md`](../../notes/DECISION-BRIEF-2026-07-06.md)
+`notes/DECISION-BRIEF-2026-07-06.md` (gitignored; not in a fresh clone)
 §2D, decision **(iii) hold now, re-rank after v1.0**). This doc is that
 re-rank.
 

@@ -52,6 +52,17 @@ check "a link-shaped token inside backticks is ignored" ok
 printf '# fixture\n\n```\n[gone](./nope-%s.md)\n```\n' "$$" > "$FIX"
 check "a link inside a balanced fenced block is ignored" ok
 
+# A target that exists on THIS machine but is gitignored does not exist for
+# anyone else. Checking the filesystem alone made the gate green locally while
+# CI failed on three such links.
+mkdir -p docs/zz-ignored-fixture-dir
+printf 'x\n' > docs/zz-ignored-fixture-dir/target.md
+printf '/docs/zz-ignored-fixture-dir/\n' >> .gitignore
+printf '# fixture\n\n[ignored target](zz-ignored-fixture-dir/target.md)\n' > "$FIX"
+check "a link to a GITIGNORED target is caught" red
+git checkout -- .gitignore 2>/dev/null || sed -i.bak '/zz-ignored-fixture-dir/d' .gitignore
+rm -rf docs/zz-ignored-fixture-dir .gitignore.bak
+
 rm -f "$FIX"
 check "clean tree passes again" ok
 

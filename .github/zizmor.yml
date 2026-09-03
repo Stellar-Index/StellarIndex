@@ -17,5 +17,14 @@
 # floor is a deliberate, reversible trade — not a suppression of the finding,
 # which stays visible in a local `zizmor .github/workflows/` run.
 #
-# Locally:  zizmor --no-online-audits .github/workflows/
+# Run it locally EXACTLY as CI does, including the online audits:
+#
+#   GITHUB_TOKEN=$(gh auth token) zizmor --min-confidence medium .github/workflows/
+#
+# `--no-online-audits` is NOT equivalent. The online set includes
+# `ref-version-mismatch`, which compares an action's pinned hash against the
+# tag its version comment claims. Running without it reported "no findings"
+# locally while CI failed on six pins whose comments said v5/v6 for hashes
+# tagged v5.0.0/v7.0.0 — a stale comment is how a reader concludes the wrong
+# version is pinned.
 rules: {}
