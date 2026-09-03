@@ -50,7 +50,25 @@ if [ -n "$LOCAL_LATEST_MIG" ] && [ -n "$R1_LATEST_MIG" ]; then
   if [ "$LOCAL_LATEST_MIG" -gt "$R1_LATEST_MIG" ]; then
     pending=$((LOCAL_LATEST_MIG - R1_LATEST_MIG))
     echo "DRIFT: migrations — local latest is $LOCAL_LATEST_MIG, r1 schema_migrations.version is $R1_LATEST_MIG ($pending pending)"
-    echo "       scp migrations/00*.sql root@r1:/tmp/ && ssh root@r1 'cd /tmp && stellarindex-migrate up -database \$RE_PG_DSN -path .'"
+    # The suggested command has been wrong in three ways at once, and a
+    # remediation line that does not work is worse than none: an operator
+    # pastes it, it fails or — worse — silently does something else, and
+    # the drift stays. `migrations/00*.sql` misses every migration
+    # numbered 0100 and above (i.e. all the recent ones, which are
+    # exactly the pending ones). `-database` and `-path` are upstream
+    # golang-migrate's flag names; this binary has `-dsn` and
+    # `-migrations` and would reject them. And it copied only the .sql
+    # files without their directory, so `-path .` pointed at /tmp.
+    #
+    # It is also not how migrations actually reach r1: deploy.yml stages
+    # the migrations FROM THE TAG'S TREE and applies them before the
+    # binary swap, which is the only path that keeps binary and schema in
+    # step. Hand-applying is the break-glass form, so it is shown as
+    # such.
+    echo "       normally: re-run deploy.yml — it stages migrations from the tag and applies"
+    echo "       them BEFORE the binary swap (binary/schema parity)."
+    echo "       break-glass, on r1:  stellarindex-migrate -migrations /path/to/migrations up"
+    echo "       (the DSN comes from \$STELLARINDEX_POSTGRES_DSN; pass -dsn to override)"
     FAILS=$((FAILS + 1))
   fi
 else

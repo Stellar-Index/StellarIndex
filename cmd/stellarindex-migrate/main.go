@@ -26,6 +26,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 
 	"github.com/golang-migrate/migrate/v4"
 	_ "github.com/golang-migrate/migrate/v4/database/postgres"
@@ -40,15 +41,7 @@ func main() { //nolint:gocognit,gocyclo // dispatch-heavy; splitting would reduc
 	dir := fs.String("migrations", "migrations", "Path to the migrations directory")
 	fs.Usage = func() { printUsage(fs) }
 
-	if err := fs.Parse(os.Args[1:]); err != nil {
-		os.Exit(2)
-	}
-
-	args := fs.Args()
-	if len(args) == 0 {
-		printUsage(fs)
-		os.Exit(2)
-	}
+	args := parseArgv(fs, os.Args[1:])
 
 	resolvedDSN := *dsn
 	if resolvedDSN == "" {
@@ -251,4 +244,76 @@ Examples:
   stellarindex-migrate status
   stellarindex-migrate down 1
 `)
+}
+
+// parseArgv resolves the whole command line into `verb` plus its
+// positionals, leaving every declared flag set on fs — wherever the
+// operator wrote it.
+//
+// It exists because this was a live production-destruction path. See the
+// comment inside for what went wrong and why the fix accepts both
+// placements rather than refusing one. Extracted from main() so the
+// chokepoint has a name; main() is a dispatch switch and every argv
+// decision now happens here.
+func parseArgv(fs *flag.FlagSet, argv []string) []string {
+	if err := fs.Parse(argv); err != nil {
+		os.Exit(2)
+	}
+
+	args := fs.Args()
+	if len(args) == 0 {
+		printUsage(fs)
+		os.Exit(2)
+	}
+
+	// Flags are accepted BEFORE the verb or AFTER the verb's positionals,
+	// and an unknown token is a parse error either way.
+	//
+	// THE DEFECT THIS REPLACES. Go's flag package stops parsing at the
+	// first non-flag argument, so a single `fs.Parse(os.Args[1:])` over
+	// the whole argv stops at the verb and leaves everything after it
+	// unparsed. In
+	//
+	//	stellarindex-migrate down 1 -dsn postgres://staging/…
+	//
+	// the -dsn was never parsed, landed in fs.Args(), was silently
+	// dropped, and the DSN fell back to $STELLARINDEX_POSTGRES_DSN — so
+	// an operator dropping a migration on what they believed was staging
+	// dropped it on production, and the command printed success.
+	// Reproduced by building the binary and watching which host it
+	// dialled: the flag AFTER the verb resolved the env host, the same
+	// flag BEFORE it resolved the flag's host. All four verbs were
+	// affected, and so was -migrations. Nothing had fired only because
+	// deploy-binary.yml happens to put -migrations first.
+	//
+	// WHY THIS SHAPE, rather than refusing the trailing form. The trap is
+	// a shared CAUSE with one this repo has already solved once:
+	// cmd/stellarindex-ops hands every leaf its own FlagSet over args[1:]
+	// precisely so a flag after the verb is honoured, and documents this
+	// same stop-at-first-positional behaviour at length. Refusing here
+	// would have left the two binaries disagreeing about where flags go —
+	// which is the inconsistency that produces the mistake in the first
+	// place. Accepting both placements removes the trap instead of
+	// posting a sign next to it.
+	//
+	// The verb's leading positionals (down's N, force's V) are taken
+	// first, then the remainder is parsed by the SAME flag set. Anything
+	// still left after that is a hard error: `down -dsn X 1` is ambiguous
+	// about whether 1 is a value or a count, so it is refused rather than
+	// guessed.
+	rest := args[1:]
+	nPos := 0
+	for nPos < len(rest) && !strings.HasPrefix(rest[nPos], "-") {
+		nPos++
+	}
+	positionals := rest[:nPos]
+	if err := fs.Parse(rest[nPos:]); err != nil {
+		os.Exit(2)
+	}
+	if leftover := fs.Args(); len(leftover) > 0 {
+		die("unexpected argument %q after the flags for %q — put every positional "+
+			"immediately after the subcommand (stellarindex-migrate %s %s -flag value)",
+			leftover[0], args[0], args[0], strings.Join(positionals, " "))
+	}
+	return append([]string{args[0]}, positionals...)
 }
