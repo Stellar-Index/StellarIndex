@@ -242,7 +242,7 @@ if command -v node >/dev/null 2>&1 && command -v npx >/dev/null 2>&1; then
     echo "=== Generated API reference + Postman + web client drift ==="
     ./scripts/dev/docs-api.sh >/dev/null
     ./scripts/dev/docs-postman.sh >/dev/null
-    ./scripts/dev/web-generate-api.sh >/dev/null
+    make web-generate-api >/dev/null
     if ! git diff --exit-code --stat -- docs/reference/api examples/postman web/explorer/src/api/types.ts; then
         echo "⚠️  Generated artifacts were STALE and have been regenerated above."
         echo "    Commit these files — CI fails on exactly this diff."

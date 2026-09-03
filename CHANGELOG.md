@@ -52,6 +52,8 @@ against.
 
 - **tests:** the heavy-job wrapper fixture now deterministically exercises the non-root branch it claims to test, including when the test runner itself is a root container. Previously it escaped into a real `systemd-run` call and failed without testing any of its ClickHouse identity assertions.
 
+- **tooling:** the Linux verifier now invokes the web API generator through its real Make target and carries the pinned Postman converter in the image, avoiding a fresh package download during every pre-push run.
+
 ## [v0.59.1] — 2026-09-03
 
 ### Fixed
