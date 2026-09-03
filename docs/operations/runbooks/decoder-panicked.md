@@ -172,7 +172,7 @@ case it exists to catch.
   one input).
 - [decode-errors](decode-errors.md) — the per-source decode-error-rate
   alert; every panic also increments that counter.
-- [frozen-indexer-cursor](frozen-indexer-cursor.md) — use if the cursor
+- [cursor-stuck](cursor-stuck.md) — use if the cursor
   is NOT advancing (a different incident).
 - docs/architecture/contract-schema-evolution.md; ADR-0033; ADR-0034.
 

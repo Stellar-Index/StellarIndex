@@ -85,5 +85,5 @@ suppression.
 ## Related
 
 - [`verify-archive-unit-failed.md`](verify-archive-unit-failed.md) — dedicated alert, excluded here.
-- [`pgbackrest-backup-unit-failed.md`](pgbackrest-backup-unit-failed.md) — dedicated alert, excluded here.
+- `pgbackrest-backup-unit-failed` (runbook not yet written) — dedicated alert, excluded here.
 - [`price-divergence.md`](price-divergence.md) — where a stale `account_directory` eventually shows up.

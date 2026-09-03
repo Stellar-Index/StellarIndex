@@ -275,8 +275,8 @@ stellarindex-ops rehydrate-galexie-archive -from <N> -to <M> -write
 - [ADR-0027 — LCM cache tiering](../adr/0027-lcm-cache-tiering.md)
 - [ADR-0016 — Per-region storage strategy](../adr/0016-per-region-storage-strategy.md)
 - [internal/ledgerstream/tiered.go](../../internal/ledgerstream/tiered.go)
-- [cmd/stellarindex-ops/trim_galexie_archive.go](../../cmd/stellarindex-ops/trim_galexie_archive.go)
-- [cmd/stellarindex-ops/rehydrate_galexie_archive.go](../../cmd/stellarindex-ops/rehydrate_galexie_archive.go)
+- [internal/ops/archive/trim_galexie_archive.go](../../internal/ops/archive/trim_galexie_archive.go)
+- [internal/ops/archive/rehydrate_galexie_archive.go](../../internal/ops/archive/rehydrate_galexie_archive.go)
 
 ## Rehydrate (the undo button) — credentials
 

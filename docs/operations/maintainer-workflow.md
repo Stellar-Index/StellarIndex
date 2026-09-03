@@ -154,7 +154,7 @@ The rule:
    green; merge with failing optional checks only if the failure is
    pre-existing CI infra, not caused by this PR.) Push and PR are one
    step, never two sessions — a pushed branch with no PR is loss, not
-   work: [AGENTS.md — No orphan work](../../AGENTS.md#no-orphan-work--the-contract)
+   work: [CONTRIBUTING.md — No orphan work](../../CONTRIBUTING.md#no-orphan-work--the-contract)
    (run its prior-art check before touching an alert or finding).
 4. Pull main, branch again, return to step 1 for the NEXT unit.
 

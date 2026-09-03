@@ -81,7 +81,7 @@ findings (M0/M1/M2) + a "what's already good" note. Inputs reused from the
 - **Good =** acyclic, layered, and the lint provably enforces the layering.
 
 ## D9 — Convention docs as checklists
-- **Method:** inventory the "how to add X" guidance (AGENTS.md "Common task recipes"
+- **Method:** inventory the "how to add X" guidance (docs/contributing/task-recipes.md
   are prose). For the top recipes (new on-chain source, new CEX connector, new
   endpoint, new metric, new migration, new supply observer) produce an actionable
   **numbered checklist**: exact files to touch, the existing helper to reuse, the

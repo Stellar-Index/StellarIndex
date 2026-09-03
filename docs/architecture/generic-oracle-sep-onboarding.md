@@ -167,7 +167,7 @@ the production path).
 A source that, for a **curated** list of oracle contracts, reads
 `lastprice`/`prices`/`assets`/`decimals` from contract storage at
 query time or via a `LedgerEntryChangeDecoder` on the oracle's
-`PriceData` storage entries — riding [ADR-0039](0039-soroban-contract-state-reader.md)'s
+`PriceData` storage entries — riding [ADR-0039](../adr/0039-soroban-contract-state-reader.md)'s
 lake-native state reader (read-time decode, no backfill worker), the
 same substrate Blend pool state already uses.
 

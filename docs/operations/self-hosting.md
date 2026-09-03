@@ -524,7 +524,7 @@ that doc's Prerequisites and §4.5 above respectively).
   three-region topology (R1 Hetzner / R2 AWS / R3 Vultr) and its
   per-region storage-shape trade-offs are documented in
   [ADR-0016](../adr/0016-per-region-storage-strategy.md) and
-  [`archival-node-bringup.md`'s per-region section](archival-node-bringup.md#per-region-variations-r2-aws--r3-vultr--per-adr-0016),
+  [`archival-node-bringup.md`'s per-region section](archival-node-bringup.md#per-region-variations-r2--r3--️-historical-adr-0016-is-superseded),
   but running more than one node of your own, and keeping them
   consistent, is out of scope here.
 - **Disaster recovery for an existing node.** Covered separately in

@@ -226,7 +226,7 @@ on R1. Existing R1 gaps as of 2026-04-27:
 
    The script deletes each named partition then re-mirrors it from AWS
    in parallel (8 workers default; tunable via `PARALLEL` env). See
-   [galexie-backfill.md "mc mirror gotcha"](galexie-backfill.md#mc-mirror-gotcha-overwritefalse-doesnt-mean-what-it-says)
+   [galexie-backfill.md "mc mirror gotcha"](galexie-backfill.md#highest-impact-lever-in-practice-mirror-from-the-aws-public-bucket)
    for the failure mode this works around.
 
 4. **Diagnose + fill cross-anchor gaps**
@@ -425,7 +425,7 @@ Defined in `deploy/monitoring/rules/archive-completeness.yml` per
 ## Status-page integration
 
 Public status page at `https://stellarindex.io/status` (planned per
-[sev-playbook.md §5.3](sev-playbook.md#53-public-status-page)).
+[sev-playbook.md §5.3](sev-playbook.md#51-status-page)).
 
 Two status-page indicators tied to archive completeness:
 

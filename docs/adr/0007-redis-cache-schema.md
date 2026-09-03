@@ -175,9 +175,9 @@ Failure modes:
   - ADR-0006 (TimescaleDB) — the source-of-truth Redis caches in
     front of.
 - Design docs:
-  - [HA plan §3.4](../architecture/ha-plan.md#34-redis-cluster)
+  - [HA plan §3.4](../architecture/ha-plan.md#34-redis-sentinel-cluster)
     — topology (3+3 Redis Cluster + Sentinel).
-  - [API design §8.2](../reference/api-design.md#82-etag--conditional-get)
+  - [API design §8.2](../reference/api-design.md#81-http-cache-headers)
     — HTTP cache headers that sit in front of Redis.
   - [Repo hygiene plan §19](../architecture/repo-hygiene-plan.md#19-the-hygiene-bill--the-sum-of-all-ci-checks)
     — cadence commitment for key-grammar reviews.

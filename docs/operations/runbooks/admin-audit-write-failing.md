@@ -102,8 +102,8 @@ these are rare, bursty events and the required response is triggered by a
 
 - [monthly-quota-fail-open](monthly-quota-fail-open.md) — the other
   best-effort path whose silence the same audit wave closed.
-- [stripe-dead-letter](stripe-dead-letter.md) — fires when a paid Stripe
+- `stripe-dead-letter` (runbook not yet written) — fires when a paid Stripe
   event provisioned nothing; `surface="stripe_dead_letter"` here means
   even *that* conclusion went unrecorded.
-- [stripe-platform-sync-errors](stripe-platform-sync-errors.md) — the
+- `stripe-platform-sync-errors` (runbook not yet written) — the
   adjacent Stripe-bridge degradation signal.

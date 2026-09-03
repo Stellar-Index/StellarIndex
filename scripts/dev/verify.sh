@@ -42,6 +42,10 @@ echo "=== Vet ==="           && make vet
 echo "=== golangci config schema ===" && go run ./scripts/ci/lint-golangci-config
 echo "=== Lint ==="          && make lint
 echo "=== Docs ==="          && ./scripts/ci/lint-docs.sh
+echo "=== Agents file ===" && ./scripts/ci/lint-agents-file.sh
+echo "=== Agents file self-test ===" && ./scripts/ci/lint-agents-file-test.sh
+echo "=== Doc links ===" && ./scripts/ci/lint-doc-links.sh
+echo "=== Doc links self-test ===" && ./scripts/ci/lint-doc-links-test.sh
 echo "=== Imports ==="       && ./scripts/ci/lint-imports.sh
 echo "=== Imports self-test ===" && ./scripts/ci/lint-imports-test.sh
 echo "=== Protocol registry sync ===" && ./scripts/ci/lint-protocol-registry-sync.sh

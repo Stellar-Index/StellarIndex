@@ -18,7 +18,7 @@ status: complete
 > [`openapi/stellar-index.v1.yaml`](../../openapi/stellar-index.v1.yaml)
 > (`/v1/assets`, `/v1/assets/{id}`, plus the
 > `GlobalAssetView` vs `AssetDetail` discriminator pattern
-> documented in AGENTS.md "Things that will surprise you").
+> documented in docs/architecture/domain-traps.md).
 
 Tracking the assets-unification endgame: removing the explorer's
 `/v1/coins` dependency in favour of `/v1/assets` (R-018 final).

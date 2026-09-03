@@ -22370,7 +22370,7 @@ pipeline itself is what's being tested.
   flipped from `draft` to `ratified`; `last_verified` bumped.
 - **Launch-day operator helpers** — two pre-baked artefacts that
   remove decision-load on the day:
-  - [`deploy/status-page/upptimerc.example.yml`](deploy/status-page/upptimerc.example.yml)
+  - `deploy/status-page/upptimerc.example.yml`
     — drop-in `.upptimerc.yml` for the Upptime fork. Names the
     surfaces (API + readiness + SSE smoke + docs + r1/r2/r3
     origins), configures the public-page intro, routes incident
@@ -22701,7 +22701,7 @@ pipeline itself is what's being tested.
   fallback path. `docs/operations/sev-playbook.md` §5.1 now
   references both rather than dangling a TBD. Hosting target
   (Cloudflare Pages recommended) + DNS cutover remain operator
-  work — see [`deploy/status-page/README.md`](../deploy/status-page/README.md).
+  work — see [`deploy/status-page/README.md`](deploy/status-page/README.md).
   Closes G4 in `docs/launch-task-list.md`.
 - **AlertManager Discord webhook (parallel fanout with Slack)** —
   the alerting design routes alerts to both
@@ -27193,7 +27193,7 @@ pipeline itself is what's being tested.
   be WASM-version-aware, what's known per source, handling
   strategy (Map-field-by-name, topic-dispatch, WASM-hash column
   on ingest rows, gated backfill).
-- AGENTS.md "Things that will surprise you" entry linking to the
+- docs/architecture/domain-traps.md entry linking to the
   new architecture doc.
 
 - Repository foundation: `LICENSE` (Apache-2.0), `README.md`,

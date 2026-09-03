@@ -183,12 +183,12 @@ ADR-0017 contracts 3+4 currently SATISFIED. Daemon is keeping `ledger/` current.
 
 | ADR | Touches storage how |
 |---|---|
-| [ADR-0002](../adr/0002-self-hosted-s3-compat-storage.md) | Galexie writes to S3-compat (MinIO on r1); not local FS |
+| [ADR-0002](../adr/0002-minio-s3-compat-storage.md) | Galexie writes to S3-compat (MinIO on r1); not local FS |
 | [ADR-0015](../adr/0015-last-closed-bucket-rate-serving.md) | Closed-bucket-only API contract = per-region storage shapes are invisible to clients |
 | [ADR-0016](../adr/0016-per-region-storage-strategy.md) | R1 = full mirror (integrity leader); R2 = AWS-hybrid; R3 = Vultr-hybrid. R2/R3 explicitly DON'T mirror /srv/history-archive — they trust R1's Tier B + E verdict (note: Tier E is dormant on R1 too) |
 | [ADR-0017](../adr/0017-archive-completeness-invariants.md) | Dual-archive completeness invariants: primary (MinIO LCMs) + cross-anchor (/srv/history-archive). Contracts 3+4 bind to `ledger/` checkpoint files |
 | [ADR-0027](../adr/0027-lcm-cache-tiering.md) | LCM hot/cold tier: galexie-archive hot (MinIO) + aws-public-blockchain cold. §2 has `trim-galexie-archive` tool. §3 has TOML enable. §4 has operator-triggered bulk trim |
-| [ADR-0011](../adr/0011-supply-snapshot.md) | supply_snapshot.timer + asset_supply_history table — postgres growth contributor |
+| [ADR-0011](../adr/0011-supply-algorithm.md) | supply_snapshot.timer + asset_supply_history table — postgres growth contributor |
 
 ---
 

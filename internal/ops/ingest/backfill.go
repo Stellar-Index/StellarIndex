@@ -903,7 +903,7 @@ func checkBackfillSources(sources []string, fromLedger, toLedger uint32) error {
 		"refusing to backfill — sources not BackfillSafe (per-WASM-hash audit pending): %v; "+
 			"run stellarindex-ops wasm-history -from %d -to %d -contracts <CID> for each on-chain source, "+
 			"review every emitted WASM hash against the current decoder, then flip BackfillSafe=true in "+
-			"internal/sources/external/registry.go in the same PR (see AGENTS.md \"Soroban DeFi contracts "+
+			"internal/sources/external/registry.go in the same PR (see docs/architecture/domain-traps.md, \"Soroban DeFi contracts "+
 			"upgrade in place\")",
 		sorobanPending, fromLedger, toLedger)
 }

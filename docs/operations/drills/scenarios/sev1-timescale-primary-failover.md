@@ -62,7 +62,7 @@ participants to narrate their response.
 Drill leader compares participant narratives against this
 expected sequence.
 
-### Within 5 minutes (per [§2 Timelines](../../sev-playbook.md#2-timelines-the-contractual-promises))
+### Within 5 minutes (per [§2 Timelines](../../sev-playbook.md#2-timelines-the-sla-promises))
 
 - Oncall acknowledges in PagerDuty.
 - Oncall opens `#incident-<YYYY-MM-DD>-<short>` channel.
@@ -134,7 +134,7 @@ Score `pass` / `partial` / `fail` per criterion. Aim for ≥ 80% pass.
 - **Customer comms drift.** Status page templates work for
   external comms; the internal Slack channel comms are ad-hoc.
   Action item template: "Add internal-channel templates to
-  [§5.3 Customer Slack/Discord](../../sev-playbook.md#53-customer-slack--discord)."
+  [§5.3 Customer Slack/Discord](../../sev-playbook.md#53-user-discord)."
 
 ## Variant scenarios
 

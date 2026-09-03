@@ -27,7 +27,7 @@ The full policy lives in docs/engineering-standards.md.
 ## Alert / finding
 
 <!-- Name the alert, audit finding or symptom this addresses, and
-     state root cause vs symptom (see AGENTS.md "No orphan work"). -->
+     state root cause vs symptom (see CONTRIBUTING.md "No orphan work"). -->
 
 - **Alert/finding:**
 - **Root cause (not symptom):**

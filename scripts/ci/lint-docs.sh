@@ -1066,7 +1066,7 @@ STATUS_REDIRECTS="web/status/public/_redirects"
 if [ ! -f "$STATUS_REDIRECTS" ]; then
   echo "  (skipped §18b — $STATUS_REDIRECTS is gone; web/status/ has been retired, so there is no stub to misdescribe)"
 elif grep -q "https://stellarindex.io/status" "$STATUS_REDIRECTS"; then
-  status_docs=$(grep -l "web/status" README.md AGENTS.md 2>/dev/null || true)
+  status_docs=$(grep -l "web/status" README.md AGENTS.md docs/architecture/repo-map.md 2>/dev/null || true)
   for doc in $status_docs; do
     if ! grep -q "web/explorer/src/app/status" "$doc"; then
       err "$doc names 'web/status' but never says where the status page actually lives — since the move it ships from web/explorer/src/app/status/ (stellarindex.io/status) and web/status/ is a redirect-only stub ($STATUS_REDIRECTS 301s to it; see web/status/README.md). Name the explorer path so an agent reading this file isn't sent to the stub."

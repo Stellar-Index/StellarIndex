@@ -1,829 +1,155 @@
-# AGENTS.md — repo orientation for AI agents
+# Stellar Index
 
-If you are an AI agent opening this repo cold, **this file is your entry
-point**. Read this first. It is the single orientation document; there is
-no second one, whatever your tooling auto-loads.
+A protocol explorer and API for the Stellar network: complete, verified,
+per-protocol on-chain data captured from a certified raw ledger lake and
+served through a public REST + SSE API. Go, Apache-2.0, pre-v1.
 
+This file is rules. Reference material lives elsewhere and is linked at
+the bottom — read that when you need to know *why*; read this before you
+write anything.
 
-Everything here is true of the **project** — its architecture, its
-invariants, and the traps in the domain it models. It is written to be
-useful to anyone who clones or forks this repo, not only to the people
-who run the reference deployment. If you are changing a decoder, adding
-a source, or touching the API, this file plus
-[AGENTS.md](AGENTS.md) is what you need.
-
-How our own boxes are operated — applying `r1`'s configuration, the
-heavy-job wrapper, cutting a release, deploying — is deliberately
-**not** here. It lives in
-[docs/operations/maintainer-workflow.md](docs/operations/maintainer-workflow.md),
-because it describes one deployment rather than the project, and a
-contributor should not have to adopt a maintainer's operational setup
-to make a change.
-
----
-
-## What this repo is
-
-**Stellar Index** is a **protocol explorer for the Stellar network**:
-complete, verified, per-protocol on-chain data — every contract, event,
-and trade for every major Stellar protocol — captured from a certified
-raw ledger lake (ADR-0034), verified for completeness (ADR-0033), and
-attributed by contract identity (ADR-0035; per-protocol verification
-pages live in docs/protocols/). Long-term it grows into a comprehensive
-Stellar explorer (classic/native + Soroban) — not a multi-chain explorer;
-the cross-chain asset model (R-018) was removed in the Stellar-focus
-refactor (docs/architecture/stellar-focus-refactor-plan.md).
-
-Its flagship product is the **Stellar Index API**: a full Stellar
-explorer and data platform — complete on-chain history, asset
-catalogue + supply, anomaly analytics, and aggregated prices
-(VWAP / TWAP / OHLC from on- and off-chain sources) — served
-through a public REST + SSE API.
-
-The repo is Go (primary), Apache-2.0, pre-v1 at time of writing.
-
----
-
-## Build + test commands
+## Commands
 
 ```sh
-make help              # list all targets
-make dev               # docker-compose up the local dependency stack (TimescaleDB + Redis + MinIO); the app binaries run on the host, and there is no API/ClickHouse service in the compose file
-make test              # unit tests (fast; ~2 min)
-make test-integration  # integration tests — spins its own containers via testcontainers-go (requires Docker)
-make lint              # golangci-lint (gofumpt runs as a golangci formatter; architectural import boundaries enforced by scripts/ci/lint-imports.sh)
-make build             # all binaries into bin/
-make docs-all          # regenerate docs/reference/ from OpenAPI + struct tags (the metrics reference is hand-edited; drift-guarded by lint-docs, not generated)
-make verify            # canonical pre-push gate (fmt, vet, lint, docs, vuln, test) — run this before every push
+make help              # every target
+make dev               # local dependency stack (TimescaleDB + Redis + MinIO) in docker-compose
+                       # the app binaries run on the HOST; there is no API or ClickHouse service
+make test              # unit tests, ~2 min
+make test-integration  # spins its own containers via testcontainers-go; needs Docker
+make verify            # THE pre-push gate: fmt, vet, lint, docs, vuln, test
 ```
 
-For verifying a live deployment (R1 or local), use:
+- ALWAYS run `make verify` before pushing. NEVER substitute `make lint && make test` — that
+  skips the doc, import, openapi and monitoring lints CI enforces.
+- `make verify` exceeds a 10-minute foreground timeout and its exit code is unreliable. Run it
+  backgrounded and grep the output for `ALL CHECKS PASSED`.
+- `make verify` does NOT run integration tests. Run `make test-integration` when you change a
+  storage query, a migration, or anything a fixture seeds.
+- ALWAYS re-run all three generators together after editing `openapi/stellar-index.v1.yaml`:
+  `make docs-api && make docs-postman && make web-generate-api`. Two of them have silently
+  drifted onto main before.
+- NEVER write a command that needs manual network access during development. If one does, that
+  is a bug.
+- ALWAYS check `CAPABILITY-INVENTORY.md` before writing a utility. Rebuilding an existing
+  primitive is this repo's largest single source of maintenance debt.
+- To check a live deployment: `bash scripts/dev/r1-smoke.sh` (or
+  `API_BASE_URL=https://api.stellarindex.io bash scripts/dev/r1-smoke.sh`). Exit code is the
+  number of failed assertions.
 
-```sh
-bash scripts/dev/r1-smoke.sh                       # localhost:3000 by default
-API_BASE_URL=http://r1:3000 bash scripts/dev/r1-smoke.sh
+## Money — invariant 1 (ADR-0003), the rule we reject PRs over
+
+Token amounts, reserves, prices and supplies are `canonical.Amount` (a `*big.Int` wrapper) in Go, `NUMERIC` in Postgres, and
+decimal **strings** in JSON. JSON numbers are IEEE 754 doubles and lose precision above 2^53.
+
+```go
+// NEVER — truncates silently above 2^63 and is our most expensive recurring bug
+amount := int64(parts.Lo)
+
+// ALWAYS — the canonical helpers carry the full 128 bits
+amount := canonical.FromInt128Parts(int64(p.Hi), uint64(p.Lo))   // i128
+amount := canonical.FromUInt128Parts(uint64(p.Hi), uint64(p.Lo)) // u128
 ```
 
-34 GETs across health / catalogue / pricing / diagnostics with jq
-shape assertions; exit code = number of failures so cron and
-Healthchecks.io can consume it. R1 runs the same script every 5
-min via `stellarindex-smoke.timer` (see `configs/healthchecks/`).
+- NEVER compare or accumulate money in `float64`. Use `*big.Int` or `*big.Rat`.
+- ALWAYS render a partial total as a lower bound, never as a total: set the response's
+  `lower_bound` flag and name what was excluded, as `/v1/protocols`'s `tvl_total` does.
+- NEVER make a number faster by making it less true. An honest slow answer beats a fast wrong one.
 
-No command should ever require manual network access during
-development. If one does, it's a bug.
+## Architectural invariants (ADR-backed; long-form in `docs/adr/`)
 
----
+The bracketed number is the invariant's stable id. Ten documents and one runtime
+error string cite "AGENTS.md invariant N" — do not renumber these.
 
-## Repo map
-
-```
-.
-├── README.md                  project overview, user-facing
-├── AGENTS.md                  this file — agent orientation
-├── LICENSE                    Apache-2.0
-├── CHANGELOG.md               Keep-a-Changelog format
-├── CONTRIBUTING.md            how to contribute
-├── CODE_OF_CONDUCT.md         Contributor Covenant
-├── SECURITY.md                vuln-disclosure process
-├── CODEOWNERS                 review routing
-├── VERSIONS.md                pinned SHAs of upstream deps we audit
-├── Makefile                   canonical build/test commands
-├── go.mod / go.sum            single Go module for the whole repo
-├── .golangci.yml              lint config
-├── .github/                   workflows + issue/PR templates
-│
-├── cmd/                       binary entry points (six in total)
-│   ├── stellarindex-indexer/              ingestion pipeline: Galexie → ClickHouse raw lake + Timescale served tier (dual-sink, ADR-0034)
-│   ├── stellarindex-aggregator/           VWAP/TWAP + continuous aggregates
-│   ├── stellarindex-api/                  REST + SSE API server
-│   ├── stellarindex-ops/          admin CLI: backfill, detect-gaps, verify-archive, wasm-history, …
-│   ├── stellarindex-migrate/      db migration runner
-│   └── stellarindex-sla-probe/    SLA-evidence harness: p50/p95/p99 latency + freshness pass/fail vs the latency + freshness SLA targets
-│
-├── internal/                  private packages (Go-enforced, not importable externally)
-│   ├── canonical/                core types: Trade, Price, Asset, Pair, Amount
-│   ├── domain/                   persisted data shapes shared by storage + consumers (blend, sorobanevents, mev, accounts, divergence)
-│   ├── config/                   config loading + schema
-│   ├── contractid/               ADR-0035 factory-descended contract-identity registry (child gate) that gated decoders embed
-│   ├── consumer/                 transport-neutral ingest contract — the load-bearing `consumer.Event` interface used across indexer/ops/dispatcher/pipeline. (The legacy `Source`/`Orchestrator` per-source-goroutine seam was deleted 2026-07; prod ingest is dispatcher-based.)
-│   ├── ledgerstream/             archive/live LedgerCloseMeta streaming
-│   ├── dispatcher/               production ledger walker + decoder router
-│   ├── pipeline/                 shared ingest-pipeline glue used by both indexer + `stellarindex-ops backfill`
-│   ├── projector/                ONLY writer for Soroban-derived events — projects per-source tables from the ClickHouse contract_events lake by default (ADR-0031/0032/0034; Postgres soroban_events is the legacy fallback source)
-│   ├── completeness/             ADR-0033 coverage verification: substrate + recognition + projection reconcile → completeness_snapshots
-│   ├── events/                   transport-neutral Soroban contract-event types (RPC or LCM-extracted)
-│   ├── scval/                    narrow SCVal primitives wrapper around go-stellar-sdk/xdr
-│   ├── xdrjson/                  XDR → JSON rendering + SAC contract-id helpers (API/explorer detail views)
-│   ├── sdexclaim/                shared helpers for interpreting SDEX claim atoms (dispatcher census + clickhouse extract)
-│   ├── stellarrpc/               JSON-RPC client for diagnostics + fixture capture, not prod ingest
-│   ├── sources/                  one package per source (on-chain + CEX + FX)
-│   ├── aggregate/                VWAP/TWAP/outlier/triangulation
-│   ├── decimalsguard/            served-price decimals-assumption guard (the 100×-scaling incident class)
-│   ├── pricingguard/             serving-sanity guard shared by every raw price read path
-│   ├── pricelesscoverage/        priceless-popular coverage tripwire — pages when a popular asset has no served price and no recorded reason
-│   ├── pricealerts/              aggregator-side evaluator for customer price alerts
-│   ├── storage/                  TimescaleDB (served tier) + ClickHouse (raw lake, ADR-0034) + Redis. Subpackages only (timescale/ clickhouse/ redisclient/) — NO top-level adapter files. MinIO/lake access is via internal/ledgerstream + go-stellar-sdk datastore, not a storage adapter.
-│   ├── pgarray/                  Postgres array column adapters for database/sql
-│   ├── archivecompleteness/      dual-archive completeness daemon (ADR-0017)
-│   ├── hashdb/                   on-disk (ledger_seq → sha256(LCM)) record for drift-detection-vs-upstream-rewrites (ADR-0016). Wired into production 2026-07-09: the indexer's live LCM read loop appends on ingest, a periodic sweep (also in the indexer) re-verifies a trailing window against the same bucket. Off by default (`[hashdb].enabled = false`, opt-in first deploy); founding case is ledger 63332650. Alert `stellarindex_hashdb_drift_detected` + runbook docs/operations/runbooks/hashdb-drift-detected.md. The ADR-0033 "feeder" role is still aspirational.
-│   ├── api/                      REST/SSE handlers (v1)
-│   ├── httpx/                    tiny shared HTTP response helpers for handler packages
-│   ├── ratelimit/                Redis-backed fixed-window counter (INCR+EXPIRE; NOT a token bucket)
-│   ├── metadata/                 SEP-1 / stellar.toml resolution
-│   ├── cachekeys/                canonical Redis key builders (ADR-0007)
-│   ├── version/                  build-time version info (ldflags-populated)
-│   ├── obs/                      metrics, tracing, logging
-│   ├── worker/                   shared primitives for detached background worker goroutines
-│   ├── ops/                      stellarindex-ops subcommand implementations (archive/ chops/ diagnostics/ discovery/ ingest/ supply/)
-│   ├── supply/                   circulating/total/max supply derivation
-│   ├── auth/                     API-key + SEP-10 auth primitives
-│   ├── nettools/                 the single canonical SSRF blocklist (used by every outbound-URL feature)
-│   ├── signupreaper/             deletes orphan speculative-account rows
-│   ├── logincodereaper/          bounds the login_code_lockouts table
-│   ├── magiclinkreaper/          bounds the magic_link_tokens table
-│   ├── currency/                 verified-currency catalogue (hand-curated seed; R-018)
-│   ├── divergence/               cross-check against CoinGecko + Chainlink-HTTP (a CMC poller exists under sources/external/ but is not wired into divergence)
-│   ├── customerwebhook/          drains the webhook delivery queue — HMAC-signs + POSTs pending rows, backoff/retry on failure
-│   ├── incidents/                loads + parses embedded customer-facing incident post-mortems for the API + status page
-│   ├── notify/                   transactional-email abstraction (Sender iface; Resend impl + Noop for dev/tests)
-│   ├── obstest/                  test helpers for asserting against Prometheus metrics (HistogramVec child counts)
-│   ├── platform/                 customer + staff dashboard primitives (accounts, API keys, webhooks, usage) per platform-spec.md
-│   └── usage/                    per-subject daily + per-endpoint×outcome request counters (Redis) + the 5-min rollup worker into the usage_daily hypertable (feeds /v1/account/usage)
-│
-├── pkg/                      public surface (SemVer-stable)
-│   └── client/                   Go client SDK + wire-shape types
-│                                 (Envelope, Flags, AssetDetail, …)
-│                                 — types live alongside the client
-│                                 in pkg/client/types.go rather than
-│                                 a separate pkg/types directory.
-│
-
-├── migrations/                TimescaleDB migrations (golang-migrate)
-├── configs/                   example.toml + Ansible roles (configs/ansible/{roles,inventory,playbooks}/) + R1 single-host overlays
-│   ├── ansible/                  multi-host roles + playbooks for R1/R2/R3
-│   ├── prometheus/               R1 single-host: prometheus.r1.yml + rules.r1/ (job names rewritten for the R1 scrape config)
-│   ├── alertmanager/             R1 single-host: alertmanager.r1.yml + apply.sh (severity-routing for page/ticket/informational + deadmansswitch heartbeat)
-│   ├── caddy/                    R1 reverse proxy — TLS termination via Let's Encrypt
-│   ├── loki/                     R1 single-host log aggregation
-│   ├── audit/                    curated auditor inputs (wasm-walk contract lists) feeding `stellarindex-ops wasm-history`
-│   └── healthchecks/             per-binary heartbeat + 5-min API smoke timers (Healthchecks.io)
-├── openapi/                   stellar-index.v1.yaml — source of truth for API
-├── examples/                  curl scripts + Postman collection (auto-gen) for the public API
-├── deploy/                    docker-compose (dev), systemd (production unit files), monitoring (Prometheus rules — multi-host), clickhouse/ (tier-1 lake DDL, ADR-0034), comms/ (customer-facing incident/launch templates). The shipped status page lives in the EXPLORER at `web/explorer/src/app/status/` (served at stellarindex.io/status; postmortems at `status/incident/[slug]`, loaded at build time from `internal/incidents/data/*.md` by `web/explorer/src/lib/incidents.ts`). `web/status/` is now a redirect-only Cloudflare Pages stub that 301s status.stellarindex.io there (`web/status/public/_redirects`, web/status/README.md); earlier scaffolds were retired (F-1211 / wave 57).
-├── web/explorer/              Next.js 16 static-export explorer rendered at stellarindex.io (Cloudflare Pages); see web/explorer/AGENTS.md for the frontend/design brief
-├── scripts/                   dev/ops/ci helpers (incl. ci/lint-docs.sh, dev/r1-smoke.sh)
-├── test/                      integration / fixtures (build tag: integration), load (k6), chaos
-│
-└── docs/
-    ├── architecture/             narrative designs (last_verified checked in CI)
-    ├── adr/                      Architecture Decision Records (immutable)
-    ├── reference/                auto-generated from OpenAPI + struct tags
-    ├── operations/               runbooks (every alert links one), SEV playbook, release-process
-    ├── methodology/              public methodology docs (how prices are computed/aggregated)
-    ├── protocols/               per-protocol verification pages (one per integrated protocol)
-    ├── engineering-standards.md  the non-negotiable engineering policy layer
-    └── blog/                     dated blog posts published to the explorer/site
-```
-
----
-
-## Invariants — never violate these
-
-These are the architectural commitments binding every PR. See
-[docs/adr/](docs/adr/) for the long-form rationale per ADR.
-
-### 1. i128 / u128 never truncates to int64 (ADR-0003)
-
-Token amounts, reserves, prices, supplies from Soroban are always:
-
-- `*big.Int` in Go.
-- `NUMERIC` column in Postgres / TimescaleDB.
-- Strings in JSON (JSON numbers are IEEE 754 doubles — precision
-  loss above 2^53).
-
-Parsing `xdr.Int128Parts` to `int64(parts.Lo)` is a bug we will
-find and reject in review every single time.
-
-### 2. Horizon is not in our architecture (ADR-0001)
-
-We don't run Horizon. We don't ingest from Horizon. We don't proxy
-to Horizon. If a third-party protocol's only path to us is via
-Horizon, we do not integrate it.
-
-### 3. Self-hosted storage is S3-compatible — not local filesystem (ADR-0002)
-
-Galexie's local filesystem backend silently drops per-object
-metadata + has explicit multi-process-write warnings in its own
-docstring. MinIO is our colo default; any S3-compatible service
-works via `endpoint_url` override.
-
-### 4. One Go module, monorepo (ADR-0005)
-
-`github.com/Stellar-Index/StellarIndex` is the root module. `internal/` is
-private (Go-enforced). `pkg/` is the public surface with SemVer
-compatibility promise.
-
-### 5. Tier-1 three-validator aspiration (ADR-0004)
-
-Post-launch we run three geographically-separated full validators
-with independent history archives. Validator keys live in an HSM;
-never on disk unencrypted.
-
-### 6. Ingest goes via Galexie → dispatcher → decoder. Never stellar-rpc.
-
-**Production ingest:** `Galexie MinIO → internal/ledgerstream →
-internal/dispatcher → internal/sources/<venue>/decode`. Decoders are
-pure functions; no RPC client, no pagination loop, no per-source
-goroutine. stellar-rpc was removed from r1 on 2026-04-23; it exists
-only for the `rpc-probe` operator diagnostic and for capturing test
-fixtures via `scripts/dev/`. Any new source that adds a
-`rpc *stellarrpc.Client` field or a `BackfillRange` / `StreamLive`
-method is wrong.
-
-Full picture + binding rules: [docs/architecture/ingest-pipeline.md](docs/architecture/ingest-pipeline.md).
-
-### 7. One writer per data domain (ADR-0031 + ADR-0032)
-
-**Soroban-derived events** (`trades`, `blend_*`, `phoenix_*`,
-`comet_*`, `soroswap_skim`, `cctp_events`, `rozo_events`,
-`defindex_*`, `sep41_*`, `sorocredit_*`, `reflector`/`redstone`
-`oracle_updates`)
-are written by **`internal/projector`** — and ONLY by the projector.
-Its READ source is the **ClickHouse `contract_events` lake by default**
-(`storage.clickhouse_projector_source`, default `true`, ADR-0034); the
-Postgres `soroban_events` raw landing zone (ADR-0029) is the legacy
-fallback source, decommission-pending (#39). Adding a new
-Soroban source means adding a case in
-`internal/projector/registry.go::buildSource` AND an arm in
-`internal/pipeline/sink.go::IsProjectedEvent`. Catch-up after a
-missing window is `stellarindex-ops projector-replay -source <name>
--from <ledger>` — never a bespoke `<source>-backfill` subcommand
-(those were deleted in rc.97 / ADR-0032 Phase 5).
-
-**Non-projected events** (`sdex`, external CEX/FX, `band`,
-`soroswap_router` (ContractCall-derived, log-only — excluded from
-`IsProjectedEvent`), supply observers) continue writing through the
-dispatcher's events goroutine — they don't flow through
-`soroban_events` and have their own catch-up paths.
-
-**Coverage signal** is data-derived, not cursor-derived (ADR-0031):
-cursor-derived helpers under `internal/api/v1` were deleted in
-rc.93/94. The authoritative coverage VERDICT is `completeness_snapshots`
-(ADR-0033: substrate + recognition + projection reconcile against the
-ClickHouse lake); the gap-detector's `source_coverage_snapshots` is a
-supporting signal.
-
-### 8. ClickHouse is the raw lake; Postgres is the served tier (ADR-0034)
-
-The certified raw history of every ledger + event lives in **ClickHouse**
-(`galexie → ClickHouse → decoders → Postgres`). **Postgres/TimescaleDB is
-the SERVED tier** — the recent working set the API queries, NOT the full
-archive. Re-backfilling Postgres for full history was abandoned as
-infeasible (OLTP-for-OLAP, billions of rows). Consequences:
-
-- **"100% coverage" = the ClickHouse substrate captured everything**
-  (provable: ledgers contiguous + hash-chained to genesis). The served
-  tier is verified faithful *within what it holds* (ADR-0033 projection
-  reconcile, retention-scoped). "Retention-scoped" here means scoped to
-  what has been **PROJECTED** into the served tier — not every source is
-  projected genesis-wide (e.g. soroswap trades start ~ledger 61.5M) —
-  NOT a DB-level drop policy; `trades` itself carries no retention (see
-  next bullet). `/v1/coverage`'s two-axis verdict (`lake_complete` vs
-  `complete`, described on the coverage endpoint in
-  openapi/stellar-index.v1.yaml)
-  surfaces this split publicly: `lake_complete` is the archive's
-  genesis-to-tip claim, `complete` is additionally gated by that
-  projection window.
-- **Raw `trades` are kept forever** in Postgres — migration 0031 removed
-  the old 90-day retention (storage is not a constraint). If you see a
-  `drop_after` retention policy on `trades`, it's drift — remove it.
-- **Continuous aggregates**: `prices_1h/4h/1d`+ are indefinite (daily
-  OHLC spans back to 2015); `prices_1m/15m` retention was also removed.
-- **Decoder backfills re-derive from the lake**, not MinIO walks — via
-  SQL, `ch-rebuild` for a non-projected domain (`-sdex`,
-  `-contract-calls`) — and note `-sep41` is NOT one of those: sep41_* IS
-  projected (§7, `projector/registry.go`, `sink.go::IsProjectedEvent`),
-  so its ch-rebuild pass is a second writer on a projected domain and is
-  exactly what the live-cursor refusal below exists for — and
-  `projector-replay` /
-  `projected-rebuild` for a projected one (§7's one-writer rule holds
-  for re-derives too; `ch-rebuild -write` refuses a range the live
-  projector is still inside). Which command, when:
+- **[2]** **NEVER integrate via Horizon** (ADR-0001). We do not run it, ingest from it, or proxy to it.
+  If a protocol's only path to us is Horizon, we do not integrate it.
+- **[6]** **NEVER ingest via stellar-rpc.** Production ingest is
+  `Galexie MinIO → internal/ledgerstream → internal/dispatcher → internal/sources/<venue>/decode`.
+  A new source with an `rpc *stellarrpc.Client` field, a `BackfillRange` or a `StreamLive` method
+  is wrong. stellar-rpc survives only for the `rpc-probe` diagnostic and fixture capture.
+- **[3]** **ALWAYS use S3-compatible storage, never Galexie's local filesystem backend** (ADR-0002).
+  That backend silently drops per-object metadata and warns about multi-process writes in its own
+  docstring.
+- **[7]** **ONE writer per data domain** (ADR-0031/0032). A **projected** Soroban source is written by
+  `internal/projector` and only by it; adding one means a case in
+  `projector/registry.go::buildSource` AND an arm in `pipeline/sink.go::IsProjectedEvent`.
+  NOT every Soroban source is projected — `band` (ContractCall-derived), `soroswap_router`
+  (log-only), `sdex`, the external CEX/FX connectors and the supply observers deliberately
+  write through the dispatcher instead. `IsProjectedEvent`'s default branch is the list.
+- **[7]** **Catch-up depends on which side of that line you are on.** A projected domain uses
+  `stellarindex-ops projector-replay -config PATH -source <name> -from <ledger>`; a
+  non-projected one uses `ch-rebuild` (`-sdex`, `-contract-calls`). NEVER add a bespoke
+  `<source>-backfill` subcommand — those were deleted in ADR-0032 Phase 5. `-sep41` is
+  projected, so `ch-rebuild -sep41` would be a second writer; `ch-rebuild -write` refuses a
+  range the live projector is still inside. Decision table:
   [docs/architecture/ingest-pipeline.md](docs/architecture/ingest-pipeline.md#the-replay-decision-rule).
+- **[8]** **ClickHouse is the raw lake; Postgres is the SERVED tier** (ADR-0034) — the recent working set,
+  not the full archive. "100% coverage" means the ClickHouse substrate captured everything; the
+  served tier is verified faithful only within what it holds. `/v1/coverage` publishes both axes:
+  `lake_complete` is the archive's genesis-to-tip claim, `complete` is additionally gated by the
+  projection window. "Retention-scoped" means scoped to what has been PROJECTED — NOT a database
+  drop policy.
+- **[8]** **NEVER put a retention policy on `trades`.** Migration 0031 removed the old 90-day one and
+  storage is not a constraint. A `drop_after` on `trades` is drift — remove it.
+- **[4]** **`internal/` is private, `pkg/` is the public SemVer surface** (ADR-0005). One Go module.
+- **[5]** **NEVER put a validator key on disk unencrypted** (ADR-0004).
 
----
+## Domain rules that will catch you out
 
-## Things that will surprise you
+Full evidence for each: [docs/architecture/domain-traps.md](docs/architecture/domain-traps.md).
 
-Traps / counter-intuitive facts about Stellar and our dependencies.
-If you're about to do something that touches any of these, the
-linked design doc has the full detail.
+- **ALWAYS key an asset on `(code, issuer)`, a SAC address, or `native` — NEVER on code alone.**
+  Code alone is an impersonation vector; a scam token can claim `USDC`.
+- **ALWAYS loop `canonical.AssetAliases` on every asset-id read path.** XLM has three disjoint
+  identities (`native`, `crypto:XLM`, its SAC) and they are different venue populations. A read
+  path that handles one silently under-reports.
+- **ALWAYS correlate a Soroswap `SwapEvent` with the immediately-following `SyncEvent`** by
+  `(ledger, tx_hash, op_index)`. `SwapEvent` carries no post-state reserves.
+- **ALWAYS group all 8 Phoenix events** to reconstruct one swap. It emits one event per field.
+- **ALWAYS gate a decoder on contract identity, never on topic alone** (ADR-0035). Comet uses a
+  shared `("POOL", <event>)` topic across every pool contract; any Balancer-v1 deployment looks
+  identical on the wire.
+- **ALWAYS type-test a SEP-41 `transfer` body before `MustI128()`** — it is either a bare `i128`
+  or a map carrying `amount` + `to_muxed_id`.
+- **NEVER assume off-chain amount scaling is uniform.** On-chain uses per-asset decimals, CEX and
+  aggregators use 10^8, FX uses 10^6. Read the per-source `Decimals` field.
+- **NEVER drop an unmapped oracle symbol.** Record it verbatim as `raw:<symbol>`. Raw rows are
+  record-layer only: NEVER let one reach VWAP, a pair leg or a supply key — filter on
+  `Asset.IsMapped()` or `asset NOT LIKE 'raw:%'`.
+- **NEVER normalise a stablecoin at ingest.** Store the real pair; the aggregator maps
+  `USDT→USD` at compute time. Eager normalisation hides a depeg.
+- **NEVER auto-populate `internal/currency` from an external aggregator.** It is a hand-vetted
+  trust surface; adding a currency is a code change.
+- **ALWAYS gate a Soroban backfill behind a per-WASM-hash decoder audit.** Contracts upgrade in
+  place: live ingest sees only current WASM, backfill sees every prior version.
+- **ALWAYS decode by map field name and dispatch on `topic[0]`** — never by field position or
+  contract address.
 
-- **Soroswap's `SwapEvent` has no post-state reserves.** Reserves
-  come in the immediately-following `SyncEvent`. Correlate by
-  `(ledger, tx_hash, op_index)`.
-- **Phoenix emits 8 events per swap** (one per field with a 2-tuple
-  topic `("swap", "<field>")`). A single swap reconstruction
-  requires grouping all 8.
-- **Comet uses a shared `("POOL", <event>)` topic across every pool
-  contract**, not a per-protocol namespace. Any pubnet contract that
-  deploys Balancer-v1 Comet code will look identical on the wire.
-  **ADR-0035 contract-identity gating is COMPLETE (2026-07-08).**
-  `soroswap` (pair/factory registry), `blend` (childgate), `phoenix`
-  (curated set, 2026-07-02), `aquarius` (router-anchored: the router's
-  `add_pool` events announce exactly the registry-API pool set, 2026-07-05),
-  `defindex` (the factory `create` event does NOT carry the VAULT'S OWN
-  address, so new vaults fail-close until operator-seeded — curated
-  evidence-verified set, 2026-07-05. Its body DOES carry each asset's
-  assigned BlendStrategy address, and strategies were self-registered
-  from it between 2026-07-10 and 2026-08-25 — that was REMOVED (76418937,
-  W8 6c) because the factory is public and the field is caller-supplied,
-  so anyone could name an arbitrary address and poison the registry.
-  Strategies are now admitted exactly like vaults: curated seed or an
-  operator `protocol_contracts` row. The extraction survives only as a
-  one-off audit tool. See docs/protocols/defindex.md and
-  TestDecode_factoryCreate_doesNotSeedFromBody) and `comet` (curated one-pool allowlist —
-  no KNOWN DEPLOYED mainnet factory; upstream ships a factory contract
-  emitting `("LOG","NEW_POOL")`, so factory anchoring becomes available
-  if one ever deploys; the only mainnet pool is Blend's BLND/USDC
-  backstop, seeded in-code via `comet.MainnetGatedSet`; 2026-07-08, closes
-  CS-026) all gate `Matches()` on contract identity. A future genuine
-  comet pool must be operator-admitted (`seed-protocol-contracts -source
-  comet` / a `protocol_contracts` row) before its events attribute —
-  fail-closed, visible as an ADR-0033 recognition gap. →
-  [docs/adr/0035-factory-anchored-contract-gating.md](docs/adr/0035-factory-anchored-contract-gating.md),
-  [docs/adr/0040-completing-contract-gating.md](docs/adr/0040-completing-contract-gating.md)
-- **Reflector v3 has no on-chain `twap` or `x_*` methods.** Some
-  upstream docs imply it does; it doesn't. We compute TWAP and
-  cross-pair locally.
-- **Reflector is three separate contracts** (DEX / CEX / FX), not
-  one.
-- **Band stores pair rates at E18 scale**. Relayed single-asset
-  rates are at E9.
-- **Band's Soroban contract emits zero events.** A conventional
-  topic-match Decoder never fires on Band. We observe the
-  `relay()` / `force_relay()` InvokeContract call instead via
-  the dispatcher's `ContractCallDecoder` interface (PR 168). Any
-  future Soroban source that updates storage without publishing
-  events plugs into the same hook — match by (contract_id,
-  function_name), decode from op args.
-- **Off-chain sources (CEX/FX) live in `internal/sources/external/`,
-  not `internal/sources/<venue>/`.** They run their own goroutines
-  speaking HTTPS / WebSocket to vendor APIs — parallel to the
-  Galexie → dispatcher path, not under it. Source-class metadata
-  (`exchange`/`aggregator`/`oracle`/`authority_sanity`) lives in
-  `external.Registry` — a single Go map the aggregator queries at
-  VWAP compute time to decide which sources contribute. Only
-  `ClassExchange` contributes by default; aggregators and oracles
-  are reported alongside but excluded (mixing them double-counts
-  upstream markets or imposes their methodology on our output).
-- **External-source amount scaling is NOT uniform.** On-chain
-  sources stamp `canonical.Trade.BaseAmount` / `QuoteAmount` at
-  per-asset decimals (XLM=7, Soroban tokens vary). Off-chain CEX +
-  reference-aggregator sources normalise to a fixed **10^8** integer
-  scale (`binance.externalAmountDecimals`), but **FX sources** use
-  **10^6** (`DefaultDecimals = 6` / `AmountDecimals: 6`). Always
-  read the per-source `Decimals` field; don't assume 10^8.
-  Aggregator looks up `external.Lookup(trade.Source).Class` to know
-  which side of the boundary a trade came from.
-- **`massive` is the ACTIVE fiat-FX feed** (massive.com = Polygon's
-  backend). It runs as the `internal/sources/external/forex` worker
-  in the API binary and writes hourly fiat rates to `fx_quotes` —
-  the USD-anchor behind per-trade usd_volume and the USD-anchored
-  local-currency derivation (ADR-0051). There is **no `/v1/currencies`
-  route** — it was removed for want of consumers; the FX snapshot
-  survives only as the in-process `CurrenciesReader` seam, so don't go
-  looking for an HTTP surface.
-  `polygon-forex` / `exchangeratesapi` are same-role trades-path
-  connectors, currently disabled; `ecb` is `ClassAuthoritySanity`
-  (standby cross-check, NOT a VWAP contributor). Full detail in the
-  registry comment at `internal/sources/external/registry.go`.
-- **Stablecoin fiat-proxy is aggregator policy, not decoder
-  policy.** Ingest stores the real pair (`XLM/USDT`, `XLM/USDC`).
-  The aggregator maps `USDT→USD`, `USDC→USD`, `DAI→USD`,
-  `PYUSD→USD`, `USDP→USD`, `EURC→EUR`, `EUROC→EUR`, `EUROB→EUR`,
-  `MXNe→MXN` at VWAP compute time (full map: `internal/aggregate/stablecoin.go`).
-  Eager normalisation at ingest would hide a depeg event; late
-  binding keeps data honest.
-- **Redstone Adapter DOES emit events** (topic `"REDSTONE"`) — one
-  per batch push containing all updated feeds. Subscribe rather
-  than poll all 19 per-feed contracts.
-- **Redstone's event body carries no feed_id.** `WritePrices
-  { updater, updated_feeds: Vec<PriceData> }` gives prices +
-  timestamps, not which feed each entry is. Feed IDs live in the
-  tx's `write_prices(updater, feed_ids, payload)` InvokeContract
-  op args — plumbed through `events.Event.OpArgs` (PR 166). The
-  adapter's freshness verifier can filter `updated_feeds` to a
-  subset of `feed_ids`; zip positionally when lengths match. When
-  they DON'T match (a real, ongoing class — 1,626 events on the
-  2026-07-29 full verify), the signed payload in args[2] recovers
-  the mapping: the adapter stores each accepted feed's signer-value
-  MEDIAN, so each surviving price must equal exactly one candidate
-  feed's payload median at its package_timestamp
-  (`internal/sources/redstone/payload.go`; verified byte-exact on
-  ledger 59,258,375). Non-unique attribution refuses the whole
-  event (`ErrAmbiguousSubset`) — honest-blind beats misattributed.
-  Any new decoder that needs tx args follows the same
-  `events.Event.OpArgs` pattern.
-- **Oracle decoders never DROP an unmapped symbol.** Since the
-  capture-totality change (PR-2, #247) reflector / redstone / band
-  record a symbol or feed_id that maps to no canonical asset
-  VERBATIM as a `raw:<symbol>` row (`canonical.AssetOracleRaw`,
-  `internal/canonical/asset_raw.go`) instead of skipping the slot —
-  which is also what keeps the synthetic `op_index` stable, since it
-  is derived from the vector POSITION. Raw rows are RECORD-layer
-  only: `Pair.Validate` refuses one as a pair leg, `supply.AssetKey`
-  refuses one as a supply key, and nothing in the interpretation
-  layer (VWAP, divergence) may read one — scans over
-  `oracle_updates` that don't key by canonical asset must filter on
-  `Asset.IsMapped()` / `asset NOT LIKE 'raw:%'`.
-  `/v1/oracle/streams` omits them unless `include_unmapped=true`
-  (every reading carries a `mapped` discriminator; `/v1/oracle/latest`
-  returns one only when asked for by its exact `raw:` key).
-  `stellarindex_source_unknown_symbols_total` still counts them —
-  it now means "recorded as raw", a mapping gap for the allow-list
-  owner, and `stellarindex_ingestion_oracle_unknown_symbols` tickets
-  on it. Widening the allow-list re-derives the same PK and promotes
-  `raw:X` → `crypto:X` in place on replay, so no capture is lost.
-  Design: docs/design/oracle-capture-totality-design.md.
-- **Post-P23 (Whisk, mainnet 2025-09-03) every classic asset
-  movement emits a unified transfer/mint/burn event with a 4th
-  `sep0011_asset` topic.** Our decoder handles both event SHAPES —
-  the 3-topic SEP-41 form and the 4-topic CAP-67 form (the 4th topic
-  is `sep0011_asset`). It does NOT, however, parse pre-P23 classic
-  movements: there is no operations+effects fallback for the era
-  before unified events existed, so historical classic-asset movement
-  before P23 is not reconstructed from this path.
-- **SEP-41 `transfer` data can be EITHER a simple `i128` OR a map**
-  containing `amount` + `to_muxed_id`. Type-test before
-  `MustI128()`.
-- **stellar/go monorepo was archived 2025-12-16.** The new Go SDK
-  lives at `github.com/stellar/go-stellar-sdk`. Horizon, Galexie,
-  stellar-rpc, stellar-archivist are each in their own repos now.
-- **`withObsrvr/cdp-pipeline-workflow` has verified correctness
-  bugs** in its i128 decoding and SDEX trade extraction. We do
-  **not** inherit from it.
-- **stellar-rpc is NOT in our production ingest path.** The
-  standalone `stellar-rpc` and `stellar-core` watcher services were
-  removed from r1 on 2026-04-23, along with the core prometheus
-  exporter. `stellar-core` itself still runs on r1 — but only as a
-  *captive-core* subprocess spawned by Galexie
-  (`/usr/bin/stellar-core … --metadata-output-stream fd:3`) — which
-  is the supported Galexie deployment shape per ADR-0002. The
-  indexer reads Galexie's MinIO output directly via
-  `go-stellar-sdk/ingest.ApplyLedgerMetadata`. If you catch yourself
-  writing `rpc.GetEvents` for ingest, stop and read
-  [docs/architecture/ingest-pipeline.md](docs/architecture/ingest-pipeline.md). →
-  [docs/operations/r1-deployment-state.md](docs/operations/r1-deployment-state.md)
-- **Soroban DeFi contracts upgrade in place.** Soroswap / Phoenix /
-  Aquarius / Reflector can each `update_contract` without changing
-  their contract address. Event body schemas (field names, types,
-  arity) and topic shapes can change across an upgrade. Live ingest
-  only sees current WASM; **backfill sees every prior version** that
-  ran for the replayed range. Decode by Map-field-name not position,
-  dispatch on topic[0] symbol not contract address, and gate
-  backfill behind a per-WASM-hash decoder audit. →
-  [docs/architecture/contract-schema-evolution.md](docs/architecture/contract-schema-evolution.md)
-- **`/v1/assets/{slug}` returns two different wire shapes.**
-  When `{slug}` is a verified-currency catalogue slug (`usdc`,
-  `eurc`, `aqua`, …) the handler returns `GlobalAssetView`
-  (Stellar-asset identity + headline USD price + Stellar issuance);
-  when it's a canonical asset_id (`USDC-G…`, `native`, `C…`,
-  `fiat:USD`) it returns `AssetDetail` (per-Stellar-asset detail).
-  Same route, two shapes — Go's mux dispatches on the catalogue
-  lookup before parsing as canonical. Clients distinguish via
-  wire-shape discriminators (`ticker` + `price_usd` vs `asset_id`
-  + `type`). The old cross-chain `networks[]` array + the
-  `/v1/assets/{slug}/{network}` drill-down were removed in the
-  Stellar-focus refactor (docs/architecture/stellar-focus-refactor-plan.md).
-- **`internal/currency` is the verified-currency trust surface.**
-  Hand-curated YAML at `internal/currency/data/seed.yaml`, embedded
-  in the binary via `//go:embed`. Adding a verified currency means
-  a code change + redeploy. The catalogue feeds the CG poller's
-  ticker map, the indexer's aggregator pair set, the
-  unverified-collision warning on `/v1/assets/{id}`, the
-  `/v1/assets/verified` listing endpoint, and the explorer's
-  verified-badge UI. Do NOT auto-populate from CG / CMC — the
-  whole point is that it's hand-vetted.
+## Working style
 
----
+- Dry and concise. No preambles, no flattery. Comments explain *why*, not *what*.
+- Smallest PR that advances one thing. NEVER "ship and clean up later".
+- ALWAYS state a measurement with its units and the command that produced it. A performance claim
+  without a number is not a claim.
+- NEVER report a gate as passing on its exit code alone when the code is unreliable. `verify.sh`
+  and `r1-smoke.sh` both exit non-zero for reasons unrelated to the assertions; grep the output
+  for `ALL CHECKS PASSED` / the failure count. NEVER pipe a gate through `tee`, `head` or `sed` —
+  you then read the pipe's status, not the gate's.
+- ALWAYS check for prior art before starting on a symptom: `gh pr list --state all --search`,
+  `git branch -r | grep`, the runbook, and the backlog. Record the result in the PR body.
+- Every pushed branch gets a PR in the same session. A branch with no PR is not work, it is loss.
+- Commit messages: see [CONTRIBUTING.md](CONTRIBUTING.md#commit-messages).
 
-## Operating the reference deployment
+## Where the reference material is
 
-Everything specific to how `r1` is run — ansible-managed configuration
-(codify every host change in the same PR), the mandatory
-`run-heavy-job.sh` wrapper for one-shot jobs, release cutting and
-deployment — is in
-[docs/operations/maintainer-workflow.md](docs/operations/maintainer-workflow.md).
-
-Kept out of this file deliberately: it is true of our deployment, not
-of the project. A fork runs its own boxes.
-
-
-## Common task recipes
-
-### "Bring up a new archival node" / "recover from disaster"
-
-End-to-end recipe in [docs/operations/archival-node-bringup.md](docs/operations/archival-node-bringup.md).
-Six steps from a fresh box to a running indexer (greenfield ≈ 10–13 h
-wall, mostly bandwidth). Same doc has the disaster-recovery triage
-tree (corrupt history-archive, partial galexie-archive partition,
-wiped postgres, lost MinIO data dir).
-
-Per-region storage shape varies by provider — see
-[ADR-0016](docs/adr/0016-per-region-storage-strategy.md): R1
-(Hetzner) is the full-mirror integrity leader; R2 (AWS) reads
-galexie data direct from `aws-public-blockchain` S3, no local
-mirror; R3 (Vultr) keeps galexie-archive on Vultr Object Storage
-hybrid. R2 + R3 trust R1's primary verification but run their own
-Tier A + Tier D periodically as defence-in-depth. The cross-region
-"all regions serve the same rate" property is preserved by
-[ADR-0015](docs/adr/0015-last-closed-bucket-rate-serving.md)'s
-closed-bucket-only API contract.
-
-### "Add a new CEX connector"
-
-CEX/FX venues are NOT under the Galexie → dispatcher path and do NOT
-use `internal/sources/<venue>/` or the on-chain five-file convention.
-They live directly at `internal/sources/external/<venue>/` and
-implement the `external.Connector` framework
-(`internal/sources/external/framework.go`), not `consumer.Source`.
-Copy the `binance` / `kraken` package as the template.
-
-1. Review the venue's public API docs for its real endpoints + pair
-   conventions before writing the parser.
-2. Create `internal/sources/external/<venue>/` following the
-   actual per-package layout: `events.go` (wire types), `parse.go`
-   (vendor JSON → `canonical.Trade`), `streamer.go` (live WS/REST;
-   implements `external.Streamer`) and/or a poller, `backfill.go`
-   (historical OHLC; implements `external.Backfiller`), and
-   `pairs.go` (symbol map). Tests sit alongside as `*_test.go`.
-3. Implement the relevant `external.Connector` sub-interface(s) —
-   `Streamer` (live push, e.g. binance/kraken), `Poller` (REST quote
-   board, used by the FX pollers), and/or `Backfiller` (historical
-   candles). NOT `consumer.Source` — that's the legacy on-chain seam.
-4. Register the venue's `Metadata` (class / subclass / weight /
-   `IncludeInVWAP` / `BackfillSafe`) in the `Registry` map in
-   `internal/sources/external/registry.go`, then wire it into
-   `buildExternal` in `cmd/stellarindex-indexer/main.go` (and the
-   parallel block in `stellarindex-ops`) behind a `cfg.<Venue>.Enabled`
-   gate.
-5. Fixtures are inline golden frames in the package's `*_test.go`
-   (e.g. `binance/streamer_test.go`) — there is no
-   `test/fixtures/external/` directory.
-6. Add an ADR if the venue has unusual constraints (e.g. requires
-   paid tier, or has licensing restrictions on redistribution).
-
-### "Add a new on-chain Soroban DEX"
-
-**Full step-by-step checklist: [docs/contributing/add-onchain-source.md](docs/contributing/add-onchain-source.md).**
-The package is SIX files (`README.md`, `events.go`, `decode.go`, `consumer.go`,
-**`dispatcher_adapter.go`** — the production seam that implements `dispatcher.Decoder`;
-this is the object the dispatcher actually calls — and `source_test.go`), PLUS **six
-wiring edits in other packages** (config `KnownSources`, `pipeline/dispatcher.go`
-BuildDispatcher, `pipeline/sink.go` HandleEvent + IsProjectedEvent,
-`projector/registry.go` buildSource, `external/registry.go` Metadata). Miss a wiring
-edit and the source compiles, registers nowhere, and silently emits nothing. Template:
-`internal/sources/soroswap/`. Reuse the shared helpers (`internal/scval`,
-`canonical.Amount`) — check CAPABILITY-INVENTORY.md before writing utilities.
-
-### "Add a new supply observer"
-
-Read [docs/architecture/supply-pipeline.md](docs/architecture/supply-pipeline.md)
-first — it covers the three-domain split (Algorithm 1 XLM /
-Algorithm 2 classic / Algorithm 3 SEP-41), which dispatcher hook
-each observer plugs into, and where the per-class hypertables
-live. New observers ship as a Go package with package-level docs
-in `doc.go` (not `README.md` — supply observers follow Go
-package-doc convention; `events.go`, `decode.go`, `consumer.go`,
-and a `dispatcher_adapter*.go` pair complete the layout). Pick the
-right dispatcher hook based on what the source emits:
-
-- `LedgerEntryChangeDecoder` for `LedgerEntry` mutations (current
-  use: AccountEntry / trustline / claimable / LP-reserve
-  observers).
-- `OpDecoder` for classic operations (e.g. `change_trust_op`).
-- `Decoder` (event-based) for Soroban contract events (current
-  use: SEP-41 mint/burn/clawback observer).
-
-The reader/storage seam is the same across all three: each
-observer writes to a per-class hypertable
-(`migrations/0011-0014_*.sql` etc.), and `StorageClassicSupplyReader`
-/ `StorageSEP41SupplyReader` aggregate the rows at refresh time.
-Wire the new observer into `cmd/stellarindex-indexer/main.go`
-alongside the existing supply observers and add an integration
-test under `test/integration/` if it touches NUMERIC arithmetic
-(see `test/integration/classic_supply_storage_test.go` /
-`sep41_supply_storage_test.go` for the testcontainers-go pattern).
-
-### "Audit a Soroban source's WASM history (flip BackfillSafe)"
-
-Procedure: [docs/operations/wasm-audits/README.md](docs/operations/wasm-audits/README.md).
-One audit log per source under that directory; each is the
-evidence trail for flipping `internal/sources/external/registry.go`'s
-`BackfillSafe` flag from `false` → `true`. The flag gates
-`stellarindex-ops backfill` from running an unaudited Soroban
-source against historical ranges (AGENTS.md "Soroban DeFi
-contracts upgrade in place").
-
-### "Investigate a price divergence"
-
-Start at [docs/operations/runbooks/price-divergence.md](docs/operations/runbooks/price-divergence.md).
-Aggregator-layer alerts (silent / outlier-storm / class-drop-spike)
-have their own runbooks under the same directory; see
-[docs/architecture/aggregation-plan.md](docs/architecture/aggregation-plan.md)
-for the policy chain that drives them.
-
-### "Find why a metric is alerting"
-
-Every alert references a runbook at `docs/operations/runbooks/<alert-name>.md`.
-If it doesn't, that's a CI failure.
-
-### "Add a new Prometheus metric"
-
-1. Declare the metric in `internal/obs/metrics.go` (one of the
-   typed `*Vec` variables near the bottom) and register it in
-   **`registerAppMetrics()` / `registerAppMetricsTail()`** (NOT
-   `init()` directly — `init()` delegates to those, which are split
-   to stay under the `funlen` ceiling).
-2. Wire it at the point of observation. For goroutine workers
-   doing IO, the established pattern is paired:
-   - `*Total{outcome}` counter for outcomes (per-attempt count).
-   - `*DurationSeconds{outcome}` histogram for latency.
-   Operators chart `outcome="ok"` p95/p99 separately from
-   failure outcomes to detect "endpoint slow" vs "endpoint
-   failing" independently. The wave-88/89/90/91 series
-   (`customer_webhook_delivery`, `divergence_refresh`,
-   `aggregator_supply_refresh`, `anomaly_freeze_recovery_sweep`)
-   are the canonical examples.
-3. Document in `docs/reference/metrics/README.md` with a
-   when-to-look-at-this prose block.
-4. If the metric warrants alerting, add a rule to BOTH
-   `deploy/monitoring/rules/<area>.yml` (multi-host) and
-   `configs/prometheus/rules.r1/<area>.yml` (R1 overlay). CI's
-   `monitoring-rules` job validates both directories with
-   promtool (wave 96); the wave-82 lint catches sibling-file
-   presence and the wave-78 template-presence lint catches
-   missing runbook structure.
-5. Write a regression test in the worker's test file using
-   `obstest.HistogramSampleCount` (`internal/obstest/`,
-   wave 100) — the helper exists because
-   `HistogramVec.WithLabelValues(...)` returns a
-   `prometheus.Observer` not a Collector, so the official
-   `testutil.CollectAndCount` can't act on per-label children
-   directly.
-
-### "Change the OpenAPI spec"
-
-1. Edit `openapi/stellar-index.v1.yaml`.
-2. Regenerate **every** spec-derived artifact and commit the diffs —
-   three separate generators, and it's easy to forget the last two
-   (both have silently drifted onto main before):
-   - `make docs-api` — rendered reference + colocated YAML (the only
-     one `make docs-all` and the CI drift-lint cover).
-   - `make docs-postman` — `examples/postman/…json` (deterministic
-     since the generator's RNG is seeded; drift-guarded in CI by an
-     exact `git diff --exit-code -- examples/postman` in the
-     postman-check job).
-   - `make web-generate-api` — `web/explorer/src/api/types.ts`, the
-     explorer's compile-time contract (drift-guarded in CI by an
-     exact `git diff --exit-code -- src/api/types.ts` in the
-     web-explorer job).
-3. Handlers in `internal/api/v1/` get updated; contract tests
-   verify they match.
-4. Bump the API minor version if the change is additive, major
-   if breaking.
-5. CHANGELOG entry under `[Unreleased]`.
-
-### "Cut a release" / "Deploy to the reference deployment"
-
-Both are maintainer operations against our own boxes rather than
-things a contributor does, so they live in
-[docs/operations/maintainer-workflow.md](docs/operations/maintainer-workflow.md).
-Full runbooks: [release-process.md](docs/operations/release-process.md)
-and [deploy-workflow.md](docs/operations/deploy-workflow.md).
-
-
-## Where to find design rationale
-
-- **What we decided + why:** [docs/adr/](docs/adr/) (numbered,
-  immutable, accept-only-or-supersede).
-- **Narrative architecture:** [docs/architecture/](docs/architecture/).
-- **How every requirement maps to a source:**
-  [docs/architecture/coverage-matrix.md](docs/architecture/coverage-matrix.md).
-- **Engineering policy (mandatory reading before a PR):**
-  [docs/engineering-standards.md](docs/engineering-standards.md).
-
----
-
-## Project procedures (docs/contributing/procedures/)
-
-Nine documents encode this repo's procedures and incident-corpus
-judgement as checklists. If you are doing one of these tasks, READ THE
-PROCEDURE rather than working from memory:
-
-| Procedure | Use for |
+| | |
 |---|---|
-| `/add-onchain-source` | new Soroban protocol: six files + six wiring edits + gating + the lockstep checks |
-| `/add-cex-connector` | new CEX/FX venue: Connector framework + the scaling traps |
-| `/add-endpoint` | API route/shape changes: spec + 3 generators + SDK triage + cache policy |
-| `/add-metric` | metric + BOTH rule trees + runbook + the five-lint guard chain |
-| `/cut-release` | CHANGELOG promote + guard-rail tagging (one release per session) |
-| `/deploy-r1` | deploy workflow + post-deploy verification battery + rollback |
-| `/review-stellarindex` | per-subsystem adversarial review checklists from the F-####/CS-### corpus |
-| `/diagnose-stellarindex` | r1 incident decision trees (frozen cursor, stale prices, verdict red) |
-| `/verify-done` | the pre-completion gate stack every other skill ends with |
-
----
-
-## How to ask for help
-
-- **Code review:** the appropriate CODEOWNER (see
-  [CODEOWNERS](CODEOWNERS)).
-- **Architectural decision:** propose an ADR in `docs/adr/` with
-  status `Proposed`. Discuss in PR.
-- **Security issue:** `security@stellarindex.io` — do not open
-  a public issue. See [SECURITY.md](SECURITY.md).
-- **General contribution questions:** [CONTRIBUTING.md](CONTRIBUTING.md).
-
----
-
-## If in doubt
-
-Make the smallest possible PR that advances one thing and is easy
-to review. Never "ship and clean up later." See
-[docs/engineering-standards.md §2](docs/engineering-standards.md)
-for the full Definition of Done.
-
----
-
-## Working in a long session
-
-The cadence for a multi-hour agent session — one PR, one merge, then
-the next, never a stack of branches that collide on shared files — and
-the no-orphan-work contract live in
-[docs/operations/maintainer-workflow.md](docs/operations/maintainer-workflow.md).
-See also [AGENTS.md — No orphan work](AGENTS.md#no-orphan-work--the-contract).
-
----
-
-## Docs index
-
-| Doc | Contents |
-| --- | -------- |
-| [README.md](README.md) | Project overview, status, contact |
-| [AGENTS.md](AGENTS.md) | Full repo orientation (layout, invariants, task recipes, footguns) |
-| [CONTRIBUTING.md](CONTRIBUTING.md) | Contribution workflow + Definition of Done |
-| [SECURITY.md](SECURITY.md) | Vulnerability disclosure process |
-| [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) | Contributor Covenant 2.1 |
-| [CHANGELOG.md](CHANGELOG.md) | Keep-a-Changelog format; Unreleased at top |
-| [VERSIONS.md](VERSIONS.md) | Pinned SHAs of every upstream dependency |
-| [docs/engineering-standards.md](docs/engineering-standards.md) | The enforcement policy |
-| [docs/architecture/semver-policy.md](docs/architecture/semver-policy.md) | Versioning + repo-layout rationale |
-| `docs/adr/` | Architecture Decision Records (numbered, immutable) |
-| `docs/architecture/` | Narrative design docs |
-| `docs/protocols/` | Per-protocol verification pages |
-
----
-
-## No orphan work — the contract
-
-Stated once, here; CONTRIBUTING.md and AGENTS.md point at this
-section. It exists because on 2026-08-27 a three-file fix branch was
-pushed with no PR and no backlog line; the next day a different
-agent re-diagnosed the same alert from scratch and fixed it
-differently (#254 — the real root cause), and the orphan was found
-only by a manual branch audit. A postmortem sat on another orphan
-branch for a day (#255).
-
-1. **Every pushed branch gets a PR in the same working session.**
-   Draft is fine. A branch with no PR is not work, it is loss —
-   nobody else can see it, so it will be redone. The daily
-   `orphan-branches` workflow lists any PR-less branch older than
-   24h in a tracking issue; don't be on it.
-2. **Prior-art check before starting on a symptom, alert or
-   finding.** Run all of:
-   - `gh pr list --state all --search "<alert name or symptom keywords>"`
-   - `git branch -r | grep -i <keyword>`
-   - grep the backlog (`docs/operations/v1-launch-plan.md`) and the
-     alert's runbook (`docs/operations/runbooks/`).
-
-   Record the result in the PR body's **Prior art** field:
-   `none` or `#NNN (superseded because …)`.
-3. **The PR body names the alert/finding and states root cause vs
-   symptom.** "Fixes `stellarindex_assets_popular_priceless`" is a
-   symptom; say what was actually wrong and why this change removes
-   it rather than hides it.
-4. **Superseding a prior attempt means closing it with a comment
-   saying why.** Never silently — the closed PR is how the next
-   reader learns which diagnosis lost and why.
-
----
-
-## When in doubt
-
-- Smallest-possible PR that advances one thing.
-- Read the nearest `doc.go` or `README.md` before you touch code.
-- Decisions go in `docs/adr/`, not architecture docs.
-- Every `TODO` has a linked issue.
-- Every amount is `*big.Int`, not `int64`.
+| [docs/architecture/repo-map.md](docs/architecture/repo-map.md) | What lives in which directory |
+| [docs/architecture/domain-traps.md](docs/architecture/domain-traps.md) | The evidence behind the domain rules above |
+| [docs/contributing/task-recipes.md](docs/contributing/task-recipes.md) | "Add a source", "add an endpoint", "recover from disaster" |
+| [docs/contributing/procedures/](docs/contributing/procedures/) | Nine step-by-step procedures with gate checklists |
+| [docs/adr/](docs/adr/) | Decisions and their rationale (numbered, immutable) |
+| [docs/architecture/](docs/architecture/) | Narrative design |
+| [docs/engineering-standards.md](docs/engineering-standards.md) | The enforcement policy and Definition of Done |
+| [docs/operations/maintainer-workflow.md](docs/operations/maintainer-workflow.md) | How the reference deployment is run — not needed to contribute |
+| [CONTRIBUTING.md](CONTRIBUTING.md) | Workflow, commit standard, review |
+| [SECURITY.md](SECURITY.md) | Disclosure — never open a public issue for a vulnerability |

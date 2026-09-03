@@ -415,7 +415,7 @@ that path is `stellarindex-ops backfill -resume` only.
 
 ## Cross-references
 
-- [`cmd/stellarindex-ops/backfill.go`](../../cmd/stellarindex-ops/backfill.go) — implementation.
+- [`internal/ops/ingest/backfill.go`](../../internal/ops/ingest/backfill.go) — implementation.
 - [`docs/operations/wasm-audits/README.md`](wasm-audits/README.md) — flip `BackfillSafe` once a Soroban source's WASM history is audited.
 - [`internal/sources/external/registry.go`](../../internal/sources/external/registry.go) — `BackfillSafe` flag per source.
 - [`migrations/0002_create_price_aggregates.up.sql`](../../migrations/0002_create_price_aggregates.up.sql) — CAGG definitions that materialise on inserted trades.

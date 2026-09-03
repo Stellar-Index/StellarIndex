@@ -65,7 +65,7 @@ Currently shipped:
   ([#201](https://github.com/Stellar-Index/StellarIndex/pull/201)).
   Wire-shape types (`Envelope`, `Flags`, `Pagination`,
   `AssetDetail`, …) live in `pkg/client/types.go` rather than a
-  separate `pkg/types` package — see AGENTS.md "Repo map" for the
+  separate `pkg/types` package — see docs/architecture/repo-map.md for the
   rationale. The server's `internal/api/v1` defines its own
   envelope intentionally; the duplication is the SemVer firewall
   between the SDK's public surface and internal handler shapes.

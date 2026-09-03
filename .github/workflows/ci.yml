@@ -345,6 +345,23 @@ jobs:
         # discipline, generated-file banner integrity, ADR status
         # + superseded-by validity.
         run: ./scripts/ci/lint-docs.sh
+      - name: lint-agents-file
+        # AGENTS.md is read cold and has to be retained, so it is capped
+        # and required to stay operative: a length ceiling, no reference
+        # sections, a minimum count of ALWAYS/NEVER directives (so an
+        # emptied file cannot pass), no self-links, and every relative
+        # link resolving.
+        run: ./scripts/ci/lint-agents-file.sh
+      - name: lint-agents-file self-test
+        # Proves each of those five assertions can still go red.
+        run: ./scripts/ci/lint-agents-file-test.sh
+      - name: lint-doc-links
+        # Every relative markdown link must resolve. A broken link in a
+        # runbook is an operational defect: the operator follows the
+        # pointer the alert gave them and lands on a 404.
+        run: ./scripts/ci/lint-doc-links.sh
+      - name: lint-doc-links self-test
+        run: ./scripts/ci/lint-doc-links-test.sh
 
   import-checks:
     name: import-boundary lint

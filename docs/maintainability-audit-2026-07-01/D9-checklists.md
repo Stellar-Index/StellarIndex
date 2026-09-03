@@ -4,7 +4,7 @@ title: D9 — Convention docs as checklists — findings + drop-in checklists
 
 # D9 — Convention docs as checklists
 
-## Findings on the existing recipes (AGENTS.md "Common task recipes")
+## Findings on the existing recipes (docs/contributing/task-recipes.md)
 - **M0 — "Add a new on-chain Soroban DEX" misleads → a source that registers nowhere +
   emits nothing.** The recipe says "five-file convention" but omits **`dispatcher_adapter.go`
   (the production seam — the actual `dispatcher.Decoder`)** and lists **zero of the 6 wiring

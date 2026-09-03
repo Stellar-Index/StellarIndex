@@ -85,12 +85,48 @@ If `make dev` fails out of the box, that's a bug — file an issue.
    substitute `make lint && make test` — it skips the doc /
    import / openapi / monitoring lints that CI enforces.
 4. **Open a PR**; fill in the template. Same session as the push —
-   see the [no-orphan-work contract](AGENTS.md#no-orphan-work--the-contract)
+   see the [no-orphan-work contract](CONTRIBUTING.md#no-orphan-work--the-contract)
    (prior-art check, alert/finding named, supersede by closing).
 5. **CI must be green.** No merging with red CI.
 6. **A CODEOWNER must review.** See [CODEOWNERS](CODEOWNERS).
 7. **Author merges after approval** (not the reviewer). Rebase +
    squash if your commits are messy.
+
+---
+
+## No orphan work — the contract
+
+Stated once, here; CONTRIBUTING.md and AGENTS.md point at this
+section. It exists because on 2026-08-27 a three-file fix branch was
+pushed with no PR and no backlog line; the next day a different
+agent re-diagnosed the same alert from scratch and fixed it
+differently (#254 — the real root cause), and the orphan was found
+only by a manual branch audit. A postmortem sat on another orphan
+branch for a day (#255).
+
+1. **Every pushed branch gets a PR in the same working session.**
+   Draft is fine. A branch with no PR is not work, it is loss —
+   nobody else can see it, so it will be redone. The daily
+   `orphan-branches` workflow lists any PR-less branch older than
+   24h in a tracking issue; don't be on it.
+2. **Prior-art check before starting on a symptom, alert or
+   finding.** Run all of:
+   - `gh pr list --state all --search "<alert name or symptom keywords>"`
+   - `git branch -r | grep -i <keyword>`
+   - grep the backlog (`docs/operations/v1-launch-plan.md`) and the
+     alert's runbook (`docs/operations/runbooks/`).
+
+   Record the result in the PR body's **Prior art** field:
+   `none` or `#NNN (superseded because …)`.
+3. **The PR body names the alert/finding and states root cause vs
+   symptom.** "Fixes `stellarindex_assets_popular_priceless`" is a
+   symptom; say what was actually wrong and why this change removes
+   it rather than hides it.
+4. **Superseding a prior attempt means closing it with a comment
+   saying why.** Never silently — the closed PR is how the next
+   reader learns which diagnosis lost and why.
+
+---
 
 ---
 
@@ -171,7 +207,7 @@ Full rules: [engineering-standards.md §2.1](docs/engineering-standards.md).
 
 CEX, DEX, AMM, FX, oracle — same pattern. See:
 
-- [AGENTS.md](AGENTS.md) → "Common task recipes."
+- [docs/contributing/task-recipes.md](docs/contributing/task-recipes.md)
 - [docs/architecture/ingest-pipeline.md](docs/architecture/ingest-pipeline.md)
   — the binding rules for source packages (pure decoders, no
   goroutines, no RPC clients, dispatcher owns routing).

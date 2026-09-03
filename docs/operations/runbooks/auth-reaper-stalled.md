@@ -21,7 +21,7 @@ severity: ticket
 Three background reapers in the API binary bound tables an unauthenticated
 caller can grow: `login_code_lockouts` (keyed by attacker-chosen email,
 [login-code-lockout-table-growing](login-code-lockout-table-growing.md)),
-`magic_link_tokens` ([magic-link-token-table-growing](magic-link-token-table-growing.md))
+`magic_link_tokens` (`magic-link-token-table-growing` — runbook not yet written)
 and speculative-account orphans (`internal/signupreaper`). Each reported
 WHAT it did — rows deleted, errors, a rows gauge — but none reported THAT
 it ran. A reaper that dies (a recovered panic, a Postgres call that never
@@ -102,7 +102,7 @@ cadence, so the threshold follows the deployment's own interval.
 ## Related
 
 - [login-code-lockout-table-growing](login-code-lockout-table-growing.md)
-- [magic-link-token-table-growing](magic-link-token-table-growing.md)
+- `magic-link-token-table-growing` (runbook not yet written)
 - [worker-panicked](worker-panicked.md)
 - Metrics: [`stellarindex_auth_reaper_last_sweep_unix`](../../reference/metrics/README.md#stellarindex_auth_reaper_last_sweep_unix)
 

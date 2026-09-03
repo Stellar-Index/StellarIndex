@@ -349,8 +349,8 @@ per-source under `test/fixtures/<source>/` rather than in a separate
 `protocol-boundary/` tree, so a decoder's pre-/post-protocol-bump
 fixtures live next to the source they exercise. The unified
 `transfer/mint/burn` (CAP-67 / P23) handling is exercised through
-each source's golden files; AGENTS.md "Things that will surprise
-you" calls out the post-P23 4th-topic shape.
+each source's golden files; docs/architecture/domain-traps.md
+calls out the post-P23 4th-topic shape.
 
 ---
 

@@ -299,7 +299,7 @@ Preventive controls put in place:
 
 - **AGENTS.md** "Invariants — never violate these" now has a
   dedicated rule #6 pointing at this doc.
-- **AGENTS.md** "Things that will surprise you" highlights the 2026-
+- **docs/architecture/domain-traps.md** highlights the 2026-
   04-23 RPC removal.
 - **This doc** is binding (status: binding, not "living"); it gets
   linked from every PR description that touches the ingest path.

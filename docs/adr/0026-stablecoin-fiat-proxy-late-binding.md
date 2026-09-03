@@ -68,7 +68,7 @@ mapping logic in the hot path) but loses three things:
   immediately for ALL historical data.
 
 Option 2 (late binding) was the implicit shape from the
-start — AGENTS.md's "Things that will surprise you" section
+start — docs/architecture/domain-traps.md
 flagged it before any rewriting was wired — but the API
 surfaces (`/v1/price`, `/v1/price/tip`, `/v1/vwap`,
 `/v1/twap`, `/v1/ohlc`, `/v1/oracle/prices`, `/v1/chart`)
@@ -208,5 +208,5 @@ covers USDT / USDC / PYUSD / EUROC / EUROB / MXNe.
   documents the operator response when a peg breaks.
 - The late-binding policy was an implicit decision from the start
   but lacked a binding ADR until this one.
-- AGENTS.md "Things that will surprise you" carries the
+- docs/architecture/domain-traps.md carries the
   short version for AI agents reading the repo cold.

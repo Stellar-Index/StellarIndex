@@ -55,7 +55,7 @@ ssh root@136.243.90.96 'curl -s "http://localhost:9090/api/v1/query?query=stella
 1. **Restart the owning unit** — `Recover` does not restart the worker:
    `systemctl restart stellarindex-<binary>`. An indexer restart resets the
    ledgerstream cursor: confirm it advances afterwards
-   ([frozen-indexer-cursor](frozen-indexer-cursor.md)).
+   ([cursor-stuck](cursor-stuck.md)).
 2. Confirm the alert resolves (the counter is monotonic; `increase(...[10m])`
    drops to 0 once ten minutes pass without a new panic).
 3. If the same worker panics again on the same input, it is a poison input
@@ -78,7 +78,7 @@ low-value, the process is now running without it.
 
 - #368 (CON worker-fleet audit) M4 — the finding this closes.
 - `internal/worker/recover.go` — the only place the counter increments.
-- [dependency-down](dependency-down.md), [frozen-indexer-cursor](frozen-indexer-cursor.md).
+- [dependency-down](dependency-down.md), [cursor-stuck](cursor-stuck.md).
 
 ## Changelog
 

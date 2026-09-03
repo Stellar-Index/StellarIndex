@@ -6,7 +6,7 @@ name: orphan-branches
 # different agent re-diagnosed the same alert from scratch and fixed it
 # differently (#254), and the orphan was found only by a manual branch
 # audit. A postmortem sat on another PR-less branch for a day (#255).
-# The contract is AGENTS.md "No orphan work": every pushed branch gets
+# The contract is CONTRIBUTING.md "No orphan work": every pushed branch gets
 # a PR in the same session. This workflow is the mechanical backstop:
 # once a day it lists every remote branch (other than main and the
 # old-*/archive* history patterns) that has NO open-or-merged PR and
@@ -145,7 +145,7 @@ jobs:
         run: |
           set -euo pipefail
           gh label create "$ISSUE_LABEL" --color D93F0B \
-            --description "remote branches with no PR (AGENTS.md: No orphan work)" 2>/dev/null || true
+            --description "remote branches with no PR (CONTRIBUTING.md: No orphan work)" 2>/dev/null || true
 
           # Dispositioned branches are clutter, not lost work — named as
           # such so they stay deletable without diluting the table.
@@ -176,7 +176,7 @@ jobs:
             exit 0
           fi
 
-          body="$(printf '%s remote branch(es) have no open or merged PR and a last commit older than 24h. Per [AGENTS.md — No orphan work](%s/%s/blob/main/AGENTS.md#no-orphan-work--the-contract): open a (Draft) PR for it, or delete it (closing any prior PR with a comment saying why it was superseded).\n\n| Branch | Last commit | Author | SHA / note |\n| --- | --- | --- | --- |\n%s%s\n---\n_Auto-managed by the orphan-branches workflow (run %s). Body is rewritten on every run; closes automatically when no orphans remain._\n' \
+          body="$(printf '%s remote branch(es) have no open or merged PR and a last commit older than 24h. Per [CONTRIBUTING.md — No orphan work](%s/%s/blob/main/CONTRIBUTING.md#no-orphan-work--the-contract): open a (Draft) PR for it, or delete it (closing any prior PR with a comment saying why it was superseded).\n\n| Branch | Last commit | Author | SHA / note |\n| --- | --- | --- | --- |\n%s%s\n---\n_Auto-managed by the orphan-branches workflow (run %s). Body is rewritten on every run; closes automatically when no orphans remain._\n' \
             "$COUNT" "${GITHUB_SERVER_URL:-https://github.com}" "$GH_REPO" "$ROWS" "$note" "${GITHUB_RUN_ID:-?}")"
 
           existing="$(gh issue list --label "$ISSUE_LABEL" --state open \

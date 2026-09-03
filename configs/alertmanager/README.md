@@ -14,8 +14,8 @@ Two parallel apply paths produce the same routing:
   [monitoring playbook](../ansible/playbooks/monitoring.yml).
 
 Both paths use the `page` / `ticket` / `informational` severity
-vocabulary defined in the
-[severity ladder runbook](../../docs/operations/severity-ladder.md)
+vocabulary defined in the severity ladder in
+[docs/operations/sev-playbook.md](../../docs/operations/sev-playbook.md)
 — matching every rule in `deploy/monitoring/rules/` +
 `configs/prometheus/rules.r1/`.
 

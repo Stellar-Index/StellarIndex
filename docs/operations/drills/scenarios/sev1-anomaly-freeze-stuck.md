@@ -81,7 +81,7 @@ participants to narrate.
 Drill leader compares participant narratives against this
 expected sequence.
 
-### Within 5 minutes (per [§2 Timelines](../../sev-playbook.md#2-timelines-the-contractual-promises))
+### Within 5 minutes (per [§2 Timelines](../../sev-playbook.md#2-timelines-the-sla-promises))
 
 - Oncall acknowledges PagerDuty.
 - Oncall opens `#incident-<YYYY-MM-DD>-freeze-stuck` channel.

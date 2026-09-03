@@ -15,7 +15,7 @@ status: point-in-time spike report (2026-07-04) — ADR-0044 Accepted; the worke
 Date: 2026-07-04
 Scope: prove an OpenNext build of the CURRENT explorer app (no
 route-family changes) renders under `wrangler dev`, per the Stage 1
-exit criterion in [ADR-0044](0044-explorer-edge-rendering.md).
+exit criterion in [ADR-0044](../adr/0044-explorer-edge-rendering.md).
 Everything here ran locally; nothing was deployed.
 
 **Verdict: GO for Stage 2.** The build worked on the first attempt,

@@ -68,7 +68,7 @@ expected sequence.
 
 ### Within 30 minutes — acknowledge + diagnose
 
-Per SEV-2 timelines in [§2](../../sev-playbook.md#2-timelines-the-contractual-promises):
+Per SEV-2 timelines in [§2](../../sev-playbook.md#2-timelines-the-sla-promises):
 
 - Oncall acknowledges in PagerDuty within 30 min (looser than
   SEV-1's 5 min).

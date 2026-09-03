@@ -127,7 +127,7 @@ distant region. Backup via pgBackRest to MinIO with 5-min RPO.
 
 - Backups: pgBackRest with WAL streaming, ~5-min RPO. Monthly
   automated restore drill, documented in
-  [docs/architecture/ha-plan.md §8](../architecture/ha-plan.md#8-backup--restore).
+  [docs/architecture/ha-plan.md §8](../architecture/ha-plan.md#8-backup--restore--target-design-rewritten-2026-07-18-deployment-status-verified-2026-07-25).
 - Upgrades: Timescale major-version upgrades require `ALTER
   EXTENSION timescaledb UPDATE` + sometimes downtime. Tested in
   staging before production, never skipped.
