@@ -61,6 +61,17 @@ all:
     # invariant and live in the role defaults.
     stellarindex_backfill_from_ledger: 62403000
 
+    # Where ch-live-catchup starts its gap scan: one past the ceiling
+    # of the certified ClickHouse bulk backfill. Below this the lake is
+    # contiguous by construction; at or above it the in-dispatcher
+    # dual-sink can leave a hole, and this timer is the only thing that
+    # heals one. There is deliberately NO role default — each network
+    # has its own ceiling and a wrong value fails silently in both
+    # directions (#371 F10) — so state it here. Re-check whenever the
+    # bulk-backfill ceiling moves: the value is `-to` of the last
+    # certified ch-backfill range, plus one.
+    stellarindex_ch_live_era_from: 62894001
+
     # ───── Storage layout ──────────────────────────────────────────
     # Typical post-installimage layout:
     #   * nvme0n1 + nvme1n1: OS-mirror drives. installimage created

@@ -87,3 +87,66 @@ func TestDivergenceRefreshOutcomesAreSeeded(t *testing.T) {
 		}
 	}
 }
+
+// TestCustomerWebhookDeliveryOutcomesAreSeeded is the #368 M6
+// regression, in the same shape as its divergence sibling above.
+//
+// Every alert on this counter uses rate()/increase(). A CounterVec
+// child does not exist until its first .Inc(), and rate()/increase()
+// over a series whose FIRST sample in the window is also its first
+// sample ever computes 0 — so on a fresh process the first `exhausted`
+// (a customer's delivery permanently lost) and the first `mark_error`
+// (the duplicate-delivery loop markTerminal's own godoc says "makes the
+// loop visible to an alert") both raise nothing at all. Both alerts
+// then need a SECOND occurrence inside the same window, which the
+// single-row loop this metric exists to catch does not reliably
+// produce.
+//
+// The subject set is derived from the EMITTER rather than restated
+// here, so a new outcome added to customerwebhook/worker.go without a
+// matching seed fails on the day it is written.
+func TestCustomerWebhookDeliveryOutcomesAreSeeded(t *testing.T) {
+	src, err := os.ReadFile("../customerwebhook/worker.go")
+	if err != nil {
+		t.Fatalf("read emitter source: %v", err)
+	}
+	body := string(src)
+
+	// The four spellings the emitter uses for an outcome label: the
+	// direct counter call, the paired duration histogram (which carries
+	// the same vocabulary), the `outcome = "…"` reassignment inside
+	// handleFailure, and the trailing string argument of the two
+	// helpers that take the outcome by name.
+	patterns := []*regexp.Regexp{
+		regexp.MustCompile(`CustomerWebhookDeliveryAttemptsTotal\.WithLabelValues\("([a-z_]+)"\)`),
+		regexp.MustCompile(`CustomerWebhookDeliveryDurationSeconds\.WithLabelValues\("([a-z_]+)"\)`),
+		regexp.MustCompile(`outcome\s:?=\s"([a-z_]+)"`),
+		regexp.MustCompile(`(?m)^\s*(?:w\.)?(?:markTerminal|handleFailure)\(.*"([a-z_]+)"\)$`),
+		regexp.MustCompile(`(?m)^\s*"([a-z_]+)"\)$`), // continuation line of a wrapped call
+	}
+	want := map[string]bool{}
+	for _, re := range patterns {
+		for _, m := range re.FindAllStringSubmatch(body, -1) {
+			want[m[1]] = true
+		}
+	}
+	if len(want) == 0 {
+		t.Fatal("found no outcome literals in the emitter — the scan is broken, and a " +
+			"guard with an empty subject set passes forever")
+	}
+	// The two outcomes alerts select on by name today. Pinned
+	// explicitly so a scan regression cannot quietly drop them.
+	want["exhausted"] = true
+	want["mark_error"] = true
+
+	got := childLabelValues(t, CustomerWebhookDeliveryAttemptsTotal, "outcome")
+	for outcome := range want {
+		if !got[outcome] {
+			t.Errorf("outcome %q is emitted by customerwebhook/worker.go but not pre-seeded "+
+				"in seedBoundedLabelSeries. Until its first occurrence the series does not "+
+				"exist, so increase()/rate() over the window containing that first event is "+
+				"0 and the alert stays silent for exactly the first occurrence it exists to "+
+				"report.", outcome)
+		}
+	}
+}

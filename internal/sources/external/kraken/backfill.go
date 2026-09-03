@@ -32,6 +32,19 @@ const ohlcPath = "/0/public/OHLC"
 // simply not served via this endpoint).
 const krakenMaxResponse = 720
 
+// krakenRESTTimeout bounds EVERY REST call this package makes
+// (/OHLC and /Trades). Both pagination loops check ctx only BETWEEN
+// pages, and `stellarindex-ops backfill` hands them the process root
+// context — which carries no deadline. So a venue that accepts the
+// connection and then never writes a response is bounded by this and
+// nothing else; without it the backfill wedges until an operator
+// notices (#371 F5).
+//
+// A var rather than a const purely so the backfill tests can drive the
+// real production path against a black-holing server without waiting
+// 30 s. Nothing in production reassigns it.
+var krakenRESTTimeout = 30 * time.Second
+
 // Backfill implements external.Backfiller. Returns historical
 // trades synthesised from Kraken OHLC candles — one canonical.Trade
 // per bucket, with Kraken's own VWAP field providing the effective
@@ -174,7 +187,7 @@ func fetchKrakenOHLC(ctx context.Context, endpoint string, q url.Values) ([]krak
 	}
 	req.Header.Set("Accept", "application/json")
 
-	client := &http.Client{Timeout: 30 * time.Second}
+	client := &http.Client{Timeout: krakenRESTTimeout}
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, 0, fmt.Errorf("http: %w", err)

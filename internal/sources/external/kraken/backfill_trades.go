@@ -108,7 +108,11 @@ func fetchKrakenTrades(ctx context.Context, endpoint string, q url.Values) ([]kr
 	if err != nil {
 		return nil, "", err
 	}
-	resp, err := http.DefaultClient.Do(req)
+	// Bounded by krakenRESTTimeout, never http.DefaultClient: the
+	// latter has no Timeout, and the pagination loop above only
+	// consults ctx between pages (#371 F5).
+	client := &http.Client{Timeout: krakenRESTTimeout}
+	resp, err := client.Do(req)
 	if err != nil {
 		return nil, "", err
 	}

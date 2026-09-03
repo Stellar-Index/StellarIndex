@@ -469,4 +469,21 @@
       STELLARINDEX_CLICKHOUSE_OPS_USER={{ clickhouse_ops_batch_user }}
       STELLARINDEX_CLICKHOUSE_OPS_PASSWORD={{ clickhouse_ops_batch_password }}
       {% endif %}
+      # Live-era floor for ch-live-catchup.sh — the lake's only
+      # self-healer (#371 F10). One past the ceiling of the certified
+      # bulk backfill: below it ch-backfill already wrote a contiguous
+      # range, at or above it a dual-sink hole can form. It is a
+      # per-HOST fact (each network has its own backfill ceiling), so
+      # the role deliberately carries NO default: the script used to
+      # hardcode r1's mainnet ceiling and 08-clickhouse.yml copies that
+      # script verbatim to every provisioned host, which on another
+      # network is a floor above its own tip — a healer that silently
+      # scans an empty range. Unset here ⇒ absent from the file ⇒ the
+      # script exits 1 naming this variable, which surfaces as
+      # stellarindex_systemd_unit_failed rather than as a lake that
+      # quietly stops healing. Same "every inventory states its own
+      # answer" shape as allowed_ssh_cidrs.
+      {% if stellarindex_ch_live_era_from is defined %}
+      LIVE_ERA_FROM={{ stellarindex_ch_live_era_from }}
+      {% endif %}
   no_log: true

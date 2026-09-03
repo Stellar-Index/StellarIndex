@@ -109,6 +109,11 @@ func directorySync(args []string) error {
 	return nil
 }
 
+// directoryFetchTimeout bounds the directory tarball download. Generous
+// because the tarball is a few MB over the public internet, but finite:
+// an unbounded fetch is a hang, not a slow success.
+const directoryFetchTimeout = 2 * time.Minute
+
 // fetchDirectoryTarball downloads the repo tarball and parses every
 // accounts/*.json blob into DirectoryEntry rows.
 func fetchDirectoryTarball(ctx context.Context, url string) (entries []timescale.DirectoryEntry, skipped int, err error) {
@@ -116,7 +121,17 @@ func fetchDirectoryTarball(ctx context.Context, url string) (entries []timescale
 	if err != nil {
 		return nil, 0, err
 	}
-	resp, err := http.DefaultClient.Do(req)
+	// http.DefaultClient has NO timeout. A tarball fetch against a
+	// third-party host that accepts the connection and then stops sending
+	// would hang this command forever — same class as the kraken REST
+	// call fixed alongside this (#371 F5), and the reason that one was
+	// worth finding: an operator command that never returns looks like a
+	// slow network, not a bug.
+	//
+	// ctx still bounds it when the caller supplies a deadline; this makes
+	// the bound unconditional.
+	client := &http.Client{Timeout: directoryFetchTimeout}
+	resp, err := client.Do(req)
 	if err != nil {
 		return nil, 0, fmt.Errorf("directory-sync: fetch: %w", err)
 	}

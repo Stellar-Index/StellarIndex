@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
-# ch-ops-user-test.sh — the ClickHouse ops-credential contract for every
-# scripts/ops script that shells out to clickhouse-client.
+# ch-ops-user-test.sh — the shared scripts/ops contracts CI pins under
+# stubs. Two of them:
+#
+#   A. the ClickHouse ops-credential contract for every scripts/ops
+#      script that shells out to clickhouse-client (below);
+#   B. ch-live-catchup.sh's required live-era floor (#371 F10, at the
+#      bottom of this file).
 #
 # Contract (2026-08-28 Wave A follow-up):
 #
@@ -84,6 +89,12 @@ run() {
   # TO is the monitor's required range end; the seed script resolves its
   # own TO from the lake, so only the monitor may see it pre-set.
   [ "$name" = backfill-monitor ] && envs+=(TO=1)
+  # LIVE_ERA_FROM is ch-live-catchup's required live-era floor (#371 F10);
+  # ansible templates it into /etc/default/stellarindex-ops per host. The
+  # script now refuses to run without it, so the credential contract below
+  # needs it supplied — the "absent" case is asserted on its own further
+  # down, not here.
+  [ "$name" = live-catchup ] && envs+=(LIVE_ERA_FROM=62894001)
   if [ "$mode" = set ]; then
     envs+=(STELLARINDEX_CLICKHOUSE_OPS_USER=ops_rw STELLARINDEX_CLICKHOUSE_OPS_PASSWORD='s3cr3t-pw'
            OPS_ENV="$TMP/ops-env.set")
@@ -139,6 +150,68 @@ check d3 d3-lecur-v2-rebuild.sh \
   probe-ordinals
 check backfill-monitor ch-backfill-monitor.sh \
   "--port 9300 --query SELECT formatReadableSize(sum(bytes_on_disk)) FROM system.parts WHERE database='stellar' AND active"
+
+
+# ─── ch-live-catchup's live-era floor contract (#371 F10) ───────────
+#
+# Second contract in this file, and it lives here rather than in a new
+# script because this is the harness CI already runs over scripts/ops
+# (.github/workflows/ci.yml, scripts/dev/verify.sh) — a guard nothing
+# invokes is not a guard.
+#
+# ch-live-catchup.sh used to default LIVE_ERA_FROM to r1's mainnet
+# backfill ceiling and ansible copied the script verbatim to every
+# host, so a different network inherited a floor above its own tip and
+# the lake's ONLY self-healer silently scanned an empty range. The
+# value is now required, and both ways of supplying a bad one must
+# fail BEFORE any ClickHouse query — hence the "never invoked"
+# assertion: an unusable floor must not reach the gap-scan SQL it is
+# interpolated into.
+catchup_refuses() {
+  local label="$1" line
+  shift
+  REC="$TMP/rec.floor.$label"; : > "$REC"
+  env -u STELLARINDEX_CLICKHOUSE_OPS_USER -u STELLARINDEX_CLICKHOUSE_OPS_PASSWORD \
+      -u CLICKHOUSE_USER -u CLICKHOUSE_PASSWORD -u LIVE_ERA_FROM \
+      STUB_OUT="$REC" STELLARINDEX_POSTGRES_DSN=postgres://stub \
+      OPS_ENV="$TMP/ops-env.unset" "$@" \
+      bash "$OPS_DIR/ch-live-catchup.sh" >"$TMP/out.floor.$label" 2>&1
+  local rc=$?
+  if [ "$rc" -eq 0 ]; then
+    bad "ch-live-catchup.sh: $label ⇒ exited 0; the floor must be refused, not guessed"
+  else
+    ok "ch-live-catchup.sh: $label ⇒ non-zero exit"
+  fi
+  if grep -q 'LIVE_ERA_FROM' "$TMP/out.floor.$label"; then
+    ok "ch-live-catchup.sh: $label ⇒ names LIVE_ERA_FROM in the failure"
+  else
+    bad "ch-live-catchup.sh: $label ⇒ failure message does not name LIVE_ERA_FROM"
+    sed 's/^/       /' "$TMP/out.floor.$label"
+  fi
+  line="$(head -n1 "$REC")"
+  if [ -z "$line" ]; then
+    ok "ch-live-catchup.sh: $label ⇒ no ClickHouse query was issued"
+  else
+    bad "ch-live-catchup.sh: $label ⇒ queried ClickHouse anyway: '$line'"
+  fi
+}
+
+catchup_refuses unset
+catchup_refuses non-numeric LIVE_ERA_FROM='62894001; DROP'
+
+# …and the sunny path still runs: a valid floor reaches the first query.
+REC="$TMP/rec.floor.valid"; : > "$REC"
+env -u STELLARINDEX_CLICKHOUSE_OPS_USER -u STELLARINDEX_CLICKHOUSE_OPS_PASSWORD \
+    -u CLICKHOUSE_USER -u CLICKHOUSE_PASSWORD \
+    STUB_OUT="$REC" STELLARINDEX_POSTGRES_DSN=postgres://stub \
+    OPS_ENV="$TMP/ops-env.unset" LIVE_ERA_FROM=62894001 \
+    bash "$OPS_DIR/ch-live-catchup.sh" >"$TMP/out.floor.valid" 2>&1
+if [ -n "$(head -n1 "$REC")" ]; then
+  ok "ch-live-catchup.sh: a valid floor still reaches the lake query"
+else
+  bad "ch-live-catchup.sh: a valid floor was refused — the guard is too strict"
+  sed 's/^/       /' "$TMP/out.floor.valid"
+fi
 
 echo "ch-ops-user-test: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]

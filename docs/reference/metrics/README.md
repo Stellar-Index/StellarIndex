@@ -1073,8 +1073,19 @@ the per-tick delta.
   dropped ledgers and the projector stalls at the hole rather than
   losing data. A steady non-zero climb means the live edge of the
   lake is degrading and CH or the host needs attention.
-- `errored` — failed `Add` / `Flush` operations (CH down, wedged,
-  or disk-full). A climb is a CH write-path fault.
+- `errored` — a ledger the sink never wrote. Two producers: the
+  sink's own `Add` / `Flush` failing (CH down, wedged, disk-full),
+  and `clickhouse.ExtractLedger` failing in the indexer's live read
+  loop, in which case the sink was never offered the ledger at all.
+  Distinct from `dropped`, which is load the sink DID accept and
+  then shed: a systematic extract break (a TransactionMeta version
+  change fails every ledger in lock-step) is not healed by
+  `ch-live-catchup`, because the catch-up re-extracts with the same
+  decoder. Alerted since #371 F6 by
+  `stellarindex_ingestion_ch_live_sink_errors` (ticket) — until then
+  both live-sink rules matched `outcome="dropped"` only, so this
+  outcome had no alert of any kind. Runbook:
+  [ch-live-sink-errors](../../operations/runbooks/ch-live-sink-errors.md).
 
 ### `stellarindex_hashdb_append_total`
 
@@ -1447,7 +1458,13 @@ credentialed auth_mode). F-1244.
 
 Counter, label `outcome` (`delivered` / `server_error` /
 `client_error` / `exhausted` / `network_error` / `webhook_missing` /
-`disabled` / `build_error` / `list_error` / `mark_error`).
+`disabled` / `no_secret` / `build_error` / `list_error` /
+`lookup_error` / `mark_error`). All twelve are pre-seeded at boot
+(`obs.seedBoundedLabelSeries`, #368 M6) so `increase()`/`rate()` read
+a real zero rather than "no data" before an outcome's first
+occurrence — without that, the window containing the FIRST
+`exhausted` or `mark_error` evaluates to 0 and the alert stays
+silent for exactly the event it exists to report.
 
 Per-attempt outcome of the customer-webhook delivery worker
 (`internal/customerwebhook`). `delivered` = 2xx response;
@@ -1469,9 +1486,17 @@ rate(...{outcome="server_error"}[5m]) > 0.1
 rate(...{outcome="exhausted"}[1h]) > 0
   # a delivery permanently failed after 15 retries — drag the
   # deliveries log
+
+increase(...{outcome="mark_error"}[30m]) > 0
+  # the POST completed and the write recording it did not, so the
+  # row keeps its claim lease and the SAME payload is re-POSTed
+  # every lease interval — a duplicate-delivery loop with no retry
+  # budget to end it. Its own rule rather than an arm of the
+  # server_error one: a single wedged row is ~0.003/s, thirty times
+  # under that rule's 0.1/s threshold.
 ```
 
-F-1270 (audit-2026-05-12).
+F-1270 (audit-2026-05-12); `mark_error` alert + seeding #368 M6.
 
 ### `stellarindex_customer_webhook_fanout_failures_total`
 
@@ -3247,6 +3272,20 @@ next successful run, so the series is absent when healthy. Alerted on
 by `stellarindex_zfs_snapshot_pool_free_unreadable`.
 
 ## Changelog
+
+- 2026-09-03 — no new metric; two existing counters gained the
+  alerting they were already documented as carrying.
+  `stellarindex_ch_live_sink_ledgers_total{outcome="errored"}` was
+  emitted from day one and matched by no rule in either tree (both
+  live-sink rules selected `outcome="dropped"`); it is now covered by
+  `stellarindex_ingestion_ch_live_sink_errors` (ticket) with its own
+  runbook — the existing drops page is unchanged, because an error and
+  a drop have different remedies (#371 F6). And every outcome of
+  `stellarindex_customer_webhook_delivery_attempts_total` is now
+  pre-seeded, with a `mark_error` rule
+  (`stellarindex_customer_webhook_mark_errors`, ticket) for the
+  duplicate-delivery loop `markTerminal`'s godoc already claimed was
+  "visible to an alert" (#368 M6).
 
 - 2026-08-29 — added the rolling ZFS snapshot textfile gauges
   (`stellarindex_zfs_pool_free_bytes`,

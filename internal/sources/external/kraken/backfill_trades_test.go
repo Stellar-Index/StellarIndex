@@ -5,7 +5,9 @@ package kraken
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -78,4 +80,61 @@ func mustAsset(t *testing.T, id string) canonical.Asset {
 		t.Fatal(err)
 	}
 	return a
+}
+
+// TestBackfillTrades_UnresponsiveVenueIsBounded pins the per-request
+// deadline on the /Trades pagination loop (#371 F5).
+//
+// The loop only checks ctx BETWEEN pages, and `stellarindex-ops
+// backfill` hands it the process root context — which has no deadline.
+// So the ONLY bound on a venue that accepts the connection and then
+// never writes a response is the HTTP client's own Timeout. With
+// http.DefaultClient (Timeout: 0) there is none: the backfill wedges
+// until the operator kills it, holding its DB handles and its slot in
+// the run.
+//
+// The server here black-holes every request rather than returning an
+// error, because that is the failure a client deadline catches and a
+// connection-refused does not.
+func TestBackfillTrades_UnresponsiveVenueIsBounded(t *testing.T) {
+	release := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
+		<-release // never responds
+	}))
+	defer func() {
+		close(release)
+		srv.Close()
+	}()
+
+	// Drives the REAL production path (BackfillTrades → fetchKrakenTrades
+	// → the package REST client); only the deadline is shortened, so the
+	// suite does not wait the production 30 s.
+	restore := krakenRESTTimeout
+	krakenRESTTimeout = 150 * time.Millisecond
+	t.Cleanup(func() { krakenRESTTimeout = restore })
+
+	pair, _ := canonical.NewPair(mustAsset(t, "crypto:XLM"), mustAsset(t, "fiat:USD"))
+	s := &Streamer{Endpoint: srv.URL, PairMap: map[string]canonical.Pair{"XXLMZUSD": pair}}
+
+	from := time.Date(2018, 7, 1, 0, 0, 0, 0, time.UTC)
+	to := time.Date(2018, 7, 2, 0, 0, 0, 0, time.UTC)
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := s.BackfillTrades(context.Background(), pair, from, to)
+		done <- err
+	}()
+
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("BackfillTrades returned nil against a venue that never responds; want a timeout error")
+		}
+		var nerr net.Error
+		if !errors.As(err, &nerr) || !nerr.Timeout() {
+			t.Fatalf("BackfillTrades error = %v; want a net.Error reporting Timeout() — the bound must come from the client deadline, not from an unrelated failure", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("BackfillTrades did not return within 5 s against a venue that never responds — the /Trades GET is unbounded (http.DefaultClient has no Timeout), so one black-holed connection wedges the whole backfill")
+	}
 }

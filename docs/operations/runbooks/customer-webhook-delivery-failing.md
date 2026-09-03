@@ -11,14 +11,14 @@ severity: P3
 
 | Field | Value |
 | ----- | ----- |
-| Alerts | `stellarindex_customer_webhook_delivery_failing` (P3) / `stellarindex_customer_webhook_delivery_exhausted` (informational) |
+| Alerts | `stellarindex_customer_webhook_delivery_failing` (P3) / `stellarindex_customer_webhook_delivery_exhausted` (informational) / `stellarindex_customer_webhook_mark_errors` (P3) |
 | Detected by | Prometheus rules in `configs/prometheus/rules.r1/api.yml` (the r1 overlay, loaded from `/etc/prometheus/rules.r1/*.yml`) + the multi-host twin `deploy/monitoring/rules/api.yml` (F-1270 audit-2026-05-12) |
 | Typical MTTR | 5–30 min for a single-customer outage; longer when the worker itself is the problem |
 | Impact | One or more customers aren't receiving the webhook callbacks they registered for. SEV-1 incident pings to their Slack / Discord / paging — failing — until their endpoint comes back up or they update the URL. The Stellar Index API itself is unaffected. |
 
 ## What this fires on
 
-Two alerts:
+Three alerts:
 
 - **`_failing`** — the delivery worker's
   `stellarindex_customer_webhook_delivery_attempts_total` counter
@@ -31,6 +31,17 @@ Two alerts:
   marked terminally failed. The customer hasn't received the
   event AT ALL; if it was a SEV-1 incident notification, they
   may not know we declared the incident.
+- **`_mark_errors`** — a DIFFERENT failure from the two above,
+  and the one to read first when it fires alongside them. The
+  POST reached a decision (2xx / 4xx / 5xx / network fault) and
+  the store write recording that decision failed. Because
+  `MarkDelivered` / `MarkAttemptFailed` is the only write that
+  advances `attempt_count`, the row keeps the 5-minute claim
+  lease `ListPendingDeliveries` set and the SAME payload is
+  re-POSTed to the customer on every lease — indefinitely, with
+  no retry budget to end it. A customer sees duplicate
+  deliveries of one event; we see a delivery that never
+  completes. Added #368 M6.
 
 ## Quick diagnosis (≤ 5 min)
 
@@ -109,6 +120,34 @@ Decision tree:
       manually re-enqueue. The cleanest path is to ask the
       customer to PATCH the webhook URL (if broken) or trigger
       a fresh event from their side.
+
+## `_mark_errors` specifically
+
+The counter advances at three sites in
+`internal/customerwebhook/worker.go` (`classifyResponse`,
+`handleFailure`, `markTerminal`); all three log a WARN naming the
+`delivery_id`.
+
+```sh
+# Which deliveries are wedged? A high attempt-lease churn with a
+# STATIC attempt_count is the signature.
+ssh r1 'sudo -u postgres psql stellarindex -c "
+  SELECT id, webhook_id, event_type, attempt_count, next_attempt_at, updated_at
+  FROM webhook_deliveries
+  WHERE next_attempt_at IS NOT NULL AND next_attempt_at < now() + interval '"'"'10 min'"'"'
+  ORDER BY updated_at DESC LIMIT 20"'
+
+# The worker's own account of it.
+ssh r1 'journalctl -u stellarindex-api --since -2h | grep -i "customer-webhook.*Mark"'
+```
+
+Almost always this is Postgres: unreachable, in recovery, or the
+statement is being cancelled. Restore the database and the next
+lease writes the outcome and the loop ends by itself. If Postgres
+is healthy, the write is being cancelled by its own context — the
+worker shares the per-attempt HTTP deadline with the store write
+(#368 M6, code half outstanding), so a POST that consumes the whole
+attempt budget leaves no time for the mark.
 
 ## Related
 

@@ -231,6 +231,45 @@ groups:
             A delivery hit the 15-attempt retry budget (~8h) and
             was marked terminally failed.
 
+      # #368 M6: `mark_error` is the delivery worker completing a POST
+      # and then failing to RECORD it. markTerminal's godoc already
+      # said this counter "makes the loop visible to an alert" — no
+      # such alert existed in either tree, so the loop was visible only
+      # in the journal.
+      #
+      # Its own rule rather than an extra arm on
+      # `…_delivery_failing` above: that rule's > 0.1/s threshold
+      # describes a customer endpoint failing under load, and one
+      # wedged row re-POSTing on its 5-minute claim lease is ~0.003/s —
+      # thirty times below it. Folding them would have produced a rule
+      # that cannot fire on this fault at all.
+      #
+      # Range [30m] against `for: 15m` so a single step stays true for
+      # longer than the pending period. The label set is pre-seeded in
+      # obs.seedBoundedLabelSeries, so increase() reads a real zero
+      # before the first occurrence rather than "no data".
+      - alert: stellarindex_customer_webhook_mark_errors
+        expr: |
+          increase(stellarindex_customer_webhook_delivery_attempts_total{outcome="mark_error"}[30m]) > 0
+        for: 15m
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: api
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/customer-webhook-delivery-failing.md
+          summary: "Customer-webhook delivery outcomes are not being recorded — deliveries are looping"
+          description: |
+            stellarindex_customer_webhook_delivery_attempts_total{outcome="mark_error"}
+            advanced in the last 30 minutes. The delivery worker
+            completed a POST and then failed to write the result
+            (MarkDelivered / MarkAttemptFailed). The row keeps the
+            5-minute claim lease ListPendingDeliveries set and
+            attempt_count does not advance, so the SAME payload is
+            re-POSTed to the customer every lease interval until the
+            write succeeds — a duplicate-delivery loop with no retry
+            budget to end it. Check Postgres health first.
+
       # F-0051 (audit-2026-05-26). Mirror of the rule in
       # deploy/monitoring/rules/api.yml; wave-96 pair lint
       # requires both copies to stay in sync.

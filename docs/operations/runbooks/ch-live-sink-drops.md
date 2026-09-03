@@ -85,6 +85,13 @@ tail integrity), follow `docs/operations/sev-playbook.md`.
 
 ## Related
 
+- [ch-live-sink-errors](ch-live-sink-errors.md) — the sibling outcome
+  on the same counter. A **drop** is the sink shedding a ledger it
+  accepted (this runbook, healed by `ch-live-catchup`); an **error**
+  is a ledger that was never written, because `ExtractLedger` or the
+  sink's own `Add`/`Flush` failed. Check which `outcome` fired before
+  acting: a systematic extract break is NOT healed by the catch-up
+  timer.
 - `docs/adr/0041-ingest-durability-semantics.md` — why drops are by
   design and what the heal contract is.
 - `all-ingestion-down.md` — the severe case where live ingest itself

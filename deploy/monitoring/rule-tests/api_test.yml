@@ -235,3 +235,113 @@ tests:
       - eval_time: 60m
         alertname: stellarindex_sdex_orderbook_maintain_failing
         exp_alerts: []
+
+  # ══ stellarindex_customer_webhook_mark_errors (#368 M6) ═══════════
+  # `mark_error` means the POST reached a decision (2xx, 4xx, 5xx or a
+  # network fault) and the store write that RECORDS that decision
+  # failed. The row keeps the 5-minute claim lease
+  # ListPendingDeliveries set, attempt_count never advances, and the
+  # same payload is re-POSTed to the customer every lease interval —
+  # forever. markTerminal's godoc says the counter "makes the loop
+  # visible to an alert"; until this rule there was no such alert in
+  # either tree.
+  #
+  # ── firing: one mark_error tickets ────────────────────────────────
+  # Deliberately a SINGLE step, not a rate: one wedged row is the
+  # whole failure, and it produces ~12 re-POSTs/hour rather than a
+  # rate that could clear a threshold.
+  - interval: 1m
+    name: one customer-webhook mark_error tickets
+    input_series:
+      - series: 'stellarindex_customer_webhook_delivery_attempts_total{job="stellarindex_api",instance="r1:8080",outcome="mark_error"}'
+        values: '0 0 1+0x60'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: stellarindex_customer_webhook_mark_errors
+        exp_alerts:
+          - exp_labels:
+              job: stellarindex_api
+              instance: r1:8080
+              outcome: mark_error
+              severity: ticket
+              team: stellarindex
+              component: api
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/customer-webhook-delivery-failing.md
+              summary: "Customer-webhook delivery outcomes are not being recorded — deliveries are looping"
+              description: |
+                stellarindex_customer_webhook_delivery_attempts_total{outcome="mark_error"}
+                advanced in the last 30 minutes. The delivery worker
+                completed a POST and then failed to write the result
+                (MarkDelivered / MarkAttemptFailed). The row keeps the
+                5-minute claim lease ListPendingDeliveries set and
+                attempt_count does not advance, so the SAME payload is
+                re-POSTed to the customer every lease interval until the
+                write succeeds — a duplicate-delivery loop with no retry
+                budget to end it. Check Postgres health first.
+
+  # ── guard: ordinary delivery failures are a different alert ───────
+  # server_error/network_error are the customer's endpoint failing,
+  # already owned by stellarindex_customer_webhook_delivery_failing.
+  # Folding mark_error into that rule's > 0.1/s threshold would have
+  # been the cheap fix and would never fire: one wedged row is
+  # ~0.003/s.
+  - interval: 1m
+    name: a failing customer endpoint does not raise the mark_error alert
+    input_series:
+      - series: 'stellarindex_customer_webhook_delivery_attempts_total{job="stellarindex_api",instance="r1:8080",outcome="server_error"}'
+        values: '0+20x60'
+      - series: 'stellarindex_customer_webhook_delivery_attempts_total{job="stellarindex_api",instance="r1:8080",outcome="mark_error"}'
+        values: '0+0x60'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: stellarindex_customer_webhook_mark_errors
+        exp_alerts: []
+
+  # ── firing: a rate too low for the sibling threshold still tickets ─
+  # One wedged row re-POSTing every 5 min = 0.0033/s of mark_error,
+  # thirty times below the delivery_failing rule's 0.1/s. This case is
+  # the reason the alert exists as its own rule.
+  - interval: 1m
+    name: a single wedged row tickets despite a sub-threshold rate
+    input_series:
+      - series: 'stellarindex_customer_webhook_delivery_attempts_total{job="stellarindex_api",instance="r1:8080",outcome="mark_error"}'
+        values: '0 0 0 0 0 1 1 1 1 1 2 2 2 2 2 3 3 3 3 3 4 4 4 4 4 5 5 5 5 5'
+    alert_rule_test:
+      - eval_time: 25m
+        alertname: stellarindex_customer_webhook_delivery_failing
+        exp_alerts: []
+      - eval_time: 25m
+        alertname: stellarindex_customer_webhook_mark_errors
+        exp_alerts:
+          - exp_labels:
+              job: stellarindex_api
+              instance: r1:8080
+              outcome: mark_error
+              severity: ticket
+              team: stellarindex
+              component: api
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/customer-webhook-delivery-failing.md
+              summary: "Customer-webhook delivery outcomes are not being recorded — deliveries are looping"
+              description: |
+                stellarindex_customer_webhook_delivery_attempts_total{outcome="mark_error"}
+                advanced in the last 30 minutes. The delivery worker
+                completed a POST and then failed to write the result
+                (MarkDelivered / MarkAttemptFailed). The row keeps the
+                5-minute claim lease ListPendingDeliveries set and
+                attempt_count does not advance, so the SAME payload is
+                re-POSTed to the customer every lease interval until the
+                write succeeds — a duplicate-delivery loop with no retry
+                budget to end it. Check Postgres health first.
+
+  # ── resolution: a healed one-off leaves the window ────────────────
+  - interval: 1m
+    name: a single healed customer-webhook mark_error resolves
+    input_series:
+      - series: 'stellarindex_customer_webhook_delivery_attempts_total{job="stellarindex_api",instance="r1:8080",outcome="mark_error"}'
+        values: '0 0 1+0x60'
+    alert_rule_test:
+      - eval_time: 45m
+        alertname: stellarindex_customer_webhook_mark_errors
+        exp_alerts: []

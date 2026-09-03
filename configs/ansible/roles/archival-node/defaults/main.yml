@@ -88,6 +88,23 @@ run_clickhouse:          false
 # installed where the ClickHouse tasks run at all, i.e. behind
 # run_clickhouse. Set false to opt a host out deliberately.
 ch_live_catchup_enabled: true
+# stellarindex_ch_live_era_from — the ledger ch-live-catchup starts its
+# gap scan from: one past the ceiling of the certified bulk backfill.
+#
+# DELIBERATELY UNDEFINED HERE (#371 F10). It is a per-network,
+# per-deployment fact, and both ways of being wrong fail SILENTLY: too
+# high and the scan matches nothing (the lake's only self-healer becomes
+# a no-op and the projector stalls behind the first unhealed hole); too
+# low and a 10-minute timer becomes a full-history DISTINCT scan against
+# the ClickHouse that also serves the explorer. The script previously
+# carried r1's mainnet value as a literal and 08-clickhouse.yml copies
+# that script verbatim to every host, so testnet/futurenet inherited a
+# mainnet floor. A role default would recreate exactly that.
+#
+# State it in the host's inventory (see inventory/r1.example.yml);
+# 09-minio.yml templates it into /etc/default/stellarindex-ops. Unset ⇒
+# ch-live-catchup exits 1 naming the variable, which pages through
+# stellarindex_systemd_unit_failed instead of degrading quietly.
 clickhouse_apply_schema: false
 clickhouse_tcp_port:     9300   # 9000 is MinIO's
 

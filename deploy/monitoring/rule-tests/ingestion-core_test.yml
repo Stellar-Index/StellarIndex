@@ -1300,3 +1300,91 @@ tests:
       - eval_time: 30m
         alertname: stellarindex_ingest_gap_detector_silent
         exp_alerts: []
+
+  # ══ stellarindex_ingestion_ch_live_sink_errors (#371 F6) ══════════
+  # `errored` is a DIFFERENT fault class from `dropped`: the sink's
+  # bounded queue never saw the ledger, because either
+  # clickhouse.ExtractLedger failed on it (a decode/meta-version break)
+  # or the sink's own Add/Flush errored. It had no alert of any kind.
+  #
+  # ── firing: a single extract failure tickets ──────────────────────
+  # A meta-version break fails every ledger in lock-step, but the
+  # FIRST one is already the signal — the [30m] range against a 15m
+  # `for` means one step stays true for a full 30 min, so this cannot
+  # resolve out from under the pending period.
+  - interval: 1m
+    name: one ch live-sink errored ledger tickets
+    input_series:
+      - series: 'stellarindex_ch_live_sink_ledgers_total{job="stellarindex_indexer",instance="r1:9100",outcome="errored"}'
+        values: '0 0 1+0x60'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: stellarindex_ingestion_ch_live_sink_errors
+        exp_alerts:
+          - exp_labels:
+              job: stellarindex_indexer
+              instance: r1:9100
+              outcome: errored
+              severity: ticket
+              team: stellarindex
+              component: ingestion
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ch-live-sink-errors.md
+              summary: "ClickHouse live-sink is erroring on ledger extracts"
+              description: |
+                stellarindex_ch_live_sink_ledgers_total{outcome="errored"}
+                advanced in the last 30 minutes. Either
+                clickhouse.ExtractLedger failed on a ledger (nothing was
+                handed to the sink at all — a decode / TransactionMeta
+                version break fails EVERY ledger in lock-step) or the
+                sink's own Add/Flush errored. Unlike `dropped`, which is
+                the sink shedding load it did see, this is the lake's
+                live edge not being written. ch-live-catchup heals it
+                only if a re-read succeeds; a systematic extract break
+                leaves the hole, and internal/projector clamps to the
+                contiguous watermark behind it.
+
+  # ── guard: the healthy write path raises nothing ──────────────────
+  # A busy sink writing and buffering, zero errors. This must stay
+  # silent, and it is also what proves the alert is not keyed on the
+  # metric name alone.
+  - interval: 1m
+    name: a busy but error-free ch live-sink raises nothing
+    input_series:
+      - series: 'stellarindex_ch_live_sink_ledgers_total{job="stellarindex_indexer",instance="r1:9100",outcome="written"}'
+        values: '0+12x60'
+      - series: 'stellarindex_ch_live_sink_ledgers_total{job="stellarindex_indexer",instance="r1:9100",outcome="buffered"}'
+        values: '0+3x60'
+      - series: 'stellarindex_ch_live_sink_ledgers_total{job="stellarindex_indexer",instance="r1:9100",outcome="errored"}'
+        values: '0+0x60'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: stellarindex_ingestion_ch_live_sink_errors
+        exp_alerts: []
+
+  # ── guard: drops alone must not raise the ERRORS alert ────────────
+  # The two classes have separate remedies; folding them would have
+  # been the cheap fix and would make this alert unable to tell an
+  # operator which one they have.
+  - interval: 1m
+    name: ch live-sink drops do not raise the errors alert
+    input_series:
+      - series: 'stellarindex_ch_live_sink_ledgers_total{job="stellarindex_indexer",instance="r1:9100",outcome="dropped"}'
+        values: '0+1x60'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: stellarindex_ingestion_ch_live_sink_errors
+        exp_alerts: []
+
+  # ── resolution: a healed one-off leaves the window ────────────────
+  # One error at t=2m and nothing after. By t=45m the step has left
+  # the trailing 30m window and the ticket clears on its own.
+  - interval: 1m
+    name: a single healed ch live-sink error resolves
+    input_series:
+      - series: 'stellarindex_ch_live_sink_ledgers_total{job="stellarindex_indexer",instance="r1:9100",outcome="errored"}'
+        values: '0 0 1+0x60'
+    alert_rule_test:
+      - eval_time: 45m
+        alertname: stellarindex_ingestion_ch_live_sink_errors
+        exp_alerts: []

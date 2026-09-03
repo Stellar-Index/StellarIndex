@@ -59,6 +59,8 @@ echo "=== Completeness-staleness calibration ===" && ./scripts/ci/lint-completen
 echo "=== Integration-shard partition self-test ===" && ./scripts/ci/integration-shard-test.sh
 echo "=== Shell SIGPIPE (pipe-into-head) ===" && ./scripts/ci/lint-shell-sigpipe.sh
 echo "=== Shell SIGPIPE self-test ===" && ./scripts/ci/lint-shell-sigpipe-test.sh
+echo "=== HTTP timeouts ===" && ./scripts/ci/lint-http-timeouts.sh
+echo "=== HTTP timeouts self-test ===" && ./scripts/ci/lint-http-timeouts-test.sh
 echo "=== Deploy-baseline self-test ===" && ./scripts/ci/deploy-baseline-test.sh
 echo "=== Deploy-protection self-test ===" && ./scripts/ci/check-deploy-protection-test.sh
 echo "=== Main-CI-health decision-core self-test ===" && ./scripts/ci/check-main-ci-health-test.sh

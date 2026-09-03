@@ -497,6 +497,43 @@ groups:
             certified-lake tail (the coverage claim's substrate) is at
             risk. Treat as data-loss-risk (ADR-0041).
 
+      # #371 F6: `errored` had no alert in either tree — both live-sink
+      # rules matched outcome="dropped" only, and `errored` is a
+      # different fault. A drop is the sink shedding a ledger it
+      # accepted; an error is either ExtractLedger failing before the
+      # sink is even offered the ledger (cmd/stellarindex-indexer/
+      # main.go, the sampled `ch extract` WARN) or the sink's own
+      # Add/Flush failing. The remedies differ, so this is its own rule
+      # rather than a widened matcher on the existing page — redefining
+      # a page an operator already reads is not a bug fix.
+      #
+      # Range [30m] against `for: 15m` deliberately: a single step must
+      # stay true for longer than the pending period, otherwise the
+      # very fault this exists for (one meta-version break, then a dead
+      # indexer) resolves out from under itself.
+      - alert: stellarindex_ingestion_ch_live_sink_errors
+        expr: increase(stellarindex_ch_live_sink_ledgers_total{outcome="errored"}[30m]) > 0
+        for: 15m
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: ingestion
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ch-live-sink-errors.md
+          summary: "ClickHouse live-sink is erroring on ledger extracts"
+          description: |
+            stellarindex_ch_live_sink_ledgers_total{outcome="errored"}
+            advanced in the last 30 minutes. Either
+            clickhouse.ExtractLedger failed on a ledger (nothing was
+            handed to the sink at all — a decode / TransactionMeta
+            version break fails EVERY ledger in lock-step) or the
+            sink's own Add/Flush errored. Unlike `dropped`, which is
+            the sink shedding load it did see, this is the lake's
+            live edge not being written. ch-live-catchup heals it
+            only if a re-read succeeds; a systematic extract break
+            leaves the hole, and internal/projector clamps to the
+            contiguous watermark behind it.
+
       # 2026-07-06 Postgres-outage fix (ADR-0041): the trade sink now
       # RETRIES an infrastructure-classified insert failure (connection
       # refused/reset, PG restarting) with backpressure instead of

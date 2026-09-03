@@ -51,9 +51,40 @@ CFG=${CFG:-/etc/stellarindex.toml}
 DSN="$STELLARINDEX_POSTGRES_DSN"
 PAR=${PAR:-4}
 CH() { clickhouse-client --port "${CH_PORT:-9300}" "$@"; }
-# Backfill is certified complete through 62894000; holes only form in the live
-# era above it. Scan from there up. Override if the backfill ceiling changes.
-LIVE_ERA_FROM=${LIVE_ERA_FROM:-62894001}
+# LIVE_ERA_FROM is the lowest ledger the in-dispatcher dual-sink is
+# responsible for — one past the ceiling of the certified bulk backfill.
+# Everything below it was written by ch-backfill and is already contiguous;
+# at or above it a sink-shaped hole can form, so that is where the gap scan
+# starts.
+#
+# It is a per-DEPLOYMENT fact with no defensible default (#371 F10). The
+# literal that used to sit here was r1's mainnet backfill ceiling, shipped
+# verbatim by the ansible role to every host it provisions — and both ways of
+# being wrong are SILENT:
+#
+#   too high — the gap scan matches nothing, and the lake's only self-healer
+#              quietly becomes a no-op (the projector then stalls at the
+#              contiguous watermark behind the first unhealed hole);
+#   too low  — a 10-minute timer turns into a full-history DISTINCT scan
+#              against the ClickHouse that also serves the explorer.
+#
+# So refuse to guess. Set `stellarindex_ch_live_era_from` in the host's
+# inventory; roles/archival-node/tasks/09-minio.yml templates it into
+# /etc/default/stellarindex-ops, which this script reads above. Derive it as
+# the `-to` of the last ch-backfill range certified complete, plus one.
+if [ -z "${LIVE_ERA_FROM:-}" ]; then
+  echo "$(date -u) ch-live-catchup: LIVE_ERA_FROM is unset — refusing to guess the live-era floor (a wrong floor fails silently in both directions). Set stellarindex_ch_live_era_from in this host's inventory and re-apply the archival-node role with --tags minio." >&2
+  exit 1
+fi
+# Digits only: the value is interpolated into the gap-scan SQL below, so this
+# is both a typo guard and the reason no operator-supplied text reaches the
+# query.
+case "$LIVE_ERA_FROM" in
+  *[!0-9]*|'')
+    echo "$(date -u) ch-live-catchup: LIVE_ERA_FROM='${LIVE_ERA_FROM}' is not a ledger sequence (digits only)." >&2
+    exit 1
+    ;;
+esac
 
 CH_MAX=$(CH -q "SELECT max(ledger_seq) FROM stellar.ledgers" 2>/dev/null)
 TIP=$(psql "$DSN" -tAc "SELECT max(last_ledger) FROM ingestion_cursors" 2>/dev/null | tr -d '[:space:]')

@@ -27,7 +27,7 @@ enforced 2026-04-23 onward).
   | Severity | Rules | AlertManager route | Delivery |
   | --- | --- | --- | --- |
   | `page` | 50 | `receiver: chat-page` | Discord **#stellarindex-pages**, `repeat_interval` 12 h. There is **no** PagerDuty leg — `pagerduty_configs` is unset, so nothing wakes anyone up. |
-  | `ticket` | 134 | `receiver: chat-default` | Discord **#stellarindex-alerts**, `repeat_interval` 24 h. |
+  | `ticket` | 136 | `receiver: chat-default` | Discord **#stellarindex-alerts**, `repeat_interval` 24 h. |
   | `informational` | 21 | `receiver: silent` | **Delivered to nobody, deliberately.** `silent` is declared with no `*_configs` block at all, which in Alertmanager means the alert is accepted and then dropped. It accumulates in the AlertManager UI and nothing else happens. |
 
   **`informational` is not "a low-priority ticket".** There is no
@@ -93,6 +93,7 @@ enforced 2026-04-23 onward).
 | `stellarindex_onchain_usd_volume_coverage_low` | same ratio over `[6h]`, aggregated across on-chain venues | < 99.5% sustained 1 h | ticket | [usd-volume-coverage-plan](usd-volume-coverage-plan.md) |
 | `stellarindex_ingestion_ch_live_sink_drops` | `increase(stellarindex_ch_live_sink_ledgers_total{outcome="dropped"}[10m])` | > 0 sustained 10 min | ticket | [ch-live-sink-drops](runbooks/ch-live-sink-drops.md) |
 | `stellarindex_ingestion_ch_live_sink_drops_sustained` | `increase(stellarindex_ch_live_sink_ledgers_total{outcome="dropped"}[1h])` | > 0 sustained 1 h | page | [ch-live-sink-drops](runbooks/ch-live-sink-drops.md) |
+| `stellarindex_ingestion_ch_live_sink_errors` | `increase(stellarindex_ch_live_sink_ledgers_total{outcome="errored"}[30m])` | > 0 sustained 15 min | ticket | [ch-live-sink-errors](runbooks/ch-live-sink-errors.md) |
 | `stellarindex_ingestion_trade_insert_backpressure` | `sum(rate(stellarindex_trade_insert_retries_total{outcome="retry"}[5m]))` | > 0 sustained 10 min | ticket | [trade-insert-backpressure](runbooks/trade-insert-backpressure.md) |
 | `stellarindex_ingestion_insert_errors` | `rate(stellarindex_source_insert_errors_total[5m])` per (source, kind) | > 0.1/s (≈6/min) sustained 5 min | ticket | [insert-errors](runbooks/insert-errors.md) |
 | `stellarindex_ingestion_persist_drop` | `increase(stellarindex_source_insert_errors_total{kind=~"soroswap_router_swap\|defindex_flow_strategy\|defindex_flow_vault"}[15m])` | > 0 sustained 15 min (any rate) | ticket | [insert-errors](runbooks/insert-errors.md) |
@@ -486,6 +487,7 @@ auto-unfreeze at all. Rules in
 | `stellarindex_aggregator_cache_write_errors` | `rate(stellarindex_aggregator_vwap_cache_write_errors_total[5m])` | > 0 for ≥ 2 min | page | [redis-write-blocked-disk-full](runbooks/redis-write-blocked-disk-full.md) |
 | `stellarindex_customer_webhook_delivery_failing` | `rate(stellarindex_customer_webhook_delivery_attempts_total{outcome=~"server_error\|network_error"}[5m])` | > 0.1/s for ≥ 15 min | ticket | [customer-webhook-delivery-failing](runbooks/customer-webhook-delivery-failing.md) |
 | `stellarindex_customer_webhook_delivery_exhausted` | `rate(stellarindex_customer_webhook_delivery_attempts_total{outcome="exhausted"}[1h])` | > 0 for ≥ 1h | informational | [customer-webhook-delivery-failing](runbooks/customer-webhook-delivery-failing.md) |
+| `stellarindex_customer_webhook_mark_errors` | `increase(stellarindex_customer_webhook_delivery_attempts_total{outcome="mark_error"}[30m])` | > 0 for ≥ 15 min (a completed POST whose result never persisted — the row re-POSTs on every claim lease) | ticket | [customer-webhook-delivery-failing](runbooks/customer-webhook-delivery-failing.md) |
 | `stellarindex_customer_webhook_fanout_failing` | `sum by (event_type, reason) (increase(stellarindex_customer_webhook_fanout_failures_total[1h]))` | > 0 for ≥ 5 min (a subscribed customer never got a delivery ROW — no retry exists) | ticket | [customer-webhook-fanout-failing](runbooks/customer-webhook-fanout-failing.md) |
 | `stellarindex_usage_rollup_failing` | `rate(stellarindex_usage_rollup_sweeps_total{outcome=~"scan_error\|sink_error"}[15m])` | > 0 for ≥ 30 min | informational | [usage-rollup-failing](runbooks/usage-rollup-failing.md) |
 | `stellarindex_dex_tvl_refresh_failing` | `rate(stellarindex_dex_tvl_refresh_total{outcome="error"}[15m])` > 0 **and** `rate(...{outcome="ok"}[15m])` == 0 | for > 30 min (served TVL is a carried-forward snapshot aging silently) | ticket | [dex-tvl-refresh-failing](runbooks/dex-tvl-refresh-failing.md) |

@@ -473,6 +473,28 @@ func seedBoundedLabelSeriesTail() {
 	for _, outcome := range []string{"ok", "no_vwap", "parse_error", "refresh_error", "no_reference"} {
 		DivergenceRefreshTotal.WithLabelValues(outcome)
 	}
+	// #368 M6: the customer-webhook sender's complete outcome
+	// vocabulary. Every alert on this counter is a rate()/increase(),
+	// and a CounterVec child does not exist until its first .Inc() —
+	// so the window containing an outcome's FIRST occurrence has a
+	// single sample and evaluates to 0, silencing the alert for
+	// precisely the first event. That matters most for the two
+	// low-frequency outcomes an operator is paged/ticketed on:
+	// `exhausted` (a customer's delivery permanently lost) and
+	// `mark_error` (the store write that records a completed POST
+	// failed, so the row keeps its claim lease and the SAME request is
+	// re-POSTed every lease interval — markTerminal's godoc calls this
+	// "visible to an alert", which it was not).
+	// The set is pinned by TestCustomerWebhookDeliveryOutcomesAreSeeded,
+	// which derives it from customerwebhook/worker.go rather than from
+	// this list.
+	for _, outcome := range []string{
+		"delivered", "server_error", "client_error", "exhausted", "network_error",
+		"webhook_missing", "disabled", "no_secret", "build_error", "list_error",
+		"lookup_error", "mark_error",
+	} {
+		CustomerWebhookDeliveryAttemptsTotal.WithLabelValues(outcome)
+	}
 	// v0.21.4 background cache workers. Seeded so the DEX-TVL /
 	// order-book failure-rate queries read a real zero (not "no data")
 	// from process start; the load_* pair matters most — a process
@@ -2560,9 +2582,17 @@ var APIStreamSubscribeTotal = prometheus.NewCounterVec(
 //   - network_error  — TCP/TLS/timeout error, scheduled for retry
 //   - webhook_missing — GetWebhook returned ErrNotFound mid-flight
 //   - disabled       — webhook.Enabled=false, silently terminated
+//   - no_secret      — the webhook's signing secret is empty (terminal)
 //   - build_error    — http.NewRequestWithContext failed (malformed URL)
 //   - list_error     — ListPendingDeliveries failed (db transport)
+//   - lookup_error   — GetWebhook failed for a non-NotFound reason
 //   - mark_error     — Mark{Delivered,AttemptFailed} failed
+//
+// All twelve are pre-seeded in [seedBoundedLabelSeries] (#368 M6):
+// a CounterVec child does not exist until its first .Inc(), so the
+// window containing an outcome's FIRST occurrence has one sample and
+// increase()/rate() over it is 0 — silencing each alert for exactly
+// the first event it exists to report.
 //
 // Operators alert on:
 //
@@ -2570,8 +2600,13 @@ var APIStreamSubscribeTotal = prometheus.NewCounterVec(
 //	  — one customer's URL is sustained-failing, raise a ticket
 //	rate(...{outcome="exhausted"}[1h]) > 0
 //	  — a delivery permanently failed, drag the deliveries table
+//	increase(...{outcome="mark_error"}[30m]) > 0
+//	  — the POST completed and the write recording it did not, so the
+//	    row keeps its claim lease and the same payload is re-POSTed
+//	    every lease interval (see markTerminal). Its own rule: one
+//	    wedged row is ~0.003/s, far under the server_error threshold.
 //
-// F-1270 (audit-2026-05-12).
+// F-1270 (audit-2026-05-12); mark_error alert + seeding #368 M6.
 var CustomerWebhookDeliveryAttemptsTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_customer_webhook_delivery_attempts_total",

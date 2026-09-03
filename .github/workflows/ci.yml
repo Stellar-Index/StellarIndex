@@ -508,6 +508,22 @@ jobs:
         # shape, skip scripts without pipefail/-e, and FAIL rather than pass
         # when a root contains no pipefail scripts at all.
         run: ./scripts/ci/lint-shell-sigpipe-test.sh
+      - name: lint-http-timeouts
+        # #371 F5: http.DefaultClient has NO timeout, so a peer that
+        # accepts and then stops sending hangs the caller forever. Two
+        # real instances shipped — a kraken backfill (reads as "slow
+        # venue") and an operator directory-sync (reads as "still
+        # running"). A ctx deadline is not a substitute: it only bounds
+        # the call when the caller supplies one, and both sites already
+        # took a ctx.
+        run: ./scripts/ci/lint-http-timeouts.sh
+      - name: lint-http-timeouts self-test
+        # Pins the gate non-vacuous: catches a production use, honours a
+        # `// http-timeout-ok:` marker on the line or in the comment
+        # block above it, does not count a comment that merely names
+        # DefaultClient, exempts _test.go, and FAILS on a root with no Go
+        # files rather than passing.
+        run: ./scripts/ci/lint-http-timeouts-test.sh
       - name: deploy-baseline self-test
         # #427: the config-apply gate's baseline is the version live on the
         # host. A FAILED read used to warn and fall back to the previous
