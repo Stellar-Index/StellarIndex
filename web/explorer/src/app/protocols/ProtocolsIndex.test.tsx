@@ -123,3 +123,121 @@ describe('ProtocolsIndex headline TVL total', () => {
     expect(screen.queryByText(/\$0\.00/)).not.toBeInTheDocument();
   });
 });
+
+// The category landings (/bridges, /yield) are one-liners over this
+// component with `lockedCategory` set. The headline stats used to be
+// summed over every card in the directory while the grid below showed
+// one category, so /bridges published the whole directory's figures —
+// measured live 2026-09-03: 16 protocols and 1,146,432 events beside
+// the 2 bridges that actually emitted 2,732.
+
+const DIRECTORY = [
+  {
+    name: 'cctp',
+    category: 'bridge',
+    description: 'Canonical burn-and-mint USDC bridging.',
+    genesis_ledger: 1,
+    factories: [],
+    contract_count: 4,
+    events_24h: 1_700,
+    completeness: { complete: true, watermark_ledger: 63_000_000 },
+  },
+  {
+    name: 'rozo',
+    category: 'bridge',
+    description: 'Intent-bridge payment settlement.',
+    genesis_ledger: 1,
+    factories: [],
+    contract_count: 2,
+    events_24h: 1_032,
+    completeness: { complete: true, watermark_ledger: 63_000_000 },
+  },
+  {
+    name: 'sdex',
+    category: 'dex',
+    description: "Stellar's protocol-native order book.",
+    genesis_ledger: 1,
+    factories: [],
+    contract_count: 0,
+    events_24h: 1_090_927,
+    completeness: { complete: true, watermark_ledger: 63_000_000 },
+  },
+  {
+    name: 'defindex',
+    category: 'yield',
+    description: 'Yield vaults and strategies.',
+    genesis_ledger: 1,
+    factories: [],
+    contract_count: 9,
+    events_24h: 2_468,
+    completeness: { complete: false, watermark_ledger: 62_900_000 },
+  },
+];
+
+function mockDirectory() {
+  vi.mocked(apiGet).mockImplementation(async (path: string) => {
+    if (path === '/v1/protocols') {
+      return { data: { protocols: DIRECTORY } } as never;
+    }
+    return { data: [] } as never;
+  });
+}
+
+// Stat renders the label in a span inside its own div; the value is that
+// div's next sibling.
+function statValue(label: string): string {
+  return (
+    screen.getByText(label).parentElement?.nextElementSibling?.textContent ?? ''
+  );
+}
+
+function cardCount(): number {
+  return document.querySelectorAll('[data-source] > a').length;
+}
+
+describe('ProtocolsIndex headline stats under a locked category', () => {
+  beforeEach(() => vi.mocked(apiGet).mockReset());
+
+  it('counts the category shown, not the whole directory', async () => {
+    mockDirectory();
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    render(
+      <QueryClientProvider client={client}>
+        <ProtocolsIndex lockedCategory="bridge" title="Bridges" />
+      </QueryClientProvider>,
+    );
+    await waitFor(() => expect(cardCount()).toBe(2));
+
+    // The headline is the grid: two bridge cards, two counts.
+    expect(statValue('Protocols')).toBe(String(cardCount()));
+    expect(statValue('Verified complete')).toBe('2');
+    // 1,700 + 1,032 — the directory's 1,096,127 ("1.1M") is not this
+    // page's number, and must appear nowhere on it.
+    expect(statValue('Events · last 24h')).toBe('2.73K');
+    expect(screen.queryByText('1.1M')).not.toBeInTheDocument();
+  });
+
+  it('renders the count as absence when the directory is unreachable', async () => {
+    // The static-registry fallback has no categories, so a locked page
+    // has nothing to list: that is a dead endpoint, not zero bridges.
+    vi.mocked(apiGet).mockImplementation(async (path: string) => {
+      if (path === '/v1/protocols') throw new Error('HTTP 503');
+      return { data: [] } as never;
+    });
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    render(
+      <QueryClientProvider client={client}>
+        <ProtocolsIndex lockedCategory="bridge" title="Bridges" />
+      </QueryClientProvider>,
+    );
+    await waitFor(() =>
+      expect(screen.getByText('Live stats unavailable')).toBeInTheDocument(),
+    );
+    expect(cardCount()).toBe(0);
+    expect(statValue('Protocols')).toBe('—');
+  });
+});
