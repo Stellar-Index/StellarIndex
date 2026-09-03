@@ -1,0 +1,153 @@
+name: dns-perimeter-check
+
+# DNS / email perimeter drift tripwire (#334).
+#
+# The email perimeter lives OUTSIDE this repo, in Cloudflare DNS, where
+# none of the repo's gate machinery can see it. That is precisely how the
+# domain came to be sending magic-link authentication email for months
+# with no MX, no SPF, no DMARC and no CAA, while `security@` — the RFC
+# 9116 Contact: on the live .well-known/security.txt — bounced. Nothing
+# in the codebase could have caught it, because nothing in the codebase
+# looks at DNS.
+#
+# This weekly job runs scripts/ops/dns-perimeter-check.sh against the
+# zone's authoritative nameservers and asserts the intended record set
+# documented in docs/operations/dns-email-perimeter.md. No credentials:
+# every assertion is a public DNS query.
+#
+# On drift it opens or updates ONE tracking issue and closes it again
+# when the perimeter is intact — the same idempotent shape as
+# public-dataset-check.yml. It never fails the scheduled run red: a
+# record someone changed in Cloudflare is not a condition any PR can
+# fix, so it should page through an issue rather than turn the Actions
+# tab red for everyone.
+#
+# The check's own exit code is the number of failed assertions, and it
+# is captured directly rather than through a pipe — piping it through
+# tee/sed would report the LAST command's status and silently turn every
+# failure green.
+
+on:
+  schedule:
+    # Mondays 07:20 UTC. DNS drift is rare and human-caused; weekly is
+    # enough to catch it long before a certificate renewal or a DMARC
+    # policy change could bite.
+    - cron: '20 7 * * 1'
+  workflow_dispatch: {}
+  # Also on any change to the perimeter itself, so the record set and
+  # the assertions cannot drift apart in a PR.
+  pull_request:
+    paths:
+      - 'scripts/ops/dns-perimeter-check.sh'
+      - 'docs/operations/dns-email-perimeter.md'
+      - '.github/workflows/dns-perimeter-check.yml'
+
+concurrency:
+  group: dns-perimeter-check
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  issues: write
+
+env:
+  ISSUE_LABEL: dns-perimeter-drift
+  ISSUE_TITLE: "DNS/email perimeter drift"
+
+jobs:
+  check-dns-perimeter:
+    name: stellarindex.io perimeter
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Ensure dig is present
+        run: |
+          set -euo pipefail
+          command -v dig >/dev/null 2>&1 || {
+            sudo apt-get update -qq
+            sudo apt-get install -y -qq bind9-dnsutils
+          }
+          dig -v 2>&1 | head -1
+
+      - name: Check the perimeter
+        id: check
+        run: |
+          set -uo pipefail
+          # Capture the exit code directly. Piping this into tee or sed
+          # would report the pipe's last status, not the gate's.
+          ./scripts/ops/dns-perimeter-check.sh > /tmp/perimeter.txt 2>&1
+          rc=$?
+          cat /tmp/perimeter.txt
+          {
+            echo "verdict_rc=${rc}"
+            echo "report<<REPORT_EOF"
+            cat /tmp/perimeter.txt
+            echo "REPORT_EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Run summary
+        env:
+          VERDICT_RC: ${{ steps.check.outputs.verdict_rc }}
+          REPORT: ${{ steps.check.outputs.report }}
+        run: |
+          set -euo pipefail
+          if [ "$VERDICT_RC" = "0" ]; then verdict="INTACT"; else verdict="DRIFT (${VERDICT_RC} failed)"; fi
+          {
+            echo "## stellarindex.io DNS/email perimeter — ${verdict}"
+            echo
+            echo '```'
+            echo "$REPORT"
+            echo '```'
+            echo
+            echo "Intended record set: \`docs/operations/dns-email-perimeter.md\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # A PR that breaks the assertions SHOULD go red — that is a code
+      # change, not an external condition.
+      - name: Fail the PR on drift
+        if: github.event_name == 'pull_request' && steps.check.outputs.verdict_rc != '0'
+        run: |
+          echo "::error::DNS perimeter assertions failed (${{ steps.check.outputs.verdict_rc }}). See the run summary."
+          exit 1
+
+      - name: Open or update the tracking issue (perimeter drifted)
+        if: github.event_name != 'pull_request' && steps.check.outputs.verdict_rc != '0'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          REPORT: ${{ steps.check.outputs.report }}
+        run: |
+          set -euo pipefail
+          gh label create "$ISSUE_LABEL" --color B60205 \
+            --description "stellarindex.io DNS/email perimeter no longer matches the intended record set" 2>/dev/null || true
+
+          body="$(printf '%s\n\n---\n_Auto-managed by the dns-perimeter-check workflow (run %s). The intended record set and the reasoning behind each choice are in docs/operations/dns-email-perimeter.md. Closes automatically when the perimeter is intact again._\n' \
+            "$REPORT" "${GITHUB_RUN_ID:-?}")"
+
+          existing="$(gh issue list --label "$ISSUE_LABEL" --state open \
+            --json number --jq '.[0].number' || true)"
+          if [ -n "$existing" ] && [ "$existing" != "null" ]; then
+            gh issue comment "$existing" --body "$body"
+            echo "Updated existing dns-perimeter-drift issue #$existing."
+          else
+            gh issue create --title "$ISSUE_TITLE" --label "$ISSUE_LABEL" --body "$body"
+            echo "Opened new dns-perimeter-drift issue."
+          fi
+          echo "::warning::DNS/email perimeter drift detected — see the tracking issue. (Scheduled run deliberately not failed.)"
+
+      - name: Close the tracking issue (perimeter intact)
+        if: github.event_name != 'pull_request' && steps.check.outputs.verdict_rc == '0'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          for n in $(gh issue list --label "$ISSUE_LABEL" --state open \
+              --json number --jq '.[].number' || true); do
+            gh issue close "$n" --comment "DNS/email perimeter is intact again — dns-perimeter-check closing automatically."
+            echo "Closed dns-perimeter-drift issue #$n."
+          done
