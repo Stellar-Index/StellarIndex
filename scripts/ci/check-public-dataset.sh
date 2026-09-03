@@ -70,7 +70,7 @@ else
   manifest="$(aws s3 cp --no-sign-request "$BUCKET_PREFIX/.config.json" -)"
 fi
 if ! printf '%s' "$manifest" | jq -e . >/dev/null 2>&1; then
-  problem "manifest .config.json is not valid JSON: $(printf '%s' "$manifest" | head -c 200)"
+  problem "manifest .config.json is not valid JSON: ${manifest:0:200}"
 else
   m_pass="$(printf '%s' "$manifest" | jq -r '.networkPassphrase // ""')"
   m_lpb="$(printf '%s' "$manifest" | jq -r '.ledgersPerBatch // ""')"

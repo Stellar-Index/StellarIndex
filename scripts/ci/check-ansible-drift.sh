@@ -130,6 +130,8 @@ fi
 recap_changed=0
 while IFS= read -r line; do
   [ -z "$line" ] && continue
+  # sigpipe-ok: the producer is a printf of ONE PLAY RECAP line, so grep -oE
+  # emits at most a handful of `changed=N` tokens — bytes, not kilobytes.
   n="$(printf '%s' "$line" | grep -oE 'changed=[0-9]+' | head -1 | cut -d= -f2)"
   recap_changed=$((recap_changed + ${n:-0}))
 done <<EOF

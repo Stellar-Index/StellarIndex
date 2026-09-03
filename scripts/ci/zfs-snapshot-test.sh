@@ -104,6 +104,8 @@ case "$cmd" in
       echo "cannot get 'usedbysnapshots' for '$ds': I/O error" >&2
       exit 1
     fi
+    # sigpipe-ok: this awk sums every record and prints in END — it never
+    # exits early; the `exit 0` sharing the line is the case arm's, not awk's.
     grep "^${ds}@" "$P/snapshots" 2>/dev/null | awk -F'\t' '{s+=$3} END{print s+0}'; exit 0 ;;
   *) echo "zfs stub: unsupported: $cmd $*" >&2; exit 99 ;;
 esac

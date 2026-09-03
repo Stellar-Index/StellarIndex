@@ -107,13 +107,13 @@ expect() {
   local name="$1" want_rc="$2" want_sub="${3:-}"
   if [[ "$RC" -ne "$want_rc" ]]; then
     echo "FAIL: $name — rc=$RC want=$want_rc"
-    echo "$OUT" | sed 's/^/    | /' | head -12
+    echo "$OUT" | sed -n '1,12s/^/    | /p'
     fail=$((fail + 1))
     return
   fi
   if [[ -n "$want_sub" && "$OUT" != *"$want_sub"* ]]; then
     echo "FAIL: $name — output missing: $want_sub"
-    echo "$OUT" | sed 's/^/    | /' | head -12
+    echo "$OUT" | sed -n '1,12s/^/    | /p'
     fail=$((fail + 1))
     return
   fi
@@ -255,15 +255,15 @@ expect "a mixed release still gates on the surface nobody applied" 1 "changed 1 
 # surface this deploy already applied and proved live.
 if [[ "$OUT" != *"VERIFIED automatically"* ]]; then
   echo "FAIL: mixed release did not report the auto-applied surface as applied"
-  echo "$OUT" | sed 's/^/    | /' | head -8
+  echo "$OUT" | sed -n '1,8s/^/    | /p'
   fail=$((fail + 1))
 elif [[ "$OUT" != *"changed 1 config surface(s)"* ]]; then
   echo "FAIL: mixed release miscounted the outstanding surfaces (want exactly 1)"
-  echo "$OUT" | sed 's/^/    | /' | head -8
+  echo "$OUT" | sed -n '1,8s/^/    | /p'
   fail=$((fail + 1))
 elif [[ "$OUT" == *"VERIFIED automatically"*"stellarindex.toml.j2"* ]]; then
   echo "FAIL: the auto-applied banner claimed a surface this deploy never applied"
-  echo "$OUT" | sed 's/^/    | /' | head -8
+  echo "$OUT" | sed -n '1,8s/^/    | /p'
   fail=$((fail + 1))
 else
   echo "ok: mixed release attributes each surface to the right column"
@@ -313,7 +313,7 @@ WF="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)/.github/workflows/deploy
 if [[ ! -f "$WF" ]]; then
   check_caller "deploy workflow present" "no"
 else
-  call=$(grep -hE 'config-apply-gate\.sh' "$WF" | grep -vE '^\s*#' | head -1)
+  call=$(grep -hE 'config-apply-gate\.sh' "$WF" | grep -vE '^\s*#' | sed -n 1p)
   argc=$(printf '%s' "$call" | sed -E 's|.*config-apply-gate\.sh||' | grep -o '"\$[A-Z_]*"' | wc -l | tr -d ' ')
   if [[ -n "$call" && "$argc" -ge 3 ]]; then
     check_caller "deploy.yml passes the host baseline as the 3rd argument" "ok"
@@ -327,8 +327,8 @@ else
   # would have kept this green while making the gate permanently
   # vacuous: the "live" version would be the version just deployed, so
   # the diff range collapses to nothing and every config change passes.
-  bl_line=$(grep -n 'id: baseline' "$WF" | head -1 | cut -d: -f1)
-  pb_line=$(grep -nE 'name:.*(Run deploy playbook|deploy playbook)' "$WF" | head -1 | cut -d: -f1)
+  bl_line=$(grep -n 'id: baseline' "$WF" | sed -n 1p | cut -d: -f1)
+  pb_line=$(grep -nE 'name:.*(Run deploy playbook|deploy playbook)' "$WF" | sed -n 1p | cut -d: -f1)
   if [[ -n "$bl_line" && -n "$pb_line" && "$bl_line" -lt "$pb_line" ]] \
      && grep -q 'deployed-versions' "$WF"; then
     check_caller "deploy.yml reads the host's live version BEFORE the playbook runs (baseline@L$bl_line < playbook@L$pb_line)" "ok"
