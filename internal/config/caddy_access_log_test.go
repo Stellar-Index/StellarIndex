@@ -248,3 +248,246 @@ func TestCaddyAccessLogFilterIsGlobalNotJustTheSite(t *testing.T) {
 		}
 	}
 }
+
+// ─── Response compression (#331 F2) ─────────────────────────────────
+//
+// The edge is also where response compression lives, and the same
+// two-file drift hazard applies. Measured against the live API on
+// 2026-09-02: every JSON route answered `Accept-Encoding: gzip, br,
+// zstd` with NO `content-encoding` at all — 15–34 KB of raw JSON per
+// page load, of which ~77% is compressible (170,924 B of
+// representative payloads → 40,554 B gzip / 39,399 B zstd).
+//
+// `encode` is not safe bare here. Caddy's DEFAULT response matcher
+// allow-lists `text/*`, which INCLUDES `text/event-stream`, and the
+// handler wraps the response writer and buffers up to
+// `minimum_length` before it can decide whether to encode. Buffering
+// an event stream is precisely the failure the `flush_interval -1`
+// block in the same file exists for — r1 2026-08-03 served ZERO bytes
+// over 25 s to every SSE consumer. So the stream paths are excluded
+// from `encode` at the REQUEST level (the handler never wraps them)
+// AND the response matcher is narrowed to the JSON/atom bodies the
+// API actually serves.
+//
+// The tests below pin both halves of that exclusion in both files. A
+// future edit that drops either one compresses an event stream and
+// takes streaming down silently — the failure mode is a 200 with the
+// right Content-Type and no data, which no smoke check catches.
+
+// caddyEncodeExclusion pulls the compression exclusion's path regexp
+// out of a Caddyfile. Caddy's `path_regexp` matcher runs on Go's
+// regexp package, so compiling the extracted pattern here exercises
+// the production matcher rather than a re-implementation of it.
+var caddyEncodeExclusion = regexp.MustCompile(`@compressible not path_regexp \S+ (\S+)`)
+
+// caddySSEFlushMatcher pulls the `@sse` matcher — the one
+// `flush_interval -1` hangs off — so a test can assert the two
+// definitions of "this is a stream" have not drifted apart.
+var caddySSEFlushMatcher = regexp.MustCompile(`@sse path_regexp \S+ (\S+)`)
+
+// caddySSERoutes is every server-sent-event endpoint the API serves
+// (internal/api/v1/server.go:1763, 1860, 1869, 1874). Each answers
+// `Content-Type: text/event-stream` and must never be encoded.
+var caddySSERoutes = []string{
+	"/v1/price/stream",
+	"/v1/price/tip/stream",
+	"/v1/ledger/stream",
+	"/v1/observations/stream",
+}
+
+// caddyCredentialRoutes carry a dashboard session cookie, a
+// magic-link / email-verification token, a SEP-10 challenge or a live
+// API key. Compressing a body that mixes a secret with
+// attacker-influenced input leaks the secret through the compressed
+// length (BREACH), and these bodies are small and low-volume, so
+// there is nothing to win by compressing them. Every one is already
+// `private, no-store` in
+// internal/api/v1/middleware/cachecontrol.go.
+var caddyCredentialRoutes = []string{
+	"/v1/auth/login",
+	"/v1/auth/callback",
+	"/v1/auth/logout",
+	"/v1/auth/verify-code",
+	"/v1/auth/sep10/challenge",
+	"/v1/auth/sep10/token",
+	"/v1/auth/passkey/begin-login",
+	"/v1/dashboard/keys",
+	"/v1/dashboard/webhooks",
+	"/v1/dashboard/price-alerts",
+	"/v1/account/me",
+	"/v1/account/keys",
+	"/v1/account/usage",
+	"/v1/signup",
+	"/v1/signup/verify",
+}
+
+// caddyCompressibleRoutes are the large public JSON bodies the fix
+// exists for. Two traps are pinned here deliberately:
+//
+//   - `/v1/accounts/{G…}` is the PUBLIC explorer surface and must stay
+//     compressed; only the singular `/v1/account/…` dashboard prefix is
+//     a credential surface. An exclusion written `account` rather than
+//     `account/` would silently stop compressing the busiest family of
+//     pages on the site.
+//   - `/v1/oracle/streams` is an ordinary JSON listing, not SSE. The
+//     exclusion is anchored `/stream$` precisely so the plural does not
+//     get caught by it.
+var caddyCompressibleRoutes = []string{
+	"/v1/assets",
+	"/v1/assets/native",
+	"/v1/markets",
+	"/v1/ledgers",
+	"/v1/operations",
+	"/v1/pools",
+	"/v1/issuers",
+	"/v1/contracts",
+	"/v1/oracle/streams",
+	"/v1/accounts/GA7QYNF7SOWQ3GLR2BGMZEHXAVIRZA4KVWLTJJFC7MGXUA74P7UJVSGZ",
+	"/v1/accounts/GA7QYNF7SOWQ3GLR2BGMZEHXAVIRZA4KVWLTJJFC7MGXUA74P7UJVSGZ/trades",
+	"/v1/incidents.atom",
+	"/v1/healthz",
+}
+
+// caddyEncodeStanza returns the compression stanza verbatim — the
+// `@compressible` matcher line plus the `encode … { … }` block. Same
+// shape as caddyLogBlock: the stanza opens at one tab of indentation
+// and every nested block is deeper, so the first line that is exactly
+// a tab and a closing brace ends it.
+func caddyEncodeStanza(t *testing.T, path string) string {
+	t.Helper()
+	src := readCaddyfile(t, path)
+	start := strings.Index(src, "\t@compressible ")
+	if start < 0 {
+		t.Fatalf("%s: no `@compressible` matcher — responses ship uncompressed (#331 F2)", path)
+	}
+	rest := src[start:]
+	end := strings.Index(rest, "\n\t}\n")
+	if end < 0 {
+		t.Fatalf("%s: compression stanza is not closed", path)
+	}
+	return rest[:end]
+}
+
+// caddyEncodeExcludes compiles the exclusion pattern out of a
+// Caddyfile and reports whether it would keep `reqPath` uncompressed.
+func caddyEncodeExcludes(t *testing.T, path string) func(string) bool {
+	t.Helper()
+	m := caddyEncodeExclusion.FindStringSubmatch(readCaddyfile(t, path))
+	if m == nil {
+		t.Fatalf("%s: no `@compressible not path_regexp …` matcher on the encode directive — "+
+			"a bare `encode` compresses text/event-stream under Caddy's default matcher", path)
+	}
+	re, err := regexp.Compile(m[1])
+	if err != nil {
+		t.Fatalf("%s: compression exclusion pattern does not compile: %v", path, err)
+	}
+	return re.MatchString
+}
+
+// TestCaddyEncodesPublicJSON pins the directive itself: both files
+// must offer zstd and gzip, and the response matcher must allow-list
+// only the JSON/atom bodies. Caddy's response matcher can NAME
+// Content-Type values to encode but cannot exclude one, so
+// "never text/event-stream" is only expressible as "only these" —
+// which means any `text/` entry appearing in the match block is the
+// bug, not a widening.
+func TestCaddyEncodesPublicJSON(t *testing.T) {
+	for _, path := range caddyfiles {
+		t.Run(filepath.Base(path), func(t *testing.T) {
+			stanza := caddyEncodeStanza(t, path)
+
+			if !strings.Contains(stanza, "encode @compressible zstd gzip") {
+				t.Errorf("%s: expected `encode @compressible zstd gzip`, got stanza:\n%s", path, stanza)
+			}
+			if !strings.Contains(stanza, "header Content-Type application/json*") {
+				t.Errorf("%s: encode's response matcher does not allow application/json — "+
+					"the whole public read path stays uncompressed", path)
+			}
+			// The load-bearing negative. `text/*` is in Caddy's default
+			// list and matches text/event-stream.
+			if strings.Contains(stanza, "text/") {
+				t.Errorf("%s: encode's response matcher names a `text/` Content-Type — "+
+					"`text/*` and `text/event-stream` are exactly what must not be encoded:\n%s", path, stanza)
+			}
+
+			isExcluded := caddyEncodeExcludes(t, path)
+			for _, reqPath := range caddyCompressibleRoutes {
+				if isExcluded(reqPath) {
+					t.Errorf("%s: %s is excluded from compression but is a public JSON body", path, reqPath)
+				}
+			}
+		})
+	}
+}
+
+// TestCaddyEncodeExcludesEventStreams is the one that matters. Caddy's
+// `encode` buffers, and an SSE response that is buffered is a 200 with
+// the right Content-Type and no bytes — the exact r1 2026-08-03
+// outage, which is invisible to a status-code smoke check. Every SSE
+// route must be excluded at the REQUEST level so `encode` never wraps
+// it, and the exclusion must agree with the `@sse` matcher that the
+// `flush_interval -1` block already hangs off.
+func TestCaddyEncodeExcludesEventStreams(t *testing.T) {
+	for _, path := range caddyfiles {
+		t.Run(filepath.Base(path), func(t *testing.T) {
+			isExcluded := caddyEncodeExcludes(t, path)
+			for _, reqPath := range caddySSERoutes {
+				if !isExcluded(reqPath) {
+					t.Errorf("%s: %s is NOT excluded from `encode` — Caddy would buffer the event stream "+
+						"and every SSE consumer gets a 200 with no data", path, reqPath)
+				}
+			}
+
+			// The two definitions of "this is a stream" must not drift.
+			m := caddySSEFlushMatcher.FindStringSubmatch(readCaddyfile(t, path))
+			if m == nil {
+				t.Fatalf("%s: no `@sse path_regexp` matcher", path)
+			}
+			sse, err := regexp.Compile(m[1])
+			if err != nil {
+				t.Fatalf("%s: @sse pattern does not compile: %v", path, err)
+			}
+			for _, reqPath := range append(append([]string{}, caddySSERoutes...),
+				caddyCompressibleRoutes...) {
+				if sse.MatchString(reqPath) && !isExcluded(reqPath) {
+					t.Errorf("%s: %s gets `flush_interval -1` (so it is a stream) but is still "+
+						"handed to `encode` — the two matchers have drifted apart", path, reqPath)
+				}
+			}
+		})
+	}
+}
+
+// TestCaddyEncodeExcludesCredentialSurfaces pins the BREACH exclusion.
+// A response that carries a session cookie, a magic-link token or a
+// live API key next to attacker-influenced input leaks the secret
+// through its compressed length.
+func TestCaddyEncodeExcludesCredentialSurfaces(t *testing.T) {
+	for _, path := range caddyfiles {
+		t.Run(filepath.Base(path), func(t *testing.T) {
+			isExcluded := caddyEncodeExcludes(t, path)
+			for _, reqPath := range caddyCredentialRoutes {
+				if !isExcluded(reqPath) {
+					t.Errorf("%s: %s is compressed — it carries a credential, and compressing a secret "+
+						"beside attacker-influenced input leaks it through the response length (BREACH)",
+						path, reqPath)
+				}
+			}
+		})
+	}
+}
+
+// TestCaddyfilesShareCompressionStanza is the drift guard, the same
+// one TestCaddyfilesShareAccessLogBlock applies to the log block:
+// Caddyfile.api is the reference copy, Caddyfile.j2 is what ansible
+// renders onto the host. An exclusion that lives in only one of them
+// means the edge does something the repo says it does not.
+func TestCaddyfilesShareCompressionStanza(t *testing.T) {
+	first := caddyEncodeStanza(t, caddyfiles[0])
+	for _, path := range caddyfiles[1:] {
+		if got := caddyEncodeStanza(t, path); got != first {
+			t.Errorf("compression stanza differs between\n  %s\nand\n  %s\n\n--- %s ---\n%s\n--- %s ---\n%s",
+				caddyfiles[0], path, caddyfiles[0], first, path, got)
+		}
+	}
+}

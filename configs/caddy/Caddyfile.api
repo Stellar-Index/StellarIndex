@@ -115,6 +115,63 @@ api.stellarindex.io {
 		-Server
 	}
 
+	# ── Response compression ────────────────────────────────────────
+	# Measured 2026-09-02 against the live API: with
+	# `Accept-Encoding: gzip, br, zstd` NO route came back with a
+	# `content-encoding` header — every JSON body shipped raw, 15–34 KB
+	# a page (#331 F2). Representative payloads (assets/ledgers/
+	# operations/markets/pools/issuers/contracts/oracle-streams,
+	# 170,924 B total) compress to 40,554 B with gzip and 39,399 B with
+	# zstd — 4.2×/4.3×, i.e. ~77% of the bytes on the read path.
+	#
+	# `encode` is deliberately NOT bare. Two exclusions, both
+	# load-bearing:
+	#
+	#  1. SSE MUST NOT be encoded. Caddy's `encode` wraps the response
+	#     writer and buffers up to `minimum_length` (512 B by default)
+	#     before it can decide whether to encode, and its DEFAULT
+	#     response matcher allow-lists `text/*` — which INCLUDES
+	#     `text/event-stream`
+	#     (https://caddyserver.com/docs/caddyfile/directives/encode,
+	#     "match … the default is a list of common text-based
+	#     Content-Types"; confirmed against caddy v2.11.4 locally: a
+	#     `text/plain` body IS encoded under the default matcher).
+	#     Buffering an event stream is exactly the failure the
+	#     `flush_interval -1` block below exists for (r1 2026-08-03:
+	#     zero bytes over 25 s to every SSE consumer). So the stream
+	#     paths are excluded at the REQUEST level — `encode` never
+	#     wraps them at all, whatever a future Caddy decides about
+	#     content types — and the response matcher independently
+	#     narrows to the three Content-Types the API actually serves
+	#     as a body. Caddy's response matcher can only ALLOW-list
+	#     Content-Type values, never exclude one, so "not
+	#     text/event-stream" has to be written as "only these".
+	#     Keep the path alternation below in step with the `@sse`
+	#     matcher further down; internal/config/caddy_access_log_test.go
+	#     pins both.
+	#
+	#  2. The credential surfaces are excluded (BREACH). Compressing a
+	#     body that carries a session cookie, a magic-link token or a
+	#     live API key alongside attacker-influenced input leaks the
+	#     secret through the compressed length. `/v1/auth/*`,
+	#     `/v1/dashboard/*`, `/v1/account/*` and `/v1/signup*` are all
+	#     `private, no-store` (internal/api/v1/middleware/cachecontrol.go),
+	#     small, and low-volume — there is nothing to win by
+	#     compressing them. Note the exclusion is `account/`, NOT
+	#     `accounts/`: `/v1/accounts/{G…}` is the PUBLIC explorer
+	#     surface and stays compressed.
+	#
+	# `zstd gzip` also sets the preference order Caddy offers a client
+	# that accepts both.
+	@compressible not path_regexp uncompressed ^/v1/(.*/stream$|auth/|dashboard/|account/|signup)
+	encode @compressible zstd gzip {
+		match {
+			header Content-Type application/json*
+			header Content-Type application/problem+json*
+			header Content-Type application/atom+xml*
+		}
+	}
+
 	# Manual serving kill-switch (audit-2026-07-23 serving-killswitch).
 	# Divergence/anomaly conditions only raise alerts today — there was
 	# no way to actually stop serving during a live data-integrity
