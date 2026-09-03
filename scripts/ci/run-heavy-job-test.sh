@@ -57,6 +57,27 @@ WRAP="$TMP/run-heavy-job.sh"
 mkdir -p "$TMP/bin" "$TMP/lock"
 printf '#!/usr/bin/env bash\nexit 0\n' > "$TMP/bin/flock"   # macOS has no flock
 chmod +x "$TMP/bin/flock"
+# The wrapper branches on `id -u`: non-root execs the payload directly,
+# root wraps it in `systemd-run --scope --unit U -p K=V … CMD`. CI runners
+# and dev machines are non-root, so this test only ever exercised the first
+# branch — and the container verifier, which runs as root, found the second
+# calling a binary the image does not have. Stub systemd-run faithfully
+# (drop its own options, exec the command, env inherited as a scope does),
+# and run the whole suite twice: once as the real uid, once with `id`
+# stubbed to answer 0, so both branches are proven on every machine.
+cat > "$TMP/bin/systemd-run" <<'SR'
+#!/usr/bin/env bash
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --scope) shift ;;
+    --unit|-p|--property) shift 2 ;;
+    --unit=*|-p*|--property=*) shift ;;
+    *) break ;;
+  esac
+done
+exec "$@"
+SR
+chmod +x "$TMP/bin/systemd-run"
 export PATH="$TMP/bin:$PATH"
 export HEAVY_JOB_LOCK_DIR="$TMP/lock"
 
@@ -90,6 +111,8 @@ out_has() { grep -qxF -- "$1" "$TMP/out"; }
 err_has() { grep -qF -- "$1" "$TMP/err"; }
 
 echo "run-heavy-job-test:"
+run_cases() {
+local branch="$1"; printf '  [%s branch]\n' "$branch"
 
 # ── 1. runbook-shaped launch: caller sourced the SERVICE env, not -ops ─
 run HEAVY_JOB_OPS_ENV="$OPS_ENV" AWS_ACCESS_KEY_ID=service-key
@@ -112,6 +135,11 @@ if err_has "WARNING" && err_has "CH 'default' user at SERVING priority"; then ok
 printf 'AWS_ACCESS_KEY_ID=ops-reader-key\n' > "$TMP/stellarindex-ops-nopair"
 run HEAVY_JOB_OPS_ENV="$TMP/stellarindex-ops-nopair"
 if out_has "USER=<unset>" && err_has "CH 'default' user"; then ok "file without the pair (profile not applied): WARNING on stderr"; else bad "file without pair: no WARNING ($(cat "$TMP/err"))"; fi
+
+}
+run_cases "non-root"
+mkdir -p "$TMP/rootbin"; printf '#!/usr/bin/env bash\necho 0\n' > "$TMP/rootbin/id"; chmod +x "$TMP/rootbin/id"
+PATH="$TMP/rootbin:$PATH" run_cases "root (id stubbed)"
 
 echo "run-heavy-job-test: $pass passed, $fail failed"
 [[ "$fail" -eq 0 ]]
