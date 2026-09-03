@@ -1,6 +1,6 @@
 ---
 title: Alerts Catalogue
-last_verified: 2026-09-02
+last_verified: 2026-09-03
 status: ratified — incremental growth
 ---
 
@@ -27,7 +27,7 @@ enforced 2026-04-23 onward).
   | Severity | Rules | AlertManager route | Delivery |
   | --- | --- | --- | --- |
   | `page` | 52 | `receiver: chat-page` | Discord **#stellarindex-pages**, `repeat_interval` 12 h. There is **no** PagerDuty leg — `pagerduty_configs` is unset, so nothing wakes anyone up. |
-  | `ticket` | 138 | `receiver: chat-default` | Discord **#stellarindex-alerts**, `repeat_interval` 24 h. |
+  | `ticket` | 140 | `receiver: chat-default` | Discord **#stellarindex-alerts**, `repeat_interval` 24 h. |
   | `informational` | 21 | `receiver: silent` | **Delivered to nobody, deliberately.** `silent` is declared with no `*_configs` block at all, which in Alertmanager means the alert is accepted and then dropped. It accumulates in the AlertManager UI and nothing else happens. |
 
   **`informational` is not "a low-priority ticket".** There is no
@@ -211,6 +211,29 @@ counterparts to the API-plane alerts above.
 | `stellarindex_sla_probe_freshness_breach` | `stellarindex_sla_probe_freshness_sec` | > 30 s for ≥ 30 min | page | [sla-probe-freshness-breach](runbooks/sla-probe-freshness-breach.md) |
 | `stellarindex_sla_probe_unit_failed_alert` | `stellarindex_sla_probe_unit_failed` | > 0 for ≥ 30 min | ticket | [sla-probe-unit-failed](runbooks/sla-probe-unit-failed.md) |
 | `stellarindex_sla_probe_stale` | `time() - stellarindex_sla_probe_last_pass_timestamp` | > 90 min for ≥ 5 min | page | [sla-probe-stale](runbooks/sla-probe-stale.md) |
+
+## API-smoke alerts
+
+Source: `scripts/dev/r1-smoke.sh` runs every 5 min via the wrapper +
+systemd timer in `configs/healthchecks/` (`smoke.sh`,
+`stellarindex-smoke.timer`); metrics emitted to node_exporter's
+textfile_collector as `api_smoke.prom`.
+
+The smoke is the only check that reads response **bodies** — 34 GETs
+with jq shape assertions, covering the failure the heartbeats and the
+SLA probe structurally cannot see: a 200 carrying the wrong JSON, or a
+documented 4xx that regressed into a silent 200. Until 2026-09-03 its
+only sink was `HEALTHCHECKS_URL_SMOKE`, empty on r1 since install, so
+the check ran into the journal and nowhere else: no textfile, no series,
+no rule. Both rows below are `ticket` rather than `page` deliberately —
+a `page` on component `api` inhibits every `ticket` sharing that
+component, so a smoke that paged while the API was healthy would mute
+the api-plane tickets it exists to complement.
+
+| Name | Metric | Condition | Severity | Runbook |
+| ---- | ------ | --------- | -------- | ------- |
+| `stellarindex_api_smoke_failing` | `stellarindex_api_smoke_failures` | > 0 for ≥ 30 min (six consecutive failing runs at the 5-min cadence) | ticket | [api-smoke-failing](runbooks/api-smoke-failing.md) |
+| `stellarindex_api_smoke_stale` | `time() - stellarindex_api_smoke_last_run_unix`, plus an `absent_over_time(…[30m])` branch for the never-ran case | > 30 min for ≥ 5 min | ticket | [api-smoke-stale](runbooks/api-smoke-stale.md) |
 
 ## SLO burn-rate alerts (multi-window)
 

@@ -764,6 +764,16 @@ jobs:
         # fire. These fixtures run the shipped probe region against a
         # stubbed curl. No network, no ClickHouse, no Postgres.
         run: ./scripts/ci/data-freshness-test.sh
+      - name: API-smoke textfile self-test
+        # stellarindex-smoke.timer ran a 34-GET API smoke with jq shape
+        # assertions every 5 minutes and reported to NOTHING:
+        # HEALTHCHECKS_URL_SMOKE was empty on r1, the wrapper wrote no
+        # node_exporter textfile, and no rule mentioned it — so the one
+        # check that can see a 200 carrying structurally wrong JSON was
+        # itself unobservable. These fixtures run the shipped wrapper
+        # against a stub smoke script and a stubbed curl, asserting the
+        # textfile lands on every path. No network, no systemd.
+        run: ./scripts/ci/smoke-textfile-test.sh
       - name: lint-deploy-playbook
         # deploy-ansible-deploy-2: deploy.yml reaches the test-net VMs only
         # via --ssh-common-args ProxyJump, which controller-side rsync

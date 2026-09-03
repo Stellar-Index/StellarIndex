@@ -21,6 +21,7 @@ adapted for the single-host scrape config in [`prometheus.r1.yml`](../prometheus
 | `archive-completeness.yml` | `archive-completeness.yml` | requires node_exporter `--collector.textfile` + `/var/lib/node_exporter/textfile_collector/` (provisioned by the archival-node role's `10-observability.yml` task). |
 | `verify-archive.yml` | `verify-archive.yml` | requires node_exporter `--collector.systemd` (already on). |
 | `sla-probe.yml` | `sla-probe.yml` | requires textfile_collector + `-textfile-output` arg on the probe binary (wired in `configs/healthchecks/sla-probe.sh`). |
+| `api-smoke.yml` | `api-smoke.yml` | as-is (no job-label refs). Requires textfile_collector + the `ReadWritePaths` grant on `stellarindex-smoke.service` that lets the wrapper write `api_smoke.prom`. |
 | `zfs-snapshots.yml` | `zfs-snapshots.yml` | as-is (textfile metrics from `zfs-snapshot.sh`, archival-node role tag `zfs-snapshots`). |
 
 The remaining files in `deploy/monitoring/rules/` are still

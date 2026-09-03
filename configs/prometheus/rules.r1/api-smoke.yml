@@ -1,0 +1,95 @@
+---
+# API-smoke alerts. Pair with scripts/dev/r1-smoke.sh + the wrapper and
+# 5-minute systemd timer in configs/healthchecks/ (smoke.sh,
+# stellarindex-smoke.timer).
+#
+# Scrape source: node_exporter's textfile_collector reads
+# `/var/lib/node_exporter/textfile_collector/api_smoke.prom`, which
+# smoke.sh rewrites atomically at the end of EVERY run, pass or fail.
+#
+# Why these rules exist: the smoke is the only check that reads response
+# BODIES. The heartbeats prove a process is listening, the SLA probe
+# measures latency and freshness — neither can see `/v1/coins` returning
+# HTTP 200 with the `data` field missing, which is precisely what the
+# smoke's 34 jq shape assertions are for. Until 2026-09-03 its single
+# sink was HEALTHCHECKS_URL_SMOKE, empty on r1 since install, so the
+# check ran every five minutes into the journal and nowhere else: no
+# textfile, no series, no rule. A check whose result no one can query is
+# indistinguishable from a check that is not running.
+#
+# absent_over_time branch (OBS-2 pattern, as the restore-drill rule
+# demonstrates): the never-scheduled cases — timer stopped, unit failing
+# before it can write, textfile directory not writable, host never
+# deployed — make `last_run_unix` ABSENT rather than old. The plain
+# `time() - last_run_unix` branch evaluates over an empty vector there
+# and can never fire, so the loudest failure of a monitoring check would
+# be its quietest signal. `absent_over_time(...[30m])` restores it.
+#
+# Severity is `ticket`, not `page`, on both: a `page` on component `api`
+# inhibits every `ticket`/`informational` alert sharing that component
+# (configs/alertmanager/alertmanager.r1.yml), so a smoke that pages while
+# the API itself is healthy would mute the api-plane tickets it is meant
+# to complement. `ticket` reaches #stellarindex-alerts, which is the
+# whole point — the previous state was zero delivery.
+
+groups:
+  - name: stellarindex.api_smoke
+    interval: 60s
+    rules:
+
+      # A run that ran and found a problem. smoke.sh rewrites the
+      # textfile on every run, so `failures > 0` is the CURRENT run's
+      # verdict; 30m is six consecutive failing runs at the 5-minute
+      # cadence, which clears the data-dependent single-run flakes
+      # (cold-cache timeouts, an empty OHLC window) the smoke tolerates
+      # by design.
+      - alert: stellarindex_api_smoke_failing
+        expr: stellarindex_api_smoke_failures > 0
+        for: 30m
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: api
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api-smoke-failing.md
+          summary: "the API smoke has failed {{ $value }} check(s) for ≥ 30m — the public surface is returning something the shape assertions reject"
+          description: |
+            The 5-minute API smoke (stellarindex-smoke.timer →
+            smoke.sh → r1-smoke.sh) has recorded {{ $value }} failed
+            check(s) on every run for at least 30 minutes. Each check is
+            an HTTP status assertion plus, for most, a jq assertion on
+            the response body — so this fires on the failure class the
+            heartbeats and the SLA probe structurally cannot see: a 200
+            carrying the wrong shape, a documented 4xx that regressed
+            into a silent 200, an OpenAPI change that breaks downstream
+            clients. Read the failing check names from
+            `journalctl -u stellarindex-smoke.service -n 200`, then run
+            `/opt/stellarindex/healthchecks/r1-smoke.sh` by hand.
+
+      # "Has the check run at all?" — deliberately separate from the
+      # verdict above. 30m is six missed firings at the 5-minute cadence.
+      - alert: stellarindex_api_smoke_stale
+        expr: |
+          (time() - stellarindex_api_smoke_last_run_unix) > (30 * 60)
+          or
+          absent_over_time(stellarindex_api_smoke_last_run_unix[30m])
+        for: 5m
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: api
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api-smoke-stale.md
+          summary: "the API smoke has not recorded a run in ≥ 30m (cadence 5m) — the shape-assertion layer is dark"
+          description: |
+            No API-smoke run has stamped `last_run_unix` in over 30
+            minutes — six missed firings — or none ever has. Either
+            stellarindex-smoke.timer is not scheduled, the service is
+            failing before it can write, or the textfile directory is
+            not writable by the unit (ProtectSystem=strict without
+            ReadWritePaths returns EROFS). While this is firing nothing
+            is asserting the public API's response shapes, so a
+            structurally-wrong 200 would ship unnoticed. Check
+            `systemctl list-timers stellarindex-smoke.timer`,
+            `journalctl -u stellarindex-smoke.service`, and
+            `ls -la /var/lib/node_exporter/textfile_collector/api_smoke.prom`.

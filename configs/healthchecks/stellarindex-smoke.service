@@ -13,3 +13,12 @@ NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=true
 PrivateTmp=true
+# smoke.sh writes /var/lib/node_exporter/textfile_collector/api_smoke.prom
+# so stellarindex_api_smoke_{failing,stale} have real series to evaluate.
+# ProtectSystem=strict makes /var read-only; without ReadWritePaths every
+# run would fail with EROFS on the textfile and the alerts would see an
+# absent series forever. Same grant the sla-probe unit already carries:
+# the archival-node role provisions the directory 0775 group
+# stellarindex, and DynamicUser joins that group to write there.
+ReadWritePaths=/var/lib/node_exporter/textfile_collector
+SupplementaryGroups=stellarindex
