@@ -71,6 +71,7 @@ cd "$REPO_ROOT"
 python3 - <<'PY'
 import os
 import re
+import subprocess
 import sys
 from pathlib import Path
 
@@ -300,11 +301,47 @@ SKIP_DIRS = {".git", "vendor", ".discovery-repos", "node_modules"}
 
 
 def walk_go_files(root):
-    for dirpath, dirnames, filenames in os.walk(root):
-        dirnames[:] = [d for d in dirnames if d not in SKIP_DIRS]
-        for fn in filenames:
-            if fn.endswith(".go"):
-                yield Path(dirpath) / fn
+    """Every .go file the repository actually owns.
+
+    Source of truth is git, not the filesystem: `--cached --others
+    --exclude-standard` is tracked files PLUS untracked ones that are
+    not ignored. That matters in both directions. Walking the
+    filesystem alone picks up ignored trees — a nested git worktree
+    under .claude/, a scratch clone, an archived copy — and reports
+    every file in them as a new violation against a baseline they were
+    never part of. Enumerating only tracked files has the opposite
+    failure: a .go file added but not yet staged goes unlinted, which
+    is precisely when the lint is most useful.
+
+    SKIP_DIRS still applies, because `vendor/` and `.discovery-repos/`
+    are checked in and would otherwise be walked.
+    """
+    try:
+        out = subprocess.run(
+            ["git", "-C", str(root), "ls-files", "--cached", "--others",
+             "--exclude-standard", "-z", "--", "*.go"],
+            capture_output=True, text=True, timeout=30, check=True,
+        ).stdout
+    except (OSError, subprocess.SubprocessError):
+        # Not a git checkout (a release tarball, say). Fall back to the
+        # filesystem walk — less precise, but the lint still runs.
+        for dirpath, dirnames, filenames in os.walk(root):
+            dirnames[:] = [d for d in dirnames if d not in SKIP_DIRS]
+            for fn in filenames:
+                if fn.endswith(".go"):
+                    yield Path(dirpath) / fn
+        return
+
+    for rel in out.split("\0"):
+        if not rel:
+            continue
+        if any(part in SKIP_DIRS for part in Path(rel).parts):
+            continue
+        p = root / rel
+        # ls-files lists index entries whose file may be gone (a
+        # deletion not yet staged); the walk never yielded those.
+        if p.is_file():
+            yield p
 
 
 # ─── Main ───────────────────────────────────────────────────────
