@@ -101,7 +101,8 @@ func TestPrewarmAssetListingsCoversTheObservedHotShapes(t *testing.T) {
 }
 
 // TestPrewarmAssetListingsNilReaderIsSafe — the prewarm goroutine runs
-// detached, so a nil reader must not take the whole cadence down.
+// detached, so neither a nil reader nor an absent snapshot store (Redis
+// unconfigured) may take the whole cadence down.
 func TestPrewarmAssetListingsNilReaderIsSafe(t *testing.T) {
-	prewarmAssetListings(context.Background(), discardLogger(), nil)
+	prewarmAssetListings(context.Background(), discardLogger(), nil, nil)
 }

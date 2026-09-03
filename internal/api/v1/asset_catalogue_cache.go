@@ -451,20 +451,46 @@ func refreshSWR[T any](c *CachedAssetsReader, op string, entry *swrEntry, done c
 // cache moves forward instead of perpetually re-spawning.
 const assetsRefreshBudget = 30 * time.Second
 
+// fetchRows returns just the rows. Kept so callers that do not care
+// about observation time are not forced to discard a value at every call
+// site.
 func (c *CachedAssetsReader) fetchRows(
 	ctx context.Context,
 	op, key string,
 	upstream func(context.Context) ([]timescale.AssetRow, error),
 ) ([]timescale.AssetRow, error) {
+	rows, _, err := c.fetchRowsAt(ctx, op, key, upstream)
+	return rows, err
+}
+
+// fetchRowsAt is fetchRows plus the OBSERVATION TIME of the rows it
+// returns, read under the same lock acquisition as the rows themselves.
+//
+// The pairing is the point. #459's first cut sampled `e.at` before
+// calling fetchRows and then paired that timestamp with whatever rows
+// came back — so a refresh landing in between returned FRESH rows
+// stamped with the STALE entry's time and `stale=true`. A caller then
+// published correct data under a wrong `as_of` and a wrong freshness
+// flag, which is the same honesty class as serving stale data as fresh,
+// just inverted. A test caught it under load; it is a race, not a flake.
+//
+// A zero `at` means the rows did not come from a cache entry (cache
+// disabled, or a cold fill whose entry was not retained), which callers
+// read as "answered live".
+func (c *CachedAssetsReader) fetchRowsAt(
+	ctx context.Context,
+	op, key string,
+	upstream func(context.Context) ([]timescale.AssetRow, error),
+) ([]timescale.AssetRow, time.Time, error) {
 	c.mu.Lock()
 	e, ok := c.entries[key]
 
 	// (A) Fresh hit.
 	if ok && e.flight == nil && time.Since(e.at) < c.ttl {
-		out := e.rows
+		out, outAt := e.rows, e.at
 		c.mu.Unlock()
 		obs.APICacheOpsTotal.WithLabelValues("coins", op, "hit").Inc()
-		return out, nil
+		return out, outAt, nil
 	}
 
 	// (A') Stale-while-revalidate. A prior SUCCESSFUL fetch exists
@@ -477,7 +503,7 @@ func (c *CachedAssetsReader) fetchRows(
 	// entire fix for #22: the expiry refetch (~seconds on the
 	// listing aggregate) must never land on a user request.
 	if ok && !e.at.IsZero() {
-		stale := e.rows
+		stale, staleAt := e.rows, e.at
 		if e.flight == nil {
 			done := make(chan struct{})
 			e.flight = done
@@ -492,11 +518,11 @@ func (c *CachedAssetsReader) fetchRows(
 			// would abort every refresh — defeating the entire point
 			// of serving stale while revalidating.
 			go c.refreshRows(op, entry, done, upstream)
-			return stale, nil
+			return stale, staleAt, nil
 		}
 		c.mu.Unlock()
 		obs.APICacheOpsTotal.WithLabelValues("coins", op, "stale").Inc()
-		return stale, nil
+		return stale, staleAt, nil
 	}
 
 	// (B) Cold fetch already in flight (no prior success to serve) —
@@ -509,12 +535,12 @@ func (c *CachedAssetsReader) fetchRows(
 		case <-ch:
 			if entry.err != nil {
 				obs.APICacheOpsTotal.WithLabelValues("coins", op, "miss").Inc()
-				return nil, entry.err
+				return nil, time.Time{}, entry.err
 			}
 			obs.APICacheOpsTotal.WithLabelValues("coins", op, "hit").Inc()
-			return entry.rows, nil
+			return entry.rows, entry.at, nil
 		case <-ctx.Done():
-			return nil, ctx.Err()
+			return nil, time.Time{}, ctx.Err()
 		}
 	}
 
@@ -530,8 +556,10 @@ func (c *CachedAssetsReader) fetchRows(
 	rows, err := upstream(ctx)
 
 	c.mu.Lock()
+	var filledAt time.Time
 	if err == nil {
-		entry.at = time.Now()
+		filledAt = time.Now()
+		entry.at = filledAt
 		entry.rows = rows
 		entry.flight = nil
 	} else {
@@ -540,7 +568,7 @@ func (c *CachedAssetsReader) fetchRows(
 	}
 	c.mu.Unlock()
 	close(done)
-	return rows, err
+	return rows, filledAt, err
 }
 
 // refreshRows runs the upstream call OFF the request path for the

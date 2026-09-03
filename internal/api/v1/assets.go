@@ -848,7 +848,13 @@ func (s *Server) handleAssetListFromAssets(
 		Cursor: cursor,
 		Order:  order,
 	}
-	rows, err := s.assetsReader.ListAssetsExt(r.Context(), opts)
+	// …At, not the plain call: this is the only listing path the boot
+	// seed and the prewarm cover, so it is the one that can serve a
+	// row-set observed by a PREVIOUS process (#459). Serving that is
+	// correct; serving it under `stale:false` / `as_of=now` would not
+	// be. observedAt/stale carry the served rows' real provenance onto
+	// the envelope below.
+	rows, observedAt, stale, err := s.listAssetsExtAt(r.Context(), opts)
 	if err != nil {
 		if clientAborted(r, err) {
 			return
@@ -888,7 +894,16 @@ func (s *Server) handleAssetListFromAssets(
 	// `/v1/assets?include=sparkline7d` (no asset_class) returned a
 	// byte-identical response with and without it.
 	s.attachSparkline7dIfRequested(r, out)
-	env := Envelope{Data: out, Flags: Flags{}}
+	// Honest freshness, same treatment /v1/markets gives its SWR reads
+	// (markets.go's `env.AsOf = observedAt.UTC()` block): when the rows
+	// came from the cache we stamp their ACTUAL observation time and,
+	// past the TTL, `flags.stale` — never now() over a boot-seeded or
+	// refresh-starved page-set. An uncached read leaves observedAt zero
+	// and writeEnvelope defaults as_of to now.
+	env := Envelope{Data: out, Flags: Flags{Stale: stale}}
+	if !observedAt.IsZero() {
+		env.AsOf = observedAt.UTC()
+	}
 	if hasMore && len(out) > 0 {
 		// Keyset cursor from the RAW last row, encoded by the store so it
 		// carries every ORDER BY key (rank tier first — #356), not just the

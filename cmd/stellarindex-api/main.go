@@ -899,7 +899,28 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 	logger.Info("prewarm: verified canonical asset_ids extracted",
 		"count", len(verifiedAssetIDs))
 
-	go prewarmCaches(rootCtx, logger.With("component", "prewarm"), cachedSourcesStats, cachedMarketsReader, cachedAssetsReader, cachedIssuersReader, verifiedAssetIDs)
+	// Boot seed for the /v1/assets listing (#459) — BEFORE the listener
+	// and before the prewarm. On r1 the HTTP listener is up 12 ms after
+	// "starting" and the first browser request lands at +4.0 s, while a
+	// cold listing fill takes ~11 s, so nothing that races the listener
+	// can help; the only way to answer that request quickly is to have
+	// an entry already. Seeding here also means the prewarm's own first
+	// pass takes the cache's stale-serve branch (detached refresh) —
+	// the same shape it takes at every steady-state TTL lapse — instead
+	// of blocking sequentially on twelve cold aggregates.
+	//
+	// Bounded and entirely optional: a cold, missing or unreachable
+	// Redis seeds nothing and leaves the pre-#459 cold-fill behaviour
+	// exactly as it was.
+	listingSnapshots := newAssetsListingSnapshots(rdb, logger.With("component", "assets-listing-snapshot"))
+	seedCtx, seedCancel := context.WithTimeout(rootCtx, assetsListingSnapshotBudget)
+	seeded, requested := seedAssetListingsFromSnapshots(seedCtx, logger, cachedAssetsReader, listingSnapshots)
+	seedCancel()
+	logger.Info("assets listing boot seed",
+		"seeded", seeded, "requested", requested,
+		"max_age", assetsListingSeedMaxAge.String())
+
+	go prewarmCaches(rootCtx, logger.With("component", "prewarm"), cachedSourcesStats, cachedMarketsReader, cachedAssetsReader, cachedIssuersReader, verifiedAssetIDs, listingSnapshots)
 
 	// TLS cert expiry self-probe (F-0051, audit-2026-05-26). Public
 	// TLS is fronted by Caddy + Let's Encrypt with auto-renewal 30d
@@ -4725,6 +4746,7 @@ func prewarmCaches(
 	assetsReader *v1.CachedAssetsReader,
 	issuers *v1.CachedIssuersReader,
 	verifiedAssetIDs []string,
+	snaps *assetsListingSnapshots,
 ) {
 	defer recoverBackgroundWorker(logger, "prewarm-caches")
 	heavyCadence := 5 * time.Minute
@@ -4758,7 +4780,7 @@ func prewarmCaches(
 	go func() {
 		defer warm.Done()
 		defer recoverBackgroundWorker(logger, "prewarm-light-initial")
-		prewarmLight(ctx, logger, markets, assetsReader, issuers, verifiedAssetIDs)
+		prewarmLight(ctx, logger, markets, assetsReader, issuers, verifiedAssetIDs, snaps)
 	}()
 	go func() {
 		defer warm.Done()
@@ -4779,7 +4801,7 @@ func prewarmCaches(
 		case <-heavyTick.C:
 			prewarmHeavy(ctx, logger, stats)
 		case <-lightTick.C:
-			prewarmLight(ctx, logger, markets, assetsReader, issuers, verifiedAssetIDs)
+			prewarmLight(ctx, logger, markets, assetsReader, issuers, verifiedAssetIDs, snaps)
 		}
 	}
 }
@@ -4817,6 +4839,7 @@ func prewarmLight(
 	assetsReader *v1.CachedAssetsReader,
 	issuers *v1.CachedIssuersReader,
 	verifiedAssetIDs []string,
+	snaps *assetsListingSnapshots,
 ) {
 	// 5-min ceiling on the whole prewarm cycle. Pre-2026-05-14 this
 	// was 60s shared across ~25 sequential calls — when the first
@@ -4871,7 +4894,7 @@ func prewarmLight(
 
 	// …and the SEPARATE /v1/assets listing, whose handler does the
 	// OPPOSITE arithmetic to /v1/coins above. See prewarmAssetListings.
-	prewarmAssetListings(assetsReaderCtx, logger, assetsReader)
+	prewarmAssetListings(assetsReaderCtx, logger, assetsReader, snaps)
 	// Mirrors the most-trafficked /v1/markets, /v1/pools requests
 	// the explorer fires (default order, no source filter). The
 	// limit set covers the four common values we see in practice:
@@ -5069,17 +5092,28 @@ var assetListingPrewarmLimits = []int{1, 5, 10, 50, 100, 500}
 // no-filter, no-cursor requests a first page-load makes. A filtered or
 // paginated request is a deliberate narrowing by a caller already past
 // the landing page.
+// Each successfully warmed variant is also persisted to Redis
+// (`snaps`, nil-safe) so the NEXT process can seed this cache before it
+// starts listening — see assets_listing_snapshot.go. The read goes
+// through ListAssetsExtAt rather than ListAssetsExt so the snapshot
+// carries the rows' REAL observation time: when this cycle is itself
+// served a stale entry, re-persisting must not reset the age of data
+// nothing has re-observed.
 func prewarmAssetListings(
 	ctx context.Context, logger *slog.Logger, assetsReader *v1.CachedAssetsReader,
+	snaps *assetsListingSnapshots,
 ) {
 	if assetsReader == nil {
 		return
 	}
 	for _, opts := range assetListingPrewarmOptions() {
-		if _, err := assetsReader.ListAssetsExt(ctx, opts); err != nil {
+		rows, observedAt, _, err := assetsReader.ListAssetsExtAt(ctx, opts)
+		if err != nil {
 			logger.Debug("prewarm assets listing failed",
 				"limit", opts.Limit, "order", opts.Order, "err", err)
+			continue
 		}
+		snaps.save(ctx, opts, rows, observedAt)
 	}
 }
 
