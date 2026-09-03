@@ -266,3 +266,80 @@ tests:
       - eval_time: 150m
         alertname: stellarindex_aggregator_outlier_trim_rate_legacy
         exp_alerts: []
+
+  # ══ stellarindex_nonstandard_decimals_correction_failing ══════════
+  # ── the startup-only refresh failure ─────────────────────────────
+  # The refresh sweep's FIRST run happens on a background goroutine
+  # while the API is still coming up. When Postgres is not reachable
+  # yet, that one failure lands before the metrics endpoint's first
+  # scrape, so Prometheus's first sample of the counter is already 1
+  # and every later sample is 1 too — a flat range, which increase()
+  # reads as 0. The cache is then coasting on an empty snapshot with
+  # nothing said about it.
+  #
+  # PROVEN-RED: delete the two `unless … offset 15m` arms from
+  # ../rules/aggregator.yml and this case fails with
+  # "alertname:stellarindex_nonstandard_decimals_correction_failing,
+  #  time:10m, exp:[…], got:[]".
+  - interval: 1m
+    name: a refresh failure that predates the first scrape still tickets
+    input_series:
+      - series: 'stellarindex_nonstandard_decimals_cache_refresh_failures_total{job="stellarindex_api",instance="r1:8080"}'
+        values: '1+0x60'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: stellarindex_nonstandard_decimals_correction_failing
+        exp_alerts:
+          - exp_labels:
+              job: stellarindex_api
+              instance: r1:8080
+              severity: ticket
+              team: stellarindex
+              component: aggregator
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/dex-nonstandard-decimals.md
+              summary: "Non-7-decimals correction sweep failing or serving declining — tokens at risk of silent price skew (P2)"
+              description: |
+                Either the aggregator's nonstandard_decimals_assets
+                refresh sweep is erroring
+                (stellarindex_nonstandard_decimals_cache_refresh_failures_total),
+                or a serving path is actively declining instead of
+                normalizing (stellarindex_price_serve_declined_nonstandard_decimals_total).
+                When the refresh sweep fails, newly-detected non-7-decimal
+                tokens don't get their nonstandard_decimals_assets
+                correction entry seeded/refreshed, so their pairs revert
+                to the raw, skewed ratio that
+                stellarindex_dex_nonstandard_decimals_detected exists to
+                warn about — this is the genuine action item behind that
+                latching detector. Investigate the aggregator's
+                decimals-guard component (internal/decimalsguard) and the
+                nonstandard_decimals_assets table directly.
+                Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/dex-nonstandard-decimals.md
+
+  # ── the blip resolves; it does not latch ─────────────────────────
+  # One failure, then clean sweeps. Once the birth ages out of the 15m
+  # window both arms go quiet — the failure mode that got the sibling
+  # `dex_nonstandard_decimals_detected` detector removed (it compared
+  # an all-time counter to zero and fired forever).
+  - interval: 1m
+    name: a single refresh failure stops ticketing once the window passes
+    input_series:
+      - series: 'stellarindex_nonstandard_decimals_cache_refresh_failures_total{job="stellarindex_api",instance="r1:8080"}'
+        values: '1+0x60'
+    alert_rule_test:
+      - eval_time: 45m
+        alertname: stellarindex_nonstandard_decimals_correction_failing
+        exp_alerts: []
+
+  # ── a healthy sweep is silent ────────────────────────────────────
+  # The counter is a plain (zero-seeded) Counter, so a flat 0 is the
+  # normal state and must never ticket.
+  - interval: 1m
+    name: a healthy nonstandard-decimals sweep raises nothing
+    input_series:
+      - series: 'stellarindex_nonstandard_decimals_cache_refresh_failures_total{job="stellarindex_api",instance="r1:8080"}'
+        values: '0+0x60'
+    alert_rule_test:
+      - eval_time: 45m
+        alertname: stellarindex_nonstandard_decimals_correction_failing
+        exp_alerts: []

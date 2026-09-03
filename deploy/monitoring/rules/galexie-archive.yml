@@ -172,7 +172,7 @@ groups:
             means the core cannot heal itself; the archive tip stops
             advancing. Remedy is a galexie restart (fresh bucket catchup
             from the archive). See the runbook.
-          runbook_url: docs/operations/runbooks/galexie-catchup-refused.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/galexie-catchup-refused.md
 
       - alert: stellarindex_host_swap_activity
         # Swap engagement is the early warning of the pressure class that
@@ -194,4 +194,4 @@ groups:
             budget is being violated — the early-warning pressure class that
             wedged the galexie captive core. Identify the over-budget process
             and cap it before the core is starved. See the runbook.
-          runbook_url: docs/operations/runbooks/galexie-catchup-refused.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/host-swap-activity.md

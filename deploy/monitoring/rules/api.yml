@@ -19,7 +19,19 @@ groups:
     rules:
 
       - alert: stellarindex_api_down
-        expr: sum(up{job="stellarindex_api"}) == 0
+        # `sum()` alone is unfireable in one of the two outages this
+        # page exists for: sum() over an EMPTY vector returns empty, not
+        # 0, so an API target that disappears from service discovery
+        # entirely — the job dropped from the scrape config, the unit
+        # removed, the target's DNS name stopped resolving — produces no
+        # `up` series and therefore no alert, forever. The
+        # absent_over_time arm covers that; `sum() == 0` still carries
+        # the scraped-but-every-pod-failing case, which is what keeps
+        # this a fleet-wide SEV-1 rather than a single-instance blip.
+        # Same shape as the four exporter pages in meta.yml.
+        expr: |
+          sum(up{job="stellarindex_api"}) == 0
+          or absent_over_time(up{job="stellarindex_api"}[5m]) == 1
         for: 60s
         labels:
           severity: page
@@ -29,9 +41,12 @@ groups:
           runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api-down.md
           summary: "Every API pod is down (SEV-1)"
           description: |
-            No API instance is scrape-reachable across the fleet. This is a
-            full public outage — customers see connection errors. Follow the
-            api-down runbook immediately.
+            No API instance is scrape-reachable across the fleet — or the
+            API scrape target has vanished from service discovery, in which
+            case the outage signal itself is blind. Both are pageable: the
+            first is a full public outage with customers seeing connection
+            errors, the second is an outage nobody would be told about.
+            Follow the api-down runbook immediately.
 
       - alert: stellarindex_api_latency_p95_high
         expr: |

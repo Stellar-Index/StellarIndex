@@ -350,3 +350,84 @@ tests:
       - eval_time: 45m
         alertname: stellarindex_divergence_no_reference
         exp_alerts: []
+
+  # ══ stellarindex_oracle_stream_rows_unparsed ══════════════════════
+  # The counter is an unseeded CounterVec, so a `{source,field}` child
+  # is BORN on the first bad row. A relabel typo that breaks one row on
+  # a surface nobody re-requests increments it exactly once: the series
+  # appears at 1 and stays there. increase() over a flat range is 0 —
+  # so the increase() arm alone never fires for the one-off, which is
+  # the shape this alert exists to catch.
+  #
+  # PROVEN-RED: delete the `or ( … unless … offset 6h )` arm from
+  # ../rules/divergence.yml and this case fails with
+  # "alertname:stellarindex_oracle_stream_rows_unparsed, time:60m,
+  #  exp:[…], got:[]".
+  - interval: 1m
+    name: a single unparseable oracle row tickets even though increase reads zero
+    input_series:
+      # Absent for 10 min (the child does not exist yet), then born at 1
+      # and flat for the rest of the window.
+      - series: 'stellarindex_oracle_stream_rows_unparsed_total{job="stellarindex_api",instance="r1:8080",source="reflector",field="asset"}'
+        values: '_x10 1+0x120'
+    alert_rule_test:
+      - eval_time: 60m
+        alertname: stellarindex_oracle_stream_rows_unparsed
+        exp_alerts:
+          - exp_labels:
+              job: stellarindex_api
+              instance: r1:8080
+              source: reflector
+              field: asset
+              severity: ticket
+              team: stellarindex
+              component: divergence
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/oracle-stream-rows-unparsed.md
+              summary: "Oracle rows dropped from the served stream — unparseable asset (reflector)"
+              description: |
+                LatestOracleStreams could not parse the stored canonical
+                `asset` text on one or more reflector
+                oracle_updates rows, so those rows are ABSENT from
+                /v1/oracle/streams and the explorer's /oracles page.
+
+                The likeliest cause is a hand-written relabel: the documented
+                remediation for a mislabelled oracle row is an operator-run raw
+                SQL UPDATE against this column, which carries no CHECK
+                constraint. Before this alert existed, a typo there deleted the
+                row from the served surface silently — the operator would watch
+                it disappear and reasonably conclude the relabel had worked.
+
+                Find them:
+                  SELECT DISTINCT source, asset, quote FROM oracle_updates
+                   WHERE source = 'reflector'
+                   ORDER BY 1,2,3;
+                and compare against internal/canonical's accepted forms.
+
+  # ── the born-in-window arm ages out ──────────────────────────────
+  # Once the birth is older than the 6h window the child stops being
+  # "new", increase() is still 0, and the ticket resolves. Without
+  # this the raw-value comparison would latch the way the removed
+  # nonstandard-decimals detector did (aggregator.yml) — a fixed row
+  # would keep ticketing until the API process restarted.
+  - interval: 1m
+    name: a long-flat unparsed counter stops ticketing once the birth ages out
+    input_series:
+      - series: 'stellarindex_oracle_stream_rows_unparsed_total{job="stellarindex_api",instance="r1:8080",source="reflector",field="asset"}'
+        values: '1+0x450'
+    alert_rule_test:
+      - eval_time: 430m
+        alertname: stellarindex_oracle_stream_rows_unparsed
+        exp_alerts: []
+
+  # ── a healthy stream is silent ───────────────────────────────────
+  # No child exists at all: nothing has ever failed to parse.
+  - interval: 1m
+    name: a stream with no unparseable rows raises nothing
+    input_series:
+      - series: 'stellarindex_oracle_last_update_unix{job="stellarindex_api",instance="r1:8080",source="reflector",asset="XLM"}'
+        values: '0+60x60'
+    alert_rule_test:
+      - eval_time: 40m
+        alertname: stellarindex_oracle_stream_rows_unparsed
+        exp_alerts: []
