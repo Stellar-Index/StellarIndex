@@ -16,6 +16,9 @@ GOFUMPT_VERSION := v0.8.0
 GOIMPORTS_VERSION := v0.42.0
 GOLANGCI_LINT_VERSION := v2.11.4
 GOVULNCHECK_VERSION := v1.1.4
+VERIFY_PROFILE  ?= auto
+VERIFY_INTEGRATION ?= auto
+LOCAL_INT_SHARDS ?= 2
 
 # Project metadata
 MODULE          := github.com/Stellar-Index/StellarIndex
@@ -78,6 +81,30 @@ deps: ## Download + verify Go module deps and tools
 	@if [ -f tools/tools.go ]; then \
 	  cd tools && $(GO) install $$(awk -F\" '/_ "/ {print $$2}' tools.go); \
 	fi
+
+.PHONY: doctor
+doctor: ## Report local verification capabilities (VERIFY_PROFILE=portable|native|container|full|auto)
+	@./scripts/dev/doctor.sh --profile $(VERIFY_PROFILE)
+
+.PHONY: fix
+fix: fmt docs-api docs-postman web-generate-api docs-config docs-metrics ## Format and regenerate tracked artifacts (modifies files)
+
+.PHONY: check
+check: ## Fast read-only development checks; portable across supported contributor machines
+	@./scripts/dev/check.sh
+
+.PHONY: prepush
+prepush: ## Verify committed HEAD before one intentional push (VERIFY_PROFILE=auto, VERIFY_INTEGRATION=auto)
+	@VERIFY_PROFILE=$(VERIFY_PROFILE) VERIFY_INTEGRATION=$(VERIFY_INTEGRATION) \
+		LOCAL_INT_SHARDS=$(LOCAL_INT_SHARDS) ./scripts/dev/prepush.sh
+
+.PHONY: prepush-linux
+prepush-linux: ## Run the pinned Linux verification lane; this is not complete push clearance
+	@VERIFY_PROFILE=container VERIFY_INTEGRATION=never PREPUSH_LANE_ONLY=1 ./scripts/dev/prepush.sh
+
+.PHONY: test-integration-local
+test-integration-local: ## Run Docker-backed integration tests in parallel local shards (LOCAL_INT_SHARDS=2)
+	@./scripts/dev/test-integration-parallel.sh $(LOCAL_INT_SHARDS)
 
 .PHONY: dev
 dev: ## Start the local dev stack — Postgres/Timescale + Redis + MinIO (deploy/docker-compose/dev.yaml). stellar-core/Galexie/stellar-rpc run on a remote box (r1), not in compose.
@@ -339,7 +366,7 @@ vuln: ## Run govulncheck, gated by the accepted-risk allowlist (scripts/ci/govul
 	@./scripts/ci/govulncheck-gated.sh ./...
 
 .PHONY: verify
-verify: vuln ## Sequential local quality gate (fmt, vet, lint, docs, vuln, test) — run before every push
+verify: ## Underlying sequential gate; use make prepush for clean-tree, capability and integration enforcement
 	@./scripts/dev/verify.sh
 
 .PHONY: verify-r1-sync

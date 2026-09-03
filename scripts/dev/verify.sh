@@ -9,6 +9,18 @@ set -euo pipefail
 
 cd "$(dirname "$0")/../.."
 
+deferred_checks=0
+defer_check() {
+    local label="$1"
+    local reason="$2"
+    if [ "${VERIFY_FAIL_ON_SKIP:-0}" = "1" ]; then
+        echo "=== ${label} (FAILED: ${reason}) ===" >&2
+        exit 1
+    fi
+    echo "=== ${label} (deferred: ${reason}) ==="
+    deferred_checks=$((deferred_checks + 1))
+}
+
 # verify.sh ↔ CI parity (W5-ci-6). The #1 cause of "green locally, red in CI"
 # is this gate drifting behind CI's import-checks job. This deterministic
 # meta-check (no network) fails fast if CI runs a scripts/ci gate that the
@@ -71,6 +83,7 @@ echo "=== Migration backward-compat self-test ===" && ./scripts/ci/lint-migratio
 echo "=== Migration immutability ===" && ./scripts/ci/lint-migration-immutability.sh
 echo "=== Migration immutability self-test ===" && ./scripts/ci/lint-migration-immutability-test.sh
 echo "=== Completeness-staleness calibration ===" && ./scripts/ci/lint-completeness-staleness.sh
+echo "=== Pre-push integration-routing self-test ===" && ./scripts/ci/prepush-integration-required-test.sh
 echo "=== Integration-shard partition self-test ===" && ./scripts/ci/integration-shard-test.sh
 echo "=== Shell SIGPIPE (pipe-into-head) ===" && ./scripts/ci/lint-shell-sigpipe.sh
 echo "=== Shell SIGPIPE self-test ===" && ./scripts/ci/lint-shell-sigpipe-test.sh
@@ -97,7 +110,7 @@ echo "=== Deploy playbook jump/backup-gate lint ===" && ./scripts/ci/lint-deploy
 if command -v ansible-playbook >/dev/null 2>&1 && { [ -n "${DEPLOY_SYNC_CONNECTION:-}" ] || tar --version 2>/dev/null | grep -q 'GNU tar'; }; then
     echo "=== Deploy migrations-sync self-test ===" && ./scripts/ci/deploy-sync-test.sh
 else
-    echo "=== Deploy migrations-sync self-test (skipped — needs ansible-playbook + GNU tar on the target; CI ansible-check runs it) ==="
+    defer_check "Deploy migrations-sync self-test" "needs ansible-playbook and GNU tar; use VERIFY_PROFILE=container on macOS"
 fi
 echo "=== EnvironmentFile verbatim-reader self-test ===" && ./scripts/ci/envfile-loader-test.sh
 echo "=== Deploy workflow input-validation self-test ===" && ./scripts/ci/deploy-inputs-test.sh
@@ -153,7 +166,7 @@ echo "=== Ansible secret-diff ===" && python3 ./scripts/ci/lint-ansible-secret-d
 if command -v promtool >/dev/null 2>&1; then
     echo "=== Monitoring ===" && make monitoring-check
 else
-    echo "=== Monitoring (skipped — promtool not installed; install via 'brew install prometheus' or the Prometheus GH release) ==="
+    defer_check "Monitoring" "promtool is not installed"
     # The dead-metric-ref guard needs no promtool, so run it even when
     # the promtool-dependent monitoring-check is skipped (F-1329).
     echo "=== Metric refs ===" && ./scripts/ci/lint-metric-refs.sh
@@ -176,7 +189,7 @@ if command -v amtool >/dev/null 2>&1; then
     # fully-passing gate.
     bash configs/alertmanager/apply-test.sh
 else
-    echo "=== Alertmanager config (skipped — amtool not installed; get it from the Alertmanager GH release) ==="
+    defer_check "Alertmanager config" "amtool is not installed"
 fi
 # The metric-refs SELF-test (does the guard still detect a dead ref?)
 # needs neither promtool nor the monitoring stack, so it runs
@@ -191,7 +204,7 @@ echo "=== ClickHouse ops-user contract self-test ===" && ./scripts/ops/ch-ops-us
 if command -v govulncheck >/dev/null 2>&1; then
     echo "=== Vuln ==="        && make vuln
 else
-    echo "=== Vuln (skipped — govulncheck not installed; install via 'go install golang.org/x/vuln/cmd/govulncheck@latest') ==="
+    defer_check "Vuln" "govulncheck is not installed"
 fi
 # gitleaks (secret scan). CI runs this as its own job; verify.sh didn't,
 # so a new base64/XDR test fixture that trips the generic-api-key entropy
@@ -220,7 +233,7 @@ if command -v gitleaks >/dev/null 2>&1; then
     echo "=== Secrets (gitleaks, history — CI parity) ===" && \
         gitleaks detect --no-banner --redact --config .gitleaks.toml
 else
-    echo "=== Secrets (skipped — gitleaks not installed; install via 'brew install gitleaks') ==="
+    defer_check "Secrets" "gitleaks is not installed"
 fi
 # Generated-artifact drift. CI enforces three of these — docs/reference/api
 # and examples/postman in the `openapi` job, web/explorer/src/api/types.ts in
@@ -232,16 +245,17 @@ fi
 # drift rather than just report it, so the operator commits the result. The
 # diff is still checked so the run is loud about having changed files.
 if command -v node >/dev/null 2>&1 && command -v npx >/dev/null 2>&1; then
-    echo "=== Generated API reference + Postman drift ==="
+    echo "=== Generated API reference + Postman + web client drift ==="
     ./scripts/dev/docs-api.sh >/dev/null
     ./scripts/dev/docs-postman.sh >/dev/null
-    if ! git diff --exit-code --stat -- docs/reference/api examples/postman; then
+    ./scripts/dev/web-generate-api.sh >/dev/null
+    if ! git diff --exit-code --stat -- docs/reference/api examples/postman web/explorer/src/api/types.ts; then
         echo "⚠️  Generated artifacts were STALE and have been regenerated above."
         echo "    Commit these files — CI fails on exactly this diff."
         exit 1
     fi
 else
-    echo "=== Generated-artifact drift (skipped — node/npx not installed) ==="
+    defer_check "Generated-artifact drift" "node or npx is not installed"
 fi
 echo "=== Test ==="          && make test
 # Compile-only: catches interface-extension breakage in
@@ -268,7 +282,7 @@ if command -v pnpm >/dev/null 2>&1 && [ -f web/explorer/pnpm-lock.yaml ]; then
     echo "=== Showcase build ==="     && \
         NEXT_PUBLIC_API_BASE_URL=http://api.local-stub.invalid make web-build >/dev/null
 else
-    echo "=== Showcase (skipped — pnpm not installed; install via 'brew install pnpm' or 'corepack enable') ==="
+    defer_check "Showcase" "pnpm or web/explorer/pnpm-lock.yaml is unavailable"
 fi
 # Dashboard SPA — same pnpm gate. Skipped silently when the
 # lockfile is missing (e.g. fresh checkouts that haven't installed).
@@ -286,4 +300,8 @@ if command -v pnpm >/dev/null 2>&1 && [ -f web/status/pnpm-lock.yaml ]; then
         NEXT_PUBLIC_API_BASE_URL=http://api.local-stub.invalid make status-build >/dev/null
 fi
 echo ""
-echo "✅ ALL CHECKS PASSED"
+if (( deferred_checks > 0 )); then
+    echo "VERIFY INCOMPLETE: $deferred_checks check(s) deferred; use make prepush for push clearance"
+    exit 1
+fi
+echo "ALL CHECKS PASSED"

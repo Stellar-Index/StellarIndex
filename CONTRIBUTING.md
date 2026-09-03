@@ -40,7 +40,7 @@ CHANGELOG).
 ### Prerequisites
 
 - Go 1.25 or later.
-- Docker + Docker Compose (for integration tests and local stack).
+- Docker + Docker Compose (recommended for the pinned verifier, integration tests and local stack).
 - Make.
 
 ### First-time setup
@@ -49,11 +49,15 @@ CHANGELOG).
 git clone https://github.com/Stellar-Index/StellarIndex
 cd StellarIndex
 make deps      # download Go modules + tools
-make verify    # canonical pre-push gate — fmt, vet, lint, doc-lint,
-               # import-lint, openapi-url-lint, monitoring-rules
-               # (graceful-skip if promtool is missing locally),
-               # unit tests, integration-build smoke
+make doctor    # report the verification profile this machine can run
+make check     # fast read-only feedback during development
+make prepush   # strict clean-HEAD gate before one intentional push
 ```
+
+The default pre-push profile uses a pinned multi-architecture Linux container
+when Docker is available and a complete native toolchain otherwise. See
+[local verification before CI](docs/contributing/local-verification.md) for
+macOS, Linux, limited-machine and integration-test profiles.
 
 ### Local full stack
 
