@@ -50,6 +50,8 @@ against.
 
 - **pipeline:** the stderr filter now uses `x/sys/unix.Dup2`, preserving its atomic descriptor replacement on Linux arm64 where `syscall.Dup2` is unavailable. The native Apple Silicon verifier found the prior compile failure before its first push.
 
+- **tests:** the heavy-job wrapper fixture now deterministically exercises the non-root branch it claims to test, including when the test runner itself is a root container. Previously it escaped into a real `systemd-run` call and failed without testing any of its ClickHouse identity assertions.
+
 ## [v0.59.1] — 2026-09-03
 
 ### Fixed

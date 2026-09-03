@@ -28,7 +28,7 @@ RUN go install mvdan.cc/gofumpt@${GOFUMPT_VERSION} \
     && go install golang.org/x/vuln/cmd/govulncheck@${GOVULNCHECK_VERSION}
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-      ca-certificates curl git jq make openssh-client pipx python3 python3-jinja2 python3-yaml rsync shellcheck systemd xz-utils \
+      ca-certificates curl git jq make openssh-client pipx python3 python3-jinja2 python3-yaml rsync shellcheck xz-utils \
     && rm -rf /var/lib/apt/lists/* \
     && corepack enable pnpm \
     && corepack prepare pnpm@10.33.0 --activate
