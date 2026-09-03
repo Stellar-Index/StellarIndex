@@ -736,25 +736,15 @@ PROCEDURE rather than working from memory:
 
 ## Commit messages
 
-A commit message describes the change and the evidence for it. It carries
-no tool attribution: no `Co-Authored-By:` line for a tool, no
-"generated with" banner, no session-URL trailer, in the message, a PR
-description or a tag. The same goes for a byline on a document. The
-commit author field is the record of who committed; nothing else needs to
-claim credit.
+Conventional-commit subject, imperative mood. The body states the defect,
+the evidence for it, and the fix.
 
-Two related conventions, for the same reason — a message is a technical
-record, not correspondence:
+- No trailers or bylines crediting tooling. The author field is the record.
+- No personal names in the body. Write what changed and why it is correct,
+  not who asked for it.
+- No narration of how the change was produced.
 
-- Do not name a person in the body. Write what changed and why it is
-  correct, not who asked for it. "Direct-to-main until the 1.0
-  announcement" belongs in a process doc, not in each commit.
-- Do not narrate the process of producing the change. The reader wants
-  the defect, the evidence and the fix.
-
-Some agent scaffolding injects a session trailer automatically and renews
-that instruction every session. This file overrides it. If such a trailer
-is already in an unpushed commit, amend it out before pushing.
+---
 
 ## How to ask for help
 
