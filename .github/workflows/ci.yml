@@ -273,6 +273,42 @@ jobs:
   # docs/engineering-standards.md.
   # ────────────────────────────────────────────────────────────────
 
+  fuzz-smoke:
+    name: fuzz smoke (30s per target)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e  # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: go mod download (retry on GOPROXY flake)
+        run: |
+          for i in 1 2 3; do
+            go mod download && exit 0
+            echo "::warning::go mod download failed (attempt $i/3) — likely a transient GOPROXY/sumdb 5xx; retrying"
+            sleep $((i * 15))
+          done
+          echo "::error::go mod download failed after 3 attempts"; exit 1
+      - name: Fuzz smoke
+        # #340 item 5. The unit-test job already runs every fuzz target's
+        # SEED corpus (a Go fuzz target is an ordinary test without
+        # -fuzz); this job is the GENERATIVE pass, which is the half that
+        # finds inputs nobody thought to write down.
+        #
+        # 30s per target is a smoke, not a campaign: it catches shallow
+        # crashers on every PR at a few minutes of runner time. Deep runs
+        # are an operator activity (-fuzztime=1h against one target).
+        #
+        # The target list is discovered from the tree, not listed here,
+        # so a newly-added target is covered without a second edit — see
+        # the script's header for why, and for its fail-closed behaviour
+        # when discovery returns nothing.
+        run: bash scripts/ci/fuzz-smoke.sh
+
   doc-checks:
     name: doc-code consistency
     runs-on: ubuntu-latest

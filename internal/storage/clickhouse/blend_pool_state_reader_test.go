@@ -30,8 +30,17 @@ const (
 	// PoolDataKey::ResData(USDC) under blendTestPool, persistent durability.
 	blendTestResDataKey = "AAAABgAAAAESnMjMYzbx/bvcwPOYNDTDzbhf2eqFaXo3gtMY2HSlgAAAABAAAAABAAAAAgAAAA8AAAAHUmVzRGF0YQAAAAASAAAAAa3vzlmu5Slo92Bh1JTCUlt1ZZ+kKWpl9JnvKeVkd+SWAAAAAQ=="
 	// The pool's own contract-instance entry, persistent then temporary.
-	blendTestInstanceKeyPersistent = "AAAABgAAAAESnMjMYzbx/bvcwPOYNDTDzbhf2eqFaXo3gtMY2HSlgAAAABQAAAAB"
-	blendTestInstanceKeyTemporary  = "AAAABgAAAAESnMjMYzbx/bvcwPOYNDTDzbhf2eqFaXo3gtMY2HSlgAAAABQAAAAA"
+	//
+	// These two are base64 Soroban LedgerKeys — PUBLIC on-chain addresses,
+	// not credentials. They differ only in their final durability byte,
+	// which is exactly why they trip gitleaks' generic-api-key rule: a
+	// long high-entropy base64 string assigned to a name ending in "Key".
+	// The annotation is per-line and deliberate; do not delete it, and do
+	// not "fix" the finding by shortening or mangling the fixtures — a
+	// wrong storage key here does not error, it silently matches nothing,
+	// which is the failure these goldens exist to catch.
+	blendTestInstanceKeyPersistent = "AAAABgAAAAESnMjMYzbx/bvcwPOYNDTDzbhf2eqFaXo3gtMY2HSlgAAAABQAAAAB" // gitleaks:allow
+	blendTestInstanceKeyTemporary  = "AAAABgAAAAESnMjMYzbx/bvcwPOYNDTDzbhf2eqFaXo3gtMY2HSlgAAAABQAAAAA" // gitleaks:allow
 )
 
 func mustContractID(t *testing.T, c string) xdr.ContractId {

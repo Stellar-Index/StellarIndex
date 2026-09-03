@@ -35,3 +35,15 @@
 # the repo is public — force-pushing to scrub a docs sample is not worth
 # rewriting published history over.
 01bcb6c32636b51edb8e895e5c9825d4afd4bcf2:docs/agent-onboarding.md:generic-api-key:25
+
+# Two base64 Soroban LedgerKeys in a Blend reader test fixture (#340 item
+# 2, commit 395943e16). PUBLIC on-chain addresses, not credentials: they
+# are the pool's own contract-instance entry and differ from each other
+# ONLY in the final durability byte (…QAAAAB persistent, …QAAAAA
+# temporary), which is what makes them long high-entropy base64 assigned
+# to a name ending in "Key" — precisely the generic-api-key heuristic.
+# The working tree carries `// gitleaks:allow` on both lines, so a future
+# commit of the same file does not re-trip; these two fingerprints exempt
+# only the commit that landed them un-annotated.
+395943e162f1e89e295a0b226ceaf30661c47c55:internal/storage/clickhouse/blend_pool_state_reader_test.go:generic-api-key:33
+395943e162f1e89e295a0b226ceaf30661c47c55:internal/storage/clickhouse/blend_pool_state_reader_test.go:generic-api-key:34

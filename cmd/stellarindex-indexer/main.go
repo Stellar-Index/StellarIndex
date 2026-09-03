@@ -1788,13 +1788,24 @@ func chainlinkFeedSetFromConfig(in map[string]config.ChainlinkFeedSetting) (map[
 
 // ─── Dispatcher wiring ──────────────────────────────────────────
 // ─── Ledger processing ─────────────────────────────────────────
+// cursorReader is the single method [resolveStartLedger] needs from
+// [timescale.Store]. Taking the narrow interface rather than the
+// concrete store states the dependency exactly — this function reads one
+// cursor row and writes nothing — and lets the precedence rules below be
+// exercised without a database.
+//
+// *timescale.Store satisfies it; the production call site is unchanged.
+type cursorReader interface {
+	GetCursor(ctx context.Context, source, sub string) (timescale.Cursor, error)
+}
+
 // resolveStartLedger chooses where to begin ingesting on startup:
 //  1. A persisted cursor wins — resume from one ledger past it.
 //  2. Otherwise, cfg.Ingestion.BackfillFromLedger.
 //  3. Otherwise, an error — we refuse to pick a default ledger
 //     silently because that's how operators end up re-ingesting
 //     genesis by accident.
-func resolveStartLedger(ctx context.Context, store *timescale.Store, backfillFrom uint32) (uint32, error) {
+func resolveStartLedger(ctx context.Context, store cursorReader, backfillFrom uint32) (uint32, error) {
 	c, err := store.GetCursor(ctx, cursorSource, "")
 	switch {
 	case errors.Is(err, timescale.ErrNotFound):
