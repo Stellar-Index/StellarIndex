@@ -99,6 +99,11 @@ func CacheControlWithCDN(cdnEnabled bool) func(http.Handler) http.Handler {
 var (
 	ledgerDetailPath = regexp.MustCompile(`^/v1/ledgers/[0-9]+(/transactions|/operations)?$`)
 	txDetailPath     = regexp.MustCompile(`^/v1/tx/[0-9a-fA-F]{64}$`)
+	// protocolTVLPath is the per-pool DEX TVL drill-down
+	// (/v1/protocols/{name}/tvl, #338) — one segment for the protocol
+	// name, nothing after /tvl, so the directory row and detail routes
+	// beside it keep the handler-set policy they already have.
+	protocolTVLPath = regexp.MustCompile(`^/v1/protocols/[^/]+/tvl$`)
 )
 
 // ledgerPolicy classifies the operator probes and the explorer's ledger/tx
@@ -221,7 +226,12 @@ func shortBandPolicy(path string, cdnEnabled bool) (string, bool) {
 		// in-process book, which itself advances every ~60s; the
 		// short band absorbs widget polling without overstating
 		// freshness the snapshot doesn't have.
-		path == "/v1/sdex/orderbook":
+		path == "/v1/sdex/orderbook",
+		// Per-pool DEX TVL drill-down — the valued counterpart of
+		// /v1/pools/reserves, served from a 10-minute in-process
+		// snapshot; the same short band keeps a CDN entry from
+		// outliving a refresh while absorbing explorer polling.
+		protocolTVLPath.MatchString(path):
 		if cdnEnabled {
 			return "public, max-age=30, s-maxage=60", true
 		}

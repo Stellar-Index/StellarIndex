@@ -63,6 +63,12 @@ curl -s localhost:3000/v1/protocols \
 
 # A carried-forward figure means that protocol's reserve read failed:
 journalctl -u stellarindex-api --since -60min | grep "dex tvl" | tail -5
+
+# The refused protocol's figure and pools are still served, labelled,
+# on the drill-down — carried_forward: true (flags.stale too) — so what
+# the headline left out can be inspected pool by pool:
+curl -s localhost:3000/v1/protocols/<name>/tvl \
+  | jq '{carried: .data.carried_forward, tvl: .data.tvl, pools: (.data.pools | length)}'
 ```
 
 `excluded[]` always contains the STANDING scope entries (classic CAP-38

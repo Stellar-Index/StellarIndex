@@ -1818,6 +1818,9 @@ func (s *Server) mountRoutes() { //nolint:funlen // route registration is intent
 	// detail. Static registry always serves; dynamic joins degrade.
 	s.mux.HandleFunc("GET /v1/protocols", s.handleProtocolsList)
 	s.mux.HandleFunc("GET /v1/protocols/{name}", s.handleProtocolDetail)
+	// Per-pool DEX TVL drill-down (#338): the pools + legs behind the
+	// `tvl` block, served from the same in-process snapshot.
+	s.mux.HandleFunc("GET /v1/protocols/{name}/tvl", s.handleProtocolTVL)
 
 	// SDEX order-book depth — live classic offers from the in-process
 	// book (503 problem until the initial lake load completes).

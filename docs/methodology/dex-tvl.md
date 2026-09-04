@@ -1,19 +1,22 @@
 ---
 title: DEX TVL methodology
-last_verified: 2026-09-03
+last_verified: 2026-09-04
 status: current
 ---
 
 # How Stellar Index computes DEX TVL
 
 This is the public methodology for the pooled-liquidity figures served
-as the `tvl` block on each `/v1/protocols` row and as the headline
-`tvl_total` on the same response. It documents what goes into the
-number, what is deliberately left out, and the check that stops a
-wrong total from being served.
+as the `tvl` block on each `/v1/protocols` row, as the headline
+`tvl_total` on the same response, and pool by pool on
+`/v1/protocols/{name}/tvl`. It documents what goes into the number,
+what is deliberately left out, and the check that stops a wrong total
+from being served.
 
-Implementation: `internal/api/v1/dex_tvl_cache.go` (per-protocol) and
-`internal/api/v1/dex_tvl_total.go` (the total and its reconciliation).
+Implementation: `internal/api/v1/dex_tvl_cache.go` (per-protocol),
+`internal/api/v1/dex_tvl_pools.go` (the per-pool breakdown and its
+drill-down endpoint) and `internal/api/v1/dex_tvl_total.go` (the total
+and its reconciliation).
 
 ## What is measured
 
@@ -53,6 +56,46 @@ would be a no-op on the C-strkey addresses pool legs actually carry.
 The trust check runs **before** the declared-peg shortcut, so a token an
 operator once declared 1:1-USD cannot re-enter through the peg after its
 issuer has been flagged.
+
+## Per-pool drill-down
+
+`GET /v1/protocols/{name}/tvl` publishes every pool a protocol's figure
+was summed from, and every reserve leg of each pool, so the figure can
+be checked against the reserves rather than taken on trust. Per leg:
+
+| Field | Meaning |
+|---|---|
+| `token` | The token contract id exactly as the pool's storage carries it. Absent when the position's address never resolved |
+| `reserve` | The captured reserve in base units (i128 decimal string). Absent when nothing was captured |
+| `asset` | The **canonical** identity the served price path values the leg under — the same id `/v1/assets/{id}` answers for. A configured classic↔SAC wrapper collapses to its classic twin here, exactly as the trust gates were asked about it |
+| `basis` + `usd` | Present when the leg was valued. `declared_usd_peg`: $1 per whole unit at the token's declared decimals, applied only after the trust gates. `served_usd_price`: reserve × the same served USD rate `/v1/assets/{asset}` publishes. `empty_reserve`: the reserve is zero, so the leg is worth exactly $0 and no price was consulted |
+| `excluded` | Present when the leg was **not** valued, naming the rule below that excluded it: `withheld` (rule 1), `no_served_price` (rule 2), `unresolved_token` (rule 5), `malformed_token`, `invalid_reserve` |
+
+Exactly one of `basis`/`usd` or `excluded` is present on a leg: a leg
+that contributed nothing says why on the wire and is never a silent
+zero. A pool whose captured storage did not decode (rule 3) is
+published with `excluded: undecodable_storage`, no legs and
+`tvl_usd: "0.00"`.
+
+**Money is rounded once, at the leaf.** Each valued leg's `usd` is
+published to the cent; a pool's `tvl_usd` is the exact sum of its legs'
+published `usd`; the protocol's `tvl_usd` is the exact sum of its
+pools'; and `tvl_total` is the exact sum of the protocols'. Add the rows
+at any level and you land on the level above byte-for-byte. Rounding at
+every level instead would let a pool's legs sum to a cent more or less
+than the pool, and the whole point of the drill-down is that the rows
+reconcile with the figure above them. The cost is bounded: at most half
+a cent per valued leg.
+
+A protocol whose reserve read failed on the latest refresh is served
+with its previous cycle's figure and pools, labelled
+`carried_forward: true` with the envelope's `flags.stale` set. The
+headline total refuses that figure (see below); the drill-down is where
+to see what was refused.
+
+The drill-down is current state only. Reserve history is not persisted
+anywhere in the API, so there is no historical TVL series and none is
+fabricated from event flows.
 
 ## Exclusion rules
 
@@ -141,17 +184,21 @@ figure we cannot stand behind. Operators see the same verdict as
 The figures are meant to agree with the rest of the API, and that is
 checkable:
 
-- A protocol's `tvl_usd` is the sum of its pools' priced reserve legs.
-  The per-pool reserves behind soroswap, phoenix and comet are the same
-  lake current-state entries `/v1/pools/reserves` serves.
+- A protocol's `tvl_usd` is the exact sum of the `tvl_usd` of its pools
+  on `/v1/protocols/{name}/tvl`, and each pool's `tvl_usd` is the exact
+  sum of its legs' published `usd`. The per-pool reserves behind
+  soroswap, phoenix and comet are the same lake current-state entries
+  `/v1/pools/reserves` serves.
 - The headline `tvl_total.tvl_usd` is the sum of the `tvl_usd` values on
   the `protocols` rows of the same response.
-- A leg's valuation uses the same price `/v1/assets/{id}` serves for that
-  asset. If an asset shows `price_usd: null` there, it contributes 0
-  here — the two surfaces cannot disagree, because they consult the same
-  gates and the same price tiers.
+- A leg's valuation uses the same price `/v1/assets/{id}` serves for the
+  leg's `asset`. If an asset shows `price_usd: null` there, the leg is
+  `excluded` here — the two surfaces cannot disagree, because they
+  consult the same gates and the same price tiers.
 
 `TestDEXTVLTotal_ReconcilesAgainstPoolReserves` in
-`internal/api/v1/dex_tvl_total_internal_test.go` asserts the first two
-of those against an independently-summed statement of the same pool
-reserves.
+`internal/api/v1/dex_tvl_total_internal_test.go` asserts the protocol
+and headline figures against an independently-summed statement of the
+same pool reserves, and `TestDEXTVLPools_ReconcileAtEveryLevel` in
+`internal/api/v1/dex_tvl_pools_internal_test.go` asserts the leg → pool
+→ protocol chain byte-for-byte on the published strings.

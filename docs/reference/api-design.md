@@ -480,7 +480,7 @@ authenticated callers see their tier's budget (1,000 / 10,000 /
 | `/v1/account/*`, `/v1/auth/sep10/*` | `private, no-store` |
 | `/v1/price/tip`, `/v1/observations*` | `private, no-cache, must-revalidate` |
 | `/v1/price`, `/v1/price/batch`, `/v1/price/changes`, `/v1/oracle/latest` | `public, max-age=30, s-maxage=5` |
-| `/v1/assets*`, `/v1/pools/reserves`, `/v1/liquidity-pools`, `/v1/sdex/orderbook` | `public, max-age=30, s-maxage=60` |
+| `/v1/assets*`, `/v1/pools/reserves`, `/v1/protocols/{name}/tvl`, `/v1/liquidity-pools`, `/v1/sdex/orderbook` | `public, max-age=30, s-maxage=60` |
 | `/v1/history*`, `/v1/ohlc`, `/v1/vwap`, `/v1/twap`, `/v1/markets`, `/v1/pairs`, `/v1/sources`, the rest of `/v1/oracle/*` | `public, max-age=60, s-maxage=300` |
 
 The **5 s** shared TTL on the price surfaces is not a round number picked
