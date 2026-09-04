@@ -102,6 +102,12 @@ prepush: ## Verify committed HEAD before one intentional push (VERIFY_PROFILE=au
 prepush-linux: ## Run the pinned Linux verification lane; this is not complete push clearance
 	@VERIFY_PROFILE=container VERIFY_INTEGRATION=never PREPUSH_LANE_ONLY=1 ./scripts/dev/prepush.sh
 
+.PHONY: prepush-clean
+prepush-clean: ## Remove the named Docker volumes the container verifier keeps between runs (Go build cache, Go modules, pnpm store, both node_modules trees)
+	@vols="$$(grep -oE 'src=stellarindex-verify-[A-Za-z0-9_-]+' scripts/dev/verify-container.sh | sed 's/^src=//' | sort -u)"; \
+	[ -n "$$vols" ] || { echo "prepush-clean: no stellarindex-verify-* volumes named in scripts/dev/verify-container.sh" >&2; exit 1; }; \
+	docker volume rm -f $$vols
+
 .PHONY: test-integration-local
 test-integration-local: ## Run Docker-backed integration tests in parallel local shards (LOCAL_INT_SHARDS=2)
 	@./scripts/dev/test-integration-parallel.sh $(LOCAL_INT_SHARDS)
@@ -124,8 +130,8 @@ dev-seed: ## Load fixture data into local stack
 
 .PHONY: fmt
 fmt: ## Format all Go code with gofumpt + goimports
-	@$(GOBIN)/gofumpt -w .
-	@$(GOBIN)/goimports -w -local $(MODULE) .
+	@git ls-files -z --cached --others --exclude-standard -- '*.go' | xargs -0 $(GOBIN)/gofumpt -w
+	@git ls-files -z --cached --others --exclude-standard -- '*.go' | xargs -0 $(GOBIN)/goimports -w -local $(MODULE)
 
 .PHONY: lint
 lint: ## Run golangci-lint

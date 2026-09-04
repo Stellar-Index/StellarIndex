@@ -1,6 +1,6 @@
 ---
 title: Runbook — external-poller-error-rate-high
-last_verified: 2026-08-29
+last_verified: 2026-09-04
 status: current
 severity: P3
 ---
@@ -137,7 +137,7 @@ journalctl -u stellarindex-indexer -n 500 --no-pager | \
 - [ ] Step 1 — if HTTP 429, slow down the poll cadence in `[external.<vendor>] poll_interval` (operator config in `/etc/stellarindex.toml`) and restart the indexer (`systemctl restart stellarindex-indexer`).
 - [ ] Step 2 — if HTTP 401/403, rotate/provision the key in `/etc/default/stellarindex` (CoinGecko: `COINGECKO_API_KEY` / `COINGECKO_DEMO_API_KEY`) and restart the owning binary. Confirm the new tier on the `external poller enabled … auth_mode=` line.
 - [ ] Step 3 — if vendor outage, no action needed; the aggregator's class-aware fallback (ADR-0008) keeps `/v1/price` serving from remaining sources. Update the status page only if `flags.reduced_redundancy=true` propagates to a customer-visible pair.
-- [ ] Step 4 — if schema drift, the decoder needs a code update. The parse path depends on the vendor's shape: streaming CEX venues keep it in `internal/sources/external/<vendor>/parse.go` (binance, bitstamp, coinbase, kraken); poller-only vendors (coingecko, ecb, cryptocompare, coinmarketcap, exchangeratesapi, polygonforex) decode inline in their `poller.go`. External venues have **no** `dispatcher_adapter.go` — that file belongs to the on-chain Soroban sources under `internal/sources/<protocol>/`. Out-of-cycle release per `release-process.md`.
+- [ ] Step 4 — if schema drift, the decoder needs a code update. The parse path depends on the vendor's shape: streaming CEX venues keep it in `internal/sources/external/<vendor>/parse.go` (binance, bitstamp, coinbase, kraken); poller-only vendors (coingecko, ecb, cryptocompare, coinmarketcap, exchangeratesapi) decode inline in their `poller.go`. External venues have **no** `dispatcher_adapter.go` — that file belongs to the on-chain Soroban sources under `internal/sources/<protocol>/`. Out-of-cycle release per `release-process.md`.
 - [ ] Verification: the ratio drops below 0.5 and the alert clears. Give it a full 15-minute window plus the `for: 15m` hold — the rate windows are 15 min, so a fix is not visible immediately.
 
 ## Root cause analysis

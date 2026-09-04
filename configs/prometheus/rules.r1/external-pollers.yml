@@ -99,7 +99,7 @@ groups:
             last-good fx_quotes row via the 7-day forex-snap lookback, so
             there is NO customer impact yet — but it will silently break
             those pairs once the lookback expires. `massive` is a PAID
-            feed (massive.com / Polygon FX backend): a 429 / subscription
+            feed (massive.com): a 429 / subscription
             lapse / MASSIVE_API_KEY problem is the likely cause
             (CoinGecko-class). See the runbook for the subscription check
             and the ecb/frankfurter fallback re-enable.

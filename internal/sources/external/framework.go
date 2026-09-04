@@ -1,6 +1,6 @@
 // Package external houses the connector framework for off-chain data
 // sources — centralised exchanges (Binance, Kraken, Bitstamp, Coinbase,
-// …), institutional FX feeds (Polygon.io, OANDA), third-party
+// …), institutional FX feeds (Massive, ExchangeRatesApi), third-party
 // aggregators (CoinGecko, CoinMarketCap, CryptoCompare), and
 // sovereign daily anchors (ECB, Fed H.10).
 //
@@ -57,10 +57,13 @@ type Class string
 const (
 	// ClassExchange — a venue that publishes real executed trades
 	// (Binance, Kraken, Coinbase, SDEX, Soroswap). Contributes to
-	// VWAP. Off-chain FX providers that source directly from
-	// interbank feeds (Polygon.io Forex, OANDA) are also exchange
-	// class — their "rate" is the executable bid/ask, not a
-	// computed aggregate.
+	// VWAP. Off-chain FX providers are also exchange class: Massive
+	// serves daily grouped OHLC aggregates of the interbank FX
+	// market (the forex worker takes the day's close),
+	// ExchangeRatesApi a computed interbank / official-blend rate.
+	// Each is a first-party FX reference, not a third-party
+	// aggregation across venues sampled elsewhere (that is
+	// ClassAggregator).
 	ClassExchange Class = "exchange"
 
 	// ClassAggregator — a third-party service that publishes

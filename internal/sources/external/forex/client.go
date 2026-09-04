@@ -1,13 +1,13 @@
 // Package forex provides a fiat-currency rates feed for the
 // /v1/currencies surface. Source: massive.com REST API
-// (Polygon-shape endpoints + auth) — hourly grain, ~200 currencies,
+// (Polygon-shape endpoints + auth) — daily grain, ~200 currencies,
 // requires an API key (env MASSIVE_API_KEY).
 //
-// The earlier currency-api/jsDelivr shim has been retired — that
-// feed was daily-grain only, which made `change_1h_pct` /
-// `change_24h_pct` on /v1/currencies impossible to compute as
-// a real rolling-window. Massive serves hourly aggregates so the
-// per-window change pcts are honest.
+// The earlier currency-api/jsDelivr shim has been retired. What
+// fx_quotes holds is Massive's grouped-daily aggregate: one row per
+// ticker per UTC day. The worker polls hourly, but every write buckets
+// to the day, so per-window figures on /v1/currencies are derived from
+// daily rows (see internal/sources/external/registry.go).
 //
 // Wire shape on /v1/currencies stays source-agnostic: this package
 // exposes the same Snapshot / History7d / Currency / HistoryPoint
@@ -41,10 +41,7 @@ import (
 	"time"
 )
 
-// MassiveBase is the Massive REST API root. Same URL Polygon.io
-// uses since the two are the same backend (Massive is Polygon's
-// rebrand). Any Polygon documentation under /v2/aggs/... and
-// /v3/reference/... applies verbatim.
+// MassiveBase is the Massive REST API root.
 const MassiveBase = "https://api.massive.com"
 
 // fetchTimeout caps a single upstream call. Massive's edge typically
@@ -52,9 +49,8 @@ const MassiveBase = "https://api.massive.com"
 // from stalling the worker indefinitely.
 const fetchTimeout = 10 * time.Second
 
-// Client wraps the Massive REST endpoints we consume. Auth is
-// Bearer-token; the same key works against api.polygon.io if the
-// operator wants to point elsewhere.
+// Client wraps the Massive REST endpoints in use. Auth uses a
+// bearer token supplied by the operator.
 type Client struct {
 	http   *http.Client
 	base   string

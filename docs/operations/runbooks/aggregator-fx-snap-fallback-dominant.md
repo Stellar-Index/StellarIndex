@@ -1,6 +1,6 @@
 ---
 title: Runbook — aggregator-fx-snap-fallback-dominant
-last_verified: 2026-08-29
+last_verified: 2026-09-04
 status: current
 severity: P3
 ---
@@ -33,11 +33,10 @@ in the **API binary** (`internal/sources/external/forex`), keyed on
 `fx_quotes` hypertable. `FXQuoteAtOrBefore`
 (`internal/storage/timescale/trades.go`) reads `fx_quotes` FIRST
 (7-day lookback) and only then falls back to `trades` — the legacy
-connector path (`polygon-forex` / `exchangeratesapi` rows),
-"disabled in production but kept for compatibility if re-enabled".
-On r1 neither legacy connector is configured (absent from the
-`[external]` block), so their `trades` queries return nothing and
-their `source_events` series don't exist — do not diagnose them.
+connector path (`exchangeratesapi` rows), disabled in production but
+kept for compatibility if re-enabled. On r1 that legacy connector is
+not configured, so its `trades` queries return nothing and its
+`source_events` series does not exist — do not diagnose it.
 
 When neither table yields a quote (`ErrNoFXQuote`), the
 orchestrator tries the cached-VWAP fallback and increments
@@ -160,11 +159,17 @@ Capture for the postmortem:
 
 ## Changelog
 
+- 2026-09-04 — the former duplicate FX connector for the same
+  upstream as `massive` was removed from the registry (#466); the
+  connector-path fallback is `exchangeratesapi` alone. Body text
+  updated to match; the diagnosis is unchanged.
 - 2026-08-29 — re-verified against HEAD. Diagnosis retargeted from
-  the retired connector path: polygon-forex / exchangeratesapi are
-  disabled in production (absent from r1's `[external]` block) — the
-  old trades queries return nothing and their `source_events` series
-  don't exist. The ACTIVE feed is `massive` (forex worker in the API
+  the retired connector path: the connector-path FX sources
+  (exchangeratesapi and, at the time, a duplicate connector for the
+  same upstream as `massive`) are disabled in production (absent from
+  r1's `[external]` block) — the old trades queries return nothing
+  and their `source_events` series don't exist. The ACTIVE feed is
+  `massive` (forex worker in the API
   binary, `MASSIVE_API_KEY`, hourly rate_usd rows into `fx_quotes`;
   `FXQuoteAtOrBefore` reads fx_quotes first with a 7-day lookback,
   trades is the disabled-in-production fallback). Impact corrected:

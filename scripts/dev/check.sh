@@ -10,11 +10,14 @@ export PATH="$go_bin:$PATH"
 
 ./scripts/dev/doctor.sh --profile portable
 
-check_tracked_go_format() {
+# Tracked and new untracked Go files alike, the same set `make fmt` writes:
+# a file that has not been `git add`ed yet is exactly the one the edit loop
+# is about to commit.
+check_go_format() {
   local label="$1"
   shift
   local output
-  output="$(git ls-files -z -- '*.go' | xargs -0 "$@")"
+  output="$(git ls-files -z --cached --others --exclude-standard -- '*.go' | xargs -0 "$@")"
   if [[ -n "$output" ]]; then
     echo "check: $label failed:" >&2
     echo "$output" >&2
@@ -23,8 +26,8 @@ check_tracked_go_format() {
 }
 
 echo "=== Format (read-only) ==="
-check_tracked_go_format gofumpt gofumpt -l
-check_tracked_go_format goimports goimports -l -local github.com/Stellar-Index/StellarIndex
+check_go_format gofumpt gofumpt -l
+check_go_format goimports goimports -l -local github.com/Stellar-Index/StellarIndex
 
 echo "=== Focused repository contracts ==="
 ./scripts/ci/lint-docs.sh

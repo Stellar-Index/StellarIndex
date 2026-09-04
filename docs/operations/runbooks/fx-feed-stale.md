@@ -1,6 +1,6 @@
 ---
 title: Runbook — fx-feed-stale
-last_verified: 2026-07-07
+last_verified: 2026-09-04
 status: draft
 severity: P2
 ---
@@ -19,8 +19,8 @@ severity: P2
 
 ## Why this exists
 
-The active fiat-FX feed is `massive` (massive.com = Polygon's FX
-backend), running as the `internal/sources/external/forex` worker in the **API**
+The active fiat-FX feed is `massive` (massive.com), running as the
+`internal/sources/external/forex` worker in the **API**
 binary. It fetches USD rates hourly and writes them to the `fx_quotes`
 hypertable. The X2.5 triangulation forex-snap
 (`Store.FXQuoteAtOrBefore`) reads `fx_quotes` with a **7-day lookback**
@@ -103,12 +103,13 @@ string.
 ### massive stays dry — re-enable the ECB / Frankfurter fallback
 
 If `massive` cannot be restored quickly, the connector-path FX
-fallbacks can serve the forex-snap in the interim. Per the note in
-`internal/sources/external/registry.go`, `polygon-forex` /
-`exchangeratesapi` / `ecb` are the same-role sources (currently
-disabled). The forex-snap reads `fx_quotes`-first and falls back to
-`trades` filtered by `FXSources()`, so re-enabling a fallback keeps
-fiat pairs priced while `massive` is down.
+fallback can serve the forex-snap in the interim. Per
+`internal/sources/external/registry.go`, `exchangeratesapi` is the only
+other `SubclassFX` source (currently disabled); `ecb` is an
+authority-sanity cross-check outside `FXSources()` and is never read
+here. The forex-snap reads `fx_quotes`-first and falls back to
+`trades` filtered by `FXSources()`, so re-enabling `exchangeratesapi`
+keeps fiat pairs priced while `massive` is down.
 
 - [ ] Enable a fallback via its `cfg.<venue>.enabled` gate and redeploy
       the indexer (these run under the dispatcher-parallel external

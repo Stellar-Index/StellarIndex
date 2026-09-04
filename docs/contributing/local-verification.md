@@ -1,6 +1,6 @@
 ---
 title: Local verification before CI
-last_verified: 2026-09-03
+last_verified: 2026-09-04
 status: living doc
 ---
 
@@ -46,8 +46,11 @@ deferred; only its literal `ALL CHECKS PASSED` line is a pass.
 On macOS, `VERIFY_PROFILE=auto` normally selects Docker. The verifier image is
 built for Docker's native architecture (`linux/arm64` on Apple Silicon and
 `linux/amd64` on Intel and most Linux hosts); it does not force x86 emulation.
-Docker caches the image, Go modules, build output and pnpm store after the first
-run.
+After the first run Docker keeps the image, and five named volumes carry the
+Go build cache, Go modules, the pnpm store and both `node_modules` trees
+between runs: `stellarindex-verify-go-build`, `stellarindex-verify-go-mod`,
+`stellarindex-verify-pnpm`, `stellarindex-verify-explorer-modules` and
+`stellarindex-verify-status-modules`. `make prepush-clean` removes all five.
 
 Linux maintainers with GNU tar and the full toolchain can use the native lane.
 Machines without Docker can still run `make check`; they must not describe that

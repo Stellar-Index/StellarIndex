@@ -134,7 +134,7 @@ Entry-point closure: 120 registered method+path patterns; 115 match OpenAPI 1:1,
 
 Stellar Index moves no *user* money, but **served prices/amounts/supply/market-caps ARE the product** — value-correctness is the money surface. Full map in `audit-2026-07-16/recon/money-pricing.md`.
 
-- **Ingress (price data):** on-chain trades (SDEX + Soroban DEXes via dispatcher/projector), CEX streamers (Binance/Bitstamp/Coinbase/Kraken — VWAP inputs), FX pollers (massive active; ecb/polygon/exchangeratesapi), oracle feeds (Reflector/Redstone/Band), aggregator refs (CoinGecko/CMC/CryptoCompare — divergence only).
+- **Ingress (price data):** on-chain trades (SDEX + Soroban DEXes via dispatcher/projector), CEX streamers (Binance/Bitstamp/Coinbase/Kraken — VWAP inputs), FX pollers (massive active; ecb as authority-sanity; exchangeratesapi disabled), oracle feeds (Reflector/Redstone/Band), aggregator refs (CoinGecko/CMC/CryptoCompare — divergence only).
 - **Internal computation:** VWAP (exact big.Rat Σq/Σb, decimals-normalized) → Redis; CAGGs (SQL, per-row-rounded, unguarded — patched by GuardServedVWAP at serve time); TWAP/OHLC; triangulation; stablecoin→fiat proxy (aggregation-time); confidence; anomaly-freeze; supply Alg-1/2/3.
 - **Egress (served values):** /v1/price*, /history, /chart, /ohlc, /vwap, /twap, /markets, /assets*, /oracle*, supply, market-cap. Plus the explorer + status page.
 - **Value representation invariant:** *big.Int/big.Rat in Go → NUMERIC in SQL → **string** in JSON**. Amount type enforces this. Violations (float64 landing in served values) are the recurring money-bug class — see §7/§8.
@@ -240,7 +240,7 @@ Stellar Index moves no *user* money, but **served prices/amounts/supply/market-c
 
 1. **float64 landing in served money** — fx_quotes, /v1/price fiat cross-rate (labelled "vwap"), fiat market-cap chart (vs crypto's big.Rat), /v1/changes (JSON numbers), coinbase backfill (only VWAP-contributing float path). The i128 guard does NOT catch these.
 2. **ON CONFLICT DO NOTHING re-derive trap** (INV-3) — no amount/price in any PK; replays never correct values.
-3. **CS-040 decimals regression (GATED high)** — `orchestrator.go:1268-1271` hardcodes 8 for fiat:USD; FX registry stamps 6; the corrector `windowUSDVolume` is dead code. Latent while connector-FX disabled; re-enabling polygon-forex/exchangeratesapi (both IncludeInVWAP:true) → ~100× volume-gate understatement + mixed-scale VWAP.
+3. **CS-040 decimals regression (GATED high)** — `orchestrator.go:1268-1271` hardcodes 8 for fiat:USD; FX registry stamps 6; the corrector `windowUSDVolume` is dead code. Latent while connector-FX disabled; re-enabling the exchangeratesapi connector (IncludeInVWAP:true) → ~100× volume-gate understatement + mixed-scale VWAP.
 4. **CAGG `twap` column is NOT time-weighted** (equal-weight mean); real TWAP only at 1h/1d.
 5. **Direction-combining** (SDEX both-orientations) uses a trade-count-weighted mean of {vwap, 1/vwap_flipped} — provably ≠ exact union VWAP.
 6. **Trade-level outlier filter is σ/z-score (masking-vulnerable), not MAD**; MAD guard covers only 3 serve-time sites, not the published VWAP.

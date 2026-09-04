@@ -388,8 +388,9 @@ func (s *Server) handleChartTWAP(
 }
 
 // handleChartFiat serves /v1/chart for fiat:fiat pairs out of the
-// fx_quotes hypertable. Frankfurter (and historically Massive) writes
-// daily ECB reference rates into fx_quotes — so any sub-daily
+// fx_quotes hypertable. The Massive worker writes one row per ticker
+// per UTC day into fx_quotes (the one-shot Frankfurter history backfill
+// wrote the rows before it) — so any sub-daily
 // granularity (1m / 15m / 1h / 4h) just gets the daily bar replicated
 // to the consumer's chosen grain (front-end renders flat candles).
 //

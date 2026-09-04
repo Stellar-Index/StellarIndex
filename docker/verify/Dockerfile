@@ -14,6 +14,14 @@ ARG ZIZMOR_AMD64_SHA256=ec8c95cd800845abb9bbc5f377ec7c57d2eb8e2386a00a201d3a74ee
 ARG ZIZMOR_ARM64_SHA256=018a024d6b6d09733b07f6ef42838d984c23ec04bc9b2acd55f7d67826aeafe5
 ARG PROM_VERSION=2.55.1
 ARG ALERTMANAGER_VERSION=0.28.1
+# Default for a bare `docker build docker/verify`. scripts/dev/verify-container.sh
+# passes the value scripts/dev/docs-postman.sh pins as CONVERTER_VERSION, which
+# is the single place the converter version is chosen, and
+# scripts/ci/check-verify-image-pins.sh fails verify when this default drifts
+# from it. The converter's transitive dependencies are frozen at image build;
+# CI resolves them afresh through npx on every run. Pinning that dependency
+# tree with a lockfile is a follow-up.
+ARG OPENAPI_TO_POSTMAN_VERSION=6.0.1
 
 ENV PATH="/root/.local/bin:/go/bin:/pnpm:${PATH}" \
     PIPX_HOME=/root/.local/pipx \
@@ -22,16 +30,17 @@ ENV PATH="/root/.local/bin:/go/bin:/pnpm:${PATH}" \
 
 COPY --from=node /usr/local/ /usr/local/
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
-      ca-certificates curl git jq make openssh-client pipx python3 python3-yaml rsync shellcheck xz-utils \
-    && rm -rf /var/lib/apt/lists/* \
-    && corepack enable pnpm \
-    && corepack prepare pnpm@10.33.0 --activate
-
 RUN go install mvdan.cc/gofumpt@${GOFUMPT_VERSION} \
     && go install golang.org/x/tools/cmd/goimports@${GOIMPORTS_VERSION} \
     && go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@${GOLANGCI_LINT_VERSION} \
     && go install golang.org/x/vuln/cmd/govulncheck@${GOVULNCHECK_VERSION}
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      ca-certificates curl git jq make openssh-client pipx python3 python3-jinja2 python3-yaml rsync shellcheck xz-utils \
+    && rm -rf /var/lib/apt/lists/* \
+    && corepack enable pnpm \
+    && corepack prepare pnpm@10.33.0 --activate \
+    && npm install --global "openapi-to-postmanv2@${OPENAPI_TO_POSTMAN_VERSION}"
 
 RUN set -eux; \
     case "${TARGETARCH}" in amd64|arm64) arch="${TARGETARCH}" ;; *) echo "unsupported architecture: ${TARGETARCH}"; exit 1 ;; esac; \
