@@ -51,7 +51,7 @@ BINARIES := \
 # carry a hand-copied duplicate, so a package added here ran locally and
 # compiled in CI but was executed by no shard — #333 F1). Add a package
 # here and every CI path picks it up.
-INT_TEST_PKGS := ./test/integration/... ./cmd/stellarindex-ops/... ./internal/ops/archive/...
+INT_TEST_PKGS := ./test/integration/... ./test/harness/... ./cmd/stellarindex-ops/... ./internal/ops/archive/...
 SHARD ?= 0
 SHARDS ?= 4
 

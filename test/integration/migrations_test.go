@@ -16,10 +16,6 @@ import (
 	_ "github.com/golang-migrate/migrate/v4/database/postgres"
 	_ "github.com/golang-migrate/migrate/v4/source/file"
 	_ "github.com/jackc/pgx/v5/stdlib"
-
-	"github.com/testcontainers/testcontainers-go"
-	tcpostgres "github.com/testcontainers/testcontainers-go/modules/postgres"
-	"github.com/testcontainers/testcontainers-go/wait"
 )
 
 // TestMigrationsRoundTrip spins up a throwaway TimescaleDB,
@@ -35,91 +31,16 @@ func TestMigrationsRoundTrip(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 
-	pg, err := tcpostgres.Run(ctx,
-		// Pin matches the version r1 actually runs (2.26.x). The old 2.17.2
-		// pin was 9 minor versions behind prod and BLOCKED the PK-swap-after-
-		// decompress that migrations 0053–0060 do on compressed hypertables
-		// (error 0A000) — so this round-trip test was red AND validated the
-		// migrations against a TimescaleDB we don't deploy. 2.26.x allows the
-		// operation (which is why the same migrations applied cleanly on r1).
-		// (audit-2026-06-15, migration dry-run / test-vs-prod version drift.)
-		"timescale/timescaledb:2.26.4-pg15",
-		tcpostgres.WithDatabase("stellarindex"),
-		tcpostgres.WithUsername("stellarindex"),
-		tcpostgres.WithPassword("stellarindex-test"),
-		// Run the scheduler with ZERO background workers (2026-08-13).
-		// The down-migration drops the very hypertables whose
-		// compression / CAGG-refresh policies this test has just
-		// asserted are attached, and TimescaleDB's job scheduler runs
-		// those policies concurrently — so DROP's AccessExclusiveLock
-		// and a running job can form a lock CYCLE. CI hit exactly that:
-		// "migrate down: deadlock detected, Process 94 waits for
-		// AccessExclusiveLock on relation 21724; blocked by process
-		// 161", which turned main red and had the ci-health tripwire
-		// mailing hourly. It reproduces only under load, which is why
-		// it passes locally in 5s.
-		//
-		// Retrying Down() is not the fix: a failed migration leaves
-		// golang-migrate's version DIRTY, so the retry needs a force.
-		// Removing the concurrent actor removes the whole class.
-		//
-		// This does not weaken the test. It asserts policies are
-		// ATTACHED — a metadata row, still written with no workers to
-		// run them — not that they execute.
-		// APPEND to the module's own Cmd ("postgres -c fsync=off") —
-		// replacing it wholesale makes the container exit 1.
-		testcontainers.WithCmdArgs("-c", "timescaledb.max_background_workers=0"),
-		testcontainers.WithWaitStrategy(
-			wait.ForLog("database system is ready to accept connections").
-				WithOccurrence(2).
-				WithStartupTimeout(60*time.Second),
-		),
-	)
-	if err != nil {
-		t.Fatalf("start timescale: %v", err)
-	}
-	t.Cleanup(func() {
-		// Always attempt teardown; log but don't fail the test on
-		// container-stop errors.
-		if err := pg.Terminate(context.Background()); err != nil {
-			t.Logf("terminate container: %v", err)
-		}
-	})
+	// The shared bootstrap: pinned image, zero background workers, the
+	// extension pre-created, and a readiness gate that waits for the
+	// mapped port and not just the log line.
+	dsn := startTimescale(t, ctx)
 
-	dsn, err := pg.ConnectionString(ctx, "sslmode=disable")
-	if err != nil {
-		t.Fatalf("connection string: %v", err)
-	}
-
-	// Prove the zero-background-workers setting actually took effect.
-	// A Cmd override that silently fails to apply would look exactly
-	// like a fix while leaving the deadlock race in place.
-	{
-		probe, perr := sql.Open("pgx", dsn)
-		if perr != nil {
-			t.Fatalf("open probe: %v", perr)
-		}
-		var workers string
-		if qerr := probe.QueryRowContext(ctx, "SHOW timescaledb.max_background_workers").Scan(&workers); qerr != nil {
-			t.Fatalf("read timescaledb.max_background_workers: %v", qerr)
-		}
-		_ = probe.Close()
-		if workers != "0" {
-			t.Fatalf("timescaledb.max_background_workers = %q, want \"0\" — the container Cmd override did not apply, "+
-				"so policy jobs can still deadlock against the down-migration's DROP", workers)
-		}
-	}
-
-	// Pre-create the timescaledb extension, mirroring
-	// deploy/docker-compose/init/00-timescale-extension.sql.
 	db, err := sql.Open("pgx", dsn)
 	if err != nil {
 		t.Fatalf("sql.Open: %v", err)
 	}
 	defer db.Close()
-	if _, err := db.ExecContext(ctx, "CREATE EXTENSION IF NOT EXISTS timescaledb"); err != nil {
-		t.Fatalf("create extension: %v", err)
-	}
 
 	// Resolve the absolute path to the migrations directory from
 	// the test file's own location so the test works regardless of
