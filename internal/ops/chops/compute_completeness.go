@@ -914,9 +914,12 @@ type projectionScope struct {
 // comet_liquidity) were silently un-verified below it too. Per TARGET is the
 // correct granularity: each table is checked over exactly what the served tier
 // holds for it, whether that is full history or a never-backfilled prefix
-// (soroswap/sdex trades begin ~61.5M — see
+// (each trades source has its OWN floor, and they are far apart: on r1 sdex
+// trades begin at ledger 61,609,957 / 2026-03-12 while soroswap trades begin at
+// 50,746,445 / 2024-03-11, measured 2026-09-03 — see
 // notes/DECISION-genesis-complete-verdict-2026-07-16.md, which lists this fix
-// as decision item 3).
+// as decision item 3). Reading one source's floor as the trades floor is
+// exactly the source-level mistake this per-target scoping replaced.
 //
 // An EMPTY target floors at `genesis` — fail CLOSED. A wiped table must
 // reconcile expected>0 against served=0 and FAIL; "there is no data, so there
@@ -1177,7 +1180,8 @@ type priorProjection struct {
 //
 // The returned detail ALWAYS states the range actually verified, so
 // `complete=true` can never be read as a genesis-to-tip claim (DAT-09: the
-// served tier legitimately holds no trades below ~61.5M; the genesis claim is
+// served tier legitimately holds no sdex trades below ledger 61,609,957, and
+// each source's floor differs — soroswap's is 50,746,445; the genesis claim is
 // the separate lake_complete axis).
 func projectionClaim(servedFrom, runFrom, hi uint32, runClean bool, runDetail string, prior priorProjection) (bool, string) {
 	if !runClean {
