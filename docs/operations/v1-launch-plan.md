@@ -1312,6 +1312,69 @@ were all found to be done or half-done once checked).
     goroutine-leak detection; two opposite ops-CLI write-gate conventions;
     `txindex-backfill` defaults.
 
+> **Filed 2026-09-04 while correcting the backfill's CAGG refresh set
+> (`timescale.CAGGsLiveForever` had skipped `prices_1m` / `prices_15m` since
+> 2026-05 on a retention migration 0031 had already removed). Neither row
+> below is fixed by that change; both are recorded here rather than folded
+> into it. The same expired premise had also reached the audit register —
+> CS-068 says the `prices_1m` gap "self-heals via 30-day retention" — and a
+> dated amendment now sits beneath that finding's accepted text in
+> [`docs/audit-2026-06-30/01-cold-system-findings.md`](../audit-2026-06-30/01-cold-system-findings.md);
+> the finding itself is left as written.**
+
+16. **CS-068's live-ingest half is untouched.** The indexer catching up after
+    a lag inserts trades whose ledger-close time predates `prices_1m`'s
+    5-minute `start_offset`; the policy refresher only rolls forward, so those
+    minute buckets stay undercounted and `/v1/price` reads them. The backfill
+    tool does not run on the live path, so widening its refresh set does not
+    reach this. Needs the catch-up-aware refresh CS-068 originally asked for.
+17. **`/v1/ohlc?interval=2h|12h|3d|2w` error today** (pre-existing, unrelated
+    to the refresh set). `storeHistoryReader.OHLCSeries`
+    (`cmd/stellarindex-api/main.go` ~3502) routes those four to
+    `OHLCSeriesReBucketed` with `"2 hours"`, `"12 hours"`, `"3 days"` and
+    `"2 weeks"`, none of which are in that function's `outInterval` allow-list
+    (`internal/storage/timescale/aggregates.go` ~1991: `5 minutes`,
+    `15 minutes`, `30 minutes`, `1 hour`, `4 hours`, `1 day`, `1 week`). Every
+    request at those four intervals fails. Decide whether to widen the
+    allow-list or drop the intervals from the surface, then pin the map
+    against the allow-list in a test — the two enumerations are a hand-kept
+    pair in different packages, which is what let them drift.
+18. **The refresh lock serialises across VIEWS, not just within one.**
+    `ingest.caggRefreshMu` is held for a worker's whole walk of
+    `CAGGsLiveForever`, but Timescale's `55P03` is per continuous aggregate:
+    two workers refreshing different views never collided and previously ran
+    concurrently. W workers over V views now take W×V×t where a per-view lock
+    would pipeline to (W+V−1)×t. Accepted for now — a lost race is a failed
+    chunk, not a slow one, and the decode + insert phase stays parallel — and
+    stated as a cost in the comment rather than as free. Revisit with a
+    per-view lock (or a single refresher goroutine fed by a channel) if the
+    refresh tail ever dominates a run's wall-clock; measure before changing.
+19. **No timeout bounds a single `refresh_continuous_aggregate` CALL.**
+    `timescale.configurePool` (`internal/storage/timescale/store.go` ~232)
+    sets pool sizing only — no `statement_timeout` — and the ops path passes
+    a context with no deadline, so one wedged refresh now blocks every
+    `-parallel` worker behind `caggRefreshMu` until SIGINT rather than
+    failing its own chunk. Widening the refresh set to the minute grains
+    raises the exposure: `prices_1m` is the long rung. Decide the bound
+    (session `statement_timeout` on the ops pool, or a per-CALL
+    `context.WithTimeout` sized off the view's `MinWindow`) and make it loud
+    when it fires.
+20. **The served-set single declaration stops at the timescale package.**
+    `AllHistoryGranularities` now drives `Validate`, `HistoryGranularityList`
+    and the 400 bodies in `chart.go` / `history.go`, but two hand-kept copies
+    of the same enumeration remain outside that chain: `ohlcInterval`
+    (`internal/api/v1/ohlc_series.go` ~62, thirteen values) with its 400 body
+    written out longhand at ~155, and the `granularity` enum in
+    `docs/reference/api/stellar-index.v1.yaml` ~13218. The first is a
+    superset (it includes the re-bucketed intervals) so it cannot simply
+    range over the slice; the second is generated from nothing. Follow-up 17
+    is the same pair seen from the routing side. Until both are derived or
+    pinned, "one declaration of the served set" holds for the
+    `HistoryGranularity` type and its three named consumers only — which is
+    what `cagg_refresh_set_test.go` actually verifies — and NOT for every
+    interval enumeration the API advertises. Read the shorter phrasing in
+    `aggregates.go` and the CHANGELOG with that scope.
+
 ---
 
 ### W9 — Post-v1 (decide, don't drift)

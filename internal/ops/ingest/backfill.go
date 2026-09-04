@@ -597,10 +597,13 @@ func runBackfillChunk(ctx context.Context, logger *slog.Logger, opts backfillOpt
 		// rows are in `trades` but absent from every OHLC/VWAP read —
 		// until the next policy run or a manual refresh covers them.
 		//
-		// We refresh prices_1h / 4h / 1d / 1w / 1mo (migration 0002).
-		// prices_1m and prices_15m are deliberately skipped: their
-		// 1-minute/15-minute grain over a historical range is a large
-		// refresh for a window nothing reads at that resolution.
+		// All seven price CAGGs are refreshed (migration 0002), because
+		// all seven are served over a caller-chosen window and a rung
+		// left out keeps a permanent hole at that resolution in every
+		// backfilled range. prices_1m and prices_15m were excluded
+		// until 2026-09-04 on a retention that migration 0031 removed
+		// in May 2026; the surfaces that read them, the refresh order
+		// and the measured cost are in [timescale.CAGGsLiveForever].
 		//
 		// DAT-09 / REL-08: a refresh failure here is FATAL to the
 		// chunk — the function returns before the checkpoint below, so
@@ -611,7 +614,7 @@ func runBackfillChunk(ctx context.Context, logger *slog.Logger, opts backfillOpt
 		}
 	default:
 		logger.Warn("skipping CAGG refresh (-refresh-caggs=false)",
-			"impact", "the range's prices_1h/4h/1d/1w/1mo buckets stay unmaterialised until the next CAGG policy run or a manual refresh_continuous_aggregate — the trades rows are durable (migration 0031 removed the retention policy), but every OHLC/VWAP read over the range is short until then",
+			"impact", "the range's prices_1m/15m/1h/4h/1d/1w/1mo buckets stay unmaterialised until a manual refresh_continuous_aggregate covers them — the CAGG policies only roll forward, so a historical range is never picked up on their own cadence. The trades rows are durable (migration 0031 removed the retention policy), but every OHLC/VWAP read over the range is short until then, at every resolution",
 		)
 	}
 
@@ -649,6 +652,44 @@ type caggRefresher interface {
 	RefreshContinuousAggregate(ctx context.Context, name string, from, to time.Time) error
 }
 
+// caggRefreshMu serialises the refresh loop across every `-parallel`
+// worker in this process.
+//
+// `-parallel N` is N goroutines in ONE process (see the WaitGroup fan-
+// out in runBackfill), each walking the same [timescale.CAGGsLiveForever]
+// list at the end of its own chunk. TimescaleDB already serialises two
+// refreshes of the SAME continuous aggregate — but it does it by
+// rejecting the loser with 55P03 immediately, not by making it wait.
+// [timescale.Store.RefreshContinuousAggregate] absorbs that with a
+// bounded retry, which held while the contended view was prices_1mo (a
+// handful of calendar buckets). It does not hold for prices_1m, now
+// first in the list and by far the longest rung: its cost is the
+// chunk's trade count, hundreds of thousands of rows for a sub-chunk
+// of the documented `-parallel 4` weekly loop. A worker that loses
+// that race retries for a fixed budget and then fails — and per
+// DAT-09 / REL-08 a refresh failure is FATAL to the chunk, so the
+// cursor does not checkpoint and the loop halts on a collision that
+// is not a fault at all.
+//
+// The lock is BROADER than the race it removes, and that is a real
+// cost rather than a free one. Timescale's 55P03 is per continuous
+// aggregate: two workers refreshing DIFFERENT views never collided and
+// would have run concurrently. Holding one mutex across the whole loop
+// serialises those too, so W workers over V views take W×V×t where a
+// per-view lock would pipeline to (W+V−1)×t. What stays parallel is
+// the decode + insert phase, which is where the wall-clock of a
+// backfill actually goes and which runs outside this lock.
+//
+// It is taken anyway because a lost race here is not a slow chunk but
+// a FAILED one — DAT-09 / REL-08 makes a refresh error fatal, the
+// cursor does not checkpoint, and the operator re-walks the chunk
+// under `-resume`. Paying refresh throughput to remove that is the
+// right trade at V=7 views; a per-view lock is the shape to reach for
+// if the refresh tail ever dominates a run. It also leaves the retry
+// budget for genuine contention from another process (the policy
+// refresher, or an operator's manual re-materialisation).
+var caggRefreshMu sync.Mutex
+
 // refreshCAGGsForChunk derives the ts range covered by the just-
 // inserted trades and force-refreshes every long-lived CAGG over
 // that range. Idempotent — re-refreshing an already-materialised
@@ -682,6 +723,13 @@ func refreshCAGGsForChunk(ctx context.Context, logger *slog.Logger, store caggRe
 		"ts_from", tsFrom.UTC().Format(time.RFC3339),
 		"ts_to", tsTo.UTC().Format(time.RFC3339),
 	)
+	// One worker at a time through the whole list — see caggRefreshMu.
+	// Held across the loop rather than per view: releasing between
+	// rungs would just hand the next worker a view this one is about
+	// to ask for, which is the collision the lock exists to remove.
+	caggRefreshMu.Lock()
+	defer caggRefreshMu.Unlock()
+
 	var failed []string
 	for _, spec := range timescale.CAGGsLiveForever {
 		// Pad the chunk's ts range to the per-CAGG minimum so the
@@ -752,13 +800,14 @@ func parseBackfillFlags(args []string) (backfillOpts, config.Config, error) {
 			"-resume. Idempotent: re-runs over already-processed ledgers are a "+
 			"no-op via the trades hypertable's unique index.")
 	refreshCAGGs := fs.Bool("refresh-caggs", true,
-		"force-refresh the long-lived continuous aggregates "+
-			"(prices_1h / 4h / 1d / 1w / 1mo) over each chunk's "+
-			"timestamp range immediately after the trade-insert loop "+
-			"completes. Required for historical backfills — without "+
-			"this, the 90-day raw-trades retention will drop the just-"+
-			"inserted chunks before the policy refresher's natural "+
-			"cadence materialises them. Disable only when debugging a "+
+		"force-refresh the seven price continuous aggregates "+
+			"(prices_1m / 15m / 1h / 4h / 1d / 1w / 1mo) over each "+
+			"chunk's timestamp range immediately after the trade-"+
+			"insert loop completes. Required for historical backfills "+
+			"— the CAGG policies only roll forward, so buckets older "+
+			"than their refresh window are never materialised on "+
+			"their own cadence and every OHLC/VWAP read over the "+
+			"range serves nothing. Disable only when debugging a "+
 			"specific refresh failure.")
 	heartbeatPath := fs.String("heartbeat", "",
 		"node_exporter textfile path for the liveness/progress gauges (C6-020). "+

@@ -606,6 +606,33 @@ No finding. (The earlier "0031/0040 down re-adds retention" mapper flag remains 
   stay empty/undercounted, and `/price` reads `prices_1m` → a post-outage hole in the
   recent-minute VWAP. Self-heals via 30-day retention; `prices_1h+` unaffected. **Fix:**
   a catch-up-aware refresh of the affected recent buckets.
+
+  > **Amended 2026-09-04 (finding text above left as accepted).** Two of this
+  > row's premises are retired, in opposite directions:
+  >
+  > - **"Self-heals via 30-day retention" is FALSE and was already false when
+  >   this was written.** Migration 0031 removed the 30-day retention on
+  >   `prices_1m` / `prices_15m` on 2026-05-14, six weeks before this audit.
+  >   Nothing drops an undercounted minute bucket, so nothing replaces it: the
+  >   hole is permanent until a `refresh_continuous_aggregate` covers it. This
+  >   is the same expired premise that kept both fine grains out of the
+  >   backfill's `CAGGsLiveForever` refresh set until 2026-09-04 — the audit
+  >   record and the code inherited it from the same source.
+  > - **"backfill deliberately excludes them" no longer holds.** The refresh set
+  >   covers all seven price aggregates as of 2026-09-04, so a backfilled range
+  >   materialises its 1m/15m buckets like any other. Ranges backfilled BEFORE
+  >   that date still have none — the repair is in
+  >   [backfill-procedure.md](../operations/backfill-procedure.md), "Repairing a
+  >   range backfilled before 2026-09-04".
+  >
+  > **The finding's own scenario is UNTOUCHED and still open.** The live
+  > indexer catching up after a lag inserts trades whose ledger-close time is
+  > older than `prices_1m`'s 5-minute `start_offset`; the policy refresher only
+  > rolls forward, so those minute buckets stay undercounted and `/price` reads
+  > them. Neither the backfill's refresh set nor migration 0031 addresses that
+  > path — the backfill tool does not run on the live-ingest path. The stated
+  > fix (a catch-up-aware refresh of the affected recent buckets) is still the
+  > fix, and it is now the WHOLE of this row.
 - **CS-069 — `source_volume_1h` values historical XLM volume at the CURRENT vwap —
   Low.** Read-time approximation (cagg can't join prices_1m); backs the source-page
   chart only, not a money endpoint.

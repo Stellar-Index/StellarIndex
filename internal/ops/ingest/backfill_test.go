@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -404,9 +405,11 @@ func discardLogger() *slog.Logger {
 // unmaterialised chunk. Every OTHER view must still be attempted —
 // one wedged view must not block refreshing the rest.
 func TestRefreshCAGGsForChunk_ViewFailurePropagates(t *testing.T) {
-	// timescale.CAGGsLiveForever always has at least "prices_1h" —
-	// fail exactly that one and confirm every configured view was
-	// still attempted.
+	// Fail whichever view leads the set — the identity of that view is
+	// not what this test is about, and naming one here is how the
+	// comment came to say "prices_1h" long after prices_1m took the
+	// lead. Read it from the list and confirm every configured view
+	// was still attempted.
 	if len(timescale.CAGGsLiveForever) == 0 {
 		t.Fatal("timescale.CAGGsLiveForever is empty — test needs at least one CAGG spec")
 	}
@@ -454,5 +457,94 @@ func TestRefreshCAGGsForChunk_NoTradesIsNil(t *testing.T) {
 	}
 	if len(fake.refreshedViews) != 0 {
 		t.Errorf("expected no views attempted when there's no ts range to refresh, got %v", fake.refreshedViews)
+	}
+}
+
+// serialisationProbeRefresher is a caggRefresher that reports whether
+// two callers were ever inside RefreshContinuousAggregate at the same
+// time. It stands in for TimescaleDB's actual behaviour on that
+// overlap — an immediate 55P03 to the loser, which the real store
+// retries for a fixed ~3s budget and then surfaces as a hard error,
+// fatal to the chunk per DAT-09 / REL-08.
+type serialisationProbeRefresher struct {
+	tsFrom, tsTo time.Time
+
+	mu       sync.Mutex
+	inFlight int
+	maxSeen  int
+	calls    int
+}
+
+func (p *serialisationProbeRefresher) LedgerRangeToTimeRange(_ context.Context, _, _ uint32) (time.Time, time.Time, error) {
+	return p.tsFrom, p.tsTo, nil
+}
+
+func (p *serialisationProbeRefresher) RefreshContinuousAggregate(_ context.Context, _ string, _, _ time.Time) error {
+	p.mu.Lock()
+	p.inFlight++
+	p.calls++
+	if p.inFlight > p.maxSeen {
+		p.maxSeen = p.inFlight
+	}
+	p.mu.Unlock()
+
+	// Long enough that unsynchronised workers overlap reliably; the
+	// real prices_1m refresh is minutes, not microseconds.
+	time.Sleep(2 * time.Millisecond)
+
+	p.mu.Lock()
+	p.inFlight--
+	p.mu.Unlock()
+	return nil
+}
+
+// TestRefreshCAGGsForChunk_SerialisesAcrossParallelWorkers is the
+// -parallel hazard: every worker `-parallel N` starts lives in ONE
+// process and walks the same CAGG list, and TimescaleDB answers a
+// second refresh of the same view with an immediate 55P03 rather than
+// a wait. With prices_1m leading the list, the losing worker's bounded
+// retry can expire against a refresh whose cost is the chunk's trade
+// count — and a refresh error is fatal to the chunk, so the cursor
+// never checkpoints and the documented weekly loop halts.
+//
+// The guard is behavioural, not structural: run the workers and assert
+// that no two were ever inside a refresh together.
+func TestRefreshCAGGsForChunk_SerialisesAcrossParallelWorkers(t *testing.T) {
+	const workers = 4
+	probe := &serialisationProbeRefresher{
+		tsFrom: time.Now().Add(-time.Hour),
+		tsTo:   time.Now(),
+	}
+	var wg sync.WaitGroup
+	errs := make(chan error, workers)
+	for i := range workers {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			chunk := chunkRange{from: uint32(100 + i*100), to: uint32(200 + i*100)}
+			if err := refreshCAGGsForChunk(context.Background(), discardLogger(), probe, chunk); err != nil {
+				errs <- err
+			}
+		}(i)
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		t.Errorf("worker returned an error: %v", err)
+	}
+
+	probe.mu.Lock()
+	maxSeen, calls := probe.maxSeen, probe.calls
+	probe.mu.Unlock()
+
+	if want := workers * len(timescale.CAGGsLiveForever); calls != want {
+		t.Errorf("got %d refresh calls, want %d (%d workers x %d views)",
+			calls, want, workers, len(timescale.CAGGsLiveForever))
+	}
+	if maxSeen != 1 {
+		t.Errorf("%d refreshes were in flight at once — every -parallel worker is in this process, "+
+			"and TimescaleDB rejects the loser of a same-view race with 55P03 instead of blocking it. "+
+			"The refresh loop must hold caggRefreshMu so the retry budget is never spent on a "+
+			"collision this process created", maxSeen)
 	}
 }

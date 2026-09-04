@@ -158,7 +158,11 @@ func (s *Server) handleChart(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, r,
 			"https://api.stellarindex.io/errors/invalid-granularity",
 			"Invalid granularity", http.StatusBadRequest,
-			fmt.Sprintf("granularity must be one of: 1m, 15m, 1h, 4h, 1d, 1w, 1mo (got %q)", gran))
+			// Enumeration comes from timescale.AllHistoryGranularities,
+			// the same slice Validate ranges over — a hand-written copy
+			// here would keep advertising the old set after a rung is
+			// added or removed.
+			fmt.Sprintf("granularity must be one of: %s (got %q)", timescale.HistoryGranularityList(), gran))
 		return
 	}
 	if err != nil {

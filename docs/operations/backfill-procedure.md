@@ -1,6 +1,6 @@
 ---
 title: Backfill procedure — replaying a historical ledger range
-last_verified: 2026-05-03
+last_verified: 2026-09-04
 status: operator runbook
 ---
 
@@ -27,12 +27,16 @@ indexer would have produced.
   flag-overridden) source set.
 - Writes one trade row per decoded event into the trades
   hypertable.
-- **Force-refreshes the long-lived CAGGs (`prices_1h` /
-  `prices_4h` / `prices_1d` / `prices_1w` / `prices_1mo`) over
-  each chunk's timestamp range as soon as the chunk's trade-
-  insert loop completes** — this is mandatory for historical
-  inserts, see "Why" below. Disable with `-refresh-caggs=false`
-  only when debugging a specific CAGG-refresh failure.
+- **Force-refreshes all seven price CAGGs (`prices_1m` /
+  `prices_15m` / `prices_1h` / `prices_4h` / `prices_1d` /
+  `prices_1w` / `prices_1mo`) over each chunk's timestamp range as
+  soon as the chunk's trade-insert loop completes** — this is
+  mandatory for historical inserts, see "Why" below. Disable with
+  `-refresh-caggs=false` only when debugging a specific CAGG-refresh
+  failure. The order is fixed, with `prices_1m` first, because
+  `prices_1m` is the one view another aggregate is defined over — see
+  the `twap_1h` / `twap_1d` entry under **Doesn't** for what that does
+  and does not get you.
 - Maintains its own cursor row (`source="backfill"`) so a crash
   doesn't pollute the indexer's resume position.
 
@@ -69,8 +73,41 @@ cycle. Aggregates persist.
 > ensures historical buckets materialize promptly), but the
 > "trades age out 90 days later" outcome no longer happens.
 
+> **Update (2026-09-04):** the refresh set now covers **all seven**
+> price CAGGs. The same migration 0031 also removed the 30-day
+> retention on `prices_1m` and `prices_15m`, but the refresh set kept
+> skipping those two for another four months — first on the retired
+> retention, then on a cost argument that assumed nothing read the
+> minute grains over a historical window. Three surfaces do:
+> `/v1/ohlc?interval=1m|5m|15m|30m` (the 5m and 30m bars re-bucket
+> `prices_1m`), `/v1/chart?granularity=1m|15m` at every timeframe
+> including the unbounded `all`, and `/v1/history/since-inception` at
+> both grains — that last one takes `granularity` verbatim, applies no
+> time bound at all and returns oldest bucket first, so a hole in
+> historical materialisation is the FIRST thing it serves. (Plain
+> `/v1/history` is a different handler and is not affected: it reads
+> raw trades, no CAGG.)
+> A range backfilled before this has **no bars at 1m or 15m** unless a
+> later full re-materialisation covered it — the trades are in the
+> hypertable, but nothing materialised those buckets and the policies
+> only roll forward. Migration 0147 (2026-08-22) recreated all seven
+> price views `WITH NO DATA` and its operator block re-materialised
+> `prices_1m` and `prices_15m` over all history, so in practice only
+> ranges backfilled AFTER that date are exposed. Run
+> `SELECT min(bucket) FROM prices_1m;` before scheduling the repair —
+> an hours-long heavy-job slice is not worth running on a range that
+> 0147 already swept. See "Repairing a range backfilled after
+> 2026-08-22" below.
+
 **Doesn't:**
 - Tail live ledgers — exits at `-to`.
+- **Refresh `twap_1h` or `twap_1d`.** Those two are hierarchical over
+  `prices_1m` and are outside the tool's allow-list, so a range whose
+  `prices_1m` buckets the tool just materialised still has **no TWAP
+  bars** over that span until an operator refreshes them by hand.
+  Refreshing `prices_1m` first only means that hand step reads current
+  input; it does not perform it. See "Repairing a range backfilled
+  after 2026-08-22" for the calls.
 - Pollute the indexer's `ingestion_cursors` cursor.
 - Run unaudited Soroban sources. Each on-chain Soroban decoder
   is gated by `BackfillSafe` in
@@ -249,16 +286,35 @@ psql stellarindex -c "
 "
 ```
 
-If the CAGGs look empty for the backfilled range, manually
-refresh them:
+If the CAGGs look empty for the backfilled range, refresh them by
+hand — **all seven, `prices_1m` first**, over the range's timestamps:
 
 ```sql
 CALL refresh_continuous_aggregate('prices_1m',
        '2026-04-15'::timestamptz, '2026-04-21'::timestamptz);
+CALL refresh_continuous_aggregate('prices_15m',  '2026-04-15'::timestamptz, '2026-04-21'::timestamptz);
+CALL refresh_continuous_aggregate('prices_1h',   '2026-04-15'::timestamptz, '2026-04-21'::timestamptz);
+CALL refresh_continuous_aggregate('prices_4h',   '2026-04-15'::timestamptz, '2026-04-21'::timestamptz);
+CALL refresh_continuous_aggregate('prices_1d',   '2026-04-15'::timestamptz, '2026-04-21'::timestamptz);
+CALL refresh_continuous_aggregate('prices_1w',   '2026-04-01'::timestamptz, '2026-04-22'::timestamptz);
+CALL refresh_continuous_aggregate('prices_1mo',  '2026-02-01'::timestamptz, '2026-05-01'::timestamptz);
+-- twap_* are hierarchical over prices_1m — run them LAST.
+CALL refresh_continuous_aggregate('twap_1h',     '2026-04-15'::timestamptz, '2026-04-21'::timestamptz);
+CALL refresh_continuous_aggregate('twap_1d',     '2026-04-15'::timestamptz, '2026-04-21'::timestamptz);
 ```
 
-The default policy auto-refreshes on a 30-min cadence, so
-manual refresh is rarely needed.
+Each window must span at least **2 buckets** of its own grain or the
+call is rejected with `SQLSTATE 22023: refresh window too small` —
+which is why the last three widen. `PadRefreshWindow`
+(`internal/storage/timescale/diagnostics.go`) is the same arithmetic
+the tool applies per chunk; the per-grain minimums are the
+`MinWindow` values beside each entry of `CAGGsLiveForever`.
+
+Do **not** expect the refresh policies to cover a historical range.
+They only roll forward: `prices_1m`'s `start_offset` is 5 minutes and
+the widest of the seven is `prices_1mo` at 3 months (migration 0002),
+so a bucket older than that window is never materialised on their own
+cadence, however long you wait.
 
 ## Failure modes
 
@@ -371,29 +427,134 @@ wall-clock on a single R1 box at `-parallel 4`.
    done
    ```
 
-5. **(Automatic since 2026-05-13.)** Backfill auto-refreshes the
-   long-lived CAGGs at the end of each chunk — no manual step
-   needed. If you're running on an older binary that lacks
-   `-refresh-caggs`, append this after the trade-insert loop:
+5. **(Automatic since 2026-05-13; all seven grains since
+   2026-09-04.)** Backfill auto-refreshes the price CAGGs at the end
+   of each chunk — no manual step needed. If you're running on an
+   older binary that lacks `-refresh-caggs`, append this after the
+   trade-insert loop (`prices_1m` first — `twap_1h` / `twap_1d` are
+   materialised from it).
+
+   `<T_LO>` / `<T_HI>` are THIS chunk's timestamps — the wall-clock
+   bounds of the ledger range the chunk just replayed, not the whole
+   run's. Nine full-history calls is the shape to avoid:
+
+   > **`NULL, NULL` would be the WHOLE view, not this run's range.**
+   > Passing it re-materialises every bucket the aggregate has ever
+   > covered, back to 2015. At r1's density that is order-of-10M
+   > `prices_1m` rows per 30 days of history, in one uninterruptible
+   > `CALL` — nine of them, `prices_1m` and both TWAP views included.
+   > It is defensible only on a small or freshly-seeded deployment. On
+   > anything else use the bounded form below, and walk a wide
+   > `[T_LO, T_HI]` in weekly or monthly slices, under a heavy-job
+   > scope and off the peak 14:00–22:00 UTC ingest window — the
+   > sizing, the abort/monitor steps and the reason are in "Repairing
+   > a range backfilled after 2026-08-22" below and in
+   > [cagg-broad-recompute.md](cagg-broad-recompute.md).
 
    ```sh
-   psql stellarindex -c "CALL refresh_continuous_aggregate('prices_1h',  NULL, NULL);"
-   psql stellarindex -c "CALL refresh_continuous_aggregate('prices_4h',  NULL, NULL);"
-   psql stellarindex -c "CALL refresh_continuous_aggregate('prices_1d',  NULL, NULL);"
-   psql stellarindex -c "CALL refresh_continuous_aggregate('prices_1w',  NULL, NULL);"
-   psql stellarindex -c "CALL refresh_continuous_aggregate('prices_1mo', NULL, NULL);"
+   psql stellarindex -c "CALL refresh_continuous_aggregate('prices_1m',  '<T_LO>'::timestamptz, '<T_HI>'::timestamptz);"
+   psql stellarindex -c "CALL refresh_continuous_aggregate('prices_15m', '<T_LO>'::timestamptz, '<T_HI>'::timestamptz);"
+   psql stellarindex -c "CALL refresh_continuous_aggregate('prices_1h',  '<T_LO>'::timestamptz, '<T_HI>'::timestamptz);"
+   psql stellarindex -c "CALL refresh_continuous_aggregate('prices_4h',  '<T_LO>'::timestamptz, '<T_HI>'::timestamptz);"
+   psql stellarindex -c "CALL refresh_continuous_aggregate('prices_1d',  '<T_LO>'::timestamptz, '<T_HI>'::timestamptz);"
+   psql stellarindex -c "CALL refresh_continuous_aggregate('prices_1w',  '<T_LO>'::timestamptz, '<T_HI>'::timestamptz);"
+   psql stellarindex -c "CALL refresh_continuous_aggregate('prices_1mo', '<T_LO>'::timestamptz, '<T_HI>'::timestamptz);"
+   psql stellarindex -c "CALL refresh_continuous_aggregate('twap_1h',    '<T_LO>'::timestamptz, '<T_HI>'::timestamptz);"
+   psql stellarindex -c "CALL refresh_continuous_aggregate('twap_1d',    '<T_LO>'::timestamptz, '<T_HI>'::timestamptz);"
    ```
 
-   `prices_1m` / `prices_15m` previously had 30-day retention by
-   design (migration 0002), which is why refreshing them for
-   historical ranges used to be wasted work. **Migration 0031
-   (2026-05-14) removed that retention — they are now retained
-   indefinitely**, so refreshing them over historical ranges is no
-   longer wasted; include them if you need sub-hourly history.
+   Each window must span at least two of that view's buckets or
+   Timescale rejects the call with SQLSTATE 22023 — `prices_1mo`
+   needs two calendar months, so widen `[T_LO, T_HI]` for the coarse
+   rungs rather than narrowing them all to the chunk. This is the
+   padding `PadRefreshWindow` applies for you on a current binary.
 
-6. **Verify.** `/v1/chart?asset=native&quote=fiat:USD&timeframe=1y`
-   should return a non-truncated point set; spot-check earliest
-   bucket's timestamp.
+   A binary between 2026-05-13 and 2026-09-04 refreshed only
+   `prices_1h` and coarser, so a range backfilled by one has no bars
+   at 1m or 15m — see the repair section below.
+
+6. **Verify — at 1m grain, not only at the default.** Check both:
+
+   ```sh
+   # (a) coarse coverage: non-truncated point set, earliest bucket
+   #     where you expect it.
+   curl -s '<host>/v1/chart?asset=native&quote=fiat:USD&timeframe=1y' \
+     | jq '{n: (.data.points|length), truncated: .data.truncated, first: .data.points[0].t}'
+
+   # (b) the fine grain THIS procedure materialises. `limit` DEFAULTS
+   #     TO 100 and the query takes the EARLIEST buckets, so pass
+   #     limit=1000 (the maximum) and keep the window under ~1000
+   #     minutes; a whole day at 1m grain is 1440 buckets and would
+   #     print the cap, hiding any hole that starts after it. Expect
+   #     one bar per traded minute up to the cap, and never 0 for a
+   #     pair that has trades in the window.
+   curl -s '<host>/v1/ohlc?base=native&quote=fiat:USD&interval=1m&from=<T_LO>&to=<T_HI>&limit=1000' \
+     | jq '.data.intervals | length'
+   ```
+
+   Both filters reach INTO `.data`, and that is the whole of their
+   correctness. Every 2xx on this API is an `Envelope` — `{data,
+   as_of, flags, …}` — so `.data` is the payload OBJECT, never the
+   array. `.data | length` on `/v1/ohlc` counts the six keys of
+   `OHLCSeriesResponse` (`base`, `quote`, `interval`, `from`, `to`,
+   `intervals`) and prints `6` whether `intervals` holds a thousand
+   bars or none, which is exactly the failure below; the bars are
+   `.data.intervals`. On `/v1/chart` the payload is `ChartSeries`, so
+   `.data[0]` is `jq: error: Cannot index object with number` (exit
+   5) and `.truncated` reads the envelope, where no such key exists —
+   the series is `.data.points` and its flag `.data.truncated`.
+
+   (b) is not optional padding. `?timeframe=1y` defaults to
+   `granularity=1d` (ADR-0020's table), so it reads `prices_1d` and
+   says nothing about `prices_1m` — it passed every day of the four
+   months the 1m/15m hole was open. A check that cannot see the
+   failure this step exists to prevent is not a check.
+
+### Repairing a range backfilled after 2026-08-22
+
+Every range backfilled by a pre-2026-09-04 binary is missing its
+`prices_1m` and `prices_15m` buckets, and therefore its `twap_1h` /
+`twap_1d` bars over the same span. The `trades` rows are intact
+(migration 0031 removed their retention), so this is a pure re-derive
+— no re-decode, no archive read:
+
+```sql
+-- [T_LO, T_HI] = the backfilled range's timestamps. prices_1m FIRST.
+CALL refresh_continuous_aggregate('prices_1m',  '<T_LO>', '<T_HI>');
+CALL refresh_continuous_aggregate('prices_15m', '<T_LO>', '<T_HI>');
+CALL refresh_continuous_aggregate('twap_1h',    '<T_LO>', '<T_HI>');
+CALL refresh_continuous_aggregate('twap_1d',    '<T_LO>', '<T_HI>');
+```
+
+Walk it in weekly or monthly slices rather than one call — the
+minute grain is the row-heavy one (r1 accrues roughly 390k
+`prices_1m` rows/day, so a 30-day slice materialises order-of-10M
+buckets). Run it under a heavy-job scope and off the peak
+14:00–22:00 UTC ingest window; the full-sweep procedure and its
+abort/monitor steps are in
+[cagg-broad-recompute.md](cagg-broad-recompute.md). A `55P03`
+concurrent-refresh error just means the policy job is running —
+retry.
+
+> **Don't run these slices while a backfill is running.** Timescale
+> serialises refreshes of one view by REJECTING the loser with
+> `55P03` rather than blocking it, and the backfill's own retry
+> budget is five attempts over ~3.0 s
+> (`RefreshContinuousAggregate`). A manual `prices_1m` slice over a
+> month outlives that budget many times over, so the backfill worker
+> that collides with it exhausts all five attempts and fails its
+> chunk — the cursor does not checkpoint, and that chunk has to be
+> re-walked under `-resume`. Recoverable, but it costs the chunk.
+> Finish or stop the backfill first, or scope the slices to ranges
+> the run is not touching.
+
+Confirm the repair from the served side, not the table — `.data` is
+the `Envelope` payload object, so the bars are `.data.intervals` and
+`.data | length` would print its key count (a constant `6`) instead:
+
+```sh
+curl -s '<host>/v1/ohlc?base=native&quote=fiat:USD&interval=1m&from=<T_LO>&to=<T_HI>&limit=1000' | jq '.data.intervals | length'
+```
 
 ### Failure & resumption
 

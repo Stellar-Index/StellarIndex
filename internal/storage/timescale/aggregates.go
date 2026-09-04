@@ -39,15 +39,57 @@ const (
 	Granularity1mo HistoryGranularity = "1mo"
 )
 
-// Validate reports whether g is one of the seven supported
-// granularities. Caller surfaces unknown granularities as 400.
-func (g HistoryGranularity) Validate() error {
-	switch g {
-	case Granularity1m, Granularity15m, Granularity1h, Granularity4h,
-		Granularity1d, Granularity1w, Granularity1mo:
-		return nil
+// AllHistoryGranularities is the ONE declaration of the served set,
+// finest first. [HistoryGranularity.Validate] ranges over it instead
+// of re-listing the constants in a switch, and builds its rejection
+// message from it via [HistoryGranularityList], so the accepted set
+// and the enumeration callers are shown cannot disagree. The API's
+// 400 bodies for `/v1/chart` and `/v1/history/since-inception` quote
+// the same helper for the same reason — the enumeration used to be
+// hand-copied into all three, and a hand-copied list is how the two
+// drift apart in the first place.
+//
+// Adding a rung here is adding a rung the backfill has to
+// materialise: TestCAGGsLiveForeverCoversEveryServedGranularity fails
+// until [CAGGsLiveForever] gains the matching prices_<g> view.
+// Without that, every backfilled range keeps a permanent hole at the
+// new resolution — the trades land in the hypertable, the
+// continuous-aggregate policies only roll forward, and nothing else
+// materialises a historical bucket.
+var AllHistoryGranularities = []HistoryGranularity{
+	Granularity1m, Granularity15m, Granularity1h, Granularity4h,
+	Granularity1d, Granularity1w, Granularity1mo,
+}
+
+// historyGranularitySep separates the entries [HistoryGranularityList]
+// renders. Named rather than inlined so the guard test can split on
+// the same value: a test that hard-coded ", " would fail on a change
+// of punctuation and report it as a missing granularity.
+const historyGranularitySep = ", "
+
+// HistoryGranularityList renders [AllHistoryGranularities] as the
+// enumeration that Validate's error and the API's 400 bodies carry.
+// Generated rather than written out, so a new granularity reaches
+// every message that advertises the set without anyone remembering to
+// edit prose.
+func HistoryGranularityList() string {
+	parts := make([]string, len(AllHistoryGranularities))
+	for i, g := range AllHistoryGranularities {
+		parts[i] = string(g)
 	}
-	return fmt.Errorf("unknown granularity %q (want one of: 1m, 15m, 1h, 4h, 1d, 1w, 1mo)", g)
+	return strings.Join(parts, historyGranularitySep)
+}
+
+// Validate reports whether g is one of the supported granularities
+// ([AllHistoryGranularities]). Caller surfaces unknown granularities
+// as 400.
+func (g HistoryGranularity) Validate() error {
+	for _, known := range AllHistoryGranularities {
+		if g == known {
+			return nil
+		}
+	}
+	return fmt.Errorf("unknown granularity %q (want one of: %s)", g, HistoryGranularityList())
 }
 
 // closedBucketInterval is the Postgres INTERVAL string that the

@@ -15,6 +15,7 @@ import (
 
 	"github.com/Stellar-Index/StellarIndex/internal/aggregate"
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
 // HistoryReader is the storage-side interface for /v1/history
@@ -675,7 +676,11 @@ func (s *Server) handleHistorySinceInception(w http.ResponseWriter, r *http.Requ
 		writeProblem(w, r,
 			"https://api.stellarindex.io/errors/invalid-granularity",
 			"Invalid granularity", http.StatusBadRequest,
-			fmt.Sprintf("granularity must be one of: 1m, 15m, 1h, 4h, 1d, 1w, 1mo (got %q)", gran))
+			// Enumeration comes from timescale.AllHistoryGranularities,
+			// the same slice Validate ranges over — a hand-written copy
+			// here would keep advertising the old set after a rung is
+			// added or removed.
+			fmt.Sprintf("granularity must be one of: %s (got %q)", timescale.HistoryGranularityList(), gran))
 		return
 	}
 	if err != nil {
