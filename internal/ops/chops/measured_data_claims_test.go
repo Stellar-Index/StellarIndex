@@ -39,6 +39,17 @@ import (
 //     restore or a reconcile against a 30-day floor the data does not
 //     have.
 //
+// Two more sites were added 2026-09-04 for the same class with a
+// different contradicting witness: the tree rather than r1. The
+// backfill's continuous-aggregate refresh set skipped prices_1m and
+// prices_15m, justified in two places by a 30-day retention migration
+// 0031 removed on 2026-05-14 and then by "nothing reads at that
+// resolution" — which /v1/ohlc, /v1/chart and /v1/history all
+// contradict, each serving both grains over a caller-chosen window.
+// The behaviour is fixed and the set is pinned structurally in
+// internal/storage/timescale/cagg_refresh_set_test.go; these two
+// entries stop the retired justification returning as prose.
+//
 // This guard lives here because [targetScope]'s own doc comment is one
 // of the five sites, and because nothing else in the build can fail on
 // a sentence: the drift is a documentation drift, and the only way to
@@ -87,6 +98,64 @@ func TestContributorGuidanceStatesTheMeasuredDataFloors(t *testing.T) {
 			},
 		},
 		{
+			// The refresh set's own doc comment. Its first justification
+			// for skipping the minute grains was a retention migration
+			// 0031 removed; the correction has to name both migrations,
+			// or a later reader re-derives the same wrong conclusion
+			// from 0002 alone.
+			//
+			// An earlier entry for this same file pinned the exclusion
+			// itself, requiring the comment to say the minute rungs are
+			// left out on cost rather than on retention. There is no
+			// exclusion left to justify — they are in the set — so that
+			// entry is gone and this one carries the ground it covered:
+			// both migrations named, and every served rung present.
+			path: "internal/storage/timescale/diagnostics.go",
+			forbidden: []string{
+				"have a 30-day retention by design",
+				"so refreshing historical buckets there is wasted work",
+				// CAGGCoverage's own comment, ~100 lines below, carried
+				// the same expired premise from the other direction.
+				"raw trades have a 90-day retention but the hourly+ CAGGs are retained forever",
+				// And RefreshContinuousAggregate's own doc, ~20 lines
+				// ABOVE the corrected comment, stated it a third time
+				// and in the present tense — inside the very function
+				// the fix is about, in the file it claims to have
+				// de-drifted.
+				"the 90-day retention on raw trades drops chunks before the policy's natural cadence picks them up",
+			},
+			required: []string{
+				"migration 0002 gave prices_1m and prices_15m a 30-day retention and migration 0031 removed it on 2026-05-14",
+				"Every SERVED rung has to be here",
+				"ORDER IS DEFENSIVE, not load-bearing today, and prices_1m leads",
+				// The retired retention claim reached a second site
+				// 100 lines below the one this pass corrected. Pin the
+				// correction so the two cannot diverge again.
+				"migration 0031 removed the 90-day retention on raw `trades` and the 30-day retention on prices_1m / prices_15m",
+				// And a third, in RefreshContinuousAggregate's doc.
+				// The roll-forward policy is the only live reason a
+				// refresh is needed; a reader who is given a second
+				// one re-derives the wrong repair (re-decode, archive
+				// read) for a range whose trades were never dropped.
+				"The roll-forward policy is the WHOLE reason",
+				"which migration 0031 retired on 2026-05-14 when it removed the 90-day retention",
+			},
+		},
+		{
+			// The call site carried the SECOND justification — a cost
+			// claim about what the fine grains are read over, which the
+			// three surfaces above disprove.
+			path: "internal/ops/ingest/backfill.go",
+			forbidden: []string{
+				"a window nothing reads at that resolution",
+				"the 90-day raw-trades retention will drop the just-",
+			},
+			required: []string{
+				"All seven price CAGGs are refreshed (migration 0002)",
+				"the CAGG policies only roll forward",
+			},
+		},
+		{
 			// The registry comment is where docs/architecture/domain-traps.md
 			// sends a reader for the full detail, so the corrected FX cadence
 			// must hold there too.
@@ -97,22 +166,6 @@ func TestContributorGuidanceStatesTheMeasuredDataFloors(t *testing.T) {
 				"one row per ticker per UTC day",
 			},
 		},
-		{
-			// The backfill refresh set's doc comment justified excluding
-			// the minute rungs by a retention policy migration 0031 had
-			// already removed. The behaviour stays; its reason is now the
-			// true one.
-			path: "internal/storage/timescale/diagnostics.go",
-			// "backfilled range": the comment once said nothing served
-			// from one reads the minute rungs; /v1/ohlc?interval=1m|15m
-			// and /v1/chart?granularity=1m|15m read them over any window.
-			forbidden: []string{"30-day retention", "have a 30-day", "backfilled range"},
-			required: []string{
-				"No price aggregate carries a retention policy",
-				"migration 0031 removed those two",
-				"The exclusion now rests on cost, not retention",
-			},
-		},
 	}
 
 	for _, tc := range cases {
@@ -120,7 +173,7 @@ func TestContributorGuidanceStatesTheMeasuredDataFloors(t *testing.T) {
 			text := flattenProse(readRepoFile(t, tc.path))
 			for _, claim := range tc.forbidden {
 				if strings.Contains(text, claim) {
-					t.Errorf("%s still states %q, which a read-only measurement of r1 contradicts", tc.path, claim)
+					t.Errorf("%s still states %q, which r1 or the tree itself contradicts", tc.path, claim)
 				}
 			}
 			for _, claim := range tc.required {

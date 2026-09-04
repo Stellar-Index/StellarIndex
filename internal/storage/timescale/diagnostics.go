@@ -119,20 +119,71 @@ var allowedCAGGViews = map[string]bool{
 	"prices_1mo": true,
 }
 
-// CAGGsLiveForever is the set of price aggregates the backfill tool
-// refreshes after each chunk. The name predates migration 0031: the
-// minute-grain CAGGs (prices_1m / prices_15m) are excluded here, and
-// that exclusion once rested on the retention policies migration 0002
-// had placed on them. No price aggregate carries a retention policy
-// any more — migration 0031 removed those two, and migration 0116
-// records the tree as holding none on any reconcile target — so no
-// rung drops history by age; each holds what its own refreshes have
-// materialised. The exclusion now rests on cost, not retention: the
-// minute rungs hold the most rows per pair, and a historical refresh
-// there is the most expensive one in the tree. They are served over any
-// window all the same (`/v1/ohlc?interval=1m|15m`,
-// `/v1/chart?granularity=1m|15m`), so history the backfill lands is
-// reachable at those grains only once a refresh names that range.
+// CAGGsLiveForever is the ORDERED set of price aggregates the
+// backfill tool refreshes after each chunk. It holds all seven, and
+// the name is literal for all seven: migration 0002 gave prices_1m
+// and prices_15m a 30-day retention and migration 0031 removed it on
+// 2026-05-14, alongside the 90-day one on raw `trades`. No price CAGG
+// has been pruned since.
+//
+// Every SERVED rung has to be here, because a rung left out is a
+// permanent hole at that resolution in every backfilled range: the
+// rows land in `trades`, the policy refresher only rolls forward, and
+// no read can reach what was never materialised. The minute grains
+// are not a recent-only working set — each is served over a window
+// the caller chooses:
+//
+//   - /v1/ohlc?interval=1m and ?interval=15m take `from`/`to`
+//     verbatim (parseOHLCSeriesFromTo) into OHLCSeries, which reads
+//     prices_1m / prices_15m.
+//   - /v1/ohlc?interval=5m and ?interval=30m re-bucket prices_1m
+//     (OHLCSeriesReBucketed).
+//   - /v1/chart?granularity=1m|15m reads the same two views through
+//     chartVWAPReader → HistoryPointsInRange, at every timeframe
+//     including the unbounded `all`.
+//   - /v1/history/since-inception?granularity=1m|15m reads them
+//     through HistoryPoints — no time bound at all, ordered oldest
+//     bucket first. It is the surface most exposed to a gap in
+//     historical materialisation, because the gap is the FIRST thing
+//     it would return. (Plain /v1/history is a different handler and
+//     is not one of these sites: it reads raw trades via
+//     TradesInRangeAfter, no CAGG involved.)
+//
+// twap_1h and twap_1d are materialised FROM prices_1m (migrations
+// 0081 / 0126 / 0147), so an unmaterialised minute range empties the
+// TWAP surface one level down as well. Those two views are NOT in
+// this set and are not refreshed by backfill — they are outside
+// allowedCAGGViews, and re-materialising them is the operator step
+// the twap-history-missing runbook owns. That exclusion is stated
+// rather than silent, which is the whole point of this comment.
+//
+// ORDER IS DEFENSIVE, not load-bearing today, and prices_1m leads.
+// Nothing in this set reads prices_1m: the other six read `trades`
+// directly, and twap_1h / twap_1d — the two aggregates that ARE built
+// on prices_1m — are not in the list (see above). So any order would
+// currently produce the same rows. prices_1m leads anyway because it
+// is the one view another aggregate is defined over, so an operator
+// re-materialising TWAP after a chunk, or a future rung that reads it,
+// finds it current rather than one chunk behind. Same order, same
+// reason, as chops.xlmBaseRestampCAGGs and the re-derive runbook's
+// list (docs/operations/usd-volume-rederive-2026-08.md).
+//
+// COST of the two fine rungs, from the MinWindow constants below
+// rather than an estimate. All seven read `trades`, so each rung is
+// one more pass over the chunk's rows: seven passes instead of five.
+// On scanned ts range the fine rungs are the CHEAP ones — they pad to
+// 2 and 30 minutes, while the coarse set pads to 3h + 12h + 3d + 21d
+// + 93d ≈ 117 days no matter how short the chunk is, so adding both
+// widens the range this function touches by 0.3% for a 4-hour chunk,
+// ~10% for a week and ~28% for a 30-day chunk. What they do cost is
+// rows written: one minute bucket per (pair-direction, minute) that
+// traded, bounded above by the chunk's own trade count, against
+// ≤ 937 buckets per pair for the five coarse rungs over 30 days.
+// Measured density on r1 (docs/operations/notes/
+// 2026-08-22-price-p95-tail-post-0147.md): prices_1m accrued 14.5M
+// rows between 2026-07-16 and that note's date, ≈392k rows/day, so a
+// 30-day range materialises order-of-10M minute buckets. Those rows
+// are exactly what the surfaces listed above read.
 //
 // Per-entry MinWindow is the Timescale-imposed minimum refresh
 // window: refresh_continuous_aggregate rejects (`SQLSTATE 22023:
@@ -149,6 +200,9 @@ type CAGGSpec struct {
 }
 
 var CAGGsLiveForever = []CAGGSpec{
+	// Must lead: twap_1h / twap_1d are materialised FROM this one.
+	{Name: "prices_1m", MinWindow: 2 * time.Minute},
+	{Name: "prices_15m", MinWindow: 30 * time.Minute},
 	{Name: "prices_1h", MinWindow: 3 * time.Hour},
 	{Name: "prices_4h", MinWindow: 12 * time.Hour},
 	{Name: "prices_1d", MinWindow: 3 * 24 * time.Hour},
@@ -180,11 +234,20 @@ func PadRefreshWindow(from, to time.Time, minWindow time.Duration) (time.Time, t
 // blocks until the materialisation completes.
 //
 // Required after backfill runs because the policy refresher only
-// rolls forward — historical inserts (ts < now()-policy_window)
-// don't trigger materialisation, and the 90-day retention on raw
-// trades drops chunks before the policy's natural cadence picks
-// them up. The backfill tool calls this at the end of each chunk
-// to make CAGG materialisation atomic with the trade insert.
+// rolls FORWARD: a policy materialises buckets inside its own
+// look-back window, and the widest of the seven price views
+// (prices_1mo) looks back three months, so a historical insert older
+// than that is never materialised on its own cadence however long you
+// wait. The backfill tool calls this at the end of each chunk to make
+// CAGG materialisation atomic with the trade insert.
+//
+// The roll-forward policy is the WHOLE reason. This comment also
+// carried a second one — that raw trades are pruned before the policy
+// reaches them — which migration 0031 retired on 2026-05-14 when it
+// removed the 90-day retention. The rows stay; only the
+// materialisation is missing. That is why repairing an
+// already-backfilled range needs no re-decode and no archive read,
+// just a bounded refresh (docs/operations/backfill-procedure.md).
 //
 // Idempotent: refreshing an already-materialised range is a no-op.
 // Fail-loud on unknown view name (defends against typo-driven
@@ -204,11 +267,24 @@ func (s *Store) RefreshContinuousAggregate(ctx context.Context, viewName string,
 	// first real backfill that exercised this path.
 	q := fmt.Sprintf(`CALL refresh_continuous_aggregate('%s', $1::timestamptz, $2::timestamptz)`, viewName)
 	// Retry on 55P03 (concurrent refresh) — Timescale serializes
-	// refresh of the same CAGG, so two parallel callers (e.g.
-	// backfill chunks racing on prices_1mo) collide. Backoff is
-	// short because the other caller's refresh is fast for our
-	// padded windows. Caught live 2026-05-14 on a `-parallel 4`
-	// SDEX backfill: every chunk's prices_1mo refresh raced.
+	// refresh of the same CAGG, but it does so by REJECTING the
+	// loser immediately rather than blocking it, so two callers
+	// racing one view need a retry on this side. Caught live
+	// 2026-05-14 on a `-parallel 4` SDEX backfill: every chunk's
+	// prices_1mo refresh raced.
+	//
+	// The budget below is ~3.0s total, and it is NOT sized to
+	// outlast a contending refresh. That reading was true only for
+	// prices_1mo, whose padded window materialises a handful of
+	// calendar buckets; prices_1m over the same chunk runs as long
+	// as the chunk has trades, which is minutes for a `-parallel 4`
+	// weekly slice. The budget is sized for the SHORT collisions —
+	// the policy refresher's own tick, an operator's slice — and
+	// callers that fan out in-process must not rely on it: the
+	// backfill tool holds a process-wide mutex over its refresh loop
+	// (ingest.caggRefreshMu) so its own workers never contend here.
+	// A caller that skips that and loses a race to a long refresh
+	// exhausts these five attempts and gets a hard error.
 	const maxAttempts = 5
 	for attempt := 0; attempt < maxAttempts; attempt++ {
 		_, err := s.db.ExecContext(ctx, q, from, to)
@@ -240,13 +316,28 @@ func isConcurrentRefreshErr(err error) bool {
 		strings.Contains(err.Error(), "concurrent refresh"))
 }
 
-// CAGGCoverage describes the time range and row count of the
-// hourly-or-larger continuous aggregate (prices_1h is canonical).
-// This is the source-of-truth "do we have historical aggregates"
-// answer — raw trades have a 90-day retention but the hourly+
-// CAGGs are retained forever (migration 0002), so a healthy
-// since-genesis backfill leaves a wide CAGGCoverage even though
-// the raw trades table only spans the last 90 days.
+// CAGGCoverage describes the time range and row count of one
+// continuous aggregate — prices_1h, which is canonical for this
+// answer only because it is the coarsest rung every deployment has
+// always materialised, not because the finer ones are transient.
+// Nothing here is pruned: migration 0031 removed the 90-day retention
+// on raw `trades` and the 30-day retention on prices_1m / prices_15m
+// on 2026-05-14, so `trades`, all seven price aggregates and this
+// stat all span the same history. The comment this replaces described
+// migration 0002's world instead — trades kept for a rolling 90 days,
+// only the hourly-and-coarser aggregates kept indefinitely — which
+// migration 0031 retired on 2026-05-14. The date is deliberate, and
+// so is the absence of an elapsed-time phrase beside it: the previous
+// wording gave the gap as a span of months, which was wrong by four
+// times on the day it was typed and would have gone on rotting after
+// that. Subtract 2026-05-14 from the reader's own clock.
+//
+// A wide CAGGCoverage therefore means what it says — a healthy
+// since-genesis backfill — but it says it about prices_1h alone. It
+// is NOT evidence that the finer grains are materialised over the
+// same span: that was exactly the gap this file's [CAGGsLiveForever]
+// comment describes, and it was invisible on this stat for four
+// months.
 type CAGGCoverage struct {
 	EarliestBucket time.Time
 	LatestBucket   time.Time
