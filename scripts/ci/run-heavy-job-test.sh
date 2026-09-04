@@ -20,7 +20,20 @@
 #      not be overridden by the -ops file's;
 #   3. a value the caller already exported wins;
 #   4. with no pair available the wrapper WARNS on stderr that the job
-#      runs as CH `default` at serving priority — never quietly.
+#      runs as CH `default` at serving priority — never quietly;
+#   5. the root branch's scope carries TimeoutStopSec — 5min by default,
+#      HEAVY_JOB_STOP_TIMEOUT when the caller sets one — so a
+#      `systemctl stop` does not SIGKILL a job mid-cleanup at systemd's
+#      90 s default, and the four resource properties are still there.
+#      The non-root branch creates no scope at all.
+#   6. HEAVY_JOB_STOP_TIMEOUT is VALIDATED before the scope is created.
+#      A bare integer is SECONDS under systemd.time, so `2` from an
+#      operator meaning two hours is a two-second grace — accepted by
+#      systemd, and harder on the job than setting nothing. The wrapper
+#      takes a bare integer, Ns, Nmin, Nh and `infinity`, and refuses
+#      every other spelling and anything under the 90 s floor (the
+#      systemd default this bound replaces), exiting 2 without running
+#      the payload.
 #
 # Runs the wrapper's non-root exec path (no systemd-run / flock needed:
 # flock is stubbed on PATH so this runs on macOS too).
@@ -59,19 +72,31 @@ printf '#!/usr/bin/env bash\nexit 0\n' > "$TMP/bin/flock"   # macOS has no flock
 chmod +x "$TMP/bin/flock"
 # The wrapper branches on `id -u`: non-root execs the payload directly,
 # root wraps it in `systemd-run --scope --unit U -p K=V … CMD`. CI runners
-# and dev machines are non-root, so this test only ever exercised the first
+# and dev machines differ in uid, so a test keyed on the real uid exercised only one
 # branch — and the container verifier, which runs as root, found the second
 # calling a binary the image does not have. Stub systemd-run faithfully
-# (drop its own options, exec the command, env inherited as a scope does),
-# and run the whole suite twice: once as the real uid, once with `id`
-# stubbed to answer 0, so both branches are proven on every machine.
+# (drop its own options, exec the command, env inherited as a scope does)
+# and record every -p/--property it was handed, one K=V per line, into
+# $SYSTEMD_RUN_PROPS when the caller names a file — the scope's
+# properties are otherwise unobservable on a machine with no systemd,
+# which is how the missing TimeoutStopSec went unnoticed. Then run the
+# whole suite twice, with `id` stubbed to answer a non-zero uid and then
+# 0, so both branches are proven on every machine. Neither pass may
+# depend on the runner's real uid: a dev machine is non-root and the
+# container verifier is root, so a pass keyed on the real uid silently
+# runs one branch twice and leaves the other untested.
 cat > "$TMP/bin/systemd-run" <<'SR'
 #!/usr/bin/env bash
+PROPS="${SYSTEMD_RUN_PROPS:-/dev/null}"
+: > "$PROPS"
 while [ $# -gt 0 ]; do
   case "$1" in
     --scope) shift ;;
-    --unit|-p|--property) shift 2 ;;
-    --unit=*|-p*|--property=*) shift ;;
+    -p|--property) printf '%s\n' "$2" >> "$PROPS"; shift 2 ;;
+    -p?*) printf '%s\n' "${1#-p}" >> "$PROPS"; shift ;;
+    --property=*) printf '%s\n' "${1#--property=}" >> "$PROPS"; shift ;;
+    --unit) shift 2 ;;
+    --unit=*) shift ;;
     *) break ;;
   esac
 done
@@ -104,8 +129,13 @@ STELLARINDEX_CLICKHOUSE_OPS_USER=ops_batch
 STELLARINDEX_CLICKHOUSE_OPS_PASSWORD=$PASSWORD
 EOT
 
-run() { # run <extra env assignments...> — runs the wrapper, captures out/err
+# Where the systemd-run stub records the scope's -p properties (case 5).
+PROPS="$TMP/props"
+
+rc=0
+run() { # run <extra env assignments...> — runs the wrapper, captures out/err/rc
   env "$@" "$WRAP" test-job "$PAYLOAD" >"$TMP/out" 2>"$TMP/err"
+  rc=$?
 }
 out_has() { grep -qxF -- "$1" "$TMP/out"; }
 err_has() { grep -qF -- "$1" "$TMP/err"; }
@@ -136,8 +166,63 @@ printf 'AWS_ACCESS_KEY_ID=ops-reader-key\n' > "$TMP/stellarindex-ops-nopair"
 run HEAVY_JOB_OPS_ENV="$TMP/stellarindex-ops-nopair"
 if out_has "USER=<unset>" && err_has "CH 'default' user"; then ok "file without the pair (profile not applied): WARNING on stderr"; else bad "file without pair: no WARNING ($(cat "$TMP/err"))"; fi
 
+# ── 5. the scope's stop bound (root branch only) ─────────────────────
+# Without TimeoutStopSec a scope takes systemd's 90 s default, and
+# `systemctl stop` — the wrapper's own disk watchdog, or an operator —
+# SIGKILLs a job mid-cleanup: usd-volume-restamp -chunks re-compresses a
+# 160 GB chunk on SIGTERM and cannot finish inside 90 s. The DEFAULT is
+# short on purpose (the other payloads die on SIGTERM at once); the
+# restamp exports the long value on its own launch line.
+: > "$PROPS"
+run HEAVY_JOB_OPS_ENV="$OPS_ENV" SYSTEMD_RUN_PROPS="$PROPS"
+if [ "$branch" = "non-root" ]; then
+  if [ ! -s "$PROPS" ]; then ok "non-root: execs directly, so no scope and no properties"; else bad "non-root branch created a scope ($(tr '\n' ' ' < "$PROPS"))"; fi
+  # The bound is inert without a scope, so the non-root branch neither
+  # applies nor validates it — a job must not be refused over a setting
+  # that could not have taken effect.
+  run HEAVY_JOB_OPS_ENV="$OPS_ENV" HEAVY_JOB_STOP_TIMEOUT=2
+  if [ "$rc" -eq 0 ] && out_has "USER=ops_batch"; then ok "non-root: an out-of-range bound is inert (no scope to carry it), the job still runs"; else bad "non-root refused over an inert bound (rc=$rc)"; fi
+else
+  if grep -qx 'TimeoutStopSec=5min' "$PROPS"; then ok "scope carries TimeoutStopSec=5min by default"; else bad "scope has no TimeoutStopSec=5min — a stop SIGKILLs at systemd's 90 s default (props: $(tr '\n' ' ' < "$PROPS"))"; fi
+  for p in MemoryMax=20G MemorySwapMax=0 CPUWeight=50 IOWeight=50; do
+    if grep -qx "$p" "$PROPS"; then ok "scope still carries $p"; else bad "scope lost $p (props: $(tr '\n' ' ' < "$PROPS"))"; fi
+  done
+  run HEAVY_JOB_OPS_ENV="$OPS_ENV" SYSTEMD_RUN_PROPS="$PROPS" HEAVY_JOB_STOP_TIMEOUT=2h
+  if grep -qx 'TimeoutStopSec=2h' "$PROPS" && ! grep -qx 'TimeoutStopSec=5min' "$PROPS"; then ok "HEAVY_JOB_STOP_TIMEOUT=2h (the restamp's launch line) overrides the default"; else bad "HEAVY_JOB_STOP_TIMEOUT not honoured (props: $(tr '\n' ' ' < "$PROPS"))"; fi
+
+  # ── 6. the bound is validated, not passed through ──────────────────
+  # `2` is the one that motivated this: a bare integer is SECONDS under
+  # systemd.time, so an operator meaning two hours would have got a
+  # two-second grace — accepted by systemd, and a harder kill than
+  # setting nothing at all.
+  for v in 2 0 -5 abc 90m "2 h" 1min 89 89s; do
+    : > "$PROPS"
+    run HEAVY_JOB_OPS_ENV="$OPS_ENV" SYSTEMD_RUN_PROPS="$PROPS" "HEAVY_JOB_STOP_TIMEOUT=$v"
+    if [ "$rc" -eq 2 ] && [ ! -s "$TMP/out" ] && [ ! -s "$PROPS" ] && err_has "refusing to start test-job"; then
+      ok "HEAVY_JOB_STOP_TIMEOUT='$v' refused before the payload runs (exit 2, no scope)"
+    else
+      bad "HEAVY_JOB_STOP_TIMEOUT='$v' was not refused (rc=$rc, out='$(tr '\n' ' ' < "$TMP/out")', props='$(tr '\n' ' ' < "$PROPS")')"
+    fi
+  done
+  if err_has "below the 90 s floor" && err_has "'2' is two seconds, not two hours"; then ok "the refusal names the 90 s floor and the seconds rule"; else bad "refusal message does not name the floor/unit rule ($(cat "$TMP/err"))"; fi
+  run HEAVY_JOB_OPS_ENV="$OPS_ENV" HEAVY_JOB_STOP_TIMEOUT=abc
+  if err_has "is not a form this wrapper accepts"; then ok "a non-time value is refused as a FORM, not as a floor breach"; else bad "'abc' refused with the wrong reason ($(cat "$TMP/err"))"; fi
+
+  for v in 90 120s 30min 2h infinity; do
+    : > "$PROPS"
+    run HEAVY_JOB_OPS_ENV="$OPS_ENV" SYSTEMD_RUN_PROPS="$PROPS" "HEAVY_JOB_STOP_TIMEOUT=$v"
+    if [ "$rc" -eq 0 ] && grep -qx "TimeoutStopSec=$v" "$PROPS"; then
+      ok "HEAVY_JOB_STOP_TIMEOUT='$v' accepted and passed through verbatim"
+    else
+      bad "HEAVY_JOB_STOP_TIMEOUT='$v' rejected or mangled (rc=$rc, props='$(tr '\n' ' ' < "$PROPS")')"
+    fi
+  done
+  if err_has "TimeoutStopSec=infinity — a systemctl stop will NEVER escalate to SIGKILL"; then ok "infinity says on stderr that no stop will ever escalate"; else bad "infinity accepted silently ($(cat "$TMP/err"))"; fi
+fi
+
 }
-run_cases "non-root"
+mkdir -p "$TMP/userbin"; printf '#!/usr/bin/env bash\necho 1000\n' > "$TMP/userbin/id"; chmod +x "$TMP/userbin/id"
+PATH="$TMP/userbin:$PATH" run_cases "non-root"
 mkdir -p "$TMP/rootbin"; printf '#!/usr/bin/env bash\necho 0\n' > "$TMP/rootbin/id"; chmod +x "$TMP/rootbin/id"
 PATH="$TMP/rootbin:$PATH" run_cases "root (id stubbed)"
 

@@ -120,8 +120,11 @@ import (
 //     cancelled context. The walk stops at the failing chunk. Before each
 //     decompress and each re-compress the by-hand repair (the exact
 //     compress_chunk and the policy re-enable) is printed to stderr,
-//     because either statement can outlive the 90 s between
-//     run-heavy-job.sh's SIGTERM and its SIGKILL.
+//     because either statement can outlive the window between
+//     run-heavy-job.sh's SIGTERM and its SIGKILL (the wrapper's
+//     TimeoutStopSec: 5min by default since 2026-09-04, 2h where the
+//     runbook's launch line exports HEAVY_JOB_STOP_TIMEOUT=2h, and 90 s
+//     on a host that has not had the heavy-job-wrapper tag applied).
 //   - RESUMABLE: every chunk is first PROBED read-only, slice by slice,
 //     stopping at the first slice that would change a row. A chunk with
 //     nothing to change — its rows already at the run's generation, or
@@ -330,7 +333,7 @@ func pauseTradesCompressionPolicy(ctx context.Context, store xlmBaseChunkStore, 
 	if !p.Scheduled {
 		_, _ = fmt.Fprintln(errw, "NOTE: -resume-paused-policy: the policy was already unscheduled when this run started (a previous attempt killed before its re-enable); this run takes it over and re-enables it when it exits.")
 	}
-	_, _ = fmt.Fprintf(errw, "  if this process is KILLED (run-heavy-job.sh escalates SIGTERM to SIGKILL after 90 s), the policy stays paused; re-enable it by hand:\n    %s\n", reenable)
+	_, _ = fmt.Fprintf(errw, "  if this process is KILLED (run-heavy-job.sh escalates SIGTERM to SIGKILL at the scope's TimeoutStopSec — the runbook launches this job with HEAVY_JOB_STOP_TIMEOUT=2h; 5min if it was launched without one, and 90 s on a host still running a pre-2026-09-04 wrapper), the policy stays paused; re-enable it by hand:\n    %s\n", reenable)
 	if err := store.SetJobScheduled(ctx, p.JobID, false); err != nil {
 		return nil, fmt.Errorf("usd-volume-restamp: pause compression policy job %d: %w", p.JobID, err)
 	}
@@ -582,18 +585,19 @@ func (w *xlmBaseChunkWalk) chunk(ctx context.Context, idx, n int, c timescale.Tr
 }
 
 // trace prints the by-hand repair BEFORE the statement that may outlive
-// the process: a SIGKILL 90 s after SIGTERM drops the connection, the
-// server aborts whichever of decompress_chunk / compress_chunk was
-// running, and the chunk stays as it was — decompressed, if the
-// re-compress was the one interrupted. Neither LEFT DECOMPRESSED nor the
-// RESUME line is printed in that case; this is.
+// the process: the SIGKILL that follows SIGTERM at the scope's
+// TimeoutStopSec drops the connection, the server aborts whichever of
+// decompress_chunk / compress_chunk was running, and the chunk stays as
+// it was — decompressed, if the re-compress was the one interrupted.
+// Neither LEFT DECOMPRESSED nor the RESUME line is printed in that
+// case; this is.
 func (w *xlmBaseChunkWalk) trace(label string, c timescale.TradeChunk, step timescale.ChunkRestampStep) {
 	switch step {
 	case timescale.ChunkRestampDecompress:
 		_, _ = fmt.Fprintf(w.errw, "%s: decompressing (%s uncompressed). If this process is killed before the chunk's progress line, put the chunk and the policy back by hand:\n    SELECT compress_chunk('%s');\n    %s\n",
 			label, fmtBytes(c.UncompressedBytes), c, w.reenableSQL)
 	case timescale.ChunkRestampCompress:
-		_, _ = fmt.Fprintf(w.errw, "%s: re-compressing — a statement that can outlive SIGTERM's 90 s grace; if this process is killed now the chunk STAYS DECOMPRESSED:\n    SELECT compress_chunk('%s');\n    %s\n",
+		_, _ = fmt.Fprintf(w.errw, "%s: re-compressing — a statement that can outlive SIGTERM's grace (run-heavy-job.sh's TimeoutStopSec: 2h when the runbook's launch line exported HEAVY_JOB_STOP_TIMEOUT=2h, 5min without it, and 90 s on a host that has not had the heavy-job-wrapper tag applied); if this process is killed now the chunk STAYS DECOMPRESSED:\n    SELECT compress_chunk('%s');\n    %s\n",
 			label, c, w.reenableSQL)
 	}
 }

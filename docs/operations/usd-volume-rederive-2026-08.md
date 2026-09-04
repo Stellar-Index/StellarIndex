@@ -602,17 +602,37 @@ compress are executed by the Postgres backend, at serving priority.
   exactly this — read the first few and extrapolate before the 160 GB
   chunk starts.**
 
-**SIGKILL.** `run-heavy-job.sh` is `systemd-run --scope` with no
-`TimeoutStopSec`, so `systemctl stop <unit>.scope` — the watchdog's
-low-disk trip, or a by-hand stop — is SIGTERM, then SIGKILL 90 s later.
-SIGTERM cancels the run: the batch in flight rolls back (the committed
-ones stay committed), then the tool re-compresses the open chunk and
-re-enables the policy — but a 160 GB re-compress takes far longer than
-90 s. SIGKILL then drops the connection, the server aborts
-`compress_chunk` (the chunk stays DECOMPRESSED, not corrupt), and the
-process is gone before it can print `LEFT DECOMPRESSED` or `RESUME:`, or
-re-enable the policy. For exactly this the tool prints the by-hand
-repair to stderr BEFORE each decompress and each re-compress:
+**SIGKILL.** `systemctl stop <unit>.scope` — the watchdog's low-disk
+trip, or a by-hand stop — is SIGTERM, then SIGKILL when the scope's
+`TimeoutStopSec` expires. SIGTERM cancels the run: the batch in flight
+rolls back (the committed ones stay committed), then the tool
+re-compresses the open chunk and re-enables the policy. That cleanup is
+what the bound has to cover, and it is why `run-heavy-job.sh` now
+renders the scope with `-p TimeoutStopSec=` from
+`HEAVY_JOB_STOP_TIMEOUT` instead of leaving it on systemd's 90 s
+default — 90 s cannot re-compress a 160 GB chunk. **The wrapper's own
+default is `5min`**, which is right for the payloads that die on SIGTERM
+at once and wrong for this one, so **this job's launch line sets
+`HEAVY_JOB_STOP_TIMEOUT=2h` itself** (step 2 below). 2h is a budget, not
+a measurement (160 GB at ~22 MB/s of uncompressed input); the per-chunk
+progress lines print seconds and bytes, so **record the largest chunk's
+re-compress from the first run** and tighten the launch value to it. A
+value below 90 s, or one systemd would read as a different unit than you
+meant (a bare integer is SECONDS — `2` is two seconds, not two hours),
+is refused by the wrapper before the job starts. The bound is host
+state: r1 has it only after `--tags heavy-job-wrapper` is applied (see
+`docs/operations/runbooks/ops-job-stalled.md` § "Stopping a wrapped job"
+for the by-scope stop, the pre-apply `systemd-run --scope` smoke check,
+what the long bound disarms in the disk watchdog, and the post-kill
+checks), and a scope already running keeps the 90 s it was created with.
+
+If the kill does land — an unapplied host, a run started before the
+apply, a re-compress that outlives the bound — SIGKILL drops the
+connection, the server aborts `compress_chunk` (the chunk stays
+DECOMPRESSED, not corrupt), and the process is gone before it can print
+`LEFT DECOMPRESSED` or `RESUME:`, or re-enable the policy. For exactly
+this the tool prints the by-hand repair to stderr BEFORE each decompress
+and each re-compress:
 
 ```
 chunk 41/90 _timescaledb_internal._hyper_1_31000_chunk [...]: re-compressing — ...
@@ -644,11 +664,16 @@ with `-resume-paused-policy` and let the tool own the paused policy and
 re-enable it at exit. The `RESUME:` line never carries
 `-resume-paused-policy`: it is printed only on an exit that has already
 re-enabled the policy.
-Follow-up, host state, not changed here: give the heavy-job scope a stop
-timeout long enough for the largest re-compress — `systemd-run --scope
--p TimeoutStopSec=…` in
+(The follow-up this section carried — give the heavy-job scope a stop
+timeout long enough for the largest re-compress — is codified as of
+2026-09-04 in
 `configs/ansible/roles/archival-node/tasks/14-stellarindex-services.yml`
-— so a SIGTERM can finish putting the chunk back.
+and covered by `scripts/ci/run-heavy-job-test.sh`: the wrapper takes the
+bound from `HEAVY_JOB_STOP_TIMEOUT` and validates it, and this job's
+launch line carries `2h`. It is host state until the
+`heavy-job-wrapper` tag is applied to r1 — `grep -c TimeoutStopSec
+/usr/local/sbin/run-heavy-job.sh` reads `0` there as of 2026-09-04, so
+until it reads `1` a stop of this job still SIGKILLs at 90 s.)
 
 Operator sequence (replaces steps 2–5 of the Step 6 mechanics for this
 span). **The right edge is `-to 2026-07-21`** — the window issue #372
@@ -693,6 +718,14 @@ stellarindex-ops usd-volume-restamp -config /etc/stellarindex.toml \
 #    is decompressed once; a second -fill-null pass would decompress all
 #    90 again. ONE attempt at a time: the tool refuses a second while
 #    the first holds the run lock.
+#    HEAVY_JOB_STOP_TIMEOUT=2h: this job's SIGTERM cleanup is a
+#    re-compress of the open chunk (up to 160 GB), which the wrapper's
+#    5min default would SIGKILL through. It is a budget, not a
+#    measurement — tighten it to the largest chunk's measured
+#    re-compress after the first run. The wrapper prints the bound it
+#    used; the value is refused below 90 s, and a bare integer is
+#    SECONDS (write "2h", never "2").
+HEAVY_JOB_STOP_TIMEOUT=2h \
 /usr/local/sbin/run-heavy-job.sh usd-xlmbase-chunks-try1 \
   /usr/local/bin/stellarindex-ops usd-volume-restamp \
     -config /etc/stellarindex.toml -tier xlm-base -chunks \
