@@ -314,8 +314,11 @@ func (a *armFilteringAssets) GetAssetByAssetID(
 	return timescale.AssetRow{}, sql.ErrNoRows
 }
 
-func (a *armFilteringAssets) GetNativeAssetRow(context.Context) (timescale.AssetRow, error) {
-	return timescale.AssetRow{}, sql.ErrNoRows
+// GetNativeAssetRow is the reader lookupCatalogueTwin uses for XLM
+// instead of the issuer filter, so a fixture that wants the `xlm`
+// catalogue row enriched carries a row with asset_id "native".
+func (a *armFilteringAssets) GetNativeAssetRow(ctx context.Context) (timescale.AssetRow, error) {
+	return a.GetAssetByAssetID(ctx, "native")
 }
 
 func (a *armFilteringAssets) GetAssetsPriceHistory24hBatch(
@@ -498,46 +501,56 @@ func TestAssetsUnifiedTypeSorobanServesTheContractArm(t *testing.T) {
 	}
 }
 
-// TestAssetsCatalogueRowVolumeIsItsClassicArm pins the OTHER half of the
-// published volume contract — the half that only exists when the
+// TestAssetsCatalogueRowVolumeFoldsTheContractArm pins the OTHER half of
+// the published volume contract — the half that only exists when the
 // catalogue is wired, which is every configuration the binary ships.
 //
 // A verified-catalogue slug's unified row is served by the CATALOGUE
 // phase, whose analytics come from lookupCatalogueTwin: an exact-ISSUER
-// lookup of the classic twin. A SAC wrapper has no issuer, so that
-// lookup can only ever return the classic arm, and foldAliasTwins is not
-// on the path at all (it runs on the classic phase, whose copy of the
-// same twin suppressCatalogueTwins then drops). So a catalogue row's
-// volume_24h_usd is its classic arm on a filtered request and an
-// unfiltered one alike — NOT the cross-arm sum a spine-served asset
-// reports unfiltered. The spec says so on all four row filters; this is
-// what makes that sentence true rather than aspirational.
-func TestAssetsCatalogueRowVolumeIsItsClassicArm(t *testing.T) {
+// lookup, and a SAC wrapper has no issuer, so that lookup returns the
+// classic arm alone. The classic phase meanwhile computes the classic +
+// SAC sum for the very same asset and suppressCatalogueTwins discards
+// that row in this one's favour, so the endpoint held the cross-arm
+// figure and published the smaller one — USDC's flagship row showed
+// 35.6M against the 44.6M in its own discarded twin. The catalogue phase
+// therefore folds the contract arm on itself, and does it on the
+// UNFILTERED request only: a row filter narrows the spine before the
+// spine's fold, so a filtered catalogue row reports the arm the filter
+// admitted, exactly as a spine-served one does.
+//
+// XLM is the carve-out and is asserted here so it stays one: `native`
+// has no classic row for a wrapper to have been folded onto, and XLM's
+// third form is off-Stellar CEX turnover, so the `xlm` row reports the
+// native reader's arm even with a funded XLM SAC row in the store.
+func TestAssetsCatalogueRowVolumeFoldsTheContractArm(t *testing.T) {
 	installFoldRegistry(t)
 	// foldUSDCIssuer IS the catalogue's USDC issuance, so this asset is
 	// served by the catalogue phase — the case the spine-served test
-	// above cannot reach.
+	// above cannot reach. The XLM rows are the same shape against a
+	// different identity: `native` plus the SAC wrapper the baseline
+	// registry unifies with it unconditionally.
 	s := shippedServer(t, &armFilteringAssets{rows: []timescale.AssetRow{
 		{AssetID: foldUSDCClassic, Code: "USDC", IssuerGStrkey: foldUSDCIssuer, Volume24hUSD: strp("35600000")},
 		{AssetID: foldUSDCSAC, Volume24hUSD: strp("9000000")},
+		{AssetID: "native", Code: "XLM", Volume24hUSD: strp("700000")},
+		{AssetID: canonical.XLMSacContractID, Volume24hUSD: strp("900000")},
 	}})
 
-	// The classic arm alone. NOT "44600000": that is the cross-arm sum,
-	// which this endpoint publishes only for a SPINE-served asset on an
-	// unfiltered request.
-	const wantClassicArm = "35600000"
 	// limit=200, comfortably past the curated catalogue, so the page
 	// still reaches the classic phase as the seed grows.
-	for _, target := range []string{
-		"/v1/assets?asset_class=all&limit=200",
-		"/v1/assets?asset_class=all&type=classic&limit=200",
+	for _, tc := range []struct {
+		target string
+		slug   string
+		want   string
+	}{
+		{target: "/v1/assets?asset_class=all&limit=200", slug: "usdc", want: "44600000"},
+		{target: "/v1/assets?asset_class=all&type=classic&limit=200", slug: "usdc", want: "35600000"},
+		{target: "/v1/assets?asset_class=all&limit=200", slug: "xlm", want: "700000"},
 	} {
-		t.Run(target, func(t *testing.T) {
-			row := rowByAssetID(t, decodeAssetRows(t, serveAssets(t, s, target)), "usdc")
-			if got := volumeOf(row); got != wantClassicArm {
-				t.Errorf("catalogue row volume_24h_usd = %q, want %q — a catalogue row's "+
-					"stats come from an exact-issuer twin lookup that cannot reach the "+
-					"contract arm, filtered or not", got, wantClassicArm)
+		t.Run(tc.slug+" "+tc.target, func(t *testing.T) {
+			row := rowByAssetID(t, decodeAssetRows(t, serveAssets(t, s, tc.target)), tc.slug)
+			if got := volumeOf(row); got != tc.want {
+				t.Errorf("catalogue row volume_24h_usd = %q, want %q", got, tc.want)
 			}
 		})
 	}
