@@ -4,14 +4,10 @@ package main
 
 import (
 	"context"
-	"database/sql"
 	"testing"
 	"time"
 
-	_ "github.com/jackc/pgx/v5/stdlib"
-	"github.com/testcontainers/testcontainers-go"
-	tcpostgres "github.com/testcontainers/testcontainers-go/modules/postgres"
-	"github.com/testcontainers/testcontainers-go/wait"
+	"github.com/Stellar-Index/StellarIndex/test/harness"
 )
 
 // TestOpenBackfillStore_StampsPositiveGeneration is the MR-1 regression (2)
@@ -35,7 +31,9 @@ func TestOpenBackfillStore_StampsPositiveGeneration(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
 
-	dsn := startTimescaleForTool(t, ctx)
+	// The one shared Timescale bootstrap (test/harness): openBackfillStore
+	// only pings, so no migrations are applied on top of it.
+	dsn := harness.StartTimescale(t, ctx)
 
 	before := time.Now().Unix()
 	store, err := openBackfillStore(ctx, dsn)
@@ -53,41 +51,4 @@ func TestOpenBackfillStore_StampsPositiveGeneration(t *testing.T) {
 	if gen < before {
 		t.Errorf("derive_generation=%d predates the call (%d); expected ~time.Now().Unix()", gen, before)
 	}
-}
-
-// startTimescaleForTool boots a throwaway TimescaleDB container and returns
-// its DSN. openBackfillStore only pings (no schema needed), so migrations are
-// not applied. Mirrors test/integration/storage_test.go's startTimescale;
-// duplicated here because that helper lives in the integration_test package,
-// which package main cannot import.
-func startTimescaleForTool(t *testing.T, ctx context.Context) string {
-	t.Helper()
-	pg, err := tcpostgres.Run(ctx,
-		"timescale/timescaledb:2.26.4-pg15",
-		tcpostgres.WithDatabase("stellarindex"),
-		tcpostgres.WithUsername("stellarindex"),
-		tcpostgres.WithPassword("stellarindex-test"),
-		testcontainers.WithWaitStrategy(
-			wait.ForLog("database system is ready to accept connections").
-				WithOccurrence(2).WithStartupTimeout(60*time.Second),
-		),
-	)
-	if err != nil {
-		t.Fatalf("start timescale: %v", err)
-	}
-	t.Cleanup(func() { _ = pg.Terminate(context.Background()) })
-
-	dsn, err := pg.ConnectionString(ctx, "sslmode=disable")
-	if err != nil {
-		t.Fatalf("conn str: %v", err)
-	}
-	db, err := sql.Open("pgx", dsn)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer db.Close()
-	if _, err := db.ExecContext(ctx, "CREATE EXTENSION IF NOT EXISTS timescaledb"); err != nil {
-		t.Fatalf("create extension: %v", err)
-	}
-	return dsn
 }

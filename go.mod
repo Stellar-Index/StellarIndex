@@ -55,7 +55,10 @@ require (
 	github.com/jackc/puddle/v2 v2.2.2 // indirect
 )
 
-require golang.org/x/sys v0.47.0
+require (
+	github.com/moby/moby/api v1.55.0 // Docker inspect/port types — test/harness implements testcontainers' wait.StrategyTarget with them (test-only; already in the graph via testcontainers)
+	golang.org/x/sys v0.47.0
+)
 
 require (
 	cel.dev/expr v0.25.2 // indirect
@@ -137,7 +140,6 @@ require (
 	github.com/magiconair/properties v1.8.10 // indirect
 	github.com/moby/docker-image-spec v1.3.1 // indirect
 	github.com/moby/go-archive v0.3.0 // indirect
-	github.com/moby/moby/api v1.55.0 // indirect
 	github.com/moby/moby/client v0.5.1 // indirect
 	github.com/moby/patternmatcher v0.6.1 // indirect
 	github.com/moby/sys/sequential v0.7.0 // indirect
