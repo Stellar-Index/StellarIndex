@@ -52,10 +52,13 @@ The HA story is constrained by three non-negotiable service targets:
 - **≥ 99.9 % availability** — the figure published to customers at
   [stellarindex.io/sla](https://stellarindex.io/sla), an error budget
   of ~43 min per 30-day month. The **99.99 %** number that appears in
-  [ADR-0008](../adr/0008-ha-topology.md) and the coverage matrix is
+  [ADR-0008](../adr/0008-ha-topology.md) (amended 2026-09-04, #487) is
   the *internal design target this topology was sized against* — it is
-  not a customer commitment, and nothing external measures it today
-  (see the availability-instrumentation banner at the top of this file).
+  not a customer commitment, nothing external measures it today (see
+  the availability-instrumentation banner at the top of this file), and
+  since 2026-09-04 the burn-rate alerts in
+  `deploy/monitoring/rules/slo.yml` budget against the published 99.9 %,
+  not this figure.
 - **≤ 30 s data freshness** on `/v1/price/tip`. `/v1/price` serves the
   last closed bucket per [ADR-0015](../adr/0015-last-closed-bucket-rate-serving.md)
   and is structurally 30–150 s old.

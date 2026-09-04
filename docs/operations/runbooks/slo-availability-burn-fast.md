@@ -1,6 +1,6 @@
 ---
 title: Runbook — slo-availability-burn-fast
-last_verified: 2026-08-29
+last_verified: 2026-09-04
 status: current
 severity: P1
 ---
@@ -15,13 +15,13 @@ severity: P1
 | Severity | **P1** (page — rule label `severity: page`, routed to the Alertmanager `chat-page` receiver) |
 | Detected by | `configs/prometheus/rules.r1/slo.yml` (r1 overlay, `job="stellarindex-api"`, loaded from `/etc/prometheus/rules.r1/*.yml`; multi-host template: `deploy/monitoring/rules/slo.yml`) |
 | Typical MTTR | 15–30 min |
-| Impact | Availability budget (99.99 % non-5xx over 30 d — the SLA target) burning at > 14.4× rate. At this rate 5 % of the monthly budget is consumed every hour; the whole 30-day budget is gone in ~2 days. Consumers see request failures now. |
+| Impact | Availability budget (99.9 % non-5xx over 30 d — the published SLA target) burning at > 14.4× rate. At this rate 5 % of the monthly budget is consumed every hour; the whole 30-day budget is gone in ~2 days. Consumers see request failures now. |
 
 ## Symptoms
 
 Multi-window detection: `stellarindex:api_error_ratio:5m` AND
-`stellarindex:api_error_ratio:1h` (slo `api_availability_3_nines_9`) both
-**> 14.4×** the budget (14.4 × 0.0001 = **0.144 %** 5xx), sustained `for: 2m`.
+`stellarindex:api_error_ratio:1h` (slo `api_availability_3_nines`) both
+**> 14.4×** the budget (14.4 × 0.001 = **1.44 %** 5xx), sustained `for: 2m`.
 
 Note the alert's `runbook_url` annotation points at `api-5xx.md`, not this
 file — a responder following the page link lands there first; this runbook is
@@ -32,9 +32,10 @@ min-traffic guard**, so this alert CAN fire on quiet r1 where a handful of
 synthetic 5xx dominate the ratio — check the traffic floor first (see false
 positives).
 
-`stellarindex_api_error_rate_high` (P3, > 1 %) and possibly
-`stellarindex_api_error_rate_critical` (P1, > 5 %) may fire alongside — but a
-fast burn at 0.144 % can page well before either direct-threshold alert trips.
+`stellarindex_api_error_rate_high` (P3, > 1 %) will normally have ticketed
+just before this fires, and `stellarindex_api_error_rate_critical` (P1, > 5 %)
+may fire alongside — a fast burn trips at 1.44 %, between the two
+direct-threshold lines.
 
 ## Quick diagnosis (≤ 5 min)
 
@@ -70,8 +71,8 @@ Key signals:
 - [ ] Step 2 — if upstream resource saturated: jump to the appropriate runbook.
 - [ ] Step 3 — if the API process needs a kick: `systemctl restart stellarindex-api` (the systemd unit has `Restart=on-failure`; manual restart is the same effect).
 - [ ] Verification: `stellarindex:api_error_ratio:5m` back below the trip
-  point — 14.4 × 0.0001 = **0.144 %** — and holding. The alert itself only
-  resolves once the **1h window drains** below 0.144 % too, which lags the
+  point — 14.4 × 0.001 = **1.44 %** — and holding. The alert itself only
+  resolves once the **1h window drains** below 1.44 % too, which lags the
   fix; watch the 5m window for confirmation the bleeding stopped.
 
 ## Root cause analysis
@@ -86,7 +87,7 @@ For postmortem:
 - **Synthetic probes at low traffic** — `stellarindex-sla-probe.timer` and
   `stellarindex-smoke.timer` (`configs/healthchecks/`) plus cache prewarm hit
   the local API. With no min-traffic guard on the availability rules, at
-  < ~5 req/s real traffic a few probe 5xx can exceed 0.144 %. Check the total
+  < ~5 req/s real traffic a few probe 5xx can exceed 1.44 %. Check the total
   request rate (Quick diagnosis, first block) before mitigating.
 - **Brief upstream blips** — Cloudflare → R1 has periodic single-region network interruptions; if the burn was < 60 s and recovered without intervention, it's the network, not us. The `for: 2m` window catches most cases. (Caddy-generated 502/503 when the API is unreachable are not in `http_requests_total` and don't count against this SLO — `api-down.md` covers that case.)
 - **Weekly k6 load test** — `k6-weekly.yml` is SCHEDULED (cron `0 2 * * 0`, 02:00 UTC every Sunday), and it targets **staging only** — it cannot trip this alert on r1. Don't attribute an r1 burn to it.
@@ -102,6 +103,12 @@ For postmortem:
 
 ## Changelog
 
+- 2026-09-04 — budget re-based to the published SLA (#487): 99.9 %, not
+  99.99 %; trip point 14.4 × 0.001 = 1.44 % (was 0.144 %); recording-rule
+  label renamed to `api_availability_3_nines`; direct-threshold ordering
+  corrected (a fast burn now lands between `error_rate_high` and
+  `error_rate_critical`). The 2026-08-29 line below re-verified against
+  the alert budget, which was the figure in error.
 - 2026-08-29 — re-verified against HEAD: SLA is 99.99 % (not 99.9 %); budget
   arithmetic (5 %/hour, whole budget ≈ 2 days — not "gone in ~1 hour");
   rule path → r1 overlay primary; no-min-traffic-guard note + synthetic-probe

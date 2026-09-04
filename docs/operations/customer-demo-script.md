@@ -169,9 +169,11 @@ Common questions to expect:
   Demo: `flags.frozen` on the response when the freeze fires.
 - **"What's the SLA?"** → Show `/sla` doc + the SLA-probe
   results dashboard.
-- **"How fast can we get to 99.99%?"** → Honest answer:
-  measurement requires ≥ 30 days production data, reported
-  90 days post-launch.
+- **"Can you commit to 99.99%?"** → Honest answer: the published
+  commitment is ≥ 99.9 % (`/sla`, #487). 99.99 % is the design
+  target of the multi-region topology (ADR-0050) and is not offered
+  until that ships and an off-host probe has measured it for
+  ≥ 30 days.
 - **"What if we want a private deployment?"** → Apache-2.0
   source + ansible roles + bringup runbook are all public;
   point at `docs/operations/archival-node-bringup.md`.

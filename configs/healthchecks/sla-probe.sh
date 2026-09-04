@@ -3,8 +3,10 @@
 # sla-probe.sh — wrapper around `stellarindex-sla-probe` that
 # reports pass/fail to Healthchecks.io. Distinct from smoke.sh:
 # that one verifies the API surface (schema + data integrity);
-# this one drives load and asserts the latency + freshness
-# SLAs are met (p95 ≤ 200 ms, p99 ≤ 500 ms, freshness ≤ 30 s).
+# this one drives load and asserts the latency, freshness and
+# availability SLAs are met (p95 ≤ 200 ms, p99 ≤ 500 ms, freshness
+# ≤ 30 s, availability ≥ 99.9 % — the figure published at
+# stellarindex.io/sla).
 #
 # Exit code from the binary = 0 (pass) or 1 (at least one SLA
 # violated). Both branches POST the full JSON report body to

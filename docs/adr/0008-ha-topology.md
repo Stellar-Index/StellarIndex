@@ -17,6 +17,15 @@ superseded_by: null
 > below **carries forward** and is Phase 1 of that plan. Do not read this ADR's
 > multi-region / active-active framing as current.
 
+> **Amendment (2026-09-04, #487).** The **≥ 99.99 % uptime** figure in
+> the Context and Consequences below was the design target the
+> three-node HA topology was sized against. It was never the customer
+> commitment: the published availability commitment is **≥ 99.9 %**
+> ([stellarindex.io/sla](https://stellarindex.io/sla)), and since
+> 2026-09-04 the burn-rate alerts in `deploy/monitoring/rules/slo.yml`
+> budget against that figure. See the dated amendment at the end of
+> this file.
+
 > **Amendment (2026-06-12, F-1353 / D2-07 + D2-08).** Two enumerations
 > below have since been superseded:
 > - The Redis "**cluster** (3 masters + 3 replicas + Sentinel)" hot
@@ -239,3 +248,37 @@ load-bearing; the budget is informative.
 - [`docs/architecture/infrastructure/archival-node-spec.md`](../architecture/infrastructure/archival-node-spec.md)
   — per-host hardware spec for the colo fleet.
 - ADR-0001, 0002, 0004, 0007, 0015, 0016 (cross-references above).
+
+## Amendment — 2026-09-04: the availability figure (#487)
+
+Recorded because this ADR is published at `/research/adr/0008` and
+because three places stated the availability commitment and disagreed
+by an order of magnitude. **The decision is untouched; only the figure
+it cites is placed in context.**
+
+**What the Context says.** "The availability SLA requires ≥ 99.99 %
+uptime (coverage-matrix S9.1)."
+
+**What is committed.** The published availability commitment is
+**≥ 99.9 %** over a 30-day month — the figure at
+[stellarindex.io/sla](https://stellarindex.io/sla), in
+[`docs/operations/sla-probe.md`](../operations/sla-probe.md), in the
+launch announcement, in the k6 thresholds and in the default target of
+`cmd/stellarindex-sla-probe`. That is an error budget of about 43
+minutes a month. 99.99 % permits about 4 minutes 19 seconds, which a
+single restart cycle on the one-box deployment ratified for v1 can
+exceed; it was never a number the deployed topology could honour, and
+[`ha-plan.md`](../architecture/ha-plan.md) has recorded it as a design
+target rather than a commitment since 2026-09-03.
+
+**What changed on 2026-09-04.** The burn-rate alerts in
+`deploy/monitoring/rules/slo.yml` and the r1 overlay compared against a
+budget of `0.0001` — a 99.99 % objective — under a recording-rule label
+that asserted the same. They now budget against `0.001`, the label is
+`api_availability_3_nines`, and
+`internal/ops/chops/sla_figure_consistency_test.go` fails the build if
+the public page, the alert budget, the probe default or the operator
+documents stop agreeing. The 99.99 % in this ADR remains what it always
+was: the design target the three-node topology was sized against, to
+be revisited if that topology ships and an off-host probe has measured
+it for 30 days.

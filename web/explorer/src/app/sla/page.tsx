@@ -58,6 +58,11 @@ export default function SLAPage() {
                   As above, 99th percentile — the tail that users actually feel
                 </td>
               </tr>
+              {/* The figure below is the availability commitment. The
+                  burn-rate alerts in deploy/monitoring/rules/slo.yml and
+                  the sla-probe default target are derived from it, and
+                  internal/ops/chops/sla_figure_consistency_test.go fails
+                  the build if any of them drift from this cell. */}
               <tr>
                 <td className="py-2 pr-4 font-mono text-xs text-brand-600">Availability</td>
                 <td className="py-2 pr-4">&ge; 99.9 %</td>

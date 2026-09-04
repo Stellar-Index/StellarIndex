@@ -33,9 +33,14 @@
 #   - Latency: 99.9% of /v1/price + /v1/oracle/* requests under 200 ms
 #     over 30 days. Steady-state target; cache-cold tail counts
 #     against the p99 contract (≤ 500 ms) but not this SLO.
-#   - Availability: 99.99% of API requests return non-5xx over 30
-#     days. The availability SLA (S9.1) commits to 99.99% uptime; this
-#     SLO operationalises it.
+#   - Availability: 99.9% of API requests return non-5xx over 30
+#     days. The figure is the one published at stellarindex.io/sla
+#     (web/explorer/src/app/sla/page.tsx), which is the authority for
+#     it; this SLO operationalises that page, and
+#     internal/ops/chops/sla_figure_consistency_test.go fails the build
+#     if the two drift. The 99.99% that ADR-0008 carries was the design
+#     target of the three-node HA topology, never the customer
+#     commitment (#487).
 
 groups:
   - name: stellarindex.slo.latency
@@ -194,8 +199,8 @@ groups:
       # ─── Recording rules — error fraction at multiple windows ─────
       #
       # "Error" = any non-5xx response. 4xx counts as success because
-      # it's the client's fault, not ours. The SLO target is 99.99%
-      # over 30 days (per the availability SLA, S9.1).
+      # it's the client's fault, not ours. The SLO target is 99.9%
+      # over 30 days — the published availability SLA.
 
       - record: stellarindex:api_error_ratio:5m
         expr: |
@@ -203,7 +208,7 @@ groups:
           /
           sum(rate(http_requests_total{job="stellarindex_api"}[5m]))
         labels:
-          slo: api_availability_3_nines_9
+          slo: api_availability_3_nines
 
       - record: stellarindex:api_error_ratio:30m
         expr: |
@@ -211,7 +216,7 @@ groups:
           /
           sum(rate(http_requests_total{job="stellarindex_api"}[30m]))
         labels:
-          slo: api_availability_3_nines_9
+          slo: api_availability_3_nines
 
       - record: stellarindex:api_error_ratio:1h
         expr: |
@@ -219,7 +224,7 @@ groups:
           /
           sum(rate(http_requests_total{job="stellarindex_api"}[1h]))
         labels:
-          slo: api_availability_3_nines_9
+          slo: api_availability_3_nines
 
       - record: stellarindex:api_error_ratio:6h
         expr: |
@@ -227,7 +232,7 @@ groups:
           /
           sum(rate(http_requests_total{job="stellarindex_api"}[6h]))
         labels:
-          slo: api_availability_3_nines_9
+          slo: api_availability_3_nines
 
       - record: stellarindex:api_error_ratio:24h
         expr: |
@@ -235,41 +240,41 @@ groups:
           /
           sum(rate(http_requests_total{job="stellarindex_api"}[24h]))
         labels:
-          slo: api_availability_3_nines_9
+          slo: api_availability_3_nines
 
       # ─── Burn-rate alerts ─────────────────────────────────────────
-      # Budget = 0.0001 (1 - 0.9999). Burn = error_rate / 0.0001.
+      # Budget = 0.001 (1 - 0.999). Burn = error_rate / 0.001.
 
       - alert: stellarindex_slo_availability_burn_fast
         expr: |
-          stellarindex:api_error_ratio:5m{slo="api_availability_3_nines_9"} > (14.4 * 0.0001)
+          stellarindex:api_error_ratio:5m{slo="api_availability_3_nines"} > (14.4 * 0.001)
           and
-          stellarindex:api_error_ratio:1h{slo="api_availability_3_nines_9"} > (14.4 * 0.0001)
+          stellarindex:api_error_ratio:1h{slo="api_availability_3_nines"} > (14.4 * 0.001)
         for: 2m
         labels:
           severity: page
           team: stellarindex
           component: api
-          slo: api_availability_3_nines_9
+          slo: api_availability_3_nines
         annotations:
           runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api-5xx.md
           summary: "FAST burn — availability SLO budget consuming at >14.4× rate"
           description: |
-            Availability SLO (99.99% non-5xx over 30d) is burning fast.
+            Availability SLO (99.9% non-5xx over 30d) is burning fast.
             At current rate we would consume 5% of monthly budget in 1h.
             Both 5m and 1h windows agree. Follow the api-5xx runbook.
 
       - alert: stellarindex_slo_availability_burn_medium
         expr: |
-          stellarindex:api_error_ratio:30m{slo="api_availability_3_nines_9"} > (6 * 0.0001)
+          stellarindex:api_error_ratio:30m{slo="api_availability_3_nines"} > (6 * 0.001)
           and
-          stellarindex:api_error_ratio:6h{slo="api_availability_3_nines_9"} > (6 * 0.0001)
+          stellarindex:api_error_ratio:6h{slo="api_availability_3_nines"} > (6 * 0.001)
         for: 5m
         labels:
           severity: page
           team: stellarindex
           component: api
-          slo: api_availability_3_nines_9
+          slo: api_availability_3_nines
         annotations:
           runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api-5xx.md
           summary: "MEDIUM burn — availability SLO budget consuming at >6× rate"
@@ -280,15 +285,15 @@ groups:
 
       - alert: stellarindex_slo_availability_burn_slow
         expr: |
-          stellarindex:api_error_ratio:6h{slo="api_availability_3_nines_9"} > (1 * 0.0001)
+          stellarindex:api_error_ratio:6h{slo="api_availability_3_nines"} > (1 * 0.001)
           and
-          stellarindex:api_error_ratio:24h{slo="api_availability_3_nines_9"} > (1 * 0.0001)
+          stellarindex:api_error_ratio:24h{slo="api_availability_3_nines"} > (1 * 0.001)
         for: 30m
         labels:
           severity: ticket
           team: stellarindex
           component: api
-          slo: api_availability_3_nines_9
+          slo: api_availability_3_nines
         annotations:
           runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api-5xx.md
           summary: "SLOW burn — sustained availability SLO budget consumption"

@@ -1,0 +1,141 @@
+---
+# promtool unit tests for the availability burn-rate family in
+# deploy/monitoring/rules/slo.yml:
+#
+#   stellarindex_slo_availability_burn_fast
+#   stellarindex_slo_availability_burn_medium
+#   stellarindex_slo_availability_burn_slow
+#
+#   promtool test rules deploy/monitoring/rule-tests/slo_test.yml
+#
+# The budget these rules burn against is the published availability
+# commitment — ≥ 99.9 % non-5xx over 30 days (stellarindex.io/sla), an
+# error budget of 0.001. Until #487 the expressions compared against
+# 0.0001, the budget of a 99.99 % objective nobody had published, so a
+# 0.5 % error rate paged as a fast burn at 35× a budget the service
+# never promised. These cases pin the arithmetic to the published
+# figure: an error rate inside the budget stays silent, one that burns
+# it at 5× tickets and does not page, one that burns it at 20× pages.
+#
+# Deliberately lives OUTSIDE `deploy/monitoring/rules/` — see the header
+# of api_test.yml.
+
+rule_files:
+  - ../rules/slo.yml
+
+evaluation_interval: 1m
+
+tests:
+  # ── inside the budget: silent ────────────────────────────────────
+  # 1 error in 2,000 requests a minute = 0.05 %, half the 0.1 % budget.
+  - interval: 1m
+    name: an error rate inside the published budget raises nothing
+    input_series:
+      - series: 'http_requests_total{job="stellarindex_api",instance="r1:8080",status="200"}'
+        values: '0+1999x150'
+      - series: 'http_requests_total{job="stellarindex_api",instance="r1:8080",status="500"}'
+        values: '0+1x150'
+
+    alert_rule_test:
+      - eval_time: 2h
+        alertname: stellarindex_slo_availability_burn_fast
+        exp_alerts: []
+      - eval_time: 2h
+        alertname: stellarindex_slo_availability_burn_medium
+        exp_alerts: []
+      - eval_time: 2h
+        alertname: stellarindex_slo_availability_burn_slow
+        exp_alerts: []
+
+  # ── 5× the budget: a ticket, not a page ──────────────────────────
+  # 5 errors in 1,000 a minute = 0.5 %. That is 5× the published budget
+  # (slow burn, > 1×, tickets) and under the 6× medium and 14.4× fast
+  # trip points. Against the former 0.0001 budget it was a 50× burn
+  # and paged twice.
+  - interval: 1m
+    name: a 0.5 percent error rate tickets and does not page
+    input_series:
+      - series: 'http_requests_total{job="stellarindex_api",instance="r1:8080",status="200"}'
+        values: '0+995x150'
+      - series: 'http_requests_total{job="stellarindex_api",instance="r1:8080",status="500"}'
+        values: '0+5x150'
+
+    alert_rule_test:
+      - eval_time: 2h
+        alertname: stellarindex_slo_availability_burn_fast
+        exp_alerts: []
+      - eval_time: 2h
+        alertname: stellarindex_slo_availability_burn_medium
+        exp_alerts: []
+      - eval_time: 2h
+        alertname: stellarindex_slo_availability_burn_slow
+        exp_alerts:
+          - exp_labels:
+              severity: ticket
+              team: stellarindex
+              component: api
+              slo: api_availability_3_nines
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api-5xx.md
+              summary: "SLOW burn — sustained availability SLO budget consumption"
+              description: |
+                Availability SLO is consuming budget at the 30-day rate.
+                Not urgent; ticket for the next workday.
+
+  # ── 20× the budget: every tier fires ─────────────────────────────
+  # 20 errors in 1,000 a minute = 2 %, above the 1.44 % fast trip point
+  # (14.4 × 0.001). Fast pages after its 2m hold, medium after 5m, slow
+  # after 30m; at one hour all three are firing.
+  - interval: 1m
+    name: a 2 percent error rate pages as a fast burn
+    input_series:
+      - series: 'http_requests_total{job="stellarindex_api",instance="r1:8080",status="200"}'
+        values: '0+980x90'
+      - series: 'http_requests_total{job="stellarindex_api",instance="r1:8080",status="500"}'
+        values: '0+20x90'
+
+    alert_rule_test:
+      - eval_time: 1h
+        alertname: stellarindex_slo_availability_burn_fast
+        exp_alerts:
+          - exp_labels:
+              severity: page
+              team: stellarindex
+              component: api
+              slo: api_availability_3_nines
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api-5xx.md
+              summary: "FAST burn — availability SLO budget consuming at >14.4× rate"
+              description: |
+                Availability SLO (99.9% non-5xx over 30d) is burning fast.
+                At current rate we would consume 5% of monthly budget in 1h.
+                Both 5m and 1h windows agree. Follow the api-5xx runbook.
+      - eval_time: 1h
+        alertname: stellarindex_slo_availability_burn_medium
+        exp_alerts:
+          - exp_labels:
+              severity: page
+              team: stellarindex
+              component: api
+              slo: api_availability_3_nines
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api-5xx.md
+              summary: "MEDIUM burn — availability SLO budget consuming at >6× rate"
+              description: |
+                Availability SLO is burning medium-fast. 30m and 6h windows
+                both confirm. Page; investigate the api-5xx runbook before
+                it crosses fast-burn.
+      - eval_time: 1h
+        alertname: stellarindex_slo_availability_burn_slow
+        exp_alerts:
+          - exp_labels:
+              severity: ticket
+              team: stellarindex
+              component: api
+              slo: api_availability_3_nines
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api-5xx.md
+              summary: "SLOW burn — sustained availability SLO budget consumption"
+              description: |
+                Availability SLO is consuming budget at the 30-day rate.
+                Not urgent; ticket for the next workday.
