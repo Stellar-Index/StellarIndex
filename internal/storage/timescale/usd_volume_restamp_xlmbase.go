@@ -27,10 +27,10 @@ import (
 // on-chain DEX trade with an XLM BASE leg, with a non-USD-pegged quote,
 // whose `usd_volume` the anchor tier would have written differently.
 //
-// # The right edge is 2026-07-19, not 2026-08-04 (#372 F2)
+// # The right edge is 2026-07-21, not 2026-08-04 (#372 F2)
 //
 // This header used to scope the population as "written before `fd1860bd`
-// (2026-08-04, v0.25.0)". That is 15 days late, and it names a commit
+// (2026-08-04, v0.25.0)". That is two weeks late, and it names a commit
 // date rather than a measured behaviour change. Measured on r1
 // 2026-09-03 over this tool's own population (DEX sources, base an XLM
 // form, quote not a declared peg), per UTC day:
@@ -42,13 +42,17 @@ import (
 //	2026-07-20   200,304       0.0%        1.0016             1.0016
 //	2026-07-21   236,558       0.0%        1.0051             1.0051
 //
-// From 2026-07-20 the NULL fraction is 0 and both ratios agree, so there
-// is nothing left for this tool to do; **2026-07-19 is the last day with
-// a candidate**. Rows at ts ≥ 2026-07-22 additionally already carry
-// `derive_generation` 1785871528 from the 2026-08 re-derive, so the
-// tool's own `-max-generation` default would still admit them and rewrite
-// them for nothing. The shipped usage example's `-to 2026-07-21` is close
-// (2 days of churn, ~437k rows); `-to 2026-07-19` is exact.
+// From 2026-07-20 the NULL fraction is 0 and both ratios agree: the
+// COVERAGE work ends on 2026-07-19. The per-row picture does not end
+// there — the same day's `-report` measured 193,056 of 250,439 rows on
+// 2026-07-20 differing from the anchor (net −$423: the long tail of small
+// wrong-leg corrections; the runbook's report table), and 2026-07-21 is
+// the same era. Rows at ts ≥ 2026-07-22 already carry `derive_generation`
+// 1785871528 from the 2026-08 re-derive and are left alone by design. So
+// the recommended window ends at `-to 2026-07-21`: the last day before
+// that generation, and the window issue #372 reconciled against. The two
+// extra days sit in the same 7-day chunk ([07-16, 07-23)) the chunk mode
+// decompresses for 07-19 anyway, so they cost a scan, not a decompress.
 //
 // # What the population actually IS — coverage first, valuation second
 //
@@ -678,6 +682,14 @@ const xlmBaseRestampApplyBatch = 2000
 //     connection (the pgx-stdlib finding behind CHANGELOG 2026-08).
 //   - `batch <= 0` uses [xlmBaseRestampApplyBatch].
 func (s *Store) ApplyXLMBaseUSDVolumeRestamp(ctx context.Context, plan *XLMBaseRestampPlan, generation int64, batch int) (int64, error) {
+	return s.applyXLMBaseRestampBatches(ctx, plan, generation, batch, nil)
+}
+
+// applyXLMBaseRestampBatches is the batch loop behind both applies. `before`,
+// when not nil, runs ahead of EVERY batch and a non-nil error stops the loop
+// with the rows written so far — the chunk walk's is-the-chunk-still-
+// decompressed guard ([Store.ApplyXLMBaseUSDVolumeRestampInChunk]).
+func (s *Store) applyXLMBaseRestampBatches(ctx context.Context, plan *XLMBaseRestampPlan, generation int64, batch int, before func(context.Context) error) (int64, error) {
 	if plan == nil || len(plan.Rows) == 0 {
 		return 0, nil
 	}
@@ -686,6 +698,11 @@ func (s *Store) ApplyXLMBaseUSDVolumeRestamp(ctx context.Context, plan *XLMBaseR
 	}
 	var total int64
 	for start := 0; start < len(plan.Rows); start += batch {
+		if before != nil {
+			if err := before(ctx); err != nil {
+				return total, err
+			}
+		}
 		end := start + batch
 		if end > len(plan.Rows) {
 			end = len(plan.Rows)

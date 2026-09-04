@@ -44,10 +44,19 @@ import (
 // distribution of relative moves, the USD sums, the extremes and a
 // sample. It writes nothing and refuses -write.
 
+// xlmBaseRestampStore is the slice of [timescale.Store] the re-derive
+// walks through: plan a window, apply the plan. A seam rather than the
+// concrete store so the chunk walk (usd_volume_restamp_chunks.go) can be
+// driven against a scripted double; production passes the store itself.
+type xlmBaseRestampStore interface {
+	PlanXLMBaseUSDVolumeRestamp(ctx context.Context, p timescale.XLMBaseRestampParams) (*timescale.XLMBaseRestampPlan, error)
+	ApplyXLMBaseUSDVolumeRestamp(ctx context.Context, plan *timescale.XLMBaseRestampPlan, generation int64, batch int) (int64, error)
+}
+
 // xlmBaseRestampRun carries one `-tier xlm-base` invocation's fixed
-// inputs and its running totals across days.
+// inputs and its running totals across days (or chunks).
 type xlmBaseRestampRun struct {
-	store *timescale.Store
+	store xlmBaseRestampStore
 
 	allow       map[string]bool
 	fillNull    bool
@@ -86,8 +95,31 @@ const xlmBaseSampleSeed = 0x53544c4c // "STLL"
 
 // runXLMBaseRestamp is the `-tier xlm-base` entry point, called by
 // usdVolumeRestamp once the shared window/flag validation has passed.
-func runXLMBaseRestamp(ctx context.Context, store *timescale.Store, cfgPath string, from, to time.Time, opts xlmBaseRestampOptions) error {
-	run := &xlmBaseRestampRun{
+func runXLMBaseRestamp(ctx context.Context, store xlmBaseRestampStore, cfgPath string, from, to time.Time, opts xlmBaseRestampOptions) error {
+	run := newXLMBaseRestampRun(store, opts)
+
+	sources := timescale.DEXSourceNames()
+	fmt.Fprintf(os.Stderr, "usd-volume-restamp: tier=xlm-base window [%s, %s] slice=%s batch=%d generation=%d max-generation=%d fill_null=%v min_rel_delta=%s\n",
+		from.Format(time.DateOnly), to.Format(time.DateOnly), opts.Slice, opts.Batch,
+		opts.Generation, opts.MaxGeneration, opts.FillNull, ratPercent(opts.MinRelDelta))
+	fmt.Fprintf(os.Stderr, "usd-volume-restamp: DEX sources in scope: %s\n", strings.Join(sources, ", "))
+
+	for day := from; !day.After(to); day = day.AddDate(0, 0, 1) {
+		if err := run.day(ctx, day); err != nil {
+			run.printResumeHint(cfgPath, day, to, opts)
+			return err
+		}
+	}
+	run.printReport(from, to)
+	fmt.Print(run.summary(cfgPath, from, to))
+	return nil
+}
+
+// newXLMBaseRestampRun builds a run from its resolved options. Shared by
+// the day walk and the chunk walk so the two cannot drift in what a run
+// carries.
+func newXLMBaseRestampRun(store xlmBaseRestampStore, opts xlmBaseRestampOptions) *xlmBaseRestampRun {
+	return &xlmBaseRestampRun{
 		store:       store,
 		allow:       opts.Allow,
 		fillNull:    opts.FillNull,
@@ -103,38 +135,31 @@ func runXLMBaseRestamp(ctx context.Context, store *timescale.Store, cfgPath stri
 		totals:      timescale.NewXLMBaseRestampStats(),
 		sampleRNG:   rand.New(rand.NewPCG(xlmBaseSampleSeed, xlmBaseSampleSeed)), //nolint:gosec // reporting sample, not a security decision
 	}
+}
 
-	sources := timescale.DEXSourceNames()
-	fmt.Fprintf(os.Stderr, "usd-volume-restamp: tier=xlm-base window [%s, %s] slice=%s batch=%d generation=%d max-generation=%d fill_null=%v min_rel_delta=%s\n",
-		from.Format(time.DateOnly), to.Format(time.DateOnly), opts.Slice, opts.Batch,
-		opts.Generation, opts.MaxGeneration, opts.FillNull, ratPercent(opts.MinRelDelta))
-	fmt.Fprintf(os.Stderr, "usd-volume-restamp: DEX sources in scope: %s\n", strings.Join(sources, ", "))
-
-	for day := from; !day.After(to); day = day.AddDate(0, 0, 1) {
-		if err := run.day(ctx, day); err != nil {
-			run.printResumeHint(cfgPath, day, to, opts)
-			return err
-		}
-	}
-	run.printReport(from, to)
+// summary renders the run's closing block: the row count, the
+// planned-vs-changed warning, the CAGG follow-up and the acceptance line.
+// Printed after the report by both walks.
+func (r *xlmBaseRestampRun) summary(cfgPath string, from, to time.Time) string {
+	var b strings.Builder
 	verb := "would restamp"
-	if opts.Write {
+	if r.write {
 		verb = "restamped"
 	}
-	fmt.Printf("\nusd-volume-restamp: %s %d row(s) in [%s, %s] (tier xlm-base)\n",
-		verb, run.totals.Changed, from.Format(time.DateOnly), to.Format(time.DateOnly))
-	if opts.Write && run.written != run.totals.Changed {
+	fmt.Fprintf(&b, "\nusd-volume-restamp: %s %d row(s) in [%s, %s] (tier xlm-base)\n",
+		verb, r.totals.Changed, from.Format(time.DateOnly), to.Format(time.DateOnly))
+	if r.write && r.written != r.totals.Changed {
 		// The write set IS the plan, so these can only diverge when a
 		// concurrent writer moved a row past the generation guard between
 		// the plan and the UPDATE. That is a one-writer-contract
 		// violation, not a rounding difference — say so loudly.
-		fmt.Printf("WARNING: %d row(s) planned but %d row(s) changed — a concurrent writer moved rows past the derive_generation guard\n",
-			run.totals.Changed, run.written)
+		fmt.Fprintf(&b, "WARNING: %d row(s) planned but %d row(s) changed — a concurrent writer moved rows past the derive_generation guard\n",
+			r.totals.Changed, r.written)
 	}
-	fmt.Print(xlmBaseRestampFollowUp(from, to))
-	fmt.Printf("acceptance: stellarindex-ops verify-usd-volume -config %s -day %s -days %d\n",
+	b.WriteString(xlmBaseRestampFollowUp(from, to))
+	fmt.Fprintf(&b, "acceptance: stellarindex-ops verify-usd-volume -config %s -day %s -days %d\n",
 		cfgPath, to.Format(time.DateOnly), int(to.Sub(from).Hours()/24)+1)
-	return nil
+	return b.String()
 }
 
 // xlmBaseRestampCAGGs is the ORDERED list of continuous aggregates a
@@ -250,55 +275,103 @@ type xlmBaseRestampOptions struct {
 
 // day plans (and, under -write, applies) one UTC day in -slice windows.
 func (r *xlmBaseRestampRun) day(ctx context.Context, day time.Time) error {
-	var (
-		dayStats = timescale.NewXLMBaseRestampStats()
-		written  int64
-	)
-	end := day.AddDate(0, 0, 1)
-	for lo := day; lo.Before(end); lo = lo.Add(r.slice) {
+	w, err := r.walk(ctx, day, day.AddDate(0, 0, 1), xlmBaseWalkFull)
+	if err != nil {
+		return err
+	}
+	r.totals.Merge(w.stats)
+	verb := "would change"
+	if r.write {
+		verb = fmt.Sprintf("changed %d, planned", w.written)
+	}
+	fmt.Printf("=== %s: scanned %d, %s %d (null-fill %d, anchor-declined %d/%d null/valued, already correct %d)\n",
+		day.Format(time.DateOnly), w.stats.Scanned, verb, w.stats.Changed,
+		w.stats.NullFilled, w.stats.AnchorDeclinedNull, w.stats.AnchorDeclinedStored,
+		w.stats.Unchanged)
+	return nil
+}
+
+// xlmBaseWalkMode selects what a walk does with each slice's plan.
+type xlmBaseWalkMode int
+
+const (
+	// xlmBaseWalkFull folds every slice into the report and, under
+	// -write, applies its plan. The day walk and the inside of a
+	// decompressed chunk.
+	xlmBaseWalkFull xlmBaseWalkMode = iota
+	// xlmBaseWalkProbe is the chunk walk's read-only pre-check: plan slice
+	// by slice, fold NOTHING into the report, and stop at the first slice
+	// that would change a row. A chunk whose rows all already hold the
+	// anchor's value is probed to its end and then skipped without ever
+	// being decompressed; a chunk that needs work is found out after its
+	// first dirty slice.
+	xlmBaseWalkProbe
+)
+
+// xlmBaseWalk is what one walk over [lo, hi) found: the merged window
+// statistics and the rows the database actually changed.
+type xlmBaseWalk struct {
+	stats   timescale.XLMBaseRestampStats
+	written int64
+}
+
+// xlmBaseApply is the write half of a walk. The day walk passes the
+// store's own apply; the chunk walk passes the one that checks the chunk
+// is still decompressed ahead of every batch.
+type xlmBaseApply func(ctx context.Context, plan *timescale.XLMBaseRestampPlan, generation int64, batch int) (int64, error)
+
+// walk plans (and, in full mode under -write, applies) [lo, hi) in
+// -slice windows with the store's own apply.
+func (r *xlmBaseRestampRun) walk(ctx context.Context, lo, hi time.Time, mode xlmBaseWalkMode) (xlmBaseWalk, error) {
+	return r.walkWith(ctx, lo, hi, mode, r.store.ApplyXLMBaseUSDVolumeRestamp)
+}
+
+// walkWith is [xlmBaseRestampRun.walk] with the apply chosen by the
+// caller. Nothing here knows whether [lo, hi) is a UTC day or a chunk's
+// slice of the run window; that is the caller's business.
+func (r *xlmBaseRestampRun) walkWith(ctx context.Context, lo, hi time.Time, mode xlmBaseWalkMode, apply xlmBaseApply) (xlmBaseWalk, error) {
+	w := xlmBaseWalk{stats: timescale.NewXLMBaseRestampStats()}
+	for s := lo; s.Before(hi); s = s.Add(r.slice) {
 		if err := ctx.Err(); err != nil {
-			return err
+			return w, err
 		}
-		hi := lo.Add(r.slice)
-		if hi.After(end) {
-			hi = end
+		e := s.Add(r.slice)
+		if e.After(hi) {
+			e = hi
 		}
 		plan, err := r.store.PlanXLMBaseUSDVolumeRestamp(ctx, timescale.XLMBaseRestampParams{
-			From: lo, To: hi, Sources: r.allow, FillNull: r.fillNull,
+			From: s, To: e, Sources: r.allow, FillNull: r.fillNull,
 			MaxGeneration: r.maxGen, MinRelDelta: r.minRelDelta,
 		})
 		if err != nil {
-			return err
+			return w, err
+		}
+		w.stats.Merge(plan.Stats)
+		if mode == xlmBaseWalkProbe {
+			if plan.Stats.Changed > 0 {
+				return w, nil
+			}
+			continue
 		}
 		r.observe(plan)
-		dayStats.Merge(plan.Stats)
 		if r.write && len(plan.Rows) > 0 {
-			n, aerr := r.store.ApplyXLMBaseUSDVolumeRestamp(ctx, plan, r.generation, r.batch)
-			written += n
+			n, aerr := apply(ctx, plan, r.generation, r.batch)
+			w.written += n
 			r.written += n
 			if aerr != nil {
-				return aerr
+				return w, aerr
 			}
 		}
-		r.progress += uint64(plan.Stats.Changed)     //nolint:gosec // a non-negative row count
-		r.hb.Progress(r.progress, uint64(lo.Unix())) //nolint:gosec // post-1970 timestamp
+		r.progress += uint64(plan.Stats.Changed)    //nolint:gosec // a non-negative row count
+		r.hb.Progress(r.progress, uint64(s.Unix())) //nolint:gosec // post-1970 timestamp
 		if plan.Stats.Changed > 0 {
 			fmt.Printf("  %s %s..%s  %d change(s) (%d null-fill, %d anchor-declined)\n",
-				day.Format(time.DateOnly), lo.Format("15:04"), hi.Format("15:04"),
+				s.Format(time.DateOnly), s.Format("15:04"), e.Format("15:04"),
 				plan.Stats.Changed, plan.Stats.NullFilled,
 				plan.Stats.AnchorDeclinedNull+plan.Stats.AnchorDeclinedStored)
 		}
 	}
-	r.totals.Merge(dayStats)
-	verb := "would change"
-	if r.write {
-		verb = fmt.Sprintf("changed %d, planned", written)
-	}
-	fmt.Printf("=== %s: scanned %d, %s %d (null-fill %d, anchor-declined %d/%d null/valued, already correct %d)\n",
-		day.Format(time.DateOnly), dayStats.Scanned, verb, dayStats.Changed,
-		dayStats.NullFilled, dayStats.AnchorDeclinedNull, dayStats.AnchorDeclinedStored,
-		dayStats.Unchanged)
-	return nil
+	return w, nil
 }
 
 // observe folds a window's changed rows into the running extremes and the
@@ -338,11 +411,9 @@ func (r *xlmBaseRestampRun) printResumeHint(cfgPath string, failed, to time.Time
 	var b strings.Builder
 	fmt.Fprintf(&b, "\nRESUME: stellarindex-ops usd-volume-restamp -config %s -tier xlm-base -from %s -to %s",
 		cfgPath, failed.Format(time.DateOnly), to.Format(time.DateOnly))
-	if opts.FillNull {
-		b.WriteString(" -fill-null")
-	}
-	if opts.Slice != time.Hour {
-		fmt.Fprintf(&b, " -slice %s", opts.Slice)
+	b.WriteString(xlmBaseResumeFlags(opts))
+	if opts.Batch != defaultRestampBatch {
+		fmt.Fprintf(&b, " -batch %d", opts.Batch)
 	}
 	if opts.Write {
 		b.WriteString(" -write")

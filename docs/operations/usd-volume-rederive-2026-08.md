@@ -412,6 +412,309 @@ stellarindex-ops verify-usd-volume -config /etc/stellarindex.toml \
 - `asset_volume_character` needs no action: it is a trailing-14-day
   rollup on a 15-minute cadence and the span is months old.
 
+### Step 6, chunk mode — `-chunks` (USE THIS for the 2026-01-01 → 2026-07-21 span)
+
+**Measured 2026-09-03.** The mechanics above, run as written
+(`-from 2026-01-01 -to 2026-07-21 -fill-null -write`, 28.6M rows), moved
+at **~1,574 rows/min** — one 2,000-row UPDATE took over 14 minutes — and
+was stopped with 0 rows committed (the generation guard held). Cause: all
+90 `trades` chunks in the window are compressed (policy `compress_after
+7 days`; TimescaleDB 2.26.4; `max_tuples_decompressed_per_dml_transaction
+= 100000`), and a DML into a compressed chunk decompresses per row. The
+dry run only reads, so it never showed it. The "DECOMPRESS FIRST" bullet
+above was the by-hand remedy; `-chunks` is the same remedy inside the
+tool, one chunk at a time, so no more than one chunk is ever
+decompressed — and with the compression policy paused for the run, which
+the by-hand path already required (Step 3's execution learnings,
+`alter_job(…, scheduled => false)`).
+
+Sizing at the time: 90 chunks, 379 GB uncompressed / 25 GB compressed,
+largest chunk 160 GB, pool 4.69 TB free.
+
+What `-chunks` does (`internal/ops/chops/usd_volume_restamp_chunks.go`,
+`internal/storage/timescale/trades_chunks.go`):
+
+0. resolve the `trades` compression policy job
+   (`timescaledb_information.jobs WHERE proc_name = 'policy_compression'
+   AND hypertable_name = 'trades'`) — **refuses to start if there is
+   none** — and check the window against its lag (below). A `-write`
+   run then, in this order: takes the run lock
+   (`pg_try_advisory_lock(hashtext('usd-volume-restamp:trades'))` on a
+   dedicated connection, held for the whole run — **refuses if another
+   session holds it**); reads the policy again under the lock and
+   **refuses if it is already unscheduled** unless
+   `-resume-paused-policy`; prints the re-enable statement to stderr;
+   PAUSES the job (`alter_job(id, scheduled => false)`); waits — at most
+   10 minutes, one progress line per poll — while
+   `timescaledb_information.job_stats` still reports the job's proc
+   running (the pause stops the NEXT fire; one in flight finishes on
+   its own, and a decompress beside it would race it); then lists the
+   chunks AGAIN and walks that listing, not the one the plan was
+   printed from;
+1. per `trades` chunk intersecting the window, oldest first: probe the
+   chunk READ-ONLY, slice by slice, stopping at the first slice that
+   would change a row — a chunk with nothing to change (rows already at
+   the run's generation, or already holding the anchor's value) is
+   **skipped without being decompressed** (this is what makes a rerun
+   resume);
+2. re-measure free space against THIS chunk, then
+   `SELECT decompress_chunk(<chunk>, if_compressed => true)` — for a
+   chunk that was compressed when the run listed it;
+3. the SAME plan + apply as the day walk (same anchor, same
+   `derive_generation` guard), restricted to that chunk's slice of the
+   window, in `-chunk-batch` UPDATE transactions (default 20,000 — a
+   plain heap UPDATE now). **Ahead of every batch the chunk's
+   `is_compressed` is read**; `true` means something took the chunk
+   back underneath the run (a by-hand `compress_chunk`, a fire that
+   slipped the pause), and the walk STOPS there — the batch is not
+   written, the error names the chunk, the `RESUME:` line is printed —
+   because an UPDATE into a compressed chunk does not fail, it crawls;
+4. `SELECT compress_chunk(<chunk>, if_not_compressed => true)` — again
+   only for a chunk that was compressed at listing, and as a DEFERRED
+   call, so a failed batch, a SIGTERM and a Go panic inside the work all
+   reach it. **The bracket restores the state it found**: a chunk that
+   was uncompressed at listing is restamped in place and left
+   uncompressed; the policy compresses it on its own schedule once
+   re-enabled;
+5. a heartbeat tick and one progress line: rows changed, seconds, bytes
+   before → decompressed → after;
+6. on EVERY exit — success, failure, SIGTERM — re-enable the policy
+   (`alter_job(id, scheduled => true)`) on a context that survives the
+   cancellation, and THEN release the run lock, so a run waiting on the
+   lock never inherits a paused policy. After a `-chunks -write` run has
+   exited on its own, the policy is scheduled. A run that finds the
+   policy already unscheduled at start does NOT take it over silently:
+   it refuses, naming the by-hand re-enable and `-resume-paused-policy`.
+   After a previous attempt was killed before its re-enable, either
+   re-enable by hand first (the SQL checks under SIGKILL below) or rerun
+   with `-resume-paused-policy`, which owns the paused policy for the
+   run and re-enables it at exit.
+
+Why the pause is not optional: the policy proc selects
+`show_chunks(older_than => lag) … WHERE status != fully_compressed` and
+compresses each — a chunk this tool has just decompressed IS selected.
+Over a multi-day run the 12-hourly fire would re-compress the open chunk
+between two batches, and the next batch would then run its `SET LOCAL
+max_tuples_decompressed_per_dml_transaction = 0` UPDATE against a
+compressed chunk: no error, just the ~1,574 rows/min path this mode
+exists to escape. The integration harness runs
+`timescaledb.max_background_workers = 0`, so no test can watch the race
+fire; the unit tests pin the ORDER (pause before the first decompress;
+re-enable after the last chunk, on failure, and on a cancelled
+context), and the integration test pins that the real job is paused
+while the run is in flight and scheduled again after it.
+
+**Two attempts at once.** `run-heavy-job.sh`'s lock is per job NAME,
+and the sequence below mandates a unique name per attempt — so the
+wrapper does nothing to stop a second `-chunks -write` from starting
+while the first is alive. Without a guard the second would read the
+policy as already unscheduled, walk beside the first, and re-enable the
+policy at ITS exit while the first was still inside a chunk: the first
+run's open chunk goes to the policy's next fire, its next batch crawls at
+~1,574 rows/min with no error, and the span ends at two generations.
+Two guards, both in the tool: the session advisory lock (one `-write`
+run per database; a held lock is a refusal before the policy is
+touched, and the server drops the lock with its connection, so a
+SIGKILL cannot leave it behind), and the already-unscheduled refusal (a
+paused policy is evidence of another actor — a killed attempt or a
+by-hand pause — and the run will not guess which without
+`-resume-paused-policy`). The integration test pins both: a `-write`
+started while a second session holds the lock is refused and touches
+nothing; a `-write` against an unscheduled policy is refused and leaves
+it unscheduled, and succeeds with the flag and re-enables it. To find
+the holder of the lock:
+
+```sql
+SELECT a.pid, a.application_name, a.backend_start, a.state, l.classid, l.objid
+  FROM pg_locks l JOIN pg_stat_activity a USING (pid)
+ WHERE l.locktype = 'advisory';
+```
+
+Guards, in addition to everything Step 6 already has (dry-run default,
+`-from/-to` closed days only, live-tail refusal, INV-3):
+
+- **The dry run prints the chunk plan** — count, compressed and
+  uncompressed totals, the largest chunk, one line per chunk — the
+  pre-flight verdict and what it would do to the policy, then walks the
+  window read-only on the chunks as they are. Nothing is decompressed,
+  nothing is paused.
+- **Pre-flight.** `-write` refuses to start unless free space on the
+  data volume EXCEEDS 2 × the largest chunk's uncompressed size, and the
+  same check runs against each chunk right before its decompress. 2 × is
+  a GUARD, not a bound: the decompress peaks at about 1 × plus the
+  compressed copy; the UPDATEs add a new tuple version per changed row
+  (non-HOT after a decompress, so heap AND index growth, up to about
+  1 × more); and `compress_chunk` writes the compressed copy beside the
+  bloated heap before truncating it — worst case ≈ 2 × plus the WAL all
+  three generate. Free space is `statfs` on the directory the database
+  reports for `trades` (`pg_tablespace_location` or `data_directory`) —
+  **so run it ON r1**, as a role that can read `data_directory`. Where
+  it cannot be measured the tool refuses; `-min-free-bytes N` overrides
+  with a loud warning after you have checked `zfs list` / `df` yourself,
+  and is then NOT re-measured per chunk.
+- **Live-adjacent refusal.** A window whose `-to` + 1 day is past
+  `now() - compress_after` is refused: the chunks there are deliberately
+  uncompressed (the ledgerstream cursor-regression replay upserts into
+  them) and the in-place walk is the right tool for them.
+  `-allow-live-adjacent` walks them anyway; they are restamped in place
+  and stay uncompressed.
+- **`-generation` in the future is refused.** A typo there would stamp
+  rows above every default run's `-max-generation` — a permanent
+  lock-out on a money column.
+- **A failed chunk is re-compressed before the tool exits non-zero**, on
+  a context that survives SIGTERM. Only a failed re-compress leaves a
+  chunk decompressed, and the error then says `LEFT DECOMPRESSED` with
+  the `compress_chunk` to run by hand. A failed re-enable of the policy
+  says `LEFT PAUSED` the same way.
+- **Resume** = rerun the same command. The tool prints it on failure as
+  `RESUME:`, carrying `-generation N` (so the whole span ends at ONE
+  generation) and every flag that shaped the population (`-fill-null`,
+  `-sources`, `-max-generation`, `-min-rel-delta`, `-slice`). Finished
+  chunks are probed at dry-run cost and skipped.
+- `-batch` does not apply with `-chunks` (it is refused; use
+  `-chunk-batch`); `-chunk-batch`, `-min-free-bytes`, `-generation`,
+  `-allow-live-adjacent` and `-resume-paused-policy` are refused without
+  `-chunks`.
+
+**What it does to the serving database while it runs.** None of this is
+throttled by the heavy-job wrapper: `IOWeight=50` / `CPUWeight=50` apply
+to the ops binary's own cgroup, and the decompress, the UPDATEs and the
+compress are executed by the Postgres backend, at serving priority.
+
+- `decompress_chunk` holds an `ExclusiveLock` on the chunk while it
+  copies and takes an `AccessExclusiveLock` at the end — it waits for
+  in-flight readers of that chunk and queues new ones behind it for that
+  moment. `compress_chunk` holds an `ExclusiveLock` for its duration.
+  Readers of OTHER chunks are unaffected; a query that spans the open
+  chunk (a long `/v1/history` range, a CAGG refresh reaching back that
+  far) waits.
+- While a chunk is decompressed, every scan over it reads a heap an order
+  of magnitude larger (15 × on the window's totals: 379 GB / 25 GB;
+  160 GB for the largest chunk). Nothing in the serving path reads
+  months-old `trades` rows routinely, but a CAGG refresh over that span
+  would — do the Step 3 refreshes AFTER the run, never interleaved.
+- I/O: each chunk is written out once (the decompress, about its
+  uncompressed size), rewritten in part (the UPDATEs), then read and
+  written again (the compress) — about 379 GB × 2 of writes over the
+  window plus WAL. Budget the run in DAYS, not hours. There is no
+  measured per-chunk figure yet: the first chunks in range order are the
+  small ones, and **their progress lines print seconds and bytes for
+  exactly this — read the first few and extrapolate before the 160 GB
+  chunk starts.**
+
+**SIGKILL.** `run-heavy-job.sh` is `systemd-run --scope` with no
+`TimeoutStopSec`, so `systemctl stop <unit>.scope` — the watchdog's
+low-disk trip, or a by-hand stop — is SIGTERM, then SIGKILL 90 s later.
+SIGTERM cancels the run: the batch in flight rolls back (the committed
+ones stay committed), then the tool re-compresses the open chunk and
+re-enables the policy — but a 160 GB re-compress takes far longer than
+90 s. SIGKILL then drops the connection, the server aborts
+`compress_chunk` (the chunk stays DECOMPRESSED, not corrupt), and the
+process is gone before it can print `LEFT DECOMPRESSED` or `RESUME:`, or
+re-enable the policy. For exactly this the tool prints the by-hand
+repair to stderr BEFORE each decompress and each re-compress:
+
+```
+chunk 41/90 _timescaledb_internal._hyper_1_31000_chunk [...]: re-compressing — ...
+    SELECT compress_chunk('_timescaledb_internal._hyper_1_31000_chunk');
+    SELECT alter_job(1000, scheduled => true);
+```
+
+After ANY exit that did not end in the tool's own summary, check both,
+from the job log or directly:
+
+```sql
+-- chunks the policy would have compressed by now and has not:
+SELECT chunk_schema, chunk_name, range_start, range_end
+  FROM timescaledb_information.chunks
+ WHERE hypertable_name = 'trades' AND NOT is_compressed
+   AND range_end < now() - interval '7 days';
+-- the policy itself (scheduled must be true):
+SELECT job_id, scheduled FROM timescaledb_information.jobs
+ WHERE proc_name = 'policy_compression' AND hypertable_name = 'trades';
+```
+
+Compress a listed chunk by hand, or let the re-enabled policy do it at
+its next fire — a rerun of the tool will NOT: it restores the state it
+lists, and that chunk now lists as uncompressed. The run lock is gone
+with the killed connection; the policy is NOT — it stays paused, and a
+rerun REFUSES while it is. Either set `scheduled` back to true by hand
+and run the `RESUME:` command (or the same command again), or run it
+with `-resume-paused-policy` and let the tool own the paused policy and
+re-enable it at exit. The `RESUME:` line never carries
+`-resume-paused-policy`: it is printed only on an exit that has already
+re-enabled the policy.
+Follow-up, host state, not changed here: give the heavy-job scope a stop
+timeout long enough for the largest re-compress — `systemd-run --scope
+-p TimeoutStopSec=…` in
+`configs/ansible/roles/archival-node/tasks/14-stellarindex-services.yml`
+— so a SIGTERM can finish putting the chunk back.
+
+Operator sequence (replaces steps 2–5 of the Step 6 mechanics for this
+span). **The right edge is `-to 2026-07-21`** — the window issue #372
+reconciled against (fills with `-fill-null` = +$27.17M). 2026-07-20 and
+2026-07-21 are not free of changes: the `-report` table above measured
+193,056 rows differing on 2026-07-20 (net −$423, the long tail of small
+wrong-leg corrections), and both days sit in the same 7-day chunk
+`[07-16, 07-23)` the run decompresses for 07-19 anyway, so they cost a
+scan, not a decompress. The acceptance window is the write set:
+`-day 2026-07-21 -days 202` is exactly [2026-01-01, 2026-07-21] (`-day`
+is the LAST day, `-days` counts back from it), and it is byte-for-byte
+the `acceptance:` line the tool prints in its summary.
+
+What the command touches, and what it deliberately leaves:
+
+- **touched**: every `trades` row with `ts` in [2026-01-01, 2026-07-22)
+  whose source is in the DEX registry, whose base leg is an XLM form
+  (`native` or its SAC), whose quote leg is not a declared USD peg,
+  whose `derive_generation` is at or below the run's, and whose stored
+  `usd_volume` differs from the anchor's value — including, with
+  `-fill-null`, rows stored NULL that the anchor can price;
+- **left, by design**: rows at `ts ≥ 2026-07-22`, already at
+  `derive_generation` 1785871528 from the 2026-08 re-derive and outside
+  the window; exact-tier rows (a USD-pegged quote) — Step 5's
+  population, never this one's; rows outside the DEX / XLM-base /
+  non-pegged population (CEX and FX rows, token/token pairs, pairs with
+  XLM on the quote side); rows the anchor declines (reported, never
+  blanked); and the chunks in [2026-01-01, 2026-03-12), which have no
+  candidate — they are probed read-only and skipped without a
+  decompress, which is why `-from 2026-01-01` costs a scan and nothing
+  else.
+
+```sh
+# 0. on r1, as root; env sourced (28P01 trap)
+set -a; . /etc/default/stellarindex; set +a
+# 1. dry run — chunk plan + pre-flight verdict + policy job + per-chunk
+#    row counts; decompresses nothing, pauses nothing, takes no lock:
+stellarindex-ops usd-volume-restamp -config /etc/stellarindex.toml \
+  -tier xlm-base -chunks -from 2026-01-01 -to 2026-07-21 -fill-null
+# 2. the run, under the heavy wrapper, UNIQUE job name per attempt.
+#    Value repair AND coverage fill in one pass (-fill-null): each chunk
+#    is decompressed once; a second -fill-null pass would decompress all
+#    90 again. ONE attempt at a time: the tool refuses a second while
+#    the first holds the run lock.
+/usr/local/sbin/run-heavy-job.sh usd-xlmbase-chunks-try1 \
+  /usr/local/bin/stellarindex-ops usd-volume-restamp \
+    -config /etc/stellarindex.toml -tier xlm-base -chunks \
+    -from 2026-01-01 -to 2026-07-21 -fill-null -write
+#    on a non-zero exit: read the error (LEFT DECOMPRESSED? LEFT PAUSED?
+#    STOPPED — re-compressed underneath?), then run the RESUME: line it
+#    printed, with a NEW job name. After a SIGKILL (no summary, no RESUME
+#    line): the two SQL checks above first; the rerun refuses while the
+#    policy is unscheduled unless -resume-paused-policy.
+# 3. the 12 CAGG refreshes the tool prints at the end, in the ORDER it
+#    prints them (prices_1m first, twap_1h/twap_1d last), psql on r1,
+#    under a heavy-job scope; then force the asset_volume_24h rollup.
+# 4. acceptance — byte-for-byte the command the tool prints in its summary:
+stellarindex-ops verify-usd-volume -config /etc/stellarindex.toml -day 2026-07-21 -days 202
+```
+
+Not covered by `-chunks`: `-tier exact` (Step 5). Its population is a
+66-day class of `[base_pegged] sdex` rows and it is a set-based UPDATE
+per slice, not a per-row one; if it ever measures like the above, the
+same chunk walk applies and should be extended to it rather than
+decompressing by hand.
+
 ## Explicitly OUT of scope here (queued, do not silently absorb)
 
 - **`classic_assets.slug` backfill** (194,057 rows, all NULL → CODE is
