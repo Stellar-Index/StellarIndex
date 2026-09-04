@@ -1,0 +1,147 @@
+---
+# ClickHouse server health, read from ClickHouse's OWN Prometheus
+# endpoint (port 9363 — there is no exporter process; the server serves
+# /metrics itself). Producer: the archival-node role's
+# 22-clickhouse-exporter.yml drop-in, scraped by the `clickhouse` job.
+# Runbook: docs/operations/runbooks/clickhouse-server-health.md.
+#
+# Why this file exists (2026-09-03): the stock config.xml ships the
+# entire <prometheus> block inside an XML comment, so on r1 nothing
+# listened on 9363 and Prometheus held ZERO `ClickHouse*` series. The
+# lake is the substrate for the API's explorer read path and for the
+# projector (ADR-0034 / ADR-0048 D4), and the only ClickHouse signal in
+# the whole alert tree was ingest-side: live-sink drop counters the project's
+# own binaries emit. A ClickHouse that was failing served queries, or
+# throttling inserts on "too many parts", produced no alert while it
+# happened and no series to read afterwards.
+#
+# The metric names are ClickHouse's own, not ours: the endpoint exports
+# system.events as `ClickHouseProfileEvents_<Name>`, system.metrics as
+# `ClickHouseMetrics_<Name>` and system.asynchronous_metrics as
+# `ClickHouseAsyncMetrics_<Name>`. lint-metric-refs.sh enforces
+# producers for `stellarindex_*` tokens only (third-party exporters'
+# metric sets are not in this repo); the two names selected below are
+# listed in its EXTERNAL_OK reference set for the record.
+
+groups:
+  - name: stellarindex.clickhouse
+    interval: 60s
+    rules:
+
+      # The lake is unreachable OR nothing is scraping it. Both are the
+      # same operator question — "what does ClickHouse look like right
+      # now?" cannot be answered — and both make every rule below
+      # structurally blind, so they share one alert.
+      #
+      # The absent_over_time arm is not decoration: it is the shape the
+      # deployment was actually in. With no `clickhouse` scrape job,
+      # `up{job="clickhouse"}` does not exist, `== 0` evaluates over an
+      # empty vector, and an alert on it alone can never fire — the
+      # F-0085 / OBS-2 blindness pattern this tree has fixed repeatedly
+      # (restore-drill.yml, storage.yml's snapshot alerts). It is also
+      # why this alert is expected to fire from the moment these rules
+      # deploy until the exporter drop-in is applied: that firing IS the
+      # finding, not a false positive.
+      - alert: stellarindex_clickhouse_server_down
+        expr: |
+          up{job="clickhouse"} == 0
+          OR
+          absent_over_time(up{job="clickhouse"}[10m]) == 1
+        for: 2m
+        labels:
+          severity: page
+          team: stellarindex
+          component: storage
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/clickhouse-server-health.md
+          summary: "ClickHouse is not answering its metrics endpoint — the lake read path is unobservable"
+          description: |
+            The `clickhouse` scrape target (clickhouse-server's own
+            Prometheus endpoint, port 9363) has been down for 2+
+            minutes, or no `up{job="clickhouse"}` series exists at all.
+            While this holds, every other ClickHouse rule is blind and
+            the API's explorer reads, the supply/census rollups and the
+            CH-fed projector have no health signal of any kind.
+            A down endpoint is usually the SERVER being down — the
+            endpoint is inside clickhouse-server, not a sidecar — so
+            check `systemctl status clickhouse-server` first. An ABSENT
+            series instead means Prometheus has no `clickhouse` job or
+            the endpoint was never enabled: the stock config.xml ships
+            the `<prometheus>` block commented out. The runbook has both
+            paths.
+
+      # The query tier is erroring. system.events' FailedQuery counts
+      # every query that ended in an exception — a bad schema change, a
+      # settings-profile regression (ADR-0048 D4 readonly), memory
+      # limits, or a table in a bad state. The API's serving reader has
+      # its own 8 s ceiling and returns a 5xx on failure, so a sustained
+      # rate here is customer-visible before it is anything else.
+      - alert: stellarindex_clickhouse_query_failures_high
+        expr: |
+          rate(ClickHouseProfileEvents_FailedQuery[10m]) > 0.1
+        for: 15m
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: storage
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/clickhouse-server-health.md
+          summary: "ClickHouse is failing {{ printf \"%.2f\" $value }} queries/s on {{ $labels.instance }}"
+          description: |
+            More than 0.1 failed queries/s (≈ 6/min) for 15 minutes,
+            counted by system.events' FailedQuery. Every failure is a
+            served read, a rollup or an ops job that got an exception
+            rather than an answer; the API's ClickHouse-backed explorer
+            routes surface it as a 5xx.
+            `SELECT type, exception_code, count() FROM system.query_log
+            WHERE event_time > now() - INTERVAL 1 HOUR AND type !=
+            'QueryFinish' GROUP BY 1, 2 ORDER BY 3 DESC` names the
+            class. Do not silence this by widening the serving
+            profile's limits before reading the exception.
+
+      # MergeTree back-pressure. RejectedInserts counts INSERTs refused
+      # with "Too many parts" because a partition has more active parts
+      # than merges can keep up with. Unlike a failed SELECT this is
+      # DATA LOSS at the ingest seam: the dual-sink's rejected block is
+      # a hole in the lake that only ch-live-catchup will heal, and the
+      # projector clamps to the contiguous watermark, so one unhealed
+      # hole stalls it rather than degrading it.
+      #
+      # Window and `for` are chosen for the shape the event actually
+      # has: a burst. Merge starvation rejects a few blocks, or a few
+      # thousand, over minutes — then the counter goes flat. A rule of
+      # the form `increase(x[15m]) > 0` with `for: 15m` needs the
+      # counter to keep RISING for the whole 15 minutes, so a single
+      # rejection, and ten thousand over five minutes, are both silent
+      # at every evaluation (promtool-proven; the burst cases in
+      # rule-tests/clickhouse_test.yml pin it). The trailing hour is
+      # the disclosure window instead: any rejection inside it holds
+      # the condition true for the rest of that hour, and the short
+      # `for` is a scrape-flap debounce, not a duration requirement.
+      - alert: stellarindex_clickhouse_inserts_rejected
+        expr: |
+          increase(ClickHouseProfileEvents_RejectedInserts[1h]) > 0
+        for: 5m
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: storage
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/clickhouse-server-health.md
+          summary: "ClickHouse rejected {{ $value | humanize }} inserts on {{ $labels.instance }} in the last hour — too many parts"
+          description: |
+            ClickHouse refused at least one INSERT in the trailing hour
+            with "Too many parts": merges are not keeping up with the
+            write rate on some partition, so MergeTree is shedding
+            writes. The alert fires 5 min after the first rejection and
+            holds until the hour is clear, so a burst that has already
+            stopped is still visible. Any rejected block is a GAP in the
+            lake — the in-dispatcher dual-sink does not retry it, and
+            the CH-fed projector clamps to the contiguous watermark, so
+            an unhealed gap stalls the projector rather than degrading
+            it.
+            `SELECT database, table, partition, count() FROM
+            system.parts WHERE active GROUP BY 1, 2, 3 ORDER BY 4 DESC
+            LIMIT 20` finds the partition; check for a stuck or
+            starved merge (`system.merges`, `system.mutations`) and
+            confirm `ch-live-catchup.timer` heals the range afterwards.

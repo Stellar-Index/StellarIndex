@@ -1,0 +1,73 @@
+---
+# ClickHouse Prometheus endpoint (2026-09-03 r1 observability gap).
+#
+# ClickHouse serves its own /metrics — no exporter package exists or is
+# needed — but the stock config.xml ships the entire <prometheus> block
+# COMMENTED OUT. r1 measured 2026-09-03: config.xml lines 1151-1158 sit
+# inside `<!-- ... -->`, nothing listens on 9363, and Prometheus knows
+# zero `ClickHouse*` series. That is not one missing dashboard: the
+# ClickHouse lake is the substrate for the API's whole explorer read
+# path and for the projector (ADR-0034/ADR-0048), and the only signal
+# about it was ingest-side (live-sink drop counters emitted by the
+# project's own binaries). A ClickHouse that is refusing queries, failing
+# them, or throttling inserts on "too many parts" produced no alert
+# and no series to look at afterwards.
+#
+# Imported UNCONDITIONALLY, like 20-clickhouse-serving-profile.yml and
+# 21-clickhouse-drop-guard.yml, rather than behind run_clickhouse
+# (false on r1 by design, so r1's hand-tended lake is never rebuilt by
+# 08-clickhouse.yml). r1 is the host with the hole, so it must be
+# reachable there:
+#
+#   ansible-playbook -i inventory/r1.yml playbooks/archival-node.yml \
+#     --tags clickhouse-exporter --check --diff
+#   ansible-playbook -i inventory/r1.yml playbooks/archival-node.yml \
+#     --tags clickhouse-exporter
+#
+# Deliberately NO `notify: Restart clickhouse-server`. ClickHouse's
+# config.d reloader rebuilds its protocol listeners in place when the
+# merged config changes, so the endpoint appears without bouncing the
+# lake — and the verify task below PROVES that on the host instead of
+# assuming it, the same posture 21-clickhouse-drop-guard.yml takes for
+# its hot-reloaded settings. A restart here would stall ingest and every
+# served read for the sake of a metrics port.
+#
+# The scrape job that consumes this lives in
+# configs/prometheus/prometheus.r1.yml (job `clickhouse`); the alerts
+# that read the series are in {deploy/monitoring,configs/prometheus}/
+# rules{,.r1}/clickhouse.yml with docs/operations/runbooks/
+# clickhouse-server-health.md.
+
+- name: Enable the ClickHouse Prometheus endpoint
+  ansible.builtin.template:
+    src: clickhouse-prometheus.xml.j2
+    dest: /etc/clickhouse-server/config.d/si-prometheus.xml
+    owner: root
+    group: root
+    mode: "0644"
+  when: clickhouse_prometheus_enabled | default(true) | bool
+  tags: [clickhouse, clickhouse-exporter, observability]
+
+- name: Verify the ClickHouse Prometheus endpoint is serving
+  # The config.d reloader polls (default 2 s), so retry rather than
+  # race it. Skipped under --check: the template has not been written
+  # there, so `until` could never hold and the preview would fail
+  # spuriously (same guard as the drop-guard verify).
+  when:
+    - clickhouse_prometheus_enabled | default(true) | bool
+    - not ansible_check_mode
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ clickhouse_prometheus_port | default(9363) | int }}{{ clickhouse_prometheus_endpoint | default('/metrics') }}"
+    return_content: true
+  register: ch_prometheus_endpoint
+  changed_when: false
+  retries: 10
+  delay: 2
+  # A 200 alone is not proof: the endpoint answers before the
+  # collectors have anything to say. ClickHouseProfileEvents_ is the
+  # prefix the alerts select on, so require at least one of those.
+  until: >-
+    ch_prometheus_endpoint.status is defined
+    and ch_prometheus_endpoint.status == 200
+    and 'ClickHouseProfileEvents_' in (ch_prometheus_endpoint.content | default(''))
+  tags: [clickhouse, clickhouse-exporter, observability]

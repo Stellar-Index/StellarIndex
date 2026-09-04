@@ -370,6 +370,10 @@ tests:
         alertname: stellarindex_ch_schema_snapshot_offsite_stale
         exp_alerts:
           - exp_labels:
+              # Per host: the arm keeps the local snapshot's own labels,
+              # so the alert names the instance whose only copy is local.
+              job: node_exporter
+              instance: r1:9100
               severity: ticket
               team: stellarindex
               component: storage
@@ -377,18 +381,29 @@ tests:
               runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ch-schema-restore.md
               summary: "ClickHouse schema snapshot has not reached offsite storage in > 72 h"
               description: |
-                The daily schema snapshot is being written locally but its
-                offsite push has been failing for 3+ days — or has never
-                succeeded since the target was configured — so the only
-                copy of the lake's DDL now lives on the same pool as the
-                lake (CS-111's failure shape, one layer down). Check the
-                `mc` alias/credentials for ch_schema_snapshot_mc_target
+                The daily schema snapshot is not reaching off-site storage —
+                the push has been failing for 3+ days, or no off-site target
+                has ever been configured on this host. Either way the only
+                copy of the lake's DDL lives on the same pool as the lake
+                (CS-111's failure shape, one layer down), and ADR-0043's
+                restore is schema-first, so a pool loss makes the re-derive
+                archaeology rather than a procedure.
+                `stellarindex_ch_schema_snapshot_offsite_configured` tells
+                the two apart: 0 = never configured (set
+                ch_schema_snapshot_mc_target and re-apply the role), 1 =
+                configured but pushing — check the `mc` alias/credentials
                 and the remote's quota.
 
-  # Acked local-only host (no target): the configured gauge reads 0 and
-  # the offsite stamp is legitimately absent — must stay silent.
+  # (RED) NO offsite target has ever been configured. This is the state
+  # r1 was measured in on 2026-09-03 — the gauge reads 0 — and it used
+  # to be the one state the alert could not report, because the absent
+  # branch was gated on that same gauge reading 1. The alert's own
+  # precondition gated the alert: a never-configured off-site was
+  # silent, a broken one was loud, and the silent case is the worse of
+  # the two. Ungated, so it fires — and it fires ON THIS HOST, carrying
+  # the instance label (see the two-host case below).
   - interval: 1h
-    name: offsite not configured (acked local-only) — offsite_stale silent
+    name: offsite never configured — offsite_stale fires
     input_series:
       - series: 'stellarindex_ch_schema_snapshot_last_success_unix{job="node_exporter", instance="r1:9100"}'
         values: '0+3600x200'
@@ -397,19 +412,174 @@ tests:
     alert_rule_test:
       - eval_time: 100h
         alertname: stellarindex_ch_schema_snapshot_offsite_stale
-        exp_alerts: []
+        exp_alerts:
+          - exp_labels:
+              # Per host: the arm keeps the local snapshot's own labels,
+              # so the alert names the instance whose only copy is local.
+              job: node_exporter
+              instance: r1:9100
+              severity: ticket
+              team: stellarindex
+              component: storage
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ch-schema-restore.md
+              summary: "ClickHouse schema snapshot has not reached offsite storage in > 72 h"
+              description: |
+                The daily schema snapshot is not reaching off-site storage —
+                the push has been failing for 3+ days, or no off-site target
+                has ever been configured on this host. Either way the only
+                copy of the lake's DDL lives on the same pool as the lake
+                (CS-111's failure shape, one layer down), and ADR-0043's
+                restore is schema-first, so a pool loss makes the re-derive
+                archaeology rather than a procedure.
+                `stellarindex_ch_schema_snapshot_offsite_configured` tells
+                the two apart: 0 = never configured (set
+                ch_schema_snapshot_mc_target and re-apply the role), 1 =
+                configured but pushing — check the `mc` alias/credentials
+                and the remote's quota.
 
-  # Pre-gauge script version (no configured series at all): silent, so a
-  # rules deploy that outruns the script deploy does not page every host.
+  # (RED) Pre-gauge script version (no configured series at all). Same
+  # verdict for the same reason: an absent gauge is not evidence that
+  # an off-site copy exists.
   - interval: 1h
-    name: offsite configured gauge absent entirely — offsite_stale silent
+    name: offsite configured gauge absent entirely — offsite_stale fires
     input_series:
       - series: 'stellarindex_ch_schema_snapshot_last_success_unix{job="node_exporter", instance="r1:9100"}'
         values: '0+3600x200'
     alert_rule_test:
       - eval_time: 100h
         alertname: stellarindex_ch_schema_snapshot_offsite_stale
+        exp_alerts:
+          - exp_labels:
+              # Per host: the arm keeps the local snapshot's own labels,
+              # so the alert names the instance whose only copy is local.
+              job: node_exporter
+              instance: r1:9100
+              severity: ticket
+              team: stellarindex
+              component: storage
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ch-schema-restore.md
+              summary: "ClickHouse schema snapshot has not reached offsite storage in > 72 h"
+              description: |
+                The daily schema snapshot is not reaching off-site storage —
+                the push has been failing for 3+ days, or no off-site target
+                has ever been configured on this host. Either way the only
+                copy of the lake's DDL lives on the same pool as the lake
+                (CS-111's failure shape, one layer down), and ADR-0043's
+                restore is schema-first, so a pool loss makes the re-derive
+                archaeology rather than a procedure.
+                `stellarindex_ch_schema_snapshot_offsite_configured` tells
+                the two apart: 0 = never configured (set
+                ch_schema_snapshot_mc_target and re-apply the role), 1 =
+                configured but pushing — check the `mc` alias/credentials
+                and the remote's quota.
+
+  # The only state that clears it: a fresh off-site stamp. Pins the
+  # non-firing side so ungating did not turn the alert into a constant.
+  - interval: 1h
+    name: offsite pushed hourly — offsite_stale silent
+    input_series:
+      - series: 'stellarindex_ch_schema_snapshot_last_success_unix{job="node_exporter", instance="r1:9100"}'
+        values: '0+3600x200'
+      - series: 'stellarindex_ch_schema_snapshot_offsite_last_success_unix{job="node_exporter", instance="r1:9100"}'
+        values: '0+3600x200'
+      - series: 'stellarindex_ch_schema_snapshot_offsite_configured{job="node_exporter", instance="r1:9100"}'
+        values: '1x200'
+    alert_rule_test:
+      - eval_time: 100h
+        alertname: stellarindex_ch_schema_snapshot_offsite_stale
         exp_alerts: []
+
+
+  # (RED) Two hosts. r1 pushes off-site every hour; r2 takes its local
+  # snapshot every hour and has never had a target. A fleet-global
+  # `absent_over_time(offsite[72h])` is ONE boolean over the whole
+  # scrape — r1's stamp made it false, so r2's missing copy was
+  # invisible (promtool-proven silent at 100h). Per host, exactly r2
+  # fires, and the alert names it.
+  - interval: 1h
+    name: two hosts, one never pushed — only that host's offsite_stale fires
+    input_series:
+      - series: 'stellarindex_ch_schema_snapshot_last_success_unix{job="node_exporter", instance="r1:9100"}'
+        values: '0+3600x200'
+      - series: 'stellarindex_ch_schema_snapshot_offsite_last_success_unix{job="node_exporter", instance="r1:9100"}'
+        values: '0+3600x200'
+      - series: 'stellarindex_ch_schema_snapshot_offsite_configured{job="node_exporter", instance="r1:9100"}'
+        values: '1x200'
+      - series: 'stellarindex_ch_schema_snapshot_last_success_unix{job="node_exporter", instance="r2:9100"}'
+        values: '0+3600x200'
+      - series: 'stellarindex_ch_schema_snapshot_offsite_configured{job="node_exporter", instance="r2:9100"}'
+        values: '0x200'
+    alert_rule_test:
+      - eval_time: 100h
+        alertname: stellarindex_ch_schema_snapshot_offsite_stale
+        exp_alerts:
+          - exp_labels:
+              job: node_exporter
+              instance: r2:9100
+              severity: ticket
+              team: stellarindex
+              component: storage
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ch-schema-restore.md
+              summary: "ClickHouse schema snapshot has not reached offsite storage in > 72 h"
+              description: |
+                The daily schema snapshot is not reaching off-site storage —
+                the push has been failing for 3+ days, or no off-site target
+                has ever been configured on this host. Either way the only
+                copy of the lake's DDL lives on the same pool as the lake
+                (CS-111's failure shape, one layer down), and ADR-0043's
+                restore is schema-first, so a pool loss makes the re-derive
+                archaeology rather than a procedure.
+                `stellarindex_ch_schema_snapshot_offsite_configured` tells
+                the two apart: 0 = never configured (set
+                ch_schema_snapshot_mc_target and re-apply the role), 1 =
+                configured but pushing — check the `mc` alias/credentials
+                and the remote's quota.
+
+  # A push that WAS working and then stopped: the script rewrites the
+  # textfile without the stamp on a failed push, so the series goes
+  # absent on this host. Silent while a stamp is still inside the 72 h
+  # window, firing once it has aged out — on this host, by name.
+  - interval: 1h
+    name: offsite push stopped after working — fires once the last stamp is 72h old
+    input_series:
+      - series: 'stellarindex_ch_schema_snapshot_last_success_unix{job="node_exporter", instance="r1:9100"}'
+        values: '0+3600x200'
+      - series: 'stellarindex_ch_schema_snapshot_offsite_last_success_unix{job="node_exporter", instance="r1:9100"}'
+        values: '0+3600x24 _x176'
+      - series: 'stellarindex_ch_schema_snapshot_offsite_configured{job="node_exporter", instance="r1:9100"}'
+        values: '1x200'
+    alert_rule_test:
+      - eval_time: 60h
+        alertname: stellarindex_ch_schema_snapshot_offsite_stale
+        exp_alerts: []
+      - eval_time: 100h
+        alertname: stellarindex_ch_schema_snapshot_offsite_stale
+        exp_alerts:
+          - exp_labels:
+              job: node_exporter
+              instance: r1:9100
+              severity: ticket
+              team: stellarindex
+              component: storage
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ch-schema-restore.md
+              summary: "ClickHouse schema snapshot has not reached offsite storage in > 72 h"
+              description: |
+                The daily schema snapshot is not reaching off-site storage —
+                the push has been failing for 3+ days, or no off-site target
+                has ever been configured on this host. Either way the only
+                copy of the lake's DDL lives on the same pool as the lake
+                (CS-111's failure shape, one layer down), and ADR-0043's
+                restore is schema-first, so a pool loss makes the re-derive
+                archaeology rather than a procedure.
+                `stellarindex_ch_schema_snapshot_offsite_configured` tells
+                the two apart: 0 = never configured (set
+                ch_schema_snapshot_mc_target and re-apply the role), 1 =
+                configured but pushing — check the `mc` alias/credentials
+                and the remote's quota.
 
   # (RED) ch-schema-snapshot.service failed — early causal signal.
   - interval: 1m

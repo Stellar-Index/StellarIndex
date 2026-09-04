@@ -1325,6 +1325,17 @@ jobs:
         run: ./scripts/ci/lint-jinja-templates.sh
       - name: jinja template parse gate self-test
         run: ./scripts/ci/lint-jinja-templates-test.sh
+      - name: ClickHouse Prometheus endpoint self-test
+        # r1 2026-09-03: ClickHouse serves its own /metrics, but the stock
+        # config.xml ships the whole <prometheus> block inside an XML
+        # comment — nothing on 9363, zero `ClickHouse*` series, so the lake
+        # behind every explorer read had no health signal while the file on
+        # disk looked like it configured one. Renders the role template and
+        # requires the block to be a live element in an XML parse (a comment
+        # is not), then pins the port + job name across the template, the
+        # task, the scrape config and both rule trees. No hosts, no
+        # ClickHouse, no ansible run.
+        run: ./scripts/ci/clickhouse-exporter-test.sh
       - name: galexie restart-wiring test (structural + local ansible run)
         # 2026-08-28 audit (deploy-ansible-handlers-7 / -drift-3): pins
         # that galexie-input renders restart only on EFFECTIVE change

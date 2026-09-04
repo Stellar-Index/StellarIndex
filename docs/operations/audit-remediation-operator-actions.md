@@ -123,10 +123,14 @@ missing the classic trustline component entirely). Code fix landed
   the ClickHouse lake had **no backup of any kind and no alert that said so**.
 - [ ] **Point the schema snapshot offsite** — `ch_schema_snapshot_mc_target` is empty
   and `ch_schema_snapshot_offsite_ack: true` is set in `inventory/r1.yml`, so the
-  daily snapshot currently lands only on the pool it protects. Set the `mc`
-  alias/prefix when the repo2 bucket lands (same provisioning as the item above) and
-  drop the ack. **Interim, do this now and repeat after any DDL change / at least
-  monthly** — the public repo is a valid off-box copy:
+  daily snapshot currently lands only on the pool it protects. The ack buys nothing
+  on pubnet any more: since 2026-09-04 the role refuses the backup surface
+  (`--tags backup`) without a target, reports the gap on every full run, and
+  `stellarindex_ch_schema_snapshot_offsite_stale` tickets r1 by name until a push
+  lands. The procedure, verification and expected transients are
+  [v1-launch-plan](v1-launch-plan.md) row 1.12; drop the ack in the same edit.
+  **Interim, do this now and repeat after any DDL change / at least monthly** —
+  the public repo is a valid off-box copy (it does not clear the alert):
   `OUT_DIR=deploy/clickhouse/schema-snapshot TEXTFILE_DIR=/dev/null scripts/ops/ch-schema-snapshot.sh`
   then commit the result.
 - [x] **CH lake "tail insurance"** (ADR-0043 §2.3) — ASSESSED 2026-07-25, **do not

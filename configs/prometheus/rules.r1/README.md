@@ -23,6 +23,7 @@ adapted for the single-host scrape config in [`prometheus.r1.yml`](../prometheus
 | `sla-probe.yml` | `sla-probe.yml` | requires textfile_collector + `-textfile-output` arg on the probe binary (wired in `configs/healthchecks/sla-probe.sh`). |
 | `api-smoke.yml` | `api-smoke.yml` | as-is (no job-label refs). Requires textfile_collector + the `ReadWritePaths` grant on `stellarindex-smoke.service` that lets the wrapper write `api_smoke.prom`. |
 | `zfs-snapshots.yml` | `zfs-snapshots.yml` | as-is (textfile metrics from `zfs-snapshot.sh`, archival-node role tag `zfs-snapshots`). |
+| `clickhouse.yml` | `clickhouse.yml` | as-is (the `_server_down` selector is `job="clickhouse"` in both trees — clickhouse-server serves its own `/metrics` on 9363, so there is no exporter job name to diverge; the two `ClickHouseProfileEvents_*` rules select by metric name alone). Requires the archival-node role tag `clickhouse-exporter` and the `clickhouse` scrape job in `prometheus.r1.yml`. |
 
 The remaining files in `deploy/monitoring/rules/` are still
 intentionally NOT shipped here:

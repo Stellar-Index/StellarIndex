@@ -1,0 +1,29 @@
+<!-- Managed by ansible (archival-node/tasks/22-clickhouse-exporter.yml).
+     ClickHouse's OWN Prometheus endpoint — there is no separate
+     exporter process to install. The stock /etc/clickhouse-server/
+     config.xml ships this whole block inside an XML comment, so a
+     default install serves no metrics at all and every ClickHouse
+     series is absent rather than zero. This drop-in is the only
+     carrier of the setting; do not re-enable the commented block
+     upstream, or two definitions fight over the port.
+
+     Bound to the server's own listen_host (loopback on every host in
+     this role), so this opens nothing to the network and needs no
+     nftables change — Prometheus scrapes 127.0.0.1. -->
+<clickhouse>
+    <prometheus>
+        <endpoint>{{ clickhouse_prometheus_endpoint | default('/metrics') }}</endpoint>
+        <port>{{ clickhouse_prometheus_port | default(9363) | int }}</port>
+        <!-- system.metrics: instantaneous gauges (Query, Merge,
+             ReadonlyReplica, parts in flight). -->
+        <metrics>true</metrics>
+        <!-- system.events: monotonic counters. FailedQuery and
+             RejectedInserts are the two the alerts read — the query
+             tier's error rate and MergeTree back-pressure. -->
+        <events>true</events>
+        <!-- system.asynchronous_metrics: periodically-collected host +
+             server state (uptime, part counts, memory). Cheap; the
+             collector runs regardless of whether anything scrapes it. -->
+        <asynchronous_metrics>true</asynchronous_metrics>
+    </prometheus>
+</clickhouse>

@@ -26,8 +26,8 @@ enforced 2026-04-23 onward).
 
   | Severity | Rules | AlertManager route | Delivery |
   | --- | --- | --- | --- |
-  | `page` | 53 | `receiver: chat-page` | Discord **#stellarindex-pages**, `repeat_interval` 12 h. There is **no** PagerDuty leg — `pagerduty_configs` is unset, so nothing wakes anyone up. |
-  | `ticket` | 140 | `receiver: chat-default` | Discord **#stellarindex-alerts**, `repeat_interval` 24 h. |
+  | `page` | 54 | `receiver: chat-page` | Discord **#stellarindex-pages**, `repeat_interval` 12 h. There is **no** PagerDuty leg — `pagerduty_configs` is unset, so nothing wakes anyone up. |
+  | `ticket` | 142 | `receiver: chat-default` | Discord **#stellarindex-alerts**, `repeat_interval` 24 h. |
   | `informational` | 21 | `receiver: silent` | **Delivered to nobody, deliberately.** `silent` is declared with no `*_configs` block at all, which in Alertmanager means the alert is accepted and then dropped. It accumulates in the AlertManager UI and nothing else happens. |
 
   **`informational` is not "a low-priority ticket".** There is no
@@ -154,8 +154,11 @@ signal lands.
 | `stellarindex_pgbackrest_backup_metrics_absent` | `up{job="pgbackrest_exporter"} == 1 unless on (instance) pgbackrest_backup_since_last_completion_seconds{stanza!~"all-stanzas.*"}` | exporter up but no real-stanza backup series for 15 min — the two alerts above are structurally blind | page | [backup-failed](runbooks/backup-failed.md) |
 | `stellarindex_pgbackrest_backup_unit_failed` | `node_systemd_unit_state{name="pgbackrest-backup.service",state="failed"}` | == 1 for 5 min | ticket | [backup-failed](runbooks/backup-failed.md) |
 | `stellarindex_ch_schema_snapshot_stale` | `time() - stellarindex_ch_schema_snapshot_last_success_unix` (or `absent_over_time(...[36h])` — never / every-run-failed) | > 36 h, or series absent 36 h, for ≥ 30 min | ticket | [ch-schema-restore](runbooks/ch-schema-restore.md) |
-| `stellarindex_ch_schema_snapshot_offsite_stale` | `time() - stellarindex_ch_schema_snapshot_offsite_last_success_unix` (or `absent_over_time(...[72h]) and on () stellarindex_ch_schema_snapshot_offsite_configured == 1`) | > 72 h, or never pushed since a target was configured, for ≥ 30 min | ticket | [ch-schema-restore](runbooks/ch-schema-restore.md) |
+| `stellarindex_ch_schema_snapshot_offsite_stale` | `time() - stellarindex_ch_schema_snapshot_offsite_last_success_unix` (or, per host, `stellarindex_ch_schema_snapshot_last_success_unix unless on (instance) max_over_time(…offsite_last_success_unix[72h])` — ungated: a never-configured off-site is as loud as a failing push, and the alert names the host) | > 72 h since the last push, or no push inside 72 h on a host that has a local snapshot (never pushed / no target ever configured there), for ≥ 30 min | ticket | [ch-schema-restore](runbooks/ch-schema-restore.md) |
 | `stellarindex_ch_schema_snapshot_unit_failed` | `node_systemd_unit_state{name="ch-schema-snapshot.service",state="failed"}` | == 1 for 5 min | ticket | [ch-schema-restore](runbooks/ch-schema-restore.md) |
+| `stellarindex_clickhouse_server_down` | `up{job="clickhouse"}` (or `absent_over_time(...[10m])` — endpoint never enabled / no scrape job) | == 0 for 2 min, or the series absent for 10 min | page | [clickhouse-server-health](runbooks/clickhouse-server-health.md) |
+| `stellarindex_clickhouse_query_failures_high` | `rate(ClickHouseProfileEvents_FailedQuery[10m])` | > 0.1/s sustained 15 min | ticket | [clickhouse-server-health](runbooks/clickhouse-server-health.md) |
+| `stellarindex_clickhouse_inserts_rejected` | `increase(ClickHouseProfileEvents_RejectedInserts[1h])` | > 0 — any "too many parts" rejection in the trailing hour; fires 5 min after the first and holds until the hour is clear (a rejected block is a lake gap) | ticket | [clickhouse-server-health](runbooks/clickhouse-server-health.md) |
 | `stellarindex_restore_drill_stale` | `time() - stellarindex_restore_drill_last_success_unix` (or `absent_over_time(...[40d])`) | > 40 d for ≥ 30 min | ticket | [restore-drill-stale](runbooks/restore-drill-stale.md) |
 | `stellarindex_zfs_pool_free_low` | `stellarindex_zfs_pool_free_bytes` (zpool free, textfile from `zfs-snapshot.sh`) | < 2.5 TiB for ≥ 15 min | ticket | [zfs-snapshots](runbooks/zfs-snapshots.md) |
 | `stellarindex_zfs_pool_free_critical` | same | < 1.5 TiB for ≥ 5 min (below the snapshot job's 2 TiB guard floor) | page | [zfs-snapshots](runbooks/zfs-snapshots.md) |

@@ -1,6 +1,6 @@
 ---
 title: Runbook — ClickHouse schema + state snapshot (ADR-0043 §2.1)
-last_verified: 2026-08-28
+last_verified: 2026-09-04
 status: draft
 severity: P3
 ---
@@ -11,7 +11,7 @@ severity: P3
 
 | Field | Value |
 | ----- | ----- |
-| Alerts | `stellarindex_ch_schema_snapshot_stale` (>36 h, or `last_success_unix` absent for 36 h — never / every-run-failed), `stellarindex_ch_schema_snapshot_offsite_stale` (>72 h, or never pushed since `SNAPSHOT_MC_TARGET` was configured), `stellarindex_ch_schema_snapshot_unit_failed` (`ch-schema-snapshot.service` exited non-zero, 5 min — the causal signal) |
+| Alerts | `stellarindex_ch_schema_snapshot_stale` (>36 h, or `last_success_unix` absent for 36 h — never / every-run-failed), `stellarindex_ch_schema_snapshot_offsite_stale` (>72 h since the last push, or no push inside 72 h on a host that has a local snapshot — including a host that has never had a target; per host, carries `instance`), `stellarindex_ch_schema_snapshot_unit_failed` (`ch-schema-snapshot.service` exited non-zero, 5 min — the causal signal) |
 | Severity | P3 (ticket) |
 | Detected by | `deploy/monitoring/rules/storage.yml` |
 | Producer | `scripts/ops/ch-schema-snapshot.sh` via `ch-schema-snapshot.timer` (daily, 03:40 UTC) |
@@ -135,23 +135,55 @@ usually fires first and names the host. So a stale metric means one of:
 
 ## Mitigation — `stellarindex_ch_schema_snapshot_offsite_stale`
 
-The snapshot is being written locally but not reaching offsite storage,
-so the only copy of the lake's DDL sits on the pool it protects.
-Check the `mc` alias and credentials behind
-`ch_schema_snapshot_mc_target`, and the remote's quota. The offsite
-stamp is only written on a successful push, so a push that has NEVER
-succeeded is an absent series; the alert's absent branch is gated on
-`stellarindex_ch_schema_snapshot_offsite_configured == 1` (emitted every
-run, 1 iff `SNAPSHOT_MC_TARGET` is set). It therefore stays silent on a
-host that has no offsite target configured — that state is declared
-instead, via `ch_schema_snapshot_offsite_ack` in the inventory
-(18-pgbackrest-backup.yml refuses to proceed without one or the other).
+The snapshot exists on this host and no copy of it has reached off-site
+storage in the last 72 h, so the only copy of the lake's DDL sits on the
+pool it protects. Two properties of the alert decide the triage:
+
+- It is **per host**. The second arm is `stellarindex_ch_schema_snapshot_last_success_unix
+  unless on (instance) max_over_time(…offsite_last_success_unix[72h])`:
+  every host that has a local snapshot, minus the hosts that pushed
+  inside the window. The alert carries the `instance` of the host whose
+  copy is local, and one host pushing never hides another that is not.
+- It is **not gated** on whether an off-site target was ever configured.
+  A host that has never had one is exactly as loud as a host whose push
+  is failing, because the two are the same exposure. (Until 2026-09-04
+  the absent arm required `offsite_configured == 1`, so a
+  never-configured target — r1's state — was the one condition the
+  alert could not report.)
+
+Split the two with the gauge the alert's description names — it is
+emitted on every run, whether or not a target is set:
+
+```sh
+curl -s http://127.0.0.1:9100/metrics | grep ch_schema_snapshot_offsite
+# or, in Prometheus, for the instance the alert names:
+#   stellarindex_ch_schema_snapshot_offsite_configured{instance="<host>:9100"}
+```
+
+| `offsite_configured` | Meaning | Fix |
+| --- | --- | --- |
+| `0`, or the gauge is absent | No off-site target has ever been configured on this host (an absent gauge is a pre-2026-08-28 script — same verdict). Nothing is failing; nothing has ever been tried. | Set `ch_schema_snapshot_mc_target` (an `mc` alias/prefix on off-site storage) in the host's inventory, configure the matching `mc` alias for root on the host, and apply the backup surface: `ansible-playbook -i inventory/<host>.yml playbooks/archival-node.yml --diff --tags backup`. On r1 this is [v1-launch-plan](../v1-launch-plan.md) row 1.12, which also lists the expected transients. |
+| `1` | A target is configured and the push is failing, or has never succeeded since it was set. The stamp is written only on a successful push and the textfile is rewritten every run, so a failing push makes the stamp **absent** on this host, not old. | `journalctl -u ch-schema-snapshot.service -n 50` shows `OFFSITE PUSH FAILED`; check the `mc` alias and credentials behind `SNAPSHOT_MC_TARGET` (`mc alias list`, `mc ls <alias>/…` as root), that `mc` is installed, and the remote's quota. Run `/usr/local/bin/ch-schema-snapshot.sh` by hand — exit `2` means the snapshot was written but the push failed. |
+
+The alert clears on the first successful push: the stamp lands and the
+`unless` arm drops the host. It cannot be acknowledged away on pubnet.
+The archival-node role (`18-pgbackrest-backup.yml`) refuses the backup
+surface (`--tags backup` / `pgbackrest`) on a pubnet host without a
+target — ADR-0043's restore is schema-first, so a re-derive has nothing
+to replay into if the DDL went down with the pool — and on a full run it
+reports the gap by name (`Report a local-only ClickHouse schema snapshot
+on pubnet`) and carries on rather than aborting, so the weekly drift
+check and everything after step 18 still apply. `ch_schema_snapshot_offsite_ack`
+is accepted only on test nets, whose lakes rebuild from
+`deploy/clickhouse/*.sql` in minutes; even there it satisfies the role,
+not this alert (the test nets run no Prometheus today, so nothing
+evaluates it there yet).
 
 ### Interim off-box copy while r1 has no offsite store
 
-r1 has no offsite object storage provisioned yet (same gap as
-`pgbackrest_offsite_ack`). Until it does, the repo itself is the
-off-box copy — public, versioned, and not on this host:
+r1 has no off-site object storage provisioned yet (same gap as
+`pgbackrest_offsite_ack`). Until it does, the repo itself is an off-box
+copy of the DDL — public, versioned, and not on this host:
 
 ```sh
 # from a checkout, with access to the ClickHouse HTTP port
@@ -163,7 +195,10 @@ git add deploy/clickhouse/schema-snapshot && git commit
 Do this after any DDL change, and at least monthly. It is an operator
 action, tracked in the operator register — the timer cannot do it
 (no repo credentials on r1, and committing from production is its own
-bad idea).
+bad idea). It does **not** clear the alert, and should not: nothing on
+the host verifies the copy, and it carries none of the cursor state. It
+narrows the exposure while the target is provisioned; it is not the
+target.
 
 ## The drift check — the other half of the snapshot
 
@@ -257,11 +292,22 @@ at a time and asserts each is caught).
 
 ## Changelog
 
+- 2026-09-04 — `_offsite_stale` is per host and ungated. The absent
+  arm was one fleet-wide boolean gated on `offsite_configured == 1`:
+  a host that had never configured a target (r1) could not fire, and any
+  host pushing would have hidden another that was not. The arm is now
+  `last_success_unix unless on (instance) max_over_time(offsite_last_success_unix[72h])`,
+  naming the host; the gauge stays as the triage split above. The role
+  refuses the backup surface on pubnet without a target and reports the
+  gap on a full run instead of aborting it. Promtool coverage: the
+  never-configured, gauge-absent, two-host and push-stopped cases in
+  `deploy/monitoring/rule-tests/storage-backup_test.yml`.
 - 2026-08-28 — absent-series coverage (audit finding backup-restore-2):
   `_stale` gains `or absent_over_time(...[36h])`, `_offsite_stale` gains
-  the `offsite_configured`-gated absent branch (new gauge
+  an absent branch gated on `offsite_configured == 1` (new gauge
   `stellarindex_ch_schema_snapshot_offsite_configured`, emitted every
-  run), and `stellarindex_ch_schema_snapshot_unit_failed` is added.
+  run) — that gate was removed 2026-09-04, see above; the gauge remains
+  — and `stellarindex_ch_schema_snapshot_unit_failed` is added.
   Before this the never-succeeded / every-run-failed cases — the ones the
   alerts exist for — evaluated over an empty vector and could not fire.
   Promtool coverage: `deploy/monitoring/rule-tests/storage-backup_test.yml`.

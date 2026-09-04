@@ -129,6 +129,20 @@ all:
     galexie_s3_bucket:    "galexie-live"
     galexie_s3_region:    "{{ region_id }}"
 
+    # ───── Backups ─────────────────────────────────────────────────
+    # REQUIRED on pubnet. Without it the archival-node role refuses the
+    # backup surface (`--tags backup` / `pgbackrest`), reports the gap on
+    # every full run (18-pgbackrest-backup.yml), and
+    # stellarindex_ch_schema_snapshot_offsite_stale tickets the host: the
+    # ClickHouse schema+state snapshot is the lake's only backup
+    # (ADR-0043 §2.1), and a copy that lives on the pool it protects does
+    # not survive the loss it exists for. `mc` alias/prefix on off-site
+    # storage — the same provider as pgBackRest repo2 is the intended
+    # shape, so one credential rotation covers both. After changing it,
+    # re-encode R1_INVENTORY_B64 (.github/workflows/ansible-drift.yml
+    # renders from that secret, not from this file).
+    ch_schema_snapshot_mc_target: "offsite/stellarindex-backups/ch-schema"   # replace
+
     # ───── Observability targets ───────────────────────────────────
     prometheus_scrape_allow_cidrs:
       - "10.0.0.0/8"
