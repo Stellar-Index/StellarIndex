@@ -336,8 +336,8 @@ Every asset's VWAP is computed across **all known venues that
 contribute trades**. Per `internal/sources/external/registry.go`,
 only `ClassExchange` (CEX + DEX with verified trade-level data)
 contributes weight. Aggregator outputs (CoinGecko / CMC), oracles
-(Reflector / Band / Redstone), and authority-sanity sources (ECB /
-Polygon FX) are reported alongside but excluded from VWAP weight.
+(Reflector / Band / Redstone), and authority-sanity sources (ECB)
+are reported alongside but excluded from VWAP weight.
 
 **Defends against:** Steps 3–4. A single-venue manipulation gets
 diluted against all other contributing venues.

@@ -77,8 +77,8 @@ linked design doc has the full detail.
   read the per-source `Decimals` field; don't assume 10^8.
   Aggregator looks up `external.Lookup(trade.Source).Class` to know
   which side of the boundary a trade came from.
-- **`massive` is the ACTIVE fiat-FX feed** (massive.com = Polygon's
-  backend). It runs as the `internal/sources/external/forex` worker
+- **`massive` is the ACTIVE fiat-FX feed** (massive.com). It runs as
+  the `internal/sources/external/forex` worker
   in the API binary and writes **daily** fiat rates to `fx_quotes` —
   the USD-anchor behind per-trade usd_volume and the USD-anchored
   local-currency derivation (ADR-0051). The worker POLLS hourly, but
@@ -92,9 +92,9 @@ linked design doc has the full detail.
   route** — it was removed for want of consumers; the FX snapshot
   survives only as the in-process `CurrenciesReader` seam, so don't go
   looking for an HTTP surface.
-  `polygon-forex` / `exchangeratesapi` are same-role trades-path
-  connectors, currently disabled; `ecb` is `ClassAuthoritySanity`
-  (standby cross-check, NOT a VWAP contributor). Full detail in the
+  `exchangeratesapi` is a same-role trades-path connector, currently
+  disabled; `ecb` is `ClassAuthoritySanity` (standby cross-check, NOT
+  a VWAP contributor). Full detail in the
   registry comment at `internal/sources/external/registry.go`.
 - **Stablecoin fiat-proxy is aggregator policy, not decoder
   policy.** Ingest stores the real pair (`XLM/USDT`, `XLM/USDC`).

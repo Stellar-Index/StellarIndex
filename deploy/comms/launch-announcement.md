@@ -27,8 +27,8 @@ contracts), the asset catalogue with supply and complete history,
 anomaly / divergence analytics, and aggregated VWAP / TWAP / OHLC
 across on-chain DEXs (Soroswap, Aquarius, Phoenix, Comet,
 SDEX), CEX feeds (Binance, Coinbase, Kraken, Bitstamp),
-oracle networks (Reflector, Redstone, Band), and FX anchors
-(ExchangeRatesApi, Polygon Forex). Source code is public at
+oracle networks (Reflector, Redstone, Band), and the Massive FX
+anchor. Source code is public at
 <https://github.com/Stellar-Index/StellarIndex>.
 
 ## First request

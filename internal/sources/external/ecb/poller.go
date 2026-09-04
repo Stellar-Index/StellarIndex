@@ -6,7 +6,8 @@
 //
 // Role: NOT primary pricing (cadence too slow — published once per
 // TARGET business day ~4pm CET). Not for triangulation either
-// (intraday triangulation uses Polygon/ExchangeRatesApi). ECB's
+// (the triangulation forex-snap reads the `massive` feed's fx_quotes,
+// with ExchangeRatesApi as the connector-path fallback). ECB's
 // value is that it's the EU's official reference rate — if our
 // computed EUR/USD ever diverges > 50 bps from ECB's daily close,
 // we want to know, because one of our upstream feeds is drifting.
@@ -81,9 +82,10 @@ const (
 	// stable tx_hash).
 	DefaultPollInterval = 6 * time.Hour
 
-	// DefaultDecimals — 6dp matches ExchangeRatesApi + Polygon
-	// Forex. ECB publishes 4dp natively; the extra headroom
-	// stays precision-safe under float→integer round-trips.
+	// DefaultDecimals — 6dp matches ExchangeRatesApi and the
+	// `massive` FX feed (AmountDecimals:6 in the registry). ECB
+	// publishes 4dp natively; the extra headroom stays
+	// precision-safe under float→integer round-trips.
 	DefaultDecimals uint8 = 6
 )
 

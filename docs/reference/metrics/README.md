@@ -615,8 +615,10 @@ Counter, labels `source`, `outcome` ∈ {success, error, skipped}.
 Per-source, per-outcome count of `PollOnce` invocations from the
 external-poller runner. Emitted on every poll tick of every
 configured external source (CoinGecko, CoinMarketCap, CryptoCompare,
-ECB, ExchangeRatesAPI, PolygonForex, Binance, Coinbase, Kraken,
-Bitstamp). The `skipped` outcome covers the per-poller cooldown path
+ECB, ExchangeRatesAPI, Binance, Coinbase, Kraken, Bitstamp). The
+`massive` fiat-FX worker is not one of them — it runs outside the
+runner and stamps `stellarindex_external_fx_last_quote_unix` instead.
+The `skipped` outcome covers the per-poller cooldown path
 (e.g. CoinGecko's post-throttle backoff) — distinct from `success`
 so absence-of-success alerting isn't masked by the poller silently
 respecting a backoff window.

@@ -44,7 +44,7 @@ The string `native` is a shorthand for `crypto:XLM`.
 - **Off-chain CEX:** Binance, Coinbase, Kraken, Bitstamp.
 - **Oracles:** Reflector (DEX/CEX/FX), Band, Redstone, Chainlink HTTP.
 - **Aggregators (cross-check only, not VWAP-contributing):** CoinGecko, CoinMarketCap, CryptoCompare.
-- **Authority FX:** ECB, exchangeratesapi, polygon-forex.
+- **Authority FX:** Massive (the active fiat/USD feed). ECB runs as a daily authority-sanity cross-check, not a VWAP input; the ExchangeRatesApi connector is present but disabled.
 
 ## How rates are computed
 

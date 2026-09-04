@@ -1,6 +1,6 @@
 ---
 title: Runbook — external-poller-stale
-last_verified: 2026-08-29
+last_verified: 2026-09-04
 status: draft
 severity: P2 for `_stale`; P3 for `_stale_ecb` + `_error_rate_high`
 ---
@@ -20,10 +20,15 @@ severity: P2 for `_stale`; P3 for `_stale_ecb` + `_error_rate_high`
 ## Symptoms
 
 The named external poller (CoinGecko, CoinMarketCap, CryptoCompare,
-ECB, ExchangeRatesAPI, PolygonForex, Binance, Coinbase, Kraken,
+ECB, ExchangeRatesAPI, Binance, Coinbase, Kraken,
 Bitstamp) has stopped producing successful `PollOnce` calls. Either
 the venue is rejecting our calls (auth / rate-limit), the venue is
 down, or the network path is broken.
+
+`massive` is not in this family — the fiat-FX feed is a bespoke
+worker in the API binary, not an `external.Connector`, and emits no
+`stellarindex_external_poller_*` series; see
+[fx-feed-stale.md](fx-feed-stale.md).
 
 **Read the alert name before you read a threshold — the staleness
 budget is NOT 30 minutes for every source:**

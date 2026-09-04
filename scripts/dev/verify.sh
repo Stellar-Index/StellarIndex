@@ -28,6 +28,11 @@ defer_check() {
 # The self-test runs first (the gate is only as trustworthy as its fixtures).
 echo "=== verify↔CI parity self-test ===" && ./scripts/ci/check-verify-parity-test.sh
 echo "=== verify.sh ↔ CI import-checks parity ===" && ./scripts/ci/check-verify-parity.sh
+# The verifier image installs the Postman converter from a Dockerfile ARG whose
+# default must equal the pin in scripts/dev/docs-postman.sh; the script refuses
+# any other version and falls back to npx, so drift makes the image copy dead.
+echo "=== Verifier image pins self-test ===" && ./scripts/ci/check-verify-image-pins-test.sh
+echo "=== Verifier image pins ===" && ./scripts/ci/check-verify-image-pins.sh
 
 # Best-effort awareness of main's CI health (W5-ci-6). ADVISORY ONLY: it needs
 # network + an authenticated gh, so it is fully wrapped and can NEVER affect

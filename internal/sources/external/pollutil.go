@@ -48,9 +48,9 @@ type GetRequest struct {
 // context-scoped request, a 30s-timeout client, and a size-capped
 // body read. It returns the HTTP status code and body; interpreting
 // non-2xx statuses stays with the caller because vendors disagree
-// about error transport (ECB uses plain HTTP statuses, Polygon puts
-// detail in a 200 body, exchangeratesapi serves auth errors as 200 +
-// a success:false field).
+// about error transport (ECB uses plain HTTP statuses,
+// exchangeratesapi serves auth errors as 200 + a success:false
+// field).
 func GetBody(ctx context.Context, r GetRequest) (int, []byte, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, r.URL, nil)
 	if err != nil {

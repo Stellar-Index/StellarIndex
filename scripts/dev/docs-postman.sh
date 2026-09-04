@@ -9,11 +9,15 @@
 # (a gitignored docs-site path) and left the tracked user-facing copy
 # drifting silently. Now the script writes the canonical directly.
 #
-# Uses openapi-to-postmanv2 via npx so contributors don't need a
-# global install (only Node is required). Pinned version so the
-# generated output stays reproducible — bumping requires updating
-# CONVERTER_VERSION below + re-running this script + committing
-# the diff.
+# The converter is openapi-to-postmanv2 at CONVERTER_VERSION below,
+# the single place that version is chosen. A pre-installed
+# `openapi2postmanv2` on PATH (the verifier image carries one) is used
+# only when its --version prints exactly that string; any other
+# version, and any machine without one, goes through npx at the pin,
+# so only Node is required. Pinned so the generated output stays
+# reproducible — bumping means updating CONVERTER_VERSION, re-running
+# this script and committing the diff; scripts/ci/check-verify-image-pins.sh
+# holds docker/verify/Dockerfile's ARG default to the same value.
 
 set -euo pipefail
 
@@ -38,12 +42,26 @@ mkdir -p examples/postman
 # through enum/format example values, so every run produced a different
 # collection and the committed artifact silently drifted).
 TMP=$(mktemp)
+
+# A binary on PATH is taken only at the pinned version: any other
+# converter release changes the generated collection, and PATH is not
+# a version statement.
+installed_version=""
+if command -v openapi2postmanv2 >/dev/null 2>&1; then
+  installed_version="$(openapi2postmanv2 --version 2>/dev/null || true)"
+fi
+if [[ "$installed_version" == "$CONVERTER_VERSION" ]]; then
+  CONVERTER=(openapi2postmanv2)
+else
+  CONVERTER=(npx --yes "openapi-to-postmanv2@${CONVERTER_VERSION}")
+fi
+
 NODE_OPTIONS="--require ${REPO_ROOT}/scripts/dev/postman-seed-random.js" \
-npx --yes "openapi-to-postmanv2@${CONVERTER_VERSION}" \
-    -s openapi/stellar-index.v1.yaml \
-    -o "$TMP" \
-    -p \
-    >/dev/null
+  "${CONVERTER[@]}" \
+      -s openapi/stellar-index.v1.yaml \
+      -o "$TMP" \
+      -p \
+      >/dev/null
 
 # openapi-to-postmanv2 stamps a fresh UUIDv4 into every "id" field
 # (and a "_postman_id" at the collection root, sourced from crypto so
