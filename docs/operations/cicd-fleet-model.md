@@ -83,7 +83,12 @@ versions; the test tier deliberately runs ahead-of-Mainnet software.
 - Push-to-main drives the `tier: test` targets (auto_deploy).
 - A `tag` drives the staged Mainnet rollout.
 - **Fleet visibility:** a "what version is where" report that polls each
-  target's `/v1/version`.
+  target's `/v1/version`. **Shipped ahead of the rest of this proposal**
+  (launch-plan 1.7): `scripts/ci/check-fleet-release-drift.sh`, run daily by
+  `fleet-release-drift.yml` (tracking issue past a 24h grace) and after every
+  deploy by `deploy.yml`'s parity step. It is the detection half of the
+  test-tier continuous deploy in §2; the auto-deploy half is still this
+  proposal.
 
 ### 5. Sequencing
 

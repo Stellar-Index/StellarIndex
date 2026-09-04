@@ -211,6 +211,7 @@ did). Operator checklist:
 | Fails at "Apply outstanding migrations" | A migration errored (permission, syntax, lock timeout) before any binary was touched | See §Migrations run before binaries, and are not rolled back — check `stellarindex-migrate … status`, fix forward with a new migration |
 | "binary version skew on r1 after deploy" | The **Served-path smoke** step runs `stellarindex-binary-version-probe.service` and asserts `stellarindex_binary_version_skew == 0` / `probe_success == 1`. Non-zero means a release-managed binary is on a different version (binaries carry `-version`, e.g. `cmd/stellarindex-indexer/main.go`); a MISSING unit means the observability config has not been applied to r1 — the config-apply-gate class | Re-run the deploy naming the stale binary. Runbook: [binary-version-skew](runbooks/binary-version-skew.md) |
 | "Config-apply gate" fails | A config/schema surface changed since the previous tag and `config_acknowledged` was not `true`. Non-destructive — the binaries are already live; the gate is flagging an outstanding config apply | Apply the config per [deploy-config-apply.md](deploy-config-apply.md), then re-run with `-f config_acknowledged=true` |
+| "test net(s) behind vX.Y.Z" warning after an r1 deploy | The **Fleet release parity** step reads `/v1/version` on `api.testnet.stellarindex.io` and `api.futurenet.stellarindex.io` and compares it with the tag just deployed. Expected right after an r1 deploy — r1 goes first by design — which is why it warns rather than fails. It becomes drift if it persists: [`fleet-release-drift.yml`](../../.github/workflows/fleet-release-drift.yml) checks daily with a 24h grace measured from the oldest release the test net lacks and opens a tracking issue | Run the two dispatches the step prints (`region=testnet` / `futurenet`, `binaries=stellarindex-indexer,stellarindex-api,stellarindex-ops`). Procedure: [testnet-futurenet-deployment.md](testnet-futurenet-deployment.md#keeping-the-test-nets-in-step-with-r1) |
 
 ## Cross-references
 
@@ -218,6 +219,7 @@ did). Operator checklist:
 - [`docs/architecture/semver-policy.md`](../architecture/semver-policy.md) — version tag rules
 - [`.github/workflows/release.yml`](../../.github/workflows/release.yml) — produces the artefacts this consumes
 - [`.github/workflows/deploy.yml`](../../.github/workflows/deploy.yml) — the workflow itself
+- [`.github/workflows/fleet-release-drift.yml`](../../.github/workflows/fleet-release-drift.yml) — the daily test-net release-drift check that escalates a lag this workflow's parity step only warns about
 - [`configs/ansible/playbooks/deploy-binary.yml`](../../configs/ansible/playbooks/deploy-binary.yml) — top-level playbook
 - [`configs/ansible/tasks/deploy-one-binary.yml`](../../configs/ansible/tasks/deploy-one-binary.yml) — per-binary task list
 - [`migrations/README.md`](../../migrations/README.md) — the additive-migrations policy §Migrations run before binaries, and are not rolled back depends on

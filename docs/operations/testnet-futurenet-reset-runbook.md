@@ -115,6 +115,11 @@ never floors above the chain regardless of the start ledger.
 - [ ] Ingest advancing from your chosen post-reset start ledger.
 - [ ] `/v1/accounts/{g}/movements` returns rows for a fresh post-reset tx.
 - [ ] No prev_hash-break warnings after the first post-reset ledger.
+- [ ] The daily `fleet-release-drift.yml` run reads the region again. While
+      the region's API is unreachable it reports the host `DEGRADED` and keeps
+      its tracking issue open — expected during a reset; the issue closes on
+      its own once the region serves r1's release
+      ([testnet-futurenet-deployment.md](./testnet-futurenet-deployment.md#keeping-the-test-nets-in-step-with-r1)).
 
 ## Related
 
