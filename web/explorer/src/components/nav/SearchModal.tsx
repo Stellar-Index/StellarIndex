@@ -183,6 +183,12 @@ const STATIC_PAGES: Result[] = [
     hint: 'live system status',
     href: '/status',
   },
+  {
+    type: 'page',
+    label: 'Service level',
+    hint: 'SLA targets + error budget',
+    href: '/sla',
+  },
   { type: 'page', label: 'API docs', href: 'https://docs.stellarindex.io' },
   { type: 'page', label: 'Sign in', hint: 'magic-link auth', href: '/signin' },
   {

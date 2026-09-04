@@ -137,7 +137,8 @@ export default function CompanyPage() {
               <Link href="/methodology" className="text-brand-600 hover:underline">
                 /methodology
               </Link>{' '}
-              page lists every gap and the path to closing each.
+              page documents how each number is computed and which
+              sources feed it.
             </span>
           </li>
         </ul>

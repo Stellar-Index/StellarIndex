@@ -1051,7 +1051,7 @@ const closedVWAP1mAtOrBeforeQuery = `
                     COALESCE(trade_count, 0), sources
                FROM prices_1m
               WHERE base_asset = $1 AND quote_asset = $2
-                AND bucket <= $3 - INTERVAL '1 minute'
+                AND bucket <= $3::timestamptz - INTERVAL '1 minute'
               ORDER BY bucket DESC
               LIMIT 2)
             UNION ALL
@@ -1059,7 +1059,7 @@ const closedVWAP1mAtOrBeforeQuery = `
                     COALESCE(trade_count, 0), sources
                FROM prices_1m
               WHERE base_asset = $2 AND quote_asset = $1
-                AND bucket <= $3 - INTERVAL '1 minute'
+                AND bucket <= $3::timestamptz - INTERVAL '1 minute'
               ORDER BY bucket DESC
               LIMIT 2)
         ) AS both_directions

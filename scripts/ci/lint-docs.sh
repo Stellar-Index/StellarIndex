@@ -254,7 +254,9 @@ for mig in migrations/[0-9][0-9][0-9][0-9]_*.up.sql; do
   # 0048_source_coverage_snapshots.up.sql, whose header opens "ADR-0031:",
   # and a lint that flags correct files gets disabled.
   cited=$(printf '%s' "$first" | sed -E 's/(ADR|CS|F)-[0-9]+//g' \
-          | grep -oE '\b[0-9]{4}\b' | head -1 || true)
+          | grep -oE '\b[0-9]{4}\b' || true)
+  cited="${cited%%$'\n'*}"   # first token; slicing a captured value cannot
+                             # close the pipe on the greps that filled it
   if [ -n "$cited" ] && [ "$cited" != "$num" ]; then
     err "$mig: header cites migration $cited but this file IS $num — a reader following that reference lands on a different migration. Fix the header (a header comment IS correctable on a shipped migration — see migrations/README.md 'Amending a shipped migration' — then run scripts/ci/lint-migration-immutability.sh --write in the same commit)."
   fi
@@ -423,6 +425,7 @@ if [ ${#gen_dirs[@]} -gt 0 ]; then
     if [ "$f" = "docs/reference/metrics/README.md" ]; then
       continue
     fi
+    # sigpipe-ok: `head -1` writes one short banner line, far under a pipe buffer.
     if ! head -1 "$f" | grep -qF "GENERATED FILE"; then
       err "Generated file '$f' is missing the 'GENERATED FILE - DO NOT EDIT' banner at line 1"
     fi
@@ -1008,7 +1011,7 @@ else
   r1_comment=$(grep -E '^#[[:space:]]+r1 = ' "$ANSIBLE_DEFAULTS" 2>/dev/null || true)
   if [ -z "$r1_comment" ]; then
     err "$ANSIBLE_DEFAULTS: the per-region '#   r1 = <topology>' comment is gone — it is the line that told operators r1 ran raidz2 for a year (#289); keep it and keep it true"
-  elif ! echo "$r1_comment" | grep -q "$r1_pool_type"; then
+  elif ! grep -q "$r1_pool_type" <<<"$r1_comment"; then
     err "$ANSIBLE_DEFAULTS: per-region comment says '$r1_comment' but r1's live topology is '$r1_pool_type' ($R1_INVENTORY). The role DEFAULT may stay raidz2 for fresh nodes; the comment must not describe r1 wrongly"
   fi
   echo "  r1 pool topology: '$r1_pool_type' (authority $R1_INVENTORY) — checked $r1_files_checked of ${#r1_topology_files[@]} r1-scoped files"
@@ -1075,6 +1078,118 @@ elif grep -q "https://stellarindex.io/status" "$STATUS_REDIRECTS"; then
 else
   echo "  (skipped §18b — $STATUS_REDIRECTS no longer 301s to stellarindex.io/status; the page appears to have moved back)"
 fi
+
+# ─── 20. The self-hosting path: what a stranger types in their first hour ──
+#
+# README's second paragraph headlines "Self-hostable", and
+# docs/operations/self-hosting.md is the document that has to make that word
+# true. Everything it tells a reader to type is a claim about a file in this
+# repo, and four of those claims had drifted far enough to brick the bring-up:
+# a `cd` into a directory the clone never creates, a `make dev` banner
+# advertising an API and a docs site the compose file does not define, a guide
+# the README never linked at all, and prose calling the ClickHouse dual-sink
+# opt-in three months after ADR-0041 turned it on. Each is re-derivable from
+# the repo, so each is re-derived here instead of trusted. The config KEYS the
+# guide names are checked separately, against the real schema, by
+# internal/config's TestSelfHostingGuide_ConfigRefs.
+
+echo "Checking the self-hosting path..."
+SELF_HOSTING="docs/operations/self-hosting.md"
+if [ ! -f "$SELF_HOSTING" ]; then
+  err "REQUIRED input missing: '$SELF_HOSTING' not found — it is the only end-to-end bring-up guide this repo ships; restore it or update lint-docs.sh §20"
+fi
+
+# (a) `git clone <url>` followed by `cd <dir>`. git names the checkout after
+# the URL's basename, so `cd stellar-index` after cloning StellarIndex.git
+# works only on a case-insensitive filesystem — and only by accident.
+if [ -f "$SELF_HOSTING" ]; then
+  cd_drift=$(awk '
+    /git clone [^ ]+/ {
+      url = $0
+      sub(/.*git clone[[:space:]]+/, "", url)
+      sub(/[[:space:]].*/, "", url)
+      sub(/\.git$/, "", url)
+      n = split(url, parts, "/")
+      repo = parts[n]
+      clone_at = FNR
+      next
+    }
+    # A `cd` further than a couple of lines below the clone is a different step.
+    repo != "" && FNR > clone_at + 3 { repo = "" }
+    repo != "" && $1 == "cd" {
+      if ($2 != repo) printf "%d %s %s\n", FNR, $2, repo
+      repo = ""
+    }
+  ' "$SELF_HOSTING")
+  printf '%s\n' "$cd_drift" | while read -r ln got want; do
+    [ -n "$ln" ] || continue
+    err "$SELF_HOSTING:$ln — 'cd $got' immediately after a clone that creates '$want/'. The step fails outright on a case-sensitive filesystem; write 'cd $want'."
+  done
+fi
+
+# (b) `make dev` prints where the stack is. Every localhost:<port> the banner
+# advertises must be a port deploy/docker-compose/dev.yaml actually publishes.
+DEV_COMPOSE="deploy/docker-compose/dev.yaml"
+if [ -f Makefile ] && [ -f "$DEV_COMPOSE" ]; then
+  dev_recipe=$(awk '/^dev:/ { f = 1; next } /^[^\t]/ { f = 0 } f' Makefile)
+  # Normalise compose's ${VAR:-1234} host-port defaults before splitting, so
+  # the ':-' inside them isn't mistaken for a port separator.
+  published=$(sed -E 's/\$\{[A-Za-z_]+:-([0-9]+)\}/\1/g' "$DEV_COMPOSE" |
+    awk -F: '/^[[:space:]]*-[[:space:]]*"?[0-9.]+:[0-9]+:[0-9]+"?/ { gsub(/"/, "", $(NF - 1)); print $(NF - 1) }')
+  advertised=$(printf '%s\n' "$dev_recipe" | grep -oE 'localhost:[0-9]+' | cut -d: -f2 | sort -u || true)
+  for port in $advertised; do
+    if ! grep -qx "$port" <<<"$published"; then
+      err "Makefile's 'dev' target advertises http://localhost:$port, but $DEV_COMPOSE publishes no such port. 'make dev' is the first command in $SELF_HOSTING §4.1 — sending a first-time operator to a port nothing listens on is where self-hosting stops. Print what actually comes up."
+    fi
+  done
+fi
+
+# (c) README's "Self-hostable." has to lead somewhere. Before this check the
+# guide was linked from exactly one file in the tree (docs/getting-started.md)
+# and never from the README that makes the claim.
+if [ -f README.md ] && ! grep -q "operations/self-hosting.md" README.md; then
+  err "README.md advertises the project as self-hostable but never links $SELF_HOSTING — a reader who takes the claim seriously has nowhere to go. Link it from the 'Start here' list."
+fi
+
+# (d) A default has one authority: Default() in internal/config/config.go
+# (TestDefault_MatchesStructTags pins the `default:` tags to it). Prose is the
+# part nothing checked — ADR-0041 turned the ClickHouse dual-sink and the
+# projector feed-switch ON and left both comments reading "off by default", so
+# an operator who believed them stood up no ClickHouse and watched the indexer
+# die at boot dialling 127.0.0.1:9300.
+for knob in ClickHouseLiveSink:clickhouse_live_sink ClickHouseProjectorSource:clickhouse_projector_source; do
+  go_name=${knob%%:*}
+  toml_name=${knob##*:}
+  knob_default=$(awk -v n="$go_name" \
+    '$0 ~ "^[[:space:]]*" n ":[[:space:]]*(true|false),[[:space:]]*$" { v = $2; sub(/,$/, "", v); print v; exit }' \
+    internal/config/config.go)
+  if [ -z "$knob_default" ]; then
+    err "could not read $go_name's runtime default from internal/config/config.go's Default() — that assignment is §20d's authority; restore it or update lint-docs.sh"
+    continue
+  fi
+  [ "$knob_default" = "true" ] || continue
+  for f in internal/config/config.go cmd/stellarindex-indexer/main.go "$SELF_HOSTING"; do
+    [ -f "$f" ] || continue
+    # Proximity, not paragraph: an "off by default" within a few lines of the
+    # knob's name is documenting THAT knob. A wider window would sweep in
+    # Default()'s body, where every field in the struct is one blank-free run.
+    bad=$(awk -v gn="$go_name" -v tn="$toml_name" -v window=6 '
+      { line[FNR] = $0 }
+      END {
+        for (i = 1; i <= FNR; i++) {
+          if (tolower(line[i]) !~ /off by default/) continue
+          lo = (i - window < 1 ? 1 : i - window)
+          hi = (i + window > FNR ? FNR : i + window)
+          for (j = lo; j <= hi; j++)
+            if (index(line[j], gn) || index(line[j], tn)) { print i; break }
+        }
+      }
+    ' "$f")
+    for ln in $bad; do
+      err "$f:$ln — calls $go_name / $toml_name off by default, but Default() sets it true. A knob documented as opt-in that is in fact on decides the deployment's topology for an operator who never chose it."
+    done
+  done
+done
 
 # ─── Summary ────────────────────────────────────────────────────────────────
 

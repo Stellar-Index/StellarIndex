@@ -1,14 +1,13 @@
 # Support
 
 GitHub issues here are for **defects and feature requests in Stellar Index
-itself**. This page is for everything else, so questions get a better answer
-than an issue tracker gives them.
+itself**. This page is for everything else, and points each kind of question
+at whatever answers it soonest.
 
 ## "How do I…" / "What does this field mean?"
 
-[GitHub Discussions](https://github.com/Stellar-Index/StellarIndex/discussions).
-
-Before asking, the two references that answer most questions:
+Two references answer most of these, and answer them faster than a thread
+would:
 
 - **[docs/reference/](docs/reference/)** — the generated API reference. It is
   produced from `openapi/stellar-index.v1.yaml` and CI fails if the two drift,
@@ -17,6 +16,15 @@ Before asking, the two references that answer most questions:
   coverage are computed. Most "this number looks wrong" questions are answered
   here, because the number is usually right and computed differently from what
   was assumed.
+
+If neither answers it, open an issue and say up front that it is a question
+rather than a defect. A question that had to become an issue is usually a
+documentation gap, so the docs get fixed and the issue closed with the answer.
+
+A discussion forum is the better home for this, and is not switched on for
+this repository yet —
+[docs/operations/external-channels.md](docs/operations/external-channels.md)
+records what turning it on takes.
 
 ## "This number looks wrong"
 

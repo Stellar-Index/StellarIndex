@@ -24,12 +24,22 @@ A successful probe POSTs `stellarindex-<svc> ok :<port>`.
 ### 2. API surface smoke test — 5 min cadence
 
 `stellarindex-smoke.timer` runs `scripts/dev/r1-smoke.sh` —
-13 GETs covering health / catalogue / pricing / diagnostics —
+34 GETs covering health / catalogue / pricing / diagnostics —
 and pings `HEALTHCHECKS_URL_SMOKE` with the full smoke output as
 the ping body. Catches schema regressions that the metrics-port
 probes can't see (e.g. `/v1/price` returning 200 with malformed
 JSON, an OpenAPI-spec change that breaks downstream clients).
 A failed run pings `${URL}/fail` instead.
+
+The ping is the OPTIONAL leg. Every run also rewrites
+`/var/lib/node_exporter/textfile_collector/api_smoke.prom` with
+the failed-check count and a last-run timestamp, which
+`stellarindex_api_smoke_failing` and `stellarindex_api_smoke_stale`
+(`configs/prometheus/rules.r1/api-smoke.yml`) evaluate against.
+Without that leg an unset `HEALTHCHECKS_URL_SMOKE` — its state on
+r1 since install — left the whole shape-assertion layer reporting
+into the journal and nowhere else, which is indistinguishable
+from a timer that stopped firing.
 
 ### 3. SLA probe — 15 min cadence
 

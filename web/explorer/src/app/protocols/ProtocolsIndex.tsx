@@ -146,8 +146,20 @@ export function ProtocolsIndex({
     return cat ? cards.filter((c) => c.category === cat) : cards;
   }, [cards, filter, lockedCategory]);
 
-  const totalEvents24h = cards.reduce((s, c) => s + (c.events_24h ?? 0), 0);
-  const verifiedCount = cards.filter((c) => c.completeness?.complete).length;
+  // The headline describes the set the page actually shows — `visible`,
+  // not the whole directory. Summing `cards` made the category landings
+  // publish the directory's totals over their own handful of rows: on
+  // 2026-09-03 /bridges and /yield both read "16 protocols · 1.15M
+  // events" for the 2 bridges (2,732 events) and the 1 yield protocol
+  // (2,468) they list.
+  const totalEvents24h = visible.reduce((s, c) => s + (c.events_24h ?? 0), 0);
+  const verifiedCount = visible.filter((c) => c.completeness?.complete).length;
+  // The static-registry fallback carries no category, so under a locked
+  // category it matches nothing. That empty grid means the directory is
+  // unreachable, not that we index no bridges — render it as absence,
+  // the way the two live-only stats beside it already do.
+  const protocolCount =
+    live || !lockedCategory ? visible.length.toLocaleString('en-US') : '—';
 
   const categoryMix = useMemo(() => {
     const m = new Map<string, number>();
@@ -161,7 +173,7 @@ export function ProtocolsIndex({
 
       <StatGrid cols={3}>
         <StatCell>
-          <Stat label="Protocols" value={cards.length.toLocaleString('en-US')} />
+          <Stat label="Protocols" value={protocolCount} />
         </StatCell>
         <StatCell>
           <Stat

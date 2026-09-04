@@ -452,9 +452,16 @@ func (s *Server) handleChartFiat(
 	defer cancel()
 	points, err := s.fxHistory.ListFXHistory(fxCtx, ticker, queryFrom, to)
 	if err != nil {
+		if clientAborted(r, err) {
+			return
+		}
+		if handlerTimedOut(fxCtx, err) {
+			s.writeChartTimeout(w, r, "ListFXHistory", ticker)
+			return
+		}
 		s.logger.Warn("chart fiat fx_quotes fetch failed",
 			"ticker", ticker, "err", err)
-		writeJSON(w, series, Flags{})
+		writeJSON(w, series, Flags{Stale: true})
 		return
 	}
 
@@ -519,16 +526,30 @@ func (s *Server) handleChartFiatCross(
 	defer cancel()
 	basePts, err := s.fxHistory.ListFXHistory(fxCtx, pair.Base.Code, queryFrom, to)
 	if err != nil {
+		if clientAborted(r, err) {
+			return
+		}
+		if handlerTimedOut(fxCtx, err) {
+			s.writeChartTimeout(w, r, "ListFXHistory", pair.Base.Code)
+			return
+		}
 		s.logger.Warn("chart fiat-cross fx_quotes fetch failed",
 			"ticker", pair.Base.Code, "err", err)
-		writeJSON(w, series, Flags{})
+		writeJSON(w, series, Flags{Stale: true})
 		return
 	}
 	quotePts, err := s.fxHistory.ListFXHistory(fxCtx, pair.Quote.Code, queryFrom, to)
 	if err != nil {
+		if clientAborted(r, err) {
+			return
+		}
+		if handlerTimedOut(fxCtx, err) {
+			s.writeChartTimeout(w, r, "ListFXHistory", pair.Quote.Code)
+			return
+		}
 		s.logger.Warn("chart fiat-cross fx_quotes fetch failed",
 			"ticker", pair.Quote.Code, "err", err)
-		writeJSON(w, series, Flags{})
+		writeJSON(w, series, Flags{Stale: true})
 		return
 	}
 
@@ -625,13 +646,15 @@ func chartGranularityGrace(gran string) time.Duration {
 // classic-peg pairs. When the literal pair returned 0 points and the
 // quote is fiat, walk the proxy source pairs (see
 // [Server.chartFiatProxyPairs]) and return the first non-empty result.
-// ok=false when no fallback fires (caller keeps the empty result +
-// leaves triangulated=false).
+// When no proxy answers either, the series is derived through XLM
+// ([Server.fiatSeriesThroughXLM]) — strictly last, so a directly
+// observed market always wins over a derived one. ok=false when no
+// fallback fires (caller keeps the empty result + leaves
+// triangulated=false).
 //
-// `read` fetches one proxied pair's closed-bucket series — the VWAP
-// path passes a prices_<gran> reader, the TWAP path a twap_<gran>
-// reader — so both CAGG-reading chart surfaces share the same
-// stablecoin-proxy fallback.
+// `read` fetches one pair's closed-bucket series — the VWAP path
+// passes a prices_<gran> reader, the TWAP path a twap_<gran> reader —
+// so both CAGG-reading chart surfaces share the same fallback chain.
 //
 // Extracted to keep handleChart under the gocognit ceiling.
 func (s *Server) chartStablecoinFallback(
@@ -648,7 +671,7 @@ func (s *Server) chartStablecoinFallback(
 		}
 		return pp, true
 	}
-	return nil, false
+	return s.fiatSeriesThroughXLM(ctx, pair, read)
 }
 
 // chartFiatProxyPairs is the ordered proxy-source list to try when a
@@ -661,8 +684,11 @@ func (s *Server) chartStablecoinFallback(
 //
 // Order is deterministic for cross-region stability (ADR-0015) and
 // preserves the legacy preference:
-//  1. operator USD-pegged classics (config order) — keeps classic
-//     Circle USDC winning where it has data;
+//  1. operator USD-pegged classics (config order), then the same pegs'
+//     other canonical forms — the SAC wrappers — in that order
+//     ([Server.usdPegProxyQuotes]): keeps classic Circle USDC winning
+//     where it has data, and reaches the Soroban pools that quote the
+//     same peg as its SAC only once every classic peg came back empty;
 //  2. abstract stablecoin backers pegged to the quote's fiat
 //     (crypto:USDT / crypto:USDC / … — sorted), so CEX USD depth is
 //     found when no classic peg traded (and EUR-quoted charts reach
@@ -670,13 +696,15 @@ func (s *Server) chartStablecoinFallback(
 //
 // Each proxy quote is crossed with both base aliases (native ↔
 // crypto:XLM, per assetAliases). The literal pair the caller already
-// tried is skipped; duplicates are dropped, first occurrence kept.
+// tried is skipped; duplicates are dropped, first occurrence kept; and a
+// combination whose two sides are one asset in two spellings (sameAsset)
+// is dropped rather than read, since it can never be a market.
 func (s *Server) chartFiatProxyPairs(pair canonical.Pair) []canonical.Pair {
 	var quotes []canonical.Asset
 	// (1) operator classic pegs — USD only (they carry issuer identity
 	// and are mapped to fiat only for USD by the operator's allow-list).
 	if pair.Quote.Code == "USD" {
-		quotes = append(quotes, s.usdPeggedClassics...)
+		quotes = append(quotes, s.usdPegProxyQuotes()...)
 	}
 	// (2) abstract stablecoin backers for the quote's fiat, sorted.
 	backers := aggregate.FiatBackers(pair.Quote.Code)
@@ -692,7 +720,7 @@ func (s *Server) chartFiatProxyPairs(pair canonical.Pair) []canonical.Pair {
 	out := make([]canonical.Pair, 0, len(quotes)*2)
 	for _, b := range assetAliases(pair.Base) {
 		for _, q := range quotes {
-			if q.Equal(b) {
+			if sameAsset(q, b) {
 				continue
 			}
 			pp, err := canonical.NewPair(b, q)
@@ -759,6 +787,118 @@ func (s *Server) chartVWAPReader(gran string, from time.Time) func(context.Conte
 	return func(ctx context.Context, p canonical.Pair) ([]HistoryPoint, error) {
 		return s.history.HistoryPointsInRange(ctx, p, gran, from, time.Time{}, historyMaxPoints)
 	}
+}
+
+// fiatSeriesThroughXLM derives a fiat-quoted series for a non-XLM asset
+// by crossing its XLM-quoted series with XLM's own series in that fiat,
+// bucket by bucket:
+//
+//	price(asset, CCY)[t] = price(asset, XLM)[t] × price(XLM, CCY)[t]
+//
+// It is analogous to the USD-anchored point derivation (ADR-0051,
+// tryUSDAnchoredFiatCross) but pivots through XLM, not USD — the USD
+// peg's own USD series has no USD leg to anchor on — and is deliberately the
+// LAST route the fiat fallback tries: every directly observed market —
+// the literal pair, its alias spellings, the declared-peg proxies and
+// the abstract backers — has already come back empty by the time this
+// runs, so it can only ever fill a series that was otherwise absent,
+// never displace one. The response carries flags.triangulated=true
+// because the value is composed, not traded.
+//
+// The route exists because the proxy walk cannot price the numeraire
+// itself. Every USD series on chain is served by rewriting the quote to
+// a declared peg, and the declared peg (Circle USDC on this deployment)
+// has no USD-quoted buckets under any of its spellings, at any grain:
+// its dollar depth is the USDC/XLM book on SDEX and the USDC-SAC/XLM-SAC
+// pools on Soroban. Crossing that book with XLM's CEX-quoted dollar
+// series is the peg's actual traded dollar price — the surface where a
+// depeg is visible — which a flat 1.0 asserted from the peg declaration
+// would not be, and which is why the declaration is not synthesised
+// backwards into a series here.
+//
+// Both legs are read through [Server.chartPointsWithAliases], so the
+// asset leg reaches the SAC-quoted Soroban pools (asset-SAC/XLM-SAC)
+// and the XLM leg reaches the CEX series stored under `crypto:XLM`;
+// each leg takes its first populated spelling, the same first-hit
+// contract as every other series read. The asset leg is read first so
+// an asset with no XLM market at all — the common miss — costs no XLM
+// read. Only buckets present on BOTH legs are emitted; a leg the reader
+// truncated at its row cap yields the overlap, never a mismatched
+// product. Base-side buckets carry the asset's own USD volume, which is
+// what the derived series reports. An XLM base (any spelling) and a fiat
+// base are not crossed: the former is the anchor itself and was already
+// read literally, the latter is fx_quotes' surface.
+func (s *Server) fiatSeriesThroughXLM(
+	ctx context.Context, pair canonical.Pair,
+	read func(context.Context, canonical.Pair) ([]HistoryPoint, error),
+) ([]HistoryPoint, bool) {
+	if pair.Quote.Type != canonical.AssetFiat || pair.Base.Type == canonical.AssetFiat {
+		return nil, false
+	}
+	xlm := canonical.NativeAsset()
+	if sameAsset(pair.Base, xlm) {
+		return nil, false
+	}
+	assetLeg, err := canonical.NewPair(pair.Base, xlm)
+	if err != nil {
+		return nil, false
+	}
+	assetPts, err := s.chartPointsWithAliases(ctx, assetLeg, read)
+	if err != nil || len(assetPts) == 0 {
+		return nil, false
+	}
+	xlmLeg, err := canonical.NewPair(xlm, pair.Quote)
+	if err != nil {
+		return nil, false
+	}
+	xlmPts, err := s.chartPointsWithAliases(ctx, xlmLeg, read)
+	if err != nil || len(xlmPts) == 0 {
+		return nil, false
+	}
+	crossed := crossSeriesThroughPivot(assetPts, xlmPts)
+	return crossed, len(crossed) > 0
+}
+
+// crossSeriesThroughPivot merges two ascending closed-bucket series on
+// equal buckets and emits base/pivot × pivot/quote per shared bucket —
+// the same merge-join [crossFiatChartPoints] runs for fiat legs, here on
+// the NUMERIC text the CAGGs serve. The product is one exact big.Rat
+// multiplication (ADR-0003: no float on the value path) rendered with
+// [ratToDecimal] to the 10 fractional digits the other derived price
+// surfaces use. A bucket missing on either side is skipped rather than
+// carried forward; a leg that fails to parse or is not strictly positive
+// is skipped for that bucket, since a price is only defined for positive
+// rates. VolumeUSD is the base leg's: the asset's own traded USD volume
+// in that bucket, unchanged by the pivot.
+func crossSeriesThroughPivot(basePts, pivotPts []HistoryPoint) []HistoryPoint {
+	n := len(basePts)
+	if len(pivotPts) < n {
+		n = len(pivotPts)
+	}
+	out := make([]HistoryPoint, 0, n)
+	i, j := 0, 0
+	for i < len(basePts) && j < len(pivotPts) {
+		b, p := basePts[i], pivotPts[j]
+		switch {
+		case b.Bucket.Before(p.Bucket):
+			i++
+		case p.Bucket.Before(b.Bucket):
+			j++
+		default:
+			i++
+			j++
+			br, pr := ratFromDecimal(b.VWAP), ratFromDecimal(p.VWAP)
+			if br == nil || pr == nil || br.Sign() <= 0 || pr.Sign() <= 0 {
+				continue
+			}
+			out = append(out, HistoryPoint{
+				Bucket:    b.Bucket,
+				VWAP:      ratToDecimal(new(big.Rat).Mul(br, pr), ohlcPriceDigits),
+				VolumeUSD: b.VolumeUSD,
+			})
+		}
+	}
+	return out
 }
 
 // adjustHistoryPointPrices applies the dex-nonstandard-decimals forward
@@ -963,9 +1103,7 @@ func (s *Server) handleChartMarketCap(
 	defer cancel()
 	points, err := s.fxHistory.ListFXHistory(fxCtx, pair.Base.Code, queryFrom, to)
 	if err != nil {
-		s.logger.Warn("market_cap: fx_quotes fetch failed",
-			"ticker", pair.Base.Code, "err", err)
-		writeJSON(w, emptyMarketCapSeries(pair, tfRaw, gran, from), Flags{})
+		s.marketCapReadFailed(w, r, fxCtx, err, "ListFXHistory", pair, tfRaw, gran, from, "market_cap: fx_quotes fetch failed", "ticker", pair.Base.Code, "err", err)
 		return
 	}
 
@@ -1009,11 +1147,68 @@ func (s *Server) handleChartMarketCap(
 	writeJSON(w, series, Flags{})
 }
 
+// writeChartTimeout answers a chart read that blew its own budget while
+// the request was still live. The fiat and fiat-cross legs used to fall
+// through to an empty series at 200 with no flag — the same shape the
+// market-cap leg had — and a deadline is retryable capacity, not an
+// absence of data.
+func (s *Server) writeChartTimeout(w http.ResponseWriter, r *http.Request, leg, ticker string) {
+	w.Header().Set("Retry-After", "5")
+	writeProblem(w, r, "https://api.stellarindex.io/errors/chart-timeout", "Chart query timed out",
+		http.StatusServiceUnavailable,
+		fmt.Sprintf("%s for %s did not return inside the request budget; retry shortly.", leg, ticker))
+}
+
+// marketCapReadFailed triages a failed market-cap leg read. A client hangup
+// writes nothing; a blown budget is retryable capacity and gets the
+// chart-timeout 503; anything else degrades to an empty series that is
+// flagged stale rather than presented as fact.
+func (s *Server) marketCapReadFailed(w http.ResponseWriter, r *http.Request, ctx context.Context, err error, leg string, pair canonical.Pair, tfRaw, gran string, from time.Time, msg string, kv ...any) {
+	if clientAborted(r, err) {
+		return
+	}
+	if handlerTimedOut(ctx, err) {
+		s.writeMarketCapTimeout(w, r, leg, pair, tfRaw, gran)
+		return
+	}
+	s.logger.Warn(msg, append(kv, "err", err)...)
+	writeJSON(w, emptyMarketCapSeries(pair, tfRaw, gran, from), Flags{Stale: true})
+}
+
+// writeMarketCapTimeout answers a market-cap read that blew its
+// deadline with the same `chart-timeout` 503 the vwap and twap chart
+// paths already use.
+//
+// The market-cap legs used to degrade to emptyMarketCapSeries at 200 on
+// ANY read error, deadline included. An empty series is a syntactically
+// valid answer, so a caller renders "market cap $0" for an asset with
+// real supply and has no way to tell that from a genuine no-data
+// window — the same wrong-answer-with-full-confidence failure as the
+// bodyless 200 this endpoint's own budget was supposed to prevent. A
+// deadline is retryable, and only a 5xx says so.
+//
+// Both legs share one writer because both are the same statement to the
+// caller ("this series is unavailable right now, retry"); which leg blew
+// is a server-side detail, carried in the log line.
+func (s *Server) writeMarketCapTimeout(w http.ResponseWriter, r *http.Request, leg string, pair canonical.Pair, tfRaw, gran string) {
+	s.logger.Warn("market_cap crypto: deadline exceeded",
+		"leg", leg, "asset", pair.Base.String(), "quote", pair.Quote.String(),
+		"timeframe", tfRaw, "granularity", gran)
+	writeProblem(w, r,
+		"https://api.stellarindex.io/errors/chart-timeout",
+		"Chart query timed out", http.StatusServiceUnavailable,
+		"the market-cap series' price + supply reads didn't both return inside the request budget; retry shortly.")
+}
+
 // emptyMarketCapSeries is the no-data response shape used when the
 // catalogue doesn't carry a supply for the asset or the FX feed has
 // no rows for the requested window. Keeping it as a helper means
 // every error path emits the same wire shape (empty points array,
 // not null).
+//
+// Callers reaching it from a read FAILURE must flag the envelope
+// Stale — an unflagged empty series claims "this asset has no market
+// cap", which is a different fact from "we could not compute one".
 func emptyMarketCapSeries(pair canonical.Pair, tfRaw, gran string, _ time.Time) ChartSeries {
 	return ChartSeries{
 		AssetID:     pair.Base.String(),
@@ -1073,9 +1268,13 @@ func (s *Server) handleChartMarketCapCrypto(
 		if clientAborted(r, err) {
 			return
 		}
+		if handlerTimedOut(ctx, err) {
+			s.writeMarketCapTimeout(w, r, "HistoryPointsInRange", pair, tfRaw, gran)
+			return
+		}
 		s.logger.Warn("market_cap crypto: price history failed",
 			"asset", pair.Base.String(), "err", err)
-		writeJSON(w, emptyMarketCapSeries(pair, tfRaw, gran, from), Flags{})
+		writeJSON(w, emptyMarketCapSeries(pair, tfRaw, gran, from), Flags{Stale: true})
 		return
 	}
 	triangulated := false
@@ -1104,9 +1303,13 @@ func (s *Server) handleChartMarketCapCrypto(
 		if clientAborted(r, err) {
 			return
 		}
+		if handlerTimedOut(ctx, err) {
+			s.writeMarketCapTimeout(w, r, "DailyCirculatingSupply", pair, tfRaw, gran)
+			return
+		}
 		s.logger.Warn("market_cap crypto: supply history failed",
 			"asset_key", supplyKey, "err", err)
-		writeJSON(w, emptyMarketCapSeries(pair, tfRaw, gran, from), Flags{})
+		writeJSON(w, emptyMarketCapSeries(pair, tfRaw, gran, from), Flags{Stale: true})
 		return
 	}
 

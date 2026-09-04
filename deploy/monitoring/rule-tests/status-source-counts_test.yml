@@ -1,0 +1,117 @@
+---
+# promtool expression tests for the two Prometheus queries behind
+# /v1/status `freshness.active_sources` and `freshness.total_sources` —
+# activeSourcesQuery and totalSourcesQuery in internal/api/v1/status.go.
+#
+#   promtool test rules deploy/monitoring/rule-tests/status-source-counts_test.yml
+#
+# No rule file: these expressions are served values, not alerts, and
+# they live in Go. internal/api/v1's
+# TestStatusSourceCountQueries_MatchPromtoolFixture holds every `expr:`
+# below to the Go constants (modulo whitespace) and holds the two cases
+# one apart on both counts, so what promtool evaluates here is what the
+# handler sends, and the file cannot quietly stop demonstrating its
+# point.
+#
+# What this pins: the population is every scraped
+# `stellarindex_source_enabled == 1` series, whichever binary emits it.
+# `massive` (the fiat-FX worker) runs in the API binary, and until it
+# published its own enabled series it was invisible to BOTH counts — a
+# switched-on, emitting source that the status page's "Active sources
+# N / M" counted on neither side. The first case is that shape; the
+# second is the same host once the API publishes the gauge, and both
+# numbers read one higher.
+#
+# 1h resolution, not 1m: the numerator's rate window is 7d, and at 1m a
+# week of samples per series is more than promtool's test engine will
+# load. 200 hourly points cover the window with room.
+#
+# LABEL SHAPES ARE POST-SCRAPE (see ops-job_test.yml's header): indexer
+# series carry job="stellarindex_indexer", API-binary series
+# job="stellarindex_api".
+#
+# Deliberately lives OUTSIDE `deploy/monitoring/rules/` — see the header
+# of ingestion-core_test.yml.
+
+rule_files: []
+
+evaluation_interval: 1h
+
+tests:
+  # ── before: massive emits events but publishes no enabled series ──
+  # sdex and binance: enabled and emitting. band: enabled, silent all
+  # week — enabled but not active, which is what keeps the two counts
+  # apart. massive: emitting daily from the API binary with no enabled
+  # series — the same shape as the always-on supply observers, which
+  # the join excludes from the numerator on purpose. Neither count
+  # sees it.
+  - interval: 1h
+    name: an API-hosted source with no enabled series is counted by neither query
+    input_series:
+      - series: 'stellarindex_source_enabled{job="stellarindex_indexer",instance="r1:9100",source="sdex"}'
+        values: '1+0x200'
+      - series: 'stellarindex_source_events_total{job="stellarindex_indexer",instance="r1:9100",source="sdex"}'
+        values: '0+3600x200'
+      - series: 'stellarindex_source_enabled{job="stellarindex_indexer",instance="r1:9100",source="binance"}'
+        values: '1+0x200'
+      - series: 'stellarindex_source_events_total{job="stellarindex_indexer",instance="r1:9100",source="binance"}'
+        values: '0+3600x200'
+      - series: 'stellarindex_source_enabled{job="stellarindex_indexer",instance="r1:9100",source="band"}'
+        values: '1+0x200'
+      - series: 'stellarindex_source_events_total{job="stellarindex_indexer",instance="r1:9100",source="band"}'
+        values: '40+0x200'
+      - series: 'stellarindex_source_events_total{job="stellarindex_api",instance="r1:8080",source="massive"}'
+        values: '0+800x200'
+    promql_expr_test:
+      - expr: |
+          count(stellarindex_source_enabled == 1)
+        eval_time: 7d
+        exp_samples:
+          - value: 3
+      - expr: |
+          count(
+            (rate(stellarindex_source_events_total[7d]) > 0)
+            and on (source) (stellarindex_source_enabled == 1)
+          )
+        eval_time: 7d
+        exp_samples:
+          - value: 2
+
+  # ── after: the API binary publishes massive's enabled series ──────
+  # The identical host plus the one series the FX worker's Run now
+  # publishes. total_sources 3 → 4 and active_sources 2 → 3: the
+  # switched-on, emitting feed is counted on both sides, and band still
+  # holds the two apart.
+  - interval: 1h
+    name: an API-hosted source publishing its own enabled series is counted by both queries
+    input_series:
+      - series: 'stellarindex_source_enabled{job="stellarindex_indexer",instance="r1:9100",source="sdex"}'
+        values: '1+0x200'
+      - series: 'stellarindex_source_events_total{job="stellarindex_indexer",instance="r1:9100",source="sdex"}'
+        values: '0+3600x200'
+      - series: 'stellarindex_source_enabled{job="stellarindex_indexer",instance="r1:9100",source="binance"}'
+        values: '1+0x200'
+      - series: 'stellarindex_source_events_total{job="stellarindex_indexer",instance="r1:9100",source="binance"}'
+        values: '0+3600x200'
+      - series: 'stellarindex_source_enabled{job="stellarindex_indexer",instance="r1:9100",source="band"}'
+        values: '1+0x200'
+      - series: 'stellarindex_source_events_total{job="stellarindex_indexer",instance="r1:9100",source="band"}'
+        values: '40+0x200'
+      - series: 'stellarindex_source_events_total{job="stellarindex_api",instance="r1:8080",source="massive"}'
+        values: '0+800x200'
+      - series: 'stellarindex_source_enabled{job="stellarindex_api",instance="r1:8080",source="massive"}'
+        values: '1+0x200'
+    promql_expr_test:
+      - expr: |
+          count(stellarindex_source_enabled == 1)
+        eval_time: 7d
+        exp_samples:
+          - value: 4
+      - expr: |
+          count(
+            (rate(stellarindex_source_events_total[7d]) > 0)
+            and on (source) (stellarindex_source_enabled == 1)
+          )
+        eval_time: 7d
+        exp_samples:
+          - value: 3

@@ -87,6 +87,20 @@ type Flags struct {
 	// the pointer to the verified asset. See R-018 /
 	// docs/architecture/multi-network-assets-migration.md.
 	UnverifiedTickerCollision bool `json:"unverified_ticker_collision,omitempty"`
+	// FiltersIgnored names the row-narrowing query parameters the
+	// response did NOT apply, spelled as the caller sent them
+	// ("type", "code", "issuer", "q"). Empty — and omitted — when
+	// everything supplied was applied.
+	//
+	// A listing that DROPPED a filter and one that genuinely matched
+	// on it are otherwise the same 200 over the same wire shape, so a
+	// client re-filtering the page, or a person reading a search
+	// result, has nothing to key on but the spec's prose. `/v1/assets`
+	// sets it where the rows come from a source that cannot narrow:
+	// the class-scoped catalogue listings
+	// (`asset_class=fiat|stablecoin|crypto`) and the lean AssetReader
+	// fallback.
+	FiltersIgnored []string `json:"filters_ignored,omitempty"`
 }
 
 // Pagination is present on list-returning endpoints only.
@@ -148,7 +162,16 @@ func writeEnvelopeStatus(w http.ResponseWriter, status int, env Envelope) {
 // https://api.stellarindex.io/errors/<name>); title is a short
 // human headline; status is the HTTP code; detail is the freeform
 // per-request message (optional).
+//
+// A 500 whose request deadline has ALREADY expired is rewritten to the
+// canonical retryable timeout problem — see requestDeadlineExpired. That
+// covers the BLANKET middleware deadline only; an error path holding the
+// error from a handler's OWN budget must call writeProblemErr instead.
 func writeProblem(w http.ResponseWriter, r *http.Request, typeURL, title string, status int, detail string) {
+	if status == http.StatusInternalServerError && requestDeadlineExpired(r) {
+		typeURL, title, status, detail = requestTimeoutType, requestTimeoutTitle,
+			http.StatusServiceUnavailable, requestTimeoutDetail
+	}
 	p := Problem{
 		Type:      typeURL,
 		Title:     title,
@@ -176,8 +199,110 @@ func writeProblem(w http.ResponseWriter, r *http.Request, typeURL, title string,
 	if status == http.StatusUnauthorized {
 		w.Header().Set("WWW-Authenticate", `Bearer realm="stellarindex.io"`)
 	}
+	// Keyed on the TYPE, not the status: writeProblemErr rewrites its own
+	// upgrade before calling in, so by the time it reaches here the status
+	// is already 503 and only the type still identifies the condition.
+	// Both upgrade legs therefore carry the hint.
+	if typeURL == requestTimeoutType {
+		w.Header().Set("Retry-After", retryAfterRequestTimeout)
+	}
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(p)
+}
+
+// The canonical problem for "this server ran out of its request budget
+// before the handler could answer" — the wire shape writeProblem
+// substitutes for a 500 raised after the request deadline expired.
+const (
+	requestTimeoutType  = "https://api.stellarindex.io/errors/request-timeout"
+	requestTimeoutTitle = "Request timed out"
+	// No budget figure in the detail: the effective bound is the
+	// deployment's api.request_timeout, not a constant this package can
+	// quote truthfully.
+	requestTimeoutDetail = "the request exceeded this server's request budget before " +
+		"the handler could answer; retry shortly."
+	// A 503 whose body says "retry shortly" but carries no Retry-After
+	// leaves every client to guess, and the guess is "immediately" —
+	// precisely the retry storm a server that just ran out of budget must
+	// not receive. 5s is the in-process busy-ness value the rest of the
+	// API already uses (the explorer's retryAfterBusy, writeChartTimeout);
+	// the 30s figure is reserved for a dependency outage
+	// (writeCacheUnavailableProblem), which a blown request budget is not.
+	retryAfterRequestTimeout = "5"
+)
+
+// requestDeadlineExpired reports whether the blanket
+// middleware.RequestTimeout deadline on r.Context() has already fired.
+//
+// It exists so writeProblem can upgrade a 500 to a retryable 503 in ONE
+// place. Roughly fifty handler error paths reach writeProblem with
+// StatusInternalServerError and no timeout branch of their own, and the
+// ones that hand r.Context() STRAIGHT to a store — /v1/anomalies, the
+// assets + price families, /v1/auth/sep10 — have no per-call context for
+// handlerTimedOut to inspect, so there is nothing for a per-site fix to
+// key on. A deadline is retryable capacity, not an internal fault: that
+// is the rule the repo already writes down (writeLendingReservesTimeout,
+// explorer writeReadTimeout) and the rule the sla-probe's
+// availability_pct is scored against, where a 500 permanently books a
+// failure a retry would have cleared.
+//
+// It keys on r.Context() specifically, so a tighter per-handler budget
+// still reaches its own more specific `…-timeout` branch first; only the
+// blanket deadline lands here. And only 500 is rewritten — a 400/404
+// decided on the request's own merits stays the client's answer even if
+// the deadline blew while it was being written.
+//
+// LIMIT, and why writeProblemErr exists: a handler that caps its own read
+// with context.WithTimeout(r.Context(), 8s) under a 15s global blows the
+// INNER budget first, and r.Context() is still alive when it does — so
+// this predicate is false and the deadline books a 500. The inner budget
+// is the dominant shape (every request-derived budget in this package is
+// 3-12s), so the blanket-deadline check alone closes the smaller half of
+// the class.
+//
+// The trade-off, stated: a genuine internal fault that happens to be
+// reported after the deadline expired is relabelled a timeout. The
+// handler's own ERROR log line still carries the real error, so
+// diagnosis is unaffected, and once the budget is gone "retry" is the
+// only advice the caller can act on anyway.
+func requestDeadlineExpired(r *http.Request) bool {
+	return errors.Is(r.Context().Err(), context.DeadlineExceeded)
+}
+
+// writeProblemErr is writeProblem for a call site that has the failing
+// error in hand. It rewrites a FAULT status to the same retryable
+// request-timeout 503 when the ERROR is a deadline — the case
+// requestDeadlineExpired structurally cannot see, because a handler's own
+// context.WithTimeout(r.Context(), …) budget expires while r.Context()
+// still has budget left. The store returns context.DeadlineExceeded, the
+// site has no timeout branch, and the request books `errors/internal`
+// 500: "we broke", for a condition a retry clears.
+//
+// Both fault statuses are rewritten. 500 attributes the failure to this
+// server and 502 to its upstream, and a deadline is neither. The supply
+// endpoint is the 502 case: an 8s ceiling on a lake read rendered as
+// "Supply read failed", which sends the reader looking at ClickHouse for
+// a bound this process imposed. A 4xx is decided on the request's own
+// merits and stays the client's answer; an already-retryable 503 keeps
+// its own more specific type.
+//
+// Deliberately keyed on errors.Is over the error rather than on a
+// context: a driver that RE-PHRASES the cancellation instead of wrapping
+// it (Postgres SQLSTATE 57014) is not caught here, and that case is what
+// handlerTimedOut and its per-call context are for. A site holding a
+// per-call ctx and a named timeout type should branch on handlerTimedOut
+// and keep its more specific `…-timeout` shape; this is the fallback for
+// the sites that have neither.
+func writeProblemErr(
+	w http.ResponseWriter, r *http.Request, err error,
+	typeURL, title string, status int, detail string,
+) {
+	faultStatus := status == http.StatusInternalServerError || status == http.StatusBadGateway
+	if faultStatus && errors.Is(err, context.DeadlineExceeded) {
+		typeURL, title, status, detail = requestTimeoutType, requestTimeoutTitle,
+			http.StatusServiceUnavailable, requestTimeoutDetail
+	}
+	writeProblem(w, r, typeURL, title, status, detail)
 }
 
 // clientAborted reports whether a reader-returned error came from
@@ -187,18 +312,38 @@ func writeProblem(w http.ResponseWriter, r *http.Request, typeURL, title string,
 // 499 (NGINX-style "client closed request") rather than the
 // misleading 500 a writeProblem would produce.
 //
-// Decision rule: the request's own context being done is the only
-// signal that means "client gone." A reader returning
-// context.DeadlineExceeded while r.Context() is still alive is a
-// SERVER-side deadline (one of the cold-path context.WithTimeout
-// guards added in #1082, #1099-#1105) — the client is still
-// waiting and deserves a 503 problem+json, not a silent abort.
+// Decision rule: the request context must be done AND its cause must
+// be CANCELLATION. net/http cancels r.Context() with
+// [context.Canceled] when the peer hangs up, so that is the one state
+// in which nobody is left to read a response.
+//
+// A done request context whose Err is [context.DeadlineExceeded] is
+// the opposite case — a SERVER-side budget expiring with the client
+// still on the wire. Two of those exist: the cold-path
+// context.WithTimeout guards inside handlers (#1082, #1099-#1105), and
+// since C3-102 the blanket middleware.RequestTimeout deadline, which
+// wraps r.Context() itself. Testing only `Err() != nil` conflated the
+// second with a client abort: on the global deadline the handler
+// returned silently and net/http emitted a BODYLESS 200, which reads
+// to a client as an authoritative empty result rather than a failure
+// (a Blend pool with real supply rendered as "0 reserves / $0 TVL").
+// Both server-side deadlines belong on the 503 problem+json path.
+//
+// The 499 relabel above does NOT cover that case, which is why the
+// bodyless 200 was invisible: obs.HTTPMetrics is installed OUTSIDE
+// middleware.RequestTimeout (server.go's Handler stack), so the
+// r.Context() it inspects is the UN-deadlined one. On a server-side
+// deadline with the peer still connected that context's Err() is nil,
+// the 499 override never fires, and the recorder's default
+// http.StatusOK stands — so those requests were counted as 200 and, on
+// that status, admitted into http_request_success_duration_seconds, the
+// latency SLO's success numerator. They are 5xx now.
 //
 // Handlers should structure error handling as:
 //
 //	if err != nil {
 //	    if clientAborted(r, err) { return }
-//	    if errors.Is(err, context.DeadlineExceeded) {
+//	    if handlerTimedOut(callCtx, err) {
 //	        // 503 timeout response
 //	    }
 //	    // 500 internal
@@ -208,7 +353,7 @@ func writeProblem(w http.ResponseWriter, r *http.Request, typeURL, title string,
 // because it's the natural call site (handlers always have it) and
 // keeps the call sites stable.
 func clientAborted(r *http.Request, _ error) bool {
-	return r.Context().Err() != nil
+	return errors.Is(r.Context().Err(), context.Canceled)
 }
 
 // handlerTimedOut reports whether a handler-scoped context (created

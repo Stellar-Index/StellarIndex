@@ -69,7 +69,7 @@ GO
 run() { OUT="$(bash "$ROOT/scripts/ci/lint-metric-refs.sh" 2>&1)" || true; }
 
 expect_absent() { # <name> <token>
-  if printf '%s' "$OUT" | grep -q "references '$2'"; then
+  if grep -q "references '$2'" <<<"$OUT"; then
     echo "FAIL: $1 — '$2' flagged DEAD-REF but it should be accounted for" >&2
     printf '%s\n' "$OUT" | sed 's/^/    /' >&2
     fail=$((fail + 1)); return
@@ -77,7 +77,7 @@ expect_absent() { # <name> <token>
   echo "ok: $1"; pass=$((pass + 1))
 }
 expect_present() { # <name> <token>
-  if ! printf '%s' "$OUT" | grep -q "references '$2'"; then
+  if ! grep -q "references '$2'" <<<"$OUT"; then
     echo "FAIL: $1 — '$2' NOT flagged DEAD-REF but it should be (comment-only is not an emitter)" >&2
     printf '%s\n' "$OUT" | sed 's/^/    /' >&2
     fail=$((fail + 1)); return

@@ -872,12 +872,19 @@ type Issuer struct {
 // `/v1/diagnostics/cursors`. `LagSeconds` is computed server-side
 // (now − last_updated) so callers don't need a clock-sync
 // agreement with the API.
+//
+// State is the server's lifecycle verdict — "live" (written in the
+// last 10 minutes), "stale" (behind but inside the 7-day abandoned
+// boundary) or "abandoned" (a record of finished or dead one-shot
+// work). Abandoned rows are omitted unless the request asks for them,
+// so a default listing carries no "abandoned" states.
 type Cursor struct {
 	Source      string `json:"source"`
 	SubSource   string `json:"sub_source,omitempty"`
 	LastLedger  uint32 `json:"last_ledger"`
 	LastUpdated string `json:"last_updated"`
 	LagSeconds  int64  `json:"lag_seconds"`
+	State       string `json:"state"`
 }
 
 // Status is the data shape returned by [Client.Status]. Mirrors

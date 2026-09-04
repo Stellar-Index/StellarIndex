@@ -55,7 +55,7 @@ import (
 // and fails if the two expressions diverge by so much as a field order.
 func listAssetsCacheKey(opts timescale.ListAssetsOptions) string {
 	return newCacheKey("ListAssetsExt").
-		int(opts.Limit).str(opts.Issuer).str(opts.Code).
+		int(opts.Limit).str(opts.Issuer).str(opts.Code).str(opts.Type).
 		str(opts.Cursor).str(opts.Q).order(int(opts.Order)).build()
 }
 

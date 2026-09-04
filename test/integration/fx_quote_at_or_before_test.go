@@ -145,18 +145,16 @@ func TestFXQuoteAtOrBefore(t *testing.T) {
 	// NOTE: every subtest above exercises the LEGACY trades fallback —
 	// fx_quotes is empty in this test's database, so the fx_quotes-first
 	// read (BACKLOG #42) misses and the connector-path trades rows win.
-	// That IS the compatibility contract: re-enabled exchangeratesapi /
-	// exchangeratesapi connectors keep working when the massive feed has
+	// That IS the compatibility contract: a re-enabled exchangeratesapi
+	// connector keeps working when the massive feed has
 	// no rows. The fx_quotes-first behaviour is proven in
 	// TestFXQuoteAtOrBeforeFXQuotesFirst below.
 
 	t.Run("FXSources is deterministic and lex-ordered", func(t *testing.T) {
 		got := external.FXSources()
 		// massive (the forex worker's fx_quotes feed) was bridged into the
-		// registry as a SubclassFX source (P0-7). polygon-forex was removed
-		// 2026-09-01 — polygon.io redirects to massive.com, so it was the same
-		// upstream as massive under a dead name, and carrying IncludeInVWAP:true
-		// meant enabling it would have double-counted massive's own rates.
+		// registry as a SubclassFX source (P0-7). The list contains only the
+		// active Massive feed and the distinct ExchangeRatesApi fallback.
 		want := []string{"exchangeratesapi", "massive"}
 		if len(got) != len(want) {
 			t.Fatalf("FXSources len=%d, want %d (%v)", len(got), len(want), got)

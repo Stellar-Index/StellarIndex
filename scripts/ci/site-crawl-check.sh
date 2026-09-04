@@ -40,9 +40,9 @@ echo "== 2. HTML red flags on key pages"
 for path in / /assets/ /issuers/ /markets/ /contracts/ /transactions/ /protocols/ /dexes/ /lending/; do
   HTML=$(fetch "$SITE$path" || true)
   [ -n "$HTML" ] || { fail "$path unfetchable"; continue; }
-  echo "$HTML" | grep -qE '>undefined<|>NaN<|\[object Object\]' &&
+  grep -qE '>undefined<|>NaN<|\[object Object\]' <<<"$HTML" &&
     fail "$path contains placeholder text"
-  echo "$HTML" | grep -q '· Stellar Index · Stellar Index' &&
+  grep -q '· Stellar Index · Stellar Index' <<<"$HTML" &&
     fail "$path has a doubled title suffix"
 done
 
@@ -50,7 +50,7 @@ echo "== 3. canonicals never double-encode (the %253A incident)"
 PAIR_URL=$(echo "$SITEMAP" | grep -oE '<loc>[^<]*/markets/[^<]+</loc>' | awk 'NR==1' | sed 's/<[^>]*>//g')
 if [ -n "$PAIR_URL" ]; then
   CANON=$(fetch "$PAIR_URL" | grep -oE '<link rel="canonical" href="[^"]+"' | awk 'NR==1' || true)
-  echo "$CANON" | grep -q '%25' && fail "market canonical double-encoded: $CANON"
+  grep -q '%25' <<<"$CANON" && fail "market canonical double-encoded: $CANON"
   CANON_URL=$(echo "$CANON" | grep -oE 'https[^"]+' || true)
   if [ -n "$CANON_URL" ]; then
     CODE=$(status_of "$CANON_URL")

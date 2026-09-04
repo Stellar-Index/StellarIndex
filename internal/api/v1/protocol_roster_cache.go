@@ -149,11 +149,14 @@ func (s *Server) refreshRosterLocked(key string, meta ProtocolMeta) *rosterFligh
 		}()
 		rctx, cancel := context.WithTimeout(context.Background(), protocolRosterRefreshTimeout)
 		defer cancel()
-		rows, err := s.rosterErr(rctx, meta)
+		// The count, not the roster's length: a source whose contracts are
+		// counted rather than enumerated caches its TRUE total instead of a
+		// roster capped far below it (protocolContractCounter).
+		count, err := s.rosterCountErr(rctx, meta)
 
 		s.protocolRosterCache.mu.Lock()
 		if err == nil {
-			s.protocolRosterCache.entries[key] = rosterEntry{count: len(rows), at: time.Now()}
+			s.protocolRosterCache.entries[key] = rosterEntry{count: count, at: time.Now()}
 		}
 		s.protocolRosterCache.mu.Unlock()
 

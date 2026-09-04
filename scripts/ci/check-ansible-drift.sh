@@ -90,7 +90,7 @@ while IFS= read -r line; do
   case "${line#"${line%%[![:space:]]*}"}" in
     ''|'#'*) continue ;;
   esac
-  if ! printf '%s' "$line" | grep -qE '#[[:space:]]*[^[:space:]]'; then
+  if ! grep -qE '#[[:space:]]*[^[:space:]]' <<<"$line"; then
     echo "ansible-drift ❌ baseline entry has no reason: $line" >&2
     bad_entry=1
     continue
@@ -130,6 +130,8 @@ fi
 recap_changed=0
 while IFS= read -r line; do
   [ -z "$line" ] && continue
+  # sigpipe-ok: the producer is a printf of ONE PLAY RECAP line, so grep -oE
+  # emits at most a handful of `changed=N` tokens — bytes, not kilobytes.
   n="$(printf '%s' "$line" | grep -oE 'changed=[0-9]+' | head -1 | cut -d= -f2)"
   recap_changed=$((recap_changed + ${n:-0}))
 done <<EOF

@@ -171,6 +171,10 @@ func projectionContractColumn(source string) (table, column string, ok bool) {
 // events). Returns nil for sources without a per-contract projected table
 // (caller keeps its registry/pairs path). Capped so a pathological table can't
 // blow the response.
+//
+// The cap is why sorocredit is deliberately absent from both switches below:
+// its contract set is ~23x the cap, so an enumerated roster could only ever
+// publish the cap as its count. It is served by CountSourceContracts instead.
 func (s *Store) ListSourceContractsFromProjection(ctx context.Context, source string) ([]string, error) {
 	// Oracle sources (band/reflector-*/redstone) share ONE projected table,
 	// oracle_updates, so the generic unfiltered DISTINCT below would return
@@ -205,6 +209,46 @@ func (s *Store) ListSourceContractsFromProjection(ctx context.Context, source st
 		return nil, fmt.Errorf("timescale: ListSourceContractsFromProjection %s rows: %w", source, err)
 	}
 	return out, nil
+}
+
+// sourceContractCountQuery maps a protocol source to the COUNT that yields its
+// TRUE contract total without enumerating it. ok=false for every other source:
+// its roster IS its count, so the caller counts the roster.
+//
+// sorocredit deploys one Collateral-<uuid> CHILD CONTRACT per opened position
+// (116,124 on r1, 2026-09-03 — ~23x the enumerating paths' LIMIT 5000). Each
+// child is announced exactly once, by the NewCollateralContract event
+// credit_positions holds (migration 0090), and the decoder claims a child's
+// events only from an announced child (ADR-0035), so DISTINCT over that one
+// column is the whole child set. The query is HARD-CODED here, never built
+// from the request.
+func sourceContractCountQuery(source string) (query string, ok bool) {
+	if source == "sorocredit" {
+		return `SELECT count(DISTINCT collateral_contract) FROM credit_positions`, true
+	}
+	return "", false
+}
+
+// CountSourceContracts returns source's exact contract total WITHOUT
+// enumerating it, for a protocol whose contracts outnumber the roster paths'
+// LIMIT 5000 by orders of magnitude — where a roster-derived count can only
+// publish the cap, and an absent roster publishes a zero. ok=false (and no
+// query issued) for a source with no count-only path.
+//
+// Deliberately unwindowed: this is the lifetime contract set, not a window's
+// activity. 170 ms over credit_positions on r1 (2026-09-03), and the API
+// serves it from its prewarmed roster-count cache, so it never runs on a
+// request path.
+func (s *Store) CountSourceContracts(ctx context.Context, source string) (int64, bool, error) {
+	q, ok := sourceContractCountQuery(source)
+	if !ok {
+		return 0, false, nil
+	}
+	var n int64
+	if err := s.db.QueryRowContext(ctx, q).Scan(&n); err != nil {
+		return 0, false, fmt.Errorf("timescale: CountSourceContracts %s: %w", source, err)
+	}
+	return n, true, nil
 }
 
 // listContractsFilteredBySource is the source-SCOPED projection roster, for

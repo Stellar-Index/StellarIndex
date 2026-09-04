@@ -17,12 +17,10 @@ import (
 	_ "github.com/jackc/pgx/v5/stdlib"
 
 	"github.com/stellar/go-stellar-sdk/strkey"
-	"github.com/testcontainers/testcontainers-go"
-	tcpostgres "github.com/testcontainers/testcontainers-go/modules/postgres"
-	"github.com/testcontainers/testcontainers-go/wait"
 
 	c "github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
+	"github.com/Stellar-Index/StellarIndex/test/harness"
 )
 
 // gAccountFromSeed returns a strkey-valid 56-char G-address whose
@@ -478,69 +476,14 @@ func TestInsertTrade_MultiOpSameTxBothLand(t *testing.T) {
 	}
 }
 
-// startTimescale is extracted so both tests can share it without
-// violating "no shared fixture" — each test starts its own
-// container. Returns the connection DSN.
+// startTimescale gives this package's ~40 call sites the shared
+// Timescale bootstrap. Every container start in the repo goes through
+// harness.StartTimescale so the image pin, the container flags and the
+// readiness gate cannot drift apart. Each call starts its OWN
+// container — no shared fixture. Returns the connection DSN.
 func startTimescale(t *testing.T, ctx context.Context) string {
 	t.Helper()
-	pg, err := tcpostgres.Run(ctx,
-		// Matches r1's deployed TimescaleDB (2.26.x); see the note in
-		// migrations_test.go on the prior 2.17.2 prod-drift.
-		"timescale/timescaledb:2.26.4-pg15",
-		tcpostgres.WithDatabase("stellarindex"),
-		tcpostgres.WithUsername("stellarindex"),
-		tcpostgres.WithPassword("stellarindex-test"),
-		// ZERO background workers — the migrations_test.go fix
-		// (2026-08-13) mirrored here 2026-08-22 after main went red on
-		// the identical deadlock through THIS bootstrap:
-		// TestTradeInsertOutcome's `migrate up` hit "deadlock detected"
-		// in 0126's DROP MATERIALIZED VIEW because a CAGG refresh
-		// policy job (created by 0081/0115 earlier in the same chain)
-		// was running concurrently. With 0147 the chain carries a
-		// second full recreate, doubling the DROP windows — which is
-		// why the flake started firing the ci-health tripwire. Tests
-		// materialize every CAGG by hand (and applyMigrations
-		// additionally unschedules the jobs post-chain), so no test
-		// here needs a background worker; policies remain ATTACHED
-		// (metadata) for anything that asserts them.
-		// APPEND to the module's own Cmd — replacing it wholesale
-		// makes the container exit 1 (see migrations_test.go).
-		testcontainers.WithCmdArgs("-c", "timescaledb.max_background_workers=0"),
-		testcontainers.WithWaitStrategy(
-			wait.ForLog("database system is ready to accept connections").
-				WithOccurrence(2).WithStartupTimeout(60*time.Second),
-		),
-	)
-	if err != nil {
-		t.Fatalf("start timescale: %v", err)
-	}
-	t.Cleanup(func() { _ = pg.Terminate(context.Background()) })
-
-	dsn, err := pg.ConnectionString(ctx, "sslmode=disable")
-	if err != nil {
-		t.Fatalf("conn str: %v", err)
-	}
-	// Pre-enable extension (dev stack does this via init script).
-	db, err := sql.Open("pgx", dsn)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer db.Close()
-	if _, err := db.ExecContext(ctx, "CREATE EXTENSION IF NOT EXISTS timescaledb"); err != nil {
-		t.Fatalf("create extension: %v", err)
-	}
-	// Prove the zero-background-workers setting took effect (same guard
-	// as migrations_test.go): a silently-unapplied Cmd override would
-	// look like a fix while leaving the migrate-up deadlock race live.
-	var workers string
-	if err := db.QueryRowContext(ctx, "SHOW timescaledb.max_background_workers").Scan(&workers); err != nil {
-		t.Fatalf("read timescaledb.max_background_workers: %v", err)
-	}
-	if workers != "0" {
-		t.Fatalf("timescaledb.max_background_workers = %q, want \"0\" — the container Cmd override did not apply, "+
-			"so policy jobs can still deadlock against the migration chain's DROPs", workers)
-	}
-	return dsn
+	return harness.StartTimescale(t, ctx)
 }
 
 func applyMigrations(t *testing.T, dsn string) {

@@ -157,6 +157,56 @@ paths:
 	}
 }
 
+// TestLint_ServerHostNotServed — the spec shipped a Staging server for
+// a hostname with no DNS record at all, so every OpenAPI import offered
+// a dead target in its server picker. Issue #316 ("no staging exists")
+// was closed without removing the entry, which is what this rule stops
+// from recurring.
+func TestLint_ServerHostNotServed(t *testing.T) {
+	s := mustParse(t, `
+servers:
+  - url: https://api.staging.stellarindex.io/v1
+    description: Staging
+`)
+	violations := lint(s)
+	if len(violations) == 0 {
+		t.Fatal("expected violation for an unserved server host, got none")
+	}
+	if !strings.Contains(violations[0], "api.staging.stellarindex.io") {
+		t.Errorf("violation should name the offending host; got %q", violations[0])
+	}
+}
+
+// TestLint_ServedAndLoopbackServersPass — the production host is on the
+// served list and the self-hosted entry is loopback, which exists to be
+// edited by the reader rather than dialled as written.
+func TestLint_ServedAndLoopbackServersPass(t *testing.T) {
+	s := mustParse(t, `
+servers:
+  - url: https://api.stellarindex.io/v1
+    description: Production
+  - url: http://localhost:3000/v1
+    description: Self-hosted / dev
+`)
+	if v := lint(s); len(v) > 0 {
+		t.Errorf("production + loopback servers should pass; got %v", v)
+	}
+}
+
+// TestLint_ServerURLNotAbsolute — a relative or malformed server URL
+// leaves a generated client with nothing to dial, so it fails on the
+// same rule rather than being skipped as "not a host we recognise".
+func TestLint_ServerURLNotAbsolute(t *testing.T) {
+	s := mustParse(t, `
+servers:
+  - url: /v1
+    description: Relative
+`)
+	if v := lint(s); len(v) == 0 {
+		t.Error("a server URL with no host should trip the lint")
+	}
+}
+
 // TestForbiddenNames_Stable — the forbidden-name list shows up in
 // error messages, which become operator-facing diagnostics. The
 // sortedKeys helper ensures the output is deterministic.

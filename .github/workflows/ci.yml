@@ -148,6 +148,10 @@ jobs:
           verify: false
       - name: go vet
         run: go vet ./...
+      - name: go vet (linux/arm64 cross)
+        # dup2 has no arm64 syscall entry; amd64-only vetting hid a build
+        # break that the native-arm64 container verifier then exposed.
+        run: GOOS=linux GOARCH=arm64 go vet ./internal/pipeline/
 
   test:
     name: unit tests
@@ -362,6 +366,17 @@ jobs:
         run: ./scripts/ci/lint-doc-links.sh
       - name: lint-doc-links self-test
         run: ./scripts/ci/lint-doc-links-test.sh
+      - name: lint-external-channels
+        # A repository setting or DNS name that is switched off cannot be
+        # seen from inside the tree, so three published channels shipped
+        # as 404s at once — a Discussions link on a repo without
+        # Discussions, a Security-tab reporting form that does not exist
+        # (leaving no working disclosure route at all), and a spec server
+        # for a host with no DNS. docs/operations/external-channels.md
+        # holds their state; this gate holds the docs to it.
+        run: ./scripts/ci/lint-external-channels.sh
+      - name: lint-external-channels self-test
+        run: ./scripts/ci/lint-external-channels-test.sh
 
   workflow-security:
     name: workflow static analysis (zizmor)
@@ -548,6 +563,23 @@ jobs:
         # the constants stay within [period+slack, 2*period) of the
         # Ansible-deployed compute-completeness.timer.
         run: ./scripts/ci/lint-completeness-staleness.sh
+      - name: lint-served-value-cadence
+        # The served-value truth harness (CS-010's only monitored check on
+        # the NUMBER rather than the pipe) shipped with three alerts, a
+        # runbook saying "daily timer" and nothing anywhere that ran it, so
+        # the textfile was never written and all three selected a series
+        # that had never existed. This asserts the harness is templated,
+        # rendered and enabled by ansible, and that the staleness
+        # threshold stays within [period+slack, 2*period] of the timer it
+        # is calibrated against — the lint-completeness-staleness contract
+        # applied to the other hand-calibrated cadence.
+        run: ./scripts/ci/lint-served-value-cadence.sh
+      - name: lint-served-value-cadence self-test
+        # Fixture tests for the gate above. Its assertion that ansible
+        # INSTALLS the units — rather than merely mentioning them, which a
+        # removal block does too — is only worth its line count if it is
+        # observed failing on the shapes it claims to catch.
+        run: ./scripts/ci/lint-served-value-cadence-test.sh
       - name: lint-migration-compat
         # CID-14 (audit-2026-07-23): migrations/README.md rule 9 —
         # every up-migration must be additive + old-binary-safe. The
@@ -749,6 +781,16 @@ jobs:
         # fire. These fixtures run the shipped probe region against a
         # stubbed curl. No network, no ClickHouse, no Postgres.
         run: ./scripts/ci/data-freshness-test.sh
+      - name: API-smoke textfile self-test
+        # stellarindex-smoke.timer ran a 34-GET API smoke with jq shape
+        # assertions every 5 minutes and reported to NOTHING:
+        # HEALTHCHECKS_URL_SMOKE was empty on r1, the wrapper wrote no
+        # node_exporter textfile, and no rule mentioned it — so the one
+        # check that can see a 200 carrying structurally wrong JSON was
+        # itself unobservable. These fixtures run the shipped wrapper
+        # against a stub smoke script and a stubbed curl, asserting the
+        # textfile lands on every path. No network, no systemd.
+        run: ./scripts/ci/smoke-textfile-test.sh
       - name: lint-deploy-playbook
         # deploy-ansible-deploy-2: deploy.yml reaches the test-net VMs only
         # via --ssh-common-args ProxyJump, which controller-side rsync
@@ -1061,7 +1103,7 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
-      - name: ADR-0018 URL-discipline check
+      - name: ADR-0018 URL-discipline + served-host check
         run: go run ./scripts/ci/lint-openapi-urls openapi/stellar-index.v1.yaml
       - name: ADR-0033 PK-discriminator check (coarse-PK data-loss guard)
         run: go run ./scripts/ci/lint-pk-discriminators

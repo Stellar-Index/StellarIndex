@@ -119,7 +119,7 @@ fi
 # --- 4. DKIM -----------------------------------------------------------------
 echo "dkim"
 for sel in resend cf2024-1; do
-  if q TXT "${sel}._domainkey.$DOMAIN" | grep -q 'p='; then
+  if grep -q 'p=' <<<"$(q TXT "${sel}._domainkey.$DOMAIN")"; then
     pass "DKIM selector ${sel}: published"
   else
     fail "DKIM selector ${sel}: absent"
@@ -135,12 +135,12 @@ else
   pass "CAA: $(printf '%s\n' "$caa" | grep -c .) record(s)"
   # r1's Caddy renews through Let's Encrypt. Losing this entry takes
   # api.$DOMAIN TLS-dark at the next renewal, ~60 days later, silently.
-  if printf '%s' "$caa" | grep -q 'letsencrypt.org'; then
+  if grep -q 'letsencrypt.org' <<<"$caa"; then
     pass "CAA allows letsencrypt.org (r1 Caddy renewal)"
   else
     fail "CAA omits letsencrypt.org — r1 Caddy renewal WILL fail"
   fi
-  if printf '%s' "$caa" | grep -q 'pki.goog'; then
+  if grep -q 'pki.goog' <<<"$caa"; then
     pass "CAA allows pki.goog (Cloudflare Universal SSL)"
   else
     fail "CAA omits pki.goog — Cloudflare Pages cert renewal may fail"
@@ -149,7 +149,7 @@ fi
 
 # --- 6. DNSSEC (informational: the DS lives at the registrar) ----------------
 echo "dnssec"
-if dig +short DS "$DOMAIN" @1.1.1.1 | grep -q .; then
+if grep -q . <<<"$(dig +short DS "$DOMAIN" @1.1.1.1)"; then
   pass "DS published at the registrar"
 else
   printf '  \033[33mnote\033[0m no DS at the registrar — DNSSEC is inert (see the doc)\n'

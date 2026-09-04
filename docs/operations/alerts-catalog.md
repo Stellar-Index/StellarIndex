@@ -1,6 +1,6 @@
 ---
 title: Alerts Catalogue
-last_verified: 2026-09-02
+last_verified: 2026-09-03
 status: ratified — incremental growth
 ---
 
@@ -26,8 +26,8 @@ enforced 2026-04-23 onward).
 
   | Severity | Rules | AlertManager route | Delivery |
   | --- | --- | --- | --- |
-  | `page` | 52 | `receiver: chat-page` | Discord **#stellarindex-pages**, `repeat_interval` 12 h. There is **no** PagerDuty leg — `pagerduty_configs` is unset, so nothing wakes anyone up. |
-  | `ticket` | 138 | `receiver: chat-default` | Discord **#stellarindex-alerts**, `repeat_interval` 24 h. |
+  | `page` | 53 | `receiver: chat-page` | Discord **#stellarindex-pages**, `repeat_interval` 12 h. There is **no** PagerDuty leg — `pagerduty_configs` is unset, so nothing wakes anyone up. |
+  | `ticket` | 140 | `receiver: chat-default` | Discord **#stellarindex-alerts**, `repeat_interval` 24 h. |
   | `informational` | 21 | `receiver: silent` | **Delivered to nobody, deliberately.** `silent` is declared with no `*_configs` block at all, which in Alertmanager means the alert is accepted and then dropped. It accumulates in the AlertManager UI and nothing else happens. |
 
   **`informational` is not "a low-priority ticket".** There is no
@@ -84,10 +84,11 @@ enforced 2026-04-23 onward).
 | `stellarindex_ingestion_decode_error` | `rate(stellarindex_source_decode_errors_total[5m])` | > 1/s sustained 5 min | informational | [decode-errors](runbooks/decode-errors.md) |
 | `stellarindex_decoder_panicked` | `stellarindex_decoder_panics_total` | > 0 — a decoder's Matches/Decode panicked; the dispatcher skipped that one input and ingest continued, but the decoder keeps dropping every event of that shape until a fixed binary ships (#371 F1). Raw value, not `increase()`: a one-off panic creates a series born at 1 that `increase()` can never see. | page | [decoder-panicked](runbooks/decoder-panicked.md) |
 | `stellarindex_ingestion_oracle_unknown_symbols` | `sum by (source) (increase(stellarindex_source_unknown_symbols_total[25h]))` | > 0 sustained 30 min (an on-chain oracle publishes a symbol / feed_id the canonical allow-list does not map) | ticket | [oracle-unknown-symbols](runbooks/oracle-unknown-symbols.md) |
-| `stellarindex_ingestion_oracle_unrepresentable_symbols` | `sum by (source) (increase(stellarindex_source_unrepresentable_symbols_total[25h]))` | > 0 sustained 30 min (an oracle publishes a feed_id the record layer cannot store even as `raw:` — the slot is dropped, no row written) | ticket | [oracle-unknown-symbols](runbooks/oracle-unknown-symbols.md) |
+| `stellarindex_ingestion_oracle_unrepresentable_symbols` | `sum by (source) (increase(stellarindex_source_unrepresentable_symbols_total[25h]))`, or the same counter born inside the 25 h window (`m unless m offset 25h`) | > 0 sustained 30 min (an oracle publishes a feed_id the record layer cannot store even as `raw:` — the slot is dropped, no row written). Second arm for the same reason `decoder_panicked` reads the raw value: a `{source}` child born at 1 is invisible to `increase()` | ticket | [oracle-unknown-symbols](runbooks/oracle-unknown-symbols.md) |
 | `stellarindex_ingestion_discovery_drops` | `increase(stellarindex_discovery_dropped_hits_total[10m])` | > 0 sustained 10 min | informational | [discovery-drops](runbooks/discovery-drops.md) |
 | `stellarindex_served_value_drift` | `stellarindex_served_value_ok == 0` | sustained 26 h (two daily runs) | ticket | [served-value-drift](runbooks/served-value-drift.md) |
-| `stellarindex_served_value_check_stale` | `time() - stellarindex_served_value_last_run_unix` | > 48 h | ticket | [served-value-drift](runbooks/served-value-drift.md) |
+| `stellarindex_served_value_check_stale` | `time() - stellarindex_served_value_last_run_unix` (or `absent_over_time(...[2d])`) | > 48 h for ≥ 1 h, or the series has never existed | ticket | [served-value-drift](runbooks/served-value-drift.md) |
+| `stellarindex_served_value_unit_failed` | `node_systemd_unit_state{name="verify-served-values.service",state="failed"} == 1 and the same 25 h earlier` | two consecutive daily runs failed (fires ~26 h after the first) | ticket | [served-value-drift](runbooks/served-value-drift.md) |
 | `stellarindex_served_value_persistently_skipped` | `stellarindex_served_value_skipped == 1` | sustained 26 h (two daily runs) | ticket | [served-value-drift](runbooks/served-value-drift.md) |
 | `stellarindex_cex_usd_volume_coverage_low` | per-source `increase(stellarindex_trade_inserts_total{usd_volume_populated="yes"}[1h])` / total, external venues | < 99.9% sustained 30 min | ticket | [usd-volume-coverage-plan](usd-volume-coverage-plan.md) |
 | `stellarindex_onchain_usd_volume_coverage_low` | same ratio over `[6h]`, aggregated across on-chain venues | < 99.5% sustained 1 h | ticket | [usd-volume-coverage-plan](usd-volume-coverage-plan.md) |
@@ -177,7 +178,7 @@ signal lands.
 
 | Name | Metric | Condition | Severity | Runbook |
 | ---- | ------ | --------- | -------- | ------- |
-| `stellarindex_api_down` | `up{job=~"stellarindex[_-]api"}` across regions | == 0 for > 60 s | page | [api-down](runbooks/api-down.md) |
+| `stellarindex_api_down` | `sum(up{job=~"stellarindex[_-]api"})` across regions, `or absent_over_time(up{...}[5m])` | == 0 for > 60 s, or the `up` series absent 5 min — `sum()` over an empty vector is empty, so the absent arm is what covers a target dropped from service discovery | page | [api-down](runbooks/api-down.md) |
 | `stellarindex_api_latency_p95_high` | `histogram_quantile(0.95, rate(http_request_duration_seconds_bucket{job="stellarindex-api"}[5m]))` | > 500 ms for 10 m (the p95 is already a 5 m percentile, so the longer `for` rides out a cold-cache deploy) | ticket | [api-latency](runbooks/api-latency.md) |
 | `stellarindex_api_latency_p99_high` | `histogram_quantile(0.99, ...)` | > 2 s for 10 m | ticket | [api-latency](runbooks/api-latency.md) |
 | `stellarindex_api_error_rate_high` | `rate(http_requests_total{status=~"5.."}[5m]) / rate(http_requests_total[5m])` | > 1 % for > 2 min | ticket | [api-5xx](runbooks/api-5xx.md) |
@@ -211,6 +212,29 @@ counterparts to the API-plane alerts above.
 | `stellarindex_sla_probe_freshness_breach` | `stellarindex_sla_probe_freshness_sec` | > 30 s for ≥ 30 min | page | [sla-probe-freshness-breach](runbooks/sla-probe-freshness-breach.md) |
 | `stellarindex_sla_probe_unit_failed_alert` | `stellarindex_sla_probe_unit_failed` | > 0 for ≥ 30 min | ticket | [sla-probe-unit-failed](runbooks/sla-probe-unit-failed.md) |
 | `stellarindex_sla_probe_stale` | `time() - stellarindex_sla_probe_last_pass_timestamp` | > 90 min for ≥ 5 min | page | [sla-probe-stale](runbooks/sla-probe-stale.md) |
+
+## API-smoke alerts
+
+Source: `scripts/dev/r1-smoke.sh` runs every 5 min via the wrapper +
+systemd timer in `configs/healthchecks/` (`smoke.sh`,
+`stellarindex-smoke.timer`); metrics emitted to node_exporter's
+textfile_collector as `api_smoke.prom`.
+
+The smoke is the only check that reads response **bodies** — 34 GETs
+with jq shape assertions, covering the failure the heartbeats and the
+SLA probe structurally cannot see: a 200 carrying the wrong JSON, or a
+documented 4xx that regressed into a silent 200. Until 2026-09-03 its
+only sink was `HEALTHCHECKS_URL_SMOKE`, empty on r1 since install, so
+the check ran into the journal and nowhere else: no textfile, no series,
+no rule. Both rows below are `ticket` rather than `page` deliberately —
+a `page` on component `api` inhibits every `ticket` sharing that
+component, so a smoke that paged while the API was healthy would mute
+the api-plane tickets it exists to complement.
+
+| Name | Metric | Condition | Severity | Runbook |
+| ---- | ------ | --------- | -------- | ------- |
+| `stellarindex_api_smoke_failing` | `stellarindex_api_smoke_failures` | > 0 for ≥ 30 min (six consecutive failing runs at the 5-min cadence) | ticket | [api-smoke-failing](runbooks/api-smoke-failing.md) |
+| `stellarindex_api_smoke_stale` | `time() - stellarindex_api_smoke_last_run_unix`, plus an `absent_over_time(…[30m])` branch for the never-ran case | > 30 min for ≥ 5 min | ticket | [api-smoke-stale](runbooks/api-smoke-stale.md) |
 
 ## SLO burn-rate alerts (multi-window)
 
@@ -341,7 +365,7 @@ chain-link locally. See [archive-completeness.md](archive-completeness.md).
 | `stellarindex_archive_completeness_critical_stale` | same | > 48 h on R1 (integrity leader) | page | [archive-completeness-stale](runbooks/archive-completeness-stale.md) |
 | `stellarindex_archive_repair_source_degraded` | `increase(archive_completeness_repair_failures_total[25h]) / increase(archive_completeness_repair_attempts_total[25h])` per source | > 0.10 over one verify cycle (25 h) | informational | [archive-repair-source-degraded](runbooks/archive-repair-source-degraded.md) |
 | `stellarindex_galexie_catchup_refused` | `stellarindex_galexie_catchup_refusals_5m` (journal probe textfile metric) | > 0 for 10 m | page | [galexie-catchup-refused](runbooks/galexie-catchup-refused.md) |
-| `stellarindex_host_swap_activity` | `rate(node_vmstat_pswpout[10m])` | > 100 for 15 m | ticket | [galexie-catchup-refused](runbooks/galexie-catchup-refused.md) |
+| `stellarindex_host_swap_activity` | `rate(node_vmstat_pswpout[10m])` | > 100 for 15 m | ticket | [host-swap-activity](runbooks/host-swap-activity.md) |
 | `stellarindex_galexie_archive_tip_lag_high` | `galexie_archive_tip_lag_ledgers` (archive newest vs live newest) | > 64,000 for 90 m | ticket | [galexie-archive-tip-lag](runbooks/galexie-archive-tip-lag.md) |
 | `stellarindex_galexie_archive_tip_lag_severe` | same | > 128,000 for 30 m | page | [galexie-archive-tip-lag](runbooks/galexie-archive-tip-lag.md) |
 | `stellarindex_galexie_archive_tip_lag_metric_stale` | `time() - galexie_archive_tip_lag_updated_seconds` | > 30 m for 15 m | ticket | [galexie-archive-tip-lag](runbooks/galexie-archive-tip-lag.md) |
@@ -468,7 +492,7 @@ auto-unfreeze at all. Rules in
 | ---- | ------ | --------- | -------- | ------- |
 | `stellarindex_price_divergence_warning` | `abs(our_price - ref_price) / ref_price` per pair | > 5 % for > 2 min | informational | [price-divergence](runbooks/price-divergence.md) |
 | `stellarindex_price_divergence_critical` | same | > 10 % for > 2 min | ticket | [price-divergence](runbooks/price-divergence.md) |
-| `stellarindex_oracle_stream_rows_unparsed` | `increase(stellarindex_oracle_stream_rows_unparsed_total[6h])` | > 0 for 10m | ticket | [oracle-stream-rows-unparsed](runbooks/oracle-stream-rows-unparsed.md) |
+| `stellarindex_oracle_stream_rows_unparsed` | `increase(stellarindex_oracle_stream_rows_unparsed_total[6h])`, or the same counter born inside the 6 h window (`m unless m offset 6h`) | > 0 for 10m — the second arm exists because `increase()` cannot see a counter's first increment, so a `{source,field}` child born at 1 would never fire the first | ticket | [oracle-stream-rows-unparsed](runbooks/oracle-stream-rows-unparsed.md) |
 | `stellarindex_oracle_stale` | `time() - stellarindex_oracle_last_update_unix` per source | > 10× its resolution | ticket | [oracle-stale](runbooks/oracle-stale.md) |
 | `stellarindex_divergence_refresh_error_dominant` | `rate(divergence_refresh_total{outcome="refresh_error"}[5m]) > rate(...{outcome="ok"}[5m])` | sustained 30 min | ticket | [divergence-refresh-error-dominant](runbooks/divergence-refresh-error-dominant.md) |
 | `stellarindex_divergence_no_reference` | `rate(divergence_refresh_total{outcome="no_reference"}[5m]) > rate(...{outcome="ok"}[5m])` | sustained 30 min | ticket | [divergence-no-reference](runbooks/divergence-no-reference.md) |
@@ -495,7 +519,7 @@ auto-unfreeze at all. Rules in
 | `stellarindex_sdex_orderbook_maintain_failing` | `rate(stellarindex_sdex_orderbook_maintain_total{outcome=~"load_error\|advance_error"}[15m])` | > 0 for ≥ 30 min (load_error = endpoint stuck warming; advance_error = book drifting from tip) | ticket | [sdex-orderbook-maintain-failing](runbooks/sdex-orderbook-maintain-failing.md) |
 | `stellarindex_protocol_events_rollup_failing` | `rate(stellarindex_protocol_events_rollup_sweeps_total{outcome="refresh_error"}[15m])` | > 0 for ≥ 30 min | informational | [protocol-events-rollup-failing](runbooks/protocol-events-rollup-failing.md) |
 | `stellarindex_asset_volume_rollup_failing` | `rate(stellarindex_asset_volume_rollup_sweeps_total{outcome="refresh_error"}[15m])` | > 0 for ≥ 30 min | informational | [asset-volume-rollup-failing](runbooks/asset-volume-rollup-failing.md) |
-| `stellarindex_nonstandard_decimals_correction_failing` | `increase(stellarindex_nonstandard_decimals_cache_refresh_failures_total[15m]) > 0 or increase(stellarindex_price_serve_declined_nonstandard_decimals_total[15m]) > 0` | > 0 for ≥ 5 min | ticket | [dex-nonstandard-decimals](runbooks/dex-nonstandard-decimals.md) |
+| `stellarindex_nonstandard_decimals_correction_failing` | `increase(stellarindex_nonstandard_decimals_cache_refresh_failures_total[15m]) > 0 or increase(stellarindex_price_serve_declined_nonstandard_decimals_total[15m]) > 0`, plus an `unless ... offset 15m` arm per counter | > 0 for ≥ 5 min. The `offset` arms catch a counter whose first increment lands before its first scrape — `increase()` reads a flat range as 0 | ticket | [dex-nonstandard-decimals](runbooks/dex-nonstandard-decimals.md) |
 | `stellarindex_price_alert_eval_failing` | `rate(stellarindex_price_alert_eval_total{outcome="list_error"}[5m]) > rate(...{outcome="ok"}[5m])` | sustained 30 min | ticket | [price-alert-eval-failing](runbooks/price-alert-eval-failing.md) |
 | `stellarindex_assets_popular_priceless` | `stellarindex_assets_popular_priceless > 0` (count of market-popular, priceless, non-withheld assets; market-character volume — single-account-pair wash excluded) | > 0 for ≥ 1 h (a genuinely-traded asset renders priceless with no recorded reason) | ticket | [assets-popular-priceless](runbooks/assets-popular-priceless.md) |
 | `stellarindex_priceless_coverage_check_stale` | `(time() - stellarindex_priceless_coverage_check_last_success_unix) > 1800` | for ≥ 30 min (the coverage tripwire wedged — blind to new gaps) | ticket | [assets-popular-priceless](runbooks/assets-popular-priceless.md) |
@@ -533,8 +557,8 @@ auto-unfreeze at all. Rules in
 | `stellarindex_zfs_pool_degraded` | `node_zfs_pool_state{state=~"DEGRADED|FAULTED|UNAVAIL"}` | any, for > 60 s | page | [zfs-degraded](runbooks/zfs-degraded.md) |
 | `stellarindex_zfs_pool_low_space` | `min by (instance) (node_filesystem_avail_bytes{fstype="zfs"})` | < 1.3 TB free for > 15 min | ticket | [zfs-pool-full](runbooks/zfs-pool-full.md) |
 | `stellarindex_zfs_pool_critical_space` | `min by (instance) (node_filesystem_avail_bytes{fstype="zfs"})` | < 650 GB free for > 5 min | page | [zfs-pool-full](runbooks/zfs-pool-full.md) |
-| `stellarindex_nvme_smart_warn` | `node_disk_io_errors_total` or SMART attributes | > 0 increase in 1 h | ticket | [nvme-smart](runbooks/nvme-smart.md) |
-| `stellarindex_nvme_thermal_throttle` | NVMe `composite_temperature` | > 70 °C for > 5 min | ticket | [nvme-thermal](runbooks/nvme-thermal.md) |
+| `stellarindex_nvme_smart_warn` | `increase(nvme_num_err_log_entries_total[1h])` | > 0 for > 5 min | ticket | [nvme-smart](runbooks/nvme-smart.md) |
+| `stellarindex_nvme_thermal_throttle` | `nvme_temperature_celsius` | > 70 °C for > 5 min | page | [nvme-thermal](runbooks/nvme-thermal.md) |
 | `stellarindex_nvme_wear_high` | `nvme_percentage_used_ratio` | > 0.80 for > 1 h | ticket | [nvme-smart](runbooks/nvme-smart.md) |
 | `stellarindex_nvme_spare_low` | `nvme_available_spare_ratio` | < 0.20 for > 30 min | page | [nvme-smart](runbooks/nvme-smart.md) |
 | `stellarindex_nvme_media_errors` | `increase(nvme_media_errors_total[24h])` | > 0 for > 5 min | ticket | [nvme-smart](runbooks/nvme-smart.md) |

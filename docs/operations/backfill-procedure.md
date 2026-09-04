@@ -401,6 +401,53 @@ Each chunk runs with `-resume` so a crash mid-chunk re-anchors at
 the last persisted cursor. Don't manually edit the cursor table —
 that path is `stellarindex-ops backfill -resume` only.
 
+### Retiring a shard's cursor row
+
+`ingestion_cursors` has one permanent row per `(source, sub_source)`
+and no retention, so every shard of every one-shot run leaves a row
+behind when it finishes — or when it is abandoned. They accumulate:
+an SDEX backfill abandoned in May 2026 left 91 rows, and by
+September 2026 the table held 4,815 rows of which 4,703 had not been
+written to in over a week. `list-cursors`, the `/diagnostics` page
+and the public `/v1/diagnostics/cursors` endpoint all read that
+table, so the dead rows become the bulk of what every consumer sees.
+
+Reaping is a two-step procedure, and the first step is the decision:
+
+1. **Confirm the work is over.** One-shot job rows past the 7-day
+   boundary are published with `state: abandoned` (a live namespace
+   never is — see step 2):
+
+   ```sh
+   curl -s 'https://api.stellarindex.io/v1/diagnostics/cursors?status=abandoned' | jq '.data | length'
+   ```
+
+   Then check what those shards still owe before deleting their
+   resume points — `resume-stalled` prints the remaining range per
+   cursor and skips the ones sibling coverage already closed:
+
+   ```sh
+   stellarindex-ops resume-stalled -config /etc/stellarindex/config.toml -dry-run
+   ```
+
+   A shard with real remaining work should be resumed, not reaped.
+
+2. **Reap.** Previews by default; `-write` applies:
+
+   ```sh
+   stellarindex-ops reap-cursors -config /etc/stellarindex/config.toml
+   stellarindex-ops reap-cursors -config /etc/stellarindex/config.toml -write
+   ```
+
+   `-older-than` (default `168h`, floor `24h`) sets the cutoff and
+   `-source` narrows to one job's shards. The live namespaces —
+   `ledgerstream` and `projector` — are never reaped at any age: an
+   old row there means ingest is stuck, which is
+   [cursor-stuck](runbooks/cursor-stuck.md), not garbage. Reaping
+   deletes a RECORD, never data; the ledgers a shard walked stay in
+   the lake and the served tier. What it deletes is the resume
+   point.
+
 ## When NOT to use this
 
 - **Live tail.** That's the indexer's job; backfill exits at
@@ -416,6 +463,7 @@ that path is `stellarindex-ops backfill -resume` only.
 ## Cross-references
 
 - [`internal/ops/ingest/backfill.go`](../../internal/ops/ingest/backfill.go) — implementation.
+- [`internal/ops/ingest/reap_cursors.go`](../../internal/ops/ingest/reap_cursors.go) — `reap-cursors`, the cursor-row retirement path above.
 - [`docs/operations/wasm-audits/README.md`](wasm-audits/README.md) — flip `BackfillSafe` once a Soroban source's WASM history is audited.
 - [`internal/sources/external/registry.go`](../../internal/sources/external/registry.go) — `BackfillSafe` flag per source.
 - [`migrations/0002_create_price_aggregates.up.sql`](../../migrations/0002_create_price_aggregates.up.sql) — CAGG definitions that materialise on inserted trades.

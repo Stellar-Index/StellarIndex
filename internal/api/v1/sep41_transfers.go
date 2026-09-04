@@ -65,6 +65,15 @@ const defaultTokenDecimals = 7
 // was precisely that two of the three had no bound at all.
 const tokenMetadataReadTimeout = 2 * time.Second
 
+// sep41TransfersReadTimeout is the whole budget the per-contract read
+// gets: the store's lookback ladder and its full-history fallback
+// together. The ladder is bounded to at most half of it by
+// timescale.SEP41TransferLadderBudget, so the fallback always runs on
+// at least as much time as the ladder that failed to answer;
+// TestSEP41Transfers_LadderBudgetLeavesTheFallbackAtLeastHalf pins the
+// relationship, since neither package can see the other's constant.
+const sep41TransfersReadTimeout = 8 * time.Second
+
 // resolveTokenDecimals best-effort reads a token contract's on-chain
 // decimals() via the tokenDecimals reader, falling back to 7 on a nil
 // reader, a read error, or an uncaptured/non-standard token. Bounded
@@ -127,7 +136,7 @@ func (s *Server) handleSEP41Transfers(w http.ResponseWriter, r *http.Request) {
 		limit = n
 	}
 
-	listCtx, listCancel := context.WithTimeout(r.Context(), 8*time.Second)
+	listCtx, listCancel := context.WithTimeout(r.Context(), sep41TransfersReadTimeout)
 	defer listCancel()
 
 	rows, err := s.sep41Transfers.ListSEP41Transfers(listCtx, contractID, fromAddr, toAddr, limit)
@@ -141,7 +150,7 @@ func (s *Server) handleSEP41Transfers(w http.ResponseWriter, r *http.Request) {
 			writeProblem(w, r,
 				"https://api.stellarindex.io/errors/sep41-transfers-timeout",
 				"SEP-41 transfers timed out", http.StatusServiceUnavailable,
-				"the per-contract scan didn't return in 8s; retry shortly.")
+				"the per-contract scan didn't return in "+sep41TransfersReadTimeout.String()+"; retry shortly.")
 			return
 		}
 		if transientStorageErr(err) {

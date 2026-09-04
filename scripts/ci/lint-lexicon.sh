@@ -76,11 +76,13 @@ trap 'rm -f "$current"' EXIT
   # existence — protocol vocabulary, not ours). A file counts only
   # if it has a Coin token that survives that filter.
   # NOTE: not `grep -vq` — BSD grep's -q reports raw match status and
-  # ignores -v, silently dropping files on macOS. head -1 + -n test is
-  # portable.
+  # ignores -v, silently dropping files on macOS. Capturing what survives
+  # the filter and testing THAT for emptiness is portable, and (unlike a
+  # trailing `head -1`) never closes the pipe on a file full of matches.
   grep -rl 'Coin' --include='*.go' --exclude='*_test.go' internal/ cmd/ pkg/ 2>/dev/null | \
     while IFS= read -r f; do
-      if [ -n "$(grep -oE '[A-Za-z_]*Coin[A-Za-z_]*' "$f" | grep -vE 'Coinbase|CoinGecko|Coingecko|CoinMarketCap|cmcCoin|[Tt]otalCoins' | head -1)" ]; then
+      kept="$(grep -oE '[A-Za-z_]*Coin[A-Za-z_]*' "$f" | grep -vE 'Coinbase|CoinGecko|Coingecko|CoinMarketCap|cmcCoin|[Tt]otalCoins' || true)"
+      if [ -n "$kept" ]; then
         echo "coin $f"
       fi
     done

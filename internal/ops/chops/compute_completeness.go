@@ -465,6 +465,13 @@ func computeCompleteness(args []string) error { //nolint:funlen,gocognit,gocyclo
 		// guard and `detail` still states the floor.
 		lakeComplete := srW.Complete && substrateOK
 		projOK := false
+		// The projection axis's own floor, published alongside the verdict
+		// (migration 0155). Until now it existed only inside `detail`'s
+		// free text, so a consumer reading the typed fields saw
+		// genesis_ledger (the LAKE floor, often ledger 2) and read the
+		// served-tier claim as reaching back to it. 0 stays "not
+		// evaluated" — the else branches below leave it alone.
+		var projVerifiedFrom uint32
 		var w completeness.Watermark
 		// Incremental: only reconcile [projFrom, srW.Ledger], trusting
 		// [genesis, projFrom] as previously verified. In -pass mode projFrom is
@@ -488,6 +495,7 @@ func computeCompleteness(args []string) error { //nolint:funlen,gocognit,gocyclo
 				if serr != nil {
 					return fmt.Errorf("%s: served floor: %w", src.name, serr)
 				}
+				projVerifiedFrom = servedFrom
 				// N-F2 residual: a bottom-edge truncation is invisible to the
 				// reconcile itself, because the reconcile's own floor moves with
 				// it. Compare against the durable floor BEFORE reconciling, and
@@ -542,6 +550,10 @@ func computeCompleteness(args []string) error { //nolint:funlen,gocognit,gocyclo
 		} else {
 			// Legacy Postgres path: strict per-ledger projection pins the watermark.
 			if srW.Ledger >= genesis {
+				// This path reconciles the FULL [genesis, watermark] range,
+				// so its published floor is genesis — not a served-tier
+				// minimum.
+				projVerifiedFrom = genesis
 				pgaps, pblind, perr := reconcileSourceProjection(ctx, store, nil, src, genesis, srW.Ledger)
 				if perr != nil {
 					return fmt.Errorf("%s: projection: %w", src.name, perr)
@@ -597,9 +609,10 @@ func computeCompleteness(args []string) error { //nolint:funlen,gocognit,gocyclo
 		if err := store.UpsertCompletenessSnapshot(ctx, timescale.CompletenessSnapshot{
 			Source: src.name, Genesis: genesis, Tip: tip,
 			Watermark: w.Ledger, CoveragePct: w.CoveragePct, Complete: w.Complete,
-			LakeComplete: lakeComplete,
-			FirstProblem: w.FirstProblem,
-			SubstrateOK:  substrateOK, RecognitionOK: recOK, ProjectionOK: projOK,
+			LakeComplete:           lakeComplete,
+			FirstProblem:           w.FirstProblem,
+			ProjectionVerifiedFrom: projVerifiedFrom,
+			SubstrateOK:            substrateOK, RecognitionOK: recOK, ProjectionOK: projOK,
 			Detail: strings.Join(detail, "; "),
 		}); err != nil {
 			return fmt.Errorf("%s: upsert snapshot: %w", src.name, err)
@@ -901,9 +914,12 @@ type projectionScope struct {
 // comet_liquidity) were silently un-verified below it too. Per TARGET is the
 // correct granularity: each table is checked over exactly what the served tier
 // holds for it, whether that is full history or a never-backfilled prefix
-// (soroswap/sdex trades begin ~61.5M — see
+// (each trades source has its OWN floor, and they are far apart: on r1 sdex
+// trades begin at ledger 61,609,957 / 2026-03-12 while soroswap trades begin at
+// 50,746,445 / 2024-03-11, measured 2026-09-03 — see
 // notes/DECISION-genesis-complete-verdict-2026-07-16.md, which lists this fix
-// as decision item 3).
+// as decision item 3). Reading one source's floor as the trades floor is
+// exactly the source-level mistake this per-target scoping replaced.
 //
 // An EMPTY target floors at `genesis` — fail CLOSED. A wiped table must
 // reconcile expected>0 against served=0 and FAIL; "there is no data, so there
@@ -1164,7 +1180,8 @@ type priorProjection struct {
 //
 // The returned detail ALWAYS states the range actually verified, so
 // `complete=true` can never be read as a genesis-to-tip claim (DAT-09: the
-// served tier legitimately holds no trades below ~61.5M; the genesis claim is
+// served tier legitimately holds no sdex trades below ledger 61,609,957, and
+// each source's floor differs — soroswap's is 50,746,445; the genesis claim is
 // the separate lake_complete axis).
 func projectionClaim(servedFrom, runFrom, hi uint32, runClean bool, runDetail string, prior priorProjection) (bool, string) {
 	if !runClean {

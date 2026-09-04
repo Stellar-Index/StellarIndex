@@ -17,7 +17,6 @@ import {
   stroopsToXlm,
 } from '../explorer-shared';
 
-import { Container } from '@/components/ui';
 /**
  * TransactionsView — recent network transactions. Defaults to the latest
  * ledger's transactions and lets you page backward/forward by ledger
@@ -26,6 +25,9 @@ import { Container } from '@/components/ui';
  *
  * A true global recent-tx feed (cross-ledger cursor) is a follow-up
  * endpoint; this gives a working transactions browser on today's API.
+ *
+ * The page frame (Container + <h1> + description) lives in page.tsx so
+ * the static export carries it; everything below depends on `?seq=`.
  */
 export function TransactionsView() {
   const params = useSearchParams();
@@ -60,39 +62,29 @@ export function TransactionsView() {
   });
 
   return (
-    <Container className="space-y-6 py-8">
-      <header className="space-y-3">
-        <div>
-          <p className="text-xs uppercase tracking-wider text-ink-muted">Explorer</p>
-          <h1 className="text-2xl font-semibold tracking-tight text-ink">Transactions</h1>
-          <p className="mt-1 max-w-2xl text-sm text-ink-muted">
-            Recent transactions, newest ledger first. Click a hash for the full
-            decoded transaction — operations, events, and result codes.
-          </p>
+    <div className="space-y-6">
+      {seq != null && (
+        <div className="flex items-center gap-3 text-xs">
+          <Link
+            href={`/transactions?seq=${seq + 1}`}
+            className="rounded-md border border-line px-2.5 py-1 text-ink-body hover:border-brand-500 hover:text-brand-600"
+          >
+            ← Newer
+          </Link>
+          <span className="font-mono text-ink-body">
+            Ledger #{seq.toLocaleString('en-US')}
+          </span>
+          <Link
+            href={`/transactions?seq=${seq - 1}`}
+            className="rounded-md border border-line px-2.5 py-1 text-ink-body hover:border-brand-500 hover:text-brand-600"
+          >
+            Older →
+          </Link>
+          <Link href="/ledgers" className="ml-auto text-brand-600 hover:underline">
+            Browse ledgers
+          </Link>
         </div>
-        {seq != null && (
-          <div className="flex items-center gap-3 text-xs">
-            <Link
-              href={`/transactions?seq=${seq + 1}`}
-              className="rounded-md border border-line px-2.5 py-1 text-ink-body hover:border-brand-500 hover:text-brand-600"
-            >
-              ← Newer
-            </Link>
-            <span className="font-mono text-ink-body">
-              Ledger #{seq.toLocaleString('en-US')}
-            </span>
-            <Link
-              href={`/transactions?seq=${seq - 1}`}
-              className="rounded-md border border-line px-2.5 py-1 text-ink-body hover:border-brand-500 hover:text-brand-600"
-            >
-              Older →
-            </Link>
-            <Link href="/ledgers" className="ml-auto text-brand-600 hover:underline">
-              Browse ledgers
-            </Link>
-          </div>
-        )}
-      </header>
+      )}
 
       {/* S-004: the page was a bare list — the daily-throughput series
           the API already serves answers "how busy is the network" before
@@ -106,7 +98,7 @@ export function TransactionsView() {
         error={txQ.error ?? tipQ.error}
         rows={txQ.data?.transactions}
       />
-    </Container>
+    </div>
   );
 }
 

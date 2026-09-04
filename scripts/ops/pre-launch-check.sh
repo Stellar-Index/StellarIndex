@@ -67,7 +67,7 @@ else
       # sigpipe-ok: $CONFIG is a TOML file of a few KiB and the grep matches at
       # most a handful of lines — well under the pipe buffer (#475).
       proxy_cidrs="$(grep -E '^\s*trusted_proxy_cidrs\s*=' "$CONFIG" | head -1 || true)"
-      if [ -z "$proxy_cidrs" ] || echo "$proxy_cidrs" | grep -q '\[\s*\]'; then
+      if [ -z "$proxy_cidrs" ] || grep -q '\[\s*\]' <<<"$proxy_cidrs"; then
         fail "listen_addr public + no trusted proxies" "$listen_addr"
       else
         warn "listen_addr public" "$listen_addr (proxy CIDRs configured)"
@@ -102,7 +102,7 @@ echo "  CORS"
 # sigpipe-ok: $CONFIG is a TOML file of a few KiB and the grep matches at
 # most a handful of lines — well under the pipe buffer (#475).
 allowed_origins="$(grep -E '^\s*allowed_origins\s*=' "$CONFIG" 2>/dev/null | head -1 || true)"
-if [ -z "$allowed_origins" ] || echo "$allowed_origins" | grep -q '"\*"'; then
+if [ -z "$allowed_origins" ] || grep -q '"\*"' <<<"$allowed_origins"; then
   fail "allowed_origins is wide open" '["*"] — narrow to your showcase + API hostnames'
 else
   pass "allowed_origins narrowed" "$(echo "$allowed_origins" | sed 's/^[[:space:]]*//')"
@@ -171,7 +171,7 @@ echo
 
 # ── 7. Caddy serving on :443
 echo "  Caddy"
-if ss -tlnp 2>/dev/null | grep -q ':443.*caddy'; then
+if grep -q ':443.*caddy' <<<"$(ss -tlnp 2>/dev/null)"; then
   pass "caddy listening on :443" ""
 else
   fail "caddy not on :443" "TLS termination won't work"

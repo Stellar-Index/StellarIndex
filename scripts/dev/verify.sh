@@ -51,6 +51,12 @@ fi
 
 echo "=== Format ==="        && make fmt
 echo "=== Vet ==="           && make vet
+# The container verifier runs native arm64 on Apple-silicon Docker, and the
+# syscall table there differs from amd64: dup2 has no arm64 entry, so a
+# call that vets clean on amd64 CI and on the production host does not
+# compile in that lane. Cross-vet the one package that touches raw
+# syscalls, so the break surfaces here rather than in a Docker run.
+echo "=== Vet (linux/arm64 cross) ===" && GOOS=linux GOARCH=arm64 go vet ./internal/pipeline/
 echo "=== golangci config schema ===" && go run ./scripts/ci/lint-golangci-config
 echo "=== Lint ==="          && make lint
 echo "=== Docs ==="          && ./scripts/ci/lint-docs.sh
@@ -101,7 +107,7 @@ echo "=== Deploy playbook jump/backup-gate lint ===" && ./scripts/ci/lint-deploy
 # via DEPLOY_SYNC_CONNECTION/DEPLOY_SYNC_HOST (see the script header) or
 # let CI's ansible-check job (ubuntu) run it. Graceful-skip only when the
 # tools are missing, same convention as promtool below.
-if command -v ansible-playbook >/dev/null 2>&1 && { [ -n "${DEPLOY_SYNC_CONNECTION:-}" ] || tar --version 2>/dev/null | grep -q 'GNU tar'; }; then
+if command -v ansible-playbook >/dev/null 2>&1 && { [ -n "${DEPLOY_SYNC_CONNECTION:-}" ] || grep -q 'GNU tar' <<<"$(tar --version 2>/dev/null)"; }; then
     echo "=== Deploy migrations-sync self-test ===" && ./scripts/ci/deploy-sync-test.sh
 else
     defer_check "Deploy migrations-sync self-test" "needs ansible-playbook and GNU tar; use VERIFY_PROFILE=container on macOS"
@@ -116,6 +122,9 @@ echo "=== Public-dataset drift decision-core self-test ===" && ./scripts/ci/chec
 echo "=== Jinja template parse gate ===" && ./scripts/ci/lint-jinja-templates.sh
 echo "=== Jinja template parse gate self-test ===" && ./scripts/ci/lint-jinja-templates-test.sh
 echo "=== pgBackRest backup wrapper self-test ===" && ./scripts/ci/pgbackrest-backup-test.sh
+echo "=== API-smoke textfile self-test ===" && ./scripts/ci/smoke-textfile-test.sh
+echo "=== Served-value harness scheduling + cadence ===" && ./scripts/ci/lint-served-value-cadence.sh
+echo "=== Served-value harness scheduling self-test ===" && ./scripts/ci/lint-served-value-cadence-test.sh
 echo "=== data-freshness watchdog self-test ===" && ./scripts/ci/data-freshness-test.sh
 # BASE_SHA-gated. Both this and lint-replay-plan.sh below take their
 # comparison base from the environment, and with none set they print a skip
@@ -137,7 +146,9 @@ echo "=== Replay-plan tripwire self-test ===" && ./scripts/ci/lint-replay-plan-t
 echo "=== Restore-drill contract + abort-path tests ===" && bash scripts/ops/restore-drill-test.sh && bash scripts/ops/restore-drill-run-test.sh
 # BASE_SHA-gated like lint-baseline-growth.sh: self-skips locally, real in CI.
 echo "=== Replay-plan tripwire ===" && ./scripts/ci/lint-replay-plan.sh
-echo "=== OpenAPI URLs ===" && go run ./scripts/ci/lint-openapi-urls openapi/stellar-index.v1.yaml
+echo "=== External channels ===" && ./scripts/ci/lint-external-channels.sh
+echo "=== External channels self-test ===" && ./scripts/ci/lint-external-channels-test.sh
+echo "=== OpenAPI URLs (query discipline + served hosts) ===" && go run ./scripts/ci/lint-openapi-urls openapi/stellar-index.v1.yaml
 echo "=== PK discriminators ===" && go run ./scripts/ci/lint-pk-discriminators
 # Structural rule-file lint — pure-Python (no promtool), so it runs even
 # on machines without a Prometheus install and catches the mis-indented-rule

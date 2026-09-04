@@ -734,10 +734,15 @@ func (c *Client) Issuer(ctx context.Context, gStrkey string) (*Envelope[Issuer],
 }
 
 // Cursors returns the per-source ingest cursor table from
-// `/v1/diagnostics/cursors`. Operator-facing diagnostic — every
-// (source, sub_source) tuple the dispatcher persists, with
+// `/v1/diagnostics/cursors`. Operator-facing diagnostic — the
+// (source, sub_source) tuples the dispatcher persists, with
 // `lag_seconds` precomputed server-side so callers don't need a
 // clock-sync agreement.
+//
+// The endpoint serves the live + stale rows: cursors left behind by
+// finished or abandoned one-shot jobs (Cursor.State "abandoned") are
+// omitted unless `?include_abandoned=true` is requested, which this
+// method does not do. It also pages at 500 rows.
 func (c *Client) Cursors(ctx context.Context) (*Envelope[[]Cursor], error) {
 	var env Envelope[[]Cursor]
 	if err := c.doJSON(ctx, http.MethodGet, "/v1/diagnostics/cursors", nil, nil, &env); err != nil {
@@ -908,7 +913,16 @@ func (c *Client) Observations(ctx context.Context, q ObservationsQuery) (*Envelo
 
 // ChangeSummaryQuery selects the entity (entity_type + id) for
 // a [Client.ChangeSummary] call. Both fields are required.
-// EntityType is one of "coin", "protocol", "pair", "source".
+//
+// EntityType is "coin" (one asset's price deltas, keyed on the base
+// asset of an aggregator-configured pair) or "pair" (one trading
+// pair's, keyed on "base/quote"). Those are the two families the
+// change-summary worker computes; anything else is a 400.
+//
+// EntityID is the raw id — pass "crypto:XLM/fiat:USD" for a pair,
+// not a pre-escaped form. ChangeSummary percent-encodes it into a
+// single path segment, so the embedded "/" reaches the server as
+// part of the id rather than as path structure.
 type ChangeSummaryQuery struct {
 	EntityType string
 	EntityID   string
@@ -920,6 +934,10 @@ type ChangeSummaryQuery struct {
 // every 5 min. For coin entities the API expands friendly slugs
 // (XLM, USDC) into canonical asset_id forms server-side per
 // PR #1115, so passing the slug works.
+//
+// The rollup covers the pairs the deployment's aggregator prices,
+// not every indexed asset: an asset with no published VWAP has no
+// row and returns 404. Use Assets for the full indexed universe.
 func (c *Client) ChangeSummary(ctx context.Context, q ChangeSummaryQuery) (*Envelope[ChangeSummary], error) {
 	if q.EntityType == "" {
 		return nil, &APIError{Status: 400, Title: "entity_type required"}

@@ -156,7 +156,7 @@ func (s *Server) handleOHLC(w http.ResponseWriter, r *http.Request) {
 			"err", err,
 			"base", base.String(), "quote", quote.String(),
 			"from", from, "to", to)
-		writeProblem(w, r,
+		writeProblemErr(w, r, err,
 			"https://api.stellarindex.io/errors/internal",
 			"Internal error", http.StatusInternalServerError, "")
 		return

@@ -32,7 +32,7 @@ by default.
 | [`bitstamp`](bitstamp/) | Streamer (WS live_trades) | EUR/GBP depth alongside Kraken; European retail liquidity profile | None | One-subscribe-per-channel; uses `price_str` / `amount_str` (preserves vendor precision); periodic server-initiated reconnect |
 | [`coinbase`](coinbase/) | Streamer (WS matches) | US price discovery for XLM/USD | None for matches | Targets the **Exchange** API (ex-Pro), not Coinbase Advanced Trade |
 | [`exchangeratesapi`](exchangeratesapi/) | Poller (REST, 5-min cadence) | Triangulation source: XLM/USD × USD/EUR = XLM/EUR | API key | Authoritative first-party FX computation (interbank + ECB blend) — `ClassExchange`, not aggregator. Free tier (EUR base, hourly) unusable for prod |
-| `polygonforex` (disabled; no package in tree) | Poller (REST snapshot) | Top-tier FX reference; "authority that will not make mistakes" | API key | Aggregates interbank/institutional feeds (OANDA among them); Advanced tier ($199/mo) required for the snapshot endpoint we depend on |
+| [`forex`](forex/) (`massive`) | Poller (REST aggregate bars) | Primary persisted fiat/USD reference feed | API key | Massive REST feed; writes daily-grain rows to `fx_quotes` |
 
 ### `ClassAggregator` — divergence signal only
 
@@ -72,8 +72,8 @@ to (rare).
 
 ### Why FX feeds are `ClassExchange`, not `ClassAggregator`
 
-ExchangeRatesApi and Polygon Forex compute their rates from
-interbank / official-blend inputs. They're a first-party
+ExchangeRatesApi and Massive compute their rates from interbank /
+official-blend inputs. They're a first-party
 authority on what FX rates *are* in the same way Binance is on
 XLM/USDT — not a third-party aggregation across venues we'd
 otherwise sample directly. So they're class-exchange and

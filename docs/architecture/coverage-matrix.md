@@ -228,7 +228,7 @@ Any row with **status ❌** is a blocker for launch. Any row with
 | # | Requirement | Spec ref | Week | Owner | ADR | Verified by | Status | Conf | Prod |
 | - | ----------- | -------- | ---- | ----- | --- | ----------- | ------ | ---- | ---- |
 | S8.1 | `usd_volume` column per trade | §Data Processing | 3 | `internal/canonical.Trade` + `migrations/0001_create_trades_hypertable.up.sql` | — | Column shipped in trades hypertable; CAGGs sum it via `volume_usd`. | ✅ verified | 4 | ✅ 2026-05-10 — `/v1/vwap.quote_volume` populated; `/v1/network/stats.volume_24h_usd=$3,542,086,217` (24h cross-source) |
-| S8.2 | FX anchor for USD conversion | §Forex Providers | 4 | `internal/sources/external/{exchangeratesapi,polygonforex}` + `internal/aggregate/stablecoin.go` | — | Stablecoin proxy at aggregator layer (USDC/USDT→USD); FX vendors wired in registry. | ✅ verified | 4 | ✅ 2026-05-10, re-confirmed 2026-06-12 probe — `exchangeratesapi`, `polygon-forex` (+`ecb`) listed in `/v1/sources` (class=exchange subclass=fx); fiat rates now served via `/v1/assets/fiat:EUR` etc. (`/v1/currencies` dissolved into `/v1/assets` — assets-unification, N-1). |
+| S8.2 | FX anchor for USD conversion | §Forex Providers | 4 | `internal/sources/external/{forex,exchangeratesapi}` + `internal/aggregate/stablecoin.go` | — | Massive supplies the active persisted FX feed; stablecoin proxying stays at the aggregator layer (USDC/USDT→USD). | ✅ verified | 4 | ✅ 2026-09-03 — `massive` is registered in `/v1/sources` (class=exchange subclass=fx); daily-grain fiat rates are persisted in `fx_quotes`. |
 
 ### S9. Performance SLAs
 

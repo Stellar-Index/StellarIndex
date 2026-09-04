@@ -9,7 +9,7 @@ import (
 	"strings"
 	"sync"
 
-	"golang.org/x/sys/unix"
+	"syscall"
 )
 
 // checksumWarnSubstring is the marker every aws-sdk-go-v2 line we want
@@ -157,14 +157,14 @@ func installStderrFilter() (func(), error) {
 func installStderrFilterTo(consume func(r io.Reader, realStderr *os.File)) (func(), error) {
 	// Duplicate fd 2 to a fresh fd so we can keep writing to the
 	// real stderr after we overwrite fd 2 with the pipe.
-	savedFD, err := unix.Dup(int(os.Stderr.Fd()))
+	savedFD, err := syscall.Dup(int(os.Stderr.Fd()))
 	if err != nil {
 		return nil, fmt.Errorf("dup fd 2: %w", err)
 	}
 
 	pr, pw, err := os.Pipe()
 	if err != nil {
-		_ = unix.Close(savedFD)
+		_ = syscall.Close(savedFD)
 		return nil, fmt.Errorf("pipe: %w", err)
 	}
 
@@ -172,10 +172,10 @@ func installStderrFilterTo(consume func(r io.Reader, realStderr *os.File)) (func
 	// reference to fd 2 (including the aws-sdk-go-v2 default
 	// logger bound to os.Stderr) is redirected through us from
 	// here on.
-	if err := unix.Dup2(int(pw.Fd()), int(os.Stderr.Fd())); err != nil {
+	if err := dupOnto(int(pw.Fd()), int(os.Stderr.Fd())); err != nil {
 		_ = pr.Close()
 		_ = pw.Close()
-		_ = unix.Close(savedFD)
+		_ = syscall.Close(savedFD)
 		return nil, fmt.Errorf("dup2 onto fd 2: %w", err)
 	}
 
@@ -207,7 +207,7 @@ func installStderrFilterTo(consume func(r io.Reader, realStderr *os.File)) (func
 			// installed in installStderrFilterTo. That close is
 			// what signals EOF to the reader, *provided* pw (the
 			// remaining handle) is also closed; do that next.
-			_ = unix.Dup2(savedFD, int(os.Stderr.Fd()))
+			_ = dupOnto(savedFD, int(os.Stderr.Fd()))
 			_ = pw.Close()
 			// Wait for the consumer goroutine to drain whatever
 			// was buffered in the pipe before we returned to the

@@ -212,9 +212,7 @@ func TestFXSnapFromRows_Cross(t *testing.T) {
 	if !obs.Equal(older) {
 		t.Errorf("observedAt = %v, want the older bucket %v", obs, older)
 	}
-	// Sorted join: exchangeratesapi < massive alphabetically. The fixture
-	// used to pair massive with polygon-forex, which sorted the other way —
-	// the assertion moved with the fixture, the sort property did not change.
+	// Sorted join: exchangeratesapi < massive alphabetically.
 	if src != "exchangeratesapi+massive" {
 		t.Errorf("source = %q, want exchangeratesapi+massive (sorted join)", src)
 	}

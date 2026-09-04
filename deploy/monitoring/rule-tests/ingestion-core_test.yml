@@ -180,6 +180,118 @@ tests:
         alertname: stellarindex_ingestion_source_stopped_daily_publisher
         exp_alerts: []
 
+  # ══ API-hosted source: massive ════════════════════════════════════
+  # `massive` (the fiat-FX worker) runs in the API binary and publishes
+  # its own stellarindex_source_enabled series from there, so it is a
+  # NEW right-hand series for every rule that joins on the gauge. Each
+  # case below carries an indexer control of the same shape: a silent
+  # result for massive is then the allow-list or the join at work, not
+  # a fixture that matched nothing.
+  #
+  # ── guard: no source_stopped variant judges massive ───────────────
+  # All three variants carry an explicit allow-list and none names
+  # massive. Same flat shape as binance, same enabled=1, same clock:
+  # binance tickets under the tight rule; massive does not, and the 24h
+  # and 30h siblings stay silent past their own `for`.
+  - interval: 1m
+    name: a flat, enabled API-hosted source is in no source_stopped allow-list
+    input_series:
+      - series: 'stellarindex_source_events_total{job="stellarindex_api",instance="r1:8080",source="massive"}'
+        values: '19141+0x90'
+      - series: 'stellarindex_source_enabled{job="stellarindex_api",instance="r1:8080",source="massive"}'
+        values: '1+0x90'
+      - series: 'stellarindex_source_events_total{job="stellarindex_indexer",instance="r1:9100",source="binance"}'
+        values: '5000+0x90'
+      - series: 'stellarindex_source_enabled{job="stellarindex_indexer",instance="r1:9100",source="binance"}'
+        values: '1+0x90'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: stellarindex_ingestion_source_stopped
+        exp_alerts:
+          - exp_labels:
+              source: binance
+              severity: ticket
+              team: stellarindex
+              component: ingestion
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/source-stopped.md
+              summary: "Source binance has stopped ingesting"
+              description: |
+                No events from source binance in the last 30 minutes,
+                sustained for ≥ 15 min. The source is configured
+                as enabled in ingestion.enabled_sources.
+                Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/source-stopped.md
+      - eval_time: 45m
+        alertname: stellarindex_ingestion_source_stopped_low_volume_dex
+        exp_alerts: []
+      - eval_time: 75m
+        alertname: stellarindex_ingestion_source_stopped_daily_publisher
+        exp_alerts: []
+
+  # ── guard: cursor_stuck and insert_stale have nothing to join ─────
+  # Neither rule enumerates sources, so both now see massive's enabled
+  # series — but their left-hand series are the indexer's ledger cursor
+  # (stellarindex_cursor_last_ledger) and the trade-insert stamp
+  # (stellarindex_source_last_insert_unix). The FX worker writes
+  # fx_quotes and emits neither, so `and on (source)` finds nothing on
+  # the left for massive. sdex, frozen on both, is the control: it
+  # tickets alone.
+  - interval: 1m
+    name: an enabled API-hosted source with no cursor or insert series is silent under the unenumerated rules
+    input_series:
+      - series: 'stellarindex_source_enabled{job="stellarindex_api",instance="r1:8080",source="massive"}'
+        values: '1+0x90'
+      - series: 'stellarindex_cursor_last_ledger{job="stellarindex_indexer",instance="r1:9100",source="sdex"}'
+        values: '58000000+0x90'
+      - series: 'stellarindex_source_last_insert_unix{job="stellarindex_indexer",instance="r1:9100",source="sdex"}'
+        values: '0+0x90'
+      - series: 'stellarindex_source_enabled{job="stellarindex_indexer",instance="r1:9100",source="sdex"}'
+        values: '1+0x90'
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: stellarindex_ingestion_cursor_stuck
+        exp_alerts:
+          - exp_labels:
+              job: stellarindex_indexer
+              instance: r1:9100
+              source: sdex
+              severity: ticket
+              team: stellarindex
+              component: ingestion
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/cursor-stuck.md
+              summary: "Cursor for sdex not advancing"
+              description: |
+                The persisted cursor hasn't moved in 5 minutes while the source is
+                enabled. Typical cause: indexer consumed events but UpsertCursor
+                failed silently, or the indexer's cursor-persist path is wedged.
+      - eval_time: 75m
+        alertname: stellarindex_ingestion_source_insert_stale
+        exp_alerts:
+          - exp_labels:
+              job: stellarindex_indexer
+              instance: r1:9100
+              source: sdex
+              severity: ticket
+              team: stellarindex
+              component: ingestion
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ingestion-duplicate-flood.md
+              summary: "Source sdex hasn't landed a new row in >1h"
+              description: |
+                stellarindex_source_last_insert_unix{source="sdex"}
+                hasn't advanced in over an hour while the source is
+                still enabled. Same root-cause cluster as the
+                duplicate-flood alert; the timestamp-shape signal
+                catches low-volume sources whose insert rate sits
+                under the rate-shape alert's 0.5/s threshold.
+
+                Cross-check stellarindex_source_last_event_unix — if the
+                dispatcher is still matching events, the gap is the
+                stuck-tip diagnostic (cursor advances, data doesn't).
+
+                Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ingestion-duplicate-flood.md
+
   # ══ stellarindex_ingestion_all_sources_stopped ════════════════════
   # ── firing: every source flat pages within minutes ────────────────
   - interval: 1m
