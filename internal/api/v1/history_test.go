@@ -124,6 +124,13 @@ func tradesForPair(trades []canonical.Trade, pair canonical.Pair) []canonical.Tr
 // the trades twin of pointsByPair, used by the alias regression test
 // where the literal pair is empty and the crypto:XLM spelling carries
 // the rows.
+//
+// The flat `trades` fixture is filtered by [tradesForPair], the same
+// predicate the TradesInRange sibling applies, because the handler now
+// reads each pair in BOTH stored directions: a row belongs to the ONE
+// orientation it declares, and a pair-blind answer would hand the same
+// fixture back for a market's flip and double every page. Fixtures that
+// leave Pair unset stay unspecified and match any request.
 func (r *stubHistoryReader) TradesInRangeAfter(_ context.Context, pair canonical.Pair, from, to, afterTs time.Time, afterLedger uint32, afterTxHash, afterSource string, afterOpIndex uint32, limit int) ([]canonical.Trade, error) {
 	r.lastCall.from = from
 	r.lastCall.to = to
@@ -140,7 +147,7 @@ func (r *stubHistoryReader) TradesInRangeAfter(_ context.Context, pair canonical
 	if r.tradesByPair != nil {
 		return r.tradesByPair[pair.String()], nil
 	}
-	return r.trades, nil
+	return tradesForPair(r.trades, pair), nil
 }
 
 // HistoryPoints stub records the granularity + returns the
