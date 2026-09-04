@@ -7,9 +7,8 @@ import (
 	"os"
 	"strings"
 	"sync"
-	"testing"
-
 	"syscall"
+	"testing"
 )
 
 // TestFilteringForwarder exercises the line-filter directly, without
