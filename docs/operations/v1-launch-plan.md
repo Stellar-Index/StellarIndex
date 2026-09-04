@@ -128,6 +128,24 @@ out of date; the board reads:
   What is owed is a `feeds.go` registry entry naming the canonical asset
   `earnUSDC_FUNDAMENTAL` maps to, which is a mapping decision rather than a
   code change; until it exists the feed is captured but not priced.
+
+  **What the feed is, so the decision is one step rather than an
+  investigation.** Six raw rows between 2026-09-03T12:07Z and
+  2026-09-04T12:58:40Z, values rising monotonically 71,763,347 →
+  71,775,467. That is +0.0169% over 1.036 days, or **6.13% annualised**,
+  which is a yield-bearing wrapper's net asset value and not a price
+  feed. The registry already carries that shape: `_FUNDAMENTAL` entries
+  (`internal/sources/redstone/feeds.go`) are the underlying value of a
+  wrapper, and the existing ones split two ways —
+  `SolvBTC_FUNDAMENTAL` is `mustCrypto` quoted in BTC, while
+  `BENJI_ETHEREUM_FUNDAMENTAL` is `mustRWA` quoted in USD. So the open
+  questions are exactly three, and none of them is answerable from the
+  wire: which canonical id this maps to, whether it is quoted in USD or
+  in USDC, and its decimal scale — the raw integer reads 0.71763347 at
+  1e8 or 71.763347 at 1e6, and a yield-bearing USDC share sitting below
+  one dollar would be unusual enough to want confirming rather than
+  assuming. Deliberately NOT guessed here: this is a price surface, and
+  a wrong scale is a wrong price rather than a missing one.
 - **`stellarindex_stellar_stack_lagging`** ×2 (ticket, sustained since
   2026-09-02T14:02Z, `archivist` and `galexie`, lag = 1) — **unrelated to
   the ledger finding above, despite the name.** The series is
