@@ -1,6 +1,8 @@
 ---
-# promtool unit tests for stellarindex_restore_drill_stale (BDR-03, audit-2026-08-14)
-# and stellarindex_restore_drill_failed (audit-2026-08-28 backup-restore-4).
+# promtool unit tests for stellarindex_restore_drill_stale (BDR-03,
+# audit-2026-08-14), stellarindex_restore_drill_offsite_stale (off-site
+# drill, 2026-09-04) and stellarindex_restore_drill_failed (audit-2026-08-28
+# backup-restore-4).
 #
 #   promtool test rules deploy/monitoring/rule-tests/restore-drill_test.yml
 #
@@ -14,15 +16,24 @@
 # textfile each run, so an every-run-failed / dead-timer / never-ran drill
 # makes the series ABSENT (not old) — exactly the OBS-2 pattern. The plain
 # `time() - last_success` branch evaluates over an empty vector there and
-# can never fire; the `absent_over_time(...[40d])` branch restores that
+# can never fire; the `absent_over_time(...)` branch restores that
 # coverage.
 #
-# PROVEN-RED: delete the `or absent_over_time(...[40d])` line from
-# restore-drill.yml and re-run — the "every recent run has failed" case
-# (series absent) reports 0 firing alerts (FAIL), because with the series
-# absent nothing selects it. The stale-but-present case and the healthy
-# case pass either way, so the absent-series case is the non-vacuous one;
-# it exercises the real alert (its 40d window + 30m `for`), not a mock.
+# PROVEN-RED (on-box): delete the `or absent_over_time(...[40d])` line
+# from restore-drill.yml and re-run — the "every recent run has failed"
+# case (series absent) reports 0 firing alerts (FAIL), because with the
+# series absent nothing selects it.
+#
+# PROVEN-RED (off-site, 2026-09-04): run this file against the rules as
+# they stood before the off-site alert existed — every
+# stellarindex_restore_drill_offsite_stale case fails ("alertname not
+# found" / expected 1 got 0), and the "repo2 healthy, repo1 never drilled"
+# isolation case fails because the unscoped on-box absent_over_time branch
+# saw repo2's sample and stayed silent. The un-labelled cases pass either
+# way: the on-box rule selects repo=~"1|", whose empty alternative the
+# pre-label series satisfies — that is the compatibility the scoping was
+# chosen for. The repo3 case below carries its own red for the step from
+# `repo!="2"` to `repo=~"1|"`.
 
 rule_files:
   - ../rules/restore-drill.yml
@@ -35,6 +46,7 @@ tests:
   # the script rewrites the textfile WITHOUT the series and it goes absent
   # from t=6h onward. Past 40d (960h) with no sample in the window + the
   # 30m `for`, the alert must fire off the absent_over_time branch.
+  # Un-labelled series: what a script from before the `repo` label wrote.
   - interval: 1h
     name: every-run-failed drops last_success and the stale ticket fires
     input_series:
@@ -99,6 +111,40 @@ tests:
                 `/var/lib/stellarindex/restore-drills/restore-drills.md`, and
                 run `/usr/local/bin/restore-drill.sh` by hand.
 
+  # ── the labelled repo1 series (post-2026-09-04 script) is read the same ──
+  # The `time() - last_success` branch carries the label through to the
+  # alert, so a responder sees which repo went stale.
+  - interval: 1h
+    name: stale-but-present last_success{repo="1"} fires the on-box ticket with the label
+    input_series:
+      - series: 'stellarindex_restore_drill_last_success_unix{repo="1"}'
+        values: '0x986'
+    alert_rule_test:
+      - eval_time: 985h
+        alertname: stellarindex_restore_drill_stale
+        exp_alerts:
+          - exp_labels:
+              severity: ticket
+              team: stellarindex
+              component: storage
+              repo: "1"
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/restore-drill-stale.md
+              summary: "pgBackRest restore-drill has recorded no success in >40d (monthly timer) — DR evidence is going stale"
+              description: |
+                The monthly pgBackRest restore-drill
+                (restore-drill.timer, first Saturday 04:00 UTC) has not
+                recorded a fully-successful run in over 40 days — one missed
+                cycle plus slack — or has never recorded one. Either the
+                timer isn't firing, every recent run has failed, or the
+                drill volume dropped below MIN_FREE_GB and the precondition
+                refused. While this is stale we have no current proof the
+                pgBackRest backup chain is actually restorable (ADR-0043 §3 /
+                CS-110). Check `systemctl status restore-drill.timer`,
+                read `/var/log/restore-drill.log` + the evidence log under
+                `/var/lib/stellarindex/restore-drills/restore-drills.md`, and
+                run `/usr/local/bin/restore-drill.sh` by hand.
+
   # ── healthy: a clean drill re-stamps last_success every scrape ──
   # last_success tracks wall clock, so `time() - last_success` stays ~0 and
   # the series is never absent. Neither branch may fire.
@@ -112,14 +158,233 @@ tests:
         alertname: stellarindex_restore_drill_stale
         exp_alerts: []
 
+  # ── stellarindex_restore_drill_offsite_stale ──
+  # 35 d = 840 h. The off-site drill runs on the 15th, so a healthy host
+  # re-stamps every 28–31 d; 840 h is one cycle plus ≥ 4 d of slack. Each
+  # case is evaluated BEFORE the threshold (800 h, must be silent) and
+  # after it (900 h, must fire), so the number in the rule is what is
+  # pinned, not merely "eventually fires".
+
+  # never ran / every run failed: the repo2 series is absent. The 2026-09-03
+  # hand-run wrote an UN-LABELLED series; it does not count for repo2.
+  - interval: 1h
+    name: off-site drill never recorded (repo2 series absent) fires after 35d
+    input_series:
+      - series: 'stellarindex_restore_drill_last_success_unix{repo="2"}'
+        values: '0+0x5 _x1000'
+    alert_rule_test:
+      - eval_time: 800h
+        alertname: stellarindex_restore_drill_offsite_stale
+        exp_alerts: []
+      - eval_time: 900h
+        alertname: stellarindex_restore_drill_offsite_stale
+        exp_alerts:
+          - exp_labels:
+              severity: ticket
+              team: stellarindex
+              component: storage
+              repo: "2"
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/restore-drill-offsite-stale.md
+              summary: "off-site pgBackRest restore-drill (repo2, S3) has recorded no success in >35d (monthly timer, the 15th) — the survival copy is not currently proven restorable"
+              description: |
+                The monthly OFF-SITE restore-drill (restore-drill-offsite.timer,
+                the 15th 04:00 UTC, DRILL_REPO=2) has not recorded a
+                fully-successful run in over 35 days — one missed cycle plus
+                slack — or has never recorded one. repo2 is the encrypted S3
+                copy that survives loss of this host or its pool; while this
+                is stale the only proof it restores is over a month old, or
+                does not exist. A green repo1 drill says nothing about it.
+                Either the timer is not firing, every recent run has failed
+                (S3 credentials, endpoint, cipher, or the repo itself), the
+                drill volume dropped below the capacity floor, or no repo2 is
+                configured on this host. Check `systemctl status
+                restore-drill-offsite.timer`, read
+                `/var/log/restore-drill-offsite.log` + the evidence log under
+                `/var/lib/stellarindex/restore-drills/restore-drills.md`, and
+                force a run with `systemctl start restore-drill-offsite.service`
+                (~47 min, ~269 GB from S3, ~$24 of egress at the 2026-09-03 size).
+
+  # timer dead, file persists: repo2's last_success is present but old.
+  - interval: 1h
+    name: stale-but-present last_success{repo="2"} fires the off-site ticket after 35d
+    input_series:
+      - series: 'stellarindex_restore_drill_last_success_unix{repo="2"}'
+        values: '0x1000'
+    alert_rule_test:
+      - eval_time: 800h
+        alertname: stellarindex_restore_drill_offsite_stale
+        exp_alerts: []
+      - eval_time: 900h
+        alertname: stellarindex_restore_drill_offsite_stale
+        exp_alerts:
+          - exp_labels:
+              severity: ticket
+              team: stellarindex
+              component: storage
+              repo: "2"
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/restore-drill-offsite-stale.md
+              summary: "off-site pgBackRest restore-drill (repo2, S3) has recorded no success in >35d (monthly timer, the 15th) — the survival copy is not currently proven restorable"
+              description: |
+                The monthly OFF-SITE restore-drill (restore-drill-offsite.timer,
+                the 15th 04:00 UTC, DRILL_REPO=2) has not recorded a
+                fully-successful run in over 35 days — one missed cycle plus
+                slack — or has never recorded one. repo2 is the encrypted S3
+                copy that survives loss of this host or its pool; while this
+                is stale the only proof it restores is over a month old, or
+                does not exist. A green repo1 drill says nothing about it.
+                Either the timer is not firing, every recent run has failed
+                (S3 credentials, endpoint, cipher, or the repo itself), the
+                drill volume dropped below the capacity floor, or no repo2 is
+                configured on this host. Check `systemctl status
+                restore-drill-offsite.timer`, read
+                `/var/log/restore-drill-offsite.log` + the evidence log under
+                `/var/lib/stellarindex/restore-drills/restore-drills.md`, and
+                force a run with `systemctl start restore-drill-offsite.service`
+                (~47 min, ~269 GB from S3, ~$24 of egress at the 2026-09-03 size).
+
+  # healthy: a clean off-site drill re-stamps repo2's last_success.
+  - interval: 1h
+    name: a recently-successful off-site drill (fresh last_success{repo="2"}) never fires
+    input_series:
+      - series: 'stellarindex_restore_drill_last_success_unix{repo="2"}'
+        values: '0+3600x1000'
+    alert_rule_test:
+      - eval_time: 900h
+        alertname: stellarindex_restore_drill_offsite_stale
+        exp_alerts: []
+
+  # ── isolation: each ticket reads its own repo and only its own ──
+  # repo1 fresh, repo2 never drilled: the on-box ticket stays silent (its
+  # absent_over_time branch must not be satisfied by repo1's presence
+  # either way), the off-site ticket fires.
+  - interval: 1h
+    name: repo1 healthy and repo2 never drilled — only the off-site ticket fires
+    input_series:
+      - series: 'stellarindex_restore_drill_last_success_unix{repo="1"}'
+        values: '0+3600x1000'
+    alert_rule_test:
+      - eval_time: 985h
+        alertname: stellarindex_restore_drill_stale
+        exp_alerts: []
+      - eval_time: 985h
+        alertname: stellarindex_restore_drill_offsite_stale
+        exp_alerts:
+          - exp_labels:
+              severity: ticket
+              team: stellarindex
+              component: storage
+              repo: "2"
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/restore-drill-offsite-stale.md
+              summary: "off-site pgBackRest restore-drill (repo2, S3) has recorded no success in >35d (monthly timer, the 15th) — the survival copy is not currently proven restorable"
+              description: |
+                The monthly OFF-SITE restore-drill (restore-drill-offsite.timer,
+                the 15th 04:00 UTC, DRILL_REPO=2) has not recorded a
+                fully-successful run in over 35 days — one missed cycle plus
+                slack — or has never recorded one. repo2 is the encrypted S3
+                copy that survives loss of this host or its pool; while this
+                is stale the only proof it restores is over a month old, or
+                does not exist. A green repo1 drill says nothing about it.
+                Either the timer is not firing, every recent run has failed
+                (S3 credentials, endpoint, cipher, or the repo itself), the
+                drill volume dropped below the capacity floor, or no repo2 is
+                configured on this host. Check `systemctl status
+                restore-drill-offsite.timer`, read
+                `/var/log/restore-drill-offsite.log` + the evidence log under
+                `/var/lib/stellarindex/restore-drills/restore-drills.md`, and
+                force a run with `systemctl start restore-drill-offsite.service`
+                (~47 min, ~269 GB from S3, ~$24 of egress at the 2026-09-03 size).
+
+  # repo2 fresh, repo1 never drilled: the off-site ticket stays silent, the
+  # on-box ticket fires off its absent_over_time branch — which it could
+  # NOT do while unscoped, because repo2's sample satisfied the selector.
+  # (The absent branch carries no repo label: `!=` yields none.)
+  - interval: 1h
+    name: repo2 healthy and repo1 never drilled — only the on-box ticket fires
+    input_series:
+      - series: 'stellarindex_restore_drill_last_success_unix{repo="2"}'
+        values: '0+3600x1000'
+    alert_rule_test:
+      - eval_time: 985h
+        alertname: stellarindex_restore_drill_offsite_stale
+        exp_alerts: []
+      - eval_time: 985h
+        alertname: stellarindex_restore_drill_stale
+        exp_alerts:
+          - exp_labels:
+              severity: ticket
+              team: stellarindex
+              component: storage
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/restore-drill-stale.md
+              summary: "pgBackRest restore-drill has recorded no success in >40d (monthly timer) — DR evidence is going stale"
+              description: |
+                The monthly pgBackRest restore-drill
+                (restore-drill.timer, first Saturday 04:00 UTC) has not
+                recorded a fully-successful run in over 40 days — one missed
+                cycle plus slack — or has never recorded one. Either the
+                timer isn't firing, every recent run has failed, or the
+                drill volume dropped below MIN_FREE_GB and the precondition
+                refused. While this is stale we have no current proof the
+                pgBackRest backup chain is actually restorable (ADR-0043 §3 /
+                CS-110). Check `systemctl status restore-drill.timer`,
+                read `/var/log/restore-drill.log` + the evidence log under
+                `/var/lib/stellarindex/restore-drills/restore-drills.md`, and
+                run `/usr/local/bin/restore-drill.sh` by hand.
+
+  # repo3 fresh, repo1 never drilled: the on-box selector must not accept
+  # a repo it was not written for. An earlier `repo!="2"` let ANY repo
+  # other than 2 satisfy its absent branch, so with a repo3 series fresh
+  # and repo1 never drilled this ticket stayed SILENT — the same masking
+  # inversion the per-repo scoping exists to fix, one repo over. It is
+  # reachable: the script takes any positive-integer DRILL_REPO and writes
+  # restore_drill_repo<N>.prom with repo="N". `repo=~"1|"` selects repo1
+  # and the un-labelled series only, so the absent branch fires here.
+  #
+  # PROVEN-RED (2026-09-04): put `{repo!="2"}` back on both branches of
+  # stellarindex_restore_drill_stale and re-run — this case reports
+  # "expected 1 alerts but got 0", while the other seven still pass.
+  - interval: 1h
+    name: repo3 healthy and repo1 never drilled — the on-box ticket still fires
+    input_series:
+      - series: 'stellarindex_restore_drill_last_success_unix{repo="3"}'
+        values: '0+3600x1000'
+    alert_rule_test:
+      - eval_time: 985h
+        alertname: stellarindex_restore_drill_stale
+        exp_alerts:
+          - exp_labels:
+              severity: ticket
+              team: stellarindex
+              component: storage
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/restore-drill-stale.md
+              summary: "pgBackRest restore-drill has recorded no success in >40d (monthly timer) — DR evidence is going stale"
+              description: |
+                The monthly pgBackRest restore-drill
+                (restore-drill.timer, first Saturday 04:00 UTC) has not
+                recorded a fully-successful run in over 40 days — one missed
+                cycle plus slack — or has never recorded one. Either the
+                timer isn't firing, every recent run has failed, or the
+                drill volume dropped below MIN_FREE_GB and the precondition
+                refused. While this is stale we have no current proof the
+                pgBackRest backup chain is actually restorable (ADR-0043 §3 /
+                CS-110). Check `systemctl status restore-drill.timer`,
+                read `/var/log/restore-drill.log` + the evidence log under
+                `/var/lib/stellarindex/restore-drills/restore-drills.md`, and
+                run `/usr/local/bin/restore-drill.sh` by hand.
+
   # ── stellarindex_restore_drill_failed ──
   # A run that got past the preconditions and found a problem rewrites
   # the textfile with failures>0 (and no last_success). The ticket must
-  # fire off that value after the 30m `for`, and stay silent on 0.
+  # fire off that value after the 30m `for`, and stay silent on 0. It is
+  # unscoped, so a repo2 failure fires it carrying repo="2".
   - interval: 1h
     name: a failed drill (failures > 0) fires the failed ticket
     input_series:
-      - series: 'stellarindex_restore_drill_failures'
+      - series: 'stellarindex_restore_drill_failures{repo="2"}'
         values: '1x10'
     alert_rule_test:
       - eval_time: 5h
@@ -129,12 +394,15 @@ tests:
               severity: ticket
               team: stellarindex
               component: storage
+              repo: "2"
             exp_annotations:
               runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/restore-drill-failed.md
               summary: "the most recent pgBackRest restore-drill FAILED (1 check(s)) — the backup chain is not currently proven restorable"
               description: |
                 The most recent restore-drill run (restore-drill.timer, first
-                Saturday 04:00 UTC, or a manual run) recorded
+                Saturday 04:00 UTC, for repo1; restore-drill-offsite.timer, the
+                15th 04:00 UTC, for repo2; or a manual run — the alert's `repo`
+                label says which) recorded
                 1 failed check(s): pgbackrest restore failed, the
                 scratch instance never reached consistency, or a verification
                 check (tables / WAL drain / tip lag / hash chain / row window)
@@ -142,7 +410,9 @@ tests:
                 the pgBackRest backup chain is restorable (ADR-0043 §3 /
                 CS-110). Read the tail of
                 `/var/lib/stellarindex/restore-drills/restore-drills.md` (which
-                names the aborted stage) and `/var/log/restore-drill.log`.
+                names the aborted stage and the repo) and
+                `/var/log/restore-drill.log` (repo1) or
+                `/var/log/restore-drill-offsite.log` (repo2).
 
   - interval: 1h
     name: a clean drill (failures == 0) never fires the failed ticket

@@ -1,0 +1,33 @@
+# systemd timer: monthly OFF-SITE pgBackRest restore-drill, repo2 (ADR-0043 / CS-110).
+#
+# Rendered by Ansible; enabled where a repo2 bucket is configured
+# (restore_drill_offsite_enabled in defaults/main.yml).
+#
+# Cadence: MONTHLY, the same commitment ADR-0043 §1/§3 makes for the
+# on-box drill — each run pulls ~269 GB from S3 (~$24 of egress at the
+# 2026-09-03 size) and holds the drill volume for ~1 h, so monthly is the
+# heaviest cadence worth paying for and the lightest that keeps the proof
+# current.
+#
+# Time slot: the 15TH of the month, 04:00 UTC + up to 30 min jitter. A
+# fixed day rather than "third Saturday" because the staleness ticket
+# (stellarindex_restore_drill_offsite_stale) fires at 35 days: a
+# weekday-of-month slot recurs at 28 OR 35 days and would ticket on a
+# healthy host every month that has five of that weekday; a fixed day
+# recurs at 28–31, leaving ≥4 days of slack. Mid-month keeps it ≥ a week
+# from the repo1 drill (first Saturday, 1st–7th) on the same volume, and
+# 04:00 is after the nightly 02:00 backup has written repo2, so the drill
+# restores that night's differential.
+
+[Unit]
+Description=Monthly OFF-SITE pgBackRest restore-drill, repo2/S3 (~47 min RTO, ~$24 egress per run; ADR-0043 / CS-110)
+Documentation=https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/restore-drill-offsite-stale.md
+
+[Timer]
+OnCalendar=*-*-15 04:00:00 UTC
+RandomizedDelaySec=1800
+Persistent=true
+Unit=restore-drill-offsite.service
+
+[Install]
+WantedBy=timers.target

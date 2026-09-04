@@ -12,13 +12,19 @@
 #     it is about to perform (sized from the backup itself, see the
 #     capacity precondition below) — never less than $MIN_FREE_GB
 #   - cleans up on exit (trap), even on failure
+#   - one drill at a time: a non-blocking lock ($DRILL_LOCK) serialises
+#     the repo1 and repo2 timers and any hand-run beside them — they
+#     share the scratch port and the pool the capacity check sizes — and
+#     a separate pre-flight refuses when a postgres left behind by a
+#     KILLED drill still answers on $DRILL_PG_PORT, which no lock covers
 #   - every run that gets past the preconditions leaves evidence: an
-#     entry in the drill log AND a rewritten textfile metric, whether
-#     it passed, failed a check, or aborted mid-restore
+#     entry in the drill log AND a rewritten per-repo textfile metric
+#     (`repo` label), whether it passed, failed a check, or aborted
+#     mid-restore
 #
 # Usage (r1, as root):
-#   bash scripts/ops/restore-drill.sh                 # pg drill, repo1
-#   DRILL_REPO=2 bash scripts/ops/restore-drill.sh    # prove the OFFSITE copy
+#   bash scripts/ops/restore-drill.sh                 # pg drill, repo1 (restore-drill.timer)
+#   DRILL_REPO=2 bash scripts/ops/restore-drill.sh    # prove the OFFSITE copy (restore-drill-offsite.timer)
 #   DRILL_CH_WINDOW=100000 bash scripts/ops/restore-drill.sh  # + CH re-derive sample
 #
 # Exit code: number of failed verification checks; 2 for a precondition
@@ -72,6 +78,11 @@ WAL_DRAIN_TIMEOUT="${WAL_DRAIN_TIMEOUT:-3600}"
 # repo: RESTORE_DRILL_LOG_DIR=$(pwd)/docs/operations/drills.
 LOG_DIR="${RESTORE_DRILL_LOG_DIR:-/var/lib/stellarindex/restore-drills}"
 TEXTFILE_DIR="${TEXTFILE_DIR:-/var/lib/node_exporter/textfile_collector}"
+# Held for the life of the run (see the one-drill-at-a-time precondition).
+# Under /run, which PrivateTmp does not shadow and ProtectSystem=full
+# leaves writable; NOT under DRILL_ROOT, so a refusal leaves the drill
+# volume exactly as it found it.
+DRILL_LOCK="${DRILL_LOCK:-/run/lock/restore-drill.lock}"
 
 fail_count=0
 note() { echo "restore-drill: $*" >&2; }
@@ -87,6 +98,9 @@ check() { # check <name> <ok:0|1> <detail>
 
 # ─── preconditions ──────────────────────────────────────────────────
 [[ "$(id -u)" == "0" ]] || { note "run as root (drops to postgres for pg ops)"; exit 2; }
+# The repo number is now a metric label and part of a file name, so it
+# must be one — a pgBackRest repo is always a small positive integer.
+[[ "$DRILL_REPO" =~ ^[1-9][0-9]*$ ]] || { note "DRILL_REPO must be a pgBackRest repo number, got '$DRILL_REPO'"; exit 2; }
 command -v pgbackrest >/dev/null || { note "pgbackrest not installed"; exit 2; }
 [[ -x "$PG_BIN/postgres" ]] || { note "postgres $PG_VERSION binaries not at $PG_BIN"; exit 2; }
 
@@ -136,6 +150,54 @@ fi
 # MIN_FREE_GB. A backup that cannot be sized is a precondition refusal
 # (exit 2), not a guess — a floor that cannot be derived is not a floor.
 command -v jq >/dev/null || { note "jq not installed (needed to size the restore from 'pgbackrest info')"; exit 2; }
+
+# One drill at a time (2026-09-04, restore-drill-offsite.timer). Two timers
+# now drive this script — repo1 on the first Saturday, repo2 on the 15th —
+# and an operator forcing a run by hand can land beside either. Two drills
+# would start their scratch instances on the same DRILL_PG_PORT, and each
+# would size its capacity check against free space the other is about to
+# consume, which is the pool-fill the floor below exists to prevent. So
+# the lock is taken BEFORE the capacity check, non-blocking, and a held
+# lock is a refusal (exit 2, nothing written), not a counted failure:
+# "another drill is running" is not a fact about the backup. flock ties
+# the lock to the open descriptor, so it is released however this process
+# ends.
+command -v flock >/dev/null || { note "flock not installed (needed to run one drill at a time)"; exit 2; }
+# Opening the lock file is itself a precondition: under `set -e` a failed
+# `exec 9>` exits 1, and 1 is this script's code for ONE FAILED CHECK —
+# an unwritable /run/lock (read-only mount, a stray directory at that
+# path, a namespace that does not expose it) would have been recorded and
+# read as "the drill ran and the backup failed a check". Nothing has been
+# written at this point, so it is exit 2 like every other refusal.
+exec 9>"$DRILL_LOCK" || { note "could not open the lock file $DRILL_LOCK — refusing (one drill at a time)"; exit 2; }
+flock -n 9 || { note "another restore drill holds $DRILL_LOCK — refusing (one drill at a time)"; exit 2; }
+
+# The scratch port, which the lock does NOT cover (2026-09-04). The lock
+# guards against a CONCURRENT drill; it says nothing about the wreckage of
+# a killed one. A run SIGKILLed after pg_start (RuntimeMaxSec, an OOM
+# kill, a hand `kill -9`) leaves a DAEMONISED postgres listening on
+# DRILL_PG_PORT — the EXIT trap never ran — while its lock died with the
+# shell, so the next drill takes the lock cleanly, restores several
+# hundred GB, and only then fails at pg_start on "address already in
+# use": hours of pool I/O spent to record a verification failure that is
+# not a fact about the backup. Probe the port first and refuse (exit 2,
+# nothing written), naming the datadir to stop. Skipped rather than
+# refused where pg_isready is absent — that is no worse than before.
+if [[ -x "$PG_BIN/pg_isready" ]]; then
+  isready_rc=0
+  "$PG_BIN/pg_isready" -h 127.0.0.1 -p "$DRILL_PG_PORT" -t 5 >/dev/null 2>&1 || isready_rc=$?
+  # 0 = accepting connections, 1 = rejecting (a server IS there, still
+  # starting up), 2 = no response (the port is free), 3 = bad invocation.
+  if [[ "$isready_rc" == "0" || "$isready_rc" == "1" ]]; then
+    note "a postgres already answers on $DRILL_PG_PORT — an earlier drill was killed before its cleanup ran; refusing (one scratch instance at a time)"
+    for pidfile in "$DRILL_ROOT"/pgdata-*/postmaster.pid; do
+      [[ -f "$pidfile" ]] || continue
+      note "  stop it: sudo -u postgres $PG_BIN/pg_ctl -D ${pidfile%/postmaster.pid} stop -m immediate  (then remove that directory)"
+    done
+    exit 2
+  fi
+fi
+
 backup_bytes=$(sudo -u postgres pgbackrest --stanza="$STANZA" --repo="$DRILL_REPO" --output=json info 2>/dev/null \
   | jq -r --arg s "$STANZA" '[.[] | select(.name == $s) | .backup[-1].info.size // empty][0] // empty') || backup_bytes=""
 if [[ ! "$backup_bytes" =~ ^[0-9]+$ ]] || (( backup_bytes == 0 )); then
@@ -223,20 +285,40 @@ record_evidence() {
 # producing evidence, and stellarindex_restore_drill_failed fires the
 # moment a run records failures > 0. Written atomically (.tmp then mv)
 # under /var, which ProtectSystem=full leaves writable.
+#
+# One textfile PER REPO, and a `repo` label on every series (2026-09-04,
+# restore-drill-offsite.timer). Two timers drive this script and each run
+# rewrites its file whole, so one shared file would let a clean repo2 run
+# erase a failed repo1 verdict (and the other way round), and a series
+# with no label could not say which copy it proves. repo1 keeps the
+# historical file name so the un-labelled series written before the label
+# existed is REPLACED by the next repo1 run rather than left behind as a
+# second, forever-ageing series. node_exporter merges a metric family that
+# appears in several files provided its HELP text agrees, which the shared
+# literals below guarantee — the verify-archive tiers already rely on the
+# same behaviour with their `tier` label. stellarindex_restore_drill_stale
+# selects repo=~"1|" (repo1 or no label — an allow-list, so a repo3 sample
+# cannot stand in for a never-drilled repo1);
+# stellarindex_restore_drill_offsite_stale selects repo="2". Until the
+# first labelled repo1 run rewrites restore_drill.prom, the un-labelled
+# series that file still holds is whichever repo ran LAST — on r1 the
+# 2026-09-03 repo2 hand-run — and the on-box rule reads it as repo1's.
 emit_metric() {
   [[ "$TEXTFILE_DIR" != "/dev/null" ]] || return 0
   if mkdir -p "$TEXTFILE_DIR" 2>/dev/null; then
     local metric_out="$TEXTFILE_DIR/restore_drill.prom"
+    [[ "$DRILL_REPO" == "1" ]] || metric_out="$TEXTFILE_DIR/restore_drill_repo${DRILL_REPO}.prom"
     local metric_tmp="$metric_out.tmp.$$"
+    local lbl="{repo=\"${DRILL_REPO}\"}"
     {
       echo "# HELP stellarindex_restore_drill_last_success_unix Unix time of the most recent fully-successful pgBackRest restore-drill (ADR-0043 §3 / CS-110)."
       echo "# TYPE stellarindex_restore_drill_last_success_unix gauge"
       if [[ "$fail_count" -eq 0 ]]; then
-        echo "stellarindex_restore_drill_last_success_unix $(date +%s)"
+        echo "stellarindex_restore_drill_last_success_unix${lbl} $(date +%s)"
       fi
       echo "# HELP stellarindex_restore_drill_failures Number of failed verification checks in the most recent restore-drill run."
       echo "# TYPE stellarindex_restore_drill_failures gauge"
-      echo "stellarindex_restore_drill_failures $fail_count"
+      echo "stellarindex_restore_drill_failures${lbl} $fail_count"
       # ClickHouse re-derive throughput (#343 / ADR-0043 §2.2): the lake RTO
       # is only honest as a MEASURED number. Emitted only when the CH stage
       # ran and succeeded; absent otherwise, so a missing series means "not
@@ -244,19 +326,19 @@ emit_metric() {
       if [[ -n "${ch_secs:-}" && -n "${DRILL_CH_WINDOW:-}" && "${ch_rc:-1}" -eq 0 ]]; then
         echo "# HELP stellarindex_restore_drill_ch_rederive_seconds Wall seconds the drill took to fetch+decode its ClickHouse re-derive window (dry-run, single-threaded)."
         echo "# TYPE stellarindex_restore_drill_ch_rederive_seconds gauge"
-        echo "stellarindex_restore_drill_ch_rederive_seconds $ch_secs"
+        echo "stellarindex_restore_drill_ch_rederive_seconds${lbl} $ch_secs"
         echo "# HELP stellarindex_restore_drill_ch_rederive_window_ledgers Size of the re-derive window the drill measured."
         echo "# TYPE stellarindex_restore_drill_ch_rederive_window_ledgers gauge"
-        echo "stellarindex_restore_drill_ch_rederive_window_ledgers $DRILL_CH_WINDOW"
+        echo "stellarindex_restore_drill_ch_rederive_window_ledgers${lbl} $DRILL_CH_WINDOW"
         echo "# HELP stellarindex_restore_drill_ch_rederive_ledgers_per_second Measured re-derive throughput (window / seconds); full-lake RTO ≈ live tip / this / parallelism."
         echo "# TYPE stellarindex_restore_drill_ch_rederive_ledgers_per_second gauge"
-        echo "stellarindex_restore_drill_ch_rederive_ledgers_per_second $(echo "scale=2; $DRILL_CH_WINDOW / ($ch_secs + 0.0001)" | bc)"
+        echo "stellarindex_restore_drill_ch_rederive_ledgers_per_second${lbl} $(echo "scale=2; $DRILL_CH_WINDOW / ($ch_secs + 0.0001)" | bc)"
       fi
     } > "$metric_tmp"
     chmod 644 "$metric_tmp"
     mv "$metric_tmp" "$metric_out"
   else
-    note "WARN: could not write $TEXTFILE_DIR — restore-drill metric not emitted (staleness alert will fire on the absent series)"
+    note "WARN: could not write $TEXTFILE_DIR — restore-drill metric for repo${DRILL_REPO} not emitted (its staleness alert will fire on the absent series)"
   fi
 }
 

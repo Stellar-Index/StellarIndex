@@ -29,7 +29,10 @@ that gets past its preconditions, and this alert reads that record.
 
 ## Symptoms
 
-- `stellarindex_restore_drill_failures > 0` for ≥ 30 min.
+- `stellarindex_restore_drill_failures > 0` for ≥ 30 min. The alert
+  carries the `repo` label (since 2026-09-04): `repo="1"` is the on-box
+  `restore-drill.timer`, `repo="2"` the off-site `restore-drill-offsite.timer`
+  (its log is `/var/log/restore-drill-offsite.log`).
 - The tail of `/var/lib/stellarindex/restore-drills/restore-drills.md`
   either names an aborted stage (`ABORTED at pg_restore` /
   `ABORTED at pg_start`) or lists `failures: N` after a full
@@ -110,7 +113,10 @@ sudo -u postgres pgbackrest --stanza=stellarindex info
 - `scripts/ops/restore-drill.sh` — the drill; `restore-drill-run-test.sh`
   pins the abort-path evidence + metric behaviour in CI.
 - `restore-drill-stale.md` — `stellarindex_restore_drill_stale`; the
-  40-day backstop when no clean run lands.
+  40-day backstop when no clean repo1 run lands.
+- [restore-drill-offsite-stale](restore-drill-offsite-stale.md) — the
+  35-day backstop for the off-site repo2 drill; S3 credential / endpoint
+  / cipher causes for a `repo="2"` failure are triaged there.
 - `backup-failed.md` — the backup chain itself.
 - `zfs-pool-full.md` — the drill restores onto the shared pool; its
   capacity floor is sized from the backup for exactly this reason.

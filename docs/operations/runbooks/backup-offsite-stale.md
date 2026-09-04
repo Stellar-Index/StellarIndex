@@ -86,6 +86,7 @@ curl -s localhost:9854/metrics | grep 'pgbackrest_backup_info' | grep 'repo_key=
 ## Related
 
 - [backup-failed](backup-failed.md) — backups stopped across ALL repos (the causal alert when both fire).
-- [restore-drill-stale](restore-drill-stale.md) — the monthly proof the chain is restorable; a stale repo2 makes that proof partial.
+- [restore-drill-stale](restore-drill-stale.md) — the monthly proof the on-box chain (repo1) is restorable; a stale repo2 makes that proof partial.
+- [restore-drill-offsite-stale](restore-drill-offsite-stale.md) — the monthly proof that the copy THIS stream writes actually restores (`restore-drill-offsite.timer`, the 15th); this alert says repo2 is being written, that one says it comes back.
 - `docs/operations/off-site-backup-plan.md` — why repo2 exists and the deferred-offsite decision record.
 - `docs/operations/pgbackrest-encryption.md` — repo2 is encrypted by us; a re-created repo needs its cipher pass.

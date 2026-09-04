@@ -366,6 +366,15 @@
 # self-contained — see its own header) and the "restore-drill" ZFS
 # dataset is already provisioned (defaults/main.yml zfs_datasets), but
 # nothing installed or scheduled it. Wire it up here.
+#
+# The whole restore-drill family carries `tags: [ops-jobs]` (2026-09-04):
+# the documented apply for scheduled ops units is `--tags ops-jobs`, and
+# a block outside that tag is rendered by nothing on such a run. The
+# script is tagged with the units because the off-site drill below needs
+# THIS script — the per-repo textfile, the `repo` label and the
+# one-drill-at-a-time lock all ride in it; the units alone would run the
+# old copy and write an un-labelled series the off-site alert cannot see.
+# Untagged behaviour is unchanged: a plain run still includes all of it.
 - name: Install restore-drill script
   ansible.builtin.copy:
     src: "{{ playbook_dir }}/../../../scripts/ops/restore-drill.sh"
@@ -374,6 +383,7 @@
     group: root
     mode: "0755"
   when: pgbackrest_backup_enabled | default(true)
+  tags: [ops-jobs]
 
 - name: Install restore-drill systemd units
   ansible.builtin.template:
@@ -387,11 +397,13 @@
     - restore-drill.timer
   register: restore_drill_units
   when: pgbackrest_backup_enabled | default(true)
+  tags: [ops-jobs]
 
 - name: Reload systemd for restore-drill units
   ansible.builtin.systemd:
     daemon_reload: true
   when: restore_drill_units is changed
+  tags: [ops-jobs]
 
 # 2026-07-27: ENABLED. The condition the note below gated on has
 # cleared — the galexie trim took the pool from ~94% to 85% and the
@@ -414,6 +426,101 @@
     state: started
     daemon_reload: true
   when: pgbackrest_backup_enabled | default(true)
+  tags: [ops-jobs]
+
+# ─── OFF-SITE restore-drill, repo2 (2026-09-04) ───────────────────────
+# The timer above proves repo1 — the LOCAL repo, on the same disks as the
+# database, which dies with the pool. repo2 (encrypted S3) is the copy DR
+# actually depends on, and it had been restored exactly once, by hand
+# (2026-09-03: restore 2813 s, ~269 GB from S3 for ~$24 of egress, 0
+# failures, ~47 min RTO against ~9 min from repo1). Nothing scheduled the
+# next one and nothing would have noticed if it never ran. This block
+# schedules it monthly on the 15th — never the same day as the repo1
+# drill, and the script holds a lock so a hand-run cannot land beside
+# either — and stellarindex_restore_drill_offsite_stale tickets when
+# last_success_unix{repo="2"} is older than 35 days or absent.
+#
+# Gated on restore_drill_offsite_enabled (defaults/main.yml): a repo2
+# bucket must be configured, or the drill can only ever refuse.
+- name: Install + enable the off-site restore-drill (repo2 configured)
+  tags: [ops-jobs]
+  when: restore_drill_offsite_enabled | bool
+  block:
+    - name: Install restore-drill-offsite systemd units
+      ansible.builtin.template:
+        src: "systemd/{{ item }}.j2"
+        dest: "/etc/systemd/system/{{ item }}"
+        owner: root
+        group: root
+        mode: "0644"
+      loop:
+        - restore-drill-offsite.service
+        - restore-drill-offsite.timer
+      register: restore_drill_offsite_units
+
+    - name: Enable + start the restore-drill-offsite timer
+      ansible.builtin.systemd:
+        name: restore-drill-offsite.timer
+        enabled: true
+        state: started
+        daemon_reload: true
+      when:
+        # check-mode guard — see the pgBackRest timer note above.
+        - not (ansible_check_mode and restore_drill_offsite_units is changed)
+
+    # Both drill units stay UNDER the catch-all
+    # stellarindex_systemd_unit_failed (they are deliberately NOT in
+    # scripts/ci/unit-failed-dedicated.baseline): the 226/NAMESPACE class
+    # that hid this drill for months — a unit that never reaches ExecStart
+    # — writes no metric, so the catch-all's 15 min is the only fast
+    # signal for it; the staleness tickets would take 35–40 days. The cost
+    # of keeping it is that a REFUSAL (exit 2) also leaves the oneshot in
+    # `failed`, and that state is sticky until someone clears it — a
+    # monthly unit would carry the ticket for a month. The remove block
+    # below already clears it; the install path did not, so a converge
+    # left a stale refusal ticketing. Clear it here too, on both drills:
+    # the run's real verdict is in the evidence log and the textfile
+    # metric, not in the unit's residual state, and an apply is an
+    # operator standing at the box.
+    - name: Clear a stale failed state left by an earlier drill refusal
+      ansible.builtin.command:
+        cmd: "systemctl reset-failed {{ item }}"
+      loop:
+        - restore-drill.service
+        - restore-drill-offsite.service
+      changed_when: false
+      failed_when: false
+
+# Converge a host that lost its repo2 (or never had one): Ansible does not
+# remove what it stops templating, and an off-site drill timer with no
+# off-site repo fires monthly into a precondition refusal — a unit list
+# that reads as coverage. Tagged with the install block so `--tags
+# ops-jobs` converges either way; idempotent on a host that never had it.
+- name: Remove the off-site restore-drill where repo2 is not configured
+  tags: [ops-jobs]
+  when: not (restore_drill_offsite_enabled | bool)
+  block:
+    - name: Stop + disable the restore-drill-offsite timer
+      ansible.builtin.systemd:
+        name: restore-drill-offsite.timer
+        state: stopped
+        enabled: false
+      failed_when: false
+
+    - name: Remove restore-drill-offsite unit files
+      ansible.builtin.file:
+        path: "/etc/systemd/system/{{ item }}"
+        state: absent
+      loop:
+        - restore-drill-offsite.timer
+        - restore-drill-offsite.service
+      notify: Reload systemd
+
+    - name: Clear the failed state left by earlier off-site drill runs
+      ansible.builtin.command:
+        cmd: systemctl reset-failed restore-drill-offsite.service
+      changed_when: false
+      failed_when: false
 
 # ── Converge a host that had backups enabled before ──────────────────
 # Ansible does not remove what it merely stops templating. A host whose

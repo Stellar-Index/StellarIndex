@@ -21,6 +21,13 @@
 # `ch-backfill -help`, so it also catches a stale binary on disk); this
 # catches it in CI before it ships.
 #
+# Section 5 (2026-09-04) pins a second seam of the same class: the
+# textfile metric is per-repo (a `repo` label on every series, one file
+# per repo), the off-site unit runs the script with DRILL_REPO=2, and the
+# off-site staleness rule in BOTH trees selects repo="2". Drift in any one
+# of the three leaves the off-site alert selecting a series nothing
+# writes — dead by construction, exactly like a mis-spelled flag.
+#
 # Run: bash scripts/ops/restore-drill-test.sh
 set -uo pipefail
 
@@ -28,13 +35,15 @@ cd "$(dirname "$0")/../.." || exit 1
 
 DRILL="scripts/ops/restore-drill.sh"
 CH_BACKFILL_GO="internal/ops/chops/ch_backfill.go"
+OFFSITE_UNIT="configs/ansible/roles/archival-node/templates/systemd/restore-drill-offsite.service.j2"
+RULE_TREES=(deploy/monitoring/rules/restore-drill.yml configs/prometheus/rules.r1/restore-drill.yml)
 
 pass=0
 fail=0
 ok()   { printf '  ok   %s\n' "$1"; pass=$((pass + 1)); }
 bad()  { printf '  FAIL %s\n' "$1"; fail=$((fail + 1)); }
 
-for f in "$DRILL" "$CH_BACKFILL_GO"; do
+for f in "$DRILL" "$CH_BACKFILL_GO" "$OFFSITE_UNIT" "${RULE_TREES[@]}"; do
   [[ -r "$f" ]] || { echo "restore-drill-test: missing $f" >&2; exit 2; }
 done
 
@@ -114,6 +123,81 @@ if grep -q 'tail -' <<<"$(ch_invocation)"; then
 else
   ok "the ch-backfill invocation does not truncate its output"
 fi
+
+# ─── 5. the metric is per-repo, and the three seams agree ───────────
+# (a) every series the drill emits carries the repo label. The label is
+# built once (`lbl`) and appended to each metric name; a metric line
+# emitted without it is a series no per-repo rule can select.
+label_def="$(grep -E '^[[:space:]]*local lbl=' "$DRILL" || true)"
+if grep -q 'repo=' <<<"$label_def"; then
+  ok "the drill builds a repo label for its textfile series"
+else
+  bad "the drill no longer builds a \`lbl\` repo label — the per-repo rules select repo=\"…\"
+       and an un-labelled series satisfies neither"
+fi
+emitted="$(grep -vE '^[[:space:]]*#' "$DRILL" | grep -oE 'echo "stellarindex_restore_drill_[a-z_]+[^ ]*' || true)"
+if [[ -z "$emitted" ]]; then
+  bad "found no metric emit lines in $DRILL — the extraction drifted; refusing to pass vacuously"
+fi
+while IFS= read -r line; do
+  [[ -z "$line" ]] && continue
+  name="${line#echo \"}"; name="${name%%[\$\{ ]*}"
+  if [[ "$line" == *'${lbl}'* ]]; then
+    ok "$name is emitted with the repo label"
+  else
+    bad "$name is emitted WITHOUT the repo label — stellarindex_restore_drill_offsite_stale
+       selects repo=\"2\" and stellarindex_restore_drill_stale repo=~\"1|\"; an un-labelled
+       series is read by the on-box rule alone, whichever repo wrote it"
+  fi
+done <<<"$emitted"
+
+# (b) one file per repo, so the two timers cannot rewrite each other's
+# verdict. repo1 keeps the historical name; every other repo gets its own.
+if grep -q 'restore_drill_repo${DRILL_REPO}.prom' "$DRILL"; then
+  ok "repos other than 1 write their own textfile (restore_drill_repo<N>.prom)"
+else
+  bad "the drill writes one textfile for every repo — a clean repo2 run would erase a failed
+       repo1 verdict (the file is rewritten whole on every run)"
+fi
+
+# (c) the off-site unit runs THIS script for repo2 …
+if grep -q '^Environment=DRILL_REPO=2$' "$OFFSITE_UNIT"; then
+  ok "restore-drill-offsite.service sets DRILL_REPO=2"
+else
+  bad "$OFFSITE_UNIT does not set Environment=DRILL_REPO=2 — the off-site drill would drill repo1"
+fi
+
+# … and the off-site rule, in both trees, reads the series that repo writes.
+for rules in "${RULE_TREES[@]}"; do
+  offsite_expr="$(awk '
+    /- alert: stellarindex_restore_drill_offsite_stale$/ { inalert = 1; next }
+    inalert && /^ *- alert:/ { exit }
+    inalert { print }
+  ' "$rules")"
+  if grep -q 'stellarindex_restore_drill_last_success_unix{repo="2"}' <<<"$offsite_expr"; then
+    ok "$rules: stellarindex_restore_drill_offsite_stale selects last_success_unix{repo=\"2\"}"
+  else
+    bad "$rules: stellarindex_restore_drill_offsite_stale does not select
+       stellarindex_restore_drill_last_success_unix{repo=\"2\"} — the series the DRILL_REPO=2 run writes"
+  fi
+  onbox_expr="$(awk '
+    /- alert: stellarindex_restore_drill_stale$/ { inalert = 1; next }
+    inalert && /^ *- alert:/ { exit }
+    inalert { print }
+  ' "$rules")"
+  # An ALLOW-LIST, not `repo!="2"`. A negative matcher lets any OTHER
+  # repo satisfy the absent branch: with a repo3 series fresh (the script
+  # takes any positive-integer DRILL_REPO) and repo1 never drilled, the
+  # ticket stayed silent — the masking inversion the scoping exists to
+  # fix, one repo over. The empty alternative keeps the pre-label series.
+  if grep -q 'stellarindex_restore_drill_last_success_unix{repo=~"1|"}' <<<"$onbox_expr"; then
+    ok "$rules: stellarindex_restore_drill_stale selects last_success_unix{repo=~\"1|\"} (repo1 + pre-label)"
+  else
+    bad "$rules: stellarindex_restore_drill_stale does not select repo=~\"1|\" — with a negative or
+       absent matcher its absent_over_time branch stays silent for a never-drilled repo1 while
+       some other repo has a sample"
+  fi
+done
 
 echo "restore-drill-test: $pass passed, $fail failed"
 [[ "$fail" -eq 0 ]] || exit 1
