@@ -16,7 +16,17 @@ import (
 // side (via the TokenDecimals reader) and default 7 for a native/classic
 // quote — resolved ONCE per request and stamped on every row.
 func TestHistory_PerSideDecimals(t *testing.T) {
-	reader := &stubHistoryReader{trades: []canonical.Trade{mkHistTrade(100), mkHistTrade(101)}}
+	// The fixture declares the pair it is requested under: the page read
+	// walks both stored directions, and the stub answers a pair the way
+	// the trades table does — a row belongs to the ONE orientation it
+	// carries. The decimals assertions below are unchanged by that.
+	pair, err := canonical.NewPair(mustParseAsset(t, decTestContract), mustParseAsset(t, "native"))
+	if err != nil {
+		t.Fatalf("NewPair: %v", err)
+	}
+	first, second := mkHistTrade(100), mkHistTrade(101)
+	first.Pair, second.Pair = pair, pair
+	reader := &stubHistoryReader{trades: []canonical.Trade{first, second}}
 	stub := &decStub{d: 6, found: true}
 	srv := v1.New(v1.Options{History: reader, TokenDecimals: stub})
 	ts := httpTestServer(t, srv)

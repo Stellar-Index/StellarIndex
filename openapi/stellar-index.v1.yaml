@@ -18,7 +18,7 @@
 openapi: 3.1.0
 info:
   title: Stellar Index API
-  version: "1.21.0"
+  version: "1.22.0"
   summary: The Stellar network — explorer, history, supply, analytics, and prices.
   description: |
     The Stellar Index API exposes the Stellar network as one
@@ -1888,16 +1888,37 @@ paths:
         `quote_asset` it was stored under, which is not necessarily the
         spelling that was asked for.
 
-        The page is read in the ORIENTATION requested: rows stored as
-        `quote/base` are not flipped into it, so a market the decoder
-        recorded only the other way round returns an empty page under
-        this orientation. An empty first page carries `coverage_from`
+        A market is served from BOTH stored orientations. The decoder
+        records `base/quote` and `quote/base` as separate rows, and rows
+        held the other way round are re-expressed into the orientation
+        requested: the two legs swap, the two amounts swap with them,
+        and `price` — always quote/base — is the exact reciprocal of the
+        stored one. The swap is performed on the smallest-unit integer
+        amounts, so nothing is rounded on the way. `base_asset` /
+        `quote_asset` on such a row report the orientation served, not
+        the one stored. An empty first page carries `coverage_from`
         (and, when the window ends at or before it,
-        `flags.outside_coverage`) measured over that same orientation
-        only — a market held only the other way round carries no floor
-        here, rather than a floor for rows this page cannot return. A
-        page reached by `cursor` carries neither: it means the window
-        was drained, not that nothing was there.
+        `flags.outside_coverage`) measured over both orientations, the
+        same population this page returns. A page reached by `cursor`
+        carries neither: it means the window was drained, not that
+        nothing was there.
+
+        Every row in the window is served EXACTLY ONCE across a drain, so
+        a client may append pages and sum them directly. `limit` is a
+        page-size target rather than an exact count, though, and both
+        directions of that need handling:
+
+        - A page may come back SHORT of `limit` while more rows exist.
+          Detect the end of the data by the ABSENCE of `pagination`,
+          never by a page shorter than `limit`.
+        - A page may EXCEED `limit`. Trades sharing an exact
+          (ts, ledger, tx_hash, op_index) — one operation recorded by
+          several sources — are served together rather than split
+          across a page edge, so a page runs to the end of such a group.
+          The excess is bounded by the size of one group, i.e. by the
+          number of sources that recorded that single operation, and is
+          independent of `limit`: a `limit=1` request over a
+          three-source group returns three rows.
 
         Bucketed/granularity-based history (VWAP/TWAP series at 1m/15m/...)
         will ship via the aggregator binary (see
@@ -11844,9 +11865,9 @@ components:
             the earliest of those, never the literal pair alone. Each surface
             is measured over the SPELLINGS its own read spans, too: /v1/ohlc's
             fiat series reads one quote spelling per constituent, so its floor
-            never counts a market held only under a peg's SAC wrapper, and
-            /v1/history measures the requested orientation only, because its
-            page read spans one stored orientation; see those operations.
+            never counts a market held only under a peg's SAC wrapper, while
+            /v1/history measures both stored orientations, because its page
+            read serves both; see those operations.
         sources:
           type: array
           items: { type: string }

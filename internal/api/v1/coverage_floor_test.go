@@ -979,23 +979,23 @@ func TestPriceAt_FiatQuoteFloorIsThePegSet(t *testing.T) {
 	}
 }
 
-// ─── /v1/history: the floor spans the orientation the page read spans ─
+// ─── /v1/history: the floor spans the directions the page read spans ──
 //
-// The raw-trade page is served by TradesInRangeAfter, which reads ONE
-// stored orientation and is never flipped by its caller. A market the
-// decoder recorded only as USDC/AQUA therefore answers
-// `base=AQUA&quote=USDC` with an empty page every time. A floor folded
-// across both orientations would find that market and describe the
-// page as quiet since its first bucket — a coverage claim about rows
-// the page can never return. So /v1/history probes the requested
-// orientation only, and a market held only the other way round carries
-// NO floor there: not `outside_coverage`, because the window is not
-// below anything, and not a floor, because the page's population has
-// none. The CAGG-backed surfaces fold both orientations because their
-// reads do, so the same fixture still yields the floor on /v1/ohlc.
+// The raw-trade page walks both legs' alias families and reads each
+// form in BOTH stored directions, folding the flipped rows into the
+// requested orientation. So a market the decoder recorded only as
+// USDC/AQUA IS served under `base=AQUA&quote=USDC`, and the floor over
+// both orientations is a claim about rows the page returns — the same
+// population, and the same floor, the CAGG-backed surfaces measure.
+//
+// The correspondence is the invariant, not the width: while the page
+// read took the stored orientation as given, this probe was narrowed to
+// match it and that market carried no floor here at all. Widening the
+// read without widening the probe would under-report the history the
+// page can serve, exactly as the reverse over-promised it.
 
-// TestHistory_ReverseStoredMarketCarriesNoFloor pins that split.
-func TestHistory_ReverseStoredMarketCarriesNoFloor(t *testing.T) {
+// TestHistory_ReverseStoredMarketCarriesTheFloor pins that correspondence.
+func TestHistory_ReverseStoredMarketCarriesTheFloor(t *testing.T) {
 	t.Parallel()
 	usdc := mustParseAsset(t, usdcClassicID)
 	aqua := mustParseAsset(t, aquaClassicID)
@@ -1020,18 +1020,53 @@ func TestHistory_ReverseStoredMarketCarriesNoFloor(t *testing.T) {
 		return env
 	}
 
-	t.Run("requested orientation is not the stored one: no floor", func(t *testing.T) {
+	t.Run("requested orientation is not the stored one: the floor", func(t *testing.T) {
 		env := getHistory(t, "base="+aquaClassicID+"&quote="+usdcClassicID)
-		assertCoverage(t, env, nil, false)
-		if probe.stored() != 1 {
-			t.Errorf("stored-orientation probes = %d, want 1 — /v1/history must probe what its page read spans", probe.stored())
+		assertCoverage(t, env, &pegFloor2021, true)
+		if probe.stored() != 0 {
+			t.Errorf("stored-orientation probes = %d, want 0 — /v1/history reads both directions, so it must not probe one", probe.stored())
 		}
 	})
-	t.Run("requested orientation is the stored one: the floor", func(t *testing.T) {
+	t.Run("requested orientation is the stored one: the same floor", func(t *testing.T) {
 		env := getHistory(t, "base="+usdcClassicID+"&quote="+aquaClassicID)
 		assertCoverage(t, env, &pegFloor2021, true)
+		if probe.stored() != 0 {
+			t.Errorf("stored-orientation probes = %d, want 0", probe.stored())
+		}
 	})
-	t.Run("the series surface still folds both orientations", func(t *testing.T) {
+	t.Run("one probe spans every market the page read reaches", func(t *testing.T) {
+		// A FRESH probe, so the span under test is the one read this
+		// request made — a union across the two orientations above would
+		// cover both markets even under a per-orientation probe, and
+		// would assert nothing.
+		fresh := &coverageFloorProbe{byPair: map[string]time.Time{probeKey(usdc, aqua): pegFloor2021}}
+		freshTS := httpTestServer(t, v1.New(v1.Options{
+			History:       &stubHistoryReader{},
+			CoverageFloor: fresh,
+		}))
+		resp := mustGet(t, freshTS.URL+"/v1/history?base="+aquaClassicID+"&quote="+usdcClassicID+window)
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("status = %d, want 200", resp.StatusCode)
+		}
+		var env coverageMeta
+		mustDecode(t, resp, &env)
+
+		reads := fresh.probedReads()
+		if len(reads) != 1 {
+			t.Fatalf("probes = %d, want 1 — the raw-trade page has one entry in its set", len(reads))
+		}
+		span := map[string]bool{}
+		for _, k := range probeSpanKeys(reads[0].pair, reads[0].span) {
+			span[k] = true
+		}
+		for _, want := range []string{probeKey(usdc, aqua), probeKey(aqua, usdc)} {
+			if !span[want] {
+				t.Errorf("%s is outside the span of the one probe (%s), but the page read reads it",
+					want, reads[0].span)
+			}
+		}
+	})
+	t.Run("the series surface reports the same floor", func(t *testing.T) {
 		env := ohlcCoverageGetPair(t, ts, "base="+aquaClassicID+"&quote="+usdcClassicID,
 			"2019-01-01T00:00:00Z", "2019-02-01T00:00:00Z")
 		assertCoverage(t, env.coverageMeta, &pegFloor2021, true)

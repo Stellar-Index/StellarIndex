@@ -31,11 +31,16 @@ import (
 //   - EarliestBucket folds both legs' alias families and both stored
 //     directions, matching a read that walks the spellings of both
 //     legs (chartPointsWithAliases, lookupPriceAt, the non-fiat
-//     ohlcSeriesWithAliases) over a store read that combines
-//     base/quote and quote/base rows into the requested orientation.
+//     ohlcSeriesWithAliases, tradesInRangeAfterWithAliases) over a read
+//     that combines base/quote and quote/base rows into the requested
+//     orientation — in SQL for the CAGG-backed surfaces, in the caller
+//     for the raw-trade page.
 //   - EarliestBucketAsStored reads the requested orientation only,
-//     matching the raw-trade page read (TradesInRangeAfter), which
-//     never flips.
+//     matching a read that takes the stored orientation as given.
+//     No surface takes it today: the raw-trade page read
+//     (TradesInRangeAfter) never flips, but its caller now reads both
+//     directions and folds them, so /v1/history measures the first
+//     method.
 //   - EarliestBucketLiteralQuote drops the alias fold on the quote leg,
 //     matching the fiat combine (ohlcSeriesFiatCombined), which reads
 //     each USD-pegged constituent under the one quote spelling the peg
@@ -64,7 +69,11 @@ const (
 	// of both legs over a direction-folding store read spans.
 	spanAliasedBothDirections coverageProbeSpan = iota
 	// spanAliasedAsStored: both legs' alias families, the requested
-	// orientation only — /v1/history's page read.
+	// orientation only. No surface selects it today — /v1/history did
+	// while its page read took the stored orientation as given, and
+	// moved to the default span when that read began folding both
+	// directions. It stays as the reader capability a single-orientation
+	// read would need, and [Store.EarliestBucketAsStored] behind it.
 	spanAliasedAsStored
 	// spanLiteralQuote: the base leg's alias family and the quote leg's
 	// literal spelling, both stored directions — the fiat /v1/ohlc
@@ -352,18 +361,22 @@ func (s *Server) priceAtCoverageSet(pair canonical.Pair) coverageSet {
 }
 
 // historyCoverageSet mirrors [Server.tradesInRangeAfterWithAliases]:
-// the pair itself, in the orientation it was asked for. The raw-trade
-// page has no fiat fallback, and its read
-// ([HistoryReader.TradesInRangeAfter]) spans ONE stored orientation and
-// is never flipped by its caller, so a market the decoder recorded only
-// as USDC/AQUA answers `base=AQUA&quote=USDC` with an empty page every
-// time. A both-orientations floor would find the USDC/AQUA bucket and
-// describe that page as quiet since then — a coverage claim about rows
-// the page can never return — so the probe spans what the read spans.
-// The read's single-orientation semantics are a separate matter, left
-// as they are here.
+// the pair itself. The raw-trade page has no fiat fallback, so one
+// entry is the whole set.
+//
+// The DEFAULT span, because that walk crosses both legs' alias families
+// and reads each form in both stored directions
+// ([Server.tradesInRangeAfterBothDirections]), re-expressing the flipped
+// rows into the requested orientation. A market the decoder recorded
+// only as USDC/AQUA is therefore served under `base=AQUA&quote=USDC`,
+// and its floor is a claim about rows this page returns. While the page
+// read spanned one orientation the probe was narrowed to match it, so
+// that market carried no floor here at all; the two moved together
+// because a floor measured over rows a surface cannot serve is a
+// coverage claim it cannot keep, and one measured over fewer rows than
+// it serves under-reports what it holds.
 func historyCoverageSet(pair canonical.Pair) coverageSet {
-	return coverageSet{direct: []canonical.Pair{pair}, span: spanAliasedAsStored}
+	return coverageSet{direct: []canonical.Pair{pair}}
 }
 
 // coverageFloor is one memoised probe: the instant the daily rung's

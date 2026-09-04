@@ -892,16 +892,37 @@ export interface paths {
          *     `quote_asset` it was stored under, which is not necessarily the
          *     spelling that was asked for.
          *
-         *     The page is read in the ORIENTATION requested: rows stored as
-         *     `quote/base` are not flipped into it, so a market the decoder
-         *     recorded only the other way round returns an empty page under
-         *     this orientation. An empty first page carries `coverage_from`
+         *     A market is served from BOTH stored orientations. The decoder
+         *     records `base/quote` and `quote/base` as separate rows, and rows
+         *     held the other way round are re-expressed into the orientation
+         *     requested: the two legs swap, the two amounts swap with them,
+         *     and `price` — always quote/base — is the exact reciprocal of the
+         *     stored one. The swap is performed on the smallest-unit integer
+         *     amounts, so nothing is rounded on the way. `base_asset` /
+         *     `quote_asset` on such a row report the orientation served, not
+         *     the one stored. An empty first page carries `coverage_from`
          *     (and, when the window ends at or before it,
-         *     `flags.outside_coverage`) measured over that same orientation
-         *     only — a market held only the other way round carries no floor
-         *     here, rather than a floor for rows this page cannot return. A
-         *     page reached by `cursor` carries neither: it means the window
-         *     was drained, not that nothing was there.
+         *     `flags.outside_coverage`) measured over both orientations, the
+         *     same population this page returns. A page reached by `cursor`
+         *     carries neither: it means the window was drained, not that
+         *     nothing was there.
+         *
+         *     Every row in the window is served EXACTLY ONCE across a drain, so
+         *     a client may append pages and sum them directly. `limit` is a
+         *     page-size target rather than an exact count, though, and both
+         *     directions of that need handling:
+         *
+         *     - A page may come back SHORT of `limit` while more rows exist.
+         *       Detect the end of the data by the ABSENCE of `pagination`,
+         *       never by a page shorter than `limit`.
+         *     - A page may EXCEED `limit`. Trades sharing an exact
+         *       (ts, ledger, tx_hash, op_index) — one operation recorded by
+         *       several sources — are served together rather than split
+         *       across a page edge, so a page runs to the end of such a group.
+         *       The excess is bounded by the size of one group, i.e. by the
+         *       number of sources that recorded that single operation, and is
+         *       independent of `limit`: a `limit=1` request over a
+         *       three-source group returns three rows.
          *
          *     Bucketed/granularity-based history (VWAP/TWAP series at 1m/15m/...)
          *     will ship via the aggregator binary (see
@@ -5481,7 +5502,7 @@ export interface components {
             as_of: string;
             /**
              * Format: date-time
-             * @description Earliest instant this deployment holds served-tier price history at for what this surface serves the named pair from — the bottom of the range this response's emptiness can speak for. Emitted by /v1/ohlc's series mode, /v1/history and /v1/chart's default vwap series on an EMPTY answer, so a consumer can tell "the market was quiet across the window" from "the window is before the history held". ABSENT means unknown — no daily bucket yet, the floor could not be read, or this surface does not probe it — and never "from the beginning of time". Measured on the daily aggregate, the rung the probe reads: it carries no retention policy, so nothing in it has been dropped by age, and it is the cheapest rung to prove empty. The floor describes that rung; a finer grain holds what its own refreshes have materialised and is not measured here. For a FIAT-quoted pair the floor is measured over the same constituent set the surface serves it from (nothing on chain quotes in `fiat:USD`): on /v1/ohlc the combined USD-pegged set, on /v1/chart the proxy list plus the XLM cross (whose floor is the later of its two legs), on /v1/price/at the declared USD pegs — the earliest of those, never the literal pair alone. Each surface is measured over the SPELLINGS its own read spans, too: /v1/ohlc's fiat series reads one quote spelling per constituent, so its floor never counts a market held only under a peg's SAC wrapper, and /v1/history measures the requested orientation only, because its page read spans one stored orientation; see those operations.
+             * @description Earliest instant this deployment holds served-tier price history at for what this surface serves the named pair from — the bottom of the range this response's emptiness can speak for. Emitted by /v1/ohlc's series mode, /v1/history and /v1/chart's default vwap series on an EMPTY answer, so a consumer can tell "the market was quiet across the window" from "the window is before the history held". ABSENT means unknown — no daily bucket yet, the floor could not be read, or this surface does not probe it — and never "from the beginning of time". Measured on the daily aggregate, the rung the probe reads: it carries no retention policy, so nothing in it has been dropped by age, and it is the cheapest rung to prove empty. The floor describes that rung; a finer grain holds what its own refreshes have materialised and is not measured here. For a FIAT-quoted pair the floor is measured over the same constituent set the surface serves it from (nothing on chain quotes in `fiat:USD`): on /v1/ohlc the combined USD-pegged set, on /v1/chart the proxy list plus the XLM cross (whose floor is the later of its two legs), on /v1/price/at the declared USD pegs — the earliest of those, never the literal pair alone. Each surface is measured over the SPELLINGS its own read spans, too: /v1/ohlc's fiat series reads one quote spelling per constituent, so its floor never counts a market held only under a peg's SAC wrapper, while /v1/history measures both stored orientations, because its page read serves both; see those operations.
              */
             coverage_from?: string;
             sources?: string[];
