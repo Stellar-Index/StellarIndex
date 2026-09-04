@@ -186,16 +186,11 @@ func (s *Server) computeTip(ctx context.Context, asset, quote canonical.Asset, w
 	if s.scam != nil && s.scam.Withheld(ctx, asset, "tip") {
 		return PriceSnapshot{}, nil, ErrPriceWithheld
 	}
-	if snap, sources, ok := s.tipWindowVWAP(ctx, asset, quote, windowSeconds); ok {
+	// Which alias combinations the window merges, and which it holds back
+	// until every other read has missed, is [tipMergePairs].
+	merge, last := tipMergePairs(asset, quote)
+	if snap, sources, ok := s.tipWindowEscalating(ctx, asset, quote, windowSeconds, merge); ok {
 		return snap, sources, nil
-	}
-	// Escalation before the closed-bucket fallback (board #42): an
-	// empty caller window widens once to the 30s SLA bound. The
-	// response's window_seconds reports the window actually used.
-	if windowSeconds < tipEscalationWindowSeconds {
-		if snap, sources, ok := s.tipWindowVWAP(ctx, asset, quote, tipEscalationWindowSeconds); ok {
-			return snap, sources, nil
-		}
 	}
 	// Fallback: most-recent known observation for the pair. PriceReader
 	// returns price_type="last_trade" today (MVP) and "vwap" once the
@@ -266,6 +261,17 @@ func (s *Server) computeTip(ctx context.Context, asset, quote canonical.Asset, w
 		// letting it fall through as "no data".
 		return PriceSnapshot{}, nil, ErrPriceWithheld
 	}
+	// Last of all: the SAC-form combinations the caller did not name —
+	// for a wrapped classic, its Soroban SAC/SAC pool. Every established
+	// read above has missed (the window at the caller's bound and at
+	// 30s, the closed bucket, the caches, the proxies), so the
+	// alternative is no price at all; this is the alias family's
+	// SAC-last shape (canonical.AssetAliases) applied to the one walk
+	// that merges. A Soroban-only wrapped classic serves from its pool
+	// here; a classic with any established answer never reaches it.
+	if snap, sources, ok := s.tipWindowEscalating(ctx, asset, quote, windowSeconds, last); ok {
+		return snap, sources, nil
+	}
 	return PriceSnapshot{}, nil, ErrPriceNotFound
 }
 
@@ -334,6 +340,24 @@ func parseTipWindowSeconds(w http.ResponseWriter, r *http.Request) (int, bool) {
 	return n, true
 }
 
+// tipWindowEscalating runs the rolling-window VWAP over pairs at the
+// caller's window and, when that window is empty, once more at the 30s
+// SLA bound (board #42) before the caller drops to its next fallback.
+// The response's window_seconds reports the window actually used. An
+// empty pair set is simply a miss.
+func (s *Server) tipWindowEscalating(ctx context.Context, asset, quote canonical.Asset, windowSeconds int, pairs []canonical.Pair) (PriceSnapshot, []string, bool) {
+	if len(pairs) == 0 {
+		return PriceSnapshot{}, nil, false
+	}
+	if snap, sources, ok := s.tipWindowVWAP(ctx, asset, quote, windowSeconds, pairs); ok {
+		return snap, sources, true
+	}
+	if windowSeconds < tipEscalationWindowSeconds {
+		return s.tipWindowVWAP(ctx, asset, quote, tipEscalationWindowSeconds, pairs)
+	}
+	return PriceSnapshot{}, nil, false
+}
+
 // tipWindowVWAP runs the rolling-window VWAP path. Returns
 // (snapshot, sources, true) when at least one trade landed in the
 // window and VWAP succeeded; (_, _, false) otherwise so the caller
@@ -346,8 +370,8 @@ func parseTipWindowSeconds(w http.ResponseWriter, r *http.Request) (int, bool) {
 // when the rolling window can't produce one. Surfacing a 5xx here
 // would make a transient hypertable hiccup turn the entire tip
 // surface red even when the fallback is healthy.
-func (s *Server) tipWindowVWAP(ctx context.Context, asset, quote canonical.Asset, windowSeconds int) (PriceSnapshot, []string, bool) {
-	if s.history == nil {
+func (s *Server) tipWindowVWAP(ctx context.Context, asset, quote canonical.Asset, windowSeconds int, pairs []canonical.Pair) (PriceSnapshot, []string, bool) {
+	if s.history == nil || len(pairs) == 0 {
 		return PriceSnapshot{}, nil, false
 	}
 	now := time.Now().UTC()
@@ -360,31 +384,25 @@ func (s *Server) tipWindowVWAP(ctx context.Context, asset, quote canonical.Asset
 	// fallback (61–113s stale) while ?asset=crypto:XLM was fresh — failing
 	// the ≤30s freshness contract for the natural spelling. MERGE the
 	// alias pairs' trades (disjoint sets) so the tip VWAP covers all venues
-	// regardless of which spelling the caller used. Both sides alias:
-	// XLM appears as a QUOTE too (e.g. AQUA/XLM).
+	// regardless of which spelling the caller used. Which combinations
+	// are merged — and why an unnamed SAC-form one is read only after
+	// every other read has missed — is [tipMergePairs]; the caller
+	// passes whichever set this read is for.
 	var trades []canonical.Trade
-	for _, a := range assetAliases(asset) {
-		for _, q := range assetAliases(quote) {
-			pair, err := canonical.NewPair(a, q)
-			if err != nil {
-				// Identity pair via aliasing (e.g. native/crypto:XLM
-				// collapsing) — skip the degenerate combination.
-				continue
+	for _, pair := range pairs {
+		tr, err := s.history.TradesInRange(ctx, pair, from, now, tipWindowMaxTrades)
+		if err != nil {
+			// Don't log under a cancelled ctx — that's just the client
+			// disconnecting (or, on the stream path, the per-tick scope
+			// completing).
+			if ctx.Err() == nil {
+				s.logger.Warn("TradesInRange failed (tip window) — falling back to LatestPrice",
+					"err", err, "asset", pair.Base.String(), "quote", pair.Quote.String(),
+					"window_seconds", windowSeconds)
 			}
-			tr, err := s.history.TradesInRange(ctx, pair, from, now, tipWindowMaxTrades)
-			if err != nil {
-				// Don't log under a cancelled ctx — that's just the client
-				// disconnecting (or, on the stream path, the per-tick scope
-				// completing).
-				if ctx.Err() == nil {
-					s.logger.Warn("TradesInRange failed (tip window) — falling back to LatestPrice",
-						"err", err, "asset", a.String(), "quote", q.String(),
-						"window_seconds", windowSeconds)
-				}
-				return PriceSnapshot{}, nil, false
-			}
-			trades = append(trades, tr...)
+			return PriceSnapshot{}, nil, false
 		}
+		trades = append(trades, tr...)
 	}
 	if len(trades) == 0 {
 		return PriceSnapshot{}, nil, false
@@ -429,6 +447,58 @@ func (s *Server) tipWindowVWAP(ctx context.Context, asset, quote canonical.Asset
 		ObservedAt:    now,
 		WindowSeconds: windowSeconds,
 	}, sources, true
+}
+
+// tipMergePairs partitions the alias-pair combinations of a requested
+// (asset, quote) into the set the tip window MERGES and the set it reads
+// LAST — only after every other read has missed.
+//
+// Both sides alias, because XLM appears as a quote too (AQUA/XLM), and
+// the merge is what lets ?asset=native reach the CEX prints stored under
+// crypto:XLM — the two established XLM forms are deep, disjoint venue
+// populations of one asset.
+//
+// Every SAC-wrapped classic has the same dual identity — the families the
+// operator declares in `[supply].sac_wrappers` — and its Soroban SAC/SAC
+// pool is routinely orders of magnitude thinner than its SDEX book. A
+// merge that admitted the pool unasked let ONE trade on a
+// few-hundred-dollar pool be the served tip of a classic-quoted request
+// in every 30s window the SDEX book was silent, with no gate on the pool
+// itself: the substance gate measures the alias union, which the deep
+// book clears on the pool's behalf, the trailing-baseline guard never
+// runs on this surface, and the window VWAP is computed straight from
+// raw trades. That is the thin-pool third-alias shape the alias family's
+// SAC-LAST ordering exists to stop (see canonical.AssetAliases); a merge
+// has no "last", so this gives it one. A SAC-form combination the caller
+// did not name is never merged: it is returned in `last`, and computeTip
+// reads it only after the established combinations' window, the
+// closed-bucket read and every other fallback have missed — where the
+// alternative is no price at all. A wrapped classic with no classic
+// venue (a Soroban-only market) therefore still serves from its pool —
+// gated by the substance floor, which for such an asset measures the
+// pool alone — and a SAC print can never displace, or blend into, an
+// answer the established forms can give.
+//
+// A caller who names a SAC form is asking about that market and keeps
+// the full cross — the pool merged with its classic sibling — in
+// `merge`, with nothing held back. Identity combinations
+// (native/crypto:XLM collapsing) are dropped.
+func tipMergePairs(asset, quote canonical.Asset) (merge, last []canonical.Pair) {
+	sacNamed := asset.Type == canonical.AssetSoroban || quote.Type == canonical.AssetSoroban
+	for _, a := range assetAliases(asset) {
+		for _, q := range assetAliases(quote) {
+			pair, err := canonical.NewPair(a, q)
+			if err != nil {
+				continue
+			}
+			if !sacNamed && (a.Type == canonical.AssetSoroban || q.Type == canonical.AssetSoroban) {
+				last = append(last, pair)
+				continue
+			}
+			merge = append(merge, pair)
+		}
+	}
+	return merge, last
 }
 
 // distinctTradeSources returns the unique source names from a slice
