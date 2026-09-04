@@ -156,10 +156,33 @@ func NewScamGate(dir ScamDirectoryReader, opts ScamGateOptions) *ScamGate {
 //
 // Only CLASSIC assets have a directory-flaggable issuer G-address;
 // native / fiat / crypto-CEX / bare-Soroban assets return false.
+//
+// The base is resolved to its CANONICAL family form before that check
+// (canonical.CanonicalAsset), because a Stellar Asset Contract wrapper
+// is the same asset as the classic issuance it wraps while carrying no
+// G-address of its own. Without the resolution the classic check
+// rejected every SAC spelling as "nothing to flag", so a flagged
+// issuer's price stayed servable to anyone who named the wrapper's
+// C-address instead of `CODE-ISSUER` — on /v1/price, /v1/vwap,
+// /v1/twap, /v1/price/tip and /v1/chart alike, since all ten
+// consultations pass the raw requested base straight through
+// (docs/audit/d7-thin-pool-third-alias-vwap-review-2026-09-04.md, R8).
+// Resolving HERE rather than at each caller is what makes the ten
+// consultations agree: a new price surface inherits it.
+//
+// Direction matters and is one-way. A configured classic↔SAC family is
+// ordered classic-first (canonical.NewAliasRegistry), so the canonical
+// form of a classic asset is itself and a classic-keyed request is
+// bit-for-bit unchanged; only the SAC spelling moves. A deployment with
+// no `[supply].sac_wrappers` entry for the asset resolves it to itself,
+// so the resolution is a no-op there rather than a behaviour change.
+// XLM's SAC canonicalises to `native`, which has no issuer and so still
+// returns false — as it did before.
 func (g *ScamGate) Withheld(ctx context.Context, base canonical.Asset, surface string) bool {
 	if g == nil {
 		return false
 	}
+	base = canonical.CanonicalAsset(base)
 	if base.Type != canonical.AssetClassic || base.Issuer == "" {
 		return false
 	}

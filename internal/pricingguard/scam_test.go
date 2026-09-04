@@ -124,3 +124,126 @@ func TestScamGate_Withheld(t *testing.T) {
 		t.Errorf("fail-open must not cache: lookups = %d, want 2", fe.calls)
 	}
 }
+
+// TestScamGate_WithheldThroughSACSpelling pins the identity half of the
+// gate: a Stellar Asset Contract wrapper IS the classic issuance it
+// wraps, so naming the wrapper's C-address must reach the same verdict
+// as naming `CODE-ISSUER`.
+//
+// Before the base was resolved to its canonical family form, the
+// classic-only guard rejected the SAC spelling outright — the gate
+// returned false without ever asking the directory, and the flagged
+// issuer's price stayed servable to any caller who spelled the asset as
+// its contract id (R8).
+//
+// NOT parallel: the alias registry is process-global (same convention as
+// TestTVLValuer_GateSeesTheCanonicalIdentity).
+func TestScamGate_WithheldThroughSACSpelling(t *testing.T) {
+	ctx := context.Background()
+	const (
+		code   = "RIO"
+		issuer = "GBNZILSTVQZ4R7IKQDGHYGY2QXL5QOFJYQMXPKWRRM5PAV7Y4M67AQUA"
+	)
+	flagged, err := canonical.NewClassicAsset(code, issuer)
+	if err != nil {
+		t.Fatalf("classic asset: %v", err)
+	}
+	sacID, err := flagged.SacContractID()
+	if err != nil {
+		t.Fatalf("derive SAC: %v", err)
+	}
+	sac, err := canonical.NewSorobanAsset(sacID)
+	if err != nil {
+		t.Fatalf("soroban asset: %v", err)
+	}
+	reg, err := canonical.NewAliasRegistry(map[string]string{sacID: code + ":" + issuer})
+	if err != nil {
+		t.Fatalf("alias registry: %v", err)
+	}
+	canonical.InstallAliasRegistry(reg)
+	t.Cleanup(func() { canonical.InstallAliasRegistry(nil) })
+
+	fd := &fakeDir{entry: timescale.DirectoryEntry{Tags: []string{"unsafe"}}, found: true}
+	g := NewScamGate(fd, ScamGateOptions{})
+
+	if !g.Withheld(ctx, sac, "vwap") {
+		t.Error("the SAC wrapper of a flagged classic issuance must be withheld — " +
+			"it is the same asset, and the C-address spelling is otherwise a way " +
+			"to ask for a price the gate has already refused")
+	}
+	if fd.calls != 1 {
+		t.Errorf("directory lookups = %d, want 1 — the SAC spelling must resolve to "+
+			"the classic issuer and ASK, not short-circuit to false", fd.calls)
+	}
+	// The classic spelling is unchanged, and shares the resolved verdict
+	// cache rather than re-asking under a second key.
+	if !g.Withheld(ctx, flagged, "price_read") {
+		t.Error("the classic spelling must still be withheld")
+	}
+	if fd.calls != 1 {
+		t.Errorf("directory lookups = %d, want 1 — both spellings resolve to one "+
+			"issuer key and must share one cached verdict", fd.calls)
+	}
+
+	// Blast radius: a wrapper whose classic twin is NOT flagged serves.
+	clean := &fakeDir{entry: timescale.DirectoryEntry{Tags: []string{"kyc"}}, found: true}
+	if NewScamGate(clean, ScamGateOptions{}).Withheld(ctx, sac, "vwap") {
+		t.Error("a SAC whose classic twin is unflagged must not be withheld")
+	}
+}
+
+// TestScamGate_BareSorobanHasNoFlaggableIssuer is the other half of the
+// same rule. A pure-SEP-41 contract with no classic twin has no
+// G-address anywhere in its identity, so the account directory cannot
+// speak to it: the gate must return false WITHOUT a lookup, exactly as
+// it did before the canonical resolution was added. Resolving an asset
+// that is in no family returns the asset itself, so the classic guard
+// still rejects it.
+func TestScamGate_BareSorobanHasNoFlaggableIssuer(t *testing.T) {
+	ctx := context.Background()
+	// A registry is installed and knows a DIFFERENT wrapper, so the miss
+	// is a genuine "no family", not an empty registry.
+	other, err := canonical.NewClassicAsset("AQUA", "GBNZILSTVQZ4R7IKQDGHYGY2QXL5QOFJYQMXPKWRRM5PAV7Y4M67AQUA")
+	if err != nil {
+		t.Fatalf("classic asset: %v", err)
+	}
+	otherSAC, err := other.SacContractID()
+	if err != nil {
+		t.Fatalf("derive SAC: %v", err)
+	}
+	reg, err := canonical.NewAliasRegistry(map[string]string{
+		otherSAC: "AQUA:GBNZILSTVQZ4R7IKQDGHYGY2QXL5QOFJYQMXPKWRRM5PAV7Y4M67AQUA",
+	})
+	if err != nil {
+		t.Fatalf("alias registry: %v", err)
+	}
+	canonical.InstallAliasRegistry(reg)
+	t.Cleanup(func() { canonical.InstallAliasRegistry(nil) })
+
+	bare, err := canonical.NewSorobanAsset("CBEM2CAIYLM3HBOPU5HLQL7V5BUAKM3N77DYQKX4FNHTQLQUUD2ZFBOX")
+	if err != nil {
+		t.Fatalf("soroban asset: %v", err)
+	}
+	fd := &fakeDir{entry: timescale.DirectoryEntry{Tags: []string{"scam"}}, found: true}
+	g := NewScamGate(fd, ScamGateOptions{})
+	if g.Withheld(ctx, bare, "price_read") {
+		t.Error("a Soroban asset with no classic twin has no directory-flaggable " +
+			"issuer — the gate cannot speak to it and must not withhold")
+	}
+	if fd.calls != 0 {
+		t.Errorf("bare Soroban asset triggered %d directory lookups, want 0", fd.calls)
+	}
+
+	// XLM's SAC canonicalises to `native`, which likewise carries no
+	// issuer: unchanged, and still no lookup.
+	xlmSAC, err := canonical.NewSorobanAsset(canonical.XLMSacContractID)
+	if err != nil {
+		t.Fatalf("xlm sac: %v", err)
+	}
+	if g.Withheld(ctx, xlmSAC, "price_read") {
+		t.Error("XLM's SAC canonicalises to native, which has no issuer to flag")
+	}
+	if fd.calls != 0 {
+		t.Errorf("XLM SAC triggered %d directory lookups, want 0", fd.calls)
+	}
+}
