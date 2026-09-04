@@ -63,6 +63,45 @@ function parseAssetClass(raw: string | null): AssetClassFilter {
   }
 }
 
+/**
+ * demoteUnpricedLast — stable partition that ranks every row the response
+ * carries no `price_usd` for below every row that has one.
+ *
+ * The listing's server-side ORDER BY already leads with a rank tier that
+ * demotes an unpriced asset, on the stated ground that this listing IS a
+ * price/market-cap table. But that tier reads the price ROLLUP, and the
+ * handler then withholds the price of any row whose backing pairs fail the
+ * substance floor (applySubstanceGateToListing) — a verdict measured
+ * per-pair at request time that no ORDER BY can see. So a row ranks as
+ * priced and serves as a dash.
+ *
+ * Measured against api.stellarindex.io 2026-09-03 21:31 UTC on the page this
+ * table opens on (`?asset_class=all&limit=100&include=sparkline7d`): 78
+ * rows, 33 carrying price_usd, the FIRST unpriced row at position 16 — above
+ * the eighteen priced rows that trail it, under a header promising a live
+ * VWAP price. Re-partitioning here applies the server's own rule to the
+ * same rows with the gate's verdict in hand: the first dash moves to 34.
+ *
+ * The partition keys on the price the response CARRIED, not on why a row
+ * has none, so it holds for /external/assets too — that listing shares this
+ * table, and its unpriced rows are reference coins the feed does not cover
+ * (fiat and reference coins never pass through the substance gate). Only
+ * the footer's stated cause is specific to the Stellar listing.
+ *
+ * Scoped to the DEFAULT order by the caller. An explicit column sort is a
+ * ranking the user asked for, and useTableSort already sinks that column's
+ * own blanks; overriding it would make "Circulating" unusable on a
+ * directory whose long tail is mostly unpriced.
+ */
+function demoteUnpricedLast(rows: Coin[]): Coin[] {
+  const priced: Coin[] = [];
+  const unpriced: Coin[] = [];
+  for (const row of rows) {
+    (parseDec(row.price_usd) != null ? priced : unpriced).push(row);
+  }
+  return unpriced.length === 0 ? priced : [...priced, ...unpriced];
+}
+
 export function AssetsTable({
   verifiedSlugs = [],
   endpoint = '/v1/assets',
@@ -110,6 +149,10 @@ export function AssetsTable({
   // net with no aggregator they are ALL null, so the directory rendered
   // six dashes per row and paid for a 7d price series that does not exist.
   const pricing = CURRENT_NETWORK.pricing;
+  // The substance floor is a Stellar-listing verdict: /v1/external/assets
+  // rows (fiat + reference coins) are outside its scope, so the footer names
+  // it only where it is the cause.
+  const stellarListing = endpoint === '/v1/assets';
   const { data, isLoading, isError, error } = useAssets(
     assetClass,
     limit,
@@ -169,9 +212,19 @@ export function AssetsTable({
   // user clicked "Volume 24h". Stable, so the chosen column still decides
   // the order within each group — and the row and its ⚠ Flagged badge stay
   // on the page: we refuse to RANK a flagged asset, we never hide it.
+  //
+  // The unpriced demotion runs FIRST so the two compose into the server's
+  // own tier order: priced, then unpriced, then flagged.
+  const defaultOrder = sort.key === null;
   const rankedAssets = useMemo(
-    () => demoteFlaggedLast(sortedAssets, (c) => c.issuer_directory_tags),
-    [sortedAssets],
+    () =>
+      demoteFlaggedLast(
+        pricing && defaultOrder
+          ? demoteUnpricedLast(sortedAssets)
+          : sortedAssets,
+        (c) => c.issuer_directory_tags,
+      ),
+    [sortedAssets, pricing, defaultOrder],
   );
 
   function setQuery(
@@ -371,7 +424,17 @@ export function AssetsTable({
           {endpoint}?asset_class={assetClass}
         </code>
         . Verified catalogue rows surface first, then long-tail Stellar-classic
-        rows by 24h volume. Per-asset issuer + on-chain pool detail lives on{' '}
+        rows by 24h volume.{' '}
+        {pricing && stellarListing && (
+          <>
+            Rows with no price we can stand behind — no market deep enough to
+            clear the substance floor — rank below the priced ones.{' '}
+          </>
+        )}
+        {pricing && !stellarListing && (
+          <>Rows the API served no price for rank below the priced ones. </>
+        )}
+        Per-asset issuer + on-chain pool detail lives on{' '}
         <code className="bg-surface-subtle rounded-sm px-1 font-mono text-[11px]">
           /assets/&#123;slug&#125;
         </code>

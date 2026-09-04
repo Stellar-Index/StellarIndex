@@ -551,7 +551,7 @@ export interface paths {
         };
         /**
          * Point-in-time price (closed bucket at-or-before a timestamp)
-         * @description The pair's closed VWAP bucket at-or-before `ts` — the cost-basis / PnL / tax-tooling lookup. The answer comes from the FINEST CAGG resolution that covers the instant: `prices_1m` for recent timestamps, coarser bars (down to daily, back to 2015) for older ones. `observed_at` is the BUCKET's close time, never `ts`, and `window_seconds` reports the resolution used (60 for a 1-minute bar, 86400 for a daily bar) — so callers see exactly how far the nearest observation was and at what granularity. A nearest bucket more than 24 hours before `ts` is a 404 (the endpoint refuses to fabricate continuity across dead markets). When the literal pair (and its aliases) has no bucket and the quote is `fiat:USD`, the lookup retries each operator-declared USD-pegged classic (the same stablecoin-proxy chain as /v1/price) and returns the peg's bucket with `flags.triangulated=true`, echoing the requested quote. Current price: /v1/price or /v1/price/tip. Multi-horizon change: /v1/price/changes.
+         * @description The pair's closed VWAP bucket at-or-before `ts` — the cost-basis / PnL / tax-tooling lookup. The answer comes from the FINEST CAGG resolution that covers the instant: `prices_1m` for recent timestamps, coarser bars (down to daily, back to 2018) for older ones. Daily coverage is not yet continuous — an instant in an uncovered stretch resolves to no bucket and 404s rather than being interpolated. `observed_at` is the BUCKET's close time, never `ts`, and `window_seconds` reports the resolution used (60 for a 1-minute bar, 86400 for a daily bar) — so callers see exactly how far the nearest observation was and at what granularity. A nearest bucket more than 24 hours before `ts` is a 404 (the endpoint refuses to fabricate continuity across dead markets). When the literal pair (and its aliases) has no bucket and the quote is `fiat:USD`, the lookup retries each operator-declared USD-pegged classic (the same stablecoin-proxy chain as /v1/price) and returns the peg's bucket with `flags.triangulated=true`, echoing the requested quote. Current price: /v1/price or /v1/price/tip. Multi-horizon change: /v1/price/changes.
          */
         get: operations["getPriceAt"];
         put?: never;
@@ -571,7 +571,7 @@ export interface paths {
         };
         /**
          * Multi-horizon price change (1h / 24h / 7d / 30d in one call)
-         * @description The current closed price plus the signed percentage change over 1h, 24h, 7d, and 30d — the wallet/portfolio delta strip in a single request (RFP §6). Each horizon's reference is the closed VWAP at-or-before `now − horizon`, resolved by the SAME point-in-time engine as /v1/price/at (finest CAGG resolution that covers the instant; daily bars reach back to 2015), so long horizons still answer for pairs whose minute-level history has aged out of the served tier. A horizon with no data that far back (a young pair, or a market that predates the window) is returned with all fields `null` and `available: false` — NEVER an error, so a fresh listing still returns its 1h/24h moves. Each horizon carries `reference_at` + `resolution` so callers see exactly which bucket (and at what granularity) the delta was measured against. A 404 only when the pair has no CURRENT price to anchor on. `quote` defaults to `fiat:USD`; when no direct fiat:USD bucket exists the same stablecoin-proxy chain as /v1/price resolves it via an operator-declared USD peg (`flags.triangulated`).
+         * @description The current closed price plus the signed percentage change over 1h, 24h, 7d, and 30d — the wallet/portfolio delta strip in a single request (RFP §6). Each horizon's reference is the closed VWAP at-or-before `now − horizon`, resolved by the SAME point-in-time engine as /v1/price/at (finest CAGG resolution that covers the instant; daily bars reach back to 2018), so long horizons still answer for pairs whose minute-level history has aged out of the served tier. A horizon with no data that far back (a young pair, or a market that predates the window) is returned with all fields `null` and `available: false` — NEVER an error, so a fresh listing still returns its 1h/24h moves. Each horizon carries `reference_at` + `resolution` so callers see exactly which bucket (and at what granularity) the delta was measured against. A 404 only when the pair has no CURRENT price to anchor on. `quote` defaults to `fiat:USD`; when no direct fiat:USD bucket exists the same stablecoin-proxy chain as /v1/price resolves it via an operator-declared USD peg (`flags.triangulated`).
          */
         get: operations["getPriceChanges"];
         put?: never;
@@ -870,6 +870,15 @@ export interface paths {
          *     `1mo`) for the requested asset/quote pair. This is the
          *     bucketed history surface; `/history` remains the raw
          *     per-trade endpoint.
+         *
+         *     Spellings and fallbacks follow /v1/chart: a pair with no
+         *     buckets under the requested spelling is retried under its
+         *     alias spellings (same asset, `flags.triangulated` stays
+         *     false); a fiat-quoted pair with none under any spelling is
+         *     served through the operator-declared USD pegs and, when no peg
+         *     answers, derived through XLM — both stamp
+         *     `flags.triangulated=true`, and `asset_id` / `quote` still echo
+         *     the request.
          */
         get: operations["getHistorySinceInception"];
         put?: never;
@@ -924,7 +933,18 @@ export interface paths {
          *     not a proxy — `asset_id` still echoes what was asked for and
          *     `flags.triangulated` stays false. The USD-pegged stablecoin
          *     proxy is tried only after every spelling comes back empty, and
-         *     that one does stamp `flags.triangulated=true`.
+         *     that one does stamp `flags.triangulated=true`. When no proxy
+         *     answers either, a non-XLM asset's series is derived through
+         *     XLM — its XLM-quoted series multiplied, bucket by bucket, by
+         *     XLM's own series in the requested fiat (analogous to the
+         *     ADR-0051 composition, but pivoting through XLM rather than
+         *     USD: the USD peg's own USD series has no USD leg to anchor
+         *     on) — and stamped
+         *     `flags.triangulated=true`. That route runs strictly last, so a
+         *     directly observed market always wins over a derived one; it is
+         *     how the declared USD peg itself, which nothing on chain quotes
+         *     in USD, charts its actual traded dollar price rather than an
+         *     empty series or an asserted 1.0.
          *
          *     Fiat:fiat pairs are served from the daily `fx_quotes`
          *     reference-rate series (sub-daily granularities replicate the
@@ -1641,9 +1661,10 @@ export interface paths {
          *     worker is lagging.
          *
          *     Returns 404 when the worker hasn't computed a row yet (fresh
-         *     deployment, newly-added entity, or bounded history). Returns
-         *     503 when this deployment hasn't wired the change-summary
-         *     reader.
+         *     deployment, newly-added entity, bounded history, or an entity
+         *     outside the aggregator's configured pair set — see `id`).
+         *     Returns 503 when this deployment hasn't wired the
+         *     change-summary reader.
          */
         get: operations["getEntityChanges"];
         put?: never;
@@ -1663,7 +1684,7 @@ export interface paths {
         };
         /**
          * Per-source ingest cursor positions.
-         * @description Returns every row of the `ingestion_cursors` table — the
+         * @description Returns rows of the `ingestion_cursors` table — the
          *     per-source markers the dispatcher persists after each ledger
          *     is processed. Used for operator-facing diagnostics and the
          *     showcase /diagnostics page (so you can see at a glance which
@@ -1674,16 +1695,42 @@ export interface paths {
          *     Soroswap tracks the factory cursor + one cursor per pair)
          *     return one row per (source, sub_source) tuple.
          *
-         *     Pass `?max_age=<duration>` to omit completed-backfill
-         *     cursors that drown out the live ledgerstream marker —
-         *     useful when polling from monitoring tools that can't
-         *     post-filter. The explorer's `/diagnostics` page applies
+         *     Every row carries a derived `state`:
+         *
+         *       - `live` — written within the last 10 minutes.
+         *       - `stale` — behind, but inside the 7-day abandoned
+         *         boundary, so plausibly still running.
+         *       - `abandoned` — untouched for over 7 days. `ingestion_cursors`
+         *         has no retention and every sharded one-shot job leaves a
+         *         permanent row per shard behind, so these are records of
+         *         finished or abandoned work, not positions anything is
+         *         writing to.
+         *
+         *     The live cursor namespaces — `ledgerstream` (the live indexer's
+         *     position) and `projector` — are never `abandoned` at any age.
+         *     Nothing abandons a resume point something still reads, so an old
+         *     row there means ingest is **stuck**: it stays `stale`, and stays
+         *     in the default response, carrying its full `lag_seconds`.
+         *
+         *     **The default response is the `live` + `stale` set.** Pass
+         *     `?include_abandoned=true` (or `?status=abandoned`) for the dead
+         *     set — it is opt-in because it is the overwhelming majority of
+         *     the table and describes work that ended months ago.
+         *
+         *     Pass `?max_age=<duration>` for an arbitrary freshness
+         *     threshold — useful when polling from monitoring tools that
+         *     can't post-filter. The explorer's `/diagnostics` page applies
          *     the same filter client-side, defaulting to 1h.
          *
          *     Pass `?source=<name>` for an exact-match filter on the
          *     `source` column — typical values are `ledgerstream` (the
-         *     live indexer) and `backfill` (one row per backfill
-         *     range). Composes with `?max_age=` (both filters apply).
+         *     live indexer), `projector`, and one row per shard for each
+         *     one-shot job (`backfill`, `projected-rebuild`,
+         *     `census-backfill`, …). Composes with `?max_age=` (both
+         *     filters apply).
+         *
+         *     The response is paged (`limit`, default 500, max 2000) with the
+         *     offset token echoed in `pagination.next`.
          *
          *     Returns 503 when the deployment hasn't wired the cursors
          *     reader.
@@ -1914,6 +1961,16 @@ export interface paths {
          *     genesis-complete even though the served tier only reconciles
          *     within its retention window.
          *
+         *     **Two floors, too.** `genesis_ledger` is the LAKE axis's floor —
+         *     the first ledger the source could have data at. The SERVED axis
+         *     has its own, `projection_verified_from`: the lowest ledger the
+         *     served tier actually holds a row at. They are frequently far
+         *     apart — sdex and the oracle sources publish `genesis_ledger: 2`
+         *     against a served tier that begins around ledger 61.6M — so
+         *     `complete: true` with `coverage_pct: 1` is a claim over
+         *     `[projection_verified_from, watermark_ledger]`, NOT over
+         *     `[genesis_ledger, watermark_ledger]`. Read the two together.
+         *
          *     **`sources` holds sources only.** The ADR-0033 recognition audit
          *     also produces a SYSTEM-wide census — event shapes in the lake on
          *     contracts no indexed source owns, i.e. Soroban protocols we have
@@ -1972,6 +2029,14 @@ export interface paths {
          *     source is OMITTED from `protocols` and named in `coverage_note`
          *     rather than published with a fabricated `contract_count: 0` — a
          *     failed read is not a real zero.
+         *
+         *     A protocol whose instances outnumber that cap by orders of
+         *     magnitude is COUNTED rather than enumerated, so its
+         *     `contract_count` is the exact total and neither a zero nor the
+         *     cap (sorocredit deploys one collateral child contract per opened
+         *     position — 116k of them). Its `contracts` roster on
+         *     `/protocols/{name}` is then empty: the count is real, the
+         *     enumeration is simply not published.
          */
         get: operations["listProtocols"];
         put?: never;
@@ -5170,6 +5235,13 @@ export interface components {
          *       Stellar ticker but the issuer doesn't. The matching
          *       `unverified_warning` body on the AssetDetail carries
          *       the verified-currency pointer (R-018 Phase 1.1).
+         *     - `filters_ignored` — the row-narrowing query parameters the
+         *       response did NOT apply, named as sent. Omitted when
+         *       everything supplied was applied. On `/v1/assets` the
+         *       class-scoped listings (`asset_class=fiat|stablecoin|crypto`)
+         *       serve their whole class and narrow on none of `type`,
+         *       `code`, `issuer`, `q`; they name what they dropped here so a
+         *       client can tell that over-broad page from a genuine match.
          */
         Flags: {
             /** @default false */
@@ -5201,6 +5273,8 @@ export interface components {
             rerouted: boolean;
             /** @default false */
             unverified_ticker_collision: boolean;
+            /** @description Names of the row-narrowing query parameters this response did NOT apply, spelled as the caller sent them (`type`, `code`, `issuer`, `q`). Absent when the response applied every filter it was given — an ignored filter and a matched one otherwise produce the same 200 over the same shape, so a client re-filtering the page has nothing else to key on. Set by `/v1/assets` on the listings whose rows come from a source that cannot narrow: the class-scoped catalogue listings (`asset_class=fiat|stablecoin|crypto`), and the lean asset-catalog fallback served when no listing store is configured. */
+            filters_ignored?: string[];
         };
         /**
          * @description Present on list endpoints when more rows exist beyond the
@@ -5238,7 +5312,15 @@ export interface components {
             genesis_ledger: number;
             /** @description Verified factory / trust-root contract C-strkeys (ADR-0035); empty for factory-less sources. */
             factories: string[];
-            /** @description Registered contract instances (protocol_contracts; soroswap_pairs for soroswap). */
+            /**
+             * @description Registered contract instances (protocol_contracts;
+             *     soroswap_pairs for soroswap). Always the TRUE total: a
+             *     protocol whose instances exceed the roster query's LIMIT 5000
+             *     is counted instead of enumerated, so this figure can exceed
+             *     the length of `contracts` on `/protocols/{name}` — it is
+             *     never truncated to the cap and never a zero standing in for
+             *     an unenumerated set.
+             */
             contract_count: number;
             /**
              * Format: int64
@@ -5250,6 +5332,20 @@ export interface components {
                 complete: boolean;
                 /** Format: int64 */
                 watermark_ledger: number;
+                /**
+                 * Format: int64
+                 * @description Floor of the range `complete` is a claim about — the
+                 *     lowest ledger the SERVED tier holds any row at for this
+                 *     source. It is NOT `genesis_ledger` (the sibling field on
+                 *     this same row), which is the lake axis's floor and is
+                 *     routinely much lower: sdex publishes `genesis_ledger: 2`
+                 *     with a served tier that begins around ledger 61.6M.
+                 *     Reading `complete` against `genesis_ledger` overstates
+                 *     the claim by that whole span. Omitted when the audit
+                 *     recorded no floor — absent means UNKNOWN, never "from
+                 *     ledger 0". Same field, same semantics, as on `/coverage`.
+                 */
+                projection_verified_from?: number;
             };
             /**
              * @description Current pooled-liquidity value (TVL) in USD, from a
@@ -5674,19 +5770,26 @@ export interface components {
                 /** Format: date-time */
                 last_aggregator_tick?: string;
                 /**
-                 * @description Sources that have emitted an event in the last 10
-                 *     minutes (Prometheus
-                 *     `count(rate(stellarindex_source_events_total[10m]) > 0)`).
+                 * @description Enabled sources that have emitted an event in the
+                 *     last 7 days (Prometheus
+                 *     `count((rate(stellarindex_source_events_total[7d]) > 0)
+                 *     and on (source) (stellarindex_source_enabled == 1))`)
+                 *     — a subset of `total_sources` by construction.
                  */
                 active_sources?: number;
                 /**
-                 * @description Sources the operator has ENABLED in this region
-                 *     (Prometheus `count(stellarindex_source_enabled == 1)`).
+                 * @description Sources switched on in this region — every scraped
+                 *     `stellarindex_source_enabled == 1` series, whichever
+                 *     binary publishes it (Prometheus
+                 *     `count(stellarindex_source_enabled == 1)`).
                  *     Different from `/v1/network/stats.total_sources`,
                  *     which counts every source REGISTERED in the binary
                  *     regardless of enable state — typically a strict
-                 *     superset. Today on r1: enabled=17, registered=21,
-                 *     active=15.
+                 *     superset. Measured on r1 2026-09-01: enabled=17,
+                 *     registered=21, active=15 — before the API binary
+                 *     published the `massive` FX worker's own enabled
+                 *     series; with it, enabled and active each read one
+                 *     higher.
                  */
                 total_sources?: number;
             };
@@ -7702,7 +7805,24 @@ export interface operations {
             query?: {
                 /** @description Comma-separated row enrichments. Supported: `sparkline7d` (per-row 7-day price history for chart columns; one batch read per page). */
                 include?: string;
-                /** @description Case-insensitive substring filter over code / asset id / slug / name, applied server-side across BOTH phases of the unified listing (catalogue + the ~191K classic long tail). */
+                /**
+                 * @description Case-insensitive substring filter over code / asset id /
+                 *     slug / name, applied server-side across BOTH phases of the
+                 *     unified listing (catalogue + the ~191K classic long tail).
+                 *
+                 *     Applied on the default listing and on `asset_class=all`.
+                 *     NOT applied on `asset_class=fiat|stablecoin|crypto`: those
+                 *     listings serve their whole class, so `q` is accepted and
+                 *     has no effect there — the response names
+                 *     it in `flags.filters_ignored`, so a client can tell the
+                 *     over-broad page from a match.
+                 *
+                 *     A row's `volume_24h_usd` under this filter is the volume of
+                 *     the arm the filter admitted — see **Row filters and
+                 *     `volume_24h_usd`** on the `type` parameter. A SAC wrapper
+                 *     has no code, slug or issuer to match, so `q` never selects
+                 *     one.
+                 */
                 q?: string;
                 /**
                  * @description Opaque pagination token echoed from a prior response's
@@ -7759,6 +7879,14 @@ export interface operations {
                  *       class plus indexed Stellar assets).
                  *
                  *     Omitted: the legacy classic-assets page (unfiltered).
+                 *
+                 *     The major dispatch, not a row filter. `fiat`, `stablecoin`
+                 *     and `crypto` serve their whole class from the catalogue and
+                 *     narrow on NONE of the row filters — `type`, `code`,
+                 *     `issuer` and `q` are accepted and have no effect on those
+                 *     three; each one a request supplies is named on the response
+                 *     in `flags.filters_ignored`. They apply on `all` and on the
+                 *     default (omitted) listing.
                  */
                 asset_class?: "fiat" | "stablecoin" | "crypto" | "blockchain" | "cryptocurrency" | "cryptocurrencies" | "all";
                 /**
@@ -7768,6 +7896,18 @@ export interface operations {
                  *     include the full coin-overlay shape (price_usd /
                  *     volume_24h_usd / change_*_pct / etc) when a
                  *     CoinsReader is wired.
+                 *
+                 *     Applied on the default listing and on `asset_class=all`.
+                 *     NOT applied on `asset_class=fiat|stablecoin|crypto`: those
+                 *     listings serve their whole class, so `issuer` is accepted
+                 *     and has no effect there — the response names
+                 *     it in `flags.filters_ignored`, so a client can tell the
+                 *     over-broad page from a match.
+                 *
+                 *     A row's `volume_24h_usd` under this filter is the volume of
+                 *     the arm the filter admitted — see **Row filters and
+                 *     `volume_24h_usd`** on the `type` parameter. A SAC wrapper
+                 *     has no issuer account, so `issuer` never selects one.
                  */
                 issuer?: string;
                 /**
@@ -7775,6 +7915,59 @@ export interface operations {
                  *     the `asset_class` catalogue dispatch above. One of `native`,
                  *     `classic`, `soroban`, `fiat`; `any` (or omitted) disables
                  *     the filter. Any other value returns 400.
+                 *
+                 *     The filter matches an asset's STELLAR ISSUANCE, not the
+                 *     `type` field on the row it returns. A verified-catalogue row
+                 *     carries `type: global` because it stands in for the on-chain
+                 *     twin whose classic row it suppresses, so USDC is returned by
+                 *     `type=classic` and XLM by `type=native` even though both
+                 *     rows are served as `global`.
+                 *
+                 *     Applied on the default listing and on `asset_class=all`.
+                 *     NOT applied on `asset_class=fiat|stablecoin|crypto`: those
+                 *     listings serve their whole class, so `type` is accepted and
+                 *     has no effect there — the response names
+                 *     it in `flags.filters_ignored`, so a client can tell the
+                 *     over-broad page from a match.
+                 *
+                 *     **Row filters and `volume_24h_usd`.** All four row filters
+                 *     (`type`, `code`, `issuer`, `q`) push down to the listing
+                 *     spine, so a filtered row reports the volume of the arm the
+                 *     filter admitted rather than the asset's total across its
+                 *     forms, while an unfiltered row reports the total. The rule
+                 *     is one rule, reached two ways:
+                 *
+                 *     - A SAC-wrapped asset served from the **classic spine**
+                 *       (any asset outside the verified catalogue) has its
+                 *       wrapper's trailing-24h volume merged onto its classic
+                 *       twin on an unfiltered `asset_class=all` request. Every
+                 *       row filter narrows before that merge, so `type=classic`,
+                 *       `code`, `issuer` and `q` each report the classic arm
+                 *       alone — materially lower than the unfiltered figure — and
+                 *       `type=soroban` returns the wrapper by itself with the
+                 *       wrapper's own volume.
+                 *     - A **verified-catalogue** row (the curated slugs that open
+                 *       the `asset_class=all` listing — `usdc`, `eurc`, `aqua`,
+                 *       `blnd`, …) is served by a different phase and lands on the
+                 *       same two figures. Its analytics come from an exact-issuer
+                 *       lookup of the classic twin, which no SAC wrapper can
+                 *       match, so an unfiltered request adds the wrapper's
+                 *       trailing-24h volume to that arm and publishes the
+                 *       classic + SAC sum. That is the sum the spine intends for
+                 *       the twin this row replaces, not one it guarantees: the
+                 *       spine folds a wrapper only when the wrapper's row lands
+                 *       in the same page window, while the catalogue row always
+                 *       point-reads it. Under any of the four filters
+                 *       the addition is skipped and the classic arm alone is
+                 *       reported, matching the spine.
+                 *     - `xlm` is the exception. It is served by the dedicated
+                 *       `native` reader rather than by a classic-twin lookup, so
+                 *       its `volume_24h_usd` is the `native` (SDEX) arm on every
+                 *       request. Neither of XLM's other two identities is added
+                 *       to it: the XLM Stellar Asset Contract is a distinct
+                 *       on-chain venue population, and `crypto:XLM` is off-Stellar
+                 *       exchange turnover that no on-Stellar volume figure
+                 *       includes.
                  */
                 type?: "native" | "classic" | "soroban" | "fiat" | "any";
                 /**
@@ -7782,6 +7975,18 @@ export interface operations {
                  *     characters — the alphanum4/alphanum12 rule). Combine with
                  *     `issuer` to pin a single classic asset. A malformed value
                  *     returns 400.
+                 *
+                 *     Applied on the default listing and on `asset_class=all`.
+                 *     NOT applied on `asset_class=fiat|stablecoin|crypto`: those
+                 *     listings serve their whole class, so `code` is accepted and
+                 *     has no effect there — the response names
+                 *     it in `flags.filters_ignored`, so a client can tell the
+                 *     over-broad page from a match.
+                 *
+                 *     A row's `volume_24h_usd` under this filter is the volume of
+                 *     the arm the filter admitted — see **Row filters and
+                 *     `volume_24h_usd`** on the `type` parameter. A SAC wrapper
+                 *     has no asset code, so `code` never selects one.
                  */
                 code?: string;
             };
@@ -11127,31 +11332,46 @@ export interface operations {
             path: {
                 /**
                  * @description Which entity family the delta strip is computed over:
-                 *     `coin` (an asset's price/volume deltas), `protocol`
-                 *     (per-protocol activity), `pair` (a trading pair), or
-                 *     `source` (an ingest source). Determines how `{id}` is
-                 *     interpreted — see the `id` parameter.
-                 * @example source
+                 *     `coin` (the deltas of one asset's price) or `pair` (the
+                 *     deltas of one trading pair's price). Determines how `{id}`
+                 *     is interpreted — see the `id` parameter.
+                 *
+                 *     Both families come off the same series — the 1-minute VWAP
+                 *     of an aggregator-configured pair — which is why they are
+                 *     the two the worker can compute. Families that would need a
+                 *     different series (per-protocol activity, per-ingest-source
+                 *     volume) have no producer and are not served: the
+                 *     `change_summary_5m` discriminator reserves room for them,
+                 *     but nothing writes those rows, so they are absent from
+                 *     this contract rather than documented and permanently
+                 *     empty.
+                 * @example coin
                  */
-                entity_type: "coin" | "protocol" | "pair" | "source";
+                entity_type: "coin" | "pair";
                 /**
                  * @description Canonical id for the entity. Form depends on
                  *     `entity_type`:
                  *
-                 *     - `coin`: any of the asset's identifier forms — friendly
-                 *       slug (`XLM`, `USDC`), canonical asset_id (`native`,
-                 *       `crypto:XLM`, `USDC-GA5Z…`), or bare classic code
-                 *       (`USDC` → also tries `crypto:USDC`). The handler
-                 *       expands the input into every candidate the
+                 *     - `coin`: the BASE asset of a configured pair, in any of
+                 *       its identifier forms — friendly slug (`XLM`), canonical
+                 *       asset_id (`native`, `crypto:XLM`, `USDC-GA5Z…`), or bare
+                 *       classic code (`USDC` → also tries `crypto:USDC`). The
+                 *       handler expands the input into every candidate the
                  *       change-summary worker might have keyed under and
                  *       returns the first hit. Without expansion, a typo of
                  *       the canonical form would 404 even when data is
                  *       populated under a sibling form.
-                 *     - `pair`: `base/quote` form (e.g. `native/USDC-GA5Z…`).
-                 *     - `protocol`: protocol slug (e.g. `soroswap`, `blend`).
-                 *     - `source`: source name (e.g. `binance`, `coinbase`,
-                 *       `sdex`).
-                 * @example binance
+                 *     - `pair`: `base/quote` form (e.g. `crypto:XLM/fiat:USD`).
+                 *       The `/` belongs to the id, not to the path, so the whole
+                 *       id occupies one path segment and must be percent-encoded
+                 *       (`crypto%3AXLM%2Ffiat%3AUSD`); an unencoded `/` splits
+                 *       the request across two segments and matches no route.
+                 *
+                 *     The rollup covers the pairs the aggregator is configured
+                 *     to price, not every indexed asset: an asset the aggregator
+                 *     publishes no VWAP for has no row here and 404s. Call
+                 *     `/v1/assets` for the full indexed universe.
+                 * @example crypto:XLM
                  */
                 id: string;
             };
@@ -11262,31 +11482,60 @@ export interface operations {
                  *       - `active` — only rows with `lag_seconds <= 600` (10 min).
                  *         Excludes completed backfill cursors that linger in the
                  *         table after their range finished.
-                 *       - `stale`  — complement; only rows older than the 10-min
-                 *         boundary. Useful for spotting dead ingest paths.
-                 *       - omitted — return everything (subject to `max_age` + `source`).
+                 *       - `stale`  — rows older than the 10-min boundary that are
+                 *         not yet abandoned. Useful for spotting dead ingest paths
+                 *         that are still worth resuming.
+                 *       - `abandoned` — only one-shot job rows past the 7-day
+                 *         boundary (implies `include_abandoned=true`). The
+                 *         reap-planning view, so it never includes a live
+                 *         namespace: those are never reaped.
+                 *       - omitted — live + stale (subject to `max_age` + `source`).
                  *     Composes with `max_age`: for `status=active` the effective
                  *     window is whichever bound is tighter; for `status=stale` the
                  *     window becomes `[10m, max_age]`.
                  */
-                status?: "active" | "stale";
+                status?: "active" | "stale" | "abandoned";
+                /**
+                 * @description `true` adds rows whose `state` is `abandoned` (untouched for
+                 *     over 7 days) back into the response. They are excluded by
+                 *     default: `ingestion_cursors` accumulates one permanent row
+                 *     per one-shot job shard, so the dead set outnumbers the live
+                 *     one by an order of magnitude or more. Any other value (or
+                 *     omitted) leaves them out.
+                 */
+                include_abandoned?: "true";
                 /**
                  * @description Positive Go-duration string (e.g. `1h`, `30m`, `5m`,
                  *     `0.5h`). When present, rows whose `lag_seconds`
                  *     exceeds this value are excluded from the response.
-                 *     Empty / omitted preserves the legacy "return every
-                 *     cursor" contract.
+                 *     Empty / omitted leaves the `state` filters to decide.
                  */
                 max_age?: string;
                 /**
                  * @description Exact-match filter on the `source` column. Typical
-                 *     values: `ledgerstream` (the live indexer) or
-                 *     `backfill` (one row per backfill range). Unknown
+                 *     values: `ledgerstream` (the live indexer), `projector`,
+                 *     or one row per shard for each one-shot job (`backfill`,
+                 *     `projected-rebuild`, `census-backfill`, …). Unknown
                  *     values return an empty array (not 400) — keeps the
                  *     surface predictable when an operator typos vs. a
                  *     brand-new source we haven't seen yet.
                  */
                 source?: string;
+                /**
+                 * @description Maximum rows to return (1-2000, default 500).
+                 *     Out-of-range values return 400. The cap exists because
+                 *     `ingestion_cursors` is append-mostly, shrinking only under the explicit reap command — every sharded job
+                 *     leaves permanent rows behind — so an uncapped listing has
+                 *     no ceiling.
+                 */
+                limit?: number;
+                /**
+                 * @description Pagination offset, echoed verbatim from a prior response's
+                 *     `pagination.next`. Rows keep their `(source, sub_source)`
+                 *     ordering, so paging over a table that is append-mostly, shrinking only under the explicit reap command
+                 *     is stable. Non-integer or negative values return 400.
+                 */
+                cursor?: string;
             };
             header?: never;
             path?: never;
@@ -11304,14 +11553,14 @@ export interface operations {
                      * @example {
                      *       "data": [
                      *         {
-                     *           "source": "backfill",
-                     *           "sub_source": "11474999-15299997:sdex",
-                     *           "last_ledger": 15299997,
-                     *           "last_updated": "2026-05-14T18:19:34Z",
-                     *           "lag_seconds": 4335523
+                     *           "source": "ledgerstream",
+                     *           "last_ledger": 63302110,
+                     *           "last_updated": "2026-09-03T22:38:14Z",
+                     *           "lag_seconds": 4,
+                     *           "state": "live"
                      *         }
                      *       ],
-                     *       "as_of": "2026-07-03T22:38:18.218056301Z",
+                     *       "as_of": "2026-09-03T22:38:18.218056301Z",
                      *       "flags": {
                      *         "stale": false,
                      *         "reduced_redundancy": false,
@@ -11330,15 +11579,33 @@ export interface operations {
                             last_updated: string;
                             /** Format: int64 */
                             lag_seconds: number;
+                            /**
+                             * @description Derived lifecycle marker — `live` within
+                             *     10 minutes, `stale` within 7 days,
+                             *     `abandoned` beyond it. Abandoned rows are
+                             *     excluded unless asked for. The live
+                             *     namespaces (`ledgerstream`, `projector`)
+                             *     are never `abandoned`: an old row there
+                             *     is stuck ingest, so it stays `stale` and
+                             *     stays in the default response.
+                             * @enum {string}
+                             */
+                            state: "live" | "stale" | "abandoned";
                         }[];
+                        pagination?: components["schemas"]["Pagination"];
                     };
                 };
             };
             /**
-             * @description Either `max_age` didn't parse as a positive Go duration
+             * @description `max_age` didn't parse as a positive Go duration
              *     (`type=https://api.stellarindex.io/errors/invalid-max-age`),
+             *     `limit` was outside 1-2000
+             *     (`type=https://api.stellarindex.io/errors/invalid-limit`),
+             *     `cursor` wasn't a non-negative integer
+             *     (`type=https://api.stellarindex.io/errors/invalid-cursor`),
              *     or `status` was set to a value other than `active` /
-             *     `stale` (`type=https://api.stellarindex.io/errors/invalid-status`).
+             *     `stale` / `abandoned`
+             *     (`type=https://api.stellarindex.io/errors/invalid-status`).
              *     Body is the standard problem+json envelope.
              */
             400: {
@@ -11984,8 +12251,24 @@ export interface operations {
                      *             "genesis_ledger": 52728375,
                      *             "watermark_ledger": 63305532,
                      *             "tip_ledger": 63305532,
+                     *             "projection_verified_from": 52728375,
                      *             "coverage_pct": 1,
                      *             "detail": "complete: substrate + recognition + projection verified to tip",
+                     *             "computed_at": "2026-07-03T05:30:21.937134Z"
+                     *           },
+                     *           {
+                     *             "source": "sdex",
+                     *             "complete": true,
+                     *             "lake_complete": true,
+                     *             "substrate_ok": true,
+                     *             "recognition_ok": true,
+                     *             "projection_ok": true,
+                     *             "genesis_ledger": 2,
+                     *             "watermark_ledger": 63305532,
+                     *             "tip_ledger": 63305532,
+                     *             "projection_verified_from": 61609957,
+                     *             "coverage_pct": 1,
+                     *             "detail": "projection: verified [63290000,63305532]; [61609957,63289999] carried from the prior clean verdict (tip=63289999), not re-verified this run",
                      *             "computed_at": "2026-07-03T05:30:21.937134Z"
                      *           },
                      *           {
@@ -11998,6 +12281,7 @@ export interface operations {
                      *             "genesis_ledger": 61500000,
                      *             "watermark_ledger": 63305532,
                      *             "tip_ledger": 63305532,
+                     *             "projection_verified_from": 61609957,
                      *             "coverage_pct": 1,
                      *             "detail": "projection: 3 mismatched ledger(s) outside the served retention window",
                      *             "computed_at": "2026-07-03T05:30:21.937134Z"
@@ -12067,10 +12351,40 @@ export interface operations {
                                 /** Format: int64 */
                                 tip_ledger: number;
                                 /**
+                                 * Format: int64
+                                 * @description PROJECTION-axis floor: the lowest ledger the
+                                 *     SERVED tier holds any row at for this source.
+                                 *     It is the bottom of the range `projection_ok`
+                                 *     — and therefore `complete` — is a claim about;
+                                 *     below it the served tier holds nothing.
+                                 *
+                                 *     It is NOT `genesis_ledger`, which is the LAKE
+                                 *     axis's floor and is routinely ten years lower:
+                                 *     on pubnet, sdex and the oracle sources publish
+                                 *     `genesis_ledger: 2` with a served tier that
+                                 *     begins around ledger 61.6M (March 2026). A
+                                 *     consumer reading only
+                                 *     complete/coverage_pct/genesis_ledger therefore
+                                 *     overstates the served claim by that whole span
+                                 *     — this field is the correction, and it is the
+                                 *     same number `detail` has always named in prose.
+                                 *
+                                 *     Omitted when the audit recorded no floor: a
+                                 *     verdict written before this field existed, or a
+                                 *     run whose projection axis was not evaluated
+                                 *     because an earlier claim already failed at
+                                 *     genesis (`projection_ok` false). Absent means
+                                 *     UNKNOWN, never "from ledger 0".
+                                 */
+                                projection_verified_from?: number;
+                                /**
                                  * @description Lake-axis coverage (watermark vs tip) — see
                                  *     watermark_ledger. A FRACTION in [0,1] despite
                                  *     the `_pct` name: 1.0 means the verdict reaches
-                                 *     the tip, not 100.
+                                 *     the tip, not 100. NOT scoped to
+                                 *     projection_verified_from: it is the lake axis's
+                                 *     number, so `coverage_pct: 1` never means the
+                                 *     served tier reaches genesis.
                                  */
                                 coverage_pct: number;
                                 /** Format: int64 */
@@ -12182,7 +12496,8 @@ export interface operations {
                      *             "events_24h": 1692662,
                      *             "completeness": {
                      *               "complete": false,
-                     *               "watermark_ledger": 63305532
+                     *               "watermark_ledger": 63305532,
+                     *               "projection_verified_from": 61609957
                      *             }
                      *           }
                      *         ],
@@ -12274,7 +12589,8 @@ export interface operations {
                      *         "events_24h": 3211,
                      *         "completeness": {
                      *           "complete": true,
-                     *           "watermark_ledger": 63305532
+                     *           "watermark_ledger": 63305532,
+                     *           "projection_verified_from": 51499546
                      *         },
                      *         "contracts": [
                      *           {
@@ -12358,6 +12674,18 @@ export interface operations {
                             bespoke?: {
                                 [key: string]: unknown;
                             };
+                            /**
+                             * @description The protocol's registered instances. Empty
+                             *     for a source with no contract registry
+                             *     (SDEX, event-less oracles, factory-less
+                             *     bridges) AND for a source whose instances
+                             *     are counted rather than enumerated
+                             *     (sorocredit's per-position child
+                             *     contracts). An empty array therefore never
+                             *     contradicts a non-zero `contract_count`:
+                             *     it means "not enumerated here", and the
+                             *     count is still the true total.
+                             */
                             contracts: {
                                 /** @description Instance C-strkey. */
                                 contract_id: string;
@@ -12720,7 +13048,12 @@ export interface operations {
                              *     from `/v1/status`'s `freshness.total_sources`,
                              *     which counts only sources the operator has
                              *     ENABLED at runtime — typically a strict subset.
-                             *     Today on r1: registry=21, enabled=17, active=15.
+                             *     Measured on r1 2026-09-03: registry=28,
+                             *     enabled=25, active=24 (25 and 26 once
+                             *     this gauge is published) — before the API binary
+                             *     published the `massive` FX worker's own enabled
+                             *     series; with it, enabled and active each read
+                             *     one higher.
                              *     The two `total_sources` measure different things
                              *     by design; see the field doc on
                              *     `internal/api/v1.NetworkStats` for the full

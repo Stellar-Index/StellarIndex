@@ -402,10 +402,23 @@ legacy orchestrator path. Zero rate + `source_enabled=1` backs the
 
 Gauge, label `source`.
 
-`1` for sources the current indexer enabled from config at startup;
-`0` during shutdown or when the source is not configured. Used to
-qualify source-level alerts so intentionally disabled sources do not
-page.
+`1` for sources the process running them switched on at startup; `0`
+during shutdown or when the source is not configured. Used to qualify
+source-level alerts so intentionally disabled sources do not page, and
+projected as `enabled` by `/v1/sources/{name}/health`.
+
+Published by whichever binary actually runs the source, not by the
+indexer alone: the indexer sets it for its configured ingestion sources
+and external connectors, and the `massive` FX worker
+(`internal/sources/external/forex`, constructed by the API binary) sets
+its own. A source running outside the indexer with no series of its own
+reads as "off" on the health surface while it is ingesting. This
+section's heading names the majority emitter, not the whole set.
+
+Also read by `/v1/status` — `freshness.total_sources` is
+`count(stellarindex_source_enabled == 1)` and `freshness.active_sources`
+that population joined to the 7-day event rate — so a source that
+publishes the gauge counts there on both sides.
 
 ### `stellarindex_source_last_event_unix`
 
@@ -602,7 +615,7 @@ Counter, labels `source`, `outcome` ∈ {success, error, skipped}.
 Per-source, per-outcome count of `PollOnce` invocations from the
 external-poller runner. Emitted on every poll tick of every
 configured external source (CoinGecko, CoinMarketCap, CryptoCompare,
-ECB, ExchangeRatesAPI, PolygonForex, Binance, Coinbase, Kraken,
+ECB, ExchangeRatesAPI, Massive, Binance, Coinbase, Kraken,
 Bitstamp). The `skipped` outcome covers the per-poller cooldown path
 (e.g. CoinGecko's post-throttle backoff) — distinct from `success`
 so absence-of-success alerting isn't masked by the poller silently
@@ -3340,6 +3353,18 @@ next successful run, so the series is absent when healthy. Alerted on
 by `stellarindex_zfs_snapshot_pool_free_unreadable`.
 
 ## Changelog
+
+- 2026-09-03 — no new metric; `stellarindex_source_enabled` gained a
+  second emitter. The `massive` fiat-FX worker runs in the API binary,
+  and the indexer — until now the gauge's only writer — never had it in
+  its list, so no series existed for it: `/v1/sources/massive/health`
+  projected the absence as `enabled: false` beside five figures of
+  `entries_24h`, and `/v1/status` counted the feed in neither
+  `active_sources` nor `total_sources`. The worker's `Run` now publishes
+  the gauge itself (1 for the life of the run, 0 on shutdown), so the
+  entry moves from indexer-only to "whichever binary runs the source";
+  the ECB standby stays unmarked. Both status counts read one higher
+  from an API build carrying this.
 
 - 2026-09-03 — no new metric; two existing counters gained the
   alerting they were already documented as carrying.

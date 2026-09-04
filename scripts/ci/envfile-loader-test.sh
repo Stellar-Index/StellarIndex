@@ -62,7 +62,11 @@ ALL_CONSUMERS=("${BASH_CONSUMERS[@]}" "$OPS_DIR/config-assertions.sh" "$TASKS" "
 # ─── 1. nobody sources an EnvironmentFile ─────────────────────────────
 for f in "${ALL_CONSUMERS[@]}"; do
   if [[ ! -r "$f" ]]; then bad "missing consumer $f"; continue; fi
-  if grep -vE '^\s*#' "$f" | grep -qE '(^|[;[:space:]])(\.|source)[[:space:]]+/etc/default/(stellarindex|stellarindex-ops|galexie)([[:space:]]|;|$)'; then
+  # The non-comment lines, landed in a value: piping them into `grep -q`
+  # lets it exit at the first hit and strands the upstream grep on a closed
+  # pipe, which pipefail reports as a failed check either way (#475).
+  uncommented="$(grep -vE '^\s*#' "$f")"
+  if grep -qE '(^|[;[:space:]])(\.|source)[[:space:]]+/etc/default/(stellarindex|stellarindex-ops|galexie)([[:space:]]|;|$)' <<<"$uncommented"; then
     bad "$f sources a systemd EnvironmentFile with the shell parser (\`.\`/source) — a secret with \$ ; quotes or spaces is mangled or executed; read it verbatim"
   else
     ok "$f does not source /etc/default/{stellarindex,-ops,galexie}"

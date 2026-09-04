@@ -1,0 +1,82 @@
+# systemd unit: served-value truth harness (the CS-010 class).
+#
+# Rendered by Ansible. Runs `stellarindex-ops verify-served-values`, which
+# reconciles a curated set of values we SERVE against INDEPENDENT ground
+# truth — the SDF lumen API for XLM supply, Stellar Expert for classic-asset
+# supply — and writes the verdict to the node_exporter textfile collector as
+# stellarindex_served_value_{ok,rel_err,skipped,last_run_unix}.
+#
+# WHY THIS EXISTS — it is the only check on the NUMBER, not the pipe.
+# Every other signal on this host answers "is the pipeline healthy". None of
+# them can answer "is the value right": CS-010's XLM market cap read +58% for
+# weeks behind an entirely green board, until someone sampled it by hand.
+#
+# It also existed on paper for two months. The three
+# stellarindex_served_value_* alerts shipped, the runbook said "daily timer",
+# and no timer was ever written — so the textfile had never been created and
+# none of the three could select a series. That is the reason this unit is
+# here, and the reason the staleness alert now carries an absent_over_time
+# arm: a rule that reads as coverage and cannot fire is worse than no rule.
+#
+# A non-zero exit is usually a REAL verdict rather than a crash: the tool
+# exits non-zero when a check drifted, and when every truth source was dark
+# (an all-skipped run verified nothing and must not read as a pass). The
+# unit is left to fail on those, which is why it is NOT covered by the
+# generic stellarindex_systemd_unit_failed ticket — that rule fires at
+# `for: 15m`, and one dark day at dashboard.stellar.org would open a
+# same-day ticket for precisely the third-party wobble the served_value_*
+# rules spend 26h riding out. The unit is named in
+# scripts/ci/unit-failed-dedicated.baseline and owned instead by
+# stellarindex_served_value_unit_failed, which carries the same
+# two-consecutive-runs ride-out; which of the three conditions it was —
+# drift, dark truth source, or a crash before the textfile is written —
+# comes from whether _drift or _persistently_skipped fires beside it.
+
+[Unit]
+Description=Stellar Index — served-value truth harness (daily)
+Documentation=https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/served-value-drift.md
+After=network-online.target stellarindex-api.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+EnvironmentFile=-/etc/default/verify-served-values
+EnvironmentFile=-/etc/default/stellarindex
+
+# Defaults. Operators override via /etc/default/verify-served-values.
+#
+# API_BASE dials the LOOPBACK listener rather than the public hostname on
+# purpose: the harness must measure what this node serves, not whatever a
+# CDN or another region happens to have cached.
+Environment=API_BASE=http://127.0.0.1:3000
+Environment=TEXTFILE=/var/lib/node_exporter/textfile_collector/served_values.prom
+Environment=RUN_TIMEOUT=90s
+
+ExecStart=/usr/local/bin/stellarindex-ops verify-served-values \
+  -api ${API_BASE} \
+  -textfile ${TEXTFILE} \
+  -timeout ${RUN_TIMEOUT}
+
+# De-privileged (CS-118, audit-2026-06-30) — the stellarindex user is
+# created by 04-users.yml (CS-119). The textfile_collector dir is
+# stellarindex-owned (10-observability.yml), so the .prom emit still works.
+User=stellarindex
+Group=stellarindex
+
+# Read-only except the textfile collector dir it writes the .prom to.
+ProtectSystem=strict
+PrivateTmp=true
+NoNewPrivileges=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+ReadWritePaths=/var/lib/node_exporter/textfile_collector
+
+# Backstop only — twice the tool's own -timeout, which is what actually
+# bounds the run. This catches the case that deadline cannot: a block the
+# run context does not reach, so the unit fails rather than pinning the
+# timer.
+TimeoutStartSec=3min
+
+[Install]
+WantedBy=multi-user.target

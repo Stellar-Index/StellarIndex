@@ -479,16 +479,58 @@ tests:
         summary: Oracle redstone published a feed_id the record layer cannot store
         description: |
           stellarindex_source_unrepresentable_symbols_total{source="redstone"}
-          increased in the trailing 25 h. The decoder met a symbol /
-          feed_id that fails even the permissive raw: validator (empty,
-          >64 bytes, or a byte outside printable ASCII), so that slot
-          was dropped with NO row written — unlike the unknown-symbols
-          case, there is no raw: row to promote later. Closing it needs
-          a feed-registry / allow-list entry AND a replay of the
-          affected ledgers. See the runbook.
+          increased in, or first appeared inside, the trailing 25 h. The
+          decoder met a symbol / feed_id that fails even the permissive
+          raw: validator (empty, >64 bytes, or a byte outside printable
+          ASCII), so that slot was dropped with NO row written — unlike
+          the unknown-symbols case, there is no raw: row to promote
+          later. Closing it needs a feed-registry / allow-list entry AND
+          a replay of the affected ledgers. See the runbook.
   # The two counters are independent series: a dropped (unstorable)
   # slot must NOT masquerade as a recorded raw: row, which is exactly
   # the operator confusion #291's separate counter exists to prevent.
+  - eval_time: 60m
+    alertname: stellarindex_ingestion_oracle_unknown_symbols
+    exp_alerts: []
+# The counter is an unseeded CounterVec, so a source's FIRST
+# unrepresentable feed_id BORNS the `{source}` child rather than
+# stepping it: the series appears at 1 and, if the source publishes
+# nothing further, stays flat. increase() over a flat range is 0, so
+# the increase() arm alone is blind to the first occurrence — the one
+# the ticket is meant to open.
+#
+# PROVEN-RED: delete the `or sum by (source) ( … unless … offset 25h )`
+# arm from ../rules/ingestion.yml and this case fails with
+# "alertname:stellarindex_ingestion_oracle_unrepresentable_symbols,
+#  time:60m, exp:[…], got:[]".
+- interval: 1m
+  name: a first-ever unrepresentable feed_id tickets even though increase reads zero
+  input_series:
+  - series: stellarindex_source_unrepresentable_symbols_total{job="stellarindex_indexer",instance="r1:9100",source="redstone"}
+    values: _x10 1+0x120
+  alert_rule_test:
+  - eval_time: 60m
+    alertname: stellarindex_ingestion_oracle_unrepresentable_symbols
+    exp_alerts:
+    - exp_labels:
+        source: redstone
+        severity: ticket
+        team: stellarindex
+        component: ingestion
+      exp_annotations:
+        runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/oracle-unknown-symbols.md
+        summary: Oracle redstone published a feed_id the record layer cannot store
+        description: |
+          stellarindex_source_unrepresentable_symbols_total{source="redstone"}
+          increased in, or first appeared inside, the trailing 25 h. The
+          decoder met a symbol / feed_id that fails even the permissive
+          raw: validator (empty, >64 bytes, or a byte outside printable
+          ASCII), so that slot was dropped with NO row written — unlike
+          the unknown-symbols case, there is no raw: row to promote
+          later. Closing it needs a feed-registry / allow-list entry AND
+          a replay of the affected ledgers. See the runbook.
+  # The sibling counter is untouched: a slot the record layer cannot
+  # store must not also read as a slot with no canonical mapping.
   - eval_time: 60m
     alertname: stellarindex_ingestion_oracle_unknown_symbols
     exp_alerts: []

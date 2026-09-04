@@ -929,6 +929,21 @@ func (a APIConfig) validate() error {
 			"the SQL-side backstop only works as defense-in-depth when it fires AFTER the app-layer deadline",
 			ErrInvalidConfig, a.ServingStatementTimeout, a.RequestTimeout)
 	}
+	// The same ordering rule one layer up, on the side the check above
+	// left open: request_timeout must also sit ABOVE the longest
+	// per-handler budget ([APIMaxHandlerBudget]). Below it, the blanket
+	// deadline is the one that fires on every slow read, so every
+	// handler's specific `…-timeout` 503 becomes unreachable and the
+	// budgets they advertise are fiction — the configuration half of the
+	// bodyless-200 class. Rejected rather than clamped: silently raising
+	// an operator's stated ceiling is the surprise this whole area is
+	// about, and the value is theirs to correct.
+	if a.RequestTimeout > 0 && a.RequestTimeout <= APIMaxHandlerBudget {
+		return fmt.Errorf("%w: api.request_timeout (%v) must be longer than the longest per-handler "+
+			"budget (%v) — at or below it the blanket request deadline fires first and every handler's "+
+			"own timeout response becomes unreachable",
+			ErrInvalidConfig, a.RequestTimeout, APIMaxHandlerBudget)
+	}
 	// #328: an unknown name in status_services is a service that can
 	// never be reported down — /v1/status would look for a heartbeat
 	// key Prometheus never publishes and hold `overall` at degraded

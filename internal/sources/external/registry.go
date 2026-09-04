@@ -114,18 +114,16 @@ var Registry = map[string]Metadata{
 	// ─── Institutional FX feeds ──────────────────────────────────
 	// `massive` is the ACTIVE fiat-FX feed (massive.com = Polygon's backend).
 	// It runs as the internal/sources/external/forex worker in the API binary and
-	// writes hourly fiat rates to the `fx_quotes` table — the USD-anchor
+	// polls hourly but writes one row per ticker per UTC day to the
+	// `fx_quotes` table — every write buckets to Truncate(24 * time.Hour),
+	// so the table never holds anything finer than daily — the USD-anchor
 	// reference behind /v1/currencies + per-trade usd_volume. It is an
 	// off-chain vendor feed (not a Stellar source), hence registered here so
 	// /v1/sources classifies it as external FX (SubclassFX → IsOnChain=false)
 	// instead of fail-closing through Lookup's unknown-source fallback.
 	//
 	// `exchangeratesapi` is a SAME-role external.Connector implementation
-	// (trades-path, currently disabled). A `polygon-forex` connector was
-	// removed on 2026-09-01: polygon.io now redirects to massive.com, so it
-	// was the same upstream as `massive` under a dead name — and being
-	// registered with IncludeInVWAP:true meant enabling it would have
-	// double-counted massive's rates. The X2.5 triangulation forex-snap
+	// (trades-path, currently disabled). The X2.5 triangulation forex-snap
 	// (FXQuoteAtOrBefore) reads fx_quotes-FIRST (the massive feed's table;
 	// BACKLOG #42) and only falls back to `trades` filtered by FXSources()
 	// when fx_quotes has no row in the lookback — so these connector-path

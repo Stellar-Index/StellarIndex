@@ -55,9 +55,10 @@ groups:
       - alert: stellarindex_alertmanager_down
         # `sum()` is deliberately NOT used here: sum() over an empty
         # vector returns empty, not 0, so a target dropped from service
-        # discovery would make this unfireable — the same latent shape
-        # stellarindex_api_down still carries. The absent_over_time arm
-        # is what covers the target disappearing entirely.
+        # discovery would make this unfireable. The absent_over_time arm
+        # is what covers the target disappearing entirely — api.yml's
+        # stellarindex_api_down keeps its sum() for the "every pod is
+        # down" reading and carries the same arm alongside it.
         expr: |
           up{job="alertmanager"} == 0
           or absent_over_time(up{job="alertmanager"}[10m]) == 1

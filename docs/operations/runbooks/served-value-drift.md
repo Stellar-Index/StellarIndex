@@ -11,7 +11,7 @@ severity: P3 (ticket)
 
 | Field | Value |
 | ----- | ----- |
-| Alert | `stellarindex_served_value_drift` / `stellarindex_served_value_check_stale` |
+| Alert | `stellarindex_served_value_drift` / `stellarindex_served_value_check_stale` / `stellarindex_served_value_persistently_skipped` / `stellarindex_served_value_unit_failed` |
 | Severity | ticket |
 | Detected by | `stellarindex_served_value_ok == 0` for 26h (two daily runs) |
 | Typical MTTR | investigation-bound (data derivation, not availability) |
@@ -19,13 +19,29 @@ severity: P3 (ticket)
 
 ## Alert description
 
-`stellarindex-ops verify-served-values` (daily timer) reconciles a
-curated set of values we serve against INDEPENDENT sources — the SDF
-lumen API for XLM supply, Stellar Expert for classic-asset supply —
-and emits `stellarindex_served_value_{ok,rel_err,last_run_unix}`
-textfile gauges. This alert means a served value sat outside its
-tolerance for two consecutive runs. The companion `_check_stale`
-alert means the harness itself is dark (timer dead / run crashing).
+`stellarindex-ops verify-served-values` reconciles a curated set of
+values we serve against INDEPENDENT sources — the SDF lumen API for
+XLM supply, Stellar Expert for classic-asset supply — and emits
+`stellarindex_served_value_{ok,rel_err,last_run_unix}` textfile
+gauges. It runs from `verify-served-values.timer` (daily, 06:20 UTC,
+after the supply chain has refreshed for the day); the units are
+ansible-managed and installed only where the ground truth is pubnet.
+This alert means a served value sat outside its tolerance for two
+consecutive runs. The companion `_check_stale` alert means the
+harness itself is dark — timer dead, run crashing, or the timer
+never installed at all, which is why it carries an
+`absent_over_time` arm as well as a staleness one.
+
+`_unit_failed` is the fourth, and it is the unit's exit status
+rather than any gauge. The tool exits non-zero on three different
+conditions — a drifted check, a run where every truth source was
+dark, and a crash — so this ticket is deliberately NOT the
+catch-all `stellarindex_systemd_unit_failed` (which would open it
+15 minutes into a third-party outage). It rides out one bad day and
+fires only when two consecutive runs left the unit failed. When it
+fires ALONE, with `_drift` and `_persistently_skipped` both quiet,
+the run is crashing before it writes anything, and `_check_stale`
+will not confirm that for another day.
 
 Deliberate scope notes: prices are NOT checked here (the divergence
 worker cross-checks them continuously); lake↔served row counts are
@@ -83,6 +99,21 @@ investigation → raise with the maintainer; it may need an upstream
   bug (served F2 supply is base-unit strings), the standing CS-010
   config gap (47% on XLM circulating), and the new USDC finding
   (board #34) — one run, three findings.
+- Never fired before the timer existed. The three alerts, this
+  runbook and the catalogue rows all described a daily harness that
+  nothing scheduled: no systemd unit, no ansible task, no cron, so
+  `served_values.prom` was never written and every rule selected a
+  series that had never existed. `_check_stale` could not report it
+  either — `time()` minus an absent vector is an empty vector, not a
+  large number. Triage accordingly: if the alert is firing with the
+  series ABSENT rather than old, check `systemctl status
+  verify-served-values.timer` before looking at the data.
+- The same gap is why `verify-served-values.service` is now named in
+  `scripts/ci/unit-failed-dedicated.baseline` and excluded from the
+  catch-all failed-unit rule. Its exit code is a VERDICT, not only a
+  crash signal, and the verdicts it reports are ones the other rules
+  deliberately wait 26h on; a 15-minute generic ticket would have
+  undone that tuning the first time a truth source went dark.
 
 ## Related
 

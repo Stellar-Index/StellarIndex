@@ -108,7 +108,7 @@ fi
 
 # ─── 4. the failure output must not be truncated ────────────────────
 # `| tail -5` on the invocation is what hid the parse error for weeks.
-if ch_invocation | grep -q 'tail -'; then
+if grep -q 'tail -' <<<"$(ch_invocation)"; then
   bad "the ch-backfill invocation pipes through 'tail -' — truncating the stage's output is
        how the original defect stayed invisible; print it in full"
 else

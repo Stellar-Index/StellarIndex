@@ -41,10 +41,7 @@ import (
 	"time"
 )
 
-// MassiveBase is the Massive REST API root. Same URL Polygon.io
-// uses since the two are the same backend (Massive is Polygon's
-// rebrand). Any Polygon documentation under /v2/aggs/... and
-// /v3/reference/... applies verbatim.
+// MassiveBase is the Massive REST API root.
 const MassiveBase = "https://api.massive.com"
 
 // fetchTimeout caps a single upstream call. Massive's edge typically
@@ -52,9 +49,8 @@ const MassiveBase = "https://api.massive.com"
 // from stalling the worker indefinitely.
 const fetchTimeout = 10 * time.Second
 
-// Client wraps the Massive REST endpoints we consume. Auth is
-// Bearer-token; the same key works against api.polygon.io if the
-// operator wants to point elsewhere.
+// Client wraps the Massive REST endpoints we consume. Auth uses a
+// bearer token supplied by the operator.
 type Client struct {
 	http   *http.Client
 	base   string

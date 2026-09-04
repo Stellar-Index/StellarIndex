@@ -51,14 +51,14 @@ cat > "$T/pipefail.yml" <<'YML'
   ansible.builtin.shell:
     cmd: |
       set -euo pipefail
-      find /x -type d | grep -q .
+      find /x -type d | grep -q .   # sigpipe-ok: fixture body for the ansible-tasks gate, never executed
   changed_when: false
 
 - name: good — pipefail under bash (cmd form)
   ansible.builtin.shell:
     cmd: |
       set -euo pipefail
-      find /x -type d | grep -q .
+      find /x -type d | grep -q .   # sigpipe-ok: fixture body for the ansible-tasks gate, never executed
     executable: /bin/bash
   changed_when: false
 

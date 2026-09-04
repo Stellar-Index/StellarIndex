@@ -205,6 +205,7 @@ export function ProtocolView({ name, label }: { name: string; label: string }) {
       {/* ── Contract roster ── */}
       <ContractRoster
         contracts={data.contracts}
+        contractCount={data.contract_count}
         analyticsAvailable={analyticsAvailable}
         source={source}
       />
@@ -540,10 +541,12 @@ function SortHeader({
 
 function ContractRoster({
   contracts,
+  contractCount,
   analyticsAvailable,
   source,
 }: {
   contracts: ProtocolContract[];
+  contractCount: number;
   analyticsAvailable: boolean;
   source: ReturnType<typeof asExample>;
 }) {
@@ -587,15 +590,19 @@ function ContractRoster({
   const overflow = instances.length - visibleInstances.length;
 
   if (contracts.length === 0) {
+    // An empty roster beside a non-zero contract_count is not a
+    // contradiction: a protocol whose instances outnumber the API's roster
+    // cap (sorocredit's per-position child contracts) is counted rather than
+    // enumerated, so the count is exact and the list is simply not published.
     return (
       <Panel
         title="Contract roster"
         source={source}
         bodyClassName="text-sm text-ink-muted"
       >
-        This source has no contract registry — it&apos;s either a classic-protocol
-        venue (SDEX), an event-less oracle, or a bridge tracked without a
-        factory model.
+        {contractCount > 0
+          ? `This protocol's ${formatCompact(contractCount)} contracts are counted, not listed — the roster is published only where the instance set is small enough to enumerate. The count is the exact total.`
+          : "This source has no contract registry — it's either a classic-protocol venue (SDEX), an event-less oracle, or a bridge tracked without a factory model."}
       </Panel>
     );
   }

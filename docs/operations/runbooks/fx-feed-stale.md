@@ -104,9 +104,9 @@ string.
 
 If `massive` cannot be restored quickly, the connector-path FX
 fallbacks can serve the forex-snap in the interim. Per the note in
-`internal/sources/external/registry.go`, `polygon-forex` /
-`exchangeratesapi` / `ecb` are the same-role sources (currently
-disabled). The forex-snap reads `fx_quotes`-first and falls back to
+`internal/sources/external/registry.go`, `exchangeratesapi` and `ecb`
+are the same-role sources (currently disabled). The forex-snap reads
+`fx_quotes`-first and falls back to
 `trades` filtered by `FXSources()`, so re-enabling a fallback keeps
 fiat pairs priced while `massive` is down.
 

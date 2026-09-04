@@ -134,3 +134,62 @@ func TestPersistSnapshot_nilWriterIsNoop(t *testing.T) {
 		t.Fatalf("liveness gauge = %v, want %v unchanged (nil writer must not stamp)", got, sentinel)
 	}
 }
+
+func enabledGauge() float64 {
+	return testutil.ToFloat64(obs.SourceEnabled.WithLabelValues(fxSource))
+}
+
+// TestRun_publishesSourceEnabledWhileRunning pins the second gauge this
+// worker owns. stellarindex_source_enabled is what
+// /v1/sources/{name}/health projects as `enabled`, and `massive` runs
+// in the API binary rather than the indexer — so until Run published
+// it, the live FX feed reported enabled=false alongside five figures of
+// entries_24h, the one combination that surface treats as impossible
+// ("enabled:false with entries_24h:0 means off, not failing").
+//
+// The primary is pointed at a dead endpoint so the immediate refresh
+// fails fast without mocking massive's wire format. The gauge must read
+// 1 regardless: enablement is about being switched on, not about the
+// upstream answering.
+//
+// Shares the process-global obs gauges with the tests above, so no
+// t.Parallel.
+func TestRun_publishesSourceEnabledWhileRunning(t *testing.T) {
+	obs.SourceEnabled.Reset()
+
+	w := newTestWorker(t)
+	// Long enough that the ticker never fires: the assertions are about
+	// the immediate refresh and the park-on-ctx that follows it.
+	w.interval = time.Hour
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- w.Run(ctx) }()
+
+	// The gauge is the first statement of Run, ahead of any network
+	// call, so a red run costs seconds rather than a fixed ten.
+	deadline := time.After(3 * time.Second)
+	for enabledGauge() != 1 {
+		select {
+		case err := <-done:
+			t.Fatalf("Run returned before the gauge was published: %v", err)
+		case <-deadline:
+			t.Fatalf("stellarindex_source_enabled{source=%q} = %v while the worker runs, want 1 — "+
+				"/v1/sources/%s/health projects this gauge as `enabled`",
+				fxSource, enabledGauge(), fxSource)
+		default:
+			time.Sleep(time.Millisecond)
+		}
+	}
+
+	// And it must fall back to 0 on shutdown rather than latch at 1 — a
+	// stopped feed reading "enabled" is the mirror-image lie.
+	cancel()
+	if err := <-done; !errors.Is(err, context.Canceled) {
+		t.Fatalf("Run returned %v, want context.Canceled", err)
+	}
+	if got := enabledGauge(); got != 0 {
+		t.Errorf("stellarindex_source_enabled{source=%q} = %v after shutdown, want 0", fxSource, got)
+	}
+}

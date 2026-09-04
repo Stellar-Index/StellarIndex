@@ -33,12 +33,12 @@ const CONTRIBUTING_PATHS = [
   {
     label: 'Decoder for a new on-chain DEX',
     href: 'https://github.com/Stellar-Index/StellarIndex/blob/main/docs/contributing/task-recipes.md#add-a-new-on-chain-soroban-dex',
-    description: 'Five-file convention: README + events + decode + consumer + tests. Templates exist for Soroswap / Phoenix / Aquarius / Comet.',
+    description: 'Six-file convention: README + events + decode + consumer + dispatcher_adapter (the production seam) + tests. Templates exist for Soroswap / Phoenix / Aquarius / Comet.',
   },
   {
     label: 'CEX connector',
     href: 'https://github.com/Stellar-Index/StellarIndex/blob/main/docs/contributing/task-recipes.md#add-a-new-cex-connector',
-    description: 'WebSocket / REST poller against vendor APIs. Same five-file convention; reference implementations for Binance / Coinbase / Kraken / Bitstamp.',
+    description: 'WebSocket / REST poller against vendor APIs. Its own layout (events + parse + streamer/poller + backfill + pairs); reference implementations for Binance / Coinbase / Kraken / Bitstamp.',
   },
   {
     label: 'Supply observer',

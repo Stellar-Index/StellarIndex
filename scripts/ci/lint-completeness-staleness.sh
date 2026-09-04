@@ -78,7 +78,7 @@ trim() {
 # Extract the RHS of a single-line `const <name> [type] = <rhs>`.
 extract_const_rhs() {
   local name="$1" file="$2" line rhs
-  line=$(grep -E "^[[:space:]]*const[[:space:]]+${name}([[:space:]]+[A-Za-z0-9_.]+)?[[:space:]]*=" "$file" | head -n1 || true)
+  line=$(grep -E "^[[:space:]]*const[[:space:]]+${name}([[:space:]]+[A-Za-z0-9_.]+)?[[:space:]]*=" "$file" | sed -n 1p || true)
   [[ -n "$line" ]] || return 1
   rhs="${line#*=}"      # after first '='
   rhs="${rhs%%//*}"     # drop trailing // comment
@@ -212,8 +212,8 @@ staleLedgers="$ledgers_rhs"
 
 # --- parse timer period --------------------------------------------------
 
-oncal=$(grep -E '^[[:space:]]*OnCalendar[[:space:]]*=' "$TIMER_FILE" | head -n1 | cut -d= -f2- || true)
-onactive=$(grep -E '^[[:space:]]*OnUnitActiveSec[[:space:]]*=' "$TIMER_FILE" | head -n1 | cut -d= -f2- || true)
+oncal=$(grep -E '^[[:space:]]*OnCalendar[[:space:]]*=' "$TIMER_FILE" | sed -n 1p | cut -d= -f2- || true)
+onactive=$(grep -E '^[[:space:]]*OnUnitActiveSec[[:space:]]*=' "$TIMER_FILE" | sed -n 1p | cut -d= -f2- || true)
 
 if [[ -n "$oncal" ]]; then
   cadence_src="OnCalendar=$(trim "$oncal")"

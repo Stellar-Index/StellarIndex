@@ -48,7 +48,7 @@ import (
 //     EUR-base to asset-in-EUR form.
 //
 // The test does NOT exercise Kraken / Coinbase / CoinMarketCap /
-// CryptoCompare / Polygon-Forex since they share shape with one
+// CryptoCompare since they share shape with one
 // of the five and would just add runtime without proving
 // additional coverage. Their unit tests at the package level
 // already pin correctness.

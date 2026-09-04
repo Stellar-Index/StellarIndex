@@ -51,7 +51,7 @@ BINARIES := \
 # carry a hand-copied duplicate, so a package added here ran locally and
 # compiled in CI but was executed by no shard — #333 F1). Add a package
 # here and every CI path picks it up.
-INT_TEST_PKGS := ./test/integration/... ./cmd/stellarindex-ops/... ./internal/ops/archive/...
+INT_TEST_PKGS := ./test/integration/... ./test/harness/... ./cmd/stellarindex-ops/... ./internal/ops/archive/...
 SHARD ?= 0
 SHARDS ?= 4
 
@@ -109,7 +109,8 @@ test-integration-local: ## Run Docker-backed integration tests in parallel local
 .PHONY: dev
 dev: ## Start the local dev stack — Postgres/Timescale + Redis + MinIO (deploy/docker-compose/dev.yaml). stellar-core/Galexie/stellar-rpc run on a remote box (r1), not in compose.
 	@docker compose -f deploy/docker-compose/dev.yaml up -d
-	@echo "Stack up. API at http://localhost:3000; docs at http://localhost:8080"
+	@echo "Dependencies up: Postgres/Timescale :5432, Redis :6379, MinIO S3 :9000 (console http://localhost:9001)."
+	@echo "The API, indexer and aggregator are your own binaries — 'make build', then docs/operations/self-hosting.md."
 
 .PHONY: dev-teardown
 dev-teardown: ## Stop the local stack and remove volumes
@@ -298,7 +299,7 @@ lint-golangci-config: ## Offline JSON-Schema check of .golangci.yml (#317 — no
 	@$(GO) run ./scripts/ci/lint-golangci-config
 
 .PHONY: lint-openapi-urls
-lint-openapi-urls: ## ADR-0018 URL-discipline check on the OpenAPI spec
+lint-openapi-urls: ## ADR-0018 URL-discipline + served-host check on the OpenAPI spec
 	@$(GO) run ./scripts/ci/lint-openapi-urls openapi/stellar-index.v1.yaml
 
 # The default backlog (docs/architecture/launch-readiness-backlog.md) was

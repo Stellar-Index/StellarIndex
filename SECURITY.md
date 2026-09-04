@@ -4,12 +4,19 @@
 
 **Please do not open a public issue for security vulnerabilities.**
 
-Report them privately via one of:
+Report privately by email to `security@stellarindex.io`. That address is
+the `Contact:` on our live `.well-known/security.txt`, so it is where the
+RFC 9116 path leads.
 
-1. **Email:** `security@stellarindex.io` (if the mailbox is not
-   yet provisioned, use the GitHub Security Advisory path below).
-2. **GitHub Security Advisory:** use the "Report a vulnerability"
-   button on the Security tab of this repo.
+**If the mail bounces**, open an ordinary issue that asks for a private
+channel and carries **no detail of the finding** — not the endpoint, not
+the payload, not the impact. A maintainer answers with a route inside the
+acknowledgement window below. GitHub's private vulnerability reporting is
+not switched on for this repository, so the Security tab offers no
+reporting form to use instead; the mailbox and that setting are both
+tracked in
+[docs/operations/external-channels.md](docs/operations/external-channels.md)
+and [docs/operations/dns-email-perimeter.md](docs/operations/dns-email-perimeter.md).
 
 We commit to:
 
@@ -93,7 +100,9 @@ our first disclosure). Reporters may opt out.
 
 Our GPG key for encrypted disclosure will be published at
 `docs/operations/security/gpg.md` once the team mailbox is
-provisioned. Until then, use GitHub Security Advisories.
+provisioned. Until then no key is published: say in your first
+message that you want an encrypted channel and one is arranged
+before any detail changes hands.
 
 ## Scope of the Stellar network itself
 

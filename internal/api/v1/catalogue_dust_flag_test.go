@@ -68,7 +68,7 @@ func TestCatalogueTwinDustFlagPropagates(t *testing.T) {
 	}
 	page := []AssetDetail{{Slug: "usdc", Code: "USDC", AssetID: "usdc"}}
 
-	s.fillCatalogueStatsForPage(context.Background(), page)
+	s.fillCatalogueStatsForPage(context.Background(), page, assetListFilters{})
 
 	if !page[0].MarketCapLowLiquidity {
 		t.Errorf("catalogue-listing row must carry market_cap_low_liquidity=true "+

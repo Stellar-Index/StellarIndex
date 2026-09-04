@@ -121,6 +121,9 @@ ssh root@136.243.90.96 'systemctl status "run-heavy-*.scope" --no-pager'
 
 ## Related
 
+- `host-swap-activity.md` — the swap-traffic half of this signal
+  (`rate(node_vmstat_pswpout[10m]) > 100`); it fires on eviction
+  regardless of how close `MemAvailable` is to the ceiling.
 - `host-cpu-high.md` — swapping shows up as CPU too.
 - `timescale-primary-down.md` — OOM-kill of Postgres is a specific
   path to this.

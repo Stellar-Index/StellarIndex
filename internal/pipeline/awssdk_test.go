@@ -9,7 +9,7 @@ import (
 	"sync"
 	"testing"
 
-	"golang.org/x/sys/unix"
+	"syscall"
 )
 
 // TestFilteringForwarder exercises the line-filter directly, without
@@ -97,13 +97,13 @@ func TestInstallStderrFilterTo(t *testing.T) {
 	// Save the real fd 2 so we can restore it after the test —
 	// otherwise subsequent tests' t.Log/t.Error output goes to
 	// the pipe and vanishes if flush misbehaves.
-	originalStderrCopy, err := unix.Dup(int(os.Stderr.Fd()))
+	originalStderrCopy, err := syscall.Dup(int(os.Stderr.Fd()))
 	if err != nil {
 		t.Fatalf("dup original stderr: %v", err)
 	}
 	t.Cleanup(func() {
-		_ = unix.Dup2(originalStderrCopy, int(os.Stderr.Fd()))
-		_ = unix.Close(originalStderrCopy)
+		_ = dupOnto(originalStderrCopy, int(os.Stderr.Fd()))
+		_ = syscall.Close(originalStderrCopy)
 	})
 
 	// Capture the routed bytes via a channel; the consume callback
@@ -126,7 +126,7 @@ func TestInstallStderrFilterTo(t *testing.T) {
 	// ultimately writes to fd 2 via os.Stderr, which after dup2
 	// is the pipe's write end.
 	want := "hello from fd 2\n"
-	if _, err := unix.Write(int(os.Stderr.Fd()), []byte(want)); err != nil {
+	if _, err := syscall.Write(int(os.Stderr.Fd()), []byte(want)); err != nil {
 		t.Fatalf("write: %v", err)
 	}
 
@@ -155,13 +155,13 @@ func TestInstallStderrFilterTo(t *testing.T) {
 // goroutine until flush returns). Asserts that all 5 lines arrived
 // with their original ordering preserved.
 func TestSilenceSDKChecksumWarnings_FlushDrainsPipe(t *testing.T) {
-	originalStderrCopy, err := unix.Dup(int(os.Stderr.Fd()))
+	originalStderrCopy, err := syscall.Dup(int(os.Stderr.Fd()))
 	if err != nil {
 		t.Fatalf("dup original stderr: %v", err)
 	}
 	t.Cleanup(func() {
-		_ = unix.Dup2(originalStderrCopy, int(os.Stderr.Fd()))
-		_ = unix.Close(originalStderrCopy)
+		_ = dupOnto(originalStderrCopy, int(os.Stderr.Fd()))
+		_ = syscall.Close(originalStderrCopy)
 	})
 
 	var (

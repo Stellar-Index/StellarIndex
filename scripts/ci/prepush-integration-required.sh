@@ -14,7 +14,7 @@ git cat-file -e "$2^{commit}" 2>/dev/null || { echo "integration-policy: unknown
 
 while IFS= read -r changed; do
   case "$changed" in
-    migrations/*|test/fixtures/*|test/integration/*|internal/storage/*|internal/pipeline/*|internal/projector/*|internal/dispatcher/*|internal/sources/*)
+    migrations/*|test/fixtures/*|test/integration/*|test/harness/*|internal/storage/*|internal/pipeline/*|internal/projector/*|internal/dispatcher/*|internal/sources/*)
       echo "integration-policy: required by $changed"
       exit 0
       ;;

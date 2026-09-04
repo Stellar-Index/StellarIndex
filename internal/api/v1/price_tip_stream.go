@@ -139,7 +139,7 @@ func (s *Server) handlePriceTipStream(w http.ResponseWriter, r *http.Request) {
 		}
 		s.logger.Error("computeTip failed (stream prelude)",
 			"err", err, "asset", asset.String(), "quote", quote.String())
-		writeProblem(w, r,
+		writeProblemErr(w, r, err,
 			"https://api.stellarindex.io/errors/internal",
 			"Internal error", http.StatusInternalServerError, "")
 		return

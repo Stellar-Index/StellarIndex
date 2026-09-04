@@ -211,7 +211,7 @@ func TestHandleAssetListFromCatalogue_Sep1ImageOverlay(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/v1/assets?asset_class=stablecoin", nil)
 	w := httptest.NewRecorder()
-	s.handleAssetListFromCatalogue(w, req, "stablecoin", 100, "")
+	s.handleAssetListFromCatalogue(w, req, "stablecoin", assetListFilters{}, 100, "")
 
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())

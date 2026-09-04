@@ -64,6 +64,25 @@ type CoverageVerdictView struct {
 	GenesisLedger   uint32 `json:"genesis_ledger"`
 	WatermarkLedger uint32 `json:"watermark_ledger"`
 	TipLedger       uint32 `json:"tip_ledger"`
+	// ProjectionVerifiedFrom is the PROJECTION axis's floor: the lowest
+	// ledger the served tier holds any row at for this source. It is the
+	// bottom of the range ProjectionOK — and therefore Complete — is a
+	// claim about; below it the served tier holds nothing at all.
+	//
+	// It is NOT GenesisLedger, which is the lake axis's floor and is
+	// routinely ten years lower: on pubnet, sdex and the oracle sources
+	// publish genesis_ledger 2 with a served tier that begins ~61.6M.
+	// Reading complete/coverage_pct/genesis_ledger without this field
+	// overstates the served claim by that whole span. The audit's own
+	// `detail` string has always named the range in prose; this is the
+	// same number, typed.
+	//
+	// Omitted when the audit recorded no floor — a verdict written
+	// before the field existed, or a run whose projection axis was not
+	// evaluated because an earlier claim already failed at genesis
+	// (`projection_ok` is false in that case). Absent means UNKNOWN, not
+	// "from ledger 0".
+	ProjectionVerifiedFrom uint32 `json:"projection_verified_from,omitempty"`
 	// CoveragePct is watermark progress vs tip, as a FRACTION in
 	// [0,1] — 1.0 (not 100) means the verdict reaches the tip at
 	// compute time. The name is a legacy misnomer kept for wire
@@ -278,19 +297,20 @@ func (s *Server) handleCoverageVerdicts(w http.ResponseWriter, r *http.Request) 
 			continue
 		}
 		view.Sources = append(view.Sources, CoverageVerdictView{
-			Source:             sn.Source,
-			Complete:           sn.Complete,
-			LakeComplete:       sn.LakeComplete,
-			SubstrateOK:        sn.SubstrateOK,
-			RecognitionOK:      sn.RecognitionOK,
-			ProjectionOK:       sn.ProjectionOK,
-			GenesisLedger:      sn.Genesis,
-			WatermarkLedger:    sn.Watermark,
-			TipLedger:          sn.Tip,
-			CoveragePct:        sn.CoveragePct,
-			FirstProblemLedger: sn.FirstProblem,
-			Detail:             sn.Detail,
-			ComputedAt:         sn.ComputedAt,
+			Source:                 sn.Source,
+			Complete:               sn.Complete,
+			LakeComplete:           sn.LakeComplete,
+			SubstrateOK:            sn.SubstrateOK,
+			RecognitionOK:          sn.RecognitionOK,
+			ProjectionOK:           sn.ProjectionOK,
+			GenesisLedger:          sn.Genesis,
+			WatermarkLedger:        sn.Watermark,
+			TipLedger:              sn.Tip,
+			ProjectionVerifiedFrom: sn.ProjectionVerifiedFrom,
+			CoveragePct:            sn.CoveragePct,
+			FirstProblemLedger:     sn.FirstProblem,
+			Detail:                 sn.Detail,
+			ComputedAt:             sn.ComputedAt,
 		})
 		if sn.Complete {
 			view.CompleteSources++

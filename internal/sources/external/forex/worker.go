@@ -262,7 +262,23 @@ func (w *Worker) WithWriter(writer FXQuoteWriter) *Worker {
 // (subject to the upstream's response time), then refreshes every
 // interval. Failures are logged but never crash the worker — the
 // cache holds the prior snapshot until a refresh succeeds.
+//
+// Publishing stellarindex_source_enabled belongs HERE rather than in
+// the host binary's wiring, because `massive` is the one registry
+// source that does not run in the indexer: this worker is constructed
+// by the API process, and the indexer's setSourceEnabled — the only
+// writer of that gauge — never had it in its list. Since
+// /v1/sources/{name}/health reads the gauge as "this source is
+// switched on", the live FX feed served enabled=false next to five
+// figures of entries_24h, and an operator triaging FX staleness read
+// "massive: off" and stopped looking. Keeping the gauge with the code
+// that actually runs the source means it stays right whichever binary
+// hosts the worker. Fallback providers are deliberately NOT marked
+// enabled: they are standbys, only consulted when the primary fails.
 func (w *Worker) Run(ctx context.Context) error {
+	obs.SourceEnabled.WithLabelValues(fxSource).Set(1)
+	defer obs.SourceEnabled.WithLabelValues(fxSource).Set(0)
+
 	w.refreshOnce(ctx)
 
 	tick := time.NewTicker(w.interval)

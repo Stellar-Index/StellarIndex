@@ -66,7 +66,7 @@ expect() {
 		fail=$((fail + 1))
 		return
 	fi
-	if [ -n "$want_sub" ] && ! printf '%s' "$OUT" | grep -q -- "$want_sub"; then
+	if [ -n "$want_sub" ] && ! grep -q -- "$want_sub" <<<"$OUT"; then
 		echo "FAIL: $name — output missing '$want_sub'" >&2
 		printf '%s\n' "$OUT" | sed 's/^/    /' >&2
 		fail=$((fail + 1))
@@ -103,6 +103,20 @@ expect "narrowed scope fails even at 100% coverage" 1 "The measured SCOPE shrank
 
 run COVERAGE_PROFILE="$TMP/narrow.cov" COVERAGE_FLOOR=10 MIN_PACKAGES=120 COVERAGE_ENFORCE=0
 expect "narrowed scope fails in report-only mode too" 1 "This is a hard failure even in"
+
+# A block listed twice (profiles merged across packages do this for shared
+# code): once uncovered, once covered. Aggregated by block identity it is ONE
+# 10-statement block that IS covered — 250 packages × 10 = 2500 statements
+# at 100.0%, not 2510 at 99.6%. The naive line sum reported the latter and
+# disagreed with `go tool cover -func` by a rounding step on the real tree.
+{
+	echo "mode: set"
+	for i in $(seq 1 250); do echo "example.com/m/p${i}/f.go:1.1,2.1 10 1"; done
+	echo "example.com/m/p1/f.go:1.1,2.1 10 0"
+} > "$TMP/dup.cov"
+run COVERAGE_PROFILE="$TMP/dup.cov" COVERAGE_FLOOR=54.0 MIN_PACKAGES=120
+expect "a block listed twice is counted once (block-keyed, like cover -func)" 0 "statements=2500 "
+expect "the duplicated block's coverage is the covered entry's" 0 "total=100.0%"
 
 # ─── the coverage verdict: report-only by default, enforceable ───
 

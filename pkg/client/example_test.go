@@ -22,9 +22,9 @@ func ExampleNew() {
 	})
 	_ = c // silence "declared and not used" in this snippet
 
-	// For self-hosted or staging, point BaseURL at the deployment:
-	staging := client.New(client.Options{BaseURL: "https://api.staging.stellarindex.io"})
-	_ = staging
+	// For a self-hosted deployment, point BaseURL at it:
+	selfHosted := client.New(client.Options{BaseURL: "http://localhost:3000"})
+	_ = selfHosted
 }
 
 // ExampleClient_Price demonstrates a current-price lookup. The
@@ -643,9 +643,10 @@ func ExampleClient_Observations() {
 // ExampleClient_ChangeSummary demonstrates the per-entity
 // multi-window delta rollup. The change-summary worker writes one
 // row per (entity_type, entity_id) every 5 min; this method
-// surfaces the latest. EntityType is one of "coin", "protocol",
-// "pair", "source"; for coin entities the API expands friendly
-// slugs (XLM, USDC) into canonical asset_id forms server-side.
+// surfaces the latest. EntityType is "coin" or "pair" — the two
+// families the worker computes; for coin entities the API expands
+// friendly slugs (XLM, USDC) into canonical asset_id forms
+// server-side.
 //
 // All H*/D* fields are *float64 — nil distinguishes "no value
 // yet" (window opened recently) from "0% change". Render `—` on

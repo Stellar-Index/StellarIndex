@@ -45,7 +45,6 @@ Where the two diverge, the OpenAPI file wins and this doc gets updated.
 ## 2. Base URL + versioning
 
 - Production: `https://api.stellarindex.io/v1`
-- Staging: `https://api.staging.stellarindex.io/v1`
 - Self-hosted: `http://<host>:3000/v1`
 
 Versioning rules:

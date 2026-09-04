@@ -1,0 +1,31 @@
+# systemd timer: daily served-value truth reconciliation.
+#
+# Rendered by Ansible. Companion to verify-served-values.service.
+#
+# DAILY is load-bearing, not a default: stellarindex_served_value_drift and
+# _persistently_skipped both gate on 26h so a verdict must hold across two
+# consecutive runs, and _check_stale escalates at 48h. A weekly cadence
+# would make the first two unreachable and the third permanently pending.
+#
+# Time slot: 06:20 UTC + up to 5 min jitter. It sits after the whole
+# supply chain has refreshed for the day — 04:42 supply-snapshot, 05:30
+# compute-completeness, 06:00 ch-supply — because reconciling the served
+# number against ground truth mid-refresh measures a value that is about to
+# change, and a check that reads drift from its own scheduling is worse than
+# no check.
+#
+# Persistent=true so a reboot does not skip a day: the run is a handful of
+# HTTP GETs, and a skipped day is a day the flagship values are unverified.
+
+[Unit]
+Description=Daily served-value truth reconciliation
+Documentation=https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/served-value-drift.md
+
+[Timer]
+OnCalendar=*-*-* 06:20:00 UTC
+RandomizedDelaySec=300
+Persistent=true
+Unit=verify-served-values.service
+
+[Install]
+WantedBy=timers.target

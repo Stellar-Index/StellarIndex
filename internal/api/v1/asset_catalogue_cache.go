@@ -153,12 +153,11 @@ func (c *CachedAssetsReader) ListAssetsExt(ctx context.Context, opts timescale.L
 	// MUST appear in the key, or two requests differing only by that
 	// dimension collide and one serves the other's rows. Code is a
 	// row-narrowing filter (BACKLOG #54), so it is keyed alongside
-	// Issuer/Cursor/Q. (Type is NOT here: the handler folds it before
-	// reaching the reader — classic_assets is homogeneously classic,
-	// so a non-classic type short-circuits to an empty page and a
-	// classic/any type is a no-op on this call.)
+	// Issuer/Cursor/Q — and so is Type, which reaches the store now
+	// that it narrows the spine (classic vs the traded Soroban-native
+	// contracts) rather than being folded away by the handler.
 	key := newCacheKey("ListAssetsExt").
-		int(opts.Limit).str(opts.Issuer).str(opts.Code).
+		int(opts.Limit).str(opts.Issuer).str(opts.Code).str(opts.Type).
 		str(opts.Cursor).str(opts.Q).order(int(opts.Order)).build()
 	return c.fetchRows(ctx, "list_coins", key, func(ctx context.Context) ([]timescale.AssetRow, error) {
 		return c.upstream.ListAssetsExt(ctx, opts)

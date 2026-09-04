@@ -161,8 +161,17 @@ export async function generateMetadata({
   params: Params;
 }): Promise<Metadata> {
   const { pair } = await params;
-  const decoded = decodePairSlug(pair);
-  if (!decoded) return { title: 'Pair' };
+  // The runtime-fallback shell answers 200 for EVERY unmatched
+  // /markets/* path, and a slug carrying no `~` separator names no pair
+  // at all — one baked document standing in for arbitrary URLs. Indexing
+  // it files a soft-404 under whatever the crawler tried, so both cases
+  // are noindex, the posture the other long-tail shells take route-wide
+  // (/accounts, /contracts, /ledgers, /transactions). follow stays on so
+  // the crawler still walks out through the nav.
+  const decoded = pair === 'shell' ? null : decodePairSlug(pair);
+  if (!decoded) {
+    return { title: 'Pair', robots: { index: false, follow: true } };
+  }
   const baseLabel = shortAssetText(decoded.base);
   const quoteLabel = shortAssetText(decoded.quote);
   // Best-effort price fetch so the social-share preview reads as

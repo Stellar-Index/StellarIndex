@@ -20,7 +20,7 @@ severity: P2 for `_stale`; P3 for `_stale_ecb` + `_error_rate_high`
 ## Symptoms
 
 The named external poller (CoinGecko, CoinMarketCap, CryptoCompare,
-ECB, ExchangeRatesAPI, PolygonForex, Binance, Coinbase, Kraken,
+Massive, ECB, ExchangeRatesAPI, Binance, Coinbase, Kraken,
 Bitstamp) has stopped producing successful `PollOnce` calls. Either
 the venue is rejecting our calls (auth / rate-limit), the venue is
 down, or the network path is broken.

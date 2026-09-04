@@ -3,6 +3,7 @@ package v1_test
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"strings"
 	"testing"
@@ -122,6 +123,113 @@ func TestHandleCoverageVerdicts_LakeCompleteDecouplesFromComplete(t *testing.T) 
 	}
 	if !sw.LakeComplete {
 		t.Error("soroswap LakeComplete should be true: substrate+recognition reached tip, decoupled from projection")
+	}
+}
+
+// TestHandleCoverageVerdicts_PublishesProjectionFloor pins the
+// SERVED-tier floor as a typed field.
+//
+// sdex on pubnet is the shape that made this necessary: complete=true,
+// coverage_pct=1, genesis_ledger=2 — while the served tier holds
+// nothing below ledger 61,609,957 (2026-03-12). Every typed field on
+// that row says "verified from 2015 to tip"; the ten-year-five-month
+// correction lived only inside the free-text `detail` string, which no
+// machine consumer parses. The floor is published as
+// projection_verified_from, on the wire, next to the claim it bounds.
+//
+// Asserted against the raw JSON rather than the decoded struct: the
+// point of the fix is the wire key a consumer reads, not a Go field.
+func TestHandleCoverageVerdicts_PublishesProjectionFloor(t *testing.T) {
+	now := time.Now().UTC().Truncate(time.Second)
+	srv := v1.New(v1.Options{
+		CompletenessReader: &stubCompletenessReader{snaps: []timescale.CompletenessSnapshot{
+			{
+				Source: "sdex", Genesis: 2, Tip: 64_249_915, Watermark: 64_249_915,
+				CoveragePct: 1, Complete: true, LakeComplete: true,
+				ProjectionVerifiedFrom: 61_609_957,
+				SubstrateOK:            true, RecognitionOK: true, ProjectionOK: true,
+				Detail:     "projection: verified [64234754,64249915]; [61609957,64234753] carried from the prior clean verdict (tip=64234753), not re-verified this run",
+				ComputedAt: now,
+			},
+		}},
+	})
+	ts := httpTestServer(t, srv)
+
+	resp := mustGet(t, ts.URL+"/v1/coverage")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("read body: %v", err)
+	}
+	var env struct {
+		Data struct {
+			Sources []map[string]any `json:"sources"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(body, &env); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(env.Data.Sources) != 1 {
+		t.Fatalf("sources = %d, want 1", len(env.Data.Sources))
+	}
+	row := env.Data.Sources[0]
+	got, ok := row["projection_verified_from"]
+	if !ok {
+		t.Fatalf("sdex row has no projection_verified_from — a consumer reading complete=%v, "+
+			"coverage_pct=%v, genesis_ledger=%v takes the served claim back to 2015, ten years "+
+			"below the served tier's real floor of 61609957; row=%v",
+			row["complete"], row["coverage_pct"], row["genesis_ledger"], row)
+	}
+	if n, isNum := got.(float64); !isNum || uint32(n) != 61_609_957 {
+		t.Fatalf("projection_verified_from = %v, want 61609957", got)
+	}
+
+	// The prose the field replaces stays: it names WHICH part of the
+	// range this run re-verified and which was carried, which the
+	// single number deliberately does not.
+	if d, _ := row["detail"].(string); !strings.Contains(d, "61609957") {
+		t.Errorf("detail no longer names the carried range: %q", d)
+	}
+}
+
+// A verdict with no recorded floor must OMIT the key rather than
+// publish 0. Zero is a legal ledger-shaped value, and "verified from
+// ledger 0" is a stronger claim than "verified from genesis" — exactly
+// the overstatement this field exists to stop. Absent means unknown.
+func TestHandleCoverageVerdicts_OmitsUnrecordedProjectionFloor(t *testing.T) {
+	now := time.Now().UTC().Truncate(time.Second)
+	srv := v1.New(v1.Options{
+		CompletenessReader: &stubCompletenessReader{snaps: []timescale.CompletenessSnapshot{
+			{
+				Source: "redstone", Genesis: 2, Tip: 64_249_915, Watermark: 64_249_915,
+				CoveragePct: 1, Complete: false, LakeComplete: true,
+				SubstrateOK: true, RecognitionOK: true, ProjectionOK: false,
+				Detail:     "projection: not evaluated (earlier claim failed at genesis)",
+				ComputedAt: now,
+			},
+		}},
+	})
+	ts := httpTestServer(t, srv)
+
+	resp := mustGet(t, ts.URL+"/v1/coverage")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	var env struct {
+		Data struct {
+			Sources []map[string]any `json:"sources"`
+		} `json:"data"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&env); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(env.Data.Sources) != 1 {
+		t.Fatalf("sources = %d, want 1", len(env.Data.Sources))
+	}
+	if v, ok := env.Data.Sources[0]["projection_verified_from"]; ok {
+		t.Errorf("projection_verified_from = %v on a verdict with no recorded floor; the key must be absent, not 0", v)
 	}
 }
 

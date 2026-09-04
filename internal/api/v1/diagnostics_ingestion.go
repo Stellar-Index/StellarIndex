@@ -511,14 +511,25 @@ func (s *Server) handleDiagnosticsIngestion(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	// Per-handler ceiling — 30s. Each filler uses its own
-	// sub-context (5-10s each) so one slow reader doesn't starve
-	// the others. Pre-2026-05-14 the parent ctx was 6s and the
-	// fillers were sequential with no per-call timeout — when one
-	// reader exceeded its share, every subsequent filler aborted
-	// with `context deadline exceeded` and the response showed
-	// 0% coverage on every source. Caught live on r1 12:45 UTC.
-	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	// Per-handler ceiling. Each filler uses its own sub-context
+	// (5-10s each) so one slow reader doesn't starve the others.
+	// Pre-2026-05-14 the parent ctx was 6s and the fillers were
+	// sequential with no per-call timeout — when one reader exceeded
+	// its share, every subsequent filler aborted with `context
+	// deadline exceeded` and the response showed 0% coverage on every
+	// source. Caught live on r1 12:45 UTC. The 30s this asked for
+	// afterwards was unreachable — the request deadline capped it at
+	// 15s — so it now names the real ceiling.
+	//
+	// That re-cap NARROWS real behaviour, not just a dead number: an
+	// inline build taking between maxHandlerBudget and the request
+	// deadline used to finish and now hits this ceiling, returning the
+	// same degraded 0%-coverage shape the 2026-05-14 fix was about. It
+	// is at least disclosed — ingestionFlags sets flags.stale on a
+	// soft-failed filler — and the window is only reachable on a cold
+	// process, since the background refresher's snapshot short-circuits
+	// above and the inline build is a 200-500ms path.
+	ctx, cancel := context.WithTimeout(r.Context(), maxHandlerBudget)
 	defer cancel()
 
 	out := s.buildIngestionSnapshot(ctx)

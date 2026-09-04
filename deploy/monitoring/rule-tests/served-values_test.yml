@@ -1,0 +1,189 @@
+---
+# promtool unit tests for the served-value harness's meta-alerts —
+# stellarindex_served_value_check_stale (the OBS-2 arm) and
+# stellarindex_served_value_unit_failed. Rules live in data-freshness.yml.
+#
+#   promtool test rules deploy/monitoring/rule-tests/served-values_test.yml
+#
+# `stellarindex-ops verify-served-values` reconciles the flagship values we
+# SERVE against independent ground truth and writes served_values.prom at the
+# end of every run, stamping `stellarindex_served_value_last_run_unix`. Three
+# alerts read that textfile; this one is the meta-alert that catches the
+# harness itself going dark.
+#
+# It could not. The harness had no systemd unit, no timer and no ansible
+# task, so the textfile had never been written on r1 and the series had never
+# existed — and `time() - <absent series>` is an EMPTY VECTOR, not a large
+# number. The alert designed to notice "the harness has not run in 48h" was
+# structurally incapable of noticing that it had never run at all. The
+# `absent_over_time(...[2d])` branch covers the absent case over the same 48h
+# window the subtraction measures.
+#
+# Own file rather than an addition to data-freshness_test.yml because these
+# cases need a 1h evaluation_interval to span a 48h threshold, and that
+# setting is per-FILE — the same reason restore-drill_test.yml is separate.
+#
+# PROVEN-RED (check_stale): delete the `or absent_over_time(...[2d])` line
+# from data-freshness.yml and re-run — the never-scheduled case reports
+# `got:[]`, nothing firing at all. The dead-timer case still fires off the
+# subtraction branch either way, so the never-scheduled case is the one
+# carrying the coverage. It exercises the real alert (its 48h window + 1h
+# `for`), not a mock.
+#
+# PROVEN-RED (unit_failed): rewrite that alert as the obvious `for: 26h` over
+# a plain `== 1` and re-run — the two-consecutive-failures case reports
+# `got:[]` at 26h. A daily oneshot drops out of `failed` while its next run
+# is activating, which resolves the alert and restarts the pending clock, so
+# the obvious form is unreliable — at a 15s scrape it fires when no sample lands in the activating gap and stays silent when one does, and it cannot fire at all when the gap is long (the all-skipped or timeout modes). That is why the ride-out is written as
+# `offset 25h` + `for: 1h`, and why the dip at t=24h is in the fixture.
+
+rule_files:
+  - ../rules/data-freshness.yml
+
+evaluation_interval: 1h
+
+tests:
+  # ── never scheduled: the series has never existed ────────────────
+  # Only an unrelated textfile gauge is scraped — the shape of a host
+  # where data-freshness.sh runs but verify-served-values never has.
+  - interval: 1h
+    name: a never-scheduled harness (last_run_unix absent) fires the stale ticket
+    input_series:
+      - series: 'stellarindex_data_freshness_stale{domain="prices",source="coingecko"}'
+        values: '0x80'
+    alert_rule_test:
+      - eval_time: 5h
+        alertname: stellarindex_served_value_check_stale
+        exp_alerts:
+          - exp_labels:
+              severity: ticket
+              team: stellarindex
+              component: data-truth
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/served-value-drift.md
+              summary: "verify-served-values has not completed in 2 days"
+              description: |
+                The daily served-value truth harness hasn't written its
+                textfile in 48h — the timer is dead, the run is crashing,
+                or the timer was never installed on this host and the
+                series has never existed. Data-truth reconciliation is
+                dark. Start with `systemctl status
+                verify-served-values.timer` on the archival node.
+
+  # ── dead timer, last textfile still on disk ──────────────────────
+  # node_exporter keeps serving the last .prom, so last_run_unix stays
+  # present at a fixed old epoch. Past 48h the subtraction branch fires.
+  - interval: 1h
+    name: a dead timer with a stale textfile fires off the time() branch
+    input_series:
+      - series: 'stellarindex_served_value_last_run_unix'
+        values: '0x80'
+    alert_rule_test:
+      - eval_time: 72h
+        alertname: stellarindex_served_value_check_stale
+        exp_alerts:
+          - exp_labels:
+              severity: ticket
+              team: stellarindex
+              component: data-truth
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/served-value-drift.md
+              summary: "verify-served-values has not completed in 2 days"
+              description: |
+                The daily served-value truth harness hasn't written its
+                textfile in 48h — the timer is dead, the run is crashing,
+                or the timer was never installed on this host and the
+                series has never existed. Data-truth reconciliation is
+                dark. Start with `systemctl status
+                verify-served-values.timer` on the archival node.
+
+  # ── the daily timer is running ───────────────────────────────────
+  # Each run re-stamps last_run_unix to wall clock, so the difference stays
+  # ~0 and the series is never absent. Neither branch may fire — this is
+  # what stops the absent arm from ticketing a healthy host.
+  - interval: 1h
+    name: a running daily harness (last_run_unix tracking wall clock) never fires
+    input_series:
+      - series: 'stellarindex_served_value_last_run_unix'
+        values: '0+3600x80'
+    alert_rule_test:
+      - eval_time: 72h
+        alertname: stellarindex_served_value_check_stale
+        exp_alerts: []
+
+  # ── the dedicated failed-unit ticket rides out ONE bad day ───────
+  # verify-served-values.service is excluded from the catch-all
+  # stellarindex_systemd_unit_failed (15m) because the harness exits
+  # non-zero for a drifted check and for an all-skipped run as well as for
+  # a crash, so a single dark day at dashboard.stellar.org would otherwise
+  # ticket within the quarter-hour. One failed run must stay silent.
+  - interval: 1h
+    name: one failed run followed by a clean one never tickets
+    input_series:
+      # failed for one full cycle (24h), then the next run succeeds.
+      - series: 'node_systemd_unit_state{name="verify-served-values.service",state="failed"}'
+        values: '1x24 0x40'
+    alert_rule_test:
+      - eval_time: 20h
+        alertname: stellarindex_served_value_unit_failed
+        exp_alerts: []
+      - eval_time: 26h
+        alertname: stellarindex_served_value_unit_failed
+        exp_alerts: []
+      - eval_time: 48h
+        alertname: stellarindex_served_value_unit_failed
+        exp_alerts: []
+
+  # ── two consecutive failed runs DO ticket, at 26h ────────────────
+  # The dip at t=24h is the next run's `activating` window, which is why
+  # the ride-out is `offset 25h` + `for: 1h` and not `for: 26h` over a
+  # plain `== 1`: the latter resolves on that dip and restarts its pending
+  # clock, so on a daily oneshot it never reaches 26h.
+  - interval: 1h
+    name: two consecutive failed runs ticket at 26h, dip at the run boundary and all
+    input_series:
+      - series: 'node_systemd_unit_state{name="verify-served-values.service",state="failed"}'
+        values: '1x23 0 1x40'
+    alert_rule_test:
+      - eval_time: 25h
+        alertname: stellarindex_served_value_unit_failed
+        exp_alerts: []
+      - eval_time: 26h
+        alertname: stellarindex_served_value_unit_failed
+        exp_alerts:
+          - exp_labels:
+              severity: ticket
+              team: stellarindex
+              component: data-truth
+              name: verify-served-values.service
+              state: failed
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/served-value-drift.md
+              summary: "verify-served-values.service failed on two consecutive daily runs"
+              description: |
+                The served-value truth harness exited non-zero on its last two
+                runs. Three conditions exit non-zero and they want different
+                responses: a DRIFTED check (served_value_drift names which one),
+                an all-skipped run where every independent truth source was dark
+                (served_value_persistently_skipped names it), and a crash before
+                the textfile is written. Only the third is unique to this ticket
+                — served_value_check_stale cannot report a crash until
+                last_run_unix is 48h old, most of another day out. So if neither
+                companion alert is firing, treat this as the crash case:
+                `systemctl status verify-served-values` then
+                `journalctl -u verify-served-values --since -50h`.
+
+  # ── a healthy unit never tickets ─────────────────────────────────
+  # node_exporter reports state="failed" with value 0 while the unit is
+  # fine, so the selector matches on every scrape and only the `== 1`
+  # comparison keeps this quiet. A rule that fired on presence rather than
+  # value would page every healthy host.
+  - interval: 1h
+    name: a unit that never fails stays silent
+    input_series:
+      - series: 'node_systemd_unit_state{name="verify-served-values.service",state="failed"}'
+        values: '0x60'
+    alert_rule_test:
+      - eval_time: 48h
+        alertname: stellarindex_served_value_unit_failed
+        exp_alerts: []

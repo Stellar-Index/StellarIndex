@@ -196,7 +196,7 @@ export default function MethodologyPage() {
       <Section
         id="closed-bucket"
         title="Closed-bucket-only contract"
-        subtitle="Why every region serves the same number at the same wall-clock time"
+        subtitle="Why any region serves the same number at the same wall-clock time"
       >
         <p>
           The aggregator computes prices in fixed time buckets
@@ -206,10 +206,14 @@ export default function MethodologyPage() {
         </p>
         <p>
           This is the load-bearing invariant behind cross-region
-          consistency. Three regions ingest independently with
-          slightly different latency profiles, but because they
-          all only serve closed buckets, the value they return for
-          a given timestamp is identical to the byte. No
+          consistency. One region serves the API today; the
+          three-region active/active topology is ratified in
+          ADR-0050 and scheduled after v1.0. Each region will
+          ingest independently, with slightly different latency
+          profiles, so the guarantee has to hold without any
+          coordination between them: because a region only ever
+          serves closed buckets, the value any of them returns
+          for a given timestamp is identical to the byte. No
           eventually-consistent reconciliation, no
           last-writer-wins, no stale-cache footgun. The one cost
           is a bucket-width of latency at the very tip — the

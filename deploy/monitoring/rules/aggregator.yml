@@ -427,11 +427,32 @@ groups:
       # permanently active. The awareness signal lives on the
       # dashboard metric; the actionable failure mode is
       # correction_failing below.)
+      #
+      # The `unless ... offset 15m` arms exist because increase() cannot
+      # see a counter's FIRST increment: a series whose first sample in
+      # the range is already 1 has a flat range and reads 0. That is the
+      # reachable shape for both counters here — the refresh counter's
+      # startup failure lands while the metrics endpoint is still coming
+      # up, and the declined counter is an unseeded CounterVec whose
+      # `{asset}` children are born on first use. Same blindness
+      # ingestion.yml's stellarindex_decoder_panicked compares the raw
+      # value to escape, and the same born-inside-the-window idiom
+      # backup-offsite.yml uses; it ages out with the window, so a
+      # one-off blip still resolves instead of latching the way the
+      # removed detector above did.
       - alert: stellarindex_nonstandard_decimals_correction_failing
         expr: |
           increase(stellarindex_nonstandard_decimals_cache_refresh_failures_total[15m]) > 0
           or
           increase(stellarindex_price_serve_declined_nonstandard_decimals_total[15m]) > 0
+          or (
+            stellarindex_nonstandard_decimals_cache_refresh_failures_total > 0
+            unless stellarindex_nonstandard_decimals_cache_refresh_failures_total offset 15m
+          )
+          or (
+            stellarindex_price_serve_declined_nonstandard_decimals_total > 0
+            unless stellarindex_price_serve_declined_nonstandard_decimals_total offset 15m
+          )
         for: 5m
         labels:
           severity: ticket

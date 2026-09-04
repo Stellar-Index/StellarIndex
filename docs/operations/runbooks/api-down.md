@@ -23,6 +23,13 @@ severity: P1
   this is a **single** scrape target — `localhost:3000` with label
   `host=r1` (`configs/prometheus/prometheus.r1.yml`) — so one unit
   being down is the whole fleet being down.
+- … **or** `absent_over_time(up{job="stellarindex-api"}[5m]) == 1`: no
+  `up` series at all for 5 min, i.e. Prometheus is no longer scraping
+  the API. `sum()` over an empty vector is empty, not 0, so without
+  this arm a target dropped from service discovery would silence the
+  page instead of firing it. Diagnose it at the SCRAPE layer first
+  (§Quick diagnosis, last block) — the API may be serving fine while
+  the outage detector is blind, which is itself pageable.
 - `/v1/healthz` and `/v1/readyz` return non-200 (or time out) when
   Caddy's active health check probes them.
 - `caddy_reverse_proxy_upstreams_healthy` on `localhost:2019/metrics`
@@ -59,6 +66,14 @@ journalctl -u caddy -n 50 --no-pager
 
 # Caddy's view of the upstream.
 curl -s localhost:2019/metrics | grep caddy_reverse_proxy_upstreams_healthy
+
+# Fired via the absent_over_time arm (no `up` series at all)? Then the
+# fault is in Prometheus, not the API: the job is gone from the scrape
+# config or the target never resolved.
+curl -s localhost:9090/api/v1/targets | jq '.data.activeTargets[]
+  | select(.labels.job == "stellarindex-api")
+  | {health, lastError, scrapeUrl}'
+grep -n 'stellarindex-api' /etc/prometheus/prometheus.yml
 
 # If the unit is RUNNING but NOT serving: probe /v1/readyz directly.
 # The response is an Envelope: {data:{status,uptime,checks:[{name,ok,error}]},as_of,flags}

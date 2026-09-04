@@ -22,6 +22,9 @@ cd "$(dirname "$0")/../.."
 
 CI_YML="${CI_YML:-.github/workflows/ci.yml}"
 VERIFY_SH="${VERIFY_SH:-scripts/dev/verify.sh}"
+# Root the ./scripts/... paths verify.sh invokes are resolved against. Tests
+# point it at a fixture tree; a real run resolves against the checkout.
+VERIFY_ROOT="${VERIFY_ROOT:-.}"
 
 for f in "$CI_YML" "$VERIFY_SH"; do
   if [ ! -f "$f" ]; then
@@ -97,6 +100,23 @@ the local gate mirrors CI, then re-run. If a gate genuinely cannot do useful
 work locally (needs a PR BASE_SHA, network, etc.), invoke it in verify.sh
 anyway behind the same guard CI uses — it self-skips, keeping parity honest.
 EOF
+  exit 1
+fi
+
+# A verify.sh step that names a script which does not exist is a gate that
+# can never run, and it fails only where the step is reached — the strict
+# container profile found one at its eighty-third section. Resolve every
+# ./scripts/... path verify.sh invokes and refuse any that is missing.
+missing_paths=0
+while IFS= read -r ref; do
+  [ -n "$ref" ] || continue
+  if [ ! -e "$VERIFY_ROOT/$ref" ]; then
+    echo "check-verify-parity: verify.sh invokes $ref, which does not exist" >&2
+    missing_paths=$((missing_paths + 1))
+  fi
+done < <(grep -oE '(^|[[:space:]&|;(])\./scripts/[A-Za-z0-9_./-]+' "$VERIFY_SH" | sed -E 's/^[[:space:]&|;(]*\.\///' | sort -u)
+if [ "$missing_paths" -gt 0 ]; then
+  echo "check-verify-parity: FAIL — $missing_paths path(s) named in verify.sh do not exist" >&2
   exit 1
 fi
 

@@ -35,4 +35,14 @@ git -C "$tmp" commit -q -m migration
 migration="$(git -C "$tmp" rev-parse HEAD)"
 (cd "$tmp" && "$root/scripts/ci/prepush-integration-required.sh" "$storage" "$migration")
 
+mkdir -p "$tmp/test/harness"
+printf 'harness\n' > "$tmp/test/harness/timescale.go"
+git -C "$tmp" add test/harness/timescale.go
+git -C "$tmp" commit -q -m harness
+harness="$(git -C "$tmp" rev-parse HEAD)"
+# The Docker-backed bootstrap lives under test/harness; a change there alone
+# must require the integration suite, or the wait strategy it implements can
+# regress without any pre-push path compiling it.
+(cd "$tmp" && "$root/scripts/ci/prepush-integration-required.sh" "$migration" "$harness")
+
 echo "prepush integration policy self-test: PASS"

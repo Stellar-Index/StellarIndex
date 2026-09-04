@@ -21,3 +21,24 @@ describe('DocsPage versioning copy', () => {
     expect(screen.getByText(/pre-v1/i)).toBeInTheDocument();
   });
 });
+
+// The quickstart said an API key "raises your limits". On the hosted
+// deployment it lowers them: the anonymous header is
+// `x-ratelimit-limit: 6000` and a free key is stamped at 1,000. That is
+// deliberate and /pricing explains it — the docs have to say the same
+// thing, or an integrator mints a key expecting headroom and gets a
+// sixfold cut.
+describe('DocsPage rate-limit copy', () => {
+  it('does not claim a key raises your limits', () => {
+    render(<DocsPage />);
+    expect(screen.queryByText(/raises your limits/i)).not.toBeInTheDocument();
+  });
+
+  it('publishes both real limits and says a key is a budget, not a raise', () => {
+    render(<DocsPage />);
+    const para = screen.getByText(/Anonymous reads are limited per source IP/i);
+    expect(para).toHaveTextContent(/6,000\s*\n?\s*req\/min/i);
+    expect(para).toHaveTextContent(/1,000\s*\n?\s*req\/min/i);
+    expect(para).toHaveTextContent(/not extra throughput/i);
+  });
+});

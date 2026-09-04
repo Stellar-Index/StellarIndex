@@ -42,16 +42,23 @@ type networkStatsStaleReader interface {
 //     "sources the binary knows how to read." Independent of
 //     operator config; constant across regions running the same
 //     build.
-//   - /v1/status.freshness.total_sources counts sources the
-//     operator has ENABLED in their region config (Prometheus
-//     `count(stellarindex_source_enabled == 1)`); a strict subset.
+//   - /v1/status.freshness.total_sources counts sources switched
+//     on in this region — every scraped
+//     `stellarindex_source_enabled == 1` series, whichever binary
+//     publishes it (the indexer for its configured sources and
+//     connectors, the API binary for the `massive` FX worker it
+//     hosts); a strict subset.
 //   - /v1/status.freshness.active_sources further narrows to
-//     sources that have emitted an event in the last 10 minutes.
+//     enabled sources that have emitted an event in the last 7 days.
 //
-// On r1 today: Registry=21, enabled=17, active=15. The gap
-// between the two `total_sources` fields is by design (different
-// metrics) — kept in separate envelopes so the names don't collide
-// in any single response.
+// Measured on r1 2026-09-03: Registry=28, enabled=25, active=24 (25 and 26
+// once this gauge is published) —
+// before the API binary published `massive`'s own enabled series
+// (internal/sources/external/forex); with that series present both
+// status counts read one higher, 18 and 16. The gap between the two
+// `total_sources` fields is by design (different metrics) — kept in
+// separate envelopes so the names don't collide in any single
+// response.
 type NetworkStats struct {
 	Volume24hUSD    *string `json:"volume_24h_usd,omitempty"`
 	MarketsCount24h int64   `json:"markets_count_24h"`

@@ -118,7 +118,8 @@ export default function DocsPage() {
       <Section id="auth" title="Authentication">
         <p>
           Public endpoints work without a key (subject to rate limits). An API key
-          raises your limits and is required for account/usage endpoints. Keys are{' '}
+          gives you a per-key budget and per-key usage history, and is required
+          for account/usage endpoints. Keys are{' '}
           <code className="font-mono text-sm">sip_*</code> tokens (legacy{' '}
           <code className="font-mono text-sm">rek_*</code> still accepted), minted
           in the{' '}
@@ -137,6 +138,18 @@ export default function DocsPage() {
       </Section>
 
       <Section id="rate-limits" title="Rate limits">
+        <p>
+          Anonymous reads are limited per source IP; a key&apos;s budget is
+          per key. On the hosted deployment the anonymous IP limit (6,000
+          req/min) deliberately exceeds a single free key&apos;s (1,000
+          req/min) — a key buys attribution and a budget nothing else on
+          your IP can spend, not extra throughput. Higher per-key partner
+          limits are set on request; see{' '}
+          <Link className="text-brand-600 hover:underline" href="/pricing">
+            pricing
+          </Link>
+          .
+        </p>
         <p>
           Every response carries{' '}
           <code className="font-mono text-sm">X-RateLimit-Limit</code> and{' '}

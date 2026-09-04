@@ -176,7 +176,7 @@ named feature.
 | Go ≥ 1.25 | to build the six binaries (`go version`) |
 | `stellar-core` + Galexie | installed from `apt.stellar.org` / the [`stellar-galexie`](https://github.com/stellar/stellar-galexie) release — **not part of this repo**; see [ADR-0002](../adr/0002-minio-s3-compat-storage.md) for why we don't run Horizon or ship our own core build |
 | An S3-compatible object store | MinIO by default (bundled in `make dev`); AWS S3, GCS, Cloudflare R2, Backblaze B2, Wasabi all work via `endpoint_url` — **never** Galexie's local-filesystem backend in production (silently drops 9 metadata keys + is multi-writer-unsafe; see [ADR-0002](../adr/0002-minio-s3-compat-storage.md)) |
-| ClickHouse server (optional, for the full raw lake) | `clickhouse-server` from the [official ClickHouse install](https://clickhouse.com/docs/getting-started/quick-start) or the `clickhouse/clickhouse-server` Docker image — **this repo does not package or install ClickHouse itself**; it ships the schema (`deploy/clickhouse/tier1_schema.sql`) and the indexer-side dual-sink code only |
+| ClickHouse server (the raw lake — on by default; §4.5 says how to opt out) | `clickhouse-server` from the [official ClickHouse install](https://clickhouse.com/docs/getting-started/quick-start) or the `clickhouse/clickhouse-server` Docker image — **this repo does not package or install ClickHouse itself**; it ships the schema (`deploy/clickhouse/tier1_schema.sql`) and the indexer-side dual-sink code only |
 | `stellar-archivist` (optional, only for a full history mirror) | from [`stellar/go-stellar-archivist`](https://github.com/stellar/go-stellar-archivist) — not installed by anything in this repo either |
 
 ---
@@ -197,10 +197,14 @@ TLS, no backups):
 
 ```sh
 git clone https://github.com/Stellar-Index/StellarIndex.git
-cd stellar-index
+cd StellarIndex
 cp deploy/docker-compose/.env.example deploy/docker-compose/.env
 make dev              # timescale + redis + minio, docker compose
 ```
+
+`make dev` brings up **only** those three containers. Nothing in this
+repo's compose file serves the API or the docs site — those are your
+own binaries (§4.2, §4.7) and a static build (`make docs-api`).
 
 For a production host, install Postgres 15 + the TimescaleDB
 extension, Redis 7, and MinIO natively (or point at your own S3-
@@ -230,15 +234,21 @@ change). At minimum, edit:
 - `[stellar] network` — `pubnet` for mainnet.
 - `[storage] postgres_dsn`, `redis_addr`, `s3_endpoint` / `s3_bucket_archive`
   / `s3_bucket_live` — point at what you brought up in 4.1.
-- `[ingestion] enabled_sources` — which on-chain decoders to run
-  (defaults to `["soroswap", "aquarius", "phoenix"]`; see
-  `internal/config/validate.go`'s `KnownSources` for the full list).
+- `[ingestion] enabled_sources` — which on-chain decoders to run.
+  The example file ships `["soroswap"]`; the built-in default when
+  the key is absent is `["soroswap", "aquarius", "phoenix"]`. See
+  `internal/config/validate.go`'s `KnownSources` for the full list.
   Each requires a per-WASM-hash decoder audit before it's safe for
   historical backfill — see
   [docs/operations/wasm-audits/README.md](wasm-audits/README.md).
-- `[storage] clickhouse_addr` / `clickhouse_live_sink` — leave
-  `clickhouse_live_sink = true` (the default) only if you're also
-  standing up ClickHouse (§4.5); otherwise set it to `false`.
+- `[storage] clickhouse_addr`, `[storage] clickhouse_live_sink` and
+  `[storage] clickhouse_projector_source` — all three live under
+  `[storage]`, and all three are commented out in the example file, so
+  the built-in defaults apply: both switches `true` (ADR-0041) against
+  `clickhouse_addr = "127.0.0.1:9300"`. **If you are not standing up
+  ClickHouse (§4.5), uncomment the two switches and set them
+  `false`** — the indexer dials that address at boot and refuses to
+  start when nothing answers.
 
 Secrets never belong in this file — see §5.
 
@@ -294,7 +304,11 @@ or light mode (start = current network tip — query it from any public
 Horizon-free source, e.g. `stellar-core`'s own `/info` endpoint, or a
 public `stellar-rpc` if you have one handy for this one read).
 
-### 4.5 ClickHouse raw lake (optional)
+### 4.5 ClickHouse raw lake (opt-out, not opt-in)
+
+Since ADR-0041 the lake is substrate rather than an add-on, so this
+step is the default path: skipping it means turning two switches off
+(below), not leaving them alone.
 
 Install `clickhouse-server` (native package or Docker), then apply
 the schema:
@@ -312,9 +326,14 @@ for the full tiering rationale and what's populated vs. not yet
 plan's §"Accepted exclusion").
 
 If you skip ClickHouse, set `storage.clickhouse_live_sink = false`
-and `ingestion.clickhouse_projector_source = false`; the pricing path
-(trades → VWAP → API) is unaffected, you just don't get the raw-lake
-completeness verdict or lake-derived supply figures.
+and `storage.clickhouse_projector_source = false` — both keys are
+under `[storage]`, and `internal/config/load.go` rejects an unknown
+key as a hard error, so a misfiled one stops every binary from
+starting. Neither is optional to set: both default to `true`
+(ADR-0041), and leaving them on without a ClickHouse to talk to fails
+the indexer at boot. The pricing path (trades → VWAP → API) is
+unaffected either way; what you give up is the raw-lake completeness
+verdict and lake-derived supply figures.
 
 **Serving-query isolation (ADR-0048 D4, optional).** By default the
 API authenticates to ClickHouse as the unauthenticated `default` user

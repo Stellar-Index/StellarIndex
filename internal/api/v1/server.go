@@ -86,7 +86,7 @@ type ReadyChecker interface {
 // This constant MUST equal the head under migrations/; the parity test
 // TestExpectedSchemaVersionMatchesMigrationsHead fails CI if a migration
 // is added without bumping it.
-const ExpectedSchemaVersion uint = 154
+const ExpectedSchemaVersion uint = 155
 
 // SchemaVersionReader reports the applied golang-migrate schema state
 // (schema_migrations.version + dirty). cmd/stellarindex-api adapts
@@ -444,6 +444,43 @@ type Server struct {
 // http.Server WriteTimeout (30s) so the app-layer deadline is what
 // actually bounds a hung request.
 const defaultRequestTimeout = 15 * time.Second
+
+// maxHandlerBudget is the ceiling for a per-handler
+// context.WithTimeout(r.Context(), …) budget — the longest a single
+// handler may ask for while still being the deadline that FIRES.
+//
+// A per-handler budget exists to convert an over-budget read into a
+// specific, actionable 503 ("the pool's reserve state didn't decode in
+// time") before the blanket request deadline arrives. A budget >= the
+// global one cannot do that: the middleware's deadline reaches the
+// reader first, so the handler's own timeout branch is unreachable and
+// the number it advertises is fiction. Three handlers had drifted there
+// (lending reserves at 15s, ingestion diagnostics at 30s, protocol
+// detail at 25s).
+//
+// The 3s of headroom is response-writing room measured against the
+// DEFAULT deadline — comfortable margin for the handler to serialise its
+// problem document — not a minimum the boot check enforces. The check
+// ([config.APIConfig.validate]) requires only api.request_timeout >
+// [config.APIMaxHandlerBudget], because RequestTimeout cancels the
+// CONTEXT and nothing else: a write already in flight when the blanket
+// deadline lands still reaches the client (the bound on writing is the
+// 30s http.Server WriteTimeout). So a deployment that deliberately runs
+// a tighter global budget keeps every handler's own timeout branch
+// reachable, which is the invariant that matters, and is allowed to.
+// Handlers wanting the longest legal budget name this constant rather
+// than restating an arithmetic result, so re-tuning
+// defaultRequestTimeout moves them with it.
+// TestHandlerBudgets_StayInsideTheRequestTimeout enforces the bound
+// across every request-derived budget in the API packages.
+//
+// The compile-time bound is only half the guarantee: the deadline a
+// deployment actually installs is Options.RequestTimeout
+// (api.request_timeout), which an operator sets, so this constant is
+// mirrored as [config.APIMaxHandlerBudget] and api.request_timeout is
+// validated against it at boot. TestMaxHandlerBudgetMatchesConfigBound
+// keeps the two spellings equal.
+const maxHandlerBudget = defaultRequestTimeout - 3*time.Second
 
 // DashboardAuthMounter is the interface main.go's
 // dashboardauth.Handlers satisfies — defined here so this package
