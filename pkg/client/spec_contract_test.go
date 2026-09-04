@@ -4,6 +4,7 @@
 package client
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"reflect"
@@ -31,6 +32,11 @@ import (
 //     directions) — a field rename/addition/removal in the spec that
 //     the SDK doesn't mirror is a silent production drift; this
 //     turns it into a test failure.
+//  4. The generic envelope and its Flags object — the members every
+//     operation shares — must match Envelope[T] and Flags the same
+//     way, both directions. The per-operation walk in (3) stops at
+//     `data`, so a new envelope member or flag could ship in the spec
+//     with no SDK field to land in; the walk in (4) covers it.
 
 // coveredOperation maps one SDK method to the spec operation it
 // calls. payload is the struct the envelope's `data` decodes into —
@@ -587,5 +593,280 @@ func TestCoveredOperationsBindToRealMethods(t *testing.T) {
 	if clientType.NumMethod() == 0 {
 		t.Fatal("*Client has no exported methods — reflection found nothing, so " +
 			"direction 2 checked nothing")
+	}
+}
+
+// ─── Envelope + Flags reconciliation ────────────────────────────────
+
+// envelopeMetaRef names the component every 2xx envelope in the spec
+// composes through allOf. The per-operation envelopes add `data` and,
+// on list surfaces, `pagination` as allOf siblings, so the generic
+// wire shape is EnvelopeMeta's own properties plus the union of every
+// composer's siblings — and that union is what Envelope[T] has to
+// carry, because the SDK decodes every operation through it.
+const envelopeMetaRef = "#/components/schemas/EnvelopeMeta"
+
+// composesEnvelopeMeta reports whether schema is an allOf whose parts
+// include a direct $ref to EnvelopeMeta.
+func composesEnvelopeMeta(schema map[string]any) bool {
+	all, _ := schema["allOf"].([]any)
+	for _, part := range all {
+		pm, _ := part.(map[string]any)
+		if ref, _ := pm["$ref"].(string); ref == envelopeMetaRef {
+			return true
+		}
+	}
+	return false
+}
+
+// specEnvelopeProps walks every schema that composes EnvelopeMeta —
+// the named components and the inline response schemas under
+// `paths`, including oneOf branches — and returns the union of their
+// top-level property names, each mapped to the sorted places that
+// declare it. The walk is what gives the check its reach: a member
+// added on one operation's inline response is as much a change to
+// the generic envelope as one added to EnvelopeMeta itself.
+func specEnvelopeProps(t *testing.T, doc map[string]any) map[string][]string {
+	t.Helper()
+	meta := resolveRef(doc, envelopeMetaRef)
+	if meta == nil {
+		t.Fatalf("spec has no %s component — renamed? update envelopeMetaRef", envelopeMetaRef)
+	}
+	origins := map[string]map[string]bool{}
+	note := func(prop, where string) {
+		if origins[prop] == nil {
+			origins[prop] = map[string]bool{}
+		}
+		origins[prop][where] = true
+	}
+	metaProps, _ := meta["properties"].(map[string]any)
+	if len(metaProps) == 0 {
+		t.Fatalf("%s declares no properties — the check would be vacuous", envelopeMetaRef)
+	}
+	for p := range metaProps {
+		note(p, "EnvelopeMeta")
+	}
+
+	composers := 0
+	visit := func(where string, schema map[string]any) {
+		if schema == nil || !composesEnvelopeMeta(schema) {
+			return
+		}
+		composers++
+		merged := mergeSchema(doc, schema)
+		props, _ := merged["properties"].(map[string]any)
+		for p := range props {
+			if _, fromMeta := metaProps[p]; !fromMeta {
+				note(p, where)
+			}
+		}
+	}
+
+	schemas := resolveRef(doc, "#/components/schemas")
+	for name, raw := range schemas {
+		s, _ := raw.(map[string]any)
+		visit(name, s)
+	}
+	paths, _ := doc["paths"].(map[string]any)
+	for path, v := range paths {
+		item, _ := v.(map[string]any)
+		for method, opRaw := range item {
+			op, _ := opRaw.(map[string]any)
+			responses, _ := op["responses"].(map[string]any)
+			for status, rRaw := range responses {
+				r, _ := rRaw.(map[string]any)
+				content, _ := r["content"].(map[string]any)
+				mt, _ := content["application/json"].(map[string]any)
+				schema, _ := mt["schema"].(map[string]any)
+				if schema == nil {
+					continue
+				}
+				where := strings.ToUpper(method) + " " + path + " " + status
+				visit(where, schema)
+				alts, _ := schema["oneOf"].([]any)
+				for i, a := range alts {
+					am, _ := a.(map[string]any)
+					visit(fmt.Sprintf("%s oneOf[%d]", where, i), am)
+				}
+			}
+		}
+	}
+	if composers == 0 {
+		t.Fatalf("no schema in the spec composes %s — the walk found nothing to check", envelopeMetaRef)
+	}
+
+	out := make(map[string][]string, len(origins))
+	for p, where := range origins {
+		list := make([]string, 0, len(where))
+		for w := range where {
+			list = append(list, w)
+		}
+		sort.Strings(list)
+		out[p] = list
+	}
+	return out
+}
+
+// specFlagsProps resolves the Flags object the way a consumer meets
+// it — through EnvelopeMeta.properties.flags — whether that is a $ref
+// to a named component or an inline object, and returns its property
+// names.
+func specFlagsProps(t *testing.T, doc map[string]any) map[string]bool {
+	t.Helper()
+	meta := resolveRef(doc, envelopeMetaRef)
+	if meta == nil {
+		t.Fatalf("spec has no %s component — renamed? update envelopeMetaRef", envelopeMetaRef)
+	}
+	props, _ := meta["properties"].(map[string]any)
+	flagsRaw, _ := props["flags"].(map[string]any)
+	if flagsRaw == nil {
+		t.Fatalf("%s has no `flags` property — the Flags check has nothing to walk", envelopeMetaRef)
+	}
+	flags := mergeSchema(doc, flagsRaw)
+	fp, _ := flags["properties"].(map[string]any)
+	if len(fp) == 0 {
+		t.Fatalf("the Flags schema behind %s.properties.flags declares no properties — the check would be vacuous", envelopeMetaRef)
+	}
+	out := make(map[string]bool, len(fp))
+	for k := range fp {
+		out[k] = true
+	}
+	return out
+}
+
+// describeOrigins renders where a property is declared, capped so a
+// member every one of the spec's envelopes carries does not turn one
+// failure line into a page.
+func describeOrigins(where []string) string {
+	const shown = 4
+	if len(where) <= shown {
+		return strings.Join(where, ", ")
+	}
+	return fmt.Sprintf("%s, +%d more", strings.Join(where[:shown], ", "), len(where)-shown)
+}
+
+// TestSDKEnvelopeMatchesSpec — the generic Envelope[T] must carry
+// exactly the top-level members the spec's envelopes declare, in
+// both directions. A spec member with no SDK field is silently
+// dropped by the decoder for every operation at once; an SDK field
+// no envelope documents is a wire shape the server never sends.
+func TestSDKEnvelopeMatchesSpec(t *testing.T) {
+	doc := loadSpec(t)
+	specProps := specEnvelopeProps(t, doc)
+	goProps := jsonTags(reflect.TypeOf(Envelope[json.RawMessage]{}))
+
+	var missingInGo, missingInSpec []string
+	for p, where := range specProps {
+		if !goProps[p] {
+			missingInGo = append(missingInGo, fmt.Sprintf("%s (declared by %s)", p, describeOrigins(where)))
+		}
+	}
+	for p := range goProps {
+		if specProps[p] == nil {
+			missingInSpec = append(missingInSpec, p)
+		}
+	}
+	sort.Strings(missingInGo)
+	sort.Strings(missingInSpec)
+	if len(missingInGo) > 0 {
+		t.Errorf("spec envelopes declare top-level members the SDK Envelope[T] does not carry — the SDK silently drops them on every operation: %v", missingInGo)
+	}
+	if len(missingInSpec) > 0 {
+		t.Errorf("SDK Envelope[T] declares top-level members no spec envelope documents: %v", missingInSpec)
+	}
+}
+
+// TestSDKFlagsMatchSpec — the advisory Flags object must match the
+// spec's Flags schema property-for-property, in both directions. The
+// decoder ignores unknown fields, so a flag the spec adds and the
+// SDK lacks is not an error at runtime — it is a signal consumers
+// can never read, which is exactly the drift this pins.
+func TestSDKFlagsMatchSpec(t *testing.T) {
+	doc := loadSpec(t)
+	specProps := specFlagsProps(t, doc)
+	goProps := jsonTags(reflect.TypeOf(Flags{}))
+
+	var missingInGo, missingInSpec []string
+	for p := range specProps {
+		if !goProps[p] {
+			missingInGo = append(missingInGo, p)
+		}
+	}
+	for p := range goProps {
+		if !specProps[p] {
+			missingInSpec = append(missingInSpec, p)
+		}
+	}
+	sort.Strings(missingInGo)
+	sort.Strings(missingInSpec)
+	if len(missingInGo) > 0 {
+		t.Errorf("spec Flags declares flags the SDK Flags type does not carry — the SDK silently drops them: %v", missingInGo)
+	}
+	if len(missingInSpec) > 0 {
+		t.Errorf("SDK Flags declares flags the spec does not document: %v", missingInSpec)
+	}
+}
+
+// TestSpecEnvelopeWalkSeesEveryComposer pins the walk behind
+// TestSDKEnvelopeMatchesSpec and TestSDKFlagsMatchSpec to a synthetic
+// document. Against the real spec a walk that skipped inline
+// responses, oneOf branches, or an inline Flags object passes exactly
+// like one that covered them, because nothing is drifting there
+// today; this is the run that tells the two apart.
+func TestSpecEnvelopeWalkSeesEveryComposer(t *testing.T) {
+	str := map[string]any{"type": "string"}
+	obj := func(props ...string) map[string]any {
+		pm := map[string]any{}
+		for _, p := range props {
+			pm[p] = str
+		}
+		return map[string]any{"type": "object", "properties": pm}
+	}
+	composer := func(props ...string) map[string]any {
+		return map[string]any{"allOf": []any{
+			map[string]any{"$ref": envelopeMetaRef},
+			obj(props...),
+		}}
+	}
+	response := func(schema map[string]any) map[string]any {
+		return map[string]any{"responses": map[string]any{"200": map[string]any{
+			"content": map[string]any{"application/json": map[string]any{"schema": schema}},
+		}}}
+	}
+	doc := map[string]any{
+		"components": map[string]any{"schemas": map[string]any{
+			"EnvelopeMeta": map[string]any{"type": "object", "properties": map[string]any{
+				"as_of": str,
+				"flags": obj("stale", "inline_flag"),
+			}},
+			"ListEnvelope": composer("data", "pagination"),
+			"Unrelated":    obj("not_an_envelope_member"),
+		}},
+		"paths": map[string]any{
+			"/inline": map[string]any{"get": response(composer("data", "inline_member"))},
+			"/either": map[string]any{"get": response(map[string]any{"oneOf": []any{
+				map[string]any{"$ref": "#/components/schemas/ListEnvelope"},
+				composer("data", "branch_member"),
+			}})},
+		},
+	}
+
+	got := specEnvelopeProps(t, doc)
+	want := map[string][]string{
+		"as_of":         {"EnvelopeMeta"},
+		"flags":         {"EnvelopeMeta"},
+		"data":          {"GET /either 200 oneOf[1]", "GET /inline 200", "ListEnvelope"},
+		"pagination":    {"ListEnvelope"},
+		"inline_member": {"GET /inline 200"},
+		"branch_member": {"GET /either 200 oneOf[1]"},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("envelope walk\n got: %v\nwant: %v", got, want)
+	}
+
+	flags := specFlagsProps(t, doc)
+	wantFlags := map[string]bool{"stale": true, "inline_flag": true}
+	if !reflect.DeepEqual(flags, wantFlags) {
+		t.Errorf("inline Flags walk\n got: %v\nwant: %v", flags, wantFlags)
 	}
 }
