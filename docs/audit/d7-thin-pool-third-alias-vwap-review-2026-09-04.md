@@ -268,6 +268,70 @@ bucket DESC LIMIT 1`) as a possible duplicate of D7. R3 covers the pool route
 only; the one-cent SDEX print route is a separate question and this document
 does not close it.
 
+> **Amended 2026-09-04, after this review** — three follow-ups raised by
+> the declared-peg SAC-spelling fix on `/v1/price`
+> (`crossDeclaredPegThroughXLM`), recorded here rather than folded into
+> R1–R6, which stand as accepted. None of the three is closed by that
+> fix.
+>
+> **R7 — the point cross and the series cross order the peg's spellings
+> differently.** `crossDeclaredPegThroughXLM`'s peg leg
+> (`internal/api/v1/price.go`, `readDeclaredPegXLMLeg`) walks the peg's
+> spellings CANONICAL-first — classic id, then the SAC wrapper, one
+> spelling at a time — leaning on the R1 decision above. Its own godoc
+> calls `fiatSeriesThroughXLM` (`internal/api/v1/chart.go:793`) the
+> "point-surface twin" and the chart's godoc says the same back, but that
+> series cross reads its asset leg through `chartPointsWithAliases`,
+> which is LITERAL-first and takes the first populated spelling. So for a
+> peg with both a classic book and a SAC pool, `/v1/price` and
+> `/v1/chart` can compose the same fiat value from different books for
+> the same requested spelling. Neither serves anything ungated, but the
+> two surfaces are no longer twins and one of the two godocs is now
+> inaccurate. Either reconcile the chart leg to the same order or amend
+> both godocs to say which walk each uses.
+>
+> **R8 — the scam gate cannot fire on a Soroban base, on any surface.**
+> `pricingguard.ScamGate.Withheld` (`internal/pricingguard/scam.go:159`)
+> returns false immediately for a base that is not classic-with-issuer
+> (`scam.go:163-165`), because the directory it consults is keyed on the
+> issuer G-address. Every consultation of that gate keys on a BASE the
+> caller may have spelled as a SAC C-address: six through `priceWithheld`
+> (`cmd/stellarindex-api/main.go:3587`, called at `:3354` asset headline,
+> `:3692` DEX TVL, `:3784` and `:3843` `price_read`, `:3872` oracle,
+> `:5497` `price_at`) and four in the handlers
+> (`internal/api/v1/vwap.go:108`, `twap.go:87`, `price_tip.go:186`,
+> `chart.go:96`). So a directory-flagged issuer's asset is withheld under
+> its classic id and served under its SAC id, across all ten. Its sibling
+> has no such asymmetry: `SubstanceGate.measure`
+> (`internal/pricingguard/substance.go:285-286`) unions the aliases on
+> both legs and reaches one verdict for either spelling. Measured shape,
+> on the one leg the fix touches: with `USDC-G…/native` withheld and a
+> live `USDC-SAC/XLM-SAC` pool, a walk that read the refusal as a miss
+> published `2.0000000000` `vwap`, `sources ["coinbase","soroswap"]`,
+> where the withheld classic book had served the `1.000000000000` `peg`
+> declaration. That walk now stops on a refusal; the gate's blind spot is
+> untouched and reaches every surface above. The remedy is on the gate —
+> resolve the base through the alias registry (`canonical.CanonicalAsset`)
+> before the classic check, so a wrapped classic's C-address carries its
+> issuer's directory verdict — and sizing it needs the wrapper map's
+> coverage, which is why it is a follow-up and not a line in that fix.
+>
+> **R9 — "one asset" and "your spelling" are decided differently one tier
+> apart.** The peg leg's canonical-first order rests on the claim that
+> the classic id and the C-address are one asset and must print one
+> cross. The tier directly above it — the caller's own `fiat:USD` read,
+> `readPriceWithAliases` — is literal-first and rests on the opposite
+> claim: each spelling serves its own observed bucket. Both are
+> defensible at their own tier and neither serves an ungated value, but
+> one request can meet both rules. Measured: with a fresh
+> `USDC-G…/fiat:USD` bucket at `1.0000000000` and a fresh
+> `USDC-SAC/fiat:USD` bucket at `2.4000000000`, `/v1/price` serves each
+> spelling its own — 2.4× apart — while had both missed, the cross one
+> tier below would have served both spellings one value from one book. R1
+> is the decision that settles which claim governs; the incoherence is
+> recorded so that decision is taken once, for both tiers, rather than
+> per surface.
+
 ## 8. Evidence — what was run
 
 All from the worktree at `origin/main` ff2acde5a; the `path:line` anchors in

@@ -208,7 +208,9 @@ func (s *Server) priceAtUSDPegPairs(asset, quote canonical.Asset) []canonical.Pa
 	}
 	out := make([]canonical.Pair, 0, len(s.usdPeggedClassics))
 	for _, peg := range s.usdPeggedClassics {
-		if peg.Equal(asset) {
+		// A peg asked for under any of its spellings — the classic id or
+		// its SAC wrapper — is not a market against itself.
+		if sameAsset(peg, asset) {
 			continue
 		}
 		proxied, err := canonical.NewPair(asset, peg)

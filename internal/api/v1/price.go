@@ -1189,13 +1189,23 @@ type proxyPairGate interface {
 //     fresh deployment, which is the most-basic possible query against
 //     the canonical price endpoint.
 //
-//   - An asset that IS a declared peg does not walk. Its fiat:USD market
+//   - An asset that IS a declared peg — under the classic id the operator
+//     declared or the SAC that wraps it, [Server.isDeclaredUSDPeg] —
+//     does not walk. Its fiat:USD market
 //     was the caller's own direct read, which has already missed by the
 //     time this runs; the market it has on Stellar is its XLM book, so it
 //     is priced through that — asset/XLM × XLM/fiat:USD
 //     ([Server.crossDeclaredPegThroughXLM]) — and only when that cross
 //     has nothing to read does the declaration itself answer
-//     ([Server.declaredPegSnapshot]) rather than a 404. The declaration
+//     ([Server.declaredPegSnapshot]) rather than a 404. Both spellings
+//     take this route, and it composes ONE value for them: the cross
+//     prices the peg as an ASSET — the classic id's book first, the SAC
+//     wrapper's only where that one found nothing — and the declaration
+//     is a constant, so only `asset_id` echoes the request. That holds for this route
+//     alone — the caller's own direct read, one tier above, is
+//     literal-first and can still answer the two spellings differently
+//     when only one of them has an observed fiat:USD bucket.
+//     The declaration
 //     is a LAST resort, never a short-circuit: a constant must not
 //     pre-empt an observation, and a depeg is precisely the moment the
 //     two disagree. Pricing the peg in ANOTHER declared peg's terms is
@@ -1280,12 +1290,18 @@ func (s *Server) tryStablecoinFiatProxy(ctx context.Context, asset, quote canoni
 
 // isDeclaredUSDPeg reports whether asset is one of the operator's
 // [trades].usd_pegged_classic_assets — the classic assets whose fiat:USD
-// price the operator has vouched for at 1:1. Exact spelling, as the
-// declaration is: the SAC twin of a declared peg is not itself declared,
-// and takes the ordinary walk exactly as before.
+// price the operator has vouched for at 1:1 — under ANY of its spellings.
+// A declared peg is an asset, not a spelling ([Server.usdPegProxyQuotes]
+// says why): the operator writes the classic id, and the SAC that wraps
+// it (`[supply].sac_wrappers`, folded by [sameAsset]) is the same asset
+// asked for by its Soroban address. Matching the declared spelling alone
+// sent that twin down the sibling walk, where the only pair it could
+// build was itself against its own classic form — a pair that is not a
+// market — so the classic id printed the XLM cross while the C-address
+// printed 404 for the same asset in the same minute.
 func (s *Server) isDeclaredUSDPeg(asset canonical.Asset) bool {
 	for _, peg := range s.usdPeggedClassics {
-		if peg.Equal(asset) {
+		if sameAsset(peg, asset) {
 			return true
 		}
 	}
@@ -1399,22 +1415,53 @@ func (s *Server) walkUSDPegs(
 // exactly 1 and prove nothing. Nor does the cross lean on any other
 // declared peg being sound — XLM is not a peg.
 //
-// Cost bound: up to three bounded reads per leg, one per XLM form,
-// each behind the substance probe, and every call on the way to them is bounded. The peg/XLM leg is
-// read under each XLM form as the quote ([Server.readDeclaredPegXLMLeg])
-// — `native`, crypto:XLM, the XLM SAC. A `native`- or SAC-quoted miss is
-// the reader's unbounded last-trade scan, not its synthetic-fiat fast
-// path, so each form runs behind the same [proxyPairGate] probe the peg
-// walk uses: one bounded existence check per form, and only a form the
-// probe reports live pays the read. The XLM/fiat:USD leg is fiat-quoted,
-// so every miss there IS the fast path — one closed-bucket lookup per
+// Cost bound: every call on the way to the reads is bounded. The peg/XLM
+// leg is read under each spelling of the peg — the classic id and its
+// SAC wrapper — crossed with each XLM form as the quote
+// ([Server.readDeclaredPegXLMLeg]) — `native`, crypto:XLM, the XLM SAC:
+// at most six combinations for a wrapped peg, three for one with no
+// wrapper, and the SAC spelling's three are reached only when the
+// classic spelling FOUND NOTHING — every one of its combinations
+// gate-missed or read not-found. A refusal or a read failure on the
+// classic spelling is not "found nothing": it ends the walk where it
+// stands (see [Server.readDeclaredPegXLMLeg]), so the six-combination
+// bound is the worst case and the common shape is three.
+// A `native`- or SAC-quoted
+// miss is the reader's unbounded last-trade scan, not its synthetic-fiat
+// fast path, so each combination runs behind the same [proxyPairGate]
+// probe the peg walk uses: one bounded existence check per combination,
+// and only one the probe reports live pays the read.
+//
+// What the probe being DOWN costs: a gate error falls through to
+// LatestPrice rather than skipping the combination (a probe blip must
+// not hide a price), and every one of the six combinations is `native`-
+// or SAC-quoted — the unbounded last-trade scan. So a probe outage on
+// this route now costs up to six unbounded scans where it cost three
+// before the peg's SAC spelling joined the walk. No new class of read;
+// twice as wide.
+//
+// The XLM/fiat:USD leg is fiat-quoted, so
+// every miss there IS the fast path — one closed-bucket lookup per
 // form. The pivot is read only once the peg leg has answered, so a peg
 // with no XLM book costs no pivot read. No unbounded read is reachable
 // from here.
 //
 // A withheld leg (ErrPriceWithheld) is a miss, not a price: the gate
 // refused to publish that market and a cross must not re-serve it
-// through a side door (MSP-06). observed_at is the OLDER of the two legs
+// through a side door (MSP-06). Widening the peg leg to the peg's SAC
+// spelling made that rule load-bearing in a second place — a refusal is
+// also not a reason to go LOOKING for another spelling of the same
+// asset, because the two spellings are not gated alike: the substance
+// gate measures the alias UNION and so reaches the same verdict for
+// either, but the scam gate keys on a classic issuer G-address and
+// cannot fire on a Soroban base at all. Walking on from a refused
+// classic book to the peg's SAC book would therefore publish, through
+// an ungated spelling, exactly the market the gate declined. So the
+// spelling walk STOPS on a refusal ([Server.readDeclaredPegXLMLeg]) and
+// the declaration answers, which is what this route did before the SAC
+// spelling joined the walk.
+//
+// observed_at is the OLDER of the two legs
 // — a derived price is only as fresh as its staler input — and sources
 // is the union of both, so a consumer sees the SDEX book and the CEX
 // venues that set the pivot.
@@ -1464,49 +1511,173 @@ func (s *Server) crossDeclaredPegThroughXLM(
 
 // readDeclaredPegXLMLeg reads asset/XLM for
 // [Server.crossDeclaredPegThroughXLM] — the peg's own on-chain book —
-// under each of XLM's alias forms as the QUOTE (`native` first, then
-// crypto:XLM, then the SAC; [canonical.AssetAliases] owns the order).
-// [Server.readPriceWithAliases] loops the BASE side and is the wrong
-// shape here. The store folds both stored orientations of a market into
-// the requested one, so the read answers whichever way SDEX recorded the
-// book.
+// under each spelling of the peg as the BASE crossed with each of XLM's
+// alias forms as the QUOTE (`native` first, then crypto:XLM, then the
+// SAC; [canonical.AssetAliases] owns the order). The store folds both
+// stored orientations of a market into the requested one, so the read
+// answers whichever way SDEX recorded the book.
 //
-// Each form runs behind the [proxyPairGate] probe first, exactly as the
-// peg walk does and for the same reason: a `native`- or SAC-quoted miss
-// is not the reader's synthetic-fiat fast path, it is the unbounded
-// last-trade scan. A gate ERROR falls through to the read (a probe blip
-// must not hide a price); a gate miss skips the form. Any read error —
-// ErrPriceNotFound and ErrPriceWithheld alike — is a miss for that
-// form. The decimals normalization is the walk's (M2), against the legs
-// actually traded.
+// The spellings are read ONE AT A TIME, and the walk advances to the
+// next spelling on exactly ONE verdict: pegXLMLegNoMarket — this
+// spelling FOUND NOTHING, every combination gate-missed or read
+// not-found. Any other verdict ends the walk where it stands:
 //
-// Among the forms that answer, a fresh one wins over a stale one, and a
-// stale one still serves when it is all there is — the preference
-// [Server.readPriceWithAliases] applies on the direct read, mirrored
-// here. Alias order alone would take `native` whenever it holds a row,
-// however old, over a fresh SAC-quoted book one form later: the
-// three forms are disjoint venue populations, and the book that traded
-// last is the one that prices the peg now.
+//   - pegXLMLegPriced — this spelling is the answer.
+//     [Server.readPegXLMLegForSpelling] prefers fresh over stale WITHIN
+//     one spelling, so a DORMANT book still answers and the next
+//     spelling is never reached. That is the shape [tipMergePairs] gave
+//     the tip: a SAC-form combination is read where the alternative is
+//     no price, never where an established form can answer. Ranking
+//     fresh-beats-stale ACROSS the spellings instead would let a fresh
+//     few-hundred-dollar Soroban pool outrank a dormant-but-present
+//     SDEX book on a classic-keyed request — the thin-pool third-alias
+//     shape the family's SAC-last ordering exists to stop, arriving on
+//     the surface that ordering was meant to protect.
+//
+//   - pegXLMLegRefused — the gate withheld this spelling's book. The
+//     walk must not go looking for another spelling of the same asset,
+//     because the two are not gated alike: pricingguard.ScamGate.Withheld
+//     returns false for any non-classic base, so the peg's SAC book is
+//     scam-ungated. Advancing would republish, through the ungated
+//     spelling, the very market the gate refused — an MSP-06 side door
+//     on the function whose own contract calls a withheld leg a miss and
+//     not a price. Sticky-withheld is what both siblings do:
+//     [Server.readPriceWithAliases] ("a withheld verdict on ANY alias
+//     wins over not-found") and [Server.walkUSDPegs] ("a WITHHELD
+//     verdict is not a miss").
+//
+//   - pegXLMLegReadFailed — the read itself broke (transport, planning,
+//     timeout). A partial reader failure is not evidence that the peg
+//     has no classic book; treating it as one would silently reprice the
+//     peg off whatever thin pool its SAC spelling holds, and the failure
+//     class is not hypothetical (v0.60.0 shipped a 42883 planning error
+//     that failed 1,651 times on a single pair). The walk ends and the
+//     declaration answers, exactly as it did before the SAC spelling
+//     joined.
+//
+// A price that parsed but is zero, negative or unparsable counts as
+// pegXLMLegPriced — the spelling ANSWERED — so the walk ends there too
+// and [crossThroughPivot] declines the product, leaving the declaration
+// to answer. Resolved that way deliberately, and identically to the
+// refusal and failure arms: the walk advances on "found nothing", never
+// on "found something unusable". The opposite resolution would let a
+// single degenerate print on the deep book hand the peg's price to a
+// thin pool, which is the shape this ordering exists to stop. Unchanged
+// from before the SAC spelling joined the walk.
+//
+// The spellings are ordered canonically — [canonical.CanonicalAsset]
+// first, the SAC wrapper last — rather than literal-first as
+// [Server.readPriceWithAliases] walks the direct read. This leg does not
+// serve the caller's own spelling; it prices ONE asset whichever id the
+// caller typed, and the classic id and the C-address must print the same
+// cross from the same book. Literal-first would let the C-address read
+// its thin Soroban pool ahead of the SDEX book the classic id reads
+// first, and the two spellings would disagree about the price of one
+// asset. The requested spelling is echoed by the caller, not by this
+// leg.
+//
+// That canonical-first order DEPARTS from what
+// [canonical.AssetAliases] documents — the literal input comes first
+// even when it IS the SAC form. Departing from it is an open MAINTAINER
+// decision, recorded as residual R1 of
+// docs/audit/d7-thin-pool-third-alias-vwap-review-2026-09-04.md §7,
+// which raises it for the quote walk. This leg leans on that decision
+// for the base walk and does not settle it: if R1 is decided the other
+// way, this walk becomes literal-first and the two spellings read
+// different books in a different order.
+//
+// Each combination runs behind the [proxyPairGate] probe first, exactly
+// as the peg walk does and for the same reason: a `native`- or
+// SAC-quoted miss is not the reader's synthetic-fiat fast path, it is
+// the unbounded last-trade scan. A gate ERROR falls through to the read
+// (a probe blip must not hide a price); a gate miss is pegXLMLegNoMarket
+// for that combination. The decimals normalization is the walk's (M2),
+// against the legs actually traded.
 func (s *Server) readDeclaredPegXLMLeg(
 	ctx context.Context, asset canonical.Asset,
 ) (PriceSnapshot, []string, bool) {
-	gate, _ := s.prices.(proxyPairGate)
+	xlmForms := assetAliases(canonical.NativeAsset())
+	for _, base := range assetAliases(canonical.CanonicalAsset(asset)) {
+		snap, srcs, verdict := s.readPegXLMLegForSpelling(ctx, base, xlmForms)
+		if verdict != pegXLMLegNoMarket {
+			// Priced, refused or failed — this spelling settles the
+			// leg. Only "found nothing" reaches the next spelling.
+			return snap, srcs, verdict == pegXLMLegPriced
+		}
+	}
+	return PriceSnapshot{}, nil, false
+}
+
+// pegXLMLegVerdict is what one read on the declared peg's XLM leg
+// SAID, as distinct from whether it yielded a price: the spelling walk
+// in [Server.readDeclaredPegXLMLeg] advances on one of these values and
+// stops on the other three, so collapsing them into a bare ok=false
+// would turn a refusal or a broken read into "no market here, try the
+// peg's other spelling".
+//
+// The values ascend by how much a read SAYS, which makes a spelling's
+// verdict the maximum of its combinations' — the same precedence
+// [Server.readPriceWithAliases] applies when it lets a withheld verdict
+// on any alias win over not-found.
+type pegXLMLegVerdict int
+
+const (
+	// pegXLMLegNoMarket — the [proxyPairGate] probe reported no recent
+	// closed bucket, or the read reported ErrPriceNotFound. The ONLY
+	// verdict that lets the walk move to the peg's next spelling.
+	pegXLMLegNoMarket pegXLMLegVerdict = iota
+	// pegXLMLegReadFailed — the read returned an error that is neither
+	// not-found nor withheld: transport, query planning, timeout. Says
+	// nothing about whether a market exists, so the walk stops.
+	pegXLMLegReadFailed
+	// pegXLMLegRefused — the read returned ErrPriceWithheld: a gate
+	// declined to publish this market. The walk stops (MSP-06 — see
+	// [Server.readDeclaredPegXLMLeg]).
+	pegXLMLegRefused
+	// pegXLMLegPriced — a snapshot was read. Freshness is carried
+	// separately; a stale snapshot is still priced.
+	pegXLMLegPriced
+)
+
+// readPegXLMLegForSpelling reads ONE spelling of the peg against every
+// XLM form for [Server.readDeclaredPegXLMLeg], and is the whole of that
+// spelling's answer. Its verdict is what the caller advances or stops
+// on: pegXLMLegNoMarket means every form of XLM gate-missed or read
+// not-found under this spelling — the one condition under which the
+// caller moves on to the peg's next spelling.
+//
+// Among the forms that answer, a fresh one wins over a stale one, and a
+// stale one still serves when it is all this spelling has — the
+// preference [Server.readPriceWithAliases] applies on the direct read,
+// mirrored here. Alias order alone would take `native` whenever it holds
+// a row, however old, over a fresh SAC-quoted book one form later: XLM's
+// forms are disjoint venue populations, and the book that traded last is
+// the one that prices the peg now. The preference is deliberately
+// confined to this one spelling — across spellings it would rank a thin
+// pool over a dormant deep book (see the caller).
+//
+// A refusal or a read failure on one XLM form does NOT stop this
+// spelling: a later form may still price the peg, which is what this
+// walk did before the peg's SAC spelling joined it. It is only when no
+// form priced that the refusal or the failure decides the verdict, and
+// with it whether the caller may look at another spelling.
+func (s *Server) readPegXLMLegForSpelling(
+	ctx context.Context, base canonical.Asset, xlmForms []canonical.Asset,
+) (PriceSnapshot, []string, pegXLMLegVerdict) {
 	var staleSnap PriceSnapshot
 	var staleSources []string
 	staleFound := false
-	for _, xlm := range assetAliases(canonical.NativeAsset()) {
-		if gate != nil {
-			if exists, gerr := gate.RecentClosedVWAP1mExists(ctx, asset, xlm); gerr == nil && !exists {
-				continue
-			}
-		}
-		snap, srcs, stale, err := s.prices.LatestPrice(ctx, asset, xlm)
-		if err != nil {
+	spelling := pegXLMLegNoMarket
+	for _, xlm := range xlmForms {
+		snap, srcs, stale, verdict := s.readPegXLMLegPair(ctx, base, xlm)
+		if verdict != pegXLMLegPriced {
+			// Keep the loudest thing any form said, so a refusal or a
+			// failure outranks a plain not-found (see the type).
+			spelling = max(spelling, verdict)
 			continue
 		}
-		s.normalizeRawPriceSnapshot(&snap, asset, xlm)
 		if !stale {
-			return snap, srcs, true
+			return snap, srcs, pegXLMLegPriced
 		}
 		// Stale — keep the first one in case no form answers fresh.
 		if !staleFound {
@@ -1514,9 +1685,47 @@ func (s *Server) readDeclaredPegXLMLeg(
 		}
 	}
 	if staleFound {
-		return staleSnap, staleSources, true
+		return staleSnap, staleSources, pegXLMLegPriced
 	}
-	return PriceSnapshot{}, nil, false
+	return PriceSnapshot{}, nil, spelling
+}
+
+// readPegXLMLegPair is one (peg spelling, XLM form) combination of
+// [Server.readDeclaredPegXLMLeg]'s walk, extracted to keep that function
+// under the gocognit ceiling. It reports which of the four
+// [pegXLMLegVerdict] outcomes the combination reached — the distinction
+// the spelling walk turns on, so it is drawn here rather than collapsed
+// into a bare miss:
+//
+//   - pegXLMLegNoMarket — the [proxyPairGate] probe reported no recent
+//     closed bucket, or LatestPrice returned ErrPriceNotFound.
+//   - pegXLMLegRefused — LatestPrice returned ErrPriceWithheld.
+//   - pegXLMLegReadFailed — LatestPrice returned any other error.
+//   - pegXLMLegPriced — a snapshot, with `stale` alongside it.
+//
+// A gate ERROR falls through to the read, so a probe blip can never hide
+// a price; only a gate verdict of "no recent bucket" skips it. The
+// returned snapshot is decimals-normalized (M2) against the legs
+// actually traded.
+func (s *Server) readPegXLMLegPair(
+	ctx context.Context, base, xlm canonical.Asset,
+) (PriceSnapshot, []string, bool, pegXLMLegVerdict) {
+	if gate, wired := s.prices.(proxyPairGate); wired {
+		if exists, gerr := gate.RecentClosedVWAP1mExists(ctx, base, xlm); gerr == nil && !exists {
+			return PriceSnapshot{}, nil, false, pegXLMLegNoMarket
+		}
+	}
+	snap, srcs, stale, err := s.prices.LatestPrice(ctx, base, xlm)
+	switch {
+	case errors.Is(err, ErrPriceWithheld):
+		return PriceSnapshot{}, nil, false, pegXLMLegRefused
+	case errors.Is(err, ErrPriceNotFound):
+		return PriceSnapshot{}, nil, false, pegXLMLegNoMarket
+	case err != nil:
+		return PriceSnapshot{}, nil, false, pegXLMLegReadFailed
+	}
+	s.normalizeRawPriceSnapshot(&snap, base, xlm)
+	return snap, srcs, stale, pegXLMLegPriced
 }
 
 // unionSources merges two legs' source sets — deduplicated, sorted — the
