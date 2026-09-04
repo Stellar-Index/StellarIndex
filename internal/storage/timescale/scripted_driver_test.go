@@ -42,12 +42,23 @@ type scriptedResult struct {
 	rows         [][]driver.Value
 	rowsAffected int64
 	err          error
+	// stall makes this the statement the database never answers: the
+	// driver blocks until the statement's context is done and fails with
+	// that context's error, which is what a deadline cancelling a running
+	// query surfaces as. A store method that budgets a read (a
+	// sub-deadline, a fallback) has its contract in what happens NEXT,
+	// and that is unassertable with a result that returns.
+	stall bool
 }
 
 // recordedStmt is one statement the store actually issued.
 type recordedStmt struct {
 	sql  string
 	args []driver.Value
+	// deadline is the statement's context deadline, zero when it had
+	// none — how a test tells a statement issued under a store-imposed
+	// sub-budget from one issued on the caller's own context.
+	deadline time.Time
 }
 
 // arg returns the 1-based placeholder ($n) value, failing the test when
@@ -97,7 +108,7 @@ func (t *scriptedTx) Rollback() error { t.c.rollbacks++; return nil }
 // stdlib driver does.
 func (c *scriptedConn) CheckNamedValue(*driver.NamedValue) error { return nil }
 
-func (c *scriptedConn) next(q string, args []driver.NamedValue) (scriptedResult, error) {
+func (c *scriptedConn) next(ctx context.Context, q string, args []driver.NamedValue) (scriptedResult, error) {
 	vals := make([]driver.Value, len(args))
 	for _, a := range args {
 		if a.Ordinal < 1 || a.Ordinal > len(vals) {
@@ -105,25 +116,33 @@ func (c *scriptedConn) next(q string, args []driver.NamedValue) (scriptedResult,
 		}
 		vals[a.Ordinal-1] = a.Value
 	}
-	c.stmts = append(c.stmts, recordedStmt{sql: q, args: vals})
+	deadline, _ := ctx.Deadline()
+	c.stmts = append(c.stmts, recordedStmt{sql: q, args: vals, deadline: deadline})
 	if c.n >= len(c.script) {
 		return scriptedResult{}, errors.New("scriptedConn: unexpected extra statement: " + q)
 	}
 	res := c.script[c.n]
 	c.n++
-	return res, res.err
+	if res.err != nil {
+		return res, res.err
+	}
+	if res.stall {
+		<-ctx.Done()
+		return res, ctx.Err()
+	}
+	return res, nil
 }
 
-func (c *scriptedConn) QueryContext(_ context.Context, q string, args []driver.NamedValue) (driver.Rows, error) {
-	res, err := c.next(q, args)
+func (c *scriptedConn) QueryContext(ctx context.Context, q string, args []driver.NamedValue) (driver.Rows, error) {
+	res, err := c.next(ctx, q, args)
 	if err != nil {
 		return nil, err
 	}
 	return &scriptedRows{res: res}, nil
 }
 
-func (c *scriptedConn) ExecContext(_ context.Context, q string, args []driver.NamedValue) (driver.Result, error) {
-	res, err := c.next(q, args)
+func (c *scriptedConn) ExecContext(ctx context.Context, q string, args []driver.NamedValue) (driver.Result, error) {
+	res, err := c.next(ctx, q, args)
 	if err != nil {
 		return nil, err
 	}
