@@ -9,6 +9,8 @@ import (
 	"testing"
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/pricingguard"
+	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
 // TestPriceServingSeamsAreGated is a guard-coverage test for the price
@@ -267,4 +269,90 @@ func exprString(sel *ast.SelectorExpr) string {
 		return x.Name + "." + sel.Sel.Name
 	}
 	return sel.Sel.Name
+}
+
+// flaggingScamDirectory flags exactly the listed G-addresses and records
+// which address each lookup asked about — the SAC spelling carries no
+// G-address of its own, so what the directory is ASKED is the proof that
+// the wrapper was resolved to its classic issuance.
+type flaggingScamDirectory struct {
+	flagged map[string]bool
+	asked   []string
+}
+
+func (d *flaggingScamDirectory) DirectoryEntryByAddress(_ context.Context, address string) (timescale.DirectoryEntry, bool, error) {
+	d.asked = append(d.asked, address)
+	if d.flagged[address] {
+		return timescale.DirectoryEntry{Address: address, Tags: []string{"unsafe"}}, true, nil
+	}
+	return timescale.DirectoryEntry{}, false, nil
+}
+
+// TestPriceWithheldChokepointResolvesSACSpelling pins the /v1/price
+// family (plus /v1/price/batch, /v1/price/at, the SEP-40 oracle and the
+// asset headline, which all route through this one function) for the
+// SAC-spelling bypass.
+//
+// The scam directory is keyed by the issuer G-address only a CLASSIC
+// asset carries, and every caller hands the chokepoint the RAW requested
+// base. A Stellar Asset Contract wrapper is the same asset as the
+// classic issuance it wraps, so a request naming the wrapper reached a
+// gate that had already decided it had nothing to say — and the flagged
+// issuer's price was served (R8). The gate now resolves the base to its
+// canonical family form first, so both spellings reach the same verdict.
+//
+// NOT parallel: the alias registry is process-global.
+func TestPriceWithheldChokepointResolvesSACSpelling(t *testing.T) {
+	const (
+		code   = "RIO"
+		issuer = "GA7QYNF7SOWQ3GLR2BGMZEHXAVIRZA4KVWLTJJFC7MGXUA74P7UJVSGZ"
+	)
+	classic, err := canonical.NewClassicAsset(code, issuer)
+	if err != nil {
+		t.Fatalf("classic asset: %v", err)
+	}
+	sacID, err := classic.SacContractID()
+	if err != nil {
+		t.Fatalf("derive SAC: %v", err)
+	}
+	sac, err := canonical.NewSorobanAsset(sacID)
+	if err != nil {
+		t.Fatalf("soroban asset: %v", err)
+	}
+	reg, err := canonical.NewAliasRegistry(map[string]string{sacID: code + ":" + issuer})
+	if err != nil {
+		t.Fatalf("alias registry: %v", err)
+	}
+	canonical.InstallAliasRegistry(reg)
+	t.Cleanup(func() { canonical.InstallAliasRegistry(nil) })
+
+	usd, err := canonical.NewFiatAsset("USD")
+	if err != nil {
+		t.Fatalf("build fiat:USD: %v", err)
+	}
+	ctx := context.Background()
+
+	dir := &flaggingScamDirectory{flagged: map[string]bool{issuer: true}}
+	gate := pricingguard.NewScamGate(dir, pricingguard.ScamGateOptions{})
+
+	if !priceWithheld(ctx, nil, gate, sac, usd, "price_read") {
+		t.Error("the SAC spelling of a flagged classic issuance must be withheld on " +
+			"/v1/price — the wrapper is the same asset, so the contract id must not " +
+			"be a second, ungated way to ask for the price")
+	}
+	if len(dir.asked) == 0 || dir.asked[0] != issuer {
+		t.Errorf("directory asked about %v, want the classic issuance's issuer %q — "+
+			"the resolution, not the status, is what is being pinned", dir.asked, issuer)
+	}
+	// The classic spelling is unchanged.
+	if !priceWithheld(ctx, nil, gate, classic, usd, "price_read") {
+		t.Error("the classic spelling must still be withheld")
+	}
+
+	// Blast radius: an unflagged wrapped asset keeps serving.
+	cleanDir := &flaggingScamDirectory{flagged: map[string]bool{}}
+	cleanGate := pricingguard.NewScamGate(cleanDir, pricingguard.ScamGateOptions{})
+	if priceWithheld(ctx, nil, cleanGate, sac, usd, "price_read") {
+		t.Error("a wrapped asset the directory has not flagged must keep serving")
+	}
 }
