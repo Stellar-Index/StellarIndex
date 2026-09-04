@@ -15,6 +15,8 @@ against.
 
 ## [Unreleased]
 
+## [v0.60.0] — 2026-09-04
+
 ### Fixed
 
 - **sdk:** `pkg/client.Flags` did not carry `filters_ignored`, the flag the spec documents for `/v1/assets` listings that serve a whole class and drop the caller's `type`/`code`/`issuer`/`q` filters — the decoder discards unknown fields, so a Go consumer re-filtering an over-broad page had no way to learn the page was over-broad. The field is added, and the SDK↔spec contract test now walks the generic envelope and its Flags object as well as each operation's `data` payload: every top-level member declared by `EnvelopeMeta` or by any envelope composing it — named components and inline responses alike — must have a field on `Envelope[T]`, every property of the `Flags` schema must have one on `Flags`, and every SDK field must be documented in the spec. A synthetic-document run pins the walk itself to the places a member can be declared, so a member landing on one operation's inline response cannot slip past the comparison.

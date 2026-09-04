@@ -23,7 +23,8 @@
 #   5. Verify CHANGELOG.md has a `## [vX.Y.Z] — YYYY-MM-DD` section
 #      that is non-empty (release.yml's auto-notes extraction reads
 #      this; an empty section produces an empty release page)
-#   6. Run `bash scripts/dev/verify.sh` (the standard pre-push gate)
+#   6. Run `make prepush` (the same clearance a push needs; container
+#      profile where Docker is available, native otherwise)
 #   7. Echo what would happen — then either bail (--dry-run), confirm
 #      interactively (unless --yes), and:
 #      a. `git tag <tag>`
@@ -159,11 +160,27 @@ if [[ -z "$(printf '%s' "$changelog_section" | tr -d '[:space:]')" ]]; then
 fi
 
 # Step 6 — verify gate
-echo "→ Running scripts/dev/verify.sh (this can take a minute)..."
-if ! bash scripts/dev/verify.sh >/dev/null 2>&1; then
-  echo "ERR: scripts/dev/verify.sh FAILED. Re-run it directly to see the failures." >&2
+#
+# The gate is `make prepush`, the same clearance a push needs: it archives
+# the committed HEAD into a disposable checkout and runs the full verify in
+# the pinned Linux container, adding the Docker-backed integration shards
+# when the range touches the paths that need them. Bare `scripts/dev/verify.sh`
+# was the gate until 2026-09-04, which made this script unrunnable on macOS:
+# the migrations-sync self-test needs GNU tar, so the run ends
+# `VERIFY INCOMPLETE … exit 1` there even when every section passed, and a
+# release could only ever be cut from Linux. prepush resolves its own
+# profile, so a machine without Docker still gets the native gate.
+prepush_log="$(mktemp -t cut-release-prepush)"
+echo "→ Running make prepush (the push clearance; this takes ~20 minutes)..."
+if ! make prepush >"$prepush_log" 2>&1 ||
+  ! grep -q 'ALL REQUIRED CHECKS PASSED' "$prepush_log"; then
+  echo "ERR: make prepush FAILED — the release is not cut." >&2
+  echo "     Full log: $prepush_log" >&2
+  # sigpipe-ok: tail reads the file to completion, no upstream writer.
+  tail -n 20 "$prepush_log" >&2
   exit 1
 fi
+rm -f "$prepush_log"
 echo "  OK"
 
 # Step 7 — go / no-go
