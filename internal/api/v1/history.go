@@ -402,6 +402,11 @@ func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) { //nolin
 	// ?cursor=<next> to drain subsequent pages. When len < limit, the
 	// window is exhausted — no cursor, no next.
 	env := Envelope{Data: rows, Flags: Flags{}}
+	// Probed in the requested orientation only — see historyCoverageSet:
+	// the page read above spans one stored orientation, so the floor
+	// must not describe rows it cannot return.
+	env.CoverageFrom, env.Flags.OutsideCoverage = s.coverageAnnotationIfEmpty(
+		r.Context(), historyCoverageSet(pair), to, historyPageIsAmbiguous(len(trades), afterTs))
 	if len(trades) == limit {
 		last := trades[len(trades)-1]
 		env.Pagination = &Pagination{

@@ -86,12 +86,14 @@ Every 2xx JSON response follows this shape:
 {
   "data": { ... },
   "as_of": "2026-04-22T14:30:15.842Z",
+  "coverage_from": "2021-02-01T00:00:00Z",
   "sources": ["soroswap", "aquarius", "reflector-dex"],
   "flags": {
     "stale": false,
     "reduced_redundancy": false,
     "triangulated": false,
-    "divergence_warning": false
+    "divergence_warning": false,
+    "outside_coverage": false
   },
   "pagination": { "next": "opaque-cursor" }
 }
@@ -102,10 +104,29 @@ Field semantics:
 - `data`: endpoint-specific payload. Always present.
 - `as_of`: when the server produced the payload. Millisecond
   precision.
+- `coverage_from`: the earliest instant this deployment holds
+  served-tier price history at for what the surface serves the
+  named pair from. Present only on an EMPTY answer from the
+  windowed surfaces (`/v1/ohlc` series mode, `/v1/history`,
+  `/v1/chart`; `/v1/price/at` carries it as an RFC 9457 extension
+  member on its 404), where it tells "quiet market" from "before the
+  history held". Measured on the daily aggregate over the same
+  population the surface reads: for a fiat-quoted pair the earliest
+  of its USD-pegged constituents, never the literal pair alone
+  (`/v1/chart`'s XLM cross counts as one candidate whose floor is the
+  later of its two legs); for `/v1/history` the requested orientation
+  only, as its page read spans one. Absent means UNKNOWN — no daily
+  bucket, floor unreadable, or a surface that does not probe — never
+  "from the beginning of time".
 - `sources`: ordered list of contributing sources (DEXes, oracles,
   CEXes). Empty when source breakdown is not meaningful.
 - `flags`: advisory quality markers. See
   [HA plan §9](../architecture/ha-plan.md#9-degradation-modes-what-we-promise-under-failure).
+  `outside_coverage` is the one flag tied to `coverage_from`: set
+  when the requested range ends at or before that floor, so the
+  emptiness is a coverage statement rather than a market one. Never
+  set on a range that straddles the floor (it contains covered time)
+  and never set when the floor is unknown. Omitted when false.
 - `pagination`: present only on list-returning endpoints. `next` is
   opaque; clients pass it verbatim to the same URL's `cursor=`.
 

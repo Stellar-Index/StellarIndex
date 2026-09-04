@@ -43,6 +43,13 @@ type stubHistoryReader struct {
 	// ohlcBars is the static fixture returned by OHLCSeries. Tests
 	// that want per-call behaviour override via ohlcSeriesFn.
 	ohlcBars []v1.OHLCSeriesBar
+	// ohlcByPair, when non-nil, keys the OHLC fixture on the requested
+	// pair and honours the window — a bar comes back only when its
+	// bucket lies in [from, to) — the series twin of tradesByPair.
+	// ohlcPairs records every pair OHLCSeries was asked for, in order,
+	// so a walk's reach and its ordering can be pinned.
+	ohlcByPair map[string][]v1.OHLCSeriesBar
+	ohlcPairs  []string
 	// ohlcSeriesFn, when non-nil, overrides ohlcBars and lets tests
 	// inject error/per-call behaviour.
 	ohlcSeriesFn func(ctx context.Context, pair canonical.Pair, interval string, from, to time.Time, limit int) ([]v1.OHLCSeriesBar, error)
@@ -188,11 +195,21 @@ func (r *stubHistoryReader) OHLCSeries(ctx context.Context, pair canonical.Pair,
 	r.lastCall.from = from
 	r.lastCall.to = to
 	r.lastCall.limit = limit
+	r.ohlcPairs = append(r.ohlcPairs, pair.String())
 	if r.ohlcSeriesFn != nil {
 		return r.ohlcSeriesFn(ctx, pair, interval, from, to, limit)
 	}
 	if r.err != nil {
 		return nil, r.err
+	}
+	if r.ohlcByPair != nil {
+		var out []v1.OHLCSeriesBar
+		for _, b := range r.ohlcByPair[pair.String()] {
+			if !b.T.Before(from) && b.T.Before(to) {
+				out = append(out, b)
+			}
+		}
+		return out, nil
 	}
 	return r.ohlcBars, nil
 }

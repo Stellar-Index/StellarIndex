@@ -343,6 +343,13 @@ type Server struct {
 	// powering /v1/diagnostics/ingestion's coverage section. Nil
 	// leaves that section absent. See [CoverageCache].
 	backfillCoverage *CoverageCache
+	// coverageFloorReader + coverageFloorCache back the empty-window
+	// coverage signal on /v1/ohlc, /v1/history, /v1/chart and
+	// /v1/price/at. Nil reader = no signal at all: those surfaces keep
+	// serving exactly what they serve now, minus `coverage_from` and
+	// `flags.outside_coverage`. See [CoverageFloorReader].
+	coverageFloorReader CoverageFloorReader
+	coverageFloorCache  *coverageFloorCache
 	// nonstandardDecimals backs the read-time dex-nonstandard-decimals
 	// forward normalization (docs/operations/runbooks/
 	// dex-nonstandard-decimals.md): every price-shaped serving path
@@ -527,6 +534,14 @@ type Options struct {
 	// History, when non-nil, backs /v1/history. Leave nil to return
 	// 503 on that path.
 	History HistoryReader
+
+	// CoverageFloor, when non-nil, lets the empty-window surfaces
+	// (/v1/ohlc, /v1/history, /v1/chart, /v1/price/at) say WHEN this
+	// deployment's history for a pair begins, so an empty answer can be
+	// told apart from a quiet market. Nil leaves those responses
+	// byte-identical to their pre-signal shape — `coverage_from` and
+	// `flags.outside_coverage` are both omitempty.
+	CoverageFloor CoverageFloorReader
 
 	// Markets, when non-nil, backs /v1/markets. Leave nil and the
 	// handler serves an empty list (mirrors /v1/assets' pattern so
@@ -1339,6 +1354,8 @@ func New(opts Options) *Server { //nolint:funlen // pure field-mapping construct
 		assets:                 opts.Assets,
 		prices:                 opts.Prices,
 		history:                opts.History,
+		coverageFloorReader:    opts.CoverageFloor,
+		coverageFloorCache:     &coverageFloorCache{entries: map[string]coverageFloorEntry{}},
 		markets:                opts.Markets,
 		oracle:                 opts.Oracle,
 		sep1Cache:              opts.Sep1Cache,

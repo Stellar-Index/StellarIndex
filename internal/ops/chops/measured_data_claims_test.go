@@ -12,7 +12,7 @@ import (
 // ─── Contributor guidance must state the MEASURED data floors ────────
 //
 // The docs a contributor (or an agent) reads cold to learn "what does
-// this system actually hold" carried four data facts that a read-only
+// this system actually hold" carried five data facts that a read-only
 // sweep of r1 contradicted. Each one is load-bearing in the same way:
 // it is the number someone sizes a backfill, a restore or a reconcile
 // scope against, so a wrong one is not a typo — it plans work against
@@ -30,9 +30,17 @@ import (
 //     at 61,609,957, soroswap ten million ledgers earlier at 50,746,445.
 //   - `fx_quotes` is DAILY, not hourly. The worker polls hourly and then
 //     buckets every write to 00:00Z.
+//   - NO price aggregate carries a retention policy. Migration 0002
+//     placed 30-day policies on `prices_1m` / `prices_15m`; migration
+//     0031 removed them, and migration 0116 records the tree as holding
+//     none. The backfill refresh set still excludes the minute rungs,
+//     and that exclusion now rests on cost — a sentence justifying it by
+//     a retention that no longer exists would send a reader to size a
+//     restore or a reconcile against a 30-day floor the data does not
+//     have.
 //
 // This guard lives here because [targetScope]'s own doc comment is one
-// of the four sites, and because nothing else in the build can fail on
+// of the five sites, and because nothing else in the build can fail on
 // a sentence: the drift is a documentation drift, and the only way to
 // catch it is to pin the corrected text. Assertions run over
 // whitespace-collapsed content so re-flowing a paragraph (or re-wrapping
@@ -87,6 +95,22 @@ func TestContributorGuidanceStatesTheMeasuredDataFloors(t *testing.T) {
 			required: []string{
 				"Truncate(24 * time.Hour)",
 				"one row per ticker per UTC day",
+			},
+		},
+		{
+			// The backfill refresh set's doc comment justified excluding
+			// the minute rungs by a retention policy migration 0031 had
+			// already removed. The behaviour stays; its reason is now the
+			// true one.
+			path: "internal/storage/timescale/diagnostics.go",
+			// "backfilled range": the comment once said nothing served
+			// from one reads the minute rungs; /v1/ohlc?interval=1m|15m
+			// and /v1/chart?granularity=1m|15m read them over any window.
+			forbidden: []string{"30-day retention", "have a 30-day", "backfilled range"},
+			required: []string{
+				"No price aggregate carries a retention policy",
+				"migration 0031 removed those two",
+				"The exclusion now rests on cost, not retention",
 			},
 		},
 	}

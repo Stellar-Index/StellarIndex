@@ -16,11 +16,23 @@ import (
 // Envelope is the shape of every 2xx JSON response. See
 // docs/reference/api-design.md §4.
 type Envelope struct {
-	Data       any         `json:"data"`
-	AsOf       time.Time   `json:"as_of"`
-	Sources    []string    `json:"sources,omitempty"`
-	Flags      Flags       `json:"flags"`
-	Pagination *Pagination `json:"pagination,omitempty"`
+	Data any       `json:"data"`
+	AsOf time.Time `json:"as_of"`
+	// CoverageFrom is the earliest instant this deployment holds
+	// served-tier price history at for the pair the request named — the
+	// bottom of the range the response's emptiness can speak for.
+	//
+	// It lives on the ENVELOPE rather than inside `data` because the
+	// surfaces that need it return three different body shapes (a bar
+	// series, a point series, a bare trade array) and one of them has no
+	// object to hang it on. Present only on the surfaces that probe it
+	// (/v1/ohlc, /v1/history, /v1/chart, /v1/price/at) and only when the
+	// probe reached an answer; absent means UNKNOWN, never "from the
+	// beginning of time".
+	CoverageFrom *time.Time  `json:"coverage_from,omitempty"`
+	Sources      []string    `json:"sources,omitempty"`
+	Flags        Flags       `json:"flags"`
+	Pagination   *Pagination `json:"pagination,omitempty"`
 }
 
 // Flags are the advisory quality markers per HA plan §9.
@@ -45,6 +57,12 @@ type Envelope struct {
 //     this response carries the previous bucket's last-known-good
 //     value (ADR-0019 freeze policy). Only fires on /v1/price; the
 //     tip + observations surfaces ignore freeze.
+//   - OutsideCoverage: the requested time range ends at or before the
+//     pair's `coverage_from` — every instant asked for predates the
+//     history this deployment holds, so the empty answer is a coverage
+//     statement, not a market one. Only set on the four windowed
+//     surfaces, only when the floor is KNOWN, and never on a range that
+//     straddles the floor (that range contains covered time).
 //   - SingleSource: the bucket had only one contributing source.
 //     Informational; combined with Frozen this is the manipulation
 //     signature.
@@ -79,8 +97,15 @@ type Flags struct {
 	// aggregated value for a base-level verdict to vouch for (see
 	// handleObservations).
 	DivergenceChecked bool `json:"divergence_checked"`
-	Frozen            bool `json:"frozen,omitempty"`
-	SingleSource      bool `json:"single_source,omitempty"`
+	// OutsideCoverage marks an empty answer whose requested range ends
+	// at or before the envelope's `coverage_from` — the window predates
+	// this deployment's history for the pair, so nothing was there to
+	// return. Without it an empty series and a quiet market are the same
+	// bytes. omitempty hides it when false, which includes every request
+	// whose coverage floor could not be established.
+	OutsideCoverage bool `json:"outside_coverage,omitempty"`
+	Frozen          bool `json:"frozen,omitempty"`
+	SingleSource    bool `json:"single_source,omitempty"`
 	// Diverged marks a triangulated composite whose contributing routes
 	// disagreed (the aggregator's router divergence signal, persisted to
 	// cachekeys.VWAPCompositeMeta). Surfaced on the /v1/price
@@ -128,13 +153,22 @@ type Pagination struct {
 // can correlate a failure they saw with server logs without
 // parsing headers separately — and so bug reports that include
 // the body are sufficient for support to find the trace.
+// CoverageFrom / OutsideCoverage are the same two extension members the
+// 2xx envelope carries, on the one windowed surface whose empty answer
+// is an ERROR rather than an empty body: /v1/price/at answers "no
+// closed bucket at that instant" with a 404, which is the identical
+// ambiguity — dead market or before the history held — in
+// problem+json clothing. RFC 9457 §3.2 admits unknown members, so they ride here
+// rather than forcing that endpoint's contract to 200.
 type Problem struct {
-	Type      string `json:"type"`
-	Title     string `json:"title"`
-	Status    int    `json:"status"`
-	Detail    string `json:"detail,omitempty"`
-	Instance  string `json:"instance,omitempty"`
-	RequestID string `json:"request_id,omitempty"`
+	Type            string     `json:"type"`
+	Title           string     `json:"title"`
+	Status          int        `json:"status"`
+	Detail          string     `json:"detail,omitempty"`
+	Instance        string     `json:"instance,omitempty"`
+	RequestID       string     `json:"request_id,omitempty"`
+	CoverageFrom    *time.Time `json:"coverage_from,omitempty"`
+	OutsideCoverage bool       `json:"outside_coverage,omitempty"`
 }
 
 // writeJSON writes the Envelope + 200. The convention everywhere in
@@ -145,6 +179,18 @@ func writeJSON(w http.ResponseWriter, data any, flags Flags, sources ...string) 
 		AsOf:    time.Now().UTC(),
 		Sources: sources,
 		Flags:   flags,
+	})
+}
+
+// writeJSONCoverage is [writeJSON] plus the coverage-floor annotation
+// the empty-window surfaces attach. coverageFrom nil (the probe reached
+// no answer) leaves the field off the wire entirely.
+func writeJSONCoverage(w http.ResponseWriter, data any, flags Flags, coverageFrom *time.Time) {
+	writeEnvelope(w, Envelope{
+		Data:         data,
+		AsOf:         time.Now().UTC(),
+		CoverageFrom: coverageFrom,
+		Flags:        flags,
 	})
 }
 
@@ -180,17 +226,33 @@ func writeEnvelopeStatus(w http.ResponseWriter, status int, env Envelope) {
 // covers the BLANKET middleware deadline only; an error path holding the
 // error from a handler's OWN budget must call writeProblemErr instead.
 func writeProblem(w http.ResponseWriter, r *http.Request, typeURL, title string, status int, detail string) {
+	writeProblemCoverage(w, r, typeURL, title, status, detail, nil, false)
+}
+
+// writeProblemCoverage is [writeProblem] carrying the coverage-floor
+// extension members. Only /v1/price/at uses it — the one windowed
+// surface whose "nothing there" answer is a 404 body rather than an
+// empty array. Every rewrite rule writeProblem applies (deadline →
+// retryable 503, no-store, the 401 challenge) applies here identically,
+// which is why this is the shared body and writeProblem the thin call.
+func writeProblemCoverage(
+	w http.ResponseWriter, r *http.Request,
+	typeURL, title string, status int, detail string,
+	coverageFrom *time.Time, outsideCoverage bool,
+) {
 	if status == http.StatusInternalServerError && requestDeadlineExpired(r) {
 		typeURL, title, status, detail = requestTimeoutType, requestTimeoutTitle,
 			http.StatusServiceUnavailable, requestTimeoutDetail
 	}
 	p := Problem{
-		Type:      typeURL,
-		Title:     title,
-		Status:    status,
-		Detail:    detail,
-		Instance:  r.URL.RequestURI(),
-		RequestID: middleware.RequestIDFrom(r),
+		Type:            typeURL,
+		Title:           title,
+		Status:          status,
+		Detail:          detail,
+		Instance:        r.URL.RequestURI(),
+		RequestID:       middleware.RequestIDFrom(r),
+		CoverageFrom:    coverageFrom,
+		OutsideCoverage: outsideCoverage,
 	}
 	w.Header().Set("Content-Type", "application/problem+json")
 	// Errors override the cache-control middleware's per-route

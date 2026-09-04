@@ -328,3 +328,63 @@ func TestParseRetryAfterOverflow(t *testing.T) {
 		})
 	}
 }
+
+// TestParseAPIError_CoverageExtensionMembers pins the two RFC 9457
+// extension members /v1/price/at attaches to its 404 — `coverage_from`
+// and `outside_coverage` — through parseAPIError and onto APIError.
+// Without the mirror a consumer could see the fields in the raw body
+// and nowhere else, which is the drift the SDK exists to prevent.
+func TestParseAPIError_CoverageExtensionMembers(t *testing.T) {
+	const ct = "application/problem+json"
+
+	t.Run("both members carried", func(t *testing.T) {
+		body := []byte(`{"type":"https://api.stellarindex.io/errors/price-not-found",` +
+			`"title":"No price at requested time","status":404,` +
+			`"detail":"no closed bucket within 168h0m0s before 2016-01-01T00:00:00Z for crypto:XLM / fiat:USD",` +
+			`"instance":"/v1/price/at?base=crypto:XLM&quote=fiat:USD&ts=2016-01-01T00:00:00Z",` +
+			`"coverage_from":"2018-07-01T00:00:00Z","outside_coverage":true}`)
+		e := parseAPIError(404, ct, "", body)
+		if !e.IsNotFound() {
+			t.Fatalf("status = %d, want 404", e.Status)
+		}
+		if e.CoverageFrom == nil {
+			t.Fatal("CoverageFrom = nil, want the floor the body carried")
+		}
+		want := time.Date(2018, 7, 1, 0, 0, 0, 0, time.UTC)
+		if !e.CoverageFrom.Equal(want) {
+			t.Errorf("CoverageFrom = %v, want %v", e.CoverageFrom, want)
+		}
+		if !e.OutsideCoverage {
+			t.Error("OutsideCoverage = false, want true")
+		}
+		// The standard members still land beside the extension ones.
+		if e.Title != "No price at requested time" || e.Type == "" || e.Detail == "" || e.Instance == "" {
+			t.Errorf("standard members lost: %+v", e)
+		}
+	})
+
+	t.Run("members absent decode as unknown", func(t *testing.T) {
+		body := []byte(`{"type":"https://api.stellarindex.io/errors/price-not-found",` +
+			`"title":"No price at requested time","status":404}`)
+		e := parseAPIError(404, ct, "", body)
+		if e.CoverageFrom != nil {
+			t.Errorf("CoverageFrom = %v, want nil when the body carried none", e.CoverageFrom)
+		}
+		if e.OutsideCoverage {
+			t.Error("OutsideCoverage = true from a body that carried no such member")
+		}
+	})
+
+	t.Run("floor known but instant inside coverage", func(t *testing.T) {
+		body := []byte(`{"type":"https://api.stellarindex.io/errors/price-not-found",` +
+			`"title":"No price at requested time","status":404,` +
+			`"coverage_from":"2018-07-01T00:00:00Z"}`)
+		e := parseAPIError(404, ct, "", body)
+		if e.CoverageFrom == nil {
+			t.Fatal("CoverageFrom = nil, want the floor echoed even when the flag is off")
+		}
+		if e.OutsideCoverage {
+			t.Error("OutsideCoverage = true, want false: the server omitted the member")
+		}
+	})
+}

@@ -572,7 +572,7 @@ export interface paths {
         };
         /**
          * Point-in-time price (closed bucket at-or-before a timestamp)
-         * @description The pair's closed VWAP bucket at-or-before `ts` — the cost-basis / PnL / tax-tooling lookup. The answer comes from the FINEST CAGG resolution that covers the instant: `prices_1m` for recent timestamps, coarser bars (down to daily, back to 2018) for older ones. Daily coverage is not yet continuous — an instant in an uncovered stretch resolves to no bucket and 404s rather than being interpolated. `observed_at` is the BUCKET's close time, never `ts`, and `window_seconds` reports the resolution used (60 for a 1-minute bar, 86400 for a daily bar) — so callers see exactly how far the nearest observation was and at what granularity. A nearest bucket more than 24 hours before `ts` is a 404 (the endpoint refuses to fabricate continuity across dead markets). When the literal pair (and its aliases) has no bucket and the quote is `fiat:USD`, the lookup retries each operator-declared USD-pegged classic (the same stablecoin-proxy chain as /v1/price) and returns the peg's bucket with `flags.triangulated=true`, echoing the requested quote. Current price: /v1/price or /v1/price/tip. Multi-horizon change: /v1/price/changes.
+         * @description The pair's closed VWAP bucket at-or-before `ts` — the cost-basis / PnL / tax-tooling lookup. The answer comes from the FINEST CAGG resolution that covers the instant: `prices_1m` for recent timestamps, coarser bars (down to daily, back to 2018) for older ones. Daily coverage is not yet continuous — an instant in an uncovered stretch resolves to no bucket and 404s rather than being interpolated. `observed_at` is the BUCKET's close time, never `ts`, and `window_seconds` reports the resolution used (60 for a 1-minute bar, 86400 for a daily bar) — so callers see exactly how far the nearest observation was and at what granularity. A nearest bucket more than 24 hours before `ts` is a 404 (the endpoint refuses to fabricate continuity across dead markets). When the literal pair (and its aliases) has no bucket and the quote is `fiat:USD`, the lookup retries each operator-declared USD-pegged classic (the same stablecoin-proxy chain as /v1/price) and returns the peg's bucket with `flags.triangulated=true`, echoing the requested quote. The 404 carries `coverage_from` and `outside_coverage` as extension members, measured over the pair AND those pegs together — the earliest bucket any of them holds — so an instant a peg covers is reported as a gap, not as predating the history held. Current price: /v1/price or /v1/price/tip. Multi-horizon change: /v1/price/changes.
          */
         get: operations["getPriceAt"];
         put?: never;
@@ -878,6 +878,17 @@ export interface paths {
          *     `quote_asset` it was stored under, which is not necessarily the
          *     spelling that was asked for.
          *
+         *     The page is read in the ORIENTATION requested: rows stored as
+         *     `quote/base` are not flipped into it, so a market the decoder
+         *     recorded only the other way round returns an empty page under
+         *     this orientation. An empty first page carries `coverage_from`
+         *     (and, when the window ends at or before it,
+         *     `flags.outside_coverage`) measured over that same orientation
+         *     only — a market held only the other way round carries no floor
+         *     here, rather than a floor for rows this page cannot return. A
+         *     page reached by `cursor` carries neither: it means the window
+         *     was drained, not that nothing was there.
+         *
          *     Bucketed/granularity-based history (VWAP/TWAP series at 1m/15m/...)
          *     will ship via the aggregator binary (see
          *     cmd/stellarindex-aggregator) on a different response shape —
@@ -982,6 +993,15 @@ export interface paths {
          *     in USD, charts its actual traded dollar price rather than an
          *     empty series or an asserted 1.0.
          *
+         *     An EMPTY default-vwap series carries `coverage_from`: the
+         *     earliest daily bucket held for anything this chain of reads
+         *     draws on — the pair under every spelling, each proxy pair, and
+         *     the XLM cross as one candidate whose floor is the later of its
+         *     two legs. With the field present an empty window reads
+         *     "quiet since then"; absent, nothing is held for the pair (or
+         *     the floor could not be read). The window always ends at now, so
+         *     `flags.outside_coverage` never fires on this surface.
+         *
          *     Fiat:fiat pairs are served from the daily `fx_quotes`
          *     reference-rate series (sub-daily granularities replicate the
          *     daily bar). Cross-fiat pairs where neither side is USD
@@ -1033,7 +1053,22 @@ export interface paths {
          *        in-progress bucket is excluded (closed-bucket guard).
          *        `limit` clamps the bar count (default 100, max 1000).
          *        Empty window returns 200 + `{intervals: []}` (NOT 404 —
-         *        series clients expect a stable shape across pairs/windows).
+         *        series clients expect a stable shape across pairs/windows),
+         *        with `coverage_from` when the floor is known and
+         *        `flags.outside_coverage` when the window ends at or before
+         *        it. A fiat-quoted series is combined from the USD-pegged
+         *        constituents (below), each read under the ONE quote
+         *        spelling the peg expansion names it in — a declared peg in
+         *        its classic form, an abstract stablecoin backer, or the
+         *        fiat itself. A declared peg's SAC wrapper is a second
+         *        spelling of the same peg and is NOT read here, so an asset
+         *        whose only USD depth is a Soroban pool quoted in that
+         *        wrapper returns an empty series. Its floor is measured over
+         *        exactly those constituent pairs — the earliest bucket any
+         *        of them holds, never the literal pair's alone, and never a
+         *        market this surface cannot serve, so such an asset returns
+         *        an empty series with no `coverage_from` rather than one
+         *        annotated as quiet.
          *
          *        Defaults (series mode):
          *          - `to`   = now snapped DOWN to the interval's UTC boundary
@@ -5362,6 +5397,15 @@ export interface components {
          *       serve their whole class and narrow on none of `type`,
          *       `code`, `issuer`, `q`; they name what they dropped here so a
          *       client can tell that over-broad page from a genuine match.
+         *     - `outside_coverage` — the empty answer you are holding is a
+         *       COVERAGE statement, not a market one: the requested range
+         *       ends at or before the envelope's `coverage_from`, so every
+         *       instant asked for predates the history this deployment holds
+         *       for the pair. Set only on `/v1/ohlc`, `/v1/history`,
+         *       `/v1/chart` and `/v1/price/at`, and only when the floor was
+         *       established — a range that STRADDLES the floor is not
+         *       flagged (it contains covered time), and neither is a pair
+         *       whose floor could not be read. Omitted when false.
          */
         Flags: {
             /** @default false */
@@ -5395,6 +5439,11 @@ export interface components {
             unverified_ticker_collision: boolean;
             /** @description Names of the row-narrowing query parameters this response did NOT apply, spelled as the caller sent them (`type`, `code`, `issuer`, `q`). Absent when the response applied every filter it was given — an ignored filter and a matched one otherwise produce the same 200 over the same shape, so a client re-filtering the page has nothing else to key on. Set by `/v1/assets` on the listings whose rows come from a source that cannot narrow: the class-scoped catalogue listings (`asset_class=fiat|stablecoin|crypto`), and the lean asset-catalog fallback served when no listing store is configured. */
             filters_ignored?: string[];
+            /**
+             * @description Set on an EMPTY response from /v1/ohlc, /v1/history, /v1/chart or /v1/price/at when the requested range ends at or before the envelope's `coverage_from` — the window predates the history this deployment holds for the pair, so nothing was there to return. Never set on a range that straddles the floor, and never set when the floor could not be established. Omitted when false.
+             * @default false
+             */
+            outside_coverage: boolean;
         };
         /**
          * @description Present on list endpoints when more rows exist beyond the
@@ -5416,6 +5465,11 @@ export interface components {
         EnvelopeMeta: {
             /** Format: date-time */
             as_of: string;
+            /**
+             * Format: date-time
+             * @description Earliest instant this deployment holds served-tier price history at for what this surface serves the named pair from — the bottom of the range this response's emptiness can speak for. Emitted by /v1/ohlc's series mode, /v1/history and /v1/chart's default vwap series on an EMPTY answer, so a consumer can tell "the market was quiet across the window" from "the window is before the history held". ABSENT means unknown — no daily bucket yet, the floor could not be read, or this surface does not probe it — and never "from the beginning of time". Measured on the daily aggregate, the rung the probe reads: it carries no retention policy, so nothing in it has been dropped by age, and it is the cheapest rung to prove empty. The floor describes that rung; a finer grain holds what its own refreshes have materialised and is not measured here. For a FIAT-quoted pair the floor is measured over the same constituent set the surface serves it from (nothing on chain quotes in `fiat:USD`): on /v1/ohlc the combined USD-pegged set, on /v1/chart the proxy list plus the XLM cross (whose floor is the later of its two legs), on /v1/price/at the declared USD pegs — the earliest of those, never the literal pair alone. Each surface is measured over the SPELLINGS its own read spans, too: /v1/ohlc's fiat series reads one quote spelling per constituent, so its floor never counts a market held only under a peg's SAC wrapper, and /v1/history measures the requested orientation only, because its page read spans one stored orientation; see those operations.
+             */
+            coverage_from?: string;
             sources?: string[];
             flags: components["schemas"]["Flags"];
         };
@@ -7494,6 +7548,13 @@ export interface components {
             instance?: string;
             /** @description Mirror of the X-Request-ID response header. */
             request_id?: string;
+            /**
+             * Format: date-time
+             * @description Extension member on `/v1/price/at`'s 404 only. Earliest instant this deployment holds price history at for the requested pair — the same field the 2xx envelope carries, on the one windowed surface whose "nothing there" answer is a problem body rather than an empty array. Absent means unknown.
+             */
+            coverage_from?: string;
+            /** @description Extension member on `/v1/price/at`'s 404 only. True when the requested `ts` is at or before `coverage_from` — the instant predates the history this deployment holds for the pair, rather than falling in a gap within it. Omitted when false. */
+            outside_coverage?: boolean;
         };
     };
     responses: {
