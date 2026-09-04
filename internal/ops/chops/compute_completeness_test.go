@@ -474,7 +474,7 @@ func TestProjectionClaim_IncrementalRunCannotUpgradeAFailingVerdict(t *testing.T
 
 // TestProjectionClaim_DetailAlwaysStatesTheVerifiedRange — `complete=true` must
 // never read as a genesis-to-tip claim. The served tier legitimately holds no
-// trades below ~61.5M (they were never projected — see
+// sdex trades below ledger 61,609,957 (they were never projected — see
 // notes/DECISION-genesis-complete-verdict-2026-07-16.md), so the verdict has to
 // say what it actually reconciled; the genesis claim is the separate
 // lake_complete axis.

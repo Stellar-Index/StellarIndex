@@ -1,7 +1,7 @@
 ---
 title: High-Availability Infrastructure Plan
 last_verified: 2026-07-25
-status: ratified but PARTIALLY STALE — §4.3/§8 refreshed 2026-07-18 for ClickHouse (§4.3's hardware-expansion claim corrected 2026-07-24, §8/§3.3's backup deployment status corrected 2026-07-25, audit-2026-07-23 DOC-05/DOC-06). 2026-09-02 (#361): §2 diagram, §3.4, §3.8, §6 and the §8/restore-drill "reality check" blocks corrected against code — those blocks had INVERTED (repo2 + restore drill are live). §3 still lacks a CH tier (see top amendment); cost/RTO tables NOT re-verified
+status: ratified but PARTIALLY STALE — §4.3/§8 refreshed 2026-07-18 for ClickHouse (§4.3's hardware-expansion claim corrected 2026-07-24, §8/§3.3's backup deployment status corrected 2026-07-25, audit-2026-07-23 DOC-05/DOC-06). 2026-09-02 (#361): §2 diagram, §3.4, §3.8, §6 and the §8/restore-drill "reality check" blocks corrected against code — those blocks had INVERTED (repo2 + restore drill are live). §3 still lacks a CH tier (see top amendment); cost/RTO tables NOT re-verified. 2026-09-03: §3.3's retention block no longer claims daily OHLC back to 2015 — `prices_1d` starts 2018-07-01
 ---
 
 > ⚠️ **Multi-region content superseded by ADR-0050 / [`multi-region-ha.md`](multi-region-ha.md) (2026-08-21).** This plan's multi-region framing (and its "active/active out of scope for v1" stance) is overturned. The **single-region HA design** below (HAProxy / Patroni / Redis-Sentinel) remains current and is **Phase 1** of the multi-region plan — read it for that, not for the multi-region shape.
@@ -259,7 +259,13 @@ provisioned; cloud is pay-as-you-use for DR.
     it's drift, remove it).
   - `prices_1m`, `prices_15m`: retention also removed — indefinite.
   - `prices_1h`, `prices_4h`, `prices_1d`, `prices_1w`,
-    `prices_1mo`: **indefinite** (daily OHLC spans back to 2015).
+    `prices_1mo`: **indefinite** (no `drop_after`). The oldest bar is a
+    COVERAGE floor, not a retention one, and it is much later than the
+    chain's: `prices_1d` starts **2018-07-01** with a single pair
+    (`crypto:XLM`/`fiat:USD`, 946 daily bars) and then holds nothing at
+    all between 2021-02-01 and 2024-03-10 (measured on r1 2026-09-03).
+    Sizing a restore or a backfill off "daily OHLC since 2015" plans for
+    history that was never materialised.
 - **Backup** (target design; see §8's ⛔ block for what is actually
   provisioned):
   - `pgBackRest` with WAL-stream, `--type=full` weekly,

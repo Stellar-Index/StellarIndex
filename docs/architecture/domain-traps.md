@@ -79,9 +79,16 @@ linked design doc has the full detail.
   which side of the boundary a trade came from.
 - **`massive` is the ACTIVE fiat-FX feed** (massive.com = Polygon's
   backend). It runs as the `internal/sources/external/forex` worker
-  in the API binary and writes hourly fiat rates to `fx_quotes` —
+  in the API binary and writes **daily** fiat rates to `fx_quotes` —
   the USD-anchor behind per-trade usd_volume and the USD-anchored
-  local-currency derivation (ADR-0051). There is **no `/v1/currencies`
+  local-currency derivation (ADR-0051). The worker POLLS hourly, but
+  every write buckets to `Truncate(24 * time.Hour)`, so the table holds
+  one row per ticker per UTC day and nothing finer: all 250,723 rows on
+  r1 sit on a 00:00Z bucket (measured 2026-09-03), and Saturdays are
+  absent because the FX market is closed — correctly, not a gap. Don't
+  reason about an hourly FX series: age an FX snap in DAYS
+  (`fx_max_age_hours` defaults to 76 for exactly that reason). There
+  is **no `/v1/currencies`
   route** — it was removed for want of consumers; the FX snapshot
   survives only as the in-process `CurrenciesReader` seam, so don't go
   looking for an HTTP surface.
@@ -142,9 +149,17 @@ linked design doc has the full detail.
   `sep0011_asset` topic.** Our decoder handles both event SHAPES —
   the 3-topic SEP-41 form and the 4-topic CAP-67 form (the 4th topic
   is `sep0011_asset`). It does NOT, however, parse pre-P23 classic
-  movements: there is no operations+effects fallback for the era
-  before unified events existed, so historical classic-asset movement
-  before P23 is not reconstructed from this path.
+  movements — but that era is NOT a hole, and reaching for the decoder
+  is the wrong move: ADR-0047's `stellarindex-ops
+  classic-movements-backfill` reconstructs it from `stellar.operations`
+  + `stellar.operation_results` (op body + op result, never Horizon) and
+  lands it in ClickHouse-native `stellar.account_movements`. On r1 that
+  table holds 6,702,108,079 rows stamped `provenance='classic_derived'`
+  spanning ledgers 3 → 58,762,516 — the whole pre-P23 range — under the
+  3,580,590,660 `cap67_derived` rows that continue it past the boundary
+  (10,282,698,739 total, measured 2026-09-03). Query
+  `account_movements`, not the unified-event path, when you need classic
+  movement before P23.
 - **SEP-41 `transfer` data can be EITHER a simple `i128` OR a map**
   containing `amount` + `to_muxed_id`. Type-test before
   `MustI128()`.
