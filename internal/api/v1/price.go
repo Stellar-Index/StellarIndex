@@ -226,12 +226,21 @@ type PriceSnapshot struct {
 	// last_trade; our reader picks the best available and reports it.
 	// "peg" is emitted on the stablecoin self-peg path
 	// (tryStablecoinFiatProxy) — a USD-pegged classic asset priced in
-	// fiat:USD returns 1.0.
+	// fiat:USD returns 1.0. It is the ONLY value that is not an
+	// observation: it means the direct fiat:USD read AND the XLM cross
+	// both missed, and the answer is the operator's standing 1:1
+	// declaration.
 	PriceType string `json:"price_type"`
 
 	// ObservedAt is when the underlying trade closed (for
 	// last_trade) or the aggregation-window end (for VWAP/TWAP).
-	// RFC 3339 on the wire.
+	// RFC 3339 on the wire. On a "peg" price nothing was observed at
+	// all, so it carries when this deployment adopted the declaration
+	// ([Server.declaredPegSnapshot]) — it does not track the clock, and
+	// a consumer comparing it against the envelope's as_of can tell a
+	// declaration from a fresh observation. That stamp is per process:
+	// it resets on every restart, so soon after a deploy the two sit
+	// close again and price_type is the durable signal.
 	ObservedAt time.Time `json:"observed_at"`
 
 	// WindowSeconds is non-zero for VWAP/TWAP — the window size.
@@ -1169,21 +1178,41 @@ type proxyPairGate interface {
 // fiat:USD — every USD-flavoured trade quotes in classic USDC
 // (USDC-GA5Z…) or one of the other operator-declared pegs.
 //
-// Walks the operator's [trades].usd_pegged_classic_assets allow-list
-// in priority order; first peg whose pair has a non-stale Timescale
-// row wins. Same shape as chart.go's chartStablecoinFallback (#98 /
-// PR #1015) — without it, /v1/price?asset=native&quote=fiat:USD 404s
-// out-of-the-box on every fresh deployment, which is the most-basic
-// possible query against the canonical price endpoint.
+// Two routes, chosen by what the asset is:
+//
+//   - An asset that is NOT a declared peg walks the operator's
+//     [trades].usd_pegged_classic_assets allow-list in priority order
+//     ([Server.walkUSDPegs]); the first peg whose asset/<peg> pair has a
+//     non-stale Timescale row wins. Same shape as chart.go's
+//     chartStablecoinFallback (#98 / PR #1015) — without it,
+//     /v1/price?asset=native&quote=fiat:USD 404s out-of-the-box on every
+//     fresh deployment, which is the most-basic possible query against
+//     the canonical price endpoint.
+//
+//   - An asset that IS a declared peg does not walk. Its fiat:USD market
+//     was the caller's own direct read, which has already missed by the
+//     time this runs; the market it has on Stellar is its XLM book, so it
+//     is priced through that — asset/XLM × XLM/fiat:USD
+//     ([Server.crossDeclaredPegThroughXLM]) — and only when that cross
+//     has nothing to read does the declaration itself answer
+//     ([Server.declaredPegSnapshot]) rather than a 404. The declaration
+//     is a LAST resort, never a short-circuit: a constant must not
+//     pre-empt an observation, and a depeg is precisely the moment the
+//     two disagree. Pricing the peg in ANOTHER declared peg's terms is
+//     deliberately not a route: it assumes the other peg is the sound
+//     one, and with two declared pegs a break of the other would print
+//     an inverted wrong price for this one. XLM is not a peg.
 //
 // Returns ok=false when:
 //   - quote is not fiat:USD,
 //   - usdPeggedClassics is empty (operator hasn't opted in),
-//   - every peg's pair returns ErrPriceNotFound or an error.
+//   - the asset is not a declared peg and every peg's pair returns
+//     ErrPriceNotFound or an error.
 //
 // Sets flags.triangulated=true on the returned snapshot — the served
-// price is the X/<peg> VWAP rounded by the implicit assumption peg ≈ $1.
-// SingleSource is whatever the underlying X/<peg> lookup carried.
+// price is the X/<peg> VWAP rounded by the implicit assumption peg ≈ $1,
+// the XLM cross, or the declaration; none is a direct print of the
+// requested pair. SingleSource is whatever the underlying lookup carried.
 //
 // The third return is `withheld`: a peg leg whose read came back
 // ErrPriceWithheld means we HAVE a price for this asset and are
@@ -1195,41 +1224,94 @@ type proxyPairGate interface {
 // the raw surfaces (/v1/observations, /v1/ohlc, /v1/history) where the
 // data IS available, and a not-found tells them to look nowhere.
 //
-// Withheld is sticky across the peg loop and does NOT stop it: a later
+// Withheld is sticky across the peg walk and does NOT stop it: a later
 // peg may still yield a servable price, which is strictly better than a
-// 404, and only if NO peg serves does the withheld verdict surface.
+// 404, and only if NO peg serves does the withheld verdict surface. The
+// declared-peg route never reports withheld: a refused XLM leg is a miss
+// inside the cross (see there), and the declaration is not a market read.
 func (s *Server) tryStablecoinFiatProxy(ctx context.Context, asset, quote canonical.Asset) (PriceSnapshot, []string, bool, bool) {
-	// withheld is sticky across the peg loop — see the doc above.
-	var withheld bool
-
 	// Self-peg: the asset IS a `crypto:<STABLE>` ticker priced in the
 	// very fiat it tracks (crypto:USDC/fiat:USD, crypto:EURC/fiat:EUR,
 	// …). The aggregator treats these tickers as that fiat
 	// (internal/aggregate/stablecoin.go FiatProxy), so the price is
 	// ≈ 1.0 by the same convention that drives every VWAP. The
-	// classic-issued form (USDC-GA5Z…) is handled by the
-	// usdPeggedClassics walk below; this arm covers the abstract
-	// global-ticker form the catalogue + explorer use, which 404'd
-	// before (no on-chain trades quote crypto:USDC in fiat:USD). A
-	// depeg surfaces via the divergence subsystem, not here — same
-	// flat-$1 peg contract as the classic-peg case (F-1232). Runs
-	// ahead of the fiat:USD guard so it also serves the EUR/MXN pegs.
+	// classic-issued form (USDC-GA5Z…) is handled by the declared-peg
+	// route below; this arm covers the abstract global-ticker form the
+	// catalogue + explorer use, which 404'd before (no on-chain trades
+	// quote crypto:USDC in fiat:USD). A depeg surfaces via the
+	// divergence subsystem, not here — same flat-$1 peg contract as the
+	// classic-peg case (F-1232). Runs ahead of the fiat:USD guard so it
+	// also serves the EUR/MXN pegs. Reached only after the caller's own
+	// literal read missed, so an observed crypto:USDC/fiat:USD bucket
+	// (the CEX tier quotes that pair directly — the global ticker's
+	// market IS a fiat market, which is why it has no XLM cross) still
+	// wins over the declaration.
 	if proxy, isStable := aggregate.FiatProxy(asset); isStable && proxy.Equal(quote) {
-		snap := PriceSnapshot{
-			AssetID:    asset.String(),
-			Quote:      quote.String(),
-			Price:      "1.000000000000",
-			PriceType:  "peg",
-			ObservedAt: time.Now().UTC(),
-		}
-		return snap, nil, true, withheld
+		return s.declaredPegSnapshot(asset, quote), nil, true, false
 	}
+	// Everything returned before the walk carries withheld=false: no peg
+	// leg has been read yet, so no withholding verdict can exist. The walk
+	// is what makes that verdict sticky — see [Server.walkUSDPegs].
 	if quote.Type != canonical.AssetFiat || quote.Code != "USD" {
-		return PriceSnapshot{}, nil, false, withheld
+		return PriceSnapshot{}, nil, false, false
 	}
 	if len(s.usdPeggedClassics) == 0 || s.prices == nil {
-		return PriceSnapshot{}, nil, false, withheld
+		return PriceSnapshot{}, nil, false, false
 	}
+	if s.isDeclaredUSDPeg(asset) {
+		if snap, srcs, ok := s.crossDeclaredPegThroughXLM(ctx, asset, quote); ok {
+			return snap, srcs, true, false
+		}
+		// No market anywhere priced this peg — publish the declaration
+		// itself. No sources (nil): the value comes from the peg
+		// assumption, not from VWAP-contributing trades, so the handler's
+		// len(sources)==1 rule leaves SingleSource=false — an empty source
+		// set is not "single-sourced". Flipping the flag would mean
+		// emitting a synthetic source into the wire `sources[]` array,
+		// which is deliberately not done.
+		return s.declaredPegSnapshot(asset, quote), nil, true, false
+	}
+	snap, srcs, ok, withheld := s.walkUSDPegs(ctx, asset, quote)
+	if ok {
+		return snap, srcs, true, withheld
+	}
+	return PriceSnapshot{}, nil, false, withheld
+}
+
+// isDeclaredUSDPeg reports whether asset is one of the operator's
+// [trades].usd_pegged_classic_assets — the classic assets whose fiat:USD
+// price the operator has vouched for at 1:1. Exact spelling, as the
+// declaration is: the SAC twin of a declared peg is not itself declared,
+// and takes the ordinary walk exactly as before.
+func (s *Server) isDeclaredUSDPeg(asset canonical.Asset) bool {
+	for _, peg := range s.usdPeggedClassics {
+		if peg.Equal(asset) {
+			return true
+		}
+	}
+	return false
+}
+
+// walkUSDPegs is [Server.tryStablecoinFiatProxy]'s allow-list walk,
+// extracted to keep that function under the gocognit ceiling. It tries
+// asset/<peg> for each operator-declared USD peg in priority order and
+// returns the first observed price, re-quoted to the requested fiat:USD.
+//
+// A declared peg never reaches this walk — the caller routes it through
+// [Server.crossDeclaredPegThroughXLM] first — so every asset/<peg> pair
+// read here has a peg on exactly one side. The walk used to carry the
+// declared-peg case itself and answered the flat $1 the moment it
+// recognised the requested asset in the list, BEFORE reading any
+// market; that is what let /v1/price publish 1.000000000000 for
+// USDC-GA5Z… in the same minute /v1/assets served the market's
+// 1.0008594347, and what would have hidden a depeg behind the
+// declaration.
+//
+// withheld carries the sticky ErrPriceWithheld verdict described on
+// [Server.tryStablecoinFiatProxy].
+func (s *Server) walkUSDPegs(
+	ctx context.Context, asset, quote canonical.Asset,
+) (snapshot PriceSnapshot, sources []string, ok, withheld bool) {
 	// Empty-proxy-pair gate (2026-07-06 empty-alias latency incident,
 	// proxy layer). Each peg lookup below is a LatestPrice(asset, <peg>),
 	// and a <peg> quote is a CLASSIC asset — so on a VWAP miss LatestPrice
@@ -1245,30 +1327,6 @@ func (s *Server) tryStablecoinFiatProxy(ctx context.Context, asset, quote canoni
 	// never suppress a real price.
 	gate, _ := s.prices.(proxyPairGate)
 	for _, peg := range s.usdPeggedClassics {
-		if peg.Equal(asset) {
-			// F-1232 (codex audit-2026-05-12): asset IS one of
-			// the operator-declared USD pegs. /v1/price?asset=<peg>
-			// &quote=fiat:USD previously skipped this peg and
-			// fell through to the cross-rate path, returning 404
-			// even though the asset-detail page surfaces an
-			// approximately-$1 enrichment price for the same asset.
-			// Return $1.0 with triangulated=true so the wire shape
-			// is consistent. We return no sources (nil): the value is
-			// derived from the peg assumption, not from VWAP-
-			// contributing trades, so the handler's len(sources)==1
-			// rule leaves SingleSource=false — an empty source set is
-			// not "single-sourced". Flipping the flag would mean
-			// emitting a synthetic source into the wire `sources[]`
-			// array, which we deliberately don't do.
-			snap := PriceSnapshot{
-				AssetID:    asset.String(),
-				Quote:      quote.String(),
-				Price:      "1.000000000000",
-				PriceType:  "peg",
-				ObservedAt: time.Now().UTC(),
-			}
-			return snap, nil, true, withheld
-		}
 		if gate != nil {
 			exists, gerr := gate.RecentClosedVWAP1mExists(ctx, asset, peg)
 			if gerr == nil && !exists {
@@ -1311,6 +1369,213 @@ func (s *Server) tryStablecoinFiatProxy(ctx context.Context, asset, quote canoni
 		return snap, srcs, true, withheld
 	}
 	return PriceSnapshot{}, nil, false, withheld
+}
+
+// crossDeclaredPegThroughXLM prices a declared USD peg in fiat:USD
+// through the one market it has on Stellar — its XLM book:
+//
+//	price(peg/fiat:USD) = price(peg/XLM) × price(XLM/fiat:USD)
+//
+// It is the point-surface twin of the per-bucket series cross /v1/chart
+// and /v1/history apply ([Server.fiatSeriesThroughXLM]) and runs the
+// same multiplication, [crossThroughPivot]: exact big.Rat on both legs
+// (ADR-0003 — no float on a served price), a zero, negative or missing
+// leg is a miss, ten fractional digits. The result is served as
+// price_type "vwap" with flags.triangulated=true — two VWAPs multiplied,
+// not a declaration — and it names its window: window_seconds is the
+// wider of the two legs' windows, 60 when both are closed 1-minute
+// buckets ([VWAP1mToSnapshot]). A served vwap carries its window on the
+// wire; only last_trade omits it. This is what makes a depeg VISIBLE on
+// this surface:
+// no on-chain venue quotes USDC-GA5Z… in fiat:USD, so the caller's
+// direct read misses in steady state, and the answer used to be the flat
+// $1 declaration before any market had been read. A peg that has broken
+// reprices against XLM first — SDEX is where its book is — and that is
+// the leg read here.
+//
+// The pivot leg is read DIRECT (XLM/fiat:USD, the CEX market under XLM's
+// alias forms), never through the Redis composite or the stablecoin
+// proxy: a pivot priced via the very peg under test would cancel to
+// exactly 1 and prove nothing. Nor does the cross lean on any other
+// declared peg being sound — XLM is not a peg.
+//
+// Cost bound: up to three bounded reads per leg, one per XLM form,
+// each behind the substance probe, and every call on the way to them is bounded. The peg/XLM leg is
+// read under each XLM form as the quote ([Server.readDeclaredPegXLMLeg])
+// — `native`, crypto:XLM, the XLM SAC. A `native`- or SAC-quoted miss is
+// the reader's unbounded last-trade scan, not its synthetic-fiat fast
+// path, so each form runs behind the same [proxyPairGate] probe the peg
+// walk uses: one bounded existence check per form, and only a form the
+// probe reports live pays the read. The XLM/fiat:USD leg is fiat-quoted,
+// so every miss there IS the fast path — one closed-bucket lookup per
+// form. The pivot is read only once the peg leg has answered, so a peg
+// with no XLM book costs no pivot read. No unbounded read is reachable
+// from here.
+//
+// A withheld leg (ErrPriceWithheld) is a miss, not a price: the gate
+// refused to publish that market and a cross must not re-serve it
+// through a side door (MSP-06). observed_at is the OLDER of the two legs
+// — a derived price is only as fresh as its staler input — and sources
+// is the union of both, so a consumer sees the SDEX book and the CEX
+// venues that set the pivot.
+func (s *Server) crossDeclaredPegThroughXLM(
+	ctx context.Context, asset, quote canonical.Asset,
+) (PriceSnapshot, []string, bool) {
+	xlm := canonical.NativeAsset()
+	if sameAsset(asset, xlm) {
+		return PriceSnapshot{}, nil, false
+	}
+	pegLeg, pegSources, ok := s.readDeclaredPegXLMLeg(ctx, asset)
+	if !ok {
+		return PriceSnapshot{}, nil, false
+	}
+	xlmLeg, xlmSources, _, err := s.readPriceWithAliases(ctx, s.prices, xlm, quote)
+	if err != nil {
+		return PriceSnapshot{}, nil, false
+	}
+	// Both legs are RAW ratios off the reader; each is decimals-corrected
+	// (M2) against the legs it actually traded before the product is
+	// taken. Byte-identical no-op for 7dp legs.
+	s.normalizeRawPriceSnapshot(&xlmLeg, xlm, quote)
+	price, ok := crossThroughPivot(pegLeg.Price, xlmLeg.Price)
+	if !ok {
+		return PriceSnapshot{}, nil, false
+	}
+	observedAt := pegLeg.ObservedAt
+	if xlmLeg.ObservedAt.Before(observedAt) {
+		observedAt = xlmLeg.ObservedAt
+	}
+	// The product spans the wider of the two windows. A leg served off
+	// the reader's last-trade tail carries none, so the other leg's
+	// window governs.
+	windowSeconds := pegLeg.WindowSeconds
+	if xlmLeg.WindowSeconds > windowSeconds {
+		windowSeconds = xlmLeg.WindowSeconds
+	}
+	return PriceSnapshot{
+		AssetID:       asset.String(),
+		Quote:         quote.String(),
+		Price:         price,
+		PriceType:     "vwap",
+		ObservedAt:    observedAt,
+		WindowSeconds: windowSeconds,
+	}, unionSources(pegSources, xlmSources), true
+}
+
+// readDeclaredPegXLMLeg reads asset/XLM for
+// [Server.crossDeclaredPegThroughXLM] — the peg's own on-chain book —
+// under each of XLM's alias forms as the QUOTE (`native` first, then
+// crypto:XLM, then the SAC; [canonical.AssetAliases] owns the order).
+// [Server.readPriceWithAliases] loops the BASE side and is the wrong
+// shape here. The store folds both stored orientations of a market into
+// the requested one, so the read answers whichever way SDEX recorded the
+// book.
+//
+// Each form runs behind the [proxyPairGate] probe first, exactly as the
+// peg walk does and for the same reason: a `native`- or SAC-quoted miss
+// is not the reader's synthetic-fiat fast path, it is the unbounded
+// last-trade scan. A gate ERROR falls through to the read (a probe blip
+// must not hide a price); a gate miss skips the form. Any read error —
+// ErrPriceNotFound and ErrPriceWithheld alike — is a miss for that
+// form. The decimals normalization is the walk's (M2), against the legs
+// actually traded.
+//
+// Among the forms that answer, a fresh one wins over a stale one, and a
+// stale one still serves when it is all there is — the preference
+// [Server.readPriceWithAliases] applies on the direct read, mirrored
+// here. Alias order alone would take `native` whenever it holds a row,
+// however old, over a fresh SAC-quoted book one form later: the
+// three forms are disjoint venue populations, and the book that traded
+// last is the one that prices the peg now.
+func (s *Server) readDeclaredPegXLMLeg(
+	ctx context.Context, asset canonical.Asset,
+) (PriceSnapshot, []string, bool) {
+	gate, _ := s.prices.(proxyPairGate)
+	var staleSnap PriceSnapshot
+	var staleSources []string
+	staleFound := false
+	for _, xlm := range assetAliases(canonical.NativeAsset()) {
+		if gate != nil {
+			if exists, gerr := gate.RecentClosedVWAP1mExists(ctx, asset, xlm); gerr == nil && !exists {
+				continue
+			}
+		}
+		snap, srcs, stale, err := s.prices.LatestPrice(ctx, asset, xlm)
+		if err != nil {
+			continue
+		}
+		s.normalizeRawPriceSnapshot(&snap, asset, xlm)
+		if !stale {
+			return snap, srcs, true
+		}
+		// Stale — keep the first one in case no form answers fresh.
+		if !staleFound {
+			staleSnap, staleSources, staleFound = snap, srcs, true
+		}
+	}
+	if staleFound {
+		return staleSnap, staleSources, true
+	}
+	return PriceSnapshot{}, nil, false
+}
+
+// unionSources merges two legs' source sets — deduplicated, sorted — the
+// way [appendFXSource] credits the FX feed beside the USD leg's venues:
+// a consumer auditing a crossed price needs every venue behind it.
+func unionSources(a, b []string) []string {
+	seen := make(map[string]struct{}, len(a)+len(b))
+	out := make([]string, 0, len(a)+len(b))
+	for _, list := range [][]string{a, b} {
+		for _, src := range list {
+			if _, dup := seen[src]; dup {
+				continue
+			}
+			seen[src] = struct{}{}
+			out = append(out, src)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// declaredPegPrice is the operator's standing 1:1 declaration, rendered
+// at the 12 fractional digits this surface has published for it since
+// F-1232 — the bytes are part of the contract, so they stay put.
+const declaredPegPrice = "1.000000000000"
+
+// declaredPegSnapshot renders that declaration as a snapshot: the answer
+// /v1/price serves for a declared peg when NO market observation for it
+// exists — the caller's direct fiat:USD read missed and
+// [Server.crossDeclaredPegThroughXLM] found no XLM book to cross — and
+// for a `crypto:<STABLE>` ticker in its own fiat after the direct read
+// missed.
+//
+// ObservedAt carries the declaration's adoption time ([Server.pegDeclaredAt])
+// — never time.Now(). The constant is not an observation, and stamping
+// it with the clock made it indistinguishable from one on the wire: two
+// consecutive GETs of USDC-GA5Z…/fiat:USD, 123ms apart, each returned
+// 1.000000000000 with an observed_at equal to its OWN envelope as_of,
+// while /v1/assets served the market's 1.0008594347 for the same asset
+// in the same minute. Stamping the adoption instant instead lets the
+// answer AGE: a consumer's staleness test reads "nothing has been
+// observed since this deployment adopted the declaration", which is the
+// truth.
+//
+// The stamp is per process. The operator declaration itself —
+// [trades].usd_pegged_classic_assets — carries no timestamp, so there is
+// nothing older for it to survive a restart on: unless [Options.PegDeclaredAt]
+// is set, the stamp is the server's construction time, resets on every
+// deploy or restart, and for a while afterwards sits close to as_of
+// again. price_type "peg" is therefore the durable signal that nothing
+// was observed; the stamp is the secondary one, and the spec says so.
+func (s *Server) declaredPegSnapshot(asset, quote canonical.Asset) PriceSnapshot {
+	return PriceSnapshot{
+		AssetID:    asset.String(),
+		Quote:      quote.String(),
+		Price:      declaredPegPrice,
+		PriceType:  "peg",
+		ObservedAt: s.pegDeclaredAt,
+	}
 }
 
 // tryFiatCrossRate synthesises a fiat-vs-fiat price by cross-rating

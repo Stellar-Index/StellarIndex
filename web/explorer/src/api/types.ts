@@ -502,7 +502,28 @@ export interface paths {
          *        (b) stablecoin-proxy rewrites the aggregator emits at
          *        tick-time (e.g. `XLM/fiat:USD` synthesised from
          *        `XLM/USDC-G…`) without a triangulation marker.
-         *     3. Fiat-vs-fiat cross-rate from the forex snapshot when both
+         *     3. Read-time stablecoin proxy for a `fiat:USD` quote, against
+         *        the operator's declared USD pegs
+         *        (`[trades].usd_pegged_classic_assets`). An asset that is
+         *        not itself a declared peg is re-quoted in the first peg it
+         *        has a live market against (`X/fiat:USD` served from
+         *        `X/USDC-G…`), `flags.triangulated=true`. An asset that IS a
+         *        declared peg is not walked against its siblings: it is
+         *        crossed through XLM — `peg/XLM × XLM/fiat:USD`, one exact
+         *        rational product, `price_type: vwap` with `window_seconds`
+         *        the wider of the two legs' windows (60 for two closed
+         *        1-minute buckets), `flags.triangulated=true` — because its
+         *        own XLM book is the
+         *        market a depeg prints on; only when that cross has nothing
+         *        to read is the declaration itself served, as
+         *        `1.000000000000` with `price_type: peg`. The declaration is
+         *        the last resort, never a short-circuit: any observed market
+         *        for the pair, including a depegged one, takes precedence
+         *        over it. The same chain fires on `/v1/price/tip`,
+         *        `/v1/price/batch`, `/v1/oracle/lastprice`,
+         *        `/v1/oracle/x_last_price`, the `/v1/assets/{id}` USD price
+         *        and the `/v1/observations` triangulation hint.
+         *     4. Fiat-vs-fiat cross-rate from the forex snapshot when both
          *        sides are `fiat:` typed (e.g.
          *        `?asset=fiat:EUR&quote=fiat:USD`). Computed as
          *        `rate_usd[Y] / rate_usd[X]`. Returned with
@@ -2503,7 +2524,13 @@ export interface paths {
          *     `/v1/price`. Quote is fixed at USD, matching the on-chain
          *     contract's fixed-quote semantic — for other quotes use
          *     `/v1/price?asset=&quote=` or `/v1/oracle/x_last_price`.
-         *     404 when no observation exists for the asset.
+         *     When the asset's own `fiat:USD` market has no closed bucket
+         *     the same fallback chain as `/v1/price` runs (its
+         *     **Resolution order**); an answer served that way
+         *     carries `flags.stale=true`, and `flags.triangulated=true`
+         *     when it is composed rather than observed — the declared-peg
+         *     XLM cross, a triangulated chain, a fiat cross-rate. 404 when
+         *     the chain serves nothing.
          */
         get: operations["getOracleLastPrice"];
         put?: never;
@@ -2554,8 +2581,12 @@ export interface paths {
          *     `base` denominated in `quote`. The response's `asset`
          *     field carries the canonical base identifier so existing
          *     SEP-40 `lastprice` parsing paths can be reused; the quote
-         *     is implicit from the request. 404 when no observation
-         *     exists for the pair.
+         *     is implicit from the request. Any canonical asset id is
+         *     accepted on either side. When the pair has no closed bucket
+         *     the same fallback chain as `/v1/price` runs; an answer
+         *     served that way carries `flags.stale=true`, and
+         *     `flags.triangulated=true` when it is composed rather than
+         *     observed. 404 when the chain serves nothing.
          */
         get: operations["getOracleCrossPrice"];
         put?: never;
@@ -6347,11 +6378,33 @@ export interface components {
              *     stablecoin self-peg path (`/v1/price?asset=<USD-pegged
              *     classic>&quote=fiat:USD` returns `1.0` with
              *     `flags.triangulated=true`) — see price.go
-             *     tryStablecoinFiatProxy.
+             *     tryStablecoinFiatProxy. It is the one value that is NOT an
+             *     observation: it means the pair's direct `fiat:USD` market AND
+             *     the peg's XLM cross (`peg/XLM × XLM/fiat:USD`, served as
+             *     `vwap` when it exists) both missed, and the answer is the
+             *     operator's standing 1:1 declaration. An observed market —
+             *     including a depegged one — always takes precedence over it,
+             *     and `observed_at` carries the declaration's adoption time
+             *     rather than a bucket close (see that field).
              * @enum {string}
              */
             price_type: "vwap" | "twap" | "last_trade" | "peg";
-            /** Format: date-time */
+            /**
+             * Format: date-time
+             * @description Close time of the underlying trade (for `last_trade`) or the
+             *     end of the aggregation window (for `vwap`/`twap`). RFC 3339,
+             *     UTC. On a `peg` price nothing was observed at all, so it
+             *     carries when the deployment adopted the declaration rather
+             *     than a bucket close: it does not track the clock, so
+             *     comparing it against the envelope's `as_of` tells a
+             *     declaration from a fresh observation. That stamp is per
+             *     process — the operator declaration
+             *     (`[trades].usd_pegged_classic_assets`) carries no timestamp
+             *     of its own, so it is the API server's start time and resets
+             *     on every deploy or restart; shortly after a restart the two
+             *     timestamps sit close again, and `price_type: peg` is the
+             *     durable signal that nothing was observed.
+             */
             observed_at: string;
             /** @description Window size for vwap/twap; omitted for last_trade. */
             window_seconds?: number | null;
@@ -8932,7 +8985,7 @@ export interface operations {
                      *           "quote": "fiat:USD",
                      *           "price": "1.000000000000",
                      *           "price_type": "peg",
-                     *           "observed_at": "2026-07-03T22:37:34.197270411Z"
+                     *           "observed_at": "2026-07-03T09:04:11.882Z"
                      *         }
                      *       ],
                      *       "as_of": "2026-07-03T22:37:34.248518093Z",
@@ -8998,7 +9051,7 @@ export interface operations {
                      *           "quote": "fiat:USD",
                      *           "price": "1.000000000000",
                      *           "price_type": "peg",
-                     *           "observed_at": "2026-07-03T22:37:34.197270411Z"
+                     *           "observed_at": "2026-07-03T09:04:11.882Z"
                      *         }
                      *       ],
                      *       "as_of": "2026-07-03T22:37:34.248518093Z",
@@ -13584,10 +13637,15 @@ export interface operations {
                 /**
                  * @description SEP-40 oracle key. Reflector contracts publish under
                  *     `crypto:<symbol>` (`crypto:XLM`, `crypto:BTC`,
-                 *     `crypto:USDC`, `crypto:ETH`, `crypto:EUROB`); the bare
-                 *     `native` / `<code>-<G…>` forms are NOT keys in the
-                 *     oracle namespace and return 404 here. Use
-                 *     `/v1/price?asset=…` for canonical-asset prices.
+                 *     `crypto:USDC`, `crypto:ETH`, `crypto:EUROB`). Any
+                 *     canonical asset id is accepted and priced in `fiat:USD`
+                 *     exactly as `/v1/price?asset=…&quote=fiat:USD` prices it:
+                 *     `native` resolves through XLM's alias forms
+                 *     (`crypto:XLM`, the XLM SAC), and a `<code>-<G…>` classic
+                 *     reads its own `fiat:USD` market first and then the
+                 *     fallback chain — a declared USD peg such as
+                 *     `USDC-GA5Z…` is served through its XLM cross, or as the
+                 *     declaration when no market prices it.
                  * @example crypto:XLM
                  */
                 asset: string;
