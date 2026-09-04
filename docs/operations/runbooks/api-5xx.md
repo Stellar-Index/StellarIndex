@@ -1,6 +1,6 @@
 ---
 title: Runbook — API 5xx rate elevated
-last_verified: 2026-08-29
+last_verified: 2026-09-04
 status: ratified
 severity: P1 at >5% / P3 at >1% / P1 at SLO burn-rate fast+medium
 ---
@@ -25,7 +25,7 @@ severity: P1 at >5% / P3 at >1% / P1 at SLO burn-rate fast+medium
 | Severity | **P1 at critical**, **P3 at high**; **P1** for fast/medium burn, P3 for slow burn |
 | Detected by | `configs/prometheus/rules.r1/api.yml` + `configs/prometheus/rules.r1/slo.yml` (r1 overlays, `job="stellarindex-api"`, loaded from `/etc/prometheus/rules.r1/*.yml`; multi-host templates: `deploy/monitoring/rules/{api,slo}.yml`) — rules on `http_requests_total{status=~"5.."}` rate |
 | Typical MTTR | 5–15 min for a bad-deploy revert; 30–60 min for a latent-bug forward fix |
-| Impact | Clients seeing request failures. Affects both the API availability SLA (99.99 % non-5xx over 30 d) and the p95/p99 latency targets — every 5xx adds timeout retries that inflate queue time. |
+| Impact | Clients seeing request failures. Affects both the API availability SLA (99.9 % non-5xx over 30 d) and the p95/p99 latency targets — every 5xx adds timeout retries that inflate queue time. |
 
 ## Burn-rate vs direct-threshold pages
 
@@ -35,8 +35,9 @@ This runbook handles two alert families with different semantics:
   "instantaneous 5xx rate just crossed 1 % / 5 %." Trips on
   any sustained spike, including a brief deploy hiccup.
 - **SLO burn-rate** (`slo_availability_burn_{fast,medium,slow}`):
-  "we're consuming SLO error budget too quickly." The 99.99 %
-  availability target gives a small monthly budget; the
+  "we're consuming SLO error budget too quickly." The 99.9 %
+  availability target (the published SLA) gives a monthly budget of
+  0.1 % of requests; the
   multi-window pattern (per Google SRE workbook) requires a short
   AND a long window to both agree before firing, so brief blips
   don't trip it. Fast tier (5m AND 1h, 14.4× burn) means the whole
@@ -46,10 +47,11 @@ This runbook handles two alert families with different semantics:
 
 A `_burn_fast` page is a real availability emergency even if the
 direct-threshold P1 (`error_rate_critical`, > 5 %) hasn't fired:
-the 99.99 % budget is so small that **0.15 %** errors sustained for
-1h is enough (the fast trip point is 14.4 × 0.0001 = 0.144 %). Use
-the diagnosis below as usual; treat the urgency as
-budget-exhaustion, not transient.
+**1.5 %** errors sustained for 1h is enough (the fast trip point is
+14.4 × 0.001 = 1.44 %), so it lands just after `error_rate_high`
+(P3, > 1 %) tickets and well before the > 5 % page. Use the
+diagnosis below as usual; treat the urgency as budget-exhaustion,
+not transient.
 
 ## Symptoms
 
@@ -348,6 +350,11 @@ Common root-cause patterns:
 
 ## Changelog
 
+- 2026-09-04 — availability budget re-based to the published SLA
+  (#487): 99.9 %, not 99.99 %; fast trip point 14.4 × 0.001 = 1.44 %
+  (was 0.144 %) and the 1h example is 1.5 % again — the 2026-08-29
+  "decimal slip" correction below was made against the wrong budget;
+  burn-fast now sits between the two direct-threshold alerts.
 - 2026-08-29 — re-verified against HEAD: `error_rate_high` is P3
   (`severity: ticket`), not P2; availability SLA 99.9 % → 99.99 %; the
   "1.5 % for 1h" burn example was a 10× decimal slip → 0.15 % (fast

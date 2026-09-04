@@ -1,6 +1,6 @@
 ---
 title: Runbook — slo-availability-burn-slow
-last_verified: 2026-08-29
+last_verified: 2026-09-04
 status: current
 severity: P3
 ---
@@ -15,20 +15,20 @@ severity: P3
 | Severity | P3 (`severity: ticket`) |
 | Detected by | `configs/prometheus/rules.r1/slo.yml` (r1 overlay, `job="stellarindex-api"`, loaded from `/etc/prometheus/rules.r1/*.yml`; multi-host template: `deploy/monitoring/rules/slo.yml`) |
 | Typical MTTR | days |
-| Impact | Availability budget (99.99 % non-5xx over 30 d) burning at 1× rate (Google SRE workbook ch. 5 multi-window). At 1× the budget lasts **exactly 30 days — zero slack**: any additional incident this month overspends the SLA. No acute customer impact, but a structural regression is in flight. |
+| Impact | Availability budget (99.9 % non-5xx over 30 d) burning at 1× rate (Google SRE workbook ch. 5 multi-window). At 1× the budget lasts **exactly 30 days — zero slack**: any additional incident this month overspends the SLA. No acute customer impact, but a structural regression is in flight. |
 
 ## Symptoms
 
 Multi-window detection: `stellarindex:api_error_ratio:6h` AND
-`stellarindex:api_error_ratio:24h` (slo `api_availability_3_nines_9`) both
-**> 1×** the budget (1 × 0.0001 = 0.01 % 5xx), sustained `for: 30m`.
+`stellarindex:api_error_ratio:24h` (slo `api_availability_3_nines`) both
+**> 1×** the budget (1 × 0.001 = 0.1 % 5xx), sustained `for: 30m`.
 
 Note the alert's `runbook_url` annotation points at `api-5xx.md`, not this
 file — this runbook is the family-specific supplement.
 
 Unlike the latency burn family, the availability burn rules have **no
 min-traffic guard** — on quiet r1 a trickle of synthetic 5xx can hold the
-ratio above 0.01 % indefinitely. Check the traffic floor before treating the
+ratio above 0.1 % indefinitely. Check the traffic floor before treating the
 trend as a real regression:
 
 ```sh
@@ -54,7 +54,7 @@ This is the earliest signal in the availability burn-rate family. Treat as a pla
 
 ## Known false-positive patterns
 
-- **Synthetic probes at low traffic** — `stellarindex-sla-probe.timer` and `stellarindex-smoke.timer` (`configs/healthchecks/`) plus cache prewarm hit the local API; with no min-traffic guard, at near-zero real traffic a few probe 5xx exceed 0.01 %. Check the total request rate first.
+- **Synthetic probes at low traffic** — `stellarindex-sla-probe.timer` and `stellarindex-smoke.timer` (`configs/healthchecks/`) plus cache prewarm hit the local API; with no min-traffic guard, at near-zero real traffic a few probe 5xx exceed 0.1 %. Check the total request rate first.
 - **Long-tail external dependency failures** — if a small fraction of requests are failing because an external poller (CoinGecko, ECB) is having structural availability issues, those don't necessarily count as our 5xx — check whether the failing path is `/v1/sources` or another aggregator-feeding surface.
 
 ## Related
@@ -66,6 +66,9 @@ This is the earliest signal in the availability burn-rate family. Treat as a pla
 
 ## Changelog
 
+- 2026-09-04 — budget re-based to the published SLA (#487): 99.9 %, not
+  99.99 %; trip point 1 × 0.001 = 0.1 % (was 0.01 %); recording-rule label
+  renamed to `api_availability_3_nines`.
 - 2026-08-29 — re-verified against HEAD: windows are 6h AND 24h (not 3d),
   `for: 30m`, `severity: ticket`; impact arithmetic — 1× burn means the
   budget lasts exactly 30 days (zero slack), not "gone in ~3 days"; rule

@@ -1,6 +1,6 @@
 ---
 title: Alerts Catalogue
-last_verified: 2026-09-03
+last_verified: 2026-09-04
 status: ratified — incremental growth
 ---
 
@@ -238,7 +238,9 @@ the api-plane tickets it exists to complement.
 
 ## SLO burn-rate alerts (multi-window)
 
-Per [ADR-0009](../adr/0009-latency-budget.md). Pattern from the
+Per [ADR-0009](../adr/0009-latency-budget.md); the availability budget
+is the published ≥ 99.9 % ([stellarindex.io/sla](https://stellarindex.io/sla),
+#487). Pattern from the
 Google SRE workbook: short + long windows must BOTH agree before
 firing. Suppresses single-spike noise; catches both fast burns
 (near-immediate budget consumption) and slow drifts (sustained
@@ -250,7 +252,7 @@ for incident-time clarity.
 | `stellarindex_slo_latency_burn_fast` | 99.9% under 200ms | > 14.4× over 5m AND 1h | page | [slo-latency-burn-fast](runbooks/slo-latency-burn-fast.md) |
 | `stellarindex_slo_latency_burn_medium` | same | > 6× over 30m AND 6h | page | [slo-latency-burn-medium](runbooks/slo-latency-burn-medium.md) |
 | `stellarindex_slo_latency_burn_slow` | same | > 1× over 6h AND 24h | ticket | [slo-latency-burn-slow](runbooks/slo-latency-burn-slow.md) |
-| `stellarindex_slo_availability_burn_fast` | 99.99% non-5xx | > 14.4× over 5m AND 1h | page | [slo-availability-burn-fast](runbooks/slo-availability-burn-fast.md) |
+| `stellarindex_slo_availability_burn_fast` | 99.9% non-5xx | > 14.4× over 5m AND 1h | page | [slo-availability-burn-fast](runbooks/slo-availability-burn-fast.md) |
 | `stellarindex_slo_availability_burn_medium` | same | > 6× over 30m AND 6h | page | [slo-availability-burn-medium](runbooks/slo-availability-burn-medium.md) |
 | `stellarindex_slo_availability_burn_slow` | same | > 1× over 6h AND 24h | ticket | [slo-availability-burn-slow](runbooks/slo-availability-burn-slow.md) |
 

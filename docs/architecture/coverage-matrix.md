@@ -234,7 +234,7 @@ Any row with **status ❌** is a blocker for launch. Any row with
 
 | # | Requirement | Spec ref | Week | Owner | ADR | Verified by | Status | Conf | Prod |
 | - | ----------- | -------- | ---- | ----- | --- | ----------- | ------ | ---- | ---- |
-| S9.1 | ≥ 99.99 % uptime | §Availability | 8–9 | HA plan + `cmd/stellarindex-sla-probe` | [ADR-0008](../adr/0008-ha-topology.md) | (HA plan) | ⚠ caveat — synthetic 2xx-success-rate gate shipped (#283 + #290 + #294); 99.99% target needs production + multi-region traffic to verify operationally. The probe surfaces the signal; the HA topology is what backs the number. | 3 | ⚠ 2026-05-10 — single-region today (R1 only); 99.99% needs ≥30 days × multi-region. R2/R3 not bootstrapped yet (L4.14/L4.15 🔴). |
+| S9.1 | ≥ 99.9 % availability (the published SLA — #487, 2026-09-04; the proposal's 99.99 % is the design target the HA topology was sized against, not a commitment) | §Availability | 8–9 | HA plan + `cmd/stellarindex-sla-probe` | [ADR-0008](../adr/0008-ha-topology.md) | (HA plan) | ⚠ caveat — synthetic 2xx-success-rate gate shipped (#283 + #290 + #294); the 99.9 % target needs ≥ 30 days of off-host measurement to verify operationally. The probe surfaces the signal; the HA topology is what backs the number. | 3 | ⚠ 2026-05-10 — single-region today (R1 only); 99.99% needs ≥30 days × multi-region. R2/R3 not bootstrapped yet (L4.14/L4.15 🔴); 2026-09-04 (#487): the figure in force is the published 99.9 %, which needs ≥ 30 days of off-host measurement to verify operationally. |
 | S9.2 | p95 ≤ 200 ms, p99 ≤ 500 ms | §Latency Targets | 9 | `internal/api` + Redis caching + `cmd/stellarindex-sla-probe` | [ADR-0009](../adr/0009-latency-budget.md) | (API design + HA plan) | ✅ verified — synthetic measurement shipped via the SLA probe (#283); the SLA targets baked into `default*Target` constants; alerts page on sustained breach. | 4 | ✅ 2026-06-12 probe — warm-path p95 well under target: client keep-alive p95=124 ms, server-side `/v1/status` p95=86 ms (was 246 ms). Cold-TLS per-request curl shows 475 ms; k6 is the load-test evidence and should confirm p99 ≤500 ms under steady load. |
 | S9.3 | 1000 req/min per client | §Rate Limits | 7 | `internal/ratelimit` + `internal/api/v1/middleware/ratelimit.go` | — | Authenticated tier wired to `api.key_rate_limit_per_min` per F-0008 fix; anon + key buckets are now distinct. | ✅ verified | 4 | ✅ 2026-06-12 probe — anonymous tier now returns `x-ratelimit-limit: 6000`/min (was 60); exceeds the "≥ 1000 req/min per client" target without a key. |
 | S9.4 | Defined degradation when prices unavailable | §Degradation Strategy + divergence | 5 | `internal/divergence/{coingecko,chainlink}.go` + `internal/api/v1/envelope.go` | — | Divergence service wires CoinGecko (free tier, default-on) + Chainlink (Enabled=true + non-empty FeedMap) per `cmd/stellarindex-api/main.go::buildDivergenceReferences`; `flags.divergence_warning` surfaces on /v1/price when any reference's tolerance is exceeded. CoinMarketCap + CryptoCompare remain external-source class registries (price contributors), not divergence references — separate role. | ✅ verified | 4 | ✅ 2026-05-10 — `flags.divergence_warning=false` on every observed response; flag surfaces correctly in JSON shape (no synthetic divergence event observed during review window) |
@@ -467,6 +467,9 @@ For each claim below we state the **requirement**, what we
 ### Claim 6 — "p95 ≤ 200 ms, p99 ≤ 500 ms, ≥ 99.99% uptime"
 
 - **Requirement:** §Performance SLAs.
+- **Figure (2026-09-04, #487):** the proposal's 99.99 % is not the
+  published commitment — stellarindex.io/sla commits ≥ 99.9 % and the
+  burn-rate alerts budget against that figure; see S9.1.
 - **Verified**: nothing empirically. The pattern (precomputed
   aggregates in Redis + CDN-cacheable historical) is industry-
   standard but our capacity, cache-hit-rate, and cold-cache latency
@@ -508,7 +511,7 @@ For each claim below we state the **requirement**, what we
 
 **Operator decision 2026-04-28: every outstanding item is
 launch-blocking.** No "soft gap" / "post-launch" deferrals
-beyond items explicitly marked ⏳ (DIA mainnet, 99.99% production
+beyond items explicitly marked ⏳ (DIA mainnet, 99.9 % production
 measurement, Phase 3 cross-oracle).
 
 Ranked by remaining work, not blast radius. See
@@ -622,7 +625,7 @@ now in *Closed since Phase 1* above.
 
 1. **S2.5 DIA mainnet ship** — testnet only today; integration
    conditional on DIA's mainnet launch.
-2. **S9.1 99.99 % uptime measurement** — needs ≥30 days production
+2. **S9.1 99.9 % availability measurement** — needs ≥30 days production
    to measure. Architecture credible at launch; number reported
    90 days post-launch.
 3. **X3.5 Phase 3 cross-oracle factor** — depends on
