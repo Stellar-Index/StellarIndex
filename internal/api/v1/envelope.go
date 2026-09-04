@@ -90,12 +90,22 @@ type Flags struct {
 	// each looking it up by BASE across every canonical spelling of the
 	// asset (lookupDivergenceFlag). On every other envelope that carries
 	// Flags the field is false and means "not consulted on this
-	// surface", never "checked and clean": /v1/price/batch, /v1/twap,
-	// the SEP-40 passthroughs, /v1/observations and its stream all
-	// serve values the looker is never asked about. The observations
-	// pair is the deliberate case — raw per-source rows carry no
-	// aggregated value for a base-level verdict to vouch for (see
-	// handleObservations).
+	// surface", never "checked and clean": /v1/price/at,
+	// /v1/price/batch, /v1/twap, the SEP-40 passthroughs,
+	// /v1/observations and its stream all serve values the looker is
+	// never asked about. /v1/price/at is the point-in-time read and
+	// answers about a past bucket, which the verdict — a claim about the
+	// CURRENT cross-reference state — does not speak to. The
+	// observations pair is the deliberate case — raw per-source rows
+	// carry no aggregated value for a base-level verdict to vouch for
+	// (see handleObservations).
+	//
+	// On /v1/price/tip/stream the lookup additionally carries its own
+	// short budget ([tipStreamDivergenceBudget]): a verdict store too
+	// slow to answer inside it leaves the field false on that event
+	// rather than holding the emission back, so a false there can also
+	// mean "the check did not answer in time". The stream degrades the
+	// flag, never the cadence.
 	DivergenceChecked bool `json:"divergence_checked"`
 	// OutsideCoverage marks an empty answer whose requested range ends
 	// at or before the envelope's `coverage_from` — the window predates

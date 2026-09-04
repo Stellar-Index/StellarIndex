@@ -239,8 +239,9 @@ func (s *Server) runSharedTipProducer(ctx context.Context, key tipProducerKey, a
 	defer s.recoverStreamProducer("price_tip_shared")
 	var gen streaming.Generator
 	emit := func() {
-		// One budget covers the compute and the event's divergence
-		// lookup, like the per-connection producer's tick.
+		// This budget covers the compute; the event's divergence lookup
+		// takes its own shorter one inside it, like the per-connection
+		// producer's tick.
 		tickCtx, cancel := context.WithTimeout(ctx, tipStreamTickTimeout)
 		defer cancel()
 		snap, sources, err := s.computeTip(tickCtx, asset, quote, window)

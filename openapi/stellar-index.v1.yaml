@@ -11741,11 +11741,19 @@ components:
             `/v1/vwap` — looked up by BASE across every canonical spelling of
             the asset. On every other envelope that carries `flags` the field
             is `false` and means "not consulted on this surface", never
-            "checked and clean": `/v1/price/batch`, `/v1/twap`, the SEP-40
-            passthroughs, `/v1/observations` and `/v1/observations/stream`
-            never ask, so `divergence_warning` is not meaningful there. The
+            "checked and clean": `/v1/price/at`, `/v1/price/batch`,
+            `/v1/twap`, the SEP-40 passthroughs, `/v1/observations` and
+            `/v1/observations/stream` never ask, so `divergence_warning` is
+            not meaningful there. `/v1/price/at` is the point-in-time read
+            and answers about a past bucket, which the verdict — a claim
+            about the CURRENT cross-reference state — does not speak to. The
             observations pair is the deliberate case: raw per-source trades
             carry no aggregated value for a base-level verdict to vouch for.
+            On `/v1/price/tip/stream` the lookup carries its own short budget
+            (1s) inside the tick: a verdict store too slow to answer within it
+            leaves the field `false` on that event rather than delaying the
+            emission, so a `false` there can also mean "the check did not
+            answer in time". The stream degrades the flag, never the cadence.
         frozen:                      { type: boolean, default: false }
         single_source:               { type: boolean, default: false }
         diverged:
