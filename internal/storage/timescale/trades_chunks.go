@@ -245,11 +245,13 @@ type TradeChunkRestampResult struct {
 
 // ChunkRestampStep names the two statements in the bracket that can
 // outlive the process issuing them: a 160 GB decompress or re-compress
-// runs for longer than the 90 s between run-heavy-job.sh's SIGTERM and
-// its SIGKILL, and a dropped connection aborts the statement with the
-// chunk in whatever state it was in. The bracket announces each through
-// the caller's `before` hook so a trace exists BEFORE the statement is
-// issued.
+// is what run-heavy-job.sh's TimeoutStopSec is sized for (the restamp's
+// launch line exports HEAVY_JOB_STOP_TIMEOUT=2h; the wrapper's own
+// default is 5min, and a host that has not had the heavy-job-wrapper
+// tag applied is still on systemd's 90 s), and a dropped connection
+// aborts the statement with the chunk in whatever state it was in. The
+// bracket announces each through the caller's `before` hook so a trace
+// exists BEFORE the statement is issued.
 type ChunkRestampStep int
 
 const (

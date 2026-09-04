@@ -373,6 +373,13 @@
   #      scope with a hard memory budget + batch-class CPU/IO so a
   #      ballooning job gets killed before it can starve galexie/CH/PG
   #      (the 2026-07-05 lesson).
+  #   3. Bounds the STOP: the scope carries TimeoutStopSec (5min by
+  #      default, HEAVY_JOB_STOP_TIMEOUT to override, validated) so
+  #      `systemctl stop` gives a job's SIGTERM cleanup time to finish
+  #      instead of taking systemd's 90 s default and SIGKILLing through
+  #      it. The one payload whose cleanup runs for hours — a
+  #      usd-volume-restamp -chunks re-compress — sets the longer value
+  #      on its own launch line.
   # Usage: run-heavy-job.sh <name> <command...>
   ansible.builtin.copy:
     dest: /usr/local/sbin/run-heavy-job.sh
@@ -530,10 +537,98 @@
       WATCHDOG=$!
       trap 'kill "$WATCHDOG" 2>/dev/null || true' EXIT
 
+      # ── Stop bound (2026-09-04) ──────────────────────────────────
+      # `systemctl stop <unit>.scope` — what stop_job above runs, and
+      # what an operator runs to end a job by hand — SIGTERMs every
+      # process in the scope, then SIGKILLs when TimeoutStopSec expires.
+      # A transient scope with no TimeoutStopSec inherits systemd's 90 s
+      # default, which is shorter than the cleanup some jobs do on
+      # SIGTERM. `usd-volume-restamp -chunks` (#372) brackets each chunk
+      # decompress → restamp → compress_chunk, and runs the re-compress
+      # on a context that survives cancellation precisely so a SIGTERM
+      # puts the chunk back; the largest trades chunk in that window is
+      # 160 GB uncompressed (r1 sizing 2026-09-03: 90 chunks, 379 GB
+      # uncompressed / 25 GB compressed). At 90 s the SIGKILL lands
+      # mid-compress_chunk: the server aborts it, the chunk stays
+      # DECOMPRESSED and the compression policy stays PAUSED until an
+      # operator runs the repair the tool prints.
+      #
+      # The DEFAULT is deliberately short. Almost every payload this
+      # wrapper starts installs no signal handler at all and is gone the
+      # instant SIGTERM lands; the handful that do handle it run their
+      # cleanup on an already-cancelled context and finish in seconds.
+      # Only the restamp's re-compress can run for hours, so it names
+      # its own bound on its launch line
+      # (docs/operations/usd-volume-rederive-2026-08.md Step 6, chunk
+      # mode: HEAVY_JOB_STOP_TIMEOUT=2h) rather than every other job
+      # inheriting a multi-hour stop it will never use. 5min is well
+      # above the 90 s it replaces — nothing that used to finish inside
+      # systemd's default is slowed — and short enough that the disk
+      # watchdog's own escalation stays quick for the other payloads.
+      #
+      # 2h, where the restamp asks for it, is a BUDGET not a
+      # measurement: the largest chunk (160 GB) at ~22 MB/s of
+      # uncompressed input. No compress_chunk rate has been measured on
+      # r1 — the tool prints per-chunk seconds and bytes, so the first
+      # -chunks run should record the largest chunk's re-compress and
+      # that launch value be tightened to it.
+      #
+      # What the bound costs while it is in force: the disk watchdog
+      # above takes up to this long to escalate its own stop, and
+      # because stop_job runs `systemctl stop` SYNCHRONOUSLY its
+      # `|| systemctl kill` fallback cannot fire during the wait. That
+      # is affordable at the one place a long value is used — the
+      # cleanup it waits on is a compress_chunk, which writes the
+      # compressed copy (~1/15 of the chunk at the window's ratio)
+      # beside the heap and then truncates it, so it PEAKS well inside
+      # the 300 GiB the pool guard preserves and ends by FREEING space.
+      # SIGTERM is still delivered immediately, so a job that exits on
+      # it promptly is not slowed: the bound only decides how long a job
+      # still cleaning up may take.
+      #
+      # A scope keeps the properties it was created with, so a job
+      # already running when this file is re-rendered stays on the bound
+      # it started with until it is relaunched.
+      STOP_TIMEOUT="${HEAVY_JOB_STOP_TIMEOUT:-5min}"
+
+      # Validate the override BEFORE the scope exists. systemd would
+      # accept far more than it should here: under systemd.time a BARE
+      # INTEGER is SECONDS, so an operator meaning two hours who writes
+      # HEAVY_JOB_STOP_TIMEOUT=2 gets a TWO-SECOND grace — systemd takes
+      # it happily, and the job is then killed harder than it would have
+      # been with no setting at all. Accept only the forms below, and
+      # refuse anything under 90 s, which is the systemd default this
+      # bound replaces: a value beneath it can only make a stop more
+      # violent than doing nothing, so it is always a mistake.
+      STOP_MULT=1
+      STOP_NUM="$STOP_TIMEOUT"
+      case "$STOP_TIMEOUT" in
+        infinity) STOP_MULT=0 ;;
+        *min)     STOP_MULT=60;   STOP_NUM="${STOP_TIMEOUT%min}" ;;
+        *h)       STOP_MULT=3600; STOP_NUM="${STOP_TIMEOUT%h}" ;;
+        *s)       STOP_MULT=1;    STOP_NUM="${STOP_TIMEOUT%s}" ;;
+      esac
+      if [ "$STOP_MULT" -ne 0 ]; then
+        case "$STOP_NUM" in
+          ''|*[!0-9]*)
+            echo "run-heavy-job: refusing to start ${NAME}: HEAVY_JOB_STOP_TIMEOUT='${STOP_TIMEOUT}' is not a form this wrapper accepts. Use a bare integer (SECONDS, per systemd.time), or Ns / Nmin / Nh, or 'infinity'. A value systemd parses differently from what you meant becomes the scope's stop bound with nothing to say so." >&2
+            exit 2 ;;
+        esac
+        STOP_SECS=$((10#$STOP_NUM * STOP_MULT))
+        if [ "$STOP_SECS" -lt 90 ]; then
+          echo "run-heavy-job: refusing to start ${NAME}: HEAVY_JOB_STOP_TIMEOUT='${STOP_TIMEOUT}' is ${STOP_SECS} SECONDS, below the 90 s floor (systemd's own TimeoutStopSec default, the bound this wrapper replaces). A bare integer is seconds under systemd.time — '2' is two seconds, not two hours; write '2h'. Below the floor a stop would SIGKILL sooner than setting nothing at all." >&2
+          exit 2
+        fi
+        echo "run-heavy-job: ${NAME} stop bound: TimeoutStopSec=${STOP_TIMEOUT} (${STOP_SECS}s before a systemctl stop escalates to SIGKILL)" >&2
+      else
+        echo "run-heavy-job: ${NAME} stop bound: TimeoutStopSec=infinity — a systemctl stop will NEVER escalate to SIGKILL, including the disk watchdog's" >&2
+      fi
+
       rc=0
       systemd-run --scope --unit "$UNIT" \
         -p MemoryMax=20G -p MemorySwapMax=0 \
         -p CPUWeight=50 -p IOWeight=50 \
+        -p "TimeoutStopSec=${STOP_TIMEOUT}" \
         "$@" || rc=$?
       exit "$rc"
   # Own tag (merged with the import's stellarindex/indexer tags) so the
