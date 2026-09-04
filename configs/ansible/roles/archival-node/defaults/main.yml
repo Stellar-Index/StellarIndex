@@ -1269,3 +1269,27 @@ zfs_snapshot_on_calendar: "*-*-* 01:45:00 UTC"
 # roughly linearly; PITR window = the diff/WAL retention.
 pgbackrest_repo2_retention_full: 1
 pgbackrest_repo2_retention_diff: 7
+
+# Off-site restore-drill (repo2) — restore-drill-offsite.{service,timer}
+# in 18-pgbackrest-backup.yml. Gated on the same fact that renders the
+# repo2 block into pgbackrest.conf: the drill restores FROM repo2, so a
+# host with no repo2 gets no timer — a timer that can only ever refuse
+# reads as coverage on a unit list, and the role removes it where this
+# resolves false. pgbackrest_backup_enabled gates the on-box drill, so it
+# gates this one too.
+#
+# WHAT IT COSTS, per monthly run, measured on the 2026-09-03 drill at the
+# then-current database size:
+#   - ~$24 of S3 egress (~269 GB pulled out of repo2), i.e. ~$24/month,
+#     and it scales with the database;
+#   - ~47 min of restore load on the SHARED ZFS pool the live Postgres
+#     and ClickHouse run on (plus WAL replay and the archive drain on
+#     top), at Nice=15 / best-effort I/O.
+# That is the price of a current proof that the only copy surviving loss
+# of this host actually restores. SET THIS TO false TO DISABLE the
+# off-site drill: the role then stops, disables and REMOVES the units on
+# the next apply (the remove block below the install block), and
+# stellarindex_restore_drill_offsite_stale will ticket from 35 days
+# later — which is the point, so decide whether to keep paying rather
+# than silencing the alert.
+restore_drill_offsite_enabled: "{{ (pgbackrest_backup_enabled | default(true) | bool) and (pgbackrest_repo2_s3_bucket | default('') != '') }}"

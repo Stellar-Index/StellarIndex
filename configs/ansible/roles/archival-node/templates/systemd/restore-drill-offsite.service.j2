@@ -1,0 +1,95 @@
+# systemd unit: OFF-SITE pgBackRest restore-drill — repo2 (ADR-0043 / CS-110).
+#
+# Rendered by Ansible. Runs scripts/ops/restore-drill.sh with DRILL_REPO=2:
+# the same NON-DESTRUCTIVE scratch restore restore-drill.service performs
+# for the local repo1, pulled instead from repo2 — the encrypted S3 copy
+# that is the only backup to survive loss of this host or its pool. A
+# green repo1 drill says nothing about repo2: it reads the same disks the
+# live database is on.
+#
+# Cost and RTO, measured on the first and (before this unit) only off-site
+# drill, 2026-09-03: restore 2813 s, ~269 GB pulled from S3 for ~$24 of
+# egress, tip lag 17 ledgers, hash-chain breaks 0, trades window match
+# 2,726,303 = 2,726,303, failures 0 — an off-site RTO of ~47 min against
+# ~9 min from repo1. Monthly, that is ~$24/month of egress bought for a
+# current proof that the survival copy restores; the price is in the
+# Description below so `systemctl list-timers` says it.
+#
+# The CH re-derive stage (DRILL_CH_WINDOW) is deliberately NOT set here:
+# it reads the on-box galexie-archive, not repo2, and the repo1 drill
+# already measures the lake RTO monthly. Running it twice would buy hours
+# of fetch+decode for no new fact about the off-site copy.
+#
+# Scheduling: restore-drill-offsite.timer, the 15th of the month, 04:00
+# UTC + up to 30 min jitter — never the same day as the repo1 drill (first
+# Saturday), so the two never share the drill volume. The script also
+# holds a non-blocking lock, so a hand-run beside either timer is refused
+# rather than started on the same scratch port.
+
+[Unit]
+Description=Stellar Index — OFF-SITE pgBackRest restore-drill, repo2/S3 (~47 min RTO, ~$24 egress per run; ADR-0043 / CS-110)
+Documentation=https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/restore-drill-offsite-stale.md
+After=postgresql.service network-online.target
+Wants=postgresql.service network-online.target
+# Ordering only — no dependency, so this still runs if the repo1 drill is
+# absent or fails. Both timers carry Persistent=true, so a host down over
+# the 1st–7th AND the 15th queues BOTH catch-up runs in the same boot
+# transaction; without this they start together, one loses the script's
+# non-blocking lock, exits 2 (a refusal), and its oneshot sits in `failed`
+# — which stellarindex_systemd_unit_failed tickets after 15 min and which
+# stays until someone runs `systemctl reset-failed`. Ordered, they run one
+# after the other and both produce a verdict. A lock refusal is still
+# possible against a HAND-run drill, which no ordering covers; see
+# runbooks/restore-drill-offsite-stale.md.
+After=restore-drill.service
+
+# Restart-storm limit — matches the stellarindex-*.service.j2 pattern
+# (systemd >=230 ignores StartLimit* under [Service]).
+StartLimitIntervalSec=1h
+StartLimitBurst=3
+
+[Service]
+Type=oneshot
+EnvironmentFile=-/etc/default/stellarindex-ops
+# The one line that makes this the off-site drill. The script validates it
+# (a repo number is a metric label and part of a file name) and writes the
+# run's verdict to restore_drill_repo2.prom with repo="2" on every series
+# — the series stellarindex_restore_drill_offsite_stale reads.
+Environment=DRILL_REPO=2
+ExecStart=/usr/local/bin/restore-drill.sh
+# The script itself requires root (drops to postgres via sudo -u for
+# the actual pg/pgbackrest operations) — see its own EUID check.
+User=root
+
+# BDR-03: the drill's deliverable is DR EVIDENCE, and journald rotates.
+# Persist the run log off journald, in its own file so a repo2 diagnosis
+# (S3 credentials, endpoint, cipher) is not interleaved with repo1's.
+StandardOutput=append:/var/log/restore-drill-offsite.log
+StandardError=append:/var/log/restore-drill-offsite.log
+
+# Keep drill I/O off the critical path of live ingest.
+Nice=15
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
+
+# ~47 min measured for the restore alone; WAL replay and the archive
+# drain come on top, as for repo1. Same 4h ceiling so a wedged S3 pull
+# still fails and frees the next tick instead of running forever.
+TimeoutStartSec=4h
+RuntimeMaxSec=4h
+
+# Hardening — identical to restore-drill.service.j2, for the same reasons
+# recorded there (BDR-04): ProtectSystem=full leaves /var, /srv and /run
+# writable for the scratch datadir, the evidence log, the textfile metric,
+# the run log and the lock; no ReadWritePaths, because a listed path that
+# does not pre-exist fails namespace setup before ExecStart; PrivateTmp
+# is why the drill root is not under /var/tmp; NoNewPrivileges is NOT set
+# because the script drops privilege with sudo -u postgres.
+PrivateTmp=true
+ProtectSystem=full
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+
+[Install]
+WantedBy=multi-user.target

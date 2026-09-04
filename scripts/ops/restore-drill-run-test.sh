@@ -19,13 +19,30 @@
 #     the backup had just been proven restorable. Every run past the
 #     preconditions now records evidence + rewrites the metric.
 #
+#  3. (2026-09-04, restore-drill-offsite.timer) Two timers now drive the
+#     script — repo1 and repo2 — and each run rewrote ONE textfile whole,
+#     so a clean repo2 run erased a failed repo1 verdict and no series
+#     said which copy it proved. The metric is now per-repo (one file per
+#     repo, a `repo` label on every series); case 4 drives a repo2 abort
+#     and checks repo1's file is untouched.
+#
+#  4. (2026-09-04) The one-drill-at-a-time lock was entirely untested —
+#     the `flock` shim returned 0 unconditionally — and `exec 9>$LOCK`
+#     under `set -e` exited 1, this script's code for ONE FAILED CHECK,
+#     so an unwritable lock path would have been recorded as the backup
+#     failing a check. Cases 6 and 7 drive a HELD lock and an UNOPENABLE
+#     lock file; case 8 drives a postgres left on the scratch port by a
+#     killed run, which no lock covers because the lock dies with the
+#     shell that held it.
+#
 # Nothing else can see these: restore-drill-test.sh is static, and the
 # script needs root + pgbackrest + a Postgres to run for real. So this
-# test puts fake `id`, `sudo`, `df`, `chown`, `pgbackrest`, `psql` and a
-# fake $PG_BIN on PATH and runs the actual script end to end until the
-# staged failure. Only the seams the drill already exposes as env
-# overrides are used (DRILL_ROOT, RESTORE_DRILL_LOG_DIR, TEXTFILE_DIR,
-# PG_BIN); nothing in the script is test-only.
+# test puts fake `id`, `sudo`, `df`, `chown`, `pgbackrest`, `psql`,
+# `flock` and a fake $PG_BIN on PATH and runs the actual script end to
+# end until the staged failure. Only the seams the drill already exposes
+# as env overrides are used (DRILL_ROOT, DRILL_LOCK, DRILL_REPO,
+# RESTORE_DRILL_LOG_DIR, TEXTFILE_DIR, PG_BIN); nothing in the script is
+# test-only.
 #
 # Run: bash scripts/ops/restore-drill-run-test.sh
 set -uo pipefail
@@ -86,6 +103,20 @@ cat > "$shims/psql" <<'SH'
 #!/usr/bin/env bash
 exit 0
 SH
+# util-linux flock is absent on macOS, so the lock needs a shim — and an
+# unconditional `exit 0` would leave the lock entirely untested, which is
+# how its refusal path stayed unexercised. FLOCK_RESULT drives it: 0 (the
+# default) is "this run took the lock", 1 is "another drill holds it".
+cat > "$shims/flock" <<'SH'
+#!/usr/bin/env bash
+exit "${FLOCK_RESULT:-0}"
+SH
+# The scratch-port pre-flight probes $PG_BIN/pg_isready. 2 = no response,
+# i.e. the port is free, which is what every other case wants.
+cat > "$pgbin/pg_isready" <<'SH'
+#!/usr/bin/env bash
+exit "${FAKE_PG_ISREADY_RC:-2}"
+SH
 cat > "$pgbin/postgres" <<'SH'
 #!/usr/bin/env bash
 exit 0
@@ -101,21 +132,26 @@ chmod +x "$shims"/* "$pgbin"/*
 
 # run_drill <case-dir>: runs the drill with the shims; stdout+stderr in
 # $case/out, exit code in $case/rc. Callers set FAKE_* first.
+# WAL_DRAIN_TIMEOUT=0: no staged case is meant to reach the verification
+# phase, but a regression that lets one through (a precondition that
+# stops refusing) must then FAIL its assertion in seconds, not sit in the
+# archive-drain loop for its default hour against a psql shim that never
+# answers.
 run_drill() {
   local d="$1"
   mkdir -p "$d/root" "$d/log" "$d/textfile"
   PATH="$shims:$PATH" PG_BIN="$pgbin" \
-    DRILL_ROOT="$d/root" RESTORE_DRILL_LOG_DIR="$d/log" TEXTFILE_DIR="$d/textfile" \
-    DRILL_CH_WINDOW='' STELLARINDEX_POSTGRES_DSN='' \
+    DRILL_ROOT="$d/root" DRILL_LOCK="${FAKE_DRILL_LOCK:-$d/lock}" RESTORE_DRILL_LOG_DIR="$d/log" TEXTFILE_DIR="$d/textfile" \
+    DRILL_CH_WINDOW='' STELLARINDEX_POSTGRES_DSN='' WAL_DRAIN_TIMEOUT=0 \
     bash "$DRILL" >"$d/out" 2>&1
   echo $? > "$d/rc"
 }
 
-# seed_stale_pass <case-dir>: the previous month's PASS, as node_exporter
-# would still be serving it.
+# seed_stale_pass <case-dir>: the previous month's repo1 PASS, as
+# node_exporter would still be serving it.
 seed_stale_pass() {
   mkdir -p "$1/textfile"
-  printf 'stellarindex_restore_drill_last_success_unix 1000\nstellarindex_restore_drill_failures 0\n' \
+  printf 'stellarindex_restore_drill_last_success_unix{repo="1"} 1000\nstellarindex_restore_drill_failures{repo="1"} 0\n' \
     > "$1/textfile/restore_drill.prom"
 }
 
@@ -172,9 +208,9 @@ else
 $(cat "$c/log/restore-drills.md" 2>/dev/null || echo '<no file>')"
 fi
 prom="$c/textfile/restore_drill.prom"
-if grep -q "^stellarindex_restore_drill_failures 1$" "$prom" \
+if grep -q '^stellarindex_restore_drill_failures{repo="1"} 1$' "$prom" \
      && ! grep -q "^stellarindex_restore_drill_last_success_unix" "$prom"; then
-  ok "restore failure rewrites the textfile: failures=1, NO last_success"
+  ok "restore failure rewrites the textfile: failures{repo=\"1\"}=1, NO last_success"
 else
   bad "restore failure left the previous PASS being scraped:
 $(cat "$prom")"
@@ -202,9 +238,9 @@ else
   bad "pg_start failure left NO evidence entry"
 fi
 prom="$c/textfile/restore_drill.prom"
-if grep -q "^stellarindex_restore_drill_failures 1$" "$prom" \
+if grep -q '^stellarindex_restore_drill_failures{repo="1"} 1$' "$prom" \
      && ! grep -q "^stellarindex_restore_drill_last_success_unix" "$prom"; then
-  ok "pg_start failure rewrites the textfile: failures=1, NO last_success"
+  ok "pg_start failure rewrites the textfile: failures{repo=\"1\"}=1, NO last_success"
 else
   bad "pg_start failure left the previous PASS being scraped:
 $(cat "$prom")"
@@ -213,6 +249,122 @@ if ls -d "$c/root"/pgdata-* >/dev/null 2>&1; then
   ok "a post-restore failure keeps the datadir (it is the evidence)"
 else
   bad "a post-restore failure removed the datadir that would have been the diagnostic"
+fi
+
+# ─── 4. a repo2 drill records under its own file + label ───────────
+# The off-site timer runs this same script with DRILL_REPO=2. Its verdict
+# must land in restore_drill_repo2.prom with repo="2" on every series, and
+# repo1's file — last month's PASS — must be exactly as it was: a shared
+# file would have been rewritten without the repo1 series, which is how a
+# failed repo1 drill could read as clean after a clean repo2 drill.
+c="$work/c4"; mkdir -p "$c"; seed_stale_pass "$c"
+DRILL_REPO=2 FAKE_DF_AVAIL_G=5000 FAKE_BACKUP_BYTES=$((300 * 1073741824)) FAKE_RESTORE_RC=1 run_drill "$c"
+rc="$(cat "$c/rc")"
+if [[ "$rc" == "1" ]]; then
+  ok "repo2 restore failure exits with the failure count (1)"
+else
+  bad "repo2 restore failure: expected exit 1, got $rc: $(tail -n 3 "$c/out")"
+fi
+prom2="$c/textfile/restore_drill_repo2.prom"
+if [[ -f "$prom2" ]] && grep -q '^stellarindex_restore_drill_failures{repo="2"} 1$' "$prom2" \
+     && ! grep -q "^stellarindex_restore_drill_last_success_unix" "$prom2"; then
+  ok "a repo2 run writes restore_drill_repo2.prom: failures{repo=\"2\"}=1, NO last_success"
+else
+  bad "a repo2 run did not write its own labelled textfile:
+$(cat "$prom2" 2>/dev/null || echo '<no file>')"
+fi
+if grep -q '^stellarindex_restore_drill_last_success_unix{repo="1"} 1000$' "$c/textfile/restore_drill.prom" \
+     && grep -q '^stellarindex_restore_drill_failures{repo="1"} 0$' "$c/textfile/restore_drill.prom"; then
+  ok "a repo2 run leaves repo1's textfile (last month's PASS) untouched"
+else
+  bad "a repo2 run rewrote repo1's textfile — the verdicts are no longer independent:
+$(cat "$c/textfile/restore_drill.prom")"
+fi
+if grep -q "restore drill (repo2)" "$c/log/restore-drills.md" 2>/dev/null; then
+  ok "a repo2 run's evidence entry names the repo"
+else
+  bad "a repo2 run's evidence entry does not name repo2"
+fi
+
+# A repo number that is not one: a label value and a file name are built
+# from it, so the drill must refuse before touching anything.
+c="$work/c5"; mkdir -p "$c"
+DRILL_REPO='2; rm -rf /' FAKE_DF_AVAIL_G=5000 FAKE_BACKUP_BYTES=$((300 * 1073741824)) run_drill "$c"
+if [[ "$(cat "$c/rc")" == "2" ]] && grep -q "DRILL_REPO must be" "$c/out" \
+     && [[ ! -e "$c/log/restore-drills.md" ]] && [[ -z "$(ls -A "$c/textfile" 2>/dev/null)" ]]; then
+  ok "a non-numeric DRILL_REPO is a precondition refusal (exit 2, nothing written)"
+else
+  bad "a non-numeric DRILL_REPO was not refused cleanly: exit $(cat "$c/rc"): $(tail -n 3 "$c/out")"
+fi
+
+# ─── 6. a HELD lock is a refusal, not a failed check ────────────────
+# Two timers drive this script and a hand-run can land beside either; two
+# drills would start their scratch instances on the same port and each
+# would size its capacity check against free space the other is about to
+# take. A held lock is a REFUSAL — exit 2, nothing written — never a
+# counted failure: "another drill is running" is not a fact about the
+# backup. The capacity numbers here would sail through, so only the lock
+# can refuse.
+c="$work/c6"; mkdir -p "$c"; seed_stale_pass "$c"
+FLOCK_RESULT=1 FAKE_DF_AVAIL_G=5000 FAKE_BACKUP_BYTES=$((300 * 1073741824)) FAKE_RESTORE_RC=0 run_drill "$c"
+rc="$(cat "$c/rc")"
+if [[ "$rc" == "2" ]] && grep -q "another restore drill holds" "$c/out"; then
+  ok "a held lock is a precondition refusal (exit 2), not a counted failure"
+else
+  bad "a held lock: expected exit 2 + 'another restore drill holds', got exit $rc:
+$(tail -n 5 "$c/out")"
+fi
+if [[ ! -e "$c/log/restore-drills.md" ]] \
+     && grep -q '^stellarindex_restore_drill_last_success_unix{repo="1"} 1000$' "$c/textfile/restore_drill.prom" \
+     && [[ -z "$(ls -A "$c/root" 2>/dev/null)" ]]; then
+  ok "a lock refusal writes no evidence, rewrites no metric and creates no datadir"
+else
+  bad "a lock refusal touched the evidence log, the previous run's metric or DRILL_ROOT:
+$(cat "$c/textfile/restore_drill.prom" 2>/dev/null)"
+fi
+
+# ─── 7. the lock file cannot be OPENED ──────────────────────────────
+# Read-only mount, a directory in the way, a namespace that does not
+# expose /run/lock. Under `set -e` a bare `exec 9>` exits 1 — this
+# script's code for ONE FAILED CHECK — so an unwritable lock path would
+# have been read as "the drill ran and the backup failed a check". It is
+# a refusal like every other: exit 2, nothing written.
+c="$work/c7"; mkdir -p "$c"
+FAKE_DRILL_LOCK="$c/no-such-dir/lock" FAKE_DF_AVAIL_G=5000 FAKE_BACKUP_BYTES=$((300 * 1073741824)) run_drill "$c"
+rc="$(cat "$c/rc")"
+if [[ "$rc" == "2" ]] && grep -q "could not open the lock file" "$c/out"; then
+  ok "an unopenable lock file is a precondition refusal (exit 2), not a failed check (exit 1)"
+else
+  bad "an unopenable lock file: expected exit 2 + 'could not open the lock file', got exit $rc:
+$(tail -n 5 "$c/out")"
+fi
+if [[ ! -e "$c/log/restore-drills.md" ]] && [[ -z "$(ls -A "$c/textfile" 2>/dev/null)" ]]; then
+  ok "an unopenable lock file writes neither evidence nor metric"
+else
+  bad "an unopenable lock file wrote evidence/metric — refusals must not share the drill's signal"
+fi
+
+# ─── 8. the scratch port, which the lock does not cover ─────────────
+# A run killed after pg_start leaves a daemonised postgres on
+# DRILL_PG_PORT and takes its lock down with it, so the next drill takes
+# the lock cleanly and would restore several hundred GB before failing at
+# pg_start on "address already in use" — counted as a verification
+# failure of the backup. The pre-flight refuses first: exit 2, before the
+# capacity check and the restore.
+c="$work/c8"; mkdir -p "$c"; seed_stale_pass "$c"
+FAKE_PG_ISREADY_RC=0 FAKE_DF_AVAIL_G=5000 FAKE_BACKUP_BYTES=$((300 * 1073741824)) FAKE_RESTORE_RC=0 run_drill "$c"
+rc="$(cat "$c/rc")"
+if [[ "$rc" == "2" ]] && grep -q "already answers on 5499" "$c/out"; then
+  ok "a postgres left on the scratch port is a precondition refusal (exit 2) before the restore"
+else
+  bad "an orphaned scratch instance: expected exit 2 + 'already answers on 5499', got exit $rc:
+$(tail -n 5 "$c/out")"
+fi
+if [[ -z "$(ls -A "$c/root" 2>/dev/null)" ]] && [[ ! -e "$c/log/restore-drills.md" ]] \
+     && grep -q '^stellarindex_restore_drill_last_success_unix{repo="1"} 1000$' "$c/textfile/restore_drill.prom"; then
+  ok "the port refusal restores nothing and leaves the previous verdict alone"
+else
+  bad "the port refusal ran past the pre-flight: $(ls "$c/root" 2>/dev/null)"
 fi
 
 echo "restore-drill-run-test: $pass passed, $fail failed"

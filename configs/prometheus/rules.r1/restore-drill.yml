@@ -1,35 +1,64 @@
 ---
-# Restore-drill evidence-staleness alert (BDR-03, audit-2026-08-14).
+# Restore-drill evidence-staleness alerts (BDR-03, audit-2026-08-14;
+# off-site drill 2026-09-04).
 #
-# Pairs with scripts/ops/restore-drill.sh + the MONTHLY systemd timer
-# (configs/ansible/.../systemd/restore-drill.timer.j2, first Saturday
-# 04:00 UTC). The drill is a NON-DESTRUCTIVE scratch restore of the
-# pgBackRest stanza (ADR-0043 §3 / CS-110: "a backup that has never been
-# restored is a hope, not a backup").
+# Pairs with scripts/ops/restore-drill.sh + TWO monthly systemd timers
+# (configs/ansible/.../systemd/restore-drill*.timer.j2):
+#   restore-drill.timer          repo1, the local pgBackRest repo — first
+#                                Saturday 04:00 UTC;
+#   restore-drill-offsite.timer  repo2, the encrypted S3 copy that survives
+#                                host or pool loss — the 15th, 04:00 UTC.
+# The drill is a NON-DESTRUCTIVE scratch restore of the pgBackRest stanza
+# (ADR-0043 §3 / CS-110: "a backup that has never been restored is a
+# hope, not a backup").
 #
-# Scrape source: node_exporter's textfile_collector reads
-# `/var/lib/node_exporter/textfile_collector/restore_drill.prom`, which
-# the script writes atomically at the end of a run. It stamps
-# `stellarindex_restore_drill_last_success_unix` ONLY on a fully clean
-# run (zero failed checks AND the evidence log was written), mirroring
+# Scrape source: node_exporter's textfile_collector reads one file per
+# repo under `/var/lib/node_exporter/textfile_collector/` —
+# `restore_drill.prom` (repo1) and `restore_drill_repo2.prom` (repo2) —
+# which the script writes atomically at the end of a run, every series
+# carrying a `repo` label. It stamps
+# `stellarindex_restore_drill_last_success_unix` ONLY on a fully clean run
+# (zero failed checks AND the evidence log was written), mirroring
 # ch-schema-snapshot.sh.
 #
 # BDR-03 root cause: the drill's ONLY deliverable is DR evidence, but the
 # installed copy (/usr/local/bin/restore-drill.sh) resolved its evidence
 # dir from $0, landing on a non-existent /usr/docs/operations/drills, so
 # the whole evidence phase was silently skipped and nothing — no file, no
-# metric — recorded whether the monthly drill ran, passed or failed. This
-# alert is the monitored signal that closes that gap: "has a restore
-# succeeded recently?" is now answerable without shell access.
+# metric — recorded whether the monthly drill ran, passed or failed. The
+# staleness alerts are the monitored signal that closes that gap: "has a
+# restore succeeded recently?" is now answerable without shell access.
 #
 # absent_over_time branch (OBS-2 pattern): a run that fails rewrites the
 # textfile WITHOUT the last_success series, so the every-run-failed / dead-
 # timer / never-ran cases make the series ABSENT (not old). The plain
 # `time() - last_success` branch evaluates over an empty vector there and
-# can never fire; `absent_over_time(...[40d])` restores that coverage —
-# it fires when no successful drill has been recorded in 40 days (one
+# can never fire; `absent_over_time(...)` restores that coverage — it
+# fires when no successful drill has been recorded in the window (one
 # missed monthly cycle + slack), covering both a stale-but-present value
 # and an absent series.
+#
+# Per-repo scoping (2026-09-04): the on-box rule selects repo=~"1|" and
+# the off-site rule repo="2". Unscoped, one metric name over two repos
+# would fire the on-box ticket for the off-site copy at 40 d beside the
+# off-site ticket at 35 d, and — worse — its absent_over_time branch would
+# stay silent for a never-drilled repo1 as long as ANY other repo had a
+# sample. `repo=~"1|"` — repo1 or no label at all — rather than `repo!="2"`
+# for the same reason one repo over: the script takes any positive-integer
+# DRILL_REPO and writes restore_drill_repo<N>.prom, so a repo3 series held
+# the on-box ticket silent through a never-drilled repo1 under `!="2"`.
+#
+# The empty alternative is a TRANSITION allowance for the un-labelled
+# series a script from before the `repo` label wrote — and what it
+# currently tolerates is NOT repo1's verdict. The pre-label
+# restore_drill.prom is written by whichever drill ran LAST, and on r1
+# that was the 2026-09-03 repo2 hand-run, so the un-labelled series most
+# likely holds REPO2's result and this rule reads it as repo1's proof of
+# health. That window closes at the first labelled repo1 run
+# (restore-drill.timer, the first Saturday), which rewrites
+# restore_drill.prom with repo="1" on every series. Dropping the empty
+# alternative instead would ticket from the moment these rules deploy
+# until that run, for a drill that had not stopped.
 
 groups:
   - name: stellarindex.restore_drill
@@ -38,9 +67,9 @@ groups:
 
       - alert: stellarindex_restore_drill_stale
         expr: |
-          (time() - stellarindex_restore_drill_last_success_unix) > (40 * 24 * 3600)
+          (time() - stellarindex_restore_drill_last_success_unix{repo=~"1|"}) > (40 * 24 * 3600)
           or
-          absent_over_time(stellarindex_restore_drill_last_success_unix[40d])
+          absent_over_time(stellarindex_restore_drill_last_success_unix{repo=~"1|"}[40d])
         for: 30m
         labels:
           severity: ticket
@@ -63,13 +92,52 @@ groups:
             `/var/lib/stellarindex/restore-drills/restore-drills.md`, and
             run `/usr/local/bin/restore-drill.sh` by hand.
 
+      # The OFF-SITE copy. repo1 is on the same disks as the database and
+      # dies with the pool; repo2 is the backup DR actually restores from,
+      # and before 2026-09-04 it had been drilled exactly once, by hand.
+      # 35 d = one monthly cycle on a fixed day of month (28–31 d) plus
+      # ≥ 4 d of slack, and under two cycles. The first and only run so far
+      # cost ~47 min and ~$24 of S3 egress (~269 GB), which is what a
+      # responder is signing up for when they force one.
+      - alert: stellarindex_restore_drill_offsite_stale
+        expr: |
+          (time() - stellarindex_restore_drill_last_success_unix{repo="2"}) > (35 * 24 * 3600)
+          or
+          absent_over_time(stellarindex_restore_drill_last_success_unix{repo="2"}[35d])
+        for: 30m
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: storage
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/restore-drill-offsite-stale.md
+          summary: "off-site pgBackRest restore-drill (repo2, S3) has recorded no success in >35d (monthly timer, the 15th) — the survival copy is not currently proven restorable"
+          description: |
+            The monthly OFF-SITE restore-drill (restore-drill-offsite.timer,
+            the 15th 04:00 UTC, DRILL_REPO=2) has not recorded a
+            fully-successful run in over 35 days — one missed cycle plus
+            slack — or has never recorded one. repo2 is the encrypted S3
+            copy that survives loss of this host or its pool; while this
+            is stale the only proof it restores is over a month old, or
+            does not exist. A green repo1 drill says nothing about it.
+            Either the timer is not firing, every recent run has failed
+            (S3 credentials, endpoint, cipher, or the repo itself), the
+            drill volume dropped below the capacity floor, or no repo2 is
+            configured on this host. Check `systemctl status
+            restore-drill-offsite.timer`, read
+            `/var/log/restore-drill-offsite.log` + the evidence log under
+            `/var/lib/stellarindex/restore-drills/restore-drills.md`, and
+            force a run with `systemctl start restore-drill-offsite.service`
+            (~47 min, ~269 GB from S3, ~$24 of egress at the 2026-09-03 size).
+
       # A run that ran and FOUND a problem. The script rewrites the
       # textfile on every run past the preconditions (including the
       # pg_restore / pg_start abort paths, audit-2026-08-28
       # backup-restore-4), so `failures > 0` is the current run's verdict,
-      # not a stale one. Without this the only signal was the 40-day
-      # staleness ticket above, i.e. a corrupt repo surfaced ~40 days
-      # after the drill that detected it.
+      # not a stale one. Without this the only signal was the staleness
+      # ticket above, i.e. a corrupt repo surfaced ~40 days after the drill
+      # that detected it. Unscoped on purpose: it fires per repo, carrying
+      # the `repo` label, for whichever drill found the problem.
       - alert: stellarindex_restore_drill_failed
         expr: stellarindex_restore_drill_failures > 0
         for: 30m
@@ -82,7 +150,9 @@ groups:
           summary: "the most recent pgBackRest restore-drill FAILED ({{ $value }} check(s)) — the backup chain is not currently proven restorable"
           description: |
             The most recent restore-drill run (restore-drill.timer, first
-            Saturday 04:00 UTC, or a manual run) recorded
+            Saturday 04:00 UTC, for repo1; restore-drill-offsite.timer, the
+            15th 04:00 UTC, for repo2; or a manual run — the alert's `repo`
+            label says which) recorded
             {{ $value }} failed check(s): pgbackrest restore failed, the
             scratch instance never reached consistency, or a verification
             check (tables / WAL drain / tip lag / hash chain / row window)
@@ -90,4 +160,6 @@ groups:
             the pgBackRest backup chain is restorable (ADR-0043 §3 /
             CS-110). Read the tail of
             `/var/lib/stellarindex/restore-drills/restore-drills.md` (which
-            names the aborted stage) and `/var/log/restore-drill.log`.
+            names the aborted stage and the repo) and
+            `/var/log/restore-drill.log` (repo1) or
+            `/var/log/restore-drill-offsite.log` (repo2).

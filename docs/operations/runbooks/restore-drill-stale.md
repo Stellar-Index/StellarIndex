@@ -19,9 +19,27 @@ severity: P3
 
 ## Symptoms
 
-- `(time() - stellarindex_restore_drill_last_success_unix) > 40 * 24 * 3600`
+- `(time() - stellarindex_restore_drill_last_success_unix{repo=~"1|"}) > 40 * 24 * 3600`
   for ≥ 30 min, **or** the series is absent for ≥ 40 d
-  (`absent_over_time(...[40d])`).
+  (`absent_over_time(...{repo=~"1|"}[40d])`). `repo=~"1|"`: this is the
+  on-box repo1 drill's ticket; the off-site repo2 drill has its own
+  ([restore-drill-offsite-stale](restore-drill-offsite-stale.md)). It is
+  an ALLOW-LIST — repo1, or no `repo` label at all — deliberately not
+  `repo!="2"`: a negative matcher lets any other repo satisfy the absent
+  branch, and the drill takes any positive-integer `DRILL_REPO` and
+  writes `restore_drill_repo<N>.prom`, so one `repo="3"` sample held this
+  ticket silent through a never-drilled repo1.
+- **The empty alternative is a transition allowance, and on r1 what it
+  currently tolerates is repo2's verdict, not repo1's.** The pre-label
+  `restore_drill.prom` is rewritten whole by whichever drill ran LAST,
+  and that was the 2026-09-03 repo2 hand-run — so the un-labelled series
+  most likely carries the OFF-SITE result and this ticket reads it as the
+  on-box drill's proof of health. The window closes at the first labelled
+  repo1 run (`restore-drill.timer`, the first Saturday), which rewrites
+  that file with `repo="1"` on every series; force it with
+  `sudo systemctl start restore-drill.service` to close it sooner. Until
+  then, treat a green `stellarindex_restore_drill_stale` as unproven for
+  repo1 and read the evidence log, which names the repo per entry.
 - No fully-successful monthly restore-drill has been recorded in over
   40 days (one missed monthly cycle plus slack), or none has ever been
   recorded.
@@ -120,6 +138,10 @@ cat /var/lib/node_exporter/textfile_collector/restore_drill.prom
 
 - `restore-drill-failed.md` — `stellarindex_restore_drill_failed`; the
   immediate signal when the most recent run recorded failures > 0.
+- [restore-drill-offsite-stale](restore-drill-offsite-stale.md) — the
+  same ticket for the OFF-SITE repo2/S3 drill (`restore-drill-offsite.timer`,
+  the 15th, `repo="2"`, 35 d). Both timers run the same script, one
+  drill at a time.
 - `backup-failed.md` — when a drill's individual restore/verify checks
   fail.
 - `ch-schema-restore.md` — the ClickHouse half of a restore; the
@@ -132,3 +154,8 @@ cat /var/lib/node_exporter/textfile_collector/restore_drill.prom
   this staleness alert).
 - 2026-08-28 — backup-derived capacity floor; companion
   `stellarindex_restore_drill_failed` ticket (audit backup-restore-3/-4).
+- 2026-09-04 — scoped to `repo=~"1|"` (repo1 or un-labelled — an
+  allow-list, so another repo's sample cannot mask a never-drilled
+  repo1); the off-site drill gets its own timer, textfile and ticket.
+  Until the first labelled repo1 run, the un-labelled series the selector
+  tolerates is the 2026-09-03 repo2 hand-run's.
