@@ -31,6 +31,19 @@ func serverWithSEP41Reader(reader SEP41TransfersReader) *Server {
 	return s
 }
 
+// TestSEP41Transfers_LadderBudgetLeavesTheFallbackAtLeastHalf pins the
+// premise of the store's lookback-ladder budget: the handler's deadline
+// is the only budget the read has, the ladder may spend at most half of
+// it, and whatever is left is the full-history fallback's. The store
+// cannot import this package and this package does not export its
+// deadline, so this is the one place the two constants meet.
+func TestSEP41Transfers_LadderBudgetLeavesTheFallbackAtLeastHalf(t *testing.T) {
+	if 2*timescale.SEP41TransferLadderBudget > sep41TransfersReadTimeout {
+		t.Fatalf("timescale.SEP41TransferLadderBudget=%s is more than half of sep41TransfersReadTimeout=%s — the fallback would run on less time than the ladder that failed to answer",
+			timescale.SEP41TransferLadderBudget, sep41TransfersReadTimeout)
+	}
+}
+
 // Valid strkeys for testing — both real-looking. The contract is
 // an actual mainnet contract (DeFindex USDC vault); the account is
 // from the asset_registry test fixtures.

@@ -217,12 +217,116 @@ func (s *Store) InsertSEP41Transfer(ctx context.Context, r SEP41TransferRow) err
 	return s.InsertSEP41TransferBatch(ctx, []SEP41TransferRow{r})
 }
 
+// sep41TransferLookbackLadder is the trailing-window ladder
+// [Store.ListSEP41Transfers] walks before it falls back to the
+// full-history read. Each rung is a `ledger_close_time >= now-D` floor;
+// the first rung that fills the caller's page wins.
+//
+// Why a ladder instead of one unbounded query: sep41_transfers has no
+// index that yields a single contract's rows in ledger_close_time DESC
+// order — sep41_transfers_contract_{from,to}_idx (migration 0047) put
+// the address column between contract_id and ledger_close_time, so a
+// contract-only predicate cannot take time order from them, and the
+// primary key leads with ledger_close_time — so an unbounded read has to materialise and sort
+// EVERY row a busy contract owns in the newest uncompressed chunk before
+// the LIMIT can take five of them. On r1 that chunk holds a month of the
+// CAP-67 firehose, and for the USDC SAC (CCW67TSZ…, the busiest token
+// contract and the OpenAPI parameter example) the planner picks
+// `Seq Scan + Sort` over ~17M estimated rows: GET
+// /v1/contracts/CCW67TSZ…/transfers?limit=5 burnt the whole 8s handler
+// budget and 503'd, while a quiet contract answered from
+// sep41_transfers_contract_from_idx in 0.19s — cost inverted with how
+// interesting the contract is.
+//
+// A floor inside the recent uncompressed data changes the plan to an
+// index scan on the hypertable's ledger_close_time index under an
+// Incremental Sort, so the LIMIT stops early (r1 EXPLAIN ANALYZE, same
+// contract: 0.34ms for limit=100 over the 1h rung, 0.97ms for limit=500
+// over the 7d one).
+//
+// The invariant the rungs keep is that they stay narrow enough for
+// chunk exclusion to leave only the newest uncompressed chunk or
+// chunks, and 7d is the widest window measured on r1 to still plan
+// onto an index scan — 90d plans straight back to the per-chunk
+// `Seq Scan + Sort`, so widening the ladder buys no deeper cheap read,
+// it only reintroduces the timeout one rung later. The rungs do NOT
+// depend on fitting inside one chunk: migration 0047 declares 1-day
+// chunks and compression after 7 days, so a tree-built deployment
+// serves the 7d rung from up to eight chunks, the oldest of which may
+// already be compressed. r1's 30-day chunk width — which happens to put
+// all three rungs inside a single chunk — is drift from that migration,
+// not the design.
+//
+// The short-circuit is safe because the read is time-ordered: every row
+// a rung's floor excludes is strictly older than every row it keeps, so
+// a rung that returns a full page returned exactly the newest page.
+//
+// Cost: a rung that fills its page stops at the LIMIT and is cheap. A
+// rung that CANNOT fill it is not — for a contract the chunk statistics
+// still call busy, the planner walks the whole window of the time index
+// filtering on contract_id, and on r1 that walk measured 36ms at 1h,
+// 2.2s at 24h and past a 9s statement timeout at 7d. The ladder as a
+// whole is therefore bounded by [SEP41TransferLadderBudget]; see
+// [Store.walkSEP41TransferLadder].
+var sep41TransferLookbackLadder = []time.Duration{
+	time.Hour,
+	24 * time.Hour,
+	7 * 24 * time.Hour,
+}
+
+// SEP41TransferLadderBudget bounds the WHOLE lookback ladder — every
+// rung of [sep41TransferLookbackLadder] together — so the ladder can
+// never spend the caller's budget on the way to the fallback that has
+// the rows. A rung still running when the budget runs out is abandoned,
+// no wider rung is tried (a wider window is a superset scan of the one
+// that just failed to finish), and the full-history read goes out on
+// the caller's OWN remaining budget.
+//
+// Sized against the handler's 8s deadline
+// (internal/api/v1/sep41_transfers.go, sep41TransfersReadTimeout — a
+// test there pins this constant at no more than half of it) and the r1
+// measurements in the ladder's doc comment: 3s lets the 1h and 24h
+// rungs complete even under the pathological walk (36ms + 2.2s), cuts
+// the 7d rung before it can reach the shape that ran past 9s, and
+// leaves the fallback 5s — nearly four times the 1.3s a low-volume
+// contract's fallback measured at limit=100 through
+// sep41_transfers_contract_from_idx. The example contract fills its
+// page at the first rung in 0.34ms, four orders of magnitude inside it.
+const SEP41TransferLadderBudget = 3 * time.Second
+
 // ListSEP41Transfers returns the most-recent N rows for a contract,
 // optionally filtered by from_addr / to_addr. Powers GET
 // /v1/contracts/{id}/transfers.
 //
-//nolint:gocognit,gocyclo // linear query-build + row-scan loop.
+// Full history stays reachable: a contract whose page none of the
+// [sep41TransferLookbackLadder] rungs can fill falls through to an
+// unbounded read — the same query this method has always issued. That
+// fallback is cheap for a genuinely low-volume contract, whose rows the
+// planner reaches through sep41_transfers_contract_from_idx (1.3s at
+// limit=100 on r1 for a contract with 21k rows in the newest chunk),
+// but NOT for every contract that reaches it: a contract with a large
+// history and fewer than `limit` rows in the widest rung still takes
+// the same per-chunk sort that produced the timeout. The ladder
+// mitigates the timeout class for contracts that are busy now; it does
+// not eliminate it, and that residual class pays the ladder first, so
+// its fallback runs on the caller's remaining time — at least 5s of the
+// 8s it used to have. The root cause — no index yielding one contract's
+// rows in ledger_close_time DESC order — is only removed by a
+// (contract_id, ledger_close_time DESC) index together with an ORDER BY
+// the compressed chunks can serve (the read also orders by op_index,
+// which compress_orderby lacks, so a compressed chunk still sorts its
+// whole segment); the index is heavy DDL on a
+// hypertable of hundreds of millions of rows and belongs in its own
+// migration with the by-hand CONCURRENTLY step r1 needs (migrations
+// 0083 / 0106 set that convention).
 func (s *Store) ListSEP41Transfers(ctx context.Context, contractID, fromAddr, toAddr string, limit int) ([]SEP41TransferRow, error) {
+	return s.listSEP41TransfersAt(ctx, contractID, fromAddr, toAddr, limit, time.Now(), SEP41TransferLadderBudget)
+}
+
+// listSEP41TransfersAt is [Store.ListSEP41Transfers] with the wall-clock
+// reference and the ladder budget threaded in so the window floors and
+// the cost bound are deterministically testable.
+func (s *Store) listSEP41TransfersAt(ctx context.Context, contractID, fromAddr, toAddr string, limit int, now time.Time, ladderBudget time.Duration) ([]SEP41TransferRow, error) {
 	if contractID == "" {
 		return nil, errors.New("timescale: ListSEP41Transfers: empty contractID")
 	}
@@ -233,6 +337,57 @@ func (s *Store) ListSEP41Transfers(ctx context.Context, contractID, fromAddr, to
 		limit = 500
 	}
 
+	rows, filled, err := s.walkSEP41TransferLadder(ctx, contractID, fromAddr, toAddr, limit, now, ladderBudget)
+	if err != nil {
+		return nil, err
+	}
+	if filled {
+		return rows, nil
+	}
+	// Zero `since` = no window bound: the full-history fallback, issued
+	// on the caller's own context — never on the ladder's, whose budget
+	// is spent or beside the point by now.
+	return s.listSEP41TransfersSince(ctx, contractID, fromAddr, toAddr, limit, time.Time{})
+}
+
+// walkSEP41TransferLadder runs the rungs of [sep41TransferLookbackLadder]
+// under one shared budget and reports (rows, true, nil) for the first
+// rung that fills the page. (nil, false, nil) tells the caller to fall
+// back to the unbounded read: either every rung came back short, or the
+// budget ran out — a rung the database had not answered by then is
+// abandoned, and no wider rung is tried. An error comes back only for a
+// real storage failure or for the CALLER's own deadline or cancellation,
+// which leaves nothing to fall back with.
+func (s *Store) walkSEP41TransferLadder(ctx context.Context, contractID, fromAddr, toAddr string, limit int, now time.Time, budget time.Duration) ([]SEP41TransferRow, bool, error) {
+	ladderCtx, cancel := context.WithTimeout(ctx, budget)
+	defer cancel()
+
+	for _, window := range sep41TransferLookbackLadder {
+		if ladderCtx.Err() != nil {
+			break // spent between rungs: a statement issued now is already dead
+		}
+		rows, err := s.listSEP41TransfersSince(ladderCtx, contractID, fromAddr, toAddr, limit, now.Add(-window))
+		if err != nil {
+			if ctx.Err() != nil {
+				return nil, false, err // the caller's deadline, not the ladder's
+			}
+			if ladderCtx.Err() != nil {
+				break // the ladder's budget: fall back on the caller's remaining time
+			}
+			return nil, false, err
+		}
+		if len(rows) >= limit {
+			return rows, true, nil
+		}
+	}
+	return nil, false, nil
+}
+
+// sep41TransfersQuery builds one audit-trail read AND its bound args
+// together — one function, so the placeholder numbering can never drift
+// from the arg order as the optional predicates come and go. A zero
+// `since` builds the unbounded (full-history) form.
+func sep41TransfersQuery(contractID, fromAddr, toAddr string, limit int, since time.Time) (string, []any) {
 	var sb strings.Builder
 	sb.WriteString(`
         SELECT
@@ -252,13 +407,26 @@ func (s *Store) ListSEP41Transfers(ctx context.Context, contractID, fromAddr, to
 		args = append(args, toAddr)
 		fmt.Fprintf(&sb, " AND to_addr = $%d", len(args))
 	}
+	if !since.IsZero() {
+		args = append(args, since.UTC())
+		fmt.Fprintf(&sb, " AND ledger_close_time >= $%d", len(args))
+	}
 	args = append(args, limit)
 	fmt.Fprintf(&sb,
 		" ORDER BY ledger_close_time DESC, ledger DESC, op_index DESC LIMIT $%d",
 		len(args),
 	)
+	return sb.String(), args
+}
 
-	rows, err := s.db.QueryContext(ctx, sb.String(), args...)
+// listSEP41TransfersSince runs one rung of the lookback ladder (or, for
+// a zero `since`, the unbounded fallback) and maps its rows.
+//
+//nolint:gocognit,gocyclo // linear null-projecting row-scan loop.
+func (s *Store) listSEP41TransfersSince(ctx context.Context, contractID, fromAddr, toAddr string, limit int, since time.Time) ([]SEP41TransferRow, error) {
+	q, args := sep41TransfersQuery(contractID, fromAddr, toAddr, limit, since)
+
+	rows, err := s.db.QueryContext(ctx, q, args...)
 	if err != nil {
 		return nil, fmt.Errorf("timescale: ListSEP41Transfers: %w", err)
 	}
