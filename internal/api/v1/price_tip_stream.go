@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/api/streaming"
@@ -27,7 +28,65 @@ const tipStreamProducerQueueDepth = 4
 // indefinitely, once per open connection. Mirrors observationsScanTimeout's
 // 8s ceiling, the same fix already applied to the observations-stream
 // producer.
+//
+// It bounds the tip COMPUTATION. The per-event divergence lookup that
+// rides beside it has its own, much shorter [tipStreamDivergenceBudget]
+// — see there for why an auxiliary read must not inherit this one.
 const tipStreamTickTimeout = 8 * time.Second
+
+// tipStreamDivergenceBudget bounds the per-event divergence lookup —
+// the one auxiliary read inside an emission — separately from the tick
+// and pre-flight budgets that carry the tip computation itself.
+//
+// Without it the lookup inherited [tipStreamTickTimeout], so a stalled
+// verdict store held the whole 8s: measured at 8.0036s, during which the
+// SSE response headers were not written and no further event was
+// emitted. That is backwards. The cadence is the product; the verdict is
+// an overlay whose documented absent state, `divergence_checked: false`,
+// already means "could not verify" (CS-087) — so a degraded auxiliary
+// signal must degrade the FLAG, never the stream.
+//
+// One second is chosen against two references rather than picked, and
+// what it has to cover is a FAN-OUT, not one record read. Per spelling,
+// divergence.LookupCached issues 1 SMEMBERS over the base index plus one
+// SEQUENTIAL GET per indexed quote — 7 commands for a base with 6
+// indexed quotes — and [Server.lookupDivergenceFlag] wraps that in an
+// alias walk of up to three canonical spellings, so an XLM-family base
+// can cost up to 21 sequential round-trips inside this one budget.
+// XLM's family is three spellings today, so the effective per-spelling
+// tolerance is about 333ms; a base outside an alias family has one
+// spelling and gets the full second.
+//
+// That is still ample for a healthy store: these are precomputed records
+// the cross-reference worker refreshes out of band, so a healthy read is
+// low-millisecond and a whole 21-trip walk lands far inside 333ms per
+// spelling. It is deliberately NOT ample for a degraded one — a store
+// answering every read in a uniform 400ms exhausts the walk and the
+// event goes out unchecked, which is the trade this constant exists to
+// make: at 400ms per read the stream would otherwise be spending over a
+// second per emission on an optional flag.
+//
+// The second reference is the cadence: a second is an eighth of the tick
+// budget and at most a fifth of the DEFAULT 5s window, so a wedged store
+// shifts an emission by a fraction of its period instead of consuming
+// the period whole. The package's sibling best-effort reads sit at 2s
+// ([tokenMetadataReadTimeout] and the coverage-floor probe); those run
+// under the 15s REQUEST budget, and the tighter cadence being protected
+// here is why this one is tighter.
+const tipStreamDivergenceBudget = time.Second
+
+// tipStreamDivergenceStallInterval bounds how often a divergence lookup
+// that exceeded [tipStreamDivergenceBudget] is logged.
+//
+// The warning is process-wide rather than per stream or per pair on
+// purpose: what stalls is the one shared verdict store, so keying the
+// limit any finer just reproduces the flood. The producer ceiling is 512
+// and a window may be as short as a second, so an unbounded warning is
+// up to ~30k lines a minute at precisely the moment an operator is
+// trying to read the log. One line a minute is enough to see a stall
+// begin, persist and end, and each line carries the count it swallowed
+// so the volume stays visible instead of hidden.
+const tipStreamDivergenceStallInterval = time.Minute
 
 // handlePriceTipStream serves GET /v1/price/tip/stream — the SSE
 // counterpart to /v1/price/tip per ADR-0018 §"SSE stream wires onto
@@ -147,9 +206,12 @@ func (s *Server) handlePriceTipStream(w http.ResponseWriter, r *http.Request) {
 
 	// A valid first snapshot + an open response. Build the
 	// connection's first frame here, still under the pre-flight budget,
-	// so both producer shapes below emit the same event — and so the
-	// per-event divergence lookup inside it is bounded like the compute
-	// that preceded it. Then switch to SSE.
+	// so both producer shapes below emit the same event. The frame's
+	// divergence lookup runs under its OWN [tipStreamDivergenceBudget]
+	// inside that budget: this call sits between the client's request and
+	// the response headers, so letting an auxiliary read spend the whole
+	// pre-flight here is paid directly in time-to-first-byte. Then switch
+	// to SSE.
 	var gen streaming.Generator
 	firstEv, _ := s.tipStreamEvent(preflightCtx, &gen, asset, first, firstSources)
 
@@ -309,8 +371,9 @@ func (s *Server) runTipStreamProducer(
 				}
 				continue
 			}
-			// The event's divergence lookup rides the same per-tick
-			// budget as the compute it describes.
+			// The event's divergence lookup runs inside this per-tick
+			// budget but on its own shorter one, so a stalled verdict
+			// store cannot push the emission past its window.
 			ev, ok := s.tipStreamEvent(tickCtx, gen, asset, snap, sources)
 			cancel()
 			if !ok {
@@ -326,18 +389,37 @@ func (s *Server) runTipStreamProducer(
 }
 
 // tipStreamEvent builds the SSE event payload for one tip emission.
-// The flags are the request endpoint's (tipFlags), so every event
-// carries the base's current divergence verdict exactly as a GET at
-// that instant would — the lookup runs under ctx, which the callers
-// bound to the tick budget. Returns (_, false) on JSON-marshal failure
+// The flags are built from the request endpoint's own lookup (tipFlags),
+// so an event carries the same verdict a GET on the same base would —
+// while the store answers inside [tipStreamDivergenceBudget].
+//
+// The two surfaces DO diverge once the store is slow, and deliberately.
+// The GET runs the walk on the request budget; this runs it on the
+// shorter sub-budget, so with every spelling answering a uniform 400ms
+// the GET serves checked=true and the stream serves checked=false for
+// the same base at the same instant. That is the trade stated on
+// [tipStreamDivergenceBudget]: the stream is a cadence product and a
+// slow flag is dropped rather than waited for. `divergence_checked:
+// false` is the honest report of it — "could not verify" (CS-087), which
+// is exactly what happened — and it is the safe direction: the stream
+// never manufactures an all-clear the GET would not give.
+//
+// See [Server.tipStreamFlags]. Returns (_, false) on JSON-marshal failure
 // (which would mean a programming error in PriceSnapshot — caller
 // skips emit so the stream stays alive).
 func (s *Server) tipStreamEvent(ctx context.Context, gen *streaming.Generator, asset canonical.Asset, snap PriceSnapshot, sources []string) (streaming.Event, bool) {
+	// Flags first, THEN the timestamp. as_of describes the event being
+	// emitted, so it is taken after the last step that can delay the
+	// emission. Stamped inline in the literal below it was evaluated
+	// before the divergence lookup (Go orders calls in a composite
+	// literal left to right), so a slow lookup published an as_of that
+	// was already up to a whole sub-budget stale when it went on the wire.
+	flags := s.tipStreamFlags(ctx, asset, sources)
 	payload := tipStreamPayload{
 		Data:    snap,
 		AsOf:    time.Now().UTC(),
 		Sources: sources,
-		Flags:   s.tipFlags(ctx, asset, sources),
+		Flags:   flags,
 	}
 	body, err := json.Marshal(payload)
 	if err != nil {
@@ -348,6 +430,79 @@ func (s *Server) tipStreamEvent(ctx context.Context, gen *streaming.Generator, a
 		Type: "tip_update",
 		Data: body,
 	}, true
+}
+
+// tipStreamFlags builds one emission's envelope flags, running the
+// auxiliary divergence lookup under [tipStreamDivergenceBudget] rather
+// than the caller's whole tick or pre-flight budget.
+//
+// The lookup is a nice-to-have; the cadence is the product. So on a
+// stall the stream degrades the FLAG and emits on time: the verdict goes
+// out unchecked, which is exactly what `divergence_checked: false` means
+// on this surface (CS-087 — "could not verify", never "prices agree").
+// An emission is never dropped or delayed because this read was slow.
+//
+// The stall is distinguished from ordinary teardown by comparing the two
+// contexts: the sub-budget expiring while the CALLER's budget still has
+// room is a stalled store, whereas both expiring together is the tick or
+// the client going away, which is not news about the verdict store and
+// is not logged.
+func (s *Server) tipStreamFlags(ctx context.Context, asset canonical.Asset, sources []string) Flags {
+	lookupCtx, cancel := context.WithTimeout(ctx, tipStreamDivergenceBudget)
+	defer cancel()
+	flags := s.tipFlags(lookupCtx, asset, sources)
+	if lookupCtx.Err() == nil || ctx.Err() != nil {
+		return flags
+	}
+	// Belt and braces: lookupDivergenceFlag already returns the unchecked
+	// pair on a failed walk, and stating it here means a future lookup
+	// that returns a partial verdict cannot leak one out of a read that
+	// did not finish.
+	flags.DivergenceWarning, flags.DivergenceChecked = false, false
+	if suppressed, ok := s.tipDivergenceStalls.admit(time.Now()); ok {
+		s.logger.Warn("divergence lookup exceeded its tip-stream budget — emitting with the verdict unchecked",
+			"asset", asset.String(), "budget", tipStreamDivergenceBudget,
+			"suppressed_since_last", suppressed)
+	}
+	return flags
+}
+
+// tipDivergenceStallLog rate-limits the stalled-lookup warning to one
+// line per [tipStreamDivergenceStallInterval] for the whole process,
+// carrying the number of stalls swallowed since the previous line.
+type tipDivergenceStallLog struct {
+	mu sync.Mutex
+	// lastLine is when a warning was last emitted; lastStall is when a
+	// stall was last seen. They are separate so a residue can be aged
+	// out against the incident that produced it rather than against the
+	// last time anything was printed.
+	lastLine   time.Time
+	lastStall  time.Time
+	suppressed uint64
+}
+
+// admit reports whether this stall should be logged now and, when it
+// should, how many went unlogged since the last one that was.
+func (l *tipDivergenceStallLog) admit(now time.Time) (suppressed uint64, ok bool) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	// A gap longer than the interval means the previous incident ended.
+	// Its unreported tail belongs to it, so drop the residue rather than
+	// stamp a fresh incident an hour later with an hour-old count — a
+	// number attributed to the wrong incident is worse than a missing
+	// one, and the tail is bounded by a single interval of stalls that
+	// the incident's own earlier lines already characterised.
+	if !l.lastStall.IsZero() && now.Sub(l.lastStall) > tipStreamDivergenceStallInterval {
+		l.suppressed = 0
+	}
+	l.lastStall = now
+	if !l.lastLine.IsZero() && now.Sub(l.lastLine) < tipStreamDivergenceStallInterval {
+		l.suppressed++
+		return 0, false
+	}
+	suppressed, l.suppressed = l.suppressed, 0
+	l.lastLine = now
+	return suppressed, true
 }
 
 // tipStreamPayload is the SSE-data shape — a flattened envelope

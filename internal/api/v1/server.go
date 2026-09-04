@@ -308,7 +308,12 @@ type Server struct {
 	// one compute loop per distinct (asset, quote, window) publishing
 	// into the hub, refcounted by open /v1/price/tip/stream
 	// connections. See price_tip_producers.go.
-	tipProducers         tipProducerRegistry
+	tipProducers tipProducerRegistry
+	// tipDivergenceStalls rate-limits the warning emitted when a
+	// tip-stream event's divergence lookup exceeds its own sub-budget.
+	// Process-wide, because the store that stalls is shared by every
+	// stream. See tipStreamFlags in price_tip_stream.go.
+	tipDivergenceStalls  tipDivergenceStallLog
 	confidence           ConfidenceLooker
 	triangulated         TriangulatedPriceLooker
 	cdnEnabled           bool

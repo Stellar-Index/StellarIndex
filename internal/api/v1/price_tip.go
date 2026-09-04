@@ -176,6 +176,18 @@ func (s *Server) computeTip(ctx context.Context, asset, quote canonical.Asset, w
 	// withholding it (the 2026-08-04 incident class). One gate call
 	// covers every branch of this function; the reader-level gates
 	// inside LatestPrice would otherwise cover only the middle one.
+	//
+	// Deliberately NOT given a best-effort sub-budget the way the
+	// event's divergence lookup is (see [tipStreamDivergenceBudget]).
+	// That treatment is only available to a signal with a safe unknown
+	// to degrade to: the divergence flag has one, because
+	// `divergence_checked: false` already means "could not verify". A
+	// withholding gate has none — it decides whether to serve AT ALL,
+	// and the only two things a timed-out gate could do are refuse a
+	// price that is fine or publish one the gate exists to withhold.
+	// Timing this out on the emit path would republish an
+	// attacker-authored rate the 2026-08-04 incident class made these
+	// gates for, so a slow gate correctly costs the emission instead.
 	if s.substance != nil && !s.substance.Allowed(ctx, asset, quote, "tip") {
 		return PriceSnapshot{}, nil, ErrPriceWithheld
 	}
