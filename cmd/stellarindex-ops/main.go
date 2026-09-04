@@ -490,9 +490,11 @@ Subcommands:
                           observer (L2.12a) wins when populated;
                           operator-static [supply].reserve_balances_stroops
                           is the bring-up fallback. Default ledger
-                          attribution is the max last_ledger across
-                          all ingestion cursors; pass -ledger to
-                          override. -dry-run prints without writing.
+                          attribution is the ledgerstream ingestion
+                          cursor, clamped to the newest landed
+                          stellar.ledgers row at or before it; pass
+                          -ledger to override. -dry-run prints
+                          without writing.
   supply seed-observations -config PATH [-ch-addr ADDR] [-dry-run]
                           Seed account_observations from the ClickHouse
                           lake for every [supply].sdf_reserve_accounts

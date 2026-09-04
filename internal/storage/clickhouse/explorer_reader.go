@@ -483,7 +483,16 @@ func (r *ExplorerReader) CloseTimeForLedger(ctx context.Context, seq uint32) (ti
 // cursor's own row is routinely not landed yet when a timer-driven snapshot
 // fires (r1 supply-snapshot failed every daily run on this race, 2026-08-22).
 // FINAL for the same ReplacingMergeTree reason as CloseTimeForLedger; the
-// primary key is ledger_seq so the descending point read stays cheap.
+// primary key is ledger_seq so the descending read should stop at
+// one granule — UNMEASURED under FINAL, where optimize_read_in_order
+// is version-dependent and `ledger_seq <= X` prunes no partition
+// below X (~65 of them at ledger 64M). This was classified as a point
+// read when the only caller ran once a day from internal/ops/supply.
+// The aggregator now calls it once per watched asset per 5-minute
+// tick, so read query_duration_ms and read_rows from system.query_log
+// on the first post-deploy tick before treating it as cheap. The 40
+// refreshers already share one reader, so a short-TTL memo collapses
+// them to one query per tick if the measurement is bad.
 func (r *ExplorerReader) LatestLedgerAtOrBefore(ctx context.Context, maxSeq uint32) (uint32, time.Time, bool, error) {
 	const q = `SELECT ledger_seq, close_time FROM stellar.ledgers FINAL
 		WHERE ledger_seq <= ? ORDER BY ledger_seq DESC LIMIT 1`

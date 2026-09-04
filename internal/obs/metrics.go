@@ -109,6 +109,7 @@ func registerAppMetrics() {
 		AggregatorTriangulationsTotal,
 		AggregatorFXSnapFallbackTotal,
 		AggregatorBaselineRefreshTotal,
+		AggregatorSupplyLakeClampLedgers,
 		AggregatorSupplyRefreshTotal,
 		SEP41SupplyRollupAdvancesTotal,
 		AggregatorConfidenceComputeTotal,
@@ -3463,6 +3464,23 @@ var AggregatorBaselineRefreshTotal = prometheus.NewCounterVec(
 // that also missed) — expected briefly post-deploy, alarming
 // sustained. Per-asset rates let operators chart bootstrap
 // progress per watched asset rather than as one aggregate.
+// AggregatorSupplyLakeClampLedgers — how far the `ledgerstream`
+// ingestion cursor leads the newest landed stellar.ledgers row at
+// the moment a supply snapshot is resolved. The snapshot is stamped
+// at the lake's row, never the cursor's, because ObservedAt must be
+// a real close_time; the gap is therefore how much the resolver had
+// to clamp. Ordinary lead is a ledger or two. The resolver refuses
+// to publish once the gap passes its stalled-lake bound, so this is
+// the series that shows the refusal coming rather than reporting it
+// after supply has already stopped advancing. Not labelled by asset
+// — every watched asset resolves against the same two positions.
+var AggregatorSupplyLakeClampLedgers = prometheus.NewGauge(
+	prometheus.GaugeOpts{
+		Name: "stellarindex_aggregator_supply_lake_clamp_ledgers",
+		Help: "Ledgers the ingestion cursor leads the landed lake tip by when a supply snapshot is resolved. Rising toward the resolver's stalled-lake bound means supply is about to stop publishing.",
+	},
+)
+
 var AggregatorSupplyRefreshTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_aggregator_supply_refresh_total",

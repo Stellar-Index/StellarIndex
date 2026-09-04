@@ -2457,6 +2457,21 @@ factor instead of using a per-asset baseline. Sustained `read_error`
 or `write_error` rates indicate the storage layer needs investigation
 (prices_1m read failing or volatility_baseline_1m write conflict).
 
+### `stellarindex_aggregator_supply_lake_clamp_ledgers`
+
+Gauge, no labels. How far the `ledgerstream` ingestion cursor leads the
+newest landed `stellar.ledgers` row at the moment a supply snapshot is
+resolved. The snapshot is stamped at the lake's row rather than the
+cursor's, because `ObservedAt` has to be a real close time, so this
+gauge is the distance the resolver had to clamp. An ordinary lead is a
+ledger or two and is expected — the two positions are written by
+different processes and are never meant to agree at an instant. The
+resolver refuses to publish once the gap passes its stalled-lake bound
+of 512 ledgers, roughly 45 minutes of chain, so a rising series here is
+the warning that supply is about to stop advancing; without it the
+first symptom is `stellarindex_aggregator_supply_refresh_total` filling
+with `no_ledger` after publishing has already stopped.
+
 ### `stellarindex_aggregator_supply_refresh_total`
 
 Counter, labels `asset_key` + `outcome`. `outcome` ∈ (`ok` /
@@ -2483,8 +2498,13 @@ Steady state is mostly `ok` per asset. Sustained `no_observation`
 on an asset indicates the AccountEntry observer hasn't backfilled
 the relevant accounts yet AND the static fallback config is also
 empty or missing entries — expected briefly post-deploy, alarming
-sustained. `no_ledger` fires before the indexer produces its
-first ingestion cursor; clears as soon as ingest catches up.
+sustained. `no_ledger` covers every failure to resolve a real chain
+position to stamp the snapshot at: no `ledgerstream` cursor yet
+(pre-first-run), no `stellar.ledgers` row at or before that cursor
+(empty or wholly gapped lake), or a lake tip trailing the cursor by
+more than 512 ledgers (a stalled CH sink, not the ordinary seconds-long
+landing race, which is absorbed by clamping the snapshot to the lake's
+landed tip).
 `write_error` indicates the storage layer needs investigation.
 `missing_baseline` is a SEP-41 SAC-wrapper whose pre-Soroban opening
 balance hasn't been seeded — its Soroban-era-only total reads
