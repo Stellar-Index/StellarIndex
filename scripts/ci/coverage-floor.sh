@@ -82,7 +82,8 @@ head -n 1 "$PROFILE" | grep -q '^mode:' ||
 # against. The arithmetic is the same ratio the tool prints (covered
 # statements / total statements); verified byte-equal against
 # `go tool cover -func` on the real repo profile at 55.7% on 2026-09-03,
-# and cross-checked on every run below whenever the toolchain can run.
+# and cross-checked on every run below whenever the toolchain can run —
+# and when it can, the tool's own total is the one the floor is judged on.
 #
 # Field 2 is the statement count for the block, field 3 the hit count.
 read -r TOTAL COVERED STATEMENTS <<EOF
@@ -107,10 +108,17 @@ EOF
 	die "coverage profile has 0 statement blocks — the coverage floor did NOT run"
 
 # Cross-check against the tool when it can actually run (real profile,
-# real source tree, Go on PATH). Silent when unavailable — that is the
-# synthetic-fixture case — but a DISAGREEMENT is a hard failure: it
-# would mean this script's arithmetic has drifted from what every
-# developer sees locally.
+# real source tree, Go on PATH), and when it can, let the tool's figure
+# be the one the floor is judged on: it is what every developer sees
+# locally. The profile arithmetic above then serves the package count and
+# the synthetic-fixture case, where the tool cannot run.
+#
+# The two figures are compared at one decimal, and they legitimately
+# differ by a rounding step: the tool totals by function (a block outside
+# any function is not in its denominator) and rounds a different float,
+# so 56.15 can print as 56.2 here and 56.1 there. A gap of at most 0.1
+# is that rounding step; anything wider means this script's arithmetic
+# has drifted from the tool, and that is a hard failure.
 #
 # NOT piped into head/tail: a gate's error text arrives on the channel a
 # pipeline throws away, and this repo has been bitten by exactly that.
@@ -119,9 +127,14 @@ if command -v go >/dev/null 2>&1; then
 	trap 'rm -f "$FUNC_OUT"' EXIT
 	if go tool cover -func="$PROFILE" >"$FUNC_OUT" 2>&1; then
 		TOOL_TOTAL="$(awk '$1 == "total:" { gsub(/%/, "", $NF); print $NF }' "$FUNC_OUT")"
-		if [ -n "$TOOL_TOTAL" ] && [ "$TOOL_TOTAL" != "$TOTAL" ]; then
-			die "computed total ${TOTAL}% disagrees with 'go tool cover -func' (${TOOL_TOTAL}%).
+		if [ -n "$TOOL_TOTAL" ]; then
+			DRIFT="$(awk -v a="$TOTAL" -v b="$TOOL_TOTAL" 'BEGIN { d = a - b; if (d < 0) d = -d; print (d > 0.1001) ? 1 : 0 }')"
+			[ "$DRIFT" -eq 0 ] ||
+				die "computed total ${TOTAL}% disagrees with 'go tool cover -func' (${TOOL_TOTAL}%) by more than a rounding step.
 The gate's arithmetic has drifted from the tool; fix the gate, not the floor."
+			[ "$TOOL_TOTAL" = "$TOTAL" ] ||
+				echo "coverage-floor: profile arithmetic ${TOTAL}% vs 'go tool cover -func' ${TOOL_TOTAL}% — a rounding step; the tool's figure is used"
+			TOTAL="$TOOL_TOTAL"
 		fi
 	fi
 fi
