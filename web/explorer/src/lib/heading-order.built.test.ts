@@ -71,6 +71,12 @@ describe('built static export: heading order (WCAG 1.3.1)', () => {
     ).toBe(true);
   });
 
+  // Timeout: this case walks and parses EVERY page of the export, so its
+  // cost scales with the site, not with the assertion — vitest's 5 s
+  // default measures how many pages exist and how loaded the machine is,
+  // not whether a heading level was skipped. It timed out mid-verification
+  // on 2026-09-04 with the export intact and every heading correct. The
+  // sibling nav-shell scan iterates a fixed route list and needs none.
   it.runIf(built)('no page skips a heading level', () => {
     const files = htmlFiles(OUT_DIR);
     const failures: string[] = [];
@@ -122,5 +128,5 @@ describe('built static export: heading order (WCAG 1.3.1)', () => {
         'headingLevel={2} (see ui/Card, reveal/Panel, ui/Feedback).\n' +
         failures.slice(0, 25).join('\n'),
     ).toEqual([]);
-  });
+  }, 60_000);
 });
