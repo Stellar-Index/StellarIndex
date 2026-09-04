@@ -425,6 +425,7 @@ if [ ${#gen_dirs[@]} -gt 0 ]; then
     if [ "$f" = "docs/reference/metrics/README.md" ]; then
       continue
     fi
+    # sigpipe-ok: `head -1` writes one short banner line, far under a pipe buffer.
     if ! head -1 "$f" | grep -qF "GENERATED FILE"; then
       err "Generated file '$f' is missing the 'GENERATED FILE - DO NOT EDIT' banner at line 1"
     fi
@@ -1010,7 +1011,7 @@ else
   r1_comment=$(grep -E '^#[[:space:]]+r1 = ' "$ANSIBLE_DEFAULTS" 2>/dev/null || true)
   if [ -z "$r1_comment" ]; then
     err "$ANSIBLE_DEFAULTS: the per-region '#   r1 = <topology>' comment is gone — it is the line that told operators r1 ran raidz2 for a year (#289); keep it and keep it true"
-  elif ! echo "$r1_comment" | grep -q "$r1_pool_type"; then
+  elif ! grep -q "$r1_pool_type" <<<"$r1_comment"; then
     err "$ANSIBLE_DEFAULTS: per-region comment says '$r1_comment' but r1's live topology is '$r1_pool_type' ($R1_INVENTORY). The role DEFAULT may stay raidz2 for fresh nodes; the comment must not describe r1 wrongly"
   fi
   echo "  r1 pool topology: '$r1_pool_type' (authority $R1_INVENTORY) — checked $r1_files_checked of ${#r1_topology_files[@]} r1-scoped files"
@@ -1137,7 +1138,7 @@ if [ -f Makefile ] && [ -f "$DEV_COMPOSE" ]; then
     awk -F: '/^[[:space:]]*-[[:space:]]*"?[0-9.]+:[0-9]+:[0-9]+"?/ { gsub(/"/, "", $(NF - 1)); print $(NF - 1) }')
   advertised=$(printf '%s\n' "$dev_recipe" | grep -oE 'localhost:[0-9]+' | cut -d: -f2 | sort -u || true)
   for port in $advertised; do
-    if ! printf '%s\n' "$published" | grep -qx "$port"; then
+    if ! grep -qx "$port" <<<"$published"; then
       err "Makefile's 'dev' target advertises http://localhost:$port, but $DEV_COMPOSE publishes no such port. 'make dev' is the first command in $SELF_HOSTING §4.1 — sending a first-time operator to a port nothing listens on is where self-hosting stops. Print what actually comes up."
     fi
   done

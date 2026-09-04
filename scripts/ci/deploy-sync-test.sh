@@ -164,7 +164,7 @@ t_exec() {
     docker exec "$HOST" bash -c "$1"
   fi
 }
-if ! t_exec 'tar --version' 2>/dev/null | grep -q 'GNU tar'; then
+if ! grep -q 'GNU tar' <<<"$(t_exec 'tar --version' 2>/dev/null)"; then
   echo "deploy-sync-test: FAIL — target ($CONN/$HOST) has no GNU tar; unarchive needs it. See the header for the container recipe." >&2
   exit 1
 fi

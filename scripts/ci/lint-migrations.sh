@@ -175,7 +175,7 @@ else
   for up in migrations/[0-9]*_*.up.sql; do
     [ -e "$up" ] || continue
     n="$(basename "$up" | cut -c1-4)"
-    printf '%s\n' "$register_rows" | grep -qx "$n" || missing="${missing}${n} "
+    grep -qx "$n" <<<"$register_rows" || missing="${missing}${n} "
   done
   if [ -n "$missing" ]; then
     echo "lint-migrations: migration(s) with NO row in $REGISTER: ${missing}" >&2

@@ -66,7 +66,7 @@ expect() {
 		fail=$((fail + 1))
 		return
 	fi
-	if [ -n "$want_sub" ] && ! printf '%s' "$OUT" | grep -q -- "$want_sub"; then
+	if [ -n "$want_sub" ] && ! grep -q -- "$want_sub" <<<"$OUT"; then
 		echo "FAIL: $name — output missing '$want_sub'" >&2
 		printf '%s\n' "$OUT" | sed 's/^/    /' >&2
 		fail=$((fail + 1))

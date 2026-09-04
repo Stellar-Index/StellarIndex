@@ -11,6 +11,11 @@
 # pinned here rather than assumed:
 #
 #   - a pipefail script piping into head is CAUGHT (the core case);
+#   - so is a pipe into `grep -q` / `grep -l`, bare or in a flag cluster —
+#     the regex named `grep -m N` and not `grep -q` for its first two
+#     versions, which left 44 sites scanning clean across the four roots;
+#   - `|| grep -q x`, and an `&& grep -q x` later on the same line, are NOT
+#     instances: neither reads from the pipe;
 #   - the same line with a `# sigpipe-ok:` marker passes;
 #   - the marker is honoured anywhere in the comment block above the line;
 #   - a comment merely QUOTING the bad shape is not an instance of it;
@@ -72,6 +77,48 @@ check "pipe into sed with q is caught" 1 "$TMP/sedq"
 
 mk grepm offender.sh $'set -euo pipefail\nmc ls bucket/ | grep -m 1 thing > /tmp/out.txt'   # sigpipe-ok: fixture text, scanned by the gate and never executed
 check "pipe into grep -m is caught" 1 "$TMP/grepm"
+
+mk col0pipe offender.sh $'set -euo pipefail\nmc ls bucket/ \\\n| head -n 4 > /tmp/out.txt'   # sigpipe-ok: fixture text, scanned by the gate and never executed
+check "continuation line starting with a pipe into head is caught" 1 "$TMP/col0pipe"
+
+mk orgrepq ok.sh $'set -euo pipefail\nprobe || grep -q x /etc/hosts'
+check "|| followed by grep -q is not a pipe" 0 "$TMP/orgrepq"
+
+mk grepq offender.sh $'set -euo pipefail\nmc ls bucket/ | grep -q thing'   # sigpipe-ok: fixture text, scanned by the gate and never executed
+check "pipe into grep -q is caught (the spelling the tree writes)" 1 "$TMP/grepq"
+
+mk grepqcluster offender.sh $'set -euo pipefail\nmc ls bucket/ | grep -Fxq -- "$want"'   # sigpipe-ok: fixture text, scanned by the gate and never executed
+check "pipe into a grep flag CLUSTER ending in q is caught" 1 "$TMP/grepqcluster"
+
+mk grepl offender.sh $'set -euo pipefail\nmc ls bucket/ | grep -l thing'   # sigpipe-ok: fixture text, scanned by the gate and never executed
+check "pipe into grep -l is caught (it stops at the first match too)" 1 "$TMP/grepl"
+
+mk grepqok ok.sh $'set -euo pipefail\nmc ls bucket/ | grep -q thing   # sigpipe-ok: the listing is four short lines'   # sigpipe-ok: fixture text, scanned by the gate and never executed
+check "the same grep -q line with a marker passes" 0 "$TMP/grepqok"
+
+mk grepqfixed ok.sh 'set -euo pipefail
+listing="$(mc ls bucket/)"
+grep -q thing <<<"$listing"'
+check "the here-string rewrite of grep -q passes" 0 "$TMP/grepqfixed"
+
+mk grepcount ok.sh 'set -euo pipefail
+n=$(mc ls bucket/ | grep -c thing)'
+check "a grep that reads to EOF (-c) passes" 0 "$TMP/grepcount"
+
+echo "lint-shell-sigpipe-test: what is not this pipe's consumer"
+
+# `||` is a shell OR, not a pipe: the grep after it reads a file and there is
+# no upstream process to leave writing into a closed descriptor.
+mk orlist ok.sh 'set -euo pipefail
+[ -f /x ] || grep -q thing /etc/hosts'
+check "grep -q after || is not a pipe" 0 "$TMP/orlist"
+
+# A second, un-piped grep later on the SAME line does not belong to the
+# earlier pipe — deploy-baseline-test.sh:176 is exactly this shape, and
+# reading it as one pipeline would fail a line that is already correct.
+mk laterand ok.sh 'set -euo pipefail
+if [ "$(printf %s "$out" | grep -c v1)" -eq 2 ] && ! grep -q v2 <<<"$out"; then :; fi'
+check "an && grep -q later on the line is not the pipe's consumer" 0 "$TMP/laterand"
 
 echo "lint-shell-sigpipe-test: escape hatch"
 
