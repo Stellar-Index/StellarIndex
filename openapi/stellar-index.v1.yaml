@@ -1417,6 +1417,10 @@ paths:
 
         - First event fires synchronously on connect (no waiting a
           full window).
+        - `flags.divergence_warning` / `flags.divergence_checked` are
+          looked up per event — by base, across the asset's canonical
+          spellings — exactly as `/v1/price/tip` does, so a
+          `tip_update` carries the verdict a GET at that instant would.
         - Pre-flight 404 when the pair has no observations: SSE
           can't change status mid-stream, so emptiness is detected
           before the response body switches to `text/event-stream`.
@@ -1608,6 +1612,12 @@ paths:
           that last trade. Assess freshness from each observation's own
           trade timestamp (`ts`); do NOT infer it from `as_of` or
           `flags.stale` on this endpoint.
+        - **`flags.divergence_checked` is likewise always `false` here.**
+          The cross-reference check vouches for an aggregated VWAP, and
+          this surface serves raw per-source trades with no aggregated
+          value to vouch for, so `divergence_warning` is never meaningful
+          on this endpoint. Use `/v1/price` or `/v1/vwap` for a
+          cross-referenced number.
         - Cross-region consistency is **NOT** provable on this surface;
           use `/v1/price` for the closed-bucket guarantee.
         - Empty pair returns 200 with `data: []`, not 404.
@@ -1689,6 +1699,11 @@ paths:
           server-side dedupe) — clients diff against the previous
           payload if they want change-detection.
         - Heartbeats every 15 s as comment lines.
+        - `flags.stale` and `flags.divergence_checked` are always
+          `false` on every tick, for the reasons given on the request
+          endpoint: this is the raw per-source surface, with nothing
+          aggregated for a staleness contract or a cross-reference
+          verdict to vouch for.
         - URL discipline: `?granularity=` and `?window_seconds=`
           return 400.
       parameters:
@@ -2170,6 +2185,13 @@ paths:
         under the limit so a truncated result always runs up to
         the window end. Narrow the window and retry for an exact
         VWAP.
+
+        `flags.divergence_checked` / `flags.divergence_warning` are the
+        base's CURRENT cross-reference verdict — the aggregator's
+        shortest-window VWAP now against the external references now —
+        not a re-check of the requested `[from, to)` window: a
+        historical window can carry `divergence_checked: true` about a
+        number the check never saw.
       parameters:
         - { $ref: "#/components/parameters/Base" }
         - { $ref: "#/components/parameters/QuoteRequired" }
@@ -11490,6 +11512,16 @@ components:
             one responding reference). When false, `divergence_warning` is NOT
             meaningful — the check is blind (references dark, or no record yet),
             so a `false` warning must not be read as "prices agree" (CS-087).
+            Set on the surfaces that consult the verdict — `/v1/price`, its
+            `?window=` variant, `/v1/price/tip`, `/v1/price/tip/stream` and
+            `/v1/vwap` — looked up by BASE across every canonical spelling of
+            the asset. On every other envelope that carries `flags` the field
+            is `false` and means "not consulted on this surface", never
+            "checked and clean": `/v1/price/batch`, `/v1/twap`, the SEP-40
+            passthroughs, `/v1/observations` and `/v1/observations/stream`
+            never ask, so `divergence_warning` is not meaningful there. The
+            observations pair is the deliberate case: raw per-source trades
+            carry no aggregated value for a base-level verdict to vouch for.
         frozen:                      { type: boolean, default: false }
         single_source:               { type: boolean, default: false }
         diverged:

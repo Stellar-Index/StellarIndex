@@ -620,20 +620,7 @@ func (s *Server) handlePrice(w http.ResponseWriter, r *http.Request) {
 	} else {
 		flags.SingleSource = len(sources) == 1
 	}
-	if s.divergence != nil {
-		// Divergence lookup is best-effort. A failure here logs at
-		// WARN and falls through with the flag unset — better to
-		// serve a fresh price without a warning than to 5xx because
-		// a Redis blip lost the cached divergence record.
-		if firing, checked, derr := s.divergence.DivergenceFiringFor(r.Context(), asset); derr == nil {
-			flags.DivergenceWarning = firing
-			flags.DivergenceChecked = checked
-		} else if !clientAborted(r, derr) {
-			s.logger.Warn("divergence lookup failed",
-				"err", derr,
-				"asset", asset.String())
-		}
-	}
+	flags.DivergenceWarning, flags.DivergenceChecked = s.lookupDivergenceFlag(r.Context(), asset)
 	writeJSON(w, snapshot, flags, sources...)
 }
 
@@ -1470,6 +1457,61 @@ func (s *Server) attachConfidence(r *http.Request, snap *PriceSnapshot, asset, q
 	}
 }
 
+// lookupDivergenceFlag is the shared best-effort divergence lookup for
+// every surface that serves an aggregated value the cross-reference
+// verdict speaks to: `/v1/price`, its windowed variant, `/v1/price/tip`,
+// `/v1/price/tip/stream` (per event, from the producer goroutine — hence
+// a context rather than a request) and `/v1/vwap`. Returns (false, false)
+// when no DivergenceLooker is wired, when no spelling holds a verdict, or
+// when the lookup errors — better to serve a fresh price without a
+// verdict than to 5xx because a Redis blip lost the cached divergence
+// record.
+//
+// Loops the alias set, exactly as readPriceWithAliases and
+// attachConfidence do. Without this the verdict silently vanished for
+// XLM's canonical `native` spelling: the aggregator refreshes the check
+// under whichever form carries the shortest-window VWAP (`crypto:XLM` on
+// r1 — which is also the form the PRICE read resolves to), but the
+// divergence key was built from the raw request asset, so
+// /v1/price?asset=native and ?asset=crypto:XLM returned the
+// byte-identical price with divergence_checked false and true
+// respectively (r1-verified 2026-09-03). Per CS-087 that false reads as
+// "could not verify", which is the wrong answer for a value four
+// references had just agreed on — and the same envelope's
+// confidence_factors.cross_oracle_checked, which already walks aliases,
+// said true right beside it.
+//
+// The first spelling that reaches a verdict wins and short-circuits the
+// rest, matching attachConfidence: a per-spelling miss (no cached record,
+// or one below the worker's quorum) is not an answer, so keep walking.
+// Verdicts are never combined across spellings — a warning under a
+// later alias is not folded into a clean verdict found under an earlier
+// one. An ERROR ends the walk, also as attachConfidence does: the
+// spellings share one backing store, so a store that failed for the
+// first is not going to answer for the second, and stopping keeps a
+// Redis outage at one round-trip and one WARN per request rather than
+// one per alias. The (warning=true, checked=false) pair stays
+// unreachable because a fired warning necessarily met that quorum.
+func (s *Server) lookupDivergenceFlag(ctx context.Context, asset canonical.Asset) (firing, checked bool) {
+	if s.divergence == nil {
+		return false, false
+	}
+	for _, a := range assetAliases(asset) {
+		gotFiring, gotChecked, err := s.divergence.DivergenceFiringFor(ctx, a)
+		if err != nil {
+			if !errors.Is(ctx.Err(), context.Canceled) {
+				s.logger.Warn("divergence lookup failed",
+					"err", err, "asset", a.String())
+			}
+			break
+		}
+		if gotFiring || gotChecked {
+			return gotFiring, gotChecked
+		}
+	}
+	return false, false
+}
+
 // attachCompositeFlags surfaces the aggregator's router-quality
 // signals — flags.diverged (contributing routes disagreed) and
 // flags.rerouted (the composite substituted around a dry configured
@@ -2125,12 +2167,7 @@ func (s *Server) handlePriceWindowed(w http.ResponseWriter, r *http.Request, ass
 				WindowSeconds: int(window / time.Second),
 			}
 			flags := Flags{Triangulated: triangulated, Frozen: s.lookupFrozen(r, asset, quote)}
-			if s.divergence != nil {
-				if firing, checked, derr := s.divergence.DivergenceFiringFor(r.Context(), asset); derr == nil {
-					flags.DivergenceWarning = firing
-					flags.DivergenceChecked = checked
-				}
-			}
+			flags.DivergenceWarning, flags.DivergenceChecked = s.lookupDivergenceFlag(r.Context(), asset)
 			writeJSON(w, snap, flags)
 			return
 		}

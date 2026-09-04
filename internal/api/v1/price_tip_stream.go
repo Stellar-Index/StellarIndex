@@ -145,8 +145,14 @@ func (s *Server) handlePriceTipStream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// We have a valid first event + an open response. Switch to SSE.
-	//
+	// A valid first snapshot + an open response. Build the
+	// connection's first frame here, still under the pre-flight budget,
+	// so both producer shapes below emit the same event — and so the
+	// per-event divergence lookup inside it is bounded like the compute
+	// that preceded it. Then switch to SSE.
+	var gen streaming.Generator
+	firstEv, _ := s.tipStreamEvent(preflightCtx, &gen, asset, first, firstSources)
+
 	// Two producer shapes (RT-1, audit 2026-08-04 "tip stream = 6 DB
 	// queries/s PER CONNECTION"):
 	//
@@ -192,20 +198,17 @@ func (s *Server) handlePriceTipStream(w http.ResponseWriter, r *http.Request) {
 		sub, cancelSub := s.hub.Subscribe([]string{topic}, streaming.LastEventIDFrom(r))
 		defer cancelSub()
 
-		var gen streaming.Generator
-		firstEv, _ := tipStreamEvent(&gen, first, firstSources)
 		ch := make(chan streaming.Event, tipStreamProducerQueueDepth)
 		go s.forwardTipStream(r.Context(), ch, sub, firstEv)
 		streaming.StreamFromChannelPreAdmitted(w, r, ch, streaming.StreamOptions{})
 		return
 	}
 
-	var gen streaming.Generator
 	ch := make(chan streaming.Event, tipStreamProducerQueueDepth)
 	prodCtx, cancelProd := context.WithCancel(r.Context())
 	defer cancelProd()
 
-	go s.runTipStreamProducer(prodCtx, ch, &gen, asset, quote, window, first, firstSources)
+	go s.runTipStreamProducer(prodCtx, ch, &gen, asset, quote, window, firstEv)
 
 	streaming.StreamFromChannelPreAdmitted(w, r, ch, streaming.StreamOptions{})
 }
@@ -251,7 +254,8 @@ func (s *Server) forwardTipStream(
 }
 
 // runTipStreamProducer is the per-connection compute + push loop.
-// Emits the pre-computed initial event, then ticks every
+// Emits the pre-built initial event (skipped when the handler could not
+// marshal one — its Data is then empty), then ticks every
 // `windowSeconds` recomputing the tip price. Failures are silently
 // skipped (heartbeats keep the connection alive) — the assumption
 // is that transient unavailability resolves itself and the next
@@ -266,8 +270,7 @@ func (s *Server) runTipStreamProducer(
 	gen *streaming.Generator,
 	asset, quote canonical.Asset,
 	windowSeconds int,
-	first PriceSnapshot,
-	firstSources []string,
+	firstEv streaming.Event,
 ) {
 	// AGT-12 (audit-2026-07-24): this producer runs in its OWN goroutine, so an
 	// unrecovered panic in the compute path below terminates the WHOLE process —
@@ -280,7 +283,7 @@ func (s *Server) runTipStreamProducer(
 	defer s.recoverStreamProducer("price_tip")
 	defer close(ch)
 
-	if firstEv, ok := tipStreamEvent(gen, first, firstSources); ok {
+	if len(firstEv.Data) > 0 {
 		select {
 		case <-ctx.Done():
 			return
@@ -298,15 +301,18 @@ func (s *Server) runTipStreamProducer(
 		case <-ticker.C:
 			tickCtx, cancel := context.WithTimeout(ctx, tipStreamTickTimeout)
 			snap, sources, err := s.computeTip(tickCtx, asset, quote, windowSeconds)
-			cancel()
 			if err != nil {
+				cancel()
 				if ctx.Err() == nil {
 					s.logger.Warn("computeTip failed (stream tick) — skipping emit",
 						"err", err, "asset", asset.String(), "quote", quote.String())
 				}
 				continue
 			}
-			ev, ok := tipStreamEvent(gen, snap, sources)
+			// The event's divergence lookup rides the same per-tick
+			// budget as the compute it describes.
+			ev, ok := s.tipStreamEvent(tickCtx, gen, asset, snap, sources)
+			cancel()
 			if !ok {
 				continue
 			}
@@ -320,15 +326,18 @@ func (s *Server) runTipStreamProducer(
 }
 
 // tipStreamEvent builds the SSE event payload for one tip emission.
-// Returns (_, false) on JSON-marshal failure (which would mean a
-// programming error in PriceSnapshot — caller skips emit so the
-// stream stays alive).
-func tipStreamEvent(gen *streaming.Generator, snap PriceSnapshot, sources []string) (streaming.Event, bool) {
+// The flags are the request endpoint's (tipFlags), so every event
+// carries the base's current divergence verdict exactly as a GET at
+// that instant would — the lookup runs under ctx, which the callers
+// bound to the tick budget. Returns (_, false) on JSON-marshal failure
+// (which would mean a programming error in PriceSnapshot — caller
+// skips emit so the stream stays alive).
+func (s *Server) tipStreamEvent(ctx context.Context, gen *streaming.Generator, asset canonical.Asset, snap PriceSnapshot, sources []string) (streaming.Event, bool) {
 	payload := tipStreamPayload{
 		Data:    snap,
 		AsOf:    time.Now().UTC(),
 		Sources: sources,
-		Flags:   Flags{SingleSource: len(sources) == 1},
+		Flags:   s.tipFlags(ctx, asset, sources),
 	}
 	body, err := json.Marshal(payload)
 	if err != nil {

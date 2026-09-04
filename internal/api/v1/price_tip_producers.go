@@ -239,9 +239,11 @@ func (s *Server) runSharedTipProducer(ctx context.Context, key tipProducerKey, a
 	defer s.recoverStreamProducer("price_tip_shared")
 	var gen streaming.Generator
 	emit := func() {
+		// One budget covers the compute and the event's divergence
+		// lookup, like the per-connection producer's tick.
 		tickCtx, cancel := context.WithTimeout(ctx, tipStreamTickTimeout)
+		defer cancel()
 		snap, sources, err := s.computeTip(tickCtx, asset, quote, window)
-		cancel()
 		if err != nil {
 			if ctx.Err() == nil {
 				s.logger.Warn("shared tip producer compute failed — skipping emit",
@@ -249,7 +251,7 @@ func (s *Server) runSharedTipProducer(ctx context.Context, key tipProducerKey, a
 			}
 			return
 		}
-		if ev, ok := tipStreamEvent(&gen, snap, sources); ok {
+		if ev, ok := s.tipStreamEvent(tickCtx, &gen, asset, snap, sources); ok {
 			s.hub.Publish(key.topic(), ev.Type, ev.Data)
 		}
 	}

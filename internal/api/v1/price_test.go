@@ -6,6 +6,8 @@ import (
 	"math/big"
 	"net/http"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -816,6 +818,134 @@ func TestPrice_NoDivergenceLookerLeavesFlagFalse(t *testing.T) {
 	body, _ := readAll(resp)
 	if !strings.Contains(body, `"divergence_warning":false`) {
 		t.Errorf("flag should default to false without a looker: %s", body)
+	}
+}
+
+// stubAliasDivergenceLooker answers per SPELLING, so a test can put the
+// cached verdict under one member of an alias family and query another —
+// the r1 shape, where the worker refreshes `crypto:XLM/fiat:USD` and
+// nothing is ever written under `native`.
+type stubAliasDivergenceLooker struct {
+	// verdicts is keyed on the asset's wire form; a spelling absent from
+	// the map is a cache miss (no verdict), which is what the production
+	// adapter returns for an unindexed base.
+	verdicts map[string]struct{ firing, checked bool }
+	// asked records every spelling consulted, in order. Guarded because
+	// the tip stream consults the looker from its producer goroutine
+	// while the test goroutine reads the record back.
+	mu    sync.Mutex
+	asked []string
+}
+
+func (s *stubAliasDivergenceLooker) DivergenceFiringFor(_ context.Context, a canonical.Asset) (firing, checked bool, err error) {
+	s.mu.Lock()
+	s.asked = append(s.asked, a.String())
+	s.mu.Unlock()
+	v := s.verdicts[a.String()]
+	return v.firing, v.checked, nil
+}
+
+// askedSpellings returns a copy of the consulted-spelling record.
+func (s *stubAliasDivergenceLooker) askedSpellings() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]string(nil), s.asked...)
+}
+
+// TestPrice_DivergenceCheckedFollowsAssetAliases — the cross-reference
+// verdict is cached under whichever XLM spelling the aggregator refreshed
+// (`crypto:XLM` on r1), so a lookup keyed on the raw request asset reports
+// divergence_checked=false for `native` while ?asset=crypto:XLM reports
+// true for the byte-identical price. Per CS-087 that false reads as "could
+// not verify", so the lookup must walk the alias set the way the price
+// read itself does.
+func TestPrice_DivergenceCheckedFollowsAssetAliases(t *testing.T) {
+	reader := &stubPriceReader{
+		snapshots: map[string]v1.PriceSnapshot{
+			"native/fiat:USD": {Price: "0.18726015145022901497", PriceType: "vwap"},
+		},
+	}
+	div := &stubAliasDivergenceLooker{
+		verdicts: map[string]struct{ firing, checked bool }{
+			"crypto:XLM": {firing: false, checked: true},
+		},
+	}
+	srv := v1.New(v1.Options{Prices: reader, Divergence: div})
+	ts := startHTTPTest(t, srv.Handler())
+
+	resp := mustGet(t, ts.URL+"/v1/price?asset=native&quote=fiat:USD")
+	body, _ := readAll(resp)
+	if !strings.Contains(body, `"divergence_checked":true`) {
+		t.Errorf("divergence_checked should follow the alias holding the verdict: %s", body)
+	}
+	if !strings.Contains(body, `"divergence_warning":false`) {
+		t.Errorf("verdict is clean, so the warning must stay false: %s", body)
+	}
+	if len(div.askedSpellings()) == 0 || div.askedSpellings()[0] != "native" {
+		t.Errorf("lookup order = %v, want the requested spelling first", div.askedSpellings())
+	}
+}
+
+// TestPrice_DivergenceCheckedFalseWhenNoAliasWasChecked — the flag is a
+// claim, not a default: when NO spelling of the asset carries a verdict
+// the response must still say divergence_checked=false, and every alias
+// must have been tried before concluding that.
+func TestPrice_DivergenceCheckedFalseWhenNoAliasWasChecked(t *testing.T) {
+	reader := &stubPriceReader{
+		snapshots: map[string]v1.PriceSnapshot{
+			"native/fiat:USD": {Price: "0.18726015145022901497", PriceType: "vwap"},
+		},
+	}
+	div := &stubAliasDivergenceLooker{}
+	srv := v1.New(v1.Options{Prices: reader, Divergence: div})
+	ts := startHTTPTest(t, srv.Handler())
+
+	resp := mustGet(t, ts.URL+"/v1/price?asset=native&quote=fiat:USD")
+	body, _ := readAll(resp)
+	if !strings.Contains(body, `"divergence_checked":false`) {
+		t.Errorf("divergence_checked must stay false with no cached verdict: %s", body)
+	}
+	if len(div.askedSpellings()) != len(canonical.AssetAliases(canonical.NativeAsset())) {
+		t.Errorf("spellings tried = %v, want every alias before reporting unchecked", div.askedSpellings())
+	}
+}
+
+// failingDivergenceLooker fails every lookup and counts the attempts —
+// the shape of a store that is down for every spelling at once.
+type failingDivergenceLooker struct{ calls atomic.Int32 }
+
+func (f *failingDivergenceLooker) DivergenceFiringFor(context.Context, canonical.Asset) (firing, checked bool, err error) {
+	f.calls.Add(1)
+	return false, false, errors.New("redis exploded")
+}
+
+// TestPrice_DivergenceLookupErrorStopsTheWalk — the spellings share one
+// backing store, so a store that failed for the first is not going to
+// answer for the second: the walk ends at the first error, and an
+// outage costs one round-trip per request rather than one per alias.
+// The response still flows with the flag left false, as
+// TestPrice_DivergenceErrorIsBestEffort pins.
+func TestPrice_DivergenceLookupErrorStopsTheWalk(t *testing.T) {
+	reader := &stubPriceReader{
+		snapshots: map[string]v1.PriceSnapshot{
+			"native/fiat:USD": {Price: "0.07", PriceType: "vwap"},
+		},
+	}
+	div := &failingDivergenceLooker{}
+	srv := v1.New(v1.Options{Prices: reader, Divergence: div})
+	ts := startHTTPTest(t, srv.Handler())
+
+	resp := mustGet(t, ts.URL+"/v1/price?asset=native&quote=fiat:USD")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200 — divergence error must NOT fail the price call", resp.StatusCode)
+	}
+	body, _ := readAll(resp)
+	if !strings.Contains(body, `"divergence_checked":false`) {
+		t.Errorf("flag must stay false on lookup error: %s", body)
+	}
+	if n := div.calls.Load(); n != 1 {
+		t.Errorf("lookups on a failing store = %d, want 1 — the walk stops at the first error rather than retrying each of the %d spellings",
+			n, len(canonical.AssetAliases(canonical.NativeAsset())))
 	}
 }
 

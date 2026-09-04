@@ -66,6 +66,18 @@ type Flags struct {
 	// verdict at all). When false, `divergence_warning` is NOT
 	// meaningful — the check is blind (references dark, or no record yet), so
 	// a `false` warning must not be read as "prices agree" (CS-087).
+	//
+	// Set on the surfaces that consult the verdict: /v1/price, its
+	// ?window= variant, /v1/price/tip, /v1/price/tip/stream and /v1/vwap —
+	// each looking it up by BASE across every canonical spelling of the
+	// asset (lookupDivergenceFlag). On every other envelope that carries
+	// Flags the field is false and means "not consulted on this
+	// surface", never "checked and clean": /v1/price/batch, /v1/twap,
+	// the SEP-40 passthroughs, /v1/observations and its stream all
+	// serve values the looker is never asked about. The observations
+	// pair is the deliberate case — raw per-source rows carry no
+	// aggregated value for a base-level verdict to vouch for (see
+	// handleObservations).
 	DivergenceChecked bool `json:"divergence_checked"`
 	Frozen            bool `json:"frozen,omitempty"`
 	SingleSource      bool `json:"single_source,omitempty"`

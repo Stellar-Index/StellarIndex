@@ -479,3 +479,47 @@ func TestObservations_AliasFanIn(t *testing.T) {
 		}
 	}
 }
+
+// TestObservations_DivergenceCheckedStructurallyFalse — the raw
+// per-source surface carries no aggregated value for the base-level
+// cross-reference verdict to vouch for, so `divergence_checked` is false
+// here BY DESIGN and the DivergenceLooker is never consulted. A verdict
+// under EVERY spelling of the base — firing, no less — must leave both
+// divergence flags false and the looker untouched. Per CS-087 that false
+// reads as "this surface does not verify", which is the truth. If this
+// test starts failing because the surface now consults the looker, the
+// comment block in handleObservations and the OpenAPI text need the
+// same decision reversed alongside it.
+func TestObservations_DivergenceCheckedStructurallyFalse(t *testing.T) {
+	now := time.Unix(1745000000, 0).UTC()
+	hist := &stubHistoryReader{
+		observations: []canonical.Trade{
+			mkObservationTrade("soroswap", now.Add(-2*time.Second), 1, 100),
+			mkObservationTrade("sdex", now.Add(-1*time.Second), 1, 105),
+		},
+	}
+	div := &stubAliasDivergenceLooker{verdicts: map[string]struct{ firing, checked bool }{}}
+	for _, a := range canonical.AssetAliases(canonical.NativeAsset()) {
+		div.verdicts[a.String()] = struct{ firing, checked bool }{firing: true, checked: true}
+	}
+	srv := v1.New(v1.Options{History: hist, Divergence: div})
+	tsv := startHTTPTest(t, srv.Handler())
+
+	resp := mustGet(t, tsv.URL+"/v1/observations?asset=native&quote=fiat:USD")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d", resp.StatusCode)
+	}
+	body, _ := readAll(resp)
+	for _, want := range []string{
+		`"source":"soroswap"`,
+		`"divergence_checked":false`,
+		`"divergence_warning":false`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("body missing %q: %s", want, body)
+		}
+	}
+	if len(div.askedSpellings()) != 0 {
+		t.Errorf("observations consulted the divergence looker for %v; the raw surface carries no verdict by design", div.askedSpellings())
+	}
+}

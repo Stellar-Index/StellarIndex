@@ -296,6 +296,14 @@ func (s *Server) runObservationsStreamProducer(
 // as an array of TradeRow, `as_of`, `sources`, and `flags`. Single-
 // source flag mirrors the request handler (true when exactly one
 // source contributed).
+//
+// stale, frozen and divergence_checked are structurally false on every
+// tick, BY DESIGN and for the same reason as the request handler: this
+// is the raw per-source surface, so there is no aggregation contract to
+// fall short of and no aggregated value for the base-level
+// cross-reference verdict to vouch for. s.divergence is never consulted
+// here. See the FRESHNESS CONTRACT block in handleObservations; pinned
+// by TestObservationsStream_DivergenceCheckedStructurallyFalse.
 func (s *Server) observationsStreamEvent(gen *streaming.Generator, pair canonical.Pair, trades []canonical.Trade) (streaming.Event, bool) {
 	rows := make([]TradeRow, len(trades))
 	srcSet := make(map[string]struct{}, len(trades))
