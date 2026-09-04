@@ -152,6 +152,22 @@ func (s *Server) handleObservations(w http.ResponseWriter, r *http.Request) {
 	// trade). Consumers assess freshness PER OBSERVATION, from each row's
 	// own trade timestamp — never from the envelope as_of or flags.stale on
 	// this endpoint. Documented on the /v1/observations OpenAPI schema.
+	//
+	// divergence_checked is ALSO structurally false here, BY DESIGN, and
+	// s.divergence is deliberately never consulted. The cross-reference
+	// worker compares the aggregator's VWAP for a base against external
+	// references and caches one verdict per base; /v1/price, its windowed
+	// variant, /v1/price/tip, /v1/price/tip/stream and /v1/vwap all serve
+	// an aggregated number that verdict speaks to, so they carry it. This
+	// surface serves raw
+	// per-source trades — there is no aggregated value for the verdict to
+	// vouch for, and stamping a base-level verdict onto every venue's last
+	// trade would read as "each of these rows was cross-checked" when none
+	// was. Per CS-087 a false here means exactly what it says: this
+	// surface does not verify. Pinned by
+	// TestObservations_DivergenceCheckedStructurallyFalse; the stream twin
+	// (observationsStreamEvent) mirrors it. Documented on the Flags schema
+	// and the /v1/observations description in the OpenAPI spec.
 	flags := Flags{SingleSource: len(srcs) == 1}
 
 	// Triangulation hint: an empty observations array is genuinely

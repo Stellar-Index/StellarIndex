@@ -293,3 +293,46 @@ func TestObservationsStream_PayloadJSONIsValid(t *testing.T) {
 		t.Errorf("data should be an array: %T", parsed["data"])
 	}
 }
+
+// TestObservationsStream_DivergenceCheckedStructurallyFalse — the stream
+// twin of TestObservations_DivergenceCheckedStructurallyFalse: every tick
+// of the raw per-source stream reports divergence_checked=false BY
+// DESIGN, with the DivergenceLooker never consulted, even when a firing
+// verdict sits under every spelling of the base.
+func TestObservationsStream_DivergenceCheckedStructurallyFalse(t *testing.T) {
+	now := time.Unix(1745000000, 0).UTC()
+	hist := &stubHistoryReader{
+		observations: []canonical.Trade{
+			mkObservationTrade("soroswap", now.Add(-2*time.Second), 1, 100),
+			mkObservationTrade("phoenix", now.Add(-5*time.Second), 2, 250),
+		},
+	}
+	div := &stubAliasDivergenceLooker{verdicts: map[string]struct{ firing, checked bool }{}}
+	for _, a := range canonical.AssetAliases(canonical.NativeAsset()) {
+		div.verdicts[a.String()] = struct{ firing, checked bool }{firing: true, checked: true}
+	}
+	srv := v1.New(v1.Options{History: hist, Divergence: div})
+	ts := httptest.NewServer(srv.Handler())
+	t.Cleanup(ts.Close)
+
+	resp, err := http.Get(ts.URL + "/v1/observations/stream?asset=native&quote=fiat:USD&interval_seconds=60")
+	if err != nil {
+		t.Fatalf("GET: %v", err)
+	}
+	defer resp.Body.Close()
+
+	br := bufio.NewReader(resp.Body)
+	data := readTipStreamEvent(t, br, 2*time.Second)
+	for _, want := range []string{
+		`"source":"soroswap"`,
+		`"divergence_checked":false`,
+		`"divergence_warning":false`,
+	} {
+		if !strings.Contains(data, want) {
+			t.Errorf("payload missing %q: %s", want, data)
+		}
+	}
+	if len(div.askedSpellings()) != 0 {
+		t.Errorf("stream consulted the divergence looker for %v; the raw surface carries no verdict by design", div.askedSpellings())
+	}
+}

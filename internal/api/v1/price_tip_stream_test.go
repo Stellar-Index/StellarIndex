@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"fmt"
 	"math/big"
 	"net/http"
 	"net/http/httptest"
@@ -12,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Stellar-Index/StellarIndex/internal/api/streaming"
 	v1 "github.com/Stellar-Index/StellarIndex/internal/api/v1"
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
@@ -377,5 +379,140 @@ func TestPriceTipStream_PayloadJSONIsValid(t *testing.T) {
 		if _, ok := parsed[key]; !ok {
 			t.Errorf("payload missing %q: %s", key, data)
 		}
+	}
+}
+
+// tipStreamDivergenceCase is one cached-verdict shape and the flags a
+// tip_update must carry for it. Shared by the two producer-shape tests
+// below so both walk the same three directions.
+type tipStreamDivergenceCase struct {
+	name        string
+	verdicts    map[string]struct{ firing, checked bool }
+	wantChecked bool
+	wantWarning bool
+}
+
+func tipStreamDivergenceCases() []tipStreamDivergenceCase {
+	return []tipStreamDivergenceCase{
+		{
+			// The r1 shape: the worker refreshed `crypto:XLM`, the
+			// stream was asked for `native`.
+			name:        "clean verdict under a sibling spelling",
+			verdicts:    map[string]struct{ firing, checked bool }{"crypto:XLM": {firing: false, checked: true}},
+			wantChecked: true,
+		},
+		{
+			name:        "firing verdict under a sibling spelling",
+			verdicts:    map[string]struct{ firing, checked bool }{"crypto:XLM": {firing: true, checked: true}},
+			wantChecked: true,
+			wantWarning: true,
+		},
+		{
+			// The flag is a claim, not a default.
+			name: "no verdict under any spelling",
+		},
+	}
+}
+
+// assertTipStreamDivergenceFlags opens the stream and holds the first
+// TWO frames to the expected divergence flags: the handler builds the
+// pre-flight frame itself and the producer — per-connection or
+// Hub-shared — builds every later one, so a regression in either path
+// shows on exactly one of them. It then checks the lookup record: the
+// pre-flight frame is built on the handler goroutine before any producer
+// starts, so its lookups lead the record — requested spelling first, and
+// with no verdict anywhere every alias tried before the flag is left
+// false.
+func assertTipStreamDivergenceFlags(t *testing.T, url string, div *stubAliasDivergenceLooker, tc tipStreamDivergenceCase) {
+	t.Helper()
+	resp, err := http.Get(url + "/v1/price/tip/stream?asset=native&quote=fiat:USD&window_seconds=1")
+	if err != nil {
+		t.Fatalf("GET: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d", resp.StatusCode)
+	}
+	br := bufio.NewReader(resp.Body)
+	wants := []string{
+		fmt.Sprintf(`"divergence_checked":%t`, tc.wantChecked),
+		fmt.Sprintf(`"divergence_warning":%t`, tc.wantWarning),
+	}
+	for _, frame := range []string{"pre-flight frame", "producer emission"} {
+		data := readTipStreamEvent(t, br, 2500*time.Millisecond)
+		if data == "" {
+			t.Fatalf("%s: no event within 2.5s", frame)
+		}
+		for _, want := range wants {
+			if !strings.Contains(data, want) {
+				t.Errorf("%s missing %q: %s", frame, want, data)
+			}
+		}
+	}
+
+	asked := div.askedSpellings()
+	if len(asked) == 0 || asked[0] != "native" {
+		t.Fatalf("lookup order = %v, want the requested spelling first", asked)
+	}
+	if tc.wantChecked {
+		return
+	}
+	aliases := canonical.AssetAliases(canonical.NativeAsset())
+	if len(asked) < len(aliases) {
+		t.Fatalf("spellings tried = %v, want every alias before reporting unchecked", asked)
+	}
+	for i, a := range aliases {
+		if asked[i] != a.String() {
+			t.Errorf("lookup %d = %q, want %q (walk must cover every alias in order)", i, asked[i], a.String())
+		}
+	}
+}
+
+// TestPriceTipStream_DivergenceCheckedFollowsAssetAliases — the stream is
+// documented as the request endpoint's "same compute logic", and the
+// envelope flags are part of that: every tip_update carries the verdict a
+// GET on the same pair would at that instant, looked up by base across
+// the asset's canonical spellings. Before this the per-connection
+// producer built its flags without the lookup, so a stream and a GET on
+// the same pair disagreed on `divergence_checked` at the same moment.
+// Hub-less server, so both frames come off the per-connection producer
+// path.
+func TestPriceTipStream_DivergenceCheckedFollowsAssetAliases(t *testing.T) {
+	for _, tc := range tipStreamDivergenceCases() {
+		t.Run(tc.name, func(t *testing.T) {
+			prices := &stubPriceReader{
+				snapshots: map[string]v1.PriceSnapshot{
+					"native/fiat:USD": {Price: "0.42", PriceType: "last_trade"},
+				},
+			}
+			div := &stubAliasDivergenceLooker{verdicts: tc.verdicts}
+			srv := v1.New(v1.Options{Prices: prices, Divergence: div})
+			ts := httptest.NewServer(srv.Handler())
+			t.Cleanup(ts.Close)
+			assertTipStreamDivergenceFlags(t, ts.URL, div, tc)
+		})
+	}
+}
+
+// TestPriceTipStream_HubSharedProducerFollowsAssetAliases — the Hub-wired
+// (production) shape: the connection's first frame is the handler's
+// pre-flight, every later one is the shared producer's publish. Both
+// must carry the same verdict the GET would, or a page that opens the
+// stream sees a different `divergence_checked` from the request it made
+// a moment earlier.
+func TestPriceTipStream_HubSharedProducerFollowsAssetAliases(t *testing.T) {
+	for _, tc := range tipStreamDivergenceCases() {
+		t.Run(tc.name, func(t *testing.T) {
+			prices := &stubPriceReader{
+				snapshots: map[string]v1.PriceSnapshot{
+					"native/fiat:USD": {Price: "0.42", PriceType: "last_trade"},
+				},
+			}
+			div := &stubAliasDivergenceLooker{verdicts: tc.verdicts}
+			srv := v1.New(v1.Options{Prices: prices, Hub: streaming.NewHub(0), Divergence: div})
+			ts := httptest.NewServer(srv.Handler())
+			t.Cleanup(ts.Close)
+			assertTipStreamDivergenceFlags(t, ts.URL, div, tc)
+		})
 	}
 }

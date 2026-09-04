@@ -134,13 +134,25 @@ func (s *Server) handlePriceTip(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Per ADR-0018: stale stays FALSE on either branch — both are
-	// in-contract on this surface. We deliberately IGNORE the
-	// staleness bit PriceReader sets for /v1/price; tip has its own
-	// envelope contract.
+	writeJSON(w, snapshot, s.tipFlags(r.Context(), asset, sources), sources...)
+}
+
+// tipFlags builds the envelope flags for one tip emission. The request
+// endpoint and both stream producers (per-connection and Hub-shared)
+// share it, so a tip_update event carries exactly the flags the GET
+// would have served for the same computation — the stream is documented
+// as "same compute logic", and the flags are part of that.
+//
+// Per ADR-0018: stale stays FALSE on either branch — both are
+// in-contract on this surface. The staleness bit PriceReader sets for
+// /v1/price is deliberately ignored; tip has its own envelope contract.
+// divergence_warning/divergence_checked come from the shared
+// alias-walking lookup, keyed on the base like every other surface that
+// carries them.
+func (s *Server) tipFlags(ctx context.Context, asset canonical.Asset, sources []string) Flags {
 	flags := Flags{SingleSource: len(sources) == 1}
-	flags.DivergenceWarning, flags.DivergenceChecked = s.lookupDivergenceFlag(r, asset)
-	writeJSON(w, snapshot, flags, sources...)
+	flags.DivergenceWarning, flags.DivergenceChecked = s.lookupDivergenceFlag(ctx, asset)
+	return flags
 }
 
 // computeTip is the shared core of [Server.handlePriceTip] and
@@ -417,25 +429,6 @@ func (s *Server) tipWindowVWAP(ctx context.Context, asset, quote canonical.Asset
 		ObservedAt:    now,
 		WindowSeconds: windowSeconds,
 	}, sources, true
-}
-
-// lookupDivergenceFlag mirrors handlePrice's best-effort divergence
-// lookup. Pulled into a helper so the tip handler doesn't duplicate
-// the error-handling shape. Returns false when no DivergenceLooker is
-// wired or when the lookup errors.
-func (s *Server) lookupDivergenceFlag(r *http.Request, asset canonical.Asset) (firing, checked bool) {
-	if s.divergence == nil {
-		return false, false
-	}
-	firing, checked, err := s.divergence.DivergenceFiringFor(r.Context(), asset)
-	if err != nil {
-		if !clientAborted(r, err) {
-			s.logger.Warn("divergence lookup failed (tip)",
-				"err", err, "asset", asset.String())
-		}
-		return false, false
-	}
-	return firing, checked
 }
 
 // distinctTradeSources returns the unique source names from a slice

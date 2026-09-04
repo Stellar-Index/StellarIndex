@@ -204,6 +204,9 @@ func (s *Server) handleVWAP(w http.ResponseWriter, r *http.Request) {
 		aggregate.ResolveDecimals(s.nonstandardDecimals, base),
 		aggregate.ResolveDecimals(s.nonstandardDecimals, quote))
 
+	// Cross-reference verdict, keyed on the BASE like the price surfaces
+	// (lookupDivergenceFlag); unconsulted here until now, a CS-087 false.
+	firing, checked := s.lookupDivergenceFlag(r.Context(), base)
 	writeJSON(w, VWAPResult{
 		From:             from,
 		To:               to,
@@ -213,7 +216,7 @@ func (s *Server) handleVWAP(w http.ResponseWriter, r *http.Request) {
 		TradeCount:       len(trades),
 		OutliersFiltered: outliersFiltered,
 		Truncated:        pre == maxTrades,
-	}, Flags{Triangulated: triangulated})
+	}, Flags{Triangulated: triangulated, DivergenceWarning: firing, DivergenceChecked: checked})
 }
 
 // fetchVWAPTrades is the trade-fetch + error-dispatch wrapper extracted
