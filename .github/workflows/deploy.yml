@@ -766,6 +766,7 @@ jobs:
           fi
 
       - name: Run deploy playbook
+        id: playbook
         # F-1298 (wave 126): inputs through `env:`. Note that
         # `ansible-playbook -e "key=$VAR"` STILL needs care —
         # ansible-playbook itself parses that string, splitting
@@ -995,6 +996,56 @@ jobs:
             fi
             echo "OK binary version skew=0 across managed binaries"
           fi
+
+      - name: Fleet release parity (test nets vs this deploy)
+        # launch-plan 1.7 (2026-09-03): one day after the test nets were
+        # caught up they were a release and three migrations behind r1
+        # again, and nothing said so — this workflow deploys ONE region
+        # per dispatch and reports that region only. After an r1 deploy
+        # this lists testnet + futurenet against the tag just deployed and
+        # prints the two catch-up dispatches; after a test-net deploy it
+        # confirms that region is now in step with live r1. Public
+        # /v1/version on each host; no ssh, no secrets.
+        #
+        # A warning, never a failure: r1 deploys first BY DESIGN, so the
+        # test nets are expected to be behind at this moment. Persisting is
+        # what makes it drift, and fleet-release-drift.yml (daily, 24h
+        # grace) opens the tracking issue for that. Grace is 0 here so the
+        # list is always printed. Runs whenever the playbook succeeded —
+        # a red config-apply gate or smoke must not hide the list.
+        if: ${{ !cancelled() && steps.playbook.outcome == 'success' }}
+        env:
+          REGION: ${{ inputs.region }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          case "$REGION" in
+            r1)
+              # Compare against the tag just deployed, not a re-read of
+              # r1: the question is whether the test nets carry THIS release.
+              export FLEET_REFERENCE_VERSION="$VERSION"
+              ;;
+            testnet|futurenet)
+              export FLEET_FOLLOWERS="${REGION}=https://api.${REGION}.stellarindex.io"
+              ;;
+          esac
+          set +e
+          report="$(FLEET_GRACE_HOURS=0 bash scripts/ci/check-fleet-release-drift.sh)"
+          rc=$?
+          set -e
+          echo "$report"
+          {
+            echo "## Fleet release parity"
+            echo
+            echo '```'
+            echo "$report"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          case "$rc" in
+            0) ;;
+            1) echo "::warning::test net(s) behind ${VERSION} — run the catch-up dispatches listed above (deploy.yml, region=testnet / futurenet, the test-net binary set). fleet-release-drift.yml opens a tracking issue if they are still behind after 24h." ;;
+            *) echo "::warning::fleet release parity could not compare every host (see above) — the test-net versions are UNKNOWN, which is not the same as in step." ;;
+          esac
 
       - name: Summary
         if: always()

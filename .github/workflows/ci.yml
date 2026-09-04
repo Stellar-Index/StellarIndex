@@ -706,6 +706,22 @@ jobs:
         # publication) and the live 1003-partition shape GREEN. No
         # network, no aws cli.
         run: ./scripts/ci/check-public-dataset-test.sh
+      - name: check-fleet-release-drift self-test
+        # launch-plan 1.7 (2026-09-03): fixtures for the test-net
+        # release-drift verdict fleet-release-drift.yml calls daily and
+        # deploy.yml runs after every deploy. Pins the drift that
+        # motivated it RED (test nets v0.57.0 / migrations 0150 vs r1
+        # v0.59.1 / 0154, with the release and migration counts), the
+        # same-day release cascade RED on the real tag dates (the 24h
+        # grace runs from the oldest release a test net lacks, not r1's
+        # newest tag), the in-step fleet GREEN, and the ways the check
+        # could lie — a redirecting hostname, an upstream error page or an
+        # unreadable host reading as "in step" — as DEGRADED, along with
+        # a served "version" carrying newlines and a forged verdict line
+        # (one prefixed line, never a key), a pre-release reference
+        # (fail-closed) and --fail-with-body (a PATH-shim curl).
+        # Throwaway git repos for the tag counts and dates; no network.
+        run: ./scripts/ci/check-fleet-release-drift-test.sh
       - name: lint-metric-refs self-test
         # W8.15: the F-1329 dead-alert guard used a plain grep over
         # emitter files, so a metric named only in a `//` (Go) or `#`

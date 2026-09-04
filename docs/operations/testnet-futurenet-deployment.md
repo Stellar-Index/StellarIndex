@@ -178,6 +178,102 @@ Two traps worth internalising:
   diagnosis: a credential-less run returns `AccessDenied` and looks like a
   MinIO policy gap when the policy is in fact correct.
 
+## Keeping the test nets in step with r1
+
+The test nets take releases AFTER r1 and only by a separate `deploy.yml`
+dispatch per region, so they drift by default: on 2026-09-03 they were a
+release and three migrations behind (`v0.57.0` / migrations head 0150 against
+r1's `v0.58.0` / 0153) one day after a catch-up, and nothing in the system
+could say so — r1's Prometheus scrapes r1 only and the VMs are NAT-only, so no
+fleet-wide series exists for an alert to compare. Two automatic checks now
+close that:
+
+| Check | When | What it does |
+| --- | --- | --- |
+| `deploy.yml` → **Fleet release parity** step | after every deploy | After an r1 deploy, reads `/v1/version` on both test nets and prints them against the tag just deployed with the two catch-up dispatches; after a test-net deploy, confirms that region is now in step with live r1. A `::warning::`, never a failure — r1 goes first by design. |
+| [`fleet-release-drift.yml`](../../.github/workflows/fleet-release-drift.yml) | daily 07:25 UTC | Same comparison against live r1 with a **24h grace** measured, per test net, from the **oldest r1 release it lacks** — never from r1's newest tag, which would re-open the window on every release (on 2026-09-03 r1 cut `v0.58.0` at 01:26Z and `v0.59.1` at 07:30Z; a test net still on `v0.57.0` at the next morning's run had lacked `v0.58.0` for 29h, whatever the newest tag's age). Past the grace it opens/updates one issue (`Fleet release drift: a test net is behind r1`, labelled `fleet-release-drift`) carrying the dispatches, fails the run so the scheduled-failure mail reaches the maintainer, and closes the issue only once every test net serves r1's release — a test net inside the grace keeps it open. An unreadable host is reported as `DEGRADED`, never as in step. |
+
+Both run [`scripts/ci/check-fleet-release-drift.sh`](../../scripts/ci/check-fleet-release-drift.sh)
+(fixture-tested in CI; the v0.57.0-vs-v0.59.1 drift and the 2026-09-03 release
+cascade are pinned red on the real tag dates).
+
+**What is read, and what it proves.** `GET /v1/version` on the **`api.*`**
+names — the served binary's `git describe`. That handler is static: it answers
+whether or not the binary is ready, so it proves which release a host **runs**
+and nothing more. It is not `/v1/healthz` (static `ok`, what Caddy
+health-checks) and not `/v1/readyz` (the readiness probe, which answers 503
+when its `schema` check fails). An HTTP error (the KVM host's Caddy answers 502
+while a VM is down — during a reset, for one), a redirect, or a body without
+`.data.version` is *unreadable* and the verdict is `DEGRADED`. The bare
+`testnet.stellarindex.io` / `futurenet.stellarindex.io` names 301 to mainnet's
+API and would read as "in step" forever; the script never follows a redirect.
+
+**What it does not prove.** The version is what the host *says* it runs, and
+nothing on the public surface can check it: a host serving a version higher
+than its binary reads as *ahead*, which is not drift, so the verdict can be
+`in-step` and the tracking issue closes. This is a tripwire against accidental
+drift — a region nobody redeployed — not a control against a compromised or
+lying host. Reading each host costs at most three attempts (`--retry 2`) five
+seconds apart, each capped at 20s, so one wedged region costs about 70s against
+the job's 10-minute budget.
+
+**Migrations are derived from the tags, not read from the hosts.** A binary's
+`ExpectedSchemaVersion` is its tag's `migrations/` head, and on the default
+deploy path `deploy-binary.yml` applies the tag's migrations before the binary
+swap — so a host serving `vX.Y.Z` has that tag's migrations, "N releases
+behind" carries "M migrations behind" with it, and `git ls-tree <tag>
+migrations/` answers M with no host access. The one deploy the derivation
+cannot see is `migrations_skip=true` (a `deploy.yml` input for hot-fixes): the
+binary then serves its tag's version over an older schema. Such a host answers
+503 on `/v1/readyz` with the `schema` check failing, but `/v1/healthz` stays
+200 and `/v1/version` still answers, so the drift check reports it as in step.
+Observing the schema through `/v1/readyz` per host would close that gap and is
+not built.
+
+**Version strings, pre-releases and dirty builds.** A released tag and every
+`git describe` label on it (`v0.59.1-3-gabc1234`, `v0.59.1-dirty`, what a local
+`make` build serves) sit on the tag's base and compare equal to it. Any other
+suffix (`v0.60.0-rc.1`) is a pre-release and sorts below the release it
+precedes. A pre-release **reference is fail-closed**: while r1 serves
+`v0.60.0-rc.1` no released tag dates what the test nets lack (`v0.60.0` is not
+cut), so no grace can be measured — every test net behind it is `DRIFT` at the
+next daily run, with no grace, the message naming the missing base tag and the
+release/migration counts printed as `?`. r1 on a pre-release is itself an
+exceptional state; the same-day issue says so rather than guessing a window.
+It closes once r1 serves a release again and the test nets carry it. Under a
+pre-release reference only an **identical** version string counts as in step:
+every pre-release of a base compares as one version and no ordering over `-rc.N`
+suffixes is attempted, so r1 on `v0.60.0-rc.2` beside a test net on
+`v0.60.0-rc.1` is drift, not a quiet run that closes the ticket on a test net a
+candidate behind. A test net that already carries the base — the cut release, or
+a newer one — is drift under that reference too, reported as *not on* r1's
+version rather than as lacking a base it has.
+
+**Host-supplied bytes.** Nothing a host serves reaches the report, a step
+output or the issue unsanitised: a served version that is not a version is
+rendered in the version alphabet (`[0-9A-Za-z.-]`, every other byte shown as
+`?`), free text (a curl error, an error page) is flattened to one line of
+printable ASCII without backticks, both capped at 120 bytes, and a *conforming*
+version is bounded by the pattern itself at 77 bytes (three digits per
+component — the width the version key can hold — and 64 bytes of suffix against
+the ~54 of the longest `git describe` label), so the caps bind every byte a host
+serves and not only the malformed ones. The workflow terminates its multi-line
+step output with a random delimiter. A host answering
+a "version" that carries newlines and a `verdict=in-step` line therefore cannot
+end the workflow's output value early and silence a `DEGRADED` run; the
+self-test pins that fixture.
+
+Catch up = the dispatches the report prints, one per region, test-net binary
+set (no aggregator):
+
+```sh
+gh workflow run deploy.yml -f region=testnet   -f version=vX.Y.Z -f binaries=stellarindex-indexer,stellarindex-api,stellarindex-ops
+gh workflow run deploy.yml -f region=futurenet -f version=vX.Y.Z -f binaries=stellarindex-indexer,stellarindex-api,stellarindex-ops
+```
+
+Verify: `curl -sf https://api.testnet.stellarindex.io/v1/version | jq -r .data.version`
+equals r1's; the next scheduled run closes the issue on its own.
+
 ## Related
 
 - [testnet-futurenet-reset-runbook.md](./testnet-futurenet-reset-runbook.md) — reset handling.

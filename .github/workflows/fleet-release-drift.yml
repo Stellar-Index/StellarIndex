@@ -1,0 +1,208 @@
+name: fleet-release-drift
+
+# Test-net release-drift tripwire (launch-plan 1.7, 2026-09-03).
+#
+# One day after testnet and futurenet were caught up to r1 they were a
+# release and three migrations behind again (v0.57.0 / migrations head
+# 0150 against r1's v0.58.0 / 0153), and nothing could have said so.
+# deploy.yml deploys ONE region per dispatch; r1's Prometheus scrapes r1
+# only; the test-net VMs are NAT-only behind the KVM host, so no
+# fleet-wide series exists for a rule to compare. The drift was routine —
+# its invisibility was the gap.
+#
+# This job needs no secrets and no host access. Each region serves its
+# binary's `git describe` on a PUBLIC endpoint, `GET /v1/version` —
+# api.stellarindex.io, api.testnet.stellarindex.io,
+# api.futurenet.stellarindex.io. That handler is static (it answers
+# whether or not the binary is ready), so it proves which release a host
+# RUNS and nothing more; an HTTP error, a redirect or a versionless body
+# is "unreadable", never "in step". Every byte a host serves is
+# sanitised by the script before it reaches the report, a step output or
+# the issue (one printable-ASCII line per host, no backticks), and the
+# report's multi-line output below is terminated by a random delimiter,
+# so a host cannot forge the verdict. The migrations a release carries are
+# derived from its tag: the binary's ExpectedSchemaVersion is the
+# migrations/ head at that tag and deploy-binary.yml applies them before
+# the swap on the default deploy path, so "how many migrations behind" is
+# `git ls-tree <tag> migrations/` on the checkout. The one deploy that
+# derivation cannot see is `migrations_skip=true` (a binary over an older
+# schema answers 503 on /v1/readyz, not on /v1/version). The bare explorer
+# names (testnet.stellarindex.io) 301 to mainnet's API and are never used.
+# What it does NOT prove: the version is what the host SAYS it runs, so a host
+# serving a version higher than its binary reads as "ahead" — not drift — and
+# the verdict can go quiet and close the issue; this is a tripwire against a
+# region nobody redeployed, not a control against a lying host.
+#
+# Daily, not weekly: r1 cut three releases on 2026-09-03 alone, and the
+# drift that motivated this appeared within a day. A follower may lack an
+# r1 release for 24h without that counting — r1 deploys first by design
+# and the test nets follow — so a deploy in progress stays quiet; past
+# that it is drift. The 24h run from the OLDEST release the follower
+# lacks, per follower, never from r1's newest tag: measured from the
+# newest tag, a same-day cascade like 2026-09-03's re-opened the window on
+# every release and a follower two releases behind never crossed it. On
+# drift or on an unreadable host it opens / updates ONE tracking issue
+# carrying the exact catch-up dispatches, closes it only once every test
+# net serves r1's release (a follower inside the grace keeps it open),
+# and FAILS the run so the scheduled failure notification reaches the
+# maintainer — the condition is fixable by one `gh workflow run`, unlike
+# a third-party dataset outage.
+#
+# Decision core: scripts/ci/check-fleet-release-drift.sh, fixture-tested
+# offline by scripts/ci/check-fleet-release-drift-test.sh in ci.yml, where
+# the v0.57.0-vs-v0.59.1 drift and the same-day cascade are pinned RED
+# and the in-step fleet GREEN. deploy.yml runs the same script with grace
+# 0 after every deploy so the operator sees the list in the run that
+# created the lag.
+
+on:
+  schedule:
+    # 07:25 UTC daily — after the deploy window most releases land in
+    # and before the working day; three GETs and a tag listing.
+    - cron: '25 7 * * *'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: fleet-release-drift
+  cancel-in-progress: false
+
+env:
+  ISSUE_LABEL: fleet-release-drift
+  ISSUE_TITLE: "Fleet release drift: a test net is behind r1"
+
+jobs:
+  compare-served-versions:
+    name: test nets vs r1 served version
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+          # Full history + tags: the release and migration counts, and the
+          # date of the oldest release a follower lacks (the grace anchor),
+          # come from the tags. Without them the counts print `?` and the
+          # grace cannot be applied (the script then fails closed and
+          # reports the lag).
+          fetch-depth: 0
+
+      - name: Compare served versions
+        id: compare
+        run: |
+          set -euo pipefail
+          set +e
+          report="$(./scripts/ci/check-fleet-release-drift.sh)"
+          rc=$?
+          set -e
+          echo "$report"
+          # The report carries bytes served by three hosts. The script
+          # flattens every one of them into a single prefixed line and
+          # drops the backtick that would end a markdown fence
+          # downstream; this tr is a second layer for the fence. The
+          # multi-line output is terminated by a RANDOM delimiter: the
+          # runner's file-command parser keeps the LAST key=value it
+          # reads, so a guessable terminator followed by a forged
+          # `verdict=in-step` line inside the value would end the value
+          # early and rewrite the verdict — GitHub's guidance for
+          # untrusted multi-line values.
+          report="$(printf '%s' "$report" | tr '`' "'")"
+          d="$(openssl rand -hex 16)"
+          {
+            echo "verdict_rc=${rc}"
+            printf 'report<<%s\n%s\n%s\n' "$d" "$report" "$d"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Run summary
+        env:
+          VERDICT: ${{ steps.compare.outputs.verdict }}
+          REFERENCE_VERSION: ${{ steps.compare.outputs.reference_version }}
+          TESTNET_VERSION: ${{ steps.compare.outputs.testnet_version }}
+          TESTNET_STATE: ${{ steps.compare.outputs.testnet_state }}
+          TESTNET_LAG: ${{ steps.compare.outputs.testnet_lag }}
+          FUTURENET_VERSION: ${{ steps.compare.outputs.futurenet_version }}
+          FUTURENET_STATE: ${{ steps.compare.outputs.futurenet_state }}
+          FUTURENET_LAG: ${{ steps.compare.outputs.futurenet_lag }}
+          REPORT: ${{ steps.compare.outputs.report }}
+        run: |
+          set -euo pipefail
+          {
+            echo "## Fleet release drift — ${VERDICT:-?}"
+            echo
+            echo "| host | served version | state |"
+            echo "|---|---|---|"
+            echo "| r1 | \`${REFERENCE_VERSION:-?}\` | reference |"
+            echo "| testnet | \`${TESTNET_VERSION:-?}\` | ${TESTNET_STATE:-?}${TESTNET_LAG:+ — $TESTNET_LAG} |"
+            echo "| futurenet | \`${FUTURENET_VERSION:-?}\` | ${FUTURENET_STATE:-?}${FUTURENET_LAG:+ — $FUTURENET_LAG} |"
+            echo
+            echo '```'
+            echo "$REPORT"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Open or update the tracking issue (behind, or unreadable)
+        if: steps.compare.outputs.verdict_rc != '0'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          REPORT: ${{ steps.compare.outputs.report }}
+          VERDICT: ${{ steps.compare.outputs.verdict }}
+        run: |
+          set -euo pipefail
+          # The issue is identified by its exact title; the label is a
+          # convenience. Creating the label fails when it already exists
+          # (fine) or when the token cannot manage labels — in which case
+          # the issue is opened without it rather than not at all.
+          label_args=()
+          gh label create "$ISSUE_LABEL" --color B60205 \
+            --description "a test net serves an older release than r1, or its version could not be read" 2>/dev/null || true
+          if gh label list --limit 200 --json name --jq '.[].name' | grep -qx -- "$ISSUE_LABEL"; then
+            label_args=(--label "$ISSUE_LABEL")
+          fi
+
+          case "$VERDICT" in
+            degraded) note="At least one host could not be read, so the comparison is INCOMPLETE — this is not evidence the fleet is in step. Check the host and the public API name (the api.* names, never the bare explorer names, which redirect to mainnet). A test net mid-reset reads this way until its API answers again." ;;
+            no-followers) note="The follower list named no host, so NOTHING was compared — this is a configuration fault in the check itself, not a fleet state. Check FLEET_FOLLOWERS in this workflow and in scripts/ci/check-fleet-release-drift.sh." ;;
+            *)        note="Run the catch-up dispatches in the report (deploy.yml, region=testnet / futurenet, the test-net binary set with NO aggregator). Migrations ship with the deploy: deploy-binary.yml applies the tag's migrations before the binary swap." ;;
+          esac
+
+          # The backticks are literal markdown fences, not expansions.
+          # shellcheck disable=SC2016
+          body="$(printf '```\n%s\n```\n\n%s\n\n---\n_Auto-managed by the fleet-release-drift workflow (run %s). Closes automatically once every test net serves the same release as r1. Procedure: docs/operations/testnet-futurenet-deployment.md, "Keeping the test nets in step with r1"._\n' \
+            "$REPORT" "$note" "${GITHUB_RUN_ID:-?}")"
+
+          existing="$(gh issue list --state open --search "\"$ISSUE_TITLE\" in:title" \
+            --json number,title | jq -r --arg t "$ISSUE_TITLE" '[.[] | select(.title == $t)][0].number // empty')"
+          if [ -n "$existing" ]; then
+            gh issue comment "$existing" --body "$body"
+            echo "Updated existing fleet-release-drift issue #$existing."
+          else
+            gh issue create --title "$ISSUE_TITLE" "${label_args[@]}" --body "$body"
+            echo "Opened new fleet-release-drift issue."
+          fi
+
+      - name: Close the tracking issue (fleet in step)
+        # Only a full in-step verdict closes: a follower inside the grace
+        # is still behind, and the issue stays open until it catches up.
+        if: steps.compare.outputs.verdict == 'in-step'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          for n in $(gh issue list --state open --search "\"$ISSUE_TITLE\" in:title" \
+              --json number,title | jq -r --arg t "$ISSUE_TITLE" '.[] | select(.title == $t) | .number'); do
+            gh issue close "$n" --comment "Every test net serves the same release as r1 again — fleet-release-drift closing automatically."
+            echo "Closed fleet-release-drift issue #$n."
+          done
+
+      - name: Fail the run while a test net is behind or unreadable
+        if: steps.compare.outputs.verdict_rc != '0'
+        env:
+          VERDICT: ${{ steps.compare.outputs.verdict }}
+        run: |
+          echo "::error::fleet-release-drift: ${VERDICT:-?} — see the tracking issue for the catch-up dispatches. A test net that has lacked an r1 release past the grace window is drift; an unreadable host is not proof of parity."
+          exit 1
