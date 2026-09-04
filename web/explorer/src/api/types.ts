@@ -7934,7 +7934,8 @@ export interface operations {
                  *     (`type`, `code`, `issuer`, `q`) push down to the listing
                  *     spine, so a filtered row reports the volume of the arm the
                  *     filter admitted rather than the asset's total across its
-                 *     forms. Two cases, and they differ:
+                 *     forms, while an unfiltered row reports the total. The rule
+                 *     is one rule, reached two ways:
                  *
                  *     - A SAC-wrapped asset served from the **classic spine**
                  *       (any asset outside the verified catalogue) has its
@@ -7946,12 +7947,27 @@ export interface operations {
                  *       `type=soroban` returns the wrapper by itself with the
                  *       wrapper's own volume.
                  *     - A **verified-catalogue** row (the curated slugs that open
-                 *       the `asset_class=all` listing — `xlm`, `usdc`, `aqua`,
-                 *       `blnd`, …) reports its CLASSIC arm on every request,
-                 *       filtered or not. Its analytics come from a single-identity lookup of its Stellar issuance — an exact-issuer lookup of the classic twin, or the dedicated `native` reader for XLM — which cannot reach a SAC wrapper, and a SAC wrapper has no
-                 *       issuer, so no merge happens on that path at all. Do not
-                 *       read a catalogue row's unfiltered figure as a cross-arm
-                 *       total.
+                 *       the `asset_class=all` listing — `usdc`, `eurc`, `aqua`,
+                 *       `blnd`, …) is served by a different phase and lands on the
+                 *       same two figures. Its analytics come from an exact-issuer
+                 *       lookup of the classic twin, which no SAC wrapper can
+                 *       match, so an unfiltered request adds the wrapper's
+                 *       trailing-24h volume to that arm and publishes the
+                 *       classic + SAC sum. That is the sum the spine intends for
+                 *       the twin this row replaces, not one it guarantees: the
+                 *       spine folds a wrapper only when the wrapper's row lands
+                 *       in the same page window, while the catalogue row always
+                 *       point-reads it. Under any of the four filters
+                 *       the addition is skipped and the classic arm alone is
+                 *       reported, matching the spine.
+                 *     - `xlm` is the exception. It is served by the dedicated
+                 *       `native` reader rather than by a classic-twin lookup, so
+                 *       its `volume_24h_usd` is the `native` (SDEX) arm on every
+                 *       request. Neither of XLM's other two identities is added
+                 *       to it: the XLM Stellar Asset Contract is a distinct
+                 *       on-chain venue population, and `crypto:XLM` is off-Stellar
+                 *       exchange turnover that no on-Stellar volume figure
+                 *       includes.
                  */
                 type?: "native" | "classic" | "soroban" | "fiat" | "any";
                 /**

@@ -52,7 +52,7 @@ func TestCatalogueStatsUseListingReader(t *testing.T) {
 	s := &Server{assetsReader: &listingOnlyAssets{}, verifiedCurrencies: cat}
 	page := []AssetDetail{{Slug: "usdc", Code: "USDC", AssetID: "usdc"}}
 	req := httptest.NewRequest(http.MethodGet, "/v1/assets", nil)
-	s.fillCatalogueStatsForPage(req.Context(), page)
+	s.fillCatalogueStatsForPage(req.Context(), page, assetListFilters{})
 	if page[0].Change24hPct == nil || *page[0].Change24hPct != "1.23" {
 		t.Fatalf("catalogue row did not absorb the twin's change: %+v", page[0].Change24hPct)
 	}

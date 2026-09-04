@@ -533,6 +533,15 @@ func (f assetListFilters) ignored() []string {
 	return out
 }
 
+// unfiltered reports whether the caller narrowed the listing at all.
+// It is the condition under which a row publishes an asset's CROSS-ARM
+// total rather than the arm the caller's own predicate admitted: every
+// row filter narrows the spine before [Server.foldAliasTwins] runs, so a
+// filtered page can only honestly report what it selected.
+func (f assetListFilters) unfiltered() bool {
+	return f == assetListFilters{}
+}
+
 // assetsOrderParam is the parsed `order_by` for /v1/assets: the store
 // order to use, plus whether the client actually asked for one.
 //
@@ -715,13 +724,16 @@ func isValidClassicCode(s string) bool {
 // volume onto its classic twin, and every row filter narrows the spine
 // before that fold — so a spine-served SAC-wrapped asset's
 // `volume_24h_usd` under any of the four filters is its classic-arm
-// figure alone. A verified-catalogue row is different and reports its
-// classic arm on EVERY request: its stats come from
-// [Server.lookupCatalogueTwin], an exact-issuer lookup of the classic
-// twin that never reaches the contract arm, so the fold plays no part.
-// Both facts are on the four parameters in the OpenAPI spec; see the
-// pushdown note in [Server.fetchClassicUnifiedRows] for why the filters
-// run before the fold rather than after it.
+// figure alone. A verified-catalogue row reaches the same two figures by
+// a different route: its stats come from [Server.lookupCatalogueTwin],
+// an exact-issuer lookup that returns the classic arm only, so an
+// unfiltered request folds the wrapper's arm on top
+// ([Server.mergeContractArmVolume]) — the sum the classic phase already
+// computes for the twin this row suppresses — and a filtered one leaves
+// the classic arm standing. Both facts are on the four parameters in the
+// OpenAPI spec; see the pushdown note in
+// [Server.fetchClassicUnifiedRows] for why the filters run before the
+// fold rather than after it.
 //
 // `asset_class` remains the major dispatch, not a row filter. The
 // class-scoped catalogue listings (`fiat` / `stablecoin` / `crypto`)
@@ -2008,7 +2020,11 @@ func (s *Server) writeCataloguePage(
 	}
 	page := rows[offset:end]
 	s.fillCataloguePricesForPage(r.Context(), page)
-	s.fillCatalogueStatsForPage(r.Context(), page)
+	// No filters: the class-scoped listings and /v1/external/assets share
+	// this writer and neither applies the row filters (stated on all four
+	// parameters in the spec), so no arm has been selected away and the
+	// cross-arm total is the only figure a row here can honestly carry.
+	s.fillCatalogueStatsForPage(r.Context(), page, assetListFilters{})
 	s.attachSparkline7dIfRequested(r, page)
 	env := Envelope{Data: page, Flags: flags}
 	if end < len(rows) {
@@ -2284,7 +2300,7 @@ func (s *Server) serveCatalogueUnifiedPage(
 	// writeCataloguePage (the class-filtered path) because both share
 	// a byte-identical price-fill line and the edits anchored on the
 	// first occurrence. Keep both call sites.
-	s.fillCatalogueStatsForPage(r.Context(), page)
+	s.fillCatalogueStatsForPage(r.Context(), page, filters)
 	s.attachSparkline7dIfRequested(r, page)
 	env := Envelope{Data: page, Flags: Flags{}}
 	if end < len(rows) {
@@ -3702,7 +3718,13 @@ func maxFractionDigits(a, b string) int {
 // 1-11 of the unified listing rendered "—" across every analytics
 // column while the same asset's classic row two screens down carried
 // them all). Bounded fan-out, best-effort per row.
-func (s *Server) fillCatalogueStatsForPage(ctx context.Context, page []AssetDetail) {
+//
+// `filters` decides which ARM of a SAC-wrapped asset the row's money
+// describes, the same way it does on the spine: unfiltered, the row
+// carries the classic + contract sum; under any row filter it carries
+// the classic arm the exact-issuer twin lookup returned, because that is
+// the arm the filter admitted.
+func (s *Server) fillCatalogueStatsForPage(ctx context.Context, page []AssetDetail, filters assetListFilters) {
 	if s.assetsReader == nil {
 		return
 	}
@@ -3733,6 +3755,13 @@ func (s *Server) fillCatalogueStatsForPage(ctx context.Context, page []AssetDeta
 			return
 		}
 		twin := []AssetDetail{assetDetailFromAssetRow(*twinRow)}
+		// Contract arm BEFORE the cap fill, the position foldAliasTwins
+		// occupies on the spine, so the dust-liquidity guard below weighs
+		// the same volume on both paths rather than suppressing a cap here
+		// that the suppressed classic row would have published.
+		if filters.unfiltered() {
+			s.mergeContractArmVolume(statsCtx, &twin[0], entry.AssetID)
+		}
 		// Same supply-derived market-cap fill the classic phase gets — the
 		// raw listing row carries no mcap. The twin row comes from
 		// ListAssetsExt (listAssetsBaseSelect), which DOES populate
@@ -3747,13 +3776,61 @@ func (s *Server) fillCatalogueStatsForPage(ctx context.Context, page []AssetDeta
 	})
 }
 
-// Follow-up, named here rather than left implicit: this lookup reaches only
-// the classic arm, so a catalogue row's volume_24h_usd is its classic volume
-// on every request while the spine phase computes the classic+SAC sum for
-// the same asset and then suppresses that row in favour of this one. The
-// flagship listing therefore under-reports SAC-wrapped catalogue assets;
-// making this lookup fold-aware changes a served money value and belongs to
-// its own change.
+// mergeContractArmVolume adds a catalogue entry's SAC wrapper's
+// trailing-24h volume and trade count onto its classic twin row, so the
+// catalogue row publishes the classic + contract sum instead of the
+// classic arm alone.
+//
+// The sum is not new money: the classic phase already computes it for
+// this same asset — foldAliasTwins merges the wrapper onto the classic
+// twin — and then suppressCatalogueTwins throws that row away in favour
+// of the catalogue row served here. Without this the flagship listing
+// under-reported every SAC-wrapped catalogue asset by its whole contract
+// arm (USDC: 35.6M published against the 44.6M the discarded row held).
+//
+// CLASSIC issuance only. The merge restores what the discarded classic
+// row carried, and only a classic asset has such a row: native XLM has
+// none (no classic_assets row exists for it — the dedicated native
+// reader serves it), so there is nothing to restore and XLM's three-form
+// split is left exactly as the native reader reports it.
+//
+// SAC forms only, within that. The equivalence class is the process
+// AliasRegistry's — the same one the spine folds on — and it also holds
+// `crypto:XLM`, the cross-network ticker every CEX publishes under.
+// That form is a DISJOINT, off-chain venue population (measured
+// 2026-08-04: $15.7M of CEX turnover against a few hundred thousand
+// on-chain), so folding it would put exchange volume inside an
+// on-Stellar figure. The type test's reachable job, though, is the
+// SELF-SKIP: canonical.AssetAliases returns the literal spelling first,
+// so without it the loop would re-read the classic row and add its own
+// arm to itself. The crypto:XLM form never reaches this loop — only a
+// classic issuance enters, and XLM is not one — so the test excludes it
+// by construction rather than by a path a test can exercise.
+//
+// GetAssetByAssetID rather than the listing reader: a wrapper has no
+// issuer to filter on and `q` matches column VALUES, never a 56-char
+// contract id. Only the additive activity counters are taken
+// (mergeAliasVolume) — price, changes and supply stay the classic
+// form's own, the SAC-last money-safety invariant canonical.AssetAliases
+// documents. One point read per catalogue row that HAS a configured
+// wrapper, inside the caller's bounded fan-out and its 8s budget.
+func (s *Server) mergeContractArmVolume(ctx context.Context, dst *AssetDetail, assetID string) {
+	asset, err := canonical.ParseAsset(assetID)
+	if err != nil || asset.Type != canonical.AssetClassic {
+		return
+	}
+	for _, alias := range canonical.AssetAliases(asset) {
+		if alias.Type != canonical.AssetSoroban {
+			continue
+		}
+		row, err := s.assetsReader.GetAssetByAssetID(ctx, alias.String())
+		if err != nil {
+			continue
+		}
+		mergeAliasVolume(dst, assetDetailFromAssetRow(row))
+	}
+}
+
 // lookupCatalogueTwin resolves a catalogue entry's Stellar asset id to
 // its listing row: the dedicated native reader for XLM (no
 // classic_assets twin exists), the exact-issuer listing filter for
@@ -3764,11 +3841,12 @@ func (s *Server) fillCatalogueStatsForPage(ctx context.Context, page []AssetDeta
 // ONE arm: the lookup keys on the classic issuer and a SAC wrapper has
 // none, so the row it returns — and with it the catalogue row's
 // volume_24h_usd and trade count, via mergeTwinStats — is the CLASSIC
-// arm's, on a filtered request and an unfiltered one alike.
-// foldAliasTwins never touches these rows: it runs on the classic
-// phase, whose copy of this same twin suppressCatalogueTwins then
-// drops. Stated on the four row filters in the OpenAPI spec so the
-// figure is not read as a cross-arm total.
+// arm's. That is the published figure under a row filter, which is the
+// arm such a filter admits. On an unfiltered request the caller adds the
+// contract arm on top ([Server.mergeContractArmVolume]) so the row
+// carries the same cross-arm sum the classic phase computes for the twin
+// suppressCatalogueTwins then drops. Stated on the four row filters in
+// the OpenAPI spec.
 func (s *Server) lookupCatalogueTwin(ctx context.Context, assetID string) *timescale.AssetRow {
 	if assetID == "native" {
 		row, err := s.assetsReader.GetNativeAssetRow(ctx)
