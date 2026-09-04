@@ -71,7 +71,7 @@ severity: P1
 | 1.8 | `gh variable delete DEPLOY_APPROVAL_RELAXED` + r1 required-reviewers, at the flip. | **the maintainer** |
 | 1.9 | ~~**D7** — the thin-pool third-alias VWAP review this plan says is owed "before public traffic". Never done, no artefact.~~ **DONE (2026-09-04).** Artefact: [d7-thin-pool-third-alias-vwap-review-2026-09-04.md](../audit/d7-thin-pool-third-alias-vwap-review-2026-09-04.md). Verdict: every first-hit served-price walk crosses the base's alias family with the **literal** quote and is gated (substance + trailing guard + freshness, or the trade-count floor), so a Soroban SAC/SAC pool is not a candidate for a classic-quoted read — pinned by tests proven non-vacuous by mutation. The one **merge** walk, `/v1/price/tip` (+ `/stream`), admitted SAC combinations unasked and served a single thin-pool print in any 30 s window the SDEX book was silent — **fixed** (`tipMergePairs`: the established forms merge; a SAC-form combination the caller did not name is read last, only after the closed bucket and every other fallback have missed, so a wrapped classic whose only market is its pool still serves from it — gated by the full substance floor, ≥ $1,000 volume **and** ≥ 20 distinct buckets **and** ≥ 6 h span over the trailing 24 h, measured on the pool alone for such an asset — and a pool print never displaces or blends into a classic-book answer; red→green). Four bounded residuals recorded (alias-union substance verdict on SAC-keyed reads; `/v1/price/at` after 24 h silence; valuation tier 3 after 1 h silence; the tip's last-tier pool read for a Soroban-only wrapped classic) and two follow-ups outside that count (coverage; a decoder-level both-legs pin); the first residual is a served-policy decision for the maintainer (artefact §7 R1). | agent |
 | 1.10 | **DONE (2026-09-04).** Applied from `configs/ansible` at `9dd126f06` with `--tags ops-jobs` (`--check --diff` first; the enable step fails in check mode before the unit exists, as documented below). `verify-served-values.timer` is armed (next 06:20 UTC) and a hand-started first run exited 0: `xlm_total_supply`, `xlm_circulating_supply` and `usdc_total_supply` all OK (rel_err 4.0e-7, 3.0e-4, 1.5e-3); `served_values.prom` is written, so the three served-value alerts now select a series that exists. Recipe kept: **Apply the served-value truth harness to r1.** `verify-served-values.{service,timer}` and their `ops-jobs` task are codified and were NOT on the box — an ansible commit does not reach r1 on its own, and until this runs the harness that reconciles the flagship served numbers against SDF/Stellar Expert is still not scheduled anywhere. From `configs/ansible`, `--check --diff` first, then `ansible-playbook -i inventory/r1.yml playbooks/archival-node.yml --diff --tags ops-jobs` (tag-limited runs need `-e ansible_python_interpreter=/usr/bin/python3`). Verify: `systemctl list-timers verify-served-values.timer` shows a NEXT/LEFT, and after the first 06:20 UTC run `/var/lib/node_exporter/textfile_collector/served_values.prom` exists and Prometheus has `stellarindex_served_value_last_run_unix`. Two expected transients: the weekly `ansible-drift` workflow reports the new install/remove tasks and the systemd handler as changed until the apply lands, and `stellarindex_served_value_check_stale` fires off its new `absent_over_time` arm from the moment the rules deploy (rules ship automatically with `deploy.yml`; the units do not) until that first run stamps the series — up to ~25 h after the apply. **If the first scheduled run exits non-zero** — the 2026-07-02 hand-run found three findings, so that is a plausible outcome — `stellarindex_served_value_drift` and `stellarindex_served_value_unit_failed` fire roughly 26–50 h after the apply and stay firing until the finding is resolved or accepted; triage per the drift section of [served-value-drift](runbooks/served-value-drift.md).| operator on r1 |
-| 1.11 | **Enable ClickHouse's Prometheus endpoint on r1.** The lake exports NO metrics: the stock `/etc/clickhouse-server/config.xml` ships the whole `<prometheus>` block inside an XML comment (lines 1151-1158 on r1), nothing listens on 9363, and Prometheus holds zero `ClickHouse*` series — so the API's ClickHouse READ path, the rollups and the CH-fed projector have only ingest-side coverage (live-sink drop counters the project's own binaries emit). The role now ships the drop-in and the scrape job. From `configs/ansible`, `--check --diff` first, then `ansible-playbook -i inventory/r1.yml playbooks/archival-node.yml --diff --tags clickhouse-exporter` (tag-limited runs need `-e ansible_python_interpreter=/usr/bin/python3`). No ClickHouse restart is performed or needed — the `config.d` reloader picks it up, and the play's own verify task polls `http://127.0.0.1:9363/metrics` for a `ClickHouseProfileEvents_` line before reporting success. Then ship the scrape job: `scp configs/prometheus/prometheus.r1.yml root@136.243.90.96:/etc/prometheus/prometheus.yml` and `systemctl reload prometheus`. Verify: `curl -s http://127.0.0.1:9090/api/v1/targets | grep clickhouse` shows the job `up`. **Expected transients:** the weekly `ansible-drift` workflow reports the new task as changed until the apply lands (it is repo-ahead-of-r1, which the baseline explicitly refuses to park), and `stellarindex_clickhouse_server_down` is a **page** and fires off its `absent_over_time` arm from the moment the rules deploy (rules ship automatically with `deploy.yml`; the drop-in and the scrape config do not) until the first successful scrape — that firing IS the finding, not a false positive. Triage per [clickhouse-server-health](runbooks/clickhouse-server-health.md). | operator on r1 |
+| 1.11 | ~~**Enable ClickHouse's Prometheus endpoint on r1.**~~ **DONE (2026-09-04).** The lake had exported no metrics at all: the stock `/etc/clickhouse-server/config.xml` ships the whole `<prometheus>` block inside an XML comment, nothing listened on 9363, and Prometheus held zero `ClickHouse*` series, so the API's ClickHouse READ path, the rollups and the CH-fed projector had ingest-side coverage only. The role's drop-in and scrape job (`9eeac705b`) are now on the box: `curl -s localhost:9363/metrics` returns `ClickHouse_Info`, the `clickhouse` scrape target reads `health: up` against `http://localhost:9363/metrics`, and Prometheus holds **3,092 `ClickHouse*` series**. No ClickHouse restart was performed — the `config.d` reloader picked the drop-in up. **The expected transient did fire and was handled:** `stellarindex_clickhouse_server_down` is a *page*, and it deploys with the rules while the drop-in does not, so it fired on its `absent_over_time` arm the moment the rules landed. It was silenced with a reason for the duration of the apply, resolved on the first successful scrape, and the silence was lifted — `amtool silence query` is empty. **That ordering is the lesson, not the alert:** a page whose rule ships automatically and whose exporter ships by hand is a self-inflicted page every time. Rows that install an exporter must land the exporter before, or in the same change as, the rule that watches it. | operator on r1 |
 | 1.12 | **Give the ClickHouse schema snapshot an off-site target** — `ch_schema_snapshot_mc_target` is unset on r1, so ADR-0043 §2.1's snapshot (the lake's ONLY backup) writes to the same host and the same ZFS pool as the lake it protects. That is not survivable: ADR-0043's restore is schema-FIRST, so in total-site-loss Postgres comes back from the repo2 S3 copy and the lake's DDL exists on no surviving medium. The role now **refuses the backup surface on pubnet** without the var — `--tags backup` (or `pgbackrest`) stops at the `Refuse a local-only ClickHouse schema snapshot` assert; `ch_schema_snapshot_offsite_ack` is accepted only on test nets, whose lakes rebuild from `deploy/clickhouse/*.sql` — while a full `archival-node.yml` run (the weekly `ansible-drift` workflow, its `apply=true` arm, and any run limited to another tag) does **not** stop there: it prints a `Report a local-only ClickHouse schema snapshot on pubnet` notice naming this row, installs the snapshot units local-only (the state r1 is in today), and reports no drift for it. Set `ch_schema_snapshot_mc_target` in `inventory/r1.yml` (an `mc` alias/prefix on the same provider as pgBackRest repo2, e.g. `offsite/stellarindex-backups/ch-schema`), configure the matching `mc` alias for root on r1, then `ansible-playbook -i inventory/r1.yml playbooks/archival-node.yml --diff --tags backup` (tag-limited runs need `-e ansible_python_interpreter=/usr/bin/python3`), and **re-encode `R1_INVENTORY_B64`** from the updated file — the drift workflow materialises `inventory/r1.yml` from that secret, not from a checkout. Verify: `systemctl start ch-schema-snapshot.service` then `grep offsite /var/lib/node_exporter/textfile_collector/ch_schema_snapshot.prom` shows `offsite_configured 1` and a fresh `offsite_last_success_unix`. **Expected transients:** until this runs, `stellarindex_ch_schema_snapshot_offsite_stale` tickets r1 by name from the moment the rules deploy — its off-site arm is now per host and no longer gated on `offsite_configured == 1`, and a never-configured off-site was the one state it could not report — and the weekly `ansible-drift` run stays green for this row (the notice task is `ok`, never `changed`). Between the apply and the secret re-encode, the drift run reports `ch-schema-snapshot.service` as changed (the secret's inventory renders the unit without `SNAPSHOT_MC_TARGET`); that clears when the secret catches up. Triage per [ch-schema-restore](runbooks/ch-schema-restore.md). | operator on r1 |
 
 ### Tier 2 — real work that does NOT gate the announcement
@@ -86,6 +86,63 @@ items 6-9, **#349-#352** (correctly labelled post-v1), **#372**, the decks,
 the CoinGecko Pro purchase, enabling hashdb, and IP rotation. **HA / R2+R3
 is superseded by D2** (single box with tested restore for v1); the
 2026-08-28 "second public host into the launch gate" line is stale.
+
+### Live findings — r1, 2026-09-04 evening (alert board read directly)
+
+Six alerts are active on r1 and none of them is `oracle_stale`, which row
+1.1 still names as the only non-heartbeat alert firing. That sentence is now
+out of date; the board reads:
+
+- **`stellarindex_aggregator_supply_refresh_error_dominant`** (ticket,
+  pending, AQUA) — **a real and previously unrecorded condition.** The
+  refresher stamps a snapshot at the freshest ingestion cursor and then
+  fails closed if that ledger has no `stellar.ledgers` row in the lake
+  (`no_ledger`, deliberate: a wall-clock stamp would corrupt point-in-time
+  supply). But the cursor is *structurally* ahead of the lake — measured
+  now, `ledgerstream` reads **64,274,510** while `max(ledger_seq)` in
+  `stellar.ledgers` is **64,274,509** — so a refresh that lands in that
+  one-ledger window always misses. Fleet-wide that is **9.9% of ticks over
+  2 h** (`ok` 1,082, `no_ledger` 119, `dormant` 0), and it is bursty rather
+  than spread: **40 assets** were over a 40% non-ok rate in the same 10 min
+  window, because when the lake lags every watched asset fails together.
+  Each miss only skips a tick, so supply is late rather than wrong — but the
+  per-asset alert F-1320 introduced now tickets on it, and it will keep
+  doing so. The fix is to pick the snapshot ledger as
+  `min(freshest cursor, max(stellar.ledgers))` rather than the cursor alone,
+  which keeps the fail-closed property and removes the self-inflicted race.
+- **`stellarindex_ingestion_oracle_unknown_symbols`** (ticket, since
+  00:07Z, source `redstone`) — **the feed is `earnUSDC_FUNDAMENTAL`, and
+  nothing was lost.** The counter has no `symbol` label, but the identity is
+  recoverable from the record layer, which is the whole point of recording
+  the miss verbatim: `SELECT asset, source, count(*) FROM oracle_updates
+  WHERE asset LIKE 'raw:%'` returns `raw:earnUSDC_FUNDAMENTAL | redstone |
+  5`, first seen 2026-09-04T00:07:10Z, most recent 12:58:40Z. Per
+  `resolveFeedEntry` an unregistered `feed_id` is written at its own vector
+  position as a `raw:<feed_id>` row rather than skipped, and a later
+  registry entry re-derives the same primary key and promotes the row in
+  place — so **no replay is owed here**, unlike the unrepresentable-feed
+  case, which has its own counter precisely because that slot IS a hole.
+  What is owed is a `feeds.go` registry entry naming the canonical asset
+  `earnUSDC_FUNDAMENTAL` maps to, which is a mapping decision rather than a
+  code change; until it exists the feed is captured but not priced.
+- **`stellarindex_stellar_stack_lagging`** ×2 (ticket, sustained since
+  2026-09-02T14:02Z, `archivist` and `galexie`, lag = 1) — **unrelated to
+  the ledger finding above, despite the name.** The series is
+  `stellarindex_stellar_stack_version_lag`: the probe compares the
+  dpkg-installed package against the apt candidate, so `lag = 1` means one
+  package version behind upstream, not one ledger. Both have been one
+  version behind since the labelset fix of 2026-09-02 made this alert
+  capable of firing at all. `archivist` is the archive mirror and verify
+  CLI, not in the live ingest path, so pinning
+  `stellar_archivist_version` and applying is low-risk and needs no
+  restart; `galexie` is in the ingest path and wants the usual care.
+- **`stellarindex_ch_schema_snapshot_offsite_stale`** (ticket) — expected;
+  it is row 1.12 ticketing until the off-site target is set.
+- **`stellarindex_deadmansswitch`** (informational) — fires constantly by
+  design; the alarm is when it stops.
+
+Nothing on the board is a page, and `amtool silence query` is empty — no
+condition is being suppressed.
 
 ### Corrections to this document, verified on 2026-09-03
 
