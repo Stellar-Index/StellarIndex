@@ -215,6 +215,8 @@ type DEXTVLSources struct {
 type DEXTVLCache struct {
 	mu        sync.RWMutex
 	snapshot  map[string]ProtocolTVLView
+	pools     map[string][]DEXTVLPoolView
+	carried   map[string]bool
 	total     *DEXTVLTotalView
 	fetchedAt time.Time
 	src       DEXTVLSources
@@ -236,6 +238,32 @@ func (c *DEXTVLCache) Snapshot() (map[string]ProtocolTVLView, time.Time) {
 	return c.snapshot, c.fetchedAt
 }
 
+// Protocol returns one protocol's published view together with the
+// per-pool breakdown it was summed from, and whether the entry is a
+// carried-forward figure from an earlier cycle. ok=false when the
+// protocol has no entry (no derivation wired, or cold start). Callers
+// must treat the pools slice as read-only.
+func (c *DEXTVLCache) Protocol(name string) (DEXTVLProtocolSnapshot, bool) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	view, ok := c.snapshot[name]
+	if !ok {
+		return DEXTVLProtocolSnapshot{}, false
+	}
+	return DEXTVLProtocolSnapshot{
+		TVL:            view,
+		Pools:          c.pools[name],
+		CarriedForward: c.carried[name],
+	}, true
+}
+
+// tvlProtocolResult is one protocol's refreshed figure plus the pools it
+// was built from; the two are published together or carried together.
+type tvlProtocolResult struct {
+	view  ProtocolTVLView
+	pools []DEXTVLPoolView
+}
+
 // Refresh recomputes the snapshot. Per-protocol failures keep that
 // protocol's previous entry (a transient read hiccup shouldn't blank
 // a healthy figure) and are joined into the returned error for the
@@ -245,6 +273,7 @@ func (c *DEXTVLCache) Refresh(ctx context.Context) error {
 	now := time.Now().UTC()
 	valuer := newTVLValuer(c.src.Pricer, c.src.PegInfo, c.src.Gate, now)
 	next := make(map[string]ProtocolTVLView, 4)
+	nextPools := make(map[string][]DEXTVLPoolView, 4)
 	prev, _ := c.Snapshot()
 	var errs []error
 	// carried names the protocols serving a PREVIOUS cycle's figure
@@ -253,23 +282,27 @@ func (c *DEXTVLCache) Refresh(ctx context.Context) error {
 	// two refreshes can share a stamp, so a value that merely LOOKS
 	// current would silently pass an equality test.
 	var carried []string
+	carriedSet := map[string]bool{}
 
 	for _, p := range []struct {
 		name    string
-		refresh func(context.Context, *tvlValuer, time.Time) (*ProtocolTVLView, error)
+		refresh func(context.Context, *tvlValuer, time.Time) (*tvlProtocolResult, error)
 	}{
 		{"soroswap", c.refreshSoroswap},
 		{"aquarius", c.refreshAquarius},
 		{"phoenix", c.refreshPhoenix},
 		{"comet", c.refreshComet},
 	} {
-		if view, err := p.refresh(ctx, valuer, now); err != nil {
+		if res, err := p.refresh(ctx, valuer, now); err != nil {
 			errs = append(errs, fmt.Errorf("%s tvl: %w", p.name, err))
 			if carryPrev(next, prev, p.name) {
 				carried = append(carried, p.name)
+				carriedSet[p.name] = true
+				nextPools[p.name] = c.prevPools(p.name)
 			}
-		} else if view != nil {
-			next[p.name] = *view
+		} else if res != nil {
+			next[p.name] = res.view
+			nextPools[p.name] = res.pools
 		}
 	}
 
@@ -282,6 +315,8 @@ func (c *DEXTVLCache) Refresh(ctx context.Context) error {
 
 	c.mu.Lock()
 	c.snapshot = next
+	c.pools = nextPools
+	c.carried = carriedSet
 	c.total = total
 	c.fetchedAt = now
 	c.mu.Unlock()
@@ -354,13 +389,24 @@ func carryPrev(next, prev map[string]ProtocolTVLView, name string) bool {
 	return ok
 }
 
+// prevPools returns the pools published for name on the previous cycle,
+// so a carried-forward figure travels with the breakdown it was summed
+// from — the drill-down for a carried protocol shows the pools that
+// produced the carried number, not an empty list beside a non-zero
+// figure.
+func (c *DEXTVLCache) prevPools(name string) []DEXTVLPoolView {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.pools[name]
+}
+
 // refreshSoroswap computes Soroswap TVL from CURRENT pair reserves in
 // the certified lake (pair instance storage), scoped to the
 // soroswap_pairs registry. Pairs absent from the lake read (archived
 // pairs, uncaptured entries) are excluded entirely — that absence is
 // the reader's honest signal, not a zero. Returns (nil, nil) when the
 // readers aren't wired.
-func (c *DEXTVLCache) refreshSoroswap(ctx context.Context, valuer *tvlValuer, now time.Time) (*ProtocolTVLView, error) {
+func (c *DEXTVLCache) refreshSoroswap(ctx context.Context, valuer *tvlValuer, now time.Time) (*tvlProtocolResult, error) {
 	if c.src.SoroswapPairs == nil || c.src.SoroswapReserves == nil {
 		return nil, nil
 	}
@@ -377,35 +423,23 @@ func (c *DEXTVLCache) refreshSoroswap(ctx context.Context, valuer *tvlValuer, no
 		return nil, fmt.Errorf("pair reserves: %w", err)
 	}
 
-	total := new(big.Rat)
-	view := ProtocolTVLView{
-		AsOf: now.Format(time.RFC3339),
-		Basis: "sum of current pair reserves (lake instance storage; archived pairs excluded), " +
-			"valued through the served USD price tiers" + c.basisTail(),
-	}
+	acc := newTVLProtocolAccumulator(valuer, now.Format(time.RFC3339),
+		"sum of current pair reserves (lake instance storage; archived pairs excluded), "+
+			"valued through the served USD price tiers"+c.basisTail())
 	for _, st := range states {
-		view.PoolsTotal++
-		view.AsOfLedger = max(view.AsOfLedger, st.Ledger)
-		priced := true
-		for _, leg := range []struct {
-			token string
-			raw   *big.Int
-		}{{st.Token0, st.Reserve0}, {st.Token1, st.Reserve1}} {
-			usd, ok := valuer.legUSD(ctx, leg.token, leg.raw)
-			if !ok {
-				priced = false
-				continue
-			}
-			total.Add(total, usd)
-		}
-		if priced {
-			view.PoolsPriced++
-		} else {
-			view.UnpricedPools++
-		}
+		acc.addPool(ctx, st.Pair, st.Ledger, []tvlLegInput{
+			{token: st.Token0, raw: st.Reserve0},
+			{token: st.Token1, raw: st.Reserve1},
+		})
 	}
-	view.TVLUSD = total.FloatString(2)
-	return &view, nil
+	return finishTVLProtocol(acc), nil
+}
+
+// finishTVLProtocol renders an accumulator into the result Refresh
+// publishes.
+func finishTVLProtocol(acc *tvlProtocolAccumulator) *tvlProtocolResult {
+	view, pools := acc.finish()
+	return &tvlProtocolResult{view: view, pools: pools}
 }
 
 // refreshAquarius computes Aquarius TVL from the latest per-pool
@@ -414,7 +448,7 @@ func (c *DEXTVLCache) refreshSoroswap(ctx context.Context, valuer *tvlValuer, no
 // carries positions, not addresses — migration 0089) is unpriceable
 // and counts its pool in UnpricedPools. Returns (nil, nil) when the
 // reader isn't wired.
-func (c *DEXTVLCache) refreshAquarius(ctx context.Context, valuer *tvlValuer, now time.Time) (*ProtocolTVLView, error) {
+func (c *DEXTVLCache) refreshAquarius(ctx context.Context, valuer *tvlValuer, now time.Time) (*tvlProtocolResult, error) {
 	if c.src.AquariusReserves == nil {
 		return nil, nil
 	}
@@ -423,36 +457,19 @@ func (c *DEXTVLCache) refreshAquarius(ctx context.Context, valuer *tvlValuer, no
 		return nil, fmt.Errorf("reserve snapshots: %w", err)
 	}
 
-	total := new(big.Rat)
-	view := ProtocolTVLView{
-		AsOf: now.Format(time.RFC3339),
-		Basis: fmt.Sprintf("sum of each pool's latest post-state reserve snapshot (aquarius_reserves, trailing %dd), "+
-			"valued through the served USD price tiers%s", aquariusTVLWindowDays, c.basisTail()),
-	}
+	acc := newTVLProtocolAccumulator(valuer, now.Format(time.RFC3339),
+		fmt.Sprintf("sum of each pool's latest post-state reserve snapshot (aquarius_reserves, trailing %dd), "+
+			"valued through the served USD price tiers%s", aquariusTVLWindowDays, c.basisTail()))
 	for _, p := range pools {
-		view.PoolsTotal++
-		view.AsOfLedger = max(view.AsOfLedger, p.Ledger)
-		priced := true
+		legs := make([]tvlLegInput, 0, len(p.Legs))
 		for _, leg := range p.Legs {
-			if leg.Token == "" {
-				priced = false
-				continue
-			}
-			usd, ok := valuer.legUSD(ctx, leg.Token, leg.Reserve.BigInt())
-			if !ok {
-				priced = false
-				continue
-			}
-			total.Add(total, usd)
+			// An empty Token is a position whose address never resolved;
+			// the accumulator files it as unresolved_token.
+			legs = append(legs, tvlLegInput{token: leg.Token, raw: leg.Reserve.BigInt()})
 		}
-		if priced {
-			view.PoolsPriced++
-		} else {
-			view.UnpricedPools++
-		}
+		acc.addPool(ctx, p.ContractID, p.Ledger, legs)
 	}
-	view.TVLUSD = total.FloatString(2)
-	return &view, nil
+	return finishTVLProtocol(acc), nil
 }
 
 // refreshPhoenix computes Phoenix TVL from CURRENT pool reserves in
@@ -464,7 +481,7 @@ func (c *DEXTVLCache) refreshAquarius(ctx context.Context, valuer *tvlValuer, no
 // shape was unrecognised contribute 0 and are counted (see
 // countUndecodablePools). Returns (nil, nil) when the readers aren't
 // wired.
-func (c *DEXTVLCache) refreshPhoenix(ctx context.Context, valuer *tvlValuer, now time.Time) (*ProtocolTVLView, error) {
+func (c *DEXTVLCache) refreshPhoenix(ctx context.Context, valuer *tvlValuer, now time.Time) (*tvlProtocolResult, error) {
 	if c.src.PhoenixReserves == nil || len(c.src.PhoenixPools) == 0 {
 		return nil, nil
 	}
@@ -473,44 +490,26 @@ func (c *DEXTVLCache) refreshPhoenix(ctx context.Context, valuer *tvlValuer, now
 		return nil, fmt.Errorf("pool reserves: %w", err)
 	}
 
-	total := new(big.Rat)
-	view := ProtocolTVLView{
-		AsOf: now.Format(time.RFC3339),
-		Basis: "sum of current pool reserves (lake persistent storage; archived pools excluded, " +
-			"unrecognised storage shapes counted unpriced), valued through the served USD price tiers" +
-			c.basisTail(),
-	}
+	acc := newTVLProtocolAccumulator(valuer, now.Format(time.RFC3339),
+		"sum of current pool reserves (lake persistent storage; archived pools excluded, "+
+			"unrecognised storage shapes counted unpriced), valued through the served USD price tiers"+
+			c.basisTail())
 	for _, st := range states {
-		view.PoolsTotal++
-		view.AsOfLedger = max(view.AsOfLedger, st.Ledger)
-		priced := true
-		for _, leg := range []struct {
-			token string
-			raw   *big.Int
-		}{{st.TokenA, st.ReserveA}, {st.TokenB, st.ReserveB}} {
-			usd, ok := valuer.legUSD(ctx, leg.token, leg.raw)
-			if !ok {
-				priced = false
-				continue
-			}
-			total.Add(total, usd)
-		}
-		if priced {
-			view.PoolsPriced++
-		} else {
-			view.UnpricedPools++
-		}
+		acc.addPool(ctx, st.Pool, st.Ledger, []tvlLegInput{
+			{token: st.TokenA, raw: st.ReserveA},
+			{token: st.TokenB, raw: st.ReserveB},
+		})
 	}
-	c.countUndecodablePools(&view, "phoenix", undecodable)
-	view.TVLUSD = total.FloatString(2)
-	return &view, nil
+	acc.addUndecodable(undecodable)
+	c.warnUndecodablePools("phoenix", undecodable)
+	return finishTVLProtocol(acc), nil
 }
 
 // refreshComet computes Comet TVL from the CURRENT per-token balance
 // records in the certified lake (the AllRecordData entry), scoped to
 // the curated allowlist. Same absence / undecodable semantics as
 // refreshPhoenix. Returns (nil, nil) when the readers aren't wired.
-func (c *DEXTVLCache) refreshComet(ctx context.Context, valuer *tvlValuer, now time.Time) (*ProtocolTVLView, error) {
+func (c *DEXTVLCache) refreshComet(ctx context.Context, valuer *tvlValuer, now time.Time) (*tvlProtocolResult, error) {
 	if c.src.CometReserves == nil || len(c.src.CometPools) == 0 {
 		return nil, nil
 	}
@@ -519,52 +518,34 @@ func (c *DEXTVLCache) refreshComet(ctx context.Context, valuer *tvlValuer, now t
 		return nil, fmt.Errorf("pool reserves: %w", err)
 	}
 
-	total := new(big.Rat)
-	view := ProtocolTVLView{
-		AsOf: now.Format(time.RFC3339),
-		Basis: "sum of current per-token pool balance records (lake persistent storage; archived pools " +
-			"excluded, unrecognised storage shapes counted unpriced), valued through the served USD " +
-			"price tiers" + c.basisTail(),
-	}
+	acc := newTVLProtocolAccumulator(valuer, now.Format(time.RFC3339),
+		"sum of current per-token pool balance records (lake persistent storage; archived pools "+
+			"excluded, unrecognised storage shapes counted unpriced), valued through the served USD "+
+			"price tiers"+c.basisTail())
 	for _, st := range states {
-		view.PoolsTotal++
-		view.AsOfLedger = max(view.AsOfLedger, st.Ledger)
-		priced := true
+		legs := make([]tvlLegInput, 0, len(st.Legs))
 		for _, leg := range st.Legs {
-			usd, ok := valuer.legUSD(ctx, leg.Token, leg.Balance)
-			if !ok {
-				priced = false
-				continue
-			}
-			total.Add(total, usd)
+			legs = append(legs, tvlLegInput{token: leg.Token, raw: leg.Balance})
 		}
-		if priced {
-			view.PoolsPriced++
-		} else {
-			view.UnpricedPools++
-		}
+		acc.addPool(ctx, st.Pool, st.Ledger, legs)
 	}
-	c.countUndecodablePools(&view, "comet", undecodable)
-	view.TVLUSD = total.FloatString(2)
-	return &view, nil
+	acc.addUndecodable(undecodable)
+	c.warnUndecodablePools("comet", undecodable)
+	return finishTVLProtocol(acc), nil
 }
 
-// countUndecodablePools folds pools whose captured storage shape the
-// reader refused to decode into the view — contributing 0, counted in
-// both PoolsTotal and UnpricedPools (an honest lower bound, never a
-// fabricated figure) — and emits one metric-friendly warn line so a
-// contract upgrade that changes the storage layout is operator-visible
-// rather than a silent TVL shrink.
-func (c *DEXTVLCache) countUndecodablePools(view *ProtocolTVLView, protocol string, pools []string) {
-	if len(pools) == 0 {
+// warnUndecodablePools emits one metric-friendly warn line for pools
+// whose captured storage shape the reader refused to decode (the
+// accumulator has already counted them: contributing 0, in both
+// PoolsTotal and UnpricedPools, published with the pool-level
+// exclusion) so a contract upgrade that changes the storage layout is
+// operator-visible rather than a silent TVL shrink.
+func (c *DEXTVLCache) warnUndecodablePools(protocol string, pools []string) {
+	if len(pools) == 0 || c.src.Logger == nil {
 		return
 	}
-	view.PoolsTotal += len(pools)
-	view.UnpricedPools += len(pools)
-	if c.src.Logger != nil {
-		c.src.Logger.Warn("dex tvl: unrecognised pool storage shape; counted unpriced",
-			"protocol", protocol, "pools", strings.Join(pools, ","), "count", len(pools))
-	}
+	c.src.Logger.Warn("dex tvl: unrecognised pool storage shape; counted unpriced",
+		"protocol", protocol, "pools", strings.Join(pools, ","), "count", len(pools))
 }
 
 // tvlValuer prices raw on-chain reserve legs in USD, memoising one
@@ -610,15 +591,42 @@ const classicScaleDecimals = 7
 // peg is valued at $1 × (A / 10^declaredDecimals) via PegInfo, whose
 // scope is deliberately classic + SAC (7-decimal invariant).
 func (v *tvlValuer) legUSD(ctx context.Context, token string, raw *big.Int) (*big.Rat, bool) {
+	val := v.value(ctx, token, raw)
+	return val.usd, val.usd != nil
+}
+
+// tvlLegValue is one leg's valuation verdict: usd is nil exactly when
+// excluded is set. asset is the canonical identity the served price
+// path was asked about (empty when the token resolved to no asset),
+// and basis says how usd was derived.
+type tvlLegValue struct {
+	usd      *big.Rat
+	asset    string
+	basis    string
+	excluded string
+}
+
+// value is legUSD with its reasons: the same decision, in the same
+// order, but every "no" names the rule that said it and every "yes"
+// names the identity and the basis. The drill-down publishes these;
+// the protocol figure only needs the amount.
+func (v *tvlValuer) value(ctx context.Context, token string, raw *big.Int) tvlLegValue {
 	if raw == nil || raw.Sign() < 0 {
-		return nil, false
-	}
-	if raw.Sign() == 0 {
-		return new(big.Rat), true
+		return tvlLegValue{excluded: DEXTVLLegInvalidReserve}
 	}
 	asset, ok := tvlAssetForToken(token)
+	var id string
+	if ok {
+		id = canonical.CanonicalAsset(asset).String()
+	}
+	if raw.Sign() == 0 {
+		// Nothing to value: worth exactly $0 whatever the price, so no
+		// gate and no price tier is consulted — a pool with an empty
+		// side is not "unpriced", it is empty.
+		return tvlLegValue{usd: new(big.Rat), asset: id, basis: DEXTVLBasisEmptyReserve}
+	}
 	if !ok {
-		return nil, false
+		return tvlLegValue{excluded: DEXTVLLegMalformedToken}
 	}
 	// Serving trust gates FIRST — before the declared-peg shortcut, not
 	// after it (#338). Same ordering the asset detail path fixed on
@@ -628,21 +636,25 @@ func (v *tvlValuer) legUSD(ctx context.Context, token string, raw *big.Int) (*bi
 	// curated directory may since have flagged, and the flag is the
 	// later, narrower, owner-level decision.
 	if v.withheld(ctx, token, asset) {
-		return nil, false
+		return tvlLegValue{asset: id, excluded: DEXTVLLegWithheld}
 	}
 	// Operator-declared USD peg: exactly $1 per whole unit at the
 	// peg's real decimals.
 	if v.pegInfo != nil {
 		if decimals, pegged := v.pegInfo.QuoteUSDPegInfo(asset); pegged && decimals >= 0 {
-			return new(big.Rat).SetFrac(raw, pow10(uint32(decimals))), true
+			return tvlLegValue{
+				usd:   new(big.Rat).SetFrac(raw, pow10(uint32(decimals))),
+				asset: id,
+				basis: DEXTVLBasisDeclaredUSDPeg,
+			}
 		}
 	}
 	rate, ok := v.rateFor(ctx, asset, token)
 	if !ok {
-		return nil, false
+		return tvlLegValue{asset: id, excluded: DEXTVLLegNoServedPrice}
 	}
 	usd := new(big.Rat).SetFrac(raw, pow10(classicScaleDecimals))
-	return usd.Mul(usd, rate), true
+	return tvlLegValue{usd: usd.Mul(usd, rate), asset: id, basis: DEXTVLBasisServedUSDPrice}
 }
 
 // withheld memoises the trust verdict per token per refresh.

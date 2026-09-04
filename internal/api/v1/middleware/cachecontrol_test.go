@@ -118,6 +118,12 @@ func TestPolicyForPath_PinsDirectives(t *testing.T) {
 		{"/v1/sdex/orderbook", "public, max-age=30, s-maxage=60"},
 		// Native (CAP-38) liquidity-pool reserves — same short band.
 		{"/v1/liquidity-pools", "public, max-age=30, s-maxage=60"},
+		// Per-pool DEX TVL drill-down — the valued counterpart of
+		// /v1/pools/reserves; same short band. Only the exact
+		// {name}/tvl shape: the directory row and detail beside it
+		// keep their handler-set policy, and a deeper path is not it.
+		{"/v1/protocols/soroswap/tvl", "public, max-age=30, s-maxage=60"},
+		{"/v1/protocols/soroswap/tvl/extra", "private, no-store"},
 
 		// Directory labels — slow-moving reference data in the public
 		// catalogue band; sibling /v1/accounts/* stays private (the

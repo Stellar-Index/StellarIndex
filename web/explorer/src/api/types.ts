@@ -2056,8 +2056,9 @@ export interface paths {
          *     latest ADR-0033 completeness verdict summary (the same
          *     `completeness_snapshots` row `/coverage` serves in full).
          *     DEX/AMM protocols with an absolute reserve source additionally
-         *     carry a `tvl` snapshot (see the `ProtocolRow.tvl` schema for
-         *     its provenance + lower-bound semantics).
+         *     carry a `tvl` snapshot (see the `ProtocolTVL` schema for
+         *     its provenance + lower-bound semantics; the pools and legs it
+         *     was summed from are served by `/protocols/{name}/tvl`).
          *
          *     The static registry always serves; each dynamic join degrades
          *     independently to zero / absent when its reader isn't wired,
@@ -2109,6 +2110,72 @@ export interface paths {
          *     `public, max-age=60`.
          */
         get: operations["getProtocol"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/protocols/{name}/tvl": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Per-pool DEX TVL drill-down — every pool and reserve leg behind a protocol's `tvl` figure.
+         * @description The pools the protocol's `tvl` block (on `/protocols` and
+         *     `/protocols/{name}`) was summed from, one row per pool, each
+         *     with its reserve legs: the reserve as captured, the canonical
+         *     asset identity the leg was valued under (the same id
+         *     `/assets/{id}` answers for), and either its USD value with the
+         *     basis it was derived on or the reason it was EXCLUDED. A leg
+         *     that could not be valued contributes exactly 0 and says so
+         *     (`excluded`); it is never silently zero-valued. Served from the
+         *     same in-process snapshot as the directory row — no reserve table
+         *     or price tier is read per request.
+         *
+         *     RECONCILIATION CONTRACT: money is rounded once, at the leaf.
+         *     Each valued leg's `usd` is published to the cent; a pool's
+         *     `tvl_usd` is the exact sum of its legs' published `usd`; the
+         *     protocol's `tvl.tvl_usd` is the exact sum of its pools'
+         *     `tvl_usd`; and `tvl_total` on `/protocols` is the exact sum of
+         *     the protocols'. Add the rows at any level and you land on the
+         *     level above byte-for-byte.
+         *
+         *     `pools[]` is ordered largest `tvl_usd` first (ties by pool id).
+         *     A pool whose captured storage did not decode publishes
+         *     `excluded: undecodable_storage` with no legs and
+         *     `tvl_usd: "0.00"` — counted in `pools_total` and
+         *     `unpriced_pools`, never guessed. `tvl.as_of_ledger` is the
+         *     highest `as_of_ledger` across the pools.
+         *
+         *     A protocol whose reserve read failed on the latest refresh is
+         *     SERVED with its previous cycle's figure and pools, labelled
+         *     `carried_forward: true` with `flags.stale` set — the headline
+         *     `tvl_total` refuses that figure, and this is where to see what
+         *     was refused.
+         *
+         *     CURRENT STATE ONLY. Reserve history is not persisted anywhere in
+         *     the API (the same limit `/pools/reserves` states), so there is no
+         *     historical TVL series to serve and none is fabricated from
+         *     flows. Exclusion rules and the per-leg vocabulary:
+         *     docs/methodology/dex-tvl.md.
+         *
+         *     Errors are problem+json. `404`: unknown protocol name
+         *     (`protocol-not-found`), or a known protocol with no
+         *     pooled-liquidity derivation (`protocol-tvl-not-derived` — the
+         *     SDEX order book, lending supplied-value, vault AUM, or a
+         *     protocol whose reserve readers this deployment did not wire;
+         *     the detail names the reason, the same one `tvl_total.excluded`
+         *     carries). `503` (`dex-tvl-unavailable`): no snapshot cache is
+         *     wired, or the first background refresh has not completed —
+         *     retry shortly. Served with `public, max-age=30`.
+         */
+        get: operations["getProtocolTVL"];
         put?: never;
         post?: never;
         delete?: never;
@@ -5400,58 +5467,174 @@ export interface components {
                  */
                 projection_verified_from?: number;
             };
+            tvl?: components["schemas"]["ProtocolTVL"];
+        };
+        /**
+         * @description Current pooled-liquidity value (TVL) in USD, from a
+         *     background-refreshed snapshot (~10-min cadence) of the
+         *     protocol's absolute pool reserves — Soroswap's current pair
+         *     reserves read from the certified lake (archived pairs
+         *     excluded), Aquarius' latest per-pool post-state reserve
+         *     snapshots, and Phoenix/Comet current pool STORAGE entries
+         *     read from the lake (their events carry flow deltas, not
+         *     post-state reserves, so the figure comes from the curated
+         *     pools' persistent storage; archived pools excluded) —
+         *     valued through the same USD price tiers that stamp
+         *     `trades.usd_volume` (declared peg → direct VWAP → XLM
+         *     bridge). Reserve legs that cannot be priced contribute 0
+         *     and count their pool in `unpriced_pools` — as does a pool
+         *     whose captured storage shape is unrecognised (it is never
+         *     partially decoded or guessed) — so `tvl_usd` is an honest
+         *     LOWER BOUND whenever `unpriced_pools` > 0. Absent for
+         *     protocols without an absolute reserve source (SDEX is an
+         *     order book), and before the first snapshot refresh after
+         *     process start. The pools and reserve legs it was summed from
+         *     are served by `/protocols/{name}/tvl`: `tvl_usd` is the exact
+         *     sum of the pools' published `tvl_usd`, each of which is the
+         *     exact sum of its legs' published `usd` (money is rounded once,
+         *     at the leg).
+         */
+        ProtocolTVL: {
             /**
-             * @description Current pooled-liquidity value (TVL) in USD, from a
-             *     background-refreshed snapshot (~10-min cadence) of the
-             *     protocol's absolute pool reserves — Soroswap's current pair
-             *     reserves read from the certified lake (archived pairs
-             *     excluded), Aquarius' latest per-pool post-state reserve
-             *     snapshots, and Phoenix/Comet current pool STORAGE entries
-             *     read from the lake (their events carry flow deltas, not
-             *     post-state reserves, so the figure comes from the curated
-             *     pools' persistent storage; archived pools excluded) —
-             *     valued through the same USD price tiers that stamp
-             *     `trades.usd_volume` (declared peg → direct VWAP → XLM
-             *     bridge). Reserve legs that cannot be priced contribute 0
-             *     and count their pool in `unpriced_pools` — as does a pool
-             *     whose captured storage shape is unrecognised (it is never
-             *     partially decoded or guessed) — so `tvl_usd` is an honest
-             *     LOWER BOUND whenever `unpriced_pools` > 0. Absent for
-             *     protocols without an absolute reserve source (SDEX is an
-             *     order book), and before the first snapshot refresh after
-             *     process start.
+             * @description Summed USD value of every priced reserve leg (decimal string — ADR-0003).
+             * @example 1234567.89
              */
-            tvl?: {
-                /**
-                 * @description Summed USD value of every priced reserve leg (decimal string — ADR-0003).
-                 * @example 1234567.89
-                 */
-                tvl_usd: string;
-                /** @description Pools with a current reserve observation in this snapshot. */
-                pools_total: number;
-                /** @description Pools whose every reserve leg resolved to a USD price. */
-                pools_priced: number;
-                /** @description Pools with at least one unpriceable reserve leg (their priceable legs still contribute). */
-                unpriced_pools: number;
-                /**
-                 * Format: int64
-                 * @description Highest ledger at which any contributing pool's reserves
-                 *     changed — this protocol's chain high-water, the same
-                 *     convention `/liquidity-pools` stamps per pool. A pool
-                 *     untouched since an earlier ledger is EQUALLY current:
-                 *     each reserve reader's contract is "current as of this
-                 *     ledger and unchanged since". Absent when no contributing
-                 *     pool carried a ledger.
-                 */
-                as_of_ledger?: number;
-                /**
-                 * Format: date-time
-                 * @description When the snapshot was computed.
-                 */
-                as_of: string;
-                /** @description One-line provenance of what was measured and how it was valued. */
-                basis: string;
-            };
+            tvl_usd: string;
+            /** @description Pools with a current reserve observation in this snapshot. */
+            pools_total: number;
+            /** @description Pools whose every reserve leg resolved to a USD price. */
+            pools_priced: number;
+            /** @description Pools with at least one unpriceable reserve leg (their priceable legs still contribute). */
+            unpriced_pools: number;
+            /**
+             * Format: int64
+             * @description Highest ledger at which any contributing pool's reserves
+             *     changed — this protocol's chain high-water, the same
+             *     convention `/liquidity-pools` stamps per pool. A pool
+             *     untouched since an earlier ledger is EQUALLY current:
+             *     each reserve reader's contract is "current as of this
+             *     ledger and unchanged since". Absent when no contributing
+             *     pool carried a ledger.
+             */
+            as_of_ledger?: number;
+            /**
+             * Format: date-time
+             * @description When the snapshot was computed.
+             */
+            as_of: string;
+            /** @description One-line provenance of what was measured and how it was valued. */
+            basis: string;
+        };
+        ProtocolTVLDetail: {
+            /** @example soroswap */
+            protocol: string;
+            /**
+             * @description The same block `/protocols` publishes on this protocol's row
+             *     for the same snapshot — same fields, same figure — so the two
+             *     surfaces can be checked against each other.
+             */
+            tvl: components["schemas"]["ProtocolTVL"];
+            /**
+             * @description True when the protocol's reserve read failed on the most
+             *     recent refresh and the figure and pools shown are the
+             *     previous cycle's (`flags.stale` is set too). The headline
+             *     `tvl_total` refuses such a figure; this surface labels it
+             *     instead of hiding it.
+             */
+            carried_forward: boolean;
+            /** @description Every pool the figure was summed from, largest `tvl_usd` first, ties by pool id. */
+            pools: components["schemas"]["DEXTVLPool"][];
+        };
+        DEXTVLPool: {
+            /** @description Pool (pair) contract C-strkey. */
+            pool: string;
+            /**
+             * @description Exact sum of the legs' published `usd` (decimal string, two
+             *     places — ADR-0003); "0.00" when no leg was valued.
+             * @example 412530.18
+             */
+            tvl_usd: string;
+            /**
+             * @description True when EVERY leg was valued (the pool counts in
+             *     `pools_priced`); otherwise the pool counts in `unpriced_pools`
+             *     and `tvl_usd` is a lower bound on it.
+             */
+            priced: boolean;
+            /**
+             * Format: int64
+             * @description Ledger at which the pool's reserves last changed — current as
+             *     of it and unchanged since. Absent when the reader carried none.
+             */
+            as_of_ledger?: number;
+            /**
+             * @description Pool-level exclusion: the captured storage did not decode to
+             *     the recognised shape, so the legs are unknown. `legs` is then
+             *     empty and `tvl_usd` is "0.00" — counted, never guessed.
+             * @enum {string}
+             */
+            excluded?: "undecodable_storage";
+            /** @description The pool's reserve legs in the reader's order; `[]` for an excluded pool. */
+            legs: components["schemas"]["DEXTVLLeg"][];
+        };
+        /**
+         * @description One reserve leg. Exactly one of (`basis` + `usd`) or `excluded`
+         *     is present: a leg is valued with a stated basis, or excluded with
+         *     a stated reason — never zero-valued in silence.
+         */
+        DEXTVLLeg: {
+            /**
+             * @description Token contract id exactly as the pool's storage carries it
+             *     (C-strkey). Absent when the position's token address never
+             *     resolved (`excluded: unresolved_token`).
+             */
+            token?: string;
+            /**
+             * @description Captured reserve in the token's base units (i128 decimal
+             *     string — ADR-0003). Absent when nothing was captured
+             *     (`excluded: invalid_reserve`).
+             */
+            reserve?: string;
+            /**
+             * @description Canonical identity the served price path values this leg
+             *     under — the id `/assets/{id}` answers for. A configured
+             *     classic↔SAC wrapper collapses to its classic twin here,
+             *     exactly as the trust gates were asked about it. Absent when
+             *     the token resolved to no asset.
+             * @example USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN
+             */
+            asset?: string;
+            /**
+             * @description How `usd` was derived. `declared_usd_peg`: $1 per whole unit
+             *     at the token's declared decimals (operator-declared peg,
+             *     applied only AFTER the trust gates). `served_usd_price`:
+             *     reserve × the same served USD rate `/assets/{asset}`
+             *     publishes (the `trades.usd_volume` tiers). `empty_reserve`:
+             *     the reserve is zero, so the leg is worth exactly $0 and no
+             *     price was consulted.
+             * @enum {string}
+             */
+            basis?: "declared_usd_peg" | "served_usd_price" | "empty_reserve";
+            /**
+             * @description The leg's value to the cent (decimal string, two places). A
+             *     valued leg worth less than half a cent reads "0.00".
+             * @example 206265.09
+             */
+            usd?: string;
+            /**
+             * @description Why the leg contributed nothing. `withheld`: the serving trust
+             *     gates withhold a USD valuation of this asset (directory-flagged
+             *     issuer, or a market below the substance floor) —
+             *     `/assets/{asset}` serves `price_usd: null` for it.
+             *     `no_served_price`: no USD price is served through the price
+             *     tiers. `unresolved_token`: the pool reports a position whose
+             *     token address is unknown (Aquarius `update_reserves` carries
+             *     positions, not addresses). `malformed_token`: the captured
+             *     token identity is not a well-formed contract id.
+             *     `invalid_reserve`: the captured reserve is missing or
+             *     negative.
+             * @enum {string}
+             */
+            excluded?: "withheld" | "no_served_price" | "unresolved_token" | "malformed_token" | "invalid_reserve";
         };
         /**
          * @description Reconciled headline pooled-liquidity total across the protocols
@@ -12870,6 +13053,108 @@ export interface operations {
                     "application/problem+json": components["schemas"]["Problem"];
                 };
             };
+        };
+    };
+    getProtocolTVL: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Canonical protocol name from the directory (`soroswap`, `aquarius`, `phoenix`, `comet`). */
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The protocol's `tvl` block plus every pool it was summed from. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "data": {
+                     *         "protocol": "soroswap",
+                     *         "tvl": {
+                     *           "tvl_usd": "412535.18",
+                     *           "pools_total": 2,
+                     *           "pools_priced": 1,
+                     *           "unpriced_pools": 1,
+                     *           "as_of_ledger": 63410221,
+                     *           "as_of": "2026-09-04T10:20:00Z",
+                     *           "basis": "sum of current pair reserves (lake instance storage; archived pairs excluded), valued through the served USD price tiers; unpriced legs contribute 0, and a leg whose asset the serving trust gates withhold (directory-flagged issuer, or a market below the substance floor) is counted unpriced rather than valued"
+                     *         },
+                     *         "carried_forward": false,
+                     *         "pools": [
+                     *           {
+                     *             "pool": "CDYRXTIUEUNJ3SVAKVWKKRK3CZVIY4WOG6TAQU27R777ZHNOKNCO26NL",
+                     *             "tvl_usd": "412530.18",
+                     *             "priced": true,
+                     *             "as_of_ledger": 63410221,
+                     *             "legs": [
+                     *               {
+                     *                 "token": "CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA",
+                     *                 "reserve": "5156627250000",
+                     *                 "asset": "native",
+                     *                 "basis": "served_usd_price",
+                     *                 "usd": "206265.09"
+                     *               },
+                     *               {
+                     *                 "token": "CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75",
+                     *                 "reserve": "2062650900000",
+                     *                 "asset": "USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
+                     *                 "basis": "declared_usd_peg",
+                     *                 "usd": "206265.09"
+                     *               }
+                     *             ]
+                     *           },
+                     *           {
+                     *             "pool": "CARCKLBXHYAQQEY2DVSG65TZIBFVEVK4U6XLDOEDRKGZJH7G5HYPWQLG",
+                     *             "tvl_usd": "5.00",
+                     *             "priced": false,
+                     *             "as_of_ledger": 63000050,
+                     *             "legs": [
+                     *               {
+                     *                 "token": "CAIRMHYEBUZDWIBJFZLVYRKKON4GCZTPSSOYFC5QXG7KPLGV3LB4REA5",
+                     *                 "reserve": "999",
+                     *                 "asset": "CAIRMHYEBUZDWIBJFZLVYRKKON4GCZTPSSOYFC5QXG7KPLGV3LB4REA5",
+                     *                 "excluded": "withheld"
+                     *               },
+                     *               {
+                     *                 "token": "CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA",
+                     *                 "reserve": "125000000",
+                     *                 "asset": "native",
+                     *                 "basis": "served_usd_price",
+                     *                 "usd": "5.00"
+                     *               }
+                     *             ]
+                     *           }
+                     *         ]
+                     *       },
+                     *       "as_of": "2026-09-04T10:21:07.000000000Z",
+                     *       "sources": [
+                     *         "soroswap"
+                     *       ],
+                     *       "flags": {
+                     *         "stale": false,
+                     *         "reduced_redundancy": false,
+                     *         "triangulated": false,
+                     *         "divergence_warning": false,
+                     *         "divergence_checked": false
+                     *       }
+                     *     }
+                     */
+                    "application/json": components["schemas"]["EnvelopeMeta"] & {
+                        data: components["schemas"]["ProtocolTVLDetail"];
+                    };
+                };
+            };
+            404: components["responses"]["NotFound"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+            503: components["responses"]["ServiceUnavailable"];
         };
     };
     getSdexOrderbook: {
