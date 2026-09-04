@@ -294,6 +294,20 @@ func (p *PrometheusStatusBackend) Latency(ctx context.Context) (StatusLatency, e
 // carry no `enabled` config flag, because they are wired into the indexer
 // rather than configured. Measured on r1 2026-09-01, that produced a
 // public status page reading "26 / 25".
+//
+// The population is every scraped stellarindex_source_enabled series,
+// whichever binary emits it: the indexer publishes the gauge for its
+// configured sources and connectors, and the `massive` FX worker
+// (internal/sources/external/forex) publishes its own from the API
+// binary, so an API-hosted source counts in both numbers exactly as an
+// indexer-hosted one does. Until the worker did, the feed was counted on
+// NEITHER side, so the headline read one low on both. Both queries count
+// series, which assumes one scrape target per source — true on r1 (one
+// indexer, one API process); a second scraped API replica would count
+// `massive` twice. deploy/monitoring/rule-tests/status-source-counts_test.yml
+// evaluates both expressions under promtool, and
+// TestStatusSourceCountQueries_MatchPromtoolFixture holds that fixture
+// to these exact strings.
 const activeSourcesQuery = `count(
 	(rate(stellarindex_source_events_total[7d]) > 0)
 	and on (source) (stellarindex_source_enabled == 1)

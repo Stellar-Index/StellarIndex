@@ -5770,19 +5770,26 @@ export interface components {
                 /** Format: date-time */
                 last_aggregator_tick?: string;
                 /**
-                 * @description Sources that have emitted an event in the last 10
-                 *     minutes (Prometheus
-                 *     `count(rate(stellarindex_source_events_total[10m]) > 0)`).
+                 * @description Enabled sources that have emitted an event in the
+                 *     last 7 days (Prometheus
+                 *     `count((rate(stellarindex_source_events_total[7d]) > 0)
+                 *     and on (source) (stellarindex_source_enabled == 1))`)
+                 *     — a subset of `total_sources` by construction.
                  */
                 active_sources?: number;
                 /**
-                 * @description Sources the operator has ENABLED in this region
-                 *     (Prometheus `count(stellarindex_source_enabled == 1)`).
+                 * @description Sources switched on in this region — every scraped
+                 *     `stellarindex_source_enabled == 1` series, whichever
+                 *     binary publishes it (Prometheus
+                 *     `count(stellarindex_source_enabled == 1)`).
                  *     Different from `/v1/network/stats.total_sources`,
                  *     which counts every source REGISTERED in the binary
                  *     regardless of enable state — typically a strict
-                 *     superset. Today on r1: enabled=17, registered=21,
-                 *     active=15.
+                 *     superset. Measured on r1 2026-09-01: enabled=17,
+                 *     registered=21, active=15 — before the API binary
+                 *     published the `massive` FX worker's own enabled
+                 *     series; with it, enabled and active each read one
+                 *     higher.
                  */
                 total_sources?: number;
             };
@@ -13025,7 +13032,12 @@ export interface operations {
                              *     from `/v1/status`'s `freshness.total_sources`,
                              *     which counts only sources the operator has
                              *     ENABLED at runtime — typically a strict subset.
-                             *     Today on r1: registry=21, enabled=17, active=15.
+                             *     Measured on r1 2026-09-03: registry=28,
+                             *     enabled=25, active=24 (25 and 26 once
+                             *     this gauge is published) — before the API binary
+                             *     published the `massive` FX worker's own enabled
+                             *     series; with it, enabled and active each read
+                             *     one higher.
                              *     The two `total_sources` measure different things
                              *     by design; see the field doc on
                              *     `internal/api/v1.NetworkStats` for the full
