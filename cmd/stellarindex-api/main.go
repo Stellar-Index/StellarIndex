@@ -4065,7 +4065,14 @@ func (r storeChange24hReader) USDPrice24hAgo(ctx context.Context, asset canonica
 	// Stablecoin-fiat proxy fallback: walk the operator's USD pegs
 	// and try asset/<peg>. First non-error row wins.
 	for _, peg := range r.pegs {
-		if peg.Equal(asset) {
+		// Fold through the alias registry like the other three
+		// self-pair guards. An exact-spelling skip is not enough
+		// here: of the two callers only handleAssetGet collapses the
+		// request through canonical.CanonicalAsset before it reaches
+		// this reader, while the batch row path parses the id and
+		// passes it through as typed, so a SAC spelling arrived and
+		// spent a read on a pair whose two sides are one asset.
+		if canonical.CanonicalAsset(peg).Equal(canonical.CanonicalAsset(asset)) {
 			continue
 		}
 		pegRow, pegErr := r.s.ClosedVWAP1mAtOrBefore(

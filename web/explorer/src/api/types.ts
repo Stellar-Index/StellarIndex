@@ -508,13 +508,27 @@ export interface paths {
          *        not itself a declared peg is re-quoted in the first peg it
          *        has a live market against (`X/fiat:USD` served from
          *        `X/USDC-G…`), `flags.triangulated=true`. An asset that IS a
-         *        declared peg is not walked against its siblings: it is
+         *        declared peg — asked for by the classic id the operator
+         *        declared or by the SAC that wraps it
+         *        (`[supply].sac_wrappers`) — is not walked against its
+         *        siblings: it is
          *        crossed through XLM — `peg/XLM × XLM/fiat:USD`, one exact
          *        rational product, `price_type: vwap` with `window_seconds`
          *        the wider of the two legs' windows (60 for two closed
          *        1-minute buckets), `flags.triangulated=true` — because its
          *        own XLM book is the
-         *        market a depeg prints on; only when that cross has nothing
+         *        market a depeg prints on. That cross is the one tier that
+         *        does NOT depend on which spelling was asked for: it reads
+         *        the peg's whole family — the classic id first, and the SAC
+         *        wrapper only where the classic id's own book was not found
+         *        at all — so both spellings compose the same value, with only
+         *        `asset_id` echoing the request. Step 1 above is unchanged
+         *        and still literal-first, which means the literal spelling is
+         *        tried first and the rest of the family after it: where BOTH
+         *        spellings carry an observed `fiat:USD` bucket each spelling
+         *        serves its own, and where only ONE does, that bucket is
+         *        served for both.
+         *        Only when the cross has nothing
          *        to read is the declaration itself served, as
          *        `1.000000000000` with `price_type: peg`. The declaration is
          *        the last resort, never a short-circuit: any observed market

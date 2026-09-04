@@ -284,7 +284,9 @@ func (s *Server) recentClosedWithStablecoinFallback(
 		return snapshots, false, nil
 	}
 	for _, peg := range s.usdPeggedClassics {
-		if peg.Equal(asset) {
+		// A peg asked for under any of its spellings — the classic id or
+		// its SAC wrapper — is not a market against itself.
+		if sameAsset(peg, asset) {
 			continue
 		}
 		pegSnapshots, pegErr := s.prices.RecentClosedSnapshots(ctx, asset, peg, n)

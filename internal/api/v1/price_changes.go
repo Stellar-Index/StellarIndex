@@ -178,7 +178,9 @@ func (s *Server) resolvePriceChangePair(
 	// and flags triangulated.
 	if quote.Type == canonical.AssetFiat && quote.Code == "USD" {
 		for _, peg := range s.usdPeggedClassics {
-			if peg.Equal(asset) {
+			// A peg asked for under any of its spellings — the classic
+			// id or its SAC wrapper — is not a market against itself.
+			if sameAsset(peg, asset) {
 				continue
 			}
 			if pair, res, ok := s.currentPriceForAliases(ctx, asset, peg, now); ok {
