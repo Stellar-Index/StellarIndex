@@ -103,10 +103,27 @@ func (s *Server) handlePriceAt(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, snap, Flags{Triangulated: true})
 		return
 	}
-	writeProblem(w, r,
+	// The 404 below carries the same ambiguity the series surfaces have
+	// in their empty arrays: "no bucket within the lookback" is what a
+	// dead market and an instant predating the held history both look
+	// like. `ts` is the exclusive end of a point request — the daily
+	// bucket that STARTS at the floor has not closed at that instant, so
+	// an instant exactly at the floor is still outside coverage. The
+	// floor is measured over the pair AND the pegs the fallback above
+	// retried ([Server.priceAtCoverageSet]), since those are the buckets
+	// this lookup can answer from.
+	var (
+		coverageFrom *time.Time
+		outside      bool
+	)
+	if pair, pairErr := canonical.NewPair(asset, quote); pairErr == nil {
+		coverageFrom, outside = s.coverageAnnotation(r.Context(), s.priceAtCoverageSet(pair), ts)
+	}
+	writeProblemCoverage(w, r,
 		"https://api.stellarindex.io/errors/price-not-found",
 		"No price at requested time", http.StatusNotFound,
-		"no closed bucket within "+priceAtMaxLookback.String()+" before "+ts.Format(time.RFC3339)+" for "+asset.String()+" / "+quote.String())
+		"no closed bucket within "+priceAtMaxLookback.String()+" before "+ts.Format(time.RFC3339)+" for "+asset.String()+" / "+quote.String(),
+		coverageFrom, outside)
 }
 
 // lookupPriceAt walks the alias combinations (F-1340, same as every
@@ -166,14 +183,8 @@ func (s *Server) lookupPriceAt(ctx context.Context, asset, quote canonical.Asset
 func (s *Server) lookupPriceAtStablecoinFallback(
 	ctx context.Context, asset, quote canonical.Asset, ts time.Time,
 ) (PriceSnapshot, bool) {
-	if quote.Type != canonical.AssetFiat || quote.Code != "USD" {
-		return PriceSnapshot{}, false
-	}
-	for _, peg := range s.usdPeggedClassics {
-		if peg.Equal(asset) {
-			continue
-		}
-		snap, found := s.lookupPriceAt(ctx, asset, peg, ts)
+	for _, proxied := range s.priceAtUSDPegPairs(asset, quote) {
+		snap, found := s.lookupPriceAt(ctx, proxied.Base, proxied.Quote, ts)
 		if !found {
 			continue
 		}
@@ -182,6 +193,31 @@ func (s *Server) lookupPriceAtStablecoinFallback(
 		return snap, true
 	}
 	return PriceSnapshot{}, false
+}
+
+// priceAtUSDPegPairs is the ordered proxy list
+// [Server.lookupPriceAtStablecoinFallback] walks: for a `fiat:USD`
+// quote, the asset against each operator-declared USD-pegged classic
+// in priority order, skipping a peg that is the asset itself; empty for
+// any other quote. It is a separate function so the coverage floor
+// ([Server.priceAtCoverageSet]) enumerates the SAME pairs the lookup
+// retries, from one definition.
+func (s *Server) priceAtUSDPegPairs(asset, quote canonical.Asset) []canonical.Pair {
+	if quote.Type != canonical.AssetFiat || quote.Code != "USD" {
+		return nil
+	}
+	out := make([]canonical.Pair, 0, len(s.usdPeggedClassics))
+	for _, peg := range s.usdPeggedClassics {
+		if peg.Equal(asset) {
+			continue
+		}
+		proxied, err := canonical.NewPair(asset, peg)
+		if err != nil {
+			continue
+		}
+		out = append(out, proxied)
+	}
+	return out
 }
 
 // parsePriceAtTS validates the required historical `ts` param.

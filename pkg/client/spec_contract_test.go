@@ -871,3 +871,50 @@ func TestSpecEnvelopeWalkSeesEveryComposer(t *testing.T) {
 		t.Errorf("inline Flags walk\n got: %v\nwant: %v", flags, wantFlags)
 	}
 }
+
+// TestProblemJSONMatchesSpec is the error-path twin of
+// TestSDKSchemasMatchSpec. The `data` walk above never reaches the
+// spec's `Problem` schema — it is a response body, not an envelope —
+// so an extension member added to the server's problem type and to
+// the spec could be missing from problemJSON with every other gate
+// green. Bidirectional: a member in the spec the SDK does not decode
+// is a field consumers cannot read; a tag in the SDK the spec does not
+// document is a field consumers cannot trust.
+func TestProblemJSONMatchesSpec(t *testing.T) {
+	doc := loadSpec(t)
+	comps, _ := doc["components"].(map[string]any)
+	schemas, _ := comps["schemas"].(map[string]any)
+	problem, _ := schemas["Problem"].(map[string]any)
+	if problem == nil {
+		t.Fatal("spec has no components.schemas.Problem")
+	}
+	props, _ := problem["properties"].(map[string]any)
+	if len(props) == 0 {
+		t.Fatal("spec Problem schema has no properties")
+	}
+	specProps := map[string]bool{}
+	for name := range props {
+		specProps[name] = true
+	}
+	sdkTags := jsonTags(reflect.TypeOf(problemJSON{}))
+
+	var missing, extra []string
+	for name := range specProps {
+		if !sdkTags[name] {
+			missing = append(missing, name)
+		}
+	}
+	for name := range sdkTags {
+		if !specProps[name] {
+			extra = append(extra, name)
+		}
+	}
+	sort.Strings(missing)
+	sort.Strings(extra)
+	if len(missing) > 0 {
+		t.Errorf("spec Problem members the SDK does not decode: %v", missing)
+	}
+	if len(extra) > 0 {
+		t.Errorf("SDK problemJSON tags the spec Problem schema does not document: %v", extra)
+	}
+}

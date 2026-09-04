@@ -154,6 +154,7 @@ func registerProjectorMetrics() {
 func registerAPIServingMetrics() {
 	Registry.MustRegister(
 		APICacheOpsTotal,
+		APICoverageFloorProbesTotal,
 		APISparkline7dRowsTotal,
 		APIStreamSubscribeTotal,
 		APICORSDecisionsTotal,
@@ -4333,6 +4334,28 @@ var APISparkline7dRowsTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_api_sparkline7d_rows_total",
 		Help: "Priced listing rows for which a 7d sparkline was requested, by result (served|empty).",
+	},
+	[]string{"result"},
+)
+
+// APICoverageFloorProbesTotal — every consultation of the coverage-floor
+// memo behind the API's outside-coverage signal, by outcome. `hit` is
+// served from the in-process cache and costs NOTHING; `found` /
+// `absent` / `error` each cost exactly one bounded `min(bucket)` read
+// against prices_1d; `evicted` fires when admitting a key forced an
+// older one out.
+//
+// Why it exists: the signal is reachable ANONYMOUSLY — any caller
+// asking for an empty window triggers the probe — so its cost has to be
+// measurable on r1 before it can be trusted. `rate(…{result!="hit"})`
+// IS the added database load, in reads/s; over `rate(…)` it is the
+// memo's miss rate. A sustained non-zero `evicted` rate means the cache
+// is being key-enumerated rather than warmed by real traffic, which is
+// the shape of a caller minting distinct pairs to force reads.
+var APICoverageFloorProbesTotal = prometheus.NewCounterVec(
+	prometheus.CounterOpts{
+		Name: "stellarindex_api_coverage_floor_probes_total",
+		Help: "Coverage-floor lookups behind the API's outside-coverage signal, by outcome (hit|found|absent|error|evicted); only non-hit results reach the database.",
 	},
 	[]string{"result"},
 )

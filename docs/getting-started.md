@@ -58,6 +58,16 @@ The `flags` block is the operational quality signal:
 | `divergence_checked` | Whether the cross-reference check reached a verdict at all. When this is `false`, `divergence_warning: false` means **blind**, not "the sources agree" (CS-087) |
 | `frozen` | Anomaly detection refused to publish the new bucket; this response carries the previous bucket's last-known-good value ([ADR-0019](adr/0019-anomaly-response-and-confidence-scoring.md)) |
 | `single_source` | Only one source contributed; combined with `frozen` this is the manipulation signature |
+| `outside_coverage` | The empty answer is a coverage statement, not a market one: the requested range ends at or before the envelope's `coverage_from`, so every instant asked for predates the history this deployment holds for the pair. Set by `/v1/ohlc`, `/v1/history`, `/v1/chart` and (as a problem-body extension member on its 404) `/v1/price/at` |
+
+`coverage_from` sits beside `flags` on those same four surfaces: the
+earliest instant this deployment holds price history at for what the
+surface serves the pair from, so an empty series can be read as "quiet
+market" or "before the history held" rather than either. For a
+fiat-quoted pair that is the earliest of the USD-pegged constituents
+the surface combines, walks or retries — not the literal pair alone;
+`/v1/history` measures the requested orientation only, as its page read
+does. Absent means unknown — never "from the beginning of time".
 
 ## Authentication
 

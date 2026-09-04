@@ -387,6 +387,42 @@ rate(stellarindex_api_sparkline7d_rows_total[15m]) > 0.5` sustained for
 30 min — half the priced rows on the directory rendering an empty chart
 is a lookup-key or pricing-pipeline regression, not a quiet market.
 
+### `stellarindex_api_coverage_floor_probes_total`
+
+Counter, label `result`.
+
+One increment per consultation of the coverage-floor memo behind the
+empty-window signal on `/v1/ohlc`, `/v1/history`, `/v1/chart` and
+`/v1/price/at` — the lookup that lets those surfaces say `coverage_from`
+and `flags.outside_coverage` instead of returning an empty array that
+means either "quiet market" or "before the history held". `hit` was
+served from the in-process TTL cache and touched no database; `found` /
+`absent` / `error` each cost exactly one bounded `min(bucket)` read
+against `prices_1d`; `evicted` fires when admitting a key forced an
+older one out of the bounded map. One consultation per CONSTITUENT: a
+fiat-quoted pair is served from its USD-pegged constituent set and its
+floor is measured over that whole set, so one empty fiat-quoted answer
+can increment this counter once per distinct constituent quote spelling
+on a cold memo (bounded by the operator's peg list plus the fixed
+stablecoin backers, never by the caller — the base spellings of one
+constituent fold onto a single memo key), and every probe behind one
+response shares a single 2 s ceiling.
+
+The probe is reachable ANONYMOUSLY — asking for an empty window is all
+it takes — so this counter is how its cost is measured rather than
+assumed. `rate(stellarindex_api_coverage_floor_probes_total{result!=
+"hit"}[5m])` IS the added database load in reads/s; over
+`rate(stellarindex_api_coverage_floor_probes_total[5m])` it is the
+memo's miss rate, which should fall towards zero as real traffic warms
+the working set. Each non-hit read measured ~5 ms of execution against
+r1's `prices_1d` (2026-09-03), and only ever follows a serving read
+that already returned nothing.
+
+A sustained non-zero `evicted` rate means the cache is being
+key-enumerated rather than warmed — a caller minting distinct pairs to
+force reads, the same signature the `evicted` result carries on
+`stellarindex_api_cache_ops_total`.
+
 ## Ingestion (indexer binary)
 
 ### `stellarindex_source_events_total`

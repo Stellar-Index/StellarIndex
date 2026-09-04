@@ -56,6 +56,23 @@ type APIError struct {
 	// from now (never negative). Callers typically sleep for this
 	// value before retrying a 429 / 503.
 	RetryAfter time.Duration
+
+	// CoverageFrom is the `coverage_from` extension member the server
+	// attaches to /v1/price/at's 404: the earliest instant it holds
+	// price history at for the requested pair. It is the same field
+	// the 2xx envelope carries ([Envelope.CoverageFrom]), on the one
+	// windowed surface whose "nothing there" answer is a problem body
+	// rather than an empty array. Nil means the server did not say —
+	// never "from the beginning of time".
+	CoverageFrom *time.Time
+
+	// OutsideCoverage is the `outside_coverage` extension member on the
+	// same 404: true when the requested instant is at or before
+	// CoverageFrom, so the miss is "before the server's history for
+	// this pair" rather than a gap inside it. Only ever true when
+	// CoverageFrom is also set; false carries no information on its
+	// own (the server omits it whenever the floor is unknown).
+	OutsideCoverage bool
 }
 
 // RetryAfterDuration reports the recommended back-off and whether the
@@ -126,6 +143,8 @@ func parseAPIError(status int, contentType, retryAfter string, body []byte) *API
 	apiErr.Detail = p.Detail
 	apiErr.Instance = p.Instance
 	apiErr.RequestID = p.RequestID
+	apiErr.CoverageFrom = p.CoverageFrom
+	apiErr.OutsideCoverage = p.OutsideCoverage
 
 	// Valid JSON that carried NONE of the problem+json fields (e.g. a
 	// proxy or non-conforming service replying
@@ -190,12 +209,16 @@ func parseRetryAfter(v string) time.Duration {
 }
 
 // problemJSON is the wire shape of an RFC 9457 problem+json
-// response. Mirrors internal/api/v1.Problem.
+// response. Mirrors internal/api/v1.Problem, and the spec's `Problem`
+// schema — TestProblemJSONMatchesSpec holds the two in lockstep, so a
+// member added to one and not the other fails rather than drifting.
 type problemJSON struct {
-	Type      string `json:"type"`
-	Title     string `json:"title"`
-	Status    int    `json:"status"`
-	Detail    string `json:"detail,omitempty"`
-	Instance  string `json:"instance,omitempty"`
-	RequestID string `json:"request_id,omitempty"`
+	Type            string     `json:"type"`
+	Title           string     `json:"title"`
+	Status          int        `json:"status"`
+	Detail          string     `json:"detail,omitempty"`
+	Instance        string     `json:"instance,omitempty"`
+	RequestID       string     `json:"request_id,omitempty"`
+	CoverageFrom    *time.Time `json:"coverage_from,omitempty"`
+	OutsideCoverage bool       `json:"outside_coverage,omitempty"`
 }

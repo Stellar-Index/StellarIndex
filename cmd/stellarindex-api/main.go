@@ -1303,6 +1303,12 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 		// so it outlives the handler's 8s ceiling and warms the
 		// cache for the status page's 2-min poll.
 		History: v1.NewCachedHistoryReader(storeHistoryReader{s: store}, 2*time.Minute),
+		// Coverage-floor probe behind the empty-window signal. Not part
+		// of HistoryReader: it is consulted only when a serving read
+		// came back empty, has its own TTL memo in the handler layer,
+		// and reads a different question (when does this pair START)
+		// than any serving method answers.
+		CoverageFloor: storeCoverageFloorReader{s: store},
 		// Wrap with a 30s TTL cache. /v1/markets and /v1/pools both
 		// scan ~24h of the trades hypertable on every hit (5-10s
 		// each); the explorer hits them on every page load. 30s
@@ -3449,6 +3455,29 @@ func (r storeHistoryReader) HistoryPointsInRange(ctx context.Context, pair canon
 		return nil, err
 	}
 	return convertHistoryPoints(rows), nil
+}
+
+// storeCoverageFloorReader adapts *timescale.Store to
+// v1.CoverageFloorReader. Separate from [storeHistoryReader] on
+// purpose: the serving reader is wrapped in a 2-minute SWR cache whose
+// keying is per-method, while the floor has its own TTL memo in the
+// handler layer keyed by the pair's alias-canonical identity — layering
+// one over the other would cache the same answer twice under different
+// keys. Translates the string-typed granularity to the storage enum;
+// an unknown value surfaces as the store's own validation error, which
+// the handler renders as "no signal".
+type storeCoverageFloorReader struct{ s *timescale.Store }
+
+func (r storeCoverageFloorReader) EarliestBucket(ctx context.Context, pair canonical.Pair, granularity string, from, to time.Time) (time.Time, bool, error) {
+	return r.s.EarliestBucket(ctx, pair, timescale.HistoryGranularity(granularity), from, to)
+}
+
+func (r storeCoverageFloorReader) EarliestBucketAsStored(ctx context.Context, pair canonical.Pair, granularity string, from, to time.Time) (time.Time, bool, error) {
+	return r.s.EarliestBucketAsStored(ctx, pair, timescale.HistoryGranularity(granularity), from, to)
+}
+
+func (r storeCoverageFloorReader) EarliestBucketLiteralQuote(ctx context.Context, pair canonical.Pair, granularity string, from, to time.Time) (time.Time, bool, error) {
+	return r.s.EarliestBucketLiteralQuote(ctx, pair, timescale.HistoryGranularity(granularity), from, to)
 }
 
 // TWAPPointsInRange adapts [timescale.Store.TWAPPointsInRange] to the

@@ -9,10 +9,18 @@ import (
 // Mirrors `internal/api/v1.Envelope` but parameterised on the data
 // type for type safety in client code.
 type Envelope[T any] struct {
-	Data    T         `json:"data"`
-	AsOf    time.Time `json:"as_of"`
-	Sources []string  `json:"sources,omitempty"`
-	Flags   Flags     `json:"flags"`
+	Data T         `json:"data"`
+	AsOf time.Time `json:"as_of"`
+	// CoverageFrom is the earliest instant the server holds price
+	// history at for the pair the request named. Present on the
+	// windowed surfaces (History, Chart, OHLC) when the server could
+	// establish it. Nil means UNKNOWN, never "from the beginning of
+	// time" — a consumer treating an empty series as "this market is
+	// dead" needs this field to tell that apart from a window that
+	// simply predates the server's data.
+	CoverageFrom *time.Time `json:"coverage_from,omitempty"`
+	Sources      []string   `json:"sources,omitempty"`
+	Flags        Flags      `json:"flags"`
 	// Pagination is a POINTER so it matches the server's wire shape
 	// (internal/api/v1/envelope.go uses *Pagination): nil ⇒ the field
 	// is absent. A value type here made `omitempty` a no-op (omitempty
@@ -56,8 +64,16 @@ type Flags struct {
 	// structurally unable to detect the blindness (cold audit
 	// 2026-08-04).
 	DivergenceChecked bool `json:"divergence_checked"`
-	Frozen            bool `json:"frozen,omitempty"`
-	SingleSource      bool `json:"single_source,omitempty"`
+	// OutsideCoverage marks an empty answer whose requested range ends
+	// at or before the envelope's CoverageFrom — the window predates the
+	// server's history for the pair, so there was nothing to return.
+	// Mirrors the server's envelope flag; dropping it would leave a
+	// consumer unable to distinguish the two meanings of an empty series
+	// (the CS-087 shape: a false that reads as a verdict when it is
+	// really "not applicable").
+	OutsideCoverage bool `json:"outside_coverage,omitempty"`
+	Frozen          bool `json:"frozen,omitempty"`
+	SingleSource    bool `json:"single_source,omitempty"`
 	// Diverged is set on a TRIANGULATED /v1/price response when the
 	// composite came from routes that disagreed (the aggregator's
 	// router divergence signal). Mirrors the server's envelope flag;

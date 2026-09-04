@@ -119,11 +119,20 @@ var allowedCAGGViews = map[string]bool{
 	"prices_1mo": true,
 }
 
-// CAGGsLiveForever is the set of price aggregates with no retention
-// policy — these are the ones the backfill tool refreshes after
-// each chunk. The minute-grain CAGGs (1m/15m) have a 30-day
-// retention by design (per migration 0002), so refreshing historical
-// buckets there is wasted work.
+// CAGGsLiveForever is the set of price aggregates the backfill tool
+// refreshes after each chunk. The name predates migration 0031: the
+// minute-grain CAGGs (prices_1m / prices_15m) are excluded here, and
+// that exclusion once rested on the retention policies migration 0002
+// had placed on them. No price aggregate carries a retention policy
+// any more — migration 0031 removed those two, and migration 0116
+// records the tree as holding none on any reconcile target — so no
+// rung drops history by age; each holds what its own refreshes have
+// materialised. The exclusion now rests on cost, not retention: the
+// minute rungs hold the most rows per pair, and a historical refresh
+// there is the most expensive one in the tree. They are served over any
+// window all the same (`/v1/ohlc?interval=1m|15m`,
+// `/v1/chart?granularity=1m|15m`), so history the backfill lands is
+// reachable at those grains only once a refresh names that range.
 //
 // Per-entry MinWindow is the Timescale-imposed minimum refresh
 // window: refresh_continuous_aggregate rejects (`SQLSTATE 22023:

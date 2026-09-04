@@ -277,7 +277,17 @@ func (s *Server) handleOHLCSeries(
 	// Fiat-quoted series are combined from USD/EUR-pegged stablecoin
 	// constituents (late-bound proxy) — flag it, mirroring the single-bar
 	// /v1/ohlc stablecoin-fallback path.
-	writeJSON(w, resp, Flags{Triangulated: pair.Quote.Type == canonical.AssetFiat && len(bars) > 0})
+	flags := Flags{Triangulated: pair.Quote.Type == canonical.AssetFiat && len(bars) > 0}
+	// An empty series is the ambiguous answer — "quiet market" and
+	// "before anything held for this pair" are the same bytes — and
+	// `to` is the window's exclusive end, so a window that ends at or
+	// before the floor is provably the second reading. The floor is
+	// measured over what ohlcSeriesWithAliases read: the pair, or for
+	// a fiat quote the whole constituent set the combine drew on.
+	coverageFrom, outside := s.coverageAnnotationIfEmpty(
+		r.Context(), s.ohlcCoverageSet(pair), to, len(bars) == 0)
+	flags.OutsideCoverage = outside
+	writeJSONCoverage(w, resp, flags, coverageFrom)
 }
 
 // parseOHLCSeriesFromTo parses from/to for the series mode with

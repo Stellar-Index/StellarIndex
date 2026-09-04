@@ -238,7 +238,7 @@ func (s *Server) handleChart(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	writeJSON(w, series, Flags{Triangulated: triangulated})
+	s.writeChartSeries(w, r, pair, series, triangulated)
 }
 
 // dispatchSpecialisedChart routes to a non-default chart handler
@@ -833,31 +833,46 @@ func (s *Server) fiatSeriesThroughXLM(
 	ctx context.Context, pair canonical.Pair,
 	read func(context.Context, canonical.Pair) ([]HistoryPoint, error),
 ) ([]HistoryPoint, bool) {
-	if pair.Quote.Type != canonical.AssetFiat || pair.Base.Type == canonical.AssetFiat {
+	legs, ok := fiatCrossLegsThroughXLM(pair)
+	if !ok {
 		return nil, false
 	}
-	xlm := canonical.NativeAsset()
-	if sameAsset(pair.Base, xlm) {
-		return nil, false
-	}
-	assetLeg, err := canonical.NewPair(pair.Base, xlm)
-	if err != nil {
-		return nil, false
-	}
-	assetPts, err := s.chartPointsWithAliases(ctx, assetLeg, read)
+	assetPts, err := s.chartPointsWithAliases(ctx, legs[0], read)
 	if err != nil || len(assetPts) == 0 {
 		return nil, false
 	}
-	xlmLeg, err := canonical.NewPair(xlm, pair.Quote)
-	if err != nil {
-		return nil, false
-	}
-	xlmPts, err := s.chartPointsWithAliases(ctx, xlmLeg, read)
+	xlmPts, err := s.chartPointsWithAliases(ctx, legs[1], read)
 	if err != nil || len(xlmPts) == 0 {
 		return nil, false
 	}
 	crossed := crossSeriesThroughPivot(assetPts, xlmPts)
 	return crossed, len(crossed) > 0
+}
+
+// fiatCrossLegsThroughXLM is the gate and the leg enumeration of
+// [Server.fiatSeriesThroughXLM] on its own: for a fiat-quoted, non-fiat,
+// non-XLM base it returns the asset leg (base/XLM) and the pivot leg
+// (XLM/quote) the derivation multiplies, and ok=false for every pair
+// the route does not apply to. It is a separate function so the
+// coverage floor ([Server.chartCoverageSet]) enumerates the SAME legs
+// the serving read multiplies, from one definition.
+func fiatCrossLegsThroughXLM(pair canonical.Pair) ([2]canonical.Pair, bool) {
+	if pair.Quote.Type != canonical.AssetFiat || pair.Base.Type == canonical.AssetFiat {
+		return [2]canonical.Pair{}, false
+	}
+	xlm := canonical.NativeAsset()
+	if sameAsset(pair.Base, xlm) {
+		return [2]canonical.Pair{}, false
+	}
+	assetLeg, err := canonical.NewPair(pair.Base, xlm)
+	if err != nil {
+		return [2]canonical.Pair{}, false
+	}
+	xlmLeg, err := canonical.NewPair(xlm, pair.Quote)
+	if err != nil {
+		return [2]canonical.Pair{}, false
+	}
+	return [2]canonical.Pair{assetLeg, xlmLeg}, true
 }
 
 // crossSeriesThroughPivot merges two ascending closed-bucket series on
