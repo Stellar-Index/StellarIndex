@@ -190,8 +190,11 @@ find "$OUT_DIR" -mindepth 1 -maxdepth 1 -type d -mtime "+$RETAIN_DAYS" -exec rm 
 # ─── 5. offsite push (gated on presence) ────────────────────────────
 # ADR-0043 §2.1 says "pushed to repo2 alongside pgBackRest": a copy that
 # lives only on the pool it protects is not a backup. Unset target =
-# local-only, which the ansible role forces the operator to acknowledge
-# explicitly (ch_schema_snapshot_offsite_ack) rather than drift into.
+# local-only. On pubnet the ansible role refuses the backup surface
+# without one and reports it on every full run; a non-pubnet host
+# acknowledges the gap explicitly (ch_schema_snapshot_offsite_ack)
+# rather than drifting into it. Either way the offsite alert tickets
+# the host, by name, until a push lands.
 offsite_ok=0
 if [[ -n "$SNAPSHOT_MC_TARGET" ]]; then
   if command -v mc >/dev/null 2>&1 && mc mirror --overwrite "$work" "$SNAPSHOT_MC_TARGET/$day" >/dev/null 2>&1; then
@@ -220,9 +223,10 @@ if [[ "$TEXTFILE_DIR" != "/dev/null" ]]; then
     echo "# HELP stellarindex_ch_schema_snapshot_bytes Size on disk of the most recent snapshot directory."
     echo "# TYPE stellarindex_ch_schema_snapshot_bytes gauge"
     echo "stellarindex_ch_schema_snapshot_bytes $bytes"
-    # Always emitted: the offsite staleness alert's absent-series branch
-    # is gated on this so a push that has NEVER succeeded fires while an
-    # acked local-only host (no target) stays silent.
+    # Always emitted. The offsite alert no longer gates on this (a
+    # never-configured target is as loud as a failing push, per host);
+    # its description reads it to split "never configured" (0) from
+    # "configured but failing" (1) for triage.
     echo "# HELP stellarindex_ch_schema_snapshot_offsite_configured 1 if an offsite target (SNAPSHOT_MC_TARGET) is configured for this host, else 0."
     echo "# TYPE stellarindex_ch_schema_snapshot_offsite_configured gauge"
     if [[ -n "$SNAPSHOT_MC_TARGET" ]]; then

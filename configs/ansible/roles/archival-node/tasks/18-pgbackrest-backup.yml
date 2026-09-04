@@ -167,23 +167,88 @@
 # Nothing existed for §2.1 before this — the lake had DDL in
 # deploy/clickhouse/tier1_schema.sql (the FOUNDING schema, since
 # outgrown by indexes, MVs and compression policies) and nothing else.
-- name: Refuse a local-only ClickHouse schema snapshot without an explicit ack of the gap
+#
+# On PUBNET the ack is not accepted. ADR-0043's restore is schema-FIRST:
+# the DDL is what a re-derive is replayed into, so in the total-site-loss
+# scenario Postgres comes back from the repo2 S3 copy and the lake's
+# schema exists on no surviving medium. An ack can record a decision to
+# run without a second copy of DATA; it cannot make the only copy of the
+# lake's DEFINITION survive the pool it sits on. Test nets rebuild from
+# deploy/clickhouse/*.sql in minutes and keep the ack.
+#
+# WHERE the pubnet refusal engages matters as much as what it says. This
+# file is imported at step 18 of a full archival-node.yml run, ahead of
+# every task after it — 22-clickhouse-exporter.yml among them — and the
+# weekly ansible-drift workflow runs that full playbook, including the
+# apply arm that is the only path holding the vault. A hard assert in
+# the linear path would abort all of that, on every run, for as long as
+# a host that has no off-site target today goes without one: no drift
+# verdict, nothing else applied, and the fix shipped beside it out of
+# reach. So on pubnet the refusal is scoped to the surface being
+# applied. It fires when the operator selects the backup surface by tag
+# (`--tags backup` / `pgbackrest` — the invocation v1-launch-plan row
+# 1.12 gives for setting the target); a full run, or a run limited to
+# some other tag, instead REPORTS the gap by name and carries on,
+# installing the snapshot units local-only. Local-only is strictly
+# better than no snapshot, and it is the state the standing alert
+# (stellarindex_ch_schema_snapshot_offsite_stale — per host, not gated
+# on the target being configured) tickets until a copy exists. Non-pubnet
+# keeps the plain assert on every run: the ack is a one-line inventory
+# var, so it never traps a run.
+- name: Record whether this host's ClickHouse schema snapshot would be local-only on pubnet
+  ansible.builtin.set_fact:
+    ch_schema_snapshot_local_only_pubnet: >-
+      {{ (ch_schema_snapshot_mc_target | default('') == '')
+         and ((stellar_network | default('pubnet')) == 'pubnet') }}
+    # `ansible_run_tags` is ['all'] on an untagged run.
+    ch_schema_snapshot_backup_surface_selected: >-
+      {{ (ansible_run_tags | default(['all']) | intersect(['backup', 'pgbackrest']) | length) > 0 }}
+  when: ch_schema_snapshot_enabled | default(true)
+
+- name: Refuse a local-only ClickHouse schema snapshot (pubnet requires an off-site target)
   ansible.builtin.assert:
     that:
       - >-
         (ch_schema_snapshot_mc_target | default('') != '')
-        or (ch_schema_snapshot_offsite_ack | default(false) | bool)
+        or (
+          (stellar_network | default('pubnet')) != 'pubnet'
+          and (ch_schema_snapshot_offsite_ack | default(false) | bool)
+        )
     fail_msg: >-
       The ClickHouse schema+state snapshot (ADR-0043 §2.1) would be written
       ONLY to this host's own pool — the same pool it protects, so one pool
       loss takes the lake's DDL with the lake (the CS-111 failure shape,
-      one layer down). Either set ch_schema_snapshot_mc_target to an mc
-      alias/prefix on offsite storage, or set
-      ch_schema_snapshot_offsite_ack: true to accept the gap explicitly.
-      With the gap accepted, regenerate the in-repo copy periodically
-      instead — see docs/operations/runbooks/ch-schema-restore.md.
+      one layer down). Set ch_schema_snapshot_mc_target to an mc
+      alias/prefix on offsite storage and re-run with --tags backup. On a
+      NON-pubnet host ch_schema_snapshot_offsite_ack: true accepts the gap
+      instead (the lake there is re-createable from deploy/clickhouse/*.sql);
+      on pubnet it is not accepted, because ADR-0043's restore is
+      schema-first and a re-derive has nothing to replay into.
+      See docs/operations/runbooks/ch-schema-restore.md and
+      docs/operations/v1-launch-plan.md row 1.12.
     quiet: true
-  when: ch_schema_snapshot_enabled | default(true)
+  when:
+    - ch_schema_snapshot_enabled | default(true)
+    # Pubnet: only when the backup surface was selected by tag (see the
+    # note above). Non-pubnet: on every run — the ack is the escape.
+    - >-
+      (stellar_network | default('pubnet')) != 'pubnet'
+      or (ch_schema_snapshot_backup_surface_selected | default(false) | bool)
+
+- name: Report a local-only ClickHouse schema snapshot on pubnet (full run — not refused here)
+  ansible.builtin.debug:
+    msg: >-
+      ch_schema_snapshot_mc_target is unset on a pubnet host, so the
+      ClickHouse schema+state snapshot — the lake's ONLY backup (ADR-0043
+      §2.1) — is installed LOCAL-ONLY, on the pool it protects. Not refused
+      on this run: only the backup surface refuses (--tags backup).
+      stellarindex_ch_schema_snapshot_offsite_stale tickets this host until
+      a push lands. Set the target per docs/operations/v1-launch-plan.md
+      row 1.12.
+  when:
+    - ch_schema_snapshot_enabled | default(true)
+    - ch_schema_snapshot_local_only_pubnet | default(false) | bool
+    - not (ch_schema_snapshot_backup_surface_selected | default(false) | bool)
 
 - name: Install ClickHouse schema-snapshot script
   ansible.builtin.copy:

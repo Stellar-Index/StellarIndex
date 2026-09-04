@@ -111,6 +111,11 @@ EXTERNAL_OK=(
   # to sit here: neither is a node_exporter metric, so listing them as
   # "expected-external" documented two invented names as legitimate.
   nvme_temperature_celsius nvme_num_err_log_entries_total
+  # clickhouse-server's OWN Prometheus endpoint (port 9363, enabled by
+  # the archival-node role's 22-clickhouse-exporter.yml). system.events
+  # is exported as ClickHouseProfileEvents_<Name>; these two are the
+  # ones clickhouse.yml selects on.
+  ClickHouseProfileEvents_FailedQuery ClickHouseProfileEvents_RejectedInserts
   up
 )
 

@@ -607,21 +607,44 @@ groups:
       # The offsite stamp is only emitted once an offsite target is
       # configured AND a push has succeeded — so, as above, a push that
       # has NEVER succeeded is an absent series and the `time() - x`
-      # branch alone can never fire. The absent branch is gated on
-      # `stellarindex_ch_schema_snapshot_offsite_configured == 1`
-      # (emitted every run, 1 iff SNAPSHOT_MC_TARGET is set) so this
-      # stays silent on a host that has explicitly acknowledged
-      # local-only (ch_schema_snapshot_offsite_ack) — the ack is the
-      # record of that decision, not this alert — and on a host whose
-      # script predates the gauge.
+      # branch alone can never fire.
+      #
+      # The absent branch USED TO be gated on
+      # `stellarindex_ch_schema_snapshot_offsite_configured == 1`, on
+      # the reasoning that a host which acknowledged local-only should
+      # not be nagged. That gate made the alert's own precondition the
+      # thing it could not report: r1 has never had SNAPSHOT_MC_TARGET
+      # set, so the gauge reads 0 and the loudest possible state —
+      # the lake's ONLY DDL copy living on the pool it protects, with
+      # no off-site copy anywhere — was the one state that stayed
+      # silent. It is also not a survivable gap: ADR-0043's restore is
+      # schema-FIRST, so in total-site-loss Postgres comes back from S3
+      # and the lake's schema exists nowhere. Ungated: a never-configured
+      # off-site is now exactly as loud as a broken one.
+      #
+      # PER HOST, not fleet-global. A bare absent_over_time(offsite[72h])
+      # is one boolean for the whole scrape: any host pushing off-site
+      # would have made every other host's missing copy invisible —
+      # promtool-proven silent for a second instance with no stamp while
+      # the first stamped hourly. The second arm instead takes every
+      # host that HAS a local snapshot (last_success_unix — the only
+      # series a host with a working snapshot always carries) and drops
+      # the ones that have pushed off-site inside the window; what is
+      # left is exactly the hosts whose only copy is local, each named
+      # by its own instance label. A host whose snapshot itself is
+      # failing has no last_success_unix and is owned by _stale above,
+      # not double-reported here. The role (18-pgbackrest-backup.yml)
+      # refuses the backup surface on pubnet without a target and
+      # reports it on every full run; the alert is the standing signal
+      # and the only way to clear it is to have a copy.
       - alert: stellarindex_ch_schema_snapshot_offsite_stale
         expr: |
           (time() - stellarindex_ch_schema_snapshot_offsite_last_success_unix) > 72 * 3600
           or
           (
-            absent_over_time(stellarindex_ch_schema_snapshot_offsite_last_success_unix[72h])
-            and on ()
-            stellarindex_ch_schema_snapshot_offsite_configured == 1
+            stellarindex_ch_schema_snapshot_last_success_unix
+            unless on (instance)
+            max_over_time(stellarindex_ch_schema_snapshot_offsite_last_success_unix[72h])
           )
         for: 30m
         labels:
@@ -632,12 +655,17 @@ groups:
           runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ch-schema-restore.md
           summary: "ClickHouse schema snapshot has not reached offsite storage in > 72 h"
           description: |
-            The daily schema snapshot is being written locally but its
-            offsite push has been failing for 3+ days — or has never
-            succeeded since the target was configured — so the only
-            copy of the lake's DDL now lives on the same pool as the
-            lake (CS-111's failure shape, one layer down). Check the
-            `mc` alias/credentials for ch_schema_snapshot_mc_target
+            The daily schema snapshot is not reaching off-site storage —
+            the push has been failing for 3+ days, or no off-site target
+            has ever been configured on this host. Either way the only
+            copy of the lake's DDL lives on the same pool as the lake
+            (CS-111's failure shape, one layer down), and ADR-0043's
+            restore is schema-first, so a pool loss makes the re-derive
+            archaeology rather than a procedure.
+            `stellarindex_ch_schema_snapshot_offsite_configured` tells
+            the two apart: 0 = never configured (set
+            ch_schema_snapshot_mc_target and re-apply the role), 1 =
+            configured but pushing — check the `mc` alias/credentials
             and the remote's quota.
 
       # Causal, early signal for both snapshot alerts above (same shape

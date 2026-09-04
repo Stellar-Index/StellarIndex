@@ -156,3 +156,9 @@
 - name: "ClickHouse destructive-DDL size guard (2026-08-29 r1 audit)"
   ansible.builtin.import_tasks: 21-clickhouse-drop-guard.yml
   tags: [clickhouse, clickhouse-drop-guard]
+
+- name: "ClickHouse Prometheus endpoint (2026-09-03 r1 observability gap)"
+  # Unconditional like the two above: run_clickhouse is false on r1, and
+  # r1 is the host whose lake exports no metrics at all.
+  ansible.builtin.import_tasks: 22-clickhouse-exporter.yml
+  tags: [clickhouse, clickhouse-exporter, observability]

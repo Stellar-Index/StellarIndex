@@ -342,10 +342,20 @@ ch_schema_snapshot_dir: "/var/lib/stellarindex/ch-schema-snapshot"
 # throws away for no saving.
 ch_schema_snapshot_retain_days: 90
 # `mc` alias/prefix for the offsite copy, e.g.
-# "offsite/stellarindex-backups/ch-schema". Empty = local-only, which
-# 18-pgbackrest-backup.yml refuses without ch_schema_snapshot_offsite_ack
-# (same shape as pgbackrest_offsite_ack): a copy on the pool it protects
-# is not a backup.
+# "offsite/stellarindex-backups/ch-schema". Empty = local-only: a copy on
+# the pool it protects is not a backup. REQUIRED on pubnet —
+# 18-pgbackrest-backup.yml refuses the backup surface (`--tags backup` /
+# `pgbackrest`) without it and reports the gap by name on every full run
+# (a full run is not aborted: the weekly drift check and its apply arm
+# must keep reaching everything after step 18), and the ack below does
+# NOT buy an exemption there. ADR-0043's restore is schema-first, so the
+# DDL is what a re-derive is replayed INTO; losing it with the pool
+# leaves nothing for the surviving Postgres backup and the two ledger
+# archives to be restored into. The ack remains available on test nets,
+# whose lakes are re-createable from deploy/clickhouse/*.sql.
+# Whichever way this is set, stellarindex_ch_schema_snapshot_offsite_stale
+# tickets the host — by name, per host — on a never-configured target as
+# loudly as on a failing push.
 ch_schema_snapshot_mc_target: ""
 ch_schema_snapshot_offsite_ack: false
 
@@ -486,6 +496,22 @@ clickhouse_ops_batch_password: "{{ vault_clickhouse_ops_batch_password | default
 clickhouse_drop_guard_enabled: true
 clickhouse_max_table_size_to_drop: 53687091200       # 50 GiB — ClickHouse default
 clickhouse_max_partition_size_to_drop: 53687091200   # 50 GiB — ClickHouse default
+
+# ───── ClickHouse Prometheus endpoint (2026-09-03 r1 gap) ─────────────
+# ClickHouse serves its own /metrics; there is no exporter to install.
+# The stock config.xml ships the whole <prometheus> block inside an XML
+# comment, so a default install publishes NOTHING — measured on r1
+# 2026-09-03: nothing listening on 9363, zero `ClickHouse*` series in
+# Prometheus. The lake is the substrate for the API's explorer read
+# path and the projector, and its only signal was ingest-side drop
+# counters the project's own binaries emit. Enabled by default: the collectors
+# run whether or not anything scrapes them, so the endpoint costs one
+# loopback listener. 9363 is ClickHouse's own documented default and
+# collides with nothing here (native 9300, MinIO 9000, node_exporter
+# 9100, redis 9121, postgres 9187, pgbackrest 9854).
+clickhouse_prometheus_enabled: true
+clickhouse_prometheus_port: 9363
+clickhouse_prometheus_endpoint: "/metrics"
 
 # ───── stellarindex-indexer / aggregator / api services ───────────────
 run_stellarindex: true

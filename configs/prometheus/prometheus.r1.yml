@@ -141,6 +141,22 @@ scrape_configs:
           host: r1
           service: pgbackrest
 
+  # ClickHouse — port 9363, served by clickhouse-server ITSELF (no
+  # exporter process exists or is needed). The stock config.xml ships
+  # the whole <prometheus> block commented out, which is why this job
+  # had no counterpart on the box until the archival-node role's
+  # 22-clickhouse-exporter.yml drop-in enabled it; until that tag is
+  # applied the job is down and clickhouse.yml's
+  # stellarindex_clickhouse_server_down pages, which is the intended
+  # signal that the lake's read path has no telemetry.
+  # Runbook: docs/operations/runbooks/clickhouse-server-health.md
+  - job_name: clickhouse
+    static_configs:
+      - targets: [localhost:9363]
+        labels:
+          host: r1
+          service: clickhouse
+
   # MinIO cluster metrics — Bearer-token auth (per the bucket-level
   # `mc admin prometheus generate` output), so the operator wires
   # the bearer token into a bearer_token_file BY HAND.
