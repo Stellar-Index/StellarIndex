@@ -412,6 +412,17 @@ type Server struct {
 	// each entry until one returns data, marking the response
 	// `triangulated: true` for transparency.
 	usdPeggedClassics []canonical.Asset
+	// pegDeclaredAt is when this deployment adopted the operator's peg
+	// declarations (usdPeggedClassics plus the aggregate.FiatProxy
+	// stablecoin table): [Options.PegDeclaredAt] when set, else the
+	// server's construction time — config is parsed before the server
+	// is built, so that is the instant this process took the
+	// declaration on. It is the observed_at [Server.declaredPegSnapshot]
+	// stamps on the flat $1 answer: the declaration is a constant, not
+	// an observation, so the only honest event time behind it is when
+	// it was adopted — see that function for what stamping the clock
+	// instead published, and for the restart semantics.
+	pegDeclaredAt time.Time
 	// fiatPeggedClassics maps a classic asset_id to the fiat currency
 	// the OPERATOR declares it 1:1-pegged to (pricing_guard.
 	// fiat_pegged_classic_assets). Drives the declared-peg price fill
@@ -1207,6 +1218,16 @@ type Options struct {
 	// literal pair when one exists.
 	USDPeggedClassics []canonical.Asset
 
+	// PegDeclaredAt is the instant the USDPeggedClassics declaration
+	// was adopted — the observed_at /v1/price stamps on the flat $1 it
+	// serves for a declared peg no market prices (PriceSnapshot.
+	// ObservedAt). The operator declaration itself,
+	// [trades].usd_pegged_classic_assets, carries no timestamp, so the
+	// API binary leaves this zero and the server uses its own
+	// construction time: the stamp is then per process and resets on
+	// every restart. Set it to pin the wire value.
+	PegDeclaredAt time.Time
+
 	// FiatPeggedClassics maps a classic asset_id (canonical
 	// "CODE-ISSUER" wire form) to the fiat asset the operator
 	// declares it 1:1-pegged to. Wired from
@@ -1417,6 +1438,7 @@ func New(opts Options) *Server { //nolint:funlen // pure field-mapping construct
 		assetDetailCache: newAssetDetailResponseCache(120 * time.Second),
 		mux:              http.NewServeMux(),
 		started:          time.Now().UTC(),
+		pegDeclaredAt:    timeOr(opts.PegDeclaredAt, time.Now().UTC()),
 		requestTimeout:   durationOr(opts.RequestTimeout, defaultRequestTimeout),
 	}
 	applyProtocolOptions(s, opts)
@@ -1512,6 +1534,15 @@ func durationOr(d, fallback time.Duration) time.Duration {
 		return fallback
 	}
 	return d
+}
+
+// timeOr returns t when it is set, else fallback. Used to back an unset
+// (zero-value) Options instant with the server's own clock.
+func timeOr(t, fallback time.Time) time.Time {
+	if t.IsZero() {
+		return fallback
+	}
+	return t
 }
 
 // globalPriceOptsWithDefaults backs `Options.GlobalPriceOpts` with

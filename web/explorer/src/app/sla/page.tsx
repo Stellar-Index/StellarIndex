@@ -92,7 +92,15 @@ export default function SLAPage() {
           <code className="rounded-sm bg-surface-subtle px-1 py-0.5 text-xs">observed_at</code>{' '}
           30&ndash;150 s old by construction; it is held to that
           structural 150-second bound instead, and a breach of it means
-          the closed-bucket pipeline has fallen behind its design. Read{' '}
+          the closed-bucket pipeline has fallen behind its design. The one
+          answer outside that bound is a{' '}
+          <code className="rounded-sm bg-surface-subtle px-1 py-0.5 text-xs">price_type</code>{' '}
+          of <code className="rounded-sm bg-surface-subtle px-1 py-0.5 text-xs">peg</code>:
+          an operator-declared 1:1 constant served only when no market
+          has priced the pair, whose{' '}
+          <code className="rounded-sm bg-surface-subtle px-1 py-0.5 text-xs">observed_at</code>{' '}
+          is the declaration&apos;s adoption stamp, not an observation
+          age. Read{' '}
           <code className="rounded-sm bg-surface-subtle px-1 py-0.5 text-xs">/v1/price/tip</code>{' '}
           when you need the tightest freshness and{' '}
           <code className="rounded-sm bg-surface-subtle px-1 py-0.5 text-xs">/v1/price</code>{' '}

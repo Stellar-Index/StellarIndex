@@ -89,6 +89,11 @@ func (s *Server) handleOracleLastPrice(w http.ResponseWriter, r *http.Request) {
 	// priceFallback result (already normalized upstream / peg / cross-
 	// rate) — see normalizeRawPriceSnapshot's doc comment in price.go.
 	viaFallback := false
+	// triangulated rides with the value, as it does on /v1/price: a
+	// composed fallback — the declared-peg XLM cross, a triangulated
+	// chain, a fiat cross-rate — is not a print of the pair, and the
+	// flag is the only place the envelope says so.
+	triangulated := false
 	if errors.Is(err, ErrPriceNotFound) {
 		// Same fallback chain as /v1/price (priceFallback): Redis VWAP
 		// cache (stablecoin-proxy rewrites + triangulated chains) →
@@ -100,7 +105,7 @@ func (s *Server) handleOracleLastPrice(w http.ResponseWriter, r *http.Request) {
 		var ok bool
 		viaFallback = true
 		var withheld bool
-		snapshot, sources, _, ok, withheld = s.priceFallback(r.Context(), asset, defaultPriceQuote)
+		snapshot, sources, triangulated, ok, withheld = s.priceFallback(r.Context(), asset, defaultPriceQuote)
 		// MSP-06: a withheld verdict reached from the proxy leg must be
 		// reported as withheld, not as "no price data" — the two are
 		// different answers, and only the withheld problem names the raw
@@ -147,7 +152,7 @@ func (s *Server) handleOracleLastPrice(w http.ResponseWriter, r *http.Request) {
 		Price:     snapshot.Price,
 		Timestamp: snapshot.ObservedAt,
 	}
-	writeJSON(w, out, Flags{Stale: stale}, sources...)
+	writeJSON(w, out, Flags{Stale: stale, Triangulated: triangulated}, sources...)
 }
 
 // handleOraclePrices serves GET /v1/oracle/prices?asset=<id>&records=N.
@@ -378,6 +383,8 @@ func (s *Server) handleOracleXLastPrice(w http.ResponseWriter, r *http.Request) 
 	// read, never on a priceFallback result (already normalized at its own
 	// source) — see normalizeRawPriceSnapshot's doc comment.
 	viaFallback := false
+	// triangulated rides with the value — see handleOracleLastPrice.
+	triangulated := false
 	if errors.Is(err, ErrPriceNotFound) {
 		// Same fallback chain as /v1/price (priceFallback): Redis VWAP
 		// cache → read-time stablecoin-fiat proxy → fiat-vs-fiat
@@ -386,7 +393,7 @@ func (s *Server) handleOracleXLastPrice(w http.ResponseWriter, r *http.Request) 
 		var ok bool
 		viaFallback = true
 		var withheld bool
-		snapshot, sources, _, ok, withheld = s.priceFallback(r.Context(), base, quote)
+		snapshot, sources, triangulated, ok, withheld = s.priceFallback(r.Context(), base, quote)
 		// MSP-06, as above.
 		if !ok && withheld {
 			writePriceWithheldProblem(w, r, base, quote)
@@ -428,5 +435,5 @@ func (s *Server) handleOracleXLastPrice(w http.ResponseWriter, r *http.Request) 
 		Price:     snapshot.Price,
 		Timestamp: snapshot.ObservedAt,
 	}
-	writeJSON(w, out, Flags{Stale: stale}, sources...)
+	writeJSON(w, out, Flags{Stale: stale, Triangulated: triangulated}, sources...)
 }

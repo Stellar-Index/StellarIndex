@@ -666,3 +666,98 @@ func TestOraclePrices_StablecoinFiatProxyFallback(t *testing.T) {
 
 // (errors import retained — used by other tests in this file.)
 var _ = errors.New
+
+// oracleFallbackCrossReader is the single-peg shape the declared-peg
+// XLM cross serves on: USDC's own SDEX book at 9.5 XLM per USDC against
+// XLM's CEX dollar market at 0.10 — a composed 0.95, and no fiat:USD
+// bucket for USDC anywhere.
+func oracleFallbackCrossReader() (*stubPriceReader, canonical.Asset) {
+	usdcClassic, err := canonical.ParseAsset("USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN")
+	if err != nil {
+		panic(err)
+	}
+	at := time.Unix(1_770_000_000, 0).UTC()
+	reader := &stubPriceReader{
+		snapshots: map[string]v1.PriceSnapshot{
+			usdcClassic.String() + "/native": {
+				AssetID: usdcClassic.String(), Quote: "native",
+				Price: "9.5", PriceType: "vwap", ObservedAt: at, WindowSeconds: 60,
+			},
+			"crypto:XLM/fiat:USD": {
+				AssetID: "crypto:XLM", Quote: "fiat:USD",
+				Price: "0.10", PriceType: "vwap", ObservedAt: at, WindowSeconds: 60,
+			},
+		},
+		sources: map[string][]string{
+			usdcClassic.String() + "/native": {"sdex"},
+			"crypto:XLM/fiat:USD":            {"coinbase"},
+		},
+	}
+	return reader, usdcClassic
+}
+
+type oracleFlagsEnvelope struct {
+	Data  v1.SEP40Price `json:"data"`
+	Flags v1.Flags      `json:"flags"`
+}
+
+// TestOracleLastPrice_FallbackCrossSetsTriangulated pins that the SEP-40
+// lastprice surface carries priceFallback's triangulated verdict: a
+// declared USD peg with no fiat:USD market is served through its XLM
+// cross, a composed value, and the envelope says so on the same flag
+// /v1/price sets. The handler used to write `Flags{Stale: stale}` alone,
+// so the composed 0.95 went out labelled `triangulated: false`.
+func TestOracleLastPrice_FallbackCrossSetsTriangulated(t *testing.T) {
+	reader, usdcClassic := oracleFallbackCrossReader()
+	srv := v1.New(v1.Options{
+		Prices:            reader,
+		USDPeggedClassics: []canonical.Asset{usdcClassic},
+	})
+	ts := startHTTPTest(t, srv.Handler())
+
+	resp := mustGet(t, ts.URL+"/v1/oracle/lastprice?asset="+usdcClassic.String())
+	if resp.StatusCode != http.StatusOK {
+		body, _ := readAll(resp)
+		t.Fatalf("status = %d, want 200 via the XLM cross. Body: %s", resp.StatusCode, body)
+	}
+	var env oracleFlagsEnvelope
+	mustDecode(t, resp, &env)
+	if env.Data.Price != "0.9500000000" {
+		t.Errorf("price = %q, want the composed 0.9500000000", env.Data.Price)
+	}
+	if !env.Flags.Triangulated {
+		t.Errorf("flags.triangulated = false, want true — the value is composed through XLM")
+	}
+	if !env.Flags.Stale {
+		t.Errorf("flags.stale = false, want true — every fallback answer is stale on this surface")
+	}
+}
+
+// TestOracleXLastPrice_FallbackCrossSetsTriangulated is the cross-pair
+// twin of the test above: x_last_price(USDC-G…, fiat:USD) served through
+// the declared-peg XLM cross carries triangulated=true.
+func TestOracleXLastPrice_FallbackCrossSetsTriangulated(t *testing.T) {
+	reader, usdcClassic := oracleFallbackCrossReader()
+	srv := v1.New(v1.Options{
+		Prices:            reader,
+		USDPeggedClassics: []canonical.Asset{usdcClassic},
+	})
+	ts := startHTTPTest(t, srv.Handler())
+
+	resp := mustGet(t, ts.URL+"/v1/oracle/x_last_price?base="+usdcClassic.String()+"&quote=fiat:USD")
+	if resp.StatusCode != http.StatusOK {
+		body, _ := readAll(resp)
+		t.Fatalf("status = %d, want 200 via the XLM cross. Body: %s", resp.StatusCode, body)
+	}
+	var env oracleFlagsEnvelope
+	mustDecode(t, resp, &env)
+	if env.Data.Price != "0.9500000000" {
+		t.Errorf("price = %q, want the composed 0.9500000000", env.Data.Price)
+	}
+	if !env.Flags.Triangulated {
+		t.Errorf("flags.triangulated = false, want true — the value is composed through XLM")
+	}
+	if !env.Flags.Stale {
+		t.Errorf("flags.stale = false, want true — every fallback answer is stale on this surface")
+	}
+}

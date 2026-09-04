@@ -862,9 +862,9 @@ func (s *Server) fiatSeriesThroughXLM(
 // crossSeriesThroughPivot merges two ascending closed-bucket series on
 // equal buckets and emits base/pivot × pivot/quote per shared bucket —
 // the same merge-join [crossFiatChartPoints] runs for fiat legs, here on
-// the NUMERIC text the CAGGs serve. The product is one exact big.Rat
-// multiplication (ADR-0003: no float on the value path) rendered with
-// [ratToDecimal] to the 10 fractional digits the other derived price
+// the NUMERIC text the CAGGs serve. The product is [crossThroughPivot]'s:
+// one exact big.Rat multiplication (ADR-0003: no float on the value
+// path) rendered to the 10 fractional digits the other derived price
 // surfaces use. A bucket missing on either side is skipped rather than
 // carried forward; a leg that fails to parse or is not strictly positive
 // is skipped for that bucket, since a price is only defined for positive
@@ -887,18 +887,37 @@ func crossSeriesThroughPivot(basePts, pivotPts []HistoryPoint) []HistoryPoint {
 		default:
 			i++
 			j++
-			br, pr := ratFromDecimal(b.VWAP), ratFromDecimal(p.VWAP)
-			if br == nil || pr == nil || br.Sign() <= 0 || pr.Sign() <= 0 {
+			crossed, ok := crossThroughPivot(b.VWAP, p.VWAP)
+			if !ok {
 				continue
 			}
 			out = append(out, HistoryPoint{
 				Bucket:    b.Bucket,
-				VWAP:      ratToDecimal(new(big.Rat).Mul(br, pr), ohlcPriceDigits),
+				VWAP:      crossed,
 				VolumeUSD: b.VolumeUSD,
 			})
 		}
 	}
 	return out
+}
+
+// crossThroughPivot is the one multiplication under every pivot cross on
+// the price surfaces — base/pivot × pivot/quote = base/quote — on the
+// NUMERIC text the readers serve. Exact big.Rat (ADR-0003: no float on
+// the value path), rendered with [ratToDecimal] to the 10 fractional
+// digits the other derived price surfaces use. ok=false when either leg
+// fails to parse or is not strictly positive: a price is only defined
+// for positive rates, so a zero, negative or missing leg is a miss, not
+// a zero. [crossSeriesThroughPivot] applies it per shared bucket for the
+// series surfaces; [Server.crossDeclaredPegThroughXLM] applies it once
+// for the point surface, so the two cannot drift apart in rounding or in
+// what they refuse.
+func crossThroughPivot(basePerPivot, pivotPerQuote string) (string, bool) {
+	br, pr := ratFromDecimal(basePerPivot), ratFromDecimal(pivotPerQuote)
+	if br == nil || pr == nil || br.Sign() <= 0 || pr.Sign() <= 0 {
+		return "", false
+	}
+	return ratToDecimal(new(big.Rat).Mul(br, pr), ohlcPriceDigits), true
 }
 
 // adjustHistoryPointPrices applies the dex-nonstandard-decimals forward
