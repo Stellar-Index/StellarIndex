@@ -8,6 +8,7 @@ import (
 	"errors"
 	"net/http"
 	"reflect"
+	"regexp"
 	"strings"
 	"sync"
 	"testing"
@@ -15,6 +16,7 @@ import (
 
 	v1 "github.com/Stellar-Index/StellarIndex/internal/api/v1"
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/pricingguard"
 )
 
 // The declared USD peg has two spellings on the wire: the classic id the
@@ -870,5 +872,271 @@ func TestPrice_DeclaredPegXLMCrossDegenerateClassicPriceNeverReachesTheSACBook(t
 	if asked := reader.pairsAsked(); callIndex(asked, pegAliasUSDCSAC+"/"+canonical.XLMSacContractID) >= 0 {
 		t.Errorf("the peg's SAC book was read although the classic book returned a row (asked=%v) — "+
 			"the walk advances on FOUND NOTHING, never on found-something-unusable", asked)
+	}
+}
+
+// The two changes above landed separately and were each pinned on their
+// own: the scam gate now resolves its base through canonical.CanonicalAsset
+// before the classic-issuer check, and the declared-peg route now folds
+// through the alias registry so a peg's contract id takes the peg's own
+// route. The cases below are the two of them TOGETHER — the scam gate
+// reached through the peg's XLM cross, which is the only place the peg
+// route consults it, and the XLM identities that must come out of the
+// combination untouched.
+
+// scamGatedPegReader wires the REAL pricingguard.ScamGate onto the
+// recording reader the way cmd/stellarindex-api's storePriceReader wires
+// it on the served binary: the raw requested base goes to the gate once a
+// row has been found, and a refusal becomes v1.ErrPriceWithheld — the
+// error every arm of the peg route branches on. /v1/price has no
+// handler-side gate call the way /v1/vwap, /v1/twap, /v1/price/tip and
+// /v1/chart do, so this seam is the ONLY place a withholding decision
+// reaches it, and every combination of the peg's XLM cross passes through
+// it.
+//
+// The gate is the real one over a fake directory because the resolution
+// being exercised lives INSIDE it: a stub keyed on the asset id would
+// reach the same verdict with the resolution or without it and would pin
+// nothing.
+type scamGatedPegReader struct {
+	recordingPriceReader
+	scam *pricingguard.ScamGate
+}
+
+func (r *scamGatedPegReader) LatestPrice(ctx context.Context, a, q canonical.Asset) (v1.PriceSnapshot, []string, bool, error) {
+	snap, srcs, stale, err := r.recordingPriceReader.LatestPrice(ctx, a, q)
+	if err == nil && r.scam.Withheld(ctx, a, "price_read") {
+		return v1.PriceSnapshot{}, nil, false, v1.ErrPriceWithheld
+	}
+	return snap, srcs, stale, err
+}
+
+// volatilePriceBodyFields are the only two members of a /v1/price body
+// that two spellings of ONE asset are allowed to differ on: `as_of` is
+// the response clock, and `asset_id` echoes what the caller typed.
+var volatilePriceBodyFields = regexp.MustCompile(`"(as_of|asset_id)":"[^"]*"`)
+
+// maskedPriceBody fetches a /v1/price body and blanks those two fields,
+// so what remains is every byte the spellings must agree on: the price,
+// its type, the window, observed_at, the sources and every flag. Compared
+// as the served bytes rather than as a decoded v1.PriceSnapshot, because
+// `sources` and the flags are not members of that struct and a
+// disagreement there is exactly the kind this is looking for.
+func maskedPriceBody(t *testing.T, url string) string {
+	t.Helper()
+	resp := mustGet(t, url)
+	body, err := readAll(resp)
+	if err != nil {
+		t.Fatalf("read body: %v", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200. Body: %s", resp.StatusCode, body)
+	}
+	return volatilePriceBodyFields.ReplaceAllString(body, `"$1":"<masked>"`)
+}
+
+// flaggedPegLivePoolReader is the shape where the two changes meet: the
+// declared peg's issuer carries a scam-class directory tag, the peg has NO
+// classic XLM book at all, and its SAC spelling holds a live pool quoted
+// in the XLM SAC that crosses to 2.00 against the 0.10 pivot.
+//
+// The classic book is ABSENT rather than refused deliberately, and that is
+// what separates this from
+// TestPrice_DeclaredPegXLMCrossWithheldClassicBookNeverReachesTheSACBook
+// above: "found nothing" is the single verdict that advances the spelling
+// walk, so it is the only fixture in which the peg's SAC book is reached
+// at all, and therefore the only one in which the gate's verdict on a
+// Soroban base decides what /v1/price serves.
+//
+// The peg is the flagged issuance scam_gate_sac_spelling_test.go already
+// keeps for this role (newSACSpellingFixture), NOT the asset the deployed
+// configuration declares. Being flagged is a fixture ROLE, and one asset
+// in the tree fills it: tagging a second, real issuance `unsafe` to reach
+// the same shape would leave the repo with two. The declared peg list is
+// per-server (v1.Options.USDPeggedClassics), so this case declares its own
+// and installPegAliasRegistry is left exactly as the rest of the file
+// finds it.
+func flaggedPegLivePoolReader(at time.Time, f sacSpellingFixture) *scamGatedPegReader {
+	pool := f.sac.String() + "/" + canonical.XLMSacContractID
+	return &scamGatedPegReader{
+		recordingPriceReader: recordingPriceReader{stubPriceReader: stubPriceReader{
+			snapshots: map[string]v1.PriceSnapshot{
+				pool: {
+					AssetID: f.sac.String(), Quote: canonical.XLMSacContractID,
+					Price: "20.0", PriceType: "vwap", ObservedAt: at, WindowSeconds: 60,
+				},
+				"crypto:XLM/fiat:USD": {
+					AssetID: "crypto:XLM", Quote: "fiat:USD",
+					Price: "0.10", PriceType: "vwap", ObservedAt: at, WindowSeconds: 60,
+				},
+			},
+			sources: map[string][]string{
+				pool:                  {"soroswap"},
+				"crypto:XLM/fiat:USD": {"coinbase"},
+			},
+		}},
+		scam: f.gate(),
+	}
+}
+
+// TestPrice_FlaggedDeclaredPegServesTheDeclarationUnderBothSpellings is
+// the case that exists only when both changes are in place, and it is the
+// one that moves money.
+//
+// The peg route sends both spellings down the XLM cross. The peg's
+// classic form finds nothing, which is the one verdict that advances the
+// spelling walk, so the walk reaches the peg's SAC form — where the only
+// market is a thin contract-quoted pool crossing more than 2x off the
+// declaration. Whether that pool is published turns entirely on the gate's
+// answer for a SOROBAN base:
+//
+//   - the gate resolves the base to the flagged classic issuance, refuses,
+//     and pegXLMLegRefused ends the walk, so the declaration serves; or
+//   - the gate sees a non-classic base, has nothing to say, and the
+//     flagged issuer's price is republished through the pool — under the
+//     CLASSIC spelling as well, because the cross prices the peg as an
+//     asset and not as a spelling.
+//
+// So the peg route widening the walk is what carries a flagged issuer's
+// price to a spelling the gate could not previously see, and the gate
+// resolving its base is what closes it. Neither half is sufficient alone,
+// and neither was exercised against the other.
+//
+// Both spellings must serve the declaration, and must serve the SAME one.
+//
+// RED two ways, which is the point of the case:
+//
+//   - with the gate's resolution removed (`base = canonical.CanonicalAsset(base)`
+//     dropped from pricingguard.ScamGate.Withheld) both spellings serve
+//     2.0000000000, price_type vwap, sources ["coinbase","soroswap"];
+//   - with the peg match narrowed back to the declared spelling
+//     (`peg.Equal(asset)` for `sameAsset(peg, asset)` in
+//     Server.isDeclaredUSDPeg) the contract id 404s while the classic id
+//     still prints.
+//
+// NOT parallel: newSACSpellingFixture installs the process-global alias
+// registry.
+func TestPrice_FlaggedDeclaredPegServesTheDeclarationUnderBothSpellings(t *testing.T) {
+	f := newSACSpellingFixture(t, true)
+	at := time.Unix(1745000000, 0).UTC()
+	reader := flaggedPegLivePoolReader(at, f)
+	srv := v1.New(v1.Options{
+		Prices:            reader,
+		USDPeggedClassics: []canonical.Asset{f.classic},
+		PegDeclaredAt:     declaredPegAdoptedAt,
+	})
+	ts := startHTTPTest(t, srv.Handler())
+
+	classic, sac := f.classic.String(), f.sac.String()
+	bodies := map[string]string{}
+	for _, spelling := range []string{classic, sac} {
+		env := getPegEnvelope(t, ts.URL+"/v1/price?asset="+spelling+"&quote=fiat:USD")
+		assertDeclarationServed(t, env, spelling)
+		bodies[spelling] = maskedPriceBody(t, ts.URL+"/v1/price?asset="+spelling+"&quote=fiat:USD")
+		if strings.Contains(bodies[spelling], "soroswap") {
+			t.Errorf("%s: the served body credits the pool's venue — the flagged issuer's price "+
+				"was republished through the peg's SAC spelling: %s", spelling, bodies[spelling])
+		}
+	}
+	// One asset, one answer: the declaration is a constant and the cross
+	// prices the peg as an asset, so nothing but the echo may differ.
+	if bodies[classic] != bodies[sac] {
+		t.Errorf("the two spellings of one asset disagree:\n classic = %s\n sac     = %s",
+			bodies[classic], bodies[sac])
+	}
+
+	// Non-vacuity: the pool is REACHABLE and was read. The declaration is
+	// served because the gate refused that read, not because the walk
+	// never got there.
+	asked := reader.pairsAsked()
+	if callIndex(asked, sac+"/"+canonical.XLMSacContractID) < 0 {
+		t.Errorf("the peg's SAC pool was never read (asked=%v) — the declaration would then be "+
+			"serving for want of a market rather than because the gate refused one", asked)
+	}
+	// The mechanism, not the value: the gate asked the directory about the
+	// classic issuance's G-address, which the SAC spelling does not carry.
+	if len(f.dir.asked) == 0 || f.dir.asked[0] != sacSpellingFlaggedIssuer {
+		t.Errorf("directory asked about %v, want the peg's issuer %q — the gate never resolved the "+
+			"Soroban base to the issuance it wraps", f.dir.asked, sacSpellingFlaggedIssuer)
+	}
+	// The self-pair guard assertNoPegSelfPairRead makes for the file's
+	// USDC fixture, keyed on THIS peg's two spellings.
+	for _, pair := range asked {
+		switch pair {
+		case sac + "/" + classic, classic + "/" + sac:
+			t.Errorf("reader asked for %s — the two sides are one asset, never a market", pair)
+		}
+	}
+}
+
+// TestPrice_XLMIdentitiesUnchangedOnTheCombinedPath is a CONTROL, and is
+// labelled one because it cannot currently fail: it passes with both of
+// the changes above in place and with either or both of them reverted.
+// XLM canonicalises to `native`, which carries no issuer for the gate to
+// look up, and is not a declared peg under any of its forms, so neither
+// change has a path to it today.
+//
+// It is kept because it is the guard for the change that WOULD reach XLM.
+// The two changes both work by folding a request through the alias
+// registry, and XLM is the one family in that registry whose members must
+// never be treated as one venue population. A later widening — resolving a
+// base into the peg match, adding an XLM form to the peg list, or letting
+// the gate key on something a native asset carries — would land here as a
+// 404 on one spelling, or a `peg` price_type where a `vwap` belongs, or
+// the two spellings disagreeing.
+//
+// The dollar bucket is held under crypto:XLM alone, so the `native`
+// spelling can only answer by the documented literal-first alias fallback
+// (TestPrice_XLMAlias_NativeFallsThroughToCryptoXLM pins that on its own,
+// without the peg registry or the gate). Serving one bucket to both
+// spellings is that fallback, not a merge of the two populations: this
+// case pins that the combined path leaves the behaviour where it was, and
+// makes no claim about the populations themselves.
+func TestPrice_XLMIdentitiesUnchangedOnTheCombinedPath(t *testing.T) {
+	usdc := installPegAliasRegistry(t)
+	at := time.Unix(1745000000, 0).UTC()
+	// The gate is ARMED — a flagged issuer in the directory — so that XLM
+	// sailing past it is a verdict and not an idle gate. WHICH issuer is
+	// immaterial here, since no XLM form resolves to any of them, so this
+	// is the file-neutral flagged issuance rather than a real one.
+	dir := &sacScamDirectory{flagged: map[string]bool{sacSpellingFlaggedIssuer: true}}
+	reader := &scamGatedPegReader{
+		recordingPriceReader: recordingPriceReader{stubPriceReader: stubPriceReader{
+			snapshots: map[string]v1.PriceSnapshot{
+				"crypto:XLM/fiat:USD": {
+					AssetID: "crypto:XLM", Quote: "fiat:USD",
+					Price: "0.10", PriceType: "vwap", ObservedAt: at, WindowSeconds: 60,
+				},
+			},
+			sources: map[string][]string{"crypto:XLM/fiat:USD": {"coinbase"}},
+		}},
+		scam: pricingguard.NewScamGate(dir, pricingguard.ScamGateOptions{}),
+	}
+	srv := v1.New(v1.Options{
+		Prices:            reader,
+		USDPeggedClassics: []canonical.Asset{usdc},
+		PegDeclaredAt:     declaredPegAdoptedAt,
+	})
+	ts := startHTTPTest(t, srv.Handler())
+
+	// `native` and crypto:XLM are the two spellings a caller reaches XLM
+	// by; the XLM SAC is the third identity, held to the same answer.
+	want := maskedPriceBody(t, ts.URL+"/v1/price?asset=native&quote=fiat:USD")
+	for _, spelling := range []string{"crypto:XLM", canonical.XLMSacContractID} {
+		got := maskedPriceBody(t, ts.URL+"/v1/price?asset="+spelling+"&quote=fiat:USD")
+		if got != want {
+			t.Errorf("%s serves a different body from `native`:\n %s = %s\n native = %s",
+				spelling, spelling, got, want)
+		}
+	}
+	// The served value itself, so agreement cannot be agreement on the
+	// wrong thing: the observed CEX bucket, NOT the declaration's flat
+	// 1.000000000000 (peg), and not a withheld 404 (maskedPriceBody
+	// fails the test on any non-200).
+	for _, member := range []string{`"price":"0.10"`, `"price_type":"vwap"`, `"sources":["coinbase"]`} {
+		if !strings.Contains(want, member) {
+			t.Errorf("the `native` body is missing %s — an XLM form must still serve its own "+
+				"observed market on the combined path: %s", member, want)
+		}
 	}
 }
