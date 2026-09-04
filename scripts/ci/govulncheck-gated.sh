@@ -67,8 +67,11 @@ if [[ "${#ALLOWED[@]}" -eq 0 ]]; then
 fi
 
 is_allowed() {
-  # exact-line match against the allowed set (empty-array safe under set -u)
-  printf '%s\n' ${ALLOWED[@]+"${ALLOWED[@]}"} | grep -Fxq -- "$1"
+  # exact-line match against the allowed set (empty-array safe under set -u).
+  # The list is landed before the match rather than piped into it: `grep -Fxq`
+  # exits at its first hit, and pipefail would then report the SUCCESSFUL
+  # match as a failed lookup once printf outgrew the pipe buffer (#475).
+  grep -Fxq -- "$1" <<<"$(printf '%s\n' ${ALLOWED[@]+"${ALLOWED[@]}"})"
 }
 
 # ── Run the scan ──
@@ -139,7 +142,7 @@ fi
 # Stale-allowlist notice (informational only — never fails): an accepted id that
 # is no longer called can eventually be pruned, but a stale entry must not red CI.
 for id in "${ALLOWED[@]}"; do
-  if ! printf '%s\n' ${accepted_seen[@]+"${accepted_seen[@]}"} | grep -Fxq -- "$id"; then
+  if ! grep -Fxq -- "$id" <<<"$(printf '%s\n' ${accepted_seen[@]+"${accepted_seen[@]}"})"; then
     echo "::notice::govulncheck-gated: allowlisted vuln $id is not currently called — candidate for pruning once the dependency is gone."
   fi
 done

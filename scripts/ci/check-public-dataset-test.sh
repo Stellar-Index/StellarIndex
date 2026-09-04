@@ -51,7 +51,7 @@ expect() {
     printf '%s\n' "$OUT" | sed 's/^/    /' >&2
     fail=$((fail + 1)); return
   fi
-  if [ -n "$want_sub" ] && ! printf '%s' "$OUT" | grep -q -- "$want_sub"; then
+  if [ -n "$want_sub" ] && ! grep -q -- "$want_sub" <<<"$OUT"; then
     echo "FAIL: $name — output missing '$want_sub'" >&2
     printf '%s\n' "$OUT" | sed 's/^/    /' >&2
     fail=$((fail + 1)); return
@@ -85,7 +85,7 @@ expect 'partition 25600000 missing → names the trimmed range' 1 'trimmed range
 # range itself is intact and must not be reported as uncovered.
 run "$(printf '%s\n' "$FULL" | grep -v -- '--60800000-60863999/')" "$GOOD_MANIFEST"
 expect 'partition 60800000 missing → DRIFT (gap)' 1 'GAP: ledgers 60800000..60863999'
-if printf '%s' "$OUT" | grep -q 'trimmed range .* NOT fully covered'; then
+if grep -q 'trimmed range .* NOT fully covered' <<<"$OUT"; then
   echo "FAIL: gap above trimmed range wrongly reported as trimmed-range hole" >&2; fail=$((fail + 1))
 else
   echo "ok: gap above trimmed range does not implicate the trimmed range"; pass=$((pass + 1))

@@ -70,14 +70,14 @@ for f in "$DIR"/*.service "$DIR"/*.timer; do
   #
   # The set is computed by deploy-systemd-authoritative.py, which parses
   # the task YAML instead of grepping it.
-  if printf '%s\n' "$authoritative" | grep -qxF "$b"; then
+  if grep -qxF "$b" <<<"$authoritative"; then
     continue
   fi
   # REFERENCE: the role templates the same unit itself.
   [ -f "$ROLE/templates/systemd/$b.j2" ] && continue
 
   # ORPHAN — must be declared.
-  if printf '%s\n' "$declared" | grep -qxF "$b"; then
+  if grep -qxF "$b" <<<"$declared"; then
     continue
   fi
   echo "  ORPHAN: $DIR/$b is installed by nothing and has no .j2 in the role."

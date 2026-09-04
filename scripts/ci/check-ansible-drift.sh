@@ -90,7 +90,7 @@ while IFS= read -r line; do
   case "${line#"${line%%[![:space:]]*}"}" in
     ''|'#'*) continue ;;
   esac
-  if ! printf '%s' "$line" | grep -qE '#[[:space:]]*[^[:space:]]'; then
+  if ! grep -qE '#[[:space:]]*[^[:space:]]' <<<"$line"; then
     echo "ansible-drift ❌ baseline entry has no reason: $line" >&2
     bad_entry=1
     continue

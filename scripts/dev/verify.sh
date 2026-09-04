@@ -107,7 +107,7 @@ echo "=== Deploy playbook jump/backup-gate lint ===" && ./scripts/ci/lint-deploy
 # via DEPLOY_SYNC_CONNECTION/DEPLOY_SYNC_HOST (see the script header) or
 # let CI's ansible-check job (ubuntu) run it. Graceful-skip only when the
 # tools are missing, same convention as promtool below.
-if command -v ansible-playbook >/dev/null 2>&1 && { [ -n "${DEPLOY_SYNC_CONNECTION:-}" ] || tar --version 2>/dev/null | grep -q 'GNU tar'; }; then
+if command -v ansible-playbook >/dev/null 2>&1 && { [ -n "${DEPLOY_SYNC_CONNECTION:-}" ] || grep -q 'GNU tar' <<<"$(tar --version 2>/dev/null)"; }; then
     echo "=== Deploy migrations-sync self-test ===" && ./scripts/ci/deploy-sync-test.sh
 else
     defer_check "Deploy migrations-sync self-test" "needs ansible-playbook and GNU tar; use VERIFY_PROFILE=container on macOS"

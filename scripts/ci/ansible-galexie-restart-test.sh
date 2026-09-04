@@ -58,13 +58,21 @@ task_block() {
     { buf = buf $0 "\n"; t = $0; sub(/^[ \t]+/, "", t); sub(/[ \t]+$/, "", t); if (t == pat) hit = 1 }
     END { if (hit) print buf }' "$1"
 }
+
+# uncommented <block> — the same block with its comment lines dropped. The
+# value is landed rather than piped on, because `grep -v … | grep -q …` lets
+# the matcher exit at its first hit and leaves the upstream grep writing into
+# a closed pipe; pipefail then reports the assertion as failed however the
+# match went (#475).
+uncommented() { grep -v '^\s*#' <<<"$1"; }
+
 G="$ROLE_TASKS/07-galexie.yml"
 for pat in "src: galexie-append.sh" "dest: /etc/stellar/captive-core-galexie.cfg" \
            "dest: /etc/galexie/galexie.toml" "dest: /etc/default/galexie" \
            "src: systemd/galexie.service.j2"; do
   blk="$(task_block "$G" "$pat")"
   if [ -z "$blk" ]; then bad "07-galexie.yml: task with '$pat' not found"; continue; fi
-  if grep -v '^\s*#' <<<"$blk" | grep -q 'Restart galexie'; then
+  if grep -q 'Restart galexie' <<<"$(uncommented "$blk")"; then
     bad "07-galexie.yml: task '$pat' notifies Restart galexie directly (comment-only edits restart galexie)"
   else
     ok "07-galexie.yml: task '$pat' does not notify Restart galexie directly"
@@ -81,7 +89,7 @@ S="$ROLE_TASKS/14-stellarindex-services.yml"
 blk="$(task_block "$S" "- name: Install stellarindex binaries on r1")"
 for h in "Restart stellarindex-indexer" "Restart stellarindex-aggregator" "Restart stellarindex-api"; do
   # accept both `notify: X` (single) and `  - X` (list) forms
-  if grep -v '^\s*#' <<<"$blk" | grep -qE -- "(notify:|-) $h\$"; then
+  if grep -qE -- "(notify:|-) $h\$" <<<"$(uncommented "$blk")"; then
     ok "14-stellarindex-services.yml: binary install notifies '$h'"
   else
     bad "14-stellarindex-services.yml: binary install does NOT notify '$h' (unit keeps the old binary in memory)"
@@ -98,11 +106,11 @@ if [ -z "$blk" ]; then
 else
   for p in /etc/stellar/captive-core-galexie.cfg /etc/galexie/galexie.toml \
            /etc/default/galexie /etc/systemd/system/galexie.service; do
-    if grep -v '^\s*#' <<<"$blk" | grep -q "path: $p\$"; then ok "effective inputs include $p"
+    if grep -q "path: $p\$" <<<"$(uncommented "$blk")"; then ok "effective inputs include $p"
     else bad "effective inputs missing $p (a real change there would not restart galexie)"; fi
   done
   for p in galexie-append galexie-archive-tip-lag galexie-archive-fill galexie-archive-contiguity sdf.asc; do
-    if grep -v '^\s*#' <<<"$blk" | grep -q "$p"; then
+    if grep -q "$p" <<<"$(uncommented "$blk")"; then
       bad "effective inputs list '$p' — not read by the running galexie; a change there must never restart it"
     else ok "effective inputs do not list $p"; fi
   done
@@ -111,7 +119,7 @@ for pat in "src: galexie-archive-tip-lag.sh" "src: galexie-archive-fill.sh" "src
            "src: galexie-backfill-status.sh" "dest: /etc/apt/keyrings/sdf.asc"; do
   blk="$(task_block "$G" "$pat")"
   if [ -z "$blk" ]; then bad "07-galexie.yml: task with '$pat' not found"; continue; fi
-  if grep -v '^\s*#' <<<"$blk" | grep -q 'Restart galexie'; then
+  if grep -q 'Restart galexie' <<<"$(uncommented "$blk")"; then
     bad "07-galexie.yml: task '$pat' notifies Restart galexie (the daemon never reads it)"
   else ok "07-galexie.yml: task '$pat' does not notify Restart galexie"; fi
 done

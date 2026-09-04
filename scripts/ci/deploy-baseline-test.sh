@@ -173,7 +173,7 @@ printf 'v0.57.0' > "$TMP/sidecars/stellarindex-indexer"
 printf 'v0.11.0' > "$TMP/sidecars/stellarindex-migrate"
 
 run_remote "$TMP/sidecars"
-if [ $? -eq 0 ] && [ "$(printf '%s' "$rout" | grep -c 'v0.57.0')" -eq 2 ] && ! printf '%s' "$rout" | grep -q 'v0.11.0'; then
+if [ $? -eq 0 ] && [ "$(printf '%s' "$rout" | grep -c 'v0.57.0')" -eq 2 ] && ! grep -q 'v0.11.0' <<<"$rout"; then
   ok "remote snippet reads the sidecars and excludes migrate"
 else
   bad "remote snippet output wrong: '$rout'"

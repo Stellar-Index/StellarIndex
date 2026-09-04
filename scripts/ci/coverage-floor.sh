@@ -70,6 +70,7 @@ die() {
 	die "coverage profile '$PROFILE' does not exist — the coverage floor did NOT run"
 [ -s "$PROFILE" ] ||
 	die "coverage profile '$PROFILE' is empty — the coverage floor did NOT run"
+# sigpipe-ok: `head -n 1` writes one short profile header ("mode: atomic"), far under a pipe buffer.
 head -n 1 "$PROFILE" | grep -q '^mode:' ||
 	die "coverage profile '$PROFILE' has no 'mode:' header — not a Go coverage profile"
 
