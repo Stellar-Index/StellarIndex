@@ -76,6 +76,17 @@ type Flags struct {
 	// envelope flag (G22-03). The decoder ignores unknown fields so
 	// adding this is non-breaking for older SDK builds.
 	UnverifiedTickerCollision bool `json:"unverified_ticker_collision,omitempty"`
+	// FiltersIgnored names the row-narrowing query parameters the
+	// response did NOT apply, spelled as the caller sent them
+	// ("type", "code", "issuer", "q"). Empty — and omitted — when
+	// everything supplied was applied. `/v1/assets` sets it on the
+	// listings whose rows come from a source that cannot narrow: the
+	// class-scoped catalogue listings
+	// (`asset_class=fiat|stablecoin|crypto`) and the lean
+	// asset-catalog fallback. A page that dropped a filter and one
+	// that matched on it are otherwise the same 200 over the same
+	// shape, so a consumer re-filtering the page keys on this.
+	FiltersIgnored []string `json:"filters_ignored,omitempty"`
 }
 
 // Pagination is present on list-returning endpoints when there are
