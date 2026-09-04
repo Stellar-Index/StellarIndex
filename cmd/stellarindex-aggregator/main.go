@@ -1324,34 +1324,87 @@ func runSupplyRefresh(ctx context.Context, r *supply.Refresher, cadence time.Dur
 	}
 }
 
-// ledgerCloseTimeReader resolves a ledger's real on-chain close time.
-// Satisfied by *clickhouse.ExplorerReader.CloseTimeForLedger; the
+// ledgerCloseTimeReader resolves the lake's landed tip at or before a
+// requested ledger, and that tip's real on-chain close time. Satisfied
+// by *clickhouse.ExplorerReader.LatestLedgerAtOrBefore; the
 // authoritative every-ledger source is ClickHouse stellar.ledgers.
 // Interface (not the concrete type) so the refresher wiring stays
-// testable without a live lake.
+// testable without a live lake. found=false means the lake holds no
+// row at or before the requested ledger.
 type ledgerCloseTimeReader interface {
-	CloseTimeForLedger(ctx context.Context, ledger uint32) (time.Time, bool, error)
+	LatestLedgerAtOrBefore(ctx context.Context, maxSeq uint32) (uint32, time.Time, bool, error)
 }
 
-// supplyAggregatorLedgers adapts *timescale.Store to
-// supply.LedgerLookup. Resolves the latest known chain ledger as
-// the max last_ledger across every ingestion cursor — same shape
-// as internal/ops/supply/supply.go::resolveSnapshotLedger but
+// supplyCursorLister is the ingestion-cursor half of
+// [supplyAggregatorLedgers], kept as an interface for the same reason
+// [ledgerCloseTimeReader] is: so ledger resolution is unit-testable
+// without Postgres. Satisfied by *timescale.Store. Mirrors
+// internal/ops/supply/supply.go::cursorReader.
+type supplyCursorLister interface {
+	ListCursors(ctx context.Context) ([]timescale.Cursor, error)
+}
+
+// supplyChainCursorSource is the ingestion_cursors row that records how
+// far the LIVE indexer has walked the chain — cmd/stellarindex-indexer's
+// `cursorSource` constant. It is the one cursor whose value means "the
+// chain position the supply components were derived from"; every other
+// row in that table belongs to an ops job (backfill/<range>,
+// projector/<source>, census-backfill, projected-rebuild, gap-detector
+// high-water) and describes that job's own progress. Mirrors
+// internal/ops/supply/supply.go::chainCursorSource.
+const supplyChainCursorSource = "ledgerstream"
+
+// maxSupplyLakeClampLedgers bounds how far the snapshot-ledger clamp may
+// walk back from the chain cursor to the lake's landed tip. The gap the
+// clamp exists to absorb is the dual-sink landing race — seconds, single
+// -digit ledgers. A gap beyond this bound is not a race, it is a stalled
+// lake (archivist down, CH sink wedged), and stamping a snapshot far
+// behind the chain would hide that stall — so resolution fails closed
+// exactly as it did before the clamp existed. 512 ledgers ≈ 45 min at
+// mainnet's ~5.3 s cadence: far above any landing race, far below a day.
+// Same value and rationale as
+// internal/ops/supply/supply.go::maxAutoSnapshotClampLedgers.
+const maxSupplyLakeClampLedgers = 512
+
+// supplyAggregatorLedgers adapts the ingestion cursors + the lake to
+// supply.LedgerLookup. Same shape as
+// internal/ops/supply/supply.go::resolveSnapshotLedger (auto branch),
 // inlined here so the aggregator path stays self-contained.
 //
-// M4-callers (audit 2026-07): the snapshot's ObservedAt is that
+// M4-callers (audit 2026-07): the snapshot's ObservedAt is the resolved
 // ledger's real close_time from ClickHouse stellar.ledgers, NEVER
-// time.Now(). Stamping the wall-clock write-time corrupts
-// point-in-time supply queries (worst on the operator's constant
-// supply re-derives). Fail-closed: if the picked ledger has no
-// stellar.ledgers row we return an error (retryable no_ledger
-// outcome) rather than a wall-clock guess. The lake is populated by
-// the same real-time dual-sink that advances the cursors, so a miss
-// is a transient lake lag / genuine gap the refresher should retry
-// past — not something to paper over with time.Now().
+// time.Now(). Stamping the wall-clock write-time corrupts point-in-time
+// supply queries (worst on the operator's constant supply re-derives).
 //
-// F-1236 (codex audit-2026-05-12) — KNOWN: this stamps the
-// freshest cursor but the supply-component readers
+// Resolution has two steps, and both are load-bearing:
+//
+//  1. The chain cursor names the position (C4-033, audit-2026-07-23).
+//     MAX(last_ledger) over every ingestion cursor let any ops job decide
+//     what ledger the money snapshot claims to be as-of: with the indexer
+//     behind (restart, re-derive, maintenance) and an operator
+//     backfilling near the tip, the backfill cursor wins the max and the
+//     snapshot is stamped at a ledger no component balance was observed
+//     at. The MAX fallback survives, named, for the pre-first-run case.
+//
+//  2. The lake's landed tip bounds it. ingestion_cursors (Postgres,
+//     realtime) leads stellar.ledgers (CH sink, lands seconds later) by
+//     design — measured on r1 2026-09-04, the ledgerstream cursor sat
+//     exactly one ledger ahead of max(stellar.ledgers) — so an exact
+//     lookup of the cursor's own ledger routinely misses and the tick is
+//     lost. Over a 2 h window that was 9.9 % of all ticks, bursty enough
+//     to push whole cohorts of watched assets past the per-asset
+//     error_dominant threshold together. The snapshot does not need the
+//     cursor ledger specifically; it needs a real chain position with a
+//     real close time, so resolution clamps to the newest LANDED ledger
+//     at or before the cursor.
+//
+// Fail-closed is preserved end to end: no cursor, no landed row at or
+// before the cursor, or a lake trailing the cursor by more than
+// [maxSupplyLakeClampLedgers] all return an error (retryable no_ledger
+// outcome) rather than a wall-clock guess.
+//
+// F-1236 (codex audit-2026-05-12) — KNOWN: this stamps a real chain
+// position but the supply-component readers
 // (LatestAccountObservationAtOrBefore, trustline / claimable /
 // LP-reserve / SAC-balance / SEP-41) silently return whatever
 // row they have at-or-before the picked ledger, even when that
@@ -1363,7 +1416,7 @@ type ledgerCloseTimeReader interface {
 // where (snapshotLedger - minComponentLedger) > threshold.
 // Tracked as F-1236 in docs/audit-2026-05-12-codex/.
 type supplyAggregatorLedgers struct {
-	s          *timescale.Store
+	s          supplyCursorLister
 	closeTimes ledgerCloseTimeReader
 }
 
@@ -1372,23 +1425,54 @@ func (a supplyAggregatorLedgers) LatestKnownLedger(ctx context.Context) (uint32,
 	if err != nil {
 		return 0, time.Time{}, fmt.Errorf("ListCursors: %w", err)
 	}
-	var maxLedger uint32
-	for _, c := range cursors {
-		if c.LastLedger > maxLedger {
-			maxLedger = c.LastLedger
-		}
-	}
-	if maxLedger == 0 {
+	cursorLedger, source := supplyChainCursorLedger(cursors)
+	if cursorLedger == 0 {
 		return 0, time.Time{}, errors.New("no ingestion cursors yet — refresher will retry next tick")
 	}
-	closeTime, found, err := a.closeTimes.CloseTimeForLedger(ctx, maxLedger)
+	lakeLedger, closeTime, found, err := a.closeTimes.LatestLedgerAtOrBefore(ctx, cursorLedger)
 	if err != nil {
-		return 0, time.Time{}, fmt.Errorf("resolve close time for ledger %d: %w", maxLedger, err)
+		return 0, time.Time{}, fmt.Errorf("resolve lake tip at or before cursor ledger %d: %w", cursorLedger, err)
 	}
 	if !found {
-		return 0, time.Time{}, fmt.Errorf("ledger %d has no stellar.ledgers row yet (lake lag?) — refresher will retry next tick", maxLedger)
+		return 0, time.Time{}, fmt.Errorf("stellar.ledgers has no row at or before the %q cursor ledger %d — lake empty or gapped; refusing to stamp the snapshot with wall-clock time", source, cursorLedger)
 	}
-	return maxLedger, closeTime, nil
+	gap := cursorLedger - lakeLedger
+	// Publish the clamp before deciding on it, so the series carries
+	// the gap that produced a refusal as well as the ordinary lead.
+	obs.AggregatorSupplyLakeClampLedgers.Set(float64(gap))
+	if gap > maxSupplyLakeClampLedgers {
+		return 0, time.Time{}, fmt.Errorf("lake tip %d trails the %q cursor %d by %d ledgers (> %d) — that is a stalled lake, not a landing race; refusing to stamp a snapshot that far behind the chain", lakeLedger, source, cursorLedger, gap, maxSupplyLakeClampLedgers)
+	}
+	return lakeLedger, closeTime, nil
+}
+
+// supplyChainCursorLedger picks the chain position a supply snapshot is
+// bounded by, and names the cursor it came from. Pure — unit-testable
+// without Postgres. Mirrors
+// internal/ops/supply/supply.go::autoSnapshotLedger; see the C4-033 note
+// on [supplyAggregatorLedgers] for why the named cursor wins over
+// MAX(last_ledger). The MAX fallback names itself so the resolution
+// error an operator reads states that a job cursor supplied the bound.
+func supplyChainCursorLedger(cursors []timescale.Cursor) (ledger uint32, source string) {
+	for _, c := range cursors {
+		if c.Source == supplyChainCursorSource {
+			return c.LastLedger, c.Source
+		}
+	}
+	var best timescale.Cursor
+	for _, c := range cursors {
+		if c.LastLedger > best.LastLedger {
+			best = c
+		}
+	}
+	if best.LastLedger == 0 {
+		return 0, ""
+	}
+	name := best.Source
+	if best.Sub != "" {
+		name += "/" + best.Sub
+	}
+	return best.LastLedger, name + " (no " + supplyChainCursorSource + " cursor yet — FALLBACK)"
 }
 
 // supplyAggregatorStoreLookup adapts *timescale.Store to

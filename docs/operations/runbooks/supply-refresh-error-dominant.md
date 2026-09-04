@@ -70,13 +70,34 @@ grep -A 10 "^\[supply" /etc/stellarindex.toml
 
 ### `outcome="no_ledger"`
 
-The aggregator can't resolve the latest ledger from
-`ingestion_cursors`. Either the indexer hasn't produced its
-first cursor, or the table is unreachable.
+The aggregator can't resolve a real chain position to stamp the
+snapshot at. Resolution takes the `ledgerstream` cursor from
+`ingestion_cursors` and clamps it to the newest ClickHouse
+`stellar.ledgers` row at or before it, so three conditions reach
+this outcome:
 
-- Signal: `_no_ledger` increments far exceed any other outcome.
-- Mitigation: confirm the indexer is running + writing cursors;
-  if storage is broken, route to `pg-conns-saturated.md`.
+1. No cursor at all — the indexer hasn't produced its first
+   `ledgerstream` row, or `ingestion_cursors` is unreachable.
+2. No `stellar.ledgers` row at or before the cursor — the lake is
+   empty or wholly gapped below the chain position.
+3. The lake tip trails the cursor by more than 512 ledgers
+   (~45 min) — a stalled CH sink rather than the ordinary
+   landing race, which the clamp absorbs.
+
+The cursor routinely leads the lake by a few ledgers (Postgres is
+realtime, the CH sink lands seconds later); that lead is clamped
+away and does NOT reach this outcome. A sustained `no_ledger` rate
+therefore means one of the three conditions above, not ordinary
+lag.
+
+- Signal: `_no_ledger` increments far exceed any other outcome. The
+  wrapped error text in the aggregator log names which condition
+  fired and which cursor supplied the bound.
+- Mitigation: for (1) confirm the indexer is running + writing
+  cursors; if storage is broken, route to `pg-conns-saturated.md`.
+  For (2) and (3) check `max(ledger_seq)` in `stellar.ledgers`
+  against the `ledgerstream` cursor and inspect the archivist /
+  galexie stack lag.
 
 ### `outcome="no_observation"`
 

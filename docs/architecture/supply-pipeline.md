@@ -486,7 +486,7 @@ The aggregator-refresh metric labels each tick with one of:
 | Outcome | Means | Operator action |
 |---------|-------|-----------------|
 | `ok` | Snapshot written | none — steady state |
-| `no_ledger` | `ListCursors` returned no max_ledger | wait for indexer's first cursor; check ingestion is alive |
+| `no_ledger` | No chain position to stamp the snapshot at: no `ledgerstream` cursor, no `stellar.ledgers` row at or before it, or a lake tip more than 512 ledgers behind that cursor | wait for the indexer's first cursor; otherwise check the CH sink — the ordinary seconds-long cursor-ahead-of-lake lead is clamped away, so this means the lake is empty, gapped, or stalled |
 | `no_observation` | Live reader has no row + static fallback empty | bootstrap window — wait for backfill OR populate static config |
 | `missing_baseline` | SEP-41 total went negative AND the contract's pre-Soroban genesis baseline hasn't been seeded (a SAC-wrapper issued before Soroban, reading Σburn > Σmint over the Soroban-era-only window) | run `stellarindex-ops supply seed-sep41-genesis` once (idempotent). Benign — excluded from `error_dominant` |
 | `compute_error` | Algorithm returned non-OK for a genuine reason (e.g. SEP-41 total negative **after** the genesis baseline is seeded — physically impossible) | code bug or upstream data inconsistency; check logs + roll back if recent deploy |

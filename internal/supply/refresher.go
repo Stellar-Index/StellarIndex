@@ -10,8 +10,9 @@ import (
 
 // LedgerLookup is the storage-side primitive the [Refresher] uses
 // to resolve "what's the most recent known chain ledger." Production
-// impl wraps timescale.Store.ListCursors and takes the max
-// last_ledger across all sources; tests pass in-memory fakes.
+// impl takes the `ledgerstream` ingestion cursor and clamps it to
+// the newest landed stellar.ledgers row at or before it; tests pass
+// in-memory fakes.
 type LedgerLookup interface {
 	LatestKnownLedger(ctx context.Context) (uint32, time.Time, error)
 }
