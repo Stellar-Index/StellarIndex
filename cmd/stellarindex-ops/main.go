@@ -1187,7 +1187,42 @@ Subcommands:
                           tier-4 XLM anchor in Go through the store's own
                           waterfall (#372) and takes the extra flags
                           [-report] [-sample N] [-batch N]
-                          [-min-rel-delta F] [-max-generation N].
+                          [-min-rel-delta F] [-max-generation N]
+                          [-chunks [-chunk-batch N] [-min-free-bytes N]
+                          [-generation N] [-allow-live-adjacent]
+                          [-resume-paused-policy]].
+                          -chunks walks the window one trades chunk at a
+                          time — decompress_chunk, restamp inside it,
+                          compress_chunk — for a window whose chunks are
+                          compressed (in-place UPDATEs measured ~1,574
+                          rows/min there, 2026-09-03). A -write run holds
+                          the session advisory lock
+                          hashtext('usd-volume-restamp:trades') for its
+                          life (run-heavy-job.sh's lock is per job NAME
+                          and cannot stop a second attempt; a held lock is
+                          a refusal), PAUSES the trades compression policy
+                          (refusing to start without one, and refusing an
+                          already-unscheduled one unless
+                          -resume-paused-policy), waits out a policy run
+                          in flight, lists the chunks again after the
+                          pause, and re-enables the policy on every exit
+                          before releasing the lock. It restores each
+                          chunk to the state it was listed in (an
+                          uncompressed chunk stays so); reads the chunk's
+                          is_compressed ahead of EVERY batch and stops if
+                          it was re-compressed underneath (never the
+                          per-row path); and refuses a window reaching
+                          into the policy's lag unless
+                          -allow-live-adjacent. Its dry run prints the
+                          chunk plan and decompresses nothing; -write
+                          refuses unless free space on the data volume
+                          exceeds 2x the largest chunk's uncompressed size
+                          (statfs on the DB host, or -min-free-bytes with
+                          a warning; re-checked before every decompress);
+                          a -generation in the future is refused; a failed
+                          chunk is re-compressed before the tool exits; a
+                          rerun probes finished chunks read-only and skips
+                          them.
                           BOTH tiers refuse a window the live ledgerstream
                           cursor has not passed (-allow-live-overlap is the
                           explicit override), and BOTH are fail-closed DRY
@@ -1253,6 +1288,10 @@ Subcommands:
                             stellarindex-ops usd-volume-restamp \
                               -config /etc/stellarindex.toml -tier xlm-base \
                               -from 2026-03-12 -to 2026-07-21 -report
+                            stellarindex-ops usd-volume-restamp \
+                              -config /etc/stellarindex.toml -tier xlm-base \
+                              -chunks -from 2026-01-01 -to 2026-07-21 \
+                              -fill-null -write
   state-snapshot -config PATH [-archive URL] [-checkpoint N] [-write] [-scope contracts|all|storage] [-ch ADDR] [-dry-run]
                           Read a history-archive checkpoint's ledger-entry
                           state and tally it per entry type. -write fills

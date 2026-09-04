@@ -68,7 +68,17 @@ import (
 // [-tier exact|xlm-base] [-slice DUR] [-sources a,b] [-fill-null]
 // [-heartbeat PATH] [-allow-live-overlap] [-write]
 // and, for -tier xlm-base only: [-report] [-sample N] [-batch N]
-// [-min-rel-delta F] [-max-generation N].
+// [-min-rel-delta F] [-max-generation N]
+// [-chunks [-chunk-batch N] [-min-free-bytes N] [-generation N]
+// [-allow-live-adjacent] [-resume-paused-policy]].
+//
+// `-chunks` (xlm-base only) is the chunk-by-chunk walk of
+// usd_volume_restamp_chunks.go: take the run lock, pause the trades
+// compression policy, decompress each compressed `trades` chunk in the
+// window, restamp inside it, re-compress it, re-enable the policy,
+// release the lock. It exists because the in-place walk measured ~1,574
+// rows/min against compressed chunks on 2026-09-03; see that file's
+// header.
 func usdVolumeRestamp(args []string) error { //nolint:gocognit,gocyclo,funlen // linear: parse, validate the tier's flag set, open+wire the store, run the live-overlap guard, dispatch — splitting scatters each guard away from the flag it guards.
 	fs := flag.NewFlagSet("usd-volume-restamp", flag.ContinueOnError)
 	cfgPath := fs.String("config", "/etc/stellarindex.toml", "path to stellarindex.toml (Postgres DSN + the operator's USD peg list)")
@@ -82,9 +92,15 @@ func usdVolumeRestamp(args []string) error { //nolint:gocognit,gocyclo,funlen //
 	allowLiveOverlap := fs.Bool("allow-live-overlap", false, "DANGEROUS: bypass the live-cursor guard and restamp a window the live ingest tail has not passed. Only pass this if you have independently verified the indexer will not write this range concurrently.")
 	report := fs.Bool("report", false, "-tier "+restampTierXLMBase+" only: print the full decision block (candidates, NULL->value population, relative-move distribution, USD sums, extremes, sample) and write nothing. Refuses -write.")
 	sample := fs.Int("sample", 10, "-tier "+restampTierXLMBase+" only: how many changed rows to print in the report's sample (deterministic reservoir)")
-	batch := fs.Int("batch", 2000, "-tier "+restampTierXLMBase+" only: rows per UPDATE transaction")
+	batch := fs.Int("batch", defaultRestampBatch, "-tier "+restampTierXLMBase+" only: rows per UPDATE transaction")
 	minRelDelta := fs.String("min-rel-delta", "", "-tier "+restampTierXLMBase+" only: skip writing rows whose relative move |new-old|/|old| is below this fraction (0.01 = 1%). Empty/0 = write every row that differs. Never skips a NULL fill. RECOMMENDED 0.001 for a full-window run: it drops ~8% of the write set that moves <0.1% purely from prices_1m finalisation — see the report footer.")
 	maxGeneration := fs.Int64("max-generation", -1, "-tier "+restampTierXLMBase+" only: only consider rows at derive_generation <= this. -1 = the run's own generation (everything). 0 targets exactly the never-re-derived population.")
+	chunks := fs.Bool("chunks", false, "-tier "+restampTierXLMBase+" only: chunk-by-chunk mode — pause the trades compression policy, then for each trades chunk in the window: decompress_chunk (if it was compressed), restamp inside it in -chunk-batch transactions, compress_chunk (if it was compressed); re-enable the policy on exit. Use for a window whose chunks are compressed (anything older than the policy's 7 days): in-place UPDATEs into compressed chunks measured ~1,574 rows/min. Dry run prints the chunk plan and decompresses nothing; -write first checks free space on the data volume (> 2 x the largest chunk's uncompressed size, re-checked before every decompress) and refuses a window reaching into the policy's lag (see -allow-live-adjacent). Run on the database host.")
+	chunkBatch := fs.Int("chunk-batch", defaultChunkBatch, "-chunks only: rows per UPDATE transaction inside a decompressed chunk")
+	minFreeBytes := fs.Int64("min-free-bytes", 0, "-chunks only: OVERRIDE the free-space measurement with this many bytes, for a host where the data volume cannot be statfs'd (the tool warns loudly and trusts the figure). Check the database host yourself first.")
+	runGeneration := fs.Int64("generation", 0, "-chunks only: the derive_generation this run stamps (0 = now; a value in the future is refused). Pass the generation a failed run printed in its RESUME line so the whole span ends at ONE generation.")
+	allowLiveAdjacent := fs.Bool("allow-live-adjacent", false, "-chunks only: walk a window whose right edge reaches into the compression policy's lag (now - compress_after) anyway. Chunks there are deliberately uncompressed — the ledgerstream cursor-regression replay upserts into them — and are restamped in place and left uncompressed. Prefer the in-place walk (no -chunks) for that span.")
+	resumePausedPolicy := fs.Bool("resume-paused-policy", false, "-chunks only: proceed when the trades compression policy is ALREADY unscheduled at start (a previous attempt killed before its re-enable) and re-enable it at exit. Without this flag that state is a refusal; the alternative is to re-enable the policy by hand first.")
 	gate := opsutil.RegisterWriteGate(fs)
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -92,6 +108,18 @@ func usdVolumeRestamp(args []string) error { //nolint:gocognit,gocyclo,funlen //
 	set := map[string]bool{}
 	fs.Visit(func(f *flag.Flag) { set[f.Name] = true })
 	if err := validateRestampTierFlags(*tier, set); err != nil {
+		return err
+	}
+	if err := validateRestampChunkFlags(*chunks, set); err != nil {
+		return err
+	}
+	if *chunkBatch <= 0 {
+		return fmt.Errorf("usd-volume-restamp: -chunk-batch must be > 0, got %d", *chunkBatch)
+	}
+	if *minFreeBytes < 0 {
+		return fmt.Errorf("usd-volume-restamp: -min-free-bytes must be >= 0, got %d", *minFreeBytes)
+	}
+	if err := validateRestampGeneration(*runGeneration, time.Now()); err != nil {
 		return err
 	}
 	from, to, err := resolveRestampWindow(*fromFlag, *toFlag, time.Now())
@@ -141,8 +169,12 @@ func usdVolumeRestamp(args []string) error { //nolint:gocognit,gocyclo,funlen //
 	}
 
 	write := gate.Banner()
-	// INV-3: one generation for the whole run, like ch-rebuild.
+	// INV-3: one generation for the whole run, like ch-rebuild. A resumed
+	// chunk run may carry its predecessor's.
 	generation := time.Now().Unix()
+	if *runGeneration > 0 {
+		generation = *runGeneration
+	}
 	maxGen := *maxGeneration
 	if maxGen < 0 {
 		maxGen = generation
@@ -162,7 +194,7 @@ func usdVolumeRestamp(args []string) error { //nolint:gocognit,gocyclo,funlen //
 	defer func() { hb.Stop(ok) }()
 
 	if *tier == restampTierXLMBase {
-		rerr := runXLMBaseRestamp(ctx, store, *cfgPath, from, to, xlmBaseRestampOptions{
+		xopts := xlmBaseRestampOptions{
 			Allow:         restampSourceAllowList(*sources),
 			FillNull:      *fillNull,
 			Slice:         *slice,
@@ -174,7 +206,16 @@ func usdVolumeRestamp(args []string) error { //nolint:gocognit,gocyclo,funlen //
 			MaxGeneration: maxGen,
 			Generation:    generation,
 			Heartbeat:     hb,
-		})
+		}
+		var rerr error
+		if *chunks {
+			rerr = runXLMBaseChunkRestamp(ctx, store, *cfgPath, from, to, xopts, xlmBaseChunkOptions{
+				Batch: *chunkBatch, MinFreeBytes: *minFreeBytes, AllowLiveAdjacent: *allowLiveAdjacent,
+				ResumePausedPolicy: *resumePausedPolicy,
+			})
+		} else {
+			rerr = runXLMBaseRestamp(ctx, store, *cfgPath, from, to, xopts)
+		}
 		ok = rerr == nil
 		return rerr
 	}
@@ -221,12 +262,47 @@ const (
 	restampTierXLMBase = "xlm-base"
 )
 
+// defaultRestampBatch is the in-place walk's -batch default: the rows one
+// UPDATE transaction may decompress out of a compressed chunk.
+const defaultRestampBatch = 2000
+
 // restampXLMBaseOnlyFlags are the flags that only mean something for
 // `-tier xlm-base`. Passing one with `-tier exact` is an ERROR rather
 // than a silent no-op: an operator who typed `-report` and got a write
 // run, or who typed `-min-rel-delta 0.3` and got every row rewritten,
 // has been actively misled by the tool on a money column.
-var restampXLMBaseOnlyFlags = []string{"report", "sample", "batch", "min-rel-delta", "max-generation"}
+var restampXLMBaseOnlyFlags = []string{"report", "sample", "batch", "min-rel-delta", "max-generation", "chunks", "chunk-batch", "min-free-bytes", "generation", "allow-live-adjacent", "resume-paused-policy"}
+
+// restampChunkOnlyFlags are the flags that only mean something with
+// `-chunks`. Same posture as [restampXLMBaseOnlyFlags]: passing one
+// without the mode is an error, not a silent no-op — `-min-free-bytes`
+// typed without `-chunks` would otherwise run the slow in-place walk the
+// operator was trying to avoid.
+var restampChunkOnlyFlags = []string{"chunk-batch", "min-free-bytes", "generation", "allow-live-adjacent", "resume-paused-policy"}
+
+// validateRestampChunkFlags rejects a chunk-only flag passed without
+// -chunks, and -batch passed WITH -chunks (the chunk walk's batch is
+// -chunk-batch; accepting -batch and ignoring it would run 2,000-row
+// transactions where 20,000 were asked for, silently).
+func validateRestampChunkFlags(chunks bool, set map[string]bool) error {
+	if !chunks {
+		var stray []string
+		for _, f := range restampChunkOnlyFlags {
+			if set[f] {
+				stray = append(stray, "-"+f)
+			}
+		}
+		if len(stray) > 0 {
+			return fmt.Errorf("usd-volume-restamp: %s only apply with -chunks, which you did not pass; they would be silently ignored",
+				strings.Join(stray, ", "))
+		}
+		return nil
+	}
+	if set["batch"] {
+		return fmt.Errorf("usd-volume-restamp: -batch is the in-place walk's batch and does not apply with -chunks; use -chunk-batch")
+	}
+	return nil
+}
 
 // validateRestampTierFlags rejects an unknown -tier and any xlm-base-only
 // flag passed alongside -tier exact.
