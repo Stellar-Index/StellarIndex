@@ -100,17 +100,24 @@ func (r *fiatConstituentReader) TradesInRange(
 // chronological first/last price, high/low the extremes, v_base/v_quote the
 // raw sums, n the count, and Sources the array_agg(DISTINCT source) over
 // the contributing rows — the column the combine resolves each bar's
-// smallest-unit scale from. Only the 1h interval is modelled — the only
-// one the parity tests request.
+// smallest-unit scale from. 1h and 1m are modelled: 1h is what most parity
+// tests request, and 1m is the grain the point path's held-back gate
+// resolves at, so the two can be compared exactly.
 func (r *fiatConstituentReader) OHLCSeries(
 	_ context.Context, pair canonical.Pair, interval string, from, to time.Time, _ int,
 ) ([]v1.OHLCSeriesBar, error) {
-	if interval != "1h" {
+	var grain time.Duration
+	switch interval {
+	case "1h":
+		grain = time.Hour
+	case "1m":
+		grain = time.Minute
+	default:
 		return nil, nil
 	}
 	byBucket := map[time.Time][]canonical.Trade{}
 	for _, t := range r.inWindow(pair, from, to) {
-		b := t.Timestamp.Truncate(time.Hour)
+		b := t.Timestamp.Truncate(grain)
 		byBucket[b] = append(byBucket[b], t)
 	}
 	out := make([]v1.OHLCSeriesBar, 0, len(byBucket))
