@@ -1406,13 +1406,19 @@ type registryObservation struct {
 // is therefore exactly twice the old read, with the same plan on each
 // half.
 //
-// [Store.TradesInRange] and [Store.TradesInRangeAfter] are NOT folded
-// here. TradesInRangeAfter is honest about reading one orientation
-// because /v1/history's caller merges the two itself; TradesInRange
-// feeds aggregates (/v1/vwap, /v1/twap, single-bar /v1/ohlc,
-// /v1/price/tip and the orchestrator), where folding a flipped row
-// into a mean or an extreme is a separate design question — rows
-// 1.14/1.15/1.16 of docs/operations/v1-launch-plan.md.
+// [Store.TradesInRange] and [Store.FXQuoteAtOrBefore] fold on the same
+// rule, for the same reason. The aggregate case was held back once as
+// "a mean is not a relabelling"; it is settled in
+// docs/architecture/aggregate-alias-folding.md and the answer is that
+// every aggregate this store feeds is defined on the two integer LEG
+// AMOUNTS — Σquote/Σbase for a mean, quote/base per row for an extreme
+// — so the leg swap re-weights them exactly and no aggregate needs a
+// rule of its own.
+//
+// [Store.TradesInRangeAfter] is the one read here that stays honest
+// about one orientation, because /v1/history's caller merges the two
+// itself under a keyset cursor. It carries the sole entry in
+// [directionExempt].
 
 // LatestTradesForPair returns up to `limit` most-recent trades for the
 // market the pair names — in EITHER stored direction, each returned in
@@ -1644,9 +1650,45 @@ func tradeIsLaterInMarket(a, b canonical.Trade) bool {
 	}
 }
 
-// TradesInRange returns trades for the given pair whose close-time
-// falls in [from, to). Ordered by (ts ASC, ledger ASC) — chronological,
-// which is what OHLC / VWAP callers want.
+// TradesInRange returns the market's trades whose close-time falls in
+// [from, to) — in EITHER stored direction, each re-expressed in the
+// requested orientation. Ordered by (ts ASC, ledger ASC) —
+// chronological, which is what OHLC / VWAP callers want.
+//
+// Both directions, because a market has no stored direction of its own
+// (see the block above [Store.LatestTradesForPair]) and this read feeds
+// aggregates: /v1/vwap, /v1/twap, single-bar /v1/ohlc, /v1/price/tip
+// and the aggregator orchestrator. Measured on r1 2026-09-05, one hour
+// of native/USDC-GA5Z…: 2957 rows stored one way round and 2794 the
+// other, so the served window held 51.4% of the market's prints — and
+// a biased 51.4%, since the decoder sets base = soldAsset and the
+// visible half is therefore the sell side. Over that hour the folded
+// high is 0.1818181818 against the 0.1806435916 served (+0.65%) and
+// the folded low 0.1794054551 against 0.1796178598: the extremes were
+// both wrong on the flagship market, in a randomly chosen hour, on a
+// bar that never looked empty.
+//
+// The fold is a per-ROW leg swap ([orientTradeTo]) and nothing else.
+// That is enough for every aggregate downstream because each is
+// defined on the two integer amounts, not on a price: Σquote/Σbase is
+// the VWAP, quote/base is the per-row price a high and a low compare,
+// and the time weights a TWAP uses come from `ts`, which a swap does
+// not touch. The swap therefore re-weights the mean at the same time
+// as it inverts the price, exactly and without dividing — a flipped
+// row's weight in the requested base IS its stored quote leg. See
+// docs/architecture/aggregate-alias-folding.md.
+//
+// TWO LIMITED ARMS, as in [Store.LatestTradesForPair]. The union of
+// each direction's newest `limit`, re-sorted and cut to `limit`, is
+// exactly the market's newest `limit`: any row in the market's newest
+// `limit` has at most limit-1 rows above it in the whole market, hence
+// at most limit-1 above it within its own direction, so it survives
+// its own arm's cut. Truncation therefore still keeps the NEWEST rows,
+// and `len(rows) == limit` still means the window overflowed — the
+// signal the orchestrator's truncation detector reads.
+//
+// A degenerate pair cannot double-count: [canonical.Pair.Validate]
+// refuses base == quote, so the two arms are always disjoint.
 //
 // limit clamps the returned count to avoid runaway queries; pass 0
 // or negative for the default of 1000. The hard ceiling is 10000.
@@ -1685,18 +1727,35 @@ func (s *Store) TradesInRange(ctx context.Context, p canonical.Pair, from, to ti
 	// present (F-1319). Callers still receive ascending order; only which
 	// rows survive truncation changed (newest, not oldest).
 	const q = `
-        SELECT source, ledger, tx_hash, op_index, ts,
-               base_asset, quote_asset,
-               base_amount, quote_amount,
-               COALESCE(maker, ''), COALESCE(taker, ''),
-               COALESCE(routed_via, '')
-          FROM trades
-         WHERE base_asset  = $1
-           AND quote_asset = $2
-           AND ts         >= $3
-           AND ts          < $4
-         ORDER BY ts DESC, ledger DESC, tx_hash DESC, op_index DESC, source DESC
-         LIMIT $5
+        (SELECT source, ledger, tx_hash, op_index, ts,
+                base_asset, quote_asset,
+                base_amount, quote_amount,
+                COALESCE(maker, '')      AS maker,
+                COALESCE(taker, '')      AS taker,
+                COALESCE(routed_via, '') AS routed_via
+           FROM trades
+          WHERE base_asset  = $1
+            AND quote_asset = $2
+            AND ts         >= $3
+            AND ts          < $4
+          ORDER BY ts DESC, ledger DESC, tx_hash DESC, op_index DESC, source DESC
+          LIMIT $5)
+        UNION ALL
+        (SELECT source, ledger, tx_hash, op_index, ts,
+                base_asset, quote_asset,
+                base_amount, quote_amount,
+                COALESCE(maker, '')      AS maker,
+                COALESCE(taker, '')      AS taker,
+                COALESCE(routed_via, '') AS routed_via
+           FROM trades
+          WHERE base_asset  = $2
+            AND quote_asset = $1
+            AND ts         >= $3
+            AND ts          < $4
+          ORDER BY ts DESC, ledger DESC, tx_hash DESC, op_index DESC, source DESC
+          LIMIT $5)
+        ORDER BY ts DESC, ledger DESC, tx_hash DESC, op_index DESC, source DESC
+        LIMIT $5
     `
 	rows, err := s.db.QueryContext(ctx, q,
 		p.Base.String(), p.Quote.String(),
@@ -1709,29 +1768,10 @@ func (s *Store) TradesInRange(ctx context.Context, p canonical.Pair, from, to ti
 
 	var out []canonical.Trade
 	for rows.Next() {
-		var t canonical.Trade
-		var baseAsset, quoteAsset string
-		if err := rows.Scan(
-			&t.Source, &t.Ledger, &t.TxHash, &t.OpIndex, &t.Timestamp,
-			&baseAsset, &quoteAsset,
-			&t.BaseAmount, &t.QuoteAmount,
-			&t.Maker, &t.Taker, &t.RoutedVia,
-		); err != nil {
-			return nil, fmt.Errorf("timescale: TradesInRange scan: %w", err)
-		}
-		base, err := canonical.ParseAsset(baseAsset)
+		t, err := scanTradeOriented(rows, p, "TradesInRange")
 		if err != nil {
-			return nil, fmt.Errorf("timescale: TradesInRange base %q: %w", baseAsset, err)
+			return nil, err
 		}
-		quote, err := canonical.ParseAsset(quoteAsset)
-		if err != nil {
-			return nil, fmt.Errorf("timescale: TradesInRange quote %q: %w", quoteAsset, err)
-		}
-		pair, err := canonical.NewPair(base, quote)
-		if err != nil {
-			return nil, fmt.Errorf("timescale: TradesInRange pair: %w", err)
-		}
-		t.Pair = pair
 		out = append(out, t)
 	}
 	if err := rows.Err(); err != nil {
@@ -1907,30 +1947,56 @@ func (s *Store) FXQuoteAtOrBefore(
 		// ErrNoFXQuote within the lookback → legacy trades fallback.
 	}
 
+	// Both stored directions, same rule and same two limited arms as
+	// [Store.TradesInRange]. A quote recorded USD/EUR answers a EUR/USD
+	// question by swapping its two legs, which is the exact reciprocal
+	// rate; the alternative was an entry in [directionExempt] saying a
+	// price-serving read may stay blind, which is what that list exists
+	// to refuse. The legacy `trades` arm holds no FX rows on r1 today
+	// (checked 2026-09-05, both FX sources, 400 days, zero rows), so
+	// this widens a dormant path rather than a hot one.
 	const q = `
-        SELECT source, ts, base_amount, quote_amount
-          FROM trades
-         WHERE base_asset  = $1
-           AND quote_asset = $2
-           AND ts         <= $3
-           AND source      = ANY($4)
-         ORDER BY ts DESC, source DESC
-         LIMIT 1
+        (SELECT source, ts, base_asset, base_amount, quote_amount
+           FROM trades
+          WHERE base_asset  = $1
+            AND quote_asset = $2
+            AND ts         <= $3
+            AND source      = ANY($4)
+          ORDER BY ts DESC, source DESC
+          LIMIT 1)
+        UNION ALL
+        (SELECT source, ts, base_asset, base_amount, quote_amount
+           FROM trades
+          WHERE base_asset  = $2
+            AND quote_asset = $1
+            AND ts         <= $3
+            AND source      = ANY($4)
+          ORDER BY ts DESC, source DESC
+          LIMIT 1)
+        ORDER BY ts DESC, source DESC
+        LIMIT 1
     `
 	var (
 		gotSource         string
 		gotTS             time.Time
+		gotBase           string
 		baseAmt, quoteAmt string
 	)
 	row := s.db.QueryRowContext(ctx, q,
 		pair.Base.String(), pair.Quote.String(),
 		cutoff.UTC(), fxSources,
 	)
-	if err := row.Scan(&gotSource, &gotTS, &baseAmt, &quoteAmt); err != nil {
+	if err := row.Scan(&gotSource, &gotTS, &gotBase, &baseAmt, &quoteAmt); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, time.Time{}, "", ErrNoFXQuote
 		}
 		return nil, time.Time{}, "", fmt.Errorf("timescale: FXQuoteAtOrBefore: %w", err)
+	}
+	// Re-express on the ROW's own base leg, never on which arm returned
+	// it: the swap makes `quoteAmt/baseAmt` the requested orientation's
+	// rate at full precision, with no division performed here.
+	if gotBase != pair.Base.String() {
+		baseAmt, quoteAmt = quoteAmt, baseAmt
 	}
 
 	baseInt, ok := new(big.Int).SetString(baseAmt, 10)

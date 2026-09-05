@@ -110,7 +110,15 @@ func (s *Server) usdPeggedConstituents(pair canonical.Pair) []canonical.Pair {
 			out = append(out, sp)
 		}
 	}
-	return out
+	// The `seen` key above is the ORDERED pair, which was the whole
+	// market back when a read bound one orientation. Both readers this
+	// set feeds — Store.TradesInRange for the point path and
+	// Store.OHLCSeries for the series — now span both stored
+	// directions, so a constituent and its flip would be read twice and
+	// merged into one bucket. Deduplicating by MARKET keeps the probe
+	// ([Server.ohlcCoverageSet]) spanning exactly what the combine
+	// reads, because both derive from this one list.
+	return distinctMarkets(out)
 }
 
 // fiatCombinedTrades is the POINT-path twin of

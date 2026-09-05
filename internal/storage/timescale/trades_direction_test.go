@@ -341,6 +341,18 @@ func TestRawTradeReadsSpanBothStoredDirections(t *testing.T) {
 				return err
 			},
 		},
+		{
+			// The aggregate read, folded with row 1.16's second half.
+			// Its arms are what /v1/vwap, /v1/twap, single-bar /v1/ohlc,
+			// /v1/price/tip and the orchestrator all compute over.
+			name: "TradesInRange",
+			run: func(s *Store) error {
+				_, err := s.TradesInRange(context.Background(), pair,
+					time.Date(2026, 9, 5, 10, 0, 0, 0, time.UTC),
+					time.Date(2026, 9, 5, 11, 0, 0, 0, time.UTC), 100)
+				return err
+			},
+		},
 	}
 
 	for _, r := range reads {
