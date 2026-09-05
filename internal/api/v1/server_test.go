@@ -9,6 +9,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -16,29 +18,83 @@ import (
 )
 
 // stubCheck is a ReadyChecker that returns a configurable error.
-// An optional `sleep` models a slow dependency so tests can verify
-// the readyz handler runs probes in parallel. `critical` defaults
-// to true (the legacy behaviour); F-1275 (wave 110) regression
-// tests set it to false to exercise the degraded-but-serving path.
+// An optional `flight` joins the probe to a rendezvous shared with
+// its siblings, so a test can count how many checkers the readyz
+// handler holds in flight at once (TestReadyz_ProbesRunInParallel).
+// `critical` defaults to true (the legacy behaviour); F-1275 (wave
+// 110) regression tests set it to false to exercise the
+// degraded-but-serving path.
 type stubCheck struct {
 	name     string
 	err      error
-	sleep    time.Duration
+	flight   *probeFlight
 	critical bool
 }
 
 func (s *stubCheck) Ping(ctx context.Context) error {
-	if s.sleep > 0 {
-		select {
-		case <-time.After(s.sleep):
-		case <-ctx.Done():
-			return ctx.Err()
+	if s.flight != nil {
+		if err := s.flight.arrive(ctx); err != nil {
+			return err
 		}
 	}
 	return s.err
 }
 func (s *stubCheck) Name() string   { return s.name }
 func (s *stubCheck) Critical() bool { return s.critical }
+
+// probeRendezvousBailout bounds how long one probe waits for siblings
+// that never come. Only a serialised handler ever reaches it — a
+// parallel round clears the rendezvous in microseconds — so it is a
+// hang guard rather than a budget, and nothing asserts on it. It sits
+// above computeReadyz's own 2 s shared deadline, which cancels a
+// stuck round first in practice.
+const probeRendezvousBailout = 5 * time.Second
+
+// probeFlight is the rendezvous the readiness stubs share: every
+// probe reports itself in flight on entry and waits there until
+// `width` of them are in flight together, so the peak is forced
+// rather than raced past — the shape
+// TestForEachBounded_RespectsConcurrencyLimit already uses to
+// saturate a semaphore. maxFlight is what survives the round and what
+// a test asserts on.
+type probeFlight struct {
+	width     int
+	inFlight  atomic.Int32
+	maxFlight atomic.Int32
+	gate      chan struct{}
+	opened    sync.Once
+}
+
+func newProbeFlight(width int) *probeFlight {
+	return &probeFlight{width: width, gate: make(chan struct{})}
+}
+
+// arrive records one probe in flight and blocks until every sibling
+// stands beside it, returning nil once they do. A handler that pings
+// its checkers one after another never assembles them: the first waits
+// alone until the round's context is cancelled, and the count it
+// leaves behind is 1.
+func (f *probeFlight) arrive(ctx context.Context) error {
+	n := f.inFlight.Add(1)
+	defer f.inFlight.Add(-1)
+	for {
+		m := f.maxFlight.Load()
+		if n <= m || f.maxFlight.CompareAndSwap(m, n) {
+			break
+		}
+	}
+	if int(n) >= f.width {
+		f.opened.Do(func() { close(f.gate) })
+	}
+	select {
+	case <-f.gate:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-time.After(probeRendezvousBailout):
+		return errors.New("probe waited alone at the rendezvous")
+	}
+}
 
 func newTestServer(t *testing.T, checks ...v1.ReadyChecker) *httptest.Server {
 	t.Helper()
@@ -181,32 +237,58 @@ func TestReadyz_NonCriticalFailureReturns200Degraded(t *testing.T) {
 	}
 }
 
+// TestReadyz_ProbesRunInParallel pins the fan-out in computeReadyz:
+// every registered ReadyChecker is pinged at once, so a readiness
+// round costs the slowest dependency rather than the sum of all of
+// them. The handler's own note puts three serial 500 ms checks at
+// 1.5 s of its 2 s budget, past the ~1 s LB probe timeout that flaps
+// the backend.
+//
+// How many probes are in flight TOGETHER is a count, not a duration,
+// so it is counted — the shape
+// TestAccountPositions_FoldsRunConcurrently uses for the same claim
+// about the positions folds. Each stub reports itself in flight and
+// waits for its siblings: a parallel round assembles all three at the
+// rendezvous, while a handler that pings in sequence leaves a peak of
+// 1 on any runner, at any load, and reports it as a count rather than
+// as a wall clock.
+//
+// The 900 ms ceiling that stood here was the only evidence for the
+// claim, and it was evidence about the machine rather than about the
+// handler: three 400 ms sleeps ran in 403 ms idle and in 1.01-1.21 s
+// under CPU load against an unchanged handler, red 4 of 20 runs, each
+// failure naming a "serial execution regression" that had not
+// happened. It is removed rather than widened — with the probes
+// counted there is no second claim left for it to carry, and the
+// round's real latency bound is computeReadyz's 2 s shared deadline,
+// which is code-defined and cancels the round rather than being
+// measured by it. The count also reaches further than the ceiling
+// did: a handler fanning out two checkers at a time finished three
+// 400 ms probes in 810 ms and passed the ceiling, where the peak
+// stops at 2 and fails here.
 func TestReadyz_ProbesRunInParallel(t *testing.T) {
-	// Three 400ms-sleep checks. Serial execution would take ~1.2s
-	// (over the 2s budget). Parallel should land well under 1s.
-	// Generous cap (900ms) so we don't flake on CPU-stressed CI.
-	const perProbeSleep = 400 * time.Millisecond
-	const elapsedCap = 900 * time.Millisecond
-
+	const probes = 3
+	flight := newProbeFlight(probes)
 	ts := newTestServer(t,
-		&stubCheck{name: "a", critical: true, sleep: perProbeSleep},
-		&stubCheck{name: "b", critical: true, sleep: perProbeSleep},
-		&stubCheck{name: "c", critical: true, sleep: perProbeSleep},
+		&stubCheck{name: "a", critical: true, flight: flight},
+		&stubCheck{name: "b", critical: true, flight: flight},
+		&stubCheck{name: "c", critical: true, flight: flight},
 	)
 
-	start := time.Now()
 	resp, err := http.Get(ts.URL + "/v1/readyz")
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer resp.Body.Close()
-	elapsed := time.Since(start)
 
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("status = %d", resp.StatusCode)
+	if got := flight.maxFlight.Load(); got != probes {
+		t.Fatalf("peak probes in flight = %d, want %d — readyz did not hold every checker in flight at once, so a round costs more than its slowest dependency", got, probes)
 	}
-	if elapsed >= elapsedCap {
-		t.Errorf("readyz took %v — expected < %v (serial execution regression)", elapsed, elapsedCap)
+	// Every probe returns nil once the rendezvous clears, so a
+	// non-200 here is the round failing for some reason other than
+	// the fan-out.
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
 	}
 }
 
