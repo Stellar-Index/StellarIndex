@@ -5,6 +5,8 @@ import (
 	"context"
 	"database/sql/driver"
 	"errors"
+	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -89,5 +91,91 @@ func TestInsertBackfilledTrades_InfraFaultAborts(t *testing.T) {
 	// in ploughing through the rest.
 	if len(store.got) != 2 {
 		t.Fatalf("expected abort after 2 attempts (a, b) on infra fault, got %v", store.got)
+	}
+}
+
+// tradeAt is a fill with an explicit venue timestamp — the field the
+// resume cursor is derived from.
+func tradeAt(hash string, ts time.Time) canonical.Trade {
+	return canonical.Trade{Source: "kraken", Ledger: 0, TxHash: hash, Timestamp: ts}
+}
+
+// TestPartialFetchResume_SalvagesExpiredWalk: a multi-hour fills walk
+// that runs out of budget must hand back a resume cursor instead of
+// having its work discarded. The cursor is the high-water venue
+// timestamp, not the last element, because a venue page is not
+// guaranteed to be ordered within itself.
+func TestPartialFetchResume_SalvagesExpiredWalk(t *testing.T) {
+	base := time.Date(2021, 2, 1, 0, 0, 0, 0, time.UTC)
+	trades := []canonical.Trade{
+		tradeAt("a", base),
+		tradeAt("c", base.Add(2*time.Hour)),
+		tradeAt("b", base.Add(time.Hour)),
+	}
+
+	for _, tc := range []struct {
+		name string
+		err  error
+	}{
+		{"deadline", context.DeadlineExceeded},
+		{"cancel", context.Canceled},
+		{"wrapped", fmt.Errorf("kraken.BackfillTrades: %w", context.DeadlineExceeded)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			at, ok := partialFetchResume(trades, tc.err)
+			if !ok {
+				t.Fatalf("expected salvage for %v, got ok=false", tc.err)
+			}
+			if want := base.Add(2 * time.Hour); !at.Equal(want) {
+				t.Fatalf("resume cursor = %v, want the high-water fill %v", at, want)
+			}
+		})
+	}
+}
+
+// TestPartialFetchResume_RefusesRealFaults: only a context expiry is a
+// stopping point. A venue 500, a decode fault or a nil error must never
+// be reported as a salvageable partial walk — treating a real fault as
+// "resume from here" would silently skip the range that faulted.
+func TestPartialFetchResume_RefusesRealFaults(t *testing.T) {
+	trades := []canonical.Trade{tradeAt("a", time.Now())}
+	for _, tc := range []struct {
+		name   string
+		trades []canonical.Trade
+		err    error
+	}{
+		{"no error", trades, nil},
+		{"no trades", nil, context.DeadlineExceeded},
+		{"venue fault", trades, errors.New("kraken: HTTP 500")},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, ok := partialFetchResume(tc.trades, tc.err); ok {
+				t.Fatalf("expected ok=false for %s, got a salvage", tc.name)
+			}
+		})
+	}
+}
+
+// TestPartialWalkError_NeverExitsZero: a truncated range must surface as
+// a non-nil error whether or not the writes themselves succeeded, and
+// must carry the resume cursor so a chunked walk can be scripted.
+func TestPartialWalkError_NeverExitsZero(t *testing.T) {
+	at := time.Date(2023, 6, 1, 12, 0, 0, 0, time.UTC)
+
+	clean := partialWalkError(42, at, nil)
+	if clean == nil {
+		t.Fatal("expected a non-nil error for a truncated range with clean writes")
+	}
+	if !strings.Contains(clean.Error(), "2023-06-01T12:00:00Z") {
+		t.Fatalf("resume cursor missing from error: %v", clean)
+	}
+
+	insErr := errors.New("3 of 42 trade(s) failed to insert")
+	both := partialWalkError(42, at, insErr)
+	if !errors.Is(both, insErr) {
+		t.Fatalf("insert fault must stay unwrappable, got %v", both)
+	}
+	if !strings.Contains(both.Error(), "2023-06-01T12:00:00Z") {
+		t.Fatalf("resume cursor missing from combined error: %v", both)
 	}
 }

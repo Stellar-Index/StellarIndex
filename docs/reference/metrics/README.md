@@ -2470,7 +2470,12 @@ resolver refuses to publish once the gap passes its stalled-lake bound
 of 512 ledgers, roughly 45 minutes of chain, so a rising series here is
 the warning that supply is about to stop advancing; without it the
 first symptom is `stellarindex_aggregator_supply_refresh_total` filling
-with `no_ledger` after publishing has already stopped.
+with `no_ledger` after publishing has already stopped. The series
+covers gaps INSIDE that bound, which is the whole range over which it
+is a warning: the lake lookup reads the 512 ledgers below the cursor
+and no further, so a lake that falls out of that window stops updating
+the gauge and refuses instead — the last value published is the last
+gap seen, and `no_ledger` takes over as the signal.
 
 ### `stellarindex_aggregator_supply_refresh_total`
 
@@ -2500,11 +2505,11 @@ the relevant accounts yet AND the static fallback config is also
 empty or missing entries — expected briefly post-deploy, alarming
 sustained. `no_ledger` covers every failure to resolve a real chain
 position to stamp the snapshot at: no `ledgerstream` cursor yet
-(pre-first-run), no `stellar.ledgers` row at or before that cursor
-(empty or wholly gapped lake), or a lake tip trailing the cursor by
-more than 512 ledgers (a stalled CH sink, not the ordinary seconds-long
-landing race, which is absorbed by clamping the snapshot to the lake's
-landed tip).
+(pre-first-run), or no `stellar.ledgers` row in the 512 ledgers below
+that cursor — an empty or wholly gapped lake, or a sink stalled further
+back than the clamp accepts. The ordinary seconds-long landing race is
+absorbed by clamping the snapshot to the lake's landed tip and does not
+reach this outcome.
 `write_error` indicates the storage layer needs investigation.
 `missing_baseline` is a SEP-41 SAC-wrapper whose pre-Soroban opening
 balance hasn't been seeded — its Soroban-era-only total reads

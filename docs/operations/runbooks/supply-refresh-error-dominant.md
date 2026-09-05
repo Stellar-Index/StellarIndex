@@ -73,30 +73,32 @@ grep -A 10 "^\[supply" /etc/stellarindex.toml
 The aggregator can't resolve a real chain position to stamp the
 snapshot at. Resolution takes the `ledgerstream` cursor from
 `ingestion_cursors` and clamps it to the newest ClickHouse
-`stellar.ledgers` row at or before it, so three conditions reach
-this outcome:
+`stellar.ledgers` row in the **512 ledgers below that cursor**
+(~45 min of chain — the lookup reads that window and no further,
+because a row older than it is refused anyway), so two conditions
+reach this outcome:
 
 1. No cursor at all — the indexer hasn't produced its first
    `ledgerstream` row, or `ingestion_cursors` is unreachable.
-2. No `stellar.ledgers` row at or before the cursor — the lake is
-   empty or wholly gapped below the chain position.
-3. The lake tip trails the cursor by more than 512 ledgers
-   (~45 min) — a stalled CH sink rather than the ordinary
-   landing race, which the clamp absorbs.
+2. No `stellar.ledgers` row in that window — the lake is empty,
+   wholly gapped below the chain position, or its tip has stalled
+   further back than the clamp would accept (a wedged CH sink
+   rather than the ordinary landing race, which lands well inside
+   the window).
 
 The cursor routinely leads the lake by a few ledgers (Postgres is
 realtime, the CH sink lands seconds later); that lead is clamped
 away and does NOT reach this outcome. A sustained `no_ledger` rate
-therefore means one of the three conditions above, not ordinary
-lag.
+therefore means one of the two conditions above, not ordinary lag.
 
 - Signal: `_no_ledger` increments far exceed any other outcome. The
   wrapped error text in the aggregator log names which condition
   fired and which cursor supplied the bound.
 - Mitigation: for (1) confirm the indexer is running + writing
   cursors; if storage is broken, route to `pg-conns-saturated.md`.
-  For (2) and (3) check `max(ledger_seq)` in `stellar.ledgers`
-  against the `ledgerstream` cursor and inspect the archivist /
+  For (2) check `max(ledger_seq)` in `stellar.ledgers` against the
+  `ledgerstream` cursor — the difference tells an empty or gapped
+  lake apart from a stalled one — and inspect the archivist /
   galexie stack lag.
 
 ### `outcome="no_observation"`

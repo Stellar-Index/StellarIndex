@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
@@ -245,5 +246,17 @@ func TestResolveSnapshotLedger_OperatorLedgerStaysExact(t *testing.T) {
 	}
 	if reader.latestCalls != 0 {
 		t.Errorf("operator branch consulted LatestLedgerAtOrBefore %d times, want 0", reader.latestCalls)
+	}
+}
+
+// TestAutoSnapshotClampMatchesLookupWindow is the operator-path half of the
+// same lockstep as
+// cmd/stellarindex-aggregator/supply_snapshot_ledger_test.go's: the ledgers
+// this resolver refuses past are exactly the ledgers the lake lookup reads,
+// so neither can be widened or narrowed alone.
+func TestAutoSnapshotClampMatchesLookupWindow(t *testing.T) {
+	if maxAutoSnapshotClampLedgers != clickhouse.LatestLedgerLookbackLedgers {
+		t.Errorf("maxAutoSnapshotClampLedgers = %d but the lookup scans %d ledgers below the cursor — the refusal bound and the scan window must be the same constant",
+			maxAutoSnapshotClampLedgers, clickhouse.LatestLedgerLookbackLedgers)
 	}
 }

@@ -25,9 +25,12 @@ import (
 // the ledger has no lake row.
 type ledgerCloseTimeReader interface {
 	CloseTimeForLedger(ctx context.Context, ledger uint32) (time.Time, bool, error)
-	// LatestLedgerAtOrBefore returns the newest stellar.ledgers row with
-	// ledger_seq <= maxSeq. Used by the AUTO snapshot-ledger path to clamp
-	// the live cursor to the lake's landed tip (see resolveSnapshotLedger).
+	// LatestLedgerAtOrBefore returns the newest stellar.ledgers row in
+	// [maxSeq-maxAutoSnapshotClampLedgers, maxSeq]. Used by the AUTO
+	// snapshot-ledger path to clamp the live cursor to the lake's landed
+	// tip (see resolveSnapshotLedger); found=false means the lake holds no
+	// row in that window, which is every position this resolver would
+	// accept a snapshot at.
 	LatestLedgerAtOrBefore(ctx context.Context, maxSeq uint32) (uint32, time.Time, bool, error)
 }
 
@@ -39,7 +42,14 @@ type ledgerCloseTimeReader interface {
 // behind the cursor would hide that stall — so the resolver fails closed
 // exactly as it did before the clamp existed. 512 ledgers ≈ 45 min at
 // mainnet's ~5.3s cadence: far above any landing race, far below a day.
-const maxAutoSnapshotClampLedgers = 512
+//
+// It IS the lookup's own scan window rather than a second copy of the number:
+// [clickhouse.ExplorerReader.LatestLedgerAtOrBefore] reads
+// [clickhouse.LatestLedgerLookbackLedgers] below the cursor and no further,
+// so what this refuses and what the lake is read for cannot drift apart. Same
+// value and rationale as
+// cmd/stellarindex-aggregator/main.go::maxSupplyLakeClampLedgers.
+const maxAutoSnapshotClampLedgers = clickhouse.LatestLedgerLookbackLedgers
 
 // cursorReader is the ingestion-cursor half of resolveSnapshotLedger's
 // inputs, kept as an interface for the same reason ledgerCloseTimeReader
@@ -374,14 +384,21 @@ func resolveSnapshotLedger(ctx context.Context, store cursorReader, closeTimes l
 		// cursor ledger specifically; it needs a real chain position with a
 		// real close time. Clamp to the newest LANDED ledger at or before
 		// the cursor — bounded, so a genuinely stalled lake still fails
-		// closed instead of being papered over.
+		// closed instead of being papered over, and bounded in the lake
+		// READ too: the lookup scans only the ledgers this resolver would
+		// accept, not all of chain history below the cursor.
 		lakeLedger, lakeClose, found, err := closeTimes.LatestLedgerAtOrBefore(ctx, ledger)
 		if err != nil {
 			return 0, time.Time{}, fmt.Errorf("resolve lake tip at or before cursor ledger %d: %w", ledger, err)
 		}
 		if !found {
-			return 0, time.Time{}, fmt.Errorf("stellar.ledgers has no row at or before cursor ledger %d — lake empty or gapped; refusing to stamp the snapshot with wall-clock time", ledger)
+			return 0, time.Time{}, fmt.Errorf("stellar.ledgers has no row within %d ledgers below cursor ledger %d — lake empty, gapped below the chain position, or a sink stalled further back than the clamp would accept; refusing to stamp the snapshot with wall-clock time", maxAutoSnapshotClampLedgers, ledger)
 		}
+		// The production reader cannot return a row beyond the bound — it is
+		// the same constant as its scan window — so this stays as this
+		// resolver's own invariant over whatever ledgerCloseTimeReader it was
+		// handed, because stamping an unchecked row is the failure being
+		// prevented.
 		if gap := ledger - lakeLedger; gap > maxAutoSnapshotClampLedgers {
 			return 0, time.Time{}, fmt.Errorf("lake tip %d trails the %q cursor %d by %d ledgers (> %d) — that is a stalled lake, not a landing race; refusing to stamp a snapshot that far behind the chain", lakeLedger, chosen, ledger, gap, maxAutoSnapshotClampLedgers)
 		}

@@ -1330,7 +1330,9 @@ func runSupplyRefresh(ctx context.Context, r *supply.Refresher, cadence time.Dur
 // authoritative every-ledger source is ClickHouse stellar.ledgers.
 // Interface (not the concrete type) so the refresher wiring stays
 // testable without a live lake. found=false means the lake holds no
-// row at or before the requested ledger.
+// row in the lookup's bounded window — the requested ledger and the
+// [maxSupplyLakeClampLedgers] below it, which is every position this
+// resolver would accept a snapshot at anyway.
 type ledgerCloseTimeReader interface {
 	LatestLedgerAtOrBefore(ctx context.Context, maxSeq uint32) (uint32, time.Time, bool, error)
 }
@@ -1364,7 +1366,13 @@ const supplyChainCursorSource = "ledgerstream"
 // mainnet's ~5.3 s cadence: far above any landing race, far below a day.
 // Same value and rationale as
 // internal/ops/supply/supply.go::maxAutoSnapshotClampLedgers.
-const maxSupplyLakeClampLedgers = 512
+//
+// It IS the lookup's own scan window, not a second copy of the number:
+// [clickhouse.ExplorerReader.LatestLedgerAtOrBefore] reads
+// [clickhouse.LatestLedgerLookbackLedgers] below the cursor and no further,
+// because a row this bound refuses is a row worth no ClickHouse read. The
+// two cannot drift, and widening one widens the other.
+const maxSupplyLakeClampLedgers = clickhouse.LatestLedgerLookbackLedgers
 
 // supplyAggregatorLedgers adapts the ingestion cursors + the lake to
 // supply.LedgerLookup. Same shape as
@@ -1396,11 +1404,15 @@ const maxSupplyLakeClampLedgers = 512
 //     error_dominant threshold together. The snapshot does not need the
 //     cursor ledger specifically; it needs a real chain position with a
 //     real close time, so resolution clamps to the newest LANDED ledger
-//     at or before the cursor.
+//     at or before the cursor. The lookup reads only the
+//     [maxSupplyLakeClampLedgers] below the cursor, because that is the
+//     whole range a result could be accepted from — an unbounded
+//     `ledger_seq <= cursor` prunes no partition of stellar.ledgers and
+//     read 735.59 MiB per watched asset per tick on r1.
 //
-// Fail-closed is preserved end to end: no cursor, no landed row at or
-// before the cursor, or a lake trailing the cursor by more than
-// [maxSupplyLakeClampLedgers] all return an error (retryable no_ledger
+// Fail-closed is preserved end to end: no cursor, no landed row within
+// [maxSupplyLakeClampLedgers] of the cursor, or a lake trailing the
+// cursor by more than that, all return an error (retryable no_ledger
 // outcome) rather than a wall-clock guess.
 //
 // F-1236 (codex audit-2026-05-12) — KNOWN: this stamps a real chain
@@ -1434,12 +1446,19 @@ func (a supplyAggregatorLedgers) LatestKnownLedger(ctx context.Context) (uint32,
 		return 0, time.Time{}, fmt.Errorf("resolve lake tip at or before cursor ledger %d: %w", cursorLedger, err)
 	}
 	if !found {
-		return 0, time.Time{}, fmt.Errorf("stellar.ledgers has no row at or before the %q cursor ledger %d — lake empty or gapped; refusing to stamp the snapshot with wall-clock time", source, cursorLedger)
+		return 0, time.Time{}, fmt.Errorf("stellar.ledgers has no row within %d ledgers below the %q cursor ledger %d — lake empty, gapped below the chain position, or a sink stalled further back than the clamp would accept; refusing to stamp the snapshot with wall-clock time", maxSupplyLakeClampLedgers, source, cursorLedger)
 	}
 	gap := cursorLedger - lakeLedger
 	// Publish the clamp before deciding on it, so the series carries
-	// the gap that produced a refusal as well as the ordinary lead.
+	// the gap that produced a refusal as well as the ordinary lead. It
+	// reports gaps inside the lookup's window; a lake that falls out of
+	// the window entirely stops updating the gauge and refuses above
+	// instead, which is the same alerting condition one step later.
 	obs.AggregatorSupplyLakeClampLedgers.Set(float64(gap))
+	// The production reader cannot return a row beyond the bound — it is
+	// the same constant as its scan window — so this is the resolver's own
+	// invariant over whatever [ledgerCloseTimeReader] it was handed, kept
+	// because stamping an unchecked row is the failure being prevented.
 	if gap > maxSupplyLakeClampLedgers {
 		return 0, time.Time{}, fmt.Errorf("lake tip %d trails the %q cursor %d by %d ledgers (> %d) — that is a stalled lake, not a landing race; refusing to stamp a snapshot that far behind the chain", lakeLedger, source, cursorLedger, gap, maxSupplyLakeClampLedgers)
 	}
