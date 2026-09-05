@@ -332,3 +332,82 @@ func abs(x float64) float64 {
 	}
 	return x
 }
+
+// TestRunProbe_FreshnessMeasuredAtSampleTime is the end-to-end guard for
+// the r1 2026-09-05 reading: the probe recorded
+// stellarindex_sla_probe_freshness_sec{endpoint="price-tip"} ≈ 15 s
+// every run while the live tip served an observed_at that was
+// sub-second old. Freshness was computed as time.Since(observedAt)
+// inside aggregateEndpointStats, which runs ONCE after the whole run,
+// so each sample was charged the gap between its own request and the
+// end of the run — a median bias of duration/2.
+//
+// The fake API stamps observed_at at the instant it answers, so the
+// TRUE freshness of every sample is the localhost round trip: well
+// under a millisecond. Anything near duration/2 is the bias.
+//
+// PROVEN-RED: restore
+//
+//	freshSamples = append(freshSamples, time.Since(s.observedAt).Seconds())
+//
+// in aggregateEndpointStats and this reports ~1.0 s against a 2 s run.
+func TestRunProbe_FreshnessMeasuredAtSampleTime(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"data":{"observed_at":"` +
+			time.Now().UTC().Format(time.RFC3339Nano) + `","price":"1.0"}}`))
+	}))
+	defer srv.Close()
+
+	const runFor = 2 * time.Second
+	rep := runProbe(srv.URL, "", []endpoint{{Name: "price-tip", Path: "/price/tip"}},
+		runFor, 2, slaTargets{P95MS: 5000, P99MS: 5000, FreshnessSec: 30, AvailabilityPct: 99.0})
+
+	if len(rep.PerEndpoint) != 1 {
+		t.Fatalf("PerEndpoint len=%d want 1", len(rep.PerEndpoint))
+	}
+	st := rep.PerEndpoint[0]
+	if st.ObservedAtFreshSec == nil {
+		t.Fatal("no freshness recorded — the fake API always returns observed_at")
+	}
+	// Ceiling sits between the true value (sub-millisecond) and the
+	// end-of-run bias the fix removes (runFor/2 = 1.0 s).
+	const ceiling = 0.25
+	if *st.ObservedAtFreshSec > ceiling {
+		t.Errorf("median freshness = %.3fs, want <= %.3fs — freshness is being charged "+
+			"the distance to the end of the %v run instead of each sample's own instant",
+			*st.ObservedAtFreshSec, ceiling, runFor)
+	}
+	if *st.ObservedAtFreshSec < 0 {
+		t.Errorf("median freshness = %.3fs, want >= 0", *st.ObservedAtFreshSec)
+	}
+}
+
+// TestAggregateEndpointStats_FreshnessUsesSampleReceiptInstant pins the
+// exact corrected value with no wall-clock dependency: 121 samples over
+// a 120 s run, every one of them read exactly 2 s after its own
+// observed_at. The median freshness IS 2 s. Charging each sample to the
+// end of the run instead yields a median of ~62 s.
+func TestAggregateEndpointStats_FreshnessUsesSampleReceiptInstant(t *testing.T) {
+	runStart := time.Now().Add(-2 * time.Minute)
+	const observedAge = 2 * time.Second
+
+	ss := make([]probeSample, 0, 121)
+	for i := 0; i <= 120; i++ {
+		receivedAt := runStart.Add(time.Duration(i) * time.Second)
+		ss = append(ss, probeSample{
+			latency:    5 * time.Millisecond,
+			ok:         true,
+			observedAt: receivedAt.Add(-observedAge),
+			receivedAt: receivedAt,
+		})
+	}
+
+	st := aggregateEndpointStats(endpoint{Name: "price-tip", Path: "/price/tip"}, ss)
+	if st.ObservedAtFreshSec == nil {
+		t.Fatal("ObservedAtFreshSec is nil, want a median")
+	}
+	if got, want := *st.ObservedAtFreshSec, observedAge.Seconds(); abs(got-want) > 1e-9 {
+		t.Errorf("median freshness = %.9fs, want %.9fs", got, want)
+	}
+}

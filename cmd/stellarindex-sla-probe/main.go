@@ -154,7 +154,9 @@ type stats struct {
 	AvailabilityPct float64      `json:"availability_pct"`
 	LatencyMS       latencyStats `json:"latency_ms"`
 	// ObservedAtFreshSec — for endpoints that return an observed_at
-	// timestamp (price, price-tip), the median freshness in seconds.
+	// timestamp (price, price-tip), the median freshness in seconds,
+	// each sample measured at the instant that sample's response was
+	// received (probeSample.receivedAt), not at end-of-run.
 	// Zero when no observed_at field on this endpoint.
 	ObservedAtFreshSec *float64 `json:"observed_at_fresh_sec,omitempty"`
 	// FreshnessTargetSec — the per-endpoint freshness target override
@@ -269,11 +271,25 @@ func main() {
 }
 
 // probeSample is one observation: latency + success + (optional)
-// observed_at parsed from the response body.
+// observed_at parsed from the response body, plus the instant the
+// response was received.
+//
+// receivedAt is what freshness is measured against. It is NOT
+// decoration: freshness used to be computed as time.Since(observedAt)
+// during aggregation, which happens once, AFTER the whole run has
+// finished — so every sample was charged the time between its own
+// request and the end of the run. Over a uniformly-sampled run of
+// length D that biases the MEDIAN by D/2 and the oldest sample by a
+// full D. On r1 (D = 30 s) it reported /price/tip's ~0.1 s freshness
+// as ~15 s, half of the 30 s page threshold spent on measurement
+// error; at the SLA_PROBE_DURATION=120 s the wrapper recommends for
+// memory-pressured hosts it would have read ~60 s and paged forever
+// on a perfectly healthy tip.
 type probeSample struct {
 	latency    time.Duration
 	ok         bool
 	observedAt time.Time
+	receivedAt time.Time
 }
 
 // runProbe drives `concurrency` workers against `endpoints` for
@@ -335,6 +351,12 @@ func collectSamples(ctx context.Context, baseURL, apiKey string, endpoints []end
 				ep := endpoints[i]
 				i = (i + 1) % len(endpoints)
 				lat, ok, observedAt := hit(ctx, httpClient, baseURL, apiKey, ep)
+				// Stamp the receipt instant here, before the ctx check
+				// and before the mutex: this is the clock reading
+				// freshness is measured against, and it must be the
+				// sample's own instant rather than anything the
+				// end-of-run aggregation can see.
+				receivedAt := time.Now()
 				// If the run-duration ctx expired while this request
 				// was in flight, the probe itself aborted it — the
 				// server did not fail it. Discard rather than count a
@@ -349,7 +371,12 @@ func collectSamples(ctx context.Context, baseURL, apiKey string, endpoints []end
 					return
 				}
 				mu.Lock()
-				samples[ep.Name] = append(samples[ep.Name], probeSample{lat, ok, observedAt})
+				samples[ep.Name] = append(samples[ep.Name], probeSample{
+					latency:    lat,
+					ok:         ok,
+					observedAt: observedAt,
+					receivedAt: receivedAt,
+				})
 				mu.Unlock()
 			}
 		}(w)
@@ -372,8 +399,12 @@ func aggregateEndpointStats(ep endpoint, ss []probeSample) stats {
 		if s.ok {
 			successes++
 		}
-		if !s.observedAt.IsZero() {
-			freshSamples = append(freshSamples, time.Since(s.observedAt).Seconds())
+		// Anchored to the sample's own receipt instant, not to now():
+		// aggregation runs after the whole run, so time.Since() here
+		// would charge every sample the distance from its request to
+		// the end of the run (see probeSample.receivedAt).
+		if !s.observedAt.IsZero() && !s.receivedAt.IsZero() {
+			freshSamples = append(freshSamples, s.receivedAt.Sub(s.observedAt).Seconds())
 		}
 	}
 	st := stats{

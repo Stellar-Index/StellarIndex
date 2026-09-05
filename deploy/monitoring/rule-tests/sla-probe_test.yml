@@ -18,6 +18,27 @@
 # with the series absent nothing selects it. The healthy case passes either way,
 # so the fire test is the non-vacuous one and it exercises the real alert
 # (its 90m window and 5m `for`), not a mock.
+#
+# ── stellarindex_sla_probe_freshness_breach (2026-09-05) ──────────────
+# The freshness selector used to read
+#
+#     stellarindex_sla_probe_freshness_sec{endpoint="price-tip"} > 30
+#     or
+#     stellarindex_sla_probe_freshness_sec{endpoint!="price-tip"} > 180
+#
+# which grants /price's ADR-0015 closed-bucket exemption (180 s) to
+# every endpoint that merely is not the tip. Only /price emits freshness
+# today, so it was latent — but the exemption is a property of the
+# closed-bucket contract, not of "not being the tip", and the first
+# other endpoint to publish an observed_at would have silently inherited
+# a bound six times the pricing SLA. Inverted to a positive matcher:
+# /price gets 180 s by name, everything else falls back to the 30 s SLA.
+#
+# PROVEN-RED: restore the `{endpoint!="price-tip"} > 180` pair and the
+# oracle-latest case below reports 0 firing alerts (FAIL) — a 120 s
+# stale oracle sits under the closed-bucket bound it should never have
+# been given. The price-tip and price cases pass either way; the
+# oracle-latest case is the non-vacuous one.
 
 rule_files:
   - ../rules/sla-probe.yml
@@ -69,4 +90,173 @@ tests:
     alert_rule_test:
       - eval_time: 100m
         alertname: stellarindex_sla_probe_stale
+        exp_alerts: []
+
+  # ── the tip is held to the 30s pricing SLA ────────────────────────
+  - interval: 1m
+    name: a stale price-tip pages against the 30s SLA
+    input_series:
+      - series: 'stellarindex_sla_probe_freshness_sec{job="node_exporter",instance="r1:9100",endpoint="price-tip"}'
+        values: '45+0x60'
+    alert_rule_test:
+      - eval_time: 45m
+        alertname: stellarindex_sla_probe_freshness_breach
+        exp_alerts:
+          - exp_labels:
+              job: node_exporter
+              instance: r1:9100
+              endpoint: price-tip
+              severity: page
+              team: stellarindex
+              component: api
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/sla-probe-freshness-breach.md
+              summary: "price-tip price freshness 45s over its bound (30s SLA; /price 180s closed-bucket) sustained 30m"
+              description: |
+                The SLA probe's median observed_at freshness for
+                price-tip has been over its bound for
+                ≥ 30 minutes. The bound is the 30 s pricing SLA for every
+                endpoint except /price, which serves the ADR-0015 closed
+                bucket and is held to 180 s — read the summary for the
+                value, not the description, before deciding which one
+                tripped.
+
+                When the endpoint is price-tip the usual cause is NOT a
+                broken pipeline: computeTip escalates to a 30 s window and
+                then falls back to the closed bucket, so a pair with no
+                trade for 30+ s serves a 60-120 s observed_at in-contract
+                (ADR-0018). Check the pair's trade cadence first, then the
+                aggregator → Redis → API path; bisect by which stage's
+                `observed_at` is lagging.
+
+  # ── /price keeps its ADR-0015 exemption: 120s is in-contract ──────
+  - interval: 1m
+    name: a 120s closed-bucket price is structural, not a page
+    input_series:
+      - series: 'stellarindex_sla_probe_freshness_sec{job="node_exporter",instance="r1:9100",endpoint="price"}'
+        values: '120+0x60'
+    alert_rule_test:
+      - eval_time: 45m
+        alertname: stellarindex_sla_probe_freshness_breach
+        exp_alerts: []
+
+  # ── the RED case: an endpoint that is neither price nor price-tip ──
+  # 120s of oracle staleness is four times the pricing SLA. Under the
+  # old `{endpoint!="price-tip"} > 180` selector it inherited /price's
+  # closed-bucket exemption and paged nobody.
+  - interval: 1m
+    name: a third endpoint falls back to the SLA bound, not the closed-bucket one
+    input_series:
+      - series: 'stellarindex_sla_probe_freshness_sec{job="node_exporter",instance="r1:9100",endpoint="oracle-latest"}'
+        values: '120+0x60'
+    alert_rule_test:
+      - eval_time: 45m
+        alertname: stellarindex_sla_probe_freshness_breach
+        exp_alerts:
+          - exp_labels:
+              job: node_exporter
+              instance: r1:9100
+              endpoint: oracle-latest
+              severity: page
+              team: stellarindex
+              component: api
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/sla-probe-freshness-breach.md
+              summary: "oracle-latest price freshness 120s over its bound (30s SLA; /price 180s closed-bucket) sustained 30m"
+              description: |
+                The SLA probe's median observed_at freshness for
+                oracle-latest has been over its bound for
+                ≥ 30 minutes. The bound is the 30 s pricing SLA for every
+                endpoint except /price, which serves the ADR-0015 closed
+                bucket and is held to 180 s — read the summary for the
+                value, not the description, before deciding which one
+                tripped.
+
+                When the endpoint is price-tip the usual cause is NOT a
+                broken pipeline: computeTip escalates to a 30 s window and
+                then falls back to the closed bucket, so a pair with no
+                trade for 30+ s serves a 60-120 s observed_at in-contract
+                (ADR-0018). Check the pair's trade cadence first, then the
+                aggregator → Redis → API path; bisect by which stage's
+                `observed_at` is lagging.
+
+  # ── /price past its own structural bound still pages ──────────────
+  - interval: 1m
+    name: a 200s closed-bucket price is a genuine stall and pages
+    input_series:
+      - series: 'stellarindex_sla_probe_freshness_sec{job="node_exporter",instance="r1:9100",endpoint="price"}'
+        values: '200+0x60'
+    alert_rule_test:
+      - eval_time: 45m
+        alertname: stellarindex_sla_probe_freshness_breach
+        exp_alerts:
+          - exp_labels:
+              job: node_exporter
+              instance: r1:9100
+              endpoint: price
+              severity: page
+              team: stellarindex
+              component: api
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/sla-probe-freshness-breach.md
+              summary: "price price freshness 200s over its bound (30s SLA; /price 180s closed-bucket) sustained 30m"
+              description: |
+                The SLA probe's median observed_at freshness for
+                price has been over its bound for
+                ≥ 30 minutes. The bound is the 30 s pricing SLA for every
+                endpoint except /price, which serves the ADR-0015 closed
+                bucket and is held to 180 s — read the summary for the
+                value, not the description, before deciding which one
+                tripped.
+
+                When the endpoint is price-tip the usual cause is NOT a
+                broken pipeline: computeTip escalates to a 30 s window and
+                then falls back to the closed bucket, so a pair with no
+                trade for 30+ s serves a 60-120 s observed_at in-contract
+                (ADR-0018). Check the pair's trade cadence first, then the
+                aggregator → Redis → API path; bisect by which stage's
+                `observed_at` is lagging.
+
+  # ── the sibling verdict gauge: unchanged expr, pinned so it stays ──
+  # stellarindex_sla_probe_unit_failed is the probe's own verdict, not
+  # systemd's — the wrapper always exits 0. It reads 1 whenever ANY SLA
+  # in the run failed, so the sample-time freshness fix in
+  # cmd/stellarindex-sla-probe/main.go is what stops it inheriting a
+  # measurement artefact. The rule itself needs no change; these two
+  # cases keep the 30m sustained contract from drifting.
+  - interval: 1m
+    name: a verdict stuck at fail for 30m raises the umbrella ticket
+    input_series:
+      - series: 'stellarindex_sla_probe_unit_failed{job="node_exporter",instance="r1:9100"}'
+        values: '1x60'
+    alert_rule_test:
+      - eval_time: 45m
+        alertname: stellarindex_sla_probe_unit_failed_alert
+        exp_alerts:
+          - exp_labels:
+              job: node_exporter
+              instance: r1:9100
+              severity: ticket
+              team: stellarindex
+              component: api
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/sla-probe-unit-failed.md
+              summary: "SLA probe verdict has been fail for ≥ 30m — at least one SLA breached"
+              description: |
+                The probe's overall verdict gauge has been 1 (fail) for
+                ≥ 30 minutes. This is the umbrella "something's off"
+                signal — the more-specific p95 / freshness / availability
+                alerts will name the exact breach if they're configured to
+                fire faster. Runbook: pick the most-recent journald entry
+                with the JSON report, read the `failed_reasons` array, and
+                route to the appropriate per-endpoint runbook.
+
+  - interval: 1m
+    name: a single failing run between passes does not reach the 30m umbrella
+    input_series:
+      - series: 'stellarindex_sla_probe_unit_failed{job="node_exporter",instance="r1:9100"}'
+        values: '0x20 1x15 0x25'
+    alert_rule_test:
+      - eval_time: 45m
+        alertname: stellarindex_sla_probe_unit_failed_alert
         exp_alerts: []

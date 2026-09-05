@@ -584,10 +584,35 @@ tests:
 
   # ══ stellarindex_timescale_compression_lag ════════════════════════
   # for: 24h — the series must stay non-zero for a full day.
+  #
+  # The alert used to read a single unlabelled scalar,
+  # stellarindex_uncompressed_chunks_older_than_7d, that counted every
+  # uncompressed chunk older than a hardcoded 7 days across all 46
+  # compression policies on r1. Two things that metric could not say,
+  # and the cases below pin both:
+  #
+  #   - WHICH hypertable is behind (it had no label, so the alert named
+  #     nothing and the responder started from a full chunk census).
+  #   - Whether being older than 7 days means anything for that
+  #     hypertable at all. fx_quotes compresses after 90 DAYS, so its
+  #     8-to-89-day-old chunks are uncompressed exactly as intended;
+  #     the old scalar counted them and the runbook wrote the resulting
+  #     alert up as a "known false-positive pattern".
+  #
+  # The producer (timescale-jobs-probe.timer) now subtracts each policy's
+  # own compress_after AND its schedule_interval before counting, and
+  # labels per hypertable. Measured on r1 2026-09-05: the old query
+  # returned 3 and peaked at 28 on a daily sawtooth; the new one returns
+  # 0 across all 46 policies.
+  #
+  # PROVEN-RED: point the expr back at
+  # `stellarindex_uncompressed_chunks_older_than_7d > 0` and every case
+  # below that expects an alert reports 0 firing — nothing selects the
+  # per-hypertable series.
   - interval: 1m
-    name: uncompressed old chunks are informational after a day
+    name: chunks past a hypertable's own compression window are informational after a day
     input_series:
-      - series: 'stellarindex_uncompressed_chunks_older_than_7d{job="node_exporter",instance="r1:9100"}'
+      - series: 'stellarindex_timescale_chunks_overdue_compression{job="node_exporter",instance="r1:9100",hypertable="trades"}'
         values: '3+0x1500'
     alert_rule_test:
       - eval_time: 1450m
@@ -596,25 +621,61 @@ tests:
           - exp_labels:
               job: node_exporter
               instance: r1:9100
+              hypertable: trades
               severity: informational
               team: stellarindex
               component: storage
             exp_annotations:
               runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/compression-lag.md
-              summary: "3 chunks older than 7d are still uncompressed"
+              summary: "trades: 3 chunks past their compression policy's own window"
               description: |
-                Compression policy should run on chunks older than 7 days. If some
-                aren't compressed, the timescaledb job scheduler may be misfiring.
+                Chunks on trades are still uncompressed more than
+                one full schedule_interval after that hypertable's own
+                compress_after elapsed, and have been for 24 h. The policy is not
+                keeping up: check the job scheduler, then locks and IO.
 
   - interval: 1m
-    name: zero uncompressed old chunks raise nothing
+    name: no hypertable past its own window raises nothing
     input_series:
-      - series: 'stellarindex_uncompressed_chunks_older_than_7d{job="node_exporter",instance="r1:9100"}'
+      - series: 'stellarindex_timescale_chunks_overdue_compression{job="node_exporter",instance="r1:9100",hypertable="trades"}'
+        values: '0+0x1500'
+      - series: 'stellarindex_timescale_chunks_overdue_compression{job="node_exporter",instance="r1:9100",hypertable="fx_quotes"}'
         values: '0+0x1500'
     alert_rule_test:
       - eval_time: 1450m
         alertname: stellarindex_timescale_compression_lag
         exp_alerts: []
+
+  # The case the old scalar could not express: fx_quotes sits at 0
+  # because its 90-day policy has not come due (under the old 7-day
+  # metric its chunks were counted and the sum was non-zero), while
+  # trades IS behind. Exactly one alert, and it names trades.
+  - interval: 1m
+    name: only the hypertable that is actually behind alerts, and it is named
+    input_series:
+      - series: 'stellarindex_timescale_chunks_overdue_compression{job="node_exporter",instance="r1:9100",hypertable="fx_quotes"}'
+        values: '0+0x1500'
+      - series: 'stellarindex_timescale_chunks_overdue_compression{job="node_exporter",instance="r1:9100",hypertable="trades"}'
+        values: '2+0x1500'
+    alert_rule_test:
+      - eval_time: 1450m
+        alertname: stellarindex_timescale_compression_lag
+        exp_alerts:
+          - exp_labels:
+              job: node_exporter
+              instance: r1:9100
+              hypertable: trades
+              severity: informational
+              team: stellarindex
+              component: storage
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/compression-lag.md
+              summary: "trades: 2 chunks past their compression policy's own window"
+              description: |
+                Chunks on trades are still uncompressed more than
+                one full schedule_interval after that hypertable's own
+                compress_after elapsed, and have been for 24 h. The policy is not
+                keeping up: check the job scheduler, then locks and IO.
 
   # ══ stellarindex_timescale_backup_failed / _backup_none_24h ═══════
   # ── both tiers fire past 25h ──────────────────────────────────────

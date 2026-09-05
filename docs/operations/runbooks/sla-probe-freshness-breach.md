@@ -1,6 +1,6 @@
 ---
 title: Runbook — sla-probe-freshness-breach
-last_verified: 2026-08-29
+last_verified: 2026-09-05
 status: current
 severity: P2
 ---
@@ -15,29 +15,32 @@ severity: P2
 | Severity | P2 (`severity: page`) |
 | Detected by | `configs/prometheus/rules.r1/sla-probe.yml` (group `stellarindex.sla_probe`, `severity: page`, `for: 30m`) — the file r1 actually loads; multi-host twin in `deploy/monitoring/rules/sla-probe.yml` (same expr/for/labels). |
 | Typical MTTR | 30–90 min |
-| Impact | Detail-page consumers see stale prices. The 30 s SLA target applies ONLY to the `price-tip` endpoint (`/v1/price/tip`). `/v1/price` is closed-bucket-served (ADR-0015) — its `observed_at` is *structurally* 30–150 s old by design — so the probe holds it to a 150 s verdict bound (`defaultClosedBucketFreshTarget` in `cmd/stellarindex-sla-probe/main.go`) and the alert pages at 180 s. A sustained breach means the affected price surface is out of date beyond even those allowances. |
+| Impact | Detail-page consumers see stale prices. The 30 s SLA target is the DEFAULT and applies to every freshness-bearing endpoint; `/v1/price` is the one exemption, because it is closed-bucket-served (ADR-0015) and its `observed_at` is *structurally* 30–150 s old by design — the probe holds it to a 150 s verdict bound (`defaultClosedBucketFreshTarget` in `cmd/stellarindex-sla-probe/main.go`) and the alert pages at 180 s. A sustained breach means the affected price surface is out of date beyond even those allowances. |
 
 ## Symptoms
 
 - The real expression (identical in both rule trees):
 
   ```promql
-  stellarindex_sla_probe_freshness_sec{endpoint="price-tip"} > 30
+  stellarindex_sla_probe_freshness_sec{endpoint="price"} > 180
   or
-  stellarindex_sla_probe_freshness_sec{endpoint!="price-tip"} > 180
+  stellarindex_sla_probe_freshness_sec{endpoint!="price"} > 30
   ```
 
-  sustained `for: 30m`. Do NOT read this as "30 s for every
-  endpoint": only `price-tip` carries the 30 s SLA target.
-  `/v1/price` serves the last CLOSED bucket (ADR-0015), so its
-  `observed_at` is structurally 30–150 s behind wall-clock even
-  when everything is healthy — the probe's verdict bound for it is
-  150 s and the alert line is 180 s.
+  sustained `for: 30m`. The 30 s SLA is the default; `/v1/price` is
+  the single exemption, because it serves the last CLOSED bucket
+  (ADR-0015) and its `observed_at` is structurally 30–150 s behind
+  wall-clock even when everything is healthy — the probe's verdict
+  bound for it is 150 s and the alert line is 180 s. Read the
+  alert's `summary` for the value; the description covers both
+  bounds and cannot tell you which one tripped.
 - The probe's JSON report shows `observed_at` on `/v1/price` (or
-  `/v1/price/tip`) beyond its per-endpoint bound. The SLA-tracked
-  freshness endpoints are `price` and `price-tip` only; the third
-  probe endpoint is named `oracle-latest` (its label on the wire —
-  not `oracle_latest`) and carries no freshness target.
+  `/v1/price/tip`) beyond its per-endpoint bound. Only `price` and
+  `price-tip` publish freshness today; the third probe endpoint is
+  named `oracle-latest` (its label on the wire — not
+  `oracle_latest`) and emits no `observed_at`, so no series exists
+  for it. If it ever grows one it is held to the 30 s SLA, not to
+  `/v1/price`'s exemption.
 - `flags.stale: true` will be set on responses for the affected
   pair — clients gating on this flag are likely backing off, but
   many clients don't gate and surface the stale value as-is.
@@ -114,9 +117,38 @@ reading the wrong key.
    - Signal: `stellarindex_timescale_cagg_stale` fires too.
    - Mitigation: see `cagg-stale.md`.
 
-4. **No trades for the asset in the last freshness window.**
-   Legitimate market quiet — the asset just hasn't traded. The
-   "stale" flag is correct, not a bug.
+4. **No trades for the pair in the tip's escalation window — the
+   most common cause on `price-tip`, and it is in-contract.**
+   `computeTip` tries the caller's window (5 s), escalates to 30 s,
+   and only then falls back to `PriceReader.LatestPrice` — the
+   CLOSED bucket. So a pair with no trade for 30+ s serves a
+   60–120 s `observed_at` on the tip surface, exactly as ADR-0018
+   describes, and the probe correctly records it as over the 30 s
+   SLA. The tell is `price` and `price-tip` reporting the SAME
+   freshness to three decimals: both endpoints are serving one
+   closed bucket. Observed on r1 2026-09-05 07:19 UTC — both read
+   `109.156` because XLM/`fiat:USD` had a 67-second CEX trade gap
+   (07:18:31 → 07:19:38) covering two thirds of the 30-second probe
+   run.
+   - Signal: bounded trade query for the pair over the run window:
+
+     ```sh
+     ssh root@136.243.90.96 "cd /tmp && runuser -u postgres -- psql -d stellarindex -X -c \"
+       SELECT ts, source, quote_asset FROM trades
+       WHERE ts >= now() - interval '5 minutes'
+         AND base_asset IN ('native','crypto:XLM')
+         AND quote_asset = 'fiat:USD'
+       ORDER BY ts;\""
+     ```
+
+   - Mitigation: none on the serving side — the closed bucket IS the
+     honest answer. If a pair is chronically this quiet the fix is
+     source coverage, not a threshold. Ack, and do not widen the
+     30 s bound: it is the published SLA.
+
+5. **No trades for the asset at all.** Legitimate market quiet —
+   the asset just hasn't traded. The "stale" flag is correct, not a
+   bug.
    - Signal: trade-count panel for the pair shows zero recent rows.
    - Mitigation: this is expected; mark the alert as ack'd if the
      asset is known-thin.
@@ -130,11 +162,24 @@ reading the wrong key.
 - [ ] Step 3 — If "no trades in window" — this is honest staleness.
       Confirm the pair is genuinely quiet and ack the alert.
 - [ ] Verification: probe `freshness_sec` back under the
-      per-endpoint bound (30 s for `price-tip`, 180 s otherwise)
-      for ≥ 30 min.
+      per-endpoint bound (180 s for `price`, 30 s for everything
+      else) for ≥ 30 min.
 
 ## Known false-positive patterns
 
+- **Measurement bias from the run duration — fixed 2026-09-05, but
+  check the binary version first.** The probe used to compute
+  freshness as `time.Since(observed_at)` during aggregation, which
+  runs once AFTER the whole run, so every sample was charged the
+  distance from its own request to the end of the run: a median
+  bias of `SLA_PROBE_DURATION / 2`. On r1 at the 30 s default the
+  tip read ~15 s against a sub-second truth; at the 120 s duration
+  `configs/healthchecks/sla-probe.sh` recommends for
+  memory-pressured hosts it would have read ~60 s and paged
+  permanently. Freshness is now anchored to each sample's own
+  receipt instant (`probeSample.receivedAt`). If the deployed
+  binary predates that fix, subtract `run_duration_seconds / 2`
+  from the reading before believing it.
 - **Newly-listed asset** with low trading volume. Freshness can
   easily exceed the target if no one's trading the pair. Consider
   adding the asset to a "thin-pair allowlist" if this pattern is
@@ -154,6 +199,15 @@ reading the wrong key.
 
 ## Changelog
 
+- 2026-09-05 — freshness selector inverted to a positive matcher:
+  `{endpoint="price"} > 180 or {endpoint!="price"} > 30`. The old
+  `{endpoint!="price-tip"} > 180` arm handed `/v1/price`'s ADR-0015
+  closed-bucket exemption to every endpoint that merely was not the
+  tip, so the first other endpoint to publish an `observed_at`
+  would have inherited a bound six times the SLA. Added the
+  `computeTip` 30 s-escalation fallback as root cause 4 (the
+  identical-value-across-two-endpoints tell) and the pre-fix
+  run-duration measurement bias as a false-positive pattern.
 - 2026-08-29 — re-verified against HEAD (Wave I). The runbook
   claimed a universal 30 s target: real expr is two-armed —
   `price-tip > 30` OR every other endpoint `> 180` (`for: 30m`),

@@ -1,6 +1,6 @@
 ---
 title: Alerts Catalogue
-last_verified: 2026-09-04
+last_verified: 2026-09-05
 status: ratified — incremental growth
 ---
 
@@ -148,7 +148,7 @@ signal lands.
 | `stellarindex_systemd_unit_failed` | `node_systemd_unit_state{state="failed"}` (catch-all, minus dedicated-alert units) | in `failed` 15m | ticket | [systemd-unit-failed](runbooks/systemd-unit-failed.md) |
 | `stellarindex_timescale_cagg_stale` | `time() - stellarindex_cagg_last_refresh_unix` per CAGG | > 5× its refresh interval | ticket | [cagg-stale](runbooks/cagg-stale.md) |
 | `stellarindex_timescale_job_failures_climbing` | `increase(stellarindex_timescale_job_failures_total[6h])` per job | > 10 failures in 6h, 30m | informational | [timescale-job-failures-climbing](runbooks/timescale-job-failures-climbing.md) |
-| `stellarindex_timescale_compression_lag` | `stellarindex_uncompressed_chunks_older_than_7d` | > 0 for > 24 h | informational | [compression-lag](runbooks/compression-lag.md) |
+| `stellarindex_timescale_compression_lag` | `stellarindex_timescale_chunks_overdue_compression` | > 0 for > 24 h | informational | [compression-lag](runbooks/compression-lag.md) |
 | `stellarindex_timescale_backup_failed` | `min by (stanza)(pgbackrest_backup_since_last_completion_seconds{stanza!~"all-stanzas.*"})` | > 25 h for 5 min | ticket | [backup-failed](runbooks/backup-failed.md) |
 | `stellarindex_timescale_backup_none_24h` | same | > 24 h for 5 min | page | [backup-failed](runbooks/backup-failed.md) |
 | `stellarindex_pgbackrest_backup_metrics_absent` | `up{job="pgbackrest_exporter"} == 1 unless on (instance) pgbackrest_backup_since_last_completion_seconds{stanza!~"all-stanzas.*"}` | exporter up but no real-stanza backup series for 15 min — the two alerts above are structurally blind | page | [backup-failed](runbooks/backup-failed.md) |
@@ -213,7 +213,7 @@ counterparts to the API-plane alerts above.
 | Name | Metric | Condition | Severity | Runbook |
 | ---- | ------ | --------- | -------- | ------- |
 | `stellarindex_sla_probe_p95_breach` | `stellarindex_sla_probe_latency_ms{quantile="0.95"}` | > 200 ms for ≥ 30 min | page | [sla-probe-p95-breach](runbooks/sla-probe-p95-breach.md) |
-| `stellarindex_sla_probe_freshness_breach` | `stellarindex_sla_probe_freshness_sec` | > 30 s for ≥ 30 min | page | [sla-probe-freshness-breach](runbooks/sla-probe-freshness-breach.md) |
+| `stellarindex_sla_probe_freshness_breach` | `stellarindex_sla_probe_freshness_sec` | `endpoint="price"` > 180 s, every other endpoint > 30 s, for ≥ 30 min | page | [sla-probe-freshness-breach](runbooks/sla-probe-freshness-breach.md) |
 | `stellarindex_sla_probe_unit_failed_alert` | `stellarindex_sla_probe_unit_failed` | > 0 for ≥ 30 min | ticket | [sla-probe-unit-failed](runbooks/sla-probe-unit-failed.md) |
 | `stellarindex_sla_probe_stale` | `time() - stellarindex_sla_probe_last_pass_timestamp` | > 90 min for ≥ 5 min | page | [sla-probe-stale](runbooks/sla-probe-stale.md) |
 
@@ -653,7 +653,7 @@ settled by this table. Counts as of 2026-09-02: 21 rules —
 | `stellarindex_prometheus_scrape_failing` | meta | A scrape target has been down 2+ min; visibility into that subsystem is gone until it returns. | `needs-delivery` — on r1 this is the ONLY `up == 0` rule covering `stellarindex-indexer`, `stellarindex-aggregator`, `galexie`, `caddy` and `prometheus` (the API has a page, `node_exporter` a ticket, the four exporters their own pages). A dead scrape target silently stops every alert built on that target's metrics: the same blindness class as `stellarindex_metrics_registry_absent`. Noted in passing for whoever picks this up — r1 also scrapes an `alertmanager` job that no `up == 0` rule covers at any severity. |
 | `stellarindex_protocol_events_rollup_failing` | aggregator | The protocol-events rollup worker has been failing for 30+ min; `/v1/protocols` `events_24h` freezes at its last-good values. | `needs-delivery` — same shape as the asset-volume rollup: stuck worker, no sibling, stale numbers served as current. |
 | `stellarindex_stellar_archive_publish_fail` | stellar | stellar-core failed to publish a checkpoint to our history archive. | `silent-correct` — structurally inert: nothing in the tree emits `stellarindex_stellar_archive_publish_errors_total` (allow-listed as known-inert in `lint-metric-refs.sh`; no series on r1) and r1 publishes no history archive. It cannot fire, so delivery is moot. Re-triage when the emitter lands with Phase-3 (ADR-0004). |
-| `stellarindex_timescale_compression_lag` | storage | Chunks older than 7 days are still uncompressed after 24 h; the compression policy or the TimescaleDB job scheduler is misfiring. | `silent-correct` — conditional on the row below. The consequence is delivered (`stellarindex_zfs_pool_low_space` ticket, `stellarindex_zfs_pool_critical_space` page) and the root cause is `stellarindex_timescale_job_failures_climbing`, which this register recommends delivering. If that one stays silent, this one must not. |
+| `stellarindex_timescale_compression_lag` | storage | Chunks on one hypertable are still uncompressed 24 h after that hypertable's own `compress_after` plus a `schedule_interval` elapsed; the compression policy or the TimescaleDB job scheduler is misfiring. | `silent-correct` — conditional on the row below. The consequence is delivered (`stellarindex_zfs_pool_low_space` ticket, `stellarindex_zfs_pool_critical_space` page) and the root cause is `stellarindex_timescale_job_failures_climbing`, which this register recommends delivering. If that one stays silent, this one must not. |
 | `stellarindex_timescale_job_failures_climbing` | storage | More than 10 failed TimescaleDB background-job runs in 6 h on one hypertable. | `needs-delivery` — the rule's own description says the caggs still look fresh and no staleness ticket will fire, and that "this is exactly how the 2026 background-worker starvation stayed invisible". An alert written specifically to make a silent failure mode visible, then delivered nowhere. 72 series live on r1. |
 | `stellarindex_usage_rollup_failing` | api | The API's 5-minute usage-rollup sweeps (Redis scan or Timescale upsert) have failed for 30+ min; per-endpoint analytics and `/v1/account/usage` stop advancing. | `needs-delivery` — a stuck worker with a hard deadline: the counters survive in Redis on a 35-day TTL, after which the loss is permanent, and this is the per-customer usage surface. No sibling at any severity. |
 
