@@ -822,6 +822,104 @@ ORDER BY bucket;
 
 CREATE TABLE IF NOT EXISTS stellar.accounts_trustline_histogram_staging
 AS stellar.accounts_trustline_histogram;
+
+-- ── account_creators — see deploy/clickhouse/account_creators_rollup.sql ──
+-- Funder → created-account league table (#351), aggregated from the
+-- create_account arm of stellar.account_movements. funded_stroops and
+-- live_stroops are Int128 to match account_movements.amount; both are
+-- served as decimal strings (ADR-0003).
+CREATE TABLE IF NOT EXISTS stellar.account_creators_rollup
+(
+    rank             UInt32,
+    creator          String,
+    accounts_created UInt64,
+    funded_stroops   Int128,
+    live_accounts    UInt64,
+    live_stroops     Int128,
+    first_ledger     UInt32,
+    last_ledger      UInt32,
+    first_created_at DateTime('UTC'),
+    last_created_at  DateTime('UTC'),
+    computed_at      DateTime DEFAULT now()
+)
+ENGINE = MergeTree
+ORDER BY rank;
+
+CREATE TABLE IF NOT EXISTS stellar.account_creators_rollup_staging
+AS stellar.account_creators_rollup;
+
+-- Metric-keyed (adding a figure is an INSERT, not a migration). Carries
+-- the exact totals AND the data-derived coverage span the cycle read:
+-- creators_total, creations_total, live_accounts_total, from_ledger,
+-- thru_ledger, from_time, thru_time.
+CREATE TABLE IF NOT EXISTS stellar.account_creators_stats
+(
+    metric      String,
+    value       Int64,
+    computed_at DateTime DEFAULT now()
+)
+ENGINE = MergeTree
+ORDER BY metric;
+
+CREATE TABLE IF NOT EXISTS stellar.account_creators_stats_staging
+AS stellar.account_creators_stats;
+
+
+-- ── account_sponsors — see deploy/clickhouse/account_sponsors_rollup.sql ──
+-- Sponsor -> sponsored-account league table (#351), aggregated from the
+-- Begin/End/Revoke sponsorship operations in stellar.operations. The
+-- sponsored identity comes from the End operation's source_account, so
+-- no body_xdr is read. account_sponsors_ops is a per-cycle working
+-- table, not a served one.
+CREATE TABLE IF NOT EXISTS stellar.account_sponsors_ops
+(
+    lseq     UInt32,
+    tidx     UInt32,
+    oidx     UInt32,
+    otype    LowCardinality(String),
+    src      String,
+    ctime    DateTime('UTC')
+)
+ENGINE = MergeTree
+ORDER BY (lseq, tidx, oidx);
+
+CREATE TABLE IF NOT EXISTS stellar.account_sponsors_rollup
+(
+    rank                 UInt32,
+    sponsor              String,
+    -- Immutable history: sponsorship arrangements this account has
+    -- STARTED, and how many distinct accounts it has ever sponsored.
+    -- These only grow.
+    sponsorships_started UInt64,
+    distinct_sponsored   UInt64,
+    -- Revocations this account ISSUED (it was the source of a
+    -- RevokeSponsorship). Also history, and the reason sponsorships
+    -- started is not a count of sponsorships still in force.
+    revocations_issued   UInt64,
+    first_ledger         UInt32,
+    last_ledger          UInt32,
+    first_seen_at        DateTime('UTC'),
+    last_seen_at         DateTime('UTC'),
+    computed_at          DateTime DEFAULT now()
+)
+ENGINE = MergeTree
+ORDER BY rank;
+
+CREATE TABLE IF NOT EXISTS stellar.account_sponsors_rollup_staging
+AS stellar.account_sponsors_rollup;
+
+CREATE TABLE IF NOT EXISTS stellar.account_sponsors_stats
+(
+    metric      String,
+    value       Int64,
+    computed_at DateTime DEFAULT now()
+)
+ENGINE = MergeTree
+ORDER BY metric;
+
+CREATE TABLE IF NOT EXISTS stellar.account_sponsors_stats_staging
+AS stellar.account_sponsors_stats;
+
 -- contract_instance_changes — per-contract instance-executable timeline
 -- index for the explorer's code-history + wasm reads (open-fixes
 -- inventory #26 items 3 + wasm; route sweeps 2026-07-29 → 2026-08-09:

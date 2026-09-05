@@ -291,6 +291,16 @@ type ExplorerReader interface {
 	// AccountsStats is the /accounts hub analytics snapshot (rollup-
 	// backed; ok=false while the rollup hasn't completed a cycle).
 	AccountsStats(ctx context.Context) (clickhouse.AccountsStats, bool, error)
+	// AccountCreators is the account-creator league table plus the
+	// ledger span the cycle that built it actually aggregated (#351).
+	// ok=false while the rollup hasn't completed a cycle, or when it
+	// carries a board with no span to qualify it.
+	AccountCreators(ctx context.Context, limit int) (clickhouse.AccountCreators, bool, error)
+	// AccountSponsors is the sponsor league table plus the ledger span
+	// the cycle that built it aggregated (#351). History only — it never
+	// carries a live sponsored set. ok=false while the rollup hasn't
+	// completed a cycle, or when it carries a board with no span.
+	AccountSponsors(ctx context.Context, limit int) (clickhouse.AccountSponsors, bool, error)
 	// ContractActivitySummaryFor is the per-contract liveness card
 	// (first/last seen + daily active-ledger series; ok=false when the
 	// active-ledgers index isn't usable — callers omit the card).

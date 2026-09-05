@@ -131,6 +131,18 @@ func TestPolicyForPath_PinsDirectives(t *testing.T) {
 		// data keyed on the query-string address list).
 		{"/v1/directory", "public, max-age=60, s-maxage=300"},
 
+		// Account-creator league table (#351) — a rollup snapshot of
+		// network-wide aggregate reference data, so it takes the public
+		// catalogue band while the per-account surface around it stays
+		// private. Exact path only: anything deeper must fall through to
+		// the conservative default, or a future /v1/accounts/creators/{g}
+		// per-account drill-down would inherit a public policy nobody
+		// chose for it.
+		{"/v1/accounts/creators", "public, max-age=60, s-maxage=300"},
+		{"/v1/accounts/creators/extra", "private, no-store"},
+		{"/v1/accounts/sponsors", "public, max-age=60, s-maxage=300"},
+		{"/v1/accounts/sponsors/extra", "private, no-store"},
+
 		// Diagnostics — operator-facing live data, never CDN-cached
 		{"/v1/diagnostics/cursors", "private, no-cache, must-revalidate"},
 		{"/v1/diagnostics/archive", "private, no-cache, must-revalidate"},

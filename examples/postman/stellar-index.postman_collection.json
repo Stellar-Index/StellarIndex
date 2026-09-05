@@ -37328,6 +37328,380 @@
           ]
         },
         {
+          "name": "creators",
+          "description": "",
+          "item": [
+            {
+              "name": "Account creators — which accounts brought the most other accounts into existence.",
+              "request": {
+                "name": "Account creators — which accounts brought the most other accounts into existence.",
+                "description": {
+                  "content": "The account-creator league table, precomputed by a rollup cycle over\nthe `create_account` arm of the classic-movement archive\n(`computed_at` stamps the cycle). One row per funding account:\nhow many accounts it created, the starting balances it paid, and how\nmuch of that created set still exists and what it holds now.\n\nTWO KINDS OF FIGURE, and they are not interchangeable.\n`accounts_created` and `funded_stroops` are immutable history — a\ncreation never un-happens, so they only grow. `live_accounts` and\n`live_stroops` are point-in-time as of `computed_at`: created\naccounts merge away and balances move.\n\n`funded_stroops` of `\"0\"` is a real value, not a gap. Since CAP-33\nsponsored reserves an account can be created with no XLM of its own,\nwith a sponsor covering the reserve.\n\nCOVERAGE. `coverage` reports the ledger span the cycle actually\naggregated — min/max over the creation rows it read, never a\nconstant and never genesis by assumption. Read the counts as\ncovering that span and nothing wider; compare `thru_ledger` against\nthe tip to see how current the snapshot is.\n\nSCOPE. This is the creator relationship only: funder → created\naccount, from the `CreateAccount` operation. It is NOT sponsorship.\nWho currently pays an entry's base reserve is a different question\nover a different source (`LedgerEntry.ext.v1.sponsoringID`) and is\nnot served by this API yet — nothing here should be read as a\nsponsorship figure.\n\nOrdered by `accounts_created` descending, ties broken by account id,\nso the ranking is stable across cycles. `totals` describe the whole\naggregation, not the returned page.\n\n503 with type `account-creators-warming` until the rollup's first\ncycle completes on a fresh deployment, and whenever the snapshot\ncarries a board with no coverage span to qualify it.\n\nServed with `public, max-age=60` (`s-maxage=300` behind the CDN).\n",
+                  "type": "text/plain"
+                },
+                "url": {
+                  "path": [
+                    "accounts",
+                    "creators"
+                  ],
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "query": [
+                    {
+                      "disabled": false,
+                      "description": {
+                        "content": "Board rows to return, 1-500. Defaults to 50.",
+                        "type": "text/plain"
+                      },
+                      "key": "limit",
+                      "value": "50"
+                    }
+                  ],
+                  "variable": []
+                },
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  }
+                ],
+                "method": "GET",
+                "body": {},
+                "auth": null
+              },
+              "response": [
+                {
+                  "name": "The current creator board, its totals, and the span they cover.",
+                  "originalRequest": {
+                    "url": {
+                      "path": [
+                        "accounts",
+                        "creators"
+                      ],
+                      "host": [
+                        "{{baseUrl}}"
+                      ],
+                      "query": [
+                        {
+                          "disabled": false,
+                          "description": {
+                            "content": "Board rows to return, 1-500. Defaults to 50.",
+                            "type": "text/plain"
+                          },
+                          "key": "limit",
+                          "value": "50"
+                        }
+                      ],
+                      "variable": []
+                    },
+                    "header": [
+                      {
+                        "key": "Accept",
+                        "value": "application/json"
+                      }
+                    ],
+                    "method": "GET",
+                    "body": {}
+                  },
+                  "status": "OK",
+                  "code": 200,
+                  "header": [
+                    {
+                      "key": "Content-Type",
+                      "value": "application/json"
+                    }
+                  ],
+                  "body": "{\n  \"data\": {\n    \"creators\": [\n      {\n        \"rank\": \"<integer>\",\n        \"account\": \"<string>\",\n        \"accounts_created\": \"<long>\",\n        \"funded_stroops\": \"<string>\",\n        \"live_accounts\": \"<long>\",\n        \"live_stroops\": \"<string>\",\n        \"first_ledger\": \"<integer>\",\n        \"last_ledger\": \"<integer>\",\n        \"first_created_at\": \"<dateTime>\",\n        \"last_created_at\": \"<dateTime>\"\n      },\n      {\n        \"rank\": \"<integer>\",\n        \"account\": \"<string>\",\n        \"accounts_created\": \"<long>\",\n        \"funded_stroops\": \"<string>\",\n        \"live_accounts\": \"<long>\",\n        \"live_stroops\": \"<string>\",\n        \"first_ledger\": \"<integer>\",\n        \"last_ledger\": \"<integer>\",\n        \"first_created_at\": \"<dateTime>\",\n        \"last_created_at\": \"<dateTime>\"\n      }\n    ],\n    \"totals\": {\n      \"creators\": \"<long>\",\n      \"accounts_created\": \"<long>\",\n      \"live_accounts\": \"<long>\"\n    },\n    \"coverage\": {\n      \"from_ledger\": \"<integer>\",\n      \"thru_ledger\": \"<integer>\",\n      \"from_time\": \"<dateTime>\",\n      \"thru_time\": \"<dateTime>\"\n    },\n    \"computed_at\": \"<dateTime>\"\n  }\n}",
+                  "cookie": [],
+                  "_postman_previewlanguage": "json"
+                },
+                {
+                  "name": "Client-supplied parameters didn't validate.",
+                  "originalRequest": {
+                    "url": {
+                      "path": [
+                        "accounts",
+                        "creators"
+                      ],
+                      "host": [
+                        "{{baseUrl}}"
+                      ],
+                      "query": [
+                        {
+                          "disabled": false,
+                          "description": {
+                            "content": "Board rows to return, 1-500. Defaults to 50.",
+                            "type": "text/plain"
+                          },
+                          "key": "limit",
+                          "value": "50"
+                        }
+                      ],
+                      "variable": []
+                    },
+                    "header": [
+                      {
+                        "key": "Accept",
+                        "value": "application/problem+json"
+                      }
+                    ],
+                    "method": "GET",
+                    "body": {}
+                  },
+                  "status": "Bad Request",
+                  "code": 400,
+                  "header": [
+                    {
+                      "key": "Content-Type",
+                      "value": "application/problem+json"
+                    }
+                  ],
+                  "body": "{\n  \"type\": \"<uri>\",\n  \"title\": \"<string>\",\n  \"status\": \"<integer>\",\n  \"detail\": \"<string>\",\n  \"instance\": \"<string>\",\n  \"request_id\": \"<string>\",\n  \"coverage_from\": \"<dateTime>\",\n  \"outside_coverage\": \"<boolean>\"\n}",
+                  "cookie": [],
+                  "_postman_previewlanguage": "json"
+                },
+                {
+                  "name": "Server is degraded (dependency outage, startup, shutdown).",
+                  "originalRequest": {
+                    "url": {
+                      "path": [
+                        "accounts",
+                        "creators"
+                      ],
+                      "host": [
+                        "{{baseUrl}}"
+                      ],
+                      "query": [
+                        {
+                          "disabled": false,
+                          "description": {
+                            "content": "Board rows to return, 1-500. Defaults to 50.",
+                            "type": "text/plain"
+                          },
+                          "key": "limit",
+                          "value": "50"
+                        }
+                      ],
+                      "variable": []
+                    },
+                    "header": [
+                      {
+                        "key": "Accept",
+                        "value": "application/problem+json"
+                      }
+                    ],
+                    "method": "GET",
+                    "body": {}
+                  },
+                  "status": "Service Unavailable",
+                  "code": 503,
+                  "header": [
+                    {
+                      "key": "Content-Type",
+                      "value": "application/problem+json"
+                    }
+                  ],
+                  "body": "{\n  \"type\": \"<uri>\",\n  \"title\": \"<string>\",\n  \"status\": \"<integer>\",\n  \"detail\": \"<string>\",\n  \"instance\": \"<string>\",\n  \"request_id\": \"<string>\",\n  \"coverage_from\": \"<dateTime>\",\n  \"outside_coverage\": \"<boolean>\"\n}",
+                  "cookie": [],
+                  "_postman_previewlanguage": "json"
+                }
+              ],
+              "event": [],
+              "protocolProfileBehavior": {
+                "disableBodyPruning": true
+              }
+            }
+          ]
+        },
+        {
+          "name": "sponsors",
+          "description": "",
+          "item": [
+            {
+              "name": "Account sponsors — which accounts have paid other accounts' base reserves.",
+              "request": {
+                "name": "Account sponsors — which accounts have paid other accounts' base reserves.",
+                "description": {
+                  "content": "The sponsor league table, precomputed by a rollup cycle over the\n`BeginSponsoringFutureReserves`, `EndSponsoringFutureReserves` and\n`RevokeSponsorship` operations (`computed_at` stamps the cycle). One\nrow per sponsoring account: how many sponsorship arrangements it has\nstarted, how many distinct accounts those covered, and how many\nrevocations it has issued.\n\nEVERYTHING HERE IS HISTORY, NOT LIVE STATE. These figures come from\nreplaying sponsorship OPERATIONS, so they say what an account has\ndone, never what is currently in force. An arrangement also lapses\nwhen the sponsored entry is deleted or the sponsored account merges\naway, and neither emits a sponsorship operation — so a \"currently\nsponsoring\" count derived from this source would OVERSTATE, and none\nis served. Observing the live set requires the `sponsoringID` carried\ninside each ledger entry, which this API does not expose.\n\n`sponsorships_started` and `distinct_sponsored` differ sharply when a\nsponsor re-sponsors the same accounts repeatedly, which is common;\nneither is a substitute for the other. `revocations_issued` is a\nLOWER BOUND on arrangements that ended, for the reason above.\n\nCOVERAGE. `coverage` reports the ledger span the cycle actually\naggregated. Its floor is protocol 14's activation, where sponsorship\nwas introduced on the network — the feature's own genesis, not a gap\nin what was indexed. `ambiguous_transactions` counts transactions\ncarrying more than one distinct sponsor; those are excluded from\nper-sponsor attribution and the count is published so the exclusion\nis visible.\n\nThis is the counterpart of `/accounts/creators`. The two answer\ndifferent questions — creation is immutable and one-off, sponsorship\nis revocable and repeatable — and an account may rank on both. Do not\nsum them.\n\n503 with type `account-sponsors-warming` until the rollup's first\ncycle completes, and whenever the snapshot carries a board with no\ncoverage span to qualify it.\n\nServed with `public, max-age=60` (`s-maxage=300` behind the CDN).\n",
+                  "type": "text/plain"
+                },
+                "url": {
+                  "path": [
+                    "accounts",
+                    "sponsors"
+                  ],
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "query": [
+                    {
+                      "disabled": false,
+                      "description": {
+                        "content": "Board rows to return, 1-500. Defaults to 50.",
+                        "type": "text/plain"
+                      },
+                      "key": "limit",
+                      "value": "50"
+                    }
+                  ],
+                  "variable": []
+                },
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  }
+                ],
+                "method": "GET",
+                "body": {},
+                "auth": null
+              },
+              "response": [
+                {
+                  "name": "The current sponsor board, its totals, and the span they cover.",
+                  "originalRequest": {
+                    "url": {
+                      "path": [
+                        "accounts",
+                        "sponsors"
+                      ],
+                      "host": [
+                        "{{baseUrl}}"
+                      ],
+                      "query": [
+                        {
+                          "disabled": false,
+                          "description": {
+                            "content": "Board rows to return, 1-500. Defaults to 50.",
+                            "type": "text/plain"
+                          },
+                          "key": "limit",
+                          "value": "50"
+                        }
+                      ],
+                      "variable": []
+                    },
+                    "header": [
+                      {
+                        "key": "Accept",
+                        "value": "application/json"
+                      }
+                    ],
+                    "method": "GET",
+                    "body": {}
+                  },
+                  "status": "OK",
+                  "code": 200,
+                  "header": [
+                    {
+                      "key": "Content-Type",
+                      "value": "application/json"
+                    }
+                  ],
+                  "body": "{\n  \"data\": {\n    \"sponsors\": [\n      {\n        \"rank\": \"<integer>\",\n        \"account\": \"<string>\",\n        \"sponsorships_started\": \"<long>\",\n        \"distinct_sponsored\": \"<long>\",\n        \"revocations_issued\": \"<long>\",\n        \"first_ledger\": \"<integer>\",\n        \"last_ledger\": \"<integer>\",\n        \"first_seen_at\": \"<dateTime>\",\n        \"last_seen_at\": \"<dateTime>\"\n      },\n      {\n        \"rank\": \"<integer>\",\n        \"account\": \"<string>\",\n        \"sponsorships_started\": \"<long>\",\n        \"distinct_sponsored\": \"<long>\",\n        \"revocations_issued\": \"<long>\",\n        \"first_ledger\": \"<integer>\",\n        \"last_ledger\": \"<integer>\",\n        \"first_seen_at\": \"<dateTime>\",\n        \"last_seen_at\": \"<dateTime>\"\n      }\n    ],\n    \"totals\": {\n      \"sponsors\": \"<long>\",\n      \"sponsorships_started\": \"<long>\",\n      \"distinct_sponsored\": \"<long>\",\n      \"revocations_issued\": \"<long>\"\n    },\n    \"coverage\": {\n      \"from_ledger\": \"<integer>\",\n      \"thru_ledger\": \"<integer>\",\n      \"from_time\": \"<dateTime>\",\n      \"thru_time\": \"<dateTime>\",\n      \"ambiguous_transactions\": \"<long>\"\n    },\n    \"computed_at\": \"<dateTime>\"\n  }\n}",
+                  "cookie": [],
+                  "_postman_previewlanguage": "json"
+                },
+                {
+                  "name": "Client-supplied parameters didn't validate.",
+                  "originalRequest": {
+                    "url": {
+                      "path": [
+                        "accounts",
+                        "sponsors"
+                      ],
+                      "host": [
+                        "{{baseUrl}}"
+                      ],
+                      "query": [
+                        {
+                          "disabled": false,
+                          "description": {
+                            "content": "Board rows to return, 1-500. Defaults to 50.",
+                            "type": "text/plain"
+                          },
+                          "key": "limit",
+                          "value": "50"
+                        }
+                      ],
+                      "variable": []
+                    },
+                    "header": [
+                      {
+                        "key": "Accept",
+                        "value": "application/problem+json"
+                      }
+                    ],
+                    "method": "GET",
+                    "body": {}
+                  },
+                  "status": "Bad Request",
+                  "code": 400,
+                  "header": [
+                    {
+                      "key": "Content-Type",
+                      "value": "application/problem+json"
+                    }
+                  ],
+                  "body": "{\n  \"type\": \"<uri>\",\n  \"title\": \"<string>\",\n  \"status\": \"<integer>\",\n  \"detail\": \"<string>\",\n  \"instance\": \"<string>\",\n  \"request_id\": \"<string>\",\n  \"coverage_from\": \"<dateTime>\",\n  \"outside_coverage\": \"<boolean>\"\n}",
+                  "cookie": [],
+                  "_postman_previewlanguage": "json"
+                },
+                {
+                  "name": "Server is degraded (dependency outage, startup, shutdown).",
+                  "originalRequest": {
+                    "url": {
+                      "path": [
+                        "accounts",
+                        "sponsors"
+                      ],
+                      "host": [
+                        "{{baseUrl}}"
+                      ],
+                      "query": [
+                        {
+                          "disabled": false,
+                          "description": {
+                            "content": "Board rows to return, 1-500. Defaults to 50.",
+                            "type": "text/plain"
+                          },
+                          "key": "limit",
+                          "value": "50"
+                        }
+                      ],
+                      "variable": []
+                    },
+                    "header": [
+                      {
+                        "key": "Accept",
+                        "value": "application/problem+json"
+                      }
+                    ],
+                    "method": "GET",
+                    "body": {}
+                  },
+                  "status": "Service Unavailable",
+                  "code": 503,
+                  "header": [
+                    {
+                      "key": "Content-Type",
+                      "value": "application/problem+json"
+                    }
+                  ],
+                  "body": "{\n  \"type\": \"<uri>\",\n  \"title\": \"<string>\",\n  \"status\": \"<integer>\",\n  \"detail\": \"<string>\",\n  \"instance\": \"<string>\",\n  \"request_id\": \"<string>\",\n  \"coverage_from\": \"<dateTime>\",\n  \"outside_coverage\": \"<boolean>\"\n}",
+                  "cookie": [],
+                  "_postman_previewlanguage": "json"
+                }
+              ],
+              "event": [],
+              "protocolProfileBehavior": {
+                "disableBodyPruning": true
+              }
+            }
+          ]
+        },
+        {
           "name": "{g_strkey}",
           "description": "",
           "item": [
@@ -37914,7 +38288,7 @@
                           "value": "application/json"
                         }
                       ],
-                      "body": "{\n  \"data\": {\n    \"account\": \"<string>\",\n    \"operations\": [\n      {\n        \"ledger\": \"<integer>\",\n        \"close_time\": \"<dateTime>\",\n        \"tx_hash\": \"<string>\",\n        \"tx_index\": \"<integer>\",\n        \"op_index\": \"<integer>\",\n        \"type\": \"<string>\",\n        \"source_account\": \"<string>\",\n        \"fields\": {\n          \"key_0\": false\n        },\n        \"raw_xdr\": \"<string>\",\n        \"transaction_successful\": \"<boolean>\",\n        \"transaction_result\": \"<string>\",\n        \"result_code\": \"<integer>\",\n        \"result\": \"<string>\"\n      },\n      {\n        \"ledger\": \"<integer>\",\n        \"close_time\": \"<dateTime>\",\n        \"tx_hash\": \"<string>\",\n        \"tx_index\": \"<integer>\",\n        \"op_index\": \"<integer>\",\n        \"type\": \"<string>\",\n        \"source_account\": \"<string>\",\n        \"fields\": {\n          \"key_0\": 2674.9280653893948\n        },\n        \"raw_xdr\": \"<string>\",\n        \"transaction_successful\": \"<boolean>\",\n        \"transaction_result\": \"<string>\",\n        \"result_code\": \"<integer>\",\n        \"result\": \"<string>\"\n      }\n    ],\n    \"next_cursor\": \"<string>\",\n    \"scope\": \"all\",\n    \"coverage_note\": \"<string>\"\n  }\n}",
+                      "body": "{\n  \"data\": {\n    \"account\": \"<string>\",\n    \"operations\": [\n      {\n        \"ledger\": \"<integer>\",\n        \"close_time\": \"<dateTime>\",\n        \"tx_hash\": \"<string>\",\n        \"tx_index\": \"<integer>\",\n        \"op_index\": \"<integer>\",\n        \"type\": \"<string>\",\n        \"source_account\": \"<string>\",\n        \"fields\": {\n          \"key_0\": false,\n          \"key_1\": true,\n          \"key_2\": false\n        },\n        \"raw_xdr\": \"<string>\",\n        \"transaction_successful\": \"<boolean>\",\n        \"transaction_result\": \"<string>\",\n        \"result_code\": \"<integer>\",\n        \"result\": \"<string>\"\n      },\n      {\n        \"ledger\": \"<integer>\",\n        \"close_time\": \"<dateTime>\",\n        \"tx_hash\": \"<string>\",\n        \"tx_index\": \"<integer>\",\n        \"op_index\": \"<integer>\",\n        \"type\": \"<string>\",\n        \"source_account\": \"<string>\",\n        \"fields\": {\n          \"key_0\": 4119,\n          \"key_1\": \"string\"\n        },\n        \"raw_xdr\": \"<string>\",\n        \"transaction_successful\": \"<boolean>\",\n        \"transaction_result\": \"<string>\",\n        \"result_code\": \"<integer>\",\n        \"result\": \"<string>\"\n      }\n    ],\n    \"next_cursor\": \"<string>\",\n    \"scope\": \"all\",\n    \"coverage_note\": \"<string>\"\n  }\n}",
                       "cookie": [],
                       "_postman_previewlanguage": "json"
                     },
@@ -38114,7 +38488,7 @@
                             "type": "text/plain"
                           },
                           "key": "direction",
-                          "value": "sent"
+                          "value": "received"
                         },
                         {
                           "disabled": false,
@@ -38197,7 +38571,7 @@
                                 "type": "text/plain"
                               },
                               "key": "direction",
-                              "value": "sent"
+                              "value": "received"
                             },
                             {
                               "disabled": false,
@@ -38239,7 +38613,7 @@
                           "value": "application/json"
                         }
                       ],
-                      "body": "{\n  \"data\": {\n    \"account\": \"<string>\",\n    \"movements\": [\n      {\n        \"ledger\": \"<integer>\",\n        \"ledger_close_time\": \"<dateTime>\",\n        \"tx_hash\": \"<string>\",\n        \"op_index\": \"<integer>\",\n        \"leg_index\": \"<integer>\",\n        \"movement_kind\": \"<string>\",\n        \"direction\": \"received\",\n        \"asset\": \"<string>\",\n        \"amount\": \"<string>\",\n        \"provenance\": \"classic_derived\",\n        \"counterparty\": \"<string>\",\n        \"attributes\": {\n          \"key_0\": \"string\"\n        }\n      },\n      {\n        \"ledger\": \"<integer>\",\n        \"ledger_close_time\": \"<dateTime>\",\n        \"tx_hash\": \"<string>\",\n        \"op_index\": \"<integer>\",\n        \"leg_index\": \"<integer>\",\n        \"movement_kind\": \"<string>\",\n        \"direction\": \"received\",\n        \"asset\": \"<string>\",\n        \"amount\": \"<string>\",\n        \"provenance\": \"cap67_event\",\n        \"counterparty\": \"<string>\",\n        \"attributes\": {\n          \"key_0\": 6927.24401364103,\n          \"key_1\": 2714,\n          \"key_2\": 6484\n        }\n      }\n    ],\n    \"next_cursor\": \"<string>\",\n    \"coverage_note\": \"<string>\"\n  }\n}",
+                      "body": "{\n  \"data\": {\n    \"account\": \"<string>\",\n    \"movements\": [\n      {\n        \"ledger\": \"<integer>\",\n        \"ledger_close_time\": \"<dateTime>\",\n        \"tx_hash\": \"<string>\",\n        \"op_index\": \"<integer>\",\n        \"leg_index\": \"<integer>\",\n        \"movement_kind\": \"<string>\",\n        \"direction\": \"sent\",\n        \"asset\": \"<string>\",\n        \"amount\": \"<string>\",\n        \"provenance\": \"classic_derived\",\n        \"counterparty\": \"<string>\",\n        \"attributes\": {\n          \"key_0\": false\n        }\n      },\n      {\n        \"ledger\": \"<integer>\",\n        \"ledger_close_time\": \"<dateTime>\",\n        \"tx_hash\": \"<string>\",\n        \"op_index\": \"<integer>\",\n        \"leg_index\": \"<integer>\",\n        \"movement_kind\": \"<string>\",\n        \"direction\": \"self\",\n        \"asset\": \"<string>\",\n        \"amount\": \"<string>\",\n        \"provenance\": \"classic_derived\",\n        \"counterparty\": \"<string>\",\n        \"attributes\": {\n          \"key_0\": \"string\",\n          \"key_1\": 2925.9027959778905\n        }\n      }\n    ],\n    \"next_cursor\": \"<string>\",\n    \"coverage_note\": \"<string>\"\n  }\n}",
                       "cookie": [],
                       "_postman_previewlanguage": "json"
                     },
@@ -38290,7 +38664,7 @@
                                 "type": "text/plain"
                               },
                               "key": "direction",
-                              "value": "sent"
+                              "value": "received"
                             },
                             {
                               "disabled": false,
@@ -38383,7 +38757,7 @@
                                 "type": "text/plain"
                               },
                               "key": "direction",
-                              "value": "sent"
+                              "value": "received"
                             },
                             {
                               "disabled": false,
@@ -38546,7 +38920,7 @@
                           "value": "application/json"
                         }
                       ],
-                      "body": "{\n  \"data\": {\n    \"account\": \"<string>\",\n    \"positions\": [\n      {\n        \"protocol\": \"blend\",\n        \"position_kind\": \"backstop_shares\",\n        \"venue\": \"<string>\",\n        \"amount\": \"<string>\",\n        \"amount_semantics\": \"signed_delta_sum_unconfirmed_unit\",\n        \"last_activity\": {\n          \"ledger\": \"<integer>\",\n          \"time\": \"<dateTime>\"\n        },\n        \"basis\": \"event_derived\",\n        \"venue_label\": \"<string>\",\n        \"assets\": [\n          \"<string>\",\n          \"<string>\"\n        ]\n      },\n      {\n        \"protocol\": \"aquarius\",\n        \"position_kind\": \"backstop_shares\",\n        \"venue\": \"<string>\",\n        \"amount\": \"<string>\",\n        \"amount_semantics\": \"stateful_current\",\n        \"last_activity\": {\n          \"ledger\": \"<integer>\",\n          \"time\": \"<dateTime>\"\n        },\n        \"basis\": \"stateful\",\n        \"venue_label\": \"<string>\",\n        \"assets\": [\n          \"<string>\",\n          \"<string>\"\n        ]\n      }\n    ],\n    \"include_closed\": \"<boolean>\",\n    \"note\": \"<string>\",\n    \"coverage_note\": \"<string>\"\n  }\n}",
+                      "body": "{\n  \"data\": {\n    \"account\": \"<string>\",\n    \"positions\": [\n      {\n        \"protocol\": \"defindex\",\n        \"position_kind\": \"lending_borrow\",\n        \"venue\": \"<string>\",\n        \"amount\": \"<string>\",\n        \"amount_semantics\": \"stateful_current\",\n        \"last_activity\": {\n          \"ledger\": \"<integer>\",\n          \"time\": \"<dateTime>\"\n        },\n        \"basis\": \"event_derived\",\n        \"venue_label\": \"<string>\",\n        \"assets\": [\n          \"<string>\",\n          \"<string>\"\n        ]\n      },\n      {\n        \"protocol\": \"phoenix\",\n        \"position_kind\": \"lending_borrow\",\n        \"venue\": \"<string>\",\n        \"amount\": \"<string>\",\n        \"amount_semantics\": \"shares\",\n        \"last_activity\": {\n          \"ledger\": \"<integer>\",\n          \"time\": \"<dateTime>\"\n        },\n        \"basis\": \"stateful\",\n        \"venue_label\": \"<string>\",\n        \"assets\": [\n          \"<string>\",\n          \"<string>\"\n        ]\n      }\n    ],\n    \"include_closed\": \"<boolean>\",\n    \"note\": \"<string>\",\n    \"coverage_note\": \"<string>\"\n  }\n}",
                       "cookie": [],
                       "_postman_previewlanguage": "json"
                     },
@@ -38799,7 +39173,7 @@
                           "value": "application/json"
                         }
                       ],
-                      "body": "{\n  \"data\": {\n    \"account\": \"<string>\",\n    \"trades\": [\n      {\n        \"ts\": \"<dateTime>\",\n        \"source\": \"<string>\",\n        \"base_asset\": \"<string>\",\n        \"quote_asset\": \"<string>\",\n        \"base_amount\": \"<string>\",\n        \"quote_amount\": \"<string>\",\n        \"tx_hash\": \"<string>\",\n        \"ledger\": \"<integer>\",\n        \"op_index\": \"<integer>\",\n        \"role\": \"maker\",\n        \"usd_volume\": \"<string>\",\n        \"counterparty\": \"<string>\",\n        \"routed_via\": \"<string>\"\n      },\n      {\n        \"ts\": \"<dateTime>\",\n        \"source\": \"<string>\",\n        \"base_asset\": \"<string>\",\n        \"quote_asset\": \"<string>\",\n        \"base_amount\": \"<string>\",\n        \"quote_amount\": \"<string>\",\n        \"tx_hash\": \"<string>\",\n        \"ledger\": \"<integer>\",\n        \"op_index\": \"<integer>\",\n        \"role\": \"maker\",\n        \"usd_volume\": \"<string>\",\n        \"counterparty\": \"<string>\",\n        \"routed_via\": \"<string>\"\n      }\n    ],\n    \"note\": \"<string>\",\n    \"next_cursor\": \"<string>\"\n  }\n}",
+                      "body": "{\n  \"data\": {\n    \"account\": \"<string>\",\n    \"trades\": [\n      {\n        \"ts\": \"<dateTime>\",\n        \"source\": \"<string>\",\n        \"base_asset\": \"<string>\",\n        \"quote_asset\": \"<string>\",\n        \"base_amount\": \"<string>\",\n        \"quote_amount\": \"<string>\",\n        \"tx_hash\": \"<string>\",\n        \"ledger\": \"<integer>\",\n        \"op_index\": \"<integer>\",\n        \"role\": \"taker\",\n        \"usd_volume\": \"<string>\",\n        \"counterparty\": \"<string>\",\n        \"routed_via\": \"<string>\"\n      },\n      {\n        \"ts\": \"<dateTime>\",\n        \"source\": \"<string>\",\n        \"base_asset\": \"<string>\",\n        \"quote_asset\": \"<string>\",\n        \"base_amount\": \"<string>\",\n        \"quote_amount\": \"<string>\",\n        \"tx_hash\": \"<string>\",\n        \"ledger\": \"<integer>\",\n        \"op_index\": \"<integer>\",\n        \"role\": \"taker\",\n        \"usd_volume\": \"<string>\",\n        \"counterparty\": \"<string>\",\n        \"routed_via\": \"<string>\"\n      }\n    ],\n    \"note\": \"<string>\",\n    \"next_cursor\": \"<string>\"\n  }\n}",
                       "cookie": [],
                       "_postman_previewlanguage": "json"
                     },
@@ -39225,7 +39599,7 @@
                   "value": "application/json"
                 }
               ],
-              "body": "{\n  \"data\": {\n    \"entries\": {\n      \"key_0\": {\n        \"name\": \"<string>\",\n        \"tags\": [\n          \"<string>\",\n          \"<string>\"\n        ],\n        \"source\": \"<string>\",\n        \"domain\": \"<string>\"\n      },\n      \"key_1\": {\n        \"name\": \"<string>\",\n        \"tags\": [\n          \"<string>\",\n          \"<string>\"\n        ],\n        \"source\": \"<string>\",\n        \"domain\": \"<string>\"\n      },\n      \"key_2\": {\n        \"name\": \"<string>\",\n        \"tags\": [\n          \"<string>\",\n          \"<string>\"\n        ],\n        \"source\": \"<string>\",\n        \"domain\": \"<string>\"\n      }\n    }\n  }\n}",
+              "body": "{\n  \"data\": {\n    \"entries\": {\n      \"key_0\": {\n        \"name\": \"<string>\",\n        \"tags\": [\n          \"<string>\",\n          \"<string>\"\n        ],\n        \"source\": \"<string>\",\n        \"domain\": \"<string>\"\n      },\n      \"key_1\": {\n        \"name\": \"<string>\",\n        \"tags\": [\n          \"<string>\",\n          \"<string>\"\n        ],\n        \"source\": \"<string>\",\n        \"domain\": \"<string>\"\n      }\n    }\n  }\n}",
               "cookie": [],
               "_postman_previewlanguage": "json"
             },
@@ -39408,7 +39782,7 @@
                   "value": "application/json"
                 }
               ],
-              "body": "{\n  \"data\": {\n    \"query\": \"<string>\",\n    \"kind\": \"account\",\n    \"canonical\": \"<string>\",\n    \"href\": \"<string>\",\n    \"supported\": \"<boolean>\",\n    \"note\": \"<string>\"\n  }\n}",
+              "body": "{\n  \"data\": {\n    \"query\": \"<string>\",\n    \"kind\": \"unknown\",\n    \"canonical\": \"<string>\",\n    \"href\": \"<string>\",\n    \"supported\": \"<boolean>\",\n    \"note\": \"<string>\"\n  }\n}",
               "cookie": [],
               "_postman_previewlanguage": "json"
             },

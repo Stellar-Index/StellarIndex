@@ -37,12 +37,12 @@ fix corrected one binary instead of the blind spot.
   **v0.46.1** — two releases of drift, invisible because *a deploy that
   never touches a binary still exits 0*.
 
-`stellarindex-ops` is not a bystander. Thirteen units on r1 exec it:
+`stellarindex-ops` is not a bystander. Fifteen units on r1 exec it:
 
 | Kind | Units |
 | ---- | ----- |
 | Data-integrity gates | `verify-archive-tier-a`, `verify-archive-tier-b`, `archive-completeness`, `ch-schema-drift`, `ch-schema-snapshot`, `restore-drill` |
-| Served-tier writers | `census-rollup`, `holders-rollup`, `supply-snapshot`, `sep1-refresh`, `directory-sync`, `cap67-movements` |
+| Served-tier writers | `census-rollup`, `holders-rollup`, `creators-rollup`, `sponsors-rollup`, `supply-snapshot`, `sep1-refresh`, `directory-sync`, `cap67-movements` |
 | Storage maintenance | `galexie-archive-trim` |
 
 - **2026-08-28, found by this probe on its first run.**

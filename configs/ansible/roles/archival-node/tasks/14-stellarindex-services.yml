@@ -768,6 +768,10 @@
     # retired below.
     - holders-rollup.service
     - holders-rollup.timer
+    - creators-rollup.service
+    - creators-rollup.timer
+    - sponsors-rollup.service
+    - sponsors-rollup.timer
     - census-rollup.service
     - census-rollup.timer
     - compute-completeness.service
@@ -811,6 +815,8 @@
     - sep1-refresh.timer
     - directory-sync.timer
     - holders-rollup.timer
+    - creators-rollup.timer
+    - sponsors-rollup.timer
     - census-rollup.timer
     - compute-completeness.timer
     - data-freshness.timer

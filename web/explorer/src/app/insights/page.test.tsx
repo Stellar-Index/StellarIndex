@@ -44,9 +44,7 @@ describe('InsightsPage network gating', () => {
       // The corrected surface: one honest "not available here" state,
       // naming this network, INSTEAD of three cards to empty feeds.
       const label = network === 'testnet' ? 'Testnet' : 'Futurenet';
-      expect(
-        screen.getByText(`Not available on ${label}`),
-      ).toBeInTheDocument();
+      expect(screen.getByText(`Not available on ${label}`)).toBeInTheDocument();
       for (const name of ['Anomalies', 'Divergence', 'MEV']) {
         expect(screen.queryByRole('heading', { level: 2, name })).toBeNull();
       }

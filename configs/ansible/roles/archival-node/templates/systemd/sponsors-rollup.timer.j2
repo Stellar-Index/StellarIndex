@@ -1,0 +1,29 @@
+# systemd timer: sponsor rollup — daily.
+#
+# Rendered by Ansible. Companion to sponsors-rollup.service (#351).
+#
+# WHY DAILY. The cycle's one pass over stellar.operations is scan-shaped
+# (op_type is not in that table's sort key). Measured on r1 over ledgers
+# 64,000,000-64,277,243: 4.5s and 12.05 GiB for the narrow projection,
+# which extrapolates to roughly 17 minutes and 2.8 TiB over the full
+# history. Everything this board reports is immutable history that grows
+# slowly against 11.5M existing rows, so the ranking is stable day to
+# day, and the API and page both publish `computed_at`.
+#
+# The cadence is a contention decision as much as a freshness one — this
+# box also runs galexie, the holders cycle and the completeness jobs.
+# Raise it if the surface needs to be fresher and the box has room.
+
+[Unit]
+Description=sponsor rollup, daily
+Documentation=https://github.com/Stellar-Index/StellarIndex/blob/main/deploy/clickhouse/account_sponsors_rollup.sql
+
+[Timer]
+OnBootSec=45min
+OnUnitInactiveSec=24h
+RandomizedDelaySec=1800
+Persistent=true
+Unit=sponsors-rollup.service
+
+[Install]
+WantedBy=timers.target

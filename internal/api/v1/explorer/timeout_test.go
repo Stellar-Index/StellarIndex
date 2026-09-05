@@ -61,6 +61,14 @@ func (r *capReader) AccountsStats(context.Context) (clickhouse.AccountsStats, bo
 	return clickhouse.AccountsStats{}, false, nil
 }
 
+func (r *capReader) AccountCreators(context.Context, int) (clickhouse.AccountCreators, bool, error) {
+	return clickhouse.AccountCreators{}, false, nil
+}
+
+func (r *capReader) AccountSponsors(context.Context, int) (clickhouse.AccountSponsors, bool, error) {
+	return clickhouse.AccountSponsors{}, false, nil
+}
+
 func (r *capReader) ContractActivitySummaryFor(context.Context, string, int) (clickhouse.ContractActivitySummary, bool, error) {
 	return clickhouse.ContractActivitySummary{}, false, nil
 }

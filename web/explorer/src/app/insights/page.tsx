@@ -1,6 +1,6 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
-import { Activity, GitCompare, Zap } from 'lucide-react';
+import { Activity, GitCompare, HandCoins, UserPlus, Zap } from 'lucide-react';
 
 import { NetworkUnavailable } from '@/components/NetworkUnavailable';
 import { availableRoutes, routeAvailable } from '@/lib/network-routes';
@@ -38,6 +38,20 @@ const SURFACES = [
     blurb:
       'Extractable-value activity observed on Stellar: arbitrage cycles, liquidation races and ordering effects, tied back to the transactions that carried them.',
   },
+  {
+    href: '/insights/sponsors',
+    label: 'Account sponsors',
+    icon: HandCoins,
+    blurb:
+      "Who pays the base reserves for other accounts' ledger entries: sponsorships started, accounts covered and revocations issued, over the whole history of the feature.",
+  },
+  {
+    href: '/insights/creators',
+    label: 'Account creators',
+    icon: UserPlus,
+    blurb:
+      'Who bootstrapped the network: the accounts that funded the most other accounts into existence, what they paid to start them, and how much of that created set still exists.',
+  },
 ] as const;
 
 export default function InsightsPage() {
@@ -59,9 +73,9 @@ export default function InsightsPage() {
     <Container className="space-y-6 py-8">
       <header className="space-y-2">
         <h1 className="text-3xl font-semibold tracking-tight">Insights</h1>
-        <p className="max-w-3xl text-sm text-ink-body">
-          The signals layer over the raw data — what the network is doing
-          that a table of trades doesn’t say by itself.
+        <p className="text-ink-body max-w-3xl text-sm">
+          The signals layer over the raw data — what the network is doing that a
+          table of trades doesn’t say by itself.
         </p>
       </header>
 
@@ -72,15 +86,15 @@ export default function InsightsPage() {
             <Link
               key={s.href}
               href={s.href}
-              className="group rounded-xl border border-line bg-surface p-5 shadow-sm transition-colors hover:border-brand-500"
+              className="group border-line bg-surface hover:border-brand-500 rounded-xl border p-5 shadow-sm transition-colors"
             >
               <div className="flex items-center gap-2.5">
-                <Icon className="h-5 w-5 text-brand-600" />
-                <h2 className="text-lg font-semibold tracking-tight group-hover:text-brand-600">
+                <Icon className="text-brand-600 h-5 w-5" />
+                <h2 className="group-hover:text-brand-600 text-lg font-semibold tracking-tight">
                   {s.label}
                 </h2>
               </div>
-              <p className="mt-2 text-sm text-ink-body">{s.blurb}</p>
+              <p className="text-ink-body mt-2 text-sm">{s.blurb}</p>
             </Link>
           );
         })}
