@@ -476,27 +476,79 @@ func (r *ExplorerReader) CloseTimeForLedger(ctx context.Context, seq uint32) (ti
 	return closeTime.UTC(), true, nil
 }
 
-// LatestLedgerAtOrBefore returns the newest stellar.ledgers row with
-// ledger_seq <= maxSeq. The supply snapshot's AUTO ledger resolver uses it to
-// clamp the live ingestion cursor to the lake's landed tip: the cursor
-// (Postgres, realtime) leads stellar.ledgers (CH sink) by seconds, so the
-// cursor's own row is routinely not landed yet when a timer-driven snapshot
-// fires (r1 supply-snapshot failed every daily run on this race, 2026-08-22).
-// FINAL for the same ReplacingMergeTree reason as CloseTimeForLedger; the
-// primary key is ledger_seq so the descending read should stop at
-// one granule — UNMEASURED under FINAL, where optimize_read_in_order
-// is version-dependent and `ledger_seq <= X` prunes no partition
-// below X (~65 of them at ledger 64M). This was classified as a point
-// read when the only caller ran once a day from internal/ops/supply.
-// The aggregator now calls it once per watched asset per 5-minute
-// tick, so read query_duration_ms and read_rows from system.query_log
-// on the first post-deploy tick before treating it as cheap. The 40
-// refreshers already share one reader, so a short-TTL memo collapses
-// them to one query per tick if the measurement is bad.
+// LatestLedgerLookbackLedgers is how far below maxSeq
+// [ExplorerReader.LatestLedgerAtOrBefore] looks for a landed row, and it is
+// the single definition of the supply snapshot's stalled-lake bound: both
+// callers derive their refusal bound from it
+// (cmd/stellarindex-aggregator/main.go::maxSupplyLakeClampLedgers,
+// internal/ops/supply/supply.go::maxAutoSnapshotClampLedgers), so the window
+// this reader scans and the window a caller will accept a result from cannot
+// drift apart. A row further back than this is refused by both callers, so
+// reading past it is cost with no reachable answer in it.
+//
+// 512 ledgers is ~45 min at mainnet's ~5.3 s cadence: far above the
+// seconds-long dual-sink landing race the clamp exists to absorb, far below
+// a day. Widening it widens the scan by the same amount.
+const LatestLedgerLookbackLedgers = 512
+
+// latestLedgerLookbackFloor is the lower bound of that window, saturating at
+// 0 so an early maxSeq (a fresh testnet/futurenet, an operator naming a
+// genesis-adjacent ledger) reads from the start of the chain rather than
+// wrapping around uint32.
+func latestLedgerLookbackFloor(maxSeq uint32) uint32 {
+	if maxSeq < LatestLedgerLookbackLedgers {
+		return 0
+	}
+	return maxSeq - LatestLedgerLookbackLedgers
+}
+
+// latestLedgerAtOrBeforeQuery reads the newest landed ledger inside that
+// window. The LOWER bound is what makes it a bounded read, and it is
+// load-bearing: stellar.ledgers is PARTITION BY intDiv(ledger_seq, 1000000),
+// so `ledger_seq <= X` on its own prunes no partition below X — 65 of them at
+// the current tip — and the descending LIMIT 1 does not save it. Measured on
+// r1 2026-09-05 from system.query_log, at tip 64277149: the unbounded
+// predicate read 64,277,409 rows / 735.59 MiB in 94 ms; this statement, run
+// verbatim, 1,520 rows / 14.90 KiB in 1-3 ms over three repeats (the exact
+// row count tracks the tip partition's part layout — 1,296 to 1,520 across
+// the session — not the height of the chain, which is the point). EXPLAIN
+// indexes=1 selects 2 parts / 2 granules of 76 / 8,366 where the unbounded
+// predicate selects 74 / 8,364. That is per call, once per watched asset (48
+// on r1) per 5-minute tick — 34.5 GiB a tick unbounded, ~715 KiB bounded, so
+// the short-TTL memo an earlier note proposed for collapsing the 48 identical
+// calls is not needed — and heavy ClickHouse reads by a non-serving-profile
+// client on this box are the established cause of the very supply-refresh
+// alert bursts this lookup was added to remove.
+//
+// FINAL stays, and costs nothing here: same rows and bytes either way, 3 ms
+// with it against 2-3 ms without (r1 2026-09-05, three repeats each).
+// stellar.ledgers is ReplacingMergeTree(ingested_at) and its duplicates are
+// not hypothetical — the sink's flush contract permits an idempotent retry
+// over a range, and a ch-backfill re-derive over a live-ingested range leaves
+// an un-merged duplicate part (audit C2-12). Those duplicates concentrate at
+// the tip, which is exactly the window this reads: the tip partition held 8
+// active parts of the table's 74 when this was measured. FINAL is what makes
+// the row this returns the newest-ingested version of that ledger rather than
+// whichever part the reader reached first, and this row's close_time is
+// stamped as a supply snapshot's ObservedAt.
+const latestLedgerAtOrBeforeQuery = `SELECT ledger_seq, close_time FROM stellar.ledgers FINAL
+	WHERE ledger_seq BETWEEN ? AND ? ORDER BY ledger_seq DESC LIMIT 1`
+
+// LatestLedgerAtOrBefore returns the newest stellar.ledgers row in
+// [maxSeq-LatestLedgerLookbackLedgers, maxSeq]. The supply snapshot's AUTO
+// ledger resolver uses it to clamp the live ingestion cursor to the lake's
+// landed tip: the cursor (Postgres, realtime) leads stellar.ledgers (CH sink)
+// by seconds, so the cursor's own row is routinely not landed yet when a
+// timer-driven snapshot fires (r1 supply-snapshot failed every daily run on
+// this race, 2026-08-22).
+//
+// found=false means the lake holds no row in that window — an empty lake, a
+// lake gapped below the chain position, or a sink stalled more than the
+// lookback behind it. All three are the stalled-lake refusal both callers
+// already fail closed on; none of them is the ordinary landing race, which
+// lands well inside the window.
 func (r *ExplorerReader) LatestLedgerAtOrBefore(ctx context.Context, maxSeq uint32) (uint32, time.Time, bool, error) {
-	const q = `SELECT ledger_seq, close_time FROM stellar.ledgers FINAL
-		WHERE ledger_seq <= ? ORDER BY ledger_seq DESC LIMIT 1`
-	rows, err := r.conn.Query(ctx, q, maxSeq)
+	rows, err := r.conn.Query(ctx, latestLedgerAtOrBeforeQuery, latestLedgerLookbackFloor(maxSeq), maxSeq)
 	if err != nil {
 		return 0, time.Time{}, false, fmt.Errorf("clickhouse: latest ledger at or before %d: %w", maxSeq, err)
 	}

@@ -2,6 +2,7 @@ package ingest
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -22,6 +23,18 @@ import (
 	externalkraken "github.com/Stellar-Index/StellarIndex/internal/sources/external/kraken"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
+
+// externalInsertBudget bounds the DATABASE half of a backfill-external
+// run, separately from the venue-walk budget.
+//
+// One shared deadline used to cover both halves, which made a long walk
+// self-defeating: the fills endpoint is paced at one page per 1.1s, so a
+// multi-year pair walk spends hours in pagination and then has whatever
+// is left — possibly nothing — to write tens of millions of rows with.
+// A walk that used its whole budget therefore discarded every fill it
+// had just paid the venue rate limit to fetch. The insert loop gets its
+// own clock so salvage is possible at all.
+const externalInsertBudget = 12 * time.Hour
 
 // backfillExternal drives the Backfiller interface for one external
 // venue. Operator passes the venue-native symbol (the same shape
@@ -96,14 +109,22 @@ func backfillExternal(args []string) error {
 	} else {
 		trades, err = backfiller.Backfill(ctx, pair, from, to, granularity)
 	}
-	if err != nil {
+	resumeFrom, partial := partialFetchResume(trades, err)
+	if err != nil && !partial {
 		return fmt.Errorf("backfill: %w", err)
+	}
+	if partial {
+		fmt.Fprintf(os.Stderr, "backfill-external: WARNING venue walk ended early (%v) holding %d trade(s) — writing them, then exiting non-zero. Resume with -from %s\n",
+			err, len(trades), resumeFrom.UTC().Format(time.RFC3339Nano))
 	}
 	fmt.Fprintf(os.Stderr, "backfill-external: fetched %d trades in %v\n",
 		len(trades), time.Since(t0).Round(time.Millisecond))
 
 	if dryRun {
 		summariseDryRun(trades)
+		if partial {
+			return partialWalkError(len(trades), resumeFrom, nil)
+		}
 		return nil
 	}
 
@@ -111,7 +132,13 @@ func backfillExternal(args []string) error {
 	if err != nil {
 		return err
 	}
-	store, err := timescale.Open(ctx, cfg.Storage.PostgresDSN)
+
+	// The walk's context may already be expired (that is exactly the
+	// case `partial` covers), so the write half runs on its own.
+	insCtx, insCancel := context.WithTimeout(context.Background(), externalInsertBudget)
+	defer insCancel()
+
+	store, err := timescale.Open(insCtx, cfg.Storage.PostgresDSN)
 	if err != nil {
 		return fmt.Errorf("storage: %w", err)
 	}
@@ -136,7 +163,49 @@ func backfillExternal(args []string) error {
 		return err
 	}
 
-	return insertBackfilledTrades(ctx, store, trades, *progressEvery, os.Stderr, t0)
+	insErr := insertBackfilledTrades(insCtx, store, trades, *progressEvery, os.Stderr, t0)
+	if partial {
+		return partialWalkError(len(trades), resumeFrom, insErr)
+	}
+	return insErr
+}
+
+// partialFetchResume reports whether a venue walk that ended in a
+// context expiry still handed back usable fills, and the instant a
+// follow-up run should resume from.
+//
+// The venue walkers page forward in time and return what they have
+// alongside ctx.Err(), so an expired budget is a stopping point, not a
+// corruption: the fills already fetched are as good as any others. The
+// high-water timestamp is the resume cursor — inserts are idempotent
+// (ON CONFLICT), so re-running from it costs at most one duplicate page.
+// Any other error is a real fault and must not be salvaged.
+func partialFetchResume(trades []canonical.Trade, err error) (time.Time, bool) {
+	if err == nil || len(trades) == 0 {
+		return time.Time{}, false
+	}
+	if !errors.Is(err, context.DeadlineExceeded) && !errors.Is(err, context.Canceled) {
+		return time.Time{}, false
+	}
+	high := trades[0].Timestamp
+	for _, tr := range trades[1:] {
+		if tr.Timestamp.After(high) {
+			high = tr.Timestamp
+		}
+	}
+	return high, true
+}
+
+// partialWalkError is the non-zero exit for a salvaged run. The range
+// asked for was NOT covered, so the command must never exit 0 however
+// well the writes went — an operator scripting a chunked walk has to be
+// able to tell a completed slice from a truncated one.
+func partialWalkError(n int, resumeFrom time.Time, insErr error) error {
+	at := resumeFrom.UTC().Format(time.RFC3339Nano)
+	if insErr != nil {
+		return fmt.Errorf("backfill-external: venue walk ended early with %d trade(s) salvaged AND the write had faults (%w) — range incomplete, resume with -from %s", n, insErr, at)
+	}
+	return fmt.Errorf("backfill-external: venue walk ended early — %d trade(s) salvaged but the requested range is NOT complete; resume with -from %s", n, at)
 }
 
 // tradeInserter is the storage seam insertBackfilledTrades depends on —

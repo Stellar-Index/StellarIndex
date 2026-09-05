@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 	"github.com/Stellar-Index/StellarIndex/internal/supply"
 )
@@ -272,5 +273,19 @@ func TestSupplyAggregatorLedgers_PropagatesCursorReadError(t *testing.T) {
 	}
 	if _, _, err := ledgers.LatestKnownLedger(context.Background()); !errors.Is(err, sentinel) {
 		t.Errorf("err = %v, want it to wrap %v", err, sentinel)
+	}
+}
+
+// TestSupplyLakeClampMatchesLookupWindow pins the clamp to the window the
+// lake lookup actually scans. They are one constant today, and this is what
+// keeps them one: a resolver that refuses past 512 while the lookup reads
+// every partition below the cursor pays chain-history-sized reads for rows it
+// can never accept (measured on r1 2026-09-05: 735.59 MiB per call, once per
+// watched asset per 5-minute tick), and a resolver that accepts further back
+// than the lookup reads would fail closed on a lake that is merely lagging.
+func TestSupplyLakeClampMatchesLookupWindow(t *testing.T) {
+	if maxSupplyLakeClampLedgers != clickhouse.LatestLedgerLookbackLedgers {
+		t.Errorf("maxSupplyLakeClampLedgers = %d but the lookup scans %d ledgers below the cursor — the refusal bound and the scan window must be the same constant",
+			maxSupplyLakeClampLedgers, clickhouse.LatestLedgerLookbackLedgers)
 	}
 }
