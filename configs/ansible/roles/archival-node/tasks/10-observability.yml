@@ -957,7 +957,16 @@
 # on a later tick, so last_run_status read Success and the caggs were
 # never stale — the only evidence was a counter nobody exported.
 #
-# Runbook: docs/operations/runbooks/cagg-stale.md
+# It also reports ITS OWN health — stellarindex_timescale_probe_query_ok,
+# _probe_rows and _probe_last_run_unix, written on every run — because
+# every way this producer could fail was previously silent, and the
+# three alerts above all fail quiet: `>` and `time() - x` over an absent
+# series are empty, so a blind alert is indistinguishable from a healthy
+# one. stellarindex_timescale_probe_degraded reads those three.
+#
+# Runbooks: docs/operations/runbooks/cagg-stale.md,
+# docs/operations/runbooks/timescale-probe-degraded.md
+# Fixtures: scripts/ci/timescale-jobs-probe-test.sh
 - name: TimescaleDB job/CAGG health probe (script)
   ansible.builtin.copy:
     dest: /usr/local/sbin/timescale-jobs-probe.sh
@@ -970,17 +979,69 @@
       # MUST be the --collector.textfile.directory the running
       # node_exporter reads, NOT Debian's /var/lib/prometheus/
       # node-exporter default (which nothing scrapes here — see the
-      # galexie probe's 2026-07-08 note).
-      DIR=/var/lib/node_exporter/textfile_collector
+      # galexie probe's 2026-07-08 note). The TEXTFILE_DIR override is
+      # the same seam galexie-archive-tip-lag.sh and the pgBackRest
+      # wrapper carry, and exists for the same reason: it lets
+      # scripts/ci/timescale-jobs-probe-test.sh execute these exact
+      # bytes rather than a hand-copied twin. The service unit sets no
+      # environment, so a real run always takes the default.
+      DIR="${TEXTFILE_DIR:-/var/lib/node_exporter/textfile_collector}"
       mkdir -p "$DIR"
       TMP=$(mktemp)
-      trap 'rm -f "$TMP"' EXIT
+      HEALTH=$(mktemp)
+      trap 'rm -f "$TMP" "$HEALTH"' EXIT
 
       # Peer-auth as postgres; timescaledb_information.* needs no
       # superuser but postgres is the account this host already uses
-      # for local maintenance. `|| true` so one failed query degrades
-      # to a missing metric rather than a half-written file.
-      q() { runuser -u postgres -- psql -d stellarindex -At -F'|' -c "$1" 2>/dev/null || true; }
+      # for local maintenance.
+      #
+      # DEGRADE-AND-CONTINUE, BUT NEVER SILENTLY. The helper used to end
+      # in `2>/dev/null || true`, which gave a failed query an empty
+      # result AND a zero exit: the file was rewritten without that
+      # query's families, node_exporter served it, and every alert built
+      # on them evaluated over an absent series and stayed quiet. A
+      # producer that cannot report its own failure reads exactly like a
+      # healthy one.
+      #
+      # The degrade itself is deliberate and is KEPT. Dying on the first
+      # bad query under `set -e` fires the EXIT trap, so `mv` never runs
+      # and the PREVIOUS timescale_jobs.prom stays on disk indefinitely —
+      # stale values re-scraped every interval with a fresh sample
+      # timestamp, which is the shape stellarindex_config_assertions_stale
+      # exists for (W5-mon) and strictly worse than losing one family. It
+      # also keeps a host where one view is legitimately unavailable from
+      # losing the two families that still answer.
+      #
+      # What is removed is the silence. Every query now records its own
+      # exit status and its own emitted-row count, both published in the
+      # same file, and stellarindex_timescale_probe_degraded alerts on
+      # either. Rows are load-bearing next to the status: a query that
+      # exits 0 against a renamed view or a filter that no longer matches
+      # (proc_name, config keys) returns NOTHING and drops every one of
+      # its series exactly as a failure would.
+      Q_OUT=""
+      Q_OK=0
+      q() {
+        # q <sql> — leaves the rows in $Q_OUT and the outcome in $Q_OK.
+        # Output is captured rather than piped so the caller's read loop
+        # runs in THIS shell and can count what it emitted.
+        local rc=0
+        Q_OUT=$(runuser -u postgres -- psql -d stellarindex -At -F'|' -c "$1" 2>/dev/null) || rc=$?
+        if [ "$rc" -eq 0 ]; then
+          Q_OK=1
+        else
+          Q_OK=0
+          Q_OUT=""
+        fi
+      }
+
+      # Accumulated in $HEALTH and appended as one block at the end, so
+      # each family carries a single HELP/TYPE header.
+      health() {
+        # health <query-label> <ok> <rows-emitted>
+        printf 'stellarindex_timescale_probe_query_ok{query="%s"} %s\n' "$1" "$2" >> "$HEALTH"
+        printf 'stellarindex_timescale_probe_rows{query="%s"} %s\n' "$1" "$3" >> "$HEALTH"
+      }
 
       {
         echo "# HELP stellarindex_cagg_last_refresh_unix Unix time of the last SUCCESSFUL refresh of each continuous aggregate."
@@ -998,12 +1059,15 @@
                 EXTRACT(epoch FROM j.schedule_interval)::bigint
          FROM timescaledb_information.jobs j
          JOIN timescaledb_information.job_stats js USING (job_id)
-         WHERE j.proc_name = 'policy_refresh_continuous_aggregate'" |
+         WHERE j.proc_name = 'policy_refresh_continuous_aggregate'"
+      rows=0
       while IFS='|' read -r cagg last iv; do
         [ -n "${cagg:-}" ] || continue
         echo "stellarindex_cagg_last_refresh_unix{cagg=\"$cagg\"} $last"
         echo "stellarindex_cagg_refresh_interval_seconds{cagg=\"$cagg\"} $iv"
-      done >> "$TMP"
+        rows=$((rows + 1))
+      done <<< "$Q_OUT" >> "$TMP"
+      health cagg_refresh "$Q_OK" "$rows"
 
       # Overdue = past the hypertable's OWN compress_after, plus one
       # schedule_interval of grace. Both terms are load-bearing and
@@ -1055,11 +1119,14 @@
                 ON c.hypertable_schema = j.hypertable_schema
                AND c.hypertable_name = j.hypertable_name
          WHERE j.proc_name = 'policy_compression'
-         GROUP BY 1" |
+         GROUP BY 1"
+      rows=0
       while IFS='|' read -r ht overdue; do
         [ -n "${ht:-}" ] || continue
         echo "stellarindex_timescale_chunks_overdue_compression{hypertable=\"$ht\"} ${overdue:-0}"
-      done >> "$TMP"
+        rows=$((rows + 1))
+      done <<< "$Q_OUT" >> "$TMP"
+      health compression "$Q_OK" "$rows"
 
       {
         echo "# HELP stellarindex_timescale_job_failures_total Cumulative failed runs per TimescaleDB background job."
@@ -1068,11 +1135,51 @@
 
       q "SELECT j.proc_name, COALESCE(j.hypertable_name,'-'), js.job_id, js.total_failures
          FROM timescaledb_information.job_stats js
-         JOIN timescaledb_information.jobs j USING (job_id)" |
+         JOIN timescaledb_information.jobs j USING (job_id)"
+      rows=0
       while IFS='|' read -r proc ht jid fails; do
         [ -n "${jid:-}" ] || continue
         echo "stellarindex_timescale_job_failures_total{job_id=\"$jid\",proc=\"$proc\",hypertable=\"$ht\"} ${fails:-0}"
-      done >> "$TMP"
+        rows=$((rows + 1))
+      done <<< "$Q_OUT" >> "$TMP"
+      health job_stats "$Q_OK" "$rows"
+
+      # ── The probe's own health ────────────────────────────────────
+      #
+      # Three families that make this producer's failures loud, written
+      # unconditionally on every run so none of them can go missing for
+      # the same reason it exists to detect:
+      #
+      #   _probe_query_ok{query}  1 iff that query exited 0.
+      #   _probe_rows{query}      rows it contributed to this file. Zero
+      #                           is the other way a family disappears
+      #                           (view renamed, filter no longer
+      #                           matches) and it does not raise rc.
+      #   _probe_last_run_unix    when this file was last WRITTEN.
+      #
+      # _last_run_unix, deliberately not _last_success_unix: it stamps
+      # the RUN, so a run whose queries all failed still refreshes it and
+      # _query_ok is what says the data is bad. Stamping only on success
+      # would make one alert carry two meanings and let a fully-failing
+      # probe read as a stopped one.
+      #
+      # This covers the case the per-query metrics cannot: the script not
+      # running at all. node_exporter keeps serving the LAST file it saw
+      # forever, so a dead timer, a masked unit, an `mv` that failed on a
+      # full disk, or a crash before the write leaves fresh-looking
+      # scrapes of frozen values — `time() - _last_run_unix` is what ages
+      # while they do. A file that never existed at all leaves every
+      # series absent, which is the alert's absent_over_time arm.
+      {
+        echo "# HELP stellarindex_timescale_probe_query_ok Whether each of this probe's queries exited 0 on the last run (1 = yes)."
+        echo "# TYPE stellarindex_timescale_probe_query_ok gauge"
+        echo "# HELP stellarindex_timescale_probe_rows Metric rows the last run emitted from each of this probe's queries."
+        echo "# TYPE stellarindex_timescale_probe_rows gauge"
+        cat "$HEALTH"
+        echo "# HELP stellarindex_timescale_probe_last_run_unix Unix time this probe last wrote its textfile, whether or not the queries succeeded."
+        echo "# TYPE stellarindex_timescale_probe_last_run_unix gauge"
+        echo "stellarindex_timescale_probe_last_run_unix $(date +%s)"
+      } >> "$TMP"
 
       # mktemp creates 0600; node_exporter runs unprivileged and
       # SILENTLY skips unreadable textfiles.

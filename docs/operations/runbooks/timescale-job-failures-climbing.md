@@ -13,7 +13,7 @@ severity: P3
 | --- | --- |
 | **Severity** | informational (P3) — no immediate customer impact |
 | **Fires when** | a single TimescaleDB background job accumulates >10 failed runs in 6h, sustained 30m |
-| **Producer** | `timescale-jobs-probe.timer` on r1 (60s), writing `timescale_jobs.prom` into the node_exporter textfile dir |
+| **Producer** | `timescale-jobs-probe.timer` on r1 (60s), writing `timescale_jobs.prom` into the node_exporter textfile dir. If that probe stops, or its `job_stats` query fails or returns nothing, this counter goes absent and the alert is blind rather than quiet — `stellarindex_timescale_probe_degraded` ([timescale-probe-degraded](timescale-probe-degraded.md)) is the standing signal for it. |
 | **Metric** | `stellarindex_timescale_job_failures_total{job_id,proc,hypertable}` |
 | **Customer impact** | usually none *yet* — TimescaleDB retries on the next tick |
 
@@ -91,3 +91,4 @@ and takes priority over this one.
 - [`cagg-stale.md`](cagg-stale.md) — the ticket-severity sibling; fires when retries stop hiding the failures.
 - [`db-disk-full.md`](db-disk-full.md) — a different cause of job failure worth ruling out.
 - Producer + the incident that motivated the counter: `configs/ansible/roles/archival-node/tasks/10-observability.yml` (TimescaleDB job/CAGG health probe).
+- [`timescale-probe-degraded.md`](timescale-probe-degraded.md) — the producer side: the alert that fires when this counter's own source has stopped reporting.

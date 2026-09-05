@@ -677,6 +677,232 @@ tests:
                 compress_after elapsed, and have been for 24 h. The policy is not
                 keeping up: check the job scheduler, then locks and IO.
 
+  # ══ stellarindex_timescale_probe_degraded ═════════════════════════
+  #
+  # Monitoring of monitoring: the three alerts above read one textfile
+  # and every way its producer could fail used to be silent. Each case
+  # below pins one of those ways.
+  #
+  # PROVEN-RED: drop the alert (or point every arm at a metric the probe
+  # does not write) and all four firing cases report 0 alerts. The
+  # producer half is proven separately — with the pre-fix
+  # `q() { ... 2>/dev/null || true; }` there is no _probe_query_ok,
+  # _probe_rows or _probe_last_run_unix series to feed these at all, and
+  # a failed query writes a file indistinguishable from a healthy one.
+  #
+  # Series values: last_run_unix is a UNIX SECOND, and promtool's clock
+  # starts at 0, so `0+60x40` on a 1-minute interval is a probe stamping
+  # the file on every tick, and `<const>+0x…` is one that stopped.
+  - interval: 1m
+    name: a query that errored is reported, once, and names itself
+    input_series:
+      # A failing psql leaves the query with no rows too (both arms of
+      # the same {query=…} label set), so the `or` must still produce
+      # exactly ONE alert, not two.
+      - series: 'stellarindex_timescale_probe_query_ok{job="node_exporter",instance="r1:9100",query="compression"}'
+        values: '0+0x40'
+      - series: 'stellarindex_timescale_probe_rows{job="node_exporter",instance="r1:9100",query="compression"}'
+        values: '0+0x40'
+      - series: 'stellarindex_timescale_probe_query_ok{job="node_exporter",instance="r1:9100",query="cagg_refresh"}'
+        values: '1+0x40'
+      - series: 'stellarindex_timescale_probe_rows{job="node_exporter",instance="r1:9100",query="cagg_refresh"}'
+        values: '20+0x40'
+      - series: 'stellarindex_timescale_probe_query_ok{job="node_exporter",instance="r1:9100",query="job_stats"}'
+        values: '1+0x40'
+      - series: 'stellarindex_timescale_probe_rows{job="node_exporter",instance="r1:9100",query="job_stats"}'
+        values: '69+0x40'
+      - series: 'stellarindex_timescale_probe_last_run_unix{job="node_exporter",instance="r1:9100"}'
+        values: '0+60x40'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: stellarindex_timescale_probe_degraded
+        exp_alerts:
+          - exp_labels:
+              job: node_exporter
+              instance: r1:9100
+              query: compression
+              severity: ticket
+              team: stellarindex
+              component: storage
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/timescale-probe-degraded.md
+              summary: "TimescaleDB job/CAGG probe is not producing usable metrics (compression)"
+              description: |
+                timescale-jobs-probe.timer is not producing a usable
+                timescale_jobs.prom, so stellarindex_timescale_cagg_stale,
+                _compression_lag and _job_failures_climbing are evaluating over
+                series that are absent or frozen and cannot fire. Silence from
+                those three currently means nothing either way.
+
+                Which arm tripped says where to look. query_ok == 0 is a query
+                that errored — psql, peer auth, or a renamed timescaledb_information
+                view. rows == 0 is a query that succeeded and returned nothing,
+                which drops exactly the same series without raising an error.
+                A last_run_unix older than 10 min, or absent, is the script or its
+                timer not running: node_exporter keeps serving the last file it
+                saw, so the metrics stay present and stop moving.
+
+                Start with `systemctl status timescale-jobs-probe.timer` and the
+                file's mtime, then run /usr/local/sbin/timescale-jobs-probe.sh by
+                hand.
+  # The door a plain exit-status check leaves open: psql exits 0 against
+  # a renamed view or a filter that stopped matching, returns nothing,
+  # and every series of that family disappears exactly as if the query
+  # had failed. r1 emits one compression row per policy including zeros
+  # (46 of them), so zero rows here IS the blind state.
+  - interval: 1m
+    name: a query that succeeded and returned nothing is caught too
+    input_series:
+      - series: 'stellarindex_timescale_probe_query_ok{job="node_exporter",instance="r1:9100",query="compression"}'
+        values: '1+0x40'
+      - series: 'stellarindex_timescale_probe_rows{job="node_exporter",instance="r1:9100",query="compression"}'
+        values: '0+0x40'
+      - series: 'stellarindex_timescale_probe_query_ok{job="node_exporter",instance="r1:9100",query="cagg_refresh"}'
+        values: '1+0x40'
+      - series: 'stellarindex_timescale_probe_rows{job="node_exporter",instance="r1:9100",query="cagg_refresh"}'
+        values: '20+0x40'
+      - series: 'stellarindex_timescale_probe_last_run_unix{job="node_exporter",instance="r1:9100"}'
+        values: '0+60x40'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: stellarindex_timescale_probe_degraded
+        exp_alerts:
+          - exp_labels:
+              job: node_exporter
+              instance: r1:9100
+              query: compression
+              severity: ticket
+              team: stellarindex
+              component: storage
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/timescale-probe-degraded.md
+              summary: "TimescaleDB job/CAGG probe is not producing usable metrics (compression)"
+              description: |
+                timescale-jobs-probe.timer is not producing a usable
+                timescale_jobs.prom, so stellarindex_timescale_cagg_stale,
+                _compression_lag and _job_failures_climbing are evaluating over
+                series that are absent or frozen and cannot fire. Silence from
+                those three currently means nothing either way.
+
+                Which arm tripped says where to look. query_ok == 0 is a query
+                that errored — psql, peer auth, or a renamed timescaledb_information
+                view. rows == 0 is a query that succeeded and returned nothing,
+                which drops exactly the same series without raising an error.
+                A last_run_unix older than 10 min, or absent, is the script or its
+                timer not running: node_exporter keeps serving the last file it
+                saw, so the metrics stay present and stop moving.
+
+                Start with `systemctl status timescale-jobs-probe.timer` and the
+                file's mtime, then run /usr/local/sbin/timescale-jobs-probe.sh by
+                hand.
+  # The case node_exporter hides: the timer stops, the last file stays on
+  # disk, and every series is still scraped every interval with a fresh
+  # sample timestamp. Every per-query metric below reads perfectly
+  # healthy — the stamp is the only thing that ages.
+  - interval: 1m
+    name: a probe that stopped running while its file stays on disk is caught
+    input_series:
+      - series: 'stellarindex_timescale_probe_query_ok{job="node_exporter",instance="r1:9100",query="compression"}'
+        values: '1+0x40'
+      - series: 'stellarindex_timescale_probe_rows{job="node_exporter",instance="r1:9100",query="compression"}'
+        values: '46+0x40'
+      - series: 'stellarindex_timescale_probe_query_ok{job="node_exporter",instance="r1:9100",query="cagg_refresh"}'
+        values: '1+0x40'
+      - series: 'stellarindex_timescale_probe_rows{job="node_exporter",instance="r1:9100",query="cagg_refresh"}'
+        values: '20+0x40'
+      - series: 'stellarindex_timescale_probe_last_run_unix{job="node_exporter",instance="r1:9100"}'
+        values: '0+0x40'
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: stellarindex_timescale_probe_degraded
+        exp_alerts:
+          - exp_labels:
+              job: node_exporter
+              instance: r1:9100
+              severity: ticket
+              team: stellarindex
+              component: storage
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/timescale-probe-degraded.md
+              summary: "TimescaleDB job/CAGG probe is not producing usable metrics"
+              description: |
+                timescale-jobs-probe.timer is not producing a usable
+                timescale_jobs.prom, so stellarindex_timescale_cagg_stale,
+                _compression_lag and _job_failures_climbing are evaluating over
+                series that are absent or frozen and cannot fire. Silence from
+                those three currently means nothing either way.
+
+                Which arm tripped says where to look. query_ok == 0 is a query
+                that errored — psql, peer auth, or a renamed timescaledb_information
+                view. rows == 0 is a query that succeeded and returned nothing,
+                which drops exactly the same series without raising an error.
+                A last_run_unix older than 10 min, or absent, is the script or its
+                timer not running: node_exporter keeps serving the last file it
+                saw, so the metrics stay present and stop moving.
+
+                Start with `systemctl status timescale-jobs-probe.timer` and the
+                file's mtime, then run /usr/local/sbin/timescale-jobs-probe.sh by
+                hand.
+  # Never written at all — host rebuilt, unit never installed, the role
+  # never applied. `time() - x` over an empty vector is empty and cannot
+  # fire, which is why the absent arm exists. node_exporter itself is up,
+  # so nothing else says a word.
+  - interval: 1m
+    name: a probe file that was never written is caught by the absent arm
+    input_series:
+      - series: 'up{job="node_exporter",instance="r1:9100"}'
+        values: '1+0x40'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: stellarindex_timescale_probe_degraded
+        exp_alerts:
+          - exp_labels:
+              severity: ticket
+              team: stellarindex
+              component: storage
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/timescale-probe-degraded.md
+              summary: "TimescaleDB job/CAGG probe is not producing usable metrics"
+              description: |
+                timescale-jobs-probe.timer is not producing a usable
+                timescale_jobs.prom, so stellarindex_timescale_cagg_stale,
+                _compression_lag and _job_failures_climbing are evaluating over
+                series that are absent or frozen and cannot fire. Silence from
+                those three currently means nothing either way.
+
+                Which arm tripped says where to look. query_ok == 0 is a query
+                that errored — psql, peer auth, or a renamed timescaledb_information
+                view. rows == 0 is a query that succeeded and returned nothing,
+                which drops exactly the same series without raising an error.
+                A last_run_unix older than 10 min, or absent, is the script or its
+                timer not running: node_exporter keeps serving the last file it
+                saw, so the metrics stay present and stop moving.
+
+                Start with `systemctl status timescale-jobs-probe.timer` and the
+                file's mtime, then run /usr/local/sbin/timescale-jobs-probe.sh by
+                hand.
+  - interval: 1m
+    name: a probe answering every query on every tick raises nothing
+    input_series:
+      - series: 'stellarindex_timescale_probe_query_ok{job="node_exporter",instance="r1:9100",query="cagg_refresh"}'
+        values: '1+0x40'
+      - series: 'stellarindex_timescale_probe_rows{job="node_exporter",instance="r1:9100",query="cagg_refresh"}'
+        values: '20+0x40'
+      - series: 'stellarindex_timescale_probe_query_ok{job="node_exporter",instance="r1:9100",query="compression"}'
+        values: '1+0x40'
+      - series: 'stellarindex_timescale_probe_rows{job="node_exporter",instance="r1:9100",query="compression"}'
+        values: '46+0x40'
+      - series: 'stellarindex_timescale_probe_query_ok{job="node_exporter",instance="r1:9100",query="job_stats"}'
+        values: '1+0x40'
+      - series: 'stellarindex_timescale_probe_rows{job="node_exporter",instance="r1:9100",query="job_stats"}'
+        values: '69+0x40'
+      - series: 'stellarindex_timescale_probe_last_run_unix{job="node_exporter",instance="r1:9100"}'
+        values: '0+60x40'
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: stellarindex_timescale_probe_degraded
+        exp_alerts: []
+
   # ══ stellarindex_timescale_backup_failed / _backup_none_24h ═══════
   # ── both tiers fire past 25h ──────────────────────────────────────
   - interval: 1m
