@@ -90,6 +90,7 @@ var coveredOperations = []coveredOperation{
 	{"Pools", "GET", "/pools", Pool{}, ""},
 	{"LendingPools", "GET", "/lending/pools", LendingPool{}, ""},
 	{"SACWrappers", "GET", "/sac-wrappers", nil, ""}, // map[string]string payload
+	{"RWAAssets", "GET", "/rwa/assets", RWAAssetsView{}, ""},
 	{"Issuers", "GET", "/issuers", IssuerListEntry{}, ""},
 	{"Issuer", "GET", "/issuers/{g_strkey}", Issuer{}, ""},
 	{"NetworkStats", "GET", "/network/stats", NetworkStats{}, ""},

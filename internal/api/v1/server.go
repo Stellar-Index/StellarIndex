@@ -248,10 +248,21 @@ type Server struct {
 	// issuer's cached sep1_payload in one scan. Backs the image fill on
 	// the /v1/assets listing so the homepage grid renders real logos
 	// instead of fallback avatars — see cachedSep1Images.
-	sep1ImagesMu           sync.Mutex
-	sep1ImagesCache        map[string]string
-	sep1ImagesAt           time.Time
-	sep1ImagesFlight       chan struct{}
+	sep1ImagesMu     sync.Mutex
+	sep1ImagesCache  map[string]string
+	sep1ImagesAt     time.Time
+	sep1ImagesFlight chan struct{}
+
+	// RWA membership set (/v1/rwa/assets) — the (code, issuer) pairs
+	// meeting the internal/rwa definition, rebuilt off the request
+	// path behind a TTL + single-flight because its inputs (the SEP-1
+	// payloads and the curated directory) move on daily cadences. It
+	// holds NO valuation: membership is decided before any number is
+	// attached.
+	rwaMu                  sync.Mutex
+	rwaCache               *rwaMembership
+	rwaAt                  time.Time
+	rwaFlight              chan struct{}
 	soroswapPairs          SoroswapPairsReader
 	networkStats           NetworkStatsReader
 	aggregators            AggregatorsReader
@@ -2075,6 +2086,13 @@ func (s *Server) mountRoutes() { //nolint:funlen // route registration is intent
 	// Phoenix / Aquarius / Comet) with readable asset symbols
 	// instead of raw C-strkeys.
 	s.mux.HandleFunc("GET /v1/sac-wrappers", s.handleSACWrappers)
+
+	// Tokenized real-world assets — the (code, issuer) set meeting the
+	// internal/rwa definition, with its aggregates and the rule that
+	// produced it. Identity is always (code, issuer): a code alone is
+	// not an asset here, because anyone can issue a token called
+	// anything. #352.
+	s.mux.HandleFunc("GET /v1/rwa/assets", s.handleRWAAssets)
 
 	// Account self-service. /me and /usage require an authenticated
 	// Subject; /keys (POST) additionally requires the AccountStore

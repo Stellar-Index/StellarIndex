@@ -1308,3 +1308,102 @@ type AccountOrg struct {
 	Tier   string `json:"tier,omitempty"`
 	Status string `json:"status,omitempty"`
 }
+
+// ─── Tokenized real-world assets (/v1/rwa/assets) ───────────────────
+
+// RWAAssetsView is the /v1/rwa/assets payload: the tokenized
+// real-world-asset set, its aggregates, and the rule that produced it.
+//
+// Membership is decided from identity and attestation only, so no
+// valuation moves an asset in or out. Every money field is a decimal
+// string (ADR-0003) and is ABSENT rather than zero when withheld or
+// unavailable — read Valuation.Status before reading a number.
+type RWAAssetsView struct {
+	Definition RWADefinition    `json:"definition"`
+	Summary    RWASummary       `json:"summary"`
+	Assets     []RWAAsset       `json:"assets"`
+	ByClass    []RWAGroupTotal  `json:"by_class"`
+	ByIssuer   []RWAIssuerTotal `json:"by_issuer"`
+	Refused    []RWARefusal     `json:"refused"`
+}
+
+// RWADefinition is the membership rule as applied to the response.
+type RWADefinition struct {
+	Requirements     []string `json:"requirements"`
+	AnchorClasses    []string `json:"anchor_classes"`
+	RecognitionTags  []string `json:"recognition_tags"`
+	ScamFlagTags     []string `json:"scam_flag_tags"`
+	DocumentationURL string   `json:"documentation_url"`
+}
+
+// RWASummary aggregates the served set. MarketCapUSD is nil when no
+// asset in the set publishes one — never "0.00".
+type RWASummary struct {
+	Assets                  int     `json:"assets"`
+	Issuers                 int     `json:"issuers"`
+	MarketCapUSD            *string `json:"market_cap_usd,omitempty"`
+	AssetsValued            int     `json:"assets_valued"`
+	AssetsUnvalued          int     `json:"assets_unvalued"`
+	LowerBound              bool    `json:"lower_bound"`
+	EarliestFirstSeenLedger uint32  `json:"earliest_first_seen_ledger,omitempty"`
+	Basis                   string  `json:"basis"`
+	Truncated               bool    `json:"truncated,omitempty"`
+}
+
+// RWAValuation carries a row valuation or the reason there is none.
+// The money fields are populated only when Status is "published".
+type RWAValuation struct {
+	Status   string  `json:"status"`
+	PriceUSD *string `json:"price_usd,omitempty"`
+	// PriceBasis names a price that is NOT a direct market observation
+	// ("declared_peg" or "transitive"). Absent means market-derived.
+	PriceBasis   string  `json:"price_basis,omitempty"`
+	MarketCapUSD *string `json:"market_cap_usd,omitempty"`
+}
+
+// RWAAsset is one member of the set, with the evidence that admitted
+// it. Identity is (Code, Issuer); Code alone identifies nothing.
+type RWAAsset struct {
+	AssetID             string       `json:"asset_id"`
+	Code                string       `json:"code"`
+	Issuer              string       `json:"issuer"`
+	Slug                string       `json:"slug,omitempty"`
+	Name                string       `json:"name,omitempty"`
+	HomeDomain          string       `json:"home_domain,omitempty"`
+	IssuerDirectoryName string       `json:"issuer_directory_name,omitempty"`
+	IssuerDirectoryTags []string     `json:"issuer_directory_tags,omitempty"`
+	Basis               string       `json:"basis"`
+	AnchorClass         string       `json:"anchor_class,omitempty"`
+	AnchorAsset         string       `json:"anchor_asset,omitempty"`
+	Valuation           RWAValuation `json:"valuation"`
+	CirculatingSupply   *string      `json:"circulating_supply,omitempty"`
+	Volume24hUSD        *string      `json:"volume_24h_usd,omitempty"`
+	FirstSeenLedger     uint32       `json:"first_seen_ledger,omitempty"`
+	ObservationCount    int64        `json:"observation_count"`
+}
+
+// RWAGroupTotal is one row of the per-declared-class breakdown.
+type RWAGroupTotal struct {
+	Class          string  `json:"class"`
+	Assets         int     `json:"assets"`
+	MarketCapUSD   *string `json:"market_cap_usd,omitempty"`
+	AssetsUnvalued int     `json:"assets_unvalued"`
+}
+
+// RWAIssuerTotal is one row of the per-issuer breakdown, keyed on the
+// G-address rather than on a company name.
+type RWAIssuerTotal struct {
+	Issuer         string  `json:"issuer"`
+	Name           string  `json:"name,omitempty"`
+	HomeDomain     string  `json:"home_domain,omitempty"`
+	Assets         int     `json:"assets"`
+	MarketCapUSD   *string `json:"market_cap_usd,omitempty"`
+	AssetsUnvalued int     `json:"assets_unvalued"`
+}
+
+// RWARefusal counts the candidates one membership requirement turned
+// away.
+type RWARefusal struct {
+	Reason string `json:"reason"`
+	Assets int    `json:"assets"`
+}

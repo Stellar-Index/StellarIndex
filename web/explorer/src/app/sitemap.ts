@@ -54,6 +54,7 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   const staticPages: MetadataRoute.Sitemap = [
     '',
     '/assets',
+    '/rwa',
     '/markets',
     '/issuers',
     // Chain-explorer hubs (ADR-0038). Each is indexable,

@@ -978,6 +978,22 @@ func (c *Client) Incidents(ctx context.Context) (*Envelope[IncidentsList], error
 //
 // Returned as a plain map; iterate the map keys for contract
 // addresses or look up a specific contract directly.
+// RWAAssets returns the tokenized real-world-asset set, its aggregates
+// and the membership rule that produced it (GET /v1/rwa/assets).
+//
+// Read Valuation.Status before any money field: only "published"
+// carries a number, and a withheld or unavailable valuation is absent
+// rather than zero. Summary.MarketCapUSD is likewise nil when nothing
+// in the set publishes one, and Summary.LowerBound reports whether the
+// total is less than the value of the set.
+func (c *Client) RWAAssets(ctx context.Context) (*Envelope[RWAAssetsView], error) {
+	var env Envelope[RWAAssetsView]
+	if err := c.doJSON(ctx, http.MethodGet, "/v1/rwa/assets", nil, nil, &env); err != nil {
+		return nil, err
+	}
+	return &env, nil
+}
+
 func (c *Client) SACWrappers(ctx context.Context) (*Envelope[map[string]string], error) {
 	var env Envelope[map[string]string]
 	if err := c.doJSON(ctx, http.MethodGet, "/v1/sac-wrappers", nil, nil, &env); err != nil {

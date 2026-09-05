@@ -1,5 +1,7 @@
 package canonical
 
+import "sort"
+
 // Off-chain tokenized real-world-asset helpers — see ADR-0028.
 //
 // The Asset type carries an AssetRWA variant for tokenized
@@ -50,9 +52,27 @@ var knownRWACodes = map[string]struct{}{
 // IsKnownRWA reports whether code is in the ADR-0028 allow-list.
 // The RedStone decoder uses this to gate feed-registry entries —
 // an unrecognized code is a decoder bug, not silent coercion.
+//
+// EXACT match, deliberately: the decoder maps a feed_id onto one
+// allow-listed code and a near-miss there is a bug. A caller matching
+// an on-chain asset code (whose case its issuer chose) against these
+// instrument tickers wants [KnownRWACodes] and its own comparison.
 func IsKnownRWA(code string) bool {
 	_, ok := knownRWACodes[code]
 	return ok
+}
+
+// KnownRWACodes returns the ADR-0028 allow-list in a stable order.
+// Exported for callers that must compare an on-chain asset code
+// against the list under their own folding rule — [IsKnownRWA] stays
+// exact for the decoder.
+func KnownRWACodes() []string {
+	out := make([]string, 0, len(knownRWACodes))
+	for c := range knownRWACodes {
+		out = append(out, c)
+	}
+	sort.Strings(out)
+	return out
 }
 
 // NewRWAAsset constructs a tokenized-real-world-asset reference.
