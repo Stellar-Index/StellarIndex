@@ -1,12 +1,16 @@
 package v1_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"log/slog"
 	"math/big"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -28,6 +32,18 @@ type countingAquariusReader struct {
 func (s *countingAquariusReader) LatestAquariusReserves(context.Context, int) ([]timescale.AquariusPoolReserve, error) {
 	s.calls.Add(1)
 	return s.pools, s.err
+}
+
+// countingTVLPricer is the stub pricer with a call counter, so a test
+// can prove the drill-down consults no price tier per request. The
+// price rule stays in one place — this only counts the way through it.
+type countingTVLPricer struct {
+	calls atomic.Int32
+}
+
+func (p *countingTVLPricer) USDPriceAt(ctx context.Context, asset canonical.Asset, at time.Time) (string, bool, error) {
+	p.calls.Add(1)
+	return stubTVLPricerT{}.USDPriceAt(ctx, asset, at)
 }
 
 func aquariusPool(id string, ledger uint32, rawXLM int64) timescale.AquariusPoolReserve {
@@ -250,13 +266,136 @@ func TestHandleProtocolTVL_CarriedForwardIsLabelledStale(t *testing.T) {
 }
 
 // The drill-down reads only the in-process snapshot: no reserve reader
-// or price tier is touched per request, so it needs no budget of its
-// own and its cost is bounded by serialisation alone. Pinned two ways —
-// the reader's call count does not move across requests, and a
-// snapshot far larger than production's pool count (r1 serves a few
-// hundred Aquarius pools) is served well inside the 15 s request
-// deadline.
-func TestHandleProtocolTVL_ServesFromMemoryWithinBudget(t *testing.T) {
+// and no price tier is touched per request, so it needs no budget of
+// its own and its cost is bounded by serialisation alone. That is a
+// claim about what the handler TOUCHES, so it is pinned by counting
+// rather than by a clock — over a run of requests against a snapshot
+// far larger than production's pool count (r1 serves a few hundred
+// Aquarius pools) the reserve read and the price lookups both stand
+// still, and every response carries the same data block byte for byte
+// (only the envelope's as_of stamp moves). What the snapshot costs to
+// serialise is measured by BenchmarkHandleProtocolTVL_LargeSnapshot,
+// on a quiet machine: a wall-clock ceiling in the unit suite measures
+// how loaded the runner is, not what the handler does. The 5 s ceiling
+// that used to sit here spent 1.1 s of itself under -race on an idle
+// machine and breached at 5.3 s under CPU load, on one unchanged
+// commit.
+func TestHandleProtocolTVL_ServesFromMemory(t *testing.T) {
+	const pools = 5_000
+	reader := &countingAquariusReader{}
+	for i := 0; i < pools; i++ {
+		reader.pools = append(reader.pools, aquariusPool(fmt.Sprintf("POOL-%05d", i), uint32(i+1), int64(i)*10_000_000))
+	}
+	pricer := &countingTVLPricer{}
+	cache := v1.NewDEXTVLCache(v1.DEXTVLSources{AquariusReserves: reader, Pricer: pricer})
+	if err := cache.Refresh(context.Background()); err != nil {
+		t.Fatalf("refresh: %v", err)
+	}
+	reads, prices := reader.calls.Load(), pricer.calls.Load()
+	if reads != 1 {
+		t.Fatalf("reader calls after refresh = %d, want 1", reads)
+	}
+	if prices == 0 {
+		t.Fatal("the refresh priced nothing, so a standing price count below would prove nothing")
+	}
+	ts := httpTestServer(t, v1.New(v1.Options{DEXTVL: cache}))
+
+	// A handful of requests, not a crowd: the counters are read after
+	// each one and a handler that read per request moves them on the
+	// first, so further repetitions buy nothing but runtime. The twenty
+	// this loop used to make were a sample size for the clock, and went
+	// with it.
+	const requests = 5
+	var first []byte
+	for i := 0; i < requests; i++ {
+		body := getProtocolTVL(t, ts.URL+"/v1/protocols/aquarius/tvl")
+		if got := reader.calls.Load(); got != reads {
+			t.Fatalf("request %d moved the reserve read count to %d, want still %d — the handler must never read the store per request", i, got, reads)
+		}
+		if got := pricer.calls.Load(); got != prices {
+			t.Fatalf("request %d moved the price lookup count to %d, want still %d — the handler must never price per request", i, got, prices)
+		}
+		data := protocolTVLData(t, body)
+		if i == 0 {
+			first = data
+			var env protocolTVLEnvelope
+			if err := json.Unmarshal(body, &env); err != nil {
+				t.Fatalf("decode: %v", err)
+			}
+			if len(env.Data.Pools) != pools || env.Data.TVL.PoolsTotal != pools {
+				t.Fatalf("pools served = %d (pools_total %d), want %d", len(env.Data.Pools), env.Data.TVL.PoolsTotal, pools)
+			}
+			continue
+		}
+		if !bytes.Equal(data, first) {
+			t.Fatalf("request %d served a data block of %d bytes against the first request's %d, diverging at byte %d — every request serves the one snapshot, unchanged",
+				i, len(data), len(first), firstDifference(data, first))
+		}
+	}
+}
+
+// getProtocolTVL issues one drill-down request and returns the whole
+// body, reading it to completion — an abandoned body leaves the server
+// writing into a socket nobody drains and costs the next request a
+// fresh connection.
+func getProtocolTVL(t *testing.T, url string) []byte {
+	t.Helper()
+	resp, err := http.Get(url)
+	if err != nil {
+		t.Fatalf("GET %s: %v", url, err)
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("read body: %v", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("GET %s = %d, want 200", url, resp.StatusCode)
+	}
+	return body
+}
+
+// protocolTVLData returns the `data` object exactly as it was written,
+// so two responses can be compared byte for byte: the envelope around
+// it carries an as_of stamped at write time, which differs per
+// response and says nothing about the snapshot underneath.
+func protocolTVLData(t *testing.T, body []byte) []byte {
+	t.Helper()
+	var env struct {
+		Data json.RawMessage `json:"data"`
+	}
+	if err := json.Unmarshal(body, &env); err != nil {
+		t.Fatalf("decode envelope: %v", err)
+	}
+	if len(env.Data) == 0 {
+		t.Fatal("response carried no data block")
+	}
+	return env.Data
+}
+
+// firstDifference reports the offset two data blocks diverge at, so a
+// failure names where they parted rather than only that they did.
+func firstDifference(a, b []byte) int {
+	for i := 0; i < len(a) && i < len(b); i++ {
+		if a[i] != b[i] {
+			return i
+		}
+	}
+	return min(len(a), len(b))
+}
+
+// BenchmarkHandleProtocolTVL_LargeSnapshot — informal perf guard over
+// the drill-down's only per-request cost, serialising the snapshot. It
+// is where the latency half of the test above went: a quiet machine
+// reports a number a regression moves by a multiple (a handler that
+// re-derived or re-read per request is orders out), where the same
+// number inside the gate reported how busy the runner was. Reference
+// on an idle arm64 laptop without -race: 1.72 ms/op over a 1.12 MiB
+// body, for a snapshot an order of magnitude past the few hundred
+// pools r1 serves — 8,700x under the 15 s request deadline. Not
+// gated in CI; run manually via
+// `go test ./internal/api/v1/ -run xxx -bench HandleProtocolTVL`.
+func BenchmarkHandleProtocolTVL_LargeSnapshot(b *testing.B) {
 	const pools = 5_000
 	reader := &countingAquariusReader{}
 	for i := 0; i < pools; i++ {
@@ -264,31 +403,19 @@ func TestHandleProtocolTVL_ServesFromMemoryWithinBudget(t *testing.T) {
 	}
 	cache := v1.NewDEXTVLCache(v1.DEXTVLSources{AquariusReserves: reader, Pricer: stubTVLPricerT{}})
 	if err := cache.Refresh(context.Background()); err != nil {
-		t.Fatalf("refresh: %v", err)
+		b.Fatalf("refresh: %v", err)
 	}
-	if got := reader.calls.Load(); got != 1 {
-		t.Fatalf("reader calls after refresh = %d, want 1", got)
-	}
-	ts := httpTestServer(t, v1.New(v1.Options{DEXTVL: cache}))
+	h := v1.New(v1.Options{
+		DEXTVL: cache,
+		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}).Handler()
 
-	const requests = 20
-	start := time.Now()
-	for i := 0; i < requests; i++ {
-		resp := mustGet(t, ts.URL+"/v1/protocols/aquarius/tvl")
-		if resp.StatusCode != http.StatusOK {
-			t.Fatalf("request %d: status %d", i, resp.StatusCode)
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/v1/protocols/aquarius/tvl", nil))
+		if rec.Code != http.StatusOK {
+			b.Fatalf("status = %d, want 200", rec.Code)
 		}
-		if i == 0 {
-			env := decodeProtocolTVL(t, resp)
-			if len(env.Data.Pools) != pools || env.Data.TVL.PoolsTotal != pools {
-				t.Fatalf("pools served = %d (pools_total %d), want %d", len(env.Data.Pools), env.Data.TVL.PoolsTotal, pools)
-			}
-		}
-	}
-	if elapsed := time.Since(start); elapsed > 5*time.Second {
-		t.Errorf("%d requests over a %d-pool snapshot took %s — the drill-down must stay far inside the request deadline", requests, pools, elapsed)
-	}
-	if got := reader.calls.Load(); got != 1 {
-		t.Errorf("reader calls after %d requests = %d, want still 1 — the handler must never read per request", requests, got)
 	}
 }
