@@ -243,9 +243,10 @@ func takerReceivesLowAsset(t canonical.Trade) (low, ok bool) {
 //
 //   - sdex writes base = the asset the maker SOLD, i.e. what the taker
 //     RECEIVED (internal/sources/sdex/decode.go).
-//   - the Soroban AMMs (aquarius, comet, phoenix, soroswap) write
-//     base = token_in = what the taker SOLD, so the taker received the
-//     QUOTE (each source's decode.go).
+//   - the Soroban AMMs (aquarius, comet, phoenix, soroswap, sushiswap_v3)
+//     write base = token_in = what the taker SOLD, so the taker received
+//     the QUOTE (each source's decode.go). For sushiswap_v3 that is the
+//     POSITIVE signed pool delta — the leg the pool received.
 //
 // These are the only on-chain sources that emit taker-attributed,
 // ledger>0 trades (off-chain venues stamp ledger 0 and are excluded by
@@ -257,7 +258,7 @@ func takerBaseIsReceived(source string) (received, ok bool) {
 	switch source {
 	case "sdex":
 		return true, true
-	case "aquarius", "comet", "phoenix", "soroswap":
+	case "aquarius", "comet", "phoenix", "soroswap", "sushiswap_v3":
 		return false, true
 	default:
 		return false, false

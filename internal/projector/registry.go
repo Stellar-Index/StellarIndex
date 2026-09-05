@@ -21,6 +21,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/sources/sep41_transfers"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/sorocredit"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/soroswap"
+	sushiswap_v3 "github.com/Stellar-Index/StellarIndex/internal/sources/sushiswap_v3"
 )
 
 // BuildRegistry constructs the projector's source list from the
@@ -140,6 +141,21 @@ func buildSource(name string, oracle config.OracleConfig, watchedSEP41 []string,
 			Name:              phoenix.SourceName,
 			Decoder:           phoenix.NewDecoder(gated[phoenix.SourceName]...),
 			ExcludeTopic0Syms: firehoseExcludeSyms,
+		}, true, nil
+	case sushiswap_v3.SourceName:
+		// ADR-0035: factory-anchored. The contract-id prefilter is the
+		// decoder's OWN gate set (factory + every registered pool), not a
+		// topic filter: this protocol emits `mint` and `burn`, which a
+		// bounded pubnet census puts at 33% and 12% of ALL contract events,
+		// so firehoseExcludeSyms would have to drop the source's own events
+		// to keep a catch-up window affordable. Scoping by contract instead
+		// is both cheaper and lossless. The set grows across restarts via
+		// the protocol_contracts warm that gated[...] carries.
+		sushiDec := sushiswap_v3.NewDecoder(gated[sushiswap_v3.SourceName]...)
+		return Source{
+			Name:        sushiswap_v3.SourceName,
+			Decoder:     sushiDec,
+			ContractIDs: sushiDec.GatedContractSet(),
 		}, true, nil
 	case comet.SourceName:
 		// ADR-0035/0040: contract-gated (curated set — comet has no

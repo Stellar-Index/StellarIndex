@@ -304,6 +304,7 @@ var sourceGenesisLedger = map[string]int64{
 	"soroswap-router": 50_746_272, // router, +6 ledgers after factory (soroswap.md:236)
 	"aquarius":        52_728_375, // MIN across 313 pools + router
 	"phoenix":         51_572_016, // factory first-deploy
+	"sushiswap_v3":    61_487_379, // pool factory first pool_created (sushiswap_v3.md)
 	// comet ≡ blend genesis is a REAL shared origin, not a
 	// copy-paste: there is no standalone mainnet Comet — the only
 	// mainnet Comet deployment IS Blend's backstop pool, instantiated

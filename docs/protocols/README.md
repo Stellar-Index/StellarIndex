@@ -70,6 +70,7 @@ tell us if a contract is missing or mis-attributed.
 | Phoenix | RPC view (pre-lake) | ✅ Gated code-side (curated set, 2026-07-02); operator rollout pending | [phoenix.md](phoenix.md) |
 | DeFindex | multi-proof classification | ✅ Gated (curated 85 vaults + 16 strategies, 4 factories, 2026-07-05) | [defindex.md](defindex.md) |
 | Comet | curated allowlist (no deployed factory) | ✅ Gated (1 pool, 2026-07-08 — CS-026 closed) | [comet.md](comet.md) |
+| SushiSwap V3 | lake deploy-graph (factory `pool_created` carries the pool AND its tokens) | ✅ Gated (1 factory, 58 pools, 2026-09-05) — concentrated liquidity, no reserve-derived TVL | [sushiswap_v3.md](sushiswap_v3.md) |
 | SDEX (classic) | op-result XDR | N/A — no contracts | [sdex.md](sdex.md) |
 
 > **Every on-chain source is now gated on contract identity.** ADR-0035

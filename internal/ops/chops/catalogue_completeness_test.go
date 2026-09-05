@@ -16,6 +16,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/sources/defindex"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/phoenix"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/soroswap"
+	sushiswap_v3 "github.com/Stellar-Index/StellarIndex/internal/sources/sushiswap_v3"
 )
 
 // ─── Catalogue-completeness invariant (the "next omission" guard) ─────
@@ -165,6 +166,12 @@ var projRoutes = []projRoute{
 	// ── comet ──
 	{typeName: "comet.TradeEvent", table: "trades", kind: "comet.trade", disp: reconciledByKind},
 	{typeName: "comet.LiquidityEvent", table: "comet_liquidity", kind: "comet.liquidity", disp: reconciledByKind},
+
+	// ── sushiswap_v3 ──
+	// One kind, one table. The position / lifecycle events (mint, burn,
+	// collect, init, upgraded, migrated) are gated and recognized but emit no
+	// consumer.Event at all, so they have no persist arm and need no route.
+	{typeName: "sushiswap_v3.TradeEvent", table: "trades", kind: "sushiswap_v3.trade", disp: reconciledByKind},
 
 	// ── blend (five kinds across four tables) ──
 	{typeName: "blend.NewAuctionEvent", table: "blend_auctions", disp: reconciledByKind},
@@ -455,6 +462,8 @@ func TestCatalogue_DeclaredKindsMatchDecoderOutput(t *testing.T) {
 		// table — pinned so the catalogue kind string stays welded to
 		// DFeesEvent.EventKind().
 		{defindex.DFeesEvent{}, "defindex.vault.dfees", "defindex_fees"},
+		// sushiswap_v3: the source's only emitted kind.
+		{sushiswap_v3.TradeEvent{}, "sushiswap_v3.trade", "trades"},
 	}
 
 	for _, e := range emitters {

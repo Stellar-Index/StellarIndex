@@ -66,7 +66,7 @@ while [ "$w" -le "$TO" ]; do
   if grep -qx "$w" "$STATE"; then w=$((w+WIN)); continue; fi
   echo "--- window [$w,$hi] DELETE $(date -u) ---"
   psql "$DSN" -v ON_ERROR_STOP=1 <<SQL || { echo "DELETE FAILED [$w,$hi]"; exit 1; }
-DELETE FROM trades WHERE source IN ('aquarius','soroswap','phoenix','comet') AND ledger BETWEEN $w AND $hi;
+DELETE FROM trades WHERE source IN ('aquarius','soroswap','phoenix','comet','sushiswap_v3') AND ledger BETWEEN $w AND $hi;
 DELETE FROM soroswap_skim_events WHERE ledger BETWEEN $w AND $hi;
 DELETE FROM phoenix_liquidity     WHERE ledger BETWEEN $w AND $hi;
 DELETE FROM phoenix_stake_events  WHERE ledger BETWEEN $w AND $hi;

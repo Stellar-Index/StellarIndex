@@ -36,6 +36,14 @@ var Registry = map[string]Metadata{
 	"phoenix":  {Class: ClassExchange, Subclass: SubclassDEX, AmountDecimals: 7, DefaultWeight: 100, IncludeInVWAP: true, Paid: false, BackfillAvailable: true, BackfillSafe: true /* audited 2026-04-29; 11 pools, 2 unique WASM hashes, both contain 8 expected swap-field strings. See docs/operations/wasm-audits/phoenix.md */},
 	"comet":    {Class: ClassExchange, Subclass: SubclassDEX, AmountDecimals: 7, DefaultWeight: 100, IncludeInVWAP: true, Paid: false, BackfillAvailable: true, BackfillSafe: true /* audited 2026-04-29; only known mainnet pool is Blend backstop CAS3FL6T..., WASM 8abc2891... verified. See docs/operations/wasm-audits/comet.md */},
 	"sdex":     {Class: ClassExchange, Subclass: SubclassDEX, AmountDecimals: 7, DefaultWeight: 100, IncludeInVWAP: true, Paid: false, BackfillAvailable: true, BackfillSafe: true},
+	// SushiSwap V3 — concentrated liquidity. BackfillSafe stays FALSE
+	// until a WASM audit page exists: the pools have been through two
+	// factory-driven upgrades (ledgers 61,594,973 and 62,898,378) and the
+	// audit is what records that the decoder handles every version that
+	// ran for a replay range. The swap bodies are field-identical across
+	// both, verified over all 97,349 swaps in history, so the audit is
+	// expected to confirm rather than change anything.
+	"sushiswap_v3": {Class: ClassExchange, Subclass: SubclassDEX, AmountDecimals: 7, DefaultWeight: 100, IncludeInVWAP: true, Paid: false, BackfillAvailable: true, BackfillSafe: false},
 
 	// ─── On-chain oracles ────────────────────────────────────────
 	// Excluded from VWAP by default — they publish already-aggregated

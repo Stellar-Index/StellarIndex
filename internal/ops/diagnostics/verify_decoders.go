@@ -25,6 +25,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/sources/reflector"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/sdex"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/soroswap"
+	sushiswap_v3 "github.com/Stellar-Index/StellarIndex/internal/sources/sushiswap_v3"
 	"github.com/Stellar-Index/StellarIndex/internal/stellarrpc"
 )
 
@@ -211,12 +212,14 @@ func buildVerifyDispatcher(oracle config.OracleConfig) (*dispatcher.Dispatcher, 
 		aquarius.NewDecoder(),
 		phoenix.NewDecoder(),
 		comet.NewDecoder(),
+		sushiswap_v3.NewDecoder(),
 	}
 	registered := []string{
 		soroswap.SourceName,
 		aquarius.SourceName,
 		phoenix.SourceName,
 		comet.SourceName,
+		sushiswap_v3.SourceName,
 	}
 
 	// Oracle variants: only register if their contract address is set.

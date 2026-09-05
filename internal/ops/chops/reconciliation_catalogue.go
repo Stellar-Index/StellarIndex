@@ -29,6 +29,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/sources/sorocredit"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/soroswap"
 	soroswap_router "github.com/Stellar-Index/StellarIndex/internal/sources/soroswap_router"
+	sushiswap_v3 "github.com/Stellar-Index/StellarIndex/internal/sources/sushiswap_v3"
 )
 
 // reconTarget is one protocol table a source writes, plus the
@@ -307,6 +308,39 @@ func buildReconciliationCatalogue(cfg config.Config) ([]reconSource, *soroswap.D
 			{"trades", "source = 'comet'", []string{"comet.trade"}},
 			{"comet_liquidity", "", []string{"comet.liquidity"}},
 		}},
+		{
+			// ADR-0035 factory-anchored. The bare NewDecoder() already
+			// carries the curated in-code pool seed (MainnetPools, all 58
+			// pools the factory has created), so a sub-range re-derive
+			// resolves tokens without first replaying creation events; the
+			// factory/creationSym pair lets preseedFactoryChildren admit a
+			// pool created after that table was frozen.
+			//
+			// newGatedDec (and NOT a static contractIDs list) is what scopes
+			// the -ch re-derive. It is not an optimisation here, it is what
+			// makes the re-derive finish: the source's own `mint` and `burn`
+			// symbols are 33% and 12% of ALL pubnet contract events, so an
+			// unscoped read over [61.5M, tip] streams the CAP-67 firehose. A
+			// STATIC contractIDs list would also be a hard filter on
+			// ch-rebuild / ch-reproject and would silently drop a pool created
+			// after the curated table was frozen; gatedPrefilter re-walks the
+			// factory creation events from the lake instead, so the set is a
+			// guaranteed superset at every point in the window.
+			//
+			// Strict per-ledger, no netting: a V3 swap body is
+			// self-contained, so a decoded trade is always attributed to the
+			// ledger its own event closed in and the served row keys 1:1
+			// with the re-derive.
+			name:        "sushiswap_v3",
+			genesis:     sushiswap_v3.FactoryGenesisLedger,
+			dec:         sushiswap_v3.NewDecoder(),
+			factories:   sushiswap_v3.MainnetFactories,
+			creationSym: sushiswap_v3.EventPoolCreated,
+			newGatedDec: func() gatedDecoder { return sushiswap_v3.NewDecoder() },
+			targets: []reconTarget{
+				{"trades", "source = 'sushiswap_v3'", []string{"sushiswap_v3.trade"}},
+			},
+		},
 		{
 			// blend_emitter — ADR-0035/0040 contract-gated (curated
 			// one-contract set, same shape as comet/cctp: no factory

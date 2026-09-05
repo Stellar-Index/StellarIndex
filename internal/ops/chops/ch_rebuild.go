@@ -26,6 +26,7 @@ import (
 	sep41supply "github.com/Stellar-Index/StellarIndex/internal/sources/sep41_supply"
 	sep41transfers "github.com/Stellar-Index/StellarIndex/internal/sources/sep41_transfers"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/soroswap"
+	sushiswap_v3 "github.com/Stellar-Index/StellarIndex/internal/sources/sushiswap_v3"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
@@ -42,6 +43,8 @@ func tradeOf(ev consumer.Event) (canonical.Trade, bool) {
 	case phoenix.TradeEvent:
 		return e.Trade, true
 	case comet.TradeEvent:
+		return e.Trade, true
+	case sushiswap_v3.TradeEvent:
 		return e.Trade, true
 	case sdex.TradeEvent:
 		return e.Trade, true

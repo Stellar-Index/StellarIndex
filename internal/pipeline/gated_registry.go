@@ -14,6 +14,7 @@ import (
 	blend_emitter "github.com/Stellar-Index/StellarIndex/internal/sources/blend_emitter"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/comet"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/defindex"
+	sushiswap_v3 "github.com/Stellar-Index/StellarIndex/internal/sources/sushiswap_v3"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
@@ -109,6 +110,21 @@ var gatedSources = map[string]GatedMeta{
 		CreationSym: aquarius.EventAddPool,
 		Genesis:     52_728_375,
 		NewDecoder:  func(opts ...contractid.Option) dispatcher.Decoder { return aquarius.NewDecoder(opts...) },
+	},
+	sushiswap_v3.SourceName: {
+		// Factory-anchored gate (ADR-0035 mechanism 1): one pool factory
+		// whose `pool_created` event announces every pool AND carries the
+		// pool's token identities. The decoder's in-code curated table
+		// (MainnetPools — all 58 pools the factory has created, decoded from
+		// the lake) is the cold-start trust root; this entry adds the
+		// protocol_contracts warm plus the live-upsert hook so a pool created
+		// after the table was frozen survives a restart.
+		Factories:   sushiswap_v3.MainnetFactories,
+		CreationSym: sushiswap_v3.EventPoolCreated,
+		Genesis:     sushiswap_v3.FactoryGenesisLedger,
+		NewDecoder: func(opts ...contractid.Option) dispatcher.Decoder {
+			return sushiswap_v3.NewDecoder(opts...)
+		},
 	},
 	defindex.SourceName: {
 		// Curated-set gate (ADR-0035/0040; strategy create-body

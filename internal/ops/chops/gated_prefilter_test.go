@@ -274,11 +274,17 @@ func TestGatedContractSet_realDecoders(t *testing.T) {
 	}
 }
 
-// TestCatalogue_GatedPrefilterOptIn pins the exact opt-in set: aquarius and
-// phoenix (identity gates that time out / risk timing out on the whole-lake
-// re-derive) opt in; defindex must NOT (its decode correlates events ACROSS
-// contracts in the same tx, which a contract-id prefilter would break), and
-// neither may a census / oracle / ContractCall source.
+// TestCatalogue_GatedPrefilterOptIn pins the exact opt-in set: aquarius,
+// phoenix and sushiswap_v3 (identity gates that time out / risk timing out on
+// the whole-lake re-derive) opt in; defindex must NOT (its decode correlates
+// events ACROSS contracts in the same tx, which a contract-id prefilter would
+// break), and neither may a census / oracle / ContractCall source.
+//
+// sushiswap_v3 qualifies on both counts the opt-in requires. Its Matches()
+// keys purely on contract identity and its decode is self-contained (a V3 swap
+// body carries both amounts, so nothing correlates across contracts), and its
+// own `mint` / `burn` symbols are 33% and 12% of ALL pubnet contract events, so
+// an unscoped re-derive over [61.5M, tip] streams the CAP-67 firehose.
 func TestCatalogue_GatedPrefilterOptIn(t *testing.T) {
 	cat, _, err := buildReconciliationCatalogue(config.Config{})
 	if err != nil {
@@ -290,7 +296,7 @@ func TestCatalogue_GatedPrefilterOptIn(t *testing.T) {
 			optedIn[src.name] = true
 		}
 	}
-	for _, name := range []string{"aquarius", "phoenix"} {
+	for _, name := range []string{"aquarius", "phoenix", "sushiswap_v3"} {
 		if !optedIn[name] {
 			t.Errorf("source %q must opt into the -ch gated prefilter (it streams the whole lake otherwise)", name)
 		}
@@ -298,8 +304,8 @@ func TestCatalogue_GatedPrefilterOptIn(t *testing.T) {
 	if optedIn["defindex"] {
 		t.Errorf("defindex must NOT opt into the gated prefilter — its decode correlates events across contracts in the same tx, which a contract-id prefilter would break")
 	}
-	// Sanity: the opt-in stays narrow — exactly the two identity-gated AMMs.
-	if len(optedIn) != 2 {
-		t.Errorf("gated-prefilter opt-in set = %v, want exactly {aquarius, phoenix}", optedIn)
+	// Sanity: the opt-in stays narrow — exactly the identity-gated AMMs.
+	if len(optedIn) != 3 {
+		t.Errorf("gated-prefilter opt-in set = %v, want exactly {aquarius, phoenix, sushiswap_v3}", optedIn)
 	}
 }
