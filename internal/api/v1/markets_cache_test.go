@@ -56,6 +56,21 @@ func (f *fakeMarketsReader) GetPairsVolumeHistory24hBatch(ctx context.Context, p
 	return nil, nil
 }
 
+// expireMarketsEntries walks every cached entry back past any ttl, so
+// the next read takes the stale-while-revalidate branch. It replaces
+// sleeping past a deliberately tiny ttl: the test below needs the entry
+// a refresh WRITES to stay fresh while it asserts on it, which a 25 ms
+// ttl cannot promise.
+func expireMarketsEntries(c *CachedMarketsReader) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for _, e := range c.entries {
+		if !e.at.IsZero() {
+			e.at = e.at.Add(-time.Hour)
+		}
+	}
+}
+
 func TestCachedMarketsReader_AllPoolsCachesByKey(t *testing.T) {
 	up := &fakeMarketsReader{}
 	c := NewCachedMarketsReader(up, 60*time.Second)
@@ -258,75 +273,148 @@ func toString(v any) string {
 	return "unknown"
 }
 
+// swrPoolsStaleTrades / swrPoolsFreshTrades are what tell the pool row
+// a cold fetch cached from the row a refresh replaces it with: the
+// stub moves the pool's 24h trade count on every call after the first,
+// which is what a re-scan of the trades window returning later data
+// looks like. The stub used to return one fixed row, identical before
+// and after a refresh, so nothing but a stopwatch separated a caller
+// served the cached entry from one handed the refresh's result.
+const (
+	swrPoolsStaleTrades = 100
+	swrPoolsFreshTrades = 200
+)
+
 // swrPoolsUpstream is a race-safe configurable AllPools stub for the
-// #23 stale-while-revalidate tests: atomic call counter, a fixed
-// construction-time delay, and an atomic "fail on call >= 2" toggle
-// (deterministic by call number → no mid-test field mutation, so
-// `go test -race` is clean even under the concurrent background
-// refresh). Embeds *fakeMarketsReader for the other interface
-// methods.
+// #23 stale-while-revalidate tests: atomic call counter, an optional
+// hold that parks a call until the test releases it, and an atomic
+// "fail on call >= 2" toggle (deterministic by call number → no
+// mid-test field mutation, so `go test -race` is clean even under the
+// concurrent background refresh). Embeds *fakeMarketsReader for the
+// other interface methods.
 type swrPoolsUpstream struct {
 	*fakeMarketsReader
 	calls   atomic.Int64
-	delay   time.Duration
+	hold    *upstreamHold
 	failGE2 atomic.Bool
 }
 
 func (s *swrPoolsUpstream) AllPools(ctx context.Context, _ timescale.PoolsFilter, _ string, _ int, _ timescale.MarketsOrder) ([]Pool, string, error) {
 	n := s.calls.Add(1)
-	if s.delay > 0 {
-		select {
-		case <-time.After(s.delay):
-		case <-ctx.Done():
-			return nil, "", ctx.Err()
-		}
+	if err := s.hold.park(ctx, n); err != nil {
+		return nil, "", err
 	}
 	if n >= 2 && s.failGE2.Load() {
 		return nil, "", errors.New("swr pools boom")
 	}
-	return []Pool{{Source: "aquarius", Base: "native"}}, "c", nil
+	trades := int64(swrPoolsStaleTrades)
+	if n >= 2 {
+		trades = swrPoolsFreshTrades
+	}
+	return []Pool{{Source: "aquarius", Base: "native", TradeCount24h: trades}}, "c", nil
 }
 
-// TestCachedMarketsReader_PoolsSWRServesStaleSingleFlight: an expired
-// pools entry serves stale IMMEDIATELY (not blocked on the slow
-// upstream — the #23 fix) under heavy concurrency, triggering
-// EXACTLY ONE single-flighted background refresh.
+// TestCachedMarketsReader_PoolsSWRServesStaleSingleFlight: every one
+// of 20 concurrent reads of an expired pools entry is served THE STALE
+// ROW while exactly one single-flighted background refresh runs (the
+// #23 fix), and the row that refresh returns is what replaces it.
+//
+// What a stale read is served is a value, so it is asserted as one.
+// The stub used to return one fixed row, so the row before the refresh
+// and the row after it were the same row and no assertion here could
+// tell a read served the entry from a read handed the refresh's
+// result — the 120 ms ceiling on each reader was the whole evidence,
+// and what it measured was how quickly the runner rescheduled 20
+// goroutines. The stub now moves the pool's 24h trade count on the
+// refresh, and the refresh is HELD until every read has returned, so a
+// read that waited for it could only be holding the refreshed count
+// and a read served the entry can only be holding the stale one — on
+// any runner at any load.
+//
+// The tail releases the hold and pins the refreshed row, which is what
+// keeps the assertion above a discrimination rather than a restatement
+// of the fixture.
 func TestCachedMarketsReader_PoolsSWRServesStaleSingleFlight(t *testing.T) {
-	up := &swrPoolsUpstream{fakeMarketsReader: &fakeMarketsReader{}, delay: 300 * time.Millisecond}
-	c := NewCachedMarketsReader(up, 25*time.Millisecond)
+	hold := newUpstreamHold(2) // the cold leader runs free; the refresh is parked
+	t.Cleanup(hold.release)
+	up := &swrPoolsUpstream{fakeMarketsReader: &fakeMarketsReader{}, hold: hold}
+	c := NewCachedMarketsReader(up, time.Minute)
 	f := timescale.PoolsFilter{Sources: []string{"aquarius"}}
 
-	if _, _, err := c.AllPools(context.Background(), f, "", 50, timescale.MarketsOrderVolume24hDesc); err != nil {
-		t.Fatal(err) // cold leader (blocks ~300ms), calls=1
+	cold, _, err := c.AllPools(context.Background(), f, "", 50, timescale.MarketsOrderVolume24hDesc)
+	if err != nil || len(cold) != 1 || cold[0].TradeCount24h != swrPoolsStaleTrades {
+		t.Fatalf("cold leader: rows=%d err=%v, want 1 row at %d trades", len(cold), err, swrPoolsStaleTrades)
 	}
 	if up.calls.Load() != 1 {
 		t.Fatalf("cold calls=%d, want 1", up.calls.Load())
 	}
-	time.Sleep(50 * time.Millisecond) // expire
+	expireMarketsEntries(c)
 
-	var wg sync.WaitGroup
-	for i := 0; i < 20; i++ {
-		wg.Add(1)
+	// The reads report back on a buffered channel rather than failing
+	// from their own goroutines: a caller blocked on the refresh is a
+	// failure this test has to name, and naming it ends the test while
+	// its siblings are still running.
+	const reads = 20
+	type staleRead struct {
+		rows   int
+		trades int64
+		err    error
+	}
+	served := make(chan staleRead, reads)
+	for i := 0; i < reads; i++ {
 		go func() {
-			defer wg.Done()
-			st := time.Now()
 			rows, _, err := c.AllPools(context.Background(), f, "", 50, timescale.MarketsOrderVolume24hDesc)
-			if err != nil || len(rows) == 0 {
-				t.Errorf("SWR must serve stale rows no err; got %d rows err=%v", len(rows), err)
+			r := staleRead{rows: len(rows), err: err}
+			if len(rows) > 0 {
+				r.trades = rows[0].TradeCount24h
 			}
-			if d := time.Since(st); d > 120*time.Millisecond {
-				t.Errorf("SWR blocked %v; must serve stale ~instantly (refresh is 300ms)", d)
-			}
+			served <- r
 		}()
 	}
-	wg.Wait()
-
-	if !waitFor(2*time.Second, func() bool { return up.calls.Load() == 2 }) {
-		t.Fatalf("want exactly 2 upstream calls (1 cold + 1 single-flighted refresh); got %d", up.calls.Load())
+	for i := 0; i < reads; i++ {
+		select {
+		case got := <-served:
+			if got.err != nil || got.rows != 1 {
+				t.Fatalf("stale read %d: rows=%d err=%v, want 1 row", i, got.rows, got.err)
+			}
+			if got.trades != swrPoolsStaleTrades {
+				t.Fatalf("stale read %d was served %d trades, want the stale %d — it waited for the refresh instead of being served the entry that was already there",
+					i, got.trades, swrPoolsStaleTrades)
+			}
+		case <-time.After(blockedCallerBailout):
+			t.Fatalf("only %d of %d stale reads returned; the rest are still waiting on a refresh that has not finished", i, reads)
+		}
 	}
-	time.Sleep(400 * time.Millisecond) // let the 300ms refresh finish; no new reads
+
+	hold.awaitCall(t, "the background refresh")
+	if n := hold.completed.Load(); n != 0 {
+		t.Fatalf("%d held refreshes had already finished; the reads above were not ordered against a refresh in flight", n)
+	}
 	if got := up.calls.Load(); got != 2 {
-		t.Fatalf("single-flight violated: %d upstream calls for 20 concurrent stale reads", got)
+		t.Fatalf("single-flight violated: %d upstream calls for %d concurrent stale reads, want 2 (1 cold + 1 refresh)", got, reads)
+	}
+
+	// Released, the one refresh settles the entry. Polling by READ adds
+	// no upstream call of its own: a stale read looks at the in-flight
+	// marker, which the refresh holds until it has written what it
+	// found, so every poll before that point is served the stale entry
+	// and the poll that succeeds is served the refreshed one. Because
+	// the ttl outlives the test, the entry then stays fresh and the
+	// call count is final.
+	hold.release()
+	var fresh []Pool
+	var freshErr error
+	if !waitFor(2*time.Second, func() bool {
+		fresh, _, freshErr = c.AllPools(context.Background(), f, "", 50, timescale.MarketsOrderVolume24hDesc)
+		return freshErr == nil && len(fresh) == 1 && fresh[0].TradeCount24h == swrPoolsFreshTrades
+	}) {
+		t.Fatalf("after the refresh: rows=%d err=%v, want 1 row at the refreshed %d trades", len(fresh), freshErr, swrPoolsFreshTrades)
+	}
+	// Nothing further may reach the upstream — see upstreamSettleWindow
+	// for why an absence gets a window and why that window fails
+	// nothing correct.
+	if waitFor(upstreamSettleWindow, func() bool { return up.calls.Load() != 2 }) {
+		t.Fatalf("single-flight violated: %d upstream calls once the refresh had settled, want 2 (1 cold + 1 refresh)", up.calls.Load())
 	}
 }
 
