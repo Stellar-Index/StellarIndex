@@ -36,6 +36,38 @@ import (
 //     open/close are exact there. Base-volume weighting matches the VWAP
 //     definition (Σ price·base / Σ base).
 //
+// SCALE (CS-040 money-path, series arm). Every one of those sums is over
+// SMALLEST-UNIT amounts, and the smallest unit is a per-SOURCE scale: an
+// on-chain DEX leg is 7-decimal stroops, a CEX leg 8, an FX poller 6. The
+// constituent set really does span them — on r1 today `native/fiat:USD`
+// combines `native/<USDC classic>` (sdex, 7dp) with
+// `crypto:XLM/crypto:USDT` (binance, 8dp) and `crypto:XLM/fiat:USD`
+// (bitstamp/coinbase/kraken, 8dp) in the SAME buckets — so summing the
+// raw integers adds incommensurable quantities and weights the 8dp legs
+// 10x per decimal against the 7dp one. Measured on the 2026-09-05 02:00Z
+// 1h bar: the sdex leg's 135,713.79 XLM entered the combine as 13,571.38,
+// the served v_base understated the market by 3.41%, and that leg carried
+// 0.39% of the open/close weight where it should carry 3.79%.
+//
+// So every bar is lifted to one common scale before it is accumulated —
+// the MAXIMUM scale present in the response, so each lift is an exact
+// integer multiply by 10^(max−scale) ≥ 1 with no division and no
+// precision loss (ADR-0003). This is the bar-level twin of
+// [aggregate.NormalizeAmountScale], which [Server.fiatCombinedTrades]
+// already applies to the raw-trade POINT path over the identical
+// constituent set; the two now agree by construction rather than by the
+// accident of every fixture being single-scale. A response whose bars all
+// share one scale — every non-fiat quote, and any fiat window served by
+// one venue class — is byte-identical to before, because every factor is
+// 10^0 = 1.
+//
+// A bar states its own scale rather than having one guessed from its pair
+// spelling: [OHLCSeriesBar.Sources] carries the CAGG's own
+// `array_agg(DISTINCT source)` column. Spelling is not scale — the
+// registry itself records that on-chain venues stamp at the ASSET decimals
+// — so inferring 7 from a classic quote id would be a guess that happens
+// to hold today.
+//
 // Each constituent read goes through the cached HistoryReader, so repeat
 // requests hit the per-pair cache.
 func (s *Server) ohlcSeriesFiatCombined(
@@ -48,6 +80,12 @@ func (s *Server) ohlcSeriesFiatCombined(
 	src := s.usdPeggedConstituents(pair)
 
 	acc := make(map[time.Time]*ohlcBucketAcc, 256)
+	// commonScale is the finest smallest-unit scale any bar in this
+	// response declares; every bucket is lifted to it in finalize. It
+	// spans the whole response rather than one bucket, so v_base never
+	// changes units part-way down a series.
+	commonScale := ohlcBarScaleUnknown
+	scales := make(map[int]struct{}, 4)
 	for _, sp := range src {
 		bars, err := s.history.OHLCSeries(ctx, sp, string(interval), from, to, limit)
 		if err != nil {
@@ -57,21 +95,31 @@ func (s *Server) ohlcSeriesFiatCombined(
 		}
 		for i := range bars {
 			b := &bars[i]
+			scale := barScaleDecimals(b.Sources)
+			if scale > commonScale {
+				commonScale = scale
+			}
+			scales[scale] = struct{}{}
 			a := acc[b.T]
 			if a == nil {
 				a = newOHLCBucketAcc()
 				acc[b.T] = a
 			}
-			a.add(b)
+			a.add(b, scale)
 		}
 	}
 	if len(acc) == 0 {
 		return nil, nil
 	}
 
+	factors := make(map[int]*big.Rat, len(scales))
+	for sc := range scales {
+		factors[sc] = ohlcScaleFactor(sc, commonScale)
+	}
+
 	out := make([]OHLCSeriesBar, 0, len(acc))
 	for t, a := range acc {
-		out = append(out, a.finalize(t))
+		out = append(out, a.finalize(t, factors))
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].T.Before(out[j].T) })
 	// Match OHLCSeries' earliest-N-in-window semantics (ORDER BY bucket
@@ -238,29 +286,84 @@ func sortTradesChronological(trades []canonical.Trade) {
 	})
 }
 
+// ohlcBarScaleUnknown is the scale of a bar whose reader reported no
+// contributing sources. It is a distinct value rather than a plausible
+// default: a bar of unknown scale is one that CANNOT be lifted, and
+// silently calling it 8 (the registry fallback for an unrecognised
+// source) would re-introduce exactly the 10x mis-weight this file
+// corrects. It never survives a production read — the CAGG populates
+// `sources` for every materialised bucket — and it lifts by a factor of
+// 1, which is the pre-fix behaviour and so can only ever leave a bar
+// where it already was.
+const ohlcBarScaleUnknown = -1
+
+// barScaleDecimals resolves a combined bar's smallest-unit scale from
+// the venues that contributed to it, via the SAME resolver the raw-trade
+// point path hands to [aggregate.NormalizeAmountScale]. Sharing the
+// resolver is what keeps point and series on one answer (C1-024).
+//
+// The MAXIMUM across the bar is taken. Every bar on r1 is homogeneous —
+// 129,854 distinct pair spellings over 400 days of prices_1d, not one of
+// them written at two scales, checked 2026-09-05 — so max is that single
+// scale and the lift is exact. If a bar ever does mix scales internally
+// its stored volume is already a sum of incommensurable integers that no
+// read-time factor can repair, and max is the choice that gives such a
+// bar the SMALLEST lift, so it can never inflate its own weight against
+// its peers. That is the same direction launch-plan row 1.15 requires of
+// a thin venue beside book data.
+func barScaleDecimals(sources []string) int {
+	scale := ohlcBarScaleUnknown
+	for _, src := range sources {
+		if d := amountScaleDecimalsFor(src); d > scale {
+			scale = d
+		}
+	}
+	return scale
+}
+
+// ohlcScaleFactor is the exact integer multiplier that lifts a bar at
+// `scale` to `common`. Mirrors [aggregate.NormalizeAmountScale]: the
+// common scale is the maximum in the set, so the exponent is never
+// negative and nothing is ever divided. Returns 1 for a bar already at
+// the common scale and for one whose scale is unknown.
+func ohlcScaleFactor(scale, common int) *big.Rat {
+	if scale == ohlcBarScaleUnknown || common == ohlcBarScaleUnknown || common <= scale {
+		return new(big.Rat).SetInt64(1)
+	}
+	exp := new(big.Int).Exp(big.NewInt(10), big.NewInt(int64(common-scale)), nil)
+	return new(big.Rat).SetInt(exp)
+}
+
 // ohlcBucketAcc accumulates the combine across constituent bars sharing a
 // bucket timestamp. All arithmetic is big.Rat/big.Int to preserve the
 // NUMERIC precision the wire contract promises (no float round-trip).
+//
+// The volume sums are kept PER SCALE rather than as one running total,
+// because the scale they must all be lifted to is the maximum across the
+// whole response and is not known until every constituent has been read.
+// Prices are scale-invariant (a ratio of two legs a source stamps at one
+// scale), so the extremes and the trade count need no such split.
 type ohlcBucketAcc struct {
-	openNum  *big.Rat   // Σ(open  · base_vol)
-	closeNum *big.Rat   // Σ(close · base_vol)
-	baseVol  *big.Rat   // Σ base_vol (weight denominator)
-	quoteVol *big.Rat   // Σ quote_vol
-	highs    []*big.Rat // per-constituent highs (bucket high = max)
-	lows     []*big.Rat // per-constituent lows  (bucket low  = min)
-	n        int64
+	byScale map[int]*ohlcScaleAcc // keyed by the contributing bars' scale
+	highs   []*big.Rat            // per-constituent highs (bucket high = max)
+	lows    []*big.Rat            // per-constituent lows  (bucket low  = min)
+	n       int64
+}
+
+// ohlcScaleAcc is one bucket's running totals for the bars at a single
+// smallest-unit scale.
+type ohlcScaleAcc struct {
+	openNum  *big.Rat // Σ(open  · base_vol)
+	closeNum *big.Rat // Σ(close · base_vol)
+	baseVol  *big.Rat // Σ base_vol (weight denominator)
+	quoteVol *big.Rat // Σ quote_vol
 }
 
 func newOHLCBucketAcc() *ohlcBucketAcc {
-	return &ohlcBucketAcc{
-		openNum:  new(big.Rat),
-		closeNum: new(big.Rat),
-		baseVol:  new(big.Rat),
-		quoteVol: new(big.Rat),
-	}
+	return &ohlcBucketAcc{byScale: make(map[int]*ohlcScaleAcc, 2)}
 }
 
-func (a *ohlcBucketAcc) add(b *OHLCSeriesBar) {
+func (a *ohlcBucketAcc) add(b *OHLCSeriesBar, scale int) {
 	open := ratFromDecimal(b.O)
 	closeP := ratFromDecimal(b.C)
 	high := ratFromDecimal(b.H)
@@ -271,11 +374,21 @@ func (a *ohlcBucketAcc) add(b *OHLCSeriesBar) {
 		return // unparseable row — skip rather than corrupt the bucket
 	}
 
-	a.openNum.Add(a.openNum, new(big.Rat).Mul(open, bv))
-	a.closeNum.Add(a.closeNum, new(big.Rat).Mul(closeP, bv))
-	a.baseVol.Add(a.baseVol, bv)
+	sa := a.byScale[scale]
+	if sa == nil {
+		sa = &ohlcScaleAcc{
+			openNum:  new(big.Rat),
+			closeNum: new(big.Rat),
+			baseVol:  new(big.Rat),
+			quoteVol: new(big.Rat),
+		}
+		a.byScale[scale] = sa
+	}
+	sa.openNum.Add(sa.openNum, new(big.Rat).Mul(open, bv))
+	sa.closeNum.Add(sa.closeNum, new(big.Rat).Mul(closeP, bv))
+	sa.baseVol.Add(sa.baseVol, bv)
 	if qv != nil {
-		a.quoteVol.Add(a.quoteVol, qv)
+		sa.quoteVol.Add(sa.quoteVol, qv)
 	}
 	a.n += b.N
 	// Collect the per-constituent extremes; the bucket extreme is simply the
@@ -285,11 +398,35 @@ func (a *ohlcBucketAcc) add(b *OHLCSeriesBar) {
 	a.lows = append(a.lows, low)
 }
 
-func (a *ohlcBucketAcc) finalize(t time.Time) OHLCSeriesBar {
+// finalize renders the bucket, lifting each scale's totals by its factor
+// from `factors` (built once per response by the caller) so the served
+// volumes and the volume-weighted open/close are all in one unit.
+//
+// The per-scale totals are summed in map-iteration order, which is not
+// deterministic. That is safe HERE and only here: these are exact
+// big.Rat additions, and rational addition is associative and
+// commutative exactly, so the sum is identical whatever order it runs in
+// — unlike the point path, where slice order picks open/close and
+// [sortTradesChronological] therefore has to impose a total order for
+// ADR-0015.
+func (a *ohlcBucketAcc) finalize(t time.Time, factors map[int]*big.Rat) OHLCSeriesBar {
+	openNum, closeNum := new(big.Rat), new(big.Rat)
+	baseVol, quoteVol := new(big.Rat), new(big.Rat)
+	for scale, sa := range a.byScale {
+		f, ok := factors[scale]
+		if !ok {
+			f = new(big.Rat).SetInt64(1)
+		}
+		openNum.Add(openNum, new(big.Rat).Mul(sa.openNum, f))
+		closeNum.Add(closeNum, new(big.Rat).Mul(sa.closeNum, f))
+		baseVol.Add(baseVol, new(big.Rat).Mul(sa.baseVol, f))
+		quoteVol.Add(quoteVol, new(big.Rat).Mul(sa.quoteVol, f))
+	}
+
 	open, closeP := new(big.Rat), new(big.Rat)
-	if a.baseVol.Sign() > 0 {
-		open.Quo(a.openNum, a.baseVol)
-		closeP.Quo(a.closeNum, a.baseVol)
+	if baseVol.Sign() > 0 {
+		open.Quo(openNum, baseVol)
+		closeP.Quo(closeNum, baseVol)
 	}
 	high := selectExtreme(a.highs, true)
 	low := selectExtreme(a.lows, false)
@@ -299,8 +436,8 @@ func (a *ohlcBucketAcc) finalize(t time.Time) OHLCSeriesBar {
 		H:      ratToDecimal(high, ohlcPriceDigits),
 		L:      ratToDecimal(low, ohlcPriceDigits),
 		C:      ratToDecimal(closeP, ohlcPriceDigits),
-		VBase:  ratToDecimal(a.baseVol, 0),
-		VQuote: ratToDecimal(a.quoteVol, ohlcPriceDigits),
+		VBase:  ratToDecimal(baseVol, 0),
+		VQuote: ratToDecimal(quoteVol, ohlcPriceDigits),
 		N:      a.n,
 	}
 }

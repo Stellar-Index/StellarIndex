@@ -10,7 +10,10 @@ status: partially implemented
 **Status:** The direction fold is implemented (launch-plan row 1.16,
 aggregate half). The alias widening on the fiat quote leg is designed
 here and deliberately **not** implemented — rows 1.14 and 1.15 stay
-open, and §7 says exactly what blocks them.
+open, and §7 says exactly what blocks them. The cross-scale bar defect
+§7.4 named as the disqualifying blocker under 1.15 is **fixed**
+(2026-09-05); §7.4 records the correction, including that its stated
+cause — a CAGG bar having no source column — was wrong.
 **Scope:** launch-plan rows 1.14, 1.15 and the aggregate half of 1.16.
 
 ---
@@ -423,35 +426,75 @@ Three of the four pieces are now in hand that were not before:
 3. **The direction fold gives a costed precedent** for widening a
    pair-bound read without a plan regression (§5).
 
-And one piece is **missing**, mechanically, and it is disqualifying.
+The fourth piece was recorded here as **missing and disqualifying**, and
+that was wrong on the facts. It is now fixed, so this section records
+both the correction and what it leaves.
 
-`ohlcSeriesFiatCombined` combines CAGG **bars**, and a CAGG bar has no
-`source` column. `NormalizeAmountScale` — the thing that stops a
-finer-scaled venue out-weighting a coarser one by 10x per decimal —
-resolves its factor from a trade's source, so it cannot run on this
-path. That is already a recorded open defect on the series combine
-("the same root cause via a different mechanism: cross-scale CAGG bars,
-no per-trade source"). A SAC-quoted Soroban pool is a 7-decimal venue;
-the CEX bars it would be combined with are 8-decimal. Widening the
-series to reach the pool therefore introduces a new cross-scale mix into
-the one path that has no way to correct it — which also means shape A's
-measured `n=102 / v_base=6,000,020` is, if anything, understated.
+The claim was: `ohlcSeriesFiatCombined` combines CAGG **bars**, and a
+CAGG bar has no `source` column, so `NormalizeAmountScale` — the thing
+that stops a finer-scaled venue out-weighting a coarser one by 10x per
+decimal — cannot run on this path.
 
-The point path does not have this problem. `fiatCombinedTrades` merges
-raw trades, each carrying its own `Source`, and already calls
-`NormalizeAmountScale`.
+**A CAGG bar has carried its sources since migration 0002.** Every
+`prices_*` view selects `array_agg(DISTINCT source) AS sources`, and
+0147 recreated all seven with it. What had no source was the Go struct:
+`Store.OHLCSeries` never put the column in its SELECT list, so
+`timescale.OHLCBar` and `v1.OHLCSeriesBar` arrived unattributed. The
+blocker was a missing projection, not a missing column, and closing it
+needed no migration and no re-materialisation.
 
-**Conclusion.** Row 1.15 is not blocked on a missing idea. It is blocked
-on a defect one layer beneath it: the series combine cannot weight
-across scales. Fix that first — give the series path a per-source scale,
-or a bar-level equivalent — and then (a)+(c) settle the rest and (b) can
-be decided on its merits. Starting a sixth attempt on the current
-footing would repeat the lineage's pattern exactly: each of the five
-prior changes in this family fixed its predecessor's defect and
-introduced its own.
+**The defect was also live, not latent.** It was recorded on the
+assumption that the shipped constituent set was single-scale so nothing
+was visibly wrong until a SAC-quoted pool was admitted. Measured on r1
+2026-09-05, the `native/fiat:USD` combine already merges three
+constituents in the same buckets — `native/<USDC classic>` (sdex, 7dp),
+`crypto:XLM/crypto:USDT` (binance, 8dp) and `crypto:XLM/fiat:USD`
+(bitstamp/coinbase/kraken, 8dp). On the 02:00Z 1h bar the sdex leg's
+135,713.79 XLM entered the combine as 13,571.38, the served `v_base`
+understated the market by **3.41%**, and that leg carried 0.39% of the
+open/close weight against a real 3.79%. `fiatCombinedTrades` has
+normalised the same constituent set since CS-040, so point and series
+were weighting one population two ways — a live C1-024 violation, and
+one the pinned parity tests could not see because every trade in their
+fixture is stamped `sdex`.
 
-Rows 1.14 and 1.15 stay open, in that order of dependency, and 1.14 is
-gated on 1.15 rather than the other way round.
+**What shipped.** Both bar readers carry `sources`, folded across BOTH
+stored directions. In `OHLCSeries` the fold is a concatenation of the
+two directions' arrays taken with `max(…) FILTER`, which is exact rather
+than clever: the CAGG groups on `(bucket, base_asset, quote_asset)` and
+the read admits exactly two such values, so a bucket holds at most one
+row per direction. `OHLCSeriesReBucketed` needs that fold twice — once
+within a source bucket, then a real N-way union across the buckets an
+out_bucket spans — so only the second gets its own grouping and join.
+The combine then lifts every bar to the maximum scale in the response,
+an exact integer multiply by `10^(max−scale) ≥ 1`, no division
+(ADR-0003). A response whose bars share one scale is byte-identical to
+before, which is every non-fiat quote and every single-venue-class
+window; on live data both readers return every numeric column unchanged.
+A bar that names no venue is left where it is rather than assigned the
+registry fallback of 8, because a plausible default here is exactly the
+mis-weight being removed.
+
+Cost, from `EXPLAIN` on r1 (plan only, 30 days, flagship pair):
+`OHLCSeries` 29911 → 30076 (**1.005x**), `OHLCSeriesReBucketed` 1h → 4h
+31003 → 38892 (1.25x). The shapes that were rejected are recorded with
+their numbers: a second CTE joined back on bucket costs 1.34x on
+`OHLCSeries`, and unioning at the pre-fold row grain — which forces the
+row-level CTE to materialise — costs 2.08x on the re-bucketed read. A
+single-pass shape using `WITH ORDINALITY` plus a `FILTER` on every sum
+measured 1.09x and was refused: its failure mode is silently wrong sums
+on a money path, and it cannot be proved without a database.
+
+**Conclusion.** Rows 1.14 and 1.15 stay open and are still in that order
+of dependency, but the defect one layer beneath them is gone. 1.15 now
+needs only its own three pieces — (a) first-hit across all established
+spellings of all families, (b) the decision on suppressing a family's
+later buckets, (c) the guarantee that a thin pool never sets a bar's
+high, low, count or volume beside book data — and a widened constituent
+set can no longer mix scales silently, because a bar that names a 7dp
+pool beside 8dp exchange bars is now lifted rather than summed raw. 1.14
+closes with 1.15 in one shape, as before. Neither is built here; the
+widening is a separate change with its own measurement.
 
 ---
 

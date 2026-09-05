@@ -238,3 +238,175 @@ func TestPriceTipMixedScaleNormalized(t *testing.T) {
 			env.Data.Price, scaleNormWantVWAP, scaleNormPreFixVWAP)
 	}
 }
+
+// ── the SERIES arm of the same defect ───────────────────────────────────
+//
+// Everything above tests paths that merge raw TRADES, each row carrying its
+// own Source. Server.ohlcSeriesFiatCombined merges continuous-aggregate
+// BARS instead, over the identical constituent set
+// (Server.usdPeggedConstituents), and a bar is a sum of smallest-unit
+// amounts in units only its contributing venues identify. Reading that
+// column and lifting every bar to one common scale is what these pin.
+//
+// Same fixture as TestFiatVWAPMixedScaleNormalized, so the point answer and
+// the series answer are computed from one population and must agree:
+//
+//	native/<USDC classic>   sdex    (7dp)  10^10 base / 10^9  quote → 0.10
+//	crypto:XLM/crypto:USDT  binance (8dp)  10^11 base / 1.2·10^10 quote → 0.12
+//
+// Both legs are 1000 XLM, so the true bar is 2000 XLM at the common 8dp
+// scale with a volume-weighted open/close of exactly 0.11.
+const (
+	scaleNormWantSeriesVBase  = "200000000000" // 2000 XLM at the common 8dp scale
+	scaleNormWantSeriesVQuote = "22000000000"  // 220 USD at the same scale
+	// Pre-fix: 10^10 + 10^11, the sdex leg counted at a tenth of its real
+	// volume because its 7dp integers were added to 8dp ones unchanged.
+	scaleNormPreFixSeriesVBase = "110000000000"
+)
+
+// mixedScaleFiatServer wires the two-constituent, two-scale fixture behind
+// the real /v1/ohlc and /v1/vwap handlers.
+func mixedScaleFiatServer(t *testing.T) *v1.Server {
+	t.Helper()
+	usdc, err := canonical.ParseAsset("USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN")
+	if err != nil {
+		t.Fatalf("parse USDC: %v", err)
+	}
+	xlmNative, _ := canonical.ParseAsset("native")
+	xlmTicker, _ := canonical.ParseAsset("crypto:XLM")
+	usdt, _ := canonical.ParseAsset("crypto:USDT")
+
+	onchainPair, _ := canonical.NewPair(xlmNative, usdc)
+	cexPair, _ := canonical.NewPair(xlmTicker, usdt)
+	t0 := scaleNormBucketStart()
+
+	reader := &fiatConstituentReader{
+		tradesByPair: map[string][]canonical.Trade{
+			fiatParityPairKey(onchainPair): {scaleNormTrade("sdex", onchainPair, 1, t0,
+				new(big.Int).Mul(big.NewInt(1000), scaleNormPow10(7)),
+				new(big.Int).Mul(big.NewInt(100), scaleNormPow10(7)))},
+			fiatParityPairKey(cexPair): {scaleNormTrade("binance", cexPair, 2, t0.Add(5*time.Minute),
+				new(big.Int).Mul(big.NewInt(1000), scaleNormPow10(8)),
+				new(big.Int).Mul(big.NewInt(120), scaleNormPow10(8)))},
+		},
+	}
+	return v1.New(v1.Options{History: reader, USDPeggedClassics: []canonical.Asset{usdc}})
+}
+
+// fetchMixedScaleSeriesBar pulls the single combined 1h bar over the
+// mixed-scale window.
+func fetchMixedScaleSeriesBar(t *testing.T, base string) v1.OHLCSeriesBar {
+	t.Helper()
+	resp := mustGet(t, base+"/v1/ohlc?base=native&quote=fiat:USD&interval=1h&limit=1"+scaleNormWindow())
+	if resp.StatusCode != http.StatusOK {
+		body, _ := readAll(resp)
+		t.Fatalf("series status = %d, want 200: %s", resp.StatusCode, body)
+	}
+	var env struct {
+		Data v1.OHLCSeriesResponse `json:"data"`
+	}
+	mustDecode(t, resp, &env)
+	if len(env.Data.Intervals) != 1 {
+		t.Fatalf("series returned %d bars, want 1", len(env.Data.Intervals))
+	}
+	return env.Data.Intervals[0]
+}
+
+// TestFiatSeriesMixedScaleNormalized is the CS-040 regression on the series
+// arm. It goes through the real /v1/ohlc?interval= handler over a
+// constituent set that genuinely spans two scales and asserts the corrected
+// bar, value by value.
+//
+// Non-vacuous: against the un-fixed combine — which sums each constituent
+// bar's raw v_base straight into one total — this serves v_base
+// 110000000000 and a volume-weighted open/close of 0.1181818181, the 7dp
+// leg counted at a tenth of the volume it traded.
+func TestFiatSeriesMixedScaleNormalized(t *testing.T) {
+	ts := httpTestServer(t, mixedScaleFiatServer(t))
+	bar := fetchMixedScaleSeriesBar(t, ts.URL)
+
+	if bar.VBase != scaleNormWantSeriesVBase {
+		t.Errorf("series v_base = %q, want %q (1000 XLM on-chain + 1000 XLM CEX at the "+
+			"common 8dp scale); %q is the pre-fix cross-scale sum, which counts the "+
+			"7dp leg at a tenth of its real volume",
+			bar.VBase, scaleNormWantSeriesVBase, scaleNormPreFixSeriesVBase)
+	}
+	// v_quote renders at ohlcPriceDigits on this surface, so compare it as
+	// a number — the same rule TestFiatVWAPPointMatchesSeries applies.
+	if mustRat(t, bar.VQuote).Cmp(mustRat(t, scaleNormWantSeriesVQuote)) != 0 {
+		t.Errorf("series v_quote = %q, want %q", bar.VQuote, scaleNormWantSeriesVQuote)
+	}
+	// Open and close are base-volume weighted across constituents, so the
+	// 10x mis-weight lands on them too: 0.10 and 0.12 on equal real volume
+	// is 0.11, not the 0.1181818181 an un-lifted weight produces.
+	for _, tc := range []struct{ name, got string }{{"open", bar.O}, {"close", bar.C}} {
+		if tc.got != scaleNormWantVWAP {
+			t.Errorf("series %s = %q, want %q (equal-real-volume midpoint of 0.10 "+
+				"on-chain and 0.12 CEX); %q is the pre-fix value",
+				tc.name, tc.got, scaleNormWantVWAP, scaleNormPreFixVWAP)
+		}
+	}
+	// The bar's own Σquote/Σbase — the number a client recomputes from the
+	// two volume fields — must be the true real-volume-weighted price.
+	vq, ok := new(big.Rat).SetString(bar.VQuote)
+	if !ok {
+		t.Fatalf("unparseable v_quote %q", bar.VQuote)
+	}
+	vb, ok := new(big.Rat).SetString(bar.VBase)
+	if !ok {
+		t.Fatalf("unparseable v_base %q", bar.VBase)
+	}
+	if got := new(big.Rat).Quo(vq, vb); got.Cmp(big.NewRat(11, 100)) != 0 {
+		t.Errorf("series v_quote/v_base = %s, want 0.11 exactly", got.FloatString(10))
+	}
+	// Extremes and the count are ratios and counts, so the lift must leave
+	// them exactly where they were.
+	if bar.H != "0.1200000000" || bar.L != "0.1000000000" {
+		t.Errorf("series high/low = %q/%q, want 0.1200000000/0.1000000000 — a scale "+
+			"lift multiplies both legs of a bar and must not move a price", bar.H, bar.L)
+	}
+	if bar.N != 2 {
+		t.Errorf("series n = %d, want 2 (one trade per constituent)", bar.N)
+	}
+}
+
+// TestFiatMixedScalePointMatchesSeries is the C1-024 invariant under the
+// condition that makes it bite. TestFiatVWAPPointMatchesSeries pins point
+// against series too, but every trade in its fixture is stamped `sdex`, so
+// both sides are single-scale and the invariant holds whether or not the
+// series lifts anything. Give the two constituents different scales and the
+// un-fixed series answers 0.1181818181 on 110000000000 base while the point
+// path — which has normalised since CS-040 — answers 0.11 on 200000000000:
+// two surfaces, one question, two populations, which is the exact defect
+// C1-024 exists to forbid.
+func TestFiatMixedScalePointMatchesSeries(t *testing.T) {
+	ts := httpTestServer(t, mixedScaleFiatServer(t))
+	bar := fetchMixedScaleSeriesBar(t, ts.URL)
+
+	resp := mustGet(t, ts.URL+"/v1/vwap?base=native&quote=fiat:USD"+scaleNormWindow())
+	if resp.StatusCode != http.StatusOK {
+		body, _ := readAll(resp)
+		t.Fatalf("vwap status = %d, want 200: %s", resp.StatusCode, body)
+	}
+	var env struct {
+		Data v1.VWAPResult `json:"data"`
+	}
+	mustDecode(t, resp, &env)
+
+	if mustRat(t, env.Data.BaseVolume).Cmp(mustRat(t, bar.VBase)) != 0 {
+		t.Errorf("point base_volume %q != series v_base %q — the two surfaces are "+
+			"weighting one population at two different scales",
+			env.Data.BaseVolume, bar.VBase)
+	}
+	if mustRat(t, env.Data.QuoteVolume).Cmp(mustRat(t, bar.VQuote)) != 0 {
+		t.Errorf("point quote_volume %q != series v_quote %q",
+			env.Data.QuoteVolume, bar.VQuote)
+	}
+	seriesVWAP := new(big.Rat).Quo(
+		mustRat(t, bar.VQuote), mustRat(t, bar.VBase))
+	if got := mustRat(t, env.Data.Price); got.Cmp(seriesVWAP) != 0 {
+		t.Errorf("point price %s != series v_quote/v_base %s — a point quote that "+
+			"cannot be reconciled against the series it is published alongside",
+			env.Data.Price, seriesVWAP.FloatString(10))
+	}
+}
