@@ -384,6 +384,15 @@ func policyForPath(path string, cdnEnabled bool) string {
 		// Accounts analytics — 30-min rollup snapshot; the public
 		// catalogue band is well inside its real cadence.
 		path == "/v1/accounts/stats",
+		// Account-creator league table (#351) — a rollup snapshot on the
+		// same cadence, and network-wide aggregate reference data rather
+		// than per-account state, so it takes the public band its
+		// /v1/accounts/* siblings deliberately do not. Exact path only:
+		// anything deeper falls through to private, no-store.
+		path == "/v1/accounts/creators",
+		// Sponsor league table (#351) — same rollup cadence and the same
+		// aggregate-reference-data reasoning as its creator sibling.
+		path == "/v1/accounts/sponsors",
 		// Curated address labels — resynced from upstream at most
 		// daily; the query string (address list) is the cache key.
 		// Deliberately public despite the /v1/accounts/* siblings

@@ -1,0 +1,63 @@
+# systemd unit: sponsor rollup recompute (#351).
+#
+# Rendered by Ansible. Recomputes the sponsor league table — sponsorship
+# arrangements started, distinct accounts sponsored, and revocations
+# issued — into staging and atomically exchanges it live
+# (deploy/clickhouse/account_sponsors_rollup.sql).
+#
+# One pass over stellar.operations lands a narrow, deduplicated
+# projection of the Begin/End/Revoke sponsorship operations, and every
+# served figure derives from those rows. It reads no operation bodies:
+# the sponsored account is the End operation's source_account, which is
+# what keeps the pass affordable.
+#
+# The board is HISTORY, never a live sponsored set — an arrangement also
+# lapses when the sponsored entry is deleted or the account merges away,
+# and neither emits an operation. Backs GET /v1/accounts/sponsors.
+
+[Unit]
+Description=Stellar Index — sponsor rollup recompute
+Documentation=https://github.com/Stellar-Index/StellarIndex/blob/main/deploy/clickhouse/account_sponsors_rollup.sql
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+EnvironmentFile=-/etc/default/sponsors-rollup
+EnvironmentFile=-/etc/default/stellarindex
+
+Environment=CH_ADDR=127.0.0.1:9300
+Environment=EXTRA_FLAGS=
+
+ExecStart=/usr/local/bin/stellarindex-ops ch-sponsors-rollup \
+  -ch-addr ${CH_ADDR} \
+  ${EXTRA_FLAGS}
+
+# De-privileged, same shape as the sibling oneshots (CS-118/CS-119).
+User=stellarindex
+Group=stellarindex
+
+ProtectSystem=strict
+PrivateTmp=true
+NoNewPrivileges=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+
+# The operations pass caps itself at max_execution_time=7200 in the job
+# SQL; the unit ceiling sits above that so systemd never kills a run
+# the server would have finished, while still releasing a wedged slot.
+TimeoutStartSec=150min
+
+# Host-level memory backstop on the CLIENT process, which only issues
+# SQL — the aggregation's memory is the ClickHouse server's, capped by
+# the job SQL's own max_memory_usage / external-spill settings. Mirrors
+# the sibling rollup oneshots.
+MemoryMax=4G
+MemorySwapMax=0
+# Batch-class weights: this must never starve galexie's captive core.
+CPUWeight=25
+IOWeight=25
+
+[Install]
+WantedBy=multi-user.target

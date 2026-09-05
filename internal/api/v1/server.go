@@ -1874,6 +1874,10 @@ func (s *Server) mountRoutes() { //nolint:funlen // route registration is intent
 	s.mux.HandleFunc("GET /v1/accounts/{g_strkey}", s.explorerHandler.AccountState)
 	s.mux.HandleFunc("GET /v1/directory", s.explorerHandler.DirectoryLookup)
 	s.mux.HandleFunc("GET /v1/accounts/stats", s.explorerHandler.AccountsStats)
+	// Account-creator league table (#351). A literal segment, so it wins
+	// over the {g_strkey} wildcard below exactly as /stats does.
+	s.mux.HandleFunc("GET /v1/accounts/creators", s.explorerHandler.AccountCreators)
+	s.mux.HandleFunc("GET /v1/accounts/sponsors", s.explorerHandler.AccountSponsors)
 	s.mux.HandleFunc("GET /v1/accounts/{g_strkey}/transactions", s.explorerHandler.AccountTransactions)
 	s.mux.HandleFunc("GET /v1/accounts/{g_strkey}/operations", s.explorerHandler.AccountOperations)
 	s.mux.HandleFunc("GET /v1/accounts/{g_strkey}/movements", s.explorerHandler.AccountMovements)

@@ -1,0 +1,31 @@
+# systemd timer: account-creator rollup — daily.
+#
+# Rendered by Ansible. Companion to creators-rollup.service (#351).
+#
+# WHY DAILY, and not the 30 minutes its sibling holders board uses. The
+# aggregation is scan-shaped over the whole stellar.account_movements
+# archive (movement_kind is not in that table's sort key), so a cycle is
+# a full pass rather than the keyed read the endpoint pays. What it
+# measures barely moves at that rate: account creation is immutable
+# history growing by a few thousand rows a day against tens of millions,
+# so the ranking is stable day to day. The board's point-in-time columns
+# (surviving accounts, XLM held now) do drift, and the API and page both
+# publish `computed_at` so a reader sees the snapshot's real age.
+#
+# The cadence is a contention decision as much as a freshness one — this
+# box also runs galexie, the holders cycle and the completeness jobs.
+# Raise it if the surface needs to be fresher and the box has room.
+
+[Unit]
+Description=account-creator rollup, daily
+Documentation=https://github.com/Stellar-Index/StellarIndex/blob/main/deploy/clickhouse/account_creators_rollup.sql
+
+[Timer]
+OnBootSec=30min
+OnUnitInactiveSec=24h
+RandomizedDelaySec=1800
+Persistent=true
+Unit=creators-rollup.service
+
+[Install]
+WantedBy=timers.target

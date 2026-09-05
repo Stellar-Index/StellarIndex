@@ -12,23 +12,30 @@ import (
 )
 
 type stubExplorerReader struct {
-	ledgers          []clickhouse.LedgerHeader
-	txs              []clickhouse.TxSummary
-	ops              []clickhouse.OpRow
-	opTypeStats      []clickhouse.OpTypeCount
-	throughput       []clickhouse.ThroughputBucket
-	reserves         []clickhouse.BlendReserveState
-	opResults        map[uint32]int32
-	events           []clickhouse.EventSummary
-	contractEvents   []clickhouse.ContractActivityRow
-	wasm             clickhouse.ContractWasmInfo
-	wasmErr          error
-	directory        []clickhouse.ContractDirectoryRow
-	interactions     []clickhouse.ContractEdgeRow
-	codeHistory      []clickhouse.ContractCodeVersion
-	accountState     clickhouse.AccountState
-	cap67WM          uint32
-	accountsStats    clickhouse.AccountsStats
+	ledgers        []clickhouse.LedgerHeader
+	txs            []clickhouse.TxSummary
+	ops            []clickhouse.OpRow
+	opTypeStats    []clickhouse.OpTypeCount
+	throughput     []clickhouse.ThroughputBucket
+	reserves       []clickhouse.BlendReserveState
+	opResults      map[uint32]int32
+	events         []clickhouse.EventSummary
+	contractEvents []clickhouse.ContractActivityRow
+	wasm           clickhouse.ContractWasmInfo
+	wasmErr        error
+	directory      []clickhouse.ContractDirectoryRow
+	interactions   []clickhouse.ContractEdgeRow
+	codeHistory    []clickhouse.ContractCodeVersion
+	accountState   clickhouse.AccountState
+	cap67WM        uint32
+	accountsStats  clickhouse.AccountsStats
+	// accountCreators backs GET /v1/accounts/creators; creatorsLimit
+	// records the limit the handler asked for, so a test can pin the
+	// handler's clamping rather than trusting it.
+	accountCreators  clickhouse.AccountCreators
+	creatorsLimit    int
+	accountSponsors  clickhouse.AccountSponsors
+	sponsorsLimit    int
 	contractActivity clickhouse.ContractActivitySummary
 	holders          []clickhouse.AssetHolder
 	holderCount      int64
@@ -148,6 +155,24 @@ func (s *stubExplorerReader) AccountsStats(_ context.Context) (clickhouse.Accoun
 	return s.accountsStats, s.accountsStats.TotalAccounts > 0, nil
 }
 
+// AccountCreators mirrors the real reader's contract: ok=false unless
+// the snapshot carries a covered span, and the board is truncated to
+// the limit the handler asked for.
+func (s *stubExplorerReader) AccountCreators(_ context.Context, limit int) (clickhouse.AccountCreators, bool, error) {
+	s.creatorsLimit = limit
+	if s.err != nil {
+		return clickhouse.AccountCreators{}, false, s.err
+	}
+	if s.accountCreators.ThruLedger == 0 {
+		return clickhouse.AccountCreators{}, false, nil
+	}
+	out := s.accountCreators
+	if limit < len(out.Board) {
+		out.Board = out.Board[:limit]
+	}
+	return out, true, nil
+}
+
 func (s *stubExplorerReader) ContractActivitySummaryFor(_ context.Context, _ string, _ int) (clickhouse.ContractActivitySummary, bool, error) {
 	return s.contractActivity, s.contractActivity.ActiveLedgersTotal > 0, nil
 }
@@ -225,6 +250,23 @@ func (s *stubExplorerReader) AccountOperations(_ context.Context, _ string, _ in
 
 func (s *stubExplorerReader) AccountMovements(_ context.Context, _ string, _ int, _ clickhouse.AccountMovementCursor, _ clickhouse.AccountMovementFilter) ([]clickhouse.AccountMovementRow, error) {
 	return s.movements, s.err
+}
+
+// AccountSponsors mirrors the real reader's contract: a snapshot with no
+// covered span is not servable, however many board rows it carries.
+func (s *stubExplorerReader) AccountSponsors(_ context.Context, limit int) (clickhouse.AccountSponsors, bool, error) {
+	s.sponsorsLimit = limit
+	if s.err != nil {
+		return clickhouse.AccountSponsors{}, false, s.err
+	}
+	if s.accountSponsors.ThruLedger == 0 {
+		return clickhouse.AccountSponsors{}, false, nil
+	}
+	out := s.accountSponsors
+	if limit < len(out.Board) {
+		out.Board = out.Board[:limit]
+	}
+	return out, true, nil
 }
 
 func explorerTestServer(t *testing.T, r v1.ExplorerReader) string {

@@ -87,6 +87,8 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     '/contact',
     '/changelog',
     '/insights',
+    '/insights/creators',
+    '/insights/sponsors',
     '/anomalies',
     '/divergences',
     '/mev',

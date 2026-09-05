@@ -1,0 +1,55 @@
+# systemd unit: account-creator rollup recompute (#351).
+#
+# Rendered by Ansible. Recomputes the funder -> created-account league
+# table into staging and atomically exchanges it live
+# (deploy/clickhouse/account_creators_rollup.sql), then writes the
+# ledger span the cycle actually aggregated so the API can state its
+# coverage instead of implying the whole chain. Backs
+# GET /v1/accounts/creators.
+
+[Unit]
+Description=Stellar Index — account-creator rollup recompute
+Documentation=https://github.com/Stellar-Index/StellarIndex/blob/main/deploy/clickhouse/account_creators_rollup.sql
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+EnvironmentFile=-/etc/default/creators-rollup
+EnvironmentFile=-/etc/default/stellarindex
+
+Environment=CH_ADDR=127.0.0.1:9300
+Environment=EXTRA_FLAGS=
+
+ExecStart=/usr/local/bin/stellarindex-ops ch-creators-rollup \
+  -ch-addr ${CH_ADDR} \
+  ${EXTRA_FLAGS}
+
+# De-privileged, same shape as the sibling oneshots (CS-118/CS-119).
+User=stellarindex
+Group=stellarindex
+
+ProtectSystem=strict
+PrivateTmp=true
+NoNewPrivileges=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+
+# The board arm caps itself at max_execution_time=3600 in the job SQL;
+# the unit ceiling sits above that so systemd never kills a run the
+# server would have finished, while still releasing a wedged slot.
+TimeoutStartSec=90min
+
+# Host-level memory backstop on the CLIENT process, which only issues
+# SQL — the aggregation's memory is the ClickHouse server's, capped by
+# the job SQL's own max_memory_usage / external-spill settings. Mirrors
+# the sibling rollup oneshots.
+MemoryMax=4G
+MemorySwapMax=0
+# Batch-class weights: this must never starve galexie's captive core.
+CPUWeight=25
+IOWeight=25
+
+[Install]
+WantedBy=multi-user.target

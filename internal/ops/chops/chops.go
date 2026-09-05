@@ -84,6 +84,10 @@ func lakeMutatorVerb(verb string) (func([]string) error, bool) {
 		return chCap67Movements, true
 	case "ch-holders-rollup":
 		return chHoldersRollup, true
+	case "ch-creators-rollup":
+		return chCreatorsRollup, true
+	case "ch-sponsors-rollup":
+		return chSponsorsRollup, true
 	case "ch-participant-backfill":
 		return chParticipantBackfill, true
 	case "ch-recognition":

@@ -172,6 +172,8 @@ var subcommands = map[string]func(args []string) error{
 	"ch-census-rollup":             chops.Run,
 	"ch-cap67-movements":           chops.Run,
 	"ch-holders-rollup":            chops.Run,
+	"ch-creators-rollup":           chops.Run,
+	"ch-sponsors-rollup":           chops.Run,
 	"ch-participant-backfill":      chops.Run,
 	"ch-recognition":               chops.Run,
 	"verify-recognition":           chops.Run,
@@ -297,6 +299,25 @@ Subcommands:
                           holder count into staging and atomically exchange
                           live (asset_holders_rollup). Run from the 30-min
                           timer; backs sub-second /v1/assets/{id}/holders.
+  ch-creators-rollup -ch-addr ADDR
+                          Recompute the account-creator league table
+                          (funder -> accounts created, plus the created
+                          set's surviving accounts and current XLM) into
+                          staging and atomically exchange live
+                          (account_creators_rollup). Aggregated from the
+                          create_account arm of account_movements; also
+                          writes the ledger span it covered. Backs
+                          /v1/accounts/creators. Issue #351.
+  ch-sponsors-rollup -ch-addr ADDR
+                          Recompute the sponsor league table (sponsorship
+                          arrangements started, distinct accounts
+                          sponsored, revocations issued) into staging and
+                          atomically exchange live
+                          (account_sponsors_rollup). Aggregated from the
+                          Begin/End/Revoke sponsorship operations; reads
+                          no operation bodies. History only, never a live
+                          sponsored set. Backs /v1/accounts/sponsors.
+                          Issue #351.
   ch-contract-ledgers-backfill -ch-addr ADDR [-from N] [-to N] [-window N]
                           One-time historical fill of
                           stellar.contract_active_ledgers (the per-contract

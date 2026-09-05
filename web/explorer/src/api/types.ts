@@ -4174,6 +4174,121 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/accounts/creators": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Account creators — which accounts brought the most other accounts into existence.
+         * @description The account-creator league table, precomputed by a rollup cycle over
+         *     the `create_account` arm of the classic-movement archive
+         *     (`computed_at` stamps the cycle). One row per funding account:
+         *     how many accounts it created, the starting balances it paid, and how
+         *     much of that created set still exists and what it holds now.
+         *
+         *     TWO KINDS OF FIGURE, and they are not interchangeable.
+         *     `accounts_created` and `funded_stroops` are immutable history — a
+         *     creation never un-happens, so they only grow. `live_accounts` and
+         *     `live_stroops` are point-in-time as of `computed_at`: created
+         *     accounts merge away and balances move.
+         *
+         *     `funded_stroops` of `"0"` is a real value, not a gap. Since CAP-33
+         *     sponsored reserves an account can be created with no XLM of its own,
+         *     with a sponsor covering the reserve.
+         *
+         *     COVERAGE. `coverage` reports the ledger span the cycle actually
+         *     aggregated — min/max over the creation rows it read, never a
+         *     constant and never genesis by assumption. Read the counts as
+         *     covering that span and nothing wider; compare `thru_ledger` against
+         *     the tip to see how current the snapshot is.
+         *
+         *     SCOPE. This is the creator relationship only: funder → created
+         *     account, from the `CreateAccount` operation. It is NOT sponsorship.
+         *     Who currently pays an entry's base reserve is a different question
+         *     over a different source (`LedgerEntry.ext.v1.sponsoringID`) and is
+         *     not served by this API yet — nothing here should be read as a
+         *     sponsorship figure.
+         *
+         *     Ordered by `accounts_created` descending, ties broken by account id,
+         *     so the ranking is stable across cycles. `totals` describe the whole
+         *     aggregation, not the returned page.
+         *
+         *     503 with type `account-creators-warming` until the rollup's first
+         *     cycle completes on a fresh deployment, and whenever the snapshot
+         *     carries a board with no coverage span to qualify it.
+         *
+         *     Served with `public, max-age=60` (`s-maxage=300` behind the CDN).
+         */
+        get: operations["getAccountCreators"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/accounts/sponsors": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Account sponsors — which accounts have paid other accounts' base reserves.
+         * @description The sponsor league table, precomputed by a rollup cycle over the
+         *     `BeginSponsoringFutureReserves`, `EndSponsoringFutureReserves` and
+         *     `RevokeSponsorship` operations (`computed_at` stamps the cycle). One
+         *     row per sponsoring account: how many sponsorship arrangements it has
+         *     started, how many distinct accounts those covered, and how many
+         *     revocations it has issued.
+         *
+         *     EVERYTHING HERE IS HISTORY, NOT LIVE STATE. These figures come from
+         *     replaying sponsorship OPERATIONS, so they say what an account has
+         *     done, never what is currently in force. An arrangement also lapses
+         *     when the sponsored entry is deleted or the sponsored account merges
+         *     away, and neither emits a sponsorship operation — so a "currently
+         *     sponsoring" count derived from this source would OVERSTATE, and none
+         *     is served. Observing the live set requires the `sponsoringID` carried
+         *     inside each ledger entry, which this API does not expose.
+         *
+         *     `sponsorships_started` and `distinct_sponsored` differ sharply when a
+         *     sponsor re-sponsors the same accounts repeatedly, which is common;
+         *     neither is a substitute for the other. `revocations_issued` is a
+         *     LOWER BOUND on arrangements that ended, for the reason above.
+         *
+         *     COVERAGE. `coverage` reports the ledger span the cycle actually
+         *     aggregated. Its floor is protocol 14's activation, where sponsorship
+         *     was introduced on the network — the feature's own genesis, not a gap
+         *     in what was indexed. `ambiguous_transactions` counts transactions
+         *     carrying more than one distinct sponsor; those are excluded from
+         *     per-sponsor attribution and the count is published so the exclusion
+         *     is visible.
+         *
+         *     This is the counterpart of `/accounts/creators`. The two answer
+         *     different questions — creation is immutable and one-off, sponsorship
+         *     is revocable and repeatable — and an account may rank on both. Do not
+         *     sum them.
+         *
+         *     503 with type `account-sponsors-warming` until the rollup's first
+         *     cycle completes, and whenever the snapshot carries a board with no
+         *     coverage span to qualify it.
+         *
+         *     Served with `public, max-age=60` (`s-maxage=300` behind the CDN).
+         */
+        get: operations["getAccountSponsors"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/accounts/{g_strkey}": {
         parameters: {
             query?: never;
@@ -17556,6 +17671,254 @@ export interface operations {
                     };
                 };
             };
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    getAccountCreators: {
+        parameters: {
+            query?: {
+                /** @description Board rows to return, 1-500. Defaults to 50. */
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The current creator board, its totals, and the span they cover. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "data": {
+                     *         "creators": [
+                     *           {
+                     *             "rank": 1,
+                     *             "account": "GBMUZ7DCFWJ47CI2FGFR4NIVSZNPPZENJJWNG7THSRWQWFZVNUNZJTR4",
+                     *             "accounts_created": 108730,
+                     *             "funded_stroops": "5290690000000",
+                     *             "live_accounts": 4346,
+                     *             "live_stroops": "71721284463",
+                     *             "first_ledger": 50000101,
+                     *             "last_ledger": 50999236,
+                     *             "first_created_at": "2024-03-18T04:11:02Z",
+                     *             "last_created_at": "2024-05-02T22:07:44Z"
+                     *           }
+                     *         ],
+                     *         "totals": {
+                     *           "creators": 1348217,
+                     *           "accounts_created": 31980254,
+                     *           "live_accounts": 19595189
+                     *         },
+                     *         "coverage": {
+                     *           "from_ledger": 3,
+                     *           "thru_ledger": 64184370,
+                     *           "from_time": "2015-09-30T16:46:54Z",
+                     *           "thru_time": "2026-09-05T09:12:31Z"
+                     *         },
+                     *         "computed_at": "2026-09-05T09:30:00Z"
+                     *       },
+                     *       "as_of": "2026-09-05T09:45:00Z",
+                     *       "flags": {
+                     *         "stale": false,
+                     *         "reduced_redundancy": false,
+                     *         "triangulated": false,
+                     *         "divergence_warning": false,
+                     *         "divergence_checked": false
+                     *       }
+                     *     }
+                     */
+                    "application/json": {
+                        data?: {
+                            creators: {
+                                /** @description 1-based position on the board */
+                                rank: number;
+                                /** @description The funding account's G-strkey. */
+                                account: string;
+                                /**
+                                 * Format: int64
+                                 * @description Successful CreateAccount operations this account was the source of. Immutable history.
+                                 */
+                                accounts_created: number;
+                                /** @description Sum of starting balances paid */
+                                funded_stroops: string;
+                                /**
+                                 * Format: int64
+                                 * @description Created accounts that still exist
+                                 */
+                                live_accounts: number;
+                                /** @description Native XLM held by the surviving created set */
+                                live_stroops: string;
+                                /** @description First ledger this creator created an account in */
+                                first_ledger?: number;
+                                /** @description Last such ledger. */
+                                last_ledger?: number;
+                                /** Format: date-time */
+                                first_created_at?: string;
+                                /** Format: date-time */
+                                last_created_at?: string;
+                            }[];
+                            /** @description Totals over the whole aggregation, not the returned page. */
+                            totals: {
+                                /**
+                                 * Format: int64
+                                 * @description Distinct funding accounts in the covered span.
+                                 */
+                                creators?: number;
+                                /** Format: int64 */
+                                accounts_created?: number;
+                                /** Format: int64 */
+                                live_accounts?: number;
+                            };
+                            /** @description The ledger span the rollup actually aggregated. Data-derived (ADR-0031), not a constant. */
+                            coverage: {
+                                from_ledger?: number;
+                                thru_ledger?: number;
+                                /** Format: date-time */
+                                from_time?: string;
+                                /** Format: date-time */
+                                thru_time?: string;
+                            };
+                            /**
+                             * Format: date-time
+                             * @description Rollup cycle timestamp — the snapshot's real age.
+                             */
+                            computed_at: string;
+                        };
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    getAccountSponsors: {
+        parameters: {
+            query?: {
+                /** @description Board rows to return, 1-500. Defaults to 50. */
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The current sponsor board, its totals, and the span they cover. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "data": {
+                     *         "sponsors": [
+                     *           {
+                     *             "rank": 1,
+                     *             "account": "GAUA7XL5K54CC2DDGP77FJ2YBHRJLT36CPZDXWPM6MP7MANOGG77PNJU",
+                     *             "sponsorships_started": 30512,
+                     *             "distinct_sponsored": 28011,
+                     *             "revocations_issued": 0,
+                     *             "first_ledger": 64000015,
+                     *             "last_ledger": 64277239,
+                     *             "first_seen_at": "2026-08-17T19:41:52Z",
+                     *             "last_seen_at": "2026-09-05T00:14:59Z"
+                     *           }
+                     *         ],
+                     *         "totals": {
+                     *           "sponsors": 41208,
+                     *           "sponsorships_started": 11487143,
+                     *           "distinct_sponsored": 9120044,
+                     *           "revocations_issued": 88525
+                     *         },
+                     *         "coverage": {
+                     *           "from_ledger": 32747295,
+                     *           "thru_ledger": 64277243,
+                     *           "from_time": "2021-02-16T18:21:00Z",
+                     *           "thru_time": "2026-09-05T00:15:11Z",
+                     *           "ambiguous_transactions": 0
+                     *         },
+                     *         "computed_at": "2026-09-05T04:30:00Z"
+                     *       },
+                     *       "as_of": "2026-09-05T04:45:00Z",
+                     *       "flags": {
+                     *         "stale": false,
+                     *         "reduced_redundancy": false,
+                     *         "triangulated": false,
+                     *         "divergence_warning": false,
+                     *         "divergence_checked": false
+                     *       }
+                     *     }
+                     */
+                    "application/json": {
+                        data?: {
+                            sponsors: {
+                                /** @description 1-based position */
+                                rank: number;
+                                /** @description The sponsoring account's G-strkey. */
+                                account: string;
+                                /**
+                                 * Format: int64
+                                 * @description Sponsorship arrangements this account began. History
+                                 */
+                                sponsorships_started: number;
+                                /**
+                                 * Format: int64
+                                 * @description Distinct accounts those arrangements covered.
+                                 */
+                                distinct_sponsored: number;
+                                /**
+                                 * Format: int64
+                                 * @description RevokeSponsorship operations sourced by this account. A LOWER BOUND on arrangements that ended.
+                                 */
+                                revocations_issued: number;
+                                first_ledger?: number;
+                                last_ledger?: number;
+                                /** Format: date-time */
+                                first_seen_at?: string;
+                                /** Format: date-time */
+                                last_seen_at?: string;
+                            }[];
+                            /** @description Totals over the whole aggregation, not the returned page. */
+                            totals: {
+                                /** Format: int64 */
+                                sponsors?: number;
+                                /** Format: int64 */
+                                sponsorships_started?: number;
+                                /** Format: int64 */
+                                distinct_sponsored?: number;
+                                /** Format: int64 */
+                                revocations_issued?: number;
+                            };
+                            /** @description The ledger span the rollup aggregated. Data-derived (ADR-0031); its floor is protocol 14, where sponsorship began. */
+                            coverage: {
+                                from_ledger?: number;
+                                thru_ledger?: number;
+                                /** Format: date-time */
+                                from_time?: string;
+                                /** Format: date-time */
+                                thru_time?: string;
+                                /**
+                                 * Format: int64
+                                 * @description Transactions with more than one distinct sponsor
+                                 */
+                                ambiguous_transactions?: number;
+                            };
+                            /**
+                             * Format: date-time
+                             * @description Rollup cycle timestamp — the snapshot's real age.
+                             */
+                            computed_at: string;
+                        };
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
             503: components["responses"]["ServiceUnavailable"];
         };
     };

@@ -157,6 +157,20 @@ type ExplorerReader struct {
 	// than serving zeros as facts.
 	accountsStatsProbe schemaProbe
 
+	// accountCreatorsProbe probes stellar.account_creators_rollup (the
+	// account-creator league table, #351,
+	// deploy/clickhouse/account_creators_rollup.sql). requireRows: an
+	// unpopulated rollup 503s the endpoint rather than serving an empty
+	// board, which would read as "nobody has created an account".
+	accountCreatorsProbe schemaProbe
+
+	// accountSponsorsProbe probes stellar.account_sponsors_rollup (the
+	// sponsor league table, #351,
+	// deploy/clickhouse/account_sponsors_rollup.sql). requireRows: an
+	// unpopulated rollup 503s the endpoint rather than serving an empty
+	// board, which would read as "nobody has ever sponsored an account".
+	accountSponsorsProbe schemaProbe
+
 	// holdersRollupProbe probes stellar.asset_holders_rollup (inventory
 	// #4, deploy/clickhouse/asset_holders_rollup.sql). Present +
 	// non-empty → AssetHolders serves keyed precomputed boards; absent →
