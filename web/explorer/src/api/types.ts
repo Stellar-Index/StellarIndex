@@ -752,6 +752,18 @@ export interface paths {
          *     pair. No aggregation, no chaining, no smoothing — purely
          *     "what each venue last published".
          *
+         *     A market is served from BOTH stored orientations. The decoder
+         *     records `base/quote` and `quote/base` as separate rows, and a row
+         *     held the other way round is re-expressed into the orientation
+         *     requested: the two legs swap, the two amounts swap with them, and
+         *     `price` — always quote/base — is the exact reciprocal of the
+         *     stored one. The swap is performed on the smallest-unit integer
+         *     amounts, so nothing is rounded on the way. `base_asset` /
+         *     `quote_asset` on such a row report the orientation served, not the
+         *     one stored. A source that traded the market BOTH ways round still
+         *     returns one row — its later trade — so the array stays one row per
+         *     source. Same market, same rule, as `/v1/history`.
+         *
          *     - `?source=X` narrows to a single source (0- or 1-element array).
          *     - `?aggregate=latest` collapses to the single newest trade across
          *       sources (preserves the array wire shape; length 1).
