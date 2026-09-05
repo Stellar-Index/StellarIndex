@@ -1838,6 +1838,23 @@ type OHLCBar struct {
 	BaseVolume  string
 	QuoteVolume string
 	TradeCount  int64
+
+	// Sources is the lexically-sorted set of venues that contributed
+	// trades to this bucket, unioned across BOTH stored directions of
+	// the market. It is the CAGG's own `array_agg(DISTINCT source)`
+	// column (migration 0147), not a derived value.
+	//
+	// It is here because BaseVolume and QuoteVolume are sums of
+	// SMALLEST-UNIT amounts, and the smallest unit is a per-SOURCE
+	// scale (CS-040: on-chain DEX legs are 7-decimal stroops, CEX 8,
+	// the FX pollers 6). A bar is therefore a quantity in units that
+	// only its contributing sources identify, and a caller that sums
+	// bars from different markets — internal/api/v1's fiat combine is
+	// the one that does — has to lift them to a common scale first or
+	// it adds incommensurable integers. Empty when the reader could
+	// not attribute the bucket; never nil-checked into a default
+	// scale, because guessing one is the defect this column removes.
+	Sources []string
 }
 
 // OHLCSeries returns chronologically-ordered (oldest-first) OHLC
@@ -1883,6 +1900,18 @@ func (s *Store) OHLCSeries(
 	// inverted flipped row (their intra-bucket ordering across directions
 	// is unknowable from the CAGG); base/quote volume + trade_count sum.
 	// See canonical.Orient / canonOrientSQL.
+	//
+	// `sources` is carried through so a caller COMBINING bars across
+	// markets can resolve each bar's smallest-unit scale — see
+	// [OHLCBar.Sources]. The two stored directions are folded by taking
+	// each one's array and concatenating: the CAGG groups on (bucket,
+	// base_asset, quote_asset) and the WHERE above admits exactly two
+	// (base_asset, quote_asset) values, so a bucket holds AT MOST ONE
+	// row per direction and max() over that single row is that row.
+	// Doing it inline keeps the whole read in one grouping pass — a
+	// second CTE joined back on bucket costs 1.34x on r1, this costs
+	// 1.005x (29911 -> 30076, 30 days of 1h on the flagship pair,
+	// EXPLAIN 2026-09-05, plan only).
 	// #nosec G201 — table + interval are derived from the validated
 	// HistoryGranularity enum, not user input. See Validate.
 	q := fmt.Sprintf(`
@@ -1896,7 +1925,8 @@ func (s *Store) OHLCSeries(
 		        CASE WHEN base_asset = $1 THEN low_price   ELSE 1.0 / NULLIF(high_price, 0)  END AS lo,
 		        CASE WHEN base_asset = $1 THEN volume        ELSE vwap * volume END AS base_vol,
 		        CASE WHEN base_asset = $1 THEN vwap * volume ELSE volume        END AS quote_vol,
-		        trade_count AS tc
+		        trade_count AS tc,
+		        sources     AS srcs
 		      FROM %s
 		     WHERE ((base_asset = $1 AND quote_asset = $2)
 		         OR (base_asset = $2 AND quote_asset = $1))
@@ -1912,7 +1942,11 @@ func (s *Store) OHLCSeries(
 		    COALESCE((array_agg(c) FILTER (WHERE req))[1], (array_agg(c))[1])::text AS close,
 		    sum(base_vol)::text                                                     AS base_volume,
 		    sum(quote_vol)::text                                                    AS quote_volume,
-		    sum(tc)::bigint                                                         AS trade_count
+		    sum(tc)::bigint                                                         AS trade_count,
+		    (SELECT COALESCE(array_agg(DISTINCT s ORDER BY s), ARRAY[]::text[])
+		       FROM unnest(COALESCE(max(srcs) FILTER (WHERE req),     ARRAY[]::text[])
+		                || COALESCE(max(srcs) FILTER (WHERE NOT req), ARRAY[]::text[])) AS s)
+		                                                                            AS sources
 		  FROM norm
 		 GROUP BY bucket
 		 ORDER BY bucket ASC
@@ -1931,19 +1965,83 @@ func (s *Store) OHLCSeries(
 	out := make([]OHLCBar, 0, 128)
 	for rows.Next() {
 		var bar OHLCBar
+		var srcs stringArray
 		if err := rows.Scan(
 			&bar.Bucket,
 			&bar.Open, &bar.High, &bar.Low, &bar.Close,
 			&bar.BaseVolume, &bar.QuoteVolume, &bar.TradeCount,
+			&srcs,
 		); err != nil {
 			return nil, fmt.Errorf("timescale: OHLCSeries[%s] scan: %w", granularity, err)
 		}
+		bar.Sources = srcs
 		out = append(out, bar)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("timescale: OHLCSeries[%s] rows: %w", granularity, err)
 	}
 	return out, nil
+}
+
+// ohlcReBucketedQuery builds [Store.OHLCSeriesReBucketed]'s statement.
+// Extracted from its caller so the reader stays inside the package length
+// budget; `table` comes from the validated granularity enum and
+// `outInterval` from the caller's allow-list, so neither is user input.
+func ohlcReBucketedQuery(table, outInterval string) string {
+	// #nosec G201 — see the call site: both arguments are enum/allow-list
+	// derived, never user-passed.
+	return fmt.Sprintf(`
+		WITH norm AS (
+		    SELECT bucket,
+		           COALESCE((array_agg(o) FILTER (WHERE req))[1], (array_agg(o))[1]) AS open,
+		           max(hi) AS high,
+		           min(lo) AS low,
+		           COALESCE((array_agg(c) FILTER (WHERE req))[1], (array_agg(c))[1]) AS close,
+		           sum(base_vol)  AS base_vol,
+		           sum(quote_vol) AS quote_vol,
+		           sum(tc)        AS tc,
+		           COALESCE(max(srcs) FILTER (WHERE req),     ARRAY[]::text[])
+		        || COALESCE(max(srcs) FILTER (WHERE NOT req), ARRAY[]::text[]) AS srcs
+		      FROM (
+		        SELECT bucket, (base_asset = $1) AS req,
+		               CASE WHEN base_asset = $1 THEN first_price ELSE 1.0 / NULLIF(first_price, 0) END AS o,
+		               CASE WHEN base_asset = $1 THEN last_price  ELSE 1.0 / NULLIF(last_price, 0)  END AS c,
+		               CASE WHEN base_asset = $1 THEN high_price  ELSE 1.0 / NULLIF(low_price, 0)   END AS hi,
+		               CASE WHEN base_asset = $1 THEN low_price   ELSE 1.0 / NULLIF(high_price, 0)  END AS lo,
+		               CASE WHEN base_asset = $1 THEN volume        ELSE vwap * volume END AS base_vol,
+		               CASE WHEN base_asset = $1 THEN vwap * volume ELSE volume        END AS quote_vol,
+		               trade_count AS tc,
+		               sources     AS srcs
+		          FROM %[1]s
+		         WHERE ((base_asset = $1 AND quote_asset = $2)
+		             OR (base_asset = $2 AND quote_asset = $1))
+		           AND bucket >= $3
+		           AND bucket <  $4
+		      ) raw
+		     GROUP BY bucket
+		),
+		src AS (
+		    SELECT time_bucket(INTERVAL '%[2]s', bucket) AS ob,
+		           array_agg(DISTINCT s ORDER BY s)      AS sources
+		      FROM norm, unnest(norm.srcs) AS s
+		     GROUP BY 1
+		)
+		SELECT
+		    time_bucket(INTERVAL '%[2]s', n.bucket)                     AS out_bucket,
+		    (array_agg(n.open  ORDER BY n.bucket ASC))[1]::text         AS open,
+		    max(n.high)::text                                           AS high,
+		    min(n.low)::text                                            AS low,
+		    (array_agg(n.close ORDER BY n.bucket DESC))[1]::text        AS close,
+		    sum(n.base_vol)::text                                       AS base_volume,
+		    sum(n.quote_vol)::text                                      AS quote_volume,
+		    sum(n.tc)::bigint                                           AS trade_count,
+		    COALESCE(sc.sources, ARRAY[]::text[])                       AS sources
+		  FROM norm n
+		  LEFT JOIN src sc ON sc.ob = time_bucket(INTERVAL '%[2]s', n.bucket)
+		 GROUP BY time_bucket(INTERVAL '%[2]s', n.bucket), sc.sources
+		 HAVING time_bucket(INTERVAL '%[2]s', n.bucket) + INTERVAL '%[2]s' <= now()
+		 ORDER BY out_bucket ASC
+	`, table, outInterval)
 }
 
 // OHLCSeriesReBucketed is [Store.OHLCSeries] but re-buckets the
@@ -2001,50 +2099,21 @@ func (s *Store) OHLCSeriesReBucketed(
 	// volume; open/close prefer the requested direction), and the outer
 	// query folds those normalized source bars into the coarser
 	// out_bucket. See OHLCSeries / canonical.Orient.
+	//
+	// `sources` needs two folds here, not one, and only the first can use
+	// the trick OHLCSeries uses. Within a SOURCE bucket there is at most
+	// one row per stored direction (the CAGG groups on (bucket,
+	// base_asset, quote_asset)), so norm concatenates the two directly.
+	// Across source buckets there are as many rows as the out_interval
+	// spans, so that fold is a real N-way union and gets its own grouping
+	// over the unnested arrays, joined back on out_bucket. Cost on r1
+	// (1h -> 4h, 30 days, flagship pair, EXPLAIN 2026-09-05, plan only):
+	// 31003 -> 38892, 1.25x. Unioning at the pre-fold grain instead —
+	// which forces the row-level CTE to materialise — measured 2.08x.
 	// #nosec G201 — table comes from the validated enum;
 	// outInterval comes from the allow-list above. No user input
 	// reaches the SQL string.
-	q := fmt.Sprintf(`
-		WITH norm AS (
-		    SELECT bucket,
-		           COALESCE((array_agg(o) FILTER (WHERE req))[1], (array_agg(o))[1]) AS open,
-		           max(hi) AS high,
-		           min(lo) AS low,
-		           COALESCE((array_agg(c) FILTER (WHERE req))[1], (array_agg(c))[1]) AS close,
-		           sum(base_vol)  AS base_vol,
-		           sum(quote_vol) AS quote_vol,
-		           sum(tc)        AS tc
-		      FROM (
-		        SELECT bucket, (base_asset = $1) AS req,
-		               CASE WHEN base_asset = $1 THEN first_price ELSE 1.0 / NULLIF(first_price, 0) END AS o,
-		               CASE WHEN base_asset = $1 THEN last_price  ELSE 1.0 / NULLIF(last_price, 0)  END AS c,
-		               CASE WHEN base_asset = $1 THEN high_price  ELSE 1.0 / NULLIF(low_price, 0)   END AS hi,
-		               CASE WHEN base_asset = $1 THEN low_price   ELSE 1.0 / NULLIF(high_price, 0)  END AS lo,
-		               CASE WHEN base_asset = $1 THEN volume        ELSE vwap * volume END AS base_vol,
-		               CASE WHEN base_asset = $1 THEN vwap * volume ELSE volume        END AS quote_vol,
-		               trade_count AS tc
-		          FROM %[1]s
-		         WHERE ((base_asset = $1 AND quote_asset = $2)
-		             OR (base_asset = $2 AND quote_asset = $1))
-		           AND bucket >= $3
-		           AND bucket <  $4
-		      ) raw
-		     GROUP BY bucket
-		)
-		SELECT
-		    time_bucket(INTERVAL '%[2]s', bucket)                       AS out_bucket,
-		    (array_agg(open  ORDER BY bucket ASC))[1]::text             AS open,
-		    max(high)::text                                             AS high,
-		    min(low)::text                                              AS low,
-		    (array_agg(close ORDER BY bucket DESC))[1]::text            AS close,
-		    sum(base_vol)::text                                         AS base_volume,
-		    sum(quote_vol)::text                                        AS quote_volume,
-		    sum(tc)::bigint                                             AS trade_count
-		  FROM norm
-		 GROUP BY out_bucket
-		 HAVING time_bucket(INTERVAL '%[2]s', bucket) + INTERVAL '%[2]s' <= now()
-		 ORDER BY out_bucket ASC
-	`, table, outInterval)
+	q := ohlcReBucketedQuery(table, outInterval)
 	args := []any{p.Base.String(), p.Quote.String(), from.UTC(), to.UTC()}
 	if limit > 0 {
 		q += fmt.Sprintf(" LIMIT $%d", len(args)+1)
@@ -2059,13 +2128,16 @@ func (s *Store) OHLCSeriesReBucketed(
 	out := make([]OHLCBar, 0, 128)
 	for rows.Next() {
 		var bar OHLCBar
+		var srcs stringArray
 		if err := rows.Scan(
 			&bar.Bucket,
 			&bar.Open, &bar.High, &bar.Low, &bar.Close,
 			&bar.BaseVolume, &bar.QuoteVolume, &bar.TradeCount,
+			&srcs,
 		); err != nil {
 			return nil, fmt.Errorf("timescale: OHLCSeriesReBucketed[%s→%s] scan: %w", sourceGranularity, outInterval, err)
 		}
+		bar.Sources = srcs
 		out = append(out, bar)
 	}
 	if err := rows.Err(); err != nil {

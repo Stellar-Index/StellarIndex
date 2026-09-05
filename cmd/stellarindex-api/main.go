@@ -3554,14 +3554,15 @@ func convertOHLCBars(bars []timescale.OHLCBar) []v1.OHLCSeriesBar {
 	out := make([]v1.OHLCSeriesBar, len(bars))
 	for i, b := range bars {
 		out[i] = v1.OHLCSeriesBar{
-			T:      b.Bucket,
-			O:      b.Open,
-			H:      b.High,
-			L:      b.Low,
-			C:      b.Close,
-			VBase:  b.BaseVolume,
-			VQuote: b.QuoteVolume,
-			N:      b.TradeCount,
+			T:       b.Bucket,
+			O:       b.Open,
+			H:       b.High,
+			L:       b.Low,
+			C:       b.Close,
+			VBase:   b.BaseVolume,
+			VQuote:  b.QuoteVolume,
+			N:       b.TradeCount,
+			Sources: b.Sources,
 		}
 	}
 	return out

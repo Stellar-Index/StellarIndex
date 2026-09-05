@@ -30,6 +30,15 @@ type OHLCSeriesBar struct {
 	VQuote    string    `json:"v_quote"`
 	N         int64     `json:"n"`
 	Truncated bool      `json:"truncated,omitempty"`
+
+	// Sources is the set of venues that contributed to the bucket,
+	// carried from the CAGG's own `sources` column. It is deliberately
+	// OFF the wire (`json:"-"`): it exists so a caller that COMBINES
+	// bars across markets can lift them to a common smallest-unit
+	// scale first — see [Server.ohlcSeriesFiatCombined]. Adding it to
+	// the response would be a spec change; nothing here needs it to
+	// be one.
+	Sources []string `json:"-"`
 }
 
 // OHLCSeriesResponse is the wire envelope for /v1/ohlc?interval=...

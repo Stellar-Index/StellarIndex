@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"math/big"
 	"net/http"
+	"sort"
 	"testing"
 	"time"
 
@@ -95,10 +96,12 @@ func (r *fiatConstituentReader) TradesInRange(
 }
 
 // OHLCSeries derives each constituent's bar from that constituent's own
-// trades exactly as migration 0002's aggregate does: open/close are the
+// trades exactly as migration 0147's aggregate does: open/close are the
 // chronological first/last price, high/low the extremes, v_base/v_quote the
-// raw sums, n the count. Only the 1h interval is modelled — the only one
-// the parity tests request.
+// raw sums, n the count, and Sources the array_agg(DISTINCT source) over
+// the contributing rows — the column the combine resolves each bar's
+// smallest-unit scale from. Only the 1h interval is modelled — the only
+// one the parity tests request.
 func (r *fiatConstituentReader) OHLCSeries(
 	_ context.Context, pair canonical.Pair, interval string, from, to time.Time, _ int,
 ) ([]v1.OHLCSeriesBar, error) {
@@ -114,7 +117,13 @@ func (r *fiatConstituentReader) OHLCSeries(
 	for b, trades := range byBucket {
 		vBase, vQuote := new(big.Int), new(big.Int)
 		var high, low *big.Rat
+		seenSrc := map[string]struct{}{}
+		var sources []string
 		for _, t := range trades {
+			if _, dup := seenSrc[t.Source]; !dup {
+				seenSrc[t.Source] = struct{}{}
+				sources = append(sources, t.Source)
+			}
 			vBase.Add(vBase, t.BaseAmount.BigInt())
 			vQuote.Add(vQuote, t.QuoteAmount.BigInt())
 			p := new(big.Rat).SetFrac(t.QuoteAmount.BigInt(), t.BaseAmount.BigInt())
@@ -129,15 +138,17 @@ func (r *fiatConstituentReader) OHLCSeries(
 		last := trades[len(trades)-1]
 		open := new(big.Rat).SetFrac(first.QuoteAmount.BigInt(), first.BaseAmount.BigInt())
 		closeP := new(big.Rat).SetFrac(last.QuoteAmount.BigInt(), last.BaseAmount.BigInt())
+		sort.Strings(sources) // array_agg(DISTINCT …) arrives sorted
 		out = append(out, v1.OHLCSeriesBar{
-			T:      b,
-			O:      open.FloatString(10),
-			H:      high.FloatString(10),
-			L:      low.FloatString(10),
-			C:      closeP.FloatString(10),
-			VBase:  vBase.String(),
-			VQuote: vQuote.String(),
-			N:      int64(len(trades)),
+			T:       b,
+			O:       open.FloatString(10),
+			H:       high.FloatString(10),
+			L:       low.FloatString(10),
+			C:       closeP.FloatString(10),
+			VBase:   vBase.String(),
+			VQuote:  vQuote.String(),
+			N:       int64(len(trades)),
+			Sources: sources,
 		})
 	}
 	return out, nil
