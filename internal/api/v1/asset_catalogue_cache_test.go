@@ -319,6 +319,117 @@ func waitFor(d time.Duration, cond func() bool) bool {
 	return cond()
 }
 
+// blockedCallerBailout bounds how long a test waits for a caller that
+// a working cache serves immediately. Only a cache that BLOCKS a
+// request on background work reaches it, and such a cache does not
+// merely run late — it waits for something the test is deliberately
+// holding — so this is a hang guard rather than a budget: nothing
+// asserts on it, no correct behaviour is measured against it, and
+// moving it changes no verdict. It exists so a blocked caller fails
+// with the sentence that names the defect instead of hanging until
+// the package deadline.
+const blockedCallerBailout = 5 * time.Second
+
+// upstreamSettleWindow is how long a test watches for an upstream call
+// that must NOT arrive — a refresh cascading into another one once it
+// settles, with no request in sight. An absence needs a window to
+// appear in, and unlike a ceiling on work this one bounds nothing
+// correct: a loaded runner makes it less sensitive, never red, so it
+// cannot fail a healthy cache. It replaces the fixed 350-400 ms sleeps
+// the stale-while-revalidate tests used for the same job, and unlike
+// them it exits the moment a violation shows up.
+const upstreamSettleWindow = 100 * time.Millisecond
+
+// expireSWREntries walks every generic swr[T] entry back past any ttl,
+// so the next read takes the stale-while-revalidate branch. It replaces
+// sleeping past a deliberately tiny ttl: the test needs the entry a
+// refresh WRITES to stay fresh while it asserts on it, which a 25 ms
+// ttl cannot promise.
+func expireSWREntries(c *CachedAssetsReader) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for _, e := range c.swrEntries {
+		if !e.at.IsZero() {
+			e.at = e.at.Add(-time.Hour)
+		}
+	}
+}
+
+// upstreamHold parks an upstream call INSIDE the stub until the test
+// lets it go. It is what these caches' non-blocking claims are
+// asserted against, in place of the fixed delays the tests used to
+// race: while a call is held the cache provably has not completed it,
+// so whatever a concurrent caller is served is the value that was
+// already in the entry. That turns "served the stale entry" and
+// "blocked on the refresh and got its result" — which a stopwatch
+// separates only by how loaded the runner is — into an order of
+// events plus two different values.
+//
+// from is the first call number the hold covers, so a fixture can let
+// the cold fetch run free and park only the refresh behind it.
+// entered closes when the first covered call arrives; completed counts
+// the covered calls that ran to completion, and cancelled the ones cut
+// short by their own context, which is how work wired to a request ctx
+// rather than to its own budget shows up.
+//
+// A held call needs no bailout of its own: every test releases the
+// hold in t.Cleanup, and the caches give their detached work a bounded
+// budget whose expiry unblocks the stub regardless.
+type upstreamHold struct {
+	from      int64
+	entered   chan struct{}
+	released  chan struct{}
+	enterOnce sync.Once
+	freeOnce  sync.Once
+	completed atomic.Int64
+	cancelled atomic.Int64
+}
+
+func newUpstreamHold(from int64) *upstreamHold {
+	return &upstreamHold{
+		from:     from,
+		entered:  make(chan struct{}),
+		released: make(chan struct{}),
+	}
+}
+
+// park blocks call number n inside the stub until the hold is
+// released, and is a no-op for a nil hold or a call the hold does not
+// cover. It returns ctx.Err() when the call's own context is cancelled
+// first — the same exit the delay select it replaces had, so upstream
+// work handed a request ctx still aborts rather than hanging.
+func (h *upstreamHold) park(ctx context.Context, n int64) error {
+	if h == nil || n < h.from {
+		return nil
+	}
+	h.enterOnce.Do(func() { close(h.entered) })
+	select {
+	case <-h.released:
+		h.completed.Add(1)
+		return nil
+	case <-ctx.Done():
+		h.cancelled.Add(1)
+		return ctx.Err()
+	}
+}
+
+// release lets every held call, and every later one, through.
+// Idempotent, so a test can release inline and still register it with
+// t.Cleanup for the paths that fail before reaching that line.
+func (h *upstreamHold) release() { h.freeOnce.Do(func() { close(h.released) }) }
+
+// awaitCall blocks until a covered call has reached the upstream,
+// failing the test if none does. An arrival is an event, so it is
+// waited for rather than polled on a call count.
+func (h *upstreamHold) awaitCall(t *testing.T, what string) {
+	t.Helper()
+	select {
+	case <-h.entered:
+	case <-time.After(blockedCallerBailout):
+		t.Fatalf("%s never reached the upstream", what)
+	}
+}
+
 // TestCachedAssetsReader_SWRServesStaleAndRefreshes: an expired entry
 // returns the stale value IMMEDIATELY (not blocked on the slow
 // upstream refetch — the #22 fix), a single background refresh runs,
@@ -571,74 +682,148 @@ func TestCachedAssetsReader_HistorySWRKeepsStaleOnError(t *testing.T) {
 	}
 }
 
+// swrAssetStaleLedger / swrAssetFreshLedger are what tell the row a
+// cold fetch cached from the row a refresh replaces it with: the stub
+// moves the asset's last-seen ledger forward on every call after the
+// first, so a caller served the stale entry and a caller that waited
+// for the refresh hold DIFFERENT rows. The stub used to echo the
+// asset id and nothing else, identical before and after, which left a
+// stopwatch as the only thing separating those two outcomes.
+const (
+	swrAssetStaleLedger = 100
+	swrAssetFreshLedger = 200
+)
+
 // swrAssetByIDUpstream is a race-safe configurable GetAssetByAssetID
-// stub for the generic swr[T] tests (#24): atomic call counter,
-// fixed construction-time delay, atomic "fail on call >= 2" toggle
-// (deterministic by call number → no mid-test field mutation, so
-// `go test -race` is clean under the concurrent background
-// refresh). Embeds *fakeAssetsUpstream for the other methods.
+// stub for the generic swr[T] tests (#24): atomic call counter, an
+// optional hold that parks a call until the test releases it, and an
+// atomic "fail on call >= 2" toggle (deterministic by call number →
+// no mid-test field mutation, so `go test -race` is clean under the
+// concurrent background refresh). Embeds *fakeAssetsUpstream for the
+// other methods.
 type swrAssetByIDUpstream struct {
 	*fakeAssetsUpstream
 	calls   atomic.Int64
-	delay   time.Duration
+	hold    *upstreamHold
 	failGE2 atomic.Bool
 }
 
 func (s *swrAssetByIDUpstream) GetAssetByAssetID(ctx context.Context, assetID string) (timescale.AssetRow, error) {
 	n := s.calls.Add(1)
-	if s.delay > 0 {
-		select {
-		case <-time.After(s.delay):
-		case <-ctx.Done():
-			return timescale.AssetRow{}, ctx.Err()
-		}
+	if err := s.hold.park(ctx, n); err != nil {
+		return timescale.AssetRow{}, err
 	}
 	if n >= 2 && s.failGE2.Load() {
 		return timescale.AssetRow{}, errors.New("swr asset boom")
 	}
-	return timescale.AssetRow{AssetID: assetID}, nil
+	seen := uint32(swrAssetStaleLedger)
+	if n >= 2 {
+		seen = swrAssetFreshLedger
+	}
+	return timescale.AssetRow{AssetID: assetID, LastSeenLedger: seen}, nil
 }
 
 // TestCachedAssetsReader_GenericSWRServesStaleSingleFlight pins the
-// generic swr[T] via the now-cached GetAssetByAssetID: an expired
-// entry serves stale IMMEDIATELY under heavy concurrency and
-// triggers EXACTLY ONE single-flighted background refresh — the
-// #24 fix for /v1/assets/{id}.
+// generic swr[T] via the now-cached GetAssetByAssetID: every one of
+// 20 concurrent reads of an expired entry is served THE STALE ROW
+// while EXACTLY ONE single-flighted background refresh runs, and the
+// row that refresh returns is what replaces it — the #24 fix for
+// /v1/assets/{id}.
+//
+// What a stale read is served is a value, so it is asserted as one.
+// The stub used to echo the asset id and nothing else, so the row
+// before the refresh and the row after it were the same row and no
+// assertion here could tell a served entry from a caller handed the
+// refresh's result; the 120 ms ceiling on each read was carrying that
+// whole claim on its own, and what it actually measured was how
+// quickly the runner rescheduled 20 goroutines. The stub now moves
+// the row's last-seen ledger forward on the refresh, and the refresh
+// is HELD until every read has returned, so a read that waited for it
+// could only be holding the fresh ledger and a read served the entry
+// can only be holding the stale one — on any runner at any load.
+//
+// The tail of the test releases the hold and pins the refreshed row,
+// which is what keeps the assertion above a discrimination rather
+// than a restatement of the fixture: the two ledgers are proved
+// distinguishable in the same run that requires the stale one.
 func TestCachedAssetsReader_GenericSWRServesStaleSingleFlight(t *testing.T) {
-	up := &swrAssetByIDUpstream{fakeAssetsUpstream: &fakeAssetsUpstream{}, delay: 300 * time.Millisecond}
-	c := NewCachedAssetsReader(up, 25*time.Millisecond)
+	hold := newUpstreamHold(2) // the cold fetch runs free; the refresh is parked
+	t.Cleanup(hold.release)
+	up := &swrAssetByIDUpstream{fakeAssetsUpstream: &fakeAssetsUpstream{}, hold: hold}
+	c := NewCachedAssetsReader(up, time.Minute)
 
-	if r, err := c.GetAssetByAssetID(context.Background(), "X"); err != nil || r.AssetID != "X" {
-		t.Fatalf("cold fetch: got %q err=%v, want X", r.AssetID, err) // blocks ~300ms, calls=1
+	cold, err := c.GetAssetByAssetID(context.Background(), "X")
+	if err != nil || cold.AssetID != "X" || cold.LastSeenLedger != swrAssetStaleLedger {
+		t.Fatalf("cold fetch: got %q at ledger %d err=%v, want X at ledger %d",
+			cold.AssetID, cold.LastSeenLedger, err, swrAssetStaleLedger)
 	}
 	if up.calls.Load() != 1 {
 		t.Fatalf("cold calls=%d, want 1", up.calls.Load())
 	}
-	time.Sleep(50 * time.Millisecond) // expire
+	expireSWREntries(c)
 
-	var wg sync.WaitGroup
-	for i := 0; i < 20; i++ {
-		wg.Add(1)
+	// The reads report back on a buffered channel rather than failing
+	// from their own goroutines: a caller blocked on the refresh is a
+	// failure this test has to name, and naming it ends the test while
+	// its siblings are still running.
+	const reads = 20
+	type staleRead struct {
+		assetID string
+		ledger  uint32
+		err     error
+	}
+	served := make(chan staleRead, reads)
+	for i := 0; i < reads; i++ {
 		go func() {
-			defer wg.Done()
-			st := time.Now()
 			r, err := c.GetAssetByAssetID(context.Background(), "X")
-			if err != nil || r.AssetID != "X" {
-				t.Errorf("SWR must serve stale X no err; got %q err=%v", r.AssetID, err)
-			}
-			if d := time.Since(st); d > 120*time.Millisecond {
-				t.Errorf("SWR blocked %v; must serve stale ~instantly (refresh is 300ms)", d)
-			}
+			served <- staleRead{assetID: r.AssetID, ledger: r.LastSeenLedger, err: err}
 		}()
 	}
-	wg.Wait()
-
-	if !waitFor(2*time.Second, func() bool { return up.calls.Load() == 2 }) {
-		t.Fatalf("want exactly 2 upstream calls (1 cold + 1 single-flighted refresh); got %d", up.calls.Load())
+	for i := 0; i < reads; i++ {
+		select {
+		case got := <-served:
+			if got.err != nil || got.assetID != "X" {
+				t.Fatalf("stale read %d: got %q err=%v, want X", i, got.assetID, got.err)
+			}
+			if got.ledger != swrAssetStaleLedger {
+				t.Fatalf("stale read %d was served ledger %d, want the stale %d — it waited for the refresh instead of being served the entry that was already there",
+					i, got.ledger, swrAssetStaleLedger)
+			}
+		case <-time.After(blockedCallerBailout):
+			t.Fatalf("only %d of %d stale reads returned; the rest are still waiting on a refresh that has not finished", i, reads)
+		}
 	}
-	time.Sleep(400 * time.Millisecond) // let the 300ms refresh finish; no new reads
+
+	hold.awaitCall(t, "the background refresh")
+	if n := hold.completed.Load(); n != 0 {
+		t.Fatalf("%d held refreshes had already finished; the reads above were not ordered against a refresh in flight", n)
+	}
 	if got := up.calls.Load(); got != 2 {
-		t.Fatalf("single-flight violated: %d upstream calls for 20 concurrent stale reads", got)
+		t.Fatalf("single-flight violated: %d upstream calls for %d concurrent stale reads, want 2 (1 cold + 1 refresh)", got, reads)
+	}
+
+	// Released, the one refresh settles the entry. Polling by READ adds
+	// no upstream call of its own: a stale read looks at the in-flight
+	// marker, which the refresh holds until it has written what it
+	// found, so every poll before that point is served the stale entry
+	// and the poll that succeeds is served the refreshed one. Because
+	// the ttl outlives the test, the entry then stays fresh and the
+	// call count is final.
+	hold.release()
+	var fresh timescale.AssetRow
+	var freshErr error
+	if !waitFor(2*time.Second, func() bool {
+		fresh, freshErr = c.GetAssetByAssetID(context.Background(), "X")
+		return freshErr == nil && fresh.LastSeenLedger == swrAssetFreshLedger
+	}) {
+		t.Fatalf("after the refresh: got ledger %d err=%v, want the refreshed %d",
+			fresh.LastSeenLedger, freshErr, swrAssetFreshLedger)
+	}
+	// Nothing further may reach the upstream — see upstreamSettleWindow
+	// for why an absence gets a window and why that window fails
+	// nothing correct.
+	if waitFor(upstreamSettleWindow, func() bool { return up.calls.Load() != 2 }) {
+		t.Fatalf("single-flight violated: %d upstream calls once the refresh had settled, want 2 (1 cold + 1 refresh)", up.calls.Load())
 	}
 }
 
