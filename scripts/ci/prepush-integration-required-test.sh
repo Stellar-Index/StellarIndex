@@ -8,7 +8,7 @@ trap 'rm -rf "$tmp"' EXIT
 git -C "$tmp" init -q
 git -C "$tmp" config user.name test
 git -C "$tmp" config user.email test@localhost.invalid
-mkdir -p "$tmp/docs" "$tmp/internal/storage" "$tmp/migrations"
+mkdir -p "$tmp/docs" "$tmp/internal/storage" "$tmp/internal/api/v1" "$tmp/migrations"
 printf 'base\n' > "$tmp/README.md"
 git -C "$tmp" add README.md
 git -C "$tmp" commit -q -m base
@@ -29,11 +29,22 @@ git -C "$tmp" commit -q -m storage
 storage="$(git -C "$tmp" rev-parse HEAD)"
 (cd "$tmp" && "$root/scripts/ci/prepush-integration-required.sh" "$docs" "$storage")
 
+# A handler change reaches the suite: test/integration stands up the real
+# router and drives served surfaces, so internal/api counts. This case exists
+# because the filter once did not carry it — a commit touching only
+# internal/api/v1 changed what /v1/history returns and left an integration
+# assertion pinning the old behaviour, which passed locally and failed CI.
+printf 'handler\n' > "$tmp/internal/api/v1/handler.go"
+git -C "$tmp" add internal/api/v1/handler.go
+git -C "$tmp" commit -q -m handler
+handler="$(git -C "$tmp" rev-parse HEAD)"
+(cd "$tmp" && "$root/scripts/ci/prepush-integration-required.sh" "$storage" "$handler")
+
 printf 'migration\n' > "$tmp/migrations/9999_test.up.sql"
 git -C "$tmp" add migrations/9999_test.up.sql
 git -C "$tmp" commit -q -m migration
 migration="$(git -C "$tmp" rev-parse HEAD)"
-(cd "$tmp" && "$root/scripts/ci/prepush-integration-required.sh" "$storage" "$migration")
+(cd "$tmp" && "$root/scripts/ci/prepush-integration-required.sh" "$handler" "$migration")
 
 mkdir -p "$tmp/test/harness"
 printf 'harness\n' > "$tmp/test/harness/timescale.go"
