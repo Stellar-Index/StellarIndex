@@ -17,8 +17,12 @@ cd "$(dirname "$0")/../.."
 GO_REG=internal/api/v1/protocols_registry.go
 TS_REG=web/explorer/src/app/protocols/registry.ts
 
-go_names=$(grep -oE 'Name:[[:space:]]+"[a-z-]+"' "$GO_REG" | grep -oE '"[a-z-]+"' | tr -d '"' | sort -u)
-ts_names=$(grep -oE "name: '[a-z-]+'" "$TS_REG" | grep -oE "'[a-z-]+'" | tr -d "'" | sort -u)
+# Character class covers every shape a source name takes in this repo:
+# plain (comet), hyphenated (reflector-cex), underscored + numbered
+# (sushiswap_v3). A narrower class silently drops a name from BOTH captures,
+# which passes the comm-diff while cross-checking nothing.
+go_names=$(grep -oE 'Name:[[:space:]]+"[a-z0-9_-]+"' "$GO_REG" | grep -oE '"[a-z0-9_-]+"' | tr -d '"' | sort -u)
+ts_names=$(grep -oE "name: '[a-z0-9_-]+'" "$TS_REG" | grep -oE "'[a-z0-9_-]+'" | tr -d "'" | sort -u)
 
 missing_in_ts=$(comm -23 <(echo "$go_names") <(echo "$ts_names") || true)
 stale_in_ts=$(comm -13 <(echo "$go_names") <(echo "$ts_names") || true)

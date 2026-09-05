@@ -93,6 +93,7 @@ var sorobanDecoderNames = map[string]struct{}{
 	"soroban-events":  {},
 	"soroswap":        {},
 	"soroswap-router": {},
+	"sushiswap_v3":    {},
 }
 
 // planHasSorobanDecoder reports whether any decoder in the plan's

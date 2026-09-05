@@ -35,6 +35,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/sources/sorocredit"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/soroswap"
 	soroswap_router "github.com/Stellar-Index/StellarIndex/internal/sources/soroswap_router"
+	sushiswap_v3 "github.com/Stellar-Index/StellarIndex/internal/sources/sushiswap_v3"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/trustlines"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
@@ -538,6 +539,8 @@ func tradeFromEvent(ev consumer.Event) (canonical.Trade, bool) {
 		return e.Trade, true
 	case comet.TradeEvent:
 		return e.Trade, true
+	case sushiswap_v3.TradeEvent:
+		return e.Trade, true
 	case sdex.TradeEvent:
 		return e.Trade, true
 	case external.TradeEvent:
@@ -569,6 +572,7 @@ func IsProjectedEvent(ev consumer.Event) bool {
 		aquarius.RewardsEvent, aquarius.AdminEvent, aquarius.FeeEvent, aquarius.KillEvent,
 		phoenix.TradeEvent, phoenix.LiquidityEvent, phoenix.StakeEvent, phoenix.InitializeEvent, phoenix.AdminEvent,
 		comet.TradeEvent, comet.LiquidityEvent,
+		sushiswap_v3.TradeEvent,
 		reflector.UpdateEvent, redstone.UpdateEvent,
 		blend.NewAuctionEvent, blend.FillAuctionEvent, blend.DeleteAuctionEvent,
 		blend.PositionEvent, blend.EmissionEvent, blend.AdminEvent,
@@ -937,6 +941,8 @@ func handleEvent(ctx context.Context, logger *slog.Logger, store *timescale.Stor
 	case phoenix.StakeEvent:
 		return persistPhoenixStake(ctx, logger, store, e)
 	case comet.TradeEvent:
+		return persistTrade(ctx, logger, store, e.Trade)
+	case sushiswap_v3.TradeEvent:
 		return persistTrade(ctx, logger, store, e.Trade)
 	case comet.LiquidityEvent:
 		return persistCometLiquidity(ctx, logger, store, e)

@@ -447,6 +447,12 @@ var DefaultGapDetectorTargets = []GapDetectorTarget{
 	// 100k threshold. 200k ≈ 11.5 days fits the observed natural
 	// trading-quietness envelope.
 	{Source: "comet", Table: "trades", LedgerColumn: "ledger", WhereFilter: "source = 'comet'", Genesis: 51_499_546, MinGapSizeOverride: 200000},
+	// sushiswap_v3: 100k matches the other concentrated/constant-product
+	// DEXs. The widest quiet window in the source's whole history is
+	// 32,512 ledgers (2.1 days, at launch between the first and second
+	// swap); every later gap is under 9,400. 100k leaves 3x headroom over
+	// the observed envelope.
+	{Source: "sushiswap_v3", Table: "trades", LedgerColumn: "ledger", WhereFilter: "source = 'sushiswap_v3'", Genesis: 61_487_379, MinGapSizeOverride: 100000},
 	// Oracle sources (reflector, band, redstone) write into the
 	// unified `oracle_updates` hypertable, sliced by `source`.
 	// Same pattern as the Soroban-DEX trades targets — per-source

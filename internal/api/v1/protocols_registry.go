@@ -7,6 +7,7 @@ import (
 	blend_emitter "github.com/Stellar-Index/StellarIndex/internal/sources/blend_emitter"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/sorocredit"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/soroswap"
+	sushiswap_v3 "github.com/Stellar-Index/StellarIndex/internal/sources/sushiswap_v3"
 )
 
 // ProtocolMeta is the hand-curated static identity of one indexed
@@ -100,6 +101,14 @@ var protocolRegistry = withVerificationPages([]ProtocolMeta{
 		Description:   "Comet — Balancer-v1-style weighted pools on Soroban (home of the BLND/USDC pool).",
 		GenesisLedger: 51_499_546,
 		EventKinds:    []string{"comet.trade", "comet.liquidity"},
+	},
+	{
+		Name:          "sushiswap_v3",
+		Category:      "amm",
+		Description:   "SushiSwap V3 — concentrated-liquidity pools on Soroban, deployed from a single pool factory. Prices from a tick range and a Q64.96 sqrt price, not from constant-product reserves.",
+		GenesisLedger: sushiswap_v3.FactoryGenesisLedger,
+		Factories:     sushiswap_v3.MainnetFactories,
+		EventKinds:    []string{"sushiswap_v3.trade"},
 	},
 	{
 		Name:          "blend",

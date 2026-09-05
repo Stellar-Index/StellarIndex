@@ -57,6 +57,7 @@ export const SOURCE_PILL_TONE: Record<string, PillTone> = {
   aquarius: 'brand',
   sdex: 'neutral',
   comet: 'violet',
+  sushiswap_v3: 'indigo',
   // CEX venues
   binance: 'yellow',
   coinbase: 'brand',

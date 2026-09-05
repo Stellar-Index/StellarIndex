@@ -47,6 +47,12 @@ export const PROTOCOLS: ProtocolRegistryEntry[] = [
     description: 'Soroban constant-product AMM with liquidity + stake events.',
   },
   {
+    name: 'sushiswap_v3',
+    category: 'amm',
+    label: 'SushiSwap V3',
+    description: 'Concentrated-liquidity Soroban pools priced by tick range, not reserves.',
+  },
+  {
     name: 'comet',
     category: 'amm',
     label: 'Comet',

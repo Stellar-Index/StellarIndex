@@ -23,7 +23,7 @@ type SignerTag struct {
 // SDEX carries a real `maker`; classic trades have no contract tx to
 // attribute. Exported so the indexer's sweeper gate reads the SAME list
 // (no drift) — kept in lockstep with the decoders that leave `maker` empty.
-var AMMSignerSources = []string{"comet", "soroswap", "aquarius", "phoenix"}
+var AMMSignerSources = []string{"comet", "soroswap", "aquarius", "phoenix", "sushiswap_v3"}
 
 // TagTradesSigner back-fills trades.signer for the supplied
 // (ledger, tx_hash) → source-account tags. FIRST-WINS: it only touches AMM

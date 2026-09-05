@@ -29,7 +29,7 @@ internal/dispatcher/       ← single consumer of ledgerstream
     │     • ContractCallDecoder     — InvokeContract ops with no events (Band relay())
     │     • LedgerEntryChangeDecoder — LedgerEntry mutations (supply observers)
     ▼
-internal/sources/{soroswap,aquarius,phoenix,reflector,sdex,band,…}/
+internal/sources/{soroswap,aquarius,phoenix,sushiswap_v3,sdex,band,…}/
     │   each is a pure decoder + (optional) per-source correlation
     │   state (Soroswap swap+sync, Phoenix 8-field assembly).
     │   NO goroutines, NO RPC clients, NO pagination loops.
@@ -52,7 +52,8 @@ internal/pipeline/sink.go  ← fans each decoded item to its destination:
     │     ▼
     │   internal/projector/  ← the ONE writer for Soroban-derived per-source
     │     │   tables (trades, blend_* incl. blend_backstop + blend_emitter,
-    │     │   phoenix_*, comet_*, aquarius_*, defindex_* (Event/VaultEvent/
+    │     │   phoenix_*, comet_*, aquarius_*, sushiswap_v3 (trades),
+    │     │   defindex_* (Event/VaultEvent/
     │     │   DFeesEvent), sorocredit_*, soroswap_skim, cctp_events,
     │     │   rozo_events, sep41_* (supply + transfers),
     │     │   reflector/redstone oracle_updates) — the authoritative list is
