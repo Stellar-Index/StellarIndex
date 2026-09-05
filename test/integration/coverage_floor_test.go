@@ -297,15 +297,20 @@ func TestEarliestBucket_AgainstTimescale(t *testing.T) {
 		}
 	})
 
-	// /v1/history reads one stored orientation: AQUA/USDC has no rows
-	// under that orientation, so it carries no floor, while USDC/AQUA
-	// carries the floor and the flag.
-	t.Run("served//v1/history measures the requested orientation only", func(t *testing.T) {
+	// /v1/history reads BOTH stored orientations, so the two spellings of
+	// one market answer alike: each carries the same floor and the same
+	// flag. This subtest pinned the opposite until the read was folded —
+	// the probe spans exactly what the page read reaches, so widening the
+	// read widened the probe with it.
+	t.Run("served//v1/history measures both orientations alike", func(t *testing.T) {
 		var flipped served
 		getJSON(t, api.URL+"/v1/history?base="+aqua.String()+"&quote="+usdc.String()+window, &flipped)
-		if flipped.CoverageFrom != nil || flipped.Flags.OutsideCoverage {
-			t.Errorf("AQUA/USDC page carried coverage_from=%v outside=%v; the page read never returns the USDC/AQUA rows, so it must carry no floor",
-				flipped.CoverageFrom, flipped.Flags.OutsideCoverage)
+		if flipped.CoverageFrom == nil || !flipped.CoverageFrom.Equal(aquaFloor) {
+			t.Errorf("AQUA/USDC page coverage_from = %v, want %s — the read folds both orientations, so the flip carries the same floor",
+				flipped.CoverageFrom, aquaFloor.Format(time.RFC3339))
+		}
+		if !flipped.Flags.OutsideCoverage {
+			t.Errorf("AQUA/USDC page flags.outside_coverage = false for a window ending below the floor")
 		}
 		var stored served
 		getJSON(t, api.URL+"/v1/history?base="+usdc.String()+"&quote="+aqua.String()+window, &stored)
