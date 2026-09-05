@@ -11,7 +11,7 @@ severity: P3 | P1
 
 | Field | Value |
 | ----- | ----- |
-| Alerts | `stellarindex_stellar_stack_lagging` (P3, ticket, any lag ≥ 1 sustained 2d) · `stellarindex_stellar_stack_protocol_lag` (P1, page, lag ≥ 2 sustained 6h) |
+| Alerts | `stellarindex_stellar_stack_lagging` (P3, ticket, any lag ≥ 1 sustained 2d) · `stellarindex_stellar_stack_protocol_lag` (P1, page, lag ≥ 2 sustained 6h) · `stellarindex_stellar_stack_probe_degraded` (P3, ticket, the probe itself unable to answer) |
 | Severity | P3 → P1 escalation, same metric family |
 | Detected by | `deploy/monitoring/rules/stellar-stack-version.yml` (and `configs/prometheus/rules.r1/stellar-stack-version.yml`) |
 | Metric source | `node_exporter` textfile_collector reads `/var/lib/node_exporter/textfile_collector/stellar_stack_version.prom`, refreshed daily by `stellar-stack-version-probe.timer` → `/usr/local/sbin/stellar-stack-version-probe.sh` |
@@ -57,6 +57,8 @@ that gap.
   degraded this run (see [Known false-positive
   patterns](#known-false-positive-patterns)) — not the same signal as
   an actual lag; check this before assuming the lag value is current.
+  Since 2026-09-05 this raises `stellarindex_stellar_stack_probe_degraded`
+  rather than waiting to be noticed.
 
 ## Quick diagnosis (≤ 5 min)
 
@@ -209,6 +211,31 @@ the exact logic. This is a deliberate design choice: reading the
 `.galexie.tag` stamp file instead would have made the probe blind to
 exactly the failure mode it exists to catch (a hand-installed binary
 swap that bypassed ansible never updates that stamp).
+
+## When `stellarindex_stellar_stack_probe_degraded` fires
+
+Not a lag. This says the probe could not answer, so the two alerts
+above are evaluating over series that are absent or frozen and cannot
+fire. Silence from them means nothing while this is firing.
+
+The probe has published `stellarindex_stellar_stack_probe_success`
+since it was written, and until 2026-09-05 no rule read it. That is the
+same blindness as no canary at all: the lag metric is deliberately
+ABSENT (not zero) for any component a run could not classify, and `>= 1`
+/ `>= 2` over an absent series are empty. A GitHub API that stays
+rate-limited, or an apt source that stops offering a candidate, blinds
+`stellarindex_stellar_stack_protocol_lag` — a page guarding the
+precondition for the 2026-07-08 and 2026-07-09 outages — while every
+dashboard reads healthy.
+
+| Arm | Reading | What it means |
+| --- | ------- | ------------- |
+| `stellarindex_stellar_stack_probe_success` | 0 | A degraded run: the GitHub releases API unreachable or rate-limited, `jq` missing, or apt with no candidate for an installed package. See [Known false-positive patterns](#known-false-positive-patterns) — a single day is usually transient. |
+| `node_textfile_mtime_seconds` for `stellar_stack_version.prom` | older than 48 h | The probe or its timer is not running. This probe writes no run stamp of its own, so the file's mtime — which the textfile collector already exports — is what ages; `node_exporter` keeps serving the last file it saw, leaving `probe_success` frozen at 1. |
+| `stellarindex_stellar_stack_probe_success` | absent > 3 d | The textfile was never written on this host at all. |
+
+Follow the §Quick diagnosis block above, which already covers the timer,
+the service and the file's mtime, then re-run the probe by hand.
 
 ## Known false-positive patterns
 

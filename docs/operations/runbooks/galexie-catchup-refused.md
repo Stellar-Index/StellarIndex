@@ -55,6 +55,42 @@ gap to consensus and resumes streaming. The lake tip advances again;
 the indexer drains automatically. No data is lost — the archive and
 MinIO are append-only and the replay is deterministic.
 
+## When `stellarindex_galexie_catchup_probe_degraded` fires
+
+Not the same alert. This one says the *probe* behind the page above is
+not producing usable metrics, so `stellarindex_galexie_catchup_refused`
+is evaluating over a series that is absent or frozen. Silence from it
+means nothing while this is firing.
+
+The probe counts `Skipping catchup` lines in the last five minutes of
+galexie's journal. Until 2026-09-05 it did that in one expression ending
+in `|| true` — unavoidable, because `grep -c` prints 0 and exits 1 when
+nothing matches, which is the healthy outcome — and that `|| true`
+swallowed the journal read's own failure with it. Measured on r1
+2026-09-05, a healthy read, a unit name that does not exist, a journal
+that could not be opened and a missing `journalctl` binary all produced
+the same count of 0 and the same exit 0. The read now keeps its own
+status and the probe publishes three series about itself:
+
+| Series | Reading | What it means |
+| ------ | ------- | ------------- |
+| `stellarindex_galexie_catchup_probe_read_ok` | 0 | The journal read errored — `journalctl` missing, an unreadable journal. No refusal count is published for that run at all; a fabricated 0 would be the assertion "no refusals". |
+| `stellarindex_galexie_catchup_probe_journal_lines` | 0 | The read succeeded and returned nothing, which yields a correctly-derived zero refusals over an empty input and raises no error anywhere. Either the unit name no longer matches, or galexie is not running. galexie logged 364-409 lines per 5 min across twelve consecutive buckets on r1, so zero is never the healthy value while it is up. |
+| `stellarindex_galexie_catchup_probe_last_run_unix` | older than 10 min, or absent | The probe or its timer is not running. `node_exporter` keeps serving the last file it saw, so the count stays present and stops moving; this stamp is the only thing that ages. |
+
+Start with `systemctl status galexie-catchup-probe.timer` and the file's
+mtime, then run `/usr/local/sbin/galexie-catchup-probe.sh` by hand and
+read `/var/lib/node_exporter/textfile_collector/galexie_catchup.prom`.
+The probe is proven against these failure shapes by
+`scripts/ci/galexie-catchup-probe-test.sh`, which executes the shipped
+script against a stubbed `journalctl`.
+
+While this is firing the detection of a wedged captive core is not lost,
+only the alert that names it: a frozen lake stalls
+`stellarindex_cursor_last_ledger` and pages via
+`stellarindex_ingestion_ledger_stalled` in about ten minutes. What is
+lost is the ten-minute signature that points straight at §Remedy.
+
 ## Prevention already in place
 
 - `galexie.service.d/resources.conf`: MemoryLow=16G + elevated

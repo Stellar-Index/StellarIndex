@@ -297,6 +297,17 @@
   # (2026-07-05) with nothing watching. Every minute: count refusals
   # in the last 5min, write node-exporter textfile metrics; the rule
   # trees alert on >0 sustained.
+  #
+  # It also reports ITS OWN health — the _probe_read_ok, _probe_journal_lines
+  # and _probe_last_run_unix series below, written on every run — because
+  # its consumer stellarindex_galexie_catchup_refused is severity `page`
+  # and EVERY way this producer could fail landed on the count 0, which
+  # is also the healthy value. A page frozen at zero is indistinguishable
+  # from a quiet one. stellarindex_galexie_catchup_probe_degraded reads
+  # those three.
+  #
+  # Runbook: docs/operations/runbooks/galexie-catchup-refused.md
+  # Fixtures: scripts/ci/galexie-catchup-probe-test.sh
   ansible.builtin.copy:
     dest: /usr/local/sbin/galexie-catchup-probe.sh
     owner: root
@@ -311,21 +322,104 @@
       # originally wrote to the Debian dir — the metric never reached
       # Prometheus and the page alert silently couldn't fire, which is
       # exactly what happened in the 2026-07-08 P27 catchup-refusal
-      # incident (found + fixed during it).
-      DIR=/var/lib/node_exporter/textfile_collector
+      # incident (found + fixed during it). The TEXTFILE_DIR override is
+      # the same seam timescale-jobs-probe.sh and
+      # galexie-archive-tip-lag.sh carry, and exists for the same reason:
+      # it lets scripts/ci/galexie-catchup-probe-test.sh execute these
+      # exact bytes rather than a hand-copied twin. The service unit sets
+      # no environment, so a real run always takes the default.
+      DIR="${TEXTFILE_DIR:-/var/lib/node_exporter/textfile_collector}"
       mkdir -p "$DIR"
-      N=$(journalctl -u galexie --since "-5min" --no-pager 2>/dev/null | grep -c "Skipping catchup" || true)
+
+      # THE READ AND THE COUNT ARE SEPARATE NUMBERS.
+      #
+      # This used to be one line:
+      #   N=$(journalctl … | grep -c "Skipping catchup" || true)
+      # `grep -c` prints 0 and exits 1 when nothing matches, which is the
+      # HEALTHY outcome here, so the `|| true` had to be there — and it
+      # swallowed the journal read's own failure along with it. Measured
+      # on r1 2026-09-05, all four of these produced N=0 and exit 0:
+      # a healthy read, a unit name that does not exist, a journal that
+      # could not be opened, and a missing journalctl binary. Identical
+      # files, so the page above sat at zero forever with nothing saying
+      # it had gone blind.
+      #
+      # The read now keeps its own exit status and the count is taken
+      # from the buffered output afterwards. grep's exit 1 is the
+      # no-match case and must NOT invalidate anything; only rc > 1 is a
+      # grep error. Buffering also keeps the read off a pipe, so an
+      # early-exiting consumer cannot SIGPIPE it under pipefail (#475).
+      journal=""
+      read_rc=0
+      journal=$(journalctl -u galexie --since "-5min" --no-pager 2>/dev/null) || read_rc=$?
+
+      read_ok=0
+      lines=0
+      refusals=""
+      if [ "$read_rc" -eq 0 ]; then
+        read_ok=1
+        if [ -n "$journal" ]; then
+          lines=$(printf '%s\n' "$journal" | wc -l | tr -d ' ')
+        fi
+        count_rc=0
+        refusals=$(printf '%s\n' "$journal" | grep -c "Skipping catchup") || count_rc=$?
+        if [ "$count_rc" -gt 1 ]; then
+          read_ok=0
+          refusals=""
+        fi
+      fi
+
       TMP=$(mktemp)
+      trap 'rm -f "$TMP"' EXIT
       {
         echo "# HELP stellarindex_galexie_catchup_refusals_5m 'History: Skipping catchup' journal lines in the last 5 minutes."
         echo "# TYPE stellarindex_galexie_catchup_refusals_5m gauge"
-        echo "stellarindex_galexie_catchup_refusals_5m $N"
+        # Omitted rather than zeroed when the read failed. A fabricated 0
+        # is the assertion "no refusals", which is exactly the lie this
+        # probe used to tell; saying nothing, and saying WHY below, is
+        # the honest degrade. The alert on that silence is
+        # stellarindex_galexie_catchup_probe_degraded.
+        if [ -n "$refusals" ]; then
+          echo "stellarindex_galexie_catchup_refusals_5m $refusals"
+        fi
+        # ── The probe's own health ──────────────────────────────────
+        #
+        #   _read_ok        1 iff the journal read exited 0.
+        #   _journal_lines  lines that read returned. Zero is the OTHER
+        #                   way the refusal count silently becomes 0 — a
+        #                   renamed unit, a journal filtered down to
+        #                   nothing — and it raises no exit status at
+        #                   all. galexie logged 364-409 lines per 5 min
+        #                   across twelve consecutive buckets on r1
+        #                   (2026-09-05), so zero is never the healthy
+        #                   value while galexie is running.
+        #   _last_run_unix  when this file was last WRITTEN. Deliberately
+        #                   not _last_success_unix: it stamps the RUN, so
+        #                   a run whose read failed still refreshes it and
+        #                   _read_ok is what says the data is bad. One
+        #                   number carrying two meanings is how this kind
+        #                   of signal goes wrong.
+        #
+        # _last_run_unix covers what the other two cannot: the script not
+        # running at all. node_exporter keeps serving the LAST file it
+        # saw, so a dead timer, a masked unit, or an `mv` that failed on
+        # a full disk leaves fresh-looking scrapes of a frozen zero.
+        echo "# HELP stellarindex_galexie_catchup_probe_read_ok Whether this probe's journal read exited 0 on the last run (1 = yes)."
+        echo "# TYPE stellarindex_galexie_catchup_probe_read_ok gauge"
+        echo "stellarindex_galexie_catchup_probe_read_ok $read_ok"
+        echo "# HELP stellarindex_galexie_catchup_probe_journal_lines Journal lines the last run read before counting refusals in them."
+        echo "# TYPE stellarindex_galexie_catchup_probe_journal_lines gauge"
+        echo "stellarindex_galexie_catchup_probe_journal_lines $lines"
+        echo "# HELP stellarindex_galexie_catchup_probe_last_run_unix Unix time this probe last wrote its textfile, whether or not the journal read succeeded."
+        echo "# TYPE stellarindex_galexie_catchup_probe_last_run_unix gauge"
+        echo "stellarindex_galexie_catchup_probe_last_run_unix $(date +%s)"
       } > "$TMP"
       # mktemp creates 0600; node_exporter runs unprivileged and
       # SILENTLY skips unreadable textfiles (second way this probe
       # was invisible, 2026-07-08).
       chmod 644 "$TMP"
       mv "$TMP" "$DIR/galexie_catchup.prom"
+      trap - EXIT
 
 - name: galexie catchup-probe service unit
   ansible.builtin.copy:

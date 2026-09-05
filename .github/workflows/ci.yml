@@ -808,6 +808,26 @@ jobs:
         # only its own family and that every failure is reported. No
         # Postgres, no systemd.
         run: ./scripts/ci/timescale-jobs-probe-test.sh
+      - name: galexie catchup probe self-test
+        # The probe writing galexie_catchup.prom counted journal lines with
+        # `journalctl … | grep -c … || true`. `grep -c` exits 1 on no match,
+        # the healthy outcome, so that `|| true` was load-bearing and
+        # swallowed the journal read's failure with it: a healthy read, a
+        # renamed unit, an unreadable journal and a missing journalctl all
+        # produced 0 and exit 0, leaving stellarindex_galexie_catchup_refused
+        # (severity page) frozen at zero and unable to fire. These fixtures
+        # run the shipped inline script against a stubbed journalctl. No
+        # systemd, no journal.
+        run: ./scripts/ci/galexie-catchup-probe-test.sh
+      - name: galexie archive contiguity self-test
+        # The hourly DR-mirror gap scan read the bucket with
+        # `mc ls … || true`, so a read that died PARTWAY handed the parser a
+        # truncated but contiguous prefix and wrote a clean
+        # galexie_archive_unexpected_gaps 0 — the healthy value — while
+        # stellarindex_galexie_archive_gap (severity page) is the only guard
+        # on that bucket's shape. These fixtures run the shipped script
+        # against a stubbed mc. No MinIO, no systemd.
+        run: ./scripts/ci/galexie-archive-contiguity-test.sh
       - name: API-smoke textfile self-test
         # stellarindex-smoke.timer ran a 34-GET API smoke with jq shape
         # assertions every 5 minutes and reported to NOTHING:
