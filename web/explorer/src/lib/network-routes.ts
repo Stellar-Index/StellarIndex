@@ -64,6 +64,11 @@ const ROUTE_CAPABILITY: ReadonlyMap<string, NetworkCapability> = new Map([
   // ── Chain-shape dependent ──
   ['/assets', 'assets'],
   ['/issuers', 'assets'],
+  // The RWA set is built from classic assets, their issuers' SEP-1
+  // payloads and the curated account directory — the same chain shape
+  // /assets and /issuers need. A net without it serves an empty set by
+  // construction, which must not be offered as a page or sitemapped.
+  ['/rwa', 'assets'],
   ['/sdex', 'sdex'],
   ['/liquidity-pools', 'sdex'],
   ['/bridges', 'bridges'],

@@ -213,6 +213,13 @@ func shortBandPolicy(path string, cdnEnabled bool) (string, bool) {
 	// ─── Current asset / pool state — short cache ───────────────
 	case path == "/v1/assets",
 		strings.HasPrefix(path, "/v1/assets/"),
+		// Tokenized real-world assets (#352). Its membership set is
+		// rebuilt on a 10-minute in-process cadence, but every number
+		// on it comes from the same catalogue read /v1/assets serves,
+		// so it takes the same band as /v1/assets rather than the
+		// longer catalogue one: a CDN entry must not outlive the
+		// valuations it carries.
+		path == "/v1/rwa/assets",
 		// Pool reserves — CURRENT contract state from the lake; can
 		// change every ledger (~5 s) but the explorer polls it, so
 		// the short band absorbs fan-out while staying honest about

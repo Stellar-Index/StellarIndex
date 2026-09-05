@@ -2617,6 +2617,85 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/rwa/assets": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Tokenized real-world assets on Stellar — the set, its aggregates, and the rule that produced it.
+         * @description Every classic Stellar asset meeting a four-requirement
+         *     definition of a tokenized real-world asset, with its valuation,
+         *     the evidence that admitted it, and per-class and per-issuer
+         *     totals. Identity is ALWAYS `(code, issuer)`: a code alone is not
+         *     an asset here, because any account can issue a token called
+         *     `USTRY`, `BENJI` or `XAU`, and the network holds many that do
+         *     exactly that.
+         *
+         *     MEMBERSHIP. All four requirements must hold:
+         *
+         *     1. The asset is a classic asset with a code and an issuer
+         *        G-address. Native and Soroban-only assets are out of scope —
+         *        SEP-1 `[[CURRENCIES]]` binds a declaration to a
+         *        (code, issuer) pair, and a bare contract address has no such
+         *        binding.
+         *     2. The issuer account serves a SEP-1 `stellar.toml` from the
+         *        `home_domain` it set ON CHAIN, containing a `[[CURRENCIES]]`
+         *        entry whose `code` matches and whose declared `issuer` equals
+         *        the account that served the file.
+         *     3. The issuer G-address is named in the curated third-party
+         *        account directory with a recognition tag
+         *        (`definition.recognition_tags`) and carries no scam-class tag
+         *        (`definition.scam_flag_tags`). A self-declaration alone is
+         *        not evidence: on the production directory the large majority
+         *        of accounts declaring a real-world `anchor_asset_type` are
+         *        tagged `malicious`, publishing from lookalike domains that
+         *        impersonate real exchanges.
+         *     4. The asset is a real-world instrument, by `basis`:
+         *        `sep1_anchor_declaration` (the bound entry declares an
+         *        `anchor_asset_type` in `definition.anchor_classes`) or
+         *        `oracle_rwa_feed` (an independent oracle publishes a
+         *        net-asset-value feed for an instrument of this code, per
+         *        ADR-0028). The oracle arm is keyed on the CODE, so it is
+         *        admissible only after requirement 3 has bound the issuer.
+         *
+         *     An asset failing any requirement is ABSENT, not downranked.
+         *     `refused[]` counts what each requirement turned away so the
+         *     served set is never mistaken for the population that CLAIMS to
+         *     be real-world assets.
+         *
+         *     VALUATION. Every figure comes from the same catalogue read,
+         *     substance gate, supply-derived market cap, dust-liquidity guard
+         *     and scam-issuer suppression that `/assets` runs — this surface
+         *     adds no price path of its own. Each row carries
+         *     `valuation.status`; only `published` carries money. A withheld
+         *     or unavailable valuation is NEVER rendered as zero, and
+         *     `summary.market_cap_usd` is ABSENT rather than `"0.00"` when
+         *     nothing in the set publishes one. `summary.lower_bound` is true
+         *     whenever any member is unvalued, so the total is less than the
+         *     value of the set.
+         *
+         *     COVERAGE. `summary.earliest_first_seen_ledger` is the lowest
+         *     ledger any member was first observed at, from an index complete
+         *     since genesis — a first appearance, not the start of a sampling
+         *     window. The membership set is rebuilt on a 10-minute in-process
+         *     cadence from inputs that move daily.
+         *
+         *     No query parameters: the set is small and complete by
+         *     construction. Served with `public, max-age=30`. The definition
+         *     in prose: docs/methodology/rwa-definition.md.
+         */
+        get: operations["listRWAAssets"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/pairs": {
         parameters: {
             query?: never;
@@ -5918,6 +5997,217 @@ export interface components {
                 subject: string;
                 reason: string;
             }[];
+        };
+        /**
+         * @description The tokenized-real-world-asset set, its aggregates, and the rule
+         *     that produced it, in one document.
+         *
+         *     The definition travels WITH the rows deliberately: the set is
+         *     small, and a reader who sees only the rows would have to infer
+         *     the membership rule from whichever assets happen to qualify
+         *     today. `refused[]` states what the rule turned away.
+         */
+        RWAAssetsView: {
+            definition: components["schemas"]["RWADefinition"];
+            summary: components["schemas"]["RWASummary"];
+            /**
+             * @description The set, ordered by published market cap descending, then by
+             *     observation count. Rows with no published valuation sort
+             *     after every valued row — an unvalued asset is never ranked
+             *     above a valued one on a number it does not have.
+             */
+            assets: components["schemas"]["RWAAsset"][];
+            /** @description Per-declared-class totals. Assets admitted on the oracle basis declare no class and group under `unclassified`. */
+            by_class: components["schemas"]["RWAGroupTotal"][];
+            /** @description Per-issuer totals, keyed on the G-address. */
+            by_issuer: components["schemas"]["RWAIssuerTotal"][];
+            /**
+             * @description How many candidate assets each requirement turned away, over
+             *     every issuer-bound SEP-1 attestation that could have
+             *     qualified. The largest bucket is normally
+             *     `issuer_not_independently_recognised`.
+             */
+            refused: components["schemas"]["RWARefusal"][];
+        };
+        /** @description The membership rule, machine-readable, as applied to this response. */
+        RWADefinition: {
+            /** @description The four conjunctive requirements, in evaluation order. */
+            requirements: string[];
+            /**
+             * @description The CLOSED SEP-1 `anchor_asset_type` vocabulary that admits
+             *     an asset on the declaration basis. `fiat` is excluded (a
+             *     fiat-anchored token is a stablecoin), as are `crypto`, `nft`
+             *     and `other`. Free-text synonyms are not folded in: accepting
+             *     them is how a closed set stops being closed.
+             */
+            anchor_classes: string[];
+            /** @description Curated-directory tags that count as an independent party recognising the account as an issuing entity. */
+            recognition_tags: string[];
+            /** @description Curated-directory tags that exclude an issuer outright. Same vocabulary the price-withholding gate reads. */
+            scam_flag_tags: string[];
+            /** @description The definition in prose, with the evidence behind each requirement. */
+            documentation_url: string;
+        };
+        /**
+         * @description Aggregate over the served set. `market_cap_usd` is the EXACT sum
+         *     of the rows' own published `valuation.market_cap_usd` strings —
+         *     add up what you can see and you land on this number.
+         */
+        RWASummary: {
+            /** @description Assets in the set. */
+            assets: number;
+            /** @description Distinct issuer G-addresses in the set. */
+            issuers: number;
+            /**
+             * @description Exact sum of the published per-asset market caps (decimal
+             *     string — ADR-0003). ABSENT, never `"0.00"`, when no asset in
+             *     the set publishes one: a zero there reads as a real total of
+             *     zero dollars, which is the one reading that is certainly
+             *     wrong.
+             * @example 1284500.00
+             */
+            market_cap_usd?: string;
+            /** @description Assets that contributed to the total. */
+            assets_valued: number;
+            /** @description Assets whose valuation is withheld or unavailable; each contributes nothing. */
+            assets_unvalued: number;
+            /** @description True whenever any member is unvalued, i.e. whenever the total is less than the value of the set. */
+            lower_bound: boolean;
+            /**
+             * Format: int64
+             * @description Lowest ledger any member asset was first observed at, from an
+             *     index complete since genesis — a true first appearance, not
+             *     the start of a sampling window. Absent when no member carried
+             *     one.
+             */
+            earliest_first_seen_ledger?: number;
+            /** @description One-line statement of what the total measured and how it was valued. */
+            basis: string;
+            /** @description True when a rebuild cap bound the set, so it is known to be incomplete. Absent when false. */
+            truncated?: boolean;
+        };
+        /**
+         * @description One member of the set, with the evidence that admitted it and
+         *     its valuation or the reason there is none.
+         */
+        RWAAsset: {
+            /** @description Canonical CODE-ISSUER identity — the same id /assets/{id} answers for. */
+            asset_id: string;
+            code: string;
+            /** @description Issuer G-address. Identity is (code, issuer); the code alone never identifies an asset here. */
+            issuer: string;
+            /** @description URL-safe slug where one exists. */
+            slug?: string;
+            /** @description [[CURRENCIES]] name from the issuer-bound SEP-1 entry. Issuer-authored display text. */
+            name?: string;
+            /** @description The domain the issuer account set ON CHAIN, from which the attestation was fetched. */
+            home_domain?: string;
+            /** @description Independent third-party label on the issuer G-address — the evidence for requirement 3. */
+            issuer_directory_name?: string;
+            /** @description Curated third-party tags on the issuer G-address. */
+            issuer_directory_tags?: string[];
+            /**
+             * @description Which requirement-4 arm admitted this asset.
+             *     `sep1_anchor_declaration` — the issuer-bound SEP-1 entry
+             *     declares a real-world `anchor_asset_type`.
+             *     `oracle_rwa_feed` — an independent oracle publishes a
+             *     net-asset-value feed for an instrument of this code
+             *     (ADR-0028); keyed on the code, so admissible only because
+             *     requirement 3 already bound the issuer.
+             * @enum {string}
+             */
+            basis: "sep1_anchor_declaration" | "oracle_rwa_feed";
+            /**
+             * @description Declared class. Present only under `sep1_anchor_declaration` — an oracle feed names an instrument, not its class, and none is invented.
+             * @enum {string}
+             */
+            anchor_class?: "stock" | "bond" | "commodity" | "realestate";
+            /** @description The off-chain instrument the issuer declared this token anchors to, verbatim. */
+            anchor_asset?: string;
+            valuation: components["schemas"]["RWAValuation"];
+            /**
+             * @description Raw chain fact in the smallest integer unit. Served even when
+             *     the valuation is withheld — a supply is not a price claim.
+             */
+            circulating_supply?: string;
+            /** @description Trailing-24h USD trade volume, as /assets serves it. */
+            volume_24h_usd?: string;
+            /**
+             * Format: int64
+             * @description Ledger this asset was first observed at, from an index complete since genesis.
+             */
+            first_seen_ledger?: number;
+            /** Format: int64 */
+            observation_count: number;
+        };
+        /**
+         * @description A row valuation, or the reason there is none. Money fields are
+         *     present ONLY when `status` is `published`. A withheld or
+         *     unavailable valuation is never rendered as zero and never as a
+         *     stale figure.
+         */
+        RWAValuation: {
+            /**
+             * @description `published` — price and supply both available, no gate
+             *     withheld them.
+             *     `withheld_issuer_flagged` — the issuer carries a scam-class
+             *     directory tag, so the same suppression `/assets` applies
+             *     withholds the price and market cap. The row stays: this
+             *     surface hides nothing it admitted.
+             *     `unpriced` — no USD price, either because the market never
+             *     produced one or because the substance gate withheld it as
+             *     too thin to aggregate.
+             *     `withheld_low_liquidity` — a price exists but the
+             *     dust-liquidity guard refused to turn it into a market cap.
+             *     `supply_unavailable` — a price exists but no
+             *     circulating-supply reading does.
+             * @enum {string}
+             */
+            status: "published" | "withheld_issuer_flagged" | "unpriced" | "withheld_low_liquidity" | "supply_unavailable";
+            /** @description Served USD price (decimal string — ADR-0003). Absent unless a price was published. */
+            price_usd?: string;
+            /**
+             * @description Present ONLY when `price_usd` is not a DIRECT market
+             *     observation, carried through verbatim from the same field on
+             *     `/assets`. `declared_peg`: filled from an operator-declared
+             *     1:1 fiat peg times the current FX rate because no
+             *     market-derived price survived the thin-market substance
+             *     gate. `transitive`: derived through one intermediate hop,
+             *     both legs independently substance-gated. Absent means the
+             *     price came from a market. It is on the wire because a
+             *     valuation surface that showed the figure and hid how it was
+             *     derived would be the same claim with the caveat removed.
+             * @enum {string}
+             */
+            price_basis?: "declared_peg" | "transitive";
+            /** @description Circulating supply times the served USD price (decimal string). Present only when status is published. */
+            market_cap_usd?: string;
+        };
+        /** @description One row of the per-declared-class breakdown. */
+        RWAGroupTotal: {
+            /** @description A declared `anchor_class`, or `unclassified` for the assets admitted on the oracle basis. */
+            class: string;
+            assets: number;
+            /** @description Exact sum of the published market caps in this group. Absent when the group publishes none. */
+            market_cap_usd?: string;
+            assets_unvalued: number;
+        };
+        /** @description One row of the per-issuer breakdown, keyed on the G-address rather than on a company name. */
+        RWAIssuerTotal: {
+            issuer: string;
+            /** @description Independent third-party directory label for the account. */
+            name?: string;
+            home_domain?: string;
+            assets: number;
+            /** @description Exact sum of the published market caps for this issuer. Absent when it publishes none. */
+            market_cap_usd?: string;
+            assets_unvalued: number;
+        };
+        /** @description How many candidate assets one requirement turned away. */
+        RWARefusal: {
+            /** @enum {string} */
+            reason: "not_a_classic_asset" | "no_issuer_bound_sep1_entry" | "issuer_scam_flagged" | "issuer_not_independently_recognised" | "no_real_world_instrument_basis";
+            assets: number;
         };
         SDEXOrderBook: {
             /** @description Base asset (what asks sell). */
@@ -14063,6 +14353,157 @@ export interface operations {
                         data?: {
                             [key: string]: string;
                         };
+                    };
+                };
+            };
+            500: components["responses"]["InternalError"];
+        };
+    };
+    listRWAAssets: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The RWA set, its aggregates, and the membership rule. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "data": {
+                     *         "definition": {
+                     *           "requirements": [
+                     *             "classic asset identified by (code, issuer)",
+                     *             "issuer-bound SEP-1 [[CURRENCIES]] entry served from the on-chain home_domain",
+                     *             "issuer independently recognised in the curated account directory and not scam-flagged",
+                     *             "real-world instrument by SEP-1 anchor_asset_type or by an ADR-0028 oracle feed"
+                     *           ],
+                     *           "anchor_classes": [
+                     *             "bond",
+                     *             "commodity",
+                     *             "realestate",
+                     *             "stock"
+                     *           ],
+                     *           "recognition_tags": [
+                     *             "anchor",
+                     *             "custodian",
+                     *             "defi",
+                     *             "exchange",
+                     *             "issuer",
+                     *             "sdf"
+                     *           ],
+                     *           "scam_flag_tags": [
+                     *             "malicious",
+                     *             "unsafe",
+                     *             "fraud",
+                     *             "scam",
+                     *             "hack",
+                     *             "phishing"
+                     *           ],
+                     *           "documentation_url": "https://stellarindex.io/docs/methodology/rwa-definition"
+                     *         },
+                     *         "summary": {
+                     *           "assets": 2,
+                     *           "issuers": 1,
+                     *           "market_cap_usd": "1284500.00",
+                     *           "assets_valued": 1,
+                     *           "assets_unvalued": 1,
+                     *           "lower_bound": true,
+                     *           "earliest_first_seen_ledger": 55008233,
+                     *           "basis": "Sum of the published market caps of the assets meeting the four-requirement definition. Market cap is circulating supply times the served USD price, both as /v1/assets serves them, under the same substance, dust-liquidity and scam-issuer gates. Assets whose valuation is withheld or unavailable contribute nothing and are counted separately, so the total is a LOWER BOUND on the value of the set."
+                     *         },
+                     *         "assets": [
+                     *           {
+                     *             "asset_id": "USTRY-GCRYUGD5NVARGXT56XEZI5CIFCQETYHAPQQTHO2O3IQZTHDH4LATMYWC",
+                     *             "code": "USTRY",
+                     *             "issuer": "GCRYUGD5NVARGXT56XEZI5CIFCQETYHAPQQTHO2O3IQZTHDH4LATMYWC",
+                     *             "slug": "ustry",
+                     *             "name": "US Treasury Bill",
+                     *             "home_domain": "etherfuse.com",
+                     *             "issuer_directory_name": "Etherfuse",
+                     *             "issuer_directory_tags": [
+                     *               "issuer"
+                     *             ],
+                     *             "basis": "sep1_anchor_declaration",
+                     *             "anchor_class": "bond",
+                     *             "anchor_asset": "US Treasury Notes",
+                     *             "valuation": {
+                     *               "status": "published",
+                     *               "price_usd": "1.0412",
+                     *               "market_cap_usd": "1284500.00"
+                     *             },
+                     *             "circulating_supply": "12336218000000",
+                     *             "volume_24h_usd": "8214.55",
+                     *             "first_seen_ledger": 55008233,
+                     *             "observation_count": 346312
+                     *           },
+                     *           {
+                     *             "asset_id": "TESOURO-GCRYUGD5NVARGXT56XEZI5CIFCQETYHAPQQTHO2O3IQZTHDH4LATMYWC",
+                     *             "code": "TESOURO",
+                     *             "issuer": "GCRYUGD5NVARGXT56XEZI5CIFCQETYHAPQQTHO2O3IQZTHDH4LATMYWC",
+                     *             "home_domain": "etherfuse.com",
+                     *             "issuer_directory_name": "Etherfuse",
+                     *             "issuer_directory_tags": [
+                     *               "issuer"
+                     *             ],
+                     *             "basis": "sep1_anchor_declaration",
+                     *             "anchor_class": "bond",
+                     *             "anchor_asset": "Brazilian Tesouro Bonds",
+                     *             "valuation": {
+                     *               "status": "unpriced"
+                     *             },
+                     *             "circulating_supply": "410000000",
+                     *             "first_seen_ledger": 56828412,
+                     *             "observation_count": 13318
+                     *           }
+                     *         ],
+                     *         "by_class": [
+                     *           {
+                     *             "class": "bond",
+                     *             "assets": 2,
+                     *             "market_cap_usd": "1284500.00",
+                     *             "assets_unvalued": 1
+                     *           }
+                     *         ],
+                     *         "by_issuer": [
+                     *           {
+                     *             "issuer": "GCRYUGD5NVARGXT56XEZI5CIFCQETYHAPQQTHO2O3IQZTHDH4LATMYWC",
+                     *             "name": "Etherfuse",
+                     *             "home_domain": "etherfuse.com",
+                     *             "assets": 2,
+                     *             "market_cap_usd": "1284500.00",
+                     *             "assets_unvalued": 1
+                     *           }
+                     *         ],
+                     *         "refused": [
+                     *           {
+                     *             "reason": "issuer_not_independently_recognised",
+                     *             "assets": 3861
+                     *           },
+                     *           {
+                     *             "reason": "issuer_scam_flagged",
+                     *             "assets": 289
+                     *           }
+                     *         ]
+                     *       },
+                     *       "as_of": "2026-09-05T10:20:00Z",
+                     *       "flags": {
+                     *         "stale": false,
+                     *         "reduced_redundancy": false,
+                     *         "triangulated": false,
+                     *         "divergence_warning": false,
+                     *         "divergence_checked": false
+                     *       }
+                     *     }
+                     */
+                    "application/json": {
+                        data: components["schemas"]["RWAAssetsView"];
                     };
                 };
             };
