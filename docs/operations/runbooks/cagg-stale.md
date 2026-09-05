@@ -13,7 +13,7 @@ severity: P2
 | ----- | ----- |
 | Alert | `stellarindex_timescale_cagg_stale` |
 | Severity | P2 (`severity: ticket`) |
-| Detected by | `configs/prometheus/rules.r1/storage.yml` (group `stellarindex.storage`, `severity: ticket`, `for: 5m`) — the file r1 actually loads; multi-host twin in `deploy/monitoring/rules/storage.yml`. **Producer:** both metrics (`stellarindex_cagg_last_refresh_unix`, `stellarindex_cagg_refresh_interval_seconds`) come from `timescale-jobs-probe.timer` (every 60 s), a shell probe installed by `configs/ansible/roles/archival-node/tasks/10-observability.yml` that writes `/var/lib/node_exporter/textfile_collector/timescale_jobs.prom` for the node_exporter textfile collector. If the probe dies, the series go **absent** and the alert goes blind — it does not fire. |
+| Detected by | `configs/prometheus/rules.r1/storage.yml` (group `stellarindex.storage`, `severity: ticket`, `for: 5m`) — the file r1 actually loads; multi-host twin in `deploy/monitoring/rules/storage.yml`. **Producer:** both metrics (`stellarindex_cagg_last_refresh_unix`, `stellarindex_cagg_refresh_interval_seconds`) come from `timescale-jobs-probe.timer` (every 60 s), a shell probe installed by `configs/ansible/roles/archival-node/tasks/10-observability.yml` that writes `/var/lib/node_exporter/textfile_collector/timescale_jobs.prom` for the node_exporter textfile collector. If the probe stops, or its refresh-policy query fails or returns nothing, the series go **absent** and this alert goes blind rather than quiet — it does not fire. That state is now itself alerted as `stellarindex_timescale_probe_degraded` ([timescale-probe-degraded](timescale-probe-degraded.md)). |
 | Typical MTTR | 15–60 min |
 | Impact | A continuous aggregate is > 5× its refresh interval overdue. `/v1/vwap`, `/v1/twap`, `/v1/ohlc` rely on these — API queries either read stale windows or fall back to raw aggregation (slow). Price data accuracy for aggregate endpoints degrades. |
 
@@ -123,7 +123,8 @@ runuser -u postgres -- psql -d stellarindex -c \
 - **Probe dead ≠ alert firing** — the inverse trap: if
   `timescale-jobs-probe.timer` stops, this alert goes silently
   absent rather than firing. Check probe health whenever the
-  series flat-lines.
+  series flat-lines; `stellarindex_timescale_probe_degraded` is
+  the standing signal for it.
 
 ## Related
 
@@ -132,9 +133,16 @@ runuser -u postgres -- psql -d stellarindex -c \
 - `price-stale.md` — aggregator staleness visible through the API.
 - `pg-conns-saturated.md` — can cascade if the refresh is holding
   connections.
+- `timescale-probe-degraded.md` — the producer side of diagnosis step 0
+  above: what to do when the probe itself is what is broken.
 
 ## Changelog
 
+- 2026-09-05 — producer health: the probe now publishes
+  `stellarindex_timescale_probe_query_ok`, `_probe_rows` and
+  `_probe_last_run_unix`, and `stellarindex_timescale_probe_degraded`
+  reports the state in which this alert cannot fire. Diagnosis step 0
+  keeps its manual check; it now has an alert behind it.
 - 2026-08-28 — re-verified against HEAD. Quick-diagnosis SQL rewritten:
   `job_stats` has no `last_finish`/`last_run_err` columns
   (→ `last_successful_finish`; error text lives in

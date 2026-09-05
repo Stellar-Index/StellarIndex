@@ -133,6 +133,7 @@ echo "=== API-smoke textfile self-test ===" && ./scripts/ci/smoke-textfile-test.
 echo "=== Served-value harness scheduling + cadence ===" && ./scripts/ci/lint-served-value-cadence.sh
 echo "=== Served-value harness scheduling self-test ===" && ./scripts/ci/lint-served-value-cadence-test.sh
 echo "=== data-freshness watchdog self-test ===" && ./scripts/ci/data-freshness-test.sh
+echo "=== TimescaleDB job/CAGG probe self-test ===" && ./scripts/ci/timescale-jobs-probe-test.sh
 # BASE_SHA-gated. Both this and lint-replay-plan.sh below take their
 # comparison base from the environment, and with none set they print a skip
 # line and exit 0 — so invoking them bare made verify↔CI parity look honest

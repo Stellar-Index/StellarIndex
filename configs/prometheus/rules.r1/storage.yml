@@ -463,6 +463,93 @@ groups:
             compress_after elapsed, and have been for 24 h. The policy is not
             keeping up: check the job scheduler, then locks and IO.
 
+      # ── The probe's own health (monitoring of monitoring) ─────────
+      #
+      # The three alerts above all read one file,
+      # /var/lib/node_exporter/textfile_collector/timescale_jobs.prom,
+      # written every 60 s by timescale-jobs-probe.timer. Until this
+      # alert existed, every way that producer could fail was silent:
+      #
+      #   - Its psql helper ended in `|| true`, so a failing query
+      #     returned an empty result AND exit 0. The file was rewritten
+      #     without that query's families, node_exporter served it, and
+      #     the alerts built on them evaluated over an absent series.
+      #     `>` and `time() - x` over an empty vector are empty, so none
+      #     of them can fire on the runs they exist for.
+      #   - A query that exits 0 but returns NO ROWS drops the same
+      #     series without erroring at all — the compression family is
+      #     specifically designed to emit a row per policy including
+      #     zeros, so zero rows there IS the blind state.
+      #   - The script not running leaves node_exporter serving the LAST
+      #     file forever: present, re-scraped every interval with a
+      #     fresh sample timestamp, and frozen. This is the shape
+      #     stellarindex_config_assertions_stale was written for
+      #     (W5-mon) — `timestamp()` on the sample cannot see it.
+      #
+      # So the producer now publishes its own state on every run and
+      # this alert reads it. Four arms, one per failure shape:
+      # a query that errored, a query that returned nothing, a file that
+      # has stopped being rewritten, and a file that was never written.
+      #
+      # `ticket`, not `page`: the loudest thing downstream of this file
+      # is stellarindex_timescale_cagg_stale, itself a ticket, and the
+      # other two are informational. A blindness alert louder than
+      # everything it protects trains people to ignore it. `ticket` is
+      # also what stellarindex_config_assertions_stale carries for the
+      # identical class, and it is the quietest severity that is
+      # DELIVERED at all — `informational` routes to `receiver: silent`,
+      # so filing this one there would reproduce the defect it closes.
+      #
+      # 600 s = ten missed ticks on a 60 s timer, plus `for: 15m`, so a
+      # postgres restart or one slow run (TimeoutStartSec=60) cannot
+      # trip it. The absent arm's 30 m window is longer than the
+      # threshold so the two cannot flap against each other.
+      #
+      # Known limitation, stated rather than hidden: the absent arm is
+      # fleet-global, so in the multi-host tree one host still writing
+      # the file would mask a second host that never has. The other
+      # three arms are per-instance and cover every host that has EVER
+      # written it; the anchor series that would make the absent arm
+      # per-host (`up{job="node_exporter"} == 1 unless on (instance) …`,
+      # the stellarindex_pgbackrest_backup_metrics_absent shape) is
+      # wrong here because node_exporter is scraped on every host in the
+      # inventory and only archival nodes run this probe.
+      - alert: stellarindex_timescale_probe_degraded
+        expr: |
+          stellarindex_timescale_probe_query_ok == 0
+          or
+          stellarindex_timescale_probe_rows == 0
+          or
+          (time() - stellarindex_timescale_probe_last_run_unix) > 600
+          or
+          absent_over_time(stellarindex_timescale_probe_last_run_unix[30m])
+        for: 15m
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: storage
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/timescale-probe-degraded.md
+          summary: "TimescaleDB job/CAGG probe is not producing usable metrics{{ if $labels.query }} ({{ $labels.query }}){{ end }}"
+          description: |
+            timescale-jobs-probe.timer is not producing a usable
+            timescale_jobs.prom, so stellarindex_timescale_cagg_stale,
+            _compression_lag and _job_failures_climbing are evaluating over
+            series that are absent or frozen and cannot fire. Silence from
+            those three currently means nothing either way.
+
+            Which arm tripped says where to look. query_ok == 0 is a query
+            that errored — psql, peer auth, or a renamed timescaledb_information
+            view. rows == 0 is a query that succeeded and returned nothing,
+            which drops exactly the same series without raising an error.
+            A last_run_unix older than 10 min, or absent, is the script or its
+            timer not running: node_exporter keeps serving the last file it
+            saw, so the metrics stay present and stop moving.
+
+            Start with `systemctl status timescale-jobs-probe.timer` and the
+            file's mtime, then run /usr/local/sbin/timescale-jobs-probe.sh by
+            hand.
+
       # F-1329: repointed off the never-emitted
       # `stellarindex_pgbackrest_last_success_unix` /
       # `stellarindex_pgbackrest_expected_interval_seconds` pair (note the

@@ -797,6 +797,17 @@ jobs:
         # fire. These fixtures run the shipped probe region against a
         # stubbed curl. No network, no ClickHouse, no Postgres.
         run: ./scripts/ci/data-freshness-test.sh
+      - name: TimescaleDB job/CAGG probe self-test
+        # The probe writing timescale_jobs.prom ran its queries through a
+        # helper ending in `|| true`, so a failing query returned an empty
+        # result AND exit 0: the file was rewritten without that query's
+        # families and stellarindex_timescale_cagg_stale, _compression_lag
+        # and _job_failures_climbing evaluated over absent series, which
+        # cannot fire. These fixtures run the shipped inline script against
+        # a stubbed runuser/psql, asserting that one failing query costs
+        # only its own family and that every failure is reported. No
+        # Postgres, no systemd.
+        run: ./scripts/ci/timescale-jobs-probe-test.sh
       - name: API-smoke textfile self-test
         # stellarindex-smoke.timer ran a 34-GET API smoke with jq shape
         # assertions every 5 minutes and reported to NOTHING:

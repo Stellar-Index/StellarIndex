@@ -13,7 +13,7 @@ severity: P3
 | ----- | ----- |
 | Alert | `stellarindex_timescale_compression_lag` |
 | Severity | P3 (`severity: informational`) |
-| Detected by | `configs/prometheus/rules.r1/storage.yml` (group `stellarindex.storage`, `severity: informational`, `for: 24h`) — the file r1 actually loads; multi-host twin in `deploy/monitoring/rules/storage.yml`. **Producer:** `stellarindex_timescale_chunks_overdue_compression{hypertable=…}` is written by `timescale-jobs-probe.timer` (every 60 s, `configs/ansible/roles/archival-node/tasks/10-observability.yml`) into `/var/lib/node_exporter/textfile_collector/timescale_jobs.prom`, one row per compression policy including zeros. If the probe dies **every** row goes absent and the alert is blind — check `systemctl status timescale-jobs-probe.timer` before trusting silence. |
+| Detected by | `configs/prometheus/rules.r1/storage.yml` (group `stellarindex.storage`, `severity: informational`, `for: 24h`) — the file r1 actually loads; multi-host twin in `deploy/monitoring/rules/storage.yml`. **Producer:** `stellarindex_timescale_chunks_overdue_compression{hypertable=…}` is written by `timescale-jobs-probe.timer` (every 60 s, `configs/ansible/roles/archival-node/tasks/10-observability.yml`) into `/var/lib/node_exporter/textfile_collector/timescale_jobs.prom`, one row per compression policy including zeros. If the probe stops, or its compression query fails or returns nothing, **every** row goes absent and this alert is blind rather than quiet — that state is now itself alerted as `stellarindex_timescale_probe_degraded` ([timescale-probe-degraded](timescale-probe-degraded.md)). |
 | Typical MTTR | 1 h – 1 day |
 | Impact | Not customer-visible directly. But uncompressed chunks use 5–20× more disk than compressed, so sustained lag is a runway to `db-disk-full.md`. The alert's `for: 24h` threshold makes it a trending problem, not an incident. |
 | Not this alert | A hypertable with **no** compression policy at all is invisible here by design — that is `compression_policies_applied` in `scripts/ops/config-assertions.sh`, surfaced through `stellarindex_config_assertion_failed`. On r1 2026-09-05 the `pools_per_source_1h` (92 GB) and `prices_1m` (52 GB) continuous-aggregate materialisations are entirely uncompressed for exactly that reason, and neither signal covers a CAGG. |
@@ -138,9 +138,17 @@ psql -c "SELECT compress_chunk('<chunk_schema>.<chunk_name>');"
 - `db-disk-full.md` — where this ends up if unchecked.
 - `cagg-stale.md` — related scheduler issues; same
   `timescale-jobs-probe.timer` producer.
+- `timescale-probe-degraded.md` — the producer side: what to do when
+  that probe is the thing that is broken, and why silence here is not
+  evidence of health while it is.
 
 ## Changelog
 
+- 2026-09-05 — producer health: the probe now publishes
+  `stellarindex_timescale_probe_query_ok`, `_probe_rows` and
+  `_probe_last_run_unix`, and `stellarindex_timescale_probe_degraded`
+  reports the state in which this alert cannot fire. Its runbook is
+  `timescale-probe-degraded.md`.
 - 2026-09-05 — metric replaced:
   `stellarindex_uncompressed_chunks_older_than_7d` (one unlabelled
   scalar, hardcoded 7 days) →
