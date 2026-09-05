@@ -510,7 +510,11 @@ func tipMergePairs(asset, quote canonical.Asset) (merge, last []canonical.Pair) 
 			merge = append(merge, pair)
 		}
 	}
-	return merge, last
+	// Each set is MERGED into one VWAP population, and the store now
+	// serves a market whichever way round it is asked for, so a pair and
+	// its flip are one read. Asking for both double-counts every trade
+	// and sums two orientations into one mean — see [distinctMarkets].
+	return distinctMarkets(merge), distinctMarkets(last)
 }
 
 // distinctTradeSources returns the unique source names from a slice

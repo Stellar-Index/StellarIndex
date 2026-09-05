@@ -41,8 +41,14 @@ import (
 // None of them could see the next reader, which is why the class
 // survived two remediations. This test is deliberately written against
 // the class instead: it parses every string literal in the package and
-// fails on any pair-bound CAGG read that filters one orientation,
-// whether or not anyone remembered to write a test for it.
+// fails on any pair-bound per-direction read that filters one
+// orientation, whether or not anyone remembered to write a test for it.
+//
+// It covers `trades` as well as the CAGGs. The raw hypertable is where
+// the same market's two spellings originate, and the aggregate readers
+// over it repeated the class a fourth time — Store.TradesInRange, which
+// fed a mean and two extremes on five serving surfaces (launch-plan row
+// 1.16).
 
 // pairBoundFilter matches a specific-pair filter: `base_asset = $N AND
 // quote_asset = $M`, tolerant of whitespace and newlines between the
@@ -50,20 +56,44 @@ import (
 var pairBoundFilter = regexp.MustCompile(
 	`base_asset\s*=\s*\$(\d+)\s+AND\s+quote_asset\s*=\s*\$(\d+)`)
 
-// caggTable matches the continuous aggregates that store per-direction
-// rows. prices_1m is where every known instance of the bug lived; the
-// coarser CAGGs have identical orientation semantics.
-var caggTable = regexp.MustCompile(`FROM\s+prices_(1m|15m|1h|4h|1d|1w)\b`)
+// directionedTable matches the tables that store per-direction rows.
+// prices_1m is where every known instance of the bug lived; the coarser
+// CAGGs have identical orientation semantics, and `trades` is the
+// hypertable they are all built from — the same market, the same two
+// spellings, one layer down.
+//
+// The scope widened to `trades` with the aggregate fold
+// ([Store.TradesInRange], launch-plan row 1.16). It could not widen
+// before it: the extension goes red on any read that is deliberately
+// single-orientation, and the only way to green those was an entry
+// asserting a known-blind read is correct — which is what
+// [directionExempt] refuses.
+var directionedTable = regexp.MustCompile(`FROM\s+(prices_(1m|15m|1h|4h|1d|1w)|trades)\b`)
 
 // directionExempt lists literals that bind a pair against a
-// per-direction CAGG yet legitimately read ONE orientation. Keyed by a
+// per-direction table yet legitimately read ONE orientation. Keyed by a
 // distinctive substring of the literal.
 //
 // Add an entry ONLY with the reason a single orientation is correct for
 // that read — not to quiet the test. If the read serves a price, a
 // volume, or a change to a caller, it is not exempt; fold the
-// directions with [combineDirVWAP] like its siblings do.
-var directionExempt = map[string]string{}
+// directions with [combineDirVWAP] on the CAGG side, or with
+// [orientTradeTo] on the raw side, like its siblings do.
+//
+// There is exactly one, and it is not "this read is blind". A cursor is
+// the one thing a two-armed union cannot carry: a keyset resumes a page
+// inside ONE ordering, and the two directions have to be merged and
+// resumed together or a tie group is cut through. /v1/history therefore
+// merges them in its caller — [tradesInRangeAfterBothDirections] in
+// internal/api/v1 — and this read stays honest about serving one arm of
+// that merge rather than pretending to be whole.
+var directionExempt = map[string]string{
+	"(ts, ledger, tx_hash, op_index, source) > ($5, $6, $7, $8, $9)": "folded by its CALLER, not blind: " +
+		"/v1/history reads this primitive once per direction and merges the two " +
+		"under one keyset cursor (internal/api/v1.tradesInRangeAfterBothDirections). " +
+		"A union cannot do it here — a cursor names a position in ONE ordering, and " +
+		"resuming two directions independently cuts through a tie group.",
+}
 
 func TestCAGGPairReadsFoldBothDirections(t *testing.T) {
 	t.Parallel()
@@ -105,7 +135,7 @@ func TestCAGGPairReadsFoldBothDirections(t *testing.T) {
 			if err != nil {
 				return true
 			}
-			if !caggTable.MatchString(s) || !pairBoundFilter.MatchString(s) {
+			if !directionedTable.MatchString(s) || !pairBoundFilter.MatchString(s) {
 				return true
 			}
 			subjects = append(subjects, subject{
@@ -122,11 +152,11 @@ func TestCAGGPairReadsFoldBothDirections(t *testing.T) {
 	// this test is silently vacuous — which is precisely how the class
 	// survived two prior remediations.
 	if len(subjects) == 0 {
-		t.Fatal("no pair-bound CAGG reads found — this guard has gone " +
+		t.Fatal("no pair-bound per-direction reads found — this guard has gone " +
 			"vacuous (queries moved or the literal shape changed); " +
 			"fix the scan, do not delete the test")
 	}
-	t.Logf("scanned %d pair-bound CAGG read(s)", len(subjects))
+	t.Logf("scanned %d pair-bound per-direction read(s)", len(subjects))
 
 	for _, sub := range subjects {
 		if reason, ok := exemptReason(sub.lit); ok {
@@ -144,20 +174,23 @@ func TestCAGGPairReadsFoldBothDirections(t *testing.T) {
 		}
 		t.Errorf(`%s:%d reads ONE stored market direction.
 
-The CAGG holds this market as both (base, quote) and (quote, base)
+This table holds the market as both (base, quote) and (quote, base)
 rows, so filtering `+"`base_asset = $%s AND quote_asset = $%s`"+` alone
-drops every bucket in which the market traded only the other way.
+drops every row in which the market traded only the other way.
 Silent: the response looks well-formed, there is just less of it.
 
 Fix it the way its siblings do — read both orientations and fold them
-with combineDirVWAP via scanCombinedVwap1mRows:
+per ROW, on the row's own base_asset:
 
     WHERE ((base_asset = $%s AND quote_asset = $%s)
         OR (base_asset = $%s AND quote_asset = $%s))
 
-selecting base_asset and volume so the Go combine can weight and invert
-the flipped leg exactly (ADR-0003 — the inversion must NOT happen in
-SQL, where 1.0/vwap rounds before it is weighted).
+On a CAGG that is combineDirVWAP via scanCombinedVwap1mRows, selecting
+base_asset and volume so the Go combine can weight and invert the
+flipped leg exactly. On the trades hypertable it is two limited arms
+unioned and scanTradeOriented, which swaps the two legs and their two
+integer amounts. Either way the inversion must NOT happen in SQL, where
+1.0/vwap rounds before it is weighted (ADR-0003).
 
 If one direction really is correct here, add the literal to
 directionExempt with the reason.

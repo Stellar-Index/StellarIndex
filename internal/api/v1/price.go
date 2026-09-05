@@ -747,6 +747,47 @@ func assetAliases(asset canonical.Asset) []canonical.Asset {
 	return canonical.AssetAliases(asset)
 }
 
+// distinctMarkets drops any pair whose flip already appeared, keeping
+// the first spelling of each market and its position in the list.
+//
+// It exists because [timescale.Store.TradesInRange] and
+// [timescale.Store.OHLCSeries] read a market in BOTH stored directions
+// and re-express what they return: a pair and its flip are now the same
+// read, differing only in which orientation the answer arrives in. Any
+// caller that MERGES a list of pairs into one population must therefore
+// ask for each market once, or it counts every trade twice and sums two
+// orientations of the same rows into one mean.
+//
+// This is reachable, not theoretical. Both legs alias, so a request
+// naming two spellings of ONE asset family — `?asset=native&quote=
+// crypto:XLM` — makes [tipMergePairs] emit `native/crypto:XLM` and
+// `crypto:XLM/native` in the same merge set, and both SAC combinations
+// in the same held-back set.
+//
+// Dropping rather than reordering keeps every existing priority intact:
+// the survivor is whichever spelling the caller's own walk reached
+// first, so the classic-before-SAC ordering the alias family documents
+// still decides which orientation answers.
+func distinctMarkets(pairs []canonical.Pair) []canonical.Pair {
+	if len(pairs) < 2 {
+		return pairs
+	}
+	out := make([]canonical.Pair, 0, len(pairs))
+	for _, p := range pairs {
+		dup := false
+		for _, kept := range out {
+			if kept.EqualEitherWay(p) {
+				dup = true
+				break
+			}
+		}
+		if !dup {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
 // sameAsset reports whether two canonical forms name the SAME asset —
 // the identical spelling, or two members of one alias family (`native`
 // ↔ `crypto:XLM` ↔ the XLM SAC; a classic ↔ its configured SAC
