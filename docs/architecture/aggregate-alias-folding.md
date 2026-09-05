@@ -1,19 +1,19 @@
 ---
 title: Folding a market's two spellings into an aggregate
 last_verified: 2026-09-05
-status: partially implemented
+status: implemented
 ---
 
 # Folding a market's two spellings into an aggregate
 
 **Last verified:** 2026-09-05
-**Status:** The direction fold is implemented (launch-plan row 1.16,
-aggregate half). The alias widening on the fiat quote leg is designed
-here and deliberately **not** implemented — rows 1.14 and 1.15 stay
-open, and §7 says exactly what blocks them. The cross-scale bar defect
-§7.4 named as the disqualifying blocker under 1.15 is **fixed**
-(2026-09-05); §7.4 records the correction, including that its stated
-cause — a CAGG bar having no source column — was wrong.
+**Status:** Implemented. The direction fold shipped as the aggregate
+half of launch-plan row 1.16; the cross-scale bar defect §7.4 named as
+1.15's blocker is fixed; and the alias widening on the fiat quote leg
+— rows 1.15 (series) and 1.14 (point), landed together — is §7.5. §7.4
+is kept as written because it records a correction worth keeping: the
+blocker it called disqualifying rested on a claim about the schema that
+was false.
 **Scope:** launch-plan rows 1.14, 1.15 and the aggregate half of 1.16.
 
 ---
@@ -35,8 +35,10 @@ The second is *alias*: a market's two legs each have several canonical
 spellings, and a thin Soroban pool is a different market from the deep
 SDEX book that shares an asset with it. Widening a read across spellings
 therefore admits new liquidity, not new rows of the same liquidity — and
-the two must never be summed into one bar. That is not implemented, and
-§7 gives the mechanical reason the series arm cannot take it yet.
+the two must never be summed into one bar. So the widening is gated, not
+merged: a held-back spelling answers only a bucket no established one
+holds. §7.5 has the rule, the r1 measurement behind it and what the
+alternative would have cost.
 
 Distinguishing the two is the whole content of this document. **Folding
 a direction adds no market. Folding an alias adds one.**
@@ -361,7 +363,8 @@ leg, and row 1.15 for the fiat series to reach a SAC-quoted Soroban
 pool. Both were expected to be answered by "whatever rule the aggregate
 fold settles on".
 
-They are not, and the reason is a one-line distinction:
+They are not, and the reason is a one-line distinction (§7.5 built them
+on the rule this section names, not on the fold):
 
 > **Folding a direction adds no market. Folding an alias adds one.**
 
@@ -381,7 +384,9 @@ So the mechanism the alias rows need is not the fold. It is the
 (`tipMergePairs`): the established spellings merge, the SAC forms go in
 a set that is read only when every established read has missed, so a
 thin pool answers where the alternative is no answer at all and never
-sits beside book data in one population.
+sits beside book data in one population. That is what §7.5 built, with
+"has missed" resolved per BUCKET on the series and per WINDOW on the
+point path — one rule at each path's own grain.
 
 ### 7.3 Row 1.14 — the fiat point path
 
@@ -391,7 +396,7 @@ spellings of all families is complete. Row 1.15's requirement (b)
 — whether suppressing a family's *later buckets* is acceptable — has no
 analogue here, because there are no buckets to suppress.
 
-It is **not implemented**, for one reason that has nothing to do with
+It was **not implemented** for one reason that had nothing to do with
 the mechanism: `usdPeggedConstituents` feeds the point path and the
 series path from one list, and `TestFiatVWAPPointMatchesSeries` /
 `TestFiatSingleBarOHLCMatchesSeriesExtremes` pin point and series to the
@@ -402,7 +407,9 @@ from two populations is the defect this path was rebuilt to remove.
 
 So 1.14 cannot land before 1.15. Closing it alone would trade a `404`
 for a fresh divergence, which is a worse bargain than the one on the
-table.
+table. **Both landed together in §7.5**, from one split of the
+constituent list, which is what keeps the two surfaces on one
+population.
 
 ### 7.4 Row 1.15 — the fiat series, and why not a sixth attempt
 
@@ -485,16 +492,271 @@ single-pass shape using `WITH ORDINALITY` plus a `FILTER` on every sum
 measured 1.09x and was refused: its failure mode is silently wrong sums
 on a money path, and it cannot be proved without a database.
 
-**Conclusion.** Rows 1.14 and 1.15 stay open and are still in that order
-of dependency, but the defect one layer beneath them is gone. 1.15 now
-needs only its own three pieces — (a) first-hit across all established
-spellings of all families, (b) the decision on suppressing a family's
-later buckets, (c) the guarantee that a thin pool never sets a bar's
-high, low, count or volume beside book data — and a widened constituent
-set can no longer mix scales silently, because a bar that names a 7dp
-pool beside 8dp exchange bars is now lifted rather than summed raw. 1.14
-closes with 1.15 in one shape, as before. Neither is built here; the
-widening is a separate change with its own measurement.
+**Conclusion.** The defect one layer beneath rows 1.14 and 1.15 is gone,
+and a widened constituent set can no longer mix scales silently. What
+those rows still needed — (a), (b), (c) — is §7.5, which built them.
+
+---
+
+## 7.5 The fiat quote leg, widened — rows 1.15 and 1.14
+
+### The measurement first
+
+Two candidate shapes had been measured and rejected on fixtures. This
+one was measured on r1 before it was designed, read-only and bounded,
+over `prices_1d` (the rung the series and the floor probe both read).
+
+**Does the shape occur?** Over 365 days to 2026-09-05, **132 markets**
+carry the declared peg's SAC wrapper
+(`CCW67TSZ…`, the SAC of `USDC-GA5Z…`) on one leg, holding **1,916,996
+prints** across **67 distinct counterparties**. Splitting those
+counterparties by whether ANY spelling the fiat combine reads — the
+direct fiat pair, the five abstract stablecoin backers, the declared
+classic peg, each under every base alias, in both stored directions —
+holds a single bucket for them:
+
+| | assets | prints | USD volume |
+|---|---:|---:|---:|
+| reachable today | 24 | 1,656,163 | $419,184,137.56 |
+| **SAC-only USD depth** | **43** | **260,833** | **$14,630,761.46** |
+
+The 43 are the row's own case, and they are not dust: the largest
+carries **$6,375,518.23** over 129,925 prints across a full unbroken
+year, and five carry six figures or more. Every one of them served
+`intervals: []` on `/v1/ohlc` and `404` on `/v1/vwap`, while `/v1/chart`
+— whose proxy walk already runs a classic pass then a SAC pass — charted
+them. So the shape occurs, at scale, and the three surfaces disagreed
+about whether these assets have a dollar price at all.
+
+**What a widened set does to a real bar.** Taking the 24 reachable
+assets — the ones with both a book and a pool — and asking, per daily
+bucket, what an unconditional merge would do to the book's extremes:
+the worst cases are not close. On **2026-06-02**, `GQX-GD7TC72O…`'s
+book carried **660 prints and $140** with a high of
+**9.5396055089328007**; the pool carried **one print worth $0.60** —
+0.43% of the day's dollar volume — at **13.0995677490335234**. Merged,
+that single print sets the bar's high: **+37.32%**. Three days earlier
+the same pair moves **+37.52%** on three prints worth $1.03. This is
+the shape the launch plan recorded from a fixture (`n=102`, high 0.50,
+low 0.01 against six million units of book volume), found in production
+data.
+
+Note what it is *not*: $0.60 clears migration 0115's `usd_volume >=
+0.01` floor on the CAGG extremes by sixty times. Requirement (c) really
+had narrowed to a legitimate-notional thin pool, exactly as §7.4 said,
+and the dust floor does not touch it.
+
+### (b) The decision: per bucket, never per response
+
+> **A held-back spelling is suppressed for a bucket an established
+> spelling answered, and for no other bucket.**
+
+The alternative on the table was a first-hit evaluated once per
+response: if any established spelling answers anywhere in the window,
+the held-back set is never read. It is simpler, it is what the point
+path's own shape suggests, and it is wrong for one reason that is a
+property rather than a preference:
+
+**A first-hit chosen once per response makes the constituent set a
+function of the WINDOW.** The same day then renders one way inside a
+window the book also covers and another way inside a window it does
+not — one unchanged database, two answers, and no way for a caller to
+tell which they hold. Resolving per bucket depends only on the bucket,
+so a bar is identical in every window containing it. That is pinned as
+a test rather than asserted.
+
+And the cost of the alternative is not hypothetical. Across those same
+24 assets, **3,356 daily buckets are pool-only** against 3,032 shared —
+the pool trades on more days than the book does — carrying **671,712
+prints and $175,962,608.19**. A per-response first-hit reports every one
+of them as quiet. That is the second fault the launch plan predicted for
+candidate shape B ("one bar is served and 29 days of real prints are
+suppressed"), and it is larger in production than the gap being closed.
+
+The rule keeps the property the row asked for: the series stays
+consistent with the live aggregator's own source set, because every
+bucket that set can answer is answered by it alone, byte for byte. The
+held-back spellings only reach buckets where the alternative is nothing.
+
+**The flagship pair moves, and that is worth stating plainly.** In
+`prices_1d` on r1, `native/USDC-GA5Z…` holds 176 daily buckets from
+2026-03-12, while `<XLM SAC>/<USDC SAC>` holds **874 from 2024-03-12**.
+So `native/fiat:USD`'s daily series gains the buckets the classic book's
+aggregate does not hold. That pool is not thin — $371M over 365 days —
+so this is depth rather than noise, and `/v1/chart` has served the same
+market for months. But the bars are Soroban-AMM-sourced and the wire
+does not say so: `OHLCSeriesBar.Sources` is `json:"-"`. That opacity is
+pre-existing — the combine has always merged SDEX, four CEXs and the FX
+pollers into one unattributed bar — and this widens it rather than
+introducing it. Putting `sources` on the wire is a spec change and is
+not made here.
+
+### (a) and (c) are one change
+
+They ship together because widening reach without the bucket gate is
+precisely how a bar acquires a wrong high — the +37.32% above is that
+mistake, measured.
+
+`Server.usdPeggedConstituentSets` splits the constituents in two.
+`established` is the peg expansion as it always was, each quote in the
+priority-first spelling. `heldBack` is the remaining canonical form of
+each of those quotes — a declared peg's SAC wrapper. Two passes, not one
+pass per family: this is `usdPegProxyQuotes`'s classic-pass-then-SAC-pass
+lifted to the constituent grain, so no family's pool is consulted before
+another family's book. The two sets are deduplicated by MARKET against
+each other, so a pair reachable under both (base and quote in one alias
+family) stays with the set read first.
+
+`ohlcSeriesFiatCombined` then reads `established`, snapshots which
+buckets it answered, and reads `heldBack` admitting only bars whose
+bucket is not in that snapshot. The snapshot is taken before the second
+pass so two held-back constituents sharing an unanswered bucket still
+merge with each other.
+
+(c) falls out of that as an absolute rather than an arithmetic
+guarantee: a held-back bar in an answered bucket is not down-weighted,
+not banded, not filtered — it is not in the bucket. The per-bucket max,
+min, count and sums the launch plan named as the fault cannot see it,
+because there is nothing for them to see. A rejected bar also
+contributes no scale, so it cannot move the units the served bars are
+rendered in.
+
+### The lift target is per BUCKET, not per response
+
+The scale fix that unblocked this row lifted every bar to the maximum
+scale **in the response**. That cannot survive a window-dependent
+constituent set: whether a held-back bar is admitted depends on the
+window, an admitted bar contributes a scale, and so the presence of a
+pool-only day changed the lift applied to the BOOK's bar on a different
+day. Measured on the first build of this row: a 7dp book day served
+`v_base` 1000000 asked for alone and **10000000** asked for beside an
+8dp pool day — the book's own bucket, ten times over, from one unchanged
+database. Which is precisely the property §7.5 had just argued was the
+reason to resolve admission per bucket.
+
+**It was not caused by the widening.** The same shape reproduces with no
+held-back set in play at all: two ESTABLISHED constituents at two venue
+scales on two days — `native/<USDC classic>` (sdex, 7dp) and
+`crypto:XLM/crypto:USDT` (binance, 8dp), which is r1's actual
+constituent set — give the identical 1000000 → 10000000 split on the
+pre-widening tree. A response-wide maximum was always a way for a window
+to change a served volume; the widening only added a second route to it.
+
+So the lift target is the maximum scale **within a bucket**. Every lift
+stays an exact integer multiply by `10^(common−scale) ≥ 1` (ADR-0003),
+and a bar now depends on nothing outside its own bucket.
+
+What that costs is that two buckets of one response can be summed at
+different scales, where the response-wide maximum made them uniform.
+Three reasons that is the right trade:
+
+1. The uniformity held only WITHIN one response. A caller stitching two
+   windows — a paged chart, an incremental refresh — already received
+   the same bucket in two different units, with nothing on the wire to
+   say so. Per-bucket is stable across every request, which is the form
+   a caller can rely on.
+2. It is what the wire already promises. `v_base` is documented as
+   "Σ base_amount over the bucket" — a per-bucket sum. The response-wide
+   maximum was the thing exceeding the contract.
+3. Prices are untouched either way. A lift multiplies both legs of a
+   bar, so `v_quote/v_base`, the open, close, high and low are
+   invariant; only the absolute magnitude of the two volumes moves.
+
+**Disclosed rather than buried:** on r1 this changes served volumes for
+sdex-only buckets inside a response that also contains CEX buckets —
+`native/fiat:USD` before 2026-05-05 has on-chain-only days beside later
+three-venue days — which previously rendered lifted to 8dp and now
+render at their own 7dp sum. Prices, extremes and counts are unchanged.
+
+### The point path (row 1.14) closes in the same shape — at a stated grain
+
+The first build of this row gated the point path on the whole window:
+read the held-back set only when the established set returned nothing,
+on the reasoning that a point window is its own bucket. **That is true
+only when the window IS one bucket**, and every parity fixture in the
+tree was exactly one bucket, so nothing saw it fail. Over a two-hour
+window with the book trading in the first hour and the pool in the
+second, the series served two bars carrying both while `/v1/vwap` served
+the book alone — `n=1 v_base=1000` against `n=2 v_base=1500`. Two served
+money surfaces answering one window from two populations: the C1-024
+defect this path exists to remove, reintroduced on the surface being
+widened, and `/v1/ohlc` single-bar reported a high of 0.20 where the
+same window's series reported 0.80.
+
+The gate is therefore per bucket here too, at `fiatPointGateInterval` —
+`1m`, the finest interval the series accepts and the finest rung the
+deployment materialises. The point path reads raw trades, so it buckets
+them itself at no extra read cost; the `answered` set is snapshotted
+from the established rows before any held-back row joins them, so two
+held-back constituents sharing an empty bucket still merge with each
+other, exactly as they do on the series side.
+
+**The claim this supports, stated precisely.** Point equals the series
+**exactly at `interval=1m`**. It does not equal the series at every
+interval, and no rule could: per-bucket admission is a function of what
+a bucket IS, so a coarser bucket is likelier to hold an established
+print and therefore suppresses more. A 1h series and a 1d series over
+one window disagree with each other for the same reason. That is the
+caller's question changing, not the population splitting — both surfaces
+run one rule over one constituent split. Pinning the finest grain is
+what keeps the statement checkable rather than aspirational, and
+`TestFiatPointEqualsTheFinestSeriesExactly` pins it.
+
+Both surfaces now answer the 43 assets, and `/v1/chart` already did, so
+all three read one population.
+
+### Cost
+
+The query shape is unchanged — `Store.OHLCSeries` and
+`Store.TradesInRange` are untouched, so there is no plan to re-cost. The
+added cost is extra reads of the same shape against different pairs, and
+it is bounded by (base alias count) × (declared classic pegs that have a
+SAC wrapper): on r1 that is 3 × 1. Measured on the fixtures that mirror
+r1's registry, `native/fiat:USD` goes from **21 to 24** constituent
+reads (1.14x) and a single-wrapper `AQUA/fiat:USD` from **7 to 8**. Each
+goes through the cached `HistoryReader`, so a repeat request pays for
+none of them. An operator who declares no SAC wrapper has an empty
+held-back set and a byte-identical response.
+
+### What is pinned
+
+| Claim | Test |
+|---|---|
+| A contract-quoted pool as the only venue is served (series) | `TestFiatSeries_SACQuotedPoolIsTheOnlyVenueIsServed` |
+| …and on the point path | `TestFiatPoint_SACQuotedPoolIsTheOnlyVenueIsServed` |
+| A thin pool sets no high, low, count or volume beside a book | `TestFiatSeries_ThinSACPoolNeverSetsABarBesideBookData` |
+| The pool fills only the buckets the book cannot answer | `TestFiatSeries_PoolFillsOnlyTheBucketsTheBookCannotAnswer` |
+| A bucket renders identically in every window containing it | `TestFiatSeries_ABucketRendersTheSameInEveryWindow` |
+| Point == series over constituents at two venue scales | `TestFiatPointMatchesSeries_AcrossVenueScales` |
+| Point == series on the held-back arm | `TestFiatPointMatchesSeries_OnAPoolOnlyVenue` |
+| Point == series over a window of MORE than one bucket | `TestFiatPointMatchesSeries_OverAMultiBucketWindow` |
+| Point == the finest series exactly | `TestFiatPointEqualsTheFinestSeriesExactly` |
+| A pool print in a bucket the book answered is dropped on the point path too | `TestFiatPoint_PoolInAnAnsweredBucketIsSuppressed` |
+| A bucket of purely established, mixed-scale constituents is window-invariant | `TestFiatSeries_EstablishedMixedScaleBucketIsWindowInvariant` |
+| Every established spelling is read before any held-back one | `assertSACQuotedSeriesReadLast` |
+| The floor spans exactly what the combine reads | `TestOHLCSeries_FiatProbeSpansWhatTheCombineReads` |
+
+The last two rows of the previous behaviour were pinned too, and moved
+deliberately: `TestOHLCSeries_FiatQuoteBookOutranksSACQuotedPool` now
+expects the book's day-1 bar **and** the pool's day-2 bar, and
+`TestOHLCSeries_SACQuotedOnlyDepthIsEmptyAndUnclaimed` became
+`TestOHLCSeries_SACQuotedOnlyDepthIsServed`.
+
+**Two fixtures here were vacuous, and both are fixed.** The parity
+fixture that was already in the tree stamps every trade `sdex`, so it
+holds the cross-surface invariant with one scale and every lift factor
+at 10^0. `TestFiatPointMatchesSeries_AcrossVenueScales` carries three
+constituents across two scales; with the series-side lift removed it
+reports `base_volume point 100000 != series 37000`, while the
+single-source fixture beside it stays green.
+
+The window-invariance pin had the same defect from the other direction:
+`mkSeriesBar` leaves the CAGG's `sources` column empty, so every fixture
+bar was unknown-scale and the pin passed with the scale machinery
+deleted outright — asserting precisely the property that was broken.
+Its bars now carry real venue names, and it checks EVERY bucket of the
+response against itself fetched alone, in both directions (coarse book
+with a fine pool, and the mirror).
 
 ---
 
@@ -510,3 +772,6 @@ widening is a separate change with its own measurement.
 | Merge-set dedupe | `internal/api/v1/price.go` — `distinctMarkets`; applied in `price_tip.go` and `ohlc_fiat_combine.go` |
 | Dedupe tests | `internal/api/v1/market_dedupe_internal_test.go` |
 | The bucket-level twin | `internal/storage/timescale/aggregates.go` — `Store.OHLCSeries`'s `norm` CTE |
+| The quote-leg widening (§7.5) | `internal/api/v1/ohlc_fiat_combine.go` — `Server.usdPeggedConstituentSets`, `Server.ohlcSeriesFiatCombined`, `Server.fiatCombinedTrades` |
+| Its behaviour | `internal/api/v1/fiat_series_sac_reach_test.go` |
+| Its floor | `internal/api/v1/coverage_floor.go` — `Server.ohlcCoverageSet`; `internal/api/v1/coverage_floor_test.go` |

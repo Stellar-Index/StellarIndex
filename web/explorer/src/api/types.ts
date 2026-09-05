@@ -1104,18 +1104,27 @@ export interface paths {
          *        with `coverage_from` when the floor is known and
          *        `flags.outside_coverage` when the window ends at or before
          *        it. A fiat-quoted series is combined from the USD-pegged
-         *        constituents (below), each read under the ONE quote
-         *        spelling the peg expansion names it in — a declared peg in
-         *        its classic form, an abstract stablecoin backer, or the
-         *        fiat itself. A declared peg's SAC wrapper is a second
-         *        spelling of the same peg and is NOT read here, so an asset
-         *        whose only USD depth is a Soroban pool quoted in that
-         *        wrapper returns an empty series. Its floor is measured over
-         *        exactly those constituent pairs — the earliest bucket any
-         *        of them holds, never the literal pair's alone, and never a
-         *        market this surface cannot serve, so such an asset returns
-         *        an empty series with no `coverage_from` rather than one
-         *        annotated as quiet.
+         *        constituents (below) under their ESTABLISHED quote
+         *        spellings — a declared peg in its classic form, an abstract
+         *        stablecoin backer, or the fiat itself. A declared peg's SAC
+         *        wrapper is a second spelling of the same peg, and is where
+         *        a Soroban pool's USD leg lives; it is read too, but a bar
+         *        of it is served only for a bucket NO established spelling
+         *        holds. So an asset whose only USD depth is such a pool is
+         *        served from it, while a bucket a book already answers keeps
+         *        that book's own open, high, low, close, volumes and trade
+         *        count — a thin pool never joins a bucket beside book data,
+         *        in either direction. The decision is per bucket rather than
+         *        per response, so a bar is identical in every window
+         *        containing it. The single-window surfaces (`/v1/vwap`,
+         *        `/v1/twap` and this route without `interval`) apply the same
+         *        rule at the finest interval this route accepts, so they agree
+         *        with `interval=1m` exactly; a coarser interval suppresses
+         *        more, because a coarser bucket is likelier to hold an
+         *        established print. The floor is measured over exactly the
+         *        constituent pairs the combine reads, the SAC spellings
+         *        included — the earliest bucket any of them holds, never the
+         *        literal pair's alone.
          *
          *        Defaults (series mode):
          *          - `to`   = now snapped DOWN to the interval's UTC boundary
@@ -5708,7 +5717,7 @@ export interface components {
             as_of: string;
             /**
              * Format: date-time
-             * @description Earliest instant this deployment holds served-tier price history at for what this surface serves the named pair from — the bottom of the range this response's emptiness can speak for. Emitted by /v1/ohlc's series mode, /v1/history and /v1/chart's default vwap series on an EMPTY answer, so a consumer can tell "the market was quiet across the window" from "the window is before the history held". ABSENT means unknown — no daily bucket yet, the floor could not be read, or this surface does not probe it — and never "from the beginning of time". Measured on the daily aggregate, the rung the probe reads: it carries no retention policy, so nothing in it has been dropped by age, and it is the cheapest rung to prove empty. The floor describes that rung; a finer grain holds what its own refreshes have materialised and is not measured here. For a FIAT-quoted pair the floor is measured over the same constituent set the surface serves it from (nothing on chain quotes in `fiat:USD`): on /v1/ohlc the combined USD-pegged set, on /v1/chart the proxy list plus the XLM cross (whose floor is the later of its two legs), on /v1/price/at the declared USD pegs — the earliest of those, never the literal pair alone. Each surface is measured over the SPELLINGS its own read spans, too: /v1/ohlc's fiat series reads one quote spelling per constituent, so its floor never counts a market held only under a peg's SAC wrapper, while /v1/history measures both stored orientations, because its page read serves both; see those operations.
+             * @description Earliest instant this deployment holds served-tier price history at for what this surface serves the named pair from — the bottom of the range this response's emptiness can speak for. Emitted by /v1/ohlc's series mode, /v1/history and /v1/chart's default vwap series on an EMPTY answer, so a consumer can tell "the market was quiet across the window" from "the window is before the history held". ABSENT means unknown — no daily bucket yet, the floor could not be read, or this surface does not probe it — and never "from the beginning of time". Measured on the daily aggregate, the rung the probe reads: it carries no retention policy, so nothing in it has been dropped by age, and it is the cheapest rung to prove empty. The floor describes that rung; a finer grain holds what its own refreshes have materialised and is not measured here. For a FIAT-quoted pair the floor is measured over the same constituent set the surface serves it from (nothing on chain quotes in `fiat:USD`): on /v1/ohlc the combined USD-pegged set, on /v1/chart the proxy list plus the XLM cross (whose floor is the later of its two legs), on /v1/price/at the declared USD pegs — the earliest of those, never the literal pair alone. Each surface is measured over the SPELLINGS its own read spans, too: /v1/ohlc's fiat series reads every canonical form of each constituent's quote — a declared peg's SAC wrapper included — so its floor counts a market held only under that wrapper, and /v1/history measures both stored orientations, because its page read serves both; see those operations.
              */
             coverage_from?: string;
             sources?: string[];
@@ -7407,9 +7416,9 @@ export interface components {
             l: string;
             /** @description Close price (decimal string). */
             c: string;
-            /** @description Σ base_amount stroops over the bucket (decimal string). */
+            /** @description Σ base_amount smallest units over the bucket (decimal string). Per BUCKET: where a bucket merges venues that stamp at different scales (an on-chain leg at 7 decimals beside an exchange leg at 8), its sum is taken at the finest scale present IN THAT BUCKET, so two buckets of one response may be summed at different scales and only `v_quote`/`v_base` — the price — is comparable across them. */
             v_base: string;
-            /** @description Σ quote_amount stroops over the bucket (decimal string). */
+            /** @description Σ quote_amount smallest units over the bucket (decimal string); same per-bucket scale rule as `v_base`, and the same for both legs of a bucket, so their ratio is a price. */
             v_quote: string;
             /**
              * Format: int64

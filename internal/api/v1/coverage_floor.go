@@ -302,18 +302,24 @@ type coverageSet struct {
 //
 // A fiat quote is served by [Server.ohlcSeriesFiatCombined], which
 // reads the LITERAL pairs [Server.usdPeggedConstituents] enumerates:
-// every base spelling crossed with the peg expansion, each quote in the
-// one form the expansion named it in. Those literal pairs are the set,
-// and [spanLiteralQuote] is the span, because [Store.OHLCSeries] takes
-// the quote spelling it is given. A quote-alias fold here would find a
-// SAC-quoted Soroban pool — where a declared peg's Soroban depth lives
-// — and publish its first bucket as this surface's floor, so an asset
-// whose only USD venue is such a pool would serve `intervals: []` and
-// call it quiet. It serves an empty series with NO floor instead, which
-// is the truth about this surface; closing the gap is launch-plan row
-// 1.15. The base leg keeps its fold because the combine enumerates
-// every base spelling itself, and the memo collapses the repeats to one
-// read per quote spelling. A test pins the probed and requested
+// every base spelling crossed with the peg expansion, each quote in
+// every canonical form of the asset the expansion named — the
+// established spellings, then the held-back SAC wrappers. Those literal
+// pairs are the set, and [spanLiteralQuote] is the span, because
+// [Store.OHLCSeries] takes the quote spelling it is given. The base leg
+// keeps its fold because the combine enumerates every base spelling
+// itself, and the memo collapses the repeats to one read per quote
+// spelling.
+//
+// The held-back spellings belong in the set even though the combine
+// admits their bars only into buckets nothing established answered:
+// this floor is consulted ONLY on an empty answer, and an empty answer
+// is by construction one where every constituent — held-back included —
+// was read and returned nothing. Leaving them out would put the probe
+// behind the read, so a window a SAC-quoted pool could have served
+// would carry no explanation at all. That was the state before
+// launch-plan row 1.15, when the read could not reach the pool either
+// and silence was the truth. A test pins the probed and requested
 // populations equal.
 func (s *Server) ohlcCoverageSet(pair canonical.Pair) coverageSet {
 	if pair.Quote.Type != canonical.AssetFiat {

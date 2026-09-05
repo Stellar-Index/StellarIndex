@@ -33,22 +33,23 @@ const (
 // The band was ALSO a correctness hazard in the other direction: a
 // genuine large trade far from VWAP is a real market event and suppressing it
 // is editing reality. That is what this test asserts.
-// finalizeCombined mirrors what [Server.ohlcSeriesFiatCombined] does once
-// its read loop is finished: take the finest scale any bar declared, build
-// each scale's exact lift factor, then render the bucket. `scales` lists
-// the scale of every bar handed to acc.add, in the same order.
-func finalizeCombined(acc *ohlcBucketAcc, ts time.Time, scales ...int) OHLCSeriesBar {
-	common := ohlcBarScaleUnknown
+// finalizeCombined renders the bucket and cross-checks that it derived
+// the lift target the caller expected. `scales` lists the scale of every
+// bar handed to acc.add, in the same order; the bucket takes their
+// maximum itself, so a mismatch here means the accumulator stopped
+// tracking its own scale rather than that the expectation is stale.
+func finalizeCombined(t *testing.T, acc *ohlcBucketAcc, ts time.Time, scales ...int) OHLCSeriesBar {
+	t.Helper()
+	want := ohlcBarScaleUnknown
 	for _, sc := range scales {
-		if sc > common {
-			common = sc
+		if sc > want {
+			want = sc
 		}
 	}
-	factors := make(map[int]*big.Rat, len(scales))
-	for _, sc := range scales {
-		factors[sc] = ohlcScaleFactor(sc, common)
+	if acc.commonScale != want {
+		t.Fatalf("bucket lift target = %d, want %d (the maximum of %v)", acc.commonScale, want, scales)
 	}
-	return acc.finalize(ts, factors)
+	return acc.finalize(ts)
 }
 
 func TestCombinedBarServesTrueExtremes(t *testing.T) {
@@ -68,7 +69,7 @@ func TestCombinedBarServesTrueExtremes(t *testing.T) {
 	}, onChainScale)
 	// Both constituents are at one scale here, so every lift factor is
 	// 10^0 = 1 and this stays a test of the extremes rule alone.
-	bar := finalizeCombined(acc, time.Unix(1_750_000_000, 0).UTC(), onChainScale, onChainScale)
+	bar := finalizeCombined(t, acc, time.Unix(1_750_000_000, 0).UTC(), onChainScale, onChainScale)
 
 	high, ok := new(big.Rat).SetString(bar.H)
 	if !ok {
@@ -102,7 +103,7 @@ func TestCombinedBarSingleConstituentExtremes(t *testing.T) {
 		O: "0.1822", H: "0.1848", L: "0.1822", C: "0.1834",
 		VBase: "1000000", VQuote: "183000", N: 321,
 	}, onChainScale)
-	bar := finalizeCombined(acc, time.Unix(1_750_000_000, 0).UTC(), onChainScale)
+	bar := finalizeCombined(t, acc, time.Unix(1_750_000_000, 0).UTC(), onChainScale)
 
 	for _, tc := range []struct{ name, got, want string }{
 		{"high", bar.H, "0.1848"},
@@ -159,7 +160,7 @@ func TestCombinedBarScaleDrivesVolumeWeighting(t *testing.T) {
 	}
 	ts := time.Unix(1_750_000_000, 0).UTC()
 
-	mixed := finalizeCombined(build(), ts, onChainScale, cexScale)
+	mixed := finalizeCombined(t, build(), ts, onChainScale, cexScale)
 	if mixed.VBase != "200000000000" {
 		t.Errorf("cross-scale v_base = %q, want 200000000000 (2000 units at the "+
 			"common 8dp scale); 110000000000 is the raw cross-scale sum, which "+
@@ -181,7 +182,7 @@ func TestCombinedBarScaleDrivesVolumeWeighting(t *testing.T) {
 		O: "0.12", H: "0.12", L: "0.12", C: "0.12",
 		VBase: pow10(11), VQuote: "12" + pow10(9), N: 1,
 	}, cexScale)
-	uniform := finalizeCombined(accU, ts, cexScale, cexScale)
+	uniform := finalizeCombined(t, accU, ts, cexScale, cexScale)
 	if uniform.VBase != "110000000000" {
 		t.Errorf("uniform v_base = %q, want 110000000000 unchanged — a single-scale "+
 			"response must be byte-identical to the pre-lift combine", uniform.VBase)
@@ -229,14 +230,22 @@ func TestCombinedBarUnknownScaleIsNeverLifted(t *testing.T) {
 			"own weight against its peers", got, cexScale)
 	}
 
+	// The unknown-scale bar sits in the SAME bucket as an 8dp one, which
+	// is the only place it can now meet it: the lift target is the
+	// bucket's own maximum, so a bar in another bucket cannot reach it.
 	acc := newOHLCBucketAcc()
 	acc.add(&OHLCSeriesBar{
 		O: "0.10", H: "0.10", L: "0.10", C: "0.10",
 		VBase: "1000", VQuote: "100", N: 1,
 	}, ohlcBarScaleUnknown)
-	bar := finalizeCombined(acc, time.Unix(1_750_000_000, 0).UTC(), ohlcBarScaleUnknown, cexScale)
-	if bar.VBase != "1000" {
-		t.Errorf("unknown-scale v_base = %q, want 1000 unchanged even beside an 8dp "+
-			"bar — an unliftable bar keeps its pre-fix value", bar.VBase)
+	acc.add(&OHLCSeriesBar{
+		O: "0.10", H: "0.10", L: "0.10", C: "0.10",
+		VBase: "500", VQuote: "50", N: 1,
+	}, cexScale)
+	bar := finalizeCombined(t, acc, time.Unix(1_750_000_000, 0).UTC(), ohlcBarScaleUnknown, cexScale)
+	if bar.VBase != "1500" {
+		t.Errorf("v_base = %q, want 1500 — the unknown-scale bar contributes its raw "+
+			"1000 beside the 8dp bar's 500. Reading the unknown as the registry "+
+			"fallback of 7 and lifting it would serve 10500", bar.VBase)
 	}
 }

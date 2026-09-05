@@ -1172,19 +1172,32 @@ func fiatSeriesGet(t *testing.T, ts *testServer, base string) fiatSeriesEnvelope
 	return env
 }
 
-// assertNoSACQuotedSeriesRead is the series twin of
-// [assertNoSACQuotedRead]: no OHLCSeries call behind a fiat-quoted
-// request may bind a SAC form as the QUOTE, because the peg expansion
-// never names one.
-func assertNoSACQuotedSeriesRead(t *testing.T, reads []string) {
+// assertSACQuotedSeriesReadLast is the series twin of the ordering
+// [assertNoSACQuotedRead] pins on the point side. Since launch-plan row
+// 1.15 the fiat combine DOES read a declared peg's SAC wrapper — that is
+// where a Soroban pool's USD leg lives, and 43 assets on r1 have depth
+// under no other spelling — but it must read every established spelling
+// of every family FIRST, because a held-back bar is admitted only into a
+// bucket none of them answered. Interleaving the two would let one
+// family's thin pool be consulted before another family's deep book.
+func assertSACQuotedSeriesReadLast(t *testing.T, reads []string) {
 	t.Helper()
+	firstSAC := -1
 	for i, raw := range reads {
 		p, err := canonical.ParsePair(raw)
 		if err != nil {
 			t.Fatalf("ParsePair(%q): %v", raw, err)
 		}
 		if p.Quote.Type == canonical.AssetSoroban {
-			t.Errorf("%s read at %d — the fiat combine reads each constituent's named quote spelling only (reads=%v)", raw, i, reads)
+			if firstSAC < 0 {
+				firstSAC = i
+			}
+			continue
+		}
+		if firstSAC >= 0 {
+			t.Errorf("%s (an established spelling) read at %d, after a SAC-quoted one at %d — "+
+				"every established spelling of every family must be read before any held-back "+
+				"form (reads=%v)", raw, i, firstSAC, reads)
 		}
 	}
 }
@@ -1195,23 +1208,28 @@ func assertNoSACQuotedSeriesRead(t *testing.T, reads []string) {
 // `<AQUA SAC>/<USDC SAC>` holds bars on day 1 (n=50, high 0.50, low
 // 0.01) and on day 2.
 //
-// Served: the book's day-1 bar alone, and no spelling with a SAC quote
-// is read. This is the answer this surface has always given — the
-// fixture is a pin on it, not a change to it — and the reason it is
-// pinned here is that the coverage floor beside it must not describe a
-// wider population than this: two prints at 0.50 and 0.01 must not
-// become the bar's high and low, and day 2 must not gain a bar from the
-// pool alone.
+// Served since launch-plan row 1.15: TWO bars. Day 1 is the book's
+// alone — the pool is dropped from that bucket entirely, so its two
+// prints at 0.50 and 0.01 cannot become the bar's high and low, which is
+// what "outranks" means here — and day 2 is the pool's, because the
+// book cannot answer it and the alternative is reporting a day the
+// market traded as quiet.
+//
+// Before 1.15 the second bar was absent and this fixture pinned that:
+// the pool was never read at all, so a bucket only it could answer was
+// served as nothing. The guarantee that survived unchanged is the
+// per-bucket one — see the day-1 assertions.
 func TestOHLCSeries_FiatQuoteBookOutranksSACQuotedPool(t *testing.T) {
 	usdc := installPegAliasRegistry(t)
 	day1 := time.Date(2024, 6, 1, 0, 0, 0, 0, time.UTC)
 	day2 := day1.AddDate(0, 0, 1)
 	book := mkSeriesBar(day1, "0.0041", "0.0042", "0.0040", "0.0041", "100", "0.41", 1)
+	poolDay2 := mkSeriesBar(day2, "0.0035", "0.0036", "0.0034", "0.0035", "10", "0.035", 3)
 	reader := &stubHistoryReader{ohlcByPair: map[string][]v1.OHLCSeriesBar{
 		pegAliasAquaClassic + "/" + usdcClassicID: {book},
 		pegAliasAquaSAC + "/" + pegAliasUSDCSAC: {
 			mkSeriesBar(day1, "0.0030", "0.5000", "0.0100", "0.0035", "20", "0.07", 50),
-			mkSeriesBar(day2, "0.0035", "0.0036", "0.0034", "0.0035", "10", "0.035", 3),
+			poolDay2,
 		},
 	}}
 	ts := httpTestServer(t, v1.New(v1.Options{
@@ -1220,15 +1238,20 @@ func TestOHLCSeries_FiatQuoteBookOutranksSACQuotedPool(t *testing.T) {
 	}))
 
 	env := fiatSeriesGet(t, ts, pegAliasAquaClassic)
-	if len(env.Data.Intervals) != 1 {
-		t.Fatalf("intervals = %d, want the book's day-1 bar alone (day 2 is the pool's, which this surface does not read): %+v (reads=%v)",
+	if len(env.Data.Intervals) != 2 {
+		t.Fatalf("intervals = %d, want the book's day-1 bar and the pool's day-2 bar: %+v (reads=%v)",
 			len(env.Data.Intervals), env.Data.Intervals, reader.ohlcPairs)
 	}
+	// Day 1: the book's own bar, print for print. The pool's 50 prints
+	// and its 0.50/0.01 extremes are not blended in and not weighted
+	// down — they are not in this bucket at all.
 	assertBookBar(t, env.Data.Intervals[0], book)
+	// Day 2: the pool's, where the book has nothing to say.
+	assertBookBar(t, env.Data.Intervals[1], poolDay2)
 	if !env.Flags.Triangulated {
 		t.Error("flags.triangulated = false; the series was served through the peg")
 	}
-	assertNoSACQuotedSeriesRead(t, reader.ohlcPairs)
+	assertSACQuotedSeriesReadLast(t, reader.ohlcPairs)
 	// The population is the classic peg under every base spelling.
 	for _, spelling := range []string{
 		pegAliasAquaClassic + "/" + usdcClassicID,
@@ -1247,10 +1270,15 @@ func TestOHLCSeries_FiatQuoteBookOutranksSACQuotedPool(t *testing.T) {
 //
 // The served bucket carries n=100 and the book's own high 0.20 and low
 // 0.18 under every XLM spelling of the request — the fiat combine folds
-// the base spellings, so which one was named does not change the answer
-// — and no SAC-quoted spelling is read. The measured shape this pins
-// out is n=102 with high 0.50 and low 0.01: two prints setting a bar's
-// extremes beside six million units of book volume.
+// the base spellings, so which one was named does not change the answer.
+// The measured shape this pins out is n=102 with high 0.50 and low 0.01:
+// two prints setting a bar's extremes beside six million units of book
+// volume.
+//
+// Since launch-plan row 1.15 the SAC-quoted spelling IS read — that is
+// how a bucket the book cannot answer gets served at all — so what holds
+// the answer still is the per-bucket gate, not an absent read. The read
+// order is asserted instead: every established spelling first.
 func TestOHLCSeries_XLMBookOutranksSACQuotedPool(t *testing.T) {
 	usdc := installPegAliasRegistry(t)
 	day := time.Date(2024, 6, 1, 0, 0, 0, 0, time.UTC)
@@ -1271,23 +1299,69 @@ func TestOHLCSeries_XLMBookOutranksSACQuotedPool(t *testing.T) {
 				t.Fatalf("intervals = %d, want 1: %+v (reads=%v)", len(env.Data.Intervals), env.Data.Intervals, reader.ohlcPairs)
 			}
 			assertBookBar(t, env.Data.Intervals[0], book)
-			assertNoSACQuotedSeriesRead(t, reader.ohlcPairs)
+			assertSACQuotedSeriesReadLast(t, reader.ohlcPairs)
+			if callIndex(reader.ohlcPairs, canonical.XLMSacContractID+"/"+pegAliasUSDCSAC) < 0 {
+				t.Errorf("the pool was never read (reads=%v) — the held-back set must be read, "+
+					"or a bucket only it can answer is served as quiet", reader.ohlcPairs)
+			}
 		})
 	}
 }
 
-// TestOHLCSeries_SACQuotedOnlyDepthIsEmptyAndUnclaimed — the residual
-// gap, pinned so it cannot be closed by accident in the probe alone.
+// TestOHLCSeries_SACQuotedOnlyDepthIsServed — the gap launch-plan row
+// 1.15 closed, pinned from the other side.
 //
 // One market, AQUA quoted in the USDC SAC, with a daily bar inside the
-// window; the declared peg is classic USDC. The combine never requests
-// that spelling, so the series is empty — and the coverage annotation
-// must stay SILENT rather than name the pool's bucket as this surface's
-// floor, which is what a quote-alias-folded probe would do: `coverage_from`
-// at the pool's first bucket with `outside_coverage: false` reads as
-// "quiet", about a window the pool traded through. Absent means unknown,
-// which is the truth here. Launch-plan row 1.15 carries the close.
-func TestOHLCSeries_SACQuotedOnlyDepthIsEmptyAndUnclaimed(t *testing.T) {
+// window; the declared peg is classic USDC. No established spelling
+// holds a bucket, so every bucket is unanswered and the held-back
+// spelling fills them: the series serves the pool's bar. This was
+// `intervals: []` before, the state 43 assets on r1 were in.
+//
+// A populated answer carries no coverage annotation at all — the floor
+// exists to explain an empty one — so the probe must not run here. The
+// annotation that used to be pinned SILENT on an empty answer is the
+// thing this replaces: the surface no longer has to describe a market it
+// cannot serve, because it serves it.
+func TestOHLCSeries_SACQuotedOnlyDepthIsServed(t *testing.T) {
+	usdc := installUSDCSACRegistry(t)
+	poolFloor := time.Date(2024, 6, 1, 0, 0, 0, 0, time.UTC)
+	pool := mkSeriesBar(poolFloor, "0.0041", "0.0042", "0.0040", "0.0041", "1000", "4.1", 3)
+	reader := &stubHistoryReader{ohlcByPair: map[string][]v1.OHLCSeriesBar{
+		aquaClassicID + "/" + pegAliasUSDCSAC: {pool},
+	}}
+	probe := &coverageFloorProbe{byPair: map[string]time.Time{}}
+	ts := httpTestServer(t, v1.New(v1.Options{
+		History:           reader,
+		CoverageFloor:     probe,
+		USDPeggedClassics: []canonical.Asset{usdc},
+	}))
+
+	env := fiatSeriesGet(t, ts, aquaClassicID)
+	if len(env.Data.Intervals) != 1 {
+		t.Fatalf("intervals = %d, want the pool's bar (reads=%v)", len(env.Data.Intervals), reader.ohlcPairs)
+	}
+	assertBookBar(t, env.Data.Intervals[0], pool)
+	assertSACQuotedSeriesReadLast(t, reader.ohlcPairs)
+	if env.CoverageFrom != nil || env.Flags.OutsideCoverage {
+		t.Errorf("populated answer carries coverage_from=%v outside_coverage=%v; the floor annotates empties only",
+			env.CoverageFrom, env.Flags.OutsideCoverage)
+	}
+	if n := len(probe.probed()); n != 0 {
+		t.Errorf("%d coverage probes issued for a populated series", n)
+	}
+}
+
+// TestOHLCSeries_SACQuotedDepthOutsideTheWindowStillCarriesItsFloor —
+// the annotation half of the same change. The pool's only bucket sits
+// BEFORE the requested window, so the series is genuinely empty, and the
+// floor must now name the pool's first bucket: the combine reads that
+// market, so a floor measured over it is a claim this surface can keep.
+//
+// Before 1.15 naming it would have been wrong — the read could not serve
+// the market the floor described, so `outside_coverage` had to stay
+// silent rather than report "quiet" about a window the pool traded
+// through. Widening the read is what makes the wider floor honest.
+func TestOHLCSeries_SACQuotedDepthOutsideTheWindowStillCarriesItsFloor(t *testing.T) {
 	usdc := installUSDCSACRegistry(t)
 	aqua := mustParseAsset(t, aquaClassicID)
 	usdcSAC := mustParseAsset(t, pegAliasUSDCSAC)
@@ -1297,9 +1371,6 @@ func TestOHLCSeries_SACQuotedOnlyDepthIsEmptyAndUnclaimed(t *testing.T) {
 			mkSeriesBar(poolFloor, "0.0041", "0.0042", "0.0040", "0.0041", "1000", "4.1", 3),
 		},
 	}}
-	// The pool's bucket exists in the rung under the SAC spelling and
-	// under no other: a probe that folded the quote family would find
-	// it, a probe scoped to the requested spelling does not.
 	probe := &coverageFloorProbe{byPair: map[string]time.Time{
 		probeKey(aqua, usdcSAC): poolFloor,
 	}}
@@ -1310,14 +1381,8 @@ func TestOHLCSeries_SACQuotedOnlyDepthIsEmptyAndUnclaimed(t *testing.T) {
 	}))
 	const pairQS = "base=" + aquaClassicID + "&quote=fiat:USD"
 
-	env := ohlcCoverageGetPair(t, ts, pairQS, "2024-06-01T00:00:00Z", "2024-07-01T00:00:00Z")
-	assertCoverage(t, env.coverageMeta, nil, false)
-	assertNoSACQuotedSeriesRead(t, reader.ohlcPairs)
-	for i, p := range probe.probed() {
-		if p.Quote.String() == pegAliasUSDCSAC {
-			t.Errorf("probe %d named %s/%s — a SAC-quoted market this surface cannot serve", i, p.Base, p.Quote)
-		}
-	}
+	env := ohlcCoverageGetPair(t, ts, pairQS, "2024-01-01T00:00:00Z", "2024-02-01T00:00:00Z")
+	assertCoverage(t, env.coverageMeta, &poolFloor, true)
 	if probe.literal() == 0 {
 		t.Error("no quote-literal probe was issued; the fiat series must not be measured with the quote leg alias-folded")
 	}
@@ -1367,9 +1432,14 @@ func coverageSetDiff(a, b map[string]bool) []string {
 // shorter of the two. Pinned for a SAC-declared base and for XLM's
 // three-form base, under the registry shape r1 runs.
 //
-// Red→green: widen the probe back to the quote's alias family and the
-// span gains the SAC-quoted market, which the combine never requested —
-// the diff names it.
+// Since launch-plan row 1.15 the SAC-quoted market is on BOTH sides of
+// the equality: the combine reads a declared peg's SAC wrapper, so the
+// floor measures it. The equality is what keeps the two honest — a probe
+// wider than the read reports a served-and-empty window as quiet, and a
+// probe narrower than the read leaves a market it can serve unmeasured.
+// An empty answer is the only one a floor annotates, and an empty answer
+// is one where the held-back set was read too, so the set the probe must
+// span is the whole constituent list.
 func TestOHLCSeries_FiatProbeSpansWhatTheCombineReads(t *testing.T) {
 	cases := []struct {
 		name     string
@@ -1423,11 +1493,13 @@ func TestOHLCSeries_FiatProbeSpansWhatTheCombineReads(t *testing.T) {
 				t.Errorf("the combine requested pairs the floor does not measure: %v", extra)
 			}
 			sacQuoted := coverageMarketKey(mustParseAsset(t, tc.base), mustParseAsset(t, pegAliasUSDCSAC))
-			if span[sacQuoted] {
-				t.Errorf("%s is in the probed span — this surface cannot serve a SAC-quoted market, so it must not measure one", sacQuoted)
+			if !requested[sacQuoted] {
+				t.Errorf("%s was not requested — a declared peg's SAC wrapper is where a Soroban pool's "+
+					"USD leg lives, and an empty answer means every established spelling missed", sacQuoted)
 			}
-			if requested[sacQuoted] {
-				t.Errorf("%s was requested — the fiat combine reads each constituent's named quote spelling only", sacQuoted)
+			if !span[sacQuoted] {
+				t.Errorf("%s is not in the probed span — the combine reads it, so the floor must measure it "+
+					"or an empty window it could serve carries no explanation", sacQuoted)
 			}
 		})
 	}
