@@ -11,11 +11,11 @@ severity: P1 | P3
 
 | Field | Value |
 | ----- | ----- |
-| Alerts | `stellarindex_galexie_archive_gap` (P1, page) · `stellarindex_galexie_archive_contiguity_silent` (P3, ticket) |
-| Severity | P1 (an integrity hole in the DR asset) / P3 (the scan itself dark) |
+| Alerts | `stellarindex_galexie_archive_gap` (P1, page) · `stellarindex_galexie_archive_contiguity_silent` (P3, ticket) · `stellarindex_galexie_archive_scan_degraded` (P3, ticket) |
+| Severity | P1 (an integrity hole in the DR asset) / P3 (the scan itself dark, or unable to read the bucket) |
 | Detected by | Prometheus rules in `deploy/monitoring/rules/galexie-archive.yml` + `configs/prometheus/rules.r1/galexie-archive.yml` |
 | Metric source | `node_exporter` textfile_collector reads `/var/lib/node_exporter/textfile_collector/galexie_archive_contiguity.prom`, refreshed hourly by `galexie-archive-contiguity.timer` → `/usr/local/bin/galexie-archive-contiguity` |
-| Steady-state | `galexie_archive_unexpected_gaps == 0`; 221 partitions (2026-08), first_ledger 0, one declared trim hole |
+| Steady-state | `galexie_archive_unexpected_gaps == 0`; 225 partitions (2026-09-05), first_ledger 0, one declared trim hole; `galexie_archive_scan_ok == 1` and `galexie_archive_scan_last_run_unix` within the hour |
 | Customer impact | None while alerting — serving unaffected. The R1 durable mirror (the source the off-site DR copy pulls from) has an integrity hole; a restore in this state would be incomplete. |
 | Companions | [galexie-archive-tip-lag](galexie-archive-tip-lag.md), [archive-files-missing](archive-files-missing.md) |
 
@@ -76,6 +76,38 @@ journal; verify root's `local` mc alias can list the bucket
 breaks every mc-based guard at once — check
 [galexie-archive-tip-lag](galexie-archive-tip-lag.md)'s staleness alert
 for correlation.
+
+## When `…_scan_degraded` fires
+
+The scan is running but is not producing a verdict you can trust, so
+`stellarindex_galexie_archive_gap` above is evaluating over a series
+that is absent or frozen. Silence from it means nothing while this is
+firing.
+
+The scan reads the bucket once per run and keeps that read's exit
+status. Until 2026-09-05 it did not: `mc ls … || true` threw the status
+away, so a read that died PARTWAY handed the parser a truncated but
+perfectly contiguous prefix and the walk certified a clean mirror from a
+read that never finished — `galexie_archive_unexpected_gaps 0`,
+byte-identical to the healthy answer. A read that died having emitted
+nothing went the other way and paged with a DR-corruption claim about a
+bucket nobody managed to list. Neither is published now: a run that
+could not look publishes no partition verdict at all, and these three
+series say so.
+
+| Series | Reading | What it means |
+| ------ | ------- | ------------- |
+| `galexie_archive_scan_ok` | 0 | The bucket listing errored. Check root's `local` mc alias, MinIO reachability and credentials — a rotated MinIO credential breaks every mc-based guard at once. |
+| `galexie_archive_scan_last_run_unix` | older than 3 h, or absent | The scan or its timer is not running. `node_exporter` keeps serving the last file it saw, so the verdict stays present and stops moving; this stamp is the only thing that ages. |
+| `galexie_archive_scan_listing_lines` | — | Diagnostic, not an alert arm. When a SUCCESSFUL read yields zero partitions the scan still pages; this says whether the bucket is really empty (0) or answered in a shape the parser no longer matches (> 0), which is a very different morning. |
+
+Start with `systemctl status galexie-archive-contiguity.timer` and the
+file's mtime, then run `/usr/local/bin/galexie-archive-contiguity` by
+hand and read
+`/var/lib/node_exporter/textfile_collector/galexie_archive_contiguity.prom`.
+The scan is proven against these failure shapes by
+`scripts/ci/galexie-archive-contiguity-test.sh`, which executes the
+shipped script against a stubbed `mc`.
 
 ## Related
 

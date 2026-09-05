@@ -106,6 +106,12 @@ EXTERNAL_OK=(
   node_zfs_zpool_state node_filesystem_avail_bytes node_filesystem_size_bytes
   node_cpu_seconds_total node_memory_MemTotal_bytes node_memory_MemAvailable_bytes
   node_vmstat_pswpout
+  # node_exporter's textfile collector publishes the mtime of every file it
+  # reads. stellarindex_stellar_stack_probe_degraded selects it by full path:
+  # that probe writes no run stamp of its own, so the file's mtime is the
+  # only thing that ages when the daily timer stops and the collector keeps
+  # re-serving the last file it saw.
+  node_textfile_mtime_seconds
   # Packaged nvme collector textfile (nvme.prom), one series per device.
   # `node_disk_io_errors_total` and `node_nvme_temperature_celsius` used
   # to sit here: neither is a node_exporter metric, so listing them as

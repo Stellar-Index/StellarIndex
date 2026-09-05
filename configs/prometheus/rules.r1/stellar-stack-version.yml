@@ -97,6 +97,90 @@ groups:
             runbook for the exact upgrade recipe per component.
             Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/stellar-stack-version-lag.md
 
+      # ── The probe's own health (monitoring of monitoring) ─────────
+      #
+      # The probe has published stellarindex_stellar_stack_probe_success
+      # since it was written, and until this alert existed NO RULE READ
+      # IT. A signal nobody looks at is the same blindness as no signal:
+      # on a degraded run the version_lag series for the component it
+      # could not classify is simply ABSENT (by design — see the probe's
+      # own comments), and `>= 1` / `>= 2` over an absent series are
+      # empty, so both alerts above go quiet exactly when the probe stops
+      # being able to answer. A GitHub API that stays rate-limited, or an
+      # apt source that stops offering a candidate, blinds
+      # stellarindex_stellar_stack_protocol_lag — a `page` guarding the
+      # precondition for the 2026-07-08 and 2026-07-09 ingest outages —
+      # while every dashboard reads healthy.
+      #
+      # The second arm is the case probe_success cannot report: the probe
+      # not running at all. node_exporter keeps serving the LAST file it
+      # read, so a dead timer leaves probe_success frozen at 1 and
+      # re-scraped with a fresh sample timestamp forever. This probe
+      # writes no run stamp of its own, so the file's mtime — which the
+      # textfile collector already exports — is what ages.
+      #
+      # `ticket`: the same severity every sibling probe-blindness alert
+      # in the tree carries, including _ledger_meta_decode_probe_stale in
+      # this very file, and the quietest one that is DELIVERED at all
+      # (`informational` routes to `receiver: silent`). The thing it
+      # guards moves on a scale of weeks — a protocol activation vote
+      # gives operators a runway measured in weeks, and the alert it
+      # protects already carries `for: 6h`.
+      #
+      # 172800 s = two missed runs on a daily timer (05:07 UTC); the
+      # absent arm's 3 d window is longer than the threshold so the two
+      # cannot flap. `max without (file)` drops the textfile collector's
+      # per-file label so all three arms carry the same {job, instance}
+      # and produce one alert, not three.
+      #
+      # Known limitation, stated rather than hidden: the absent arm is
+      # fleet-global, so in the multi-host tree one host still writing
+      # the file would mask a second host that never has. The other two
+      # arms are per-instance and cover every host that has EVER written
+      # it.
+      - alert: stellarindex_stellar_stack_probe_degraded
+        expr: |
+          stellarindex_stellar_stack_probe_success == 0
+          or
+          (
+            time()
+            - max without (file) (
+                node_textfile_mtime_seconds{file="/var/lib/node_exporter/textfile_collector/stellar_stack_version.prom"}
+              )
+          ) > 172800
+          or
+          absent_over_time(stellarindex_stellar_stack_probe_success[3d])
+        for: 1h
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: stellar-stack
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/stellar-stack-version-lag.md
+          summary: "stellar-stack version probe is not classifying components"
+          description: |
+            The daily stellar-stack-version-probe either could not
+            classify a component it knows is installed, or has stopped
+            writing its textfile. Either way
+            stellarindex_stellar_stack_version_lag is missing rows, and
+            stellarindex_stellar_stack_lagging and
+            stellarindex_stellar_stack_protocol_lag evaluate over absent
+            series and cannot fire. Silence from those two currently
+            means nothing either way.
+
+            probe_success == 0 is a degraded run: the GitHub releases API
+            unreachable or rate-limited, jq missing, or apt with no
+            candidate for an installed package. A stale file mtime, or an
+            absent probe_success, is the probe or its timer not running —
+            node_exporter keeps serving the last file it saw, so the
+            values stay present and stop moving.
+
+            Check `systemctl status stellar-stack-version-probe.timer`,
+            then run /usr/local/sbin/stellar-stack-version-probe.sh by
+            hand and read the textfile. The "Known false-positive
+            patterns" section of the runbook covers the API-degradation
+            case.
+
       # ── Reactive backstop: a component CANNOT DECODE current ledger meta ──
       # The proactive guard above (version_lag) is the primary defence and
       # should fire first. This catches the case it structurally cannot:

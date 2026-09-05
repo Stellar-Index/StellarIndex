@@ -27,7 +27,7 @@ enforced 2026-04-23 onward).
   | Severity | Rules | AlertManager route | Delivery |
   | --- | --- | --- | --- |
   | `page` | 54 | `receiver: chat-page` | Discord **#stellarindex-pages**, `repeat_interval` 12 h. There is **no** PagerDuty leg — `pagerduty_configs` is unset, so nothing wakes anyone up. |
-  | `ticket` | 144 | `receiver: chat-default` | Discord **#stellarindex-alerts**, `repeat_interval` 24 h. |
+  | `ticket` | 147 | `receiver: chat-default` | Discord **#stellarindex-alerts**, `repeat_interval` 24 h. |
   | `informational` | 21 | `receiver: silent` | **Delivered to nobody, deliberately.** `silent` is declared with no `*_configs` block at all, which in Alertmanager means the alert is accepted and then dropped. It accumulates in the AlertManager UI and nothing else happens. |
 
   **`informational` is not "a low-priority ticket".** There is no
@@ -306,6 +306,7 @@ textfile collector.
 | ---- | ------ | --------- | -------- | ------- |
 | `stellarindex_stellar_stack_lagging` | `stellarindex_stellar_stack_version_lag` per `component` | >= 1 for 2 d | ticket | [stellar-stack-version-lag](runbooks/stellar-stack-version-lag.md) |
 | `stellarindex_stellar_stack_protocol_lag` | same | >= 2 for 6 h | page | [stellar-stack-version-lag](runbooks/stellar-stack-version-lag.md) |
+| `stellarindex_stellar_stack_probe_degraded` | `stellarindex_stellar_stack_probe_success`, plus `node_textfile_mtime_seconds` for the probe's own file | a run could not classify an installed component, the file has not been rewritten in 48 h, or the canary was never written — for > 1 h | ticket | [stellar-stack-version-lag](runbooks/stellar-stack-version-lag.md) |
 | `stellarindex_ledger_meta_decode_failing` | `stellarindex_ledger_meta_decode_failures_total` per `unit` | > 0 for 10 m | page | [protocol-upgrades](protocol-upgrades.md) |
 | `stellarindex_ledger_meta_decode_probe_stale` | `stellarindex_ledger_meta_decode_probe_updated_seconds` | age > 1 h for 30 m | ticket | [protocol-upgrades](protocol-upgrades.md) |
 
@@ -372,12 +373,14 @@ chain-link locally. See [archive-completeness.md](archive-completeness.md).
 | `stellarindex_archive_completeness_critical_stale` | same | > 48 h on R1 (integrity leader) | page | [archive-completeness-stale](runbooks/archive-completeness-stale.md) |
 | `stellarindex_archive_repair_source_degraded` | `increase(archive_completeness_repair_failures_total[25h]) / increase(archive_completeness_repair_attempts_total[25h])` per source | > 0.10 over one verify cycle (25 h) | informational | [archive-repair-source-degraded](runbooks/archive-repair-source-degraded.md) |
 | `stellarindex_galexie_catchup_refused` | `stellarindex_galexie_catchup_refusals_5m` (journal probe textfile metric) | > 0 for 10 m | page | [galexie-catchup-refused](runbooks/galexie-catchup-refused.md) |
+| `stellarindex_galexie_catchup_probe_degraded` | `stellarindex_galexie_catchup_probe_read_ok` / `_journal_lines` / `_last_run_unix` | the journal read errored, it returned no lines at all, the probe stopped rewriting its file (> 10 min), or it was never written — for > 15 min | ticket | [galexie-catchup-refused](runbooks/galexie-catchup-refused.md) |
 | `stellarindex_host_swap_activity` | `rate(node_vmstat_pswpout[10m])` | > 100 for 15 m | ticket | [host-swap-activity](runbooks/host-swap-activity.md) |
 | `stellarindex_galexie_archive_tip_lag_high` | `galexie_archive_tip_lag_ledgers` (archive newest vs live newest) | > 64,000 for 90 m | ticket | [galexie-archive-tip-lag](runbooks/galexie-archive-tip-lag.md) |
 | `stellarindex_galexie_archive_tip_lag_severe` | same | > 128,000 for 30 m | page | [galexie-archive-tip-lag](runbooks/galexie-archive-tip-lag.md) |
 | `stellarindex_galexie_archive_tip_lag_metric_stale` | `time() - galexie_archive_tip_lag_updated_seconds` | > 30 m for 15 m | ticket | [galexie-archive-tip-lag](runbooks/galexie-archive-tip-lag.md) |
 | `stellarindex_galexie_archive_gap` | `galexie_archive_unexpected_gaps` — partition-level holes/overlaps in the DR mirror that are NOT the declared capacity trim (tip-lag proves the newest edge; this proves the middle) | > 0 for 1 h | page | [galexie-archive-contiguity](runbooks/galexie-archive-contiguity.md) |
 | `stellarindex_galexie_archive_contiguity_silent` | `absent_over_time(galexie_archive_unexpected_gaps[3h])` | for 15 m (hourly scan dark) | ticket | [galexie-archive-contiguity](runbooks/galexie-archive-contiguity.md) |
+| `stellarindex_galexie_archive_scan_degraded` | `galexie_archive_scan_ok` / `_scan_last_run_unix` | the bucket listing errored, the scan stopped rewriting its file (> 3 h), or it was never written — for > 15 min. A failed read no longer publishes a partition verdict at all, so this is what speaks for it | ticket | [galexie-archive-contiguity](runbooks/galexie-archive-contiguity.md) |
 
 Defense-in-depth for `#26` — the original 23-day silent stall of
 `galexie-archive`. The post-`#26` fix is the hourly

@@ -1,0 +1,506 @@
+---
+# promtool unit tests for the galexie-archive alert family in
+# ../rules/galexie-archive.yml.
+#
+#   promtool test rules deploy/monitoring/rule-tests/galexie-archive_test.yml
+#
+# Coverage note: the two probe-health alerts
+# (stellarindex_galexie_archive_scan_degraded,
+# stellarindex_galexie_catchup_probe_degraded) are covered here arm by
+# arm, together with the two `page` alerts they exist to keep honest
+# (stellarindex_galexie_archive_gap, stellarindex_galexie_catchup_refused)
+# so a change to the health metrics cannot quietly cost the pages. The
+# tip-lag trio and stellarindex_host_swap_activity are not covered here.
+#
+# LABEL SHAPES ARE POST-SCRAPE: every series below is emitted into
+# node_exporter's textfile collector, so it carries
+# job="node_exporter" and the host's instance.
+#
+# Series values: the _last_run_unix / _scan_last_run_unix stamps are
+# UNIX SECONDS and promtool's clock starts at 0, so `0+60x…` on a
+# 1-minute interval is a probe stamping its file on every tick, and
+# `<const>+0x…` is one that stopped while node_exporter kept serving the
+# file it left behind.
+#
+# Deliberately lives OUTSIDE `deploy/monitoring/rules/` — everything in
+# that directory is globbed by `promtool check rules`,
+# lint-rule-structure.py and lint-metric-refs.sh, all of which require a
+# top-level `groups:` key that a unit-test file does not have.
+
+rule_files:
+  - ../rules/galexie-archive.yml
+
+evaluation_interval: 1m
+
+tests:
+  # ══ stellarindex_galexie_catchup_refused ══════════════════════════
+  #
+  # The page the probe-health alert below exists to protect. It must
+  # still fire on a real refusal, and must stay quiet on the measured
+  # zero a healthy quiet run publishes.
+  - interval: 1m
+    name: sustained catchup refusals page
+    input_series:
+      - series: 'stellarindex_galexie_catchup_refusals_5m{job="node_exporter",instance="r1:9100"}'
+        values: '4+0x40'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: stellarindex_galexie_catchup_refused
+        exp_alerts:
+          - exp_labels:
+              job: node_exporter
+              instance: r1:9100
+              severity: page
+              team: stellarindex
+              component: archive
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/galexie-catchup-refused.md
+              summary: "galexie captive core is refusing catchup (invalid local state)"
+              description: |
+                The galexie captive core has logged catchup refusals ('invalid
+                local state') sustained 10+ minutes — the same signature that
+                wedged the lake for 11 hours on 2026-07-05. A sustained refusal
+                means the core cannot heal itself; the archive tip stops
+                advancing. Remedy is a galexie restart (fresh bucket catchup
+                from the archive). See the runbook.
+
+  - interval: 1m
+    name: a measured zero raises no refusal page
+    input_series:
+      - series: 'stellarindex_galexie_catchup_refusals_5m{job="node_exporter",instance="r1:9100"}'
+        values: '0+0x40'
+      - series: 'stellarindex_galexie_catchup_probe_read_ok{job="node_exporter",instance="r1:9100"}'
+        values: '1+0x40'
+      - series: 'stellarindex_galexie_catchup_probe_journal_lines{job="node_exporter",instance="r1:9100"}'
+        values: '364+0x40'
+      - series: 'stellarindex_galexie_catchup_probe_last_run_unix{job="node_exporter",instance="r1:9100"}'
+        values: '0+60x40'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: stellarindex_galexie_catchup_refused
+        exp_alerts: []
+      - eval_time: 20m
+        alertname: stellarindex_galexie_catchup_probe_degraded
+        exp_alerts: []
+
+  # ══ stellarindex_galexie_catchup_probe_degraded ═══════════════════
+  #
+  # PROVEN-RED: with the pre-fix producer none of the three series below
+  # exists at all, so every firing case here reports zero alerts. The
+  # producer half is proven separately by
+  # scripts/ci/galexie-catchup-probe-test.sh — against the pre-fix
+  # counting logic 15 of its 25 assertions fail, among them "a failed
+  # read publishes NO refusal count", which returned the fabricated 0
+  # that kept the page above frozen and quiet.
+  - interval: 1m
+    name: a journal read that errored is reported
+    input_series:
+      # The read failed, so the probe publishes no refusal count at all
+      # and the page above has nothing to evaluate. This is the only
+      # thing that says so.
+      - series: 'stellarindex_galexie_catchup_probe_read_ok{job="node_exporter",instance="r1:9100"}'
+        values: '0+0x40'
+      - series: 'stellarindex_galexie_catchup_probe_journal_lines{job="node_exporter",instance="r1:9100"}'
+        values: '0+0x40'
+      - series: 'stellarindex_galexie_catchup_probe_last_run_unix{job="node_exporter",instance="r1:9100"}'
+        values: '0+60x40'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: stellarindex_galexie_catchup_probe_degraded
+        exp_alerts:
+          - exp_labels:
+              job: node_exporter
+              instance: r1:9100
+              severity: ticket
+              team: stellarindex
+              component: archive
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/galexie-catchup-refused.md
+              summary: "galexie catchup-refusal probe is not producing usable metrics"
+              description: |
+                galexie-catchup-probe.timer is not producing a usable
+                galexie_catchup.prom, so stellarindex_galexie_catchup_refused
+                is evaluating over a series that is absent or frozen and
+                cannot fire. Silence from it currently means nothing either
+                way.
+
+                Which arm tripped says where to look. read_ok == 0 is a
+                journal read that errored — a missing journalctl, an
+                unreadable journal. journal_lines == 0 is a read that
+                succeeded and returned nothing, which yields a
+                correctly-derived zero refusals over an empty input: the unit
+                name no longer matches, or galexie is not running at all. A
+                last_run_unix older than 10 min, or absent, is the script or
+                its timer not running: node_exporter keeps serving the last
+                file it saw, so the count stays present and stops moving.
+
+                Start with `systemctl status galexie-catchup-probe.timer` and
+                the file's mtime, then run
+                /usr/local/sbin/galexie-catchup-probe.sh by hand. While this
+                is firing, a wedged captive core would still surface as
+                stellarindex_ingestion_ledger_stalled.
+
+  # The door an exit-status check alone leaves open: `journalctl -u <unit
+  # that does not exist>` exits 0 and prints nothing (confirmed on r1
+  # 2026-09-05), so the refusal count is a genuine, correctly-derived
+  # zero over an empty input and nothing errors. Only the line count
+  # sees it — galexie logged 364-409 lines per 5 min across twelve
+  # consecutive buckets, so zero is never the healthy value.
+  - interval: 1m
+    name: a read that succeeded and returned nothing is caught too
+    input_series:
+      - series: 'stellarindex_galexie_catchup_refusals_5m{job="node_exporter",instance="r1:9100"}'
+        values: '0+0x40'
+      - series: 'stellarindex_galexie_catchup_probe_read_ok{job="node_exporter",instance="r1:9100"}'
+        values: '1+0x40'
+      - series: 'stellarindex_galexie_catchup_probe_journal_lines{job="node_exporter",instance="r1:9100"}'
+        values: '0+0x40'
+      - series: 'stellarindex_galexie_catchup_probe_last_run_unix{job="node_exporter",instance="r1:9100"}'
+        values: '0+60x40'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: stellarindex_galexie_catchup_refused
+        exp_alerts: []
+      - eval_time: 20m
+        alertname: stellarindex_galexie_catchup_probe_degraded
+        exp_alerts:
+          - exp_labels:
+              job: node_exporter
+              instance: r1:9100
+              severity: ticket
+              team: stellarindex
+              component: archive
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/galexie-catchup-refused.md
+              summary: "galexie catchup-refusal probe is not producing usable metrics"
+              description: |
+                galexie-catchup-probe.timer is not producing a usable
+                galexie_catchup.prom, so stellarindex_galexie_catchup_refused
+                is evaluating over a series that is absent or frozen and
+                cannot fire. Silence from it currently means nothing either
+                way.
+
+                Which arm tripped says where to look. read_ok == 0 is a
+                journal read that errored — a missing journalctl, an
+                unreadable journal. journal_lines == 0 is a read that
+                succeeded and returned nothing, which yields a
+                correctly-derived zero refusals over an empty input: the unit
+                name no longer matches, or galexie is not running at all. A
+                last_run_unix older than 10 min, or absent, is the script or
+                its timer not running: node_exporter keeps serving the last
+                file it saw, so the count stays present and stops moving.
+
+                Start with `systemctl status galexie-catchup-probe.timer` and
+                the file's mtime, then run
+                /usr/local/sbin/galexie-catchup-probe.sh by hand. While this
+                is firing, a wedged captive core would still surface as
+                stellarindex_ingestion_ledger_stalled.
+
+  # The case node_exporter hides: the timer stops, the last file stays on
+  # disk, and every series is re-scraped every interval with a fresh
+  # sample timestamp. read_ok and journal_lines read perfectly healthy —
+  # the stamp is the only thing that ages.
+  - interval: 1m
+    name: a probe that stopped running while its file stays on disk is caught
+    input_series:
+      - series: 'stellarindex_galexie_catchup_refusals_5m{job="node_exporter",instance="r1:9100"}'
+        values: '0+0x40'
+      - series: 'stellarindex_galexie_catchup_probe_read_ok{job="node_exporter",instance="r1:9100"}'
+        values: '1+0x40'
+      - series: 'stellarindex_galexie_catchup_probe_journal_lines{job="node_exporter",instance="r1:9100"}'
+        values: '364+0x40'
+      - series: 'stellarindex_galexie_catchup_probe_last_run_unix{job="node_exporter",instance="r1:9100"}'
+        values: '0+0x40'
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: stellarindex_galexie_catchup_refused
+        exp_alerts: []
+      - eval_time: 30m
+        alertname: stellarindex_galexie_catchup_probe_degraded
+        exp_alerts:
+          - exp_labels:
+              job: node_exporter
+              instance: r1:9100
+              severity: ticket
+              team: stellarindex
+              component: archive
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/galexie-catchup-refused.md
+              summary: "galexie catchup-refusal probe is not producing usable metrics"
+              description: |
+                galexie-catchup-probe.timer is not producing a usable
+                galexie_catchup.prom, so stellarindex_galexie_catchup_refused
+                is evaluating over a series that is absent or frozen and
+                cannot fire. Silence from it currently means nothing either
+                way.
+
+                Which arm tripped says where to look. read_ok == 0 is a
+                journal read that errored — a missing journalctl, an
+                unreadable journal. journal_lines == 0 is a read that
+                succeeded and returned nothing, which yields a
+                correctly-derived zero refusals over an empty input: the unit
+                name no longer matches, or galexie is not running at all. A
+                last_run_unix older than 10 min, or absent, is the script or
+                its timer not running: node_exporter keeps serving the last
+                file it saw, so the count stays present and stops moving.
+
+                Start with `systemctl status galexie-catchup-probe.timer` and
+                the file's mtime, then run
+                /usr/local/sbin/galexie-catchup-probe.sh by hand. While this
+                is firing, a wedged captive core would still surface as
+                stellarindex_ingestion_ledger_stalled.
+
+  # Never written at all — host rebuilt, role never applied. `time() - x`
+  # over an empty vector is empty and cannot fire, which is why the
+  # absent arm exists. node_exporter itself is up, so nothing else says a
+  # word.
+  - interval: 1m
+    name: a catchup textfile that was never written is caught by the absent arm
+    input_series:
+      - series: 'up{job="node_exporter",instance="r1:9100"}'
+        values: '1+0x40'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: stellarindex_galexie_catchup_probe_degraded
+        exp_alerts:
+          - exp_labels:
+              severity: ticket
+              team: stellarindex
+              component: archive
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/galexie-catchup-refused.md
+              summary: "galexie catchup-refusal probe is not producing usable metrics"
+              description: |
+                galexie-catchup-probe.timer is not producing a usable
+                galexie_catchup.prom, so stellarindex_galexie_catchup_refused
+                is evaluating over a series that is absent or frozen and
+                cannot fire. Silence from it currently means nothing either
+                way.
+
+                Which arm tripped says where to look. read_ok == 0 is a
+                journal read that errored — a missing journalctl, an
+                unreadable journal. journal_lines == 0 is a read that
+                succeeded and returned nothing, which yields a
+                correctly-derived zero refusals over an empty input: the unit
+                name no longer matches, or galexie is not running at all. A
+                last_run_unix older than 10 min, or absent, is the script or
+                its timer not running: node_exporter keeps serving the last
+                file it saw, so the count stays present and stops moving.
+
+                Start with `systemctl status galexie-catchup-probe.timer` and
+                the file's mtime, then run
+                /usr/local/sbin/galexie-catchup-probe.sh by hand. While this
+                is firing, a wedged captive core would still surface as
+                stellarindex_ingestion_ledger_stalled.
+
+  # ══ stellarindex_galexie_archive_gap ══════════════════════════════
+  #
+  # The DR-integrity page the scan-health alert below exists to protect.
+  # A real gap, on a read that succeeded, must still page.
+  - interval: 1m
+    name: a real partition gap on a successful read still pages
+    input_series:
+      - series: 'galexie_archive_unexpected_gaps{job="node_exporter",instance="r1:9100"}'
+        values: '1+0x300'
+      - series: 'galexie_archive_scan_ok{job="node_exporter",instance="r1:9100"}'
+        values: '1+0x300'
+      - series: 'galexie_archive_scan_last_run_unix{job="node_exporter",instance="r1:9100"}'
+        values: '0+60x300'
+    alert_rule_test:
+      - eval_time: 2h
+        alertname: stellarindex_galexie_archive_gap
+        exp_alerts:
+          - exp_labels:
+              job: node_exporter
+              instance: r1:9100
+              severity: page
+              team: stellarindex
+              component: archive
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/galexie-archive-contiguity.md
+              summary: "galexie-archive has 1 unexpected partition gap(s)/overlap(s)"
+              description: |
+                galexie_archive_unexpected_gaps = 1 — the durable
+                mirror's partition coverage no longer matches its declared
+                shape (genesis [0,63999] + ARCHIVE_FROM→tip, capacity-trim
+                middle excluded). Either a partition was deleted/corrupted or
+                a re-fill wrote an overlapping range. Do NOT let the next
+                trim run before diagnosing. Enumerate with
+                `mc ls local/galexie-archive/` and compare against the
+                declared trim; recover a lost partition from
+                aws-public-blockchain per the runbook.
+      - eval_time: 2h
+        alertname: stellarindex_galexie_archive_scan_degraded
+        exp_alerts: []
+
+  # ══ stellarindex_galexie_archive_scan_degraded ════════════════════
+  #
+  # PROVEN-RED: with the pre-fix scan neither galexie_archive_scan_ok nor
+  # _scan_last_run_unix exists, so every firing case here reports zero
+  # alerts. The producer half is proven by
+  # scripts/ci/galexie-archive-contiguity-test.sh — against the pre-fix
+  # scan 18 of its 37 assertions fail, among them "a truncated read
+  # publishes NO gap verdict", which returned `unexpected_gaps 0` from a
+  # read that never finished.
+  - interval: 1m
+    name: a bucket listing that errored is reported
+    input_series:
+      # The read failed, so no partition verdict is published at all and
+      # the page above has nothing to evaluate.
+      - series: 'galexie_archive_scan_ok{job="node_exporter",instance="r1:9100"}'
+        values: '0+0x300'
+      - series: 'galexie_archive_scan_listing_lines{job="node_exporter",instance="r1:9100"}'
+        values: '0+0x300'
+      - series: 'galexie_archive_scan_last_run_unix{job="node_exporter",instance="r1:9100"}'
+        values: '0+60x300'
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: stellarindex_galexie_archive_gap
+        exp_alerts: []
+      - eval_time: 30m
+        alertname: stellarindex_galexie_archive_scan_degraded
+        exp_alerts:
+          - exp_labels:
+              job: node_exporter
+              instance: r1:9100
+              severity: ticket
+              team: stellarindex
+              component: archive
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/galexie-archive-contiguity.md
+              summary: "galexie-archive contiguity scan is not producing a usable verdict"
+              description: |
+                The hourly partition scan is not producing a usable
+                galexie_archive_contiguity.prom, so
+                stellarindex_galexie_archive_gap is evaluating over a series
+                that is absent or frozen and cannot fire. Silence from it
+                currently means nothing either way.
+
+                Which arm tripped says where to look. scan_ok == 0 is a
+                bucket listing that errored — the `local` mc alias, MinIO
+                reachability, credentials. A last_run_unix older than 3 h, or
+                absent, is the scan or its timer not running: node_exporter
+                keeps serving the last file it saw, so the verdict stays
+                present and stops moving.
+
+                Start with `systemctl status galexie-archive-contiguity.timer`
+                and the file's mtime, then run
+                /usr/local/bin/galexie-archive-contiguity by hand. When the
+                partition count is zero on a SUCCESSFUL read,
+                galexie_archive_scan_listing_lines says whether the bucket is
+                really empty (0) or answered in a shape the scan can no
+                longer parse (> 0).
+
+  # The frozen file: the hourly timer stops, node_exporter keeps serving
+  # the last verdict, and a clean zero-gaps result is re-scraped with a
+  # fresh sample timestamp forever. Nothing in the gap alert can see it,
+  # and the sibling contiguity_silent arm reads ABSENCE, which never
+  # arrives.
+  - interval: 1m
+    name: a scan that stopped running while its file stays on disk is caught
+    input_series:
+      - series: 'galexie_archive_unexpected_gaps{job="node_exporter",instance="r1:9100"}'
+        values: '0+0x300'
+      - series: 'galexie_archive_scan_ok{job="node_exporter",instance="r1:9100"}'
+        values: '1+0x300'
+      - series: 'galexie_archive_scan_last_run_unix{job="node_exporter",instance="r1:9100"}'
+        values: '0+0x300'
+    alert_rule_test:
+      - eval_time: 200m
+        alertname: stellarindex_galexie_archive_gap
+        exp_alerts: []
+      - eval_time: 200m
+        alertname: stellarindex_galexie_archive_contiguity_silent
+        exp_alerts: []
+      - eval_time: 200m
+        alertname: stellarindex_galexie_archive_scan_degraded
+        exp_alerts:
+          - exp_labels:
+              job: node_exporter
+              instance: r1:9100
+              severity: ticket
+              team: stellarindex
+              component: archive
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/galexie-archive-contiguity.md
+              summary: "galexie-archive contiguity scan is not producing a usable verdict"
+              description: |
+                The hourly partition scan is not producing a usable
+                galexie_archive_contiguity.prom, so
+                stellarindex_galexie_archive_gap is evaluating over a series
+                that is absent or frozen and cannot fire. Silence from it
+                currently means nothing either way.
+
+                Which arm tripped says where to look. scan_ok == 0 is a
+                bucket listing that errored — the `local` mc alias, MinIO
+                reachability, credentials. A last_run_unix older than 3 h, or
+                absent, is the scan or its timer not running: node_exporter
+                keeps serving the last file it saw, so the verdict stays
+                present and stops moving.
+
+                Start with `systemctl status galexie-archive-contiguity.timer`
+                and the file's mtime, then run
+                /usr/local/bin/galexie-archive-contiguity by hand. When the
+                partition count is zero on a SUCCESSFUL read,
+                galexie_archive_scan_listing_lines says whether the bucket is
+                really empty (0) or answered in a shape the scan can no
+                longer parse (> 0).
+
+  - interval: 1m
+    name: a scan textfile that was never written is caught by the absent arm
+    input_series:
+      - series: 'up{job="node_exporter",instance="r1:9100"}'
+        values: '1+0x40'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: stellarindex_galexie_archive_scan_degraded
+        exp_alerts:
+          - exp_labels:
+              severity: ticket
+              team: stellarindex
+              component: archive
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/galexie-archive-contiguity.md
+              summary: "galexie-archive contiguity scan is not producing a usable verdict"
+              description: |
+                The hourly partition scan is not producing a usable
+                galexie_archive_contiguity.prom, so
+                stellarindex_galexie_archive_gap is evaluating over a series
+                that is absent or frozen and cannot fire. Silence from it
+                currently means nothing either way.
+
+                Which arm tripped says where to look. scan_ok == 0 is a
+                bucket listing that errored — the `local` mc alias, MinIO
+                reachability, credentials. A last_run_unix older than 3 h, or
+                absent, is the scan or its timer not running: node_exporter
+                keeps serving the last file it saw, so the verdict stays
+                present and stops moving.
+
+                Start with `systemctl status galexie-archive-contiguity.timer`
+                and the file's mtime, then run
+                /usr/local/bin/galexie-archive-contiguity by hand. When the
+                partition count is zero on a SUCCESSFUL read,
+                galexie_archive_scan_listing_lines says whether the bucket is
+                really empty (0) or answered in a shape the scan can no
+                longer parse (> 0).
+
+  - interval: 1m
+    name: a scan reading the bucket cleanly on every tick raises nothing
+    input_series:
+      - series: 'galexie_archive_unexpected_gaps{job="node_exporter",instance="r1:9100"}'
+        values: '0+0x300'
+      - series: 'galexie_archive_partition_count{job="node_exporter",instance="r1:9100"}'
+        values: '225+0x300'
+      - series: 'galexie_archive_scan_ok{job="node_exporter",instance="r1:9100"}'
+        values: '1+0x300'
+      - series: 'galexie_archive_scan_listing_lines{job="node_exporter",instance="r1:9100"}'
+        values: '225+0x300'
+      - series: 'galexie_archive_scan_last_run_unix{job="node_exporter",instance="r1:9100"}'
+        values: '0+60x300'
+    alert_rule_test:
+      - eval_time: 200m
+        alertname: stellarindex_galexie_archive_scan_degraded
+        exp_alerts: []
+      - eval_time: 200m
+        alertname: stellarindex_galexie_archive_gap
+        exp_alerts: []

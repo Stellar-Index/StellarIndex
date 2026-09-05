@@ -3417,6 +3417,30 @@ by `stellarindex_zfs_snapshot_pool_free_unreadable`.
 
 ## Changelog
 
+- 2026-09-05 — added self-health families to two textfile probes whose
+  consumers are `page` severity, both of which previously reported every
+  failure as the healthy value.
+  `stellarindex_galexie_catchup_probe_read_ok`,
+  `stellarindex_galexie_catchup_probe_journal_lines` and
+  `stellarindex_galexie_catchup_probe_last_run_unix` are emitted by
+  `galexie-catchup-probe.sh` (ansible-managed,
+  `configs/ansible/roles/archival-node/tasks/10-observability.yml`);
+  `galexie_archive_scan_ok`, `galexie_archive_scan_listing_lines` and
+  `galexie_archive_scan_last_run_unix` by
+  `configs/ansible/roles/archival-node/files/galexie-archive-contiguity.sh`.
+  NOT Go-declared, so neither is covered by this file's round-trip lint
+  (§3 of `scripts/ci/lint-docs.sh` only enforces
+  `internal/obs/metrics.go` → doc) — the same textfile-only convention
+  as the `galexie_archive_tip_lag_*` and `stellar_stack_probe` families.
+  The status and the count are separate numbers because the count alone
+  cannot tell a real zero from a read that never happened, and the stamp
+  is of the RUN rather than of success, so a probe producing bad data
+  and a probe that stopped stay different signals. Read by
+  `stellarindex_galexie_catchup_probe_degraded` and
+  `stellarindex_galexie_archive_scan_degraded`; the pre-existing
+  `stellarindex_stellar_stack_probe_success` gained its first reader in
+  the same change (`stellarindex_stellar_stack_probe_degraded`).
+
 - 2026-09-03 — no new metric; `stellarindex_source_enabled` gained a
   second emitter. The `massive` fiat-FX worker runs in the API binary,
   and the indexer — until now the gauge's only writer — never had it in

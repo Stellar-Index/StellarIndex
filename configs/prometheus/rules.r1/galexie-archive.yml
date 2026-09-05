@@ -151,6 +151,85 @@ groups:
             service journal; verify the `local` mc alias can list the
             bucket.
 
+      # ── The scan's own health (monitoring of monitoring) ─────────
+      #
+      # stellarindex_galexie_archive_gap above is `page` and is the only
+      # recurring guard on this bucket's SHAPE. Until this alert existed
+      # its producer could fail without saying so:
+      #
+      #   - The scan read the bucket with `mc ls … || true`, which threw
+      #     the exit status away. A read that died PARTWAY handed the
+      #     parser a truncated but perfectly contiguous prefix, so the
+      #     walk found no holes and wrote `unexpected_gaps 0` — a clean
+      #     DR verdict derived from a failed read, byte-identical to the
+      #     healthy answer. Reproduced against the shipped bytes
+      #     2026-09-05: a listing cut after 4 of 11 partitions.
+      #   - A read that died having emitted NOTHING wrote
+      #     `unexpected_gaps 1`, which pages with a DR-corruption claim
+      #     about a bucket nobody managed to look at, and sends the
+      #     responder to the recovery runbook for a `mc` fault.
+      #   - The scan not running leaves node_exporter serving the LAST
+      #     file forever: present, re-scraped every interval with a fresh
+      #     sample timestamp, and frozen on the zero it last wrote. The
+      #     contiguity_silent arm above reads ABSENCE and so cannot see
+      #     this at all.
+      #
+      # The producer now publishes its own state on every run, and does
+      # not publish a partition verdict for a run that could not look. A
+      # SUCCESSFUL read that returns nothing is unchanged and still
+      # pages: an empty durable mirror is a real DR event, and
+      # galexie_archive_scan_listing_lines is what separates it from a
+      # listing the parser no longer matches.
+      #
+      # `ticket`, not `page`: this is the severity every sibling
+      # probe-blindness alert in the tree carries —
+      # _galexie_archive_contiguity_silent (which guards the same page),
+      # _galexie_archive_tip_lag_metric_stale, _ledger_meta_decode_probe_stale
+      # and _timescale_probe_degraded. A blindness alert louder than
+      # everything it protects trains people to ignore it, and `ticket`
+      # is the quietest severity that is DELIVERED at all
+      # (`informational` routes to `receiver: silent`).
+      #
+      # 10800 s = three missed runs on an hourly timer, matching the 3 h
+      # window contiguity_silent already uses; the absent arm's 6 h
+      # window is longer than the threshold so the two cannot flap.
+      - alert: stellarindex_galexie_archive_scan_degraded
+        expr: |
+          galexie_archive_scan_ok == 0
+          or
+          (time() - galexie_archive_scan_last_run_unix) > 10800
+          or
+          absent_over_time(galexie_archive_scan_last_run_unix[6h])
+        for: 15m
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: archive
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/galexie-archive-contiguity.md
+          summary: "galexie-archive contiguity scan is not producing a usable verdict"
+          description: |
+            The hourly partition scan is not producing a usable
+            galexie_archive_contiguity.prom, so
+            stellarindex_galexie_archive_gap is evaluating over a series
+            that is absent or frozen and cannot fire. Silence from it
+            currently means nothing either way.
+
+            Which arm tripped says where to look. scan_ok == 0 is a
+            bucket listing that errored — the `local` mc alias, MinIO
+            reachability, credentials. A last_run_unix older than 3 h, or
+            absent, is the scan or its timer not running: node_exporter
+            keeps serving the last file it saw, so the verdict stays
+            present and stops moving.
+
+            Start with `systemctl status galexie-archive-contiguity.timer`
+            and the file's mtime, then run
+            /usr/local/bin/galexie-archive-contiguity by hand. When the
+            partition count is zero on a SUCCESSFUL read,
+            galexie_archive_scan_listing_lines says whether the bucket is
+            really empty (0) or answered in a shape the scan can no
+            longer parse (> 0).
+
       - alert: stellarindex_galexie_catchup_refused
         # 2026-07-05: the captive core wedged with 'invalid local state'
         # and refused catchup for 11 hours while the lake froze — the
@@ -173,6 +252,86 @@ groups:
             advancing. Remedy is a galexie restart (fresh bucket catchup
             from the archive). See the runbook.
           runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/galexie-catchup-refused.md
+
+      # ── The catchup probe's own health (monitoring of monitoring) ──
+      #
+      # stellarindex_galexie_catchup_refused above is `page` and has no
+      # absent arm and no staleness arm, so until this alert existed
+      # every way its producer could fail was silent AND landed on the
+      # value 0 — which is also the healthy value:
+      #
+      #   - The probe counted with `journalctl … | grep -c … || true`.
+      #     `grep -c` prints 0 and exits 1 on no match, the healthy
+      #     outcome, so the `|| true` was load-bearing and swallowed the
+      #     journal read's failure with it. Measured on r1 2026-09-05, a
+      #     healthy read, a unit name that does not exist, a journal that
+      #     could not be opened and a missing journalctl binary all
+      #     produced N=0 and exit 0.
+      #   - A read that exits 0 and returns NOTHING (a renamed unit) is a
+      #     correctly-derived zero over an empty input, with no error
+      #     anywhere. galexie logged 364-409 lines per 5 min across
+      #     twelve consecutive buckets on r1, so zero lines is never the
+      #     healthy value while galexie is running.
+      #   - The probe not running leaves node_exporter serving the LAST
+      #     file forever: present, re-scraped with a fresh sample
+      #     timestamp every interval, frozen at zero refusals.
+      #
+      # `ticket`, not `page`, even though what it protects is a page:
+      # every sibling probe-blindness alert in the tree is a ticket
+      # (_galexie_archive_tip_lag_metric_stale,
+      # _galexie_archive_contiguity_silent, _ledger_meta_decode_probe_stale,
+      # _timescale_probe_degraded), a blindness alert louder than
+      # everything it protects trains people to ignore it, and the
+      # CONDITION behind the page it guards has an independent net —
+      # a wedged captive core freezes the lake, which stalls
+      # stellarindex_cursor_last_ledger and pages via
+      # stellarindex_ingestion_ledger_stalled in ~10 min. What is lost
+      # while this probe is blind is the alert that NAMES the cause, not
+      # the detection. `ticket` is also the quietest severity that is
+      # DELIVERED at all (`informational` routes to `receiver: silent`).
+      #
+      # 600 s = ten missed ticks on a 60 s timer, plus `for: 15m`, so a
+      # galexie restart or one slow run cannot trip it. The absent arm's
+      # 30 m window is longer than the threshold so the two cannot flap.
+      - alert: stellarindex_galexie_catchup_probe_degraded
+        expr: |
+          stellarindex_galexie_catchup_probe_read_ok == 0
+          or
+          stellarindex_galexie_catchup_probe_journal_lines == 0
+          or
+          (time() - stellarindex_galexie_catchup_probe_last_run_unix) > 600
+          or
+          absent_over_time(stellarindex_galexie_catchup_probe_last_run_unix[30m])
+        for: 15m
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: archive
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/galexie-catchup-refused.md
+          summary: "galexie catchup-refusal probe is not producing usable metrics"
+          description: |
+            galexie-catchup-probe.timer is not producing a usable
+            galexie_catchup.prom, so stellarindex_galexie_catchup_refused
+            is evaluating over a series that is absent or frozen and
+            cannot fire. Silence from it currently means nothing either
+            way.
+
+            Which arm tripped says where to look. read_ok == 0 is a
+            journal read that errored — a missing journalctl, an
+            unreadable journal. journal_lines == 0 is a read that
+            succeeded and returned nothing, which yields a
+            correctly-derived zero refusals over an empty input: the unit
+            name no longer matches, or galexie is not running at all. A
+            last_run_unix older than 10 min, or absent, is the script or
+            its timer not running: node_exporter keeps serving the last
+            file it saw, so the count stays present and stops moving.
+
+            Start with `systemctl status galexie-catchup-probe.timer` and
+            the file's mtime, then run
+            /usr/local/sbin/galexie-catchup-probe.sh by hand. While this
+            is firing, a wedged captive core would still surface as
+            stellarindex_ingestion_ledger_stalled.
 
       - alert: stellarindex_host_swap_activity
         # Swap engagement is the early warning of the pressure class that

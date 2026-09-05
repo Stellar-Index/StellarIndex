@@ -1,0 +1,240 @@
+---
+# promtool unit tests for the stellar-stack version-lag family in
+# ../rules/stellar-stack-version.yml.
+#
+#   promtool test rules deploy/monitoring/rule-tests/stellar-stack-version_test.yml
+#
+# Coverage note: stellarindex_stellar_stack_probe_degraded is covered
+# arm by arm, together with stellarindex_stellar_stack_protocol_lag —
+# the `page` it exists to keep honest — so a change to the probe canary
+# cannot quietly cost that page. stellarindex_stellar_stack_lagging and
+# the two ledger-meta decode alerts are not covered here.
+#
+# LABEL SHAPES ARE POST-SCRAPE: the probe writes into node_exporter's
+# textfile collector, so every series carries job="node_exporter" and
+# the host's instance. node_textfile_mtime_seconds is node_exporter's
+# own per-file gauge and carries the file's FULL path.
+#
+# evaluation_interval is 4 m rather than the usual 1 m: this family
+# measures in days (`for: 2d`, `for: 6h`, a 48 h staleness threshold),
+# and at a 1 m step the staleness case alone would be ~3,000 rule
+# evaluations. 4 m stays inside Prometheus's 5 m staleness horizon, so
+# no input series goes stale between samples.
+#
+# Deliberately lives OUTSIDE `deploy/monitoring/rules/` — everything in
+# that directory is globbed by `promtool check rules`,
+# lint-rule-structure.py and lint-metric-refs.sh, all of which require a
+# top-level `groups:` key that a unit-test file does not have.
+
+rule_files:
+  - ../rules/stellar-stack-version.yml
+
+evaluation_interval: 4m
+
+tests:
+  # ══ stellarindex_stellar_stack_protocol_lag ═══════════════════════
+  #
+  # The page the probe-health alert below exists to protect. It reads
+  # version_lag, which the probe leaves ABSENT for any component it
+  # could not classify — so a degraded probe makes this structurally
+  # unable to fire.
+  - interval: 4m
+    name: a protocol-major lag pages
+    input_series:
+      - series: 'stellarindex_stellar_stack_version_lag{job="node_exporter",instance="r1:9100",component="galexie"}'
+        values: '2+0x200'
+      - series: 'stellarindex_stellar_stack_probe_success{job="node_exporter",instance="r1:9100"}'
+        values: '1+0x200'
+      - series: 'node_textfile_mtime_seconds{job="node_exporter",instance="r1:9100",file="/var/lib/node_exporter/textfile_collector/stellar_stack_version.prom"}'
+        values: '0+240x200'
+    alert_rule_test:
+      - eval_time: 7h
+        alertname: stellarindex_stellar_stack_protocol_lag
+        exp_alerts:
+          - exp_labels:
+              job: node_exporter
+              instance: r1:9100
+              component: stellar-stack
+              stack_component: galexie
+              severity: page
+              team: stellarindex
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/stellar-stack-version-lag.md
+              summary: "galexie is a PROTOCOL-MAJOR version behind upstream (P1)"
+              description: |
+                The installed galexie is behind upstream
+                by a full protocol-major version — the exact precondition
+                for the 2026-07-08 (core) and 2026-07-09 (galexie /
+                CAP-0071) incidents. Schedule the coordinated-upgrade
+                maintenance window NOW, well before any network protocol-
+                activation vote. See the "Remediation" section of the
+                runbook for the exact upgrade recipe per component.
+                Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/stellar-stack-version-lag.md
+      - eval_time: 7h
+        alertname: stellarindex_stellar_stack_probe_degraded
+        exp_alerts: []
+
+  # ══ stellarindex_stellar_stack_probe_degraded ═════════════════════
+  #
+  # PROVEN-RED: the probe has emitted
+  # stellarindex_stellar_stack_probe_success since it was written and NO
+  # RULE READ IT. Delete this alert and all three firing cases below
+  # report zero alerts, which is exactly the state the tree was in — a
+  # canary producing a signal nobody looks at.
+  - interval: 4m
+    name: a degraded classification run is reported
+    input_series:
+      # The GitHub releases API is unreachable, so the galexie row of
+      # version_lag is absent this run and the page above has nothing to
+      # evaluate. Only this says so.
+      - series: 'stellarindex_stellar_stack_probe_success{job="node_exporter",instance="r1:9100"}'
+        values: '0+0x200'
+      - series: 'stellarindex_stellar_stack_version_lag{job="node_exporter",instance="r1:9100",component="core"}'
+        values: '0+0x200'
+      - series: 'node_textfile_mtime_seconds{job="node_exporter",instance="r1:9100",file="/var/lib/node_exporter/textfile_collector/stellar_stack_version.prom"}'
+        values: '0+240x200'
+    alert_rule_test:
+      - eval_time: 2h
+        alertname: stellarindex_stellar_stack_protocol_lag
+        exp_alerts: []
+      - eval_time: 2h
+        alertname: stellarindex_stellar_stack_probe_degraded
+        exp_alerts:
+          - exp_labels:
+              job: node_exporter
+              instance: r1:9100
+              component: stellar-stack
+              severity: ticket
+              team: stellarindex
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/stellar-stack-version-lag.md
+              summary: "stellar-stack version probe is not classifying components"
+              description: |
+                The daily stellar-stack-version-probe either could not
+                classify a component it knows is installed, or has stopped
+                writing its textfile. Either way
+                stellarindex_stellar_stack_version_lag is missing rows, and
+                stellarindex_stellar_stack_lagging and
+                stellarindex_stellar_stack_protocol_lag evaluate over absent
+                series and cannot fire. Silence from those two currently
+                means nothing either way.
+
+                probe_success == 0 is a degraded run: the GitHub releases API
+                unreachable or rate-limited, jq missing, or apt with no
+                candidate for an installed package. A stale file mtime, or an
+                absent probe_success, is the probe or its timer not running —
+                node_exporter keeps serving the last file it saw, so the
+                values stay present and stop moving.
+
+                Check `systemctl status stellar-stack-version-probe.timer`,
+                then run /usr/local/sbin/stellar-stack-version-probe.sh by
+                hand and read the textfile. The "Known false-positive
+                patterns" section of the runbook covers the API-degradation
+                case.
+
+  # The case probe_success cannot report on its own: the daily timer
+  # stops and node_exporter keeps serving the file it left behind, so
+  # probe_success is re-scraped as a healthy 1 with a fresh sample
+  # timestamp forever. The file's mtime is the only thing that ages.
+  - interval: 4m
+    name: a probe that stopped running while its file stays on disk is caught
+    input_series:
+      - series: 'stellarindex_stellar_stack_probe_success{job="node_exporter",instance="r1:9100"}'
+        values: '1+0x800'
+      - series: 'stellarindex_stellar_stack_version_lag{job="node_exporter",instance="r1:9100",component="core"}'
+        values: '0+0x800'
+      - series: 'node_textfile_mtime_seconds{job="node_exporter",instance="r1:9100",file="/var/lib/node_exporter/textfile_collector/stellar_stack_version.prom"}'
+        values: '0+0x800'
+    alert_rule_test:
+      - eval_time: 50h
+        alertname: stellarindex_stellar_stack_probe_degraded
+        exp_alerts:
+          - exp_labels:
+              job: node_exporter
+              instance: r1:9100
+              component: stellar-stack
+              severity: ticket
+              team: stellarindex
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/stellar-stack-version-lag.md
+              summary: "stellar-stack version probe is not classifying components"
+              description: |
+                The daily stellar-stack-version-probe either could not
+                classify a component it knows is installed, or has stopped
+                writing its textfile. Either way
+                stellarindex_stellar_stack_version_lag is missing rows, and
+                stellarindex_stellar_stack_lagging and
+                stellarindex_stellar_stack_protocol_lag evaluate over absent
+                series and cannot fire. Silence from those two currently
+                means nothing either way.
+
+                probe_success == 0 is a degraded run: the GitHub releases API
+                unreachable or rate-limited, jq missing, or apt with no
+                candidate for an installed package. A stale file mtime, or an
+                absent probe_success, is the probe or its timer not running —
+                node_exporter keeps serving the last file it saw, so the
+                values stay present and stop moving.
+
+                Check `systemctl status stellar-stack-version-probe.timer`,
+                then run /usr/local/sbin/stellar-stack-version-probe.sh by
+                hand and read the textfile. The "Known false-positive
+                patterns" section of the runbook covers the API-degradation
+                case.
+
+  # Never written at all — host rebuilt, role never applied.
+  - interval: 4m
+    name: a version textfile that was never written is caught by the absent arm
+    input_series:
+      - series: 'up{job="node_exporter",instance="r1:9100"}'
+        values: '1+0x200'
+    alert_rule_test:
+      - eval_time: 2h
+        alertname: stellarindex_stellar_stack_probe_degraded
+        exp_alerts:
+          - exp_labels:
+              severity: ticket
+              team: stellarindex
+              component: stellar-stack
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/stellar-stack-version-lag.md
+              summary: "stellar-stack version probe is not classifying components"
+              description: |
+                The daily stellar-stack-version-probe either could not
+                classify a component it knows is installed, or has stopped
+                writing its textfile. Either way
+                stellarindex_stellar_stack_version_lag is missing rows, and
+                stellarindex_stellar_stack_lagging and
+                stellarindex_stellar_stack_protocol_lag evaluate over absent
+                series and cannot fire. Silence from those two currently
+                means nothing either way.
+
+                probe_success == 0 is a degraded run: the GitHub releases API
+                unreachable or rate-limited, jq missing, or apt with no
+                candidate for an installed package. A stale file mtime, or an
+                absent probe_success, is the probe or its timer not running —
+                node_exporter keeps serving the last file it saw, so the
+                values stay present and stop moving.
+
+                Check `systemctl status stellar-stack-version-probe.timer`,
+                then run /usr/local/sbin/stellar-stack-version-probe.sh by
+                hand and read the textfile. The "Known false-positive
+                patterns" section of the runbook covers the API-degradation
+                case.
+
+  # A file written 20 h ago is a probe running on its normal daily
+  # cadence, not a stopped one. The threshold is two missed runs.
+  - interval: 4m
+    name: a clean daily run inside its cadence raises nothing
+    input_series:
+      - series: 'stellarindex_stellar_stack_probe_success{job="node_exporter",instance="r1:9100"}'
+        values: '1+0x400'
+      - series: 'stellarindex_stellar_stack_version_lag{job="node_exporter",instance="r1:9100",component="core"}'
+        values: '0+0x400'
+      - series: 'stellarindex_stellar_stack_version_lag{job="node_exporter",instance="r1:9100",component="galexie"}'
+        values: '1+0x400'
+      - series: 'node_textfile_mtime_seconds{job="node_exporter",instance="r1:9100",file="/var/lib/node_exporter/textfile_collector/stellar_stack_version.prom"}'
+        values: '0+0x400'
+    alert_rule_test:
+      - eval_time: 20h
+        alertname: stellarindex_stellar_stack_probe_degraded
+        exp_alerts: []
