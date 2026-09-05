@@ -1378,24 +1378,81 @@ type registryObservation struct {
 	ts     time.Time
 }
 
-// LatestTradesForPair returns up to `limit` most-recent trades for
-// the given ordered pair. Returns an empty slice + nil error if the
-// pair has no trades.
+// A market has NO stored direction of its own, and the two readers
+// below are the raw-trade reads that serve one.
+//
+// internal/sources/sdex/decode.go sets base = soldAsset, quote =
+// boughtAsset, and [canonical.Trade] deliberately does not normalise
+// ("Direction matches the on-chain event — we do not normalise here"),
+// so one market lands in `trades` as both (A,B) and (B,A) rows. A read
+// keyed on `base_asset = $1 AND quote_asset = $2` alone therefore
+// answered `base=AQUA&quote=USDC` with nothing at all for a market the
+// decoder recorded only as USDC/AQUA — silent in the worst way, since
+// an empty answer is a valid one on both surfaces.
+//
+// Each reader now selects BOTH stored directions and re-expresses the
+// flipped rows in the requested orientation ([orientTradeTo]). It is
+// the raw-trade twin of what [Store.OHLCSeries]'s `norm` CTE does on
+// the bucket side and of what /v1/history's page read does in its
+// caller, and it is per ROW: the row's own base_asset decides, not
+// which arm of the union returned it.
+//
+// TWO LIMITED ARMS, not one OR'd scan. Each arm is exactly the query
+// this used to be, so each keeps its index-ordered scan
+// (trades_pair_ts_idx / trades_pair_source_ts_idx, migration 0037) and
+// its early stop. An OR would have to bitmap both directions and sort
+// them together — on a read whose worst case is already a full-history
+// walk for an empty pair (see [Store.RecentClosedVWAP1mExists]). Cost
+// is therefore exactly twice the old read, with the same plan on each
+// half.
+//
+// [Store.TradesInRange] and [Store.TradesInRangeAfter] are NOT folded
+// here. TradesInRangeAfter is honest about reading one orientation
+// because /v1/history's caller merges the two itself; TradesInRange
+// feeds aggregates (/v1/vwap, /v1/twap, single-bar /v1/ohlc,
+// /v1/price/tip and the orchestrator), where folding a flipped row
+// into a mean or an extreme is a separate design question — rows
+// 1.14/1.15/1.16 of docs/operations/v1-launch-plan.md.
+
+// LatestTradesForPair returns up to `limit` most-recent trades for the
+// market the pair names — in EITHER stored direction, each returned in
+// the requested orientation. Returns an empty slice + nil error if the
+// market has no trades.
+//
+// The union of each direction's newest `limit`, re-sorted and cut to
+// `limit`, is exactly the market's newest `limit`, so the arms may be
+// limited individually. Ties on (ts, ledger) are broken by the
+// database, as they were when this read spanned one direction.
 func (s *Store) LatestTradesForPair(ctx context.Context, p canonical.Pair, limit int) ([]canonical.Trade, error) {
 	if limit <= 0 {
 		limit = 100
 	}
 	const q = `
-        SELECT source, ledger, tx_hash, op_index, ts,
-               base_asset, quote_asset,
-               base_amount, quote_amount,
-               COALESCE(maker, ''), COALESCE(taker, ''),
-               COALESCE(routed_via, '')
-          FROM trades
-         WHERE base_asset  = $1
-           AND quote_asset = $2
-         ORDER BY ts DESC, ledger DESC
-         LIMIT $3
+        (SELECT source, ledger, tx_hash, op_index, ts,
+                base_asset, quote_asset,
+                base_amount, quote_amount,
+                COALESCE(maker, '')      AS maker,
+                COALESCE(taker, '')      AS taker,
+                COALESCE(routed_via, '') AS routed_via
+           FROM trades
+          WHERE base_asset  = $1
+            AND quote_asset = $2
+          ORDER BY ts DESC, ledger DESC
+          LIMIT $3)
+        UNION ALL
+        (SELECT source, ledger, tx_hash, op_index, ts,
+                base_asset, quote_asset,
+                base_amount, quote_amount,
+                COALESCE(maker, '')      AS maker,
+                COALESCE(taker, '')      AS taker,
+                COALESCE(routed_via, '') AS routed_via
+           FROM trades
+          WHERE base_asset  = $2
+            AND quote_asset = $1
+          ORDER BY ts DESC, ledger DESC
+          LIMIT $3)
+        ORDER BY ts DESC, ledger DESC
+        LIMIT $3
     `
 	rows, err := s.db.QueryContext(ctx, q,
 		p.Base.String(), p.Quote.String(), limit,
@@ -1407,31 +1464,10 @@ func (s *Store) LatestTradesForPair(ctx context.Context, p canonical.Pair, limit
 
 	var out []canonical.Trade
 	for rows.Next() {
-		var t canonical.Trade
-		var baseAsset, quoteAsset string
-		if err := rows.Scan(
-			&t.Source, &t.Ledger, &t.TxHash, &t.OpIndex, &t.Timestamp,
-			&baseAsset, &quoteAsset,
-			&t.BaseAmount, &t.QuoteAmount,
-			&t.Maker, &t.Taker, &t.RoutedVia,
-		); err != nil {
-			return nil, fmt.Errorf("timescale: LatestTradesForPair scan: %w", err)
-		}
-		// Reconstruct Pair via the canonical parse path — this also
-		// enforces shape invariants on read.
-		base, err := canonical.ParseAsset(baseAsset)
+		t, err := scanTradeOriented(rows, p, "LatestTradesForPair")
 		if err != nil {
-			return nil, fmt.Errorf("timescale: LatestTradesForPair base %q: %w", baseAsset, err)
+			return nil, err
 		}
-		quote, err := canonical.ParseAsset(quoteAsset)
-		if err != nil {
-			return nil, fmt.Errorf("timescale: LatestTradesForPair quote %q: %w", quoteAsset, err)
-		}
-		pair, err := canonical.NewPair(base, quote)
-		if err != nil {
-			return nil, fmt.Errorf("timescale: LatestTradesForPair pair: %w", err)
-		}
-		t.Pair = pair
 		out = append(out, t)
 	}
 	if err := rows.Err(); err != nil {
@@ -1441,31 +1477,60 @@ func (s *Store) LatestTradesForPair(ctx context.Context, p canonical.Pair, limit
 }
 
 // LatestTradePerSource returns the most-recent trade from each source
-// that has ever traded `pair`. Empty slice + nil error when the pair
-// has no trades.
+// that has ever traded the market `pair` names, in either stored
+// direction and returned in the requested orientation. Empty slice +
+// nil error when the market has no trades.
 //
 // sourceFilter "" returns all sources; a non-empty value restricts to
 // that single source (0- or 1-element slice). Filtering at the SQL
 // layer means a single-source query is just an index point lookup.
 //
-// Implementation: DISTINCT ON (source) ordered by ts DESC, ledger DESC
-// — cheap because trades_pair_source_ts_idx (migration 0037) covers
-// the (base_asset, quote_asset, source, ts DESC, ledger DESC) order
-// exactly. The cost is ~O(num_sources) per pair rather than
-// O(rows_in_pair).
+// Implementation: DISTINCT ON (source) per stored direction, ordered by
+// ts DESC, ledger DESC — cheap because trades_pair_source_ts_idx
+// (migration 0037) covers the (base_asset, quote_asset, source, ts
+// DESC, ledger DESC) order exactly, and each arm uses it as it always
+// did. The cost is ~O(num_sources) per direction rather than
+// O(rows_in_market).
+//
+// A source that traded the market BOTH ways round therefore arrives
+// twice, and one row per source is what this returns, so the two are
+// folded here by [tradeIsLaterInMarket] — the later trade wins. The
+// fold happens in Go, over rows already fetched, so it never leans on
+// the database's collation; and it compares (ts, ledger, tx_hash,
+// op_index), which is a TOTAL order within one source (the trades
+// primary key is (source, ledger, tx_hash, op_index, ts), so two rows
+// tying on all four would be the same row). The answer is therefore
+// the same whichever way round the market is asked for, and it is the
+// same row /v1/history serves last for that source — it orders on
+// those four components too.
 func (s *Store) LatestTradePerSource(ctx context.Context, p canonical.Pair, sourceFilter string) ([]canonical.Trade, error) {
 	const q = `
-        SELECT DISTINCT ON (source)
-               source, ledger, tx_hash, op_index, ts,
-               base_asset, quote_asset,
-               base_amount, quote_amount,
-               COALESCE(maker, ''), COALESCE(taker, ''),
-               COALESCE(routed_via, '')
-          FROM trades
-         WHERE base_asset  = $1
-           AND quote_asset = $2
-           AND ($3 = '' OR source = $3)
-         ORDER BY source, ts DESC, ledger DESC
+        (SELECT DISTINCT ON (source)
+                source, ledger, tx_hash, op_index, ts,
+                base_asset, quote_asset,
+                base_amount, quote_amount,
+                COALESCE(maker, '')      AS maker,
+                COALESCE(taker, '')      AS taker,
+                COALESCE(routed_via, '') AS routed_via
+           FROM trades
+          WHERE base_asset  = $1
+            AND quote_asset = $2
+            AND ($3 = '' OR source = $3)
+          ORDER BY source, ts DESC, ledger DESC)
+        UNION ALL
+        (SELECT DISTINCT ON (source)
+                source, ledger, tx_hash, op_index, ts,
+                base_asset, quote_asset,
+                base_amount, quote_amount,
+                COALESCE(maker, '')      AS maker,
+                COALESCE(taker, '')      AS taker,
+                COALESCE(routed_via, '') AS routed_via
+           FROM trades
+          WHERE base_asset  = $2
+            AND quote_asset = $1
+            AND ($3 = '' OR source = $3)
+          ORDER BY source, ts DESC, ledger DESC)
+        ORDER BY source
     `
 	rows, err := s.db.QueryContext(ctx, q,
 		p.Base.String(), p.Quote.String(), sourceFilter,
@@ -1476,36 +1541,107 @@ func (s *Store) LatestTradePerSource(ctx context.Context, p canonical.Pair, sour
 	defer func() { _ = rows.Close() }()
 
 	var out []canonical.Trade
+	bySource := map[string]int{}
 	for rows.Next() {
-		var t canonical.Trade
-		var baseAsset, quoteAsset string
-		if err := rows.Scan(
-			&t.Source, &t.Ledger, &t.TxHash, &t.OpIndex, &t.Timestamp,
-			&baseAsset, &quoteAsset,
-			&t.BaseAmount, &t.QuoteAmount,
-			&t.Maker, &t.Taker, &t.RoutedVia,
-		); err != nil {
-			return nil, fmt.Errorf("timescale: LatestTradePerSource scan: %w", err)
-		}
-		base, err := canonical.ParseAsset(baseAsset)
+		t, err := scanTradeOriented(rows, p, "LatestTradePerSource")
 		if err != nil {
-			return nil, fmt.Errorf("timescale: LatestTradePerSource base %q: %w", baseAsset, err)
+			return nil, err
 		}
-		quote, err := canonical.ParseAsset(quoteAsset)
-		if err != nil {
-			return nil, fmt.Errorf("timescale: LatestTradePerSource quote %q: %w", quoteAsset, err)
+		if i, ok := bySource[t.Source]; ok {
+			if tradeIsLaterInMarket(t, out[i]) {
+				out[i] = t
+			}
+			continue
 		}
-		pair, err := canonical.NewPair(base, quote)
-		if err != nil {
-			return nil, fmt.Errorf("timescale: LatestTradePerSource pair: %w", err)
-		}
-		t.Pair = pair
+		bySource[t.Source] = len(out)
 		out = append(out, t)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("timescale: LatestTradePerSource rows: %w", err)
 	}
 	return out, nil
+}
+
+// scanTradeOriented scans one row of the projection both latest-trade
+// readers select — source, ledger, tx_hash, op_index, ts, base_asset,
+// quote_asset, base_amount, quote_amount, maker, taker, routed_via —
+// rebuilds its Pair through the canonical parse path (which enforces
+// shape invariants on read), and re-expresses it in `want`'s
+// orientation.
+//
+// `who` names the calling method so the wrapped error keeps this
+// file's `timescale: <method> …` convention.
+func scanTradeOriented(rows *sql.Rows, want canonical.Pair, who string) (canonical.Trade, error) {
+	var t canonical.Trade
+	var baseAsset, quoteAsset string
+	if err := rows.Scan(
+		&t.Source, &t.Ledger, &t.TxHash, &t.OpIndex, &t.Timestamp,
+		&baseAsset, &quoteAsset,
+		&t.BaseAmount, &t.QuoteAmount,
+		&t.Maker, &t.Taker, &t.RoutedVia,
+	); err != nil {
+		return canonical.Trade{}, fmt.Errorf("timescale: %s scan: %w", who, err)
+	}
+	base, err := canonical.ParseAsset(baseAsset)
+	if err != nil {
+		return canonical.Trade{}, fmt.Errorf("timescale: %s base %q: %w", who, baseAsset, err)
+	}
+	quote, err := canonical.ParseAsset(quoteAsset)
+	if err != nil {
+		return canonical.Trade{}, fmt.Errorf("timescale: %s quote %q: %w", who, quoteAsset, err)
+	}
+	pair, err := canonical.NewPair(base, quote)
+	if err != nil {
+		return canonical.Trade{}, fmt.Errorf("timescale: %s pair: %w", who, err)
+	}
+	t.Pair = pair
+	return orientTradeTo(t, want), nil
+}
+
+// orientTradeTo re-expresses one stored trade in `want`'s orientation.
+//
+// A row stored that way already is returned untouched. A row stored the
+// other way round has its two legs and its two smallest-unit amounts
+// swapped — what [canonical.Orient] documents for a flipped row.
+//
+// The swap is EXACT and divides nothing. Price is derived from the two
+// amounts downstream (quote_amount / base_amount), so it inverts as a
+// consequence of the swap, at full precision and at any magnitude, and
+// a zero amount cannot poison a row here because no ratio is formed.
+// Same rule, same name, as the /v1/history page's own re-expression;
+// the two are deliberately identical, and inverting by division in
+// either would break ADR-0003.
+//
+// A row in NEITHER orientation is left exactly as it came: this
+// re-expresses rows, it does not relabel them.
+func orientTradeTo(t canonical.Trade, want canonical.Pair) canonical.Trade {
+	if !t.Pair.Equal(want.Flip()) {
+		return t
+	}
+	t.Pair = want
+	t.BaseAmount, t.QuoteAmount = t.QuoteAmount, t.BaseAmount
+	return t
+}
+
+// tradeIsLaterInMarket reports whether `a` is the later of two trades
+// on one market, comparing (ts, ledger, tx_hash, op_index) — the four
+// components /v1/history orders its raw page on, and the four that
+// exclude `source`, whose Go byte order need not agree with the
+// database's collation.
+//
+// Used to pick between the two stored directions of one source, where
+// those four are a total order (see [Store.LatestTradePerSource]).
+func tradeIsLaterInMarket(a, b canonical.Trade) bool {
+	switch {
+	case !a.Timestamp.Equal(b.Timestamp):
+		return a.Timestamp.After(b.Timestamp)
+	case a.Ledger != b.Ledger:
+		return a.Ledger > b.Ledger
+	case a.TxHash != b.TxHash:
+		return a.TxHash > b.TxHash
+	default:
+		return a.OpIndex > b.OpIndex
+	}
 }
 
 // TradesInRange returns trades for the given pair whose close-time

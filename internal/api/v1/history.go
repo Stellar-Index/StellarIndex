@@ -100,18 +100,32 @@ type HistoryReader interface {
 	OHLCSeries(ctx context.Context, pair canonical.Pair, interval string, from, to time.Time, limit int) ([]OHLCSeriesBar, error)
 
 	// LatestTradePerSource returns the most-recent trade FROM EACH
-	// source that has ever recorded a trade on `pair`. Empty slice +
-	// nil error when the pair has no trades at all.
+	// source that has ever recorded a trade on the market `pair`
+	// names. Empty slice + nil error when the market has no trades at
+	// all.
+	//
+	// EITHER STORED DIRECTION, returned in the requested orientation.
+	// A market has no stored direction of its own — the SDEX decoder
+	// records XLM/USDC and USDC/XLM as separate rows — so an
+	// implementation that binds (base_asset, quote_asset) literally
+	// answers `base=AQUA&quote=USDC` with nothing at all for a market
+	// recorded only the other way round, while /v1/history serves the
+	// same market from the same rows. Implementations MUST read both
+	// directions and re-express the flipped rows: the two legs and the
+	// two smallest-unit amounts SWAP, so a derived price is the exact
+	// reciprocal and nothing is divided. One row per source either
+	// way: a source that traded the market both ways round is folded
+	// to whichever of its two trades came later.
 	//
 	// Optional sourceFilter ("" = no filter) restricts the result to
-	// a single source — equivalent to "latest trade for the pair on
+	// a single source — equivalent to "latest trade for the market on
 	// venue X", returning a 0- or 1-element slice. The filter is
 	// applied at the SQL layer so a per-source query is cheap.
 	//
 	// This is the storage-side primitive for the ADR-0018 Surface 3
 	// `/v1/observations` endpoint. The production impl is a
-	// `DISTINCT ON (source) … WHERE base=$1 AND quote=$2
-	// ORDER BY source, ts DESC` scan with no time bound.
+	// `DISTINCT ON (source) … ORDER BY source, ts DESC` scan per
+	// stored direction, unioned, with no time bound.
 	//
 	// COST, re-measured on r1 2026-08-03 (this comment was wrong in
 	// BOTH directions before): `trades_pair_source_ts_idx` (migration
@@ -125,7 +139,11 @@ type HistoryReader interface {
 	// root-cause follow-up" is work that is already deployed. Do not
 	// re-schedule it. Note Postgres PLANNING (40-210 ms over 249
 	// chunks) can exceed execution on a novel key, since the planner
-	// re-plans across the wide chunk set.
+	// re-plans across the wide chunk set. Those figures are per
+	// DIRECTION: each arm of the union is the scan they were measured
+	// on, so the whole read is twice a number that was already tens of
+	// milliseconds, well inside the surface's 8s ceiling. Not
+	// re-measured on r1 since the second arm was added.
 	//
 	// [CachedHistoryReader] still SWR-caches this method (#29) to
 	// keep the status page's poll off the database entirely.
