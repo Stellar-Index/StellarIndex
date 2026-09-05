@@ -333,24 +333,22 @@ groups:
             > 80 % of max_connections in use for 5+ minutes. PgBouncer should
             be smoothing this; check that the pool is healthy + sized right.
 
-      # ── INERT (F-1329) — NO PRODUCER ──────────────────────────────
-      # The two TimescaleDB-internal alerts below reference metrics that
-      # NOTHING emits today:
+      # ── WAS INERT (F-1329) — NOW PRODUCED ─────────────────────────
+      # The two TimescaleDB-internal alerts below describe job-scheduler
+      # state (timescaledb_information.job_stats / .chunks) that
+      # postgres_exporter's default queries do not cover, so their
+      # metrics had no producer and the rules could not fire:
       #   - stellarindex_cagg_last_refresh_unix /
       #     stellarindex_cagg_refresh_interval_seconds (cagg-stale)
-      #   - stellarindex_uncompressed_chunks_older_than_7d (compression-lag)
-      # These describe TimescaleDB job-scheduler state
-      # (timescaledb_information.job_stats / .chunks). postgres_exporter's
-      # default queries don't cover them, so they had no producer and these
-      # rules could not fire.
+      #   - stellarindex_timescale_chunks_overdue_compression
+      #     (compression-lag)
       #
-      # NO LONGER INERT: the timescale-jobs-probe timer (archival-node role,
-      # 10-observability.yml) queries those views every minute and writes
-      # them to the node_exporter textfile collector. They stay listed in
-      # scripts/ci/lint-metric-refs.sh KNOWN_INERT only because that lint
-      # greps *.go/*.sh/*.prom for emitters and cannot see a script that
-      # lives as an inline ansible `content:` block — the same reason
-      # stellarindex_galexie_catchup_refusals_5m is still listed there.
+      # The timescale-jobs-probe timer (archival-node role,
+      # 10-observability.yml) now queries those views every minute and
+      # writes them to the node_exporter textfile collector, and
+      # lint-metric-refs.sh reads the inline ansible `content:` blocks
+      # via ANSIBLE_TASK_PATHS — so neither metric is parked in that
+      # lint's KNOWN_INERT any more. Both are live series.
       - alert: stellarindex_timescale_cagg_stale
         # Producer: timescale-jobs-probe.timer (every 60s). The probe
         # interval is deliberately well inside this rule's 5x-of-30s
@@ -415,9 +413,42 @@ groups:
             headroom first; "failed to start job" in the job_errors view means
             starvation, not a broken job body.
 
+      # Judged against each policy's OWN window, per hypertable.
+      #
+      # The metric this replaced counted every uncompressed chunk older
+      # than a hardcoded 7 days on any hypertable that had a compression
+      # policy — one scalar, one interval, 46 policies. Two false shapes
+      # came out of that, both measured on r1 2026-09-05:
+      #
+      #   1. `compress_after` is per-policy, not 7 days. fx_quotes is
+      #      90 days, aquarius_admin and defindex_fees are 30. Their
+      #      8-to-89-day-old chunks are uncompressed BY DESIGN, and the
+      #      old metric called every one of them lag. The runbook carried
+      #      that as a "known false-positive pattern" rather than a bug.
+      #   2. A policy only compresses on its scheduled tick, and every
+      #      policy here runs on a 12h `schedule_interval`. A chunk that
+      #      crossed compress_after ten minutes ago is not behind, it is
+      #      queued. The old metric was a daily sawtooth: 2-28 at 00:00
+      #      as day-chunks crossed the line, back to 0 by ~10:00 once the
+      #      policies ran. The alert sat PENDING for a third of every day
+      #      and its 24h `for:` was all that kept it from firing.
+      #
+      # So the producer now subtracts the policy's own compress_after AND
+      # its schedule_interval before counting, and labels by hypertable.
+      # A chunk counted here is one the policy said it would have
+      # compressed by now and has not. `for: 24h` on top of the 12h
+      # schedule grace means two full missed ticks before this speaks.
+      #
+      # NOT this alert's job: a hypertable with NO compression policy at
+      # all (the pools_per_source_1h and prices_1m materialisations, 92 GB
+      # and 52 GB uncompressed) — a missing policy is
+      # `compression_policies_applied` in scripts/ops/config-assertions.sh,
+      # surfaced by stellarindex_config_assertion_failed. Counting
+      # policy-less chunks here is what made the old number look like a
+      # 384-chunk backlog when nothing was ever going to compress them.
       - alert: stellarindex_timescale_compression_lag
         # Producer: timescale-jobs-probe.timer (every 60s).
-        expr: stellarindex_uncompressed_chunks_older_than_7d > 0
+        expr: stellarindex_timescale_chunks_overdue_compression > 0
         for: 24h
         labels:
           severity: informational
@@ -425,10 +456,12 @@ groups:
           component: storage
         annotations:
           runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/compression-lag.md
-          summary: "{{ $value }} chunks older than 7d are still uncompressed"
+          summary: "{{ $labels.hypertable }}: {{ $value }} chunks past their compression policy's own window"
           description: |
-            Compression policy should run on chunks older than 7 days. If some
-            aren't compressed, the timescaledb job scheduler may be misfiring.
+            Chunks on {{ $labels.hypertable }} are still uncompressed more than
+            one full schedule_interval after that hypertable's own
+            compress_after elapsed, and have been for 24 h. The policy is not
+            keeping up: check the job scheduler, then locks and IO.
 
       # F-1329: repointed off the never-emitted
       # `stellarindex_pgbackrest_last_success_unix` /

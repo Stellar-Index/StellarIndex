@@ -1,6 +1,6 @@
 ---
 title: Runbook — compression-lag
-last_verified: 2026-08-28
+last_verified: 2026-09-05
 status: current
 severity: P3
 ---
@@ -13,14 +13,17 @@ severity: P3
 | ----- | ----- |
 | Alert | `stellarindex_timescale_compression_lag` |
 | Severity | P3 (`severity: informational`) |
-| Detected by | `configs/prometheus/rules.r1/storage.yml` (group `stellarindex.storage`, `severity: informational`, `for: 24h`) — the file r1 actually loads; multi-host twin in `deploy/monitoring/rules/storage.yml`. **Producer:** `stellarindex_uncompressed_chunks_older_than_7d` is written by `timescale-jobs-probe.timer` (every 60 s, `configs/ansible/roles/archival-node/tasks/10-observability.yml`) into `/var/lib/node_exporter/textfile_collector/timescale_jobs.prom`. If the probe dies the series goes **absent** and the alert is blind — check `systemctl status timescale-jobs-probe.timer` before trusting silence. |
+| Detected by | `configs/prometheus/rules.r1/storage.yml` (group `stellarindex.storage`, `severity: informational`, `for: 24h`) — the file r1 actually loads; multi-host twin in `deploy/monitoring/rules/storage.yml`. **Producer:** `stellarindex_timescale_chunks_overdue_compression{hypertable=…}` is written by `timescale-jobs-probe.timer` (every 60 s, `configs/ansible/roles/archival-node/tasks/10-observability.yml`) into `/var/lib/node_exporter/textfile_collector/timescale_jobs.prom`, one row per compression policy including zeros. If the probe dies **every** row goes absent and the alert is blind — check `systemctl status timescale-jobs-probe.timer` before trusting silence. |
 | Typical MTTR | 1 h – 1 day |
 | Impact | Not customer-visible directly. But uncompressed chunks use 5–20× more disk than compressed, so sustained lag is a runway to `db-disk-full.md`. The alert's `for: 24h` threshold makes it a trending problem, not an incident. |
+| Not this alert | A hypertable with **no** compression policy at all is invisible here by design — that is `compression_policies_applied` in `scripts/ops/config-assertions.sh`, surfaced through `stellarindex_config_assertion_failed`. On r1 2026-09-05 the `pools_per_source_1h` (92 GB) and `prices_1m` (52 GB) continuous-aggregate materialisations are entirely uncompressed for exactly that reason, and neither signal covers a CAGG. |
 
 ## Symptoms
 
-- `stellarindex_uncompressed_chunks_older_than_7d > 0` sustained
-  24 h.
+- `stellarindex_timescale_chunks_overdue_compression{hypertable="X"} > 0`
+  sustained 24 h. "Overdue" means past hypertable X's OWN
+  `compress_after`, plus one of its `schedule_interval`s of grace —
+  not past a fixed 7 days. The alert names the hypertable.
 - Disk usage growing faster than expected.
 - `SELECT * FROM timescaledb_information.jobs WHERE proc_name =
   'policy_compression'` shows failures or skipped runs.
@@ -28,15 +31,22 @@ severity: P3
 ## Quick diagnosis (≤ 5 min)
 
 ```sh
-# Which chunks are overdue?
-psql -c "SELECT hypertable_name,
-                chunk_name,
-                range_start, range_end,
-                is_compressed
-         FROM timescaledb_information.chunks
-         WHERE NOT is_compressed
-           AND range_end < now() - interval '7 days'
-         ORDER BY range_end
+# Which chunks are overdue? Same predicate the probe uses: each
+# policy's own compress_after plus one schedule_interval of grace.
+psql -c "SELECT c.hypertable_name, c.chunk_schema, c.chunk_name,
+                c.range_start, c.range_end,
+                j.config->>'compress_after' AS compress_after,
+                j.schedule_interval
+         FROM timescaledb_information.jobs j
+         JOIN timescaledb_information.chunks c
+              ON c.hypertable_schema = j.hypertable_schema
+             AND c.hypertable_name = j.hypertable_name
+         WHERE j.proc_name = 'policy_compression'
+           AND c.is_compressed = false
+           AND c.range_end < now()
+               - COALESCE((j.config->>'compress_after')::interval, interval '7 days')
+               - j.schedule_interval
+         ORDER BY c.range_end
          LIMIT 20;"
 
 # Why is the job failing?
@@ -80,12 +90,19 @@ psql -c "SELECT compress_chunk('<chunk_schema>.<chunk_name>');"
       in parallel carefully:
       ```sh
       psql -c "SELECT compress_chunk(c.chunk_schema || '.' || c.chunk_name)
-               FROM timescaledb_information.chunks c
-               WHERE NOT c.is_compressed
-                 AND c.range_end < now() - interval '7 days'
+               FROM timescaledb_information.jobs j
+               JOIN timescaledb_information.chunks c
+                    ON c.hypertable_schema = j.hypertable_schema
+                   AND c.hypertable_name = j.hypertable_name
+               WHERE j.proc_name = 'policy_compression'
+                 AND c.is_compressed = false
+                 AND c.range_end < now()
+                     - COALESCE((j.config->>'compress_after')::interval, interval '7 days')
+                     - j.schedule_interval
                LIMIT 10;"
       ```
-- [ ] Verification: `stellarindex_uncompressed_chunks_older_than_7d`
+- [ ] Verification:
+      `stellarindex_timescale_chunks_overdue_compression{hypertable="X"}`
       drops to zero; disk usage trends back down.
 
 ## Known false-positive patterns
@@ -94,16 +111,27 @@ psql -c "SELECT compress_chunk('<chunk_schema>.<chunk_name>');"
   intentionally for a while until the migration completes.
   Silence during planned windows.
 - **Historical backfill** adding new chunks for old data — those
-  chunks are instantly > 7 days old and the compression policy
-  needs a cycle or two to catch up. Expected; subsides.
-- **Per-table `compress_after` longer than 7 days.** The probe
-  counts uncompressed chunks older than 7 days on any hypertable
-  that HAS a compression policy — but the policies' `compress_after`
-  intervals vary. `fx_quotes` compresses after **90 days**
-  (`migrations/0028`), so its 8–89-day-old chunks are uncompressed
-  BY DESIGN and count as "overdue" in this metric. A small stable
-  nonzero value that tracks `fx_quotes` chunk cadence is not a
-  compression failure.
+  chunks are instantly past `compress_after` and the compression
+  policy needs a cycle or two to catch up. The metric's built-in
+  one-`schedule_interval` grace plus the rule's `for: 24h` cover
+  36 h of that; a backfill wider than two missed 12 h ticks will
+  still surface. Expected; subsides.
+- **Per-table `compress_after` longer than 7 days — RESOLVED
+  2026-09-05, no longer a false positive.** The metric used to
+  count uncompressed chunks older than a hardcoded 7 days, so
+  `fx_quotes` (90 days, `migrations/0028`), `aquarius_admin` and
+  `defindex_fees` (30 days) had their by-design-uncompressed chunks
+  counted as overdue. The producer now subtracts each policy's own
+  `compress_after`. A nonzero value on those hypertables today is a
+  real backlog, not their policy shape.
+- **The daily sawtooth — RESOLVED 2026-09-05.** Every policy on r1
+  runs on a 12 h `schedule_interval`, so day-chunks crossed the old
+  metric's 7-day line at 00:00 and were cleared by ~10:00: the
+  metric read 2–28 for a third of every day and the alert sat
+  permanently pending, saved from firing only by its 24 h `for:`.
+  The producer now waits one `schedule_interval` past
+  `compress_after` before counting a chunk, so a queued chunk is
+  not lag.
 
 ## Related
 
@@ -113,6 +141,17 @@ psql -c "SELECT compress_chunk('<chunk_schema>.<chunk_name>');"
 
 ## Changelog
 
+- 2026-09-05 — metric replaced:
+  `stellarindex_uncompressed_chunks_older_than_7d` (one unlabelled
+  scalar, hardcoded 7 days) →
+  `stellarindex_timescale_chunks_overdue_compression{hypertable=…}`
+  (per policy, judged against that policy's own `compress_after`
+  plus one `schedule_interval`). Both "known false-positive"
+  entries this runbook carried — per-table `compress_after` and the
+  backfill sawtooth — were the metric being wrong, and are now
+  fixed rather than documented. Measured on r1: old query 3, peak
+  28 on a daily cycle; new query 0 across all 46 policies. Added
+  the "not this alert" row for policy-less hypertables.
 - 2026-08-28 — re-verified against HEAD. `compress_chunk` example now
   schema-qualified (chunks live in `_timescaledb_internal`); rule
   citation → `rules.r1/storage.yml` with the `timescale-jobs-probe.timer`

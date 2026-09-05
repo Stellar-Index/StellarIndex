@@ -1005,18 +1005,63 @@
         echo "stellarindex_cagg_refresh_interval_seconds{cagg=\"$cagg\"} $iv"
       done >> "$TMP"
 
-      # Only count hypertables that HAVE a compression policy —
-      # otherwise every uncompressed-by-design table trips the alert.
-      CHUNKS=$(q "SELECT count(*) FROM timescaledb_information.chunks c
-                  WHERE c.is_compressed = false
-                    AND c.range_end < now() - interval '7 days'
-                    AND EXISTS (SELECT 1 FROM timescaledb_information.jobs j
-                                WHERE j.proc_name = 'policy_compression'
-                                  AND j.hypertable_name = c.hypertable_name)")
+      # Overdue = past the hypertable's OWN compress_after, plus one
+      # schedule_interval of grace. Both terms are load-bearing and
+      # neither can be a constant:
+      #
+      #   - compress_after varies per policy (7d for most of r1, 30d for
+      #     aquarius_admin/defindex_fees, 90d for fx_quotes). The old
+      #     query hardcoded 7 days, so fx_quotes' 8-to-89-day-old chunks
+      #     — uncompressed exactly as its policy intends — were counted
+      #     as lag.
+      #   - a policy compresses only on its scheduled tick, and every
+      #     policy here is on a 12h schedule_interval. Without that
+      #     grace the count is a daily sawtooth (day-chunks cross the
+      #     line at 00:00, the policies clear them by ~10:00) and the
+      #     alert sits pending for a third of every day.
+      #
+      # LEFT JOIN + FILTER, not EXISTS: emit a row per POLICY, including
+      # zeros, so `absent()` means the probe stopped rather than "no
+      # backlog", and so the per-hypertable backlog is readable directly.
+      # Joined on schema AND name; grouped by name alone so two
+      # same-named hypertables in different schemas could only ever sum
+      # into one series, never emit a duplicate that would make
+      # node_exporter reject this whole file.
+      #
+      # COALESCE fallback: a policy configured with something other than
+      # compress_after (integer-time hypertables use
+      # compress_created_before) would otherwise yield NULL and drop out
+      # silently. Falling back to r1's dominant 7 days keeps such a
+      # policy counted — loud, which is the right way for a monitoring
+      # signal to fail.
+      #
+      # A hypertable with NO compression policy is deliberately absent
+      # here: that is compression_policies_applied's job
+      # (scripts/ops/config-assertions.sh), reported through
+      # stellarindex_config_assertion_failed.
       {
-        echo "# HELP stellarindex_uncompressed_chunks_older_than_7d Chunks older than 7d still uncompressed on compression-enabled hypertables."
-        echo "# TYPE stellarindex_uncompressed_chunks_older_than_7d gauge"
-        echo "stellarindex_uncompressed_chunks_older_than_7d ${CHUNKS:-0}"
+        echo "# HELP stellarindex_timescale_chunks_overdue_compression Uncompressed chunks past their hypertable's own compress_after plus one schedule_interval."
+        echo "# TYPE stellarindex_timescale_chunks_overdue_compression gauge"
+      } >> "$TMP"
+
+      q "SELECT j.hypertable_name,
+                count(*) FILTER (
+                  WHERE c.is_compressed = false
+                    AND c.range_end < now()
+                        - COALESCE((j.config->>'compress_after')::interval, interval '7 days')
+                        - j.schedule_interval)
+         FROM timescaledb_information.jobs j
+         LEFT JOIN timescaledb_information.chunks c
+                ON c.hypertable_schema = j.hypertable_schema
+               AND c.hypertable_name = j.hypertable_name
+         WHERE j.proc_name = 'policy_compression'
+         GROUP BY 1" |
+      while IFS='|' read -r ht overdue; do
+        [ -n "${ht:-}" ] || continue
+        echo "stellarindex_timescale_chunks_overdue_compression{hypertable=\"$ht\"} ${overdue:-0}"
+      done >> "$TMP"
+
+      {
         echo "# HELP stellarindex_timescale_job_failures_total Cumulative failed runs per TimescaleDB background job."
         echo "# TYPE stellarindex_timescale_job_failures_total counter"
       } >> "$TMP"

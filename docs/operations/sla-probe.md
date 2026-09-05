@@ -1,6 +1,6 @@
 ---
 title: SLA probe — periodic per-endpoint evidence trail
-last_verified: 2026-05-03
+last_verified: 2026-09-05
 status: living procedure
 ---
 
@@ -32,9 +32,20 @@ probe holds it to a separate structural bound
 (`defaultClosedBucketFreshTarget = 150s`,
 `cmd/stellarindex-sla-probe/main.go`) whose breach means the
 closed-bucket pipeline has fallen behind its design, not that the
-service SLA is violated. Measured on R1 2026-09-03:
-`stellarindex_sla_probe_freshness_sec{endpoint="price"} 95.2`,
-`{endpoint="price-tip"} 18.1`.
+service SLA is violated.
+
+Freshness is measured **at the instant each sample's response was
+received**, not at the end of the run. That is a 2026-09-05 fix: the
+probe used to compute `time.Since(observed_at)` during aggregation,
+which runs once after the whole run, so every sample was charged the
+distance from its own request to the end of the run — a median bias of
+`duration / 2`. On r1 (`SLA_PROBE_DURATION=30s`) the series read
+`{endpoint="price"} 116.698`, `{endpoint="price-tip"} 14.841` while the
+live API served a tip `observed_at` that was sub-second old; at the
+`SLA_PROBE_DURATION=120s` this doc's wrapper recommends for
+memory-pressured hosts the bias would have been ~60 s and
+`stellarindex_sla_probe_freshness_breach` would have paged permanently
+on a healthy tip.
 
 The SLA probe drives synthetic load against the deployed API,
 measures per-endpoint p50/p95/p99 latency, parses `observed_at`
@@ -275,7 +286,7 @@ runbook under `docs/operations/runbooks/sla-probe-*.md`:
 | Alert | Condition | Severity |
 |-------|-----------|----------|
 | `stellarindex_sla_probe_p95_breach` | per-endpoint p95 > 200 ms sustained 30 min | **P2** page |
-| `stellarindex_sla_probe_freshness_breach` | `price-tip` freshness > 30 s, or any other endpoint > 180 s, sustained 30 min | **P2** page |
+| `stellarindex_sla_probe_freshness_breach` | `price` freshness > 180 s (the ADR-0015 closed-bucket bound), every other endpoint > 30 s (the pricing SLA), sustained 30 min | **P2** page |
 | `stellarindex_sla_probe_unit_failed_alert` | overall verdict gauge = 1 sustained 30 min | P3 ticket |
 | `stellarindex_sla_probe_stale` | `last_pass_timestamp` older than 90 min (6× 15-min cadence) | **P2** page |
 

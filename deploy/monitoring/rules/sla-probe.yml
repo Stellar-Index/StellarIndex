@@ -51,15 +51,29 @@ groups:
             through {{ $labels.endpoint }}-specific diagnostics, then
             general API-latency triage.
 
-      # Per-endpoint: 30s SLA applies to /price/tip (open bucket, ~4s);
-      # /price serves the last CLOSED 1-min bucket (ADR-0015) so its
-      # freshness is structurally ~60-120s — page it at 180s (genuine
-      # stall), not 30s (which fired permanently on a healthy system).
+      # Two bounds, and the DEFAULT is the SLA one. /price is the single
+      # endpoint carrying a structural exemption: it serves the last
+      # CLOSED 1-min bucket (ADR-0015), so its observed_at is 30-150 s
+      # old by design (bucket width + CAGG end_offset + schedule
+      # interval) and 180 s is the genuine-stall line above that
+      # envelope. Everything else — /price/tip today, and any endpoint
+      # that grows an observed_at tomorrow — is held to the 30 s
+      # pricing SLA.
+      #
+      # The selector used to read `{endpoint!="price-tip"} > 180`,
+      # which handed the closed-bucket exemption to every endpoint that
+      # is not the tip. Nothing else emitted freshness yet, so it was
+      # latent rather than live: the first endpoint to publish an
+      # observed_at (e.g. /oracle/latest) would have inherited a 180 s
+      # bound justified only by ADR-0015, and 179 s of oracle staleness
+      # would have paged nobody. Inverted to a positive matcher so the
+      # exemption is granted by name and the SLA is what a new endpoint
+      # falls back to.
       - alert: stellarindex_sla_probe_freshness_breach
         expr: |
-          stellarindex_sla_probe_freshness_sec{endpoint="price-tip"} > 30
+          stellarindex_sla_probe_freshness_sec{endpoint="price"} > 180
           or
-          stellarindex_sla_probe_freshness_sec{endpoint!="price-tip"} > 180
+          stellarindex_sla_probe_freshness_sec{endpoint!="price"} > 30
         for: 30m
         labels:
           severity: page
@@ -67,15 +81,23 @@ groups:
           component: api
         annotations:
           runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/sla-probe-freshness-breach.md
-          summary: "{{ $labels.endpoint }} price freshness {{ $value }}s exceeds SLA target (30s) sustained 30m"
+          summary: "{{ $labels.endpoint }} price freshness {{ $value }}s over its bound (30s SLA; /price 180s closed-bucket) sustained 30m"
           description: |
             The SLA probe's median observed_at freshness for
-            {{ $labels.endpoint }} has been > 30 s for ≥ 30 minutes.
-            Pricing data is going stale — consumers gating on
-            `flags.stale` may be backing off, but the wire contract
-            says the field is < 30 s for healthy operation. Runbook:
-            check aggregator → Redis → API path; bisect by which
-            stage's `observed_at` is lagging.
+            {{ $labels.endpoint }} has been over its bound for
+            ≥ 30 minutes. The bound is the 30 s pricing SLA for every
+            endpoint except /price, which serves the ADR-0015 closed
+            bucket and is held to 180 s — read the summary for the
+            value, not the description, before deciding which one
+            tripped.
+
+            When the endpoint is price-tip the usual cause is NOT a
+            broken pipeline: computeTip escalates to a 30 s window and
+            then falls back to the closed bucket, so a pair with no
+            trade for 30+ s serves a 60-120 s observed_at in-contract
+            (ADR-0018). Check the pair's trade cadence first, then the
+            aggregator → Redis → API path; bisect by which stage's
+            `observed_at` is lagging.
 
       - alert: stellarindex_sla_probe_unit_failed_alert
         expr: stellarindex_sla_probe_unit_failed > 0
