@@ -774,4 +774,6 @@ with a fine pool, and the mirror).
 | The bucket-level twin | `internal/storage/timescale/aggregates.go` — `Store.OHLCSeries`'s `norm` CTE |
 | The quote-leg widening (§7.5) | `internal/api/v1/ohlc_fiat_combine.go` — `Server.usdPeggedConstituentSets`, `Server.ohlcSeriesFiatCombined`, `Server.fiatCombinedTrades` |
 | Its behaviour | `internal/api/v1/fiat_series_sac_reach_test.go` |
+| §7.5's rule on the chart-shaped series (`/v1/chart`, `/v1/history/since-inception`) | `internal/api/v1/chart.go` — `chartBucketMerge`, `Server.chartSeriesPoints`, `Server.chartFiatProxyQuotes` |
+| Its behaviour | `internal/api/v1/chart_holed_series_test.go`, `internal/api/v1/chart_constituents_internal_test.go` |
 | Its floor | `internal/api/v1/coverage_floor.go` — `Server.ohlcCoverageSet`; `internal/api/v1/coverage_floor_test.go` |

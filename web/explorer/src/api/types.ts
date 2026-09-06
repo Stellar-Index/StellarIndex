@@ -7202,6 +7202,27 @@ export interface components {
                 price_type: "vwap" | "twap";
                 granularity: string;
                 points: components["schemas"]["HistoryPoint"][];
+                /**
+                 * @description True when `points` skips at least one whole bucket
+                 *     between two served buckets, at `granularity`. Same
+                 *     field, same meaning and same computation as
+                 *     `ChartEnvelope.data.discontinuous` — this surface
+                 *     shares the chart's read chain, so it can serve the
+                 *     same holed series.
+                 */
+                discontinuous: boolean;
+                /**
+                 * Format: date-time
+                 * @description Last bucket before the WIDEST interior gap. Only
+                 *     present when `discontinuous=true`.
+                 */
+                gap_starts_at?: string;
+                /**
+                 * Format: date-time
+                 * @description First bucket after the widest interior gap. Only
+                 *     present when `discontinuous=true`.
+                 */
+                gap_ends_at?: string;
             };
         };
         ChartEnvelope: components["schemas"]["EnvelopeMeta"] & {
@@ -7244,6 +7265,34 @@ export interface components {
                  *     `truncated=true`.
                  */
                 requested_from?: string;
+                /**
+                 * @description True when `points` skips at least one whole bucket
+                 *     between two served buckets, at the granularity
+                 *     actually served. `points` is a dense array with no
+                 *     holes in it, so a consumer plots a straight line
+                 *     across missing buckets whether the market was quiet
+                 *     or the deployment holds nothing for that stretch —
+                 *     and `truncated` describes only where the series
+                 *     STARTS (and is never raised for `timeframe=all`).
+                 *     Read it beside `coverage_from`, which is present
+                 *     only when the whole series is empty.
+                 */
+                discontinuous: boolean;
+                /**
+                 * Format: date-time
+                 * @description Last bucket before the WIDEST interior gap. Only
+                 *     present when `discontinuous=true`. One gap is
+                 *     reported rather than a list, mirroring
+                 *     `data_starts_at`/`requested_from`; a consumer that
+                 *     needs every gap has the buckets themselves.
+                 */
+                gap_starts_at?: string;
+                /**
+                 * Format: date-time
+                 * @description First bucket after the widest interior gap. Only
+                 *     present when `discontinuous=true`.
+                 */
+                gap_ends_at?: string;
             };
         };
         TradeRow: {

@@ -667,13 +667,30 @@ func TestChart_StablecoinFallback_CryptoBacker(t *testing.T) {
 	if !env.Flags.Triangulated {
 		t.Error("flags.triangulated = false, want true on stablecoin-backer fallback")
 	}
-	// The literal pair is tried first, and the winning proxy is the
-	// crypto:USDT backer under the crypto:XLM base alias.
+	// The literal pair is tried first, and the backer that carries the
+	// answer is the crypto:USDT quote under the crypto:XLM base alias.
 	if reader.calls[0] != "native/fiat:USD" {
 		t.Errorf("first call = %q, want native/fiat:USD (literal)", reader.calls[0])
 	}
-	if last := reader.calls[len(reader.calls)-1]; last != "crypto:XLM/crypto:USDT" {
-		t.Errorf("winning fallback call = %q, want crypto:XLM/crypto:USDT", last)
+	// This used to assert the backer was the LAST call, which only held
+	// because the walk stopped at the first source pair holding any
+	// bucket at all. That short-circuit is the defect
+	// [Server.chartBucketMerge] removes — the walk now reads every source
+	// so a later one can fill a bucket an earlier one left empty — so the
+	// last call is simply the last enumerated pair and says nothing. What
+	// the test was actually pinning is that the backer is READ and that
+	// the served values are ITS values, and both are asserted directly.
+	read := false
+	for _, c := range reader.calls {
+		if c == "crypto:XLM/crypto:USDT" {
+			read = true
+		}
+	}
+	if !read {
+		t.Errorf("crypto:XLM/crypto:USDT never read; calls=%v", reader.calls)
+	}
+	if got := []string{env.Data.Points[0].P, env.Data.Points[1].P}; got[0] != "0.1650" || got[1] != "0.1655" {
+		t.Errorf("points = %v, want the backer's own values [0.1650 0.1655]", got)
 	}
 }
 

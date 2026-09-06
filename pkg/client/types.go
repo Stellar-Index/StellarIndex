@@ -208,14 +208,24 @@ type PriceChanges struct {
 
 // HistorySeries is the data shape returned by
 // [Client.HistorySinceInception].
+//
+// Discontinuous reports that Points skips at least one whole bucket at
+// Granularity, with GapStartsAt + GapEndsAt bounding the widest such
+// gap. Points is a dense array, so without it a hole in the middle of a
+// series renders as a straight line between the buckets either side —
+// see [ChartSeries], which carries the same three fields for the same
+// reason and computes them the same way.
 type HistorySeries struct {
 	AssetID string `json:"asset_id"`
 	Quote   string `json:"quote"`
 	// PriceType names the aggregation each point carries — "vwap"
 	// today; TWAP planned.
-	PriceType   string         `json:"price_type"`
-	Granularity string         `json:"granularity"`
-	Points      []HistoryPoint `json:"points"`
+	PriceType     string         `json:"price_type"`
+	Granularity   string         `json:"granularity"`
+	Points        []HistoryPoint `json:"points"`
+	Discontinuous bool           `json:"discontinuous"`
+	GapStartsAt   *time.Time     `json:"gap_starts_at,omitempty"`
+	GapEndsAt     *time.Time     `json:"gap_ends_at,omitempty"`
 }
 
 // HistoryPoint is one row of a [HistorySeries].
@@ -1039,6 +1049,15 @@ type Version struct {
 // the deployment is data-thin or the asset is genuinely flat.
 // `Timeframe: "all"` always reports Truncated=false because that
 // timeframe means "everything you have" by definition.
+//
+// Discontinuous reports the other ambiguity Points cannot express:
+// the array is dense, so a hole in the MIDDLE of a series renders as a
+// straight line between the two buckets either side of it. When it is
+// true, GapStartsAt + GapEndsAt bound the widest such gap. Truncated
+// speaks only for the series' start and never fires for
+// `Timeframe: "all"`, and the envelope's coverage annotation speaks
+// only for a series that is entirely empty — so a holed series had
+// nothing on the wire to declare itself before this field.
 type ChartSeries struct {
 	AssetID       string         `json:"asset_id"`
 	Quote         string         `json:"quote"`
@@ -1049,6 +1068,9 @@ type ChartSeries struct {
 	Truncated     bool           `json:"truncated"`
 	DataStartsAt  *time.Time     `json:"data_starts_at,omitempty"`
 	RequestedFrom *time.Time     `json:"requested_from,omitempty"`
+	Discontinuous bool           `json:"discontinuous"`
+	GapStartsAt   *time.Time     `json:"gap_starts_at,omitempty"`
+	GapEndsAt     *time.Time     `json:"gap_ends_at,omitempty"`
 }
 
 // ChangeSummary is the data shape returned by [Client.ChangeSummary]

@@ -30,7 +30,7 @@ import (
 //
 //   - EarliestBucket folds both legs' alias families and both stored
 //     directions, matching a read that walks the spellings of both
-//     legs (chartPointsWithAliases, lookupPriceAt, the non-fiat
+//     legs (chartMergeAliasPairs, lookupPriceAt, the non-fiat
 //     ohlcSeriesWithAliases, tradesInRangeAfterWithAliases) over a read
 //     that combines base/quote and quote/base rows into the requested
 //     orientation — in SQL for the CAGG-backed surfaces, in the caller
@@ -328,22 +328,32 @@ func (s *Server) ohlcCoverageSet(pair canonical.Pair) coverageSet {
 	return coverageSet{direct: s.usdPeggedConstituents(pair), span: spanLiteralQuote}
 }
 
-// chartCoverageSet mirrors [Server.handleChart]'s default vwap path:
-// the pair itself ([Server.chartPointsWithAliases]), then for a fiat
-// quote the proxy list [Server.chartStablecoinFallback] walks, then the
-// XLM cross [Server.fiatSeriesThroughXLM] derives — its two legs as one
-// derived entry, since the cross exists only where both legs do.
+// chartCoverageSet mirrors [Server.chartSeriesPoints], the chain behind
+// every CAGG-served chart: the requested pair's alias spellings
+// ([Server.chartAliasPairs]), then for a fiat quote the proxy list
+// [Server.chartStablecoinFallback] fills from
+// ([Server.chartFiatProxyPairs]), then the XLM cross
+// [Server.fiatSeriesThroughXLM] derives — its two legs as one derived
+// entry, since the cross exists only where both legs do.
+//
+// The set is built from the read's OWN enumeration helpers, so the two
+// cannot drift by editing one of them. That the probe and the serving
+// read now agree on the SAC-quoted pool is a property of the read, not
+// of this list: the list has always named `<base>/<peg SAC>` pairs, but
+// until the merge became per bucket the serving read short-circuited on
+// the first source pair holding any bucket at all, and a pool named
+// after that pair was enumerated and never read. A floor is consulted
+// only on an EMPTY answer, and an empty answer is one where every pair
+// in the list came back empty — which is now true of the read as well
+// as of the list.
 //
 // The default span (both legs' aliases, both directions) is what this
-// chain spans: every entry is read through
-// [Server.chartPointsWithAliases] or, for a proxy entry, is one of the
-// literal pairs [Server.chartFiatProxyPairs] already enumerated across
-// both base aliases AND every canonical form of each declared peg
-// ([Server.usdPegProxyQuotes]'s classic pass then SAC pass) — so this
-// surface's read does reach a SAC-quoted pool, and a floor that spans
-// one is a floor over bars it can serve.
+// chain spans: every entry is read through [Server.chartSeriesPoints],
+// which crosses both base aliases with every canonical form of each
+// declared peg ([Server.chartFiatProxyQuotes]'s established pass then
+// held-back pass).
 func (s *Server) chartCoverageSet(pair canonical.Pair) coverageSet {
-	set := coverageSet{direct: []canonical.Pair{pair}}
+	set := coverageSet{direct: s.chartAliasPairs(pair)}
 	if pair.Quote.Type != canonical.AssetFiat {
 		return set
 	}
@@ -579,11 +589,17 @@ func historyPageIsAmbiguous(rows int, afterTS time.Time) bool {
 }
 
 // writeChartSeries emits a /v1/chart response with its coverage
-// annotation attached. It is one call rather than an annotate-then-write
-// pair because the retention-truncation signal handleChart already
-// carries is computed from points[0] and so says nothing at all about an
-// EMPTY series — this is the surface's only account of that case, and it
-// belongs with the write.
+// annotation and its interior-gap signal attached. It is one call rather
+// than an annotate-then-write pair because the retention-truncation
+// signal handleChart already carries is computed from points[0] and so
+// says nothing at all about an EMPTY series — this is the surface's only
+// account of that case, and it belongs with the write.
+//
+// [ChartSeries.markDiscontinuity] is stamped here for the mirror reason:
+// points[0] says nothing about a hole in the MIDDLE of a populated
+// series either. The two signals partition the ambiguity — coverage
+// speaks for the empty answer, the gap signal for the holed one — and
+// both ride the write so a handler cannot forget either.
 //
 // The chart's window always ends at NOW, so it structurally cannot sit
 // below the floor and `outside_coverage` never fires here. The floor
@@ -593,10 +609,14 @@ func historyPageIsAmbiguous(rows int, afterTS time.Time) bool {
 // the pair at all. Pre-signal both rendered as `points: []`.
 func (s *Server) writeChartSeries(
 	w http.ResponseWriter, r *http.Request,
-	pair canonical.Pair, series ChartSeries, triangulated bool,
+	pair canonical.Pair, series ChartSeries, walk chartWalkResult,
 ) {
+	series.markDiscontinuity()
 	coverageFrom, outside := s.coverageAnnotationIfEmpty(
 		r.Context(), s.chartCoverageSet(pair), time.Now().UTC(), len(series.Points) == 0)
-	writeJSONCoverage(w, series,
-		Flags{Triangulated: triangulated, OutsideCoverage: outside}, coverageFrom)
+	writeJSONCoverage(w, series, Flags{
+		Triangulated:    walk.proxied,
+		Stale:           walk.degraded,
+		OutsideCoverage: outside,
+	}, coverageFrom)
 }

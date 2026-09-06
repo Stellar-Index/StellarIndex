@@ -622,11 +622,30 @@ func parseBaseQuote(w http.ResponseWriter, r *http.Request) (canonical.Asset, ca
 // HistorySeries is the wire shape for /v1/history/since-inception.
 // Mirrors the OpenAPI HistoryEnvelope.data shape exactly.
 type HistorySeries struct {
-	AssetID     string             `json:"asset_id"`
-	Quote       string             `json:"quote"`
-	PriceType   string             `json:"price_type"`  // "vwap" today; TWAP planned
-	Granularity string             `json:"granularity"` // "1m" / "15m" / "1h" / etc.
-	Points      []HistoryPointWire `json:"points"`
+	AssetID       string             `json:"asset_id"`
+	Quote         string             `json:"quote"`
+	PriceType     string             `json:"price_type"`  // "vwap" today; TWAP planned
+	Granularity   string             `json:"granularity"` // "1m" / "15m" / "1h" / etc.
+	Points        []HistoryPointWire `json:"points"`
+	Discontinuous bool               `json:"discontinuous"`           // true when points skip at least one whole bucket
+	GapStartsAt   *time.Time         `json:"gap_starts_at,omitempty"` // last bucket before the WIDEST interior gap
+	GapEndsAt     *time.Time         `json:"gap_ends_at,omitempty"`   // first bucket after it
+}
+
+// markDiscontinuity stamps the interior-gap signal, delegating to
+// [ChartSeries.markDiscontinuity] so the two surfaces cannot disagree
+// about what a hole is.
+//
+// This surface shares the chart's read chain, so it serves the same
+// merged series and can carry the same hole: on the flagship pair it
+// gains 763 buckets from the SAC-quoted pool and still stops ~1,156
+// days short of continuous, which needs CEX ingest rather than a read
+// change. A signal that covered two of the three repaired surfaces
+// would leave the third asserting continuity it does not have.
+func (h *HistorySeries) markDiscontinuity() {
+	c := ChartSeries{Granularity: h.Granularity, Points: h.Points}
+	c.markDiscontinuity()
+	h.Discontinuous, h.GapStartsAt, h.GapEndsAt = c.Discontinuous, c.GapStartsAt, c.GapEndsAt
 }
 
 // HistoryPointWire is the JSON-tagged shape that marshals as the
@@ -724,7 +743,20 @@ func (s *Server) handleHistorySinceInception(w http.ResponseWriter, r *http.Requ
 
 	hCtx, hCancel := context.WithTimeout(r.Context(), 8*time.Second)
 	defer hCancel()
-	points, err := s.historyPointsWithAliases(hCtx, pair, gran)
+	// Deliberately the SAME chain /v1/chart runs
+	// ([Server.chartSeriesPoints]), differing only in the read closure:
+	// this surface has no lower bound, so it reads HistoryPoints rather
+	// than HistoryPointsInRange. The two endpoints answer one question
+	// about one pair, and they held two hand-maintained copies of the
+	// fallback — which drifted (this one never reached the abstract
+	// stablecoin backers) and which carried the same per-response
+	// first-hit gate, so `native/fiat:USD` since-inception served the
+	// identical 1,070-point series with the identical 1,919-day hole
+	// measured on /v1/chart. One definition cannot drift from itself.
+	read := func(rc context.Context, p canonical.Pair) ([]HistoryPoint, error) {
+		return s.history.HistoryPoints(rc, p, gran, historyMaxPoints)
+	}
+	points, walk, err := s.chartSeriesPoints(hCtx, pair, chartWindow{gran: gran}, read)
 	if errors.Is(err, ErrUnknownGranularity) {
 		writeProblem(w, r,
 			"https://api.stellarindex.io/errors/invalid-granularity",
@@ -757,43 +789,25 @@ func (s *Server) handleHistorySinceInception(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	// F-1225 (codex audit-2026-05-12): stablecoin → fiat:USD fallback.
-	// The literal X/fiat:USD pair never has rows in the CAGGs on
-	// Stellar mainnet because no on-chain trades quote in fiat:USD —
-	// every USD-flavoured trade quotes in classic USDC (USDC-GA5Z…)
-	// or one of the other operator-declared pegs. The chart + price
-	// handlers already implement this fallback; without it, since-
-	// inception XLM/USD returns empty while chart/price/VWAP all
-	// surface data. Mirrors `chartStablecoinFallback` shape.
-	triangulated := false
-	if len(points) == 0 {
-		if fp, ok := s.historySinceInceptionStablecoinFallback(hCtx, pair, gran); ok {
-			points = fp
-			// The series was served via the X/<peg> proxy under the
-			// peg≈$1 assumption — that's a triangulated value, exactly
-			// as the chart/price siblings flag it (G2-13). Pre-fix this
-			// path wrote Flags{} and silently hid the proxy.
-			triangulated = true
-		}
-	}
-
 	wire := make([]HistoryPointWire, len(points))
 	for i, p := range points {
 		wire[i] = HistoryPointWire{T: p.Bucket, P: p.VWAP, VUSD: p.VolumeUSD}
 	}
 
-	writeJSON(w, HistorySeries{
+	series := HistorySeries{
 		AssetID:     asset.String(),
 		Quote:       quote.String(),
 		PriceType:   "vwap",
 		Granularity: gran,
 		Points:      wire,
-	}, Flags{Triangulated: triangulated})
+	}
+	series.markDiscontinuity()
+	writeJSON(w, series, Flags{Triangulated: walk.proxied, Stale: walk.degraded})
 }
 
 // tradesInRangeAfterWithAliases reads one page of raw trades trying each
 // XLM dual-form alias pair and returns the FIRST alias form that holds
-// rows — the raw-trade twin of [Server.historyPointsWithAliases], and
+// rows — the raw-trade twin of [Server.chartMergeAliasPairs], and
 // the first-hit gate [Server.tradesInRangeWithStablecoinFallback]
 // already applies to a non-fiat quote on the /v1/vwap side.
 //
@@ -820,8 +834,9 @@ func (s *Server) handleHistorySinceInception(w http.ResponseWriter, r *http.Requ
 // op_index, source) and `cursor` resumes on that tuple — so serving one
 // alias form per page keeps the cursor monotonic over exactly the
 // population it was minted from. Cross-form trade FUSION is the same
-// separate design decision [Server.historyPointsWithAliases] defers on
-// the bucket side; direction is not a form, it is the same market.
+// separate design decision [Server.chartMergeAliasPairs] defers on
+// the bucket side — it ranks the forms per bucket rather than blending
+// them; direction is not a form, it is the same market.
 //
 // The returned cursor is the read's own answer about where the next page
 // resumes, nil when the window is drained. It is deliberately NOT
@@ -1353,92 +1368,6 @@ func sameTradeOrderKey(a, b canonical.Trade) bool {
 		a.Ledger == b.Ledger &&
 		a.TxHash == b.TxHash &&
 		a.OpIndex == b.OpIndex
-}
-
-// historyPointsWithAliases reads the point series trying each XLM
-// dual-form alias pair (F-1340) and returns the FIRST non-empty series —
-// mirroring [Server.ohlcSeriesWithAliases] on the OHLC side. A literal
-// read keyed by the requested form silently omits every venue publishing
-// XLM under the other id (native vs crypto:XLM vs the SAC), so
-// ?asset=native returned empty while crypto:XLM-keyed CEX history existed
-// one loop iteration away. First-hit matches the series endpoint;
-// cross-form point FUSION is a separate design decision. The first form's
-// error (e.g. [ErrUnknownGranularity], which is form-invariant) propagates
-// unchanged.
-func (s *Server) historyPointsWithAliases(
-	ctx context.Context, pair canonical.Pair, gran string,
-) ([]HistoryPoint, error) {
-	for _, a := range assetAliases(pair.Base) {
-		for _, q := range assetAliases(pair.Quote) {
-			ap, perr := canonical.NewPair(a, q)
-			if perr != nil {
-				continue // degenerate alias combination (identity pair)
-			}
-			points, err := s.history.HistoryPoints(ctx, ap, gran, historyMaxPoints)
-			if err != nil || len(points) > 0 {
-				return points, err
-			}
-		}
-	}
-	return nil, nil
-}
-
-// historySinceInceptionStablecoinFallback is the fiat fallback chain for
-// a since-inception series whose literal pair (and alias spellings)
-// returned no points. Mirrors [chartStablecoinFallback] but uses the
-// since-inception read (no `from` lower bound): for a `fiat:USD` quote
-// it walks the operator's USD-pegged allow-list, and when no peg answers
-// — or the fiat is not USD — it derives the series through XLM
-// ([Server.fiatSeriesThroughXLM]), which runs last so a directly
-// observed market always wins over a derived one. Returns ok=false when:
-//
-//   - quote is not fiat,
-//   - every peg combination's CAGG read returns empty / errors out AND
-//     the XLM cross has no populated leg.
-//
-// Both sides of each proxied pair are alias-crossed, matching
-// [Server.chartFiatProxyPairs]: the base through assetAliases and the
-// peg through [Server.usdPegProxyQuotes]. The literal-spelling walk
-// above ([Server.historyPointsWithAliases]) already crosses the base
-// aliases, so a fallback keyed on the literal base and the classic peg
-// alone left the one combination Soroban depth is actually stored under
-// — SAC base quoted in the peg's SAC — unread, and answered a
-// since-inception request for such an asset with an empty series.
-// Priority order is preserved (literal base first; every classic peg
-// before any SAC form), so a pair that already answered still answers
-// on its first read; only pairs that previously came back empty reach
-// the new combinations.
-//
-// F-1225 (codex audit-2026-05-12).
-func (s *Server) historySinceInceptionStablecoinFallback(
-	ctx context.Context, pair canonical.Pair, gran string,
-) ([]HistoryPoint, bool) {
-	if pair.Quote.Type != canonical.AssetFiat {
-		return nil, false
-	}
-	read := func(rc context.Context, p canonical.Pair) ([]HistoryPoint, error) {
-		return s.history.HistoryPoints(rc, p, gran, historyMaxPoints)
-	}
-	if pair.Quote.Code == "USD" {
-		pegs := s.usdPegProxyQuotes()
-		for _, base := range assetAliases(pair.Base) {
-			for _, peg := range pegs {
-				if sameAsset(peg, base) {
-					continue
-				}
-				proxied, err := canonical.NewPair(base, peg)
-				if err != nil {
-					continue
-				}
-				pp, err := read(ctx, proxied)
-				if err != nil || len(pp) == 0 {
-					continue
-				}
-				return pp, true
-			}
-		}
-	}
-	return s.fiatSeriesThroughXLM(ctx, pair, read)
 }
 
 // externalSourceAmountDecimals returns the amount scale an off-chain
