@@ -45,9 +45,9 @@ func TestCreatorsRollupStatsDeriveFromTheBoard(t *testing.T) {
 // exists to avoid, and AccountCreators would serve it as authoritative.
 func TestCreatorsRollupSwapIsAtomic(t *testing.T) {
 	var exchanges []string
-	for _, stmt := range creatorsRollupStatements {
-		if strings.Contains(stmt, "EXCHANGE TABLES") {
-			exchanges = append(exchanges, stmt)
+	for _, step := range creatorsRollupStatements {
+		if strings.Contains(step.sql, "EXCHANGE TABLES") {
+			exchanges = append(exchanges, step.sql)
 		}
 	}
 	if len(exchanges) != 1 {
@@ -61,18 +61,26 @@ func TestCreatorsRollupSwapIsAtomic(t *testing.T) {
 			t.Errorf("the single EXCHANGE is missing the pair %q", pair)
 		}
 	}
-	if exchanges[0] != creatorsRollupStatements[len(creatorsRollupStatements)-1] {
+	if exchanges[0] != creatorsRollupStatements[len(creatorsRollupStatements)-1].sql {
 		t.Error("the EXCHANGE must be the last statement, after every staging arm is filled")
+	}
+	// The working table is not served and must never be swapped.
+	if strings.Contains(exchanges[0], "account_creators_ops") {
+		t.Error("the working table is not a served table and must not be exchanged")
 	}
 }
 
 // TestCreatorsRollupDedupesTheArchive: stellar.account_movements is a
 // ReplacingMergeTree, so un-merged duplicate parts are normal. Counting
 // rows straight out of it would inflate accounts_created — a silently
-// wrong league table. The board arm must collapse duplicates over the
-// table's full ORDER BY key.
+// wrong league table. The walked pass that lands the working table must
+// collapse duplicates over the table's full ORDER BY key.
+//
+// Grouping per window loses nothing: the partition expression is a
+// function of `ledger`, which is itself part of that ORDER BY key, so
+// every row of a duplicate group lands in the same window.
 func TestCreatorsRollupDedupesTheArchive(t *testing.T) {
-	board := creatorsRollupStatement(t, "account_creators_rollup_staging")
+	board := creatorsRollupStatement(t, "account_creators_ops")
 
 	if !strings.Contains(board, "argMax(") {
 		t.Error("board arm must collapse ReplacingMergeTree duplicates (argMax over ingested_at)")
@@ -88,6 +96,69 @@ func TestCreatorsRollupDedupesTheArchive(t *testing.T) {
 	}
 	if !strings.Contains(board, "movement_kind = 'create_account'") {
 		t.Error("board arm must filter to create_account movements")
+	}
+}
+
+// TestCreatorsRollupScansMovementsOnce: stellar.account_movements is the
+// expensive table — 10,309,271,697 rows / 583.54 GiB on r1 2026-09-06.
+// Exactly one statement may touch it, the walked one that lands the
+// working table; every other figure derives from those rows, which is
+// what makes the board and its coverage span describe the same data.
+func TestCreatorsRollupScansMovementsOnce(t *testing.T) {
+	var touching []int
+	for i, step := range creatorsRollupStatements {
+		if strings.Contains(step.sql, "stellar.account_movements") {
+			touching = append(touching, i+1)
+		}
+	}
+	if len(touching) != 1 {
+		t.Fatalf("statements touching stellar.account_movements: %v, want exactly 1", touching)
+	}
+	step := creatorsRollupStatements[touching[0]-1]
+	if !step.walk {
+		t.Error("the pass over stellar.account_movements must be walked per ledger window")
+	}
+	if !strings.Contains(step.sql, "WHERE ledger BETWEEN ? AND ?") {
+		t.Error("the walked pass must bound ledger to the window, which is what prunes " +
+			"stellar.account_movements to one partition")
+	}
+	if !strings.HasPrefix(step.sql, "INSERT INTO stellar.account_creators_ops") {
+		t.Error("the single pass over the archive must be the one filling the working table")
+	}
+}
+
+// TestCreatorsRollupJoinsOutsideTheWalk pins the placement that the
+// walk alone would not have fixed.
+//
+// The board's LEFT JOIN builds one row per account that currently exists
+// — 10,928,611 rows at 3.18 GiB measured on r1 2026-09-06 — and that
+// build side does not shrink when the movement scan is partitioned. A
+// join left inside the walked step would therefore rebuild the same hash
+// table on every one of the 65 windows and re-read the whole account
+// entry range each time, while leaving the cycle's largest single memory
+// consumer un-walked. It belongs in the once-per-cycle step that reads
+// the working table.
+func TestCreatorsRollupJoinsOutsideTheWalk(t *testing.T) {
+	for i, step := range creatorsRollupStatements {
+		if step.walk && strings.Contains(step.sql, "JOIN") {
+			t.Errorf("walked step %d carries a JOIN; its build side is the account "+
+				"population and would be paid once per window:\n%s", i+1, step.sql)
+		}
+	}
+	board := creatorsRollupStatement(t, "account_creators_rollup_staging")
+	if !strings.Contains(board, "LEFT JOIN") {
+		t.Fatal("the board no longer joins the live account entries; live_accounts " +
+			"and live_stroops would stop describing the created set")
+	}
+	if !strings.Contains(board, "FROM stellar.account_creators_ops AS c") {
+		t.Error("the board must join the working table the walk wrote, not re-scan the archive")
+	}
+	// The build side is pinned to the account-entry population so the
+	// cycle's peak cannot silently switch to the creation population,
+	// which grows with chain history instead.
+	if !strings.Contains(board, "query_plan_join_swap_table = 0") {
+		t.Error("the board's join build side is unpinned; which population sets the " +
+			"cycle's peak would then be a planner estimate")
 	}
 }
 
@@ -119,9 +190,9 @@ func TestClampLedger(t *testing.T) {
 func creatorsRollupStatement(t *testing.T, table string) string {
 	t.Helper()
 	var found []string
-	for _, stmt := range creatorsRollupStatements {
-		if strings.HasPrefix(stmt, "INSERT INTO stellar."+table) {
-			found = append(found, stmt)
+	for _, step := range creatorsRollupStatements {
+		if strings.HasPrefix(step.sql, "INSERT INTO stellar."+table) {
+			found = append(found, step.sql)
 		}
 	}
 	if len(found) != 1 {
