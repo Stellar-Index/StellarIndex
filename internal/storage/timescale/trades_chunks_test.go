@@ -15,8 +15,8 @@ import (
 
 // ─── the chunk-wise restamp's store primitives, pinned on the scripted driver ──
 //
-// The chunk mode of `usd-volume-restamp -tier xlm-base` exists because a
-// per-row UPDATE into a COMPRESSED `trades` chunk decompresses per row
+// The chunk mode of `usd-volume-restamp -tier xlm-base` exists because an
+// UPDATE into a COMPRESSED `trades` chunk decompresses the chunk
 // (measured 2026-09-03: one 2,000-row batch took over 14 minutes, ~1,574
 // rows/min across 28.6M rows). The remedy is mechanical — decompress the
 // chunk, restamp inside it, re-compress it — and the whole of its safety
@@ -452,8 +452,11 @@ func TestRestampTradesChunk_RecompressesWhenWorkPanics(t *testing.T) {
 // TestApplyXLMBaseUSDVolumeRestampInChunk_GuardsEveryBatch: ahead of EVERY
 // batch the chunk's is_compressed is read; the moment it reads true the
 // loop stops with [ErrTradesChunkRecompressed], the rows so far committed,
-// and the next UPDATE — the one that would decompress per row — never
-// issued.
+// and the next UPDATE — the one that would decompress the chunk wholesale
+// — never issued. Each batch also carries BOTH transaction-local GUCs the
+// write depends on: the lifted decompression cap, and the forced custom
+// plan without which the batch's `ts` bound cannot prune the statement to
+// one chunk.
 func TestApplyXLMBaseUSDVolumeRestampInChunk_GuardsEveryBatch(t *testing.T) {
 	t.Parallel()
 	isCompressed := func(v bool) scriptedResult {
@@ -469,18 +472,18 @@ func TestApplyXLMBaseUSDVolumeRestampInChunk_GuardsEveryBatch(t *testing.T) {
 	// Happy path: two batches, a guard read ahead of each, both carrying the
 	// chunk's own identifiers.
 	store, conn := newScriptedStore(t,
-		isCompressed(false), scriptedResult{}, scriptedResult{rowsAffected: 2},
-		isCompressed(false), scriptedResult{}, scriptedResult{rowsAffected: 1},
+		isCompressed(false), scriptedResult{}, scriptedResult{}, scriptedResult{rowsAffected: 2},
+		isCompressed(false), scriptedResult{}, scriptedResult{}, scriptedResult{rowsAffected: 1},
 	)
 	n, err := store.ApplyXLMBaseUSDVolumeRestampInChunk(context.Background(), c, plan, 1_756_800_000, 2)
 	if err != nil || n != 3 {
 		t.Fatalf("n=%d err=%v, want 3 rows and no error", n, err)
 	}
 	got := conn.statements()
-	if len(got) != 6 {
-		t.Fatalf("issued %d statements, want 6 (guard, SET LOCAL, UPDATE) x 2:\n%s", len(got), strings.Join(got, "\n"))
+	if len(got) != 8 {
+		t.Fatalf("issued %d statements, want 8 (guard, 2 x SET LOCAL, UPDATE) x 2:\n%s", len(got), strings.Join(got, "\n"))
 	}
-	for _, i := range []int{0, 3} {
+	for _, i := range []int{0, 4} {
 		g := conn.stmts[i]
 		if !strings.Contains(g.sql, "timescaledb_information.chunks") || !strings.Contains(g.sql, "is_compressed") {
 			t.Errorf("statement %d = %q, want the is_compressed read", i, g.sql)
@@ -488,8 +491,14 @@ func TestApplyXLMBaseUSDVolumeRestampInChunk_GuardsEveryBatch(t *testing.T) {
 		if g.arg(t, 1) != c.Schema || g.arg(t, 2) != c.Name {
 			t.Errorf("guard %d args = %v, want (%s, %s)", i, g.args, c.Schema, c.Name)
 		}
-		if !strings.Contains(got[i+2], "UPDATE trades") {
-			t.Errorf("statement %d = %q, want the batch's UPDATE after its guard", i+2, got[i+2])
+		if !strings.Contains(got[i+1], "SET LOCAL timescaledb.max_tuples_decompressed_per_dml_transaction = 0") {
+			t.Errorf("statement %d = %q, want the lifted decompression cap", i+1, got[i+1])
+		}
+		if !strings.Contains(got[i+2], "SET LOCAL plan_cache_mode = force_custom_plan") {
+			t.Errorf("statement %d = %q, want the forced custom plan — a generic plan cannot prune on the batch's ts bound", i+2, got[i+2])
+		}
+		if !strings.Contains(got[i+3], "UPDATE trades") {
+			t.Errorf("statement %d = %q, want the batch's UPDATE after its guard", i+3, got[i+3])
 		}
 	}
 	if conn.commits != 2 {
@@ -498,7 +507,7 @@ func TestApplyXLMBaseUSDVolumeRestampInChunk_GuardsEveryBatch(t *testing.T) {
 
 	// The chunk is taken back between batch 1 and batch 2.
 	store, conn = newScriptedStore(t,
-		isCompressed(false), scriptedResult{}, scriptedResult{rowsAffected: 2},
+		isCompressed(false), scriptedResult{}, scriptedResult{}, scriptedResult{rowsAffected: 2},
 		isCompressed(true),
 	)
 	n, err = store.ApplyXLMBaseUSDVolumeRestampInChunk(context.Background(), c, plan, 1_756_800_000, 2)
@@ -514,8 +523,8 @@ func TestApplyXLMBaseUSDVolumeRestampInChunk_GuardsEveryBatch(t *testing.T) {
 		t.Errorf("n = %d, want the 2 rows batch 1 committed", n)
 	}
 	got = conn.statements()
-	if len(got) != 4 || strings.Count(strings.Join(got, "\n"), "UPDATE trades") != 1 {
-		t.Fatalf("after the guard tripped:\n%s\nwant exactly 4 statements and ONE update", strings.Join(got, "\n"))
+	if len(got) != 5 || strings.Count(strings.Join(got, "\n"), "UPDATE trades") != 1 {
+		t.Fatalf("after the guard tripped:\n%s\nwant exactly 5 statements and ONE update", strings.Join(got, "\n"))
 	}
 	if conn.commits != 1 {
 		t.Errorf("commits = %d, want batch 1's only", conn.commits)

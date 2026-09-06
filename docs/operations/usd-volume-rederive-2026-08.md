@@ -417,16 +417,71 @@ stellarindex-ops verify-usd-volume -config /etc/stellarindex.toml \
 **Measured 2026-09-03.** The mechanics above, run as written
 (`-from 2026-01-01 -to 2026-07-21 -fill-null -write`, 28.6M rows), moved
 at **~1,574 rows/min** — one 2,000-row UPDATE took over 14 minutes — and
-was stopped with 0 rows committed (the generation guard held). Cause: all
-90 `trades` chunks in the window are compressed (policy `compress_after
-7 days`; TimescaleDB 2.26.4; `max_tuples_decompressed_per_dml_transaction
-= 100000`), and a DML into a compressed chunk decompresses per row. The
-dry run only reads, so it never showed it. The "DECOMPRESS FIRST" bullet
-above was the by-hand remedy; `-chunks` is the same remedy inside the
-tool, one chunk at a time, so no more than one chunk is ever
-decompressed — and with the compression policy paused for the run, which
-the by-hand path already required (Step 3's execution learnings,
+was stopped with 0 rows committed (the generation guard held). All 90
+`trades` chunks in the window are compressed (policy `compress_after
+7 days`; TimescaleDB 2.26.4;
+`max_tuples_decompressed_per_dml_transaction = 100000`), and the dry run
+only reads, so it never showed it. The "DECOMPRESS FIRST" bullet above
+was the by-hand remedy; `-chunks` is the same remedy inside the tool,
+one chunk at a time, so no more than one chunk is ever decompressed —
+and with the compression policy paused for the run, which the by-hand
+path already required (Step 3's execution learnings,
 `alter_job(…, scheduled => false)`).
+
+**The cause was NOT the targeted chunk (measured 2026-09-06).** A second
+attempt in `-chunks` mode reached chunk 1 of 91 — the smallest,
+`_hyper_1_26385_chunk`, 211,786 rows, 16.2 MB — decompressed it
+(`timescaledb_information.chunks` read `is_compressed = false` for the
+whole UPDATE), and then one **23-row** UPDATE ran for 60 minutes on CPU
+with no wait event and was stopped, again with nothing committed. The
+statement, not the chunk, is what does not converge:
+
+- `trades` holds 260 chunks, 258 of them compressed, and the batch UPDATE
+  named the HYPERTABLE while constraining `ts` only through its join
+  (`t.ts = v.ts`). Chunk exclusion cannot read a join clause, so
+  `EXPLAIN` on the real schema returns 260 `Update on …_chunk` targets
+  over an Append of 260 sequential scans — 61.9M estimated rows, cost
+  **10,040,409** — for a 23-row write set.
+- None of the join clauses can be turned into a scan key on a
+  `segmentby` (`base_asset, quote_asset, source`) or `orderby`
+  (`ts, ledger`) column, so servicing the DML on each compressed chunk in
+  that list decompresses it WHOLESALE. The run's own
+  `SET LOCAL timescaledb.max_tuples_decompressed_per_dml_transaction = 0`
+  removes the limit that would otherwise have surfaced this in seconds.
+- The fingerprint on the box: WAL archiving went from 5-6 segments a
+  minute to 240-417 for exactly the statement's hour (~270 GB) and back
+  to 13 the second it was cancelled; and 55 COMPRESSED chunks spanning
+  2026-03-12 → 2026-05-21 — none of which held a row of the batch — were
+  left holding **119.7M dead tuples** and 36 GB of heap in their
+  uncompressed relations, from decompression that the rollback undid.
+- So the earlier `~1,574 rows/min` figure is the same defect, not a
+  different one: the day walk was decompressing the whole hypertable per
+  batch as well. Chunk mode decompressed the right chunk and the
+  statement went after all the others anyway.
+
+The fix is in the statement (`applyXLMBaseRestampBatch`): each batch
+carries `t.ts >= $2 AND t.ts <= $3`, bound to the batch's own earliest
+and latest row. It is redundant against `t.ts = v.ts` — every matched
+row's `ts` is already one of the batch's values — so it excludes nothing
+and only tells the planner what it could not infer. The same batch then
+plans as ONE result relation: cost **61.99** at 23 rows, **18,614** at
+10,000. `tx_hash` also binds as `bpchar` rather than `text` (as `text`
+the comparison is `(t.tx_hash)::text = v.tx_hash`, which no index on a
+`char(64)` column can serve; as `bpchar` the join rides `trades_pkey` on
+all five key columns), and the write transaction pins
+`SET LOCAL plan_cache_mode = force_custom_plan`, because the pruning
+exists only in a custom plan and equal-length batches share one prepared
+statement.
+
+**Budget the bracket, not the UPDATE.** With the statement pruned, the
+cost of a full-window `-chunks` run is the decompress/re-compress
+bracket over 378.6 GB, not the writes. The runaway measured decompression
+at roughly 36 GB of heap an hour on this box under normal load, so the
+one-way decompress of the window is of the order of **10 hours** and the
+round trip plus the re-compress is **one to three days**, walked chunk by
+chunk under `run-heavy-job.sh`. Plan the attempt as a multi-day resumable
+walk (the tool probes and skips finished chunks) and carry `-generation`
+across restarts so the span lands at one generation.
 
 Sizing at the time: 90 chunks, 379 GB uncompressed / 25 GB compressed,
 largest chunk 160 GB, pool 4.69 TB free.
@@ -462,8 +517,10 @@ What `-chunks` does (`internal/ops/chops/usd_volume_restamp_chunks.go`,
    chunk that was compressed when the run listed it;
 3. the SAME plan + apply as the day walk (same anchor, same
    `derive_generation` guard), restricted to that chunk's slice of the
-   window, in `-chunk-batch` UPDATE transactions (default 20,000 — a
-   plain heap UPDATE now). **Ahead of every batch the chunk's
+   window, in `-chunk-batch` UPDATE transactions (default 20,000,
+   clamped to 10,922 — the statement binds 6 placeholders a row and the
+   extended query protocol carries 65,535 — a plain heap UPDATE now).
+   **Ahead of every batch the chunk's
    `is_compressed` is read**; `true` means something took the chunk
    back underneath the run (a by-hand `compress_chunk`, a fire that
    slipped the pause), and the walk STOPS there — the batch is not

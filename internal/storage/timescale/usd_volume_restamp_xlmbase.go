@@ -664,6 +664,16 @@ func (s XLMBaseRestampStats) Residual() int64 {
 // (only the in-flight batch is lost, and the tool is idempotent).
 const xlmBaseRestampApplyBatch = 2000
 
+// xlmBaseRestampMaxBatch caps the rows one UPDATE transaction can carry,
+// whatever the operator asked for. The statement binds 6 placeholders per
+// row plus 3 fixed ones (the generation and the two `ts` bounds), and the
+// extended query protocol carries at most 65,535 parameters — pgx refuses
+// the Exec above that, mid-run, after the rest of the walk has already
+// paid for itself. `-chunk-batch` defaults to 20,000, so an hour busy
+// enough to change more than this many rows would abort the run rather
+// than slow it; the cap turns that into one more transaction.
+const xlmBaseRestampMaxBatch = (65535 - 3) / 6
+
 // ApplyXLMBaseUSDVolumeRestamp writes the plan's rows and returns how many
 // rows the database actually changed.
 //
@@ -696,6 +706,9 @@ func (s *Store) applyXLMBaseRestampBatches(ctx context.Context, plan *XLMBaseRes
 	if batch <= 0 {
 		batch = xlmBaseRestampApplyBatch
 	}
+	if batch > xlmBaseRestampMaxBatch {
+		batch = xlmBaseRestampMaxBatch
+	}
 	var total int64
 	for start := 0; start < len(plan.Rows); start += batch {
 		if before != nil {
@@ -716,6 +729,64 @@ func (s *Store) applyXLMBaseRestampBatches(ctx context.Context, plan *XLMBaseRes
 	return total, nil
 }
 
+// ─── why the batch UPDATE carries a redundant `ts` range ────────────────
+//
+// `trades` is a hypertable with 260 chunks, 258 of them compressed. An
+// UPDATE that names `trades` and constrains `ts` only through a join
+// clause (`t.ts = v.ts`) cannot be pruned at planning time, so the plan
+// makes EVERY chunk a result relation and hash-joins the batch against an
+// Append over all of them. Measured on production 2026-09-06: the plan
+// for one batch carried 260 `Update on …_chunk` targets, an Append of 260
+// sequential scans estimated at 61.9M rows, cost 10,040,409 — and because
+// TimescaleDB has to service the DML on each compressed chunk in that
+// list, and none of the join clauses can be turned into a scan key on a
+// `segmentby`/`orderby` column, it decompressed the chunks WHOLESALE. A
+// 23-row UPDATE ran 60 minutes, wrote ~270 GB of WAL (a 50x jump over the
+// box's baseline, ending the second it was cancelled), left 119.7M dead
+// tuples across 55 compressed chunks it had no rows in, and changed
+// nothing. That — not per-row decompression inside the targeted chunk —
+// is what made both the day walk and the chunk walk crawl.
+//
+// The remedy is information, not a different write: `t.ts = v.ts` already
+// forces every matched row's `ts` to be one of the batch's own values, so
+// bounding `t.ts` by the batch's own minimum and maximum cannot exclude a
+// row the join would have matched. It is a provably redundant predicate
+// that the planner can prune on. With it the same batch plans as ONE
+// result relation over a nested loop / merge join driven by an index —
+// cost 61.99 at 23 rows, 18,614 at 10,000 (measured on the same schema).
+//
+// Two smaller shapes hang off the same statement:
+//
+//   - `tx_hash` is `char(64)`. Binding it as `text` makes the comparison
+//     `(t.tx_hash)::text = v.tx_hash`, which no index on the column can
+//     serve; binding it as `bpchar` lets the join ride `trades_pkey` on
+//     all five key columns (`Inner Unique: true`, cost 2.92 a probe).
+//   - the pruning only happens in a CUSTOM plan. Batches of equal length
+//     produce identical statement text, so pgx reuses one prepared
+//     statement and Postgres may promote it to a generic plan, which
+//     cannot know the bounds and would silently restore the 260-chunk
+//     plan. `SET LOCAL plan_cache_mode = force_custom_plan` pins it, and
+//     LOCAL keeps it off the pooled connection the same way the
+//     decompression cap is kept off it.
+
+// xlmBaseRestampTSBounds returns the inclusive `ts` span of one batch.
+// The planner scan orders by `ts`, so a batch is normally contiguous and
+// these are its first and last row — but the bound is computed rather
+// than assumed, because a reordering of that scan must not silently
+// narrow the range the UPDATE is allowed to match.
+func xlmBaseRestampTSBounds(rows []XLMBaseRestampRow) (lo, hi time.Time) {
+	lo, hi = rows[0].TS.UTC(), rows[0].TS.UTC()
+	for _, r := range rows[1:] {
+		switch ts := r.TS.UTC(); {
+		case ts.Before(lo):
+			lo = ts
+		case ts.After(hi):
+			hi = ts
+		}
+	}
+	return lo, hi
+}
+
 // applyXLMBaseRestampBatch writes one bounded batch in its own
 // transaction. Split from the loop so the transaction's lifetime is a
 // single function body and cannot accidentally span batches.
@@ -723,25 +794,28 @@ func (s *Store) applyXLMBaseRestampBatch(ctx context.Context, rows []XLMBaseRest
 	if len(rows) == 0 {
 		return 0, nil
 	}
-	args := []any{generation}
+	lo, hi := xlmBaseRestampTSBounds(rows)
+	args := []any{generation, lo, hi}
 	var values strings.Builder
 	for i, r := range rows {
 		if i > 0 {
 			values.WriteString(", ")
 		}
 		n := len(args)
-		fmt.Fprintf(&values, "($%d::text, $%d::integer, $%d::text, $%d::integer, $%d::timestamptz, $%d::numeric)",
+		fmt.Fprintf(&values, "($%d::text, $%d::integer, $%d::bpchar, $%d::integer, $%d::timestamptz, $%d::numeric)",
 			n+1, n+2, n+3, n+4, n+5, n+6)
 		args = append(args, r.Source, int64(r.Ledger), r.TxHash, int64(r.OpIndex), r.TS.UTC(), r.Want)
 	}
-	// Every fragment is code-built here; all values (the generation and
-	// each row's primary key + value) travel as positional placeholders —
-	// gosec G202 is a false positive.
+	// Every fragment is code-built here; all values (the generation, the
+	// two `ts` bounds and each row's primary key + value) travel as
+	// positional placeholders — gosec G202 is a false positive.
 	//nolint:gosec // no caller-supplied text reaches the statement
 	q := `UPDATE trades t
 	         SET usd_volume = v.usd_volume, derive_generation = $1
 	        FROM (VALUES ` + values.String() + `) AS v(source, ledger, tx_hash, op_index, ts, usd_volume)
-	       WHERE t.source   = v.source
+	       WHERE t.ts      >= $2
+	         AND t.ts      <= $3
+	         AND t.source   = v.source
 	         AND t.ledger   = v.ledger
 	         AND t.tx_hash  = v.tx_hash
 	         AND t.op_index = v.op_index
@@ -755,6 +829,9 @@ func (s *Store) applyXLMBaseRestampBatch(ctx context.Context, rows []XLMBaseRest
 	defer func() { _ = tx.Rollback() }()
 	if _, err := tx.ExecContext(ctx, "SET LOCAL timescaledb.max_tuples_decompressed_per_dml_transaction = 0"); err != nil {
 		return 0, fmt.Errorf("timescale: xlm-base restamp: raise decompression cap: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, "SET LOCAL plan_cache_mode = force_custom_plan"); err != nil {
+		return 0, fmt.Errorf("timescale: xlm-base restamp: force a custom plan: %w", err)
 	}
 	res, err := tx.ExecContext(ctx, q, args...)
 	if err != nil {
