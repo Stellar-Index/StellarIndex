@@ -18,7 +18,7 @@
 openapi: 3.1.0
 info:
   title: Stellar Index API
-  version: "1.26.0"
+  version: "1.27.0"
   summary: The Stellar network — explorer, history, supply, analytics, and prices.
   description: |
     The Stellar Index API exposes the Stellar network as one
@@ -14018,7 +14018,28 @@ components:
                 points:
                   type: array
                   items: { $ref: "#/components/schemas/HistoryPoint" }
-              required: [asset_id, quote, price_type, granularity, points]
+                discontinuous:
+                  type: boolean
+                  description: |
+                    True when `points` skips at least one whole bucket
+                    between two served buckets, at `granularity`. Same
+                    field, same meaning and same computation as
+                    `ChartEnvelope.data.discontinuous` — this surface
+                    shares the chart's read chain, so it can serve the
+                    same holed series.
+                gap_starts_at:
+                  type: string
+                  format: date-time
+                  description: |
+                    Last bucket before the WIDEST interior gap. Only
+                    present when `discontinuous=true`.
+                gap_ends_at:
+                  type: string
+                  format: date-time
+                  description: |
+                    First bucket after the widest interior gap. Only
+                    present when `discontinuous=true`.
+              required: [asset_id, quote, price_type, granularity, points, discontinuous]
           required: [data]
 
     ChartEnvelope:
@@ -14067,7 +14088,35 @@ components:
                     Window start the consumer asked for (derived
                     from `timeframe`). Only present when
                     `truncated=true`.
-              required: [asset_id, quote, timeframe, granularity, price_type, points, truncated]
+                discontinuous:
+                  type: boolean
+                  description: |
+                    True when `points` skips at least one whole bucket
+                    between two served buckets, at the granularity
+                    actually served. `points` is a dense array with no
+                    holes in it, so a consumer plots a straight line
+                    across missing buckets whether the market was quiet
+                    or the deployment holds nothing for that stretch —
+                    and `truncated` describes only where the series
+                    STARTS (and is never raised for `timeframe=all`).
+                    Read it beside `coverage_from`, which is present
+                    only when the whole series is empty.
+                gap_starts_at:
+                  type: string
+                  format: date-time
+                  description: |
+                    Last bucket before the WIDEST interior gap. Only
+                    present when `discontinuous=true`. One gap is
+                    reported rather than a list, mirroring
+                    `data_starts_at`/`requested_from`; a consumer that
+                    needs every gap has the buckets themselves.
+                gap_ends_at:
+                  type: string
+                  format: date-time
+                  description: |
+                    First bucket after the widest interior gap. Only
+                    present when `discontinuous=true`.
+              required: [asset_id, quote, timeframe, granularity, price_type, points, truncated, discontinuous]
           required: [data]
 
     TradeRow:
