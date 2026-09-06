@@ -13,14 +13,23 @@ import (
 
 // ─── `trades` chunk primitives for the chunk-wise usd_volume restamp ───
 //
-// A per-row UPDATE into a COMPRESSED Timescale chunk decompresses the
-// row's whole compressed batch inside the transaction, every time.
-// Measured on production 2026-09-03 running `usd-volume-restamp -tier
-// xlm-base -write` over [2026-01-01, 2026-07-21]: all 90 `trades` chunks
-// in the window were compressed (policy: compress_after 7 days), one
-// 2,000-row batch took over 14 minutes, and the run sustained ~1,574
-// rows/min against a 28.6M-row write set — a 12-day job. The dry run is
+// An UPDATE into a COMPRESSED Timescale chunk is serviced by
+// decompressing it inside the transaction, and none of the restamp's
+// join clauses can become a scan key on a `segmentby` / `orderby`
+// column, so what gets decompressed is the WHOLE chunk. Measured on
+// production 2026-09-03 running `usd-volume-restamp -tier xlm-base
+// -write` over [2026-01-01, 2026-07-21]: all 90 `trades` chunks in the
+// window were compressed (policy: compress_after 7 days), one 2,000-row
+// batch took over 14 minutes, and the run sustained ~1,574 rows/min
+// against a 28.6M-row write set — a 12-day job. The dry run is
 // read-only and never showed it.
+//
+// Escaping that needs BOTH halves. This file is one of them; the other
+// is the statement's own `ts` bound, without which the UPDATE names the
+// hypertable and every one of its 258 compressed chunks is a result
+// relation whatever this file decompressed — see
+// [Store.applyXLMBaseRestampBatch] and the 2026-09-06 measurement in
+// docs/operations/usd-volume-rederive-2026-08.md.
 //
 // The remedy is to invert the order: decompress the chunk ONCE, run the
 // same restamp inside it (a plain heap UPDATE), and compress it again.
@@ -358,9 +367,10 @@ func (s *Store) recompressTradesChunk(ctx context.Context, c TradeChunk, res *Tr
 // fence: a by-hand `compress_chunk`, a fire of the policy that started
 // before the pause, or another actor's mitigation can compress the open
 // chunk between two of the run's batches. An UPDATE into a compressed chunk
-// does not fail — it decompresses per row, the ~1,574 rows/min path the
-// chunk mode exists to escape — so the run would crawl for hours before
-// anyone noticed. The guard is a catalog read before EVERY batch: one row
+// does not fail — it decompresses the chunk wholesale inside the
+// transaction, the path the chunk mode exists to escape, and the run's
+// own lifted decompression cap removes the error that would otherwise
+// surface it — so the run would crawl for hours before anyone noticed. The guard is a catalog read before EVERY batch: one row
 // of timescaledb_information.chunks against a 20,000-row UPDATE.
 
 // tradesChunkIsCompressed reads one chunk's compression state right now.
@@ -395,7 +405,7 @@ func (s *Store) ApplyXLMBaseUSDVolumeRestampInChunk(ctx context.Context, c Trade
 		}
 		if compressed {
 			return fmt.Errorf("%w: %s reads is_compressed = true ahead of the next batch — the batch is NOT written, "+
-				"because an UPDATE into a compressed chunk decompresses per row", ErrTradesChunkRecompressed, c)
+				"because an UPDATE into a compressed chunk decompresses it wholesale", ErrTradesChunkRecompressed, c)
 		}
 		return nil
 	})

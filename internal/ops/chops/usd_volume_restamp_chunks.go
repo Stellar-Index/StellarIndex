@@ -26,10 +26,19 @@ import (
 // meant every one of the 90 `trades` chunks in [2026-01-01, 2026-07-21]
 // was COMPRESSED (policy: compress_after 7 days; TimescaleDB 2.26.4;
 // max_tuples_decompressed_per_dml_transaction = 100000), and a DML into a
-// compressed chunk decompresses the touched batch per row: one 2,000-row
-// UPDATE took over 14 minutes, the run sustained ~1,574 rows/min against
-// a 28.6M-row write set, and it was stopped with 0 rows committed. The
-// dry run never showed it — it only reads.
+// compressed chunk is serviced by decompressing it wholesale: one
+// 2,000-row UPDATE took over 14 minutes, the run sustained ~1,574
+// rows/min against a 28.6M-row write set, and it was stopped with 0 rows
+// committed. The dry run never showed it — it only reads.
+//
+// Decompressing the chunk is necessary and was not sufficient. The batch
+// statement names the HYPERTABLE, so until it carried its own `ts` bound
+// every one of the 258 compressed chunks was a result relation of every
+// batch and got decompressed too — measured 2026-09-06, a 23-row UPDATE
+// inside a freshly decompressed chunk ran 60 minutes and wrote ~270 GB
+// of WAL. The bound lives with the statement
+// ([timescale.Store.ApplyXLMBaseUSDVolumeRestamp]); this walk is what
+// keeps the ONE chunk it targets out of the slow path.
 //
 // This walk inverts the order. For each chunk intersecting the window,
 // oldest first:
