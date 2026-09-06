@@ -36,9 +36,13 @@ ProtectKernelTunables=true
 ProtectKernelModules=true
 ProtectControlGroups=true
 
-# The board arm caps itself at max_execution_time=3600 in the job SQL;
-# the unit ceiling sits above that so systemd never kills a run the
-# server would have finished, while still releasing a wedged slot.
+# No single statement in the cycle runs unbounded: the archive pass is
+# walked one 1M-ledger partition per statement at max_execution_time=600,
+# and the board arm caps itself at 1800. The unit ceiling bounds the
+# whole cycle instead — measured on r1 2026-09-06 the walk's windows cost
+# 2.9-13.9 s each and the board's join 3.31 GiB / ~23 s, so 65 windows
+# plus the board is a single-digit-minutes cycle and this sits far above
+# it, while still releasing a wedged slot.
 TimeoutStartSec=90min
 
 # Host-level memory backstop on the CLIENT process, which only issues

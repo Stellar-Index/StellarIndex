@@ -24,12 +24,12 @@ import (
 // A future edit that reaches for body_xdr would silently multiply the
 // cycle's cost, so it fails here instead.
 func TestSponsorsRollupReadsNoOperationBody(t *testing.T) {
-	for i, stmt := range sponsorsRollupStatements {
-		if strings.Contains(stmt, "body_xdr") {
+	for i, step := range sponsorsRollupStatements {
+		if strings.Contains(step.sql, "body_xdr") {
 			t.Errorf("statement %d reads body_xdr; the sponsored account comes from the "+
 				"End operation's source_account precisely so it does not have to", i+1)
 		}
-		if strings.Contains(stmt, "base64Decode") {
+		if strings.Contains(step.sql, "base64Decode") {
 			t.Errorf("statement %d base64-decodes an operation body; see the comment above", i+1)
 		}
 	}
@@ -42,17 +42,28 @@ func TestSponsorsRollupReadsNoOperationBody(t *testing.T) {
 // describe the same rows by construction.
 func TestSponsorsRollupScansOperationsOnce(t *testing.T) {
 	var touching []int
-	for i, stmt := range sponsorsRollupStatements {
-		if strings.Contains(stmt, "stellar.operations") {
+	for i, step := range sponsorsRollupStatements {
+		if strings.Contains(step.sql, "stellar.operations") {
 			touching = append(touching, i+1)
 		}
 	}
 	if len(touching) != 1 {
 		t.Fatalf("statements touching stellar.operations: %v, want exactly 1", touching)
 	}
-	stmt := sponsorsRollupStatements[touching[0]-1]
+	step := sponsorsRollupStatements[touching[0]-1]
+	stmt := step.sql
 	if !strings.Contains(stmt, "INSERT INTO stellar.account_sponsors_ops") {
 		t.Error("the single pass over stellar.operations must be the one filling the working table")
+	}
+	// The pass is walked one lake partition at a time. Unwalked it is a
+	// single statement over a 24.74-billion-row, 2.18 TiB table whose
+	// dedupe state count grows with the whole archive.
+	if !step.walk {
+		t.Error("the pass over stellar.operations must be walked per ledger window")
+	}
+	if !strings.Contains(stmt, "WHERE ledger_seq BETWEEN ? AND ?") {
+		t.Error("the walked pass must bound ledger_seq to the window, which is what " +
+			"prunes stellar.operations to one partition")
 	}
 	// ReplacingMergeTree duplicates must be collapsed over the table's
 	// full ORDER BY key, not trusted away.
@@ -103,9 +114,9 @@ func TestSponsorsRollupSpanDerivesFromTheScannedRows(t *testing.T) {
 // at all.
 func TestSponsorsRollupSwapIsAtomic(t *testing.T) {
 	var exchanges []string
-	for _, stmt := range sponsorsRollupStatements {
-		if strings.Contains(stmt, "EXCHANGE TABLES") {
-			exchanges = append(exchanges, stmt)
+	for _, step := range sponsorsRollupStatements {
+		if strings.Contains(step.sql, "EXCHANGE TABLES") {
+			exchanges = append(exchanges, step.sql)
 		}
 	}
 	if len(exchanges) != 1 {
@@ -119,7 +130,7 @@ func TestSponsorsRollupSwapIsAtomic(t *testing.T) {
 			t.Errorf("the single EXCHANGE is missing the pair %q", pair)
 		}
 	}
-	if exchanges[0] != sponsorsRollupStatements[len(sponsorsRollupStatements)-1] {
+	if exchanges[0] != sponsorsRollupStatements[len(sponsorsRollupStatements)-1].sql {
 		t.Error("the EXCHANGE must be the last statement")
 	}
 	// The working table is not served and must never be swapped.
@@ -131,9 +142,9 @@ func TestSponsorsRollupSwapIsAtomic(t *testing.T) {
 func sponsorsRollupStatement(t *testing.T, table string) string {
 	t.Helper()
 	var found []string
-	for _, stmt := range sponsorsRollupStatements {
-		if strings.HasPrefix(stmt, "INSERT INTO stellar."+table) {
-			found = append(found, stmt)
+	for _, step := range sponsorsRollupStatements {
+		if strings.HasPrefix(step.sql, "INSERT INTO stellar."+table) {
+			found = append(found, step.sql)
 		}
 	}
 	if len(found) != 1 {

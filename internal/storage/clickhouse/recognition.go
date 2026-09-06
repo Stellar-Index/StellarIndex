@@ -47,11 +47,7 @@ func MaxLedger(ctx context.Context, addr string) (uint32, error) {
 		return 0, err
 	}
 	defer func() { _ = conn.Close() }()
-	var hi uint64
-	if err := conn.QueryRow(ctx, `SELECT toUInt64(max(ledger_seq)) FROM stellar.ledgers`).Scan(&hi); err != nil {
-		return 0, fmt.Errorf("clickhouse: max ledger: %w", err)
-	}
-	return uint32(hi), nil
+	return lakeTipLedger(ctx, conn)
 }
 
 // recognitionScanWindow is the per-query ledger span for the distinct-shape

@@ -44,9 +44,12 @@ ProtectKernelTunables=true
 ProtectKernelModules=true
 ProtectControlGroups=true
 
-# The operations pass caps itself at max_execution_time=7200 in the job
-# SQL; the unit ceiling sits above that so systemd never kills a run
-# the server would have finished, while still releasing a wedged slot.
+# No single statement in the cycle runs unbounded: the operations pass is
+# walked one 1M-ledger partition per statement at max_execution_time=600,
+# and the board arm caps itself at 3600. The unit ceiling bounds the whole
+# cycle instead — measured on r1 2026-09-06 a partition of that pass costs
+# 18.1-24.7 s, so 65 windows extrapolates to roughly 20-25 min and this
+# sits well above it, while still releasing a wedged slot.
 TimeoutStartSec=150min
 
 # Host-level memory backstop on the CLIENT process, which only issues

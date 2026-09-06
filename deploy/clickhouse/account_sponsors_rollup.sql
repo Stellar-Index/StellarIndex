@@ -56,6 +56,21 @@
 -- served figure derives from the same materialized rows.
 -- stellar.operations is a ReplacingMergeTree, so duplicates are
 -- collapsed over its full ORDER BY key rather than trusted away.
+--
+-- THE PASS THAT FILLS IT IS WALKED, one 1M-ledger lake partition per
+-- statement. Unwalked it is a single indivisible statement over a
+-- 24.74-billion-row, 2.18 TiB table, and the two things it holds — its
+-- wall time and its dedupe state, one argMax per sponsorship operation
+-- in all of history — both grow with the archive. Measured on r1
+-- 2026-09-06 at max_threads=2, one partition costs 18.1 s / 165.76 MiB
+-- (partition 40, 186,968 operations) or 24.7 s / 819.23 MiB (partition
+-- 62, 1,073,991 operations): a 5.7x growth in state count across 22
+-- partitions, against a statement cap of 7200 s inside a unit whose
+-- TimeoutStartSec is 150 min. Walking makes each statement's cost a
+-- function of one partition, and per-window progress visible in the
+-- journal rather than only success or failure at the end. Grouping per
+-- window is exact: the partition expression is a function of ledger_seq,
+-- which leads the ORDER BY, so no duplicate group straddles a window.
 CREATE TABLE IF NOT EXISTS stellar.account_sponsors_ops
 (
     lseq     UInt32,

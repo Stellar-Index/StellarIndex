@@ -12,12 +12,34 @@
 --
 -- WHY A ROLLUP. The predicate is movement_kind, which is not in
 -- account_movements' ORDER BY (address, ledger, tx_hash, op_index,
--- leg_index, direction), so the aggregation is scan-shaped over the
--- whole 10.3-billion-row archive — measured 2026-09-05 at 2.1s /
--- 3.10 GiB for one 1M-ledger partition with max_threads=2, so ~65
--- partitions is a low-minutes full pass. That is a cycle cost, not a
--- request cost. The same staging + atomic EXCHANGE shape as
+-- leg_index, direction), so finding creations is scan-shaped over the
+-- whole 10.31-billion-row archive. That is a cycle cost, not a request
+-- cost. The same staging + atomic EXCHANGE shape as
 -- asset_holders_rollup / accounts_stats: readers are keyed and tiny.
+--
+-- WHY THE CYCLE WALKS PARTITIONS. As one statement the aggregation held
+-- two things at once whose sizes are set by different populations: the
+-- dedupe hash table, one state per creation in all of history, and the
+-- LEFT JOIN's build side, one row per account that currently exists.
+-- Measured on r1 2026-09-06 the pair summed past the ops-batch class's
+-- 8 GiB budget — 8.12 GiB in FillingRightJoinSide, with the dedupe
+-- already spilled to 32 external parts and all 10,309,146,441 movement
+-- rows read — and the endpoint served 503 for want of a board. Raising
+-- the ceiling would only move which cycle fails, because neither
+-- population stops growing.
+--
+-- So the archive pass is WALKED, one 1M-ledger partition per statement,
+-- into stellar.account_creators_ops below, and the join is taken OUT of
+-- the walk and run once against that working table. Measured on r1
+-- 2026-09-06 at max_threads=2: the widest creation window costs 13.9 s /
+-- 701.17 MiB (partition 55, 1,027,707 rows) and a window with no
+-- creations 2.9 s / 11.27 MiB, against 3.31 GiB for the single join.
+-- Peak is now a function of one partition's creations plus the account
+-- population, and both are stated rather than extrapolated.
+--
+-- Nothing is written to a staging arm until the walk has finished, so an
+-- interrupted cycle leaves the previous cycle's board live and the
+-- single EXCHANGE remains the only moment anything becomes visible.
 --
 -- COVERAGE IS DATA-DERIVED (ADR-0031). The cycle records the ledger
 -- span it actually aggregated — min/max ledger and close time over the
@@ -32,6 +54,30 @@
 -- the base64 entry_xdr blob on stellar.ledger_entries_current and is
 -- not projected as a column anywhere. It is deliberately absent here
 -- rather than approximated; see #351.
+
+-- Narrow, deduplicated projection of every account creation, written
+-- one lake partition at a time. Not served; it exists so the walked pass
+-- over the archive can land its rows somewhere bounded, and so the join
+-- against the live account entries is paid ONCE per cycle instead of
+-- once per window. stellar.account_movements is a ReplacingMergeTree, so
+-- duplicates are collapsed over its full ORDER BY key rather than
+-- trusted away; the partition expression is a function of `ledger`,
+-- which is part of that key, so per-window grouping is exact.
+-- Partitioned to mirror the walk (one part written per window) and
+-- ordered by creator, which is how the board arm reads it back.
+CREATE TABLE IF NOT EXISTS stellar.account_creators_ops
+(
+    creator   String,
+    created   String,
+    -- Starting balance in stroops. Int128 to match
+    -- account_movements.amount.
+    amount    Int128,
+    ledger    UInt32,
+    closed_at DateTime('UTC')
+)
+ENGINE = MergeTree
+PARTITION BY intDiv(ledger, 1000000)
+ORDER BY (creator, ledger, created);
 
 CREATE TABLE IF NOT EXISTS stellar.account_creators_rollup
 (

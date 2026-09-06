@@ -100,28 +100,54 @@ const factsCTE = `
 
 // sponsorsRollupStatements is the full recompute cycle.
 //
-// Step 2 is the only pass over stellar.operations. It lands a narrow,
-// deduplicated projection of sponsorship operations into a working
-// table; every served figure then derives from THOSE rows, so the board
-// and the coverage span that qualifies it cannot describe different
-// data. It reads no body_xdr — see the module doc in
-// deploy/clickhouse/account_sponsors_rollup.sql for why that matters
-// and how the equivalence was proven.
-var sponsorsRollupStatements = []string{
-	`TRUNCATE TABLE stellar.account_sponsors_ops`,
-	`INSERT INTO stellar.account_sponsors_ops (lseq, tidx, oidx, otype, src, ctime)
+// Step 2 is the only pass over stellar.operations, and it is WALKED: one
+// statement per 1M-ledger lake partition, each landing that partition's
+// narrow, deduplicated projection of sponsorship operations into the
+// working table. Every served figure then derives from THOSE rows, so
+// the board and the coverage span that qualifies it cannot describe
+// different data. It reads no body_xdr — see the module doc in
+// deploy/clickhouse/account_sponsors_rollup.sql for why that matters and
+// how the equivalence was proven.
+//
+// WHY THAT PASS IS WALKED. Unwalked it is one indivisible statement over
+// a 24.74-billion-row, 2.18 TiB table, and both of the things it holds
+// grow with the archive: its wall time, and its dedupe hash table, which
+// carries one argMax state per sponsorship operation in all of history.
+// Measured on r1 2026-09-06 a single partition already costs 18.1 s /
+// 165.76 MiB (partition 40, 186,968 operations) and 24.7 s / 819.23 MiB
+// (partition 62, 1,073,991 operations) at max_threads=2 — a 5.7x growth
+// in state count across 22 partitions, against a statement-level
+// max_execution_time of 7200 s inside a unit whose TimeoutStartSec is
+// 150 min. Walking makes each statement's cost a function of one
+// partition, and makes the cycle's progress visible per window instead
+// of only on success or failure.
+//
+// Grouping per window is exact rather than approximate: stellar.operations
+// is PARTITION BY intDiv(ledger_seq, 1000000) and ledger_seq leads its
+// ORDER BY, so every row sharing an ORDER BY key shares a partition and
+// no duplicate group can straddle a window boundary. The window
+// predicate is also a primary-key range on that table, so it prunes
+// granules and not only partitions.
+//
+// Nothing is written to a staging arm until the walk has finished, so an
+// interrupted cycle leaves the live board as the previous cycle left it,
+// and the single EXCHANGE remains the only moment anything becomes
+// visible.
+var sponsorsRollupStatements = []rollupStep{
+	{sql: `TRUNCATE TABLE stellar.account_sponsors_ops`},
+	{walk: true, sql: `INSERT INTO stellar.account_sponsors_ops (lseq, tidx, oidx, otype, src, ctime)
 	 SELECT ledger_seq, tx_index, op_index,
 	        argMax(op_type, ingested_at) AS otype,
 	        argMax(source_account, ingested_at) AS src,
 	        argMax(close_time, ingested_at) AS ctime
 	 FROM stellar.operations
-	 WHERE op_type IN ('` + opBeginSponsoring + `', '` + opEndSponsoring + `', '` + opRevokeSponsoring + `')
+	 WHERE ledger_seq BETWEEN ? AND ?
+	   AND op_type IN ('` + opBeginSponsoring + `', '` + opEndSponsoring + `', '` + opRevokeSponsoring + `')
 	 GROUP BY ledger_seq, tx_index, op_index
-	 SETTINGS max_threads = 4, max_memory_usage = 8589934592,
-	          max_bytes_before_external_group_by = 4000000000, max_execution_time = 7200`,
-	`TRUNCATE TABLE stellar.account_sponsors_rollup_staging`,
-	`TRUNCATE TABLE stellar.account_sponsors_stats_staging`,
-	`INSERT INTO stellar.account_sponsors_rollup_staging
+	 ` + rollupWalkSettings},
+	{sql: `TRUNCATE TABLE stellar.account_sponsors_rollup_staging`},
+	{sql: `TRUNCATE TABLE stellar.account_sponsors_stats_staging`},
+	{sql: `INSERT INTO stellar.account_sponsors_rollup_staging
 	     (rank, sponsor, sponsorships_started, distinct_sponsored, revocations_issued,
 	      first_ledger, last_ledger, first_seen_at, last_seen_at)
 	 WITH` + perTxCTE + `,` + factsCTE + `
@@ -140,10 +166,8 @@ var sponsorsRollupStatements = []string{
 	     FROM facts
 	     GROUP BY sponsor
 	 )
-	 SETTINGS max_threads = 4, max_memory_usage = 8589934592,
-	          max_bytes_before_external_group_by = 4000000000,
-	          max_bytes_before_external_sort = 4000000000, max_execution_time = 3600`,
-	`INSERT INTO stellar.account_sponsors_stats_staging (metric, value)
+	 ` + boundedScanSettings + `, max_execution_time = 3600`},
+	{sql: `INSERT INTO stellar.account_sponsors_stats_staging (metric, value)
 	 WITH` + perTxCTE + `
 	 SELECT metric, value FROM (
 	     SELECT 'sponsors_total' AS metric, toInt64(count()) AS value
@@ -169,28 +193,17 @@ var sponsorsRollupStatements = []string{
 	     UNION ALL
 	     SELECT 'thru_time', toInt64(toUnixTimestamp(max(ctime))) FROM stellar.account_sponsors_ops
 	 )
-	 SETTINGS max_threads = 4, max_memory_usage = 8589934592, max_execution_time = 900`,
+	 ` + boundedScanSettings + `, max_execution_time = 900`},
 	// Board and the span that qualifies it swap in one metadata
 	// transaction — a board beside a stale span is the overstatement this
 	// surface exists to avoid.
-	`EXCHANGE TABLES stellar.account_sponsors_rollup_staging AND stellar.account_sponsors_rollup,
-	                 stellar.account_sponsors_stats_staging AND stellar.account_sponsors_stats`,
+	{sql: `EXCHANGE TABLES stellar.account_sponsors_rollup_staging AND stellar.account_sponsors_rollup,
+	                 stellar.account_sponsors_stats_staging AND stellar.account_sponsors_stats`},
 }
 
 // RunSponsorsRollup executes one full recompute + atomic exchange.
 func RunSponsorsRollup(ctx context.Context, addr string, logf func(format string, args ...any)) error {
-	conn, err := openRead(ctx, addr)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = conn.Close() }()
-	for i, stmt := range sponsorsRollupStatements {
-		if err := conn.Exec(ctx, stmt); err != nil {
-			return fmt.Errorf("clickhouse: sponsors rollup step %d/%d: %w", i+1, len(sponsorsRollupStatements), err)
-		}
-		logf("step %d/%d done", i+1, len(sponsorsRollupStatements))
-	}
-	return nil
+	return runRollupCycle(ctx, addr, "sponsors rollup", sponsorsRollupStatements, logf)
 }
 
 // AccountSponsors reads the rollup snapshot: the top `limit` rows plus

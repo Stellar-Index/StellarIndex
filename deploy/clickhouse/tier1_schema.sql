@@ -827,7 +827,22 @@ AS stellar.accounts_trustline_histogram;
 -- Funder → created-account league table (#351), aggregated from the
 -- create_account arm of stellar.account_movements. funded_stroops and
 -- live_stroops are Int128 to match account_movements.amount; both are
--- served as decimal strings (ADR-0003).
+-- served as decimal strings (ADR-0003). account_creators_ops is a
+-- per-cycle working table, not a served one: the archive pass is walked
+-- one lake partition at a time and lands there, so the board's join
+-- against the live account entries is paid once per cycle.
+CREATE TABLE IF NOT EXISTS stellar.account_creators_ops
+(
+    creator   String,
+    created   String,
+    amount    Int128,
+    ledger    UInt32,
+    closed_at DateTime('UTC')
+)
+ENGINE = MergeTree
+PARTITION BY intDiv(ledger, 1000000)
+ORDER BY (creator, ledger, created);
+
 CREATE TABLE IF NOT EXISTS stellar.account_creators_rollup
 (
     rank             UInt32,
