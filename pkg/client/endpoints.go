@@ -234,9 +234,15 @@ const (
 // HistoryQuery selects the range for a [Client.HistorySinceInception]
 // call. Asset is required.
 type HistoryQuery struct {
-	Asset       string
-	Quote       string // optional
-	Granularity string // 1m / 15m / 1h / 4h / 1d / 1w / 1mo; default 1d
+	Asset string
+	Quote string // optional
+	// Granularity is 1m / 15m / 1h / 4h / 1d / 1w / 1mo; default 1d.
+	// This endpoint has no window parameter, so the width asked for is
+	// always the width served — and the response is capped at 50,000
+	// buckets taking the OLDEST, so a fine grain over a long-lived pair
+	// ends early with Flags.Stale raised. For a bounded window whose
+	// width is fitted to the cap automatically, use [Client.Chart].
+	Granularity string
 }
 
 // HistorySinceInception fetches the full historical series for an
@@ -824,17 +830,25 @@ func (c *Client) Version(ctx context.Context) (*Envelope[Version], error) {
 // ChartQuery selects the asset / quote and the binned chart
 // timeframe + granularity. Asset is required.
 type ChartQuery struct {
-	Asset       string
-	Quote       string // optional; defaults to fiat:USD server-side
-	Timeframe   string // 1h / 24h / 7d / 30d / 90d / 1y / all; default 24h
-	Granularity string // 1m / 5m / 15m / 1h / 1d / 1w; defaults match Timeframe
+	Asset string
+	Quote string // optional; defaults to fiat:USD server-side
+	// Timeframe is 1h / 24h / 1w / 1mo / 1y / all; default 24h. Any
+	// other token is a 400 — the previous comment here advertised
+	// 7d / 30d / 90d, which the server has never accepted.
+	Timeframe string
+	// Granularity is 1m / 15m / 1h / 4h / 1d / 1w / 1mo; the default
+	// tracks Timeframe. The server may serve a COARSER width than the
+	// one asked for when the requested grid exceeds its 50,000-bucket
+	// response cap (1y + 1m is served at 15m); read
+	// [ChartSeries.Granularity] for the width actually served.
+	Granularity string
 }
 
 // Chart returns the binned price + USD-volume series for a chart
 // rendering. Distinct from [Client.HistorySinceInception] (which
 // returns the FULL series at one granularity) — Chart trims to a
-// caller-chosen window and resolves a server-default granularity
-// per timeframe (24h → 1h bins, 7d → 4h, 30d → 1d, etc.).
+// caller-chosen window and resolves a server-default granularity per
+// timeframe (24h → 15m bins, 1w → 1h, 1mo → 4h, 1y → 1d, all → 1d).
 func (c *Client) Chart(ctx context.Context, q ChartQuery) (*Envelope[ChartSeries], error) {
 	if q.Asset == "" {
 		return nil, &APIError{Status: 400, Title: "asset required"}

@@ -252,6 +252,15 @@ func (s *Server) handleChart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Serve the finest grain the requested window can actually carry
+	// ([chartFitGranularity]). `gran` is REPLACED rather than shadowed:
+	// every use below it — the read, the window the walk covers, the
+	// retention grace, the `granularity` on the wire and the two log
+	// lines — is about the series that is actually produced, and the
+	// 400 body is unaffected because an unknown grain is returned
+	// untouched.
+	gran = chartFitGranularity(chartVWAPGranularityLadder, gran, tf.Duration)
+
 	// 8s ceiling on the chart query + downstream stablecoin
 	// fallback. Same pattern as #1082 / #1099 / #1100 / #1101.
 	// The chart's prices_1m / prices_5m / prices_1h scan can take
@@ -379,6 +388,118 @@ func twapChartGranularity(gran string) string {
 	}
 }
 
+// ─── granularity fitting ────────────────────────────────────────
+
+// chartVWAPGranularityLadder is the coarsening ladder the default
+// price path walks: every served rung, finest first. It IS
+// [timescale.AllHistoryGranularities] — the one declaration of the
+// served set — rather than a second list, for the reason that slice's
+// own doc gives: a hand-copied enumeration is how two lists of the
+// same seven strings drift apart.
+var chartVWAPGranularityLadder = timescale.AllHistoryGranularities
+
+// chartTWAPGranularityLadder is the TWAP path's ladder, and it is
+// deliberately NOT the served set. price_type=twap is backed by
+// exactly two CAGGs (twap_1h / twap_1d, migration 0081), so
+// [twapChartGranularity] snaps every request onto one of them and a
+// coarsening that stepped past `1d` — or onto `4h` — would name a view
+// that does not exist.
+var chartTWAPGranularityLadder = []timescale.HistoryGranularity{
+	timescale.Granularity1h, timescale.Granularity1d,
+}
+
+// chartGranularityFits reports whether a series at `gran` covering a
+// window of `window` can be carried by one response — whether the
+// grid `time_bucket(<gran>, …)` lays over that window has at most
+// [historyMaxPoints] points.
+//
+// A grain with no known bucket width is not this function's to judge:
+// it is a bad `?granularity=`, and the reader answers it with
+// [ErrUnknownGranularity], which the handlers turn into the 400 that
+// enumerates the served set. Reporting "fits" hands it straight
+// through unchanged.
+func chartGranularityFits(gran string, window time.Duration) bool {
+	width := timescale.HistoryGranularity(gran).BucketDuration()
+	if width <= 0 {
+		return true
+	}
+	// CEILING, not floor: a window that spans 50,000.4 bucket widths
+	// can still touch 50,001 grid points, and floor division would
+	// call that a fit and hand back a series short by one bucket. No
+	// timeframe lands on a fraction today (1y at 15m is exactly
+	// 35,040), so this only fixes the direction of a future one.
+	return (window+width-1)/width <= historyMaxPoints
+}
+
+// chartFitGranularity is the grain a window of `window` is SERVED at
+// when `gran` was asked for: `gran` itself when its grid fits, else
+// the finest COARSER rung of `ladder` that does.
+//
+// The reader caps every response at [historyMaxPoints] and the
+// truncation takes the EARLIEST buckets, so a (timeframe,
+// granularity) pair whose grid is wider than that cap cannot be
+// answered as asked — and the surface answered it anyway. Measured on
+// production 2026-09-07, `?timeframe=1y&granularity=1m` returned 200
+// with 50,000 points covering 2026-05-05 to 2026-06-10: 36 of the 365
+// days requested, ending three months before the request did, under a
+// response that still said `granularity: "1m"`. None of the existing
+// signals says that — `truncated` describes RETENTION at the series'
+// start, `discontinuous` an interior hole, `stale` a source walk that
+// was cut — so the wire carried a year-of-minutes shape with a month
+// of stale minutes in it and nothing to tell the two apart.
+//
+// The response's own `granularity` carries the answer, and no new
+// field is added, because that field already means "the grain this
+// series is ON": the TWAP path has reported its snapped grain there
+// since it shipped ([twapChartGranularity]), and a consumer plotting
+// the array reads it to label the axis. A caller that sends `1m` and
+// reads back `15m` knows precisely what happened; one that sends a
+// pair that fits reads back what it sent.
+//
+// Coarsening is also what makes [chartWindow.covered] REACHABLE, which
+// is the second half of the same defect: at 1y/1m the grid has
+// ~525,600 points and the reader can never return more than 50,000, so
+// the merge could not hold a full grid however complete the data was
+// and the walk ran to [chartWalkBudget] on every request (measured
+// 3.40-4.27s warm against 1.26-1.31s for the same window at 15m). The
+// predicate is untouched — it was verified exact over 155 holed-set
+// variants and stays that way; what changes is that the grid it
+// measures against now fits under the cap.
+//
+// It is a property of the REQUEST alone — window width over bucket
+// width — so it costs no read and cannot vary with how much data a
+// pair happens to hold. That is also why it is applied ONLY where the
+// window has a requested width. `timeframe=all` and
+// /v1/history/since-inception ask for "everything you have", whose
+// point count is a property of the DATA: measured the same day,
+// `?timeframe=all&granularity=1h` serves 47,823 points spanning
+// 2017-01-17 to now, complete and under the cap, because the pair's
+// hourly buckets are sparse — while a grid laid from pubnet genesis
+// would count 96,600 and coarsen a response that is already right.
+// A `window <= 0` therefore returns `gran` untouched.
+//
+// A ladder that runs out returns `gran` as well. Unreachable with
+// today's rungs (`1mo` fits any window under 4,000 years), and the
+// point is the direction of the fallback: serving the requested grain
+// truncated is what this surface already does, and is strictly better
+// than naming a grain that was never read.
+func chartFitGranularity(ladder []timescale.HistoryGranularity, gran string, window time.Duration) string {
+	if window <= 0 || chartGranularityFits(gran, window) {
+		return gran
+	}
+	coarser := false
+	for _, g := range ladder {
+		if !coarser {
+			coarser = string(g) == gran
+			continue
+		}
+		if chartGranularityFits(string(g), window) {
+			return string(g)
+		}
+	}
+	return gran
+}
+
 // handleChartTWAP serves /v1/chart?price_type=twap for a non-fiat base
 // out of the twap_1h / twap_1d CAGGs (migration 0081). It mirrors the
 // default VWAP path — closed CAGG buckets over the timeframe window,
@@ -392,7 +513,15 @@ func (s *Server) handleChartTWAP(
 	tfRaw, gran string,
 	from time.Time,
 ) {
-	twapGran := twapChartGranularity(gran)
+	// Snap onto a TWAP-backed grain, then coarsen if even that grain's
+	// grid outruns one response ([chartFitGranularity]). The second
+	// step is a guard rather than a live path: the widest bounded
+	// timeframe today is `1y`, which is 8,760 buckets at `1h`. It is
+	// wired anyway because `chartTimeframes` advertises itself as a
+	// one-line table to extend, and a one-line extension is exactly how
+	// the defect would come back on the surface nobody re-checked.
+	twapGran := chartFitGranularity(chartTWAPGranularityLadder,
+		twapChartGranularity(gran), chartTimeframes[tfRaw].Duration)
 
 	// 8s ceiling covering the CAGG scan + the proxy fallback retry,
 	// matching the VWAP path (#1082 / #1099 …).

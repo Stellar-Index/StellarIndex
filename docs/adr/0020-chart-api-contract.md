@@ -140,3 +140,43 @@ cap and receive `flags.truncated=true`.
   on a future release.
 - Coverage matrix rows F1.3 (Historical Price Chart) move from
   partial to served.
+
+## Amendment — 2026-09-07: the cap, and what a request that exceeds it gets
+
+Recorded because this ADR is published at `/research/adr/0020` and its
+§Cap makes a prediction that was never true. **The decision is
+untouched — `(timeframe, granularity, price_type) → points[]` still
+stands, and the default-granularity table is unchanged.**
+
+**What §Cap says.** "`historyMaxPoints = 50_000` … At `1m` granularity
+this is ~35 days of data; well above the largest standard timeframe
+(1mo @ 4h = 180 points). Operators running an unusual
+`timeframe=1y&granularity=1m` request hit the cap and receive
+`flags.truncated=true`."
+
+**What was measured on production, 2026-09-07.** That request returns
+`200` with 50,000 points spanning 2026-05-05 to 2026-06-10 — 36 of the
+365 days asked for, ending three months before the request did. The
+cap's truncation takes the EARLIEST buckets, so the response is the
+oldest slice of the available minute data rather than the most recent.
+`truncated` is indeed `true`, but not for the reason §Cap gives: that
+field is the RETENTION signal, computed from `points[0]` against the
+window start, and it is raised here because the series begins late —
+it says nothing about a window cut at the far end. `1m` was also not
+"well above" the standard set: `1y` at `1m` is 525,600 grid points
+against the 50,000 cap, an order of magnitude over.
+
+**What the handler does now.** When the requested
+`(timeframe, granularity)` grid exceeds the cap, the series is served
+at the finest granularity whose grid fits and the response's own
+`granularity` reports the width actually served — the field
+`price_type=twap` has used for its snapped `1h`/`1d` grain since TWAP
+shipped. Today this moves exactly one cell: `1y` + `1m` is served at
+`15m`. `timeframe=all` is never coarsened, because its point count is a
+property of the data rather than of the request (measured the same day,
+`all` + `1h` serves 47,823 points, complete and under the cap).
+
+This is a narrowing of §Cap's claim, not a change to the contract's
+shape: the parameter is still honoured, and a request whose grid fits —
+every combination in the default table, and `1mo` + `1m` at 43,200
+points — is served exactly as before.

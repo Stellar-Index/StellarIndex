@@ -220,7 +220,11 @@ type HistorySeries struct {
 	Quote   string `json:"quote"`
 	// PriceType names the aggregation each point carries — "vwap"
 	// today; TWAP planned.
-	PriceType     string         `json:"price_type"`
+	PriceType string `json:"price_type"`
+	// Granularity is the bucket width this series is on. On this
+	// endpoint it always equals the width requested — there is no
+	// window to fit a narrower one against, so an over-fine request is
+	// truncated at 50,000 buckets rather than coarsened.
 	Granularity   string         `json:"granularity"`
 	Points        []HistoryPoint `json:"points"`
 	Discontinuous bool           `json:"discontinuous"`
@@ -1059,8 +1063,14 @@ type Version struct {
 // only for a series that is entirely empty — so a holed series had
 // nothing on the wire to declare itself before this field.
 type ChartSeries struct {
-	AssetID       string         `json:"asset_id"`
-	Quote         string         `json:"quote"`
+	AssetID string `json:"asset_id"`
+	Quote   string `json:"quote"`
+	// Granularity is the bucket width the series is ON, which is not
+	// always the width requested: price_type=twap snaps onto the 1h /
+	// 1d TWAP aggregates, and a (Timeframe, Granularity) pair whose
+	// grid exceeds the server's 50,000-bucket response cap is served at
+	// the finest width that fits — 1y + 1m comes back as 15m. Label an
+	// axis from this field, not from the request.
 	Granularity   string         `json:"granularity"`
 	Timeframe     string         `json:"timeframe"`
 	PriceType     string         `json:"price_type"`
