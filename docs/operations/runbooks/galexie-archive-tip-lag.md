@@ -43,7 +43,12 @@ values false-fired through every normal partition cycle.
 # 1. Is the catch-up timer actively running on its hourly cadence (:17 + jitter)?
 ssh r1 'systemctl list-timers galexie-archive-fill.timer galexie-archive-tip-lag.timer'
 ssh r1 'systemctl status galexie-archive-fill.service'           # last run, exit code
-ssh r1 'systemctl show galexie-archive-fill.service -p Result'
+# Read Result WITH its completion timestamp, never alone. This is a
+# Type=oneshot RemainAfterExit=no unit, so it never enters `active` and
+# Result persists from whatever ran last — 25 of r1's 87 such units
+# report Result=success having never run at all. An empty
+# InactiveEnterTimestamp means there is no run for that Result to describe.
+ssh r1 'systemctl show galexie-archive-fill.service -p Result,InactiveEnterTimestamp,ExecMainStartTimestamp'
 
 # 2. Did the most recent fill find no missing partitions (the
 #    expected steady state)?
