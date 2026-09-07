@@ -1,17 +1,37 @@
 name: ci-health
 
-# Main-CI-red tripwire (audit C4-16).
+# Two tripwires over this repo's own CI, sharing one open-or-update-an-
+# issue-AND-fail-the-run pattern.
 #
-# Chronically-red `main` is a standing operator pain: nobody notices
-# when main CI has been failing for hours. This scheduled workflow
-# queries the recent `ci` runs on main and, if main has been red past a
-# threshold (consecutive-failure count OR wall-clock age), opens/updates
-# a tracking issue AND fails this run — two independent surfaces so the
-# red state can't stay invisible. When main goes green again it closes
-# the tracking issue.
+# 1. MAIN-CI-RED (audit C4-16). Chronically-red `main` is a standing
+#    operator pain: nobody notices when main CI has been failing for
+#    hours. Queries the recent `ci` runs on main and, if main has been
+#    red past a threshold (consecutive-failure count OR wall-clock age),
+#    opens/updates a tracking issue AND fails this run. When main goes
+#    green again it closes the issue.
 #
-# Self-contained: uses ${{ github.token }} via the gh CLI, no new
-# secrets. The decision core is scripts/ci/check-main-ci-health.sh
+# 2. DEAD SCHEDULED CONTROL (#496). A scheduled workflow exists to
+#    notice something and say so; when one stops working, nothing says
+#    so, because its silence is indistinguishable from "nothing to
+#    report". ansible-drift.yml is the recorded case — 0 green of 8
+#    scheduled runs from 2026-07-20 to 2026-09-07, seven weeks
+#    unnoticed, with a three-way divergence in the rollup statement cap
+#    sitting behind it. The per-workflow watchdog that was supposed to
+#    catch that (reconciliation-health.yml) read the LATEST run
+#    regardless of trigger, and the latest was a green manual dispatch,
+#    so it reported healthy throughout.
+#
+#    This job enumerates every workflow carrying a `schedule:` trigger
+#    — read from the tree, so a new scheduled workflow is covered the
+#    day it merges — and flags any that has produced no passing
+#    SCHEDULED run within a threshold derived from its own cron
+#    cadence. Decision core: scripts/ci/check-scheduled-controls.sh
+#    (offline-testable via SCHEDULED_CONTROLS_FIXTURE; see
+#    scripts/ci/check-scheduled-controls-test.sh for the thresholds and
+#    the one exclusion).
+#
+# Self-contained: both use ${{ github.token }} via the gh CLI, no new
+# secrets. The main-CI decision core is scripts/ci/check-main-ci-health.sh
 # (unit-testable offline via CI_HEALTH_FIXTURE).
 
 on:
@@ -19,12 +39,22 @@ on:
     # Every 2 hours. Chronic-red is a slow-burn problem; a tighter
     # cadence would just re-notify the same open issue.
     - cron: '17 */2 * * *'
+    # Daily, for the dead-control sweep only (see DEAD_CONTROL_CRON).
+    # A control that has been dead for weeks does not become newsworthy
+    # twelve times a day, and a job that goes red on every 2-hourly run
+    # would recreate the alarm fatigue this whole tripwire exists to
+    # cure. The sweep itself still RUNS on every trigger — only the
+    # issue-management and the run-failure are held to this cadence —
+    # so the verdict is in the log of every ci-health run and the
+    # detector cannot go quiet if this cron string ever drifts.
+    - cron: '47 9 * * *'
   workflow_dispatch: {}
 
+# Least privilege per JOB (k6-weekly.yml's pattern): the two tripwires
+# each read run history and manage their own tracking issue, and neither
+# needs a token any wider than that at workflow level.
 permissions:
   contents: read
-  actions: read
-  issues: write
 
 concurrency:
   group: ci-health
@@ -41,6 +71,10 @@ jobs:
     name: main CI red tripwire
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    permissions:
+      contents: read
+      actions: read
+      issues: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
@@ -106,4 +140,126 @@ jobs:
         if: steps.assess.outputs.verdict_rc != '0'
         run: |
           echo "::error::main CI has been red past threshold — see the ci-health tracking issue."
+          exit 1
+
+  check-scheduled-controls:
+    name: dead scheduled-control tripwire
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      actions: read
+      issues: write
+    env:
+      ISSUE_LABEL: dead-control
+      ISSUE_TITLE: "Scheduled controls: a control has stopped reporting"
+      # The one cron that owns the issue-management + fail-the-run
+      # surfaces, referenced by the three `if:` gates below rather than
+      # written out three times. scripts/ci/check-scheduled-controls-test.sh
+      # asserts this value appears in the on: schedule block above and
+      # that the gates read it from here, so it cannot drift into never
+      # matching and silently retire the job.
+      DEAD_CONTROL_CRON: '47 9 * * *'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Assess every scheduled control
+        # Runs on EVERY trigger, including the 2-hourly main-CI cron, so
+        # the sweep's verdict is always in a log somewhere even if the
+        # cadence gate below stops matching.
+        id: assess
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          SELF_WORKFLOW_FILE: ci-health.yml
+        run: |
+          set -euo pipefail
+          set +e
+          report="$(./scripts/ci/check-scheduled-controls.sh 2>&1)"
+          rc=$?
+          set -e
+          echo "$report"
+          # No early-exit consumer on the pipe: the script prints exactly
+          # one scheduled-controls-dead: line, and a trailing head -1
+          # under pipefail is the SIGPIPE shape lint-shell-sigpipe.sh
+          # rejects everywhere else in the repo.
+          dead="$(printf '%s\n' "$report" | sed -n 's/^scheduled-controls-dead: //p')"
+          {
+            echo "verdict_rc=${rc}"
+            echo "dead=${dead}"
+            echo "report<<REPORT_EOF"
+            echo "$report"
+            echo "REPORT_EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Open or update the tracking issue (a control has stopped reporting)
+        if: >-
+          steps.assess.outputs.verdict_rc != '0' &&
+          (github.event_name != 'schedule' || github.event.schedule == env.DEAD_CONTROL_CRON)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          REPORT: ${{ steps.assess.outputs.report }}
+          DEAD: ${{ steps.assess.outputs.dead }}
+        run: |
+          set -euo pipefail
+          # Ensure the label exists (idempotent).
+          gh label create "$ISSUE_LABEL" --color B60205 \
+            --description "a scheduled workflow has produced no passing scheduled run past its threshold" 2>/dev/null || true
+
+          # The body carries the current sweep; the fingerprint is the
+          # set of dead controls. The body is REWRITTEN every day rather
+          # than commented, because an unreconciled control stays dead
+          # for weeks and a daily comment would bury the one comment
+          # that matters — the day a SECOND control dies. That change of
+          # set is what gets a comment (and therefore a notification).
+          fingerprint="<!-- dead-controls: ${DEAD} -->"
+          # Tilde fences, not backtick ones: a literal backtick inside
+          # the format string reads to SC2016 as an unexpanded command
+          # substitution, and markdown treats the two fences the same.
+          body="$(printf '%s\n\n~~~\n%s\n~~~\n\n---\n_Auto-managed by the ci-health workflow (run %s). Closes automatically once every scheduled control has passed within its threshold._\n' \
+            "$fingerprint" "$REPORT" "${GITHUB_RUN_ID:-?}")"
+
+          existing="$(gh issue list --label "$ISSUE_LABEL" --state open \
+            --json number --jq '.[0].number' || true)"
+          if [ -n "$existing" ] && [ "$existing" != "null" ]; then
+            prev="$(gh issue view "$existing" --json body --jq '.body' || true)"
+            gh issue edit "$existing" --body "$body"
+            if ! printf '%s' "$prev" | grep -qF "$fingerprint"; then
+              gh issue comment "$existing" --body "The set of non-reporting scheduled controls changed: \`${DEAD}\`."
+              echo "Dead-control set changed on issue #$existing."
+            fi
+            echo "Updated dead-control issue #$existing."
+          else
+            gh issue create --title "$ISSUE_TITLE" --label "$ISSUE_LABEL" --body "$body"
+            echo "Opened new dead-control issue."
+          fi
+
+      - name: Close the tracking issue (every control is reporting)
+        if: >-
+          steps.assess.outputs.verdict_rc == '0' &&
+          (github.event_name != 'schedule' || github.event.schedule == env.DEAD_CONTROL_CRON)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          for n in $(gh issue list --label "$ISSUE_LABEL" --state open \
+              --json number --jq '.[].number' || true); do
+            gh issue close "$n" --comment "Every scheduled control has passed within its threshold — ci-health closing automatically."
+            echo "Closed dead-control issue #$n."
+          done
+
+      - name: Fail the run if a scheduled control has stopped reporting
+        if: >-
+          steps.assess.outputs.verdict_rc != '0' &&
+          (github.event_name != 'schedule' || github.event.schedule == env.DEAD_CONTROL_CRON)
+        # DEAD rides in `env:` rather than being interpolated into the
+        # shell — the same rule ansible-drift.yml's steps follow (F-1298).
+        env:
+          DEAD: ${{ steps.assess.outputs.dead }}
+        run: |
+          echo "::error::a scheduled control has produced no passing scheduled run past its threshold (${DEAD}) — see the dead-control tracking issue."
           exit 1

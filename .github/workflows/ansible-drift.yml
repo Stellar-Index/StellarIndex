@@ -19,20 +19,13 @@ name: ansible-drift
 #   - R1_INVENTORY_B64        (base64 of configs/ansible/inventory/r1.yml —
 #                              see the OPERATOR ACTION block immediately below)
 #
-# ════════════════════════════════════════════════════════════════════════
-# OPERATOR ACTION REQUIRED BEFORE MERGING — R1_INVENTORY_B64 (C6-041)
-# ════════════════════════════════════════════════════════════════════════
-# configs/ansible/inventory/r1.yml is no longer tracked (it carried the
-# production host IP, the world-open `allowed_ssh_cidrs`, disk serials and
-# the operator SSH pubkey in a PUBLIC repository). This workflow now
-# materializes it from an Actions secret, exactly as it already does for
-# the vault. THIS WORKFLOW IS RED UNTIL THAT SECRET EXISTS.
-#
-# Create it FIRST, from a machine holding the working-tree copy:
-#
-#     base64 -w0 configs/ansible/inventory/r1.yml   # macOS: base64 -i <file>
-#     # → repo Settings → Secrets and variables → Actions → New secret
-#     #   Name: R1_INVENTORY_B64
+# R1_INVENTORY_B64 (C6-041). configs/ansible/inventory/r1.yml is not
+# tracked — it carried the production host IP, the world-open
+# `allowed_ssh_cidrs`, disk serials and the operator SSH pubkey in a
+# PUBLIC repository — so this workflow materializes it from an Actions
+# secret, exactly as it does the vault. The secret has existed since
+# 2026-08-24; recreate it from the working-tree copy with
+# `base64 -w0 configs/ansible/inventory/r1.yml` (macOS: `base64 -i`).
 #
 # HISTORY IS NOT REWRITTEN by the untracking. Every value that file ever
 # held is still readable from any clone via `git log -p --
@@ -51,20 +44,43 @@ name: ansible-drift
 # (ANSIBLE_VAULT_PASSWORD / ANSIBLE_VAULT_FILE_B64 on 2026-07-27;
 # R1_INVENTORY_B64 / R1_SSH_KNOWN_HOSTS on 2026-08-24), and the workflow
 # now runs end-to-end and produces a real drift verdict (playbook dry-run
-# reaches PLAY RECAP, unreachable=0). ⇒ From 2026-08-24 on, a FAILURE here
+# reaches PLAY RECAP, unreachable=0). ⇒ From 2026-07-27 on, a FAILURE here
 # is a GENUINE DRIFT signal (host≠codified: e.g. a `changed>0` diff or a
 # missing systemd unit), NOT a credential problem — reconcile r1 (or the
 # playbook), do not assume the secrets lapsed again. The "Vault password"
 # step still fails fast with an explicit message if a secret is ever unset
 # again (see the missing-secret guard below).
 #
+# "RED ON EVERY SCHEDULE, GREEN ON DISPATCH" IS NOT A SCHEDULED-CONTEXT
+# DIFFERENCE (#496, measured 2026-09-07). Every scheduled run since
+# 2026-07-27 reached PLAY RECAP with unreachable=0 — the credentials are
+# present under `schedule` exactly as under `workflow_dispatch`, and the
+# `R1_INVENTORY_B64 is unset` lines in those logs are the shell ECHOING
+# the guard's source, not the guard firing. The scheduled runs fail
+# because they find real drift (changed=70, 7, 10, 21, 8 on 07-27, 08-03,
+# 08-17, 08-31, 09-07) or a playbook task error (08-10, 08-24). The green
+# dispatches are green because of WHEN they run: each is the last of a
+# burst an operator fires minutes after applying config to r1, so the
+# host is momentarily in step. Repo config then moves on and the next
+# Monday's run finds the week's worth that was never applied. Reading
+# this pattern as "a secret the schedule cannot see" sends the
+# investigation to Actions settings instead of to `deploy-binary.yml
+# ships binaries, nothing ships config`.
+#
 # SCHEDULING: the "this cron has never fired" claim that used to live here
 # was wrong and has been removed — `gh run list --workflow=ansible-drift.yml`
-# shows real schedule-triggered runs (e.g. 2026-07-20T09:35 UTC), all
-# failing at the step above, not silently absent. Treating "broken guard"
-# as "cron never fires" would have sent the next investigation down the
-# wrong path (GitHub Actions scheduling config) instead of the real one
-# (the two vault secrets above).
+# shows real schedule-triggered runs (e.g. 2026-07-20T09:35 UTC), not
+# silently absent ones. Treating "broken guard" as "cron never fires"
+# would have sent the next investigation down the wrong path (GitHub
+# Actions scheduling config) instead of the real one.
+#
+# A GREEN RUN MEANS "codified = live", ON EVERY PATH. Apply runs used to
+# skip the verdict step, so `apply=true` concluded `success` without
+# checking anything (run 33418645334, 2026-08-31) — and any liveness
+# watchdog reading this workflow's run history counted that as proof the
+# detector works. An apply now re-runs the dry-run and renders the
+# verdict on the result, which also makes it prove convergence rather
+# than merely assert it.
 
 on:
   schedule:
@@ -87,7 +103,9 @@ permissions:
 jobs:
   drift-check:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # An apply run is two full playbook passes (the apply, then the
+    # dry-run that renders its verdict); one pass has measured ~12 min.
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
@@ -233,16 +251,26 @@ jobs:
           if [ "${APPLY:-false}" = "true" ]; then
             echo "::warning::APPLY MODE — this run MUTATES r1 and restarts the indexer, aggregator and api."
             ansible-playbook -i inventory/r1.yml playbooks/archival-node.yml \
-              --diff | tee /tmp/drift.out
-          else
-            ansible-playbook -i inventory/r1.yml playbooks/archival-node.yml \
-              --check --diff | tee /tmp/drift.out
+              --diff | tee /tmp/apply.out
+            echo "::notice::apply finished — re-running the dry-run so this run still renders a verdict."
           fi
+          # ALWAYS ends on a --check pass, and the verdict below always
+          # reads it. An apply that leaves the host out of step (a task
+          # that did not converge, a hand edit the role does not own)
+          # now fails the run instead of concluding success without
+          # having checked anything.
+          ansible-playbook -i inventory/r1.yml playbooks/archival-node.yml \
+            --check --diff | tee /tmp/drift.out
 
       - name: Fail on drift
-        # An APPLY run is expected to report changed>0 — that is the point.
-        # Only the detector arm renders a verdict.
-        if: inputs.apply != true
+        # Runs on EVERY path, apply included: the step above always ends
+        # on a `--check` pass, so an apply run is judged on whether it
+        # actually converged r1 rather than on having been attempted.
+        # This is also what makes a green run of this workflow usable as
+        # evidence by the dead-control sweep in ci-health.yml (#496) —
+        # a skipped verdict step and a passing one are indistinguishable
+        # in run history.
+        #
         # OBS-drift (audit-2026-07-23): the verdict used to be
         # `[ "${CHANGED:-999}" -gt 13 ]` — thirteen UNNAMED changed
         # tasks passed as "codified = live", justified by a one-line
@@ -263,11 +291,11 @@ jobs:
         # (scripts/ci/lint-baseline-growth.sh) — an auditable act with
         # a task name attached, unlike a `13` → `14`.
         #
-        # FIRST RUN AFTER THE VAULT SECRETS ARE RESTORED: expect this to
-        # be red. No verdict has been produced since the rotation
-        # (CID-24), so the baseline was seeded from the runbook's
-        # 2026-07-06 reconcile rather than from an observed run. The
-        # failure will NAME the tasks — confirm each is genuinely
+        # The baseline has since been validated against live runs
+        # (2026-09-07 — see the note at the top of
+        # scripts/ci/ansible-drift.baseline). Its one entry is real and
+        # was observed both firing and correctly staying silent. When
+        # this step is red it is NAMING tasks: confirm each is genuinely
         # non-idempotent (and add it with a reason) or codify/apply it.
         # Do not restore a numeric allowance to clear the red.
         run: bash scripts/ci/check-ansible-drift.sh /tmp/drift.out
