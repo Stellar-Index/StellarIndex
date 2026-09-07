@@ -9,6 +9,104 @@ set -euo pipefail
 
 cd "$(dirname "$0")/../.."
 
+# ── Preconditions: five seconds, before anything expensive ───────────────
+#
+# Both failed local verify runs on 2026-09-07 died about ten minutes into a
+# twelve-minute sequence, in sections unrelated to the change under test,
+# on a missing install: `openapi-typescript: command not found` (web/explorer
+# had no node_modules), then `tsc: command not found` (web/status had none).
+# The conditions guarding those sections test for pnpm-lock.yaml, which is
+# TRACKED and therefore always present — node_modules is not tracked and was
+# never checked at all.
+#
+# This block changes nothing about WHAT any check below asserts. It resolves
+# the preconditions those checks already depend on, in one pass, reports
+# every gap at once, and stops before the first slow gate. Each condition
+# below is the same condition as the section that needs it, so a gap named
+# here is a gate that would fail later, and a gap absent here is not.
+#
+# Deferrable tools are only listed, never failed on — except under
+# VERIFY_FAIL_ON_SKIP=1 (what `make prepush` sets), where defer_check exits 1
+# and the identical verdict is simply reached ten minutes sooner.
+preflight_gaps=()
+preflight_defers=()
+gap()   { preflight_gaps+=("$1"); }
+willdefer() {
+    if [ "${VERIFY_FAIL_ON_SKIP:-0}" = "1" ]; then gap "$1"; else preflight_defers+=("$1"); fi
+}
+
+echo "=== Preconditions ==="
+# --show-current EXITS ZERO with empty output on a detached HEAD, so the
+# branch has to be defaulted from the value, not from the exit code.
+verify_branch="$(git branch --show-current 2>/dev/null || true)"
+printf 'verify: HEAD=%s branch=%s tree=%s\n' \
+    "$(git rev-parse --short=12 HEAD 2>/dev/null || echo unknown)" \
+    "${verify_branch:-<detached>}" \
+    "$([ -z "$(git status --porcelain 2>/dev/null)" ] && echo clean || echo dirty)"
+
+for tool in git make go python3 tar; do
+    command -v "$tool" >/dev/null 2>&1 || gap "${tool} is not on PATH"
+done
+
+# make fmt and make lint call these out of $(GOBIN) by absolute path, so
+# PATH is irrelevant and `command -v` would report a false miss.
+# `|| true` because this file runs under set -e: with go absent, the bare
+# substitution aborts the script at 127 with stderr suppressed, and the gap
+# list below — which names the missing go — is never printed.
+verify_go_bin="$(go env GOPATH 2>/dev/null || true)/bin"
+for tool in gofumpt goimports golangci-lint; do
+    [ -x "${verify_go_bin}/${tool}" ] || gap "${verify_go_bin}/${tool} is absent (make fmt / make lint call it by absolute path)"
+done
+
+# node_modules, per app, under exactly the conditions that make each app's
+# section run. The test is the executable each gate invokes, because a
+# half-finished install leaves the directory present and the binary absent.
+verify_have_pnpm_explorer=0
+if command -v pnpm >/dev/null 2>&1 && [ -f web/explorer/pnpm-lock.yaml ]; then verify_have_pnpm_explorer=1; fi
+if command -v node >/dev/null 2>&1 && command -v npx >/dev/null 2>&1; then
+    [ -x web/explorer/node_modules/.bin/openapi-typescript ] || \
+        gap "web/explorer/node_modules/.bin/openapi-typescript is absent — 'make web-generate-api' in the generated-artifact drift check needs it"
+elif [ "$verify_have_pnpm_explorer" = 1 ]; then
+    [ -x web/explorer/node_modules/.bin/openapi-typescript ] || \
+        gap "web/explorer/node_modules is absent — the showcase typecheck/lint/test/build sections need it"
+fi
+if [ "$verify_have_pnpm_explorer" = 1 ]; then
+    [ -x web/explorer/node_modules/.bin/tsc ] || \
+        gap "web/explorer/node_modules/.bin/tsc is absent — 'make web-typecheck' needs it"
+fi
+if command -v pnpm >/dev/null 2>&1 && [ -f web/status/pnpm-lock.yaml ]; then
+    [ -x web/status/node_modules/.bin/tsc ] || \
+        gap "web/status/node_modules/.bin/tsc is absent — 'make status-typecheck' needs it"
+fi
+
+# The deferrable set, resolved with the same conditions their sections use.
+command -v promtool >/dev/null 2>&1 || willdefer "Monitoring (promtool is not installed)"
+command -v amtool >/dev/null 2>&1 || willdefer "Alertmanager config (amtool is not installed)"
+command -v govulncheck >/dev/null 2>&1 || willdefer "Vuln (govulncheck is not installed)"
+command -v gitleaks >/dev/null 2>&1 || willdefer "Secrets (gitleaks is not installed)"
+if ! { command -v node >/dev/null 2>&1 && command -v npx >/dev/null 2>&1; }; then
+    willdefer "Generated-artifact drift (node or npx is not installed)"
+fi
+if ! { command -v pnpm >/dev/null 2>&1 && [ -f web/explorer/pnpm-lock.yaml ]; }; then
+    willdefer "Showcase (pnpm or web/explorer/pnpm-lock.yaml is unavailable)"
+fi
+if ! { command -v ansible-playbook >/dev/null 2>&1 && { [ -n "${DEPLOY_SYNC_CONNECTION:-}" ] || grep -q 'GNU tar' <<<"$(tar --version 2>/dev/null)"; }; }; then
+    willdefer "Deploy migrations-sync self-test (needs ansible-playbook and GNU tar; use VERIFY_PROFILE=container on macOS)"
+fi
+
+if [ "${#preflight_defers[@]}" -gt 0 ]; then
+    printf 'verify: %d check(s) will be deferred:\n' "${#preflight_defers[@]}"
+    for d in "${preflight_defers[@]}"; do printf '  - %s\n' "$d"; done
+fi
+if [ "${#preflight_gaps[@]}" -gt 0 ]; then
+    printf 'verify: FAIL — %d precondition(s) missing. Every one of them is listed here rather than one per run:\n' "${#preflight_gaps[@]}" >&2
+    for g in "${preflight_gaps[@]}"; do printf '  - %s\n' "$g" >&2; done
+    echo "" >&2
+    echo "Fix them all in one command:  make bootstrap-worktree" >&2
+    exit 1
+fi
+echo "verify: preconditions met"
+
 deferred_checks=0
 defer_check() {
     local label="$1"
