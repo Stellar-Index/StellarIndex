@@ -47,17 +47,22 @@ describe('fetchPriceDirect / fetchPrice — AGT-06 real flags.stale propagation'
   });
 
   it('a triangulated price is marked stale when either leg is stale', async () => {
-    let call = 0;
     vi.stubGlobal(
       'fetch',
-      vi.fn(async () => {
-        call += 1;
-        // First direct-quote attempt 404s (forces triangulation); the two
-        // triangulation legs follow, one of them stale.
-        if (call === 1) {
+      vi.fn(async (input: RequestInfo | URL) => {
+        // Keyed on the REQUEST, never on arrival order: fetchPrice races the
+        // two triangulation legs through Promise.all, so a counter marks
+        // whichever leg's continuation happens to run first. Under load that
+        // is the wrong one, and the test fails claiming the fix regressed it.
+        const url = String(input instanceof Request ? input.url : input);
+        const q = new URL(url, 'http://x').searchParams;
+        const asset = q.get('asset') ?? '';
+        const quote = q.get('quote') ?? '';
+        // The direct asset->USD quote 404s, which is what forces triangulation.
+        if (quote === 'fiat:USD' && asset !== 'native') {
           return new Response('not found', { status: 404 });
         }
-        const stale = call === 2; // asset/native leg is stale
+        const stale = quote === 'native'; // the asset/native leg is the stale one
         return envelopeResponse({
           data: { price: '2.0', quote: 'native' },
           as_of: new Date().toISOString(),
