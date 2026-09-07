@@ -4347,6 +4347,15 @@ export interface paths {
          *     started, how many distinct accounts those covered, and how many
          *     revocations it has issued.
          *
+         *     ONLY OPERATIONS THAT APPLIED ARE COUNTED. Each operation is joined to
+         *     its transaction and kept only where that transaction SUCCEEDED, so
+         *     operations submitted in failed transactions are excluded from every
+         *     figure and from the ranking — nothing about them happened, so no
+         *     reserve was paid and no arrangement was opened. This is not a rounding
+         *     adjustment: measured across the whole archive, 10.8% of sponsorship
+         *     operations sit in failed transactions, and counting them inflated
+         *     `revocations_issued` to better than twice its true value.
+         *
          *     EVERYTHING HERE IS HISTORY, NOT LIVE STATE. These figures come from
          *     replaying sponsorship OPERATIONS, so they say what an account has
          *     done, never what is currently in force. An arrangement also lapses

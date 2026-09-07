@@ -70,7 +70,7 @@ func TestSponsorsRollupScansOperationsOnce(t *testing.T) {
 	if !strings.Contains(stmt, "argMax(") {
 		t.Error("the operations pass must collapse ReplacingMergeTree duplicates")
 	}
-	if !strings.Contains(stmt, "GROUP BY ledger_seq, tx_index, op_index") {
+	if !strings.Contains(stmt, "GROUP BY o.ledger_seq, o.tx_index, o.op_index") {
 		t.Error("dedupe must group by stellar.operations' full ORDER BY key")
 	}
 	for _, op := range []string{opBeginSponsoring, opEndSponsoring, opRevokeSponsoring} {
@@ -78,6 +78,104 @@ func TestSponsorsRollupScansOperationsOnce(t *testing.T) {
 			t.Errorf("the operations pass does not select %s", op)
 		}
 	}
+}
+
+// TestSponsorsRollupCountsOnlyAppliedOperations is the guard for #494: a
+// served league table that counted sponsorship arrangements which never
+// took effect.
+//
+// stellar.operations carries no success flag and never will — the lake
+// stores what the ledger CONTAINED, so extractOps keeps the operations of
+// failed transactions by design. Measured on r1 2026-09-07, 2,426,813 of
+// the archive's 22,413,991 sponsorship operations (10.8%) sit in failed
+// transactions. Ungated the board served 11,162,397 sponsorships_started
+// and 87,193 revocations_issued against true figures of 9,972,887 and
+// 39,492; 323 of its 2,740 ranked accounts had every operation they were
+// credited with inside a failed transaction, one was credited with 27,528
+// revocations against a real 63, and 2,408 of the 2,417 rows that survive
+// the correction were ranked in the wrong place.
+//
+// The sibling cycle gates by pairing the operation with an APPLIED EFFECT
+// (a CAP-67 transfer movement, which a failed transaction cannot
+// produce). That route does not exist here: under CAP-33 the
+// is-sponsoring-future-reserves-for relationship lives only for the
+// duration of the transaction and is written to no ledger entry, so 0 of
+// 4,745 Begin and End operations over ledgers 63,000,000-63,010,000 have
+// any stellar.ledger_entry_changes row at their own operation identity,
+// the 4,294 that applied included. The transaction's own success flag is
+// the only evidence of application there is.
+//
+// Three properties make that gate sound, and each is pinned here because
+// dropping any one of them puts wrong numbers on a served board rather
+// than an error in a log:
+//
+//   - the join key is the FULL transaction identity, which is also
+//     stellar.transactions' whole ORDER BY key. A looser key would gate an
+//     operation on some other transaction's outcome.
+//   - the flag is resolved with argMax over the version column, not read
+//     off whichever duplicate row the scan reached first. Duplicates are
+//     not hypothetical: over ledgers 63,000,000-63,099,999 every one of
+//     that range's 33,380,486 distinct (ledger_seq, tx_index) keys carries
+//     more than one row.
+//   - the build side is PINNED. The window's transactions outnumber its
+//     sponsorship operations by roughly 460 to 1 (519,663,457 against
+//     1,129,122 in partition 63), so a planner estimate that swapped them
+//     would build a hash table over half a billion rows in a step that
+//     measures 1.28 GiB pinned.
+func TestSponsorsRollupCountsOnlyAppliedOperations(t *testing.T) {
+	stmt := sponsorsOperationsStatement(t)
+
+	if !strings.Contains(stmt, "stellar.transactions") {
+		t.Fatalf("the pass over stellar.operations does not join stellar.transactions, so it "+
+			"counts sponsorship operations from FAILED transactions — arrangements that "+
+			"never took effect, ranked as though they had:\n%s", stmt)
+	}
+	if !strings.Contains(stmt, "HAVING argMax(t.successful, t.ingested_at) = 1") {
+		t.Error("the success flag must be resolved with argMax over ingested_at, the version " +
+			"column, so an un-merged duplicate row cannot decide whether an arrangement counts")
+	}
+	if strings.Contains(stmt, "t.successful = 1") {
+		t.Error("reading `successful` off a raw row trusts ReplacingMergeTree dedupe that has " +
+			"not happened; resolve it with argMax over ingested_at instead")
+	}
+	if !strings.Contains(stmt, "ON t.ledger_seq = o.ledger_seq AND t.tx_index = o.tx_index") {
+		t.Error("the gate's join key must be the full (ledger_seq, tx_index) transaction " +
+			"identity, or an operation is gated on another transaction's outcome")
+	}
+	if !strings.Contains(stmt, "WHERE t.ledger_seq BETWEEN ? AND ?") {
+		t.Error("the transactions side must carry its own window predicate; a join condition " +
+			"prunes neither side's partitions, so without it every window rescans the archive")
+	}
+	if !strings.Contains(stmt, "query_plan_join_swap_table = 0") {
+		t.Error("the build side must be pinned to the window's sponsorship operations; " +
+			"unpinned, a planner estimate can build the hash table over the transactions")
+	}
+	// The projection's own columns still come from the operation. The
+	// transaction contributes the verdict and nothing else — taking a
+	// sponsor identity from it would attribute every arrangement in a
+	// transaction to that transaction's fee payer.
+	for _, col := range []string{"t.source_account", "t.fee_charged", "t.memo"} {
+		if strings.Contains(stmt, col) {
+			t.Errorf("the transactions side selects %q; it may contribute the success verdict "+
+				"only:\n%s", col, stmt)
+		}
+	}
+}
+
+// sponsorsOperationsStatement returns the cycle's single pass over
+// stellar.operations.
+func sponsorsOperationsStatement(t *testing.T) string {
+	t.Helper()
+	var found []string
+	for _, step := range sponsorsRollupStatements {
+		if strings.Contains(step.sql, "stellar.operations") {
+			found = append(found, step.sql)
+		}
+	}
+	if len(found) != 1 {
+		t.Fatalf("found %d statements touching stellar.operations, want exactly 1", len(found))
+	}
+	return found[0]
 }
 
 // TestSponsorsRollupExcludesAmbiguousAttribution: attribution assumes a

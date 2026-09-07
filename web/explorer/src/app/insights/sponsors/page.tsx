@@ -57,8 +57,17 @@ export default function SponsorsPage() {
           Every number here is derived by replaying sponsorship{' '}
           <strong>operations</strong> — the begin/end pair that opens an
           arrangement, and the revocations that end one. That tells you exactly
-          what an account has done, and it is complete: the board covers every
-          sponsorship operation since protocol 14 introduced the feature.
+          what an account has done: the board covers every sponsorship operation
+          that <strong>took effect</strong> since protocol 14 introduced the
+          feature.
+        </p>
+        <p>
+          Operations submitted in transactions that <strong>failed</strong> are
+          excluded, because nothing about them ever happened — no reserve was
+          paid and no arrangement was opened. They are a real share of the
+          record rather than a rounding error: about one sponsorship operation
+          in nine on the network sits in a failed transaction, and a board that
+          counted them would rank accounts on work the ledger rejected.
         </p>
         <p>
           What it deliberately does <strong>not</strong> tell you is who is

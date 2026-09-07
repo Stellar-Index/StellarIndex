@@ -14,9 +14,21 @@ import (
 // lakeArchiveTables are the append-only, ledger-partitioned archives a
 // rollup cycle reads. Their row counts are functions of chain history —
 // 10,309,271,697 rows / 583.54 GiB and 24,736,312,156 rows / 2.18 TiB on
-// r1 2026-09-06 — so a statement that reads one of them without a ledger
-// window has a cost nothing bounds.
-var lakeArchiveTables = []string{"stellar.account_movements", "stellar.operations"}
+// r1 2026-09-06, and stellar.transactions carried 519,663,457 rows in
+// partition 63 alone on 2026-09-07 — so a statement that reads one of
+// them without a ledger window has a cost nothing bounds.
+var lakeArchiveTables = []string{
+	"stellar.account_movements",
+	"stellar.operations",
+	"stellar.transactions",
+}
+
+// appliedEffectSources are the lake tables that hold a row only where an
+// effect was actually APPLIED to the ledger: a CAP-67 movement is written
+// from the transaction meta, so a failed transaction produces none. A
+// board that pairs an operation with one of these has gated itself on
+// transaction success through the pairing.
+var appliedEffectSources = []string{"stellar.account_movements"}
 
 // rollupCycles is every recompute cycle this package ships, so a cycle
 // added later inherits the walk guards below rather than having to
@@ -213,6 +225,72 @@ func TestRollupCyclesDeclareTheirWindowBinds(t *testing.T) {
 					t.Errorf("walked step %d carries %d placeholder(s) for %d window predicate(s); "+
 						"a stray ? shifts every bound after it:\n%s", i+1, got, pairs, step.sql)
 				}
+			}
+		})
+	}
+}
+
+// TestRollupCyclesGateOperationsOnTransactionSuccess is the guard for the
+// bug class both boards shipped with: counting operations that never took
+// effect.
+//
+// stellar.operations has NO success gate. The lake stores what the ledger
+// contained rather than only what succeeded, so extractOps retains the
+// operations of failed transactions by design (extract.go's Ops arm). A
+// league table built straight off that table therefore credits accounts
+// for work that was rolled back — measured on r1 2026-09-07, 10.8% of the
+// archive's sponsorship operations and about 8% of its CreateAccount
+// operations sit in failed transactions, and the served revocation count
+// was better than twice its true value (#493, #494).
+//
+// So any statement reading stellar.operations must establish application
+// one of the two ways this repo has evidence for: pair the operation with
+// an applied effect that a failed transaction cannot produce, or join its
+// transaction and read the success flag. A third statement that reads the
+// table bare fails here rather than on a served board.
+//
+// WHAT THIS GUARD DOES NOT REACH, stated so the next reader does not
+// mistake its silence for a verdict: it walks rollupCycles(), so it sees
+// the []rollupStep cycles and nothing else. Five other readers of
+// stellar.operations are outside it and are ungated today —
+// explorer_reader.go, sdex_op_reader.go (which gates itself, via a
+// successful-tx IN-set), contract_call_op_reader.go,
+// classic_movement_reader.go and participant_backfill.go. Those serve
+// per-entity detail or feed a decoder rather than ranking a board, and an
+// unfiltered read is plausibly correct for them — a transaction's failed
+// operations are part of that transaction's honest history, and
+// /v1/accounts/{g}/operations stamps transaction_successful per row. The
+// point is that nobody has ASKED the question of them, not that the
+// answer is known to be fine.
+func TestRollupCyclesGateOperationsOnTransactionSuccess(t *testing.T) {
+	for name, steps := range rollupCycles() {
+		t.Run(name, func(t *testing.T) {
+			reading := 0
+			for i, step := range steps {
+				if !strings.Contains(step.sql, "stellar.operations") {
+					continue
+				}
+				reading++
+				if strings.Contains(step.sql, "stellar.transactions") &&
+					strings.Contains(step.sql, "successful") {
+					continue
+				}
+				gated := false
+				for _, src := range appliedEffectSources {
+					if strings.Contains(step.sql, src) {
+						gated = true
+					}
+				}
+				if !gated {
+					t.Errorf("step %d reads stellar.operations without gating on transaction "+
+						"success — it counts operations from FAILED transactions, which that "+
+						"table retains by design. Pair the operation with an applied effect "+
+						"(%v) or join stellar.transactions and read `successful`:\n%s",
+						i+1, appliedEffectSources, step.sql)
+				}
+			}
+			if reading == 0 {
+				t.Error("no step reads stellar.operations; this guard is asserting nothing")
 			}
 		})
 	}

@@ -12,6 +12,35 @@
 -- What it cannot answer is written into the API description and the
 -- page rather than papered over.
 --
+-- ONLY THE OPERATIONS THAT APPLIED. stellar.operations has no success
+-- gate: the lake stores what the ledger CONTAINED, so it retains the
+-- operations of transactions that FAILED, by design. A sponsorship
+-- arrangement inside a failed transaction never took effect, so the
+-- fill joins each operation to its transaction on the full (ledger_seq,
+-- tx_index) identity and keeps it only where that transaction succeeded.
+-- Measured on r1 2026-09-07, 2,426,813 of the archive's 22,413,991
+-- sponsorship operations (10.8%) sit in failed transactions, rising to
+-- 61.6% of partition 39; ungated the board served 11,162,397
+-- sponsorships_started and 87,193 revocations_issued against true
+-- figures of 9,972,887 and 39,492, ranked 323 accounts whose every
+-- credited operation had failed, and placed 2,408 of the other 2,417 at
+-- the wrong rank (#494).
+--
+-- WHY THE TRANSACTION AND NOT AN APPLIED EFFECT. The sibling creator
+-- board gates by pairing its operation with a CAP-67 transfer movement,
+-- which a failed transaction cannot produce, so the pairing IS the
+-- gate. Sponsorship has no such effect to pair with: under CAP-33 the
+-- is-sponsoring-future-reserves-for relationship lives only for the
+-- duration of the transaction and is written to no ledger entry.
+-- Measured on r1 2026-09-07 over ledgers 63,000,000-63,010,000, 0 of
+-- 4,745 Begin and End operations have any stellar.ledger_entry_changes
+-- row at their own (ledger_seq, tx_hash, op_index) — the 4,294 that DID
+-- apply included. Only Revoke leaves an entry change (2 of 2), and
+-- finding which entry needs the body_xdr decode this rollup exists to
+-- avoid. The transaction's own successful flag is the only evidence of
+-- application available for the two operation types that produce
+-- sponsorships_started.
+--
 -- THE DERIVATION CARRIES NO XDR DECODE. Within a transaction a
 -- BeginSponsoringFutureReserves is sourced by the SPONSOR and names the
 -- sponsored account in its body; the matching
@@ -51,26 +80,49 @@
 -- 32,747,295. The API and page present that as the feature's own
 -- genesis, not as a gap in what was indexed.
 
--- Narrow, deduplicated projection of every sponsorship operation. Not
--- served; it exists so the big table is read ONCE per cycle and every
--- served figure derives from the same materialized rows.
+-- Narrow, deduplicated projection of every APPLIED sponsorship
+-- operation. Not served; it exists so the big table is read ONCE per
+-- cycle and every served figure derives from the same materialized rows.
 -- stellar.operations is a ReplacingMergeTree, so duplicates are
--- collapsed over its full ORDER BY key rather than trusted away.
+-- collapsed over its full ORDER BY key rather than trusted away — and so
+-- is stellar.transactions, whose duplicates are present in bulk: over
+-- ledgers 63,000,000-63,099,999 every one of that range's 33,380,486
+-- distinct (ledger_seq, tx_index) keys carries more than one row. The
+-- fill therefore groups by the operation identity, which absorbs the
+-- multiplication a raw join would introduce, and resolves the success
+-- flag with argMax over ingested_at rather than reading it off whichever
+-- duplicate the scan reached first.
 --
 -- THE PASS THAT FILLS IT IS WALKED, one 1M-ledger lake partition per
 -- statement. Unwalked it is a single indivisible statement over a
--- 24.74-billion-row, 2.18 TiB table, and the two things it holds — its
--- wall time and its dedupe state, one argMax per sponsorship operation
--- in all of history — both grow with the archive. Measured on r1
--- 2026-09-06 at max_threads=2, one partition costs 18.1 s / 165.76 MiB
--- (partition 40, 186,968 operations) or 24.7 s / 819.23 MiB (partition
--- 62, 1,073,991 operations): a 5.7x growth in state count across 22
--- partitions, against a statement cap of 7200 s inside a unit whose
--- TimeoutStartSec is 150 min. Walking makes each statement's cost a
--- function of one partition, and per-window progress visible in the
--- journal rather than only success or failure at the end. Grouping per
--- window is exact: the partition expression is a function of ledger_seq,
--- which leads the ORDER BY, so no duplicate group straddles a window.
+-- 24.74-billion-row, 2.18 TiB archive joined to a second one larger
+-- still, and everything it holds grows with the chain: its wall time,
+-- its dedupe state (one argMax per sponsorship operation in all of
+-- history), and the join's build side. Measured on r1 2026-09-07 at
+-- max_threads=2, one gated partition costs 18.9 s / 234.85 MiB
+-- (partition 40, 164,670 applied operations), 31.5 s / 1.00 GiB
+-- (partition 62, 1,013,943), 40.7 s / 1.28 GiB (partition 63, 1,033,738)
+-- or 20.1 s / 1.68 GiB (partition 55, 2,410,901). Partition 55 is the
+-- widest by MEMORY and partition 63 the slowest — they are not the same
+-- window, and 1.68 GiB is the figure a future ceiling is sized from.
+-- Ungated the same partitions cost 143.79 MiB, 705.21 MiB, 769.67 MiB
+-- and 1.01 GiB, so the gate adds 67% at the widest. All of it sits
+-- inside a unit whose TimeoutStartSec is 150 min. Walking
+-- makes each statement's cost a function of one partition, and
+-- per-window progress visible in the journal rather than only success or
+-- failure at the end. Grouping per window is exact: both tables are
+-- PARTITION BY intDiv(ledger_seq, 1000000) with ledger_seq leading the
+-- ORDER BY, so no duplicate group straddles a window and no transaction
+-- lands in a different window from its own operations. Each side carries
+-- its OWN window predicate, because a join condition prunes neither.
+--
+-- The build side is pinned to the operations, which is the small side by
+-- 128.5 to 1 in partition 55 (2,475,607 sponsorship operations before the
+-- gate drops the failed ones, against 318,127,649 transactions) and 460 to
+-- 1 in partition 63 (1,129,122 against 519,663,457). Below sponsorship's own
+-- genesis there is no build side at all and the arm costs 0.01-0.29 s at
+-- under 6 MiB, so the 32 windows under ledger 32,747,295 add nothing
+-- measurable.
 CREATE TABLE IF NOT EXISTS stellar.account_sponsors_ops
 (
     lseq     UInt32,
