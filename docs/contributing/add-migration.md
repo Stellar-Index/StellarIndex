@@ -31,6 +31,19 @@ Reference + full rules: `migrations/README.md`.
       per-event discriminator (`event_index` or equivalent) — the `lint-pk-discriminators` CI gate
       requires it for protocol-row tables.
 - [ ] Header comment explains the *why*. `CREATE … IF NOT EXISTS` where idempotent.
+- [ ] **Every SQL command in the header is a claim, and claims get tested** —
+      `scripts/ci/lint-migration-commands.sh`. A command an operator can paste (an uppercase
+      statement verb, a terminating `;`, real SQL structure) needs a `*_test.go` that names the
+      migration file and holds a verbatim slice of the command. 0156's disarm command shipped with
+      a predicate naming the materialization hypertable where `timescaledb_information.jobs`
+      reports the aggregate's user view name, so it matched **zero rows** — and `alter_job` over an
+      empty set prints nothing and exits 0, which reads exactly like a successful disarm.
+      `internal/storage/timescale/retention_policy_test.go` is the worked example. Two other
+      dispositions exist and both are narrower than they look: prefix a form quoted as a warning
+      with `DO NOT RUN:`, or grandfather the command in
+      `scripts/ci/lint-migration-commands.baseline` with a reason and a `Baseline-Growth:` trailer.
+      **Pair every command that changes a job or a policy with a verification `SELECT`** that shows
+      the outcome, because a zero-row `alter_job` is silent success.
 - [ ] Add a row to the **"Current migrations"** table in `migrations/README.md`.
 - [ ] Refresh the checksum baseline — `./scripts/ci/lint-migration-immutability.sh --write`. New
       migrations are append-only and the gate FAILS an unbaselined file; `scripts/dev/verify.sh`

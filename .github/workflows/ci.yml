@@ -615,6 +615,50 @@ jobs:
         # baseline trips it, and a new migration added with its checksum
         # passes. A frozen-migration gate that stops tripping is worse than none.
         run: ./scripts/ci/lint-migration-immutability-test.sh
+      - name: lint-migration-commands
+        # A SQL command written into a migration HEADER is a claim, and
+        # claims get tested. 0156's disarm command shipped with a
+        # predicate naming the materialization hypertable where
+        # timescaledb_information.jobs reports the aggregate's user view
+        # name, so it matched ZERO rows — and `alter_job` over an empty
+        # set prints nothing and exits 0, which reads exactly like a
+        # successful disarm. Armed, that would have dropped 66 GB a day
+        # later. The migration BODY is executed by the integration suite;
+        # the header was prose to every gate in the tree until this one.
+        # Pre-existing commands are grandfathered (shrink-only) in
+        # scripts/ci/lint-migration-commands.baseline; a `DO NOT RUN:`
+        # marker declares a form quoted as a warning rather than offered
+        # as a recipe.
+        run: ./scripts/ci/lint-migration-commands.sh
+      - name: lint-migration-commands self-test
+        # Pins the gate against the real defect: the untested disarm
+        # command is caught, the same command with a test that names the
+        # migration and holds a slice of it passes, and a test that only
+        # NAMES the file is not coverage. Plus the prose it lives among —
+        # "DROP TABLE removes the hypertable …; CASCADE is not needed" —
+        # stays unflagged.
+        run: ./scripts/ci/lint-migration-commands-test.sh
+      - name: lint-lake-dedup
+        # stellar.transactions and stellar.operations are
+        # ReplacingMergeTree archives whose duplicates are not merged
+        # away: over ledgers 63,000,000-63,099,999 on r1 EVERY distinct
+        # (ledger_seq, tx_index) key in transactions carries more than one
+        # row and operations runs at 2.0x. Three near-misses in one day
+        # (2026-09-07) — a sponsors board inflated 176,573 -> 296,799, a
+        # verification query reporting 489,253 rows dropped that were not,
+        # and the argMax gate the shipped rollup needs. None was visible in
+        # a total. This fails an AGGREGATING read that does not collapse
+        # the table on its full identity first; per-entity detail readers
+        # are out of scope by construction.
+        run: ./scripts/ci/lint-lake-dedup.sh
+      - name: lint-lake-dedup self-test
+        # Pins the gate against the two historical defects — the naive
+        # sponsors join (caught on BOTH sides, because a join condition
+        # collapses neither) and the undeduplicated verification count —
+        # and against the shapes it must stay quiet on: the five detail
+        # readers, a max()-only rollup, a count() above a collapsing
+        # subquery, and prose.
+        run: ./scripts/ci/lint-lake-dedup-test.sh
       - name: integration-shard self-test
         # 4-way integration-suite shard (2026-08-29): pins that the shards
         # PARTITION `go test -list` exactly (every test in exactly one

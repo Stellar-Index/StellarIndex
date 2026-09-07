@@ -20,6 +20,7 @@ task-recipes.md points here rather than duplicating steps.
 | Add a Prometheus metric | [add-metric.md](add-metric.md) |
 | Add a migration | [add-migration.md](add-migration.md) |
 | Add a supply observer | [add-supply-observer.md](add-supply-observer.md) |
+| Read a duplicate-bearing lake table | [lake-reads.md](lake-reads.md) |
 
 **Before writing any new utility, check `/CAPABILITY-INVENTORY.md`** — most primitives
 (SSRF guard, HMAC sign, rate limit, cache key, SCVal/i128 decode, VWAP, XDR decode,

@@ -1,0 +1,84 @@
+# Migration-header commands that predate lint-migration-commands.sh.
+#
+# Format: `<migration-path>#<despaced-command>  <reason>`, one per line.
+# The key is printed by the gate on failure, so an entry is copied rather
+# than hand-derived. The reason field is REQUIRED.
+#
+# SHRINK-ONLY. Adding a line needs a `Baseline-Growth:` commit trailer
+# naming this file (scripts/ci/lint-baseline-growth.sh), and a line whose
+# command has gone away — or has since gained a test that names its
+# migration and holds a verbatim slice of it — is STALE and fails the
+# gate until it is deleted.
+#
+# 151 migrations predate the rule; 10 of them carry header commands, and
+# migrations/0156_prices_1m_retention.{up,down}.sql is the one already
+# covered (internal/storage/timescale/retention_policy_test.go pins its
+# arm, its disarm, its `force => true` recovery and its DO-NOT-RUN form).
+# The way to shrink this file is to write that test for the next one.
+#
+# CURRENT STATE: 46 entries across 18 migration files.
+
+# 0004_relax_trades_ledger_for_offchain.down.sql
+migrations/0004_relax_trades_ledger_for_offchain.down.sql#ALTERTABLEtradesVALIDATECONSTRAINTtrades_ledger_check;  post-apply constraint validation; predates this rule and no test names the migration
+# 0037_trades_pair_source_ts_index.up.sql
+migrations/0037_trades_pair_source_ts_index.up.sql#CREATEINDEXCONCURRENTLYtrades_pair_source_ts_idxONtrades(base_asset,quote_asset,  operator-run index build (CONCURRENTLY is illegal inside golang-migrate's transaction); predates this rule and no test names the migration
+# 0040_remove_oracle_updates_retention.up.sql
+migrations/0040_remove_oracle_updates_retention.up.sql#CALLrefresh_continuous_aggregate('oracle_prices_15m',NULL,NULL);  post-create materialisation recipe for a WITH NO DATA aggregate; predates this rule and no test names the migration
+migrations/0040_remove_oracle_updates_retention.up.sql#CALLrefresh_continuous_aggregate('oracle_prices_1d',NULL,NULL);  post-create materialisation recipe for a WITH NO DATA aggregate; predates this rule and no test names the migration
+migrations/0040_remove_oracle_updates_retention.up.sql#CALLrefresh_continuous_aggregate('oracle_prices_1h',NULL,NULL);  post-create materialisation recipe for a WITH NO DATA aggregate; predates this rule and no test names the migration
+migrations/0040_remove_oracle_updates_retention.up.sql#CALLrefresh_continuous_aggregate('oracle_prices_1m',NULL,NULL);  post-create materialisation recipe for a WITH NO DATA aggregate; predates this rule and no test names the migration
+migrations/0040_remove_oracle_updates_retention.up.sql#CALLrefresh_continuous_aggregate('oracle_prices_1mo',NULL,NULL);  post-create materialisation recipe for a WITH NO DATA aggregate; predates this rule and no test names the migration
+migrations/0040_remove_oracle_updates_retention.up.sql#CALLrefresh_continuous_aggregate('oracle_prices_1w',NULL,NULL);  post-create materialisation recipe for a WITH NO DATA aggregate; predates this rule and no test names the migration
+migrations/0040_remove_oracle_updates_retention.up.sql#CALLrefresh_continuous_aggregate('oracle_prices_4h',NULL,NULL);  post-create materialisation recipe for a WITH NO DATA aggregate; predates this rule and no test names the migration
+# 0064_create_dex_volume_cagg.up.sql
+migrations/0064_create_dex_volume_cagg.up.sql#CALLrefresh_continuous_aggregate('dex_volume_by_pair_1d',now()-interval'120days'  post-create materialisation recipe for a WITH NO DATA aggregate; predates this rule and no test names the migration
+# 0066_create_supply_cagg.up.sql
+migrations/0066_create_supply_cagg.up.sql#CALLrefresh_continuous_aggregate('supply_1d',NULL,now());  post-create materialisation recipe for a WITH NO DATA aggregate; predates this rule and no test names the migration
+# 0068_create_source_volume_cagg.up.sql
+migrations/0068_create_source_volume_cagg.up.sql#CALLrefresh_continuous_aggregate('source_volume_1h',now()-interval'14days',now()  post-create materialisation recipe for a WITH NO DATA aggregate; predates this rule and no test names the migration
+# 0081_create_twap_aggregates.up.sql
+migrations/0081_create_twap_aggregates.up.sql#CALLrefresh_continuous_aggregate('twap_1d',NULL,now());  NULL-start TWAP refresh — the exact form 0156 quotes under DO NOT RUN; shipped before that hazard was understood, superseded by 0156's warning
+migrations/0081_create_twap_aggregates.up.sql#CALLrefresh_continuous_aggregate('twap_1h',NULL,now());  NULL-start TWAP refresh — the exact form 0156 quotes under DO NOT RUN; shipped before that hazard was understood, superseded by 0156's warning
+# 0115_ohlc_extremes_notional_floor.up.sql
+migrations/0115_ohlc_extremes_notional_floor.up.sql#CALLrefresh_continuous_aggregate('prices_15m',now()-INTERVAL'30days',now());  post-create materialisation recipe for a WITH NO DATA aggregate; predates this rule and no test names the migration
+migrations/0115_ohlc_extremes_notional_floor.up.sql#CALLrefresh_continuous_aggregate('prices_1d',NULL,now());  post-create materialisation recipe for a WITH NO DATA aggregate; predates this rule and no test names the migration
+migrations/0115_ohlc_extremes_notional_floor.up.sql#CALLrefresh_continuous_aggregate('prices_1h',NULL,now());  post-create materialisation recipe for a WITH NO DATA aggregate; predates this rule and no test names the migration
+migrations/0115_ohlc_extremes_notional_floor.up.sql#CALLrefresh_continuous_aggregate('prices_1m',now()-INTERVAL'7days',now());  post-create materialisation recipe for a WITH NO DATA aggregate; predates this rule and no test names the migration
+migrations/0115_ohlc_extremes_notional_floor.up.sql#CALLrefresh_continuous_aggregate('prices_1mo',NULL,now());  post-create materialisation recipe for a WITH NO DATA aggregate; predates this rule and no test names the migration
+migrations/0115_ohlc_extremes_notional_floor.up.sql#CALLrefresh_continuous_aggregate('prices_1w',NULL,now());  post-create materialisation recipe for a WITH NO DATA aggregate; predates this rule and no test names the migration
+migrations/0115_ohlc_extremes_notional_floor.up.sql#CALLrefresh_continuous_aggregate('prices_4h',NULL,now());  post-create materialisation recipe for a WITH NO DATA aggregate; predates this rule and no test names the migration
+migrations/0115_ohlc_extremes_notional_floor.up.sql#CALLrefresh_continuous_aggregate('twap_1d',NULL,now());  NULL-start TWAP refresh — the exact form 0156 quotes under DO NOT RUN; shipped before that hazard was understood, superseded by 0156's warning
+migrations/0115_ohlc_extremes_notional_floor.up.sql#CALLrefresh_continuous_aggregate('twap_1h',NULL,now());  NULL-start TWAP refresh — the exact form 0156 quotes under DO NOT RUN; shipped before that hazard was understood, superseded by 0156's warning
+# 0118_stripe_event_dead_letter.down.sql
+migrations/0118_stripe_event_dead_letter.down.sql#SELECTstripe_event_id,type,received_at,dead_lettered_at,dead_letter_reasonFROMst  operator inspection query over the table this migration creates; predates this rule and no test names the migration
+# 0118_stripe_event_dead_letter.up.sql
+migrations/0118_stripe_event_dead_letter.up.sql#SELECT*FROMstripe_event_logWHEREdead_lettered_atISNOTNULLANDdead_letter_resolved  operator inspection query over the table this migration creates; predates this rule and no test names the migration
+# 0119_freeze_events_lifecycle.down.sql
+migrations/0119_freeze_events_lifecycle.down.sql#SELECTasset_id,quote_id,frozen_at,hold_until,extensions_used,escalated,corrobora  operator inspection query over the table this migration creates; predates this rule and no test names the migration
+# 0121_stripe_event_claim.down.sql
+migrations/0121_stripe_event_claim.down.sql#SELECTstripe_event_id,type,claimed_atFROMstripe_event_logWHEREclaimed_atISNOTNUL  operator inspection query over the table this migration creates; predates this rule and no test names the migration
+# 0122_login_code_lockouts.down.sql
+migrations/0122_login_code_lockouts.down.sql#SELECTemail,failed_count,window_started_at,last_failed_at,locked_untilFROMlogin_  operator inspection query over the table this migration creates; predates this rule and no test names the migration
+# 0122_login_code_lockouts.up.sql
+migrations/0122_login_code_lockouts.up.sql#DELETEFROMlogin_code_lockoutsWHEREupdated_at<now()-<retention>AND(locked_untilIS  operator retention sweep carrying a <retention> placeholder; predates this rule and no test names the migration
+# 0123_trades_account_ts_indexes.up.sql
+migrations/0123_trades_account_ts_indexes.up.sql#CREATEINDEXtrades_maker_ts_idxONtrades(maker,tsDESC,ledgerDESC,tx_hashDESC,op_in  operator-run index build (CONCURRENTLY is illegal inside golang-migrate's transaction); predates this rule and no test names the migration
+migrations/0123_trades_account_ts_indexes.up.sql#CREATEINDEXtrades_taker_ts_idxONtrades(taker,tsDESC,ledgerDESC,tx_hashDESC,op_in  operator-run index build (CONCURRENTLY is illegal inside golang-migrate's transaction); predates this rule and no test names the migration
+# 0126_twap_sample_count.down.sql
+migrations/0126_twap_sample_count.down.sql#CALLrefresh_continuous_aggregate('twap_1d',NULL,now());  NULL-start TWAP refresh — the exact form 0156 quotes under DO NOT RUN; shipped before that hazard was understood, superseded by 0156's warning
+migrations/0126_twap_sample_count.down.sql#CALLrefresh_continuous_aggregate('twap_1h',NULL,now());  NULL-start TWAP refresh — the exact form 0156 quotes under DO NOT RUN; shipped before that hazard was understood, superseded by 0156's warning
+# 0126_twap_sample_count.up.sql
+migrations/0126_twap_sample_count.up.sql#CALLrefresh_continuous_aggregate('twap_1d',NULL,now());  NULL-start TWAP refresh — the exact form 0156 quotes under DO NOT RUN; shipped before that hazard was understood, superseded by 0156's warning
+migrations/0126_twap_sample_count.up.sql#CALLrefresh_continuous_aggregate('twap_1h',NULL,now());  NULL-start TWAP refresh — the exact form 0156 quotes under DO NOT RUN; shipped before that hazard was understood, superseded by 0156's warning
+# 0147_ohlc_deterministic_tiebreak.up.sql
+migrations/0147_ohlc_deterministic_tiebreak.up.sql#CALLrefresh_continuous_aggregate('prices_15m',now()-INTERVAL'30days',now());  post-create materialisation recipe for a WITH NO DATA aggregate; predates this rule and no test names the migration
+migrations/0147_ohlc_deterministic_tiebreak.up.sql#CALLrefresh_continuous_aggregate('prices_15m',NULL,now()-INTERVAL'30days');  post-create materialisation recipe for a WITH NO DATA aggregate; predates this rule and no test names the migration
+migrations/0147_ohlc_deterministic_tiebreak.up.sql#CALLrefresh_continuous_aggregate('prices_1d',NULL,now());  post-create materialisation recipe for a WITH NO DATA aggregate; predates this rule and no test names the migration
+migrations/0147_ohlc_deterministic_tiebreak.up.sql#CALLrefresh_continuous_aggregate('prices_1h',NULL,now());  post-create materialisation recipe for a WITH NO DATA aggregate; predates this rule and no test names the migration
+migrations/0147_ohlc_deterministic_tiebreak.up.sql#CALLrefresh_continuous_aggregate('prices_1m',now()-INTERVAL'7days',now());  post-create materialisation recipe for a WITH NO DATA aggregate; predates this rule and no test names the migration
+migrations/0147_ohlc_deterministic_tiebreak.up.sql#CALLrefresh_continuous_aggregate('prices_1m',NULL,now()-INTERVAL'7days');  post-create materialisation recipe for a WITH NO DATA aggregate; predates this rule and no test names the migration
+migrations/0147_ohlc_deterministic_tiebreak.up.sql#CALLrefresh_continuous_aggregate('prices_1mo',NULL,now());  post-create materialisation recipe for a WITH NO DATA aggregate; predates this rule and no test names the migration
+migrations/0147_ohlc_deterministic_tiebreak.up.sql#CALLrefresh_continuous_aggregate('prices_1w',NULL,now());  post-create materialisation recipe for a WITH NO DATA aggregate; predates this rule and no test names the migration
+migrations/0147_ohlc_deterministic_tiebreak.up.sql#CALLrefresh_continuous_aggregate('prices_4h',NULL,now());  post-create materialisation recipe for a WITH NO DATA aggregate; predates this rule and no test names the migration
+migrations/0147_ohlc_deterministic_tiebreak.up.sql#CALLrefresh_continuous_aggregate('twap_1d',NULL,now());  NULL-start TWAP refresh — the exact form 0156 quotes under DO NOT RUN; shipped before that hazard was understood, superseded by 0156's warning
+migrations/0147_ohlc_deterministic_tiebreak.up.sql#CALLrefresh_continuous_aggregate('twap_1h',NULL,now());  NULL-start TWAP refresh — the exact form 0156 quotes under DO NOT RUN; shipped before that hazard was understood, superseded by 0156's warning
