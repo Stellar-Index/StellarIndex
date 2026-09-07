@@ -217,10 +217,23 @@ JQ_RUNS='.workflow_runs[]
 workflow_meta() {  # <basename> → "<state>\t<created_at>", empty on failure
   if [ -n "$FIXTURE" ]; then
     jq -r '[(.state // "active"), (.created_at // "")] | @tsv' "$FIXTURE/$1.json" 2>/dev/null
-  else
-    gh api "repos/${GH_REPO}/actions/workflows/$1" \
-      --jq '[.state, .created_at] | @tsv' 2>/dev/null
+    return
   fi
+  # Retried: a sweep issues two calls per workflow in a tight burst, which
+  # trips GitHub's secondary rate limit intermittently. An unretried blip
+  # lands the workflow in the unreadable bucket, and an unreadable workflow
+  # is one this gate did not actually check.
+  local attempt out
+  for attempt in 1 2 3; do
+    if out="$(gh api "repos/${GH_REPO}/actions/workflows/$1" \
+                --jq '[.state, .created_at] | @tsv' 2>/dev/null)" \
+       && [ -n "$out" ]; then
+      printf '%s\n' "$out"
+      return 0
+    fi
+    [ "$attempt" -lt 3 ] && sleep $(( attempt * 2 ))
+  done
+  return 1
 }
 
 workflow_runs() {  # <basename> → "<conclusion>\t<created_at>" lines, newest first
@@ -346,6 +359,15 @@ fi
 
 if [ "$dead" -gt 0 ]; then
   echo "scheduled-controls: ${dead} scheduled control(s) have produced no passing scheduled run past their threshold: ${dead_list}" >&2
+  exit 1
+fi
+
+# "Could not check" is not "passed". A sweep that read only some of its
+# controls has no basis for a clean verdict, and the one dead control is
+# exactly what hides in the unreadable bucket — the failure this gate
+# exists to prevent, turned on itself.
+if [ "$unknown" -gt 0 ]; then
+  echo "scheduled-controls: ${unknown} scheduled workflow(s) could not be read from the API after 3 attempts each, so this sweep did not assess them. Not reporting a clean pass over controls that were never checked." >&2
   exit 1
 fi
 

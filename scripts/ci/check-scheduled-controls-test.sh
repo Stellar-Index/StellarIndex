@@ -285,8 +285,16 @@ workflow weekly.yml '0 6 * * 1'
 workflow other.yml '0 6 * * 1'
 history weekly.yml active 60 success:1
 run_check
-expect 'a partially unreadable sweep still reports' 0 "????  other.yml"
-expect '…and self-accounts the shortfall' 0 'assessed 1 of 2 scheduled workflow(s)'
+# A partial sweep still REPORTS everything it managed to assess — that part
+# was right and is kept. What changed: it must not also return success.
+# Measured live 2026-09-07 before this was tightened: two workflows fell into
+# the unreadable bucket on a secondary-rate-limit blip, one of them the only
+# genuinely dead control, and the sweep printed "every scheduled control has
+# passed" and exited 0. A gate that cannot read a control has not checked it,
+# and this gate exists precisely to stop a control's silence reading as health.
+expect 'a partially unreadable sweep still reports what it read' 1 "????  other.yml"
+expect '…and self-accounts the shortfall' 1 'assessed 1 of 2 scheduled workflow(s)'
+expect '…and refuses to call it a pass' 1 'did not assess them'
 
 # ── Wiring the fixtures cannot reach ────────────────────────────────
 # The whole point is that only SCHEDULED runs count, and that the
