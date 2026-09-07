@@ -973,6 +973,18 @@ export interface paths {
          *     answers, derived through XLM — both stamp
          *     `flags.triangulated=true`, and `asset_id` / `quote` still echo
          *     the request.
+         *
+         *     **This endpoint returns at most 50 000 buckets and takes the
+         *     OLDEST ones.** Unlike `/v1/chart` it has no window parameter,
+         *     so there is nothing to derive a served width from and the
+         *     requested `granularity` is always the one served — a `1m`
+         *     request on a long-lived pair therefore stops early rather than
+         *     being coarsened. Measured 2026-09-07 on `native`/`fiat:USD`:
+         *     `granularity=1m` returned exactly 50 000 points ending
+         *     2018-02-21, while `granularity=1d` returned 2 183 points
+         *     running to yesterday. `flags.stale` is raised when the series
+         *     may be short. For a bounded window with an automatically
+         *     fitted width, use `/v1/chart`.
          */
         get: operations["getHistorySinceInception"];
         put?: never;
@@ -1009,6 +1021,17 @@ export interface paths {
          *     | `1mo`     | `4h`                |
          *     | `1y`      | `1d`                |
          *     | `all`     | `1d`                |
+         *
+         *     A response carries at most 50 000 buckets. When the requested
+         *     (`timeframe`, `granularity`) grid is wider than that, the
+         *     series is served at the finest width that fits and
+         *     `data.granularity` reports the width actually served —
+         *     `timeframe=1y&granularity=1m` is served at `15m`. The
+         *     alternative, which this replaces, was the oldest 50 000
+         *     minute buckets of the year with nothing on the wire to say the
+         *     window had been cut to a tenth. `timeframe=all` is never
+         *     coarsened (its size is a property of the data, not of the
+         *     request).
          *
          *     `price_type=twap` returns a time-weighted series from the
          *     `twap_1h` / `twap_1d` continuous aggregates. TWAP is
@@ -7209,7 +7232,17 @@ export interface components {
                 quote: string;
                 /** @enum {string} */
                 price_type: "vwap" | "twap";
-                granularity: string;
+                /**
+                 * @description The bucket width this series is on. On
+                 *     `/history/since-inception` it always equals the
+                 *     requested width — that endpoint has no window to
+                 *     fit a narrower one against, and truncates at
+                 *     50 000 buckets instead. (`/chart` DOES fit, and
+                 *     reports the fitted width in its own
+                 *     `granularity`.)
+                 * @enum {string}
+                 */
+                granularity: "1m" | "15m" | "1h" | "4h" | "1d" | "1w" | "1mo";
                 points: components["schemas"]["HistoryPoint"][];
                 /**
                  * @description True when `points` skips at least one whole bucket
@@ -7240,7 +7273,17 @@ export interface components {
                 quote: string;
                 /** @enum {string} */
                 timeframe: "1h" | "24h" | "1w" | "1mo" | "1y" | "all";
-                /** @enum {string} */
+                /**
+                 * @description The bucket width this series is ON — the grain
+                 *     actually served, which is not always the grain
+                 *     requested. `price_type=twap` snaps onto the `1h` /
+                 *     `1d` TWAP aggregates, and any pair whose grid
+                 *     exceeds the 50 000-bucket response cap is served
+                 *     at the finest width that fits (`timeframe=1y` with
+                 *     `granularity=1m` → `15m`). Label the axis from
+                 *     this field.
+                 * @enum {string}
+                 */
                 granularity: "1m" | "15m" | "1h" | "4h" | "1d" | "1w" | "1mo";
                 /**
                  * @description `vwap` for the default price chart; `twap` for the
@@ -8249,6 +8292,25 @@ export interface components {
          *     `1mo` = 1 month). When omitted the server picks a sensible
          *     width for the requested timeframe (e.g. `1m` for `1h`,
          *     `1h` for `1w`) so the series stays a few hundred points.
+         *
+         *     **Requested width, not necessarily the served one.** A single
+         *     response carries at most 50 000 buckets, so a
+         *     (`timeframe`, `granularity`) pair whose grid is wider than
+         *     that cannot be answered at the width asked for. Rather than
+         *     return the oldest 50 000 buckets and stop — which is what a
+         *     `?timeframe=1y&granularity=1m` request used to get: 36 of the
+         *     365 days requested, ending three months early, under a
+         *     response that still claimed `1m` — the series is served at the
+         *     finest width that DOES fit and the response's own
+         *     `granularity` reports it. Today that affects exactly one
+         *     combination: `timeframe=1y` with `granularity=1m` is served at
+         *     `15m` (525 600 grid points against 35 040). Read the response
+         *     `granularity`, not the request, to label an axis.
+         *
+         *     `timeframe=all` is never coarsened: it asks for whatever the
+         *     deployment holds, so its point count is a property of the data
+         *     rather than of the request, and it is routinely well under the
+         *     cap.
          */
         Granularity: "1m" | "15m" | "1h" | "4h" | "1d" | "1w" | "1mo";
         /**
@@ -10171,6 +10233,25 @@ export interface operations {
                  *     `1mo` = 1 month). When omitted the server picks a sensible
                  *     width for the requested timeframe (e.g. `1m` for `1h`,
                  *     `1h` for `1w`) so the series stays a few hundred points.
+                 *
+                 *     **Requested width, not necessarily the served one.** A single
+                 *     response carries at most 50 000 buckets, so a
+                 *     (`timeframe`, `granularity`) pair whose grid is wider than
+                 *     that cannot be answered at the width asked for. Rather than
+                 *     return the oldest 50 000 buckets and stop — which is what a
+                 *     `?timeframe=1y&granularity=1m` request used to get: 36 of the
+                 *     365 days requested, ending three months early, under a
+                 *     response that still claimed `1m` — the series is served at the
+                 *     finest width that DOES fit and the response's own
+                 *     `granularity` reports it. Today that affects exactly one
+                 *     combination: `timeframe=1y` with `granularity=1m` is served at
+                 *     `15m` (525 600 grid points against 35 040). Read the response
+                 *     `granularity`, not the request, to label an axis.
+                 *
+                 *     `timeframe=all` is never coarsened: it asks for whatever the
+                 *     deployment holds, so its point count is a property of the data
+                 *     rather than of the request, and it is routinely well under the
+                 *     cap.
                  */
                 granularity?: components["parameters"]["Granularity"];
             };
@@ -10253,6 +10334,25 @@ export interface operations {
                  *     `1mo` = 1 month). When omitted the server picks a sensible
                  *     width for the requested timeframe (e.g. `1m` for `1h`,
                  *     `1h` for `1w`) so the series stays a few hundred points.
+                 *
+                 *     **Requested width, not necessarily the served one.** A single
+                 *     response carries at most 50 000 buckets, so a
+                 *     (`timeframe`, `granularity`) pair whose grid is wider than
+                 *     that cannot be answered at the width asked for. Rather than
+                 *     return the oldest 50 000 buckets and stop — which is what a
+                 *     `?timeframe=1y&granularity=1m` request used to get: 36 of the
+                 *     365 days requested, ending three months early, under a
+                 *     response that still claimed `1m` — the series is served at the
+                 *     finest width that DOES fit and the response's own
+                 *     `granularity` reports it. Today that affects exactly one
+                 *     combination: `timeframe=1y` with `granularity=1m` is served at
+                 *     `15m` (525 600 grid points against 35 040). Read the response
+                 *     `granularity`, not the request, to label an axis.
+                 *
+                 *     `timeframe=all` is never coarsened: it asks for whatever the
+                 *     deployment holds, so its point count is a property of the data
+                 *     rather than of the request, and it is routinely well under the
+                 *     cap.
                  */
                 granularity?: components["parameters"]["Granularity"];
                 /**

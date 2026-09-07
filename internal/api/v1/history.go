@@ -668,6 +668,26 @@ const (
 	// granularity=1m request doesn't try to ship a 32M-row JSON
 	// payload. Operators wanting the full series in 1m grain should
 	// paginate (planned cursor surface).
+	//
+	// Truncation takes the EARLIEST buckets, so a request whose grid is
+	// wider than this cap is answered with its oldest slice and no
+	// remaining window. On /v1/chart that is decidable from the request
+	// — window width over bucket width — and the grain is coarsened to
+	// one that fits, reported as the response's own `granularity`
+	// ([chartFitGranularity]).
+	//
+	// This surface is NOT the same shape and is deliberately left
+	// alone: /v1/history/since-inception has no window parameter at
+	// all, so how many buckets its grid holds is a property of the
+	// DATA, not of the request, and there is nothing to compare against
+	// the cap without reading first. Measured on production 2026-09-07,
+	// `?granularity=1m` on the flagship pair returns exactly 50,000
+	// points ending 2018-02-21 while `?granularity=1d` returns 2,183
+	// spanning to yesterday — the same silent truncation, reachable
+	// only by a signal computed AFTER a read, which is a different
+	// change to a different budget. Plain /v1/history is not this shape
+	// either: it pages raw trades through `limit`/`cursor` and takes no
+	// `granularity`.
 	historyMaxPoints = 50_000
 )
 
