@@ -71,6 +71,40 @@ changing them. `VERIFY_INTEGRATION=never` is reserved for the isolated Linux
 lane (`make prepush-linux`); that command does not claim complete clearance.
 Adjust parallelism with `LOCAL_INT_SHARDS=4` when Docker has enough resources.
 
+## A new or changed test is run more than once
+
+A single green run says the test passed once, on an idle machine, at one
+moment of the wall clock. Two defects that cost a day each in September 2026
+were invisible to exactly that check and visible to these two, so a new or
+changed test is put through both before it is pushed:
+
+```sh
+go test ./internal/<pkg>/ -count=5           # repetition
+bash scripts/ci/<name>-test.sh               # ... ten times, for a shell test
+pnpm --dir web/explorer test                 # ... five times, for the web suite
+```
+
+Repetition finds a test that carries state between runs or that reads the
+clock. Six Go tests asserted absolute values of process-global Prometheus
+vectors that nothing resets, so each was asserting that the binary had run it
+exactly once; `-count=2` failed all six. `zfs-snapshot-test.sh` asserted that
+two snapshot calls landed in the same minute, which is a property of when the
+run started, not of the script — it failed one run in three.
+
+Contention finds a test whose mock is keyed on arrival order rather than on
+what was asked. `fetchPrice.test.ts` drove its mock from a call counter while
+the subject raced two triangulation legs through `Promise.all`, so under load
+the wrong leg was marked and the test failed pointing at an unrelated patch.
+Run the suite against a loaded machine — a background loop per core is enough
+— rather than only against an idle one:
+
+```sh
+for i in $(seq 1 "$(sysctl -n hw.ncpu)"); do (while :; do :; done) & done
+```
+
+Both classes fail with the subject behaving perfectly, which is what makes
+them expensive: the failure names whatever was being changed at the time.
+
 ## What remains CI-only
 
 CI still provides a clean independent runner, event and permission context,
