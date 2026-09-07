@@ -985,6 +985,11 @@ export interface paths {
          *     running to yesterday. `flags.stale` is raised when the series
          *     may be short. For a bounded window with an automatically
          *     fitted width, use `/v1/chart`.
+         *
+         *     `granularity=1m` may additionally be bounded to the last 90
+         *     days (migration 0156); coarser widths hold the deployment's
+         *     full history. This surface reads oldest-bucket-first, so where
+         *     that window is enabled the bound is the first thing it meets.
          */
         get: operations["getHistorySinceInception"];
         put?: never;
@@ -1031,7 +1036,8 @@ export interface paths {
          *     minute buckets of the year with nothing on the wire to say the
          *     window had been cut to a tenth. `timeframe=all` is never
          *     coarsened (its size is a property of the data, not of the
-         *     request).
+         *     request). `1m` may additionally be bounded to 90 days on a
+         *     given deployment — see the `granularity` parameter.
          *
          *     `price_type=twap` returns a time-weighted series from the
          *     `twap_1h` / `twap_1d` continuous aggregates. TWAP is
@@ -8311,6 +8317,14 @@ export interface components {
          *     deployment holds, so its point count is a property of the data
          *     rather than of the request, and it is routinely well under the
          *     cap.
+         *
+         *     **`1m` may be bounded to 90 days.** The minute aggregate is the
+         *     one rung a deployment can put a retention window on (migration
+         *     0156, 90 days, shipped disabled); every coarser width holds the
+         *     deployment's full history. Where the window is enabled, a `1m`
+         *     series over an older window comes back empty rather than wrong,
+         *     and the raw trades behind it are still reachable through
+         *     `/v1/history`.
          */
         Granularity: "1m" | "15m" | "1h" | "4h" | "1d" | "1w" | "1mo";
         /**
@@ -10252,6 +10266,14 @@ export interface operations {
                  *     deployment holds, so its point count is a property of the data
                  *     rather than of the request, and it is routinely well under the
                  *     cap.
+                 *
+                 *     **`1m` may be bounded to 90 days.** The minute aggregate is the
+                 *     one rung a deployment can put a retention window on (migration
+                 *     0156, 90 days, shipped disabled); every coarser width holds the
+                 *     deployment's full history. Where the window is enabled, a `1m`
+                 *     series over an older window comes back empty rather than wrong,
+                 *     and the raw trades behind it are still reachable through
+                 *     `/v1/history`.
                  */
                 granularity?: components["parameters"]["Granularity"];
             };
@@ -10353,6 +10375,14 @@ export interface operations {
                  *     deployment holds, so its point count is a property of the data
                  *     rather than of the request, and it is routinely well under the
                  *     cap.
+                 *
+                 *     **`1m` may be bounded to 90 days.** The minute aggregate is the
+                 *     one rung a deployment can put a retention window on (migration
+                 *     0156, 90 days, shipped disabled); every coarser width holds the
+                 *     deployment's full history. Where the window is enabled, a `1m`
+                 *     series over an older window comes back empty rather than wrong,
+                 *     and the raw trades behind it are still reachable through
+                 *     `/v1/history`.
                  */
                 granularity?: components["parameters"]["Granularity"];
                 /**
@@ -10462,6 +10492,16 @@ export interface operations {
                  * @description Bar width for multi-bar series mode. Omit for the
                  *     single-bar response over `[from, to)`. Invalid intervals
                  *     return 400 `errors/invalid-interval`.
+                 *
+                 *     **`1m`, `5m` and `30m` may be bounded to 90 days.** All
+                 *     three are served from the minute aggregate (`5m` and `30m`
+                 *     by re-bucketing it), which is the one rung a deployment can
+                 *     put a retention window on (migration 0156). Where it is
+                 *     enabled, a window older than that returns no bars at these
+                 *     three widths; `15m` and coarser hold the deployment's full
+                 *     history. It bounds what is MATERIALISED, not what happened
+                 *     — the raw trades are kept forever and remain reachable
+                 *     through `/v1/history`.
                  */
                 interval?: "1m" | "5m" | "15m" | "30m" | "1h" | "2h" | "4h" | "12h" | "1d" | "3d" | "1w" | "2w" | "1mo";
                 /**

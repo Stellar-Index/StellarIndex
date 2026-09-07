@@ -31,7 +31,12 @@ type OHLCBar = components['schemas']['OHLCSeriesBar'];
 type Bar = { time: number; open: number; high: number; low: number; close: number; volume: number };
 
 // Interval → seconds, used to size the request (limit = span ÷ interval, capped
-// at the API's 1000-bar/request ceiling). /v1/ohlc serves this full grain set.
+// at the API's 1000-bar/request ceiling). /v1/ohlc serves this full grain set,
+// but 1m/5m/30m come off the minute aggregate, which a deployment MAY bound to
+// a 90-day retention window (migration 0156) — where it does, those three
+// return no bars beyond it. The window→grain table below never asks for one
+// outside its window, so this is a note for whoever edits that table, not a
+// live constraint.
 const INTERVAL_SEC: Record<string, number> = {
   '1m': 60,
   '5m': 300,
@@ -49,6 +54,10 @@ const OHLC_CAP = 1000;
 // with a sensible default (the finest that's dense-but-performant). Per the
 // chart-data recon: the API accepts any grain for any window, so this offer set
 // is a client-side bar-budget choice — showing ALL usable variants per window.
+// One server-side bound can apply, and it is why the minute-derived grains stop
+// at the 7d row: 1m/5m/30m are served from the minute aggregate, which a
+// deployment may bound to 90 days, so offering 5m on the 90d/1y/all windows
+// would render an empty chart rather than a coarse one.
 type Win = '24h' | '7d' | '30d' | '90d' | '1y' | 'all';
 const WINDOWS: {
   key: Win;

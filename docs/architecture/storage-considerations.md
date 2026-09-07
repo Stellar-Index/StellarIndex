@@ -117,7 +117,7 @@ pool (R1 is not hardware-upgradeable, see
 |---|---|---|---|---|
 | `data/archive` | `/srv/history-archive` | **6.95 TB** | Stellar history-archive (SDF format) | Mixed — see below |
 | `data/minio` | `/var/lib/minio` | 4.96 TB | MinIO buckets (galexie-archive + galexie-live) | LCM tiering candidate (ADR-0027) |
-| `data/postgres` | `/var/lib/postgresql` | 606 GB | TimescaleDB | Grows indefinitely — ADR-0006's retention was SUPERSEDED by migration 0031 (raw trades + all price aggregates retained forever); the ADR says so itself |
+| `data/postgres` | `/var/lib/postgresql` | 606 GB | TimescaleDB | Grows indefinitely — ADR-0006's retention was SUPERSEDED by migration 0031 (raw trades retained forever); the ADR says so itself. One exception since migration 0156: `prices_1m` alone may carry a 90-day window, shipped disabled, and arming it releases 22 GB of that view's 69 GB on the first run. Every other price aggregate is still kept forever |
 | `data/galexie` | `/var/lib/galexie` | 7.83 GB | Galexie captive-core working dir | NA |
 | `data/os` | `/` | 645 KB | (rounding artefact) | NA |
 

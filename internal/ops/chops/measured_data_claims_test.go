@@ -21,15 +21,19 @@ import (
 //   - `prices_1d` does NOT span back to 2015. It starts 2018-07-01 with
 //     a single pair (crypto:XLM/fiat:USD, 946 bars) and holds nothing
 //     between 2021-02-01 and 2024-03-10.
+//
 //   - pre-P23 classic movement IS reconstructed. The unified-event
 //     decoder does not parse it, but `classic-movements-backfill`
 //     derives it from operations + operation_results, and
 //     stellar.account_movements holds 6,702,108,079 `classic_derived`
 //     rows from ledger 3.
+//
 //   - trades floors are PER SOURCE, not one ~61.5M number: sdex begins
 //     at 61,609,957, soroswap ten million ledgers earlier at 50,746,445.
+//
 //   - `fx_quotes` is DAILY, not hourly. The worker polls hourly and then
 //     buckets every write to 00:00Z.
+//
 //   - NO price aggregate carries a retention policy. Migration 0002
 //     placed 30-day policies on `prices_1m` / `prices_15m`; migration
 //     0031 removed them, and migration 0116 records the tree as holding
@@ -38,6 +42,19 @@ import (
 //     a retention that no longer exists would send a reader to size a
 //     restore or a reconcile against a 30-day floor the data does not
 //     have.
+//
+//     Superseded in part on 2026-09-07, and left standing rather than
+//     rewritten because the reasoning above is why the correction has a
+//     shape at all: migration 0156 attaches a 90-day policy to
+//     `prices_1m` ALONE, `scheduled => false`, so on a deployment that
+//     has not armed it the sentence still holds exactly, and on one that
+//     has, it holds for every rung but the minute one. The sizing hazard
+//     runs the same way in reverse — a reader who takes "none" as
+//     unconditional will size a restore against minute history a
+//     retention run removed. `prices_15m` and coarser, both TWAP views,
+//     every `oracle_prices_*` rung and raw `trades` carry none, and
+//     `internal/storage/timescale/retention_policy_test.go` fails if
+//     that set widens.
 //
 // Two more sites were added 2026-09-04 for the same class with a
 // different contradicting witness: the tree rather than r1. The
@@ -164,6 +181,62 @@ func TestContributorGuidanceStatesTheMeasuredDataFloors(t *testing.T) {
 			required: []string{
 				"Truncate(24 * time.Hour)",
 				"one row per ticker per UTC day",
+			},
+		},
+		{
+			// The migration-authoring checklist, and the site with the
+			// most leverage of any here: it is what an author reads
+			// BEFORE writing the migration, so a rule that is visibly
+			// false for one name in its list is a rule they discount for
+			// the rest of it. It forbade `drop_after` on
+			// trades/prices_1m/prices_15m/oracle_updates as one
+			// undifferentiated group; migration 0156 then did exactly
+			// that to prices_1m. The correction has to keep forbidding
+			// the three that must stay permanent — `trades` above all,
+			// since its permanence is the entire reason a dropped
+			// aggregate is recoverable — while naming the one reviewed
+			// exception and what a future author owes before adding a
+			// second.
+			path: "docs/contributing/add-migration.md",
+			forbidden: []string{
+				"`trades`/`prices_1m`/`prices_15m`/`oracle_updates`",
+				"kept forever; retention was removed in 0031/0040",
+			},
+			required: []string{
+				"Do not add `drop_after` to `trades`, `oracle_updates`, `prices_15m` or any coarser price rung",
+				"`prices_1m` is the one reviewed exception",
+				"Adding a second exception is a design change, not a checklist tick:",
+				// The gate that blocked this very migration until its
+				// checksum was baselined, and which the checklist never
+				// mentioned.
+				"lint-migration-immutability.sh --write",
+			},
+		},
+		{
+			// The sizing table for the volume the policy cuts. A row
+			// that says every price aggregate is retained forever is
+			// read by whoever plans the next capacity decision on r1.
+			path: "docs/architecture/storage-considerations.md",
+			forbidden: []string{
+				"raw trades + all price aggregates retained forever",
+			},
+			required: []string{
+				"One exception since migration 0156: `prices_1m` alone may carry a 90-day window",
+				"Every other price aggregate is still kept forever",
+			},
+		},
+		{
+			// The verbatim twin of the sentence corrected in
+			// coverage_floor.go beside it. The daily rung is still the
+			// right rung to probe — MORE so — but the premise that got
+			// it there has to say which rung can now move.
+			path: "internal/api/v1/coverage_floor_test.go",
+			forbidden: []string{
+				"No price aggregate carries a retention policy (migration 0031 removed the ones migration 0002 had placed on prices_1m / prices_15m)",
+			},
+			required: []string{
+				"migration 0156 attaches one to prices_1m and to nothing else",
+				"the minute rung is the only rung whose bottom edge can move with the clock",
 			},
 		},
 	}

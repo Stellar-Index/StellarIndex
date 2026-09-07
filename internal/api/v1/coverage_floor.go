@@ -101,11 +101,13 @@ func (s coverageProbeSpan) String() string {
 const (
 	// coverageFloorGranularity is the CAGG rung the floor is measured
 	// on. The daily rung, always — not the grain the request happened
-	// to ask for. No price aggregate carries a retention policy
-	// (migration 0031 removed the 30-day policies migration 0002 had
-	// placed on prices_1m / prices_15m, and migration 0116 records the
-	// tree as holding none on any reconcile target), so nothing in the
-	// daily rung has been dropped by age; and prices_1d is the coarsest
+	// to ask for. prices_1d carries no retention policy — migration
+	// 0156 attaches one to prices_1m and to NOTHING else (90 days,
+	// shipped disabled), so the minute rung is the only rung whose
+	// bottom edge can move with the clock, and only on a deployment
+	// that has armed it. The daily rung still holds everything it ever
+	// materialised — so nothing in it has been dropped by age; and
+	// prices_1d is the coarsest
 	// rung, holds the fewest rows per pair, and is the cheapest to
 	// prove empty on a path an anonymous caller can drive. The floor is
 	// a statement about the rung the probe reads, not about the tree:
