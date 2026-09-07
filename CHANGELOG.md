@@ -15,6 +15,8 @@ against.
 
 ## [Unreleased]
 
+## [v0.63.0] — 2026-09-07
+
 ### Fixed
 
 - **storage:** the account-sponsors league table counts only sponsorship operations that actually took effect (#494). `GET /v1/accounts/sponsors` built its board from `stellar.operations`, which carries no success gate — the lake stores what the ledger CONTAINED, so `extractOps` retains the operations of transactions that FAILED, by design. A sponsorship arrangement inside a failed transaction never happened, and the board both counted and RANKED on those. **Measured on r1 2026-09-07 across the whole archive:** 2,426,813 of the 22,413,991 sponsorship operations (10.8%) sit in failed transactions — 8.4% of partition 63's `BeginSponsoringFutureReserves` operations and 13.8% of its `RevokeSponsorship` ones, rising to 61.6% of partition 39. The served figures were `sponsorships_started` 11,162,397 against a true 9,972,887 (-10.7%), `revocations_issued` 87,193 against 39,492 (-54.7%, better than twice its real value), `distinct_sponsored` 4,349,992 against 4,079,579 (-6.2%) and a board of 2,740 rows against 2,417. **323 ranked accounts had every operation they were credited with inside a failed transaction**, one was credited with 27,528 revocations against a real 63, the top row lost 1.6% and rank 17 lost 85.9% (115,129 → 16,249, falling to rank 48), and 2,408 of the 2,417 rows that survive the correction were ranked in the wrong place. Coverage is unmoved: the first and last APPLIED sponsorship operations are the same ledgers as the first and last of any kind, so the data-derived span stays 32,747,295-64,307,071 (ADR-0031).
