@@ -240,8 +240,10 @@ type HistoryQuery struct {
 	// This endpoint has no window parameter, so the width asked for is
 	// always the width served — and the response is capped at 50,000
 	// buckets taking the OLDEST, so a fine grain over a long-lived pair
-	// ends early with Flags.Stale raised. For a bounded window whose
-	// width is fitted to the cap automatically, use [Client.Chart].
+	// ends early with Flags.Stale raised. 1m may additionally be
+	// bounded to the last 90 days on a given deployment. For a bounded
+	// window whose width is fitted to the cap automatically, use
+	// [Client.Chart].
 	Granularity string
 }
 
@@ -840,7 +842,9 @@ type ChartQuery struct {
 	// tracks Timeframe. The server may serve a COARSER width than the
 	// one asked for when the requested grid exceeds its 50,000-bucket
 	// response cap (1y + 1m is served at 15m); read
-	// [ChartSeries.Granularity] for the width actually served.
+	// [ChartSeries.Granularity] for the width actually served. 1m may
+	// additionally be bounded to the last 90 days on a given
+	// deployment; coarser widths are never bounded.
 	Granularity string
 }
 

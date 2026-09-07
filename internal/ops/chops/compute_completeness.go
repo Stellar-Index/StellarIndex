@@ -933,9 +933,11 @@ type projectionScope struct {
 // migrations and r1 (2026-07-25). This comment used to cite oracle_updates as
 // "a real drop_chunks boundary, 90d per migration 0003"; migration 0040
 // removed that policy, and 0031 removed retention from trades / prices_1m /
-// prices_15m. The only surviving add_retention_policy in the tree is
-// api_usage_events (12 months, migration 0027), which is not a reconcile
-// target. That matters for anyone extending this: it means a RISING servedMin
+// prices_15m. Two add_retention_policy calls survive in the tree —
+// api_usage_events (12 months, migration 0027) and prices_1m (90 days,
+// migration 0156, shipped disabled) — and NEITHER is a reconcile target: the
+// targets are raw event and trade tables keyed on `ledger`, and prices_1m is a
+// continuous aggregate keyed on `bucket`. That matters for anyone extending this: it means a RISING servedMin
 // is unambiguously LOSS, with no legitimate drop_chunks case to exempt — so
 // the durable-floor fix below does not need per-target retention windows. The
 // stale version of this sentence very nearly produced exactly that

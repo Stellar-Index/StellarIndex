@@ -390,13 +390,17 @@ func TestOHLCSeries_UnknownFloorYieldsNoSignal(t *testing.T) {
 // DAILY rung, over a window bounded at both ends and strictly
 // increasing.
 //
-// The rung is not the requested interval on purpose. No price aggregate
-// carries a retention policy (migration 0031 removed the ones migration
-// 0002 had placed on prices_1m / prices_15m), so nothing in the daily
-// rung has been dropped by age; it is the coarsest, holds the fewest
+// The rung is not the requested interval on purpose. prices_1d carries
+// no retention policy — migration 0031 removed the ones migration 0002
+// had placed on prices_1m / prices_15m, and migration 0156 attaches one
+// to prices_1m and to nothing else (90 days, shipped disabled). So the
+// minute rung is the only rung whose bottom edge can move with the
+// clock, and only where that policy is armed; nothing in the daily rung
+// has been dropped by age. It is also the coarsest, holds the fewest
 // rows per pair, and is the cheapest to prove empty — so a handler that
 // probed at the requested grain would spend more to describe a rung
-// whose contents follow its own refresh schedule.
+// whose contents follow its own refresh schedule, and on the minute
+// grain could describe one a retention run had truncated.
 //
 // The fixture is a stablecoin-quoted pair, which the series read serves
 // from the pair itself; a fiat-quoted pair is served from a constituent

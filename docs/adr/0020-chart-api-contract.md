@@ -180,3 +180,13 @@ This is a narrowing of §Cap's claim, not a change to the contract's
 shape: the parameter is still honoured, and a request whose grid fits —
 every combination in the default table, and `1mo` + `1m` at 43,200
 points — is served exactly as before.
+
+**Separately: `1m` may now be bounded to 90 days.** Migration 0156
+attaches a 90-day retention policy to the `prices_1m` continuous
+aggregate — that one view, shipped disabled, armed only by a deliberate
+operator act. Every coarser rung keeps its full history, and the raw
+trades behind all of them are retained forever, so a dropped range is
+recomputable with a FORCED `refresh_continuous_aggregate`. §Cap's
+"~35 days of data" figure was always about the response cap, not about
+what is stored; the two bounds are independent and the OpenAPI
+`granularity` description states each.

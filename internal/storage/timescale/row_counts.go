@@ -32,7 +32,11 @@ const opsVerifyStatementTimeoutMS = 7200000 // 2 hours, in ms
 // No reconcile target has a retention policy (verified against the migrations
 // and r1, 2026-07-25 — 0031 removed it from trades / prices_1m / prices_15m and
 // 0040 from oracle_updates), so a RISING value here is unambiguously served-tier
-// LOSS, not a drop_chunks artifact. chops.detectFloorLoss makes exactly that
+// LOSS, not a drop_chunks artifact. Migration 0156 adds one on prices_1m
+// (90 days, shipped disabled) and does not weaken that: prices_1m is a
+// continuous aggregate keyed on `bucket`, has no `ledger` column and is not
+// among the reconcile targets (chops.reconciliation_catalogue — raw event and
+// trade tables only). chops.detectFloorLoss makes exactly that
 // comparison against the durable floor in completeness_target_floors
 // (migration 0116), which is why this value must stay a raw observation and not
 // be clamped or defaulted. Returns ok=false if no rows.

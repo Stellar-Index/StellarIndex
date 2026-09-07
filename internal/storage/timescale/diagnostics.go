@@ -121,10 +121,20 @@ var allowedCAGGViews = map[string]bool{
 
 // CAGGsLiveForever is the ORDERED set of price aggregates the
 // backfill tool refreshes after each chunk. It holds all seven, and
-// the name is literal for all seven: migration 0002 gave prices_1m
+// the name is literal for six of them: migration 0002 gave prices_1m
 // and prices_15m a 30-day retention and migration 0031 removed it on
-// 2026-05-14, alongside the 90-day one on raw `trades`. No price CAGG
-// has been pruned since.
+// 2026-05-14, alongside the 90-day one on raw `trades`.
+//
+// prices_1m is the exception since migration 0156, which attaches a
+// 90-day retention policy to THAT VIEW ALONE. The policy ships
+// DISABLED, so on a deployment that has not armed it nothing has
+// changed. Where it IS armed, this view stays in the refresh set — a
+// backfilled chunk inside the window needs its minute buckets like any
+// other rung — but for a chunk OLDER than the window the rows it
+// writes are dropped again by the next retention run. That is wasted
+// work rather than a fault, and the repair for an old range is the
+// forced refresh the migration's header states, run with the policy
+// disarmed. Nothing else here has ever been pruned.
 //
 // Every SERVED rung has to be here, because a rung left out is a
 // permanent hole at that resolution in every backfilled range: the
@@ -320,10 +330,12 @@ func isConcurrentRefreshErr(err error) bool {
 // continuous aggregate — prices_1h, which is canonical for this
 // answer only because it is the coarsest rung every deployment has
 // always materialised, not because the finer ones are transient.
-// Nothing here is pruned: migration 0031 removed the 90-day retention
-// on raw `trades` and the 30-day retention on prices_1m / prices_15m
-// on 2026-05-14, so `trades`, all seven price aggregates and this
-// stat all span the same history. The comment this replaces described
+// Nothing in prices_1h is pruned: migration 0031 removed the 90-day
+// retention on raw `trades` and the 30-day retention on prices_1m /
+// prices_15m on 2026-05-14. `trades`, prices_1h and this stat still
+// span the same history. prices_1m need not, on a deployment that has
+// armed migration 0156's 90-day policy on that one view — one more
+// reason this answer is about prices_1h alone. The comment this replaces described
 // migration 0002's world instead — trades kept for a rolling 90 days,
 // only the hourly-and-coarser aggregates kept indefinitely — which
 // migration 0031 retired on 2026-05-14. The date is deliberate, and
