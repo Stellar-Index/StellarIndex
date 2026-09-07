@@ -17,8 +17,14 @@
 #
 # What it does (in order):
 #   1. Validate the supplied tag matches SemVer (vX.Y.Z[-pre][+build])
-#   2. Verify we're on `main` and the working tree is clean
-#   3. Verify `git pull --ff-only origin main` is a no-op (we're up to date)
+#   2. PRECONDITIONS, all three together and before anything else: on
+#      `main`, working tree clean, in sync with origin/main. They are
+#      evaluated as a set and every failure is named, because failing on
+#      the first one turns "cut a release" into three round trips — fix
+#      the branch, re-run, discover the tree is dirty, re-run, discover
+#      you are behind origin. The first line of output names the failing
+#      precondition.
+#   3. Refuse a non-TTY invocation that gave neither --yes nor --dry-run
 #   4. Verify the tag doesn't already exist locally or on origin
 #   5. Verify CHANGELOG.md has a `## [vX.Y.Z] — YYYY-MM-DD` section
 #      that is non-empty (release.yml's auto-notes extraction reads
@@ -67,18 +73,6 @@ for arg in "${@:2}"; do
   esac
 done
 
-# Fail fast, BEFORE the slow gates, when there is no terminal to answer
-# the step-7 prompt and the caller has not said what to do. Without
-# this, `read` hits EOF, the script aborts, and any `| tail`-style
-# pipeline hides the failure (2026-08-28: "release cut", no tag on
-# origin). --dry-run never prompts, so it is exempt.
-if [[ ! -t 0 && "$ASSUME_YES" -eq 0 && "$DRY_RUN" -eq 0 ]]; then
-  echo "ERR: stdin is not a TTY and neither --yes nor --dry-run was given." >&2
-  echo "     The confirmation prompt cannot be answered; refusing to guess." >&2
-  echo "     Pass --yes for automation (or --dry-run to only run the gates)." >&2
-  exit 2
-fi
-
 # Step 1 — tag shape
 if ! [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9.-]+)?(\+[A-Za-z0-9.-]+)?$ ]]; then
   echo "ERR: '$TAG' does not match SemVer vX.Y.Z[-prerelease][+build]" >&2
@@ -87,23 +81,30 @@ fi
 
 cd "$(git rev-parse --show-toplevel)"
 
-# Step 2 — branch + clean tree
+# Step 2 — the three repository preconditions, together.
+#
+# Branch, clean tree and origin-sync are one question — "is this checkout
+# in a state a release can be cut from?" — and asking them one at a time
+# costs a round trip per answer. They are evaluated as a set, every
+# failure is named, and the FIRST line of output is the failing
+# precondition rather than a preamble. Nothing slow, nothing that writes,
+# and no prompt runs before this.
+preconditions=()
+
 branch="$(git branch --show-current)"
 if [[ "$branch" != "main" ]]; then
-  echo "ERR: not on main (currently on '$branch'). Switch with 'git checkout main' first." >&2
-  exit 1
-fi
-if [[ -n "$(git status --porcelain)" ]]; then
-  echo "ERR: working tree has uncommitted changes:" >&2
-  git status --short >&2
-  exit 1
+  preconditions+=("not on main (currently on '${branch:-<detached HEAD>}') — switch with 'git checkout main'")
 fi
 
-# Step 3 — up to date with origin. Use the gh API to read the
-# remote tip rather than `git fetch` so the script works against
-# both SSH-keyed and HTTPS-credential-via-gh setups (some envs
-# carry gh creds but no SSH key, and vice versa).
-local_sha=$(git rev-parse main)
+dirty="$(git status --porcelain)"
+if [[ -n "$dirty" ]]; then
+  preconditions+=("working tree has uncommitted changes — commit or discard them")
+fi
+
+# Read the remote tip through the gh API rather than `git fetch`, so this
+# works against both SSH-keyed and HTTPS-credential-via-gh setups (some
+# environments carry gh credentials but no SSH key, and vice versa).
+local_sha=$(git rev-parse main 2>/dev/null || echo unknown)
 if command -v gh >/dev/null 2>&1; then
   remote_sha=$(gh api repos/{owner}/{repo}/commits/main --jq '.sha' 2>/dev/null || true)
   if [[ -z "$remote_sha" ]]; then
@@ -116,11 +117,35 @@ else
   remote_sha=$(git rev-parse origin/main)
 fi
 if [[ "$local_sha" != "$remote_sha" ]]; then
-  echo "ERR: main is not in sync with origin/main:" >&2
-  echo "  local:  $local_sha" >&2
-  echo "  remote: $remote_sha" >&2
-  echo "Run: git pull --ff-only origin main" >&2
+  preconditions+=("main is not in sync with origin/main (local ${local_sha}, remote ${remote_sha}) — run 'git pull --ff-only origin main'")
+fi
+
+if (( ${#preconditions[@]} > 0 )); then
+  echo "ERR: ${preconditions[0]}" >&2
+  for (( i = 1; i < ${#preconditions[@]}; i++ )); do
+    echo "ERR: ${preconditions[$i]}" >&2
+  done
+  if [[ -n "$dirty" ]]; then
+    echo "" >&2
+    git status --short >&2
+  fi
+  echo "" >&2
+  echo "${#preconditions[@]} precondition(s) failed; nothing was tagged or pushed." >&2
   exit 1
+fi
+
+# Step 3 — no terminal to answer the step-7 prompt, and no instruction.
+# Without this, `read` hits EOF, the script aborts, and any `| tail`-style
+# pipeline hides the failure (2026-08-28: "release cut", no tag on origin).
+# --dry-run never prompts, so it is exempt. It sits after the repository
+# preconditions deliberately: a caller on the wrong branch should be told
+# about the branch, which is the thing they can act on, not about the
+# terminal.
+if [[ ! -t 0 && "$ASSUME_YES" -eq 0 && "$DRY_RUN" -eq 0 ]]; then
+  echo "ERR: stdin is not a TTY and neither --yes nor --dry-run was given." >&2
+  echo "     The confirmation prompt cannot be answered; refusing to guess." >&2
+  echo "     Pass --yes for automation (or --dry-run to only run the gates)." >&2
+  exit 2
 fi
 
 # Step 4 — tag doesn't already exist

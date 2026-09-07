@@ -86,6 +86,14 @@ deps: ## Download + verify Go module deps and tools
 doctor: ## Report local verification capabilities (VERIFY_PROFILE=portable|native|container|full|auto)
 	@./scripts/dev/doctor.sh --profile $(VERIFY_PROFILE)
 
+.PHONY: bootstrap-worktree
+bootstrap-worktree: ## Make a fresh worktree able to pass verify.sh — surveys every gap at once, then installs the Go tool pins and BOTH web/ node_modules trees
+	@./scripts/dev/bootstrap-worktree.sh
+
+.PHONY: bootstrap-worktree-check
+bootstrap-worktree-check: ## bootstrap-worktree survey only; installs nothing
+	@./scripts/dev/bootstrap-worktree.sh --check
+
 .PHONY: fix
 fix: fmt docs-api docs-postman web-generate-api docs-config docs-metrics ## Format and regenerate tracked artifacts (modifies files)
 
@@ -477,6 +485,16 @@ docs-metrics: ## (no-op) Metrics reference is hand-edited — drift is guarded b
 .PHONY: docs-serve
 docs-serve: ## Preview docs site locally on :8080
 	@./scripts/dev/docs-serve.sh
+
+##@ Deploy preflight
+
+# VERSION is a Makefile variable (git describe) by default, so an operator
+# who forgets `VERSION=` gets a describe string rather than an empty value.
+# The script's SemVer check refuses that shape and says what to pass, which
+# is why the tag is not re-validated here.
+.PHONY: preflight-deploy
+preflight-deploy: ## Answer every question deploy.yml will ask, locally: make preflight-deploy REGION=r1 VERSION=vX.Y.Z (PREFLIGHT_ARGS='--no-host --refresh-manifest --migrations-ack')
+	@./scripts/dev/preflight-deploy.sh --region "$(REGION)" --version "$(VERSION)" $(PREFLIGHT_ARGS)
 
 ##@ Release
 

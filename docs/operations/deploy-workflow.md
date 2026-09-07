@@ -215,6 +215,7 @@ did). Operator checklist:
 
 ## Cross-references
 
+- [`docs/operations/local-preflight.md`](local-preflight.md) — answer every question below locally, before the dispatch (`make preflight-deploy REGION=… VERSION=…`)
 - [`docs/operations/release-process.md`](release-process.md) — the cut-tag side of the pipeline
 - [`docs/architecture/semver-policy.md`](../architecture/semver-policy.md) — version tag rules
 - [`.github/workflows/release.yml`](../../.github/workflows/release.yml) — produces the artefacts this consumes
