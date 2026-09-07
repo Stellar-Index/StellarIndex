@@ -314,10 +314,13 @@ Subcommands:
                           sponsored, revocations issued) into staging and
                           atomically exchange live
                           (account_sponsors_rollup). Aggregated from the
-                          Begin/End/Revoke sponsorship operations; reads
-                          no operation bodies. History only, never a live
-                          sponsored set. Backs /v1/accounts/sponsors.
-                          Issue #351.
+                          Begin/End/Revoke sponsorship operations that
+                          APPLIED — each is joined to its transaction and
+                          kept only where that transaction succeeded, so
+                          operations in failed transactions are excluded;
+                          reads no operation bodies. History only, never a
+                          live sponsored set. Backs /v1/accounts/sponsors.
+                          Issues #351, #494.
   ch-contract-ledgers-backfill -ch-addr ADDR [-from N] [-to N] [-window N]
                           One-time historical fill of
                           stellar.contract_active_ledgers (the per-contract

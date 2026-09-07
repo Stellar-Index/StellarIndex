@@ -98,36 +98,131 @@ const factsCTE = `
 	    FROM stellar.account_sponsors_ops WHERE otype = '` + opRevokeSponsoring + `'
 	)`
 
+// sponsorsGatedArmSettings is the settings clause for this cycle's one
+// walked step, which reads two lake archives and joins them.
+//
+// query_plan_join_swap_table = 0 PINS which side is built into the hash
+// table, for the reason the sibling cycle's post-P23 arm pins its own
+// (creatorsP23ArmSettings) and over a far more lopsided pair. The build
+// side is that window's sponsorship operations BEFORE the gate drops the
+// failed ones — 2,475,607 rows in partition 55, the widest measured on r1
+// 2026-09-07 — and the streaming side is that window's transactions,
+// 318,127,649 rows in the same partition. That is 128.5 to 1 there and
+// 460 to 1 in partition 63
+// (1,129,122 operations against 519,663,457 transactions), so left to a
+// planner estimate a swap would build a hash table over hundreds of
+// millions of transactions, in a step that measures 1.68 GiB pinned.
+//
+// The execution cap is 1800 s rather than the walk's 600 s, matching the
+// sibling's joining arm. Gated windows measured 18.9-40.7 s on r1
+// 2026-09-07 (partition 63 the slowest; the widest by MEMORY is
+// partition 55, and the two are not the same window), so this is a 44x
+// margin on a box that also runs galexie and the sibling rollups. The
+// wider cap goes with the wider input: the streaming side grows with ALL
+// transaction volume rather than with sponsorship traffic, and that
+// population alone went from 318,127,649 rows in partition 55 to
+// 519,663,457 in partition 63, so it is the term whose margin erodes
+// fastest.
+const sponsorsGatedArmSettings = boundedScanSettings +
+	", query_plan_join_swap_table = 0, max_execution_time = 1800"
+
 // sponsorsRollupStatements is the full recompute cycle.
 //
 // Step 2 is the only pass over stellar.operations, and it is WALKED: one
 // statement per 1M-ledger lake partition, each landing that partition's
-// narrow, deduplicated projection of sponsorship operations into the
-// working table. Every served figure then derives from THOSE rows, so
+// narrow, deduplicated projection of APPLIED sponsorship operations into
+// the working table. Every served figure then derives from THOSE rows, so
 // the board and the coverage span that qualifies it cannot describe
 // different data. It reads no body_xdr — see the module doc in
 // deploy/clickhouse/account_sponsors_rollup.sql for why that matters and
 // how the equivalence was proven.
 //
+// WHY THAT PASS JOINS THE TRANSACTION. stellar.operations has no success
+// gate: the lake keeps what the ledger CONTAINED, so extractOps retains
+// the operations of transactions that failed (extract.go's Ops arm, by
+// design). A sponsorship arrangement inside a failed transaction never
+// took effect, and counting it puts arrangements on the board that were
+// never entered into. Measured on r1 2026-09-07, 2,426,813 of the
+// archive's 22,413,991 sponsorship operations (10.8%) sit in failed
+// transactions — 47,570 of partition 63's 563,655 Begin operations (8.4%)
+// and 251 of its 1,819 Revoke operations (13.8%), rising to 61.6% of
+// partition 39. Ungated, the board served 11,162,397 sponsorships_started
+// and 87,193 revocations_issued against true figures of 9,972,887 and
+// 39,492: the revocation count was better than twice its real value, 323
+// of the 2,740 ranked accounts had every operation they were credited
+// with inside a failed transaction, and 2,408 of the 2,417 that survive
+// the correction were ranked in the wrong place (#494).
+//
+// The gate is a join to stellar.transactions on the full (ledger_seq,
+// tx_index) transaction identity — which is that table's whole ORDER BY
+// key — rather than a filter on a column stellar.operations carries,
+// because it carries none. The sibling cycle gates by pairing the
+// operation with an APPLIED EFFECT instead (a CAP-67 transfer movement,
+// which exists only where the creation happened), and that route was
+// checked here first: it does not exist for sponsorship. Under CAP-33 the
+// is-sponsoring-future-reserves-for relationship lives only for the
+// duration of the transaction and is written to no ledger entry, so
+// measured on r1 2026-09-07 over ledgers 63,000,000-63,010,000, 0 of
+// 4,745 Begin and End operations have any stellar.ledger_entry_changes
+// row at their own (ledger_seq, tx_hash, op_index) — including all 4,294
+// of them that DID apply. Only Revoke leaves an entry change (2 of 2),
+// and finding which entry needs the body_xdr decode this rollup exists to
+// avoid. transactions.successful is therefore the only evidence of
+// application there is for the two operation types that produce
+// sponsorships_started.
+//
+// Both sides of that join are collapsed explicitly rather than trusted:
+// stellar.transactions is a ReplacingMergeTree whose duplicates are
+// present in bulk — over ledgers 63,000,000-63,099,999 every one of its
+// 33,380,486 distinct (ledger_seq, tx_index) keys carries more than one
+// row — so a join that did not collapse them would multiply each
+// operation by its transaction's row count and inflate the very counts
+// this gate exists to correct. The GROUP BY over the operation identity
+// absorbs that multiplication, and the HAVING resolves the flag the same
+// way the projection resolves its own columns: argMax over ingested_at,
+// the table's version column. No key was observed carrying conflicting
+// successful values, so this reads as the stricter form of the same
+// answer rather than a different one.
+//
 // WHY THAT PASS IS WALKED. Unwalked it is one indivisible statement over
-// a 24.74-billion-row, 2.18 TiB table, and both of the things it holds
-// grow with the archive: its wall time, and its dedupe hash table, which
-// carries one argMax state per sponsorship operation in all of history.
-// Measured on r1 2026-09-06 a single partition already costs 18.1 s /
-// 165.76 MiB (partition 40, 186,968 operations) and 24.7 s / 819.23 MiB
-// (partition 62, 1,073,991 operations) at max_threads=2 — a 5.7x growth
-// in state count across 22 partitions, against a statement-level
-// max_execution_time of 7200 s inside a unit whose TimeoutStartSec is
-// 150 min. Walking makes each statement's cost a function of one
-// partition, and makes the cycle's progress visible per window instead
-// of only on success or failure.
+// a 24.74-billion-row, 2.18 TiB archive joined to a second one larger
+// still, and everything it holds grows with the chain: its wall time, its
+// dedupe hash table — one argMax state per sponsorship operation in all
+// of history — and the join's build side. Measured on r1 2026-09-07 at
+// max_threads=2, a single gated partition already costs 18.9 s /
+// 234.85 MiB (partition 40, 164,670 applied operations), 31.5 s /
+// 1.00 GiB (partition 62, 1,013,943), 40.7 s / 1.28 GiB (partition 63,
+// 1,033,738) and 20.1 s / 1.68 GiB (partition 55, 2,410,901 — the widest
+// by memory, and not the slowest), against a unit whose TimeoutStartSec
+// is 150 min. Walking
+// makes each statement's cost a function of one partition, and makes the
+// cycle's progress visible per window instead of only on success or
+// failure.
+//
+// The gate is what the walk pays for. Over the same partitions the
+// ungated statement cost 29.5 s / 143.79 MiB, 26.6 s / 705.21 MiB,
+// 35.0 s / 769.67 MiB and 18.6 s / 1.01 GiB. The widest window is
+// partition 55 on BOTH sides, and there the gate adds 67% — 1.01 GiB to
+// 1.68 GiB — which is the figure any future ceiling must be sized from,
+// not the 1.28 GiB of the slowest window. It leaves 6.32 GiB of headroom
+// against the 8 GiB budget. The cycle's peak is higher and is not this
+// arm's: the board join of step 5 measures 4.09 GiB over the same working
+// table, leaving 3.91 GiB, and this arm does not touch it — so the gate
+// moved the widest WALKED window, not the cycle's ceiling. Below sponsorship's own genesis the arm
+// is free rather than merely cheap: with no operation to build a hash
+// table from, windows 5, 20 and 31 cost 0.01-0.29 s at under 6 MiB, so
+// the 32 windows under ledger 32,747,295 add nothing measurable to the
+// cycle.
 //
 // Grouping per window is exact rather than approximate: stellar.operations
-// is PARTITION BY intDiv(ledger_seq, 1000000) and ledger_seq leads its
-// ORDER BY, so every row sharing an ORDER BY key shares a partition and
-// no duplicate group can straddle a window boundary. The window
-// predicate is also a primary-key range on that table, so it prunes
-// granules and not only partitions.
+// and stellar.transactions are both PARTITION BY
+// intDiv(ledger_seq, 1000000) with ledger_seq leading their ORDER BY, so
+// every row sharing an ORDER BY key shares a partition, no duplicate
+// group can straddle a window boundary, and no transaction lands in a
+// different window from its own operations. The window predicate is also
+// a primary-key range on both tables, so it prunes granules and not only
+// partitions — and it is carried TWICE because a join condition prunes
+// neither side, which is why this template declares two window binds.
 //
 // Nothing is written to a staging arm until the walk has finished, so an
 // interrupted cycle leaves the live board as the previous cycle left it,
@@ -135,16 +230,22 @@ const factsCTE = `
 // visible.
 var sponsorsRollupStatements = []rollupStep{
 	{sql: `TRUNCATE TABLE stellar.account_sponsors_ops`},
-	{walk: true, sql: `INSERT INTO stellar.account_sponsors_ops (lseq, tidx, oidx, otype, src, ctime)
-	 SELECT ledger_seq, tx_index, op_index,
-	        argMax(op_type, ingested_at) AS otype,
-	        argMax(source_account, ingested_at) AS src,
-	        argMax(close_time, ingested_at) AS ctime
-	 FROM stellar.operations
-	 WHERE ledger_seq BETWEEN ? AND ?
-	   AND op_type IN ('` + opBeginSponsoring + `', '` + opEndSponsoring + `', '` + opRevokeSponsoring + `')
-	 GROUP BY ledger_seq, tx_index, op_index
-	 ` + rollupWalkSettings},
+	{walk: true, windowBinds: 2, sql: `INSERT INTO stellar.account_sponsors_ops (lseq, tidx, oidx, otype, src, ctime)
+	 SELECT o.ledger_seq, o.tx_index, o.op_index,
+	        argMax(o.op_type, o.ingested_at) AS otype,
+	        argMax(o.source_account, o.ingested_at) AS src,
+	        argMax(o.close_time, o.ingested_at) AS ctime
+	 FROM stellar.transactions AS t
+	 INNER JOIN (
+	     SELECT ledger_seq, tx_index, op_index, op_type, source_account, close_time, ingested_at
+	     FROM stellar.operations
+	     WHERE ledger_seq BETWEEN ? AND ?
+	       AND op_type IN ('` + opBeginSponsoring + `', '` + opEndSponsoring + `', '` + opRevokeSponsoring + `')
+	 ) AS o ON t.ledger_seq = o.ledger_seq AND t.tx_index = o.tx_index
+	 WHERE t.ledger_seq BETWEEN ? AND ?
+	 GROUP BY o.ledger_seq, o.tx_index, o.op_index
+	 HAVING argMax(t.successful, t.ingested_at) = 1
+	 ` + sponsorsGatedArmSettings},
 	{sql: `TRUNCATE TABLE stellar.account_sponsors_rollup_staging`},
 	{sql: `TRUNCATE TABLE stellar.account_sponsors_stats_staging`},
 	{sql: `INSERT INTO stellar.account_sponsors_rollup_staging
