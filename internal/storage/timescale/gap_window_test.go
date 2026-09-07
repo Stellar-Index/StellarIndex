@@ -144,6 +144,13 @@ func TestMarkGapDetectorScanSuccessAdvancesLivenessGauge(t *testing.T) {
 	// detector targets and from parallel tests sharing the global registry.
 	target := GapDetectorTarget{Source: "test-liveness-src", Table: "test_liveness_tbl"}
 
+	// The ok counter is process-global and no scan resets it, so its
+	// ABSOLUTE value counts how many times this binary has run this
+	// test, not what one scan did: under `go test -count=2` the second
+	// iteration reads 2 with the success path behaving perfectly. What
+	// the success path owes is one increment, so the delta is measured.
+	okBefore := testutil.ToFloat64(obs.IngestGapDetectorRunsTotal.WithLabelValues(target.Source, target.Table, "ok"))
+
 	now := time.Unix(1_700_000_000, 0)
 	markGapDetectorScanSuccess(target, now.Add(-3*time.Second), now)
 
@@ -153,8 +160,9 @@ func TestMarkGapDetectorScanSuccessAdvancesLivenessGauge(t *testing.T) {
 	}
 	// The ok counter increments alongside, but it is NOT the liveness
 	// signal — the alert no longer reads its rate.
-	if c := testutil.ToFloat64(obs.IngestGapDetectorRunsTotal.WithLabelValues(target.Source, target.Table, "ok")); c != 1 {
-		t.Fatalf("ok counter = %v; want 1", c)
+	okAfter := testutil.ToFloat64(obs.IngestGapDetectorRunsTotal.WithLabelValues(target.Source, target.Table, "ok"))
+	if c := okAfter - okBefore; c != 1 {
+		t.Fatalf("ok counter advanced by %v; want 1", c)
 	}
 
 	// A later successful scan advances the stamp forward: staleness

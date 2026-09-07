@@ -1,6 +1,8 @@
 package timescale
 
 import (
+	"fmt"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -52,11 +54,26 @@ func gatherGapDetectorRunsTotal(t *testing.T) map[[3]string]float64 {
 // due yet" as "detector dead". A detector that has run zero scans must
 // still expose {outcome="ok"} and {outcome="error"} at exactly 0 for
 // every configured target.
+// preregFixtureSeq numbers this test's fixture targets so each
+// invocation gets label sets no earlier one has used.
+//
+// The guard below insists the series is ABSENT before
+// preregisterGapDetectorSeries runs, which is what makes its presence
+// afterwards attributable to that call rather than to anything else in
+// the binary that touched the process-global vec. Fixed names satisfy
+// that exactly once per process: a second iteration (`go test -count=2`,
+// the standard way to hunt a flake) trips the guard on the previous
+// iteration's own leftovers and reports a fixture collision. Numbering
+// keeps the guard strict rather than relaxing it to tolerate a
+// pre-existing series.
+var preregFixtureSeq atomic.Uint64
+
 func TestGapDetectorPreregistersRunsTotalSeries(t *testing.T) {
 	t.Parallel()
+	n := preregFixtureSeq.Add(1)
 	targets := []GapDetectorTarget{
-		{Source: "prereg-a", Table: "prereg_a_events", LedgerColumn: "ledger"},
-		{Source: "prereg-b", Table: "prereg_b_trades", LedgerColumn: "ledger", ScanCadence: 6 * time.Hour},
+		{Source: fmt.Sprintf("prereg-a-%d", n), Table: fmt.Sprintf("prereg_a_events_%d", n), LedgerColumn: "ledger"},
+		{Source: fmt.Sprintf("prereg-b-%d", n), Table: fmt.Sprintf("prereg_b_trades_%d", n), LedgerColumn: "ledger", ScanCadence: 6 * time.Hour},
 	}
 
 	before := gatherGapDetectorRunsTotal(t)

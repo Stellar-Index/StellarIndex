@@ -2,14 +2,46 @@ package obs_test
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 
+	"github.com/prometheus/client_golang/prometheus/testutil"
+
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
 )
+
+// obs.HTTPRequestsTotal is a PROCESS-GLOBAL counter that no test resets,
+// so an absolute expectation on a scrape row ("… } 1") asserts that this
+// binary ran this test exactly once — not anything the middleware does.
+// `go test -count=2`, the standard way to hunt a flake, then fails all
+// four of the tests below with the middleware behaving perfectly, and so
+// would any future test that happened to route the same
+// method/route/status. What the middleware owes is the DELTA its own
+// requests cause, so that is what these helpers pin.
+//
+// The assertions stay on the scrape TEXT rather than moving to the
+// Collector: the exact row format is what the alert rules and the SLO
+// recording rule read, and it is the only check here that the metric is
+// registered at all.
+
+// httpRequestsBaseline reads a label set's counter before a test issues
+// its requests.
+func httpRequestsBaseline(method, route, status string) float64 {
+	return testutil.ToFloat64(obs.HTTPRequestsTotal.WithLabelValues(method, route, status))
+}
+
+// httpRequestsRow renders the exact scrape line for one label set at
+// value v, terminator included — without the newline "… } 2" also
+// matches "… } 20", which a repeated run reaches.
+func httpRequestsRow(method, route, status string, v float64) string {
+	return fmt.Sprintf("http_requests_total{method=%q,route=%q,status=%q} %s\n",
+		method, route, status, strconv.FormatFloat(v, 'g', -1, 64))
+}
 
 func TestHandler_ExposesMetrics(t *testing.T) {
 	// Warm up every registered Vec with at least one child so the
@@ -108,6 +140,9 @@ func TestHTTPMetrics_CountsRequests(t *testing.T) {
 
 	h := obs.HTTPMetrics(mux)
 
+	fooBefore := httpRequestsBaseline("GET", "/foo", "200")
+	barBefore := httpRequestsBaseline("GET", "/bar", "500")
+
 	// Hit /foo twice, /bar once.
 	for i := 0; i < 2; i++ {
 		rr := httptest.NewRecorder()
@@ -127,12 +162,13 @@ func TestHTTPMetrics_CountsRequests(t *testing.T) {
 	body, _ := io.ReadAll(resp.Body)
 	text := string(body)
 
-	// Assert both counter rows landed. Exact format:
+	// Assert both counter rows landed, each advanced by exactly the
+	// traffic this test sent. Exact format:
 	//   http_requests_total{method="GET",route="/foo",status="200"} 2
 	//   http_requests_total{method="GET",route="/bar",status="500"} 1
 	for _, want := range []string{
-		`http_requests_total{method="GET",route="/foo",status="200"} 2`,
-		`http_requests_total{method="GET",route="/bar",status="500"} 1`,
+		httpRequestsRow("GET", "/foo", "200", fooBefore+2),
+		httpRequestsRow("GET", "/bar", "500", barBefore+1),
 	} {
 		if !strings.Contains(text, want) {
 			t.Errorf("scrape missing %q; body:\n%s", want, text)
@@ -262,6 +298,7 @@ func TestHTTPMetrics_RouteSurvivesWithContextChain(t *testing.T) {
 	// CaptureRoute → mux. CaptureRoute is innermost.
 	h := obs.HTTPMetrics(withContextMW(obs.CaptureRoute(mux)))
 
+	before := httpRequestsBaseline("GET", "/v1/probe", "200")
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/v1/probe", nil))
 
@@ -277,7 +314,7 @@ func TestHTTPMetrics_RouteSurvivesWithContextChain(t *testing.T) {
 
 	// Positive assertion is sufficient: if the route was lost, this
 	// counter would be route="unmatched" instead.
-	want := `http_requests_total{method="GET",route="/v1/probe",status="200"} 1`
+	want := httpRequestsRow("GET", "/v1/probe", "200", before+1)
 	if !strings.Contains(text, want) {
 		t.Errorf("expected %q, body:\n%s", want, text)
 	}
@@ -295,6 +332,8 @@ func TestHTTPMetrics_SyntheticUASkipsHistogram(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	})
 	h := obs.HTTPMetrics(mux)
+
+	before := httpRequestsBaseline("GET", "/v1/synthetic-probe", "200")
 
 	// Real customer request — should land in the histogram.
 	rr := httptest.NewRecorder()
@@ -317,15 +356,15 @@ func TestHTTPMetrics_SyntheticUASkipsHistogram(t *testing.T) {
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(resp.Body)
 
-	// Exactly 1 sample for /v1/synthetic-probe — the customer
+	// Exactly 1 new sample for /v1/synthetic-probe — the customer
 	// request. The smoke request should be invisible.
-	want := `http_requests_total{method="GET",route="/v1/synthetic-probe",status="200"} 1`
+	want := httpRequestsRow("GET", "/v1/synthetic-probe", "200", before+1)
 	if !strings.Contains(string(body), want) {
 		t.Errorf("expected %q, body:\n%s", want, string(body))
 	}
-	// Defensive: if the smoke request had been counted, the value
-	// would be 2. Pin the negative.
-	if strings.Contains(string(body), `http_requests_total{method="GET",route="/v1/synthetic-probe",status="200"} 2`) {
+	// Defensive: if the smoke request had been counted too, the counter
+	// would have advanced by 2. Pin the negative.
+	if strings.Contains(string(body), httpRequestsRow("GET", "/v1/synthetic-probe", "200", before+2)) {
 		t.Errorf("regression: smoke traffic counted in customer histogram")
 	}
 }
@@ -344,6 +383,7 @@ func TestHTTPMetrics_StreamRouteSkipsDurationHistogram(t *testing.T) {
 	})
 	h := obs.HTTPMetrics(mux)
 
+	before := httpRequestsBaseline("GET", "/v1/streamtest/stream", "200")
 	rr := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/v1/streamtest/stream", nil)
 	req.Header.Set("User-Agent", "Mozilla/5.0")
@@ -360,7 +400,7 @@ func TestHTTPMetrics_StreamRouteSkipsDurationHistogram(t *testing.T) {
 	s := string(body)
 
 	// The request IS counted in http_requests_total.
-	if !strings.Contains(s, `http_requests_total{method="GET",route="/v1/streamtest/stream",status="200"} 1`) {
+	if !strings.Contains(s, httpRequestsRow("GET", "/v1/streamtest/stream", "200", before+1)) {
 		t.Errorf("stream request not counted in http_requests_total; body:\n%s", s)
 	}
 	// The duration is NOT observed — no histogram series for the route.

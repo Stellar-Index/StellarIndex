@@ -118,7 +118,35 @@ cat "$FAKE_POOL/free"
 STUB
 # `logger` must not reach the real journal from a test run.
 printf '#!/usr/bin/env bash\nexit 0\n' > "$TMP/bin/logger"
-chmod +x "$TMP/bin/zfs" "$TMP/bin/zpool" "$TMP/bin/logger"
+# `date` is stubbed but INERT unless FAKE_DATE_EPOCH is exported into a
+# particular call: every other invocation execs the real binary, so the
+# fixture ages below and the script's own `date +%s` keep the real clock.
+# Cases that assert on a FORMATTED stamp set it, because the snapshot name
+# is `auto-$(date -u +%Y%m%d-%H%M)` and an assertion about two calls
+# sharing a name is otherwise an assertion about which wall-clock minute
+# the run happened to start in.
+cat > "$TMP/bin/date" <<'STUB'
+#!/usr/bin/env bash
+real=/bin/date
+[[ -x "$real" ]] || real=/usr/bin/date
+[[ -n "${FAKE_DATE_EPOCH:-}" ]] || exec "$real" "$@"
+utc=""; fmt=""
+for a in "$@"; do
+  case "$a" in
+    -u) utc=1 ;;
+    +*) fmt="$a" ;;
+  esac
+done
+[[ -n "$fmt" ]] || exec "$real" "$@"
+if [[ "$fmt" == "+%s" ]]; then printf '%s\n' "$FAKE_DATE_EPOCH"; exit 0; fi
+# BSD date (macOS) takes -r <epoch>; GNU date takes -d @<epoch>.
+if [[ -n "$utc" ]]; then
+  "$real" -u -r "$FAKE_DATE_EPOCH" "$fmt" 2>/dev/null || "$real" -u -d "@$FAKE_DATE_EPOCH" "$fmt"
+else
+  "$real" -r "$FAKE_DATE_EPOCH" "$fmt" 2>/dev/null || "$real" -d "@$FAKE_DATE_EPOCH" "$fmt"
+fi
+STUB
+chmod +x "$TMP/bin/zfs" "$TMP/bin/zpool" "$TMP/bin/logger" "$TMP/bin/date"
 export PATH="$TMP/bin:$PATH"
 
 export TEXTFILE_DIR="$TMP/textfile"
@@ -264,12 +292,23 @@ res $? "snapshots taken after the guard freed space" "created=[$(created_list)]"
 
 echo "zfs-snapshot-test: now / --keep / unmanaged"
 reset_pool $(( 5 * TIB ))
-"$SCRIPT" now data/clickhouse 2>"$TMP/log5"; rc=$?
+FAKE_DATE_EPOCH="$NOW" "$SCRIPT" now data/clickhouse 2>"$TMP/log5"; rc=$?
 [[ $rc -eq 0 && "$(n_created)" -eq 1 ]] && grep -qE '^data/clickhouse@auto-[0-9]{8}-[0-9]{4}$' "$FAKE_POOL/created"
 res $? "now <ds> takes exactly one auto snapshot of that dataset" "rc=$rc created=[$(created_list)]"
-"$SCRIPT" now data/clickhouse 2>>"$TMP/log5"; rc=$?
+# Idempotence is keyed on the snapshot NAME, and the name carries the
+# minute — so the clock is frozen for the pair. Driven by the real clock
+# this case asserted "the run did not straddle a minute boundary": two
+# calls either side of :00 legitimately mint auto-…-1749 and auto-…-1750,
+# and the case failed ~1 run in 3 with nothing wrong.
+FAKE_DATE_EPOCH="$NOW" "$SCRIPT" now data/clickhouse 2>>"$TMP/log5"; rc=$?
 t "$rc" -eq 0 -a "$(n_created)" -eq 1
 res $? "now twice in the same minute is an idempotent no-op" "rc=$rc created=[$(created_list)]"
+# Control, and the proof the freeze above is doing work rather than
+# passing vacuously: one minute on, the same call DOES take a snapshot,
+# so the no-op is name-keyed and not a once-per-fixture latch.
+FAKE_DATE_EPOCH=$(( NOW + 60 )) "$SCRIPT" now data/clickhouse 2>>"$TMP/log5"; rc=$?
+t "$rc" -eq 0 -a "$(n_created)" -eq 2
+res $? "now in the NEXT minute takes a second snapshot (idempotence is name-keyed)" "rc=$rc created=[$(created_list)]"
 "$SCRIPT" now data/postgres --keep pre-0123 2>>"$TMP/log5"; rc=$?
 [[ $rc -eq 0 ]] && grep -qx 'data/postgres@manual-pre-0123' "$FAKE_POOL/created"
 res $? "now --keep takes manual-<label>" "rc=$rc created=[$(created_list)]"
