@@ -679,6 +679,20 @@ jobs:
         # ci-health.yml (watches `ci.yml`) and reconciliation-health.yml
         # (watches `ansible-drift.yml`) call. No network, no token.
         run: ./scripts/ci/check-main-ci-health-test.sh
+      - name: check-scheduled-controls self-test
+        # #496: the red-streak core above reads the LATEST run whatever
+        # triggered it, so ansible-drift.yml — 0 green of 8 SCHEDULED
+        # runs across seven weeks — read healthy on the strength of a
+        # green manual dispatch. These fixtures pin the dead-control
+        # sweep ci-health.yml runs daily: scheduled runs only, a
+        # threshold derived from each workflow's own cron cadence (the
+        # same 8-day-old pass is live weekly and dead daily), cancelled
+        # runs and a disabled schedule not read as green, a newly
+        # merged workflow not flagged, self-reference as the one
+        # exclusion, workflows enumerated from the tree rather than a
+        # list, and an empty or unreadable sweep failing rather than
+        # reporting a clean result. No network, no token.
+        run: ./scripts/ci/check-scheduled-controls-test.sh
       - name: check-sla-evidence self-test
         # #316: k6-weekly.yml's scheduled path exited 0 with a `::notice::`
         # whenever the load-target secrets were unset, so four months of

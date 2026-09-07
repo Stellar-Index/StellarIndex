@@ -6,12 +6,9 @@ name: reconciliation-health
 #
 # ansible-drift.yml failing every week (or never firing at all) is
 # invisible to anyone who doesn't go looking: there is no badge or
-# consumer of "did the weekly drift check produce a verdict", and the
-# 2026-07-20 run history shows exactly this — every scheduled run has
-# died at a credential-loading step before reaching PLAY RECAP, so no
-# valid drift verdict has existed for weeks with nothing surfacing it.
-# A broken reconciliation guard is indistinguishable from "no drift"
-# to anyone who isn't reading individual run logs.
+# consumer of "did the weekly drift check produce a verdict". A broken
+# reconciliation guard is indistinguishable from "no drift" to anyone
+# who isn't reading individual run logs.
 #
 # This reuses ci-health.yml's own decision core
 # (scripts/ci/check-main-ci-health.sh — generic over CI_WORKFLOW_FILE,
@@ -20,6 +17,27 @@ name: reconciliation-health
 # instead of ci.yml, with thresholds sized for a WEEKLY schedule rather
 # than a per-push one: 2 consecutive red/absent runs (~2 weeks) or 9
 # days since the last green run, whichever trips first.
+#
+# WHAT THIS DOES NOT SEE, measured 2026-09-07 (#496). The core reads
+# the LATEST runs whatever triggered them, and ansible-drift.yml is
+# dispatched by hand far more often than it is scheduled — 31 of its
+# 38 runs. So a green manual dispatch breaks the red streak and resets
+# the age, and this workflow reported ansible-drift healthy through the
+# whole stretch in which every one of its 8 SCHEDULED runs failed:
+#
+#     CI_WORKFLOW_FILE=ansible-drift.yml FAIL_RUNS=2 FAIL_HOURS=216 \
+#       scripts/ci/check-main-ci-health.sh   → exit 0, "not faulting yet"
+#
+# The claim that used to stand here — that the 2026-07-20 history shows
+# every scheduled run dying at a credential step before PLAY RECAP —
+# was true of that one run and of nothing after it, and reading it kept
+# the investigation on credentials. Treat this workflow as what it is:
+# a fast red-streak trigger over ALL triggers (2 runs / 9 days), useful
+# because it fires sooner than the sweep below. The authoritative
+# "is this control still reporting" answer is the scheduled-runs-only
+# sweep in ci-health.yml (scripts/ci/check-scheduled-controls.sh),
+# which covers ansible-drift.yml along with every other scheduled
+# workflow.
 #
 # Self-contained: uses ${{ github.token }} via the gh CLI to read run
 # history only — this workflow never touches the vault/SSH secrets
