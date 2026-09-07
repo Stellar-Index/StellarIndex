@@ -20,6 +20,11 @@ import (
 // paid once, not a per-request cost: the endpoint reads a keyed board
 // and seven metric rows.
 //
+// It reads that archive on both sides of the Protocol 23 boundary, where
+// a creation changes representation rather than stopping: the classic
+// create_account movements below it, and above it the CAP-67 transfer
+// paired with the CreateAccount operation in stellar.operations (#493).
+//
 // The same cycle writes the coverage span it aggregated, so the API
 // never has to assume the board covers the whole chain.
 func chCreatorsRollup(args []string) error {

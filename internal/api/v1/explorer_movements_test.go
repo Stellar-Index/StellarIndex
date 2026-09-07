@@ -17,18 +17,29 @@ import (
 
 // TestP23BoundaryConstantsAgree is ADR-0048 D5's "assert [the CH/PG
 // non-overlap] in code" requirement, the compile+run-time half: the
-// ClickHouse archive's hard clamp (classicmovements.P23StartLedger) and
-// the Postgres tail's hard floor (timescale.SEP41MovementsFloorLedger)
-// are two SEPARATE constants (import-direction rules forbid
-// internal/storage from importing internal/sources — see either
-// constant's doc comment) that MUST hold the same value for
-// explorer.Handler.assertP23NonOverlap's invariant to mean anything. A
-// package that can import both (this one) is the only place able to
-// pin them together.
+// ClickHouse archive's hard clamp (classicmovements.P23StartLedger), the
+// Postgres tail's hard floor (timescale.SEP41MovementsFloorLedger) and
+// the creator board's arm split (clickhouse.P23BoundaryLedger) are three
+// SEPARATE constants (import-direction rules forbid internal/storage
+// from importing internal/sources — see any of their doc comments) that
+// MUST hold the same value for explorer.Handler.assertP23NonOverlap's
+// invariant, and for the creators cycle's two arms partitioning the
+// ledger axis, to mean anything. A package that can import all three
+// (this one) is the only place able to pin them together.
+//
+// Each surface that reads across the boundary adds its constant here.
+// The creators board is on this list because it silently did NOT read
+// across it: its cycle read only the pre-P23 representation, so it
+// ranked creators over a population that ended at the boundary (#493).
 func TestP23BoundaryConstantsAgree(t *testing.T) {
 	if classicmovements.P23StartLedger != timescale.SEP41MovementsFloorLedger {
 		t.Fatalf("P23 boundary constants drifted: classicmovements.P23StartLedger=%d != timescale.SEP41MovementsFloorLedger=%d",
 			classicmovements.P23StartLedger, timescale.SEP41MovementsFloorLedger)
+	}
+	if classicmovements.P23StartLedger != clickhouse.P23BoundaryLedger {
+		t.Fatalf("P23 boundary constants drifted: classicmovements.P23StartLedger=%d != clickhouse.P23BoundaryLedger=%d — "+
+			"the creators cycle's arms would leave a gap or an overlap at the boundary",
+			classicmovements.P23StartLedger, clickhouse.P23BoundaryLedger)
 	}
 	// The config defaults MUST equal the leaf constants: a pubnet TOML that
 	// omits stellar.movements_floor_ledger / stellar.soroban_genesis_ledger

@@ -1,14 +1,45 @@
 -- account_creators rollup — the "who bootstrapped the most accounts"
 -- league table behind GET /v1/accounts/creators (#351).
 --
--- SOURCE. stellar.account_movements, the feed-shaped classic-movement
--- archive (ADR-0048 D2). A `create_account` operation lands there as two
--- rows — direction='sent' on the funder and direction='received' on the
--- created account — with `counterparty` carrying the other side and
--- `amount` the starting balance in stroops. The funder arm alone
--- (direction='sent') is the creation record: one row per successful
--- CreateAccount, already decoded. Nothing has to be read out of
--- stellar.operations.body_xdr, which is undecoded base64 XDR.
+-- SOURCE, BELOW PROTOCOL 23. stellar.account_movements, the feed-shaped
+-- classic-movement archive (ADR-0048 D2). A `create_account` operation
+-- lands there as two rows — direction='sent' on the funder and
+-- direction='received' on the created account — with `counterparty`
+-- carrying the other side and `amount` the starting balance in stroops.
+-- The funder arm alone (direction='sent') is the creation record: one
+-- row per successful CreateAccount, already decoded. Nothing has to be
+-- read out of stellar.operations.body_xdr, which is undecoded base64
+-- XDR.
+--
+-- SOURCE, AT OR ABOVE PROTOCOL 23. The same table, a different
+-- representation. That archive is historical-only by design (ADR-0047
+-- D2) — `classic-movements-backfill` hard-clamps its -to below ledger
+-- 58,762,517 — because CAP-67 folded classic payments into the
+-- token-event model at that ledger. The creation's funding leg is then a
+-- `transfer` movement written by the live ch-cap67-movements daemon, and
+-- what says the transfer WAS a creation is the
+-- OperationTypeCreateAccount row in stellar.operations, joined on the
+-- full (ledger, tx_hash, op_index) operation identity.
+--
+-- Reading only the classic arm ranked creators over a population that
+-- ended at the boundary — 4,715,612 creations short of the tip on r1
+-- 2026-09-07 (#493). The two arms clamp on opposite sides of one
+-- constant (clickhouse.P23BoundaryLedger, pinned against
+-- classicmovements.P23StartLedger and timescale.SEP41MovementsFloorLedger
+-- by TestP23BoundaryConstantsAgree), so their union is every ledger and
+-- their intersection is empty.
+--
+-- The pairing goes THROUGH the movement rather than reading the
+-- operation's own columns because stellar.operations retains failed
+-- transactions' operations by design. Measured on r1 2026-09-07 over
+-- ledgers 63,000,000-63,010,000: of 6,266 distinct CreateAccount
+-- operations, the 5,890 in successful transactions each match exactly
+-- one transfer leg and the 376 in failed transactions match none — so
+-- the join is also the success gate, and the operations side contributes
+-- the join key and nothing else. On the same sample the movement's
+-- `address` equals the operation's source account in every case, its
+-- `counterparty` is the created G-strkey, and its `asset` is native;
+-- zero amounts are real (CAP-33 sponsored creation), not missing ones.
 --
 -- WHY A ROLLUP. The predicate is movement_kind, which is not in
 -- account_movements' ORDER BY (address, ledger, tx_hash, op_index,
@@ -29,13 +60,23 @@
 -- population stops growing.
 --
 -- So the archive pass is WALKED, one 1M-ledger partition per statement,
--- into stellar.account_creators_ops below, and the join is taken OUT of
--- the walk and run once against that working table. Measured on r1
--- 2026-09-06 at max_threads=2: the widest creation window costs 13.9 s /
--- 701.17 MiB (partition 55, 1,027,707 rows) and a window with no
--- creations 2.9 s / 11.27 MiB, against 3.31 GiB for the single join.
--- Peak is now a function of one partition's creations plus the account
--- population, and both are stated rather than extrapolated.
+-- into stellar.account_creators_ops below, and the board's join is taken
+-- OUT of the walk and run once against that working table. Measured on
+-- r1 2026-09-06 at max_threads=2: the widest classic creation window
+-- costs 13.9 s / 701.17 MiB (partition 55, 1,027,707 rows) and a window
+-- with no creations 2.9 s / 11.27 MiB, against 3.31 GiB for the single
+-- join. The post-P23 arm keeps a join of its own, but one whose build
+-- side is bounded by the window and pinned rather than estimated: across
+-- the seven post-P23 partitions on r1 2026-09-07 it costs 16.0-106.9 s
+-- per window at a peak of 216 MiB-1.43 GiB, for 4,715,612 creations.
+-- Peak is a function of one partition's creations plus the account
+-- population, and both are stated rather than extrapolated; the cycle
+-- goes from about 6m11s to about 13m10s and its peak is unchanged.
+--
+-- Each arm is free on the windows the other owns. The boundary clamp is
+-- a predicate on the partition key of both tables, so a window wholly on
+-- the far side prunes to no parts — measured at 0 rows read and 2-4 ms
+-- per arm on r1 2026-09-07. A window is still scanned once.
 --
 -- Nothing is written to a staging arm until the walk has finished, so an
 -- interrupted cycle leaves the previous cycle's board live and the
@@ -43,9 +84,11 @@
 --
 -- COVERAGE IS DATA-DERIVED (ADR-0031). The cycle records the ledger
 -- span it actually aggregated — min/max ledger and close time over the
--- create_account rows it read — into account_creators_stats. Nothing
--- assumes genesis. The API serves that span verbatim so the page can
--- state what it covers instead of implying the whole chain.
+-- creation rows it read, from both arms — into account_creators_stats.
+-- Nothing assumes genesis and nothing substitutes the tip. The API
+-- serves that span verbatim so the page can state what it covers instead
+-- of implying the whole chain; thru_ledger reaches the tip now because
+-- the board covers it.
 --
 -- SCOPE. This is the CREATOR relationship only: funder → created
 -- account, immutable history. The SPONSOR relationship (who currently
@@ -56,10 +99,10 @@
 -- rather than approximated; see #351.
 
 -- Narrow, deduplicated projection of every account creation, written
--- one lake partition at a time. Not served; it exists so the walked pass
--- over the archive can land its rows somewhere bounded, and so the join
--- against the live account entries is paid ONCE per cycle instead of
--- once per window. stellar.account_movements is a ReplacingMergeTree, so
+-- one lake partition at a time, by both arms. Not served; it exists so
+-- the walked passes over the archive can land their rows somewhere
+-- bounded, and so the join against the live account entries is paid ONCE
+-- per cycle instead of once per window. stellar.account_movements is a ReplacingMergeTree, so
 -- duplicates are collapsed over its full ORDER BY key rather than
 -- trusted away; the partition expression is a function of `ledger`,
 -- which is part of that key, so per-window grouping is exact.
