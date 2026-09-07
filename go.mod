@@ -1,8 +1,6 @@
 module github.com/Stellar-Index/StellarIndex
 
-go 1.25.10
-
-toolchain go1.25.13
+go 1.26.0
 
 // Direct production dependencies.
 //
@@ -17,7 +15,7 @@ toolchain go1.25.13
 
 require (
 	github.com/BurntSushi/toml v1.6.0 // TOML parser for config/ + metadata/sep1.go
-	github.com/alicebob/miniredis/v2 v2.38.0 // In-memory Redis for ratelimit/ tests (test-only)
+	github.com/alicebob/miniredis/v2 v2.39.0 // In-memory Redis for ratelimit/ tests (test-only)
 	github.com/golang-migrate/migrate/v4 v4.19.1 // Schema migrations; cmd/stellarindex-migrate (ADR-0006)
 	github.com/jackc/pgx/v5 v5.10.0 // Postgres driver — pgx v5 via the database/sql stdlib adapter (ADR-0006)
 	github.com/prometheus/client_golang v1.24.1 // /metrics + counters/gauges in internal/obs
@@ -30,22 +28,22 @@ require (
 require github.com/stellar/go-stellar-sdk v0.7.3 // SCVal/XDR decoding for Soroban event connectors (ADR-0013). Pinned SHA in VERSIONS.md.
 
 require (
-	cloud.google.com/go/bigquery v1.82.0
+	cloud.google.com/go/bigquery v1.83.0
 	github.com/ClickHouse/clickhouse-go/v2 v2.48.0
 	github.com/aws/aws-sdk-go-v2 v1.45.1
-	github.com/aws/aws-sdk-go-v2/config v1.33.1
-	github.com/aws/aws-sdk-go-v2/credentials v1.20.1
-	github.com/aws/aws-sdk-go-v2/service/s3 v1.109.1
+	github.com/aws/aws-sdk-go-v2/config v1.33.2
+	github.com/aws/aws-sdk-go-v2/credentials v1.20.2
+	github.com/aws/aws-sdk-go-v2/service/s3 v1.110.0
 	github.com/coder/websocket v1.8.15
 	github.com/coreos/go-systemd/v22 v22.7.0
 	github.com/go-webauthn/webauthn v0.18.0
 	github.com/google/uuid v1.6.0
-	github.com/prometheus/client_model v0.6.2
+	github.com/prometheus/client_model v0.6.3
 	github.com/xeipuuv/gojsonschema v1.2.0 // JSON-Schema validation for scripts/ci/lint-golangci-config (offline .golangci.yml check, #317); already in the graph via go-stellar-sdk
 	go.uber.org/goleak v1.3.0
-	golang.org/x/crypto v0.55.0
+	golang.org/x/crypto v0.56.0
 	golang.org/x/tools v0.49.0
-	google.golang.org/api v0.295.0
+	google.golang.org/api v0.297.0
 	gopkg.in/yaml.v3 v3.0.1
 )
 
@@ -56,7 +54,7 @@ require (
 )
 
 require (
-	github.com/moby/moby/api v1.55.0 // Docker inspect/port types — test/harness implements testcontainers' wait.StrategyTarget with them (test-only; already in the graph via testcontainers)
+	github.com/moby/moby/api v1.56.0 // Docker inspect/port types — test/harness implements testcontainers' wait.StrategyTarget with them (test-only; already in the graph via testcontainers)
 	golang.org/x/sys v0.47.0
 )
 
@@ -89,10 +87,10 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/internal/checksum v1.11.1 // indirect
 	github.com/aws/aws-sdk-go-v2/service/internal/presigned-url v1.14.1 // indirect
 	github.com/aws/aws-sdk-go-v2/service/internal/s3shared v1.20.1 // indirect
-	github.com/aws/aws-sdk-go-v2/service/signin v1.7.1 // indirect
-	github.com/aws/aws-sdk-go-v2/service/sso v1.35.1 // indirect
-	github.com/aws/aws-sdk-go-v2/service/ssooidc v1.40.1 // indirect
-	github.com/aws/aws-sdk-go-v2/service/sts v1.47.1 // indirect
+	github.com/aws/aws-sdk-go-v2/service/signin v1.8.0 // indirect
+	github.com/aws/aws-sdk-go-v2/service/sso v1.36.0 // indirect
+	github.com/aws/aws-sdk-go-v2/service/ssooidc v1.41.0 // indirect
+	github.com/aws/aws-sdk-go-v2/service/sts v1.48.0 // indirect
 	github.com/aws/smithy-go v1.28.1 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/cenkalti/backoff/v4 v4.3.0 // indirect
