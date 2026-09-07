@@ -92,6 +92,264 @@ concurrency:
 
 jobs:
   # ────────────────────────────────────────────────────────────────
+  # preflight — fast-fail gate (CI feedback-loop plan,
+  # §A). Target under 60s: every lint measured sub-5s standalone on
+  # 2026-09-07 (see the script-by-script comments below), so a lint
+  # slip costs ~40s of runner time here, never the 15-20 min container
+  # lane a `needs: preflight` job would otherwise have started paying
+  # for in parallel. Mirrors `make lint-changed`'s intent — same checks,
+  # so local and CI cannot disagree about what "fast" means.
+  #
+  # ALSO computes the path-change classes (§B) that gate the expensive
+  # jobs below, and the Dependabot toolchain guard (§C).
+  #
+  # REQUIRED-CHECK NOTE (§B) on HOW the gating below is done, and why
+  # not with a job-level `if:`. This file currently disagrees with
+  # itself about what a SKIPPED job means to a required status check:
+  # `lint`'s CID-02 comment reads a skip as satisfying ("passing") a
+  # required check, while `integration-test`'s comment reads the
+  # opposite ("a skipped required check never turns green either") and
+  # is why that job runs `if: always()` and actively fails rather than
+  # letting a skip stand in for a verdict. Main currently has ZERO
+  # active branch-protection rules (verified live 2026-09-07,
+  # `GET /repos/<repo>/rules/branches/main` -> `[]`; see
+  # `branch-protection-status` below), so neither reading is exercised
+  # today and this cannot be resolved by observation before this PR.
+  # Given that, every job gated below by path class does it with a
+  # STEP-level `if: needs.preflight.outputs.<class> == 'true'` on the
+  # WORK steps only — never a job-level `if:` — so the job's own
+  # conclusion is always `success` or `failure`, never `skipped`,
+  # regardless of which reading of the contradiction above turns out to
+  # be true. `needs: [preflight]` (no job-level `if:`) is kept so a
+  # `preflight` FAILURE still cascades to skip the expensive jobs (the
+  # "~40s, not the full matrix" saving from §A) — that cascade is the
+  # rare path and, even if it reads as a wedge under the pessimistic
+  # interpretation, is resolved by `preflight` itself failing.
+  # Whoever next touches branch protection should resolve the
+  # contradiction above with a real PR before relying on either.
+  preflight:
+    name: preflight (fast-fail)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      integration: ${{ steps.resolve.outputs.integration }}
+      go: ${{ steps.resolve.outputs.go }}
+      web: ${{ steps.resolve.outputs.web }}
+      ansible: ${{ steps.resolve.outputs.ansible }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+          # Path-class diffing and the Dependabot guard both need the
+          # base commit present locally, same reasoning as import-checks
+          # / actions-pinning / vuln below.
+          fetch-depth: 0
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e  # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Install gofumpt/goimports
+        run: |
+          go install mvdan.cc/gofumpt@${GOFUMPT_VERSION}
+          go install golang.org/x/tools/cmd/goimports@${GOIMPORTS_VERSION}
+      # Measured standalone, full tree, 2026-09-07: gofumpt 3.8s,
+      # goimports 2.9s. Both comfortably sub-5s even unscoped.
+      - name: gofumpt (fast — full tree)
+        run: |
+          if [ -n "$(gofumpt -l .)" ]; then
+            echo "::error::gofumpt found unformatted files:"
+            gofumpt -l .
+            exit 1
+          fi
+      - name: goimports (fast — full tree)
+        run: |
+          if [ -n "$(goimports -l .)" ]; then
+            echo "::error::goimports found files with unmanaged imports:"
+            goimports -l .
+            exit 1
+          fi
+      # Measured standalone 2026-09-07: 2.81s.
+      - name: lint-shell-sigpipe
+        run: ./scripts/ci/lint-shell-sigpipe.sh
+      # Measured standalone 2026-09-07: 1.27s.
+      - name: lint-lexicon
+        run: ./scripts/ci/lint-lexicon.sh
+      # Measured standalone 2026-09-07: 0.11s.
+      - name: lint-actions-pinning
+        run: bash scripts/ci/lint-actions-pinning.sh
+      # Measured standalone 2026-09-07: 2.37s.
+      - name: lint-migration-immutability
+        run: ./scripts/ci/lint-migration-immutability.sh
+      # Measured standalone 2026-09-07: 0.73s.
+      - name: lint-baseline-growth
+        env:
+          BASE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
+        run: ./scripts/ci/lint-baseline-growth.sh
+      # §D (govulncheck toolchain parity) durability guard: every
+      # actions/setup-go step must resolve its Go version from go.mod,
+      # never a hardcoded pin — see the script header for why this is a
+      # forward-looking regression guard rather than a fix to a live
+      # defect (every setup-go step here has used go-version-file since
+      # the jobs were first written).
+      - name: lint-go-toolchain-parity
+        run: ./scripts/ci/lint-go-toolchain-parity.sh
+      # §C: a language/runtime-version bump is a deliberate decision, not
+      # a dependency patch — #495 raised go.mod's `go` directive
+      # 1.25.10 -> 1.26.0 and dropped `toolchain` inside a grouped
+      # go-minor-patch Dependabot PR, surfacing only as a govulncheck
+      # parse failure. Only meaningful on pull_request (push-to-main is
+      # never dependabot-authored); fails open on unresolvable history
+      # rather than false-failing a shallow checkout.
+      - name: Dependabot toolchain/language-version guard
+        if: github.event_name == 'pull_request'
+        env:
+          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          if ! git cat-file -e "${BASE_SHA}^{commit}" 2>/dev/null || ! git cat-file -e "${HEAD_SHA}^{commit}" 2>/dev/null; then
+            echo "::warning::Dependabot toolchain guard: base or head commit not present in this checkout (fetch-depth too shallow?) — skipping."
+            exit 0
+          fi
+          git diff "$BASE_SHA" "$HEAD_SHA" -- go.mod '**/package.json' \
+            | ./scripts/ci/check-dependabot-toolchain-bump.sh "$PR_AUTHOR"
+      # §B: resolve the diff base once (same BASE_SHA pattern as
+      # import-checks/actions-pinning below) so path-class filtering and
+      # the changed-scripts shellcheck scope agree on the same range.
+      # Fails OPEN (empty `resolved`) on first-push/shallow history — an
+      # unknown diff must widen the gate, never narrow it.
+      - name: Resolve diff base
+        id: base
+        env:
+          BASE_SHA_IN: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          set -euo pipefail
+          ZERO_SHA="0000000000000000000000000000000000000000"
+          if [ -z "${BASE_SHA_IN:-}" ] || [ "$BASE_SHA_IN" = "$ZERO_SHA" ] || ! git cat-file -e "${BASE_SHA_IN}^{commit}" 2>/dev/null; then
+            echo "::notice::preflight: no usable comparison base (first push / shallow history) — every path class will be treated as changed."
+            echo "resolved=" >> "$GITHUB_OUTPUT"
+          else
+            echo "resolved=${BASE_SHA_IN}" >> "$GITHUB_OUTPUT"
+          fi
+      # shellcheck's own full-tree run is 8.7s across scripts/**, with
+      # hundreds of pre-existing (never-gated) style/info findings — NOT
+      # sub-5s and would hard-fail on day one of enabling it. Scoped to
+      # the files this diff actually touches, matching Tier 0's
+      # `*.sh` row exactly ("shellcheck -x", scoped to the file).
+      - name: shellcheck (changed scripts only)
+        if: steps.base.outputs.resolved != ''
+        env:
+          # Piped through env rather than expanded directly into the
+          # script (zizmor `template-injection`, low-confidence but the
+          # established convention in this file — see the base-ref
+          # restore steps below).
+          RESOLVED_BASE: ${{ steps.base.outputs.resolved }}
+        run: |
+          set -euo pipefail
+          mapfile -t changed < <(git diff --name-only --diff-filter=ACMR "${RESOLVED_BASE}" HEAD -- '*.sh' || true)
+          if [ "${#changed[@]}" -eq 0 ]; then
+            echo "shellcheck: no changed *.sh files in this diff"
+            exit 0
+          fi
+          printf 'shellcheck: scanning %s changed script(s):\n' "${#changed[@]}"
+          printf '  %s\n' "${changed[@]}"
+          shellcheck -x "${changed[@]}"
+      # §B: change-class filter. Base is the same range `base` resolved
+      # above (or the run is skipped, per the fail-open rule above).
+      - name: Path-class filter
+        id: filter
+        if: steps.base.outputs.resolved != ''
+        uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d  # v4.0.3
+        with:
+          base: ${{ steps.base.outputs.resolved }}
+          filters: |
+            integration:
+              - 'internal/storage/**'
+              - 'internal/pipeline/**'
+              - 'internal/sources/**'
+              - 'internal/api/**'
+              - 'migrations/**'
+              - 'test/integration/**'
+              - 'go.mod'
+            go:
+              - '**/*.go'
+              - 'go.mod'
+              - 'go.sum'
+            web:
+              - 'web/**'
+              - 'openapi/**'
+            ansible:
+              - 'configs/ansible/**'
+      # dorny/paths-filter's glob matching cannot be exercised offline
+      # (no Docker/`act`), so its rule is restated in plain shell at
+      # scripts/ci/check-change-class.sh and proven against fixtures
+      # there. This step is the seam: it runs BOTH copies against the
+      # same diff and fails the whole job if they disagree, so a change
+      # to one that is not mirrored in the other is caught same-day
+      # instead of shipping a silent skip.
+      - name: Cross-check the filter against check-change-class.sh
+        if: steps.base.outputs.resolved != ''
+        env:
+          BASE_SHA: ${{ steps.base.outputs.resolved }}
+          FILTER_INTEGRATION: ${{ steps.filter.outputs.integration }}
+          FILTER_GO: ${{ steps.filter.outputs.go }}
+          FILTER_WEB: ${{ steps.filter.outputs.web }}
+          FILTER_ANSIBLE: ${{ steps.filter.outputs.ansible }}
+        run: |
+          set -euo pipefail
+          mapfile -t files < <(git diff --name-only "${BASE_SHA}" HEAD)
+          mismatch=0
+          for class in integration go web ansible; do
+            case "$class" in
+              integration) want="$FILTER_INTEGRATION" ;;
+              go) want="$FILTER_GO" ;;
+              web) want="$FILTER_WEB" ;;
+              ansible) want="$FILTER_ANSIBLE" ;;
+            esac
+            if [ "${#files[@]}" -eq 0 ]; then
+              got=false
+            elif ./scripts/ci/check-change-class.sh "$class" "${files[@]}" >/dev/null 2>&1; then
+              got=true
+            else
+              got=false
+            fi
+            if [ "$got" != "$want" ]; then
+              echo "::error::preflight path-filter drift: dorny/paths-filter says $class=$want but scripts/ci/check-change-class.sh says $class=$got for this diff. ci.yml's filters: block and check-change-class.sh have drifted apart — fix whichever is wrong before this PR can be trusted to skip anything."
+              mismatch=1
+            fi
+          done
+          exit "$mismatch"
+      # Job outputs: fail OPEN when the diff base could not be resolved
+      # (run every gated job below rather than silently skip on an
+      # unknown diff), otherwise mirror the filter exactly.
+      - name: Resolve preflight outputs
+        id: resolve
+        env:
+          RESOLVED: ${{ steps.base.outputs.resolved }}
+          FILTER_INTEGRATION: ${{ steps.filter.outputs.integration }}
+          FILTER_GO: ${{ steps.filter.outputs.go }}
+          FILTER_WEB: ${{ steps.filter.outputs.web }}
+          FILTER_ANSIBLE: ${{ steps.filter.outputs.ansible }}
+        run: |
+          set -euo pipefail
+          if [ -z "$RESOLVED" ]; then
+            {
+              echo "integration=true"
+              echo "go=true"
+              echo "web=true"
+              echo "ansible=true"
+            } >> "$GITHUB_OUTPUT"
+          else
+            {
+              echo "integration=${FILTER_INTEGRATION:-false}"
+              echo "go=${FILTER_GO:-false}"
+              echo "web=${FILTER_WEB:-false}"
+              echo "ansible=${FILTER_ANSIBLE:-false}"
+            } >> "$GITHUB_OUTPUT"
+          fi
+
+  # ────────────────────────────────────────────────────────────────
   # Fast path — runs on every commit. < 2 min target.
   # Path filters below skip unneeded jobs when only docs changed.
   # ────────────────────────────────────────────────────────────────
@@ -100,6 +358,7 @@ jobs:
     name: lint
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    needs: [preflight]
     # CID-02 (audit-2026-07-23): `lint` is a required status check
     # (main-required-checks per CS-097); a job-level `if:` that a PR
     # author's own label can flip to `false` makes a "skipped" run
@@ -110,6 +369,14 @@ jobs:
     # the trigger (`paths-ignore` above already exempts docs-only
     # diffs) — not with a per-job label a required check can't defend
     # against.
+    #
+    # §B gates this job on preflight's `go` class, but deliberately with
+    # a STEP-level `if:` on each work step below rather than a job-level
+    # one — see the REQUIRED-CHECK NOTE on `preflight` above. That keeps
+    # this job's own conclusion always `success`/`failure`, never
+    # `skipped`, which is the CID-02 property this comment protects,
+    # regardless of which reading of the skipped-required-check
+    # contradiction turns out to be correct.
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
@@ -119,10 +386,12 @@ jobs:
           go-version-file: go.mod
           cache: true
       - name: Install tools
+        if: needs.preflight.outputs.go == 'true'
         run: |
           go install mvdan.cc/gofumpt@${GOFUMPT_VERSION}
           go install golang.org/x/tools/cmd/goimports@${GOIMPORTS_VERSION}
       - name: gofmt / gofumpt
+        if: needs.preflight.outputs.go == 'true'
         run: |
           if [ -n "$(gofumpt -l .)" ]; then
             echo "::error::gofumpt found unformatted files:"
@@ -139,24 +408,34 @@ jobs:
       # `verify: false` here is enforced by that same lint, so it cannot
       # silently come back.
       - name: golangci-lint config schema (offline)
+        if: needs.preflight.outputs.go == 'true'
         run: go run ./scripts/ci/lint-golangci-config
       - name: golangci-lint
+        if: needs.preflight.outputs.go == 'true'
         uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a  # v9
         with:
           version: ${{ env.GOLANGCI_LINT_VERSION }}
           args: --timeout=5m
           verify: false
       - name: go vet
+        if: needs.preflight.outputs.go == 'true'
         run: go vet ./...
       - name: go vet (linux/arm64 cross)
         # dup2 has no arm64 syscall entry; amd64-only vetting hid a build
         # break that the native-arm64 container verifier then exposed.
+        if: needs.preflight.outputs.go == 'true'
         run: GOOS=linux GOARCH=arm64 go vet ./internal/pipeline/
 
   test:
     name: unit tests
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    needs: [preflight]
+    # §B: pure Go work, gated on preflight's `go` class — with a
+    # STEP-level `if:` on each work step (see the REQUIRED-CHECK NOTE on
+    # `preflight` and `lint`'s comment above for why not a job-level
+    # one). `if-no-files-found: warn` on the coverage upload below
+    # because a skipped run legitimately produces no coverage.txt.
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
@@ -170,6 +449,7 @@ jobs:
         # 502 that red-failed #172 and generated a run of "CI failed" emails
         # for a non-issue). Retry with backoff so a proxy hiccup doesn't fail
         # the build; a genuine missing/renamed module still fails after 3.
+        if: needs.preflight.outputs.go == 'true'
         run: |
           for i in 1 2 3; do
             go mod download && exit 0
@@ -182,12 +462,14 @@ jobs:
         # can legitimately exceed 2m on hosted runners with the race
         # detector enabled. Keep the guard, but give the unit job enough
         # headroom that it does not flap on unrelated PRs.
+        if: needs.preflight.outputs.go == 'true'
         run: go test -race -timeout 4m -coverprofile=coverage.txt -covermode=atomic ./...
       - name: Compile integration-tagged tests (no Docker)
         # F-1334: catches build-tag breakage (an interface change that
         # doesn't update an `//go:build integration` test) without
         # spinning testcontainers. The full Docker suite stays
         # operator-/local-invoked.
+        if: needs.preflight.outputs.go == 'true'
         run: make test-integration-build
       - name: Coverage floor (report-only)
         # #340 item 6: coverage.txt has been uploaded since this job
@@ -202,15 +484,18 @@ jobs:
         # not block). NOT report-only for the gate's own liveness: a
         # missing/empty/unparseable profile, or one whose package count
         # collapsed, fails hard. See the script header.
+        if: needs.preflight.outputs.go == 'true'
         run: bash scripts/ci/coverage-floor.sh
 
       - name: Coverage floor self-test
         # The gate's own fixtures. Cheap, and the reason the gate can be
         # trusted to be able to fail — which is the whole difference
         # between this and the artifact nobody read.
+        if: needs.preflight.outputs.go == 'true'
         run: bash scripts/ci/coverage-floor-test.sh
 
       - name: Upload coverage
+        if: needs.preflight.outputs.go == 'true'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7
         with:
           name: coverage
@@ -220,6 +505,22 @@ jobs:
     name: integration tests (Docker) shard ${{ matrix.shard }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    needs: [preflight]
+    # §B: only when the diff touches internal/storage|pipeline|sources|
+    # api, migrations/, test/integration/ or go.mod — the 2026-07-01
+    # sponsors/markets/blend regressions this shard matrix exists to
+    # catch all lived in those paths, and a docs/scripts/web-only PR
+    # gets zero additional signal from a 20-minute Docker round-trip.
+    #
+    # Gated with a STEP-level `if:` on "integration shard N of 4" below,
+    # NOT a job-level one: this job's comment two lines down already
+    # explains that `integration-test` treats a SKIPPED shard result as
+    # a failure, on purpose, because a skipped required check does not
+    # reliably turn green (see the REQUIRED-CHECK NOTE on `preflight`).
+    # A job-level `if:` here would make every out-of-scope PR trip that
+    # exact failure. Step-level gating keeps this job's conclusion
+    # `success` (a fast no-op) when out of scope, so the aggregate
+    # below needs no change at all.
     # 4-way shard (2026-08-29): main CI's wall-clock was ~23 min and this
     # job alone was ~1230 s (20.5 min) — the suite has ~158 tests, zero
     # t.Parallel(), one testcontainers set per test, so it ran strictly
@@ -253,6 +554,7 @@ jobs:
         # 502 that red-failed #172 and generated a run of "CI failed" emails
         # for a non-issue). Retry with backoff so a proxy hiccup doesn't fail
         # the build; a genuine missing/renamed module still fails after 3.
+        if: needs.preflight.outputs.integration == 'true'
         run: |
           for i in 1 2 3; do
             go mod download && exit 0
@@ -267,7 +569,12 @@ jobs:
         # tests; the per-slice go-test deadline (15m) lives in the script
         # and the job timeout above is its ceiling. Shard 0 also runs the
         # non-sharded INT_TEST_PKGS packages (seconds).
+        if: needs.preflight.outputs.integration == 'true'
         run: ./scripts/ci/integration-shard.sh "${{ matrix.shard }}" 4
+      - name: no in-scope change (path filter) — nothing to run
+        if: needs.preflight.outputs.integration != 'true'
+        run: |
+          echo "integration-test-shard: no internal/storage, internal/pipeline, internal/sources, internal/api, migrations/, test/integration/ or go.mod change in this diff -- shard skipped its Docker suite, reporting success."
 
   integration-test:
     # Aggregate of the shard matrix. This is the job whose NAME branch
@@ -302,6 +609,9 @@ jobs:
     name: fuzz smoke (30s per target)
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    needs: [preflight]
+    # §B: pure Go work, gated on the `go` class with STEP-level `if:`
+    # (see the REQUIRED-CHECK NOTE on `preflight`).
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
@@ -311,6 +621,7 @@ jobs:
           go-version-file: go.mod
           cache: true
       - name: go mod download (retry on GOPROXY flake)
+        if: needs.preflight.outputs.go == 'true'
         run: |
           for i in 1 2 3; do
             go mod download && exit 0
@@ -332,12 +643,18 @@ jobs:
         # so a newly-added target is covered without a second edit — see
         # the script's header for why, and for its fail-closed behaviour
         # when discovery returns nothing.
+        if: needs.preflight.outputs.go == 'true'
         run: bash scripts/ci/fuzz-smoke.sh
 
   doc-checks:
     name: doc-code consistency
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    needs: [preflight]
+    # §B: cheap — kept unconditional (runs regardless of path class),
+    # per the CI feedback-loop plan's path-filter list. `needs:` alone
+    # (no explicit `if:`) still cascades a `preflight` failure into a
+    # skip here, which is fine for §A's sequencing purpose.
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
@@ -366,6 +683,13 @@ jobs:
         run: ./scripts/ci/lint-doc-links.sh
       - name: lint-doc-links self-test
         run: ./scripts/ci/lint-doc-links-test.sh
+      - name: Changed-file dispatcher self-test
+        # `make lint-changed` picks the applicable lints for a diff and runs
+        # them in seconds, so a defect surfaces at the keyboard rather than
+        # ten minutes into a push. Its 99 assertions run here as well as in
+        # verify.sh: a gate wired into one surface and not its mirror is the
+        # defect this repository has shipped twice.
+        run: ./scripts/dev/lint-changed-test.sh
       - name: lint-external-channels
         # A repository setting or DNS name that is switched off cannot be
         # seen from inside the tree, so three published channels shipped
@@ -382,6 +706,8 @@ jobs:
     name: workflow static analysis (zizmor)
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    needs: [preflight]
+    # §B: cheap — kept unconditional, same reasoning as doc-checks above.
     permissions:
       contents: read
     steps:
@@ -405,6 +731,8 @@ jobs:
     name: import-boundary lint
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    needs: [preflight]
+    # §B: cheap — kept unconditional, same reasoning as doc-checks above.
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
@@ -954,6 +1282,8 @@ jobs:
     name: github-actions SHA-pinning lint
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    needs: [preflight]
+    # §B: cheap — kept unconditional, same reasoning as doc-checks above.
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
@@ -1014,6 +1344,8 @@ jobs:
     name: prometheus rule validation
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    needs: [preflight]
+    # §B: cheap — kept unconditional, same reasoning as doc-checks above.
     # Validates BOTH deploy/monitoring/rules/*.yml (multi-host) and
     # configs/prometheus/rules.r1/*.yml (R1 single-host overlay)
     # with promtool. Catches YAML syntax errors, broken PromQL, and
@@ -1121,6 +1453,16 @@ jobs:
     name: govulncheck + gitleaks
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    needs: [preflight]
+    # §B: govulncheck is Go-only work, gated on the `go` class — but
+    # gitleaks is a full-repository SECRET scan with no relationship to
+    # file type, so it is NOT gated: a leaked credential is exactly as
+    # real in a YAML/shell/config-only diff as in a .go one, and gating
+    # the whole job on the `go` class would silently turn secret
+    # scanning off for the majority of the repo's files. Only the
+    # govulncheck STEP below carries the class condition; this job has
+    # no job-level `if:` at all (see the REQUIRED-CHECK NOTE on
+    # `preflight`).
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
@@ -1131,6 +1473,7 @@ jobs:
           go-version-file: go.mod
           cache: true
       - name: govulncheck
+        if: needs.preflight.outputs.go == 'true'
         run: |
           go install golang.org/x/vuln/cmd/govulncheck@${GOVULNCHECK_VERSION}
           # Gated by a documented accepted-risk allowlist
@@ -1167,7 +1510,13 @@ jobs:
     name: build
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    needs: [lint, test]
+    needs: [preflight, lint, test]
+    # §B: gated on the `go` class with STEP-level `if:` below (see the
+    # REQUIRED-CHECK NOTE on `preflight`). `needs: [lint, test]` already
+    # cascades correctly: both now always conclude `success`/`failure`
+    # (never `skipped`), since they gate their OWN work steps the same
+    # way, so this job still runs whenever they pass — it just has
+    # nothing to build on an out-of-scope diff.
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
@@ -1177,7 +1526,9 @@ jobs:
           go-version-file: go.mod
           cache: true
       - run: make build
+        if: needs.preflight.outputs.go == 'true'
       - name: Upload binaries (short retention)
+        if: needs.preflight.outputs.go == 'true'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7
         with:
           name: binaries-${{ github.sha }}
@@ -1192,10 +1543,16 @@ jobs:
     name: openapi lint
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    needs: [preflight]
     # N2-04: runs on push-to-main too — a direct push (the live-in-dev
     # norm) that edits openapi/ or the handlers previously skipped Spectral
     # + the generated-reference drift check, the exact bypass the push
     # trigger above exists to close. The job is cheap.
+    #
+    # §B: kept unconditional (not gated on the `web` class, deliberately
+    # — it also validates the Go-side openapi/*.yaml consumers via
+    # lint-openapi-urls/lint-pk-discriminators, so a "web"-only filter
+    # would be wrong for it either way).
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
@@ -1247,6 +1604,11 @@ jobs:
     name: web/explorer
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    needs: [preflight]
+    # §B: gated on the `web` class with STEP-level `if:` on every
+    # substantive step below (see the REQUIRED-CHECK NOTE on
+    # `preflight`) — checkout/pnpm/node setup stay unconditional since
+    # they are cheap and harmless as a no-op prefix.
     defaults:
       run:
         working-directory: web/explorer
@@ -1263,7 +1625,9 @@ jobs:
           cache: "pnpm"
           cache-dependency-path: web/explorer/pnpm-lock.yaml
       - run: pnpm install --frozen-lockfile
+        if: needs.preflight.outputs.web == 'true'
       - name: Generated API types are in sync
+        if: needs.preflight.outputs.web == 'true'
         run: |
           pnpm generate:api
           if ! git diff --exit-code -- src/api/types.ts; then
@@ -1271,7 +1635,9 @@ jobs:
             exit 1
           fi
       - run: pnpm typecheck
+        if: needs.preflight.outputs.web == 'true'
       - run: pnpm lint
+        if: needs.preflight.outputs.web == 'true'
       # The vitest suite ran in NEITHER this job nor scripts/dev/verify.sh
       # (cold audit 2026-08-04) — 209 tests across 49 files, all green and
       # all dead, including safe-domain.test.ts (the isSafeHomeDomain /
@@ -1279,6 +1645,7 @@ jobs:
       # SSRF regression, and the AGT-06 stale-flag regression. A refactor
       # loosening any of them would have landed green.
       - run: pnpm test
+        if: needs.preflight.outputs.web == 'true'
       # Build covers what typecheck/lint don't: Next.js static-export
       # constraints (e.g. `dynamic = 'force-static'` requirement on
       # sitemap/robots routes), generateStaticParams behaviour at
@@ -1297,6 +1664,7 @@ jobs:
       # second-pass was redundant. Keep the stub-URL build — it
       # exercises every code path that doesn't depend on API shape.
       - run: pnpm build
+        if: needs.preflight.outputs.web == 'true'
         env:
           # Force a deterministic api-base URL so the build doesn't
           # try to contact production from CI. The fallback in
@@ -1320,6 +1688,7 @@ jobs:
       # happened to resolve. scan-ref is repo-root-relative: `uses:` steps
       # ignore this job's defaults.run.working-directory.
       - name: web-deps vuln scan (trivy, pnpm-lock)
+        if: needs.preflight.outputs.web == 'true'
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25  # v0.36.0
         with:
           scan-type: fs
@@ -1340,6 +1709,9 @@ jobs:
     name: web/status
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    needs: [preflight]
+    # §B: gated on the `web` class, same STEP-level shape as web-explorer
+    # above (see the REQUIRED-CHECK NOTE on `preflight`).
     defaults:
       run:
         working-directory: web/status
@@ -1356,9 +1728,13 @@ jobs:
           cache: "pnpm"
           cache-dependency-path: web/status/pnpm-lock.yaml
       - run: pnpm install --frozen-lockfile
+        if: needs.preflight.outputs.web == 'true'
       - run: pnpm typecheck
+        if: needs.preflight.outputs.web == 'true'
       - run: pnpm lint
+        if: needs.preflight.outputs.web == 'true'
       - run: pnpm build
+        if: needs.preflight.outputs.web == 'true'
         env:
           NEXT_PUBLIC_API_BASE_URL: http://api.ci-stub.invalid
       # F-1207 (codex audit-2026-05-12): per-PR web-dependency vuln gate.
@@ -1370,6 +1746,7 @@ jobs:
       # repo-root-relative; node_modules skipped so the verdict is a pure
       # function of the committed web/status/pnpm-lock.yaml.
       - name: web-deps vuln scan (trivy, pnpm-lock)
+        if: needs.preflight.outputs.web == 'true'
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25  # v0.36.0
         with:
           scan-type: fs
@@ -1385,11 +1762,16 @@ jobs:
     name: ansible syntax + lint
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    needs: [preflight]
+    # §B: gated on the `ansible` class with STEP-level `if:` on every
+    # substantive step below (see the REQUIRED-CHECK NOTE on
+    # `preflight`) — checkout stays unconditional.
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           persist-credentials: false
       - name: Install ansible + lint
+        if: needs.preflight.outputs.ansible == 'true'
         # DEP-01 (audit-2026-07-23): exact pins, same reasoning as
         # ansible-drift.yml — this job carries no secrets, but an
         # unpinned install still runs arbitrary upstream code in CI on
@@ -1399,6 +1781,7 @@ jobs:
           pipx install --include-deps 'ansible==14.2.0'
           pipx install 'ansible-lint==26.6.0'
       - name: Syntax check (secrets stubbed — structure only)
+        if: needs.preflight.outputs.ansible == 'true'
         working-directory: configs/ansible
         run: |
           # syntax-check only needs the vars file to exist and parse.
@@ -1427,8 +1810,10 @@ jobs:
         # render, so #305's per-repo nightly backup never reached the host
         # while every gate here stayed green (`--syntax-check` parses
         # playbooks, never template bodies). Parses all *.j2 as ansible will.
+        if: needs.preflight.outputs.ansible == 'true'
         run: ./scripts/ci/lint-jinja-templates.sh
       - name: jinja template parse gate self-test
+        if: needs.preflight.outputs.ansible == 'true'
         run: ./scripts/ci/lint-jinja-templates-test.sh
       - name: ClickHouse Prometheus endpoint self-test
         # r1 2026-09-03: ClickHouse serves its own /metrics, but the stock
@@ -1440,6 +1825,7 @@ jobs:
         # is not), then pins the port + job name across the template, the
         # task, the scrape config and both rule trees. No hosts, no
         # ClickHouse, no ansible run.
+        if: needs.preflight.outputs.ansible == 'true'
         run: ./scripts/ci/clickhouse-exporter-test.sh
       - name: galexie restart-wiring test (structural + local ansible run)
         # 2026-08-28 audit (deploy-ansible-handlers-7 / -drift-3): pins
@@ -1448,6 +1834,7 @@ jobs:
         # that the bootstrap binary install restarts every daemon it
         # replaces. Runs galexie-effective-checksum.yml for real against
         # temp files with a stub handler — no hosts, no secrets.
+        if: needs.preflight.outputs.ansible == 'true'
         run: ./scripts/ci/ansible-galexie-restart-test.sh
       - name: verify-archive Tier D cron-argument test (#362)
         # r1 2026-09-02: the Tier D fork-detection cron rendered
@@ -1456,6 +1843,7 @@ jobs:
         # weekly ADR-0016 §7.4 control had never produced a single journal
         # line. --syntax-check and ansible-lint both pass such a task; only
         # RENDERING it and checking the flag values catches it. No hosts.
+        if: needs.preflight.outputs.ansible == 'true'
         run: ./scripts/ci/verify-archive-tier-d-test.sh
       - name: deploy migrations-sync test (structural + local ansible run)
         # 2026-08-29 incident (r1 deploy of v0.49.0, run 33244745680): the
@@ -1466,8 +1854,10 @@ jobs:
         # (-c local, temp dirs): extras pruned, idempotent re-run, nothing
         # outside dest touched, empty source fails closed. Needs GNU tar
         # (unarchive's --diff) — this runner has it. No hosts, no secrets.
+        if: needs.preflight.outputs.ansible == 'true'
         run: ./scripts/ci/deploy-sync-test.sh
       - name: ansible-lint (moderate profile — enforced; baseline grandfathered)
+        if: needs.preflight.outputs.ansible == 'true'
         working-directory: configs/ansible
         # CID-3 (audit-2026-08-14): the trailing `|| true` used to swallow the
         # exit code, so this REQUIRED check was permanently green even on
@@ -1482,6 +1872,7 @@ jobs:
         # vault secrets (pgbackrest cipher-pass, S3 key pair) without
         # `diff: false` prints them into the weekly ansible-drift job log
         # via `--check --diff`. Pure-Python (PyYAML); also in verify.sh.
+        if: needs.preflight.outputs.ansible == 'true'
         run: python3 ./scripts/ci/lint-ansible-secret-diff.py
 
   branch-protection-status:

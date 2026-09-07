@@ -62,7 +62,13 @@ extract_invoked() {
 #   fuzz-smoke.sh         30s per target is ~2 min of wall clock on a gate
 #                         people run before every push. Its targets are also
 #                         exercised as plain seed-corpus tests by `make test`.
-LOCAL_EXEMPT="govulncheck-gated.sh integration-shard.sh coverage-floor.sh fuzz-smoke.sh"
+#   check-change-class.sh HELPERS, not gates: CI invokes each with arguments —
+#   check-dependabot-   a class and file list, and a PR author login — and both
+#   toolchain-bump.sh   exit 2 on usage when run bare. Same shape as
+#                         coverage-floor.sh: their SELF-TESTS are in verify.sh
+#                         and are what guard the logic. lint-go-toolchain-
+#                         parity.sh is NOT here — it runs bare and is mirrored.
+LOCAL_EXEMPT="govulncheck-gated.sh integration-shard.sh coverage-floor.sh fuzz-smoke.sh check-change-class.sh check-dependabot-toolchain-bump.sh"
 
 ci_scripts="$(extract_invoked <"$CI_YML" || true)"
 
