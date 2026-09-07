@@ -186,6 +186,10 @@ echo "=== Migration backward-compat ===" && ./scripts/ci/lint-migration-compat.s
 echo "=== Migration backward-compat self-test ===" && ./scripts/ci/lint-migration-compat-test.sh
 echo "=== Migration immutability ===" && ./scripts/ci/lint-migration-immutability.sh
 echo "=== Migration immutability self-test ===" && ./scripts/ci/lint-migration-immutability-test.sh
+echo "=== Migration header commands ===" && ./scripts/ci/lint-migration-commands.sh
+echo "=== Migration header commands self-test ===" && ./scripts/ci/lint-migration-commands-test.sh
+echo "=== Lake dedup (aggregating reads of duplicate-bearing archives) ===" && ./scripts/ci/lint-lake-dedup.sh
+echo "=== Lake dedup self-test ===" && ./scripts/ci/lint-lake-dedup-test.sh
 echo "=== Completeness-staleness calibration ===" && ./scripts/ci/lint-completeness-staleness.sh
 echo "=== Pre-push integration-routing self-test ===" && ./scripts/ci/prepush-integration-required-test.sh
 echo "=== Integration-shard partition self-test ===" && ./scripts/ci/integration-shard-test.sh

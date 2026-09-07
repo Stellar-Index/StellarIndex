@@ -1,0 +1,19 @@
+# Aggregating reads of a duplicate-bearing lake table that are exempt
+# from scripts/ci/lint-lake-dedup.sh.
+#
+# Format: `<file>:<stellar.table>  <reason>`, one per line. The key is
+# printed by the gate on failure, so an entry is copied rather than
+# hand-derived. The reason field is REQUIRED.
+#
+# SHRINK-ONLY. Adding a line needs a `Baseline-Growth:` commit trailer
+# naming this file (scripts/ci/lint-baseline-growth.sh), and a line
+# whose site no longer violates is STALE and fails the gate until it is
+# deleted.
+#
+# CURRENT STATE: 0 entries. The tree's one aggregating read of a lake
+# archive — opTypeStatsQuery in
+# internal/storage/clickhouse/explorer_reader.go — already collapses
+# with FINAL, for the reason audit C2-12 recorded: a re-ingested
+# operation leaves an un-merged duplicate part that inflates count()
+# until a background merge. Keeping this file empty is the goal, not an
+# accident.
