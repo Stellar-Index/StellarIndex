@@ -253,6 +253,7 @@ fi
 echo "=== Baseline-growth tripwire ===" && ./scripts/ci/lint-baseline-growth.sh
 echo "=== Replay-plan tripwire self-test ===" && ./scripts/ci/lint-replay-plan-test.sh
 echo "=== Restore-drill contract + abort-path tests ===" && bash scripts/ops/restore-drill-test.sh && bash scripts/ops/restore-drill-run-test.sh
+echo "=== Verdict helpers self-test (oneshot waits, sentinel gates) ===" && bash scripts/ops/ops-verdict-test.sh
 # BASE_SHA-gated like lint-baseline-growth.sh: self-skips locally, real in CI.
 echo "=== Replay-plan tripwire ===" && ./scripts/ci/lint-replay-plan.sh
 echo "=== External channels ===" && ./scripts/ci/lint-external-channels.sh
