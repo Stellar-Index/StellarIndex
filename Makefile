@@ -101,6 +101,18 @@ fix: fmt docs-api docs-postman web-generate-api docs-config docs-metrics ## Form
 check: ## Fast read-only development checks; portable across supported contributor machines
 	@./scripts/dev/check.sh
 
+.PHONY: lint-changed
+lint-changed: ## The lints that apply to the files you changed (staged, else origin/main...HEAD), cheapest first, in seconds — a dispatcher over the existing scripts/ci gates (LINT_CHANGED_ARGS='--plan' prints the plan)
+	@./scripts/dev/lint-changed.sh $(LINT_CHANGED_ARGS)
+
+.PHONY: hooks
+hooks: ## Opt in to lint-changed as a pre-commit hook (git commit --no-verify skips it once; make hooks-remove takes it out)
+	@./scripts/dev/install-hooks.sh
+
+.PHONY: hooks-remove
+hooks-remove: ## Remove the pre-commit hook installed by make hooks
+	@./scripts/dev/install-hooks.sh --uninstall
+
 .PHONY: prepush
 prepush: ## Verify committed HEAD before one intentional push (VERIFY_PROFILE=auto, VERIFY_INTEGRATION=auto)
 	@VERIFY_PROFILE=$(VERIFY_PROFILE) VERIFY_INTEGRATION=$(VERIFY_INTEGRATION) \

@@ -152,8 +152,34 @@ else
     echo "=== Main CI health (skipped — gh not installed; 'brew install gh' for the push-onto-red-main warning) ==="
 fi
 
-echo "=== Format ==="        && make fmt
-echo "=== Vet ==="           && make vet
+# ── Tier 0: every check measured under five seconds, before the Go build ────
+#
+# Cost order, not topic order. Each section below runs in under five seconds
+# standalone (measured 2026-09-07 on a warm cache; the table is in
+# docs/contributing/local-verification.md), and the sections after this block
+# run from five seconds to several minutes. Nothing here changes WHAT any
+# check asserts, WHICH checks run, or the ALL CHECKS PASSED / VERIFY
+# INCOMPLETE verdict — only when each one is reached.
+#
+# The measurement that forced it: lint-shell-sigpipe.sh takes 2.5 s and used
+# to sit at section ~95 of 103, so a one-line shell edit that tripped it was
+# told so after about ten minutes of Go build, doc lints and web builds. It
+# now answers in the first fifteen seconds of a run, and `make lint-changed`
+# answers before the commit exists.
+#
+# Relative order inside this block is unchanged from before the move, so a
+# section's neighbours — a gate and its self-test especially — still read
+# together, and this reordering is a pure move rather than a rewrite.
+#
+# Two ordering facts worth stating, since both look like accidents:
+#   * These lints now run BEFORE `make fmt` rewrites anything. They judge the
+#     tree as committed, which is what CI judges; none of their assertions is
+#     about formatting.
+#   * The three `go run` lints in scripts/ci (lint-golangci-config,
+#     lint-openapi-urls, lint-pk-discriminators) are here because each is a
+#     standalone program (stdlib plus yaml/jsonschema, no repo imports), so
+#     no amount of breakage in internal/ can make them fail. On a cold Go
+#     build cache their first compile costs more than the sub-second figure.
 # The container verifier runs native arm64 on Apple-silicon Docker, and the
 # syscall table there differs from amd64: dup2 has no arm64 entry, so a
 # call that vets clean on amd64 CI and on the production host does not
@@ -161,16 +187,26 @@ echo "=== Vet ==="           && make vet
 # syscalls, so the break surfaces here rather than in a Docker run.
 echo "=== Vet (linux/arm64 cross) ===" && GOOS=linux GOARCH=arm64 go vet ./internal/pipeline/
 echo "=== golangci config schema ===" && go run ./scripts/ci/lint-golangci-config
-echo "=== Lint ==="          && make lint
-echo "=== Docs ==="          && ./scripts/ci/lint-docs.sh
 echo "=== Agents file ===" && ./scripts/ci/lint-agents-file.sh
 echo "=== Agents file self-test ===" && ./scripts/ci/lint-agents-file-test.sh
-echo "=== Doc links ===" && ./scripts/ci/lint-doc-links.sh
-echo "=== Doc links self-test ===" && ./scripts/ci/lint-doc-links-test.sh
 echo "=== Actions pinning ===" && ./scripts/ci/lint-actions-pinning.sh
 echo "=== Actions pinning self-test ===" && ./scripts/ci/lint-actions-pinning-test.sh
+# ci.yml's path-filter change-class computation, mirrored so a local run
+# judges the same classification CI gates on.
+# check-change-class.sh is a HELPER that CI invokes with a class and a file
+# list, not a standalone gate — running it bare is a usage error. Its
+# self-test is the meaningful local mirror, as for every other -test.sh here.
+echo "=== Change-class computation self-test ===" && ./scripts/ci/check-change-class-test.sh
+# Refuses a Dependabot PR that rides a go/toolchain or engines/packageManager
+# bump in under a dependency-patch label — that decision is deliberate, never
+# automatic (see #495).
+# Another HELPER: CI passes it the PR author login. Its self-test is the mirror.
+echo "=== Dependabot toolchain-bump guard self-test ===" && ./scripts/ci/check-dependabot-toolchain-bump-test.sh
+# govulncheck must be built with the Go version go.mod declares, or a
+# toolchain bump makes the vulnerability gate fail to parse the module graph
+# instead of reporting on it.
+echo "=== Go toolchain parity (govulncheck) ===" && ./scripts/ci/lint-go-toolchain-parity.sh
 echo "=== Dead scheduled-control detector self-test ===" && ./scripts/ci/check-scheduled-controls-test.sh
-echo "=== Ansible galexie-restart self-test ===" && ./scripts/ci/ansible-galexie-restart-test.sh
 echo "=== Archive tier-D self-test ===" && ./scripts/ci/verify-archive-tier-d-test.sh
 echo "=== Coverage floor self-test ===" && ./scripts/ci/coverage-floor-test.sh
 echo "=== Imports ==="       && ./scripts/ci/lint-imports.sh
@@ -179,55 +215,29 @@ echo "=== Protocol registry sync ===" && ./scripts/ci/lint-protocol-registry-syn
 echo "=== Lexicon ==="       && ./scripts/ci/lint-lexicon.sh
 echo "=== i128/NUMERIC ===" && ./scripts/ci/lint-i128.sh
 echo "=== Migrations money ===" && ./scripts/ci/lint-migrations.sh
-# CI's import-checks job runs these gate scripts too; verify.sh must mirror
-# them or it issues a green CI won't honour (W5-ci-6, enforced by the parity
-# check above). All are deterministic + network-free.
-echo "=== Migration backward-compat ===" && ./scripts/ci/lint-migration-compat.sh
 echo "=== Migration backward-compat self-test ===" && ./scripts/ci/lint-migration-compat-test.sh
 echo "=== Migration immutability ===" && ./scripts/ci/lint-migration-immutability.sh
 echo "=== Migration immutability self-test ===" && ./scripts/ci/lint-migration-immutability-test.sh
 echo "=== Migration header commands ===" && ./scripts/ci/lint-migration-commands.sh
 echo "=== Migration header commands self-test ===" && ./scripts/ci/lint-migration-commands-test.sh
-echo "=== Lake dedup (aggregating reads of duplicate-bearing archives) ===" && ./scripts/ci/lint-lake-dedup.sh
-echo "=== Lake dedup self-test ===" && ./scripts/ci/lint-lake-dedup-test.sh
 echo "=== Completeness-staleness calibration ===" && ./scripts/ci/lint-completeness-staleness.sh
 echo "=== Pre-push integration-routing self-test ===" && ./scripts/ci/prepush-integration-required-test.sh
 echo "=== Integration-shard partition self-test ===" && ./scripts/ci/integration-shard-test.sh
 echo "=== Shell SIGPIPE (pipe-into-head) ===" && ./scripts/ci/lint-shell-sigpipe.sh
-echo "=== Shell SIGPIPE self-test ===" && ./scripts/ci/lint-shell-sigpipe-test.sh
 echo "=== HTTP timeouts ===" && ./scripts/ci/lint-http-timeouts.sh
 echo "=== HTTP timeouts self-test ===" && ./scripts/ci/lint-http-timeouts-test.sh
 echo "=== Deploy-baseline self-test ===" && ./scripts/ci/deploy-baseline-test.sh
 echo "=== Deploy-protection self-test ===" && ./scripts/ci/check-deploy-protection-test.sh
 echo "=== Main-CI-health decision-core self-test ===" && ./scripts/ci/check-main-ci-health-test.sh
 echo "=== SLA-evidence decision-core + k6-weekly wiring self-test ===" && ./scripts/ci/check-sla-evidence-test.sh
-echo "=== Public-dataset drift-verdict self-test ===" && ./scripts/ci/check-public-dataset-test.sh
-echo "=== Fleet release-drift verdict self-test ===" && ./scripts/ci/check-fleet-release-drift-test.sh
 echo "=== deploy/systemd authority ===" && bash ./scripts/ci/lint-deploy-systemd-authority.sh
 echo "=== Ansible task lint (pipefail/bash, secret-on-argv) ===" && ./scripts/ci/lint-ansible-tasks.sh
 echo "=== Ansible task lint self-test ===" && ./scripts/ci/lint-ansible-tasks-test.sh
 echo "=== Ansible-drift decision-core self-test ===" && ./scripts/ci/check-ansible-drift-test.sh
 echo "=== run-heavy-job wrapper self-test ===" && ./scripts/ci/run-heavy-job-test.sh
-echo "=== zfs-snapshot job self-test ===" && ./scripts/ci/zfs-snapshot-test.sh
 echo "=== Deploy playbook jump/backup-gate lint ===" && ./scripts/ci/lint-deploy-playbook.sh
-# Migrations-sync self-test: structural half needs only python; the
-# behavioural half runs the task file with ansible and needs GNU tar on the
-# target (unarchive --diff). macOS ships bsdtar — point it at a container
-# via DEPLOY_SYNC_CONNECTION/DEPLOY_SYNC_HOST (see the script header) or
-# let CI's ansible-check job (ubuntu) run it. Graceful-skip only when the
-# tools are missing, same convention as promtool below.
-if command -v ansible-playbook >/dev/null 2>&1 && { [ -n "${DEPLOY_SYNC_CONNECTION:-}" ] || grep -q 'GNU tar' <<<"$(tar --version 2>/dev/null)"; }; then
-    echo "=== Deploy migrations-sync self-test ===" && ./scripts/ci/deploy-sync-test.sh
-else
-    defer_check "Deploy migrations-sync self-test" "needs ansible-playbook and GNU tar; use VERIFY_PROFILE=container on macOS"
-fi
 echo "=== EnvironmentFile verbatim-reader self-test ===" && ./scripts/ci/envfile-loader-test.sh
 echo "=== Deploy workflow input-validation self-test ===" && ./scripts/ci/deploy-inputs-test.sh
-echo "=== Baseline-growth tripwire self-test ===" && ./scripts/ci/lint-baseline-growth-test.sh
-echo "=== Config-apply gate self-test ===" && ./scripts/ci/config-apply-gate-test.sh
-# Two import-checks gates that landed (#287, #305) without their verify.sh
-# twin — check-verify-parity was red on main for everyone until added here.
-echo "=== Public-dataset drift decision-core self-test ===" && ./scripts/ci/check-public-dataset-test.sh
 echo "=== Jinja template parse gate ===" && ./scripts/ci/lint-jinja-templates.sh
 echo "=== Jinja template parse gate self-test ===" && ./scripts/ci/lint-jinja-templates-test.sh
 echo "=== ClickHouse Prometheus endpoint self-test ===" && ./scripts/ci/clickhouse-exporter-test.sh
@@ -255,9 +265,7 @@ if [ -z "${BASE_SHA:-}" ] && git rev-parse -q --verify origin/main >/dev/null 2>
     [ -n "$BASE_SHA" ] && export BASE_SHA && echo "verify: BASE_SHA=${BASE_SHA} (merge-base with origin/main)"
 fi
 echo "=== Baseline-growth tripwire ===" && ./scripts/ci/lint-baseline-growth.sh
-echo "=== Replay-plan tripwire self-test ===" && ./scripts/ci/lint-replay-plan-test.sh
 echo "=== Restore-drill contract + abort-path tests ===" && bash scripts/ops/restore-drill-test.sh && bash scripts/ops/restore-drill-run-test.sh
-echo "=== Verdict helpers self-test (oneshot waits, sentinel gates) ===" && bash scripts/ops/ops-verdict-test.sh
 # BASE_SHA-gated like lint-baseline-growth.sh: self-skips locally, real in CI.
 echo "=== Replay-plan tripwire ===" && ./scripts/ci/lint-replay-plan.sh
 echo "=== External channels ===" && ./scripts/ci/lint-external-channels.sh
@@ -277,6 +285,68 @@ echo "=== Runbook annotations ===" && python3 ./scripts/ci/lint-runbook-annotati
 # no_log) so `--check --diff` never prints vault material into scrollback
 # or the weekly drift job's CI log (audit-2026-08-28 backup-restore-7).
 echo "=== Ansible secret-diff ===" && python3 ./scripts/ci/lint-ansible-secret-diff.py
+# The metric-refs SELF-test (does the guard still detect a dead ref?)
+# needs neither promtool nor the monitoring stack, so it runs
+# unconditionally — outside the promtool branch above, which would
+# otherwise skip it on any machine that HAS promtool. CI's import-checks
+# job runs it, so verify.sh must too or check-verify-parity fails.
+echo "=== Metric refs self-test ===" && ./scripts/ci/lint-metric-refs-test.sh
+echo "=== Unit-failed baseline self-test ===" && ./scripts/ci/lint-unit-failed-baseline-test.sh
+echo "=== ClickHouse ops-user contract self-test ===" && ./scripts/ops/ch-ops-user-test.sh
+# scripts/ci runs the gate scripts this file mirrors; scripts/dev/lint-changed.sh
+# is a dispatcher OVER those same gates and had no caller of its own — a
+# 99-assertion self-test that no gate ever ran. check-verify-parity.sh only
+# enforces the CI-\>verify direction for scripts/ci, so it could not have
+# caught this. Run it here explicitly.
+echo "=== Changed-file dispatcher self-test ===" && ./scripts/dev/lint-changed-test.sh
+# govulncheck (F-0057). Graceful-skip when not installed locally —
+# CI installs it via `make deps`. Mirrors the promtool pattern.
+if command -v govulncheck >/dev/null 2>&1; then
+    echo "=== Vuln ==="        && make vuln
+else
+    defer_check "Vuln" "govulncheck is not installed"
+fi
+
+# ── Everything from five seconds up, cheapest tier first ───────────────────
+#
+# Same sections, same assertions, same order among themselves as before; they
+# simply no longer stand in front of the block above. `make prepush` is still
+# what clears a push, and the deferral accounting at the bottom is untouched.
+echo "=== Format ==="        && make fmt
+echo "=== Vet ==="           && make vet
+echo "=== Lint ==="          && make lint
+echo "=== Docs ==="          && ./scripts/ci/lint-docs.sh
+echo "=== Doc links ===" && ./scripts/ci/lint-doc-links.sh
+echo "=== Doc links self-test ===" && ./scripts/ci/lint-doc-links-test.sh
+echo "=== Ansible galexie-restart self-test ===" && ./scripts/ci/ansible-galexie-restart-test.sh
+# CI's import-checks job runs these gate scripts too; verify.sh must mirror
+# them or it issues a green CI won't honour (W5-ci-6, enforced by the parity
+# check above). All are deterministic + network-free.
+echo "=== Migration backward-compat ===" && ./scripts/ci/lint-migration-compat.sh
+echo "=== Lake dedup (aggregating reads of duplicate-bearing archives) ===" && ./scripts/ci/lint-lake-dedup.sh
+echo "=== Lake dedup self-test ===" && ./scripts/ci/lint-lake-dedup-test.sh
+echo "=== Shell SIGPIPE self-test ===" && ./scripts/ci/lint-shell-sigpipe-test.sh
+echo "=== Public-dataset drift-verdict self-test ===" && ./scripts/ci/check-public-dataset-test.sh
+echo "=== Fleet release-drift verdict self-test ===" && ./scripts/ci/check-fleet-release-drift-test.sh
+echo "=== zfs-snapshot job self-test ===" && ./scripts/ci/zfs-snapshot-test.sh
+# Migrations-sync self-test: structural half needs only python; the
+# behavioural half runs the task file with ansible and needs GNU tar on the
+# target (unarchive --diff). macOS ships bsdtar — point it at a container
+# via DEPLOY_SYNC_CONNECTION/DEPLOY_SYNC_HOST (see the script header) or
+# let CI's ansible-check job (ubuntu) run it. Graceful-skip only when the
+# tools are missing, same convention as promtool below.
+if command -v ansible-playbook >/dev/null 2>&1 && { [ -n "${DEPLOY_SYNC_CONNECTION:-}" ] || grep -q 'GNU tar' <<<"$(tar --version 2>/dev/null)"; }; then
+    echo "=== Deploy migrations-sync self-test ===" && ./scripts/ci/deploy-sync-test.sh
+else
+    defer_check "Deploy migrations-sync self-test" "needs ansible-playbook and GNU tar; use VERIFY_PROFILE=container on macOS"
+fi
+echo "=== Baseline-growth tripwire self-test ===" && ./scripts/ci/lint-baseline-growth-test.sh
+echo "=== Config-apply gate self-test ===" && ./scripts/ci/config-apply-gate-test.sh
+# Two import-checks gates that landed (#287, #305) without their verify.sh
+# twin — check-verify-parity was red on main for everyone until added here.
+echo "=== Public-dataset drift decision-core self-test ===" && ./scripts/ci/check-public-dataset-test.sh
+echo "=== Replay-plan tripwire self-test ===" && ./scripts/ci/lint-replay-plan-test.sh
+echo "=== Verdict helpers self-test (oneshot waits, sentinel gates) ===" && bash scripts/ops/ops-verdict-test.sh
 # Prometheus rule files. Graceful-skip when promtool isn't
 # installed locally — CI installs it explicitly. The Makefile
 # target hard-fails on missing promtool; verify.sh wraps it with
@@ -309,21 +379,6 @@ if command -v amtool >/dev/null 2>&1; then
     bash configs/alertmanager/apply-test.sh
 else
     defer_check "Alertmanager config" "amtool is not installed"
-fi
-# The metric-refs SELF-test (does the guard still detect a dead ref?)
-# needs neither promtool nor the monitoring stack, so it runs
-# unconditionally — outside the promtool branch above, which would
-# otherwise skip it on any machine that HAS promtool. CI's import-checks
-# job runs it, so verify.sh must too or check-verify-parity fails.
-echo "=== Metric refs self-test ===" && ./scripts/ci/lint-metric-refs-test.sh
-echo "=== Unit-failed baseline self-test ===" && ./scripts/ci/lint-unit-failed-baseline-test.sh
-echo "=== ClickHouse ops-user contract self-test ===" && ./scripts/ops/ch-ops-user-test.sh
-# govulncheck (F-0057). Graceful-skip when not installed locally —
-# CI installs it via `make deps`. Mirrors the promtool pattern.
-if command -v govulncheck >/dev/null 2>&1; then
-    echo "=== Vuln ==="        && make vuln
-else
-    defer_check "Vuln" "govulncheck is not installed"
 fi
 # gitleaks (secret scan). CI runs this as its own job; verify.sh didn't,
 # so a new base64/XDR test fixture that trips the generic-api-key entropy

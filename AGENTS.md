@@ -21,9 +21,14 @@ make prepush           # THE pre-push gate: clean HEAD, strict checks, selected 
 make verify            # underlying sequential gate used by prepush
 ```
 
-- ALWAYS run `make prepush` before pushing and require its literal `ALL REQUIRED CHECKS PASSED`.
-  NEVER substitute `make lint && make test` — that
-  skips the doc, import, openapi and monitoring lints CI enforces.
+- **ALWAYS pick the gate by what the diff touches and state the tier first.** Go under `internal/`
+  or `cmd/`, and `migrations/` -> `make prepush`, requiring its literal `ALL REQUIRED CHECKS PASSED`.
+  `scripts/`, `.github/`, `configs/`, `docs/`, `web/` tests and `*_test.go`-only diffs -> `make verify`,
+  no container. Markdown only -> `make lint-changed`. NEVER substitute `make lint && make test`.
+  Table and measurements: [docs/contributing/local-verification.md](docs/contributing/local-verification.md).
+- ALWAYS run `make lint-changed` before committing; `make hooks` makes it a pre-commit hook.
+- Run gates in the BACKGROUND and keep working; NEVER two at once, or one alongside heavy agent
+  work. One gate per logical change — amend a follow-up one-liner into the patch under gate.
 - `make prepush` can exceed a 10-minute foreground timeout. Run it backgrounded and inspect both
   its status and final marker; never infer success from a job-completion notification.
 - `make prepush` automatically runs integration tests for storage, migration, fixture and ingest
@@ -139,6 +144,11 @@ Full evidence for each: [docs/architecture/domain-traps.md](docs/architecture/do
   `make prepush`, `ALL CHECKS PASSED` from `verify.sh`, or the failure count from `r1-smoke.sh`.
   NEVER pipe a gate through `tee`, `head` or `sed` —
   you then read the pipe's status, not the gate's.
+- **ALWAYS check an instrument against a known case before trusting its verdict**, and when two
+  measurements disagree suspect your own first. `stellar.operations` and `stellar.transactions`
+  carry 2× duplicates; a oneshot's `Result` is the PREVIOUS run's and `is-active` is non-zero while
+  it runs (use `wait_for_oneshot` in `scripts/ops/ops-verdict.sh`); this shell is zsh, so `$VAR`
+  does not word-split.
 - ALWAYS check for prior art before starting on a symptom: `gh pr list --state all --search`,
   `git branch -r | grep`, the runbook, and the backlog. Record the result in the PR body.
 - Every pushed branch gets a PR in the same session. A branch with no PR is not work, it is loss.
