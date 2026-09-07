@@ -31,28 +31,39 @@ separate facts.
 The three failure classes it removes:
 
 **1. Config-apply gate.** The gate (`scripts/ci/config-apply-gate.sh`) fails a
-deploy whose release changed a config surface a binary deploy does not apply,
-unless `-f config_acknowledged=true` was passed. Whether that acknowledgement
-is honest or a rubber stamp depends on what actually changed, and the deploy
-run is a slow place to find out — two releases in a row failed the gate, and
-both turned out to be comment-only.
+deploy whose release changed a config surface a binary deploy does not apply
+and that nothing has cleared. Which surfaces those are is decided by the gate,
+in [three cases](deploy-config-apply.md#three-cases-not-two) — comment-only,
+already applied, substantive — and the preflight reports the same three under
+the same names, because it reads both the surface list **and** the classifier
+out of the gate script rather than keeping a second copy.
 
-The preflight reads the surface list **out of** the gate script (one copy),
-runs the gate for its own verdict, and adds the classification the gate does
-not make: every added and removed line of each changed file is checked against
-that file type's comment syntax. All comment-only ⇒ `config_acknowledged=true`
-asserts something true, and the flag is emitted. Any substantive change ⇒ the
-flag is withheld, the offending lines are printed, and the run exits non-zero
-pointing at [deploy-config-apply.md](deploy-config-apply.md).
+What it adds is the host half. For a `deploy/clickhouse/*.sql` diff the gate
+says is verifiable by object existence, the preflight asks the target whether
+every object the diff creates is present in `system.tables`, and passes the
+files that are to the gate as its `[applied]` argument — the same evidence
+`deploy.yml` produces for itself. So the verdict printed here is the verdict
+that job will reach.
 
-Two limits, stated because they matter:
+The emitted dispatch **never** carries `-f config_acknowledged=true`. Both
+cases where that flag was warranted by evidence are now cleared by machine, so
+what remains is an operator asserting, from their own knowledge, that a surface
+no checker can read has been applied — which this script has no basis to assert
+for them. The rule it used to apply, "all comment-only, so acknowledge", is the
+rule that would have acknowledged v0.61.1..v0.62.0's unapplied `CREATE TABLE`.
 
-- A file type with no comment convention known to the script (`.md`, anything
+Three limits, stated because they matter:
+
+- A file type with no comment convention known to the gate (`.md`, anything
   unrecognised) is **substantive by default**. The failure to avoid is a
   rubber-stamped acknowledgement, so the ambiguous case falls to a human.
 - Comment-only means *no rendered behaviour differs*. It does not mean the
   bytes on the host match: a comment-only `.j2` change still leaves a textual
   difference the weekly `ansible-drift` job will report until it is applied.
+- "Already applied" is only ever answered for ClickHouse DDL whose diff adds
+  whole new statements. A column added inside an existing
+  `CREATE TABLE IF NOT EXISTS`, an `ALTER`, a systemd unit and an ansible
+  template have no such check and stay substantive.
 
 **2. The region's real binary set.** No per-region manifest existed anywhere:
 `deploy.yml` carries one default list of six binaries for three regions.
@@ -81,6 +92,11 @@ can reach the host re-derives the set anyway and **uses the host's answer**,
 so a stale row can never be what gets dispatched — it is reported as drift and
 blocks the run until the row is refreshed.
 
+Since 2026-09-07 `deploy.yml` reads the same file, so this preflight is a
+preview of a refusal rather than the only thing standing between a wrong set
+and a rolled-back binary. See
+[deploy-workflow.md](deploy-workflow.md#the-region-binary-manifest).
+
 The emitted `-f binaries=` list is always the region's **whole** deployable
 set. A partial dispatch is what left `stellarindex-migrate` and
 `stellarindex-sla-probe` behind and tripped `stellarindex_binary_version_skew`.
@@ -99,7 +115,9 @@ ancestry baseline, saying so; `--refresh-manifest` rewrites the region row;
 `--migrations-ack` records the CS-099 read.
 
 Everything read from a host is read-only: `cat` of the deploy sidecars,
-`systemctl is-enabled` / `is-active`, and a `test -x`.
+`systemctl is-enabled` / `is-active`, a `test -x`, and a
+`SELECT … FROM system.tables` when a ClickHouse surface is up for the
+already-applied question.
 
 ## `make bootstrap-worktree`
 

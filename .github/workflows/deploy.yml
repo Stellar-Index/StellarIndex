@@ -21,8 +21,10 @@ name: deploy
 #                              (e.g. root@95.217.126.13) to ProxyJump through
 #   <REGION>_SSH_KNOWN_HOSTS — base64 of ssh-keyscan for BOTH the jump host
 #                              AND the VM (the pinned file covers both hops)
-# Deploy the test-net binary set (NO aggregator):
-#   -f binaries=stellarindex-indexer,stellarindex-api,stellarindex-ops
+# The per-region binary set is scripts/dev/region-binaries.tsv, derived
+# from the hosts and read by this workflow — `binaries` is filtered
+# through it rather than obeyed, so the pubnet default dispatches
+# everywhere and drops only what a region cannot run.
 #
 # Triggered exclusively via workflow_dispatch. There's no auto-deploy
 # on tag push — the release workflow produces the artefacts; a human
@@ -91,7 +93,7 @@ on:
         # adds no risk. Making the runner swap before it runs is a
         # structural change to the migration path on a live money
         # database and wants its own reviewed PR, not a rider on this.
-        description: 'Comma-separated binaries to deploy. TEST NETS (testnet/futurenet) MUST override to the test-net set — stellarindex-indexer,stellarindex-api,stellarindex-ops — with NO aggregator (no USD markets off pubnet). The default below is the PUBNET set.'
+        description: 'Comma-separated binaries to deploy. The default below is the PUBNET set; it is FILTERED through scripts/dev/region-binaries.tsv for the target region, so a binary that region has no unit for is skipped with a notice rather than deployed and rolled back. Naming fewer than the region runs is refused unless the omitted ones are already on this version.'
         required: false
         type: string
         default: 'stellarindex-indexer,stellarindex-aggregator,stellarindex-api,stellarindex-sla-probe,stellarindex-ops,stellarindex-migrate'
@@ -258,6 +260,132 @@ jobs:
           done
           echo "Validated ${#LIST[@]} binaries: ${LIST[*]}"
 
+      - name: Resolve the region's binary set
+        id: binset
+        # G2 (2026-09-07). The three regions run DIFFERENT unit sets and
+        # nothing declared that to this workflow: it carried ONE default
+        # binary list for all three. Both of the day's binary-set failures
+        # follow from that.
+        #
+        #   - the pubnet six-binary default dispatched at futurenet, which
+        #     has no stellarindex-aggregator unit. deploy-one-binary.yml
+        #     restarts <binary>.service and then requires `systemctl
+        #     is-active`, so a unit systemd does not have is a failed
+        #     deploy BY CONSTRUCTION. The health probe failed, the binary
+        #     rolled back, and the residue is still on that host as
+        #     /usr/local/bin/stellarindex-aggregator.failed-v0.62.0.
+        #   - a four-of-six set dispatched at r1, which left
+        #     stellarindex-migrate and stellarindex-sla-probe two releases
+        #     behind and tripped stellarindex_binary_version_skew AFTER
+        #     everything was live.
+        #
+        # Both were knowable before anything was staged. This step answers
+        # the first from a checked-in manifest, offline, before the release
+        # artefacts are even downloaded; the second needs the host's
+        # sidecars and is answered by "Reconcile the binary set against the
+        # host" below, before the playbook runs.
+        #
+        # SINGLE SOURCE. scripts/dev/region-binaries.tsv is the manifest and
+        # this reads it rather than carrying a second copy — the `binaries`
+        # input's own default stays the PUBNET set, and is now filtered
+        # rather than obeyed. A row is host-derived by
+        # `scripts/dev/preflight-deploy.sh --refresh-manifest` (read-only).
+        #
+        # REFUSE vs SKIP, decided per case:
+        #
+        #   declared not deployable (futurenet's aggregator, recorded in
+        #   the manifest as `stellarindex-aggregator:unit-not-found`) → SKIP
+        #   the binary, loudly, and deploy the rest. The absence is a
+        #   checked-in, reviewed fact about that region, so refusing would
+        #   make the documented pubnet default permanently undispatchable
+        #   there and leave the operator doing a mechanical edit. The
+        #   effective set — not the requested one — is what every step
+        #   below uses and what the job summary records, so the skip is
+        #   never silent.
+        #
+        #   named but unknown to the region's row → REFUSE. The manifest
+        #   has no opinion, and deploying a binary whose unit nobody has
+        #   checked is exactly what rolled back.
+        env:
+          REGION: ${{ inputs.region }}
+          VERSION: ${{ inputs.version }}
+          BINARIES: ${{ inputs.binaries }}
+          MANIFEST: scripts/dev/region-binaries.tsv
+        run: |
+          set -euo pipefail
+          if [ ! -f "$MANIFEST" ]; then
+            echo "::error::the region binary manifest '${MANIFEST}' is missing. It is the only per-region binary set this repo has; refusing to guess one."
+            exit 1
+          fi
+          if ! row="$(awk -F'\t' -v r="$REGION" '$1 == r { print; found = 1 } END { exit found ? 0 : 1 }' "$MANIFEST")"; then
+            echo "::error::region '${REGION}' has no row in ${MANIFEST}. Derive one read-only with 'scripts/dev/preflight-deploy.sh --region ${REGION} --version ${VERSION} --refresh-manifest' and commit it."
+            exit 1
+          fi
+          IFS=$'\t' read -r _ _ _ _ region_set not_deployable derived_utc <<<"$row"
+          [ "$not_deployable" = "-" ] && not_deployable=""
+          region_set="$(tr ',' ' ' <<<"$region_set")"
+          not_deployable="$(tr ',' ' ' <<<"$not_deployable")"
+          requested="$(tr ',' ' ' <<<"$(tr -d '[:space:]' <<<"$BINARIES")")"
+          echo "manifest row for ${REGION} (derived ${derived_utc}): ${region_set}"
+
+          effective=""
+          skipped=""
+          unknown=""
+          for b in $requested; do
+            case " $region_set " in
+              *" $b "*) effective="${effective}${b} "; continue ;;
+            esac
+            reason=""
+            for entry in $not_deployable; do
+              case "$entry" in
+                "$b":*) reason="${entry#*:}" ;;
+              esac
+            done
+            if [ -n "$reason" ]; then
+              skipped="${skipped}${b}:${reason} "
+            else
+              unknown="${unknown}${b} "
+            fi
+          done
+
+          if [ -n "$unknown" ]; then
+            echo "::error::region ${REGION} has no manifest entry for: ${unknown% }. ${MANIFEST} records its deployable set as '${region_set}'. Either the request is wrong, or the manifest is and needs re-deriving from the host ('scripts/dev/preflight-deploy.sh --region ${REGION} --version ${VERSION} --refresh-manifest'). Refusing before anything is staged."
+            exit 1
+          fi
+          for entry in $skipped; do
+            echo "::warning::skipping ${entry%%:*} at ${REGION}: ${entry#*:}, per ${MANIFEST}. That region has no such unit to restart, so deploying it fails the health probe and rolls the binary back. It is NOT in the effective set below."
+          done
+
+          effective="${effective% }"
+          if [ -z "$effective" ]; then
+            echo "::error::nothing in '${BINARIES}' is deployable at ${REGION}."
+            exit 1
+          fi
+
+          # Whatever the region runs that this dispatch does not name. Not
+          # refused here — a re-run naming only a stale binary is the
+          # documented skew RECOVERY path, and whether an omission leaves
+          # skew depends on the host's sidecars, which are read below.
+          omitted=""
+          for m in $region_set; do
+            case " $effective " in
+              *" $m "*) ;;
+              *) omitted="${omitted}${m} " ;;
+            esac
+          done
+          omitted="${omitted% }"
+          if [ -n "$omitted" ]; then
+            echo "::warning::this dispatch does not name ${omitted}, which ${REGION} also runs. That is only safe if they are already on ${VERSION}; the host reconciliation step checks it and refuses if not."
+          fi
+
+          {
+            echo "binaries=$(tr ' ' ',' <<<"$effective")"
+            echo "omitted=${omitted}"
+            echo "region_set=${region_set}"
+            echo "not_deployable=${not_deployable}"
+          } >> "$GITHUB_OUTPUT"
+          echo "effective set for ${REGION}: ${effective}"
+
       - name: Resolve region inventory
         id: region
         # F-1298 (wave 126): inputs through `env:`, never
@@ -292,10 +420,12 @@ jobs:
               ;;
             testnet)
               # Testnet VM on the shared Frankfurt box. No approval gate
-              # (low-stakes test tier); binaries = the test-net set (pass
-              # `binaries` = stellarindex-indexer,stellarindex-api,stellarindex-ops
-              # — NO aggregator). The VM has no public IP: HOST is its private
-              # NAT address (192.168.122.10) and SSH_JUMP is the KVM host
+              # (low-stakes test tier). Its binary set is
+              # scripts/dev/region-binaries.tsv's, not a constant here —
+              # measured 2026-09-07 it runs all six, aggregator included
+              # (that unit is disabled at boot and active right now). The VM
+              # has no public IP: HOST is its private NAT address
+              # (192.168.122.10) and SSH_JUMP is the KVM host
               # (user@public-ip) we ProxyJump through.
               host="${TESTNET_HOST}"
               user="${TESTNET_USER:-root}"
@@ -340,7 +470,8 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           VERSION: ${{ inputs.version }}
-          BINARIES: ${{ inputs.binaries }}
+          # The EFFECTIVE set (region manifest applied), never the raw request.
+          BINARIES: ${{ steps.binset.outputs.binaries }}
           REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
@@ -395,7 +526,8 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           VERSION: ${{ inputs.version }}
-          BINARIES: ${{ inputs.binaries }}
+          # The EFFECTIVE set (region manifest applied), never the raw request.
+          BINARIES: ${{ steps.binset.outputs.binaries }}
           REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
@@ -637,6 +769,145 @@ jobs:
             exit 1
           fi
 
+      - name: Reconcile the binary set against the host
+        # G2, second half. "Resolve the region's binary set" answered what
+        # the MANIFEST says; this answers what the HOST says, before the
+        # playbook touches it. Two questions, both fail-closed:
+        #
+        #   1. IS THE MANIFEST STILL TRUE? The file is a cache of a host
+        #      property, and a cache with no invalidation is a future
+        #      incident. Every daemon the row claims deployable must have a
+        #      unit systemd can load, and every daemon it claims is not
+        #      must still have none. Either disagreement refuses the deploy
+        #      and names the one read-only command that fixes the row.
+        #
+        #      DEPLOYABILITY IS UNIT PRESENCE, NOT ENABLEMENT — measured,
+        #      because the obvious test is wrong. testnet's aggregator is
+        #      UnitFileState=disabled with ActiveState=active: off at boot,
+        #      running now, and deployed there by this workflow. An
+        #      enablement test would drop it and re-create the very skew
+        #      this exists to prevent. futurenet's is LoadState=not-found,
+        #      which is the real exclusion. So LoadState is the property
+        #      read, and nothing else.
+        #
+        #      The CLI binaries (deploy-binary.yml's cli_binaries
+        #      deny-list) are exempt: they have no unit to restart and no
+        #      health probe — the playbook stats the file — so unit state
+        #      says nothing about them. That list is READ from the playbook
+        #      rather than copied.
+        #
+        #   2. WOULD THIS DISPATCH LEAVE SKEW? A partial set is not wrong
+        #      in itself: re-running with only the stale binary named is
+        #      the recovery path the served-path smoke below prints. It is
+        #      wrong when a binary this dispatch omits is not already on
+        #      the deploying version — which is precisely the four-of-six
+        #      r1 dispatch that left stellarindex-migrate and
+        #      stellarindex-sla-probe behind. So the question is asked of
+        #      the sidecars, not of the request's shape.
+        #
+        # Runs before "Install Ansible" and long before the playbook: a
+        # refusal here has changed nothing on the host.
+        id: hostset
+        env:
+          REGION: ${{ inputs.region }}
+          VERSION: ${{ inputs.version }}
+          BINARIES: ${{ steps.binset.outputs.binaries }}
+          OMITTED: ${{ steps.binset.outputs.omitted }}
+          REGION_SET: ${{ steps.binset.outputs.region_set }}
+          NOT_DEPLOYABLE: ${{ steps.binset.outputs.not_deployable }}
+          DEPLOY_HOST: ${{ steps.region.outputs.host }}
+          DEPLOY_USER: ${{ steps.region.outputs.user }}
+          DEPLOY_JUMP: ${{ steps.region.outputs.jump }}
+          MANIFEST: scripts/dev/region-binaries.tsv
+          DEPLOY_PLAYBOOK: configs/ansible/playbooks/deploy-binary.yml
+        run: |
+          set -euo pipefail
+          cli_binaries="$(awk '
+            /^ *cli_binaries:/ { grab = 1; next }
+            grab && /^ *- / { sub(/^ *- */, ""); print; next }
+            grab { exit }
+          ' "$DEPLOY_PLAYBOOK" | tr '\n' ' ')"
+          if [ -z "${cli_binaries// /}" ]; then
+            echo "::error::could not read cli_binaries out of ${DEPLOY_PLAYBOOK}; without it a CLI binary would be judged by a unit it never has."
+            exit 1
+          fi
+          echo "cli binaries (from ${DEPLOY_PLAYBOOK}): ${cli_binaries}"
+
+          # One read, covering everything either side names.
+          probe=""
+          for b in $REGION_SET $OMITTED $(tr ',' ' ' <<<"$BINARIES"); do
+            case " $probe " in *" $b "*) ;; *) probe="${probe}${b} " ;; esac
+          done
+          for entry in $NOT_DEPLOYABLE; do
+            b="${entry%%:*}"
+            case " $probe " in *" $b "*) ;; *) probe="${probe}${b} " ;; esac
+          done
+
+          # An args ARRAY, not a string: the jump option carries an `=`
+          # and an unquoted expansion is how a ProxyJump ends up split.
+          ssh_opts=(-i ~/.ssh/id_deploy -o BatchMode=yes -o ConnectTimeout=20)
+          if [ -n "${DEPLOY_JUMP:-}" ]; then ssh_opts+=(-o "ProxyJump=${DEPLOY_JUMP}"); fi
+          # LoadState for the unit, and the deployed-versions sidecar for
+          # the version. `awk 1`, not `cat`: the sidecars are written with
+          # ansible.builtin.copy `content:` and carry NO trailing newline.
+          remote="d=/var/lib/stellarindex/deployed-versions
+          for b in ${probe}; do
+            l=\$(systemctl show \"\$b.service\" -p LoadState --value 2>/dev/null)
+            [ -n \"\$l\" ] || l=unknown
+            if [ -f \"\$d/\$b\" ]; then v=\$(awk 1 \"\$d/\$b\" | tr -d '\r'); else v=-; fi
+            [ -n \"\$v\" ] || v=-
+            printf '%s\t%s\t%s\n' \"\$b\" \"\$l\" \"\$v\"
+          done"
+          set +e
+          # shellcheck disable=SC2029  # the binary list IS meant to expand
+          # client-side; everything the remote shell must evaluate is escaped
+          # above.
+          host_states=$(ssh "${ssh_opts[@]}" "${DEPLOY_USER}@${DEPLOY_HOST}" "$remote")
+          rc=$?
+          set -e
+          if [ "$rc" -ne 0 ] || [ -z "$host_states" ]; then
+            echo "::error::could not read unit state and deployed versions from ${DEPLOY_USER}@${DEPLOY_HOST} (ssh exit ${rc}). Refusing: without them this job cannot tell a deployable unit from an absent one, which is the read whose absence rolled a binary back on futurenet."
+            exit 1
+          fi
+          printf '%s\n' "$host_states" | sed 's/^/  /'
+
+          load_state() { awk -F'\t' -v b="$1" '$1 == b { print $2 }' <<<"$host_states"; }
+          live_version() { awk -F'\t' -v b="$1" '$1 == b { print $3 }' <<<"$host_states"; }
+          is_cli() { case " $cli_binaries " in *" $1 "*) return 0 ;; esac; return 1; }
+
+          drift=""
+          for b in $REGION_SET; do
+            if is_cli "$b"; then continue; fi
+            state="$(load_state "$b")"
+            [ "$state" = loaded ] || drift="${drift}${b}(manifest:deployable,host:${state:-unread}) "
+          done
+          for entry in $NOT_DEPLOYABLE; do
+            b="${entry%%:*}"
+            if is_cli "$b"; then continue; fi
+            state="$(load_state "$b")"
+            [ "$state" = loaded ] && drift="${drift}${b}(manifest:${entry#*:},host:loaded) "
+          done
+          if [ -n "$drift" ]; then
+            echo "::error::${MANIFEST} no longer matches ${REGION}: ${drift% }. The host is the fact and the manifest is a cache of it, so this dispatch is running on a stale contract. Re-derive the row read-only with 'scripts/dev/preflight-deploy.sh --region ${REGION} --version ${VERSION} --refresh-manifest', commit it, and re-dispatch."
+            exit 1
+          fi
+          echo "manifest agrees with ${DEPLOY_HOST} on every unit it names"
+
+          behind=""
+          for b in $OMITTED; do
+            [ -n "$b" ] || continue
+            v="$(live_version "$b")"
+            [ "$v" = "$VERSION" ] || behind="${behind}${b}=${v:-unread} "
+          done
+          if [ -n "$behind" ]; then
+            echo "::error::this dispatch deploys '${BINARIES}' but ${REGION} also runs ${OMITTED}, and these are NOT already on ${VERSION}: ${behind% }. Deploying it would leave the region split across releases and trip stellarindex_binary_version_skew after everything is live — which is the 2026-09-07 four-of-six dispatch. Re-dispatch with -f binaries=$(tr ' ' ',' <<<"$REGION_SET"), or name only binaries whose peers are already current."
+            exit 1
+          fi
+          if [ -n "${OMITTED// /}" ]; then
+            echo "::notice::partial dispatch accepted: ${OMITTED} are omitted but already on ${VERSION}, so this leaves no skew."
+          fi
+          echo "no version skew will remain after this deploy"
+
       - name: Install Ansible
         # F-1299 (codex audit-2026-05-13): EXACT pins for both
         # ansible-core and pip itself. Pre-fix `'ansible-core==2.18.*'`
@@ -786,7 +1057,8 @@ jobs:
           DEPLOY_JUMP: ${{ steps.region.outputs.jump }}
           BACKUP_GATE: ${{ steps.region.outputs.backup_gate }}
           VERSION: ${{ inputs.version }}
-          BINARIES: ${{ inputs.binaries }}
+          # The EFFECTIVE set (region manifest applied), never the raw request.
+          BINARIES: ${{ steps.binset.outputs.binaries }}
           HEALTH_GRACE: ${{ inputs.health_grace_seconds }}
           MIGRATIONS_SKIP: ${{ inputs.migrations_skip }}
         run: |
@@ -871,6 +1143,123 @@ jobs:
           # the config-apply gate keeps demanding this surface.
           echo "applied=configs/prometheus/rules.r1/" >>"$GITHUB_OUTPUT"
 
+      - name: Verify ClickHouse DDL is applied (config-apply evidence)
+        # G1 (2026-09-07). The config-apply gate knew only "changed" and
+        # "unchanged", so every diff was an operator decision. Two of the
+        # day's four failed deploys were spent discovering that a
+        # deploy/clickhouse/*.sql diff was comment-only — and the rule
+        # generalised from that ("comment-only, so acknowledge") is FALSE:
+        # v0.61.1..v0.62.0 added CREATE TABLE stellar.account_creators_ops
+        # to account_creators_rollup.sql AND tier1_schema.sql. That
+        # acknowledgement was right only because the DDL had been applied
+        # by hand first and the objects confirmed present. The gate now
+        # answers comment-only itself; this step answers the other half by
+        # ASKING THE HOST, so "already applied" is evidence rather than an
+        # assumption.
+        #
+        # WHAT IT CAN AND CANNOT CHECK, exactly:
+        #
+        #   can    a deploy/clickhouse/*.sql diff whose every hunk opens a
+        #          new CREATE TABLE/MATERIALIZED VIEW/VIEW/DICTIONARY, with
+        #          nothing substantive removed and no other DDL/DML verb.
+        #          For those, every object the diff creates must be present
+        #          in system.tables on this host. That test is decided by
+        #          the gate's --ddl-objects mode, so the shapes that
+        #          qualify are pinned in one place and tested.
+        #   cannot a column added inside an existing `CREATE TABLE IF NOT
+        #          EXISTS` (the object exists either way, and re-running the
+        #          file would not add the column), an ALTER/DROP/EXCHANGE,
+        #          a systemd unit, or an ansible template. Those are never
+        #          certified here and stay in the gate for the operator.
+        #
+        # Existence proves the DDL RAN. It does not prove a new
+        # materialized view is backfilled — backfills are a separate
+        # monitored job, per docs/operations/deploy-config-apply.md.
+        #
+        # continue-on-error, and the output is written LAST: any fault
+        # leaves the output empty, which keeps every schema surface in the
+        # gate. Producing no evidence is the fail-closed direction.
+        id: ch_ddl
+        continue-on-error: true
+        env:
+          VERSION: ${{ inputs.version }}
+          BASELINE: ${{ steps.baseline.outputs.live }}
+          DEPLOY_HOST: ${{ steps.region.outputs.host }}
+          DEPLOY_USER: ${{ steps.region.outputs.user }}
+          DEPLOY_JUMP: ${{ steps.region.outputs.jump }}
+          GATE: scripts/ci/config-apply-gate.sh
+        run: |
+          set -euo pipefail
+          base="${BASELINE}"
+          if [ -z "$base" ]; then
+            base="$(git describe --tags --abbrev=0 "${VERSION}^" 2>/dev/null || true)"
+          fi
+          if [ -z "$base" ]; then
+            echo "no baseline resolves; certifying nothing."
+            exit 0
+          fi
+          echo "baseline ${base} → ${VERSION}"
+          changed="$(git diff --name-only "$base" "$VERSION" -- 'deploy/clickhouse/*.sql')"
+          if [ -z "$changed" ]; then
+            echo "no ClickHouse schema file changed in this range."
+            exit 0
+          fi
+
+          plan=""
+          for f in $changed; do
+            if [ -z "$(bash "$GATE" --payload "$base" "$VERSION" "$f")" ]; then
+              echo "  ${f}: comment-only — the gate clears it without help."
+              continue
+            fi
+            if ! objects="$(bash "$GATE" --ddl-objects "$base" "$VERSION" "$f")"; then
+              echo "  ${f}: substantive, and its diff is NOT purely new CREATE statements — object existence would not prove it applied. Left to the operator."
+              continue
+            fi
+            plan="${plan}${f}=$(tr '\n' ' ' <<<"$objects")"$'\n'
+          done
+          if [ -z "$plan" ]; then
+            echo "nothing here is verifiable by object existence."
+            exit 0
+          fi
+
+          ssh_opts=(-i ~/.ssh/id_deploy -o BatchMode=yes -o ConnectTimeout=20)
+          if [ -n "${DEPLOY_JUMP:-}" ]; then ssh_opts+=(-o "ProxyJump=${DEPLOY_JUMP}"); fi
+          # The whole database.name list is fetched and compared here
+          # rather than interpolated into an IN(...) clause: nothing
+          # derived from a diff reaches the query text.
+          set +e
+          existing=$(ssh "${ssh_opts[@]}" "${DEPLOY_USER}@${DEPLOY_HOST}" \
+            "command -v clickhouse-client >/dev/null 2>&1 || exit 9; clickhouse-client --port \"\${CH_PORT:-9300}\" -q \"SELECT concat(database, '.', name) FROM system.tables\"")
+          rc=$?
+          set -e
+          if [ "$rc" -ne 0 ] || [ -z "$existing" ]; then
+            echo "::warning::could not ask ${DEPLOY_HOST} which ClickHouse objects exist (ssh/client exit ${rc}); certifying nothing. The changed schema surfaces stay in the config-apply gate."
+            exit 0
+          fi
+
+          applied=""
+          while IFS= read -r entry; do
+            [ -n "$entry" ] || continue
+            f="${entry%%=*}"
+            objects="${entry#*=}"
+            missing=""
+            for o in $objects; do
+              grep -qxF -- "$o" <<<"$existing" || missing="${missing}${o} "
+            done
+            if [ -n "$missing" ]; then
+              echo "::warning::${f} creates ${missing% }, which ${DEPLOY_HOST} does NOT have — NOT applied. The config-apply gate will demand it, correctly."
+            else
+              echo "  ${f}: applied — every object it creates is present on ${DEPLOY_HOST} (${objects% })."
+              applied="${applied}${f} "
+            fi
+          done <<<"$plan"
+
+          # Written LAST, so any failure above leaves it unset and every
+          # schema surface stays in the gate.
+          if [ -n "$applied" ]; then
+            echo "applied=${applied% }" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Config-apply gate
         # Runs AFTER the binaries are deployed. deploy-binary.yml swaps
         # binaries only; when a release changed the ansible config,
@@ -891,7 +1280,12 @@ jobs:
           # the step runs under `set -e`, so any earlier failure aborts before
           # the write and leaves this empty. A failed or skipped apply
           # therefore keeps rules.r1/ in the gate, where it belongs.
-          APPLIED: ${{ steps.prom_rules.outputs.applied }}
+          # Two producers, both of which write their output only after
+          # the surface is PROVEN live: apply-rules.sh polls /api/v1/rules,
+          # and the ClickHouse step above confirms every object in
+          # system.tables. A step that failed or was skipped contributes
+          # nothing and its surface stays gated.
+          APPLIED: ${{ steps.prom_rules.outputs.applied }} ${{ steps.ch_ddl.outputs.applied }}
         run: |
           bash scripts/ci/config-apply-gate.sh "$VERSION" "$CONFIG_ACK" "$BASELINE" "$APPLIED"
 
@@ -1055,7 +1449,9 @@ jobs:
         env:
           REGION: ${{ inputs.region }}
           VERSION: ${{ inputs.version }}
-          BINARIES: ${{ inputs.binaries }}
+          # The EFFECTIVE set (region manifest applied), never the raw request.
+          BINARIES: ${{ steps.binset.outputs.binaries }}
+          REQUESTED: ${{ inputs.binaries }}
           JOB_STATUS: ${{ job.status }}
         run: |
           {
@@ -1063,6 +1459,12 @@ jobs:
             echo ""
             echo "- Region: \`${REGION}\`"
             echo "- Version: \`${VERSION}\`"
-            echo "- Binaries: \`${BINARIES}\`"
+            echo "- Binaries deployed: \`${BINARIES}\`"
+            if [ "${BINARIES}" != "${REQUESTED}" ]; then
+              # The record must not say the dispatch deployed something it
+              # did not: a binary the region's manifest declares
+              # undeployable is skipped, and the summary names both.
+              echo "- Binaries requested: \`${REQUESTED}\` (filtered by \`scripts/dev/region-binaries.tsv\` for \`${REGION}\`)"
+            fi
             echo "- Outcome: \`${JOB_STATUS}\`"
           } >> "$GITHUB_STEP_SUMMARY"

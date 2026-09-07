@@ -1,6 +1,6 @@
 ---
 title: Post-deploy config-apply (the "config ships dead" guard)
-last_verified: 2026-09-01
+last_verified: 2026-09-07
 status: operational
 ---
 
@@ -27,14 +27,67 @@ despite "deploy OK"), and the v0.43.0 Prometheus rules (copied to the unused
 
 The **config-apply gate** (`scripts/ci/config-apply-gate.sh`, run by
 `deploy.yml`) fails the deploy job when a release changed a config surface
-and the operator did not pass `-f config_acknowledged=true` — a forcing
-function so the apply below is never forgotten. Its surfaces are the whole
+that nothing has cleared and the operator did not pass
+`-f config_acknowledged=true` — a forcing function so the apply below is
+never forgotten. Its surfaces are the whole
 `configs/ansible/roles/` tree (templates, tasks, files, **defaults**,
 handlers — a `defaults/main.yml` change re-renders every template that reads
 it), `configs/ansible/inventory/`, `configs/healthchecks/`, the Prometheus
 rules, `deploy/systemd/`, `deploy/clickhouse/`, and the repo scripts the role
 copies onto the host verbatim (`scripts/ops/config-assertions.sh`,
 `ch-schema-snapshot.sh`, `restore-drill.sh`, `scripts/dev/r1-smoke.sh`).
+
+## Three cases, not two
+
+Until 2026-09-07 the gate knew only *changed* and *unchanged*, so every diff
+was an operator decision. Two of that day's four failed deploys were spent
+discovering that a `deploy/clickhouse/*.sql` diff was comment-only. The rule
+generalised from that — "comment-only, so acknowledge" — is **false**:
+`v0.61.1..v0.62.0` added `CREATE TABLE stellar.account_creators_ops` to
+`account_creators_rollup.sql` **and** `tier1_schema.sql`, and the
+acknowledgement was correct only because the DDL had been applied by hand
+first and the objects confirmed present.
+
+Each changed surface now lands in exactly one of:
+
+| Case | What it means | Who clears it |
+| --- | --- | --- |
+| **comment-only** | every added and removed line is blank or a comment in that file's syntax, so nothing the host renders or executes differs | the gate itself, no operator action |
+| **applied** | substantive, and proven live on this host by a step that fails closed | the step that proved it, via the gate's `[applied]` argument |
+| **substantive** | everything else | the operator, with `-f config_acknowledged=true`, after applying **and verifying** |
+
+Classification is conservative: a file type with no known comment convention
+is substantive, and any non-comment payload on either side of the diff is
+substantive. A comment-only surface still differs *textually* from the host
+copy until the config is applied — the weekly `ansible-drift` job is what
+reports that.
+
+### What "applied" is allowed to mean
+
+The gate reads git, not the host: it can verify nothing itself. `[applied]` is
+evidence its caller produced, and `deploy.yml` produces exactly two kinds:
+
+- **`configs/prometheus/rules.r1/`** — `apply-rules.sh` installs and then
+  POLLS `/api/v1/rules` until every expected alert is loaded and healthy,
+  restoring its backup if it never is.
+- **`deploy/clickhouse/*.sql`, and only some of them.** The *Verify ClickHouse
+  DDL is applied* step asks the target whether every object such a diff
+  creates is present in `system.tables`. A file qualifies only when its whole
+  diff is additive whole statements: every hunk opens a `CREATE
+  TABLE/MATERIALIZED VIEW/VIEW/DICTIONARY`, nothing substantive was removed,
+  and no other DDL/DML verb appears (`config-apply-gate.sh --ddl-objects`
+  decides this, and is what the self-test pins).
+
+What is **not** checked, deliberately, because no cheap check exists:
+
+- a column added inside an existing `CREATE TABLE IF NOT EXISTS` — the object
+  is present either way, and re-running the file would not add the column;
+- an `ALTER` / `DROP` / `EXCHANGE`, or any diff that removes a statement;
+- a systemd unit, an ansible template, an inventory var, a healthcheck script.
+
+Those are never auto-cleared. Existence also proves the DDL **ran**, not that
+a new materialized view is backfilled — backfills are a separate monitored
+job, as below.
 
 The gate diffs the deploying tag against the **previous release tag by
 ancestry** unless it is given the host's live version as a 3rd argument —
@@ -122,6 +175,12 @@ ssh r1 'systemctl daemon-reload && systemctl enable --now <unit>.timer'
 Apply idempotent DDL (`CREATE … IF NOT EXISTS`) via `clickhouse-client` /
 `psql`. Heavy backfills are a SEPARATE monitored job, not part of the deploy.
 **Verify:** the table/MV exists (`system.tables` / `\dt`).
+
+Apply it **before** the dispatch where you can: the deploy's ClickHouse
+evidence step then finds the objects present, clears those surfaces itself,
+and no acknowledgement is needed. That is what happened by hand for
+`stellar.account_creators_ops`; the difference is that it is now checked
+rather than remembered.
 
 ## Durable fix (roadmap)
 `ansible-drift.yml` already `--check --diff`s the full archival-node playbook
