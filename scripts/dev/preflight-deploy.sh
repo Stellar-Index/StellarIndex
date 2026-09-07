@@ -4,8 +4,8 @@
 #
 # Four failed deploys on 2026-09-07 were all knowable before the dispatch:
 # two config-apply-gate reds whose surface diffs turned out to be
-# comment-only (so `config_acknowledged=true` was the correct call, learned
-# twice at the cost of a failed run each), one six-binary set dispatched at
+# comment-only (learned twice at the cost of a failed run each; the gate
+# now answers that case itself), one six-binary set dispatched at
 # a region that runs five (futurenet has no aggregator unit; the health
 # probe failed and the binary rolled back), and one four-of-six set that
 # left `stellarindex-migrate` and `stellarindex-sla-probe` behind and
@@ -14,10 +14,14 @@
 # Reported here, before any of that costs a round trip:
 #
 #   1. Config surfaces changed since the version LIVE ON THE TARGET, each
-#      classified comment-only or substantive. The surface list is READ
-#      from scripts/ci/config-apply-gate.sh so there is one copy of it, and
-#      that gate is then executed for its own verdict rather than
-#      re-implemented.
+#      classified comment-only, already-applied, or substantive. Both the
+#      surface list and the classifier are READ from
+#      scripts/ci/config-apply-gate.sh (--payload / --ddl-objects) so there
+#      is one copy of each, and that gate is then executed for its own
+#      verdict rather than re-implemented. "Already applied" is not
+#      assumed: for a ClickHouse DDL diff that adds only whole new
+#      statements, the target is asked whether every object it creates is
+#      present in system.tables.
 #   2. The binary set the target region actually runs, from a checked-in
 #      manifest derived from the hosts (scripts/dev/region-binaries.tsv).
 #      There is no per-region manifest anywhere else — deploy.yml carries
@@ -26,9 +30,11 @@
 #   4. Migrations in the range, with the CS-099 caveat.
 #
 # The last line of output is the exact `gh workflow run deploy.yml` command
-# for that region, with `-f config_acknowledged=true` present only when the
-# evidence warrants it. Exit is non-zero whenever an operator decision is
-# outstanding.
+# for that region. It never carries `-f config_acknowledged=true`: both
+# cases that flag used to cover are now cleared by machine, so what is left
+# is an operator asserting something no checker can read, which this script
+# has no basis to assert for them. Exit is non-zero whenever an operator
+# decision is outstanding.
 #
 # Usage:
 #   scripts/dev/preflight-deploy.sh --region r1 --version v0.63.0
@@ -199,6 +205,28 @@ ssh_read() { # ssh_read <remote-sh-snippet>
         ssh -o BatchMode=yes -o ConnectTimeout="$SSH_TIMEOUT" \
             "${SSH_USER}@${HOST}" "$1"
     fi
+}
+
+# ch_objects_present <newline-separated db.object list> — ask the target's
+# ClickHouse which of those objects exist. Prints "all" or the missing
+# ones; returns non-zero when the question could not be ASKED (no client,
+# host unreachable, server down). A question that could not be asked must
+# never read as an answer, so the caller then leaves the surface
+# substantive rather than claiming it applied.
+#
+# The whole database.name list is fetched and compared here rather than
+# interpolated into an IN(...) clause: nothing derived from a diff reaches
+# the query text.
+ch_objects_present() {
+    local objects="$1" existing missing="" obj
+    existing="$(ssh_read "command -v clickhouse-client >/dev/null 2>&1 || exit 9; clickhouse-client --port \"\${CH_PORT:-9300}\" -q \"SELECT concat(database, '.', name) FROM system.tables\"")" || return 1
+    [ -n "$existing" ] || return 1
+    while IFS= read -r obj; do
+        [ -n "$obj" ] || continue
+        grep -qxF -- "$obj" <<<"$existing" || missing="${missing}${obj} "
+    done <<<"$objects"
+    if [ -n "$missing" ]; then printf '%s' "${missing% }"; else printf 'all'; fi
+    return 0
 }
 
 # Remote derivation: unit enablement for the daemons, installation for the
@@ -429,48 +457,67 @@ if [ ${#SURFACES[@]} -eq 0 ]; then
 fi
 
 changed="$(git diff --name-only "$BASELINE" "$VERSION" -- "${SURFACES[@]}")"
-gate_out="$(bash "$GATE" "$VERSION" false "$BASELINE" 2>&1)"
-gate_rc=$?
 
-# Comment-only classification. A file is comment-only when EVERY added and
-# removed line is blank or a comment in that file's syntax. Anything whose
-# comment convention is not known is substantive by default: the failure to
-# be avoided is a rubber-stamped acknowledgement, so the ambiguous case has
-# to fall on the side of a human reading the diff.
-comment_marker() {
-    case "$1" in
-        *.sql) printf -- '--' ;;
-        *.j2|*.yml|*.yaml|*.sh|*.service|*.timer|*.conf|*.cfg|*.ini|*.toml|*.py|*.rules) printf '#' ;;
-        *.go|*.ts|*.js) printf '//' ;;
-        *) printf '' ;;
-    esac
-}
-
+# Comment-only classification, and — for ClickHouse DDL — whether the
+# substantive half is ALREADY APPLIED on this host.
+#
+# Both judgements come from the gate (--payload / --ddl-objects) rather
+# than from a second implementation here: since 2026-09-07 the gate PASSES
+# a comment-only surface itself, so a local classifier that disagreed with
+# it would mispredict the verdict this section exists to preview.
+#
+# The three cases the gate distinguishes are reported here with the same
+# names it uses.
 substantive=0
 comment_only=0
+applied_verified=0
+# Paths proven applied on the host — handed to the gate below as its
+# "[applied]" argument, exactly as deploy.yml hands it the surfaces its own
+# steps applied and verified.
+VERIFIED_PATHS=""
 if [ -z "$changed" ]; then
     echo "  no config-surface changes — config_acknowledged is not needed"
 else
     while IFS= read -r f; do
         [ -n "$f" ] || continue
-        marker="$(comment_marker "$f")"
-        if [ -z "$marker" ]; then
-            printf '  %-12s %s\n' "SUBSTANTIVE" "$f  (no comment convention known for this file type)"
+        payload="$(bash "$GATE" --payload "$BASELINE" "$VERSION" "$f")"
+        if [ -z "$payload" ]; then
+            printf '  %-12s %s\n' "comment-only" "$f"
+            comment_only=$((comment_only + 1))
+            continue
+        fi
+        # Substantive. For a ClickHouse DDL diff that adds only whole new
+        # statements the host can be ASKED whether the objects exist —
+        # which is the difference between "already applied" and
+        # "unapplied", and the difference the 2026-09-07 acknowledgement
+        # got right only by luck. Nothing equivalent exists for a systemd
+        # unit or an ansible template: those stay substantive.
+        if objects="$(bash "$GATE" --ddl-objects "$BASELINE" "$VERSION" "$f")" && [ -n "$objects" ]; then
+            if [ "$NO_HOST" -eq 0 ] && present="$(ch_objects_present "$objects")"; then
+                if [ "$present" = "all" ]; then
+                    printf '  %-12s %s\n' "applied" "$f  (objects present on ${HOST}: $(tr '\n' ' ' <<<"$objects"))"
+                    applied_verified=$((applied_verified + 1))
+                    VERIFIED_PATHS="${VERIFIED_PATHS}${f} "
+                    continue
+                fi
+                printf '  %-12s %s\n' "SUBSTANTIVE" "$f  (NOT applied on ${HOST}: ${present})"
+                substantive=$((substantive + 1))
+                continue
+            fi
+            printf '  %-12s %s\n' "SUBSTANTIVE" "$f  (creates $(tr '\n' ' ' <<<"$objects")— existence unchecked)"
             substantive=$((substantive + 1))
             continue
         fi
-        hunk="$(git diff -U0 "$BASELINE" "$VERSION" -- "$f" | grep -E '^[+-]' | grep -vE '^(\+\+\+|---)')"
-        payload="$(sed -E 's/^[+-]//' <<<"$hunk" | grep -vE "^[[:space:]]*(${marker//\//\\/}|\$)")"
-        if [ -n "$payload" ]; then
-            printf '  %-12s %s\n' "SUBSTANTIVE" "$f"
-            sed -n '1,4p' <<<"$payload" | sed 's/^/                 | /'
-            substantive=$((substantive + 1))
-        else
-            printf '  %-12s %s\n' "comment-only" "$f"
-            comment_only=$((comment_only + 1))
-        fi
+        printf '  %-12s %s\n' "SUBSTANTIVE" "$f"
+        sed -n '1,4p' <<<"$payload" | sed 's/^/                 | /'
+        substantive=$((substantive + 1))
     done <<<"$changed"
 fi
+
+# Run the gate with exactly the evidence deploy.yml will hand it, so what
+# follows is that job's verdict rather than a second opinion about it.
+gate_out="$(bash "$GATE" "$VERSION" false "$BASELINE" "$VERIFIED_PATHS" 2>&1)"
+gate_rc=$?
 
 printf '  gate verdict: %s (exit %d)\n' \
     "$([ "$gate_rc" -eq 0 ] && echo 'passes without acknowledgement' || echo 'FAILS without config_acknowledged=true')" "$gate_rc"
@@ -479,18 +526,25 @@ printf '  gate verdict: %s (exit %d)\n' \
 # makes this section a preview of that job rather than a second opinion.
 printf '%s\n' "$gate_out" | sed 's/^/      | /'
 
-CONFIG_ACK=false
+# The dispatch printed at the end NEVER carries -f config_acknowledged=true.
+# Both cases where an acknowledgement is warranted by evidence are now
+# cleared by machine — comment-only by the gate, applied ClickHouse DDL by
+# the object check above — so the flag has exactly one remaining meaning:
+# an operator asserting, from their own knowledge, that a surface no
+# checker can read is applied. This script has no basis to assert that on
+# their behalf, and the rule it used to apply ("all comment-only, so
+# acknowledge") is the rule that would have acknowledged v0.61.1..v0.62.0's
+# unapplied CREATE TABLE.
+if [ "$comment_only" -gt 0 ]; then
+    note "the ${comment_only} comment-only surface file(s) still differ TEXTUALLY from the host copies until applied; the weekly ansible-drift job will report them"
+fi
+if [ "$applied_verified" -gt 0 ]; then
+    echo "  ${applied_verified} substantive surface(s) are already applied on ${HOST} — every object their diff creates is present in system.tables."
+fi
 if [ "$gate_rc" -ne 0 ]; then
-    if [ "$substantive" -eq 0 ] && [ "$comment_only" -gt 0 ]; then
-        CONFIG_ACK=true
-        echo "  all ${comment_only} changed surface(s) are comment-only: no rendered behaviour differs,"
-        echo "  so -f config_acknowledged=true asserts something true and nothing is left dead."
-        note "the ${comment_only} comment-only surface file(s) still differ TEXTUALLY from the host copies until applied; the weekly ansible-drift job will report them"
-    else
-        echo "  ${substantive} surface(s) carry real changes: apply them per docs/operations/deploy-config-apply.md,"
-        echo "  verify each landed on the host, and re-run this preflight."
-        block "${substantive} config surface(s) changed substantively between ${BASELINE} and ${VERSION} — acknowledging without applying is what ships the feature dead"
-    fi
+    echo "  ${substantive} surface(s) carry real changes nothing has proven applied: apply them per"
+    echo "  docs/operations/deploy-config-apply.md, verify each landed on the host, and re-run this preflight."
+    block "${substantive} config surface(s) changed substantively between ${BASELINE} and ${VERSION} and are not proven applied — acknowledging without verifying is what ships the feature dead"
 fi
 
 # ── 5. Migrations in the range ───────────────────────────────────────────
@@ -547,12 +601,7 @@ echo ""
 echo "gh workflow run deploy.yml \\"
 echo "  -f region=${REGION} \\"
 echo "  -f version=${VERSION} \\"
-if [ "$CONFIG_ACK" = true ]; then
-    echo "  -f binaries=${binaries_csv} \\"
-    echo "  -f config_acknowledged=true"
-else
-    echo "  -f binaries=${binaries_csv}"
-fi
+echo "  -f binaries=${binaries_csv}"
 
 [ ${#BLOCKERS[@]} -eq 0 ] || exit 1
 exit 0

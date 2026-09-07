@@ -46,6 +46,44 @@
 # is an ERROR, not "no changes" — a gate that cannot see the diff has no
 # basis for a green.
 #
+# THREE OUTCOMES PER CHANGED SURFACE, not two. Until 2026-09-07 this gate
+# knew only "changed" and "unchanged", so every diff was an operator
+# decision. Two of the day's four failed deploys were spent discovering
+# that a diff was comment-only (deploy/clickhouse/*.sql, twice), and the
+# rule people then generalised from that — "comment-only, so acknowledge"
+# — is FALSE: v0.61.1..v0.62.0 added `CREATE TABLE
+# stellar.account_creators_ops` to account_creators_rollup.sql and
+# tier1_schema.sql. That acknowledgement was correct only because the DDL
+# had already been applied by hand and the objects confirmed present.
+# So each changed surface lands in exactly one of:
+#
+#   comment-only   every added and removed line is blank or a comment in
+#                  that file's syntax, so NOTHING the host renders or
+#                  executes differs. Passed by this gate itself; no
+#                  operator action. Conservative by construction: a file
+#                  type with no known comment convention is substantive,
+#                  and any non-comment payload on either side is
+#                  substantive. (The host's copy still differs TEXTUALLY
+#                  until the config is applied; the weekly ansible-drift
+#                  job is what reports that.)
+#   applied        substantive, and applied AND VERIFIED on this run by
+#                  an automated step that fails closed — passed via
+#                  [applied]. See the bar below.
+#   substantive    everything else. Blocks unless the operator passes
+#                  config_acknowledged=true, which asserts they have
+#                  applied it and VERIFIED it landed.
+#
+# What this gate can and cannot verify itself: nothing. It reads git, not
+# the host. "applied" is evidence its CALLER produced —
+# .github/workflows/deploy.yml verifies two surfaces and passes only
+# those: configs/prometheus/rules.r1/ (apply-rules.sh polls /api/v1/rules)
+# and any deploy/clickhouse/*.sql whose diff adds only whole new CREATE
+# statements, each of whose objects is then confirmed present in
+# system.tables on the target. A systemd unit, an ansible template or a
+# ClickHouse diff that ALTERs an existing object has no such check and is
+# never auto-passed — see the --ddl-objects mode below for exactly which
+# shapes qualify.
+#
 # Usage: config-apply-gate.sh <version-tag> [acknowledged] [baseline-tag] [applied]
 #   <version-tag>   the deploying tag, e.g. v0.43.0
 #   [acknowledged]  "true" if the operator passed config_acknowledged=true
@@ -53,6 +91,25 @@
 #                   the previous release tag by ancestry
 #   [applied]       space-separated surface prefixes this deploy already
 #                   applied AND VERIFIED automatically — see below
+#
+# Two helper modes expose the classification to callers so there is ONE
+# copy of it (scripts/dev/preflight-deploy.sh and deploy.yml both use
+# them rather than re-deriving a second opinion the gate would contradict):
+#
+#   config-apply-gate.sh --payload <baseline> <version> <path>
+#       print the substantive (non-blank, non-comment) diff lines for one
+#       path. EMPTY output means comment-only. Always exit 0.
+#
+#   config-apply-gate.sh --ddl-objects <baseline> <version> <path>
+#       print the `db.object` names a ClickHouse DDL diff CREATES, and
+#       exit 0, ONLY when that file's whole diff is additive whole
+#       statements: every hunk begins with a CREATE
+#       TABLE/MATERIALIZED VIEW/VIEW/DICTIONARY, no substantive line was
+#       removed, and no other DDL/DML verb appears. Otherwise print
+#       nothing and exit 1 — object existence would not prove such a diff
+#       applied. A column added inside an existing `CREATE TABLE IF NOT
+#       EXISTS` is the case this refuses: the object exists either way,
+#       and re-running the file would not add the column.
 #
 # The [applied] argument exists so automation can retire surfaces from
 # this gate ONE AT A TIME as they become self-applying, without weakening
@@ -70,6 +127,105 @@
 # also pass a surface here ONLY when the apply actually succeeded on this
 # run; a pre-declared list would clear the gate for a step that never ran.
 set -uo pipefail
+
+# ── Diff classification ──────────────────────────────────────────────
+#
+# Shared with scripts/dev/preflight-deploy.sh and .github/workflows/deploy.yml
+# through the --payload / --ddl-objects modes, so the local preview, the
+# workflow's evidence step and this gate's verdict can never disagree.
+
+# comment_marker <path> — the line-comment token for that file type, or
+# empty when the convention is not known. Empty is DELIBERATELY the
+# conservative answer: the failure to avoid is a rubber-stamped
+# acknowledgement, so an unrecognised type falls to a human reading the
+# diff.
+comment_marker() {
+  case "$1" in
+    *.sql) printf -- '--' ;;
+    *.j2|*.yml|*.yaml|*.sh|*.service|*.timer|*.conf|*.cfg|*.ini|*.toml|*.py|*.rules) printf '#' ;;
+    *.go|*.ts|*.js) printf '//' ;;
+    *) printf '' ;;
+  esac
+}
+
+# diff_body <baseline> <version> <path> — the diff's CONTENT lines only,
+# one per line, with "@" marking each hunk boundary.
+#
+# Everything before the first @@ is header, so it is dropped by position
+# rather than by pattern. Matching `^---` instead (the obvious spelling)
+# also eats a REMOVED line that begins with `--`: every removed SQL
+# comment, and a removed YAML `---` document separator.
+diff_body() {
+  git diff -U0 --no-color --src-prefix=a/ --dst-prefix=b/ "$1" "$2" -- "$3" \
+    | awk '
+        /^@@/ { in_hunk = 1; print "@"; next }
+        !in_hunk { next }
+        /^\\ No newline/ { next }
+        /^[+-]/ { print }
+      '
+}
+
+# surface_payload <baseline> <version> <path> — the substantive diff
+# lines. EMPTY means comment-only.
+surface_payload() {
+  local marker
+  marker="$(comment_marker "$3")"
+  if [ -z "$marker" ]; then
+    printf '%s\n' "<no comment convention is known for this file type — substantive by default>"
+    return 0
+  fi
+  diff_body "$1" "$2" "$3" \
+    | sed -E '/^@$/d; s/^[+-]//' \
+    | grep -vE "^[[:space:]]*(${marker}|\$)"
+  return 0
+}
+
+# ddl_objects <baseline> <version> <path> — see the --ddl-objects usage
+# above. Exit 1 (printing nothing) whenever object existence would not
+# prove this diff applied.
+ddl_objects() {
+  diff_body "$1" "$2" "$3" | awk '
+    function substantive(s) { return (s ~ /^[[:space:]]*$/ || s ~ /^[[:space:]]*--/) ? 0 : 1 }
+    /^@$/ { at_hunk_start = 1; next }
+    /^-/  { if (substantive(substr($0, 2))) unverifiable = 1; next }
+    /^\+/ {
+      line = substr($0, 2)
+      if (!substantive(line)) next
+      upper = toupper(line)
+      creates = (upper ~ /^CREATE (OR REPLACE )?(TABLE|MATERIALIZED VIEW|VIEW|DICTIONARY) (IF NOT EXISTS )?[A-Za-z0-9_]+\.[A-Za-z0-9_]+/)
+      # Each hunk must OPEN a new statement. A hunk that starts mid-body
+      # is a column/engine/setting edit inside an object that already
+      # exists, which existence cannot distinguish from unapplied.
+      if (at_hunk_start && !creates) unverifiable = 1
+      at_hunk_start = 0
+      if (creates) {
+        n = split(line, token, /[[:space:](]+/)
+        for (i = 1; i <= n; i++) {
+          if (token[i] ~ /^[A-Za-z0-9_]+\.[A-Za-z0-9_]+$/) { name[++found] = token[i]; break }
+        }
+        next
+      }
+      if (upper ~ /^(ALTER|DROP|RENAME|TRUNCATE|INSERT|DELETE|UPDATE|OPTIMIZE|EXCHANGE|ATTACH|DETACH|SYSTEM|GRANT|REVOKE|CREATE)([[:space:]]|$)/) unverifiable = 1
+    }
+    END {
+      if (unverifiable || found == 0) exit 1
+      for (i = 1; i <= found; i++) print name[i]
+    }
+  '
+}
+
+case "${1:-}" in
+  --payload)
+    [ "$#" -eq 4 ] || { echo "usage: config-apply-gate.sh --payload <baseline> <version> <path>" >&2; exit 2; }
+    surface_payload "$2" "$3" "$4"
+    exit 0
+    ;;
+  --ddl-objects)
+    [ "$#" -eq 4 ] || { echo "usage: config-apply-gate.sh --ddl-objects <baseline> <version> <path>" >&2; exit 2; }
+    ddl_objects "$2" "$3" "$4"
+    exit $?
+    ;;
+esac
 
 VERSION="${1:?deploying version tag, e.g. v0.43.0}"
 ACK="${2:-false}"
@@ -165,10 +321,42 @@ if [ -n "$AUTO_APPLIED" ]; then
   } >>"$SUMMARY" 2>/dev/null || true
 fi
 
+# Separate the comment-only surfaces from the substantive ones. This runs
+# AFTER the [applied] subtraction, so a surface this deploy applied and
+# verified is reported as applied rather than re-judged on its text.
+#
+# Classification is per FILE and the whole set must clear: one substantive
+# file keeps the gate red for the release.
+COMMENT_ONLY=""
+if [ -n "$CHANGED" ]; then
+  remaining=""
+  while IFS= read -r path; do
+    [ -z "$path" ] && continue
+    if [ -z "$(surface_payload "$PREV" "$VERSION" "$path")" ]; then
+      COMMENT_ONLY="${COMMENT_ONLY}${path}"$'\n'
+    else
+      remaining="${remaining}${path}"$'\n'
+    fi
+  done <<EOF
+$CHANGED
+EOF
+  CHANGED="$(printf '%s' "$remaining")"
+fi
+
+if [ -n "$COMMENT_ONLY" ]; then
+  n=$(printf '%s' "$COMMENT_ONLY" | grep -c . || true)
+  echo "✓ ${n} changed config surface(s) are COMMENT-ONLY — every added and removed line is blank or a comment in that file's syntax, so nothing the host renders or executes differs:"
+  printf '%s' "$COMMENT_ONLY" | sed 's/^/    /'
+  echo "  (they still differ TEXTUALLY from the host copies until the config is applied; the weekly ansible-drift job is what reports that.)"
+  {
+    echo "- ✓ config-apply gate: **${n}** changed surface(s) are comment-only — no rendered behaviour differs, no operator action."
+  } >>"$SUMMARY" 2>/dev/null || true
+fi
+
 if [ -z "$CHANGED" ]; then
-  if [ -n "$AUTO_APPLIED" ]; then
-    echo "✓ every changed config surface between ${PREV} and ${VERSION} was applied and verified automatically — nothing left for the operator."
-    echo "- ✓ config-apply gate: every changed surface was auto-applied and verified; no operator action outstanding." >>"$SUMMARY" 2>/dev/null || true
+  if [ -n "$AUTO_APPLIED" ] || [ -n "$COMMENT_ONLY" ]; then
+    echo "✓ every changed config surface between ${PREV} and ${VERSION} is comment-only or was applied and verified automatically — nothing left for the operator."
+    echo "- ✓ config-apply gate: every changed surface was comment-only or auto-applied and verified; no operator action outstanding." >>"$SUMMARY" 2>/dev/null || true
   else
     echo "✓ no config-surface changes between ${PREV} and ${VERSION} — the binary deploy is complete."
     echo "- ✓ config-apply gate: no config-surface changes between \`${PREV}\` and \`${VERSION}\`." >>"$SUMMARY" 2>/dev/null || true
@@ -179,7 +367,8 @@ fi
 {
   echo "## ⚠️ Config-apply required — a binary deploy does NOT apply these"
   echo ""
-  echo "Release **${VERSION}** changed these config/schema surfaces since **${PREV}**."
+  echo "Release **${VERSION}** changed these config/schema surfaces SUBSTANTIVELY since **${PREV}**"
+  echo "(comment-only surfaces and surfaces this deploy applied and verified are already cleared above)."
   echo "\`deploy-binary.yml\` swaps binaries only. Apply them per"
   echo "\`docs/operations/deploy-config-apply.md\` and **verify each landed on the host**"
   echo "(grep the live surface — never trust \"deploy OK\"):"
@@ -190,11 +379,11 @@ fi
 } >>"$SUMMARY" 2>/dev/null || true
 
 if [ "$ACK" = "true" ]; then
-  echo "::notice::config-apply acknowledged for ${VERSION} — operator asserts the $(echo "$CHANGED" | grep -c . ) changed config surface(s) are/will be applied per the runbook."
+  echo "::notice::config-apply acknowledged for ${VERSION} — operator asserts the $(echo "$CHANGED" | grep -c . ) SUBSTANTIVE config surface(s) above are/will be applied AND verified per the runbook. This gate reads git, not the host: it cannot confirm that assertion."
   echo "" >>"$SUMMARY" 2>/dev/null || true
   echo "_Operator passed \`config_acknowledged=true\` — gate satisfied._" >>"$SUMMARY" 2>/dev/null || true
   exit 0
 fi
 
-echo "::error::Release ${VERSION} changed $(echo "$CHANGED" | grep -c . ) config surface(s) a binary deploy does NOT apply. Apply them per docs/operations/deploy-config-apply.md, then re-run deploy with -f config_acknowledged=true (or pass it now if you have already applied them). Binaries are already deployed; this gate only flags the outstanding config-apply."
+echo "::error::Release ${VERSION} changed $(echo "$CHANGED" | grep -c . ) config surface(s) SUBSTANTIVELY — a binary deploy does NOT apply them, and neither comment-only classification nor an automated verifier cleared them. Apply them per docs/operations/deploy-config-apply.md, VERIFY each landed on the host, then re-run deploy with -f config_acknowledged=true (or pass it now if you have already applied AND verified them). Acknowledging without verifying is what ships a schema change dead: v0.61.1..v0.62.0 looked like the two comment-only ClickHouse diffs before it and was not. Binaries are already deployed; this gate only flags the outstanding config-apply."
 exit 1

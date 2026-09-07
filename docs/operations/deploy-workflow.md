@@ -1,6 +1,6 @@
 ---
 title: Deploy workflow — pushing a tagged release to a region
-last_verified: 2026-07-05
+last_verified: 2026-09-07
 status: living doc
 ---
 
@@ -57,12 +57,65 @@ deliberately: omitting them let `ops` sit two releases behind on r1
 while thirteen units — the data-integrity gates and served-tier
 writers — exec'd it, with every deploy reporting success.
 
-> **Test nets** (`testnet` / `futurenet`) MUST override `binaries` to
-> `stellarindex-indexer,stellarindex-api,stellarindex-ops` — no
-> aggregator, since there are no USD markets off pubnet.
-
 The workflow refuses to run unless `version` matches
 `vX.Y.Z[-prerelease][+build]` and the GitHub Release exists.
+
+## The region binary manifest
+
+The three regions run different unit sets, and until 2026-09-07 nothing
+declared that to the workflow — it carried the one default list above for
+all three. Both of that day's binary-set failures follow from it:
+
+- the six-binary default dispatched at **futurenet**, which has no
+  `stellarindex-aggregator` unit. `deploy-one-binary.yml` restarts
+  `<binary>.service` and then requires `systemctl is-active`, so a unit
+  systemd does not have is a failed deploy by construction. The health
+  probe failed, the binary rolled back, and the residue is still on that
+  host as `/usr/local/bin/stellarindex-aggregator.failed-v0.62.0`;
+- a **four-of-six** set at r1, which left `stellarindex-migrate` and
+  `stellarindex-sla-probe` two releases behind and tripped
+  `stellarindex_binary_version_skew` *after* everything was live.
+
+[`scripts/dev/region-binaries.tsv`](../../scripts/dev/region-binaries.tsv)
+is the manifest and the workflow reads it — there is no second copy. Two
+steps use it:
+
+**Resolve the region's binary set** runs before anything is staged, offline.
+A requested binary the region's row records as not deployable (futurenet's
+aggregator, as `stellarindex-aggregator:unit-not-found`) is **skipped**
+loudly: that absence is a checked-in, reviewed fact, so refusing would make
+the documented default permanently undispatchable there. A requested binary
+the row has **no opinion about** is **refused** — nobody has checked its
+unit, and deploying it blind is what rolled back. Every later step, and the
+job summary, uses the effective set, so a skip is never silent.
+
+**Reconcile the binary set against the host** runs after the SSH path is
+proven and before the playbook, and answers two questions against the host
+rather than the file:
+
+- *Is the manifest still true?* Every daemon the row calls deployable must
+  have a unit systemd can load, and every one it calls undeployable must
+  still have none. Either disagreement refuses, naming
+  `scripts/dev/preflight-deploy.sh --refresh-manifest`. This is how a stale
+  row is detected: the file is a cache of a host property, and the host is
+  read on every deploy.
+- *Would this dispatch leave skew?* A partial set is not wrong in itself —
+  re-running with only the stale binary named is the recovery path the
+  served-path smoke prints. It is wrong when a binary the dispatch omits is
+  not already on the deploying version, which is checked against the
+  `deployed-versions` sidecars.
+
+> **Deployability is unit presence, not enablement.** Measured 2026-09-07:
+> testnet's aggregator is `UnitFileState=disabled` with
+> `ActiveState=active` — off at boot, running now, and deployed there by
+> this workflow at v0.62.0. An enablement test would drop it and re-create
+> the very skew this exists to prevent. futurenet's is
+> `LoadState=not-found`, which is the real exclusion. The reconciliation
+> reads `LoadState` and nothing else. The CLI binaries (`ops`, `migrate`,
+> `sla-probe`) have no unit at all and are exempt from the rule.
+
+Both refusals are pinned by `scripts/ci/config-apply-gate-test.sh`, which
+extracts the two steps from the workflow and runs them.
 
 ## Per-region setup
 
