@@ -30,12 +30,37 @@ const rollupWalkSettings = boundedScanSettings + ", max_execution_time = 600"
 // rollupStep is one statement of a recompute cycle.
 //
 // A step with walk set is a TEMPLATE rather than a statement: it carries
-// two bind parameters — the inclusive ledger bounds of ONE window — and
+// the inclusive ledger bounds of ONE window as bind parameters, and
 // runRollupCycle executes it once per window instead of once. Every
 // other step runs exactly once, in order.
 type rollupStep struct {
 	sql  string
 	walk bool
+	// windowBinds is how many `BETWEEN ? AND ?` pairs sql carries. One
+	// per SOURCE TABLE the step reads, not one per step: a join
+	// condition prunes neither side's partitions, so a step reading two
+	// lake archives has to bound each of them itself or the unbounded
+	// one costs the whole archive per window. The same window is bound
+	// into every pair, in placeholder order.
+	//
+	// Zero reads as one — the single pair a one-source walked step
+	// carries. TestRollupCyclesDeclareTheirWindowBinds pins the declared
+	// count against the placeholders actually present, so a template
+	// that grows a source cannot silently bind the wrong number.
+	windowBinds int
+}
+
+// windowBindArgs repeats one window's inclusive bounds once per
+// `BETWEEN ? AND ?` pair the template carries.
+func windowBindArgs(lo, hi uint32, pairs int) []any {
+	if pairs < 1 {
+		pairs = 1
+	}
+	args := make([]any, 0, 2*pairs)
+	for range pairs {
+		args = append(args, lo, hi)
+	}
+	return args
 }
 
 // runRollupCycle executes a recompute cycle: each step in order, walked
@@ -57,9 +82,13 @@ type rollupStep struct {
 // Walking makes the first population a per-partition one: the widest
 // creation window measured holds 1,027,707 rows at 701.17 MiB, and a
 // window would need roughly twelve times that to reach the same ceiling.
-// The second population is taken out of the walk entirely — the join
-// runs ONCE, against the narrow working table the walk wrote, so it is
-// paid once per cycle rather than once per window.
+// The second population is taken out of the walk entirely — the board's
+// account-population join runs ONCE, against the narrow working table
+// the walk wrote, so it is paid once per cycle rather than once per
+// window. A join a walked step does keep (the creators cycle's post-P23
+// arm, which pairs a window's transfers with that window's CreateAccount
+// operations) is one whose build side is bounded by the window, and it
+// pins that side rather than leaving it to a planner estimate.
 //
 // The atomic-swap guarantee is unchanged and is why the walk writes to a
 // working table rather than to staging: nothing touches a staging arm
@@ -112,7 +141,7 @@ func runRollupSteps(ctx context.Context, conn rollupExecer, tip uint32, label st
 		})
 		done := 0
 		if err := forEachLedgerWindow(1, tip, rollupLedgerWindow, func(lo, hi uint32) error {
-			if xerr := conn.Exec(ctx, step.sql, lo, hi); xerr != nil {
+			if xerr := conn.Exec(ctx, step.sql, windowBindArgs(lo, hi, step.windowBinds)...); xerr != nil {
 				return fmt.Errorf("clickhouse: %s step %d/%d window [%d,%d]: %w",
 					label, i+1, len(steps), lo, hi, xerr)
 			}

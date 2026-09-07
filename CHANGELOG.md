@@ -15,6 +15,16 @@ against.
 
 ## [Unreleased]
 
+### Fixed
+
+- **storage:** the account-creator league table spans the Protocol 23 boundary instead of ending at it (#493). `GET /v1/accounts/creators` reported `coverage.thru_ledger 58762516` — honestly, since the span is data-derived — but that is ledger 58,762,517 minus one, the first ledger of Protocol 23, and the board's ranking was therefore computed over a set of creations that stopped roughly a year before the lake tip. The cycle read `create_account` rows from `stellar.account_movements`, and that archive is historical-only by design (ADR-0047 D2): `classic-movements-backfill` hard-clamps its `-to` below the boundary, because CAP-67 folded classic payments into the token-event model there. Nothing was missing from ingestion — the creation changes representation at the boundary, and the cycle only read one of the two.
+
+- The cycle now walks both. Below the boundary it reads the `create_account` movements as before; at and above it, the same window's CAP-67 `transfer` movement joined to that window's `OperationTypeCreateAccount` row in `stellar.operations`, which is what says the transfer was a creation. Both arms clamp against one constant, `clickhouse.P23BoundaryLedger`, so their union is every ledger and their intersection is empty; `TestP23BoundaryConstantsAgree` now pins that constant against `classicmovements.P23StartLedger` and `timescale.SEP41MovementsFloorLedger` so the creators path cannot drift from the `/v1/accounts/{g}/movements` merge that already crosses this boundary (ADR-0048 D5).
+
+- The pairing goes through the movement rather than reading the operation directly because `stellar.operations` retains failed transactions' operations by design. Measured on r1 over ledgers 63,000,000-63,010,000: of 6,266 distinct `CreateAccount` operations, the 5,890 in successful transactions each match exactly one transfer leg and the 376 in failed transactions match none — so the join is also the success gate, and the operations side contributes the join key only. Zero starting balances survive as the real values they are: 197 of 666 sampled amounts are zero, which is CAP-33 sponsored creation.
+
+- Coverage stays data-derived (ADR-0031): `thru_ledger` reaches the tip because the board now covers it, never by substituting the tip. Measured across the seven post-P23 lake partitions on r1, the new arm adds 4,715,612 creations for 433 s at a peak of 1.43 GiB, taking the cycle from about 6m11s to about 13m10s while leaving its peak set by the board's account-population join at 3.31 GiB against the unchanged 8 GiB budget; `TimeoutStartSec=90min` on `creators-rollup.service` is untouched. Each arm prunes to no parts at all on the windows the other owns, so a window is still scanned once.
+
 ## [v0.62.0] — 2026-09-06
 
 ### Fixed
