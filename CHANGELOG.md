@@ -15,6 +15,23 @@ against.
 
 ## [Unreleased]
 
+### Added
+
+- **redstone:** the `earnUSDC_FUNDAMENTAL` feed is mapped, so the Gami
+  earnUSDC vault's published value reaches the price surface instead of
+  being dropped under `raw:`. The base is the vault's own Soroban
+  contract, not USDC and not a bare ticker: the vault is tokenized (it
+  mints its own shares), so one contract is both vault and share token,
+  and pricing it by contract id lands the oracle value on the same asset
+  id as the deposits and withdrawals already indexed. A yield-bearing
+  claim on USDC is a different instrument from USDC — its value accrues
+  away from the peg — and a test pins the two apart.
+
+  Reported as the vendor publishes it. RedStone's figure (~0.72) sits
+  below the vault's own share price (~1.01); that gap is theirs, and the
+  decoder was checked against BTC and EUROC on the same oracle contract
+  to rule out a scaling fault here.
+
 ### Fixed
 
 - **ops:** the ClickHouse schema snapshot's off-site push reported

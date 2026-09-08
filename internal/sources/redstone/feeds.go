@@ -58,7 +58,7 @@ var (
 )
 
 // feedRegistry maps each EXACT on-chain feed_id() string to the
-// canonical (base, quote) pair it prices — the 31 RedStone Stellar
+// canonical (base, quote) pair it prices — the 32 RedStone Stellar
 // mainnet feeds: 19 captured on-chain 2026-05-22 (#53; see
 // ADR-0028), 11 from the 2026-07-24 relayer expansion (ledger
 // 63624934 — unknown ids were skipped fail-closed, ~5,600 events
@@ -82,6 +82,18 @@ var (
 // Pre-#53 this was `canonical.IsKnownCrypto(feedID)`; an explicit
 // registry is required because (a) feed_id ≠ ticker for 5 feeds and
 // (b) the quote currency is per-feed, not a global USD assumption.
+// earnUSDCVaultContract is the Gami earnUSDC vault on Stellar — a
+// TOKENIZED vault that accepts native USDC deposits and mints
+// proportional earnUSDC shares, so the vault contract IS the share
+// token and one id serves both. Verified against the lake rather than
+// taken on trust: this contract carries 115 `deposit`, 35 `withdraw`
+// and 8 `transfer` events from ledger 62938336, while the other address
+// circulated for this vault has zero events of any kind.
+//
+// Held as a named constant because it is an IDENTITY, not a tunable:
+// changing it re-points a published price at a different instrument.
+const earnUSDCVaultContract = "CCL3WITWFFXIHV2I52ECV5DPIEOFSTU3PBPR53ILPLF2IP5KHECXRUTY"
+
 var feedRegistry = map[string]feedEntry{
 	// Crypto / stablecoin feeds.
 	"BTC":       {Base: mustCrypto("BTC"), Quote: quoteUSD},
@@ -92,6 +104,24 @@ var feedRegistry = map[string]feedEntry{
 	"PYUSD":     {Base: mustCrypto("PYUSD"), Quote: quoteUSD},
 	"EUROC/EUR": {Base: mustCrypto("EUROC"), Quote: quoteEUR}, // EUR-denominated — note the suffix
 	"EUROB":     {Base: mustCrypto("EUROB"), Quote: quoteUSD},
+
+	// earnUSDC — an Upshift vault share (curated by Gami Labs + Stake
+	// Capital) that allocates USDC across Stellar yield sources. The base
+	// is the vault's own Soroban contract, not a bare ticker and NOT
+	// USDC: a yield-bearing claim on USDC is a different instrument from
+	// USDC, and collapsing the two is the asset-identity error that put
+	// attacker-authored pricing on a served surface once already.
+	// Identifying it by contract id also means this price lands on the
+	// same asset id as any on-chain activity we index for the token.
+	//
+	// REPORTED AS PUBLISHED. RedStone price this feed at ~0.72 while the
+	// vault's own share price is ~1.01; that gap is RedStone's to explain,
+	// and confirmed with them as their published figure. We pass their
+	// number through rather than reconciling it — so do not "correct" this
+	// entry to make the two agree. The decoder was checked against BTC and
+	// EUROC on the same oracle contract (78,6xx and 1.0002, both right),
+	// so the 0.72 is not a scaling bug on our side.
+	"earnUSDC_FUNDAMENTAL": {Base: mustSoroban(earnUSDCVaultContract), Quote: quoteUSD},
 	// MXNe is published units-per-USD (USDMXN market convention);
 	// Invert reciprocates it to MXNe-in-USD. See feedEntry.Invert.
 	"MXNe": {Base: mustCrypto("MXNe"), Quote: quoteUSD, Invert: true},
@@ -209,6 +239,14 @@ func reciprocalAtScale(a canonical.Amount, decimals uint8) canonical.Amount {
 // for the registry. The codes are compile-time constants vetted
 // against the ADR-0014 / ADR-0028 allow-lists — an error means a
 // typo in this file, so panic at init rather than degrade silently.
+func mustSoroban(contractID string) canonical.Asset {
+	a, err := canonical.NewSorobanAsset(contractID)
+	if err != nil {
+		panic("redstone: feed registry: " + err.Error())
+	}
+	return a
+}
+
 func mustCrypto(code string) canonical.Asset {
 	a, err := canonical.NewCryptoAsset(code)
 	if err != nil {

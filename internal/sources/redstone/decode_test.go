@@ -586,8 +586,8 @@ func TestDecode_RWAandQuoteCurrency(t *testing.T) {
 	}
 }
 
-func TestFeedRegistry_Has31Feeds(t *testing.T) {
-	// The registry must cover exactly the 31 known mainnet feeds:
+func TestFeedRegistry_Has32Feeds(t *testing.T) {
+	// The registry must cover exactly the 32 known mainnet feeds:
 	// 19 captured 2026-05-22 (ADR-0028) + 11 from the 2026-07-24
 	// relayer expansion + USDT0, observed live on 2026-08-31. A drift
 	// here means a feed was added/removed without updating the docs +
@@ -599,8 +599,8 @@ func TestFeedRegistry_Has31Feeds(t *testing.T) {
 	// stellarindex_ingestion_oracle_unknown_symbols so the allow-list
 	// owner sees the gap. Mapping it promotes the existing rows in
 	// place on replay; no capture is lost either way.
-	if len(feedRegistry) != 31 {
-		t.Errorf("feedRegistry has %d feeds, want 31 (ADR-0028 + 2026-07-24 expansion + USDT0)", len(feedRegistry))
+	if len(feedRegistry) != 32 {
+		t.Errorf("feedRegistry has %d feeds, want 32 (ADR-0028 + 2026-07-24 expansion + USDT0 + earnUSDC_FUNDAMENTAL)", len(feedRegistry))
 	}
 	for feedID, entry := range feedRegistry {
 		if err := entry.Base.Validate(); err != nil {
@@ -992,7 +992,7 @@ func TestFeedRegistry_USDT0MapsToItsOwnAsset(t *testing.T) {
 // If you are adding a feed: update the constant AND the doc comment. The
 // point of the assertion is that you cannot forget.
 func TestFeedRegistry_CountMatchesItsDocComment(t *testing.T) {
-	const documented = 31
+	const documented = 32
 	if got := len(feedRegistry); got != documented {
 		t.Errorf("feedRegistry has %d entries but its doc comment says %d — update BOTH (internal/sources/redstone/feeds.go)", got, documented)
 	}

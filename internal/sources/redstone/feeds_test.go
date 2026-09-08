@@ -40,6 +40,16 @@ var navFundamentalInFiat = map[string]string{
 	"savUSD_FUNDAMENTAL": "Avant staked avUSD vault share; reserve is avUSD, a " +
 		"USD-denominated stablecoin, so the vault exchange rate is a dollar figure " +
 		"(live 1.1877, 2026-07-27 — plausible only as USD). No `/USD` sibling feed.",
+	"earnUSDC_FUNDAMENTAL": "Upshift earnUSDC vault share (curated by Gami Labs + " +
+		"Stake Capital); reserve is USDC, a USD stablecoin, so the vault exchange rate " +
+		"is a dollar figure — the same shape as savUSD_FUNDAMENTAL above. Live " +
+		"0.7176 -> 0.7200 across 2026-09-03..08 on r1, monotonically increasing on every " +
+		"one of 14 observations: yield-like, not price-like, which is what rules out a " +
+		"volatile non-fiat reserve. NOTE the published figure sits BELOW the vault's own " +
+		"~1.01 share price; that gap is the vendor's, confirmed as their published number, " +
+		"and we report an oracle as published rather than reconciling it — the decoder was " +
+		"checked against BTC (78,6xx) and EUROC (1.0002) on the same oracle contract, so it " +
+		"is not a scaling fault here. No `/USD` sibling feed.",
 }
 
 // TestFeedRegistry_NAVFeedsQuoteTheirReserveAsset is the class guard
@@ -200,5 +210,39 @@ func TestDecode_SolvBTCFamily_NAVRatiosQuotedInReserveAsset(t *testing.T) {
 		if updates[i].Price.BigInt().Cmp(prices[i]) != 0 {
 			t.Errorf("feed %q → price %s, want %s unchanged", feedIDs[i], updates[i].Price, prices[i])
 		}
+	}
+}
+
+// TestFeedRegistry_EarnUSDCIsItsOwnInstrument pins the identity of the
+// Gami earnUSDC vault feed. A yield-bearing claim on USDC is NOT USDC:
+// its value accrues away from the peg (observed 0.7176 -> 0.7200 over
+// six days, monotonically), so resolving the two to one asset would
+// publish a drifting number under the peg's identity. That is the
+// asset-identity failure that put attacker-authored pricing on a served
+// surface once already, which is why this is pinned rather than assumed.
+//
+// The base is the vault's Soroban contract because the vault is
+// TOKENIZED — it mints its own shares, so the vault and the share token
+// are one contract, and pricing it by contract id lands the oracle value
+// on the same asset id as the deposits/withdrawals we already index.
+func TestFeedRegistry_EarnUSDCIsItsOwnInstrument(t *testing.T) {
+	entry, ok := feedRegistry["earnUSDC_FUNDAMENTAL"]
+	if !ok {
+		t.Fatal("earnUSDC_FUNDAMENTAL is not registered — it would fall back to raw: and be dropped from the price surface")
+	}
+	if entry.Base.Type != canonical.AssetSoroban {
+		t.Errorf("base is %s (type %v), want the vault's Soroban contract id — a bare ticker cannot be joined to on-chain activity",
+			entry.Base.String(), entry.Base.Type)
+	}
+	if entry.Base.String() == "" || !strings.Contains(entry.Base.String(), "CCL3WITW") {
+		t.Errorf("base %q is not the verified earnUSDC vault contract (CCL3WITW…); the other address circulated for this vault has zero lake events",
+			entry.Base.String())
+	}
+	// The whole point: distinct from USDC.
+	if usdc, found := feedRegistry["USDC"]; found && usdc.Base.Equal(entry.Base) {
+		t.Error("earnUSDC and USDC resolve to the SAME canonical asset — a yield-bearing vault share is not the stablecoin it is a claim on")
+	}
+	if entry.Invert {
+		t.Error("earnUSDC_FUNDAMENTAL is published token-in-quote; Invert must be false")
 	}
 }
