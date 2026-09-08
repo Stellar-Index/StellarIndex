@@ -15,6 +15,12 @@ against.
 
 ## [Unreleased]
 
+### Added
+
+- Explorer footer now credits CoinGecko as a price-data source. The
+  Analyst plan permits commercial use only with visible attribution,
+  so the credit is a licence condition rather than a courtesy.
+
 ## [v0.64.0] — 2026-09-08
 
 ### Added

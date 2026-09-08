@@ -103,7 +103,25 @@ export function Footer() {
             </a>
             <BuildBadge />
           </div>
-          <span>Apache-2.0</span>
+          <div className="flex flex-wrap items-center gap-4">
+            {/* Attribution is a licence condition of the CoinGecko
+                Analyst plan, which permits commercial use only with
+                visible credit. It is load-bearing, not decorative —
+                do not remove it while any served value can derive
+                from a CoinGecko observation. */}
+            <span>
+              Price data by{' '}
+              <a
+                href="https://www.coingecko.com"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="hover:text-ink-body"
+              >
+                CoinGecko
+              </a>
+            </span>
+            <span>Apache-2.0</span>
+          </div>
         </div>
       </div>
     </footer>
