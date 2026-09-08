@@ -32,8 +32,40 @@
   # healthcheck ping URLs). Wired 2026-07-03 — previously the README
   # implied it but nothing loaded the file, so every secret-using task
   # died on undefined vars. Override secrets_file for other regions.
+  #
+  # THE DEFAULT IS PRODUCTION. Forgetting `-e secrets_file=` while
+  # targeting another region does not fail — it silently loads r1's
+  # secrets and applies them to that host. On 2026-09-08 that reset a
+  # test net's postgres role password to r1's value, leaving the env file
+  # (correctly testnet's) and the database disagreeing: every service
+  # there died on `failed SASL auth` and the API crash-looped until the
+  # role password was put back. Nothing reached disk, because postgres
+  # stores only a SCRAM hash — but a missing flag should not be able to
+  # cross regions at all, so the assert below refuses the mismatch.
   vars_files:
     - "{{ secrets_file | default('../inventory/r1.secrets.yml') }}"
+
+  pre_tasks:
+    - name: Refuse a secrets file that does not belong to this inventory
+      ansible.builtin.assert:
+        that:
+          - (secrets_file | default('../inventory/r1.secrets.yml')) is search(si_region_token)
+        fail_msg: >-
+          secrets_file resolves to
+          '{{ secrets_file | default('../inventory/r1.secrets.yml') }}'
+          but this play targets '{{ si_region_token }}'. Pass
+          -e secrets_file=../inventory/{{ si_region_token }}.secrets.yml.
+          The default is r1's, so an omitted flag would apply PRODUCTION
+          secrets to this host.
+        success_msg: "secrets file matches the target region ({{ si_region_token }})"
+      vars:
+        # region_id is what every inventory actually declares (r1 /
+        # testnet / futurenet). It is REQUIRED here rather than defaulted:
+        # defaulting it to 'r1' is what made the first version of this
+        # assert pass trivially on a test net — the guard agreed with the
+        # mistake it exists to catch.
+        si_region_token: "{{ region_id }}"
+      tags: [always]
 
   roles:
     - role: archival-node

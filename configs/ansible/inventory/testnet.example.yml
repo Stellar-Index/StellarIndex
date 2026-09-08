@@ -93,6 +93,12 @@ all:
     # native Stellar DEX) exists on every network, so keep it: the explorer
     # shows real on-chain DEX trades. Aggregator/pricing stays off.
     run_aggregator: false
+    # ch-live-catchup needs a live-era floor (stellarindex_ch_live_era_from),
+    # and only pubnet defines one — r1's value is a pubnet ledger and means
+    # nothing here. The script fail-closes rather than guess a floor, so with
+    # the timer enabled and no floor the unit just fails on every tick. Leave
+    # it off until this network has a floor worth naming.
+    ch_live_catchup_enabled: false
     stellarindex_enabled_sources:
       - sdex
     stellarindex_sdf_reserve_accounts: []
