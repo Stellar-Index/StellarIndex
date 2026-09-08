@@ -43,7 +43,7 @@ groups:
         expr: stellarindex_metrics_registry_present{component!="ledgerstream"} == 0
         for: 15m
         labels:
-          severity: informational
+          severity: ticket
           team: stellarindex
           component: observability
         annotations:

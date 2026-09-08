@@ -18,7 +18,7 @@ groups:
         expr: up{job=~"stellarindex_api|stellarindex_indexer|stellarindex_aggregator|postgres_exporter|redis_exporter|minio|node_exporter"} == 0
         for: 2m
         labels:
-          severity: informational
+          severity: ticket
           team: stellarindex
           component: meta
         annotations:

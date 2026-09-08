@@ -52,7 +52,7 @@ groups:
           (time() - stellarindex_external_poller_last_success_unix{source="ecb"}) > 43200
         for: 10m
         labels:
-          severity: informational
+          severity: ticket
           team: stellarindex
           component: external-poller
         annotations:

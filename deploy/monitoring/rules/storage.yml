@@ -379,10 +379,15 @@ groups:
         # this counter. Which no rule referenced, so the evidence was
         # collected and never acted on (wave-D ALERT-12).
         #
-        # Informational, not ticket: TimescaleDB retries a failed job on
-        # the next tick, so isolated failures are normal operation and
-        # the CAGG-staleness ticket above is the real customer-impact
-        # signal. What this catches is the SHAPE that hid the incident —
+        # Ticket, not informational (#485). This comment used to argue the
+        # opposite — that "the CAGG-staleness ticket above is the real
+        # customer-impact signal" — and the rule's own description directly
+        # contradicts it: "the caggs may look fresh and no staleness ticket
+        # will fire". Both cannot be true, and the description is the one
+        # that matches the incident it was written for. An alert authored
+        # specifically to expose a silent failure mode, then routed to a
+        # receiver that delivers to nobody, is the failure mode twice over.
+        # What this catches is the SHAPE that hid the incident —
         # failures accumulating steadily while everything downstream
         # looks healthy.
         #
@@ -393,7 +398,7 @@ groups:
         expr: increase(stellarindex_timescale_job_failures_total[6h]) > 10
         for: 30m
         labels:
-          severity: informational
+          severity: ticket
           team: stellarindex
           component: storage
         annotations:

@@ -226,7 +226,7 @@ groups:
         expr: sum by (source) (rate(stellarindex_source_orphan_events_total[10m])) > 10/60
         for: 15m
         labels:
-          severity: informational
+          severity: ticket
           team: stellarindex
           component: ingestion
         annotations:
@@ -243,7 +243,7 @@ groups:
         expr: rate(stellarindex_source_decode_errors_total[5m]) > 1
         for: 5m
         labels:
-          severity: informational
+          severity: ticket
           team: stellarindex
           component: ingestion
         annotations:
@@ -426,7 +426,7 @@ groups:
         expr: increase(stellarindex_discovery_record_failures_total[10m]) > 0
         for: 10m
         labels:
-          severity: informational
+          severity: ticket
           team: stellarindex
           component: ingestion
         annotations:

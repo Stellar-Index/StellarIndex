@@ -12,7 +12,7 @@ groups:
         expr: up{job=~"stellarindex-api|stellarindex-indexer|stellarindex-aggregator|node_exporter|prometheus|caddy|galexie"} == 0
         for: 2m
         labels:
-          severity: informational
+          severity: ticket
           team: stellarindex
           component: meta
         annotations:
