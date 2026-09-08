@@ -101,19 +101,39 @@ tests:
                 a bad ingest (wrong decimals, stale source contributing) rather
                 than a real market move.
 
-  # ── NOT firing: one source, TWO assets, only one of them silent ───
-  # The join is group_left() on {source}: the single {source} resolution
-  # series must fan out to every {source, asset} left-hand series. If it
-  # ever regresses to a bare comparison this case goes empty along with
-  # the firing case above; if it regresses to a many-to-one without
-  # group_left, promtool fails on the match itself.
+  # ══ stellarindex_oracle_stale ═════════════════════════════════════
+  # Every case below carries a
+  # `stellarindex_oracle_staleness_budget_seconds` series on the SAME
+  # label set as `stellarindex_oracle_last_update_unix`, because that is
+  # what production carries: obs.RecordOracleUpdate emits the two
+  # together (#478). Before that, the budget was computed inside the
+  # expression from the {source}-only resolution gauge, and the rule
+  # needed `ignoring(asset) group_left()` to bridge the label mismatch.
+  #
+  # A fixture that keeps only the resolution series now goes empty —
+  # which is exactly the intended failure: the rule must read the
+  # per-asset budget, never re-derive a threshold of its own.
+
+  # ── firing: no publish for longer than the pair's budget ──────────
+  # 3000 s is the DEFAULT budget for a reflector source: 10 × its 300 s
+  # declared resolution, i.e. the number the old expression computed
+  # inline. The resolution series rides along because production still
+  # publishes it (it describes the oracle's cadence and is what the
+  # default is derived from) — but nothing in the rule reads it, and
+  # the boundary case further down proves that by omitting it.
   - interval: 1m
-    name: a fresh asset on a source with a stale sibling does not ticket
+    name: an oracle silent past its staleness budget tickets
     input_series:
       - series: 'stellarindex_oracle_last_update_unix{job="stellarindex_aggregator",instance="r1:9102",source="reflector-dex",asset="XLM"}'
         values: '0+0x60'
-      - series: 'stellarindex_oracle_last_update_unix{job="stellarindex_aggregator",instance="r1:9102",source="reflector-dex",asset="USDC"}'
-        values: '0+60x60'
+      - series: 'stellarindex_oracle_staleness_budget_seconds{job="stellarindex_aggregator",instance="r1:9102",source="reflector-dex",asset="XLM"}'
+        values: '3000+0x60'
+      # NO asset label on the resolution series. stellarindex_oracle_-
+      # resolution_seconds is declared with []string{"source"}
+      # (internal/obs/metrics.go), so a series carrying `asset` cannot
+      # exist in production — WithLabelValues would panic. This test
+      # used to fabricate one, which is the only reason the old broken
+      # join ever went green (wave-D ALERT-02).
       - series: 'stellarindex_oracle_resolution_seconds{job="stellarindex_aggregator",instance="r1:9102",source="reflector-dex"}'
         values: '300+0x60'
     alert_rule_test:
@@ -133,31 +153,93 @@ tests:
               summary: "Oracle reflector-dex stale for XLM"
               description: |
                 reflector-dex hasn't published a price for XLM
-                in > 10× its resolution. May be legitimate (oracle paused) or a
-                signal of oracle failure — check the oracle's own status page.
+                in longer than that pair's staleness budget (default 10× the
+                source's declared resolution; per-asset overrides live in
+                [[oracle.staleness_overrides]]). May be legitimate (oracle paused)
+                or a signal of oracle failure — check the oracle's own status page.
 
+  # ── near-threshold: a publishing oracle stays silent ──────────────
+  - interval: 1m
+    name: a publishing oracle raises nothing
+    input_series:
+      - series: 'stellarindex_oracle_last_update_unix{job="stellarindex_aggregator",instance="r1:9102",source="reflector-dex",asset="XLM"}'
+        values: '0+60x60'
+      - series: 'stellarindex_oracle_staleness_budget_seconds{job="stellarindex_aggregator",instance="r1:9102",source="reflector-dex",asset="XLM"}'
+        values: '3000+0x60'
+      - series: 'stellarindex_oracle_resolution_seconds{job="stellarindex_aggregator",instance="r1:9102",source="reflector-dex"}'
+        values: '300+0x60'
+    alert_rule_test:
+      - eval_time: 55m
+        alertname: stellarindex_oracle_stale
+        exp_alerts: []
+
+  # ── NOT firing: one source, TWO assets, only one of them silent ───
+  # The budget is per (source, asset), so the fresh sibling has its own
+  # budget series and its own comparison. A regression that aggregated
+  # the budget up to {source} — or dropped `asset` from either side —
+  # would either lose this per-asset cardinality or fail the match.
+  - interval: 1m
+    name: a fresh asset on a source with a stale sibling does not ticket
+    input_series:
+      - series: 'stellarindex_oracle_last_update_unix{job="stellarindex_aggregator",instance="r1:9102",source="reflector-dex",asset="XLM"}'
+        values: '0+0x60'
+      - series: 'stellarindex_oracle_last_update_unix{job="stellarindex_aggregator",instance="r1:9102",source="reflector-dex",asset="USDC"}'
+        values: '0+60x60'
+      - series: 'stellarindex_oracle_staleness_budget_seconds{job="stellarindex_aggregator",instance="r1:9102",source="reflector-dex",asset="XLM"}'
+        values: '3000+0x60'
+      - series: 'stellarindex_oracle_staleness_budget_seconds{job="stellarindex_aggregator",instance="r1:9102",source="reflector-dex",asset="USDC"}'
+        values: '3000+0x60'
+      - series: 'stellarindex_oracle_resolution_seconds{job="stellarindex_aggregator",instance="r1:9102",source="reflector-dex"}'
+        values: '300+0x60'
+    alert_rule_test:
+      - eval_time: 55m
+        alertname: stellarindex_oracle_stale
+        exp_alerts:
+          - exp_labels:
+              job: stellarindex_aggregator
+              instance: r1:9102
+              source: reflector-dex
+              asset: XLM
+              severity: ticket
+              team: stellarindex
+              component: divergence
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/oracle-stale.md
+              summary: "Oracle reflector-dex stale for XLM"
+              description: |
+                reflector-dex hasn't published a price for XLM
+                in longer than that pair's staleness budget (default 10× the
+                source's declared resolution; per-asset overrides live in
+                [[oracle.staleness_overrides]]). May be legitimate (oracle paused)
+                or a signal of oracle failure — check the oracle's own status page.
 
   # ── multi-target: TWO indexer instances, one silent oracle each ────
-  # `on (source)` would discard job/instance from the match group, so
-  # two targets exporting the same {source} make the right side
-  # non-unique and the WHOLE RULE errors:
+  # This case was written when the rule joined two label sets, to prove
+  # `on (source)` could not be used: `on` discards job/instance, so two
+  # targets exporting the same {source} made the right side non-unique
+  # and the WHOLE RULE errored —
   #
   #   found duplicate series for the match group {source="reflector-dex"}
   #   … many-to-many matching not allowed
   #
-  # The prometheus job template builds stellarindex_indexer by looping
-  # its host group, so a second indexer host (R2, ADR-0004/ADR-0016)
-  # produces exactly this shape. `ignoring(asset)` keeps job/instance in
-  # the match, so each target pairs with its own resolution series.
+  # — which the multi-host prometheus template produces the moment a
+  # second indexer host (R2, ADR-0004/ADR-0016) is scraped. It is kept
+  # because the bare comparison must clear the same bar: both series
+  # come from the same process, so job/instance match naturally and each
+  # target gets its own alert.
   - interval: 1m
     name: two scrape targets each get their own alert, not a match error
     input_series:
       - series: 'stellarindex_oracle_last_update_unix{job="stellarindex_indexer",instance="r1:9101",source="reflector-dex",asset="XLM"}'
         values: '0+0x60'
+      - series: 'stellarindex_oracle_staleness_budget_seconds{job="stellarindex_indexer",instance="r1:9101",source="reflector-dex",asset="XLM"}'
+        values: '3000+0x60'
       - series: 'stellarindex_oracle_resolution_seconds{job="stellarindex_indexer",instance="r1:9101",source="reflector-dex"}'
         values: '300+0x60'
       - series: 'stellarindex_oracle_last_update_unix{job="stellarindex_indexer",instance="r2:9101",source="reflector-dex",asset="XLM"}'
         values: '0+0x60'
+      - series: 'stellarindex_oracle_staleness_budget_seconds{job="stellarindex_indexer",instance="r2:9101",source="reflector-dex",asset="XLM"}'
+        values: '3000+0x60'
       - series: 'stellarindex_oracle_resolution_seconds{job="stellarindex_indexer",instance="r2:9101",source="reflector-dex"}'
         values: '300+0x60'
     alert_rule_test:
@@ -177,8 +259,10 @@ tests:
               summary: "Oracle reflector-dex stale for XLM"
               description: |
                 reflector-dex hasn't published a price for XLM
-                in > 10× its resolution. May be legitimate (oracle paused) or a
-                signal of oracle failure — check the oracle's own status page.
+                in longer than that pair's staleness budget (default 10× the
+                source's declared resolution; per-asset overrides live in
+                [[oracle.staleness_overrides]]). May be legitimate (oracle paused)
+                or a signal of oracle failure — check the oracle's own status page.
           - exp_labels:
               job: stellarindex_indexer
               instance: r2:9101
@@ -192,54 +276,149 @@ tests:
               summary: "Oracle reflector-dex stale for XLM"
               description: |
                 reflector-dex hasn't published a price for XLM
-                in > 10× its resolution. May be legitimate (oracle paused) or a
-                signal of oracle failure — check the oracle's own status page.
-  # ══ stellarindex_oracle_stale ═════════════════════════════════════
-  # ── firing: no publish for >10x the oracle's 300s resolution ──────
+                in longer than that pair's staleness budget (default 10× the
+                source's declared resolution; per-asset overrides live in
+                [[oracle.staleness_overrides]]). May be legitimate (oracle paused)
+                or a signal of oracle failure — check the oracle's own status page.
+
+  # ── the no-behaviour-change boundary: an un-overridden asset ───────
+  # The point of #478 is that adding a per-asset budget must not move a
+  # single existing alert. So this pins the exact minute an asset with
+  # NO override goes off, against the default budget of 3000 s
+  # (10 × reflector's 300 s resolution — the same arithmetic the old
+  # expression did inline).
+  #
+  # time() starts at 0 in a promtool test and last_update_unix is
+  # pinned at 0, so the age IS the eval time: the condition first turns
+  # true at 51m (3060 > 3000) and `for: 2m` promotes it at 53m. 52m
+  # must still be silent — a rule that read a looser budget, or dropped
+  # the `for`, would ticket a minute early here.
+  #
+  # NO resolution series in this fixture, deliberately: if the rule ever
+  # regresses to deriving its own threshold from the {source} gauge,
+  # this case goes empty instead of silently passing.
   - interval: 1m
-    name: an oracle silent past ten resolutions tickets
+    name: an un-overridden asset tickets at the pre-budget threshold and not a minute sooner
     input_series:
-      - series: 'stellarindex_oracle_last_update_unix{job="stellarindex_aggregator",instance="r1:9102",source="reflector-dex",asset="XLM"}'
+      - series: 'stellarindex_oracle_last_update_unix{job="stellarindex_indexer",instance="r1:9101",source="reflector-cex",asset="crypto:XLM"}'
         values: '0+0x60'
-      # NO asset label. stellarindex_oracle_resolution_seconds is declared
-      # with []string{"source"} (internal/obs/metrics.go), so a series
-      # carrying `asset` cannot exist in production — WithLabelValues would
-      # panic. This test used to fabricate it, which is the only reason the
-      # broken join ever went green: the rule joins {source,asset} against
-      # {source} with no on(), so real series never match and the alert
-      # could not fire at all (wave-D ALERT-02).
-      - series: 'stellarindex_oracle_resolution_seconds{job="stellarindex_aggregator",instance="r1:9102",source="reflector-dex"}'
-        values: '300+0x60'
+      - series: 'stellarindex_oracle_staleness_budget_seconds{job="stellarindex_indexer",instance="r1:9101",source="reflector-cex",asset="crypto:XLM"}'
+        values: '3000+0x60'
     alert_rule_test:
-      - eval_time: 55m
+      - eval_time: 52m
+        alertname: stellarindex_oracle_stale
+        exp_alerts: []
+      - eval_time: 53m
         alertname: stellarindex_oracle_stale
         exp_alerts:
           - exp_labels:
-              job: stellarindex_aggregator
-              instance: r1:9102
-              source: reflector-dex
-              asset: XLM
+              job: stellarindex_indexer
+              instance: r1:9101
+              source: reflector-cex
+              asset: crypto:XLM
               severity: ticket
               team: stellarindex
               component: divergence
             exp_annotations:
               runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/oracle-stale.md
-              summary: "Oracle reflector-dex stale for XLM"
+              summary: "Oracle reflector-cex stale for crypto:XLM"
               description: |
-                reflector-dex hasn't published a price for XLM
-                in > 10× its resolution. May be legitimate (oracle paused) or a
-                signal of oracle failure — check the oracle's own status page.
+                reflector-cex hasn't published a price for crypto:XLM
+                in longer than that pair's staleness budget (default 10× the
+                source's declared resolution; per-asset overrides live in
+                [[oracle.staleness_overrides]]). May be legitimate (oracle paused)
+                or a signal of oracle failure — check the oracle's own status page.
 
-  # ── near-threshold: a publishing oracle stays silent ──────────────
+  # ── an overridden asset is quiet INSIDE its widened budget ────────
+  # reflector-cex / crypto:DAI carries the one shipped override: 32400 s
+  # (9 h) against the 3000 s (50 min) source default, because DAI is a
+  # peg asset Reflector publishes only on movement — observed gaps to
+  # 7 h, breaching the default on 11.6% of evaluations with nothing
+  # broken (#478).
+  #
+  # 8 h of silence is well past the default and well inside the
+  # override. Under the old per-source threshold this pair would have
+  # been ticketing for over seven hours by now.
   - interval: 1m
-    name: a publishing oracle raises nothing
+    name: an overridden asset stays quiet inside its widened budget
     input_series:
-      - series: 'stellarindex_oracle_last_update_unix{job="stellarindex_aggregator",instance="r1:9102",source="reflector-dex",asset="XLM"}'
-        values: '0+60x60'
-      # No asset label — see the firing case above. This negative case
-      # passed either way (it asserts nothing fires), which is precisely
-      # why the fabrication survived here after being removed there.
-      - series: 'stellarindex_oracle_resolution_seconds{job="stellarindex_aggregator",instance="r1:9102",source="reflector-dex"}'
+      - series: 'stellarindex_oracle_last_update_unix{job="stellarindex_indexer",instance="r1:9101",source="reflector-cex",asset="crypto:DAI"}'
+        values: '0+0x560'
+      - series: 'stellarindex_oracle_staleness_budget_seconds{job="stellarindex_indexer",instance="r1:9101",source="reflector-cex",asset="crypto:DAI"}'
+        values: '32400+0x560'
+      # The source still declares 300 s, and that is the point: this
+      # case only means something because the pre-#478 threshold
+      # (10 × 300 = 3000 s) is present in the fixture and the rule
+      # ignores it in favour of the pair's own budget.
+      - series: 'stellarindex_oracle_resolution_seconds{job="stellarindex_indexer",instance="r1:9101",source="reflector-cex"}'
+        values: '300+0x560'
+    alert_rule_test:
+      - eval_time: 480m
+        alertname: stellarindex_oracle_stale
+        exp_alerts: []
+
+  # ── an overridden asset STILL tickets past its widened budget ─────
+  # An override widens the bound; it never removes it. Same series as
+  # above, evaluated past 9 h: the condition turns true at 541m
+  # (32460 > 32400) and `for: 2m` promotes it at 543m, so a genuine DAI
+  # outage still reaches the operator. A "budget" implemented as a mute
+  # would leave this case empty.
+  - interval: 1m
+    name: an overridden asset still tickets once past its widened budget
+    input_series:
+      - series: 'stellarindex_oracle_last_update_unix{job="stellarindex_indexer",instance="r1:9101",source="reflector-cex",asset="crypto:DAI"}'
+        values: '0+0x560'
+      - series: 'stellarindex_oracle_staleness_budget_seconds{job="stellarindex_indexer",instance="r1:9101",source="reflector-cex",asset="crypto:DAI"}'
+        values: '32400+0x560'
+      - series: 'stellarindex_oracle_resolution_seconds{job="stellarindex_indexer",instance="r1:9101",source="reflector-cex"}'
+        values: '300+0x560'
+    alert_rule_test:
+      - eval_time: 542m
+        alertname: stellarindex_oracle_stale
+        exp_alerts: []
+      - eval_time: 543m
+        alertname: stellarindex_oracle_stale
+        exp_alerts:
+          - exp_labels:
+              job: stellarindex_indexer
+              instance: r1:9101
+              source: reflector-cex
+              asset: crypto:DAI
+              severity: ticket
+              team: stellarindex
+              component: divergence
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/oracle-stale.md
+              summary: "Oracle reflector-cex stale for crypto:DAI"
+              description: |
+                reflector-cex hasn't published a price for crypto:DAI
+                in longer than that pair's staleness budget (default 10× the
+                source's declared resolution; per-asset overrides live in
+                [[oracle.staleness_overrides]]). May be legitimate (oracle paused)
+                or a signal of oracle failure — check the oracle's own status page.
+
+  # ── an age with no budget series cannot ticket at all ─────────────
+  # This is why the two gauges are emitted from ONE call
+  # (obs.RecordOracleUpdate): a bare vector-to-vector comparison is
+  # evaluated only where both sides carry identical labels, so an asset
+  # that somehow acquired an age without a budget would be silently
+  # un-alertable — the rule would look perfectly healthy while covering
+  # nothing. Pinned here so the consequence is written down, and
+  # prevented in code by TestRecordOracleUpdate_EveryAgeHasABudget
+  # (internal/obs) plus TestBuildDispatcher_DeclaresBudgetForEveryOracle-
+  # Source (internal/pipeline).
+  #
+  # Note this is NOT a regression from the join it replaced: the old
+  # expression joined against the {source} resolution gauge, so a source
+  # missing that series was un-alertable in exactly the same way.
+  # obs.OracleStalenessBudget returns +Inf for an undeclared source,
+  # which keeps that silence while still emitting a visible series.
+  - interval: 1m
+    name: an age with no budget series raises nothing
+    input_series:
+      - series: 'stellarindex_oracle_last_update_unix{job="stellarindex_indexer",instance="r1:9101",source="reflector-cex",asset="crypto:XLM"}'
+        values: '0+0x60'
+      - series: 'stellarindex_oracle_resolution_seconds{job="stellarindex_indexer",instance="r1:9101",source="reflector-cex"}'
         values: '300+0x60'
     alert_rule_test:
       - eval_time: 55m

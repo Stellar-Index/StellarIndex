@@ -503,7 +503,7 @@ auto-unfreeze at all. Rules in
 | `stellarindex_price_divergence_warning` | `abs(our_price - ref_price) / ref_price` per pair | > 5 % for > 2 min | informational | [price-divergence](runbooks/price-divergence.md) |
 | `stellarindex_price_divergence_critical` | same | > 10 % for > 2 min | ticket | [price-divergence](runbooks/price-divergence.md) |
 | `stellarindex_oracle_stream_rows_unparsed` | `increase(stellarindex_oracle_stream_rows_unparsed_total[6h])`, or the same counter born inside the 6 h window (`m unless m offset 6h`) | > 0 for 10m — the second arm exists because `increase()` cannot see a counter's first increment, so a `{source,field}` child born at 1 would never fire the first | ticket | [oracle-stream-rows-unparsed](runbooks/oracle-stream-rows-unparsed.md) |
-| `stellarindex_oracle_stale` | `time() - stellarindex_oracle_last_update_unix` per source | > 10× its resolution | ticket | [oracle-stale](runbooks/oracle-stale.md) |
+| `stellarindex_oracle_stale` | `time() - stellarindex_oracle_last_update_unix` per (source, asset) | > that pair's `stellarindex_oracle_staleness_budget_seconds` — 10× the source's declared resolution by default, per-asset overrides in `[[oracle.staleness_overrides]]` | ticket | [oracle-stale](runbooks/oracle-stale.md) |
 | `stellarindex_divergence_refresh_error_dominant` | `rate(divergence_refresh_total{outcome="refresh_error"}[5m]) > rate(...{outcome="ok"}[5m])` | sustained 30 min | ticket | [divergence-refresh-error-dominant](runbooks/divergence-refresh-error-dominant.md) |
 | `stellarindex_divergence_no_reference` | `rate(divergence_refresh_total{outcome="no_reference"}[5m]) > rate(...{outcome="ok"}[5m])` | sustained 30 min | ticket | [divergence-no-reference](runbooks/divergence-no-reference.md) |
 

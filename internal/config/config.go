@@ -711,6 +711,35 @@ type OracleConfig struct {
 	Redstone  RedstoneOracleConfig  `toml:"redstone"  doc:"RedStone Adapter contract address (single adapter owns every feed)."`
 	Band      BandOracleConfig      `toml:"band"      doc:"Band Protocol StandardReference contract address (Soroban-native, emits no events — observed via InvokeContract call args)."`
 	Soroswap  SoroswapConfig        `toml:"soroswap"  doc:"Soroswap factory contract — used at boot to seed the pair→tokens registry via stellar-rpc view calls. Not required for live ingest, but without it the decoder skips swaps from pairs created before the first processed ledger."`
+
+	StalenessOverrides []OracleStalenessOverrideConfig `toml:"staleness_overrides" doc:"Per-(source, asset) exceptions to the oracle-staleness budget the stellarindex_oracle_stale alert reads. Empty (default) leaves every asset on its source's default budget — 10 × the source's declared resolution. Each row is a written-down claim that ONE asset publishes on a different rhythm than its source's cadence; see OracleStalenessOverrideConfig." default:"[]"`
+}
+
+// OracleStalenessOverrideConfig widens (or tightens) the staleness
+// budget for exactly one (source, asset) pair.
+//
+// WHY THIS EXISTS (issue #478): `stellarindex_oracle_stale` compares
+// each pair's age against `stellarindex_oracle_staleness_budget_seconds`,
+// which defaults to 10 × the source's declared resolution. Resolution
+// is a per-SOURCE fact — one contract, one relayer, one schedule — but
+// staleness is a per-ASSET one. Reflector's CEX oracle declares 300 s,
+// so every asset on it defaulted to a 50-minute budget; `crypto:DAI`
+// is a peg asset that publishes only when it moves and ran 7-hour
+// gaps, breaching that budget on 11.6% of evaluations with nothing
+// broken. Loosening the source's resolution would have been a lie
+// about the oracle's cadence AND would have loosened every other asset
+// on the same source.
+//
+// An override is NOT a mute. The budget is replaced, not removed, so a
+// genuine outage on the overridden pair still tickets once it passes
+// the wider bound. Size one from the asset's observed publication gaps
+// plus headroom, and record the observation in Reason — the next
+// reader should be able to re-test the claim, not re-derive it.
+type OracleStalenessOverrideConfig struct {
+	Source        string `toml:"source" doc:"Oracle source name exactly as it appears in the metric's source label: reflector-dex, reflector-cex, reflector-fx, redstone, or band."`
+	Asset         string `toml:"asset" doc:"Canonical asset identifier exactly as it appears in the metric's asset label — \"crypto:DAI\", not \"DAI\". Oracle symbols pass through canonical.MapOracleSymbol (known fiat → fiat:CODE, known crypto → crypto:CODE, known RWA → rwa:CODE, anything else → raw:SYMBOL), so the label is the mapped form; a bare or non-round-tripping identifier is rejected at startup rather than silently matching no series."`
+	BudgetSeconds int    `toml:"budget_seconds" doc:"Seconds this pair may go without a publication before the alert tickets, replacing the source default (10 × declared resolution). Must be > 0."`
+	Reason        string `toml:"reason" doc:"Why this pair's publication rhythm differs from its source's cadence, with the observation behind the number. Required — an override without a stated reason is indistinguishable from a silenced alert."`
 }
 
 // ReflectorOracleConfig carries the three Reflector contract
@@ -1859,6 +1888,10 @@ func Default() Config {
 			Redstone:  RedstoneOracleConfig{},
 			Band:      BandOracleConfig{},
 			Soroswap:  SoroswapConfig{},
+			// No shipped overrides: the default budget (10 × declared
+			// resolution) is what every asset gets until an operator
+			// writes down a per-asset exception.
+			StalenessOverrides: []OracleStalenessOverrideConfig{},
 		},
 		External: defaultExternalConfig(),
 		Aggregate: AggregateConfig{

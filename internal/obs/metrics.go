@@ -84,6 +84,7 @@ func registerAppMetrics() {
 		OracleLastUpdateUnix,
 		OracleStreamRowsUnparsedTotal,
 		OracleResolutionSeconds,
+		OracleStalenessBudgetSeconds,
 
 		AggregatorTicksTotal,
 		AggregatorVWAPWritesTotal,
@@ -2477,6 +2478,13 @@ var PriceStalenessSeconds = prometheus.NewGaugeVec(
 // OracleLastUpdateUnix — per-(source, asset) gauge with the Unix
 // timestamp of the most recent oracle observation for that pair.
 //
+// Set it through [RecordOracleUpdate], never directly: the
+// oracle-stale alert compares this gauge against
+// [OracleStalenessBudgetSeconds] as a bare vector-to-vector op, which
+// requires the two to carry IDENTICAL label sets. One call emits both,
+// so an asset cannot acquire an age without also acquiring the budget
+// that age is judged against.
+//
 // Cardinality: Reflector/Band/Redstone each track O(30) assets, so
 // the shipped sources together stay well inside Prometheus's
 // comfort zone. If we ever wire a "passthrough every asset"
@@ -2491,14 +2499,36 @@ var OracleLastUpdateUnix = prometheus.NewGaugeVec(
 )
 
 // OracleResolutionSeconds — per-source gauge of the oracle's
-// declared resolution interval. Used by the oracle-stale alert
-// to qualify "no update in > 10× resolution".
+// declared resolution interval. The publication cadence genuinely IS
+// a property of the source (one contract, one relayer, one schedule),
+// so this stays per-source; the per-asset number the oracle-stale
+// alert reads is OracleStalenessBudgetSeconds, which this gauge seeds.
 var OracleResolutionSeconds = prometheus.NewGaugeVec(
 	prometheus.GaugeOpts{
 		Name: "stellarindex_oracle_resolution_seconds",
 		Help: "Declared resolution interval of each oracle source (seconds).",
 	},
 	[]string{"source"},
+)
+
+// OracleStalenessBudgetSeconds — per-(source, asset) gauge of how long
+// that pair may go without a publication before stellarindex_oracle_stale
+// tickets. Emitted by [RecordOracleUpdate] alongside
+// OracleLastUpdateUnix, so the alert is a bare comparison on one label
+// set rather than a join across two.
+//
+// Staleness is a per-ASSET property even though cadence is per-source:
+// a peg asset publishes only when it moves, so a quiet stablecoin
+// breaches its source's cadence budget while the oracle is working
+// perfectly. Default is OracleStaleBudgetMultiplier × the source's
+// declared resolution; operators widen single pairs via
+// [SetOracleStalenessOverrides].
+var OracleStalenessBudgetSeconds = prometheus.NewGaugeVec(
+	prometheus.GaugeOpts{
+		Name: "stellarindex_oracle_staleness_budget_seconds",
+		Help: "Staleness budget per oracle source and asset (seconds) — the threshold stellarindex_oracle_stale compares against.",
+	},
+	[]string{"source", "asset"},
 )
 
 // ─── Aggregator orchestrator metrics ─────────────────────────────

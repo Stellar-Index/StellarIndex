@@ -151,6 +151,38 @@ cursor_store_scheme   = "postgres"
 # cex_contract = "C…"   # set when enabling reflector-cex
 # fx_contract  = "C…"   # set when enabling reflector-fx
 
+# Per-asset oracle-staleness budgets. The `stellarindex_oracle_stale`
+# alert compares each (source, asset) pair's age against
+# `stellarindex_oracle_staleness_budget_seconds`, which defaults to
+# 10 × the source's declared resolution (50 min for Reflector's 5-min
+# cadence). Publication CADENCE is a property of the source; staleness
+# is a property of the ASSET — a peg asset publishes only when it moves,
+# so it breaches a cadence-derived budget while the oracle is healthy.
+#
+# Each row below widens (or tightens) exactly one pair. It is not a
+# mute: past the wider bound the pair tickets normally, so a real outage
+# still reaches the operator.
+#
+#   source          the source label: reflector-dex / reflector-cex /
+#                   reflector-fx / redstone / band
+#   asset           the CANONICAL identifier the metric's asset label
+#                   carries — "crypto:DAI", not "DAI". Oracle symbols go
+#                   through canonical.MapOracleSymbol, so an unmapped
+#                   symbol appears as "raw:<SYMBOL>". A bare or aliased
+#                   spelling is refused at startup rather than silently
+#                   matching nothing.
+#   budget_seconds  the pair's allowance; size it from observed gaps
+#                   plus headroom
+#   reason          required — the observation behind the number, so the
+#                   next reader can re-test the claim:
+#                   86400 / changes(stellarindex_oracle_last_update_unix{…}[7d])
+#
+# [[oracle.staleness_overrides]]
+# source         = "reflector-cex"
+# asset          = "crypto:DAI"
+# budget_seconds = 32400
+# reason         = "peg asset — republished only on movement; observed gaps to 7h against a 50-min default"
+
 # ──────────────────────────────────────────────────────────────────
 # External — off-chain connectors (CEX / FX / aggregator pollers).
 # Each venue runs on its own goroutine and emits canonical.Trade /

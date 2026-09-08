@@ -1292,17 +1292,41 @@ relabel.
 Gauge, labels `source`, `asset`.
 
 Unix-seconds timestamp of the most recent oracle observation for the
-(source, asset) pair. `oracle-stale` alert compares to
-`oracle_resolution_seconds`.
+(source, asset) pair. The `oracle-stale` alert compares its age against
+`oracle_staleness_budget_seconds` on the same label set.
+
+Emitted only through `obs.RecordOracleUpdate`, which publishes the
+budget in the same call — the alert is a bare vector-to-vector
+comparison, so an asset with an age and no budget would be silently
+un-alertable.
 
 ### `stellarindex_oracle_resolution_seconds`
 
 Gauge, label `source`.
 
-Declared publication cadence of the oracle (Reflector: 300 s). Set
-once at source construction. Used by `oracle-stale` to make "> 10×
-resolution" tractable without hard-coding per-source intervals in
-the rule.
+Declared publication cadence of the oracle (Reflector: 300 s, Band:
+3600 s, RedStone: 86400 s). Set once at source construction. Seeds each
+source's default staleness budget (10 × this) and remains the number to
+check when asking whether a source publishes as often as its declared
+cadence says — see the `oracle-stale` runbook's "rule out a budget that never matched
+the asset" section.
+
+### `stellarindex_oracle_staleness_budget_seconds`
+
+Gauge, labels `source`, `asset`.
+
+How long that pair may go without a publication before `oracle-stale`
+tickets. Defaults to 10 × the source's declared resolution — the
+threshold the alert expression used to compute inline — and is
+overridden per pair by `[[oracle.staleness_overrides]]`.
+
+The split from `resolution_seconds` exists because cadence is a
+property of the SOURCE while staleness is a property of the ASSET: a
+peg asset publishes only when it moves, so `reflector-cex` /
+`crypto:DAI` ran 7-hour gaps against a 50-minute cadence budget with
+the oracle working perfectly (#478). A source that never declared a
+resolution publishes `+Inf` here, which reproduces the pre-#478
+behaviour (no threshold, no alert) while leaving the gap visible.
 
 ## API layer (api binary)
 

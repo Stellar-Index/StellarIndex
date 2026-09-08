@@ -74,15 +74,20 @@ this query is the on-call's continuous view.
 
 ```promql
 time() - stellarindex_oracle_last_update_unix
-  > on (source) stellarindex_oracle_resolution_seconds * 5
+  > 0.5 * stellarindex_oracle_staleness_budget_seconds
 ```
 
-Returns rows where the oracle hasn't published in 5× its declared
-resolution. Empty result = healthy. The
-`stellarindex_oracle_stale` alert in `divergence.yml` fires at
-10× — this query catches the early-warning band. Reflector ticks
-every 5 min (so 25-min staleness shows here); Redstone ticks per
-batch push.
+Returns rows where a (source, asset) pair has used up half its
+staleness budget. Empty result = healthy. The
+`stellarindex_oracle_stale` alert in `divergence.yml` fires at the
+full budget — this query is the early-warning band below it.
+
+The budget is per (source, asset): 10× the source's declared
+resolution by default (Reflector ticks every 5 min, so 50 min; Redstone
+ticks per batch push), and whatever `[[oracle.staleness_overrides]]`
+declares for a pair that legitimately publishes on its own rhythm. No
+join is needed — the budget gauge carries the same labels as
+`last_update_unix`.
 
 ## 5. Source events rate by source
 
