@@ -1,14 +1,19 @@
 package band
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/Stellar-Index/StellarIndex/internal/obs"
+)
 
 // DefaultResolutionSeconds is not documentation — it is published as
-// `stellarindex_oracle_resolution_seconds{source="band"}` and the
-// `stellarindex_oracle_stale` rule alerts at 10× it (see the expr in
-// configs/prometheus/rules.r1/divergence.yml and its multi-host twin).
-// So the constant IS this source's alert threshold, and getting it
-// wrong does not fail a build — it produces an alert that is either
-// permanently firing or permanently blind.
+// `stellarindex_oracle_resolution_seconds{source="band"}` and it seeds
+// every band asset's default staleness budget at 10× it
+// (obs.DeclareOracleResolution), which is the number
+// `stellarindex_oracle_stale` compares against. So the constant IS this
+// source's alert threshold for every asset without a per-asset
+// override, and getting it wrong does not fail a build — it produces an
+// alert that is either permanently firing or permanently blind.
 //
 // It was 60, copied from a poll-cadence RECOMMENDATION (how often a
 // consumer might ask) rather than the relayer's publication interval.
@@ -20,10 +25,24 @@ import "testing"
 // A test that only asserted `== 3600` would pass just as happily on a
 // future value that is wrong in the same way.
 
-// staleAlertMultiplier mirrors the `10 *` in the oracle-stale rule
-// expression. If that multiplier changes, this must change with it —
-// the two together decide when band tickets.
+// staleAlertMultiplier mirrors obs.OracleStaleBudgetMultiplier — the
+// `10 ×` that used to sit in the oracle-stale rule expression and now
+// lives in the budget gauge the rule reads. The mirror is pinned by
+// TestStaleAlertMultiplierMatchesTheShippedBudget rather than trusted,
+// because the two together decide when band tickets.
 const staleAlertMultiplier = 10
+
+// TestStaleAlertMultiplierMatchesTheShippedBudget stops this file from
+// reasoning about a threshold the fleet no longer applies. If the
+// default budget multiplier moves, the cadence assertions below must
+// move with it or they pin arithmetic nothing performs.
+func TestStaleAlertMultiplierMatchesTheShippedBudget(t *testing.T) {
+	if staleAlertMultiplier != obs.OracleStaleBudgetMultiplier {
+		t.Fatalf("staleAlertMultiplier = %d but obs.OracleStaleBudgetMultiplier = %d — "+
+			"the cadence checks below would be pinning a threshold nothing applies",
+			staleAlertMultiplier, obs.OracleStaleBudgetMultiplier)
+	}
+}
 
 // measuredRelayIntervalSeconds is Band's observed mainnet cadence,
 // from r1 on 2026-09-01:

@@ -100,6 +100,21 @@ standard_reference_contract = "CCQXWMZVM3KRTXTUPTN53YHL272QGKF32L7XEDNZ2S6OSUFK3
 [oracle.soroswap]
 factory_contract  = "CA4HEQTL2WPEUYKYKCDOHCDNIV4QHNJ7EL4J4NQ6VADP7SYHVRYZ7AW2"
 seed_rpc_endpoint = "https://mainnet.sorobanrpc.com"
+
+{# Per-asset oracle-staleness budgets (#478). stellarindex_oracle_stale
+   compares each (source, asset) against
+   stellarindex_oracle_staleness_budget_seconds, which defaults to
+   10 x the source's declared resolution. Cadence is per source;
+   staleness is per asset, so a quiet asset needs its own bound. Each
+   row is a claim about ONE asset that a later reader can re-test:
+     86400 / changes(stellarindex_oracle_last_update_unix{source="…",asset="…"}[7d])
+   `asset` must be the canonical identifier the metric labels carry
+   ("crypto:DAI", not "DAI"); the indexer refuses to start otherwise. #}
+[[oracle.staleness_overrides]]
+source         = "reflector-cex"
+asset          = "crypto:DAI"
+budget_seconds = 32400
+reason         = "DAI is a peg asset: Reflector's CEX feed republishes it only when the price moves, so quiet stretches are the oracle working. Measured gaps reach 7h (25200s) against the 50-min source default, breaching it on 11.6% of evaluations with the feed healthy. 9h = 1.3x the widest observed gap, so a real DAI outage still tickets within half a day."
 {% endif %}
 
 # ──────────────────────────────────────────────────────────────────

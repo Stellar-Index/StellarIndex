@@ -212,6 +212,49 @@ against.
 - Explorer footer now credits CoinGecko as a price-data source. The
   Analyst plan permits commercial use only with visible attribution,
   so the credit is a licence condition rather than a courtesy.
+### Changed
+
+- **monitoring:** the oracle-staleness budget is now per **(source, asset)**
+  rather than per source. `stellarindex_oracle_stale` compared each pair's
+  age against `10 × stellarindex_oracle_resolution_seconds`, and resolution
+  is declared per source — so every asset on a feed shared one bound.
+  Staleness is not a source property: `reflector-cex` / `crypto:DAI` is a peg
+  asset Reflector republishes only when the price moves, so it ran 7-hour
+  gaps against the 50-minute source budget and breached it on **11.6%** of
+  evaluations with the feed working perfectly. Loosening the source's
+  declared resolution would have been a lie about its cadence and would have
+  loosened every other asset on it.
+
+  A new gauge `stellarindex_oracle_staleness_budget_seconds{source, asset}`
+  carries the threshold, emitted by the same call that emits
+  `stellarindex_oracle_last_update_unix` (`obs.RecordOracleUpdate`) so the two
+  can never drift onto different label sets. It defaults to
+  `10 × resolution` — the exact number the expression computed inline — so
+  **no un-overridden asset's alerting moves**; operators widen a single pair
+  with `[[oracle.staleness_overrides]]`, which requires a written `reason` and
+  the canonical asset identifier (`crypto:DAI`, not `DAI` — a bare or aliased
+  spelling is refused at startup rather than silently matching no series). An
+  override widens the bound, it does not remove it: past the wider bound the
+  pair tickets normally.
+
+  Shipped with exactly one override — `reflector-cex` / `crypto:DAI` at
+  **32400s (9h)**, 1.3× the widest observed gap, so a genuine DAI outage still
+  tickets within half a day.
+
+  Deploy order matters once: the rule reads a gauge only the new binary
+  emits, so roll the indexer before (or with) the rule files. A Prometheus
+  that reloaded the rule while an old indexer is still running finds no
+  budget series and the alert is blind until the restart — the same window
+  the old rule had whenever a source had not yet published its resolution.
+
+  `stellarindex_oracle_resolution_seconds` is unchanged and still per source:
+  the declared publication cadence genuinely is a property of the oracle, and
+  it is what seeds each source's default budget. What went away is the
+  `ignoring(asset) group_left()` join the old expression needed to bridge two
+  different label sets — with both sides now on `{job, instance, source,
+  asset}` the rule is a plain comparison, so neither that join's silent-empty
+  failure (wave-D ALERT-02) nor the `on (source)` duplicate-match error a
+  second scrape target would have caused is reachable any more.
 
 ## [v0.64.0] — 2026-09-08
 

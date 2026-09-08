@@ -89,6 +89,17 @@ import (
 // persistence (the verify-decoders subcommand uses SeedFromFactoryRPC
 // instead and ignores postgres entirely).
 func BuildDispatcher(names []string, oracle config.OracleConfig, gated map[string][]contractid.Option, soroswapOpts ...soroswap.DecoderOption) (*dispatcher.Dispatcher, error) { //nolint:gocognit,gocyclo,funlen // linear case-table, splitting hurts readability
+	// Oracle-staleness policy (issue #478) is installed BEFORE any
+	// decoder is built, so the first update a source persists already
+	// publishes the right budget. Overrides go in unconditionally —
+	// they are keyed by (source, asset) and a row naming a source this
+	// replica does not run simply never matches a series, which is
+	// cheaper than reasoning about which replica owns which asset.
+	// Per-source DEFAULTS are declared alongside each decoder below,
+	// so a source that is not enabled here publishes neither a
+	// resolution nor a budget.
+	obs.SetOracleStalenessOverrides(oracleStalenessOverrides(oracle))
+
 	var decoders []dispatcher.Decoder
 	var opDecoders []dispatcher.OpDecoder
 	var callDecoders []dispatcher.ContractCallDecoder
@@ -112,7 +123,7 @@ func BuildDispatcher(names []string, oracle config.OracleConfig, gated map[strin
 			}
 			decoders = append(decoders,
 				reflector.NewDecoder(reflector.VariantDEX, oracle.Reflector.DEXContract))
-			obs.OracleResolutionSeconds.WithLabelValues(reflector.SourceDEX).Set(float64(reflector.DefaultResolutionSeconds))
+			obs.DeclareOracleResolution(reflector.SourceDEX, reflector.DefaultResolutionSeconds)
 		case reflector.SourceCEX:
 			if oracle.Reflector.CEXContract == "" {
 				return nil, fmt.Errorf(
@@ -121,7 +132,7 @@ func BuildDispatcher(names []string, oracle config.OracleConfig, gated map[strin
 			}
 			decoders = append(decoders,
 				reflector.NewDecoder(reflector.VariantCEX, oracle.Reflector.CEXContract))
-			obs.OracleResolutionSeconds.WithLabelValues(reflector.SourceCEX).Set(float64(reflector.DefaultResolutionSeconds))
+			obs.DeclareOracleResolution(reflector.SourceCEX, reflector.DefaultResolutionSeconds)
 		case reflector.SourceFX:
 			if oracle.Reflector.FXContract == "" {
 				return nil, fmt.Errorf(
@@ -130,7 +141,7 @@ func BuildDispatcher(names []string, oracle config.OracleConfig, gated map[strin
 			}
 			decoders = append(decoders,
 				reflector.NewDecoder(reflector.VariantFX, oracle.Reflector.FXContract))
-			obs.OracleResolutionSeconds.WithLabelValues(reflector.SourceFX).Set(float64(reflector.DefaultResolutionSeconds))
+			obs.DeclareOracleResolution(reflector.SourceFX, reflector.DefaultResolutionSeconds)
 		case redstone.SourceName:
 			if oracle.Redstone.AdapterContract == "" {
 				return nil, fmt.Errorf(
@@ -139,7 +150,7 @@ func BuildDispatcher(names []string, oracle config.OracleConfig, gated map[strin
 			}
 			decoders = append(decoders,
 				redstone.NewDecoder(oracle.Redstone.AdapterContract))
-			obs.OracleResolutionSeconds.WithLabelValues(redstone.SourceName).Set(float64(redstone.DefaultResolutionSeconds))
+			obs.DeclareOracleResolution(redstone.SourceName, redstone.DefaultResolutionSeconds)
 		case band.SourceName:
 			if oracle.Band.StandardReferenceContract == "" {
 				return nil, fmt.Errorf(
@@ -148,7 +159,7 @@ func BuildDispatcher(names []string, oracle config.OracleConfig, gated map[strin
 			}
 			callDecoders = append(callDecoders,
 				band.NewDecoder(oracle.Band.StandardReferenceContract))
-			obs.OracleResolutionSeconds.WithLabelValues(band.SourceName).Set(float64(band.DefaultResolutionSeconds))
+			obs.DeclareOracleResolution(band.SourceName, band.DefaultResolutionSeconds)
 		case soroswap_router.SourceName:
 			// Soroswap router emits no events itself — its swap_*
 			// functions delegate to per-pair contracts which DO
@@ -234,6 +245,31 @@ func BuildDispatcher(names []string, oracle config.OracleConfig, gated map[strin
 		disp.AddContractCallDecoder(ccd)
 	}
 	return disp, nil
+}
+
+// oracleStalenessOverrides translates the operator's
+// `[[oracle.staleness_overrides]]` rows into the obs package's shape.
+//
+// The translation exists so internal/obs stays free of an
+// internal/config import: obs is the leaf every binary links, and the
+// budget policy it owns is described by (source, asset, seconds) —
+// the `reason` field is for humans reading the config, not for the
+// gauge. config.Validate has already rejected unknown sources,
+// non-canonical asset spellings, non-positive budgets and duplicate
+// pairs by the time this runs.
+func oracleStalenessOverrides(oracle config.OracleConfig) []obs.OracleStalenessOverride {
+	if len(oracle.StalenessOverrides) == 0 {
+		return nil
+	}
+	out := make([]obs.OracleStalenessOverride, 0, len(oracle.StalenessOverrides))
+	for _, ov := range oracle.StalenessOverrides {
+		out = append(out, obs.OracleStalenessOverride{
+			Source:        ov.Source,
+			Asset:         ov.Asset,
+			BudgetSeconds: float64(ov.BudgetSeconds),
+		})
+	}
+	return out
 }
 
 // RegisterSupplyEntryDecoders attaches the LCM-based supply observers

@@ -1344,8 +1344,12 @@ func persistOracle(ctx context.Context, logger *slog.Logger, store *timescale.St
 		)
 		return err
 	}
-	obs.OracleLastUpdateUnix.WithLabelValues(u.Source, u.Asset.String()).
-		Set(float64(u.Timestamp.Unix()))
+	// One call, two gauges: the observation's age and the staleness
+	// budget that age is judged against (issue #478). They MUST share a
+	// label set — stellarindex_oracle_stale compares them directly —
+	// so they are emitted together rather than from two call sites that
+	// could drift.
+	obs.RecordOracleUpdate(u.Source, u.Asset.String(), float64(u.Timestamp.Unix()))
 	logger.Debug("oracle update ingested",
 		"source", u.Source,
 		"ledger", u.Ledger,

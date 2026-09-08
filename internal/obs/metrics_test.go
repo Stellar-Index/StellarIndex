@@ -61,8 +61,13 @@ func TestHandler_ExposesMetrics(t *testing.T) {
 	obs.Sep1CacheOpsTotal.WithLabelValues("hit").Inc()
 	obs.CursorLastLedger.WithLabelValues("_warmup").Set(0)
 	obs.PriceStalenessSeconds.WithLabelValues("_warmup").Set(0)
-	obs.OracleLastUpdateUnix.WithLabelValues("_warmup", "_warmup").Set(0)
-	obs.OracleResolutionSeconds.WithLabelValues("_warmup").Set(0)
+	// Through RecordOracleUpdate, not the vec directly: it is the only
+	// supported writer for last_update_unix (it emits the paired
+	// staleness budget on the same label set), and warming it here also
+	// keeps TestRecordOracleUpdate_EveryAgeHasABudget honest — a warmup
+	// that set the age alone would leave a permanent budget-less series.
+	obs.DeclareOracleResolution("_warmup", 0)
+	obs.RecordOracleUpdate("_warmup", "_warmup", 0)
 	obs.AggregatorTicksTotal.WithLabelValues("_warmup").Inc()
 	obs.AggregatorVWAPWritesTotal.Inc()
 	obs.AggregatorEmptyWindowsTotal.Inc()
@@ -107,6 +112,7 @@ func TestHandler_ExposesMetrics(t *testing.T) {
 		"stellarindex_price_staleness_seconds",
 		"stellarindex_oracle_last_update_unix",
 		"stellarindex_oracle_resolution_seconds",
+		"stellarindex_oracle_staleness_budget_seconds",
 		"stellarindex_aggregator_ticks_total",
 		"stellarindex_aggregator_vwap_writes_total",
 		"stellarindex_aggregator_empty_windows_total",

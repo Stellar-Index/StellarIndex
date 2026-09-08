@@ -512,6 +512,79 @@ func (o OracleConfig) validate() error {
 				ErrInvalidConfig, name, addr)
 		}
 	}
+	return o.validateStalenessOverrides()
+}
+
+// OracleSourceNames is the set of source names that publish
+// oracle_updates rows and therefore carry the
+// stellarindex_oracle_last_update_unix / _staleness_budget_seconds
+// gauges. It is the subset of KnownSources a staleness override may
+// name.
+//
+// Mirrored here rather than imported for the same cycle-avoidance
+// reason KnownSources is (see its comment). When an oracle source is
+// added to pipeline.BuildDispatcher, add it here too — an override
+// naming a source nothing emits would sit in the config looking
+// effective while matching no series.
+var OracleSourceNames = map[string]struct{}{
+	"reflector-dex": {},
+	"reflector-cex": {},
+	"reflector-fx":  {},
+	"redstone":      {},
+	"band":          {},
+}
+
+// validateStalenessOverrides rejects the ways a per-asset staleness
+// budget can be written down and silently do nothing.
+//
+// Every check here exists because the override's whole job is to
+// change one alert's threshold: a row that names a source nothing
+// emits, or an asset spelled differently from the metric's label,
+// matches no series at all. That failure is invisible — the operator
+// sees a config full of intent, the alert keeps firing on the same
+// schedule, and there is no error anywhere. Fail at startup instead.
+func (o OracleConfig) validateStalenessOverrides() error {
+	seen := make(map[string]int, len(o.StalenessOverrides))
+	for i, ov := range o.StalenessOverrides {
+		where := fmt.Sprintf("oracle.staleness_overrides[%d]", i)
+
+		if _, ok := OracleSourceNames[ov.Source]; !ok {
+			return fmt.Errorf("%w: %s.source %q is not an oracle source (want one of reflector-dex, reflector-cex, reflector-fx, redstone, band)",
+				ErrInvalidConfig, where, ov.Source)
+		}
+
+		// The `asset` label is canonical.Asset.String(), so the
+		// configured value must both parse AND round-trip. Parsing
+		// alone is not enough: "XLM" parses (to the native asset) but
+		// stringifies back to "native", so an override written "XLM"
+		// would key a series that never exists.
+		asset, err := canonical.ParseAsset(ov.Asset)
+		if err != nil {
+			return fmt.Errorf("%w: %s.asset %q is not a canonical asset identifier — use the exact form the metric's asset label carries (e.g. \"crypto:DAI\"): %v",
+				ErrInvalidConfig, where, ov.Asset, err)
+		}
+		if got := asset.String(); got != ov.Asset {
+			return fmt.Errorf("%w: %s.asset %q is an alias for %q — write the canonical form, which is what the metric's asset label carries",
+				ErrInvalidConfig, where, ov.Asset, got)
+		}
+
+		if ov.BudgetSeconds <= 0 {
+			return fmt.Errorf("%w: %s.budget_seconds must be > 0 (a zero or negative budget would ticket the pair on every evaluation)",
+				ErrInvalidConfig, where)
+		}
+
+		if strings.TrimSpace(ov.Reason) == "" {
+			return fmt.Errorf("%w: %s.reason is required — an override is a claim that %s/%s is legitimately slow, and an unexplained one cannot be re-tested later",
+				ErrInvalidConfig, where, ov.Source, ov.Asset)
+		}
+
+		key := ov.Source + "\x00" + ov.Asset
+		if first, dup := seen[key]; dup {
+			return fmt.Errorf("%w: %s duplicates oracle.staleness_overrides[%d] (%s / %s) — one pair, one budget",
+				ErrInvalidConfig, where, first, ov.Source, ov.Asset)
+		}
+		seen[key] = i
+	}
 	return nil
 }
 

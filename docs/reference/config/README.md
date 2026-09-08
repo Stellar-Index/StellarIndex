@@ -92,6 +92,11 @@ the `env:` column.
 | `oracle.band.standard_reference_contract` | `string` | _(required)_ | — | Band Protocol StandardReference contract (C-prefix) on mainnet — CCQXWMZVM3KRTXTUPTN53YHL272QGKF32L7XEDNZ2S6OSUFK3NFBGG5M. |
 | `oracle.soroswap.factory_contract` | `string` | _(required)_ | — | Soroswap factory contract (C-prefix) on mainnet — CA4HEQTL2WPEUYKYKCDOHCDNIV4QHNJ7EL4J4NQ6VADP7SYHVRYZ7AW2. |
 | `oracle.soroswap.seed_rpc_endpoint` | `string` | _(required)_ | — | stellar-rpc URL used for the boot-time factory sweep. Any public pubnet endpoint works (e.g. https://mainnet.sorobanrpc.com). Falls back to stellar.rpc_endpoints[0] when empty. |
+| `oracle.staleness_overrides` | `[]struct` | `[]` | — | Per-(source, asset) exceptions to the oracle-staleness budget the stellarindex_oracle_stale alert reads. Empty (default) leaves every asset on its source's default budget — 10 × the source's declared resolution. Each row is a written-down claim that ONE asset publishes on a different rhythm than its source's cadence; see OracleStalenessOverrideConfig. |
+| `oracle.staleness_overrides[].source` | `string` | _(required)_ | — | Oracle source name exactly as it appears in the metric's source label: reflector-dex, reflector-cex, reflector-fx, redstone, or band. |
+| `oracle.staleness_overrides[].asset` | `string` | _(required)_ | — | Canonical asset identifier exactly as it appears in the metric's asset label — "crypto:DAI", not "DAI". Oracle symbols pass through canonical.MapOracleSymbol (known fiat → fiat:CODE, known crypto → crypto:CODE, known RWA → rwa:CODE, anything else → raw:SYMBOL), so the label is the mapped form; a bare or non-round-tripping identifier is rejected at startup rather than silently matching no series. |
+| `oracle.staleness_overrides[].budget_seconds` | `int` | _(required)_ | — | Seconds this pair may go without a publication before the alert tickets, replacing the source default (10 × declared resolution). Must be > 0. |
+| `oracle.staleness_overrides[].reason` | `string` | _(required)_ | — | Why this pair's publication rhythm differs from its source's cadence, with the observation behind the number. Required — an override without a stated reason is indistinguishable from a silenced alert. |
 
 ### `[external]`
 
