@@ -65,6 +65,74 @@ func (p *Poller) BackfillRange(ctx context.Context, pair canonical.Pair, from, t
 		return nil, fmt.Errorf("coingecko: quote %q is not a fiat currency", pair.Quote.String())
 	}
 
+	prices, err := p.fetchMarketChartRange(ctx, id, currency, from, to)
+	if err != nil {
+		return nil, err
+	}
+
+	// The live poller rebuilds asset maps from the pairs it was handed;
+	// here the pair IS the argument, so its own legs are the answer and
+	// there is nothing to look up or get out of step with.
+	cryptoAsset, quoteAsset := pair.Base, pair.Quote
+
+	out := make([]canonical.OracleUpdate, 0, len(prices))
+	for _, pt := range prices {
+		ms, priceFloat := pt[0], pt[1]
+		if priceFloat <= 0 {
+			continue
+		}
+		ts := time.UnixMilli(int64(ms)).UTC()
+		// The API clamps to its own bucket edges, so a window can return
+		// points marginally outside it. Drop those rather than writing
+		// observations the caller did not ask for.
+		if ts.Before(from) || !ts.Before(to) {
+			continue
+		}
+		scaled, err := scale.FloatToScaledInt(priceFloat, int(DefaultDecimals))
+		if err != nil || scaled.Sign() <= 0 {
+			continue
+		}
+		out = append(out, canonical.OracleUpdate{
+			Source:     SourceName,
+			ContractID: "",
+			Ledger:     0,
+			// Same synthetic-hash construction as the live path, so a
+			// backfilled observation and a polled one for the same
+			// (ticker, currency, second) collapse to one row instead of
+			// double-counting.
+			TxHash:    syntheticTxHash(ticker, currency, ts.Unix()),
+			OpIndex:   0,
+			Timestamp: ts,
+			Asset:     cryptoAsset,
+			Quote:     quoteAsset,
+			Price:     canonical.NewAmount(scaled),
+			Decimals:  DefaultDecimals,
+			Observer:  "",
+		})
+	}
+	return out, nil
+}
+
+func minInt(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
+// timeMillisString renders t as CoinGecko's epoch-milliseconds form. Used by
+// the tests to build fixture payloads in the venue's own shape.
+func timeMillisString(t time.Time) string {
+	return strconv.FormatInt(t.UnixMilli(), 10)
+}
+
+// fetchMarketChartRange performs the HTTP half of a range read: host and auth
+// selection, the request, and the two failure shapes that must stay
+// distinguishable — the tier's window refusal (a purchasing decision) and
+// everything else (an outage). Split out of BackfillRange so neither the
+// transport concerns nor the conversion loop has to be read through the
+// other.
+func (p *Poller) fetchMarketChartRange(ctx context.Context, id, currency string, from, to time.Time) ([][2]float64, error) {
 	endpoint := p.Endpoint
 	if endpoint == "" {
 		endpoint = DefaultEndpoint
@@ -122,66 +190,11 @@ func (p *Poller) BackfillRange(ctx context.Context, pair canonical.Pair, from, t
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("coingecko: http %d: %s", resp.StatusCode, strings.TrimSpace(string(body[:minInt(len(body), 200)])))
 	}
-
 	var payload struct {
 		Prices [][2]float64 `json:"prices"`
 	}
 	if err := json.Unmarshal(body, &payload); err != nil {
 		return nil, fmt.Errorf("decode: %w", err)
 	}
-
-	// The live poller rebuilds asset maps from the pairs it was handed;
-	// here the pair IS the argument, so its own legs are the answer and
-	// there is nothing to look up or get out of step with.
-	cryptoAsset, quoteAsset := pair.Base, pair.Quote
-
-	out := make([]canonical.OracleUpdate, 0, len(payload.Prices))
-	for _, pt := range payload.Prices {
-		ms, priceFloat := pt[0], pt[1]
-		if priceFloat <= 0 {
-			continue
-		}
-		ts := time.UnixMilli(int64(ms)).UTC()
-		// The API clamps to its own bucket edges, so a window can return
-		// points marginally outside it. Drop those rather than writing
-		// observations the caller did not ask for.
-		if ts.Before(from) || !ts.Before(to) {
-			continue
-		}
-		scaled, err := scale.FloatToScaledInt(priceFloat, int(DefaultDecimals))
-		if err != nil || scaled.Sign() <= 0 {
-			continue
-		}
-		out = append(out, canonical.OracleUpdate{
-			Source:     SourceName,
-			ContractID: "",
-			Ledger:     0,
-			// Same synthetic-hash construction as the live path, so a
-			// backfilled observation and a polled one for the same
-			// (ticker, currency, second) collapse to one row instead of
-			// double-counting.
-			TxHash:    syntheticTxHash(ticker, currency, ts.Unix()),
-			OpIndex:   0,
-			Timestamp: ts,
-			Asset:     cryptoAsset,
-			Quote:     quoteAsset,
-			Price:     canonical.NewAmount(scaled),
-			Decimals:  DefaultDecimals,
-			Observer:  "",
-		})
-	}
-	return out, nil
-}
-
-func minInt(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
-}
-
-// timeMillisString renders t as CoinGecko's epoch-milliseconds form. Used by
-// the tests to build fixture payloads in the venue's own shape.
-func timeMillisString(t time.Time) string {
-	return strconv.FormatInt(t.UnixMilli(), 10)
+	return payload.Prices, nil
 }

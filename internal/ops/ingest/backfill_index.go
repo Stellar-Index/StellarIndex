@@ -36,7 +36,24 @@ import (
 // is a volume-weighted composite across venues we do not observe and has
 // none of it. Keeping the two apart is what stops a convenience backfill
 // quietly degrading a claim the project currently earns.
-func BackfillIndex(args []string) error {
+// backfillIndexPlan is the validated shape of a backfill-index invocation:
+// every flag resolved, parsed and checked, so the run loop below deals only
+// with the walk itself. Splitting it out is what keeps either half readable.
+type backfillIndexPlan struct {
+	cfgPath       string
+	source        string
+	pair          canonical.Pair
+	from, to      time.Time
+	chunkDays     int
+	sleep         time.Duration
+	progressEvery int
+	write         bool
+}
+
+// parseBackfillIndexArgs validates the invocation and fails on anything the
+// walk would otherwise discover halfway through a long run.
+func parseBackfillIndexArgs(args []string) (backfillIndexPlan, error) {
+	var plan backfillIndexPlan
 	fs := flag.NewFlagSet("backfill-index", flag.ContinueOnError)
 	cfgPath := fs.String("config", "", "path to stellarindex.toml (required)")
 	source := fs.String("source", "coingecko", "index source: coingecko (coinmarketcap and cryptocompare have no historical adapter yet)")
@@ -48,31 +65,47 @@ func BackfillIndex(args []string) error {
 	progressEvery := fs.Int("progress-every", 500, "print a progress line every N updates")
 	write := fs.Bool("write", false, "actually insert; default is a dry run")
 	if err := fs.Parse(args); err != nil {
-		return err
+		return plan, err
 	}
 	if *cfgPath == "" || *fromArg == "" || *toArg == "" {
 		fs.Usage()
-		return errors.New("backfill-index: -config, -from and -to are required")
+		return plan, errors.New("backfill-index: -config, -from and -to are required")
 	}
 	if *source != "coingecko" {
-		return fmt.Errorf("backfill-index: source %q has no historical adapter; only coingecko does today", *source)
+		return plan, fmt.Errorf("backfill-index: source %q has no historical adapter; only coingecko does today", *source)
 	}
 	from, err := time.Parse(time.RFC3339, *fromArg)
 	if err != nil {
-		return fmt.Errorf("-from: %w", err)
+		return plan, fmt.Errorf("-from: %w", err)
 	}
 	to, err := time.Parse(time.RFC3339, *toArg)
 	if err != nil {
-		return fmt.Errorf("-to: %w", err)
+		return plan, fmt.Errorf("-to: %w", err)
 	}
 	if !from.Before(to) {
-		return fmt.Errorf("backfill-index: -from must precede -to")
+		return plan, errors.New("backfill-index: -from must precede -to")
+	}
+	if *chunkDays < 1 {
+		return plan, errors.New("backfill-index: -chunk-days must be at least 1")
 	}
 	pair, err := canonical.ParsePair(*pairArg)
 	if err != nil {
-		return fmt.Errorf("-pair: %w", err)
+		return plan, fmt.Errorf("-pair: %w", err)
 	}
-	cfg, err := config.Load(*cfgPath)
+	plan = backfillIndexPlan{
+		cfgPath: *cfgPath, source: *source, pair: pair, from: from, to: to,
+		chunkDays: *chunkDays, sleep: time.Duration(*sleepMs) * time.Millisecond,
+		progressEvery: *progressEvery, write: *write,
+	}
+	return plan, nil
+}
+
+func BackfillIndex(args []string) error {
+	plan, err := parseBackfillIndexArgs(args)
+	if err != nil {
+		return err
+	}
+	cfg, err := config.Load(plan.cfgPath)
 	if err != nil {
 		return fmt.Errorf("config: %w", err)
 	}
@@ -99,14 +132,14 @@ func BackfillIndex(args []string) error {
 	// into the indexer's catalogue would couple an ops one-shot to the
 	// live service's startup state.
 
-	dryRun := !*write
+	dryRun := !plan.write
 	if dryRun {
 		fmt.Fprintln(os.Stderr, "═══ DRY RUN — no writes; pass -write to apply ═══")
 	} else {
 		fmt.Fprintln(os.Stderr, "═══ WRITING — applying changes ═══")
 	}
 	fmt.Fprintf(os.Stderr, "backfill-index: source=%s pair=%s from=%s to=%s chunk=%dd dry-run=%v\n",
-		*source, pair.String(), from.Format(time.RFC3339), to.Format(time.RFC3339), *chunkDays, dryRun)
+		plan.source, plan.pair.String(), plan.from.Format(time.RFC3339), plan.to.Format(time.RFC3339), plan.chunkDays, dryRun)
 	fmt.Fprintf(os.Stderr, "backfill-index: auth=%s (only a pro key reaches past %d days)\n", authMode, coingecko.FreeTierHistoryDays)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 12*time.Hour)
@@ -126,48 +159,9 @@ func BackfillIndex(args []string) error {
 	}
 
 	t0 := time.Now()
-	inserted, skipped, chunks := 0, 0, 0
-	for start := from; start.Before(to); start = start.AddDate(0, 0, *chunkDays) {
-		end := start.AddDate(0, 0, *chunkDays)
-		if end.After(to) {
-			end = to
-		}
-		updates, err := poller.BackfillRange(ctx, pair, start, end)
-		if err != nil {
-			// The tier refusal is not an outage and must not read like
-			// one: it is the signal that this window needs a Pro key,
-			// which is a purchasing decision rather than an incident.
-			if errors.Is(err, coingecko.ErrOutsideFreeTier) {
-				return fmt.Errorf("%s..%s is outside this key's history window — %w",
-					start.Format("2006-01-02"), end.Format("2006-01-02"), err)
-			}
-			return fmt.Errorf("chunk %s..%s: %w",
-				start.Format("2006-01-02"), end.Format("2006-01-02"), err)
-		}
-		chunks++
-		for _, u := range updates {
-			if dryRun {
-				inserted++
-				continue
-			}
-			if err := store.InsertOracleUpdate(ctx, u); err != nil {
-				skipped++
-				fmt.Fprintf(os.Stderr, "insert oracle_update (%s %s ts=%s): %v\n",
-					u.Source, u.Price.String(), u.Timestamp.Format(time.RFC3339), err)
-				continue
-			}
-			inserted++
-			if *progressEvery > 0 && inserted%*progressEvery == 0 {
-				fmt.Fprintf(os.Stderr, "  ... %d inserted, %d skipped\n", inserted, skipped)
-			}
-		}
-		if end.Before(to) {
-			select {
-			case <-ctx.Done():
-				return ctx.Err()
-			case <-time.After(time.Duration(*sleepMs) * time.Millisecond):
-			}
-		}
+	inserted, skipped, chunks, err := walkIndexRange(ctx, plan, poller, store, dryRun)
+	if err != nil {
+		return err
 	}
 	fmt.Fprintf(os.Stderr, "backfill-index: done — %d observation(s) over %d chunk(s), %d skipped, in %v\n",
 		inserted, chunks, skipped, time.Since(t0).Round(time.Second))
@@ -175,7 +169,83 @@ func BackfillIndex(args []string) error {
 		// A zero-row "success" is the shape that hides a broken backfill,
 		// so it exits non-zero rather than reading as done.
 		return fmt.Errorf("no observations returned for %s..%s — the window may predate the source's coverage, or the key's tier",
-			from.Format("2006-01-02"), to.Format("2006-01-02"))
+			plan.from.Format("2006-01-02"), plan.to.Format("2006-01-02"))
 	}
 	return nil
+}
+
+// walkIndexRange steps the window in chunk-sized pieces and writes what each
+// returns. Split out of BackfillIndex so the command's setup (flags, config,
+// auth, store) and its work loop can each be read on their own; together they
+// were past the complexity budget, and the loop is the half that matters.
+func walkIndexRange(
+	ctx context.Context,
+	plan backfillIndexPlan,
+	poller *coingecko.Poller,
+	store *timescale.Store,
+	dryRun bool,
+) (inserted, skipped, chunks int, err error) {
+	for start := plan.from; start.Before(plan.to); start = start.AddDate(0, 0, plan.chunkDays) {
+		end := start.AddDate(0, 0, plan.chunkDays)
+		if end.After(plan.to) {
+			end = plan.to
+		}
+		updates, err := poller.BackfillRange(ctx, plan.pair, start, end)
+		if err != nil {
+			// The tier refusal is not an outage and must not read like
+			// one: it is the signal that this window needs a Pro key,
+			// which is a purchasing decision rather than an incident.
+			if errors.Is(err, coingecko.ErrOutsideFreeTier) {
+				return inserted, skipped, chunks, fmt.Errorf("%s..%s is outside this key's history window — %w",
+					start.Format("2006-01-02"), end.Format("2006-01-02"), err)
+			}
+			return inserted, skipped, chunks, fmt.Errorf("chunk %s..%s: %w",
+				start.Format("2006-01-02"), end.Format("2006-01-02"), err)
+		}
+		chunks++
+		added, failed := insertIndexChunk(ctx, store, updates, dryRun, plan.progressEvery, inserted, skipped)
+		inserted += added
+		skipped += failed
+		if end.Before(plan.to) {
+			select {
+			case <-ctx.Done():
+				return inserted, skipped, chunks, ctx.Err()
+			case <-time.After(plan.sleep):
+			}
+		}
+	}
+	return inserted, skipped, chunks, nil
+}
+
+// insertIndexChunk writes one chunk's observations, counting rather than
+// aborting on a per-row failure: a single bad observation must not discard a
+// window that is otherwise good, and the caller's non-zero-exit-on-zero-rows
+// check is what catches a run where everything failed.
+//
+// inserted/skipped are passed in only so the progress line reports a running
+// total across chunks rather than restarting at each one.
+func insertIndexChunk(
+	ctx context.Context,
+	store *timescale.Store,
+	updates []canonical.OracleUpdate,
+	dryRun bool,
+	progressEvery, inserted, skipped int,
+) (added, failed int) {
+	for _, u := range updates {
+		if dryRun {
+			added++
+			continue
+		}
+		if err := store.InsertOracleUpdate(ctx, u); err != nil {
+			failed++
+			fmt.Fprintf(os.Stderr, "insert oracle_update (%s %s ts=%s): %v\n",
+				u.Source, u.Price.String(), u.Timestamp.Format(time.RFC3339), err)
+			continue
+		}
+		added++
+		if progressEvery > 0 && (inserted+added)%progressEvery == 0 {
+			fmt.Fprintf(os.Stderr, "  ... %d inserted, %d skipped\n", inserted+added, skipped+failed)
+		}
+	}
+	return added, failed
 }
