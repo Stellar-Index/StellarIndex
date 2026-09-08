@@ -105,6 +105,10 @@ check: ## Fast read-only development checks; portable across supported contribut
 lint-changed: ## The lints that apply to the files you changed (staged, else origin/main...HEAD), cheapest first, in seconds — a dispatcher over the existing scripts/ci gates (LINT_CHANGED_ARGS='--plan' prints the plan)
 	@./scripts/dev/lint-changed.sh $(LINT_CHANGED_ARGS)
 
+.PHONY: branch-status
+branch-status: ## Per branch: does it still carry unlanded work, and would applying it DELETE files main has? (BRANCH_STATUS_ARGS='--stale-only')
+	@./scripts/dev/branch-status.sh $(BRANCH_STATUS_ARGS)
+
 .PHONY: hooks
 hooks: ## Opt in to lint-changed as a pre-commit hook (git commit --no-verify skips it once; make hooks-remove takes it out)
 	@./scripts/dev/install-hooks.sh

@@ -17,6 +17,18 @@ against.
 
 ### Added
 
+- **dev:** `make branch-status` (`scripts/dev/branch-status.sh`) reports,
+  per branch, whether it still carries unlanded work and whether applying
+  it would DELETE files the base has. It exists because `git diff
+  main...branch` is the merge-base diff: it answers "what did this branch
+  do since it forked", including everything since landed by another route,
+  so a branch 104 commits behind read as a tidy "+10/-18 still to land"
+  when its tip was already an ancestor of main and applying it would have
+  removed 158 files. The script judges by `merge-base --is-ancestor`,
+  two-dot ranges, and the `D` lines of `--name-status`, and exits 3 on a
+  branch that would delete. Self-tested against a fixture built so the
+  two-dot and three-dot answers genuinely differ.
+
 - **web:** the status page banner now names the open-ticket backlog beside
   the status word — "8 active tickets" next to "Operational". `/v1/status`
   can serve `overall: "ok"` in the same body as `incidents.active_count: 8`,
