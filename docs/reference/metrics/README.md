@@ -3150,6 +3150,34 @@ the cache is coasting on a stale (but still valid) snapshot. No dedicated
 alert; the underlying Postgres-health alerts already cover the infra
 failure this reflects.
 
+### `stellarindex_nonstandard_decimals_partial_alias_family_total`
+
+Counter, no labels.
+
+Flagged non-7-decimal assets seen at refresh time whose alias family is only
+PARTLY flagged — one canonical spelling present in `nonstandard_decimals_assets`,
+another absent.
+
+Unlike the refresh-failure counter above, this **is** a pricing-correctness
+signal. `NonstandardDecimalsCache.Lookup` is a raw map lookup on the exact
+asset-id string and does not alias-fold, so a partly-flagged family normalises
+one spelling and not another: the price leg is scaled per source pair (whose
+base may be a different spelling of the same asset) while the supply leg is
+divided by the requested base's decimals, and the two diverge by a **power of
+ten** with both looking plausible.
+
+Expected value is 0 and has always been 0 — every flagged row today is a bare
+C-strkey whose alias family is a singleton. A nonzero value means a row was
+added for one spelling of an aliasing asset (XLM is the live example: `native`,
+`crypto:XLM`, and its SAC contract id are three disjoint venue populations) and
+the served numbers for that asset cannot be trusted until every spelling is
+flagged. The fix is to flag the missing spellings, not to remove the present
+one — removing it un-normalises every surface for that asset.
+
+No dedicated alert: the condition is operator-introduced at row-insert time
+rather than emergent, and the counter plus the accompanying `WARN` line naming
+both the flagged id and the unflagged alias is what a reviewer needs.
+
 ## Background cache workers (API binary, v0.21.4)
 
 ### `stellarindex_dex_tvl_refresh_total`

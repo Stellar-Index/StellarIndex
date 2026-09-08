@@ -5,6 +5,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
@@ -81,11 +82,58 @@ func (c *NonstandardDecimalsCache) Refresh(ctx context.Context) error {
 	for _, row := range rows {
 		next[row.Asset] = row
 	}
+	c.warnOnPartialAliasFamily(next)
 	c.mu.Lock()
 	c.assets = next
 	c.fetchedAt = time.Now().UTC()
 	c.mu.Unlock()
 	return nil
+}
+
+// warnOnPartialAliasFamily reports a flagged asset whose alias family is only
+// PARTLY flagged. [NonstandardDecimalsCache.Lookup] is a raw map lookup on the
+// exact asset-id string, so it does not alias-fold — and an asset that lives
+// under several canonical spellings (XLM is `native`, `crypto:XLM` and its SAC
+// contract id) would then be normalised under one spelling and not another.
+// The consequence is not a missing value but a WRONG one: the price leg is
+// scaled per source pair, whose base may be a different spelling of the same
+// asset, while the supply leg is divided by the requested base's decimals — so
+// price and supply diverge by a power of ten with both legs looking plausible.
+//
+// This is unreachable on today's data (every flagged row is a bare C-strkey
+// with a singleton alias family) and the durable fix is to alias-fold the
+// lookup itself, which changes this cache's contract and affects its other
+// callers. That is deliberately not done here. What IS done is refusing to let
+// the state arrive silently: the dangerous row is added to a TABLE at runtime,
+// not to code, so no unit test over fixtures can catch it — only a check at
+// refresh time against the rows actually loaded can.
+//
+// It warns and counts; it does not drop the row or fail the refresh. A partial
+// family is a data-entry question for an operator, and blanking the guard
+// would turn a scaling error into an unnormalised one across every surface.
+func (c *NonstandardDecimalsCache) warnOnPartialAliasFamily(next map[string]timescale.NonstandardDecimalsAsset) {
+	for id := range next {
+		asset, err := canonical.ParseAsset(id)
+		if err != nil {
+			continue // an unparseable id cannot have a computable family
+		}
+		for _, alias := range assetAliases(asset) {
+			aliasID := alias.String()
+			if aliasID == id {
+				continue
+			}
+			if _, ok := next[aliasID]; ok {
+				continue
+			}
+			obs.NonstandardDecimalsPartialAliasFamilyTotal.Inc()
+			if c.logger != nil {
+				c.logger.Warn(
+					"nonstandard-decimals: flagged asset has an UNFLAGGED alias — price and supply can diverge by a power of ten",
+					"flagged", id, "unflagged_alias", aliasID,
+				)
+			}
+		}
+	}
 }
 
 // Lookup reports whether assetID is a confirmed non-7-decimal asset and, if

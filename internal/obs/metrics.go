@@ -261,6 +261,7 @@ func registerAppMetricsTail() {
 		DEXTradeNonstandardDecimalsTotal,
 		PriceServeDeclinedNonstandardDecimalsTotal,
 		NonstandardDecimalsCacheRefreshFailuresTotal,
+		NonstandardDecimalsPartialAliasFamilyTotal,
 
 		HashdbAppendTotal,
 		HashdbAppendDurationSeconds,
@@ -3896,6 +3897,30 @@ var NonstandardDecimalsCacheRefreshFailuresTotal = prometheus.NewCounter(
 	prometheus.CounterOpts{
 		Name: "stellarindex_nonstandard_decimals_cache_refresh_failures_total",
 		Help: "Failed background refreshes of the API's in-process nonstandard-decimals serving-guard cache. Fail-open: the previous snapshot keeps serving. Infra-health signal, not a pricing-correctness one.",
+	},
+)
+
+// NonstandardDecimalsPartialAliasFamilyTotal counts flagged assets observed at
+// refresh time whose alias family is only PARTLY flagged — one canonical
+// spelling present in `nonstandard_decimals_assets`, another absent.
+//
+// Unlike the refresh-failure counter above, this IS a pricing-correctness
+// signal, and a sharp one. NonstandardDecimalsCache.Lookup is a raw map lookup
+// on the exact asset-id string and does not alias-fold, so a partly-flagged
+// family normalises one spelling and not another: the price leg is scaled per
+// source pair (whose base may be a different spelling of the same asset) while
+// the supply leg is divided by the requested base's decimals, and the two
+// diverge by a POWER OF TEN with both looking plausible.
+//
+// Expected value is 0 and has always been 0: every flagged row today is a bare
+// C-strkey whose alias family is a singleton. A nonzero value means someone
+// added a row for one spelling of an aliasing asset (XLM is the live example —
+// `native`, `crypto:XLM`, and its SAC contract id) and the served numbers for
+// that asset can no longer be trusted until every spelling is flagged.
+var NonstandardDecimalsPartialAliasFamilyTotal = prometheus.NewCounter(
+	prometheus.CounterOpts{
+		Name: "stellarindex_nonstandard_decimals_partial_alias_family_total",
+		Help: "Flagged non-7-decimal assets whose alias family is only partly flagged. Expected 0. Nonzero means price and supply for that asset can diverge by a power of ten, because the decimals lookup does not alias-fold.",
 	},
 )
 
