@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
 FROM node:22-bookworm-slim AS node
 
-FROM golang:1.25.13-trixie
+FROM golang:1.26.8-trixie
 
 ARG TARGETARCH
 ARG GOFUMPT_VERSION=v0.8.0

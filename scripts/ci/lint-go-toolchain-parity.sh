@@ -110,4 +110,58 @@ if [[ "$FAIL" -gt 0 ]]; then
   exit 1
 fi
 
+# ── Container Go pin ───────────────────────────────────────────────────────
+# A Dockerfile cannot read go.mod, so its `FROM golang:X.Y.Z` is a SECOND,
+# independent declaration of the toolchain — the same divergence this gate
+# forbids in workflows, in the one place `go-version-file` cannot reach.
+# It is not hypothetical and not new: docker/README.md records F-1240
+# (audit 2026-05-12), where the Dockerfiles sat on 1.26-alpine while go.mod
+# and CI were on 1.25.x. It recurred on 2026-09-08 in the other direction —
+# go.mod moved to 1.26.0/toolchain go1.26.8 while docker/verify/Dockerfile
+# stayed on golang:1.25.13-trixie — and nothing caught it, because the
+# container is what `make prepush` runs, so a stale pin silently grades the
+# push with a different compiler than CI and production use.
+DOCKERFILES=()
+while IFS= read -r df; do
+  DOCKERFILES+=("$df")
+done < <(find docker -type f -name 'Dockerfile*' 2>/dev/null | sort)
+
+if [[ "${#DOCKERFILES[@]}" -gt 0 ]]; then
+  want="$(awk '/^toolchain[ \t]+go/ { sub(/^go/, "", $2); print $2; exit }' go.mod)"
+  if [[ -z "$want" ]]; then
+    want="$(awk '/^go[ \t]+[0-9]/ { print $2; exit }' go.mod)"
+  fi
+  if [[ -z "$want" ]]; then
+    echo "lint-go-toolchain-parity: FAIL — go.mod declares neither a toolchain nor a go version" >&2
+    exit 1
+  fi
+  PINS=0
+  for df in "${DOCKERFILES[@]}"; do
+    while IFS= read -r hit; do
+      [ -z "$hit" ] && continue
+      ln="${hit%%:*}"
+      tag="${hit#*:}"
+      PINS=$((PINS + 1))
+      # Compare on major.minor.patch when the tag carries one, else major.minor.
+      case "$tag" in
+        "$want"|"$want"-*)                   ;;
+        "${want%.*}"|"${want%.*}"-*)         ;;
+        *)
+          echo "lint-go-toolchain-parity: $df:$ln pins golang:$tag but go.mod resolves to $want"
+          FAIL=$((FAIL + 1))
+          ;;
+      esac
+    done < <(grep -nE '^[[:space:]]*FROM[[:space:]]+golang:' "$df" 2>/dev/null \
+             | sed -E 's/^([0-9]+):[[:space:]]*FROM[[:space:]]+golang:([^[:space:]]+).*/\1:\2/')
+  done
+  if [[ "$FAIL" -gt 0 ]]; then
+    echo
+    echo "lint-go-toolchain-parity: FAIL — a container Go pin disagrees with go.mod."
+    echo "  The container is what \`make prepush\` runs; a stale pin grades the push"
+    echo "  with a different compiler than CI and production use (see F-1240)."
+    exit 1
+  fi
+  echo "lint-go-toolchain-parity: OK — $PINS container Go pin(s) across ${#DOCKERFILES[@]} Dockerfile(s) match go.mod ($want)"
+fi
+
 echo "lint-go-toolchain-parity: OK — $STEPS actions/setup-go step(s) in ${#FILES[@]} workflow file(s), all resolve from go.mod"

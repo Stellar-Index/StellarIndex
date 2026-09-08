@@ -40,7 +40,7 @@ issue or PR restoring the `containers:` job in
 
 ## Image shape
 
-- **Builder stage** uses `golang:1.25-alpine` and runs the same
+- **Builder stage** uses `golang:1.26-alpine` and runs the same
   `go build -trimpath -buildvcs=true -ldflags=...` invocation the
   release workflow does so the locally-built image and the
   CI-released one are byte-equivalent at the binary level. The

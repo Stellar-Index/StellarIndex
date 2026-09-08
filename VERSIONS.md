@@ -40,7 +40,7 @@ At deploy-time we will pin these:
 ```go
 // go.mod
 module github.com/Stellar-Index/StellarIndex
-go 1.25.10
+go 1.26.0
 
 require (
     github.com/stellar/go-stellar-sdk v0.6.0
