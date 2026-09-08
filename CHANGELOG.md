@@ -17,6 +17,20 @@ against.
 
 ### Added
 
+- **web:** the status page banner now names the open-ticket backlog beside
+  the status word — "8 active tickets" next to "Operational". `/v1/status`
+  can serve `overall: "ok"` in the same body as `incidents.active_count: 8`,
+  which is the documented precedence working (only a service fault, a
+  metrics-backend error, a breached latency SLO or a `page`-severity alert
+  escalates the roll-up), but the two fields read as a contradiction with
+  nothing to join them. The caption is muted and untinted: it explains the
+  verdict, it does not change it. `overall` keeps its exact meaning and
+  values, and the wire is untouched — the count is read from the
+  `incidents.active_count` already published. Silent when nothing is firing
+  (never "0 active tickets"), when `incidents_status` is "unknown" (the
+  counts are a failed alerting query, not an all-clear), and while a page
+  is firing (a page is not a ticket, and it has already moved `overall`).
+
 - **monitoring:** informational-severity alerts now fan out to their own
   low-traffic Discord channel instead of the `silent` receiver, which
   had no config block and delivered nowhere (#485). Kept separate from

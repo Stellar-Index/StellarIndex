@@ -416,3 +416,115 @@ describe('StatusPageClient honest staleness', () => {
     expect(screen.getByText(/notices feed unreachable/i)).toBeInTheDocument();
   });
 });
+
+// ---------------------------------------------------------------------------
+// Open-ticket note on the overall banner.
+//
+// /v1/status can serve `overall: "ok"` in the same body as
+// `incidents.active_count: 8`. That is correct — rollupOverall escalates
+// only on a service fault, a metrics-backend error, a breached latency SLO
+// or a `page`-severity alert, and a ticket is none of those — but read
+// together the two fields look like a contradiction. The banner names the
+// backlog beside the status word so the reader can see why both are true.
+// `overall` keeps its meaning; nothing here changes the verdict.
+// ---------------------------------------------------------------------------
+describe('StatusPageClient overall banner ticket note', () => {
+  beforeAll(() => {
+    (globalThis as { EventSource?: unknown }).EventSource = FakeEventSource;
+  });
+  afterAll(() => {
+    delete (globalThis as { EventSource?: unknown }).EventSource;
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  function renderWithIncidents(
+    incidents: Record<string, unknown>,
+    incidentsStatus: string,
+    overall = 'ok',
+  ) {
+    mockFeeds({
+      status: async () =>
+        json({
+          data: statusPayload({
+            overall,
+            incidents,
+            incidents_status: incidentsStatus,
+          }),
+          as_of: new Date().toISOString(),
+        }),
+    });
+    return renderPageWithClient();
+  }
+
+  // The reported payload: overall "ok", eight firing tickets, no page.
+  it('names the open tickets beside the status word', async () => {
+    renderWithIncidents(
+      { active_count: 8, page_count: 0, ticket_count: 8 },
+      'degraded',
+    );
+
+    const headline = await screen.findByText('All systems operational');
+    // The verdict is untouched — the note is a caption, not an escalation.
+    expect(screen.getByText('Operational')).toBeInTheDocument();
+    expect(screen.queryByText('Degraded performance')).not.toBeInTheDocument();
+    // …and the count sits in the same row as the status word.
+    const row = headline.parentElement;
+    expect(row).not.toBeNull();
+    expect(row!.textContent).toContain('Operational');
+    expect(row!.textContent).toContain('8 active tickets');
+  });
+
+  it('uses the singular for a single open ticket', async () => {
+    renderWithIncidents(
+      { active_count: 1, page_count: 0, ticket_count: 1 },
+      'degraded',
+    );
+
+    expect(await screen.findByText('1 active ticket')).toBeInTheDocument();
+    expect(screen.queryByText('1 active tickets')).not.toBeInTheDocument();
+  });
+
+  // Zero is silence, not "0 active tickets" — a banner that announces an
+  // empty backlog is noise on every healthy day.
+  it('renders no note when nothing is firing', async () => {
+    renderWithIncidents(
+      { active_count: 0, page_count: 0, ticket_count: 0 },
+      'ok',
+    );
+
+    await screen.findByText('All systems operational');
+    expect(screen.queryByText(/active ticket/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/0 active/i)).not.toBeInTheDocument();
+  });
+
+  // incidents_status "unknown" means the Alertmanager query FAILED, so the
+  // counts beside it are absence-of-signal (W1.1) — the trust signal is read
+  // FIRST and the counts are not read at all. Carrying a non-zero count here
+  // is the case that separates that rule from the zero check above: a note
+  // sourced from an untrusted count is fabricated whatever the number says.
+  it('renders no note when the alerting query failed', async () => {
+    renderWithIncidents(
+      { active_count: 8, page_count: 0, ticket_count: 8 },
+      'unknown',
+    );
+
+    await screen.findByText('All systems operational');
+    expect(screen.queryByText(/active ticket/i)).not.toBeInTheDocument();
+  });
+
+  // A page is not a ticket. It has already moved `overall` off "ok", so the
+  // headline carries it — captioning it as backlog would both mislabel the
+  // severity and soften a customer-facing fault.
+  it('renders no ticket note while a page-severity alert is firing', async () => {
+    renderWithIncidents(
+      { active_count: 9, page_count: 1, ticket_count: 8 },
+      'degraded',
+      'degraded',
+    );
+
+    await screen.findByText('Degraded performance');
+    expect(screen.queryByText(/active ticket/i)).not.toBeInTheDocument();
+  });
+});

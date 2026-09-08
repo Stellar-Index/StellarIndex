@@ -671,6 +671,17 @@ export default function StatusPageClient({
     () => toneFor(effectiveOverall),
     [effectiveOverall],
   );
+  // The open-ticket caption for the banner. Derived from the snapshot only
+  // while we can still refresh it — a feed we cannot reach makes every
+  // count last-known rather than current, and the headline has already
+  // fallen back to "Status unknown" for the same reason.
+  const ticketNote = useMemo(
+    () =>
+      feedUnreachable
+        ? null
+        : activeTicketNote(status?.incidents, status?.incidents_status),
+    [feedUnreachable, status],
+  );
 
   return (
     <Container className="max-w-5xl space-y-8 py-10">
@@ -686,7 +697,11 @@ export default function StatusPageClient({
             : 'No snapshot has been received yet — independent endpoint probes below still show live results, and past incidents are loaded from the build-time corpus.'}
         </Card>
       )}
-      <OverallBanner status={effectiveOverall} tone={overallTone} />
+      <OverallBanner
+        status={effectiveOverall}
+        tone={overallTone}
+        note={ticketNote}
+      />
       {loading && !status && !error && (
         <Card className="text-ink-faint px-4 py-8 text-center text-sm">
           Loading status…
@@ -760,12 +775,54 @@ function PageHead({ error, asOf }: { error: string | null; asOf: string }) {
   );
 }
 
+// activeTicketNote is the banner's open-ticket caption — "8 active
+// tickets", or null for no caption at all.
+//
+// Why the banner needs one: `overall` is deliberately blind to
+// ticket-severity alerts. rollupOverall escalates on a service fault, a
+// metrics-backend error, a breached latency SLO, or a `page` alert, and a
+// ticket is none of those — `page` means customers are affected, `ticket`
+// means someone should look during working hours. So the SAME response can
+// carry `overall: "ok"` beside `incidents.active_count: 8` (measured on r1
+// 2026-09-08: overall ok, 30 tickets + 1 informational, 0 pages). The rule
+// is right and stays exactly as it is; what the reader was missing is the
+// sentence that makes both halves legible at once. Naming the backlog is a
+// caption, never a verdict — it must not tint the banner or change a word
+// of the headline.
+//
+// Read from `incidents.active_count`, already on the wire; no new API field
+// exists for this.
+//
+// Three silences, each deliberate:
+//   - Nothing firing → no caption. "0 active tickets" is noise on every
+//     healthy day, and the empty backlog is the default the reader assumes.
+//   - `incidents_status` not "ok"/"degraded" → no caption. "unknown" means
+//     the Alertmanager query FAILED, so the zeroed counts are
+//     absence-of-signal rather than an all-clear (W1.1); a count read
+//     through a `?? 0` chain there would be fabricated.
+//   - A `page` firing → no caption. A page is not a ticket, so counting it
+//     as one would mislabel it; it has already moved `overall` off "ok",
+//     and the headline plus the active-incident list below carry it.
+function activeTicketNote(
+  incidents: StatusResponse['incidents'] | undefined,
+  incidentsStatus: StatusResponse['incidents_status'] | undefined,
+): string | null {
+  if (incidentsStatus !== 'ok' && incidentsStatus !== 'degraded') return null;
+  if ((incidents?.page_count ?? 0) > 0) return null;
+  const open = incidents?.active_count ?? 0;
+  if (open <= 0) return null;
+  return `${open} active ticket${open === 1 ? '' : 's'}`;
+}
+
 function OverallBanner({
   status,
   tone,
+  note,
 }: {
   status: ServiceStatus;
   tone: ReturnType<typeof toneFor>;
+  // Open-ticket caption from activeTicketNote; null renders nothing.
+  note?: string | null;
 }) {
   const headlines: Record<ServiceStatus, string> = {
     ok: 'All systems operational',
@@ -804,6 +861,13 @@ function OverallBanner({
             <Badge tone={tone.badge} dot>
               {badgeLabels[status]}
             </Badge>
+            {/* The open-ticket caption sits in the SAME row as the status
+                word, muted and untinted: a reader who sees "Operational"
+                sees the backlog in the same glance instead of meeting it
+                as a surprise count further down the page. */}
+            {note && (
+              <span className="text-ink-muted text-sm font-normal">{note}</span>
+            )}
           </div>
           <p className="text-ink-muted mt-1.5 text-sm leading-relaxed">
             {subtitles[status]}

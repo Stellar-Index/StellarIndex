@@ -718,3 +718,111 @@ func TestStatusLatencyBreached(t *testing.T) {
 		}
 	}
 }
+
+// TestStatus_TicketIncidentsDoNotMoveOverall pins the documented
+// precedence in rollupOverall against the one pressure it is most likely
+// to be "fixed" under. `overall` escalates on a service fault, a
+// metrics-backend error, a breached latency SLO, or a `page`-severity
+// alert — and on nothing else. Ticket- and informational-severity alerts
+// are an operator backlog rather than a customer-facing fault, so they
+// leave `overall` at "ok" (and flags.stale false) however many are firing.
+//
+// The guard is here because /v1/status serves those counts in the SAME
+// body as the verdict: r1 on 2026-09-08 read overall "ok" beside 30 ticket
+// + 1 informational alerts, which reads as a contradiction even though it
+// is the rule working. The status banner now names that backlog in words,
+// which is a presentation change only. Folding tickets into the roll-up
+// instead would change what "ok" PROMISES on a public surface — a decision,
+// not a patch — and it fails here first.
+func TestStatus_TicketIncidentsDoNotMoveOverall(t *testing.T) {
+	now := time.Now().UTC()
+	recent := now.Add(-3 * time.Second) // within the 60s heartbeat threshold
+
+	cases := []struct {
+		name      string
+		incidents StatusIncidents
+		want      string
+	}{
+		{
+			name:      "no alerts firing",
+			incidents: StatusIncidents{},
+			want:      "ok",
+		},
+		{
+			name: "one ticket",
+			incidents: StatusIncidents{
+				ActiveCount: 1, TicketCount: 1,
+				Active: []ActiveIncident{
+					{Name: "stellarindex_source_stalled", Severity: "ticket"},
+				},
+			},
+			want: "ok",
+		},
+		{
+			name: "eight tickets — the reported payload",
+			incidents: StatusIncidents{
+				ActiveCount: 8, TicketCount: 8,
+			},
+			want: "ok",
+		},
+		{
+			name: "thirty tickets and an informational — measured on r1",
+			incidents: StatusIncidents{
+				ActiveCount: 31, TicketCount: 30, InformationalCount: 1,
+			},
+			want: "ok",
+		},
+		{
+			// Control: the severity that DOES escalate still does.
+			name: "a page alongside the tickets",
+			incidents: StatusIncidents{
+				ActiveCount: 9, TicketCount: 8, PageCount: 1,
+				Active: []ActiveIncident{
+					{Name: "stellarindex_api_down", Severity: "page"},
+				},
+			},
+			want: "degraded",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := New(Options{
+				RegionName: "r1",
+				StatusBackend: &fakeStatusBackend{
+					heartbeats: map[string]time.Time{
+						"indexer": recent, "aggregator": recent,
+					},
+					incidents: tc.incidents,
+				},
+			})
+
+			req := httptest.NewRequest(http.MethodGet, "/v1/status", nil)
+			rr := httptest.NewRecorder()
+			srv.Handler().ServeHTTP(rr, req)
+
+			var env Envelope
+			if err := json.NewDecoder(rr.Body).Decode(&env); err != nil {
+				t.Fatalf("decode envelope: %v", err)
+			}
+			body, _ := json.Marshal(env.Data)
+			var st StatusResponse
+			if err := json.Unmarshal(body, &st); err != nil {
+				t.Fatalf("decode StatusResponse: %v", err)
+			}
+
+			if st.Overall != tc.want {
+				t.Errorf("Overall = %q, want %q", st.Overall, tc.want)
+			}
+			if wantStale := tc.want != "ok"; env.Flags.Stale != wantStale {
+				t.Errorf("flags.stale = %v, want %v", env.Flags.Stale, wantStale)
+			}
+			// The counts the banner reads must still be on the wire
+			// untouched — the note is rendered from them.
+			if st.Incidents.ActiveCount != tc.incidents.ActiveCount {
+				t.Errorf("incidents.active_count = %d, want %d",
+					st.Incidents.ActiveCount, tc.incidents.ActiveCount)
+			}
+		})
+	}
+}
