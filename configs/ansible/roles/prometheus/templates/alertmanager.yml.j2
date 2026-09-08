@@ -7,6 +7,14 @@
 {# rules.r1/ emits. The receiver fanout mirrors the standalone           #}
 {# configs/alertmanager/alertmanager.r1.yml so a host can be brought up  #}
 {# from either path with consistent behaviour.                            #}
+{#                                                                        #}
+{# The Discord title/message templates are held in {% raw %} blocks and  #}
+{# must stay BYTE-IDENTICAL to the ones in alertmanager.r1.yml: they are #}
+{# the same Go templates, and a divergence means one apply path can hit  #}
+{# a payload limit the other cannot. See that file's header for the      #}
+{# 2026-09-07 outage those bounds exist to prevent, and the measured     #}
+{# worst case. Raw blocks (rather than the {{ "{{" }} escaping used for  #}
+{# the rest of the file) are what makes the two readable side by side.   #}
 
 global:
   resolve_timeout: 5m
@@ -37,6 +45,25 @@ route:
       group_interval: 60s
       repeat_interval: 60s
       continue: false
+
+    # Delivery failure — reported OUT OF BAND, on purpose.
+    #
+    # stellarindex_alertmanager_notifications_failing is the alert that
+    # says "a receiver is being refused by the far end". Routed by
+    # severity alone it is a ticket, so it lands in chat-default — i.e.
+    # it is delivered through the very integration whose failure it is
+    # reporting. During the 2026-09-07 Discord outage it fired for 11
+    # hours into the dead channel and nobody saw it: the only signal of
+    # a delivery failure travelled the failing path.
+    #
+    # `continue: true` — this route ADDS a transport, it does not take
+    # one away. The alert still falls through to the severity routes
+    # below and reaches chat exactly as before whenever chat works.
+    - matchers: [alertname = "stellarindex_alertmanager_notifications_failing"]
+      receiver: alert-delivery-failure
+      group_interval: 5m
+      repeat_interval: 1h
+      continue: true
 
     # Page — SEV-1: customer-visible outage. Highest-urgency chat
     # channel + (when wired) PagerDuty.
@@ -100,14 +127,17 @@ receivers:
 {% if alertmanager_discord_webhook_url_pages %}
     discord_configs:
       - webhook_url: {{ alertmanager_discord_webhook_url_pages }}
-        send_resolved: true
-        title: '🚨 PAGE — {{ "{{" }} .GroupLabels.alertname {{ "}}" }}'
+        send_resolved: true{% raw %}
+        title: '🚨 PAGE — {{ printf "%.120s" .GroupLabels.alertname }}'
         message: |
-          {{ "{{" }} range .Alerts {{ "}}" }}
-          **{{ "{{" }} .Annotations.summary {{ "}}" }}**
-          {{ "{{" }} .Annotations.description {{ "}}" }}
-          {{ "{{" }} if .Annotations.runbook_url {{ "}}" }}Runbook: {{ "{{" }} .Annotations.runbook_url {{ "}}" }}{{ "{{" }} end {{ "}}" }}
-          {{ "{{" }} end {{ "}}" }}
+          {{ $max := 3 }}{{ $shown := .Alerts }}{{ if gt (len .Alerts) $max }}{{ $shown = slice .Alerts 0 $max }}{{ end }}{{ range $shown }}{{ $sum := printf "%.160s" .Annotations.summary }}{{ $desc := printf "%.300s" (trimSpace .Annotations.description) }}
+          **{{ $sum }}{{ if ne $sum .Annotations.summary }} …{{ end }}**
+          {{ $desc }}{{ if ne $desc (trimSpace .Annotations.description) }} …{{ end }}
+          {{ if .Annotations.runbook_url }}Runbook: {{ printf "%.200s" .Annotations.runbook_url }}{{ end }}
+          {{ end }}{{ if gt (len .Alerts) $max }}
+          … and {{ len (slice .Alerts $max) }} more in this group — see {{ printf "%.120s" .ExternalURL }}
+          {{ end }}
+{% endraw %}
 {% endif %}
 {% if alertmanager_pagerduty_key %}
     pagerduty_configs:
@@ -125,17 +155,45 @@ receivers:
 {% if alertmanager_discord_webhook_url_alerts %}
     discord_configs:
       - webhook_url: {{ alertmanager_discord_webhook_url_alerts }}
-        send_resolved: true
-        title: '{{ "{{" }} .GroupLabels.alertname {{ "}}" }}'
+        send_resolved: true{% raw %}
+        title: '{{ printf "%.120s" .GroupLabels.alertname }}'
         message: |
-          {{ "{{" }} range .Alerts {{ "}}" }}
-          **[{{ "{{" }} .Labels.severity | toUpper {{ "}}" }}]** {{ "{{" }} .Annotations.summary {{ "}}" }}
-          {{ "{{" }} .Annotations.description {{ "}}" }}
-          {{ "{{" }} if .Annotations.runbook_url {{ "}}" }}Runbook: {{ "{{" }} .Annotations.runbook_url {{ "}}" }}{{ "{{" }} end {{ "}}" }}
-          {{ "{{" }} end {{ "}}" }}
+          {{ $max := 3 }}{{ $shown := .Alerts }}{{ if gt (len .Alerts) $max }}{{ $shown = slice .Alerts 0 $max }}{{ end }}{{ range $shown }}{{ $sum := printf "%.160s" .Annotations.summary }}{{ $desc := printf "%.300s" (trimSpace .Annotations.description) }}
+          **[{{ printf "%.16s" (.Labels.severity | toUpper) }}]** {{ $sum }}{{ if ne $sum .Annotations.summary }} …{{ end }}
+          {{ $desc }}{{ if ne $desc (trimSpace .Annotations.description) }} …{{ end }}
+          {{ if .Annotations.runbook_url }}Runbook: {{ printf "%.200s" .Annotations.runbook_url }}{{ end }}
+          {{ end }}{{ if gt (len .Alerts) $max }}
+          … and {{ len (slice .Alerts $max) }} more in this group — see {{ printf "%.120s" .ExternalURL }}
+          {{ end }}
+{% endraw %}
 {% else %}
     # No alertmanager_discord_webhook_url_alerts — ticket alerts
     # visible only in the Alertmanager UI. Set the webhook to fan out.
+{% endif %}
+
+  # Delivery-failure escape hatch — a SECOND Healthchecks.io check,
+  # deliberately NOT the deadmansswitch one. Pinging the deadman check's
+  # /fail endpoint would work mechanically, but it would make one signal
+  # carry two meanings ("Prometheus or Alertmanager is dead" and "chat
+  # delivery is being refused") and send the operator to the wrong
+  # runbook. Provision a separate check — see
+  # docs/operations/runbooks/alertmanager-notifications-failing.md.
+  #
+  # Dark until that check exists: with the variable unset this renders
+  # as a stub. That is why the route above carries `continue: true` —
+  # chat delivery is identical either way. max_alerts bounds the webhook
+  # body for the same reason the Discord templates are bounded.
+  - name: alert-delivery-failure
+{% if alertmanager_healthchecks_alert_delivery_url %}
+    webhook_configs:
+      - url: {{ alertmanager_healthchecks_alert_delivery_url }}
+        send_resolved: true
+        max_alerts: 5
+{% else %}
+    # No alertmanager_healthchecks_alert_delivery_url — a Discord
+    # outage will silence its own alarm again. Set
+    # alertmanager_healthchecks_alert_delivery_url in inventory to a
+    # Healthchecks check SEPARATE from the deadmansswitch one.
 {% endif %}
 
   # ─── silent — A BLACK HOLE, ON PURPOSE ─────────────────────────

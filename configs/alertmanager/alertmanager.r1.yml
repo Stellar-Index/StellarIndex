@@ -18,6 +18,30 @@
 # so pages and alerts use two separate webhook URLs
 # (DISCORD_WEBHOOK_URL_PAGES, DISCORD_WEBHOOK_URL_ALERTS) — point both
 # at the same webhook if you only want one channel.
+#
+# ─── The Discord message templates are BOUNDED. Keep them that way. ──
+#
+# A Discord embed is rejected whole if its description exceeds 4096
+# characters, its title exceeds 256, or the two together exceed 6000.
+# Alertmanager 0.26 (the version on r1) does not truncate either field,
+# and it treats the resulting HTTP 400 as UNRECOVERABLE — one oversized
+# notification kills the receiver for every alert routed to it, not just
+# the one that overflowed.
+#
+# That is not hypothetical. On 2026-09-07T14:28 reflector-dex stalled,
+# 22 stellarindex_oracle_stale alerts landed in one group, the then
+# unbounded `range .Alerts` rendered a 9319-character description, and
+# chat-default returned 400 on every attempt for 11 hours
+# (alertmanager_notifications_failed_total{integration="discord"} = 107).
+# Every other ticket alert in that window was silently dropped with it.
+#
+# So both message templates render AT MOST `$max` alerts, state the
+# remainder, and cap every interpolated field with `printf "%.Ns"`. The
+# bound is therefore hard, not an estimate: no annotation, label or URL
+# can grow the payload. Measured worst case is 2257 characters (55% of
+# the 4096 limit) at any group size; the real 22-alert group renders at
+# 1378. If you edit a template here, re-measure — apply.sh's
+# `--check-only` validates syntax, not size.
 
 global:
   resolve_timeout: 5m
@@ -43,6 +67,25 @@ route:
       group_interval: 60s
       repeat_interval: 60s
       continue: false
+
+    # Delivery failure — reported OUT OF BAND, on purpose.
+    #
+    # stellarindex_alertmanager_notifications_failing is the alert that
+    # says "a receiver is being refused by the far end". Routed by
+    # severity alone it is a ticket, so it lands in chat-default — i.e.
+    # it is delivered through the very integration whose failure it is
+    # reporting. During the 2026-09-07 Discord outage it fired for 11
+    # hours into the dead channel and nobody saw it: the only signal of
+    # a delivery failure travelled the failing path.
+    #
+    # `continue: true` — this route ADDS a transport, it does not take
+    # one away. The alert still falls through to the severity routes
+    # below and reaches chat exactly as before whenever chat works.
+    - matchers: [alertname = "stellarindex_alertmanager_notifications_failing"]
+      receiver: alert-delivery-failure
+      group_interval: 5m
+      repeat_interval: 1h
+      continue: true
 
     # SEV-1 — page operators. Currently routes to chat-page; wire
     # PagerDuty in chat-page receiver below when integration_key is
@@ -95,12 +138,14 @@ receivers:
     discord_configs:
       - webhook_url: ${DISCORD_WEBHOOK_URL_PAGES}
         send_resolved: true
-        title: '🚨 PAGE — {{ .GroupLabels.alertname }}'
+        title: '🚨 PAGE — {{ printf "%.120s" .GroupLabels.alertname }}'
         message: |
-          {{ range .Alerts }}
-          **{{ .Annotations.summary }}**
-          {{ .Annotations.description }}
-          {{ if .Annotations.runbook_url }}Runbook: {{ .Annotations.runbook_url }}{{ end }}
+          {{ $max := 3 }}{{ $shown := .Alerts }}{{ if gt (len .Alerts) $max }}{{ $shown = slice .Alerts 0 $max }}{{ end }}{{ range $shown }}{{ $sum := printf "%.160s" .Annotations.summary }}{{ $desc := printf "%.300s" (trimSpace .Annotations.description) }}
+          **{{ $sum }}{{ if ne $sum .Annotations.summary }} …{{ end }}**
+          {{ $desc }}{{ if ne $desc (trimSpace .Annotations.description) }} …{{ end }}
+          {{ if .Annotations.runbook_url }}Runbook: {{ printf "%.200s" .Annotations.runbook_url }}{{ end }}
+          {{ end }}{{ if gt (len .Alerts) $max }}
+          … and {{ len (slice .Alerts $max) }} more in this group — see {{ printf "%.120s" .ExternalURL }}
           {{ end }}
 
   # Ticket-severity + default → Discord #stellarindex-alerts webhook,
@@ -109,13 +154,35 @@ receivers:
     discord_configs:
       - webhook_url: ${DISCORD_WEBHOOK_URL_ALERTS}
         send_resolved: true
-        title: '{{ .GroupLabels.alertname }}'
+        title: '{{ printf "%.120s" .GroupLabels.alertname }}'
         message: |
-          {{ range .Alerts }}
-          **[{{ .Labels.severity | toUpper }}]** {{ .Annotations.summary }}
-          {{ .Annotations.description }}
-          {{ if .Annotations.runbook_url }}Runbook: {{ .Annotations.runbook_url }}{{ end }}
+          {{ $max := 3 }}{{ $shown := .Alerts }}{{ if gt (len .Alerts) $max }}{{ $shown = slice .Alerts 0 $max }}{{ end }}{{ range $shown }}{{ $sum := printf "%.160s" .Annotations.summary }}{{ $desc := printf "%.300s" (trimSpace .Annotations.description) }}
+          **[{{ printf "%.16s" (.Labels.severity | toUpper) }}]** {{ $sum }}{{ if ne $sum .Annotations.summary }} …{{ end }}
+          {{ $desc }}{{ if ne $desc (trimSpace .Annotations.description) }} …{{ end }}
+          {{ if .Annotations.runbook_url }}Runbook: {{ printf "%.200s" .Annotations.runbook_url }}{{ end }}
+          {{ end }}{{ if gt (len .Alerts) $max }}
+          … and {{ len (slice .Alerts $max) }} more in this group — see {{ printf "%.120s" .ExternalURL }}
           {{ end }}
+
+  # Delivery-failure escape hatch — a SECOND Healthchecks.io check,
+  # deliberately NOT the deadmansswitch one. Pinging the deadman check's
+  # /fail endpoint would work mechanically, but it would make one signal
+  # carry two meanings ("Prometheus or Alertmanager is dead" and "chat
+  # delivery is being refused") and send the operator to the wrong
+  # runbook. Provision a separate check — see
+  # docs/operations/runbooks/alertmanager-notifications-failing.md.
+  #
+  # Dark until that check exists: with the URL unset the renderer drops
+  # this block and the receiver becomes a stub. That is why the route
+  # above carries `continue: true` — chat delivery is identical either
+  # way, and apply.sh names this receiver on every run so the gap cannot
+  # go unnoticed. max_alerts bounds the webhook body for the same reason
+  # the Discord templates are bounded.
+  - name: alert-delivery-failure
+    webhook_configs:
+      - url: ${HEALTHCHECKS_ALERT_DELIVERY_URL}
+        send_resolved: true
+        max_alerts: 5
 
   # ─── silent — A BLACK HOLE, ON PURPOSE ─────────────────────────
   #

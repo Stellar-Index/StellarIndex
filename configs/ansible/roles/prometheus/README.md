@@ -42,6 +42,12 @@ emitted metrics. Design rationale lives in
     for the `ticket` route (#alerts channel). Discord webhooks are
     locked to one channel each; point both vars at the same webhook
     if you only want a single channel.
+  - `alertmanager_healthchecks_alert_delivery_url` — Healthchecks
+    URL for `stellarindex_alertmanager_notifications_failing`, on a
+    check SEPARATE from the deadmansswitch one. Without it, the only
+    signal that chat delivery is being refused travels the refused
+    path (2026-09-07: 11 h of Discord 400s, the alert firing into
+    the dead channel throughout).
 
   Note: the template uses the shared
   `page / ticket / informational` severity vocabulary that
@@ -136,7 +142,20 @@ on `prometheus_pair`. No manual scrape-config edits.
 page          → chat-page    (Discord #pages + PagerDuty when wired)
 ticket        → chat-default  (Discord #alerts)
 informational → silent        (Alertmanager UI only — no fanout)
+
+stellarindex_alertmanager_notifications_failing
+              → alert-delivery-failure (Healthchecks, out of band)
+                AND onward to the severity route (continue: true)
 ```
+
+Both Discord message templates are BOUNDED — at most three alerts
+rendered per notification plus a "…and N more" line, with every
+interpolated field capped by `printf "%.Ns"`. A Discord embed whose
+description exceeds 4096 characters is rejected with HTTP 400, which
+Alertmanager treats as unrecoverable, killing the receiver for every
+alert routed to it. Keep the templates byte-identical to the ones in
+`configs/alertmanager/alertmanager.r1.yml` and re-measure if you
+change them.
 
 Inhibit rules:
 - A `page`-severity alert for a given `(alertname, service)`

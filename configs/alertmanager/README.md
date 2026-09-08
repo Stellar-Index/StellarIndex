@@ -27,10 +27,42 @@ vocabulary defined in the severity ladder in
 | `ticket` | `chat-default` (Discord `#stellarindex-alerts`) | every 24 h while firing |
 | `informational` | `silent` (Alertmanager UI only) | — |
 | `stellarindex_deadmansswitch` | `deadmansswitch` (Healthchecks.io) | every 60 s |
+| `stellarindex_alertmanager_notifications_failing` | `alert-delivery-failure` (Healthchecks.io) **and** the severity route | every 1 h |
 
 The deadmansswitch is the alarm-of-last-resort — when its 60 s
 heartbeat stops, Healthchecks.io pages us via a fully separate
 channel, catching outages of Prometheus or Alertmanager itself.
+
+`alert-delivery-failure` closes a different gap. The alert that
+reports a refused delivery is a `ticket`, so by severity alone it is
+delivered through the integration whose failure it is reporting — on
+2026-09-07 the Discord receiver returned HTTP 400 for 11 hours and
+that alert fired into the same dead channel the entire time. Its
+route carries `continue: true`, so the alert reaches the out-of-band
+check *in addition to* chat, never instead of it. The check is
+deliberately separate from the deadmansswitch one: overloading that
+signal would make "Prometheus is dead" and "chat delivery is refused"
+indistinguishable.
+
+## Message size is bounded on purpose
+
+A Discord embed is rejected whole (HTTP 400, which Alertmanager treats
+as **unrecoverable** — one attempt, no retry) if its description
+exceeds 4096 characters, its title exceeds 256, or the two together
+exceed 6000. Alertmanager 0.26 does not truncate either field.
+
+So both Discord templates render at most **3** alerts per notification,
+state the remainder ("… and N more in this group"), and cap every
+interpolated field with `printf "%.Ns"` — summary 160, description 300,
+runbook URL 200, severity 16, alertname 120, external URL 120. The
+bound is hard: no annotation, label or URL can grow the payload. The
+measured worst case is **2257 characters** at any group size (55 % of
+the limit); the real 22-alert `stellarindex_oracle_stale` group that
+caused the outage renders at **1378**, down from **9319**.
+
+`apply.sh --check-only` and `amtool check-config` validate *syntax*,
+not size. If you edit a template, re-render it against a large group
+and count the characters.
 
 ## Apply to R1
 
@@ -45,6 +77,11 @@ channel, catching outages of Prometheus or Alertmanager itself.
    # at the same URL if you only want a single channel.
    DISCORD_WEBHOOK_URL_PAGES='https://discord.com/api/webhooks/<id>/<token>'
    DISCORD_WEBHOOK_URL_ALERTS='https://discord.com/api/webhooks/<id>/<token>'
+   # Optional, strongly recommended: a SECOND Healthchecks check (not
+   # the deadmansswitch one) that carries delivery failures out of
+   # band. Unset is allowed so provisioning never blocks an urgent
+   # apply, but apply.sh prints "DARK" on every run until it is set.
+   HEALTHCHECKS_ALERT_DELIVERY_URL='https://hc-ping.com/<a-different-uuid>'
    ```
 
    **None of these may be empty.** An empty URL makes the renderer

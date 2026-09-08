@@ -12,6 +12,14 @@
 #   DISCORD_WEBHOOK_URL_PAGES       — e.g. https://discord.com/api/webhooks/<id>/<token>
 #   DISCORD_WEBHOOK_URL_ALERTS      — e.g. https://discord.com/api/webhooks/<id>/<token>
 #
+# Optional env var:
+#   HEALTHCHECKS_ALERT_DELIVERY_URL — a SECOND Healthchecks check (not
+#     the deadmansswitch one) that carries
+#     stellarindex_alertmanager_notifications_failing out of band, so a
+#     dead Discord receiver cannot swallow the alert that reports it.
+#     Optional so that provisioning a new check never blocks an urgent
+#     apply — but never silent: every run prints whether it is wired.
+#
 # An empty URL makes the renderer drop that receiver's *_configs block,
 # leaving a no-op stub: the receiver accepts alerts and delivers them to
 # nobody, exactly like `silent`. That is a legitimate rendering branch
@@ -63,19 +71,26 @@ fi
 # and ALERTMANAGER_ALLOW_EMPTY use the same vocabulary.
 am_url_for() {
   case "$1" in
-    deadmansswitch) printf '%s' "${HEALTHCHECKS_DEADMANSSWITCH_URL:-}" ;;
-    pages)          printf '%s' "${DISCORD_WEBHOOK_URL_PAGES:-}" ;;
-    alerts)         printf '%s' "${DISCORD_WEBHOOK_URL_ALERTS:-}" ;;
+    deadmansswitch)   printf '%s' "${HEALTHCHECKS_DEADMANSSWITCH_URL:-}" ;;
+    pages)            printf '%s' "${DISCORD_WEBHOOK_URL_PAGES:-}" ;;
+    alerts)           printf '%s' "${DISCORD_WEBHOOK_URL_ALERTS:-}" ;;
+    delivery-failure) printf '%s' "${HEALTHCHECKS_ALERT_DELIVERY_URL:-}" ;;
   esac
 }
 am_var_for() {
   case "$1" in
-    deadmansswitch) printf 'HEALTHCHECKS_DEADMANSSWITCH_URL' ;;
-    pages)          printf 'DISCORD_WEBHOOK_URL_PAGES' ;;
-    alerts)         printf 'DISCORD_WEBHOOK_URL_ALERTS' ;;
+    deadmansswitch)   printf 'HEALTHCHECKS_DEADMANSSWITCH_URL' ;;
+    pages)            printf 'DISCORD_WEBHOOK_URL_PAGES' ;;
+    alerts)           printf 'DISCORD_WEBHOOK_URL_ALERTS' ;;
+    delivery-failure) printf 'HEALTHCHECKS_ALERT_DELIVERY_URL' ;;
   esac
 }
 AM_RECEIVERS="deadmansswitch pages alerts"
+# Optional: absence is reported, not refused. Adding delivery-failure to
+# the required set would mean the apply that RESTORES a broken chat
+# channel first fails on a check nobody has created yet — the worst
+# possible moment to introduce a new precondition.
+AM_OPTIONAL_RECEIVERS="delivery-failure"
 
 # --check-only is a RENDERER test: CI drives it with every URL empty on
 # purpose, to exercise the block-stripper. The fail-closed guard is an
@@ -106,12 +121,25 @@ if [ "$CHECK_ONLY" = false ]; then
     } >&2
     exit 1
   fi
+
+  # Optional receivers are never refused, but they are never silent
+  # either: an out-of-band transport that nobody notices is missing is
+  # the same failure mode as one that was never added.
+  for r in $AM_OPTIONAL_RECEIVERS; do
+    if [ -n "$(am_url_for "$r")" ]; then
+      echo "alertmanager: optional receiver '$r' is wired ($(am_var_for "$r"))"
+    else
+      echo "alertmanager: optional receiver '$r' is DARK — $(am_var_for "$r") is unset," >&2
+      echo "              so a refused chat delivery has no out-of-band alarm." >&2
+    fi
+  done
 fi
 
 RENDERED="$(mktemp)"
 trap 'rm -f "$RENDERED"' EXIT
 
 HEALTHCHECKS_URL="${HEALTHCHECKS_DEADMANSSWITCH_URL:-}" \
+HEALTHCHECKS_DELIVERY_URL="${HEALTHCHECKS_ALERT_DELIVERY_URL:-}" \
 DISCORD_PAGES_URL="${DISCORD_WEBHOOK_URL_PAGES:-}" \
 DISCORD_ALERTS_URL="${DISCORD_WEBHOOK_URL_ALERTS:-}" \
 SOURCE="$SOURCE" \
@@ -122,9 +150,10 @@ import os
 src = open(os.environ["SOURCE"]).read()
 
 subs = {
-    "${HEALTHCHECKS_DEADMANSSWITCH_URL}": os.environ.get("HEALTHCHECKS_URL", "").strip(),
-    "${DISCORD_WEBHOOK_URL_PAGES}":       os.environ.get("DISCORD_PAGES_URL", "").strip(),
-    "${DISCORD_WEBHOOK_URL_ALERTS}":      os.environ.get("DISCORD_ALERTS_URL", "").strip(),
+    "${HEALTHCHECKS_DEADMANSSWITCH_URL}":  os.environ.get("HEALTHCHECKS_URL", "").strip(),
+    "${HEALTHCHECKS_ALERT_DELIVERY_URL}":  os.environ.get("HEALTHCHECKS_DELIVERY_URL", "").strip(),
+    "${DISCORD_WEBHOOK_URL_PAGES}":        os.environ.get("DISCORD_PAGES_URL", "").strip(),
+    "${DISCORD_WEBHOOK_URL_ALERTS}":       os.environ.get("DISCORD_ALERTS_URL", "").strip(),
 }
 
 
@@ -191,7 +220,7 @@ fi
 # ALERTMANAGER_SKIP_PROBE=1 for an offline or air-gapped apply.
 if [ "${ALERTMANAGER_SKIP_PROBE:-0}" != "1" ]; then
   probe_failed=""
-  for r in $AM_RECEIVERS; do
+  for r in $AM_RECEIVERS $AM_OPTIONAL_RECEIVERS; do
     url="$(am_url_for "$r")"
     [ -z "$url" ] && continue
     if curl -fsS --max-time 10 -o /dev/null "$url"; then
@@ -224,7 +253,7 @@ echo "alertmanager: applied $TARGET, reload OK"
 # that turns "the file I wrote looks right" into "the process I just
 # reloaded will fan out".
 AM_API="${AM_API:-http://localhost:9093}"
-for attempt in 1 2 3 4 5; do
+for _ in 1 2 3 4 5; do
   loaded="$(curl -fsS --max-time 5 "$AM_API/api/v2/status" 2>/dev/null \
             | python3 -c 'import sys,json; print(json.load(sys.stdin)["config"]["original"])' 2>/dev/null)" && break
   sleep 1
@@ -235,14 +264,20 @@ if [ -z "$loaded" ]; then
   echo "              the file is installed but delivery is UNVERIFIED." >&2
 else
   want_webhook=0; want_discord=0
-  for r in $AM_RECEIVERS; do
+  for r in $AM_RECEIVERS $AM_OPTIONAL_RECEIVERS; do
     [ -z "$(am_url_for "$r")" ] && continue
-    case "$r" in deadmansswitch) want_webhook=1 ;; *) want_discord=$((want_discord + 1)) ;; esac
+    case "$r" in
+      deadmansswitch|delivery-failure) want_webhook=$((want_webhook + 1)) ;;
+      *)                               want_discord=$((want_discord + 1)) ;;
+    esac
   done
   got_webhook=$(printf '%s' "$loaded" | grep -c 'webhook_configs:' || true)
   got_discord=$(printf '%s' "$loaded" | grep -c 'discord_configs:' || true)
   bad=""
-  [ "$want_webhook" -gt 0 ] && [ "$got_webhook" -lt 1 ] && bad="$bad deadmansswitch"
+  # Counted, not "at least one": with two webhook receivers configured, a
+  # single surviving block would otherwise satisfy the old `-lt 1` test
+  # while the other one had been stripped.
+  [ "$got_webhook" -lt "$want_webhook" ] && bad="$bad webhook($got_webhook/$want_webhook)"
   [ "$got_discord" -lt "$want_discord" ] && bad="$bad discord($got_discord/$want_discord)"
   if [ -n "$bad" ]; then
     echo "error: the RUNNING config is missing delivery blocks:$bad" >&2

@@ -597,6 +597,18 @@ to a receiver that expects it every minute. If the receiver stops
 seeing it, that's the alarm (catches AlertManager-down and
 Prometheus-down scenarios).
 
+`stellarindex_alertmanager_notifications_failing` is routed twice, on
+purpose. By severity alone it is a `ticket`, so it fans out to the
+Discord `chat-default` receiver — the same integration whose failure
+it exists to report. On 2026-09-07 that receiver returned HTTP 400 for
+11 hours and this alert fired into the dead channel for the whole
+window. An alertname-matched route now also sends it to
+`alert-delivery-failure` (a Healthchecks.io check separate from the
+deadman's switch) with `continue: true`, so it reaches an out-of-band
+transport *in addition to* chat. See
+[alertmanager-notifications-failing](runbooks/alertmanager-notifications-failing.md)
+for the provisioning step that arms it.
+
 `prometheus_down` is the disk-full / TSDB-corruption family — same
 root cause as `redis-write-blocked-disk-full`. Doesn't have its own
 Prometheus rule (Prometheus can't alert on its own absence — that's

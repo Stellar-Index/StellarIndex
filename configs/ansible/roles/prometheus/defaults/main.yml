@@ -97,6 +97,21 @@ alertmanager_discord_webhook_url_alerts: ""
 # docs/operations/runbooks/deadmansswitch.md).
 alertmanager_healthchecks_deadmansswitch_url: ""
 
+# Healthchecks.io endpoint for delivery FAILURES — a SECOND check, not
+# the deadmansswitch one. stellarindex_alertmanager_notifications_failing
+# is routed here as well as to chat, because routed to chat alone it is
+# delivered through the integration whose failure it reports: on
+# 2026-09-07 a Discord receiver returned 400 for 11 h and that alert
+# fired into the same dead channel for the whole window.
+#
+# Deliberately a separate check: pinging the deadmansswitch check's
+# /fail endpoint would make one signal mean both "Prometheus or
+# Alertmanager is dead" and "chat delivery is being refused", sending
+# the operator to the wrong runbook. Empty = the receiver renders as a
+# stub and the alert still reaches chat (the route carries
+# `continue: true`), i.e. no worse than before, but no better either.
+alertmanager_healthchecks_alert_delivery_url: ""
+
 # ── Firewall ───────────────────────────────────────────────────
 # AlertManager cluster gossip needs TCP between the two prom
 # hosts on 9094.

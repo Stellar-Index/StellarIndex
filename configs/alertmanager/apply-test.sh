@@ -31,7 +31,7 @@ run_with() {
   out="$(ALERTMANAGER_SECRETS="$env_file" \
          ALERTMANAGER_SKIP_PROBE="${SKIP_PROBE:-1}" \
          TARGET="$(mktemp)" \
-         bash "$APPLY" ${CHECK_ONLY_FLAG:-} 2>&1)"
+         bash "$APPLY" "${CHECK_ONLY_FLAG:-}" 2>&1)"
   RC=$?
   rm -f "$env_file"
   printf '%s' "$out"
@@ -138,6 +138,50 @@ else
 fi
 else
   echo "  skip — amtool not installed; probe rejection not exercised"
+fi
+
+# 8. The out-of-band delivery-failure receiver is OPTIONAL — an unset
+#    URL must not block the apply. Making it required would mean the
+#    apply that restores a broken chat channel fails first on a
+#    Healthchecks check nobody has created yet.
+out8="$(run_with "${FULL[@]}")"
+if [[ "$out8" != *"refusing to install"* ]]; then
+  ok "an unset HEALTHCHECKS_ALERT_DELIVERY_URL does not block the apply"
+else
+  bad "unset delivery-failure URL should not be fatal; out=${out8:0:200}"
+fi
+
+# 9. …but it is never SILENT. A dark out-of-band transport that nobody
+#    notices is missing fails exactly like one that was never added, so
+#    every run says so by name and names the variable to set.
+if [[ "$out8" == *"optional receiver 'delivery-failure' is DARK"* ]] \
+   && [[ "$out8" == *"HEALTHCHECKS_ALERT_DELIVERY_URL"* ]]; then
+  ok "an unset delivery-failure URL is reported by name"
+else
+  bad "dark optional receiver was not reported; out=${out8:0:300}"
+fi
+
+# 10. And when it IS set: reported as wired, and the extra
+#     `${HEALTHCHECKS_ALERT_DELIVERY_URL}` marker substitutes cleanly —
+#     case 6 only ever exercises that marker on the stripper branch.
+if command -v amtool >/dev/null 2>&1; then
+  CHECK_ONLY_FLAG=--check-only
+  out10="$(run_with "${FULL[@]}" 'HEALTHCHECKS_ALERT_DELIVERY_URL=https://hc-ping.com/y')"
+  rc10=$?
+  unset CHECK_ONLY_FLAG
+  if [ "$rc10" -eq 0 ]; then
+    ok "--check-only renders + validates with the delivery-failure URL set"
+  else
+    bad "delivery-failure substitution branch should validate; rc=$rc10 out=${out10:0:300}"
+  fi
+  out11="$(run_with "${FULL[@]}" 'HEALTHCHECKS_ALERT_DELIVERY_URL=https://hc-ping.com/y')"
+  if [[ "$out11" == *"optional receiver 'delivery-failure' is wired"* ]]; then
+    ok "a set delivery-failure URL is reported as wired"
+  else
+    bad "wired optional receiver was not reported; out=${out11:0:300}"
+  fi
+else
+  echo "  skip — amtool not installed; delivery-failure branches not exercised"
 fi
 
 echo "alertmanager apply-test: $PASS passed, $FAIL failed"
