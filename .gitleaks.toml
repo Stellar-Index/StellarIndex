@@ -23,6 +23,16 @@ useDefault = true
 description = "Gitignored local-dev bulk (working-tree scan only)"
 paths = [
   '''^\.discovery-repos/''',
+  # Per-host ansible inventory + its secrets. These are GITIGNORED and
+  # untracked — they hold the real credentials for r1 and the test nets
+  # and must never be committed, which is exactly why .gitignore covers
+  # them. The working-tree scan reads them anyway, so without this entry
+  # verify.sh cannot pass on ANY operator machine that actually holds the
+  # inventory, which is every machine that can run a deploy. The
+  # protection that matters here is the COMMITTED-HISTORY scan below,
+  # which still sees these paths if anyone ever force-adds one.
+  '''^configs/ansible/inventory/[^/]+\.secrets\.yml$''',
+  '''^configs/ansible/inventory/r[^/]*\.yml$''',
   '''(^|/)node_modules/''',
   '''^web/[^/]+/(\.next|out)/''',
   '''^docs/archive/''',
@@ -94,6 +104,12 @@ paths = [
 description = "Test-only Stellar G-strkey + C-strkey fixtures (Circle USDC issuer + USDC SAC contract id, both public ledger entries) used by trades.usd_volume tests for L2.2 phase 1. Same pattern as the dispatcher_test.go allowlist — bare addresses trip the entropy heuristic, but they're not credentials."
 paths = [
   '''internal/storage/timescale/trades_usd_volume_test\.go''',
+]
+
+[[rules.allowlists]]
+description = "Test-only Stellar C-strkey fixtures (public Soroban contract IDs) standing in for a token/token pair in the usd-volume restamp mirror-tier tests. They exist to prove the substance gate REFUSES to price a pair with no XLM or USD-pegged leg, so the addresses are deliberately arbitrary and pair with no private key. Same entropy-heuristic false positive as the trades_usd_volume_test.go allowlist above."
+paths = [
+  '''internal/storage/timescale/usd_volume_restamp_mirrors_test\.go''',
 ]
 
 [[rules.allowlists]]
