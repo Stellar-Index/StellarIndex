@@ -35,6 +35,21 @@ against.
   refresh this far back on its own, so the check went green while the
   API kept serving pre-restamp numbers.
 
+- **ops:** `backfill-index` loaded its config with bare `config.Load`,
+  so it ignored `STELLARINDEX_POSTGRES_DSN` and fell back to the file's
+  password-less DSN — the run reached the API, did its work, then died
+  at connect time with a SASL failure. It now uses `LoadWithEnv` like
+  the other 52 ops commands, pinned by a regression test (the C3-14
+  class the archive commands already guard).
+
+- **ops:** `backfill-index` now refuses a pre-2018 window walked in
+  chunks of 90 days or fewer. CoinGecko picks granularity from the
+  window width and holds no hourly history before 2018, so such a
+  request returned an empty series with no error — indistinguishable
+  from the source genuinely lacking the data. The default
+  `-chunk-days 80` hit this, making every default pre-2018 invocation a
+  silent no-op.
+
 - `stellarindex-ops -h`: the `backfill-index` entry was inserted
   between `backfill-chainlink`'s synopsis and its description, so the
   Chainlink text read as if it documented the CoinGecko index
