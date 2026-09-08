@@ -1,0 +1,44 @@
+# Managed by ansible — archival-node role, 23-local-prometheus.yml.
+# Any hand edit is erased on the next apply; change
+# roles/archival-node/defaults/main.yml (local_prometheus_*) instead.
+#
+# Single-host scrape config: every target is on this box. The job list
+# is rendered from `local_prometheus_scrape_jobs`, which is DERIVED
+# from the run_* switches that decide which services this host
+# installs — so a subsystem that is switched off contributes no target
+# rather than a permanently-down one. See the derivation, and why a
+# hardcoded list is the bug this file fixes, in the role defaults.
+#
+# Deliberately absent: `alerting:` and `rule_files:`. That is a scope
+# decision, not an oversight. /v1/status needs the scrape layer —
+# Heartbeats/Latency/Freshness read plain series, and Incidents()
+# queries the `ALERTS` series Prometheus synthesizes itself, so an
+# empty rule set answers "nothing firing" instead of erroring.
+# Alertmanager would add paging that a disposable test net has no
+# on-call rotation for. Adding rules later is a drop-in:
+# deploy/monitoring/rules/ (multi-host labels) and
+# configs/prometheus/rules.r1/ (the hyphenated-job overlay that matches
+# the job names below) are both in tree.
+
+global:
+  scrape_interval: {{ local_prometheus_scrape_interval }}
+  scrape_timeout: {{ local_prometheus_scrape_timeout }}
+  evaluation_interval: {{ local_prometheus_scrape_interval }}
+  # Stamped on every series so a federated/compared read can tell the
+  # networks apart. Same two labels prometheus.r1.yml carries.
+  external_labels:
+    region: {{ region_id }}
+    deployment: {{ region_deployment | default('production') }}
+
+scrape_configs:
+{% for job in local_prometheus_scrape_jobs %}
+  - job_name: {{ job.job }}
+{% if job.path is defined %}
+    metrics_path: {{ job.path }}
+{% endif %}
+{% if job.timeout is defined %}
+    scrape_timeout: {{ job.timeout }}
+{% endif %}
+    static_configs:
+      - targets: ["{{ job.target }}"]
+{% endfor %}

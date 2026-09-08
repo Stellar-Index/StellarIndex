@@ -1110,6 +1110,130 @@ loki_push_url:           "http://localhost:3100/loki/api/v1/push"
 pgbackrest_exporter_version: "0.23.0"  # 2026-07-03: matched to the version live on r1 (0.18.0 predated it AND its release URL 404s upstream)
 # pgbackrest_exporter_release_sha256: <required; set in inventory>
 
+# ───── Local single-host Prometheus (23-local-prometheus.yml) ────────
+#
+# The exporters above emit; nothing on a lean host SCRAPES them. That
+# gap is not just missing dashboards — it changes what the API says
+# about itself. /v1/status derives background-service liveness from
+# PrometheusStatusBackend.Heartbeats(), which queries
+# `timestamp(up{job=~"stellarindex-indexer|stellarindex-aggregator|
+# stellarindex-api"})` against `api.prometheus_url` (templated
+# unconditionally to http://localhost:9090 in stellarindex.toml.j2).
+# With no Prometheus there, every query errors, status.go maps that to
+# hb = nil, every declared service grades `unknown`, and rollupOverall
+# turns that into `overall: degraded` — permanently, on a host where
+# every unit is active. Both test nets sat in that state.
+#
+# Default OFF. `configs/ansible/playbooks/monitoring.yml` +
+# roles/prometheus remain the MULTI-HOST shape (a `prometheus_pair`
+# group of exactly two hosts, tarball install, its own unit); this is
+# the single-host path, and it deliberately mirrors what r1 runs
+# out-of-band: the DISTRO PACKAGE (`prometheus`, /usr/bin/prometheus,
+# unit `prometheus.service`) plus a scrape config of localhost targets.
+# r1 keeps its out-of-band arrangement (this stays false there).
+#
+# ALERTING IS OUT OF SCOPE HERE, deliberately — not forgotten. What
+# /v1/status needs is the SCRAPE layer: Heartbeats/Latency/Freshness
+# all read plain series, and Incidents() queries the `ALERTS` series
+# that Prometheus itself synthesizes from loaded rules, so an empty
+# rule set answers "no firing alerts" without erroring. Alertmanager
+# would add paging, which a disposable test net has no on-call for.
+run_local_prometheus: false
+
+# Loopback-only bind. The API reads localhost:9090 from the same box,
+# and 9090 is not in internal_allow_ports on any inventory — the bind
+# is the defence-in-depth half of that, same posture as the redis /
+# postgres exporters. Operator UI access is `ssh -L 9090:localhost:9090`.
+local_prometheus_listen: "127.0.0.1:9090"
+
+# Retention. statusHeartbeatStaleAfter in internal/api/v1/status.go is
+# 60 s, so the scrape interval has to stay well under it; 15 s matches
+# configs/prometheus/prometheus.r1.yml.
+#
+# 7 days, capped at 4 GB, is sized for the test-net VMs rather than for
+# r1: ~20 GB RAM and ~500 GB free disk each, and the value of the data
+# is "what happened during this debugging session", not quarter-long
+# trends. Whichever limit trips first evicts. A production host turning
+# this on should raise both (the multi-host role uses 30 d).
+local_prometheus_retention_time: "7d"
+local_prometheus_retention_size: "4GB"
+local_prometheus_scrape_interval: "15s"
+local_prometheus_scrape_timeout: "10s"
+
+# Memory ceiling, enforced by a systemd drop-in. testnet.yml documents a
+# real prior OOM on these VMs (ClickHouse + captive-core exhausted
+# committable memory) and carries vm_overcommit_memory: 0 plus a 4 GiB
+# ClickHouse cap for it. A handful of localhost targets is a few
+# thousand active series — well under 300 MB — so 1 GiB is generous and
+# still small enough that a runaway TSDB cannot starve the VM.
+# MemoryHigh throttles and reclaims first; MemoryMax is the hard stop.
+local_prometheus_memory_high: "768M"
+local_prometheus_memory_max: "1G"
+
+# Scrape ports that no other role default already names. The three
+# exporter ports are the same literals 16-prometheus-exporters.yml
+# writes into the exporters' env-files and
+# templates/systemd/pgbackrest_exporter.service.j2 passes to
+# --web.listen-address; change them together. The indexer/aggregator
+# ports are internal/config's obs.metrics_listen default (9464) and the
+# aggregator's automatic shift off that collision (9465) — the role
+# templates no [obs] section, so the binaries use those defaults.
+local_prometheus_indexer_port: 9464
+local_prometheus_aggregator_port: 9465
+local_prometheus_redis_exporter_port: 9121
+local_prometheus_postgres_exporter_port: 9187
+local_prometheus_pgbackrest_exporter_port: 9854
+local_prometheus_caddy_admin_port: 2019
+
+# The scrape list is DERIVED from the same run_* switches that decide
+# which services this host installs — never a fixed list. A hardcoded
+# target for a service the host does not run is the same class of bug
+# this whole file exists to fix: both test nets set run_aggregator:
+# false, so a `stellarindex-aggregator` job there would be a target
+# that can never come up. It would not even fail honestly —
+# Heartbeats() reads `timestamp(up{...})`, and Prometheus stamps `up 0`
+# at the scrape time of a FAILED scrape, so a dead target reads as a
+# fresh heartbeat. (`status_services` in stellarindex.toml.j2 derives
+# from run_aggregator the same way, which is why the two must agree.)
+#
+# Same shape as public_allow_ports / internal_allow_ports above: base
+# list plus a conditional fragment per subsystem. Each entry is
+# {job, target} with optional `path` (metrics_path) and `timeout`
+# (per-job scrape_timeout). Inspect the result for an inventory
+# WITHOUT touching the host:
+#
+#   ansible-inventory -i inventory/testnet.yml --host si-testnet
+#   ansible si-testnet -i inventory/testnet.yml -m debug \
+#     -a "var=local_prometheus_scrape_jobs" --connection=local
+#
+# Not scraped, on purpose: MinIO (its /metrics needs a bearer token
+# minted by hand — see the job comment in prometheus.r1.yml) and
+# Alertmanager (not installed; see run_local_prometheus above).
+local_prometheus_scrape_jobs: >-
+  {{
+    [{'job': 'prometheus', 'target': '127.0.0.1:' ~ (local_prometheus_listen | regex_replace('^.*:', ''))}]
+    + ([{'job': 'node_exporter', 'target': '127.0.0.1:' ~ node_exporter_port}]
+       if run_observability | bool else [])
+    + ([{'job': 'stellarindex-indexer', 'target': '127.0.0.1:' ~ local_prometheus_indexer_port}]
+       if run_stellarindex | bool else [])
+    + ([{'job': 'stellarindex-api', 'target': '127.0.0.1:' ~ (stellarindex_api_listen_addr | regex_replace('^.*:', ''))}]
+       if run_stellarindex | bool else [])
+    + ([{'job': 'stellarindex-aggregator', 'target': '127.0.0.1:' ~ local_prometheus_aggregator_port}]
+       if (run_stellarindex | bool) and (run_aggregator | default(true) | bool) else [])
+    + ([{'job': 'redis_exporter', 'target': '127.0.0.1:' ~ local_prometheus_redis_exporter_port}]
+       if (run_observability | bool) and (run_redis | bool) else [])
+    + ([{'job': 'postgres_exporter', 'target': '127.0.0.1:' ~ local_prometheus_postgres_exporter_port}]
+       if (run_observability | bool) and (run_postgres | bool) else [])
+    + ([{'job': 'pgbackrest_exporter', 'target': '127.0.0.1:' ~ local_prometheus_pgbackrest_exporter_port}]
+       if (run_observability | bool) and (pgbackrest_backup_enabled | default(true) | bool) else [])
+    + ([{'job': 'clickhouse', 'target': '127.0.0.1:' ~ clickhouse_prometheus_port}]
+       if (run_clickhouse | bool) and (clickhouse_prometheus_enabled | default(true) | bool) else [])
+    + ([{'job': 'galexie', 'target': '127.0.0.1:' ~ galexie_admin_port, 'timeout': '5s'}]
+       if run_galexie | bool else [])
+    + ([{'job': 'caddy', 'target': '127.0.0.1:' ~ local_prometheus_caddy_admin_port}]
+       if run_caddy | bool else [])
+  }}
+
 # ───── SSH hardening ─────────────────────────────────────────────────
 admin_ssh_keys: []
 ssh_permit_root_login: "prohibit-password"

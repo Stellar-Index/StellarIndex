@@ -162,3 +162,18 @@
   # r1 is the host whose lake exports no metrics at all.
   ansible.builtin.import_tasks: 22-clickhouse-exporter.yml
   tags: [clickhouse, clickhouse-exporter, observability]
+
+- name: "Local single-host Prometheus (ASH-8 — the /v1/status scrape layer)"
+  # LAST on purpose. Its scrape list is derived from the run_* switches,
+  # so every target it declares has already been installed by the tasks
+  # above (exporters at 10/16/22, the stellarindex units at 14) — the
+  # verify at the end of the file can then assert real scrapes on a
+  # from-scratch build instead of racing the services it monitors.
+  #
+  # Default OFF (run_local_prometheus, defaults/main.yml): r1's
+  # Prometheus + Alertmanager stay managed out-of-band, and
+  # playbooks/monitoring.yml + roles/prometheus stay the multi-host
+  # shape. The test-net inventories turn it on.
+  ansible.builtin.import_tasks: 23-local-prometheus.yml
+  when: run_local_prometheus | bool
+  tags: [local-prometheus, monitoring, observability]

@@ -131,6 +131,26 @@ all:
     run_promtail: false
     loki_push_url: "http://localhost:3100/loki/api/v1/push"
 
+    # ── Local Prometheus (ASH-8) ──
+    # Without one this net reports `overall: degraded` at every check while
+    # every unit is active: /v1/status derives background-service liveness
+    # from PrometheusStatusBackend.Heartbeats(), which queries
+    # http://localhost:9090; with nothing listening the query errors, every
+    # declared service grades `unknown`, and the roll-up degrades. Forever.
+    # `api.prometheus_url` is already templated to localhost:9090, so this
+    # only has to make something answer there — the API needs no restart.
+    #
+    # Scrape targets are DERIVED from the run_* switches in this file, not
+    # hardcoded: run_aggregator: false above contributes no aggregator
+    # target (the same derivation that makes status_services ["indexer"]
+    # alone), and run_caddy: false contributes no caddy target. Retention
+    # (7 d, capped at 4 GB) and the 1 GiB memory ceiling are role defaults
+    # sized for this 20 GB VM — see the memory note above, which exists
+    # because ClickHouse + captive-core once exhausted committable memory
+    # here. Alerting is deliberately not installed: /v1/status needs the
+    # scrape layer, and a disposable test net has no on-call to page.
+    run_local_prometheus: true
+
     # MUST include the keys we connect with — the role REPLACES authorized_keys.
     admin_ssh_keys:
       - "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIPknEhtWeiFH7MRebS0X2A2JdHbmyixmpD0YaJChG/jQ Ashs-MacBook-Pro.local-04-04-2024"

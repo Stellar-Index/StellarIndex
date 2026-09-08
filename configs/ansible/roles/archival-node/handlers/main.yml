@@ -171,6 +171,18 @@
     name: prometheus-postgres-exporter
     state: restarted
 
+# 23-local-prometheus — restart rather than reload. A SIGHUP reload
+# would be gentler, but it depends on the packaged unit declaring
+# ExecReload, and `state: reloaded` fails outright on a unit that does
+# not; a restart works on any packaging. The cost is ~1 s on a test-net
+# TSDB and no data: the WAL is replayed on start. `daemon_reload` is on
+# because the memory-cap drop-in is a unit change, not just a config one.
+- name: Restart prometheus
+  ansible.builtin.systemd:
+    name: prometheus
+    state: restarted
+    daemon_reload: true
+
 - name: Restart cap67-movements
   # Targeted restart for the follow daemon, notified ONLY by its own unit
   # template (14-stellarindex-services.yml). SIGTERM is graceful: the loop
