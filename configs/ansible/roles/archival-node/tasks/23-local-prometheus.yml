@@ -166,6 +166,12 @@
     state: started
     enabled: true
     daemon_reload: true
+  # Same reason as the Restart prometheus handler: in check mode the
+  # package was never really installed, so systemd cannot find the unit
+  # and fails the task. Previewing an install of a service that does not
+  # exist yet has nothing to assert here, and a `--check --diff` that
+  # always fails is one no operator will run before the real apply.
+  when: not ansible_check_mode
 
 # Flush the restart before verifying: handlers otherwise run at the end
 # of the play, and the check below would read the PREVIOUS config's

@@ -182,6 +182,13 @@
     name: prometheus
     state: restarted
     daemon_reload: true
+  # Check mode never really installs the package, so the unit does not
+  # exist and systemd fails the handler outright — which made
+  # `--check --diff` unusable for this tag on a host that has not had a
+  # real apply yet. A dry run that cannot be run is a dry run nobody
+  # does, so skip the restart when we are only previewing; there is
+  # nothing running to restart in that state anyway.
+  when: not ansible_check_mode
 
 - name: Restart cap67-movements
   # Targeted restart for the follow daemon, notified ONLY by its own unit

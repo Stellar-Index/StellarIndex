@@ -967,6 +967,13 @@
     enabled: true
     state: started
     daemon_reload: true
+  # Check mode never really writes the unit, so systemd cannot find it and
+  # this task fails — on a host that has not yet had a real apply. That is
+  # exactly a new or lean host, where `--check --diff` is most worth
+  # running, and one failure here aborts the preview for every task after
+  # it. The test nets hit this while r1 did not, purely because r1 already
+  # had the unit from an earlier apply.
+  when: not ansible_check_mode
   tags: [observability]
 
 # ── Ledger-meta decode probe (reactive protocol backstop) ─────────
