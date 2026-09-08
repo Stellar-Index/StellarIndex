@@ -545,16 +545,70 @@ lane_d() { # everything else
     fi
 }
 
-lane_a > "$LANEDIR/a.log" 2>&1 & pid_a=$!
-lane_b > "$LANEDIR/b.log" 2>&1 & pid_b=$!
-lane_c > "$LANEDIR/c.log" 2>&1 & pid_c=$!
-lane_d > "$LANEDIR/d.log" 2>&1 & pid_d=$!
+# Lane CONCURRENCY is bounded by memory, not by core count. Lane b runs
+# golangci-lint (multi-GB on this tree) and lane c runs a Next.js build
+# (another GB-scale Node process); on a host with tens of GB all four lanes
+# coexist happily, but `make prepush` runs this inside Docker, and this
+# machine's Docker VM has 7.65 GiB for all of it. Running all four there
+# OOM-killed golangci-lint — `make[1]: *** [Makefile:158: lint] Killed`, a
+# bare SIGKILL with no diagnostic, which reads like a lint failure and is
+# not one. The host run that preceded it passed, so the parallel win is real
+# and worth keeping where the memory exists; it must simply not be assumed.
+#
+# Below the threshold the two heavy lanes are separated rather than the whole
+# tier being serialised: a and d are both light (doc lints; shell/python/
+# ansible self-tests plus gitleaks, which is CPU-hungry but not memory-hungry)
+# and still run together, then b alone, then c alone. VERIFY_LANES=1 forces
+# that schedule and VERIFY_LANES=4 forces the parallel one, so a machine that
+# disagrees with the heuristic is not stuck with it.
+verify_total_mem_mb() {
+    # cgroup v2 limit first: inside a container it is the number that binds,
+    # and it is smaller than the host's MemTotal that /proc would report.
+    if [ -r /sys/fs/cgroup/memory.max ]; then
+        local v; v="$(cat /sys/fs/cgroup/memory.max 2>/dev/null || echo max)"
+        [ "$v" != "max" ] && [ -n "$v" ] && { echo $((v / 1024 / 1024)); return; }
+    fi
+    if [ -r /proc/meminfo ]; then
+        awk '/^MemTotal:/ { print int($2 / 1024); exit }' /proc/meminfo && return
+    fi
+    if command -v sysctl >/dev/null 2>&1; then
+        local b; b="$(sysctl -n hw.memsize 2>/dev/null || echo 0)"
+        [ "$b" -gt 0 ] 2>/dev/null && { echo $((b / 1024 / 1024)); return; }
+    fi
+    echo 0   # unknown -> treated as constrained below, which is the safe side
+}
+
+VERIFY_LANE_MEM_FLOOR_MB="${VERIFY_LANE_MEM_FLOOR_MB:-12288}"
+if [ -n "${VERIFY_LANES:-}" ]; then
+    lane_mode="$VERIFY_LANES"
+else
+    _mem_mb="$(verify_total_mem_mb)"
+    if [ "$_mem_mb" -ge "$VERIFY_LANE_MEM_FLOOR_MB" ] 2>/dev/null; then
+        lane_mode=4
+    else
+        lane_mode=1
+        echo "verify: ${_mem_mb} MiB available (floor ${VERIFY_LANE_MEM_FLOOR_MB} MiB) — separating the two memory-heavy lanes; set VERIFY_LANES=4 to override"
+    fi
+fi
 
 lane_rc_a=0; lane_rc_b=0; lane_rc_c=0; lane_rc_d=0
-wait "$pid_a" || lane_rc_a=$?
-wait "$pid_b" || lane_rc_b=$?
-wait "$pid_c" || lane_rc_c=$?
-wait "$pid_d" || lane_rc_d=$?
+if [ "$lane_mode" = "4" ]; then
+    lane_a > "$LANEDIR/a.log" 2>&1 & pid_a=$!
+    lane_b > "$LANEDIR/b.log" 2>&1 & pid_b=$!
+    lane_c > "$LANEDIR/c.log" 2>&1 & pid_c=$!
+    lane_d > "$LANEDIR/d.log" 2>&1 & pid_d=$!
+    wait "$pid_a" || lane_rc_a=$?
+    wait "$pid_b" || lane_rc_b=$?
+    wait "$pid_c" || lane_rc_c=$?
+    wait "$pid_d" || lane_rc_d=$?
+else
+    lane_a > "$LANEDIR/a.log" 2>&1 & pid_a=$!
+    lane_d > "$LANEDIR/d.log" 2>&1 & pid_d=$!
+    wait "$pid_a" || lane_rc_a=$?
+    wait "$pid_d" || lane_rc_d=$?
+    lane_b > "$LANEDIR/b.log" 2>&1 || lane_rc_b=$?
+    lane_c > "$LANEDIR/c.log" 2>&1 || lane_rc_c=$?
+fi
 
 # Every lane's log, in full, lane order — a lane runs concurrently with the
 # others but is itself strictly sequential, so within one lane's block the
