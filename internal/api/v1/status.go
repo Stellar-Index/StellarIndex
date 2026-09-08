@@ -621,6 +621,27 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 
 	// Background-service heartbeats — the services this deployment
 	// declares it runs (s.statusServices; #328).
+	// A nil map here means "we could not look", and the wire cannot say so:
+	// heartbeatServices renders every declared service "unknown" either way,
+	// and rollupOverall turns that into "degraded". Backend-unreachable and
+	// backend-answered-with-nothing are therefore INDISTINGUISHABLE to a
+	// reader, who sees `degraded` and reasonably concludes the indexer is
+	// sick.
+	//
+	// That is not hypothetical. Diagnosed 2026-09-08: BOTH test nets report
+	// `overall: degraded` permanently while every unit is active, because
+	// neither runs Prometheus (`:9090` unreachable, unit not installed), so
+	// PrometheusStatusBackend.Heartbeats always errors. On r1 the backend
+	// works and this path never shows, which is why it went unexplained.
+	//
+	// The conservatism is deliberate and correct — refusing to claim "ok"
+	// when nothing is known beats a false all-clear. What is missing is the
+	// REASON. `incidents_status` is the precedent for saying it; an
+	// equivalent `services_status` ("ok" / "unavailable") would let a lean
+	// deployment report honestly instead of looking sick. That is an
+	// additive wire change on a public surface, so it is a decision rather
+	// than a cleanup: either add the field, or give the test nets a metrics
+	// backend. Recorded here so the next person does not re-diagnose it.
 	if hbErr != nil {
 		hb = nil
 	}
