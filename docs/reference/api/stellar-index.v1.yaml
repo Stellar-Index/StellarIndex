@@ -2031,6 +2031,7 @@ paths:
                   quote: fiat:USD
                   price_type: vwap
                   granularity: 1d
+                  discontinuous: false
                   points:
                   - t: '2021-02-02T00:00:00Z'
                     p: '0.32955352120071295890'
@@ -2148,6 +2149,7 @@ paths:
                   timeframe: 24h
                   granularity: 1h
                   price_type: vwap
+                  discontinuous: false
                   points:
                   - t: '2026-07-02T23:00:00Z'
                     p: '0.19854703598674192431'
@@ -2197,6 +2199,27 @@ paths:
            closed CAGG-backed bars sourced from `prices_<N>`. The
            in-progress bucket is excluded (closed-bucket guard).
            `limit` clamps the bar count (default 100, max 1000).
+           **No cross-derivation.** This route reads the pair's own buckets
+           (and the USD-pegged constituent spellings below). It does NOT
+           triangulate through a pivot, so a pair whose only route to a quote
+           is via one returns an empty series here even while `/v1/chart`
+           serves it — measured 2026-09-08 on `USDC-GA5Z…/fiat:USD`, where
+           `/v1/ohlc` returned `intervals: []` and `/v1/chart` returned 363
+           daily points with `triangulated: true`. Read `intervals: []` as
+           "no bars on a direct route", NOT as "this pair has no history";
+           `/v1/chart` is the surface that answers the second question.
+
+           This asymmetry is deliberate, not an omission. A price series
+           composes through a pivot; an OHLC BAR does not. `high(A/C)` is not
+           `high(A/B) × high(B/C)` — the two legs reach their extremes at
+           different instants inside the bucket, so multiplying them invents a
+           high that never traded, and the same argument applies to `low`, and
+           to `open`/`close` whenever the legs' first and last prints are not
+           simultaneous. Honest triangulated bars need per-trade recomputation
+           across both legs, not bar arithmetic. Anything cheaper silently
+           reports prices that did not occur, which is worse on this surface
+           than an empty array.
+
            Empty window returns 200 + `{intervals: []}` (NOT 404 —
            series clients expect a stable shape across pairs/windows),
            with `coverage_from` when the floor is known and
