@@ -101,6 +101,30 @@ if [ "$verify_have_pnpm_explorer" = 1 ]; then
     [ -x web/explorer/node_modules/.bin/tsc ] || \
         gap "web/explorer/node_modules/.bin/tsc is absent — 'make web-typecheck' needs it"
 fi
+
+# A PRESENT node_modules is not a CURRENT one. The checks above ask whether an
+# install happened, never whether it matches the lockfile in the tree — so a
+# pull that moves pnpm-lock.yaml leaves the gate running yesterday's packages
+# and saying nothing. On 2026-09-08 `package.json` declared vitest `^5.0.0`
+# (merged in #500) while `node_modules` still held **4.1.10**, so every local
+# `make web-test` had been grading the tree under a different test runner than
+# CI installs — the same shape as the Go toolchain skew checked above, and
+# invisible for the same reason: the tool was present, just wrong.
+#
+# mtime comparison rather than a version probe: it is one stat per app, needs
+# no package names, and catches ANY drift rather than the one dependency
+# someone thought to check. `pnpm install` rewrites node_modules/.modules.yaml,
+# so that file being older than the lockfile is exactly "the lockfile moved and
+# nothing reinstalled".
+for verify_app in explorer status dashboard; do
+    verify_lock="web/${verify_app}/pnpm-lock.yaml"
+    verify_stamp="web/${verify_app}/node_modules/.modules.yaml"
+    [ -f "$verify_lock" ] || continue
+    [ -f "$verify_stamp" ] || continue
+    if [ "$verify_lock" -nt "$verify_stamp" ]; then
+        gap "web/${verify_app}/node_modules is STALE — pnpm-lock.yaml is newer than the last install; run 'pnpm --dir web/${verify_app} install'"
+    fi
+done
 if command -v pnpm >/dev/null 2>&1 && [ -f web/status/pnpm-lock.yaml ]; then
     [ -x web/status/node_modules/.bin/tsc ] || \
         gap "web/status/node_modules/.bin/tsc is absent — 'make status-typecheck' needs it"

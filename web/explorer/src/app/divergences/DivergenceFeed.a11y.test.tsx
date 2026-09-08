@@ -56,8 +56,21 @@ function mountFeed() {
   );
 }
 
+// Testing Library's findBy* default timeout is 1000 ms, which is ample on an
+// idle machine and not ample inside `make verify`: that runs four lanes
+// concurrently — gitleaks alone was measured at 717 % CPU — and this board
+// renders through a QueryClientProvider, so the button can appear well past a
+// second under that load. It failed exactly once that way on 2026-09-08
+// ("Unable to find role=button and name /Plot AAA/", 1755 ms) while passing
+// 3/3 standalone and in a full 678-test standalone run, i.e. the component is
+// fine and the deadline was not.
+//
+// Raising it is the right fix rather than a mask: the assertion is still that
+// the button EXISTS with an accessible name, and a genuinely missing button
+// fails just as loudly, five seconds later. A gate that goes red for a reason
+// unrelated to the diff teaches people to re-run it, which is worse than slow.
 const seriesButton = (label: string) =>
-  screen.findByRole('button', { name: new RegExp(label) });
+  screen.findByRole('button', { name: new RegExp(label) }, { timeout: 5000 });
 
 /**
  * Sequential-focus-navigation order, computed the way a browser does: the
