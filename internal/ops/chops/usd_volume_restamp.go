@@ -67,18 +67,22 @@ import (
 // Usage: usd-volume-restamp -config PATH -from YYYY-MM-DD -to YYYY-MM-DD
 // [-tier exact|xlm-base] [-slice DUR] [-sources a,b] [-fill-null]
 // [-heartbeat PATH] [-allow-live-overlap] [-write]
+// [-chunks [-min-free-bytes N] [-generation N] [-allow-live-adjacent]
+// [-resume-paused-policy]]
 // and, for -tier xlm-base only: [-report] [-sample N] [-batch N]
-// [-min-rel-delta F] [-max-generation N]
-// [-chunks [-chunk-batch N] [-min-free-bytes N] [-generation N]
-// [-allow-live-adjacent] [-resume-paused-policy]].
+// [-min-rel-delta F] [-max-generation N] [-chunk-batch N].
 //
-// `-chunks` (xlm-base only) is the chunk-by-chunk walk of
-// usd_volume_restamp_chunks.go: take the run lock, pause the trades
+// `-chunks` is the chunk-by-chunk walk of usd_volume_restamp_chunks.go,
+// available to BOTH tiers: take the run lock, pause the trades
 // compression policy, decompress each compressed `trades` chunk in the
 // window, restamp inside it, re-compress it, re-enable the policy,
-// release the lock. It exists because the in-place walk measured ~1,574
-// rows/min against compressed chunks on 2026-09-03; see that file's
-// header.
+// release the lock. It exists because an in-place walk measured ~1,574
+// rows/min against compressed chunks on 2026-09-03 — a rate both tiers
+// pay, since both write the same column of the same chunks. Each tier
+// supplies its own per-chunk restamp (usd_volume_restamp_chunks_exact.go,
+// usd_volume_restamp_chunks_xlmbase.go); everything around it — the lock,
+// the policy dance, the free-space pre-flight, the resume line — is one
+// driver. See that file's header.
 func usdVolumeRestamp(args []string) error { //nolint:gocognit,gocyclo,funlen // linear: parse, validate the tier's flag set, open+wire the store, run the live-overlap guard, dispatch — splitting scatters each guard away from the flag it guards.
 	fs := flag.NewFlagSet("usd-volume-restamp", flag.ContinueOnError)
 	cfgPath := fs.String("config", "/etc/stellarindex.toml", "path to stellarindex.toml (Postgres DSN + the operator's USD peg list)")
@@ -95,8 +99,8 @@ func usdVolumeRestamp(args []string) error { //nolint:gocognit,gocyclo,funlen //
 	batch := fs.Int("batch", defaultRestampBatch, "-tier "+restampTierXLMBase+" only: rows per UPDATE transaction")
 	minRelDelta := fs.String("min-rel-delta", "", "-tier "+restampTierXLMBase+" only: skip writing rows whose relative move |new-old|/|old| is below this fraction (0.01 = 1%). Empty/0 = write every row that differs. Never skips a NULL fill. RECOMMENDED 0.001 for a full-window run: it drops ~8% of the write set that moves <0.1% purely from prices_1m finalisation — see the report footer.")
 	maxGeneration := fs.Int64("max-generation", -1, "-tier "+restampTierXLMBase+" only: only consider rows at derive_generation <= this. -1 = the run's own generation (everything). 0 targets exactly the never-re-derived population.")
-	chunks := fs.Bool("chunks", false, "-tier "+restampTierXLMBase+" only: chunk-by-chunk mode — pause the trades compression policy, then for each trades chunk in the window: decompress_chunk (if it was compressed), restamp inside it in -chunk-batch transactions, compress_chunk (if it was compressed); re-enable the policy on exit. Use for a window whose chunks are compressed (anything older than the policy's 7 days): in-place UPDATEs into compressed chunks measured ~1,574 rows/min. Dry run prints the chunk plan and decompresses nothing; -write first checks free space on the data volume (> 2 x the largest chunk's uncompressed size, re-checked before every decompress) and refuses a window reaching into the policy's lag (see -allow-live-adjacent). Run on the database host.")
-	chunkBatch := fs.Int("chunk-batch", defaultChunkBatch, "-chunks only: rows per UPDATE transaction inside a decompressed chunk")
+	chunks := fs.Bool("chunks", false, "EITHER tier: chunk-by-chunk mode — pause the trades compression policy, then for each trades chunk in the window: decompress_chunk (if it was compressed), restamp inside it, compress_chunk (if it was compressed); re-enable the policy on exit. Use for a window whose chunks are compressed (anything older than the policy's 7 days): in-place UPDATEs into compressed chunks measured ~1,574 rows/min. Dry run prints the chunk plan and decompresses nothing; -write first checks free space on the data volume (> 2 x the largest chunk's uncompressed size, re-checked before every decompress) and refuses a window reaching into the policy's lag (see -allow-live-adjacent). Run on the database host.")
+	chunkBatch := fs.Int("chunk-batch", defaultChunkBatch, "-chunks with -tier "+restampTierXLMBase+" only: rows per UPDATE transaction inside a decompressed chunk. The exact tier's transaction is one -slice window and takes no row batch.")
 	minFreeBytes := fs.Int64("min-free-bytes", 0, "-chunks only: OVERRIDE the free-space measurement with this many bytes, for a host where the data volume cannot be statfs'd (the tool warns loudly and trusts the figure). Check the database host yourself first.")
 	runGeneration := fs.Int64("generation", 0, "-chunks only: the derive_generation this run stamps (0 = now; a value in the future is refused). Pass the generation a failed run printed in its RESUME line so the whole span ends at ONE generation.")
 	allowLiveAdjacent := fs.Bool("allow-live-adjacent", false, "-chunks only: walk a window whose right edge reaches into the compression policy's lag (now - compress_after) anyway. Chunks there are deliberately uncompressed — the ledgerstream cursor-regression replay upserts into them — and are restamped in place and left uncompressed. Prefer the in-place walk (no -chunks) for that span.")
@@ -193,6 +197,12 @@ func usdVolumeRestamp(args []string) error { //nolint:gocognit,gocyclo,funlen //
 	ok := false
 	defer func() { hb.Stop(ok) }()
 
+	// The chunk walk's own flag set, shared by both tiers.
+	copts := chunkRestampOptions{
+		Batch: *chunkBatch, MinFreeBytes: *minFreeBytes, AllowLiveAdjacent: *allowLiveAdjacent,
+		ResumePausedPolicy: *resumePausedPolicy,
+	}
+
 	if *tier == restampTierXLMBase {
 		xopts := xlmBaseRestampOptions{
 			Allow:         restampSourceAllowList(*sources),
@@ -209,10 +219,7 @@ func usdVolumeRestamp(args []string) error { //nolint:gocognit,gocyclo,funlen //
 		}
 		var rerr error
 		if *chunks {
-			rerr = runXLMBaseChunkRestamp(ctx, store, *cfgPath, from, to, xopts, xlmBaseChunkOptions{
-				Batch: *chunkBatch, MinFreeBytes: *minFreeBytes, AllowLiveAdjacent: *allowLiveAdjacent,
-				ResumePausedPolicy: *resumePausedPolicy,
-			})
+			rerr = runXLMBaseChunkRestamp(ctx, store, *cfgPath, from, to, xopts, copts)
 		} else {
 			rerr = runXLMBaseRestamp(ctx, store, *cfgPath, from, to, xopts)
 		}
@@ -231,6 +238,12 @@ func usdVolumeRestamp(args []string) error { //nolint:gocognit,gocyclo,funlen //
 		hb:         hb,
 	}
 
+	if *chunks {
+		rerr := runExactChunkRestamp(ctx, store, run, *cfgPath, from, to, copts)
+		ok = rerr == nil
+		return rerr
+	}
+
 	fmt.Fprintf(os.Stderr, "usd-volume-restamp: tier=exact window [%s, %s] slice=%s generation=%d fill_null=%v\n",
 		from.Format(time.DateOnly), to.Format(time.DateOnly), *slice, run.generation, *fillNull)
 
@@ -244,15 +257,27 @@ func usdVolumeRestamp(args []string) error { //nolint:gocognit,gocyclo,funlen //
 		totalGroups += groups
 	}
 	ok = true
+	fmt.Print(exactRestampSummary(*cfgPath, from, to, totalRows, totalGroups, write))
+	return nil
+}
+
+// exactRestampSummary is the exact tier's closing block, shared by the day
+// walk and the chunk walk so the two cannot report the same run
+// differently: what was written, the CAGG refreshes the write does not do
+// (the acceptance check below CANNOT see them — it reads `trades`
+// directly), and the acceptance command for the window that ran.
+func exactRestampSummary(cfgPath string, from, to time.Time, rows, groupDays int64, write bool) string {
+	var b strings.Builder
 	verb := "would restamp"
 	if write {
 		verb = "restamped"
 	}
-	fmt.Printf("\nusd-volume-restamp: %s %d row(s) across %d exact-tier group-day(s) in [%s, %s]\n",
-		verb, totalRows, totalGroups, from.Format(time.DateOnly), to.Format(time.DateOnly))
-	fmt.Printf("acceptance: stellarindex-ops verify-usd-volume -config %s -day %s -days %d  → expect 0 violations\n",
-		*cfgPath, to.Format(time.DateOnly), int(to.Sub(from).Hours()/24)+1)
-	return nil
+	fmt.Fprintf(&b, "\nusd-volume-restamp: %s %d row(s) across %d exact-tier group-day(s) in [%s, %s]\n",
+		verb, rows, groupDays, from.Format(time.DateOnly), to.Format(time.DateOnly))
+	b.WriteString(restampCAGGFollowUp(from, to))
+	fmt.Fprintf(&b, "acceptance: stellarindex-ops verify-usd-volume -config %s -day %s -days %d  → expect 0 violations\n",
+		cfgPath, to.Format(time.DateOnly), int(to.Sub(from).Hours()/24)+1)
+	return b.String()
 }
 
 // The two -tier values. Named constants so the flag help, the dispatch
@@ -271,7 +296,17 @@ const defaultRestampBatch = 2000
 // than a silent no-op: an operator who typed `-report` and got a write
 // run, or who typed `-min-rel-delta 0.3` and got every row rewritten,
 // has been actively misled by the tool on a money column.
-var restampXLMBaseOnlyFlags = []string{"report", "sample", "batch", "min-rel-delta", "max-generation", "chunks", "chunk-batch", "min-free-bytes", "generation", "allow-live-adjacent", "resume-paused-policy"}
+//
+// `-chunks` and its own flags are NOT on this list: both tiers write into
+// the same compressed chunks and pay the same price for it (the exact
+// tier's own population measured ~1,574 rows/min in place), so both drive
+// the same chunk walk. What stays here is what the exact tier has no
+// meaning FOR: the report/sample of an estimated re-derive, its relative-
+// move threshold, its separate `-max-generation` (the exact walk's guard
+// is the run's own generation), and the two row-batch knobs — the exact
+// tier's per-transaction bound is its `-slice` window, so `-batch` and
+// `-chunk-batch` would be silently ignored.
+var restampXLMBaseOnlyFlags = []string{"report", "sample", "batch", "min-rel-delta", "max-generation", "chunk-batch"}
 
 // restampChunkOnlyFlags are the flags that only mean something with
 // `-chunks`. Same posture as [restampXLMBaseOnlyFlags]: passing one
@@ -388,9 +423,19 @@ func restampSourceAllowList(csv string) map[string]bool {
 	return out
 }
 
+// exactRestampStore is the slice of [timescale.Store] the exact-tier walk
+// classifies, counts and writes through. A seam rather than the concrete
+// store so the chunk walk (usd_volume_restamp_chunks_exact.go) can be
+// driven against a scripted double; production passes the store itself.
+type exactRestampStore interface {
+	TradeValuationByDay(ctx context.Context, day time.Time) ([]timescale.TradeValuationGroup, error)
+	CountUSDVolumeRestampCandidates(ctx context.Context, p timescale.USDVolumeRestampParams) (int64, error)
+	RestampExactTierUSDVolume(ctx context.Context, p timescale.USDVolumeRestampParams) (int64, error)
+}
+
 // restampRun carries one invocation's fixed inputs across days.
 type restampRun struct {
-	store      *timescale.Store
+	store      exactRestampStore
 	spec       *timescale.USDVolumeQuoteSpec
 	allow      map[string]bool
 	fillNull   bool
@@ -399,50 +444,143 @@ type restampRun struct {
 	generation int64
 	hb         *opsutil.JobHeartbeat
 	progress   uint64
+
+	// days caches each UTC day's classification. The tier and the scale
+	// are a property of the DAY's groups, and a chunk boundary puts the
+	// same day in two chunks — so the chunk walk would otherwise re-run
+	// TradeValuationByDay (a whole-day aggregate) for it twice.
+	days map[time.Time]exactTierDay
+}
+
+// exactTierDay is one UTC day's classification: the exact-tier groups the
+// run may touch, how many groups the day had in total, and the verifier's
+// Σ|Δ| over the targets — the "before" figure the operator compares
+// against verify-usd-volume's report.
+type exactTierDay struct {
+	targets []timescale.USDVolumeRestampGroup
+	groups  int
+	before  *big.Rat
+}
+
+// dayTargets classifies one UTC day, once.
+func (r *restampRun) dayTargets(ctx context.Context, day time.Time) (exactTierDay, error) {
+	day = day.UTC().Truncate(24 * time.Hour)
+	if d, ok := r.days[day]; ok {
+		return d, nil
+	}
+	groups, err := r.store.TradeValuationByDay(ctx, day)
+	if err != nil {
+		return exactTierDay{}, err
+	}
+	targets, before := r.exactTierGroups(groups)
+	d := exactTierDay{targets: targets, groups: len(groups), before: before}
+	if r.days == nil {
+		r.days = map[time.Time]exactTierDay{}
+	}
+	r.days[day] = d
+	return d, nil
+}
+
+// groupDays is the run's "exact-tier group-day" count: the number of
+// (day, group) pairs it had in scope, summed over the days it classified.
+func (r *restampRun) groupDays() int64 {
+	var n int64
+	for _, d := range r.days {
+		n += int64(len(d.targets))
+	}
+	return n
+}
+
+// exactTierApply is the write half of an exact-tier walk: the store's own
+// UPDATE for the day walk, the chunk-guarded one for the chunk walk, and
+// the candidate count for either walk's dry run.
+type exactTierApply func(ctx context.Context, p timescale.USDVolumeRestampParams) (int64, error)
+
+// apply is the run's own write half. The dry run counts through the SAME
+// scope predicate the UPDATE evaluates, so it is the write's exact
+// preview.
+func (r *restampRun) apply() exactTierApply {
+	if r.write {
+		return r.store.RestampExactTierUSDVolume
+	}
+	return r.store.CountUSDVolumeRestampCandidates
+}
+
+// exactSpan is one bounded exact-tier walk over [lo, hi): the day's
+// classified targets, and what to do with each -slice of it.
+type exactSpan struct {
+	targets []timescale.USDVolumeRestampGroup
+	lo, hi  time.Time
+	apply   exactTierApply
+	// probe is the chunk walk's read-only pre-check: stop at the first
+	// slice that would change a row, print nothing, and count nothing
+	// towards the run's progress. A chunk that probes clean is skipped
+	// without ever being decompressed.
+	probe bool
+	// dated prefixes each slice's progress line with its UTC day. The
+	// chunk walk crosses days inside one label; the day walk does not.
+	dated bool
+}
+
+// sliceWalk walks [lo, hi) one -slice window at a time. Nothing here
+// knows whether the span is a UTC day or a chunk's slice of the run
+// window; that is the caller's business.
+func (r *restampRun) sliceWalk(ctx context.Context, s exactSpan) (int64, error) {
+	var rows int64
+	for lo := s.lo; lo.Before(s.hi); lo = lo.Add(r.slice) {
+		if err := ctx.Err(); err != nil {
+			return rows, err
+		}
+		hi := lo.Add(r.slice)
+		if hi.After(s.hi) {
+			hi = s.hi
+		}
+		n, err := s.apply(ctx, timescale.USDVolumeRestampParams{
+			Groups: s.targets, From: lo, To: hi, FillNull: r.fillNull, Generation: r.generation,
+		})
+		if err != nil {
+			return rows, err
+		}
+		rows += n
+		if s.probe {
+			if n > 0 {
+				return rows, nil
+			}
+			continue
+		}
+		r.progress += uint64(n)                      //nolint:gosec // n is a non-negative row count
+		r.hb.Progress(r.progress, uint64(lo.Unix())) //nolint:gosec // post-1970 timestamp
+		if n > 0 {
+			day := ""
+			if s.dated {
+				day = lo.Format(time.DateOnly) + " "
+			}
+			fmt.Printf("  %s%s..%s  %d row(s)\n", day, lo.Format("15:04"), hi.Format("15:04"), n)
+		}
+	}
+	return rows, nil
 }
 
 // day restamps one UTC day: classify its groups, keep the exact tiers,
 // then walk the day in -slice windows. Returns (rows, groups).
 func (r *restampRun) day(ctx context.Context, day time.Time) (int64, int64, error) {
-	groups, err := r.store.TradeValuationByDay(ctx, day)
+	d, err := r.dayTargets(ctx, day)
 	if err != nil {
 		return 0, 0, err
 	}
-	targets, before := r.exactTierGroups(groups)
 	fmt.Printf("=== %s: %d group(s), %d exact-tier target(s), Σ|Δ| before = %s USD\n",
-		day.Format(time.DateOnly), len(groups), len(targets), before.FloatString(8))
-	if len(targets) == 0 {
+		day.Format(time.DateOnly), d.groups, len(d.targets), d.before.FloatString(8))
+	if len(d.targets) == 0 {
 		return 0, 0, nil
 	}
-
-	var rows int64
-	end := day.AddDate(0, 0, 1)
-	for lo := day; lo.Before(end); lo = lo.Add(r.slice) {
-		hi := lo.Add(r.slice)
-		if hi.After(end) {
-			hi = end
-		}
-		p := timescale.USDVolumeRestampParams{
-			Groups: targets, From: lo, To: hi, FillNull: r.fillNull, Generation: r.generation,
-		}
-		var n int64
-		if r.write {
-			n, err = r.store.RestampExactTierUSDVolume(ctx, p)
-		} else {
-			n, err = r.store.CountUSDVolumeRestampCandidates(ctx, p)
-		}
-		if err != nil {
-			return rows, int64(len(targets)), err
-		}
-		rows += n
-		r.progress += uint64(n)                      //nolint:gosec // n is a non-negative row count
-		r.hb.Progress(r.progress, uint64(lo.Unix())) //nolint:gosec // post-1970 timestamp
-		if n > 0 {
-			fmt.Printf("  %s..%s  %d row(s)\n", lo.Format("15:04"), hi.Format("15:04"), n)
-		}
+	rows, err := r.sliceWalk(ctx, exactSpan{
+		targets: d.targets, lo: day, hi: day.AddDate(0, 0, 1), apply: r.apply(),
+	})
+	if err != nil {
+		return rows, int64(len(d.targets)), err
 	}
 	fmt.Printf("%s: %d row(s)\n", day.Format(time.DateOnly), rows)
-	return rows, int64(len(targets)), nil
+	return rows, int64(len(d.targets)), nil
 }
 
 // exactTierGroups filters a day's groups to the exact-tier targets this

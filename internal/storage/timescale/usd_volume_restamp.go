@@ -211,6 +211,11 @@ func (s *Store) CountUSDVolumeRestampCandidates(ctx context.Context, p USDVolume
 // 265k). The window is caller-sliced (see [USDVolumeRestampParams.From]),
 // so the transaction stays one bounded UPDATE.
 //
+// The same transaction also pins a CUSTOM plan, so the window's `ts`
+// bounds stay visible to the planner and the statement is pruned to the
+// chunks the window covers rather than fanning out over every chunk of
+// the hypertable (see the SET below).
+//
 // `SET LOCAL`, and POSTGRES scopes it — not the driver. A plain session
 // `SET` on a borrowed [database/sql.Conn] OUTLIVES the call: `Conn.Close`
 // returns the connection to the pool, and pgx v5's stdlib adapter resets
@@ -233,6 +238,19 @@ func (s *Store) RestampExactTierUSDVolume(ctx context.Context, p USDVolumeRestam
 	defer func() { _ = tx.Rollback() }()
 	if _, err := tx.ExecContext(ctx, "SET LOCAL timescaledb.max_tuples_decompressed_per_dml_transaction = 0"); err != nil {
 		return 0, fmt.Errorf("timescale: usd-volume restamp: raise decompression cap: %w", err)
+	}
+	// The `ts` bounds ($1, $2) are what let the planner prune this UPDATE
+	// to the chunks the window actually covers. A GENERIC plan cannot know
+	// them, and every slice of a day produces identical statement text, so
+	// the prepared statement is promoted after a handful of executions and
+	// the plan silently widens to every chunk of the hypertable as a result
+	// relation — the 2026-09-06 measurement behind
+	// [Store.applyXLMBaseRestampBatch]'s own force_custom_plan (260 result
+	// relations, ~270 GB of WAL, 55 compressed chunks decompressed that
+	// held no matching row). LOCAL keeps it off the pooled connection the
+	// same way the decompression cap is kept off it.
+	if _, err := tx.ExecContext(ctx, "SET LOCAL plan_cache_mode = force_custom_plan"); err != nil {
+		return 0, fmt.Errorf("timescale: usd-volume restamp: force a custom plan: %w", err)
 	}
 	// Every fragment is code-built by exactTierRestampScope; all values
 	// (window, generation, group triples, leg, denominator) travel as

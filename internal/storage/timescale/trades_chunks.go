@@ -392,13 +392,12 @@ func (s *Store) TradesChunkCompressed(ctx context.Context, c TradeChunk) (bool, 
 // the chunk underneath the run. The batch is not written.
 var ErrTradesChunkRecompressed = errors.New("timescale: chunk was re-compressed underneath the restamp")
 
-// ApplyXLMBaseUSDVolumeRestampInChunk is [Store.ApplyXLMBaseUSDVolumeRestamp]
-// for a plan whose rows all lie in chunk c, with the guard above ahead of
-// every batch. On [ErrTradesChunkRecompressed] the rows written so far are
-// committed and reported; the caller stops the walk rather than letting the
-// next UPDATE run the per-row path.
-func (s *Store) ApplyXLMBaseUSDVolumeRestampInChunk(ctx context.Context, c TradeChunk, plan *XLMBaseRestampPlan, generation int64, batch int) (int64, error) {
-	return s.applyXLMBaseRestampBatches(ctx, plan, generation, batch, func(ctx context.Context) error {
+// stillDecompressed is the guard itself, as a hook to run ahead of a
+// write: the catalog's answer for chunk c, turned into a refusal. Shared
+// by both tiers' in-chunk applies so neither can drift into writing
+// through the per-row path the chunk walk exists to escape.
+func (s *Store) stillDecompressed(c TradeChunk) func(context.Context) error {
+	return func(ctx context.Context) error {
 		compressed, err := s.TradesChunkCompressed(ctx, c)
 		if err != nil {
 			return err
@@ -408,7 +407,28 @@ func (s *Store) ApplyXLMBaseUSDVolumeRestampInChunk(ctx context.Context, c Trade
 				"because an UPDATE into a compressed chunk decompresses it wholesale", ErrTradesChunkRecompressed, c)
 		}
 		return nil
-	})
+	}
+}
+
+// ApplyXLMBaseUSDVolumeRestampInChunk is [Store.ApplyXLMBaseUSDVolumeRestamp]
+// for a plan whose rows all lie in chunk c, with the guard above ahead of
+// every batch. On [ErrTradesChunkRecompressed] the rows written so far are
+// committed and reported; the caller stops the walk rather than letting the
+// next UPDATE run the per-row path.
+func (s *Store) ApplyXLMBaseUSDVolumeRestampInChunk(ctx context.Context, c TradeChunk, plan *XLMBaseRestampPlan, generation int64, batch int) (int64, error) {
+	return s.applyXLMBaseRestampBatches(ctx, plan, generation, batch, s.stillDecompressed(c))
+}
+
+// RestampExactTierUSDVolumeInChunk is [Store.RestampExactTierUSDVolume]
+// for a window that lies inside chunk c, with the same guard ahead of the
+// UPDATE. The exact tier has no row batching — its transaction IS the
+// caller's `-slice` window — so the guard runs once per slice, which is
+// once per statement, exactly as the xlm-base guard runs once per batch.
+func (s *Store) RestampExactTierUSDVolumeInChunk(ctx context.Context, c TradeChunk, p USDVolumeRestampParams) (int64, error) {
+	if err := s.stillDecompressed(c)(ctx); err != nil {
+		return 0, err
+	}
+	return s.RestampExactTierUSDVolume(ctx, p)
 }
 
 // ─── one run per hypertable: the run lock ────────────────────────────────

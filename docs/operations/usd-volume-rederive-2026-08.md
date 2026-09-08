@@ -291,6 +291,51 @@ stellarindex-ops verify-usd-volume -config /etc/stellarindex.toml \
   steps 0–4 (`ch-rebuild`). The tier-4 XLM anchor IS, via `-tier
   xlm-base` — Step 6.
 
+### Step 5, chunk mode — `-chunks` with `-tier exact`
+
+The "DECOMPRESS FIRST still applies for throughput" bullet above is the
+by-hand version of this. `-chunks` is the same remedy inside the tool,
+and it is the SAME walk Step 6 uses: one driver
+(`internal/ops/chops/usd_volume_restamp_chunks.go`) takes the run lock,
+pauses the `trades` compression policy, and for each chunk in the window
+decompresses it, restamps inside it, and re-compresses it — with every
+guard that section documents (free-space pre-flight re-checked before
+each decompress, live-adjacent refusal, re-compress on failure, policy
+re-enable on every exit path, probe-and-skip resume carrying
+`-generation`).
+
+Use it for any exact-tier window older than the policy's 7 days. In-place
+UPDATEs into compressed chunks measured ~1,574 rows/min on 2026-09-03,
+and the pre-07-23 exact-tier population is ~10M rows across 2026-03..07
+(2,306,054 in March alone) — 100+ hours in place.
+
+```sh
+# dry run first: the chunk plan, the pre-flight verdict, the candidate
+# counts per chunk. Nothing is decompressed, nothing is paused.
+stellarindex-ops usd-volume-restamp -config /etc/stellarindex.toml \
+  -tier exact -chunks -from 2026-03-01 -to 2026-03-31
+# apply, on r1, under the heavy wrapper with a UNIQUE job name:
+set -a; . /etc/default/stellarindex; set +a
+/usr/local/sbin/run-heavy-job.sh usd-exact-chunks-mar-try1 \
+  /usr/local/bin/stellarindex-ops usd-volume-restamp \
+    -config /etc/stellarindex.toml -tier exact -chunks \
+    -from 2026-03-01 -to 2026-03-31 -write
+```
+
+Differences from Step 6's chunk mode:
+
+- `-chunk-batch` is REFUSED with `-tier exact`. There is no row batch
+  here: one `-slice` window is one UPDATE is one transaction, so `-slice`
+  is the per-transaction bound. Narrow it (`-slice 15m`) for a busy span.
+- so are `-report`, `-sample`, `-batch`, `-min-rel-delta` and
+  `-max-generation` — an identity has no relative-move distribution to
+  threshold or report, and the walk's generation guard is the run's own
+  generation.
+- the run prints the same 12 CAGG refreshes Step 6 prints. The
+  `acceptance:` line reads `trades` directly and CANNOT see them; until
+  they run, every served volume surface keeps serving pre-restamp
+  numbers.
+
 ## Step 6 — #372: re-derive the pre-`fd1860bd` XLM-base rows (`usd-volume-restamp -tier xlm-base`)
 
 A third class again. Step 5 repairs a SQL identity; this one RE-DERIVES
@@ -632,6 +677,14 @@ Guards, in addition to everything Step 6 already has (dry-run default,
   `-chunk-batch`); `-chunk-batch`, `-min-free-bytes`, `-generation`,
   `-allow-live-adjacent` and `-resume-paused-policy` are refused without
   `-chunks`.
+- `-chunks` is available to BOTH tiers (see "Step 5, chunk mode" below).
+  Everything in this section — the lock, the policy pause and guaranteed
+  re-enable, the free-space pre-flight, the live-adjacent refusal, the
+  per-chunk re-compress on failure, the probe-and-skip resume, the
+  `RESUME:` line — is one tier-agnostic driver
+  (`internal/ops/chops/usd_volume_restamp_chunks.go`); each tier supplies
+  only what it does inside a decompressed chunk
+  (`…_chunks_xlmbase.go`, `…_chunks_exact.go`).
 
 **What it does to the serving database while it runs.** None of this is
 throttled by the heavy-job wrapper: `IOWeight=50` / `CPUWeight=50` apply
@@ -799,11 +852,14 @@ HEAVY_JOB_STOP_TIMEOUT=2h \
 stellarindex-ops verify-usd-volume -config /etc/stellarindex.toml -day 2026-07-21 -days 202
 ```
 
-Not covered by `-chunks`: `-tier exact` (Step 5). Its population is a
-66-day class of `[base_pegged] sdex` rows and it is a set-based UPDATE
-per slice, not a per-row one; if it ever measures like the above, the
-same chunk walk applies and should be extended to it rather than
-decompressing by hand.
+`-chunks` now covers `-tier exact` (Step 5) as well — see the section
+below. The paragraph that used to stand here said the exact tier was out
+of scope because it is a set-based UPDATE per slice rather than a per-row
+write; that turned out not to be the thing that matters. A DML into a
+compressed chunk is serviced by decompressing that chunk inside the
+transaction whatever shape the statement has, and the exact tier's own
+repair population — ~10M rows across 2026-03..07, 2,306,054 in March
+alone — is 100+ hours at the ~1,574 rows/min measured in place.
 
 ## Explicitly OUT of scope here (queued, do not silently absorb)
 

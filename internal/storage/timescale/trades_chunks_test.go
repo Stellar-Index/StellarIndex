@@ -602,3 +602,81 @@ func TestJobRunning(t *testing.T) {
 		t.Errorf("no row: running=%v err=%v", got, err)
 	}
 }
+
+// TestRestampExactTierUSDVolumeInChunk_GuardsTheUpdate: the exact tier's
+// in-chunk apply reads the chunk's is_compressed BEFORE its UPDATE and
+// refuses to write when it reads true — the same guard the xlm-base
+// batch loop runs, on the statement the exact tier actually issues (one
+// set-based UPDATE per -slice window, not a row batch). The transaction
+// carries both GUCs the write depends on: the lifted decompression cap,
+// and the forced custom plan without which the window's `ts` bounds
+// cannot prune the statement to the chunks it covers.
+func TestRestampExactTierUSDVolumeInChunk_GuardsTheUpdate(t *testing.T) {
+	t.Parallel()
+	isCompressed := func(v bool) scriptedResult {
+		return scriptedResult{cols: []string{"is_compressed"}, rows: [][]driver.Value{{v}}}
+	}
+	c := TradeChunk{Schema: "_timescaledb_internal", Name: "_hyper_1_10_chunk", Compressed: true}
+	day := time.Date(2026, 3, 2, 0, 0, 0, 0, time.UTC)
+	p := USDVolumeRestampParams{
+		Groups: []USDVolumeRestampGroup{{
+			Source:     "sdex",
+			BaseAsset:  "USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
+			QuoteAsset: "native",
+			Tier:       TierBasePegged,
+			Decimals:   7,
+		}},
+		From: day, To: day.Add(time.Hour), Generation: 1_756_800_000,
+	}
+
+	// Still decompressed: guard, both SET LOCALs, then the UPDATE.
+	store, conn := newScriptedStore(t,
+		isCompressed(false), scriptedResult{}, scriptedResult{}, scriptedResult{rowsAffected: 9})
+	n, err := store.RestampExactTierUSDVolumeInChunk(context.Background(), c, p)
+	if err != nil || n != 9 {
+		t.Fatalf("n=%d err=%v, want 9 rows and no error", n, err)
+	}
+	got := conn.statements()
+	if len(got) != 4 {
+		t.Fatalf("issued %d statements, want 4 (guard, 2 x SET LOCAL, UPDATE):\n%s", len(got), strings.Join(got, "\n"))
+	}
+	if !strings.Contains(got[0], "timescaledb_information.chunks") || !strings.Contains(got[0], "is_compressed") {
+		t.Errorf("statement 0 = %q, want the is_compressed read", got[0])
+	}
+	if g := conn.stmts[0]; g.arg(t, 1) != c.Schema || g.arg(t, 2) != c.Name {
+		t.Errorf("guard args = %v, want (%s, %s)", g.args, c.Schema, c.Name)
+	}
+	if !strings.Contains(got[1], "SET LOCAL timescaledb.max_tuples_decompressed_per_dml_transaction = 0") {
+		t.Errorf("statement 1 = %q, want the lifted decompression cap", got[1])
+	}
+	if !strings.Contains(got[2], "SET LOCAL plan_cache_mode = force_custom_plan") {
+		t.Errorf("statement 2 = %q, want the forced custom plan — a generic plan cannot prune on the window's ts bounds", got[2])
+	}
+	if !strings.Contains(got[3], "UPDATE trades") || !strings.Contains(got[3], "derive_generation <= $3") {
+		t.Errorf("statement 3 = %q, want the guarded UPDATE (INV-3)", got[3])
+	}
+	if conn.commits != 1 {
+		t.Errorf("commits = %d, want 1", conn.commits)
+	}
+
+	// Compressed again underneath the run: the UPDATE is never issued.
+	store, conn = newScriptedStore(t, isCompressed(true))
+	n, err = store.RestampExactTierUSDVolumeInChunk(context.Background(), c, p)
+	if !errors.Is(err, ErrTradesChunkRecompressed) {
+		t.Fatalf("err = %v, want ErrTradesChunkRecompressed", err)
+	}
+	if n != 0 {
+		t.Errorf("n = %d, want 0", n)
+	}
+	for _, want := range []string{"_timescaledb_internal._hyper_1_10_chunk", "is_compressed = true", "NOT written"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("err = %v, want containing %q", err, want)
+		}
+	}
+	if got := conn.statements(); len(got) != 1 || strings.Contains(strings.Join(got, "\n"), "UPDATE trades") {
+		t.Fatalf("after the guard tripped:\n%s\nwant exactly the guard read", strings.Join(got, "\n"))
+	}
+	if conn.commits != 0 {
+		t.Errorf("commits = %d, want none", conn.commits)
+	}
+}

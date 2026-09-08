@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"sort"
 	"strings"
 	"syscall"
 	"time"
@@ -17,7 +16,16 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// ─── `usd-volume-restamp -tier xlm-base -chunks` — chunk-by-chunk ───────
+// ─── `usd-volume-restamp -chunks` — the chunk-by-chunk walk ─────────────
+//
+// This file is the TIER-AGNOSTIC driver. It owns the chunks, the
+// compression policy, the run lock and the free-space guard; it knows
+// nothing about which usd_volume tier is being repaired. The rows are the
+// tier's business, reached through [chunkRestampTier] — implemented by
+// usd_volume_restamp_chunks_xlmbase.go (the #372 anchor re-derive) and
+// usd_volume_restamp_chunks_exact.go (the W5.3 peg identity). Both tiers
+// live in COMPRESSED chunks and both pay the same price for writing into
+// one, so they share the walk rather than each growing their own.
 //
 // # Why a second walk exists
 //
@@ -144,11 +152,10 @@ import (
 //     run's generation so the whole span ends up at ONE generation
 //     (INV-3).
 
-// xlmBaseChunkStore is the chunk walk's seam: the day walk's plan/apply
-// pair plus the chunk and policy primitives. *timescale.Store satisfies
-// it.
-type xlmBaseChunkStore interface {
-	xlmBaseRestampStore
+// chunkRestampStore is the DRIVER's seam: the chunk, policy and lock
+// primitives, and nothing that knows a tier. *timescale.Store satisfies
+// it; each tier extends it with its own plan/apply pair.
+type chunkRestampStore interface {
 	TradesChunksInRange(ctx context.Context, from, to time.Time) ([]timescale.TradeChunk, error)
 	TradesDataVolumePath(ctx context.Context) (string, error)
 	TradesCompressionPolicy(ctx context.Context) (timescale.TradesCompressionPolicy, error)
@@ -156,13 +163,64 @@ type xlmBaseChunkStore interface {
 	JobRunning(ctx context.Context, jobID int) (bool, error)
 	TryUSDVolumeRestampLock(ctx context.Context) (release func(context.Context) error, err error)
 	RestampTradesChunk(ctx context.Context, c timescale.TradeChunk, work func(context.Context) error, before func(timescale.ChunkRestampStep)) (timescale.TradeChunkRestampResult, error)
-	ApplyXLMBaseUSDVolumeRestampInChunk(ctx context.Context, c timescale.TradeChunk, plan *timescale.XLMBaseRestampPlan, generation int64, batch int) (int64, error)
 }
 
-// xlmBaseChunkOptions is the chunk walk's own flag set, resolved.
-type xlmBaseChunkOptions struct {
+// chunkRestampTier is the per-tier half of the walk: everything the
+// driver cannot decide without knowing WHICH usd_volume tier is being
+// repaired. Every method is scoped to one chunk's slice [lo, hi) of the
+// run window, which the driver has already clamped.
+type chunkRestampTier interface {
+	// write reports whether this is a -write run. The driver reads it from
+	// the tier rather than carrying its own copy, so the guard that
+	// decompresses and the walk that writes can never disagree.
+	write() bool
+	// header is the run's opening line: the window and every flag that
+	// shaped the population. Printed to stderr before anything is read.
+	header(from, to time.Time, copts chunkRestampOptions) string
+	// probe answers, READ-ONLY, whether [lo, hi) still holds a row this run
+	// would change. A chunk that probes clean is skipped without being
+	// decompressed — what makes a rerun resume at the first unfinished
+	// chunk (INV-3: at the run's own generation).
+	probe(ctx context.Context, lo, hi time.Time) (bool, error)
+	// preview is the dry run's read-only pass over [lo, hi): it folds the
+	// slice into the run's totals and returns the operator-facing
+	// description of what it found ("would change N row(s) …").
+	preview(ctx context.Context, lo, hi time.Time) (string, error)
+	// restamp does the write inside chunk c, which the driver has already
+	// decompressed. The outcome is meaningful even when the error is
+	// non-nil: it carries the rows written before the failure.
+	restamp(ctx context.Context, c timescale.TradeChunk, lo, hi time.Time) (chunkRestampOutcome, error)
+	// tick reports the run's cumulative progress to the job heartbeat at
+	// the slice boundary the walk has reached.
+	tick(watermark time.Time)
+	// finish is the closing block, printed after the last chunk: whatever
+	// the tier reports on its own stdout, plus the summary the driver
+	// writes to its `out`.
+	finish(cfgPath string, from, to time.Time) string
+	// resume is the RESUME line printed when the walk stops early — the
+	// same command, carrying the run's generation and every flag that
+	// shaped its population.
+	resume(cfgPath string, from, to time.Time, copts chunkRestampOptions) string
+}
+
+// chunkRestampOutcome is what one tier did inside one chunk.
+type chunkRestampOutcome struct {
+	// Written is the rows the database actually changed. Reported even on
+	// the error path, so a stopped walk can say how far it got.
+	Written int64
+	// Note is the tier's own description for the chunk's progress line
+	// ("changed N row(s) (planned M)"); the driver adds the timing and the
+	// byte figures around it.
+	Note string
+}
+
+// chunkRestampOptions is the chunk walk's own flag set, resolved. Every
+// field is the DRIVER's, except Batch — see its comment.
+type chunkRestampOptions struct {
 	// Batch is -chunk-batch: rows per UPDATE transaction inside a
-	// decompressed chunk.
+	// decompressed chunk. It belongs to the xlm-base tier, whose write set
+	// is a row list; the exact tier's per-transaction bound is its -slice
+	// window, and `-chunk-batch` is refused with `-tier exact`.
 	Batch int
 	// MinFreeBytes is -min-free-bytes: the operator's assertion of free
 	// space on the data volume, used INSTEAD of a measurement. 0 = measure.
@@ -206,13 +264,11 @@ type xlmBaseChunkOptions struct {
 // than lean on this number.
 const chunkFreeSpaceHeadroom = 2.0
 
-// runXLMBaseChunkRestamp is the `-chunks` entry point, called by
-// usdVolumeRestamp once the shared window/flag/live-tail validation has
-// passed. The named return is what lets the deferred policy re-enable
-// fold its own failure into the run's error.
-func runXLMBaseChunkRestamp(ctx context.Context, store xlmBaseChunkStore, cfgPath string, from, to time.Time, opts xlmBaseRestampOptions, copts xlmBaseChunkOptions) (err error) { //nolint:gocognit,funlen // linear: header, policy, live-adjacent, plan, pre-flight, pause, walk, report — each guard beside the print that explains it.
-	run := newXLMBaseRestampRun(store, opts)
-	run.batch = copts.Batch
+// runChunkRestamp is the `-chunks` walk, for whichever tier it is handed.
+// Called by usdVolumeRestamp once the shared window/flag/live-tail
+// validation has passed. The named return is what lets the deferred
+// policy re-enable fold its own failure into the run's error.
+func runChunkRestamp(ctx context.Context, store chunkRestampStore, cfgPath string, from, to time.Time, copts chunkRestampOptions, tier chunkRestampTier) (err error) { //nolint:gocognit,funlen // linear: header, policy, live-adjacent, plan, pre-flight, pause, walk, report — each guard beside the print that explains it.
 	out, errw := copts.Out, copts.Err
 	if out == nil {
 		out = os.Stdout
@@ -226,9 +282,7 @@ func runXLMBaseChunkRestamp(ctx context.Context, store xlmBaseChunkStore, cfgPat
 	}
 	windowEnd := to.AddDate(0, 0, 1)
 
-	_, _ = fmt.Fprintf(errw, "usd-volume-restamp: tier=xlm-base mode=chunks window [%s, %s] slice=%s chunk_batch=%d generation=%d max-generation=%d fill_null=%v min_rel_delta=%s\n",
-		from.Format(time.DateOnly), to.Format(time.DateOnly), opts.Slice, copts.Batch,
-		opts.Generation, opts.MaxGeneration, opts.FillNull, ratPercent(opts.MinRelDelta))
+	_, _ = fmt.Fprint(errw, tier.header(from, to, copts))
 
 	policy, err := store.TradesCompressionPolicy(ctx)
 	if err != nil {
@@ -263,12 +317,12 @@ func runXLMBaseChunkRestamp(ctx context.Context, store xlmBaseChunkStore, cfgPat
 	pf := chunkRestampPreflight(ctx, store, plan.Largest.UncompressedBytes, copts)
 	_, _ = fmt.Fprint(out, pf.render())
 	if pf.Err != nil {
-		if opts.Write {
+		if tier.write() {
 			return fmt.Errorf("usd-volume-restamp: pre-flight refused -write: %w", pf.Err)
 		}
 		_, _ = fmt.Fprintf(out, "PRE-FLIGHT WOULD REFUSE -write: %v\n", pf.Err)
 	}
-	if !opts.Write {
+	if !tier.write() {
 		_, _ = fmt.Fprintf(out, "DRY RUN: would take session advisory lock hashtext('%s') (one -chunks -write run per database), then pause compression policy job %d on trades (scheduled=%v, compress_after=%s) before the first decompress, wait out a fire in flight, and re-enable it at exit.\n",
 			timescale.USDVolumeRestampLockName, policy.JobID, policy.Scheduled, policy.CompressAfter)
 		if !policy.Scheduled && !copts.ResumePausedPolicy {
@@ -284,16 +338,15 @@ func runXLMBaseChunkRestamp(ctx context.Context, store xlmBaseChunkStore, cfgPat
 		defer func() { err = finish(err) }()
 	}
 
-	walk := &xlmBaseChunkWalk{run: run, chunks: store, copts: copts, out: out, errw: errw, reenableSQL: policyReenableSQL(policy)}
+	walk := &chunkRestampWalk{tier: tier, chunks: store, copts: copts, out: out, errw: errw, reenableSQL: policyReenableSQL(policy)}
 	for i, c := range chunks {
 		lo, hi := clampTradesChunk(c, from, windowEnd)
 		if err := walk.chunk(ctx, i+1, len(chunks), c, lo, hi); err != nil {
-			_, _ = fmt.Fprint(out, chunkRestampResumeHint(cfgPath, from, to, opts, copts))
+			_, _ = fmt.Fprint(out, tier.resume(cfgPath, from, to, copts))
 			return err
 		}
 	}
-	run.printReport(from, to)
-	_, _ = fmt.Fprint(out, run.summary(cfgPath, from, to))
+	_, _ = fmt.Fprint(out, tier.finish(cfgPath, from, to))
 	return nil
 }
 
@@ -335,7 +388,7 @@ func policyReenableSQL(p timescale.TradesCompressionPolicy) string {
 // the by-hand statement. The by-hand statement is printed BEFORE the
 // pause so a SIGKILL, which runs no deferred function, leaves the trace
 // in the job log.
-func pauseTradesCompressionPolicy(ctx context.Context, store xlmBaseChunkStore, p timescale.TradesCompressionPolicy, errw io.Writer) (func(error) error, error) {
+func pauseTradesCompressionPolicy(ctx context.Context, store chunkRestampStore, p timescale.TradesCompressionPolicy, errw io.Writer) (func(error) error, error) {
 	reenable := policyReenableSQL(p)
 	_, _ = fmt.Fprintf(errw, "usd-volume-restamp: compression policy job %d on trades (compress_after %s): PAUSING it for this run so it cannot re-compress the open chunk between batches; it is re-enabled on every exit path.\n",
 		p.JobID, p.CompressAfter)
@@ -367,7 +420,7 @@ func pauseTradesCompressionPolicy(ctx context.Context, store xlmBaseChunkStore, 
 // the run's error. A failure inside undoes what was taken before it
 // returns, so no refusal leaves the lock held or the policy paused by this
 // run.
-func beginChunkWriteRun(ctx context.Context, store xlmBaseChunkStore, from, windowEnd time.Time, planned []timescale.TradeChunk, copts xlmBaseChunkOptions, out, errw io.Writer) (chunks []timescale.TradeChunk, finish func(error) error, err error) {
+func beginChunkWriteRun(ctx context.Context, store chunkRestampStore, from, windowEnd time.Time, planned []timescale.TradeChunk, copts chunkRestampOptions, out, errw io.Writer) (chunks []timescale.TradeChunk, finish func(error) error, err error) {
 	release, err := takeRestampLock(ctx, store, errw)
 	if err != nil {
 		return nil, nil, err
@@ -419,7 +472,7 @@ const restampLockHolderSQL = `SELECT a.pid, a.application_name, a.backend_start,
 
 // takeRestampLock takes the run lock or refuses, naming the lock and how
 // to find its holder.
-func takeRestampLock(ctx context.Context, store xlmBaseChunkStore, errw io.Writer) (func(context.Context) error, error) {
+func takeRestampLock(ctx context.Context, store chunkRestampStore, errw io.Writer) (func(context.Context) error, error) {
 	release, err := store.TryUSDVolumeRestampLock(ctx)
 	if err != nil {
 		if errors.Is(err, timescale.ErrUSDVolumeRestampLockHeld) {
@@ -461,7 +514,7 @@ const (
 // still executing: the pause stops the NEXT fire, a fire in flight
 // finishes on its own, and a decompress issued beside it races it. One
 // progress line per poll; a bounded wait, refused at the bound.
-func waitTradesPolicyIdle(ctx context.Context, store xlmBaseChunkStore, p timescale.TradesCompressionPolicy, copts xlmBaseChunkOptions, errw io.Writer) error {
+func waitTradesPolicyIdle(ctx context.Context, store chunkRestampStore, p timescale.TradesCompressionPolicy, copts chunkRestampOptions, errw io.Writer) error {
 	timeout, poll := copts.PolicyIdleTimeout, copts.PolicyPoll
 	if timeout <= 0 {
 		timeout = defaultPolicyIdleTimeout
@@ -516,39 +569,36 @@ func describeChunkListDrift(planned, now []timescale.TradeChunk) string {
 	return fmt.Sprintf("%d chunk(s) (plan had %d); changed: %s", len(now), len(planned), strings.Join(changed, ", "))
 }
 
-// xlmBaseChunkWalk drives one run over its chunks.
-type xlmBaseChunkWalk struct {
-	run         *xlmBaseRestampRun
-	chunks      xlmBaseChunkStore
-	copts       xlmBaseChunkOptions
+// chunkRestampWalk drives one run over its chunks.
+type chunkRestampWalk struct {
+	tier        chunkRestampTier
+	chunks      chunkRestampStore
+	copts       chunkRestampOptions
 	out         io.Writer
 	errw        io.Writer
 	reenableSQL string
 }
 
 // chunk handles one chunk's slice [lo, hi) of the window.
-func (w *xlmBaseChunkWalk) chunk(ctx context.Context, idx, n int, c timescale.TradeChunk, lo, hi time.Time) error {
-	r := w.run
+func (w *chunkRestampWalk) chunk(ctx context.Context, idx, n int, c timescale.TradeChunk, lo, hi time.Time) error {
 	label := fmt.Sprintf("chunk %d/%d %s [%s, %s)", idx, n, c, lo.Format(time.RFC3339), hi.Format(time.RFC3339))
-	if !r.write {
-		res, err := r.walk(ctx, lo, hi, xlmBaseWalkFull)
+	if !w.tier.write() {
+		note, err := w.tier.preview(ctx, lo, hi)
 		if err != nil {
 			return err
 		}
-		r.totals.Merge(res.stats)
-		_, _ = fmt.Fprintf(w.out, "%s: would change %d row(s) (scanned %d, null-fill %d, already correct %d) — chunk %s, untouched\n",
-			label, res.stats.Changed, res.stats.Scanned, res.stats.NullFilled, res.stats.Unchanged, chunkState(c))
+		_, _ = fmt.Fprintf(w.out, "%s: %s — chunk %s, untouched\n", label, note, chunkState(c))
 		return nil
 	}
 
 	// Read-only probe on the chunk as it is: is there anything to do?
-	probe, err := r.walk(ctx, lo, hi, xlmBaseWalkProbe)
+	dirty, err := w.tier.probe(ctx, lo, hi)
 	if err != nil {
 		return err
 	}
-	if probe.stats.Changed == 0 {
+	if !dirty {
 		_, _ = fmt.Fprintf(w.out, "%s: nothing to change — skipped, chunk left %s\n", label, chunkState(c))
-		r.hb.Progress(r.progress, uint64(lo.Unix())) //nolint:gosec // post-1970 timestamp
+		w.tier.tick(lo)
 		return nil
 	}
 
@@ -559,15 +609,12 @@ func (w *xlmBaseChunkWalk) chunk(ctx context.Context, idx, n int, c timescale.Tr
 			return fmt.Errorf("usd-volume-restamp: %s: pre-flight refused before the decompress (the chunk is untouched): %w", label, pf.Err)
 		}
 	}
-	// Every batch inside the chunk goes through the guarded apply, which
-	// reads the chunk's is_compressed ahead of the UPDATE.
-	inChunk := func(ctx context.Context, plan *timescale.XLMBaseRestampPlan, generation int64, batch int) (int64, error) {
-		return w.chunks.ApplyXLMBaseUSDVolumeRestampInChunk(ctx, c, plan, generation, batch)
-	}
-	var inside xlmBaseWalk
+	// Every write inside the chunk goes through the tier's guarded apply,
+	// which reads the chunk's is_compressed ahead of the UPDATE.
+	var inside chunkRestampOutcome
 	res, err := w.chunks.RestampTradesChunk(ctx, c, func(ctx context.Context) error {
 		var werr error
-		inside, werr = r.walkWith(ctx, lo, hi, xlmBaseWalkFull, inChunk)
+		inside, werr = w.tier.restamp(ctx, c, lo, hi)
 		return werr
 	}, func(step timescale.ChunkRestampStep) { w.trace(label, c, step) })
 	if err != nil {
@@ -575,20 +622,19 @@ func (w *xlmBaseChunkWalk) chunk(ctx context.Context, idx, n int, c timescale.Tr
 			return fmt.Errorf("usd-volume-restamp: %s: STOPPED — the chunk was re-compressed underneath the run after %d row(s) were written into it. "+
 				"Nothing was written into it compressed, and the walk does not continue on the per-row path. Check that the compression policy is "+
 				"the one this run paused and that nothing else compresses trades chunks (a by-hand compress_chunk, another run), then rerun: %w",
-				label, inside.written, err)
+				label, inside.Written, err)
 		}
 		return fmt.Errorf("usd-volume-restamp: %s: %w", label, err)
 	}
-	r.totals.Merge(inside.stats)
-	r.hb.Progress(r.progress, uint64(lo.Unix())) //nolint:gosec // post-1970 timestamp
+	w.tier.tick(lo)
 	if c.Compressed {
-		_, _ = fmt.Fprintf(w.out, "%s: changed %d row(s) (planned %d) in %.0fs; bytes %s -> %s -> %s\n",
-			label, inside.written, inside.stats.Changed, res.Elapsed.Seconds(),
+		_, _ = fmt.Fprintf(w.out, "%s: %s in %.0fs; bytes %s -> %s -> %s\n",
+			label, inside.Note, res.Elapsed.Seconds(),
 			fmtBytes(res.BytesBefore), fmtBytes(res.BytesDecompressed), fmtBytes(res.BytesAfter))
 		return nil
 	}
-	_, _ = fmt.Fprintf(w.out, "%s: changed %d row(s) (planned %d) in %.0fs; bytes %s -> %s; chunk left uncompressed (not compressed at listing)\n",
-		label, inside.written, inside.stats.Changed, res.Elapsed.Seconds(),
+	_, _ = fmt.Fprintf(w.out, "%s: %s in %.0fs; bytes %s -> %s; chunk left uncompressed (not compressed at listing)\n",
+		label, inside.Note, res.Elapsed.Seconds(),
 		fmtBytes(res.BytesBefore), fmtBytes(res.BytesAfter))
 	return nil
 }
@@ -600,7 +646,7 @@ func (w *xlmBaseChunkWalk) chunk(ctx context.Context, idx, n int, c timescale.Tr
 // it was — decompressed, if the re-compress was the one interrupted.
 // Neither LEFT DECOMPRESSED nor the RESUME line is printed in that
 // case; this is.
-func (w *xlmBaseChunkWalk) trace(label string, c timescale.TradeChunk, step timescale.ChunkRestampStep) {
+func (w *chunkRestampWalk) trace(label string, c timescale.TradeChunk, step timescale.ChunkRestampStep) {
 	switch step {
 	case timescale.ChunkRestampDecompress:
 		_, _ = fmt.Fprintf(w.errw, "%s: decompressing (%s uncompressed). If this process is killed before the chunk's progress line, put the chunk and the policy back by hand:\n    SELECT compress_chunk('%s');\n    %s\n",
@@ -715,7 +761,7 @@ type chunkPreflight struct {
 // Neither available is a refusal, not a guess.
 func chunkRestampPreflight(ctx context.Context, store interface {
 	TradesDataVolumePath(context.Context) (string, error)
-}, largest int64, copts xlmBaseChunkOptions,
+}, largest int64, copts chunkRestampOptions,
 ) chunkPreflight {
 	p := chunkPreflight{Largest: largest, Override: copts.MinFreeBytes}
 	if largest > 0 {
@@ -795,67 +841,6 @@ func freeBytesOnPath(path string) (uint64, error) {
 	}
 	return st.Bavail * uint64(st.Bsize), nil //nolint:gosec,unconvert // block size is positive; the field's width differs per OS
 }
-
-// chunkRestampResumeHint is the chunk walk's RESUME line: the same
-// command, carrying the run's generation and every flag that shaped its
-// population. Finished chunks are probed read-only and skipped; the
-// failed chunk was re-compressed unless the error above says LEFT
-// DECOMPRESSED.
-func chunkRestampResumeHint(cfgPath string, from, to time.Time, opts xlmBaseRestampOptions, copts xlmBaseChunkOptions) string {
-	var b strings.Builder
-	fmt.Fprintf(&b, "\nRESUME: stellarindex-ops usd-volume-restamp -config %s -tier xlm-base -chunks -from %s -to %s -generation %d",
-		cfgPath, from.Format(time.DateOnly), to.Format(time.DateOnly), opts.Generation)
-	b.WriteString(xlmBaseResumeFlags(opts))
-	if copts.Batch != defaultChunkBatch {
-		fmt.Fprintf(&b, " -chunk-batch %d", copts.Batch)
-	}
-	if copts.MinFreeBytes > 0 {
-		fmt.Fprintf(&b, " -min-free-bytes %d", copts.MinFreeBytes)
-	}
-	if copts.AllowLiveAdjacent {
-		b.WriteString(" -allow-live-adjacent")
-	}
-	if opts.Write {
-		b.WriteString(" -write")
-	}
-	b.WriteString("\n  (finished chunks are probed read-only and skipped; the failed chunk was re-compressed unless the error says LEFT DECOMPRESSED)\n")
-	return b.String()
-}
-
-// xlmBaseResumeFlags renders the flags BOTH walks' RESUME lines carry:
-// everything that shapes the population (-fill-null, -sources,
-// -max-generation, -min-rel-delta) and the slice. A resume that dropped
-// -sources would restamp every DEX source where one was asked for; one
-// that dropped -max-generation would admit rows the first run excluded.
-func xlmBaseResumeFlags(opts xlmBaseRestampOptions) string {
-	var b strings.Builder
-	if opts.FillNull {
-		b.WriteString(" -fill-null")
-	}
-	if opts.Slice != time.Hour {
-		fmt.Fprintf(&b, " -slice %s", opts.Slice)
-	}
-	if len(opts.Allow) > 0 {
-		sources := make([]string, 0, len(opts.Allow))
-		for s := range opts.Allow {
-			sources = append(sources, s)
-		}
-		sort.Strings(sources)
-		fmt.Fprintf(&b, " -sources %s", strings.Join(sources, ","))
-	}
-	if opts.MaxGeneration != opts.Generation {
-		fmt.Fprintf(&b, " -max-generation %d", opts.MaxGeneration)
-	}
-	if opts.MinRelDelta != nil {
-		fmt.Fprintf(&b, " -min-rel-delta %s", opts.MinRelDelta.FloatString(6))
-	}
-	return b.String()
-}
-
-// defaultChunkBatch is -chunk-batch's default. Ten times the day walk's
-// -batch: inside a decompressed chunk an UPDATE is a plain heap write,
-// so the per-transaction footprint the smaller batch bounded is gone.
-const defaultChunkBatch = 20_000
 
 // validateRestampGeneration checks an explicit -generation. Negative is
 // nonsense; a value in the FUTURE is worse: every default run's

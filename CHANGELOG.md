@@ -17,6 +17,24 @@ against.
 
 ### Fixed
 
+- **ops:** `usd-volume-restamp -tier exact` planned its UPDATE without
+  pinning a custom plan. Every slice of a day produces identical
+  statement text, so Postgres promotes the prepared statement to a
+  generic plan after a handful of executions — and a generic plan cannot
+  see the window's `ts` bounds, which is what prunes the statement to
+  the chunks it covers. The transaction now carries
+  `SET LOCAL plan_cache_mode = force_custom_plan` beside the lifted
+  decompression cap, as the xlm-base batch already did (the 2026-09-06
+  measurement: 260 result relations, ~270 GB of WAL, 55 compressed
+  chunks decompressed that held no matching row).
+
+- **ops:** a finished `-tier exact` run now prints the same ordered CAGG
+  refresh block the xlm-base tier prints. `verify-usd-volume` — the
+  acceptance the tool points at — reads `trades` directly, while every
+  served volume surface reads a continuous aggregate that does not
+  refresh this far back on its own, so the check went green while the
+  API kept serving pre-restamp numbers.
+
 - `stellarindex-ops -h`: the `backfill-index` entry was inserted
   between `backfill-chainlink`'s synopsis and its description, so the
   Chainlink text read as if it documented the CoinGecko index
@@ -25,6 +43,27 @@ against.
   documents its call budget.
 
 ### Added
+
+- **ops:** `usd-volume-restamp -chunks` now works with `-tier exact`, not
+  only `-tier xlm-base`. The exact tier's repair population — ~10M rows
+  across 2026-03..07, 2,306,054 in March alone — lives in compressed
+  Timescale chunks, where an in-place UPDATE measured ~1,574 rows/min:
+  100+ hours. The flag combination used to be refused on the reasoning
+  that the exact tier writes a set-based UPDATE per slice rather than a
+  row batch, which is not what the cost depends on — a DML into a
+  compressed chunk is serviced by decompressing that chunk inside the
+  transaction whatever shape the statement has. Both tiers now drive ONE
+  chunk driver (decompress → restamp → re-compress per chunk, run lock,
+  compression-policy pause with a guaranteed re-enable on every exit
+  path, free-space pre-flight re-checked before each decompress,
+  live-adjacent refusal, probe-and-skip resume carrying `-generation`);
+  each tier supplies only what it does inside a decompressed chunk, so
+  the guards cannot drift apart between them. Every exact-tier invariant
+  is unchanged: the `pegged_leg / 10^decimals` identity, the
+  `derive_generation <= gen` guard (INV-3), `-fill-null` as an opt-in,
+  and a fail-closed dry run that counts and decompresses nothing.
+  `-chunk-batch` stays xlm-base-only and is refused rather than silently
+  ignored — the exact walk's per-transaction bound is `-slice`.
 
 - Explorer footer now credits CoinGecko as a price-data source. The
   Analyst plan permits commercial use only with visible attribution,

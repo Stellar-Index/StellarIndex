@@ -274,13 +274,13 @@ func threeChunks() ([]timescale.TradeChunk, time.Time, time.Time) {
 	return chunks, d(5), d(18)
 }
 
-func chunkTestOptions(write bool) (xlmBaseRestampOptions, xlmBaseChunkOptions, *bytes.Buffer) {
+func chunkTestOptions(write bool) (xlmBaseRestampOptions, chunkRestampOptions, *bytes.Buffer) {
 	var out bytes.Buffer
 	opts := xlmBaseRestampOptions{
 		Slice: 24 * time.Hour, Batch: 2000, Write: write, SampleSize: 3,
 		MaxGeneration: 1_756_800_000, Generation: 1_756_800_000,
 	}
-	copts := xlmBaseChunkOptions{
+	copts := chunkRestampOptions{
 		Batch:     20_000,
 		FreeBytes: func(string) (uint64, error) { return 4_690 << 30, nil }, // 4.69 TB free
 		// Months after the window: nowhere near the policy's 7-day lag.
@@ -648,12 +648,9 @@ func TestValidateRestampChunkFlags(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "-chunk-batch") {
 		t.Errorf("-batch with -chunks: err = %v, want a redirect to -chunk-batch", err)
 	}
-	// And the whole chunk flag set is xlm-base-only.
-	for _, f := range append([]string{"chunks"}, restampChunkOnlyFlags...) {
-		if err := validateRestampTierFlags(restampTierExact, map[string]bool{f: true}); err == nil {
-			t.Errorf("-%s with -tier exact was accepted", f)
-		}
-	}
+	// Which of the chunk flags each TIER may pass is
+	// TestValidateRestampTierFlags_ChunkModeIsAvailableToBothTiers's
+	// business: the walk itself is available to both.
 }
 
 func TestFmtBytes(t *testing.T) {
@@ -966,7 +963,7 @@ func TestChunkRestampResumeHint_CarriesEveryPopulationFlag(t *testing.T) {
 		Allow: map[string]bool{"soroswap": true, "sdex": true}, FillNull: true, Slice: 30 * time.Minute,
 		Write: true, Generation: 1_756_800_000, MaxGeneration: 0,
 	}
-	copts := xlmBaseChunkOptions{Batch: 5000, MinFreeBytes: 1 << 40, AllowLiveAdjacent: true}
+	copts := chunkRestampOptions{Batch: 5000, MinFreeBytes: 1 << 40, AllowLiveAdjacent: true}
 	got := chunkRestampResumeHint("/etc/stellarindex.toml", from, to, opts, copts)
 	want := "RESUME: stellarindex-ops usd-volume-restamp -config /etc/stellarindex.toml -tier xlm-base -chunks -from 2026-01-01 -to 2026-07-19 -generation 1756800000" +
 		" -fill-null -slice 30m0s -sources sdex,soroswap -max-generation 0 -chunk-batch 5000 -min-free-bytes 1099511627776 -allow-live-adjacent -write"
@@ -976,7 +973,7 @@ func TestChunkRestampResumeHint_CarriesEveryPopulationFlag(t *testing.T) {
 	// Defaults are not repeated: -max-generation equal to the generation
 	// is the default, and so are the batch, slice, and no sources.
 	opts = xlmBaseRestampOptions{Slice: time.Hour, Generation: 7, MaxGeneration: 7}
-	copts = xlmBaseChunkOptions{Batch: defaultChunkBatch}
+	copts = chunkRestampOptions{Batch: defaultChunkBatch}
 	got = chunkRestampResumeHint("/etc/x.toml", from, to, opts, copts)
 	for _, stray := range []string{"-max-generation", "-sources", "-slice", "-chunk-batch", "-min-free-bytes", "-allow-live-adjacent", "-write", "-fill-null"} {
 		if strings.Contains(got, stray) {

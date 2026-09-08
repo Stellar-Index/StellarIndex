@@ -216,9 +216,32 @@ var xlmBaseRestampCAGGs = []timescale.CAGGSpec{
 }
 
 // xlmBaseRestampFollowUp renders the operator's post-write follow-up: the
-// ordered CAGG refresh block, and the `-min-rel-delta` guidance. Returned
-// as a string rather than printed so the ordering contract is testable
-// without capturing stdout.
+// ordered CAGG refresh block BOTH tiers print, and the `-min-rel-delta`
+// guidance only the anchor re-derive has. Returned as a string rather
+// than printed so the ordering contract is testable without capturing
+// stdout.
+func xlmBaseRestampFollowUp(from, to time.Time) string {
+	return restampCAGGFollowUp(from, to) + xlmBaseMinRelDeltaGuidance
+}
+
+// xlmBaseMinRelDeltaGuidance is the anchor re-derive's flag advice; the
+// exact tier has no such threshold (it repairs an identity, and a row is
+// either on it or off it).
+const xlmBaseMinRelDeltaGuidance = "\nFLAG GUIDANCE — `-min-rel-delta 0.001` is the recommended setting for a full-window\n" +
+	"run. The re-derive reads the FINALISED prices_1m bucket while the original insert\n" +
+	"read the partially-materialised real-time bucket for the same minute, so a large\n" +
+	"share of the write set moves by less than 0.1% — repairing nothing, on a\n" +
+	"COMPRESSED hypertable where the write is the expensive part. Measured over\n" +
+	"2026-01-01..2026-07-21: of 10,734,569 non-null-fill changes, 8,423,350 move >=0.1%,\n" +
+	"so the flag drops 2,311,219 rows (8.1% of the 28,583,186-row write set) at a cost\n" +
+	"of <0.1% each. It never suppresses a NULL fill, which is where the coverage\n" +
+	"recovery lives, so the tool's whole point survives the flag.\n\n"
+
+// restampCAGGFollowUp renders the ordered CAGG refresh block every
+// finished restamp must be followed by, whichever tier ran it: the
+// acceptance check reads `trades` directly, every served volume surface
+// reads a continuous aggregate, and none of them refresh this far back on
+// their own.
 //
 // The window is [from 00:00Z, to+1d 00:00Z), padded per aggregate by
 // [timescale.PadRefreshWindow] so each call clears Timescale's
@@ -226,7 +249,7 @@ var xlmBaseRestampCAGGs = []timescale.CAGGSpec{
 // re-materialise unchanged, which is cheap; a call that is REJECTED for a
 // too-small window is the expensive outcome, because the operator reads
 // the error, skips that aggregate, and ships a partially-stale surface.
-func xlmBaseRestampFollowUp(from, to time.Time) string {
+func restampCAGGFollowUp(from, to time.Time) string {
 	lo := from.UTC().Truncate(24 * time.Hour)
 	hi := to.UTC().Truncate(24*time.Hour).AddDate(0, 0, 1)
 
@@ -244,15 +267,6 @@ func xlmBaseRestampFollowUp(from, to time.Time) string {
 	}
 	b.WriteString("\nThen force the asset_volume_24h rollup (it re-sums prices_1m.volume_usd; it also\n")
 	b.WriteString("self-heals on its own cadence, so verify rather than assume).\n")
-	b.WriteString("\nFLAG GUIDANCE — `-min-rel-delta 0.001` is the recommended setting for a full-window\n")
-	b.WriteString("run. The re-derive reads the FINALISED prices_1m bucket while the original insert\n")
-	b.WriteString("read the partially-materialised real-time bucket for the same minute, so a large\n")
-	b.WriteString("share of the write set moves by less than 0.1% — repairing nothing, on a\n")
-	b.WriteString("COMPRESSED hypertable where the write is the expensive part. Measured over\n")
-	b.WriteString("2026-01-01..2026-07-21: of 10,734,569 non-null-fill changes, 8,423,350 move >=0.1%,\n")
-	b.WriteString("so the flag drops 2,311,219 rows (8.1% of the 28,583,186-row write set) at a cost\n")
-	b.WriteString("of <0.1% each. It never suppresses a NULL fill, which is where the coverage\n")
-	b.WriteString("recovery lives, so the tool's whole point survives the flag.\n\n")
 	return b.String()
 }
 

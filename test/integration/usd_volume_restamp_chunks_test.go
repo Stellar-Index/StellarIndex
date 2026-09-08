@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math/big"
 	"os"
 	"path/filepath"
 	"strings"
@@ -453,4 +454,286 @@ func captureStdout(t *testing.T, fn func() error) (string, error) {
 	<-done
 	_ = r.Close()
 	return buf.String(), ferr
+}
+
+// TestExactTierRestampChunks_RestampsInsideACompressedChunk is the
+// DB-backed proof for `usd-volume-restamp -tier exact -chunks`, driven
+// through the real subcommand (flags, config, live-tail guard,
+// generation) on real TimescaleDB, against a `trades` chunk that is
+// COMPRESSED the way every chunk older than the 7-day policy is on
+// production. It is the exact tier's half of the test above, and it
+// exists because the exact-tier repair population — ~10M rows across
+// 2026-03..07, 2,306,054 in March alone — is 100+ hours at the ~1,574
+// rows/min an in-place UPDATE sustains against compressed chunks.
+//
+//  1. the DRY RUN (the default) prints the chunk plan, counts, and leaves
+//     the chunk compressed and every row byte-identical;
+//  2. -write applies the peg identity (`base_amount / 10^7`, the value
+//     [timescale.ExactTierUSDVolume] renders), stamps the rows with the
+//     run's generation, and leaves the chunk COMPRESSED again;
+//  3. the already-correct row is untouched — value AND generation;
+//  4. NULL rows are filled only because -fill-null was passed;
+//  5. a second -write run changes nothing: the chunk is probed read-only,
+//     reported as skipped, and never decompressed;
+//  6. `-chunk-batch` — the xlm-base tier's row batch — is still refused
+//     with -tier exact, because this walk's transaction is one -slice
+//     window.
+func TestExactTierRestampChunks_RestampsInsideACompressedChunk(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
+
+	dsn := startTimescale(t, ctx)
+	applyMigrations(t, dsn)
+
+	store, err := timescale.Open(ctx, dsn)
+	if err != nil {
+		t.Fatalf("store open: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+
+	const usdcID = "USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
+	usdc, err := c.NewClassicAsset("USDC", "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// USDC/XLM — the dollar leg is the BASE: tier 2b, the exact class the
+	// 2026-07-30 sweep found dirty on every one of its 66 days.
+	pair, err := c.NewPair(usdc, c.NativeAsset())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := timescale.InstallUSDVolumeResolution(store, []string{usdcID}, nil); err != nil {
+		t.Fatalf("InstallUSDVolumeResolution: %v", err)
+	}
+
+	day := time.Date(2026, 6, 10, 0, 0, 0, 0, time.UTC)
+	// base amounts in stroops: $125, $0.0000003 (dust), $9,876,543.21.
+	fixtures := []struct {
+		name string
+		base int64
+		ts   time.Time
+	}{
+		{"resolver-priced", 1_250_000_000, day.Add(3 * time.Hour)},
+		{"stored NULL", 3, day.Add(9 * time.Hour)},
+		{"already correct", 98_765_432_100_000, day.Add(15 * time.Hour)},
+	}
+	ledger := map[string]uint32{}
+	var topLedger uint32
+	for i, f := range fixtures {
+		tr := mkIntegrationTrade("sdex", 20+i, f.ts, pair, f.base, 10_000_000_000)
+		if err := store.InsertTrade(ctx, tr); err != nil {
+			t.Fatalf("InsertTrade %s: %v", f.name, err)
+		}
+		ledger[f.name] = tr.Ledger
+		if tr.Ledger > topLedger {
+			topLedger = tr.Ledger
+		}
+	}
+	exec := func(t *testing.T, q string, args ...any) {
+		t.Helper()
+		if _, err := store.DB().ExecContext(ctx, q, args...); err != nil {
+			t.Fatalf("%q: %v", q, err)
+		}
+	}
+	type row struct {
+		usd *string
+		gen int64
+	}
+	readRow := func(t *testing.T, l uint32) row {
+		t.Helper()
+		var (
+			usd sql.NullString
+			gen int64
+		)
+		if err := store.DB().QueryRowContext(ctx,
+			`SELECT usd_volume::text, derive_generation FROM trades WHERE source = 'sdex' AND ledger = $1`, l,
+		).Scan(&usd, &gen); err != nil {
+			t.Fatalf("read ledger %d: %v", l, err)
+		}
+		if !usd.Valid {
+			return row{nil, gen}
+		}
+		return row{&usd.String, gen}
+	}
+	snapshot := func(t *testing.T) map[uint32]row {
+		t.Helper()
+		out := map[uint32]row{}
+		for _, l := range ledger {
+			out[l] = readRow(t, l)
+		}
+		return out
+	}
+	sameSnapshot := func(t *testing.T, before, after map[uint32]row, what string) {
+		t.Helper()
+		for l, b := range before {
+			a := after[l]
+			switch {
+			case (b.usd == nil) != (a.usd == nil):
+				t.Errorf("%s: ledger %d usd_volume nullness changed (%v -> %v)", what, l, b.usd, a.usd)
+			case b.usd != nil && *b.usd != *a.usd:
+				t.Errorf("%s: ledger %d usd_volume %s -> %s", what, l, *b.usd, *a.usd)
+			case b.gen != a.gen:
+				t.Errorf("%s: ledger %d derive_generation %d -> %d", what, l, b.gen, a.gen)
+			}
+		}
+	}
+	chunkCompressed := func(t *testing.T) bool {
+		t.Helper()
+		var compressed bool
+		if err := store.DB().QueryRowContext(ctx, `
+			SELECT is_compressed FROM timescaledb_information.chunks
+			 WHERE hypertable_name = 'trades' AND range_start <= $1 AND range_end > $1`, day.Add(3*time.Hour),
+		).Scan(&compressed); err != nil {
+			t.Fatalf("read chunk state: %v", err)
+		}
+		return compressed
+	}
+	policyScheduled := func(t *testing.T) bool {
+		t.Helper()
+		var scheduled bool
+		if err := store.DB().QueryRowContext(ctx,
+			`SELECT scheduled FROM timescaledb_information.jobs WHERE proc_name = 'policy_compression' AND hypertable_name = 'trades'`,
+		).Scan(&scheduled); err != nil {
+			t.Fatalf("read the trades compression policy: %v", err)
+		}
+		return scheduled
+	}
+
+	// ── the pre-2026-07-23 state, imposed by hand ─────────────────────
+	exec(t, `UPDATE trades SET usd_volume = usd_volume * 1.007 WHERE source='sdex' AND ledger=$1`, ledger["resolver-priced"])
+	exec(t, `UPDATE trades SET usd_volume = NULL WHERE source='sdex' AND ledger=$1`, ledger["stored NULL"])
+	correctBefore := readRow(t, ledger["already correct"])
+	if correctBefore.usd == nil || correctBefore.gen != 0 {
+		t.Fatalf("fixture: the correct row = %+v, want a gen-0 priced row", correctBefore)
+	}
+
+	// ── compress the chunk, as the 7-day policy would have ────────────
+	exec(t, `SELECT compress_chunk(c, true) FROM show_chunks('trades') c`)
+	if !chunkCompressed(t) {
+		t.Fatal("fixture: the day's chunk did not compress")
+	}
+	if !policyScheduled(t) {
+		t.Fatal("fixture: the trades compression policy (migration 0001) is not scheduled before the run")
+	}
+	if err := store.UpsertCursor(ctx, "ledgerstream", "", topLedger+1_000); err != nil {
+		t.Fatalf("UpsertCursor: %v", err)
+	}
+
+	cfgPath := filepath.Join(t.TempDir(), "stellarindex.toml")
+	cfg := fmt.Sprintf("[storage]\npostgres_dsn = %q\n\n[trades]\nusd_pegged_classic_assets = [%q]\n", dsn, usdcID)
+	if err := os.WriteFile(cfgPath, []byte(cfg), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	const gen = "1756800000"
+	args := []string{
+		"usd-volume-restamp", "-config", cfgPath, "-tier", "exact", "-chunks",
+		"-from", "2026-06-10", "-to", "2026-06-10", "-fill-null",
+		"-generation", gen,
+		// The database's data directory is inside the container, so the
+		// host cannot statfs it: the operator-override path.
+		"-min-free-bytes", fmt.Sprint(int64(1) << 40),
+	}
+
+	// ── 1. dry run: plan printed, nothing decompressed, nothing written ─
+	before := snapshot(t)
+	out, err := captureStdout(t, func() error { return chops.Run(args) })
+	if err != nil {
+		t.Fatalf("dry run: %v\n%s", err, out)
+	}
+	for _, want := range []string{
+		"chunk plan: 1 trades chunk(s) intersect [2026-06-10, 2026-06-10] — 1 compressed, 0 not",
+		"WARNING: trusting -min-free-bytes",
+		"DRY RUN: would take session advisory lock hashtext('usd-volume-restamp:trades')",
+		"DRY RUN: nothing is decompressed",
+		"would change 2 row(s)",
+		"would restamp 2 row(s) across 1 exact-tier group-day(s)",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("dry-run output lacks %q:\n%s", want, out)
+		}
+	}
+	sameSnapshot(t, before, snapshot(t), "dry run")
+	if !chunkCompressed(t) {
+		t.Fatal("the dry run decompressed the chunk")
+	}
+	if !policyScheduled(t) {
+		t.Fatal("the dry run paused the compression policy")
+	}
+
+	// ── 2. -write: identity applied INSIDE the chunk, left compressed ──
+	out, err = captureStdout(t, func() error { return chops.Run(append(args, "-write")) })
+	if err != nil {
+		t.Fatalf("write run: %v\n%s", err, out)
+	}
+	for _, want := range []string{
+		"changed 2 row(s)",
+		"bytes ",
+		"restamped 2 row(s) across 1 exact-tier group-day(s) in [2026-06-10, 2026-06-10]",
+		"CALL refresh_continuous_aggregate('prices_1m'",
+		"acceptance: stellarindex-ops verify-usd-volume -config " + cfgPath + " -day 2026-06-10 -days 1",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("write-run output lacks %q:\n%s", want, out)
+		}
+	}
+	if !chunkCompressed(t) {
+		t.Fatal("the chunk was left DECOMPRESSED after a successful write run")
+	}
+	if !policyScheduled(t) {
+		t.Error("the trades compression policy was not re-enabled after the write run")
+	}
+	// The identity, from the SAME function the insert path renders with.
+	after := snapshot(t)
+	for _, f := range fixtures[:2] {
+		want, ok := timescale.ExactTierUSDVolume(timescale.TierBasePegged, 7, fmt.Sprint(f.base), "10000000000")
+		if !ok {
+			t.Fatalf("%s: ExactTierUSDVolume declined", f.name)
+		}
+		got := after[ledger[f.name]]
+		if got.usd == nil {
+			t.Errorf("%s: usd_volume is NULL, want %s", f.name, want)
+			continue
+		}
+		gotRat, ok1 := new(big.Rat).SetString(*got.usd)
+		wantRat, ok2 := new(big.Rat).SetString(want)
+		if !ok1 || !ok2 || gotRat.Cmp(wantRat) != 0 {
+			t.Errorf("%s: usd_volume = %s, want %s (pegged_leg / 10^7)", f.name, *got.usd, want)
+		}
+		if fmt.Sprint(got.gen) != gen {
+			t.Errorf("%s: derive_generation = %d, want the run's %s (INV-3)", f.name, got.gen, gen)
+		}
+	}
+	// 3. the already-correct row is byte-identical, generation included.
+	if a := after[ledger["already correct"]]; a.gen != 0 || *a.usd != *correctBefore.usd {
+		t.Errorf("correctly-stamped row was rewritten: before %+v after %+v", correctBefore, a)
+	}
+
+	// ── 5. the rerun: probed, skipped, nothing moves ──────────────────
+	before = snapshot(t)
+	out, err = captureStdout(t, func() error { return chops.Run(append(args, "-write")) })
+	if err != nil {
+		t.Fatalf("rerun: %v\n%s", err, out)
+	}
+	for _, want := range []string{
+		"nothing to change — skipped, chunk left compressed",
+		"restamped 0 row(s)",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("rerun output lacks %q:\n%s", want, out)
+		}
+	}
+	sameSnapshot(t, before, snapshot(t), "rerun")
+	if !chunkCompressed(t) {
+		t.Fatal("the rerun left the chunk decompressed")
+	}
+	if !policyScheduled(t) {
+		t.Fatal("the rerun left the compression policy paused")
+	}
+
+	// ── 6. the xlm-base tier's row batch is still refused here ────────
+	out, err = captureStdout(t, func() error { return chops.Run(append(args, "-chunk-batch", "5000", "-write")) })
+	if err == nil || !strings.Contains(err.Error(), "-chunk-batch") || !strings.Contains(err.Error(), "-tier xlm-base") {
+		t.Fatalf("-chunk-batch with -tier exact: err = %v, want a refusal naming the flag\n%s", err, out)
+	}
+	sameSnapshot(t, before, snapshot(t), "refused run (-chunk-batch)")
 }
