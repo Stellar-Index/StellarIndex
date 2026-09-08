@@ -15,6 +15,15 @@ against.
 
 ## [Unreleased]
 
+### Fixed
+
+- `stellarindex-ops -h`: the `backfill-index` entry was inserted
+  between `backfill-chainlink`'s synopsis and its description, so the
+  Chainlink text read as if it documented the CoinGecko index
+  backfill and `backfill-chainlink` appeared to have none. Both
+  commands now carry their own description, and `backfill-index`
+  documents its call budget.
+
 ### Added
 
 - Explorer footer now credits CoinGecko as a price-data source. The
