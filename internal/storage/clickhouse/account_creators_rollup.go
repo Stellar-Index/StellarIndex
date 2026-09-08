@@ -263,6 +263,36 @@ var creatorsRollupStatements = []rollupStep{
 	   AND m.movement_kind = 'transfer' AND m.direction = 'sent'
 	 GROUP BY m.address, m.ledger, m.tx_hash, m.op_index, m.leg_index, m.direction
 	 ` + creatorsP23ArmSettings},
+	// ASSUMPTION, not an enforced invariant: exactly ONE `sent` transfer leg
+	// per create_account op. `leg_index` is in the GROUP BY above, so if a
+	// future protocol ever emits a second `sent` leg for one creation, this
+	// arm emits TWO rows for it and that creator's accounts_created SILENTLY
+	// DOUBLES — no error, no gap, just a wrong number on a served board.
+	//
+	// It holds today and was re-verified read-only on r1 2026-09-08 over
+	// ledgers 63,000,000-63,099,999: ZERO (ledger, tx_hash, op_index) keys
+	// carry more than one leg. The detector, if this needs re-checking or a
+	// probe:
+	//
+	//   SELECT count() FROM (
+	//     SELECT m.ledger, m.tx_hash, m.op_index, uniqExact(m.leg_index) AS legs
+	//     FROM stellar.account_movements AS m
+	//     INNER JOIN (SELECT ledger_seq, tx_hash, op_index FROM stellar.operations
+	//                 WHERE ledger_seq BETWEEN ? AND ? AND ledger_seq >= 58762517
+	//                   AND op_type = 'OperationTypeCreateAccount'
+	//                 GROUP BY ledger_seq, tx_hash, op_index) AS o
+	//       ON m.ledger = o.ledger_seq AND m.tx_hash = o.tx_hash
+	//      AND m.op_index = o.op_index
+	//     WHERE m.ledger BETWEEN ? AND ? AND m.ledger >= 58762517
+	//       AND m.movement_kind = 'transfer' AND m.direction = 'sent'
+	//     GROUP BY m.ledger, m.tx_hash, m.op_index HAVING legs > 1)
+	//
+	// Dropping `leg_index` from the GROUP BY would make the arm robust by
+	// construction and is a no-op on today's data — but it changes a query
+	// verified at whole-partition scale, on money, and the multi-leg case has
+	// no integration fixture to prove the collapse picks the right
+	// counterparty. Left as an assumption ON PURPOSE, written down here rather
+	// than only in a private ledger, so whoever edits this GROUP BY sees it.
 	{sql: `TRUNCATE TABLE stellar.account_creators_rollup_staging`},
 	{sql: `TRUNCATE TABLE stellar.account_creators_stats_staging`},
 	{sql: `INSERT INTO stellar.account_creators_rollup_staging
