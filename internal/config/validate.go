@@ -12,6 +12,7 @@ import (
 
 	"github.com/Stellar-Index/StellarIndex/internal/aggregate/anomaly"
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/redact"
 )
 
 // ErrInvalidConfig is the sentinel error every validation failure
@@ -419,24 +420,12 @@ func setOrEmpty(v string) string {
 	return "set"
 }
 
-// redactConnString renders a connection string for a fatal boot error
-// without disclosing it. A Postgres DSN carries its password inline
-// (postgres://user:pw@host/db) and so does a managed-Redis URI — every
-// hosted Redis vendor issues rediss://default:<password>@host:port
-// rather than the bare host:port storage.redis_addr wants, which is the
-// single likeliest way a real password reaches this code path. The
-// branches that call this fire on MALFORMED input, so nothing about the
-// string can be assumed: keep the scheme, which is the part that shows
-// the operator what they got wrong, and drop the rest.
-func redactConnString(v string) string {
-	if v == "" {
-		return "(empty)"
-	}
-	if i := strings.Index(v, "://"); i > 0 {
-		return v[:i] + "://<redacted>"
-	}
-	return "<redacted>"
-}
+// redactConnString is [redact.ConnString]. It stays as a name in this
+// file because the validation branches read better for it, and it
+// delegates because the migration tool needs the same behaviour and a
+// second copy is how a redaction invariant drifts (the maskEmail
+// duplication that produced internal/pii is the precedent).
+func redactConnString(v string) string { return redact.ConnString(v) }
 
 // addrErrReason returns net.SplitHostPort's reason WITHOUT the address
 // it embeds. *net.AddrError formats as "address <addr>: <reason>", so

@@ -15,6 +15,43 @@ against.
 
 ## [Unreleased]
 
+### Security
+
+- **migrate,config,api:** a Postgres password can no longer reach the deploy
+  log, and the two URL-borne-personal-data checks are now schema-driven
+  rather than enumerated (#346 F2/F3). `stellarindex-migrate` is handed the
+  production DSN — password inline — on every deploy, and none of its own
+  format strings printed it; the leak came from the library. golang-migrate
+  rejects an unparseable database URL by wrapping `*url.Error`, which renders
+  as `parse "<the whole URL>": …`, so a generated password containing an
+  unescaped `%`, `#`, space or `/` printed the live credential in full to the
+  deploy job's output, journald and Loki — on exactly the run an operator is
+  most likely to paste into a ticket. A second path was ours: `down <dsn>`, a
+  paste into the slot where the step count goes, echoed the argument back
+  through an unrelated error. Both are closed at the point the process
+  WRITES: the binary now has one stderr chokepoint that strips inline
+  secrets, so a future error path inherits the redaction instead of having to
+  remember it. The redaction itself moved to a new leaf package,
+  `internal/redact` (the secrets counterpart to `internal/pii`), with two
+  renderers because using the wrong one either leaks or destroys the
+  diagnostic: `ConnString` for values we compose, which keeps only the scheme,
+  and `Credentials` for text we did not, which cuts the secret out of a
+  third-party error and keeps the host, the database, the options and the
+  reason — an operator reading a failed migration still gets everything
+  except the password. `internal/config`'s validation now delegates to it
+  rather than holding a second copy. Pinned by a test that BUILDS AND RUNS the
+  real binary against a DSN with a placeholder password, because the leak
+  lived in a dependency's error text and an audit of our own format strings —
+  which is what had been done — could only ever conclude that our strings were
+  fine. On the URL-personal-data side the contract and the handlers are now
+  checked directly: nothing in `openapi/stellar-index.v1.yaml` may declare an
+  address-bearing query parameter or path template, and no handler under
+  `internal/api` may read one. The edge's Caddy filter is a field
+  enumeration — it masks the keys somebody thought of, which is why it
+  covered `token` and was already blind to `email` when the staff look-up
+  shipped — so these fail on the next route to try it, whether or not anyone
+  remembers to extend a list at the edge.
+
 ## [v0.65.0] — 2026-09-08
 
 ### Added

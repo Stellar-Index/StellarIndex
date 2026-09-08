@@ -147,6 +147,7 @@ type openAPIOperation struct {
 type openAPIParameter struct {
 	Ref     string  `yaml:"$ref"`
 	Name    string  `yaml:"name"`
+	In      string  `yaml:"in"`
 	Example any     `yaml:"example"`
 	Schema  *schema `yaml:"schema"`
 }
