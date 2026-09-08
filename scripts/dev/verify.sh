@@ -58,6 +58,33 @@ for tool in gofumpt goimports golangci-lint; do
     [ -x "${verify_go_bin}/${tool}" ] || gap "${verify_go_bin}/${tool} is absent (make fmt / make lint call it by absolute path)"
 done
 
+# A Go-built tool embeds the toolchain it was compiled with, and golangci-lint
+# REFUSES to run when that is older than the module's target:
+#   can't load config: the Go language version (go1.25) used to build
+#   golangci-lint is lower than the targeted Go version (1.26.8)
+# Moving go.mod's toolchain therefore breaks every previously-installed local
+# tool at once, and does it five minutes in, in the Lint section, with a
+# message that reads like a config error rather than a stale binary. CI and
+# the verify container never see it because both build these tools from source
+# against the same go.mod; only a developer machine carries the old ones.
+# Cheap here, so it is checked here — `make deps` reinstalls all three.
+verify_go_target="$(awk '/^toolchain[ \t]+go/ { sub(/^go/, "", $2); print $2; exit }' go.mod 2>/dev/null || true)"
+[ -n "$verify_go_target" ] || verify_go_target="$(awk '/^go[ \t]+[0-9]/ { print $2; exit }' go.mod 2>/dev/null || true)"
+if [ -n "$verify_go_target" ] && command -v go >/dev/null 2>&1; then
+    for tool in gofumpt goimports golangci-lint; do
+        [ -x "${verify_go_bin}/${tool}" ] || continue
+        verify_tool_go="$(go version "${verify_go_bin}/${tool}" 2>/dev/null | awk '{ print $2 }' || true)"
+        verify_tool_go="${verify_tool_go#go}"
+        [ -n "$verify_tool_go" ] || continue
+        # awk NR==1 rather than `head -1`: head exits after the first line and
+        # SIGPIPEs sort, which under `set -o pipefail` fails the whole run.
+        verify_older="$(printf '%s\n%s\n' "$verify_go_target" "$verify_tool_go" | sort -V | awk 'NR==1')"
+        if [ "$verify_older" = "$verify_tool_go" ] && [ "$verify_tool_go" != "$verify_go_target" ]; then
+            gap "${tool} was built with go${verify_tool_go} but go.mod targets ${verify_go_target} — run 'make deps' (golangci-lint refuses to run on this skew)"
+        fi
+    done
+fi
+
 # node_modules, per app, under exactly the conditions that make each app's
 # section run. The test is the executable each gate invokes, because a
 # half-finished install leaves the directory present and the binary absent.

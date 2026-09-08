@@ -555,7 +555,7 @@ tests:
         exp_alerts:
           - exp_labels:
               source: soroswap
-              severity: informational
+              severity: ticket
               team: stellarindex
               component: ingestion
             exp_annotations:
@@ -594,7 +594,7 @@ tests:
               job: stellarindex_indexer
               instance: r1:9100
               source: sdex
-              severity: informational
+              severity: ticket
               team: stellarindex
               component: ingestion
             exp_annotations:
@@ -713,7 +713,7 @@ tests:
           - exp_labels:
               job: stellarindex_indexer
               instance: r1:9100
-              severity: informational
+              severity: ticket
               team: stellarindex
               component: ingestion
             exp_annotations:
