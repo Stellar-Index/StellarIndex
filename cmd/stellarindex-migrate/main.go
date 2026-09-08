@@ -32,6 +32,7 @@ import (
 	_ "github.com/golang-migrate/migrate/v4/database/postgres"
 	_ "github.com/golang-migrate/migrate/v4/source/file"
 
+	"github.com/Stellar-Index/StellarIndex/internal/redact"
 	"github.com/Stellar-Index/StellarIndex/internal/version"
 )
 
@@ -97,7 +98,7 @@ func main() { //nolint:gocognit,gocyclo // dispatch-heavy; splitting would reduc
 	case "help", "--help", "-h":
 		printUsage(fs)
 	default:
-		fmt.Fprintf(os.Stderr, "unknown subcommand %q\n", args[0])
+		errf("unknown subcommand %q", args[0])
 		printUsage(fs)
 		os.Exit(2)
 	}
@@ -200,15 +201,34 @@ func cmdForce(dir, dsn string, v int) error {
 func closeSilent(m *migrate.Migrate) {
 	srcErr, dbErr := m.Close()
 	if srcErr != nil {
-		fmt.Fprintf(os.Stderr, "warn: close source: %v\n", srcErr)
+		errf("warn: close source: %v", srcErr)
 	}
 	if dbErr != nil {
-		fmt.Fprintf(os.Stderr, "warn: close db: %v\n", dbErr)
+		errf("warn: close db: %v", dbErr)
 	}
 }
 
+// errf is the ONLY place this binary writes a diagnostic, and it strips
+// inline credentials on the way out.
+//
+// This tool is handed the production DSN — password included — on every
+// deploy, and its stderr is captured by the deploy job, journald and
+// Loki. The leak is not in the format strings above: golang-migrate
+// rejects an unparseable database URL by wrapping net/url's *url.Error,
+// which renders the WHOLE URL, so a password containing an unescaped
+// `%`, `#` or space printed the live credential in full. Redacting the
+// two call sites that exist today would leave the next one to remember;
+// redacting at the write inherits it (#346 F3).
+//
+// Scrubbing output is a backstop, not a licence to format a secret on
+// purpose — see internal/redact for which helper renders a value we
+// compose ourselves.
+func errf(format string, args ...any) {
+	fmt.Fprintln(os.Stderr, redact.Credentials(fmt.Sprintf(format, args...)))
+}
+
 func die(format string, args ...any) {
-	fmt.Fprintf(os.Stderr, "stellarindex-migrate: "+format+"\n", args...)
+	errf("stellarindex-migrate: "+format, args...)
 	os.Exit(1)
 }
 
