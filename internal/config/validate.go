@@ -560,7 +560,10 @@ func (o OracleConfig) validateStalenessOverrides() error {
 		// would key a series that never exists.
 		asset, err := canonical.ParseAsset(ov.Asset)
 		if err != nil {
-			return fmt.Errorf("%w: %s.asset %q is not a canonical asset identifier — use the exact form the metric's asset label carries (e.g. \"crypto:DAI\"): %v",
+			// Both errors wrap: callers match ErrInvalidConfig to know the
+			// config is bad, and the parse error stays reachable through
+			// errors.Is/As for anyone who needs to know WHY it did not parse.
+			return fmt.Errorf("%w: %s.asset %q is not a canonical asset identifier — use the exact form the metric's asset label carries (e.g. \"crypto:DAI\"): %w",
 				ErrInvalidConfig, where, ov.Asset, err)
 		}
 		if got := asset.String(); got != ov.Asset {
