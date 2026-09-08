@@ -39,11 +39,14 @@
 #                            reads commit trailers, so it has nothing to say
 #                            about STAGED edits and is deferred there.
 #   verify.sh, ci.yml        check-verify-parity (0.7 s).
-#   *.md                     nothing runs here, and the plan says so:
-#                            lint-doc-links takes no file list and costs 38 s
-#                            over the tree, lint-docs 64 s. Both stay in
-#                            scripts/dev/verify.sh, where they now run
-#                            before the Go build rather than after it.
+#   *.md                     lint-doc-links, scoped to the changed files
+#                            (source scan only — link targets still resolve
+#                            against the whole tree; ~0.1-0.3 s/file). It
+#                            used to cost ~22 s regardless of arguments,
+#                            because it took none; scripts/ci/lint_doc_links.py
+#                            now accepts a file list. lint-docs still takes
+#                            no file list and stays deferred to
+#                            scripts/dev/verify.sh (64 s over the tree).
 #
 # Two adoption notes, both visible in the plan output rather than silent:
 #   - actionlint runs with its embedded shellcheck pass OFF (-shellcheck=).
@@ -267,6 +270,19 @@ if [ "${#go_files[@]}" -gt 0 ]; then
     add_step "goimports" "" format_clean goimports "$go_bin/goimports" -l -local "$go_module" "${go_files[@]}"
 fi
 
+# 2b. Markdown: lint-doc-links now takes a file list (previously it always
+#     rescanned all 607 files regardless of arguments, ~22 s, so it lived
+#     only in scripts/dev/verify.sh). Scoping narrows what gets SCANNED as a
+#     link SOURCE; link TARGETS — existence, the gitignore check, anchor
+#     lookups — still resolve against the whole tree exactly as in the
+#     no-argument form, so this catches the same defects on the changed
+#     files as the full scan would. lint-docs takes no file list and is
+#     still deferred to verify.sh.
+if [ "${#md_files[@]}" -gt 0 ]; then
+    add_step "lint-doc-links" "scoped to ${#md_files[@]} file(s)" "$ci_dir/lint-doc-links.sh" "${md_files[@]}"
+    defer "lint-docs" "${#md_files[@]} .md file(s) changed; lint-docs (64 s, no file list) runs in scripts/dev/verify.sh"
+fi
+
 # 3. Workflows: the pinning policy, actionlint, zizmor — all scoped.
 if [ "${#wf_files[@]}" -gt 0 ]; then
     add_step "lint-actions-pinning" "scoped" "$ci_dir/lint-actions-pinning.sh" "${wf_files[@]}"
@@ -346,11 +362,6 @@ fi
 #    is not known in advance.
 for t in ${test_scripts[@]+"${test_scripts[@]}"}; do add_step "test-script" "$t" bash "$t"; done
 
-# Markdown: nothing sub-5 s exists for it today, and the plan must say so
-# rather than let a .md-only diff read as linted.
-if [ "${#md_files[@]}" -gt 0 ]; then
-    defer "markdown" "${#md_files[@]} .md file(s) changed; lint-doc-links (38 s, no file list) and lint-docs (64 s) run in scripts/dev/verify.sh"
-fi
 for f in ${other[@]+"${other[@]}"}; do
     skip_line+=("skip  ${f}: no changed-file lint applies to this type")
 done

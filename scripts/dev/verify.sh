@@ -307,117 +307,25 @@ else
     defer_check "Vuln" "govulncheck is not installed"
 fi
 
-# ── Everything from five seconds up, cheapest tier first ───────────────────
+# ── Generated-artifact drift: MUST run before any parallel lane starts ─────
 #
-# Same sections, same assertions, same order among themselves as before; they
-# simply no longer stand in front of the block above. `make prepush` is still
-# what clears a push, and the deferral accounting at the bottom is untouched.
-echo "=== Format ==="        && make fmt
-echo "=== Vet ==="           && make vet
-echo "=== Lint ==="          && make lint
-echo "=== Docs ==="          && ./scripts/ci/lint-docs.sh
-echo "=== Doc links ===" && ./scripts/ci/lint-doc-links.sh
-echo "=== Doc links self-test ===" && ./scripts/ci/lint-doc-links-test.sh
-echo "=== Ansible galexie-restart self-test ===" && ./scripts/ci/ansible-galexie-restart-test.sh
-# CI's import-checks job runs these gate scripts too; verify.sh must mirror
-# them or it issues a green CI won't honour (W5-ci-6, enforced by the parity
-# check above). All are deterministic + network-free.
-echo "=== Migration backward-compat ===" && ./scripts/ci/lint-migration-compat.sh
-echo "=== Lake dedup (aggregating reads of duplicate-bearing archives) ===" && ./scripts/ci/lint-lake-dedup.sh
-echo "=== Lake dedup self-test ===" && ./scripts/ci/lint-lake-dedup-test.sh
-echo "=== Shell SIGPIPE self-test ===" && ./scripts/ci/lint-shell-sigpipe-test.sh
-echo "=== Public-dataset drift-verdict self-test ===" && ./scripts/ci/check-public-dataset-test.sh
-echo "=== Fleet release-drift verdict self-test ===" && ./scripts/ci/check-fleet-release-drift-test.sh
-echo "=== zfs-snapshot job self-test ===" && ./scripts/ci/zfs-snapshot-test.sh
-# Migrations-sync self-test: structural half needs only python; the
-# behavioural half runs the task file with ansible and needs GNU tar on the
-# target (unarchive --diff). macOS ships bsdtar — point it at a container
-# via DEPLOY_SYNC_CONNECTION/DEPLOY_SYNC_HOST (see the script header) or
-# let CI's ansible-check job (ubuntu) run it. Graceful-skip only when the
-# tools are missing, same convention as promtool below.
-if command -v ansible-playbook >/dev/null 2>&1 && { [ -n "${DEPLOY_SYNC_CONNECTION:-}" ] || grep -q 'GNU tar' <<<"$(tar --version 2>/dev/null)"; }; then
-    echo "=== Deploy migrations-sync self-test ===" && ./scripts/ci/deploy-sync-test.sh
-else
-    defer_check "Deploy migrations-sync self-test" "needs ansible-playbook and GNU tar; use VERIFY_PROFILE=container on macOS"
-fi
-echo "=== Baseline-growth tripwire self-test ===" && ./scripts/ci/lint-baseline-growth-test.sh
-echo "=== Config-apply gate self-test ===" && ./scripts/ci/config-apply-gate-test.sh
-# Two import-checks gates that landed (#287, #305) without their verify.sh
-# twin — check-verify-parity was red on main for everyone until added here.
-echo "=== Public-dataset drift decision-core self-test ===" && ./scripts/ci/check-public-dataset-test.sh
-echo "=== Replay-plan tripwire self-test ===" && ./scripts/ci/lint-replay-plan-test.sh
-echo "=== Verdict helpers self-test (oneshot waits, sentinel gates) ===" && bash scripts/ops/ops-verdict-test.sh
-# Prometheus rule files. Graceful-skip when promtool isn't
-# installed locally — CI installs it explicitly. The Makefile
-# target hard-fails on missing promtool; verify.sh wraps it with
-# an existence check so local-dev `bash scripts/dev/verify.sh`
-# keeps working without a full Prometheus install.
-if command -v promtool >/dev/null 2>&1; then
-    echo "=== Monitoring ===" && make monitoring-check
-else
-    defer_check "Monitoring" "promtool is not installed"
-    # The dead-metric-ref guard needs no promtool, so run it even when
-    # the promtool-dependent monitoring-check is skipped (F-1329).
-    echo "=== Metric refs ===" && ./scripts/ci/lint-metric-refs.sh
-fi
-# Alertmanager config — validate BOTH render branches of apply.sh
-# (all URLs empty → stub path through the block-stripper; all URLs
-# set → substitution path). Graceful-skip when amtool isn't
-# installed, same convention as promtool above; CI's
-# monitoring-rules job installs it explicitly and never skips.
-if command -v amtool >/dev/null 2>&1; then
-    echo "=== Alertmanager config ==="
-    ALERTMANAGER_SECRETS=/dev/null bash configs/alertmanager/apply.sh --check-only
-    AM_DUMMY_ENV=$(mktemp)
-    printf 'HEALTHCHECKS_DEADMANSSWITCH_URL=https://hc-ping.com/x\nDISCORD_WEBHOOK_URL_PAGES=https://discord.com/api/webhooks/1/a\nDISCORD_WEBHOOK_URL_ALERTS=https://discord.com/api/webhooks/2/b\n' > "$AM_DUMMY_ENV"
-    ALERTMANAGER_SECRETS="$AM_DUMMY_ENV" bash configs/alertmanager/apply.sh --check-only
-    rm -f "$AM_DUMMY_ENV"
-    # And the fail-closed guard's SELF-test: an empty URL must be
-    # refused at apply time. Renders green either way without this —
-    # the 31-day outage installed a receiver-less config through a
-    # fully-passing gate.
-    bash configs/alertmanager/apply-test.sh
-else
-    defer_check "Alertmanager config" "amtool is not installed"
-fi
-# gitleaks (secret scan). CI runs this as its own job; verify.sh didn't,
-# so a new base64/XDR test fixture that trips the generic-api-key entropy
-# heuristic passed local gate but reddened CI (2026-07-06). Graceful-skip
-# when absent (mirrors promtool/govulncheck).
-#
-# TWO scans, because neither subsumes the other and running only the first
-# is what let a leak through on 2026-07-25:
-#
-#   --no-git  scans the WORKING TREE, including uncommitted edits. This is
-#             the one that catches a fixture before you commit it, when the
-#             fix is still cheap. It cannot see history.
-#   (default) scans COMMITTED HISTORY, which is exactly what CI runs (with
-#             fetch-depth: 0). It cannot see uncommitted edits.
-#
-# The gap that bit: a test fixture was committed, then removed from the
-# working tree in a follow-up commit. --no-git went green — the string was
-# genuinely gone from the tree — while CI stayed red, because the commit
-# that INTRODUCED it is still in the log and always will be. A local gate
-# that calls itself "run before every push" has to run what CI runs, or it
-# is issuing a pass it has no basis for. History findings that are provably
-# not credentials are exempted by fingerprint in .gitleaksignore.
-if command -v gitleaks >/dev/null 2>&1; then
-    echo "=== Secrets (gitleaks, working tree) ===" && \
-        gitleaks detect --no-git --no-banner --redact --config .gitleaks.worktree.toml
-    echo "=== Secrets (gitleaks, history — CI parity) ===" && \
-        gitleaks detect --no-banner --redact --config .gitleaks.toml
-else
-    defer_check "Secrets" "gitleaks is not installed"
-fi
-# Generated-artifact drift. CI enforces three of these — docs/reference/api
-# and examples/postman in the `openapi` job, web/explorer/src/api/types.ts in
-# the `web/explorer` job — each by regenerating and diffing. verify.sh ran
-# none of them, so an OpenAPI change that regenerated two of the three
-# passed local gate and reddened CI on the third (2026-07-25).
+# CI enforces three of these — docs/reference/api and examples/postman in
+# the `openapi` job, web/explorer/src/api/types.ts in the `web/explorer`
+# job — each by regenerating and diffing. verify.sh ran none of them, so an
+# OpenAPI change that regenerated two of the three passed local gate and
+# reddened CI on the third (2026-07-25).
 #
 # Regenerating here is deliberate: unlike CI, a local run should FIX the
 # drift rather than just report it, so the operator commits the result. The
 # diff is still checked so the run is loud about having changed files.
+#
+# This step is pulled out of the parallel block below and run BEFORE any
+# lane starts, on purpose: it regenerates web/explorer/src/api/types.ts,
+# which lane c's typecheck/build reads, and a concurrent regenerate-while-
+# read is exactly the race the ordering rule under "Parallel phase" exists
+# to forbid. Running it here also means every lane sees the freshly
+# regenerated tree, which serial order already guaranteed for `Test` and
+# `Showcase` and now guarantees for lane a and lane d's readers too.
 if command -v node >/dev/null 2>&1 && command -v npx >/dev/null 2>&1; then
     echo "=== Generated API reference + Postman + web client drift ==="
     ./scripts/dev/docs-api.sh >/dev/null
@@ -431,48 +339,258 @@ if command -v node >/dev/null 2>&1 && command -v npx >/dev/null 2>&1; then
 else
     defer_check "Generated-artifact drift" "node or npx is not installed"
 fi
-echo "=== Test ==="          && make test
-# Compile-only: catches interface-extension breakage in
-# build-tagged integration adapters without spinning testcontainers.
-# Real `make test-integration` lives outside verify because Docker
-# isn't always available locally.
-echo "=== Integration build ===" && make test-integration-build
-# Showcase typecheck + lint + build. Graceful-skip when pnpm
-# isn't installed locally — CI runs the same gate via the
-# `web/explorer` job, so a local skip just defers the check.
-# The build catches Next.js output: 'export' constraints
-# (e.g. dynamic = 'force-static' on sitemap/robots) that
-# typecheck alone misses.
-if command -v pnpm >/dev/null 2>&1 && [ -f web/explorer/pnpm-lock.yaml ]; then
-    echo "=== Showcase typecheck ===" && make web-typecheck
-    echo "=== Showcase lint ==="      && make web-lint
-    # The vitest suite ran in NEITHER CI nor this gate (cold audit
-    # 2026-08-04): 209 tests across 49 files, all green and all dead —
-    # including safe-domain.test.ts, the isSafeHomeDomain /
-    # isSafePublicImageUrl phishing + client-SSRF regression gate, and
-    # the AGT-06 stale-flag regression. A refactor loosening any of
-    # them would have landed green.
-    echo "=== Showcase tests ==="     && make web-test
-    echo "=== Showcase build ==="     && \
-        NEXT_PUBLIC_API_BASE_URL=http://api.local-stub.invalid make web-build >/dev/null
-else
-    defer_check "Showcase" "pnpm or web/explorer/pnpm-lock.yaml is unavailable"
+
+# ── Parallel phase (TIER 1b) ─────────────────────────────────────────────────
+#
+# Same sections, same assertions as before; only WHEN and IN WHAT PROCESS
+# each runs has changed. Four lanes, grouped so each shares no file with any
+# other — the property that makes concurrent execution safe rather than
+# merely fast:
+#
+#   a  doc lints            reads markdown + this file's own targets; writes nothing
+#   b  Go build/vet/tests   the ONLY lane that writes a tracked file (`make fmt`)
+#   c  web typecheck/build  pnpm/node only; never touches *.go
+#   d  everything else      ops/ansible/migration/monitoring self-tests; none of it
+#                           invokes go, invokes pnpm, or writes a tracked file
+#
+# Measured 2026-09-07 on this machine, one real run, after the doc-links
+# self-test fix above cut its cost from 227 s to 66 s: serial total 918 s,
+# with Lint 154 s, Monitoring 146 s, Test 128 s and Doc links self-test 66 s
+# as the four largest remaining costs — no longer one section dominating,
+# four roughly comparable ones (Monitoring's figure includes contention from
+# another process on the same machine; a quiet run measured this section at
+# 90 s). Grouped into the lanes above, the ceiling is lane b (Format + Vet +
+# Lint + Test + Integration build) at ~304 s against the 918 s serial total:
+# a ~2.3x reduction on a contended run, more on a quiet one.
+#
+# Lane d keeps promtool's Monitoring, amtool's Alertmanager config and
+# gitleaks' Secrets scans — none of those tools, nor anything else in lane
+# d, touches *.go or web/**, so lane d is safe to run alongside b and c
+# rather than needing a lane of its own.
+#
+# A lane runs in a background subshell, so it cannot write back to this
+# script's own `deferred_checks` variable or exit the parent on failure —
+# each lane keeps its own deferred-count file and its own exit code, and
+# both are collected after every lane finishes.
+LANEDIR="$(mktemp -d "${TMPDIR:-/tmp}/verify-lanes.XXXXXX")"
+trap 'rm -rf "$LANEDIR"' EXIT
+
+defer_check_lane() { # defer_check_lane <deferred-file> <label> <reason> —
+                      # same contract as defer_check above, scoped to one
+                      # lane's counter file instead of the shared variable.
+    local file="$1" label="$2" reason="$3"
+    if [ "${VERIFY_FAIL_ON_SKIP:-0}" = "1" ]; then
+        echo "=== ${label} (FAILED: ${reason}) ===" >&2
+        exit 1
+    fi
+    echo "=== ${label} (deferred: ${reason}) ==="
+    echo "$(( $(cat "$file" 2>/dev/null || echo 0) + 1 ))" > "$file"
+}
+
+lane_a() { # doc lints
+    echo "=== Docs ==="          && ./scripts/ci/lint-docs.sh
+    echo "=== Doc links ===" && ./scripts/ci/lint-doc-links.sh
+    echo "=== Doc links self-test ===" && ./scripts/ci/lint-doc-links-test.sh
+}
+
+lane_b() { # Go build/vet/unit tests
+    echo "=== Format ==="        && make fmt
+    echo "=== Vet ==="           && make vet
+    echo "=== Lint ==="          && make lint
+    echo "=== Test ==="          && make test
+    # Compile-only: catches interface-extension breakage in
+    # build-tagged integration adapters without spinning testcontainers.
+    # Real `make test-integration` lives outside verify because Docker
+    # isn't always available locally.
+    echo "=== Integration build ===" && make test-integration-build
+}
+
+lane_c() { # web typecheck/lint/test/build. Graceful-skip when pnpm isn't
+           # installed locally — CI runs the same gate via the `web/explorer`
+           # job, so a local skip just defers the check. The build catches
+           # Next.js output: 'export' constraints (e.g. dynamic =
+           # 'force-static' on sitemap/robots) that typecheck alone misses.
+    if command -v pnpm >/dev/null 2>&1 && [ -f web/explorer/pnpm-lock.yaml ]; then
+        echo "=== Showcase typecheck ===" && make web-typecheck
+        echo "=== Showcase lint ==="      && make web-lint
+        # The vitest suite ran in NEITHER CI nor this gate (cold audit
+        # 2026-08-04): 209 tests across 49 files, all green and all dead —
+        # including safe-domain.test.ts, the isSafeHomeDomain /
+        # isSafePublicImageUrl phishing + client-SSRF regression gate, and
+        # the AGT-06 stale-flag regression. A refactor loosening any of
+        # them would have landed green.
+        # BUILD BEFORE TEST, deliberately. nav-shell.built.test.ts asserts on
+        # the static export in web/explorer/out, so with the build after it the
+        # suite graded whatever `out/` a previous run happened to leave behind.
+        # On 2026-09-08 that was a five-day-old export from before /rwa existed,
+        # and the test duly reported `/rwa: no rwa/index.html in the export` plus
+        # three pages with an empty <main> — a stale artifact, not a regression in
+        # the source. A test whose verdict depends on leftover build output is
+        # worse than no test: it reads green while the tree it claims to grade is
+        # unbuilt, and red for a reason that has nothing to do with the diff.
+        echo "=== Showcase build ==="     && \
+            NEXT_PUBLIC_API_BASE_URL=http://api.local-stub.invalid make web-build >/dev/null
+        echo "=== Showcase tests ==="     && make web-test
+    else
+        defer_check_lane "$LANEDIR/c.deferred" "Showcase" "pnpm or web/explorer/pnpm-lock.yaml is unavailable"
+    fi
+    # Dashboard SPA — same pnpm gate. Skipped silently when the
+    # lockfile is missing (e.g. fresh checkouts that haven't installed).
+    if command -v pnpm >/dev/null 2>&1 && [ -f web/dashboard/pnpm-lock.yaml ]; then
+        echo "=== Dashboard typecheck ===" && make dashboard-typecheck
+        echo "=== Dashboard lint ==="      && make dashboard-lint
+        echo "=== Dashboard build ==="     && \
+            NEXT_PUBLIC_API_BASE_URL=http://api.local-stub.invalid make dashboard-build >/dev/null
+    fi
+    # Status page — same pnpm gate.
+    if command -v pnpm >/dev/null 2>&1 && [ -f web/status/pnpm-lock.yaml ]; then
+        echo "=== Status typecheck ===" && make status-typecheck
+        echo "=== Status lint ==="      && make status-lint
+        echo "=== Status build ==="     && \
+            NEXT_PUBLIC_API_BASE_URL=http://api.local-stub.invalid make status-build >/dev/null
+    fi
+}
+
+lane_d() { # everything else
+    echo "=== Ansible galexie-restart self-test ===" && ./scripts/ci/ansible-galexie-restart-test.sh
+    # CI's import-checks job runs these gate scripts too; verify.sh must mirror
+    # them or it issues a green CI won't honour (W5-ci-6, enforced by the parity
+    # check above). All are deterministic + network-free.
+    echo "=== Migration backward-compat ===" && ./scripts/ci/lint-migration-compat.sh
+    echo "=== Lake dedup (aggregating reads of duplicate-bearing archives) ===" && ./scripts/ci/lint-lake-dedup.sh
+    echo "=== Lake dedup self-test ===" && ./scripts/ci/lint-lake-dedup-test.sh
+    echo "=== Shell SIGPIPE self-test ===" && ./scripts/ci/lint-shell-sigpipe-test.sh
+    echo "=== Public-dataset drift-verdict self-test ===" && ./scripts/ci/check-public-dataset-test.sh
+    echo "=== Fleet release-drift verdict self-test ===" && ./scripts/ci/check-fleet-release-drift-test.sh
+    echo "=== zfs-snapshot job self-test ===" && ./scripts/ci/zfs-snapshot-test.sh
+    # Migrations-sync self-test: structural half needs only python; the
+    # behavioural half runs the task file with ansible and needs GNU tar on the
+    # target (unarchive --diff). macOS ships bsdtar — point it at a container
+    # via DEPLOY_SYNC_CONNECTION/DEPLOY_SYNC_HOST (see the script header) or
+    # let CI's ansible-check job (ubuntu) run it. Graceful-skip only when the
+    # tools are missing, same convention as promtool below.
+    if command -v ansible-playbook >/dev/null 2>&1 && { [ -n "${DEPLOY_SYNC_CONNECTION:-}" ] || grep -q 'GNU tar' <<<"$(tar --version 2>/dev/null)"; }; then
+        echo "=== Deploy migrations-sync self-test ===" && ./scripts/ci/deploy-sync-test.sh
+    else
+        defer_check_lane "$LANEDIR/d.deferred" "Deploy migrations-sync self-test" "needs ansible-playbook and GNU tar; use VERIFY_PROFILE=container on macOS"
+    fi
+    echo "=== Baseline-growth tripwire self-test ===" && ./scripts/ci/lint-baseline-growth-test.sh
+    echo "=== Config-apply gate self-test ===" && ./scripts/ci/config-apply-gate-test.sh
+    # Two import-checks gates that landed (#287, #305) without their verify.sh
+    # twin — check-verify-parity was red on main for everyone until added here.
+    echo "=== Public-dataset drift decision-core self-test ===" && ./scripts/ci/check-public-dataset-test.sh
+    echo "=== Replay-plan tripwire self-test ===" && ./scripts/ci/lint-replay-plan-test.sh
+    echo "=== Verdict helpers self-test (oneshot waits, sentinel gates) ===" && bash scripts/ops/ops-verdict-test.sh
+    # Prometheus rule files. Graceful-skip when promtool isn't
+    # installed locally — CI installs it explicitly. The Makefile
+    # target hard-fails on missing promtool; verify.sh wraps it with
+    # an existence check so local-dev `bash scripts/dev/verify.sh`
+    # keeps working without a full Prometheus install.
+    if command -v promtool >/dev/null 2>&1; then
+        echo "=== Monitoring ===" && make monitoring-check
+    else
+        defer_check_lane "$LANEDIR/d.deferred" "Monitoring" "promtool is not installed"
+        # The dead-metric-ref guard needs no promtool, so run it even when
+        # the promtool-dependent monitoring-check is skipped (F-1329).
+        echo "=== Metric refs ===" && ./scripts/ci/lint-metric-refs.sh
+    fi
+    # Alertmanager config — validate BOTH render branches of apply.sh
+    # (all URLs empty → stub path through the block-stripper; all URLs
+    # set → substitution path). Graceful-skip when amtool isn't
+    # installed, same convention as promtool above; CI's
+    # monitoring-rules job installs it explicitly and never skips.
+    if command -v amtool >/dev/null 2>&1; then
+        echo "=== Alertmanager config ==="
+        ALERTMANAGER_SECRETS=/dev/null bash configs/alertmanager/apply.sh --check-only
+        AM_DUMMY_ENV=$(mktemp)
+        printf 'HEALTHCHECKS_DEADMANSSWITCH_URL=https://hc-ping.com/x\nDISCORD_WEBHOOK_URL_PAGES=https://discord.com/api/webhooks/1/a\nDISCORD_WEBHOOK_URL_ALERTS=https://discord.com/api/webhooks/2/b\n' > "$AM_DUMMY_ENV"
+        ALERTMANAGER_SECRETS="$AM_DUMMY_ENV" bash configs/alertmanager/apply.sh --check-only
+        rm -f "$AM_DUMMY_ENV"
+        # And the fail-closed guard's SELF-test: an empty URL must be
+        # refused at apply time. Renders green either way without this —
+        # the 31-day outage installed a receiver-less config through a
+        # fully-passing gate.
+        bash configs/alertmanager/apply-test.sh
+    else
+        defer_check_lane "$LANEDIR/d.deferred" "Alertmanager config" "amtool is not installed"
+    fi
+    # gitleaks (secret scan). CI runs this as its own job; verify.sh didn't,
+    # so a new base64/XDR test fixture that trips the generic-api-key entropy
+    # heuristic passed local gate but reddened CI (2026-07-06). Graceful-skip
+    # when absent (mirrors promtool/govulncheck).
+    #
+    # TWO scans, because neither subsumes the other and running only the first
+    # is what let a leak through on 2026-07-25:
+    #
+    #   --no-git  scans the WORKING TREE, including uncommitted edits. This is
+    #             the one that catches a fixture before you commit it, when the
+    #             fix is still cheap. It cannot see history.
+    #   (default) scans COMMITTED HISTORY, which is exactly what CI runs (with
+    #             fetch-depth: 0). It cannot see uncommitted edits.
+    #
+    # The gap that bit: a test fixture was committed, then removed from the
+    # working tree in a follow-up commit. --no-git went green — the string was
+    # genuinely gone from the tree — while CI stayed red, because the commit
+    # that INTRODUCED it is still in the log and always will be. A local gate
+    # that calls itself "run before every push" has to run what CI runs, or it
+    # is issuing a pass it has no basis for. History findings that are provably
+    # not credentials are exempted by fingerprint in .gitleaksignore.
+    if command -v gitleaks >/dev/null 2>&1; then
+        echo "=== Secrets (gitleaks, working tree) ===" && \
+            gitleaks detect --no-git --no-banner --redact --config .gitleaks.worktree.toml
+        echo "=== Secrets (gitleaks, history — CI parity) ===" && \
+            gitleaks detect --no-banner --redact --config .gitleaks.toml
+    else
+        defer_check_lane "$LANEDIR/d.deferred" "Secrets" "gitleaks is not installed"
+    fi
+}
+
+lane_a > "$LANEDIR/a.log" 2>&1 & pid_a=$!
+lane_b > "$LANEDIR/b.log" 2>&1 & pid_b=$!
+lane_c > "$LANEDIR/c.log" 2>&1 & pid_c=$!
+lane_d > "$LANEDIR/d.log" 2>&1 & pid_d=$!
+
+lane_rc_a=0; lane_rc_b=0; lane_rc_c=0; lane_rc_d=0
+wait "$pid_a" || lane_rc_a=$?
+wait "$pid_b" || lane_rc_b=$?
+wait "$pid_c" || lane_rc_c=$?
+wait "$pid_d" || lane_rc_d=$?
+
+# Every lane's log, in full, lane order — a lane runs concurrently with the
+# others but is itself strictly sequential, so within one lane's block the
+# output reads exactly as the old serial run did.
+echo ""
+echo "── lane a: doc lints ──────────────────────────────────────────────"
+cat "$LANEDIR/a.log"
+echo ""
+echo "── lane b: Go build/vet/unit tests ─────────────────────────────────"
+cat "$LANEDIR/b.log"
+echo ""
+echo "── lane c: web typecheck/lint/test/build ───────────────────────────"
+cat "$LANEDIR/c.log"
+echo ""
+echo "── lane d: everything else ─────────────────────────────────────────"
+cat "$LANEDIR/d.log"
+
+# A lane failure fails the whole run, and names every lane that failed —
+# not just the first one bash happened to notice, since all four already
+# ran to their own completion or their own first failure independently.
+failed_lanes=()
+[ "$lane_rc_a" -eq 0 ] || failed_lanes+=("a:doc-lints(exit ${lane_rc_a})")
+[ "$lane_rc_b" -eq 0 ] || failed_lanes+=("b:go-build-vet-test(exit ${lane_rc_b})")
+[ "$lane_rc_c" -eq 0 ] || failed_lanes+=("c:web(exit ${lane_rc_c})")
+[ "$lane_rc_d" -eq 0 ] || failed_lanes+=("d:everything-else(exit ${lane_rc_d})")
+if [ "${#failed_lanes[@]}" -gt 0 ]; then
+    echo "" >&2
+    echo "VERIFY FAILED — lane(s) failed: ${failed_lanes[*]}" >&2
+    exit 1
 fi
-# Dashboard SPA — same pnpm gate. Skipped silently when the
-# lockfile is missing (e.g. fresh checkouts that haven't installed).
-if command -v pnpm >/dev/null 2>&1 && [ -f web/dashboard/pnpm-lock.yaml ]; then
-    echo "=== Dashboard typecheck ===" && make dashboard-typecheck
-    echo "=== Dashboard lint ==="      && make dashboard-lint
-    echo "=== Dashboard build ==="     && \
-        NEXT_PUBLIC_API_BASE_URL=http://api.local-stub.invalid make dashboard-build >/dev/null
-fi
-# Status page — same pnpm gate.
-if command -v pnpm >/dev/null 2>&1 && [ -f web/status/pnpm-lock.yaml ]; then
-    echo "=== Status typecheck ===" && make status-typecheck
-    echo "=== Status lint ==="      && make status-lint
-    echo "=== Status build ==="     && \
-        NEXT_PUBLIC_API_BASE_URL=http://api.local-stub.invalid make status-build >/dev/null
-fi
+
+for f in "$LANEDIR"/*.deferred; do
+    [ -e "$f" ] || continue
+    deferred_checks=$((deferred_checks + $(cat "$f")))
+done
+
 echo ""
 if (( deferred_checks > 0 )); then
     echo "VERIFY INCOMPLETE: $deferred_checks check(s) deferred; use make prepush for push clearance"

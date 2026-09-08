@@ -48,4 +48,13 @@ paths = [
   # store shares the device, never grows the directory and never sees them.
   '''(^|/)node_modules/''',
   '''(^|/)\.pnpm-store/''',
+  # Agent-created git worktrees nest a FULL second checkout under
+  # .claude/worktrees/. They are ordinary working trees, not this one: every
+  # committed byte in them is already covered by the history scan and by this
+  # scan of the real tree, so scanning them re-reports the same content once
+  # per worktree. Left in, twenty-two of them grew the tree to 20 GB and this
+  # scan to 2.33 GB / 8m10s, and turned a clean gate into `leaks found: 5570`
+  # — every one a duplicate of a fixture already cleared here. A secrets gate
+  # that reports thousands of known-clean findings is a gate nobody reads.
+  '''(^|/)\.claude/worktrees/''',
 ]

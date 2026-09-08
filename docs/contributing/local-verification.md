@@ -122,7 +122,7 @@ cheapest first.
 | `migrations/*.sql` | `lint-migrations`, `lint-migration-immutability`, `lint-migration-commands`, `lint-migration-compat` |
 | `*.go`/`*.sql` naming a duplicate-bearing table | `lint-lake-dedup` |
 | `scripts/dev/verify.sh`, `.github/workflows/ci.yml` | `check-verify-parity` |
-| `*.md` | nothing sub-5 s exists for markdown; the run reports it as **deferred**, naming `lint-doc-links` and `lint-docs`, rather than silently reading as linted |
+| `*.md` | `lint-doc-links` scoped to the changed files (link targets still resolve against the whole tree); `lint-docs` takes no file list and stays **deferred** to `scripts/dev/verify.sh` |
 
 A missing optional tool (`shellcheck`, `actionlint`, `zizmor`) defers its own
 step, counted in the summary line, and does not fail the run — this is the
@@ -190,6 +190,58 @@ that ran before still runs after, in the same conditional branches, with
 nothing added or removed. The macOS `VERIFY INCOMPLETE: 1 check(s)
 deferred` terminal line is unchanged and is not a failure — it is the
 GNU-tar-dependent ansible self-test deferring by design, exactly as before.
+
+## `verify.sh`'s slow tier runs in four parallel lanes
+
+`scripts/ci/lint-doc-links.sh` and its self-test used to be the largest
+single cost by far (227 s standalone-measured 2026-09-07 — ten times the
+lint it covers, see the entry above on `lint-doc-links.sh` taking a file
+list). Fixing that changed the shape of what was left: re-measured
+2026-09-07 on this machine, one real run, the largest remaining sections
+were `Lint` 154 s, `Monitoring` 146 s (contended by another process on the
+same machine that day; a quiet run measured it at 90 s), `Test` 128 s and
+`Doc links self-test` 66 s — four roughly comparable costs rather than one
+section dominating everything else.
+
+The sections from `Format` onward now run as four concurrent lanes, grouped
+so each shares no file with any other:
+
+| lane | contents | measured (this run) |
+|---|---|---|
+| a | `Docs`, `Doc links`, `Doc links self-test` | 148 s |
+| b | `Format`, `Vet`, `Lint`, `Test`, `Integration build` | 304 s |
+| c | Showcase/Dashboard/Status typecheck+lint+test+build | 81 s |
+| d | everything else — ops/ansible/migration/monitoring self-tests, `Monitoring`, `Alertmanager config`, `Secrets` | 296 s |
+
+Lane b is the only lane that writes a tracked file (`make fmt` rewrites Go
+source); lane c is the only lane that reads `web/**`; lane a and lane d only
+read. Nothing in lane d invokes `go` or `pnpm`. A lane runs in a background
+subshell and cannot write back to the parent's `deferred_checks` variable or
+exit the parent script on failure, so each lane keeps its own deferred-count
+file and its own exit code under `$LANEDIR`, collected by the parent after
+every lane finishes with `wait`. A lane failure fails the whole run and
+names every lane that failed, not just the first one bash happened to
+notice.
+
+**The one thing that must NOT run inside a lane**: the generated-artifact
+drift check regenerates `docs/reference/api`, `examples/postman` and
+`web/explorer/src/api/types.ts` and then diffs the result — lane c's
+typecheck/build reads that last file, so a concurrent regenerate-while-read
+is exactly the race this ordering rule exists to forbid. It runs once,
+serially, right after the fast-lint block and before any lane starts, which
+also means every lane now sees the freshly regenerated tree that serial
+order previously only guaranteed for `Test` and `Showcase`.
+
+Measured 2026-09-07 on this machine: a serial run (with the doc-links fix
+already applied, before parallelising) took **918 s**; the same commit with
+the four lanes above took **409 s** — a 2.24x reduction, consistent with
+the lane-b ceiling (~304 s) against the serial total. Verified two ways
+before landing: `check-verify-parity.sh` stays green, and the full multiset
+of `=== ... ===` section markers a real run emits is identical before and
+after (107 markers both runs, zero dropped, zero added) — as are all 53
+self-tests' own `N passed, M failed` summary lines, compared name-for-name.
+The macOS `VERIFY INCOMPLETE: 1 check(s) deferred` terminal line is
+unchanged.
 
 ## CI's own fast-fail gate and path filtering
 

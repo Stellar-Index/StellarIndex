@@ -7,6 +7,20 @@
 # tracked files only; that raced with any concurrent `git add` during the
 # ~15-minute backgrounded verify.sh run. The gate now reads untracked,
 # non-ignored files too, so the fixture is visible to it as a plain file.
+#
+# SCOPE — most checks below run the gate SCOPED to just the fixture file
+# (lint-doc-links.sh now takes a file list; see lint_doc_links.py's
+# docstring). That is safe here for exactly the reason it is safe in
+# production use: scoping narrows what gets SCANNED as a link source, never
+# what a target resolves against, so a fixture link into ../README.md or
+# ../CONTRIBUTING.md is still checked in full either way — proven by the
+# checks below covering both an anchor hit and a gitignored-target miss.
+# Full-tree (no file list) runs are kept for exactly the checks that are
+# ABOUT the whole-tree discovery mechanism itself, so that mechanism stays
+# under test: whether an untracked file is scanned at all, and two "is the
+# tree actually clean" bookends. Before this split every one of the 11
+# checks below ran a full 607-file scan, at ~21 s each — a self-test costing
+# ten times the lint it covers.
 set -uo pipefail
 cd "$(dirname "$0")/../.." || exit 1
 
@@ -17,9 +31,15 @@ PASS=0; FAIL=0
 cleanup() { rm -f "$FIX"; }
 trap cleanup EXIT
 
-check() { # <name> <expected ok|red>
-  local name="$1" want="$2" rc
-  bash "$GATE" >/dev/null 2>&1; rc=$?
+check() { # <name> <expected ok|red> [full] — scoped to $FIX unless "full"
+          # is passed, in which case the gate runs its default whole-tree
+          # discovery with no file list.
+  local name="$1" want="$2" scope="${3:-scoped}" rc
+  if [ "$scope" = full ]; then
+    bash "$GATE" >/dev/null 2>&1; rc=$?
+  else
+    bash "$GATE" "$FIX" >/dev/null 2>&1; rc=$?
+  fi
   if { [ "$want" = ok ] && [ "$rc" -eq 0 ]; } || { [ "$want" = red ] && [ "$rc" -gt 0 ]; }; then
     printf '  ok   %s\n' "$name"; PASS=$((PASS+1))
   else
@@ -27,13 +47,25 @@ check() { # <name> <expected ok|red>
   fi
 }
 
-check "clean tree passes" ok
+# Wall-clock budget: the ok/red verdict on every check below is identical
+# whether the gate scans one file or all 607 — a boolean pass/fail cannot
+# tell scoped mode from a regression back to always-full-scan, only the
+# clock can. t0 brackets the whole run; single_scan_s times the very first
+# check's full-tree scan, so the budget below scales with THIS machine's
+# speed rather than a hardcoded second count.
+t0=$SECONDS
+check "clean tree passes" ok full
+single_scan_s=$((SECONDS - t0))
+[ "$single_scan_s" -ge 1 ] || single_scan_s=1
 
 printf '# fixture\n\n[gone](./does-not-exist-%s.md)\n' "$$" > "$FIX"
 check "a broken relative link is caught" red
 
 # The hole that made this gate blind to the very files a change creates.
-check "an UNTRACKED file is scanned, not skipped" red
+# This one MUST run the default whole-tree discovery (not a file-list
+# scope) — passing the fixture explicitly would trivially "discover" it
+# and prove nothing about the untracked-file scan this check exists for.
+check "an UNTRACKED file is scanned, not skipped" red full
 
 printf '# fixture\n\n[bad anchor](../README.md#no-such-heading-%s)\n' "$$" > "$FIX"
 check "a link to a non-existent heading anchor is caught" red
@@ -54,7 +86,9 @@ check "a link inside a balanced fenced block is ignored" ok
 
 # A target that exists on THIS machine but is gitignored does not exist for
 # anyone else. Checking the filesystem alone made the gate green locally while
-# CI failed on three such links.
+# CI failed on three such links. Scoped mode still catches this because
+# _ignored() resolves the target against git, unrestricted to the source
+# file list — exactly the subtlety this test exists to pin down.
 mkdir -p docs/zz-ignored-fixture-dir
 printf 'x\n' > docs/zz-ignored-fixture-dir/target.md
 printf '/docs/zz-ignored-fixture-dir/\n' >> .gitignore
@@ -64,7 +98,21 @@ git checkout -- .gitignore 2>/dev/null || sed -i.bak '/zz-ignored-fixture-dir/d'
 rm -rf docs/zz-ignored-fixture-dir .gitignore.bak
 
 rm -f "$FIX"
-check "clean tree passes again" ok
+check "clean tree passes again" ok full
+
+# This run does 3 full-tree scans (clean/untracked/clean-again) plus 8
+# scoped, near-instant ones; a regression back to always-full-scan does 11
+# full-tree scans. 6x a single scan sits well above the 3 this run needs and
+# well below the 11 the defect this test exists to catch would cost.
+total_s=$((SECONDS - t0))
+budget_s=$((single_scan_s * 6))
+if [ "$total_s" -le "$budget_s" ]; then
+  printf '  ok   %s\n' "self-test cost stays near 3 full scans, not 10 (${total_s}s <= ${budget_s}s budget, single scan ~${single_scan_s}s)"
+  PASS=$((PASS+1))
+else
+  printf '  FAIL %s\n' "self-test cost stays near 3 full scans, not 10 (${total_s}s > ${budget_s}s budget, single scan ~${single_scan_s}s — a check likely regressed to an unscoped full-tree call)"
+  FAIL=$((FAIL+1))
+fi
 
 echo
 echo "lint-doc-links-test: $PASS passed, $FAIL failed"

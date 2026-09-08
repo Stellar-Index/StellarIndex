@@ -23,6 +23,20 @@ Exclusions, both deliberate:
     like `Vec[Address](assets)` that looks exactly like one. An UNBALANCED
     fence count is reported rather than silently blinding the rest of a file.
   * `_template` / `*TEMPLATE*` files carry placeholder targets on purpose.
+
+Usage:
+  lint_doc_links.py                every tracked + untracked markdown file
+                                    (the default, unchanged)
+  lint_doc_links.py FILE...        only these files as link SOURCES
+
+Passing files scopes what gets SCANNED for outgoing links, never what a link
+can resolve AGAINST: target existence, the gitignore check and anchor lookups
+all still read the full working tree on demand, exactly as in the no-argument
+form, so a fixture link to `../README.md#some-heading` is checked the same
+way either way. Most of the cost here is one `git check-ignore` subprocess
+per existing relative target (2000+ across 607 files) — scoping the source
+set is what makes a single-file check cheap; it is not a shortcut on
+resolution.
 """
 
 import os
@@ -102,10 +116,26 @@ def anchors_of(path):
 
 
 def main():
-    files = sorted(
-        set(_git("ls-files", "-z", "*.md"))
-        | set(_git("ls-files", "-z", "--others", "--exclude-standard", "*.md"))
-    )
+    argv = sys.argv[1:]
+    if argv:
+        # Explicit source list (e.g. from lint-changed.sh's diff). Scoping
+        # is SOURCE-only: every target lookup below (os.path.exists,
+        # _ignored, anchors_of) still resolves against the real filesystem,
+        # unrestricted to this set, so a link out of one of these files into
+        # an untouched file elsewhere in the tree is still checked in full.
+        files = sorted(dict.fromkeys(argv))
+        missing = [f for f in files if not os.path.isfile(f)]
+        if missing:
+            for f in missing:
+                print(f"  \033[31mFAIL\033[0m {f} no such file — usage error, not skipped")
+            print()
+            print(f"lint-doc-links: {len(missing)} argument(s) named no such file")
+            return len(missing)
+    else:
+        files = sorted(
+            set(_git("ls-files", "-z", "*.md"))
+            | set(_git("ls-files", "-z", "--others", "--exclude-standard", "*.md"))
+        )
     fails = []
     for path in files:
         base = os.path.basename(path)

@@ -11,7 +11,8 @@
 # being noticed at minute ten of a push:
 #
 #   - selection by type, in one mixed diff and in isolation per type;
-#   - a .md-only diff is reported as deferred, never as linted;
+#   - a .md-only diff runs lint-doc-links scoped to the changed files, and
+#     defers only lint-docs (which takes no file list), never both;
 #   - a *-test.sh is run, and runs last;
 #   - discovery: staged, a commit range, the default fallback, an explicit
 #     list, and the refusals for each;
@@ -120,7 +121,8 @@ expect_has "migration -> lint-migration-commands" "plan  lint-migration-commands
 expect_has "migration -> lint-migration-compat --staged in staged mode" "lint-migration-compat.sh --staged" "$out"
 expect_has "verify.sh -> check-verify-parity" "plan  check-verify-parity:" "$out"
 expect_has "baseline -> lint-baseline-growth deferred on staged edits, with the reason" "skip  lint-baseline-growth: reads the Baseline-Growth commit trailer" "$out"
-expect_has ".md -> deferred, naming the two whole-tree doc lints" "skip  markdown: 1 .md file(s) changed; lint-doc-links" "$out"
+expect_has ".md -> lint-doc-links scoped to the changed file" "lint-doc-links.sh docs/note.md" "$out"
+expect_has ".md -> lint-docs still deferred (no file list)" "skip  lint-docs: 1 .md file(s) changed; lint-docs" "$out"
 expect_has "an uncovered type is named, not silently dropped" "skip  data.json: no changed-file lint applies to this type" "$out"
 expect_not "no test script changed -> none is run" "plan  test-script:" "$out"
 expect_not "no lake-table reference -> lint-lake-dedup is not selected" "lint-lake-dedup" "$out"
@@ -169,8 +171,9 @@ put "$R" CHANGELOG.md '# changelog'
 git -C "$R" add -A
 out="$(cd "$R" && "$DISPATCH" --staged --plan 2>&1)"; rc=$?
 expect_exit "md-only: plans cleanly" 0 "$rc"
-expect_has "md-only: zero lints, two files, one deferral — never reads as linted" "lint-changed: plan — 0 lint(s) over 2 changed file(s), 1 deferred" "$out"
-expect_has "md-only: the deferral names both file count and the doc lints" "skip  markdown: 2 .md file(s) changed" "$out"
+expect_has "md-only: lint-doc-links scoped to both files, one deferral — never reads as fully linted" "lint-changed: plan — 1 lint(s) over 2 changed file(s), 1 deferred" "$out"
+expect_has "md-only: lint-doc-links scoped to both changed files" "lint-doc-links.sh CHANGELOG.md docs/a.md" "$out"
+expect_has "md-only: lint-docs still names the file count and itself" "skip  lint-docs: 2 .md file(s) changed; lint-docs" "$out"
 
 R="$TMP/lake"; new_repo "$R"
 put "$R" internal/r/reader.go $'package r\n\nconst q = "SELECT count() FROM stellar.transactions"\n'
