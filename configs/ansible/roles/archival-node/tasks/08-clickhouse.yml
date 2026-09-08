@@ -92,14 +92,37 @@
 
 - name: Apply ClickHouse tier1 schema (base lake) then the rest
   when: clickhouse_apply_schema | default(false) | bool
+  # `|| true` used to swallow EVERY non-tier1 file's failure, so this task
+  # reported success whether or not a single object was created. That is the
+  # worst shape an apply can have: on 2026-09-07 the DDL for
+  # stellar.account_creators_ops had to be applied by hand and confirmed in
+  # system.tables, because nothing here would have said it had not been.
+  # deploy.yml's evidence step only ASKS whether the objects exist — it is
+  # not an apply — so this task was the only place a failure could surface.
+  #
+  # Still applies every file rather than stopping at the first failure (a
+  # later file is usually independent of an earlier one, and aborting early
+  # would leave a half-applied schema with no report of the rest), but the
+  # failures are collected and the task fails at the end naming each one.
   ansible.builtin.shell: |
-    set -e
+    set -u
     P={{ clickhouse_tcp_port | default(9300) }}
-    clickhouse-client --port $P --multiquery < /tmp/ch-schema/tier1_schema.sql
+    if ! clickhouse-client --port "$P" --multiquery < /tmp/ch-schema/tier1_schema.sql; then
+      echo "FAILED: tier1_schema.sql (base lake) — nothing else was attempted" >&2
+      exit 1
+    fi
+    failed=""
     for f in /tmp/ch-schema/*.sql; do
       [ "$(basename "$f")" = tier1_schema.sql ] && continue
-      clickhouse-client --port $P --multiquery < "$f" || true
+      if ! clickhouse-client --port "$P" --multiquery < "$f"; then
+        failed="${failed} $(basename "$f")"
+      fi
     done
+    if [ -n "$failed" ]; then
+      echo "FAILED to apply:${failed}" >&2
+      exit 1
+    fi
+    echo "applied every schema file cleanly"
   changed_when: true
 
 # ─── Tier-1 lake self-healer (wave-D LID-1) ──────────────────────────

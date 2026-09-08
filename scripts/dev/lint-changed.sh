@@ -166,7 +166,7 @@ fi
 # ── Classification ──────────────────────────────────────────────────────────
 sh_files=(); test_scripts=(); go_files=(); go_dirs=(); wf_files=()
 mig_files=(); md_files=(); baseline_files=(); lake_files=(); parity=0; other=()
-rules_files=()
+rules_files=(); ansible_files=()
 
 add_unique() { # add_unique <value> — appends to go_dirs if absent
     local v="$1" d
@@ -197,6 +197,12 @@ for f in "${changed[@]}"; do
         # Prometheus alert rules and their promtool fixtures. Scoped to these
         # three directories on purpose: an unrelated *.yml must not drag in
         # the monitoring suite.
+        # Ansible task files and Jinja templates. Both gates are whole-tree
+        # and cheap (0.46 s / 0.30 s), so the trigger is the type, not a scope.
+        configs/ansible/*|*/configs/ansible/*|configs/alertmanager/*|*/configs/alertmanager/*)
+            ansible_files+=("$f"); hit=1 ;;
+    esac
+    case "$f" in
         configs/prometheus/rules.r1/*.yml|*/configs/prometheus/rules.r1/*.yml| \
         deploy/monitoring/rules/*.yml|*/deploy/monitoring/rules/*.yml| \
         deploy/monitoring/rule-tests/*.yml|*/deploy/monitoring/rule-tests/*.yml)
@@ -382,6 +388,14 @@ if [ "${#rules_files[@]}" -gt 0 ]; then
     # exactly the omission made in 132d8f8b0 — so the deferral is a real gap
     # in this gate's reach, not a redundancy. Named so it is visible.
     defer "monitoring-check" "${#rules_files[@]} rule file(s) changed; promtool rule tests (56 s alone, 146 s via make monitoring-check) run in scripts/dev/verify.sh — this is the gate that catches a stale exp_labels severity"
+fi
+
+# 7c. Ansible tasks and Jinja templates. Same gap as 7b: a change under
+#     configs/ansible/ selected NO ansible gate, and both are under half a
+#     second whole-tree.
+if [ "${#ansible_files[@]}" -gt 0 ]; then
+    add_step "lint-ansible-tasks" "whole tree; ${#ansible_files[@]} ansible/alertmanager file(s) changed" "$ci_dir/lint-ansible-tasks.sh"
+    add_step "lint-jinja-templates" "" "$ci_dir/lint-jinja-templates.sh"
 fi
 
 # 8. Lake reads.

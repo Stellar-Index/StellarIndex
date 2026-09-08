@@ -90,11 +90,12 @@ put "$R" docs/note.md '# note'
 put "$R" scripts/ci/x.baseline 'entry'
 put "$R" scripts/dev/verify.sh $'#!/usr/bin/env bash\nset -euo pipefail\necho verify'
 put "$R" configs/prometheus/rules.r1/meta.yml $'groups:\n  - name: meta\n    rules: []\n'
+put "$R" configs/ansible/roles/x/tasks/main.yml $'- name: noop\n  ansible.builtin.debug:\n    msg: hi\n'
 put "$R" data.json '{}'
 git -C "$R" add -A
 out="$(cd "$R" && "$DISPATCH" --staged --plan 2>&1)"; rc=$?
 expect_exit "a mixed staged diff plans without error" 0 "$rc"
-expect_has "discovery reports the staged count" "lint-changed: 10 changed file(s), staged" "$out"
+expect_has "discovery reports the staged count" "lint-changed: 11 changed file(s), staged" "$out"
 expect_has ".sh -> bash -n on the file" "plan  bash -n: bash -n tools/run.sh" "$out"
 # git lists staged paths in index order (alphabetical), and the plan keeps it.
 expect_has ".sh -> lint-shell-sigpipe scoped to the pipefail scripts" "lint-shell-sigpipe.sh scripts/dev/verify.sh tools/run.sh" "$out"
@@ -131,6 +132,11 @@ expect_has "rules yaml -> lint-runbook-annotations" "plan  lint-runbook-annotati
 expect_has "rules yaml -> lint-rule-structure" "plan  lint-rule-structure:" "$out"
 expect_has "rules yaml -> lint-metric-refs deferred on cost, with the reason" "skip  lint-metric-refs:" "$out"
 expect_has "rules yaml -> promtool deferred, and the gap is named" "skip  monitoring-check:" "$out"
+# Ansible. Same gap as the rules block above: a change under
+# configs/ansible/ selected no ansible gate at all, while both gates are
+# under half a second whole-tree.
+expect_has "ansible -> lint-ansible-tasks" "plan  lint-ansible-tasks:" "$out"
+expect_has "ansible -> lint-jinja-templates" "plan  lint-jinja-templates:" "$out"
 expect_has "verify.sh -> check-verify-parity" "plan  check-verify-parity:" "$out"
 expect_has "baseline -> lint-baseline-growth deferred on staged edits, with the reason" "skip  lint-baseline-growth: reads the Baseline-Growth commit trailer" "$out"
 expect_has ".md -> lint-doc-links scoped to the changed file" "lint-doc-links.sh docs/note.md" "$out"
