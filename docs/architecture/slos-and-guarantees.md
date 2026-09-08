@@ -47,26 +47,44 @@ both isolate the quantity this SLO actually constrains.
 
 ## Historical retention ≥ 1 yr (since inception where possible)
 
-Verified live 2026-06-13:
+Verified live **2026-09-08** (the 2026-06-13 figures below it were wrong on
+two counts and are corrected here; see the note at the end of this list):
 
-- **XLM/USD (headline pair)**: `/v1/history/since-inception?asset=native&quote=fiat:USD`
-  serves daily VWAP back to **2021-02-01** (5.4 yr — when reliable
-  on-chain USD anchoring began on Stellar) → ≫ the ≥1yr floor.
-- **SDEX since-inception**: `/v1/ohlc?interval=1d` against classic
-  anchor pairs serves daily bars back to 2016-2018; the `prices_1d`
-  continuous aggregate holds native pairs back to **2015-11-18** (6.3 M
-  rows). 1h+ granularities retained indefinitely (migration 0031 removed
-  trades retention; caggs indefinite). Raw `trades` is the ~3-month
-  served working set (ADR-0034); full history lives in the ClickHouse
-  lake + the indefinite caggs.
+- **XLM/USD (headline pair)**: daily VWAP back to **2017-01-17**, which is the
+  earliest trade of any source in the served tier (`kraken`). `prices_1d` for
+  `crypto:XLM/fiat:USD` holds 2,556 daily buckets, 2017-01-17 → 2026-09-07, and
+  `/v1/chart?timeframe=all&granularity=1d` returns 3,318 points with
+  `discontinuous: true` and a declared widest gap of 2017-08-22 → 2018-02-16.
+  ≫ the ≥1yr floor.
+- **SDEX since-inception**: **SDEX data begins 2026-03-12**, and the
+  `prices_1d` native candles begin on exactly that date — the aggregate is
+  complete over the data that exists. Earlier SDEX history is not held in the
+  served tier and is tracked as #349 (full SDEX trade-history backfill,
+  post-v1). 1h+ granularities retained indefinitely (migration 0031 removed
+  trades retention; caggs indefinite).
 - **OHLC candlesticks, deep**: `/v1/ohlc?quote=fiat:USD&interval=…` —
   the series handler COMBINES the USD-pegged constituent pairs per bucket
   (the same source set the live aggregator's VWAP uses:
   `aggregate.ExpandTargetPairWithClassicPegs`). Verified live: XLM/USD
   candles to **2021-02-01**, and it **generalises to every asset**
   (AQUA/USD from 2021-08, its USD inception). `triangulated: true` flags
-  the proxy combine. Non-USD pairs (XLM/anchors) still serve to 2015 per
-  the cagg.
+  the proxy combine.
+
+> **Correction, 2026-09-08.** The previous revision of this list, marked
+> "verified live 2026-06-13", claimed `prices_1d` held native pairs back to
+> **2015-11-18 (6.3 M rows)** and that non-USD XLM pairs "still serve to 2015
+> per the cagg". Both are false and were false when written in the sense that
+> matters: SDEX trades begin **2026-03-12**, so no native candle can predate
+> it, and the whole of `prices_1d` is **4,332,808** rows, not 6.3 M. Measured
+> on r1: `min(ts)` per source is kraken 2017-01-17, soroswap 2024-03-11,
+> aquarius 2024-07-25, sdex 2026-03-12, coinbase/bitstamp 2026-05-05.
+>
+> This mattered beyond the doc. Migrations 0115 and 0147 drop and recreate the
+> price aggregates `WITH NO DATA`, and the 2015 claim was the main reason to
+> suspect they had silently destroyed ~1.1 TB of materialised history. They had
+> not: the nine `prices_*`/`twap_*` aggregates total **141 GB** and are complete
+> to the earliest trade of every source. The apparent hole was a documentation
+> error, not a data loss.
 
 ## Throughput — ≥ 1000 requests/min per client
 
