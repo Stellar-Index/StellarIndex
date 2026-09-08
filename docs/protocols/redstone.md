@@ -104,11 +104,17 @@ suffixes. Two correctness consequences:
   USDY, USST, XAUm, deJAAA, deJTRSY)
   decode as `canonical.AssetRWA`, deliberately NOT `crypto`, so a
   tokenized T-bill never lands in a crypto-scoped surface.
-- **A feed_id outside the registry** is skipped
-  per-entry and counted on
+- **A feed_id outside the registry** is RECORDED verbatim as a
+  `raw:<feed_id>` row at its own vector position — not skipped, since
+  oracle capture-totality (`resolveFeedEntry`) — and counted on
   `stellarindex_source_unknown_symbols_total{source="redstone"}`
-  (alert `stellarindex_ingestion_oracle_unknown_symbols`) — skipped,
-  never mis-attributed.
+  (alert `stellarindex_ingestion_oracle_unknown_symbols`,
+  `informational`). Captured, never mis-attributed: a raw row is
+  reference-only until a registry entry promotes it in place.
+  A feed_id the raw validator itself refuses (empty, > 64 bytes, or a
+  byte outside printable ASCII) IS dropped, on its own counter
+  `stellarindex_source_unrepresentable_symbols_total` and its own
+  `ticket`-severity alert.
 
 ### 2026-07-24 relayer expansion (ledger 63624934)
 
@@ -198,9 +204,14 @@ durable Soroban events; backfill decodes identically to live, subject to
 ## Update cadence / staleness
 
 A feed may go quiet up to 24h if the underlying price hasn't moved > 0.2%.
-The decoder publishes `DefaultResolutionSeconds = 86400` so the
-`oracle-stale` alert (fires at > 10× resolution) uses the correct
-threshold for a legitimately quiet feed.
+The decoder publishes `DefaultResolutionSeconds = 86400`, which seeds
+each RedStone asset's default staleness budget at 10× that — the
+threshold `oracle-stale` compares against, so a legitimately quiet feed
+does not fire. Since #478 that budget is a per-(source, asset) gauge
+(`stellarindex_oracle_staleness_budget_seconds`) and a single asset
+that publishes on its own rhythm can be widened via
+`[[oracle.staleness_overrides]]` without loosening the source's
+declared cadence.
 
 ## References
 

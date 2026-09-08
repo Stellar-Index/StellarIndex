@@ -585,22 +585,24 @@ Alert: `stellarindex_ingestion_oracle_unknown_symbols` (any per-source
 increase over a trailing 25 h, sustained 30 min — the window exceeds
 Band's daily cadence so it cannot flap) → runbook
 [oracle-unknown-symbols](../../operations/runbooks/oracle-unknown-symbols.md).
-The 2026-08-04 cold audit found this counter had no consumer at all
-while r1 carried 7,794 dropped Reflector slots. The oracle decoders
-now record unmapped slots verbatim as `raw:<symbol>` rows
-(`canonical.AssetOracleRaw`, oracle capture-totality design PR-2) and
-the counter keeps incrementing — a raw row is still a mapping gap to
-close.
+`informational` since 2026-09-08, delivered to the low-traffic
+`chat-informational` channel: a source listing a new token is routine
+and the observation is captured under `raw:`, so it earns a mapping
+rather than a ticket.
 
-Alert: `stellarindex_ingestion_oracle_unknown_symbols` (any per-source
-increase over a trailing 25 h, sustained 30 min — the window exceeds
-Band's daily cadence so it cannot flap) → runbook
-[oracle-unknown-symbols](../../operations/runbooks/oracle-unknown-symbols.md).
 The 2026-08-04 cold audit found this counter had no consumer at all
-while r1 carried 7,794 dropped Reflector slots. Once the oracle
-decoders record unmapped slots verbatim as `raw:<symbol>` rows
-(`canonical.AssetOracleRaw`, oracle capture-totality design) the counter
-keeps incrementing — a raw row is still a mapping gap to close.
+while r1 carried 7,794 dropped Reflector slots — dropped, because the
+decoders then skipped an unmapped slot. They now record it verbatim as
+a `raw:<symbol>` row (`canonical.AssetOracleRaw`, oracle
+capture-totality design PR-2) and the counter keeps incrementing — a
+raw row is still a mapping gap to close.
+
+**No decoder logs on this branch.** Reflector, Band and RedStone
+increment the counter and emit the raw row without a log line, and the
+counter has no `symbol` label, so the symbol's identity comes from the
+record layer (`asset LIKE 'raw:%'`, or
+`/v1/oracle/streams?include_unmapped=true`) and never from the journal.
+Its sibling below is the opposite — that one logs.
 
 ### `stellarindex_source_unrepresentable_symbols_total`
 
@@ -630,7 +632,9 @@ dropped slot's identity is in the accompanying WARN log line
 Alert: `stellarindex_ingestion_oracle_unrepresentable_symbols` (any
 per-source increase over a trailing 25 h, sustained 30 min — same
 window as its unknown-symbols sibling so a daily-cadence oracle cannot
-flap) → runbook
+flap). It stays `ticket` where the sibling dropped to
+`informational`, for the reason the two counters are separate: no row
+was written, so there is nothing to promote later. → runbook
 [oracle-unknown-symbols](../../operations/runbooks/oracle-unknown-symbols.md).
 
 ### `stellarindex_source_orphan_events_total`

@@ -15,6 +15,59 @@ against.
 
 ## [Unreleased]
 
+### Fixed
+
+- **docs(runbook):** the `oracle-unknown-symbols` runbook's first
+  diagnostic step could not work. It told the operator to `journalctl |
+  grep` the indexer for the unmapped symbol, and **no oracle decoder
+  logs on that branch** — `reflector`, `band` and `redstone` each
+  increment `stellarindex_source_unknown_symbols_total` and emit the
+  `raw:<symbol>` row with no log line, and the counter carries no
+  `symbol` label. Following the runbook returned nothing, which reads
+  as a false alarm rather than as a missing instrument. Step 1 now uses
+  the observation that actually exists: the `raw:%` rows in
+  `oracle_updates`, and `/v1/oracle/streams?include_unmapped=true`
+  (`mapped: false`), with the SQL scoped to a window instead of
+  scanning the hypertable whole. The metrics port in both curl examples
+  was `:9100`, which on r1 is node_exporter — corrected to `:9464`, the
+  indexer's `metrics_listen`. The replay commands were missing flags
+  their binaries require and would have exited on usage:
+  `projector-replay` needs `-config`, `ch-rebuild` needs
+  `-config`/`-from`/`-to` plus `-write` to leave dry-run. The
+  promotion-in-place claim is now stated with the guard that enforces
+  it (`derive_generation <= EXCLUDED.derive_generation`), including the
+  case where a gen-0 `projector-replay` will not overwrite a row a
+  prior re-derive stamped. Severity framing rewritten for the
+  2026-09-08 drop to `informational`: an oracle listing a new token is
+  routine, the observation is captured, so the alert earns a mapping at
+  leisure rather than a place in the ticket queue — with the contrast
+  to `oracle_unrepresentable_symbols`, which stays a `ticket` because
+  there the slot is dropped with no row written, made explicit at the
+  top rather than left to a later section.
+
+- **docs:** `oracle-stale`'s diagnosis block still asserted "> 50 min
+  is real stall" for Reflector, which the per-(source, asset) budget
+  made wrong for any overridden pair — `crypto:DAI` is allowed 9 h. It
+  now says to read the alerting pair's own
+  `stellarindex_oracle_staleness_budget_seconds`. The same per-source
+  reading survived in the protocol pages (`reflector.md`,
+  `redstone.md`) and, for the unknown-symbols alert, its pre-capture-
+  totality "unknown feeds are skipped" description, which stopped being
+  true when the decoders began recording them; `domain-traps.md` and
+  the metrics reference still called the alert a ticket, and the
+  metrics reference carried the same paragraph twice with contradictory
+  tenses. The alerting docs asserted that `informational` routes to
+  `silent` and delivers to nobody: the `alertmanager-not-notifying`
+  runbook told the operator that a receiver with no `*_configs` block
+  is the bug and "only `silent` is supposed to look like that", which
+  would now misdiagnose an unset `DISCORD_WEBHOOK_URL_INFORMATIONAL` as
+  the outage; `configs/alertmanager/README.md` still routed the
+  severity to `silent` in its table and never mentioned the new webhook
+  in its provisioning example; and the `silent` receiver's own comment
+  block, which is what an operator reads while triaging, still claimed
+  every informational rule routes there. No alert expression, label,
+  route or served value changes.
+
 ## [v0.65.0] — 2026-09-08
 
 ### Added

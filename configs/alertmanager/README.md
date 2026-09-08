@@ -25,9 +25,19 @@ vocabulary defined in the severity ladder in
 |----------|----------|---------|
 | `page` | `chat-page` (Discord `#stellarindex-pages`) | every 12 h while firing |
 | `ticket` | `chat-default` (Discord `#stellarindex-alerts`) | every 24 h while firing |
-| `informational` | `silent` (Alertmanager UI only) | — |
+| `informational` | `chat-informational` (Discord `#stellarindex-informational`) | every 12 h while firing (the tree default); `send_resolved: false` |
 | `stellarindex_deadmansswitch` | `deadmansswitch` (Healthchecks.io) | every 60 s |
 | `stellarindex_alertmanager_notifications_failing` | `alert-delivery-failure` (Healthchecks.io) **and** the severity route | every 1 h |
+
+`informational` stopped meaning "delivered to nobody" on 2026-09-08.
+It gets its own low-traffic channel, deliberately separate from
+`alerts` so a routine notice cannot bury a ticket in the same feed —
+the routine notice that motivated it being an oracle publishing a
+ticker we do not map yet. `DISCORD_WEBHOOK_URL_INFORMATIONAL` is
+OPTIONAL: unset, the renderer strips the block and the receiver
+degrades to the `silent` stub it replaced, so a host that has not
+configured it is unchanged rather than broken. Nothing routes to
+`silent` any more; the receiver is kept as that fallback shape.
 
 The deadmansswitch is the alarm-of-last-resort — when its 60 s
 heartbeat stops, Healthchecks.io pages us via a fully separate
@@ -82,15 +92,23 @@ and count the characters.
    # band. Unset is allowed so provisioning never blocks an urgent
    # apply, but apply.sh prints "DARK" on every run until it is set.
    HEALTHCHECKS_ALERT_DELIVERY_URL='https://hc-ping.com/<a-different-uuid>'
+   # Optional: the low-traffic channel every `informational` alert
+   # goes to (2026-09-08). Unset leaves that receiver a stub, which is
+   # the pre-2026-09-08 behaviour — a no-op, not a config error.
+   DISCORD_WEBHOOK_URL_INFORMATIONAL='https://discord.com/api/webhooks/<id>/<token>'
    ```
 
-   **None of these may be empty.** An empty URL makes the renderer
-   drop that receiver's config block, and the receiver then accepts
-   alerts and delivers them to nobody — identical to `silent`, with a
-   *successful* reload and every self-check green. That is precisely
-   what happened between 2026-07-29 and 2026-08-29: all three URLs
-   were unset, every path including the deadman's switch was a black
-   hole, and nothing reported it for 31 days.
+   **The first three may not be empty.** An empty URL makes the
+   renderer drop that receiver's config block, and the receiver then
+   accepts alerts and delivers them to nobody — identical to `silent`,
+   with a *successful* reload and every self-check green. That is
+   precisely what happened between 2026-07-29 and 2026-08-29: all
+   three URLs were unset, every path including the deadman's switch
+   was a black hole, and nothing reported it for 31 days. The last two
+   are optional by design (`AM_OPTIONAL_RECEIVERS` in `apply.sh`):
+   their absence is reported on every run, not refused, so a
+   provisioning gap can never block the apply that restores a broken
+   chat channel.
 
    `apply.sh` therefore refuses to install a config whose receivers
    deliver to nobody, probes each URL for a live 2xx first (a revoked

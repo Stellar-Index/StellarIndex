@@ -25,13 +25,24 @@ This check PARSES both rule trees and asserts, per alert:
 
 THE INFORMATIONAL-DELIVERY REGISTER (issue #485, 2026-09-02):
 #362 made the Severity column honest, which surfaced the operational
-fact underneath it — `severity: informational` routes to `receiver:
+fact underneath it — `severity: informational` routed to `receiver:
 silent`, a receiver declared with NO `*_configs` block, so those alerts
-are accepted by Alertmanager and delivered to nobody. Twenty-one rules
-sit in that bucket today. Whether each of them SHOULD be silent is a
-policy question (#485) this lint deliberately does not answer; what it
-does enforce is that landing a rule there is a deliberate, written-down
-choice rather than a copied YAML block nobody re-read. So, additionally:
+were accepted by Alertmanager and delivered to nobody. Twenty-one rules
+sat in that bucket when this register was written; eleven do today.
+
+That routing changed on 2026-09-08: `informational` now fans out to
+`receiver: chat-informational`, a low-traffic Discord channel kept
+separate from `alerts` so a routine notice cannot bury a ticket. The
+register's job is unchanged, but the question a row answers is now
+"does this belong in the quiet channel and nowhere louder?" rather than
+"is silence right?". (With `DISCORD_WEBHOOK_URL_INFORMATIONAL` unset
+the receiver degrades to the `silent` stub, so the original reading
+still holds on a host that has not configured it.)
+
+Whether a rule SHOULD be informational at all is a policy question this
+lint deliberately does not answer; what it does enforce is that landing
+a rule there is a deliberate, written-down choice rather than a copied
+YAML block nobody re-read. So, additionally:
   * every `informational` rule has a row in the catalogue's
     "Informational alerts — delivery register" section (between the
     `informational-register:begin/end` HTML comments);

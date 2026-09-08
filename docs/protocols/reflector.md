@@ -104,10 +104,16 @@ decodes identically to live ingest.
 
 ## Update cadence / staleness
 
-Each contract updates on a uniform ~5-min cadence on mainnet. The
-`oracle-stale` alert fires at > 10× the declared resolution (= 50 min
-without an update), which flags an upstream halt (e.g. a CEX-aggregator
-outage) per contract independently.
+Each contract updates on a uniform ~5-min cadence on mainnet, so every
+Reflector asset defaults to a 50-minute staleness budget (10× the
+declared resolution). The `oracle-stale` alert fires when a
+(source, asset) pair passes ITS budget, which since #478 is a per-pair
+gauge — an asset Reflector republishes only on movement can be widened
+via `[[oracle.staleness_overrides]]` (the shipped example is
+`reflector-cex` / `crypto:DAI` at 9 h) without loosening the contract's
+declared cadence or any sibling asset. Firing on the default bound
+flags an upstream halt (e.g. a CEX-aggregator outage) per contract
+independently.
 
 ## References
 

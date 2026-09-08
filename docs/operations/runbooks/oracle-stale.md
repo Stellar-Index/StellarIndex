@@ -1,6 +1,6 @@
 ---
 title: Runbook — oracle-stale
-last_verified: 2026-09-01
+last_verified: 2026-09-08
 status: current
 severity: P2
 ---
@@ -35,8 +35,12 @@ curl -s http://localhost:9464/metrics |
 # ["REFLECTOR","update"]) straight out of the Galexie ledger
 # stream, so a stall on our side means the indexer/dispatcher
 # path is stuck, not a dropped subscription.
-# A Reflector contract goes 5 min between updates in normal ops;
-# > 50 min is real stall. r1 doesn't run its own stellar-rpc
+# A Reflector contract publishes on a ~5-min cadence, so its
+# assets default to a 50-min budget — but read the ALERTING
+# pair's own budget from the gauge above rather than assuming
+# that number: a pair with an override (crypto:DAI is at 9 h)
+# is not stalled until IT passes ITS bound.
+# r1 doesn't run its own stellar-rpc
 # (removed 2026-04-23, see docs/operations/r1-deployment-state.md);
 # point the probe at a public endpoint to confirm the network is
 # closing ledgers and the oracle contract has been invoked recently.
@@ -176,7 +180,11 @@ Originally flagged P2 (ticket) because the impact is bounded — the API keeps s
   now a bare comparison rather than a join against the per-source
   resolution. Added the two-shapes triage split and the
   `[[oracle.staleness_overrides]]` procedure. Declared resolution is
-  unchanged and still per-source.
+  unchanged and still per-source. Re-verified the rest of the file
+  against HEAD the same day: the one remaining per-source residue was
+  the diagnosis block asserting "> 50 min is real stall" for Reflector,
+  which is now wrong for any overridden pair — it says to read the
+  alerting pair's own budget instead.
 - 2026-09-01 — added the mis-declared-resolution section. `band` declared a
   60s resolution against an hourly relay cadence, so this alert fired 100%
   of the time for both its assets; corrected to 3600 and pinned by a test.

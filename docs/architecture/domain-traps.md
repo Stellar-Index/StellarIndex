@@ -140,8 +140,12 @@ linked design doc has the full detail.
   returns one only when asked for by its exact `raw:` key).
   `stellarindex_source_unknown_symbols_total` still counts them —
   it now means "recorded as raw", a mapping gap for the allow-list
-  owner, and `stellarindex_ingestion_oracle_unknown_symbols` tickets
-  on it. Widening the allow-list re-derives the same PK and promotes
+  owner, and `stellarindex_ingestion_oracle_unknown_symbols` reports
+  it — `informational` since 2026-09-08, not a ticket: a source listing
+  a new token is routine and the observation is captured either way.
+  (Its sibling `stellarindex_ingestion_oracle_unrepresentable_symbols`
+  stays a ticket, because there no row is written at all.)
+  Widening the allow-list re-derives the same PK and promotes
   `raw:X` → `crypto:X` in place on replay, so no capture is lost.
   Design: docs/design/oracle-capture-totality-design.md.
 - **Post-P23 (Whisk, mainnet 2025-09-03) every classic asset

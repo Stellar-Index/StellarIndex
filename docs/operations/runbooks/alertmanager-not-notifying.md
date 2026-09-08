@@ -47,8 +47,22 @@ curl -s 'localhost:9090/api/v1/query?query=alertmanager_notifications_total' \
 
 Read the receiver list carefully. A receiver that shows `- name: X`
 with **no following `*_configs:` block** accepts alerts and delivers
-them to nobody. That is the failure mode. Only `silent` is supposed to
-look like that.
+them to nobody. That is the failure mode.
+
+Two receivers may legitimately look like that, and neither is the bug:
+
+- `silent` — a black hole on purpose. Nothing routes to it any more
+  (see below), and it is kept as the fallback shape.
+- `chat-informational` — only when `DISCORD_WEBHOOK_URL_INFORMATIONAL`
+  is unset. `informational` has routed here since 2026-09-08 rather
+  than to `silent`, and `apply.sh` treats the URL as OPTIONAL: absent,
+  the renderer strips the block and the receiver degrades to a stub. It
+  reports the state rather than refusing the apply, so an unset
+  informational webhook is a deliberate no-op, not this incident.
+  `deadmansswitch`, `chat-page` and `chat-default` are the three it
+  refuses to install empty.
+
+Anything else with a bare `- name:` is the bug.
 
 ## 2. The overwhelmingly likely cause: an empty URL
 

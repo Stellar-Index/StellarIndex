@@ -188,32 +188,6 @@ receivers:
         send_resolved: true
         max_alerts: 5
 
-  # ─── silent — A BLACK HOLE, ON PURPOSE ─────────────────────────
-  #
-  # READ THIS BEFORE ASSUMING THE EMPTY STANZA IS AN OVERSIGHT.
-  #
-  # `- name: silent` has no webhook_configs, no discord_configs and
-  # no pagerduty_configs, and that is DELIBERATE: an Alertmanager
-  # receiver with no *_configs block accepts the alert and delivers
-  # it to NOBODY. Every `severity: informational` rule routes here,
-  # so a firing informational alert reaches a human only if someone
-  # happens to open the Alertmanager UI. It does not reach Discord,
-  # it does not reach Healthchecks, and there is no PagerDuty leg
-  # anywhere in this file for any severity.
-  #
-  # Do NOT "repair" this by adding a webhook. Whether each of those
-  # rules should be delivered is an open POLICY question tracked in
-  # issue #485; the per-alert triage that decides it lives in
-  # docs/operations/alerts-catalog.md, section "Informational alerts
-  # — delivery register", and `scripts/ci/lint-alerts-catalog.py`
-  # requires a register row for every informational rule so a new one
-  # cannot land in this bucket by accident.
-  #
-  # The one exception to "informational goes nowhere" is
-  # stellarindex_deadmansswitch: it carries severity=informational
-  # but the alertname-matched route above it fires first
-  # (`continue: false`), so it reaches Healthchecks.io and never
-  # reaches this receiver.
   # Informational fanout → a dedicated Discord channel. Same bounded
   # template as chat-default: every interpolated field is capped and at
   # most $max alerts render, because an unbounded body is what returned
@@ -232,4 +206,31 @@ receivers:
           … and {{ len (slice .Alerts $max) }} more in this group — see {{ printf "%.120s" .ExternalURL }}
           {{ end }}
 
+  # ─── silent — A BLACK HOLE, ON PURPOSE ─────────────────────────
+  #
+  # READ THIS BEFORE ASSUMING THE EMPTY STANZA IS AN OVERSIGHT.
+  #
+  # `- name: silent` has no webhook_configs, no discord_configs and
+  # no pagerduty_configs, and that is DELIBERATE: an Alertmanager
+  # receiver with no *_configs block accepts the alert and delivers it
+  # to NOBODY.
+  #
+  # Nothing routes here as of 2026-09-08 — `severity: informational`
+  # moved to chat-informational above. It is kept because that is
+  # exactly the shape chat-informational degrades to when
+  # DISCORD_WEBHOOK_URL_INFORMATIONAL is unset, so the stub stays a
+  # named, documented state rather than an accident. There is no
+  # PagerDuty leg anywhere in this file, for any severity.
+  #
+  # Do NOT route anything here to quiet it. Which alerts may be
+  # informational at all is a POLICY decision recorded per-alert in
+  # docs/operations/alerts-catalog.md, section "Informational alerts
+  # — delivery register"; `scripts/ci/lint-alerts-catalog.py` requires
+  # a register row for every informational rule so a new one cannot
+  # land in that bucket by accident.
+  #
+  # stellarindex_deadmansswitch also carries severity=informational,
+  # but the alertname-matched route above fires first
+  # (`continue: false`), so it reaches Healthchecks.io and never the
+  # severity route.
   - name: silent
