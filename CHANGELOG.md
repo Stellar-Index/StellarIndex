@@ -17,6 +17,19 @@ against.
 
 ### Fixed
 
+- **ops:** the ClickHouse schema snapshot's off-site push reported
+  success on every run while uploading nothing. Two independent
+  defects. `mc` reads `AWS_*` from the process environment ahead of an
+  alias's own credentials, and the unit's `EnvironmentFile` sets
+  `AWS_ENDPOINT_URL` to the local MinIO with `AWS_REGION=r1` — so an
+  S3 alias was retargeted at the very host the snapshot exists to
+  survive, and the request failed the bucket's real region. And `mc
+  mirror` exits 0 on a transfer that moved nothing, so the exit-code
+  check could not see it: the log said "pushed", the gauge said
+  healthy, and the bucket stayed empty. The push now strips `AWS_*`
+  for the `mc` calls and proves the objects landed by counting them at
+  the destination instead of trusting the exit status.
+
 - **ops:** `usd-volume-restamp -tier exact` planned its UPDATE without
   pinning a custom plan. Every slice of a day produces identical
   statement text, so Postgres promotes the prepared statement to a

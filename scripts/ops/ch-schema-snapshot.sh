@@ -197,11 +197,35 @@ find "$OUT_DIR" -mindepth 1 -maxdepth 1 -type d -mtime "+$RETAIN_DAYS" -exec rm 
 # the host, by name, until a push lands.
 offsite_ok=0
 if [[ -n "$SNAPSHOT_MC_TARGET" ]]; then
-  if command -v mc >/dev/null 2>&1 && mc mirror --overwrite "$work" "$SNAPSHOT_MC_TARGET/$day" >/dev/null 2>&1; then
-    offsite_ok=1
-    note "pushed to $SNAPSHOT_MC_TARGET/$day"
+  # `mc` honours AWS_* from the process environment ahead of the alias's
+  # own stored credentials, and this unit's EnvironmentFile
+  # (/etc/default/stellarindex-ops) sets AWS_ENDPOINT_URL to the LOCAL
+  # MinIO with AWS_REGION=r1. Inherited, they retarget an S3 alias at the
+  # very host the snapshot is supposed to survive, and the request fails
+  # the bucket's real region with "must be addressed using the specified
+  # endpoint". Strip them for the mc calls only.
+  mc_clean=(env -u AWS_ACCESS_KEY_ID -u AWS_SECRET_ACCESS_KEY
+            -u AWS_ENDPOINT_URL -u AWS_REGION -u AWS_SESSION_TOKEN
+            -u AWS_DEFAULT_REGION)
+
+  # NEVER gate this on mc's exit code. `mc mirror` exits 0 on a transfer
+  # that moved nothing — the failure above printed an error, reported
+  # "Total 0 B", and still returned 0, so the old check reported a
+  # healthy off-site push on every single run while the bucket stayed
+  # empty. Prove the objects landed instead: count what is at the
+  # destination and require it to match what we meant to send.
+  want=$(find "$work" -type f | wc -l | tr -d ' ')
+  if command -v mc >/dev/null 2>&1; then
+    "${mc_clean[@]}" mc mirror --overwrite "$work" "$SNAPSHOT_MC_TARGET/$day" >/dev/null 2>&1 || true
+    got=$("${mc_clean[@]}" mc ls --recursive "$SNAPSHOT_MC_TARGET/$day" 2>/dev/null | wc -l | tr -d ' ')
   else
-    note "OFFSITE PUSH FAILED to $SNAPSHOT_MC_TARGET/$day — the snapshot exists only on this host"
+    want=0 got=-1
+  fi
+  if [[ "$got" -ge 1 && "$got" -eq "$want" ]]; then
+    offsite_ok=1
+    note "pushed to $SNAPSHOT_MC_TARGET/$day ($got object(s) verified at the destination)"
+  else
+    note "OFFSITE PUSH FAILED to $SNAPSHOT_MC_TARGET/$day — wanted $want object(s), found ${got} at the destination; the snapshot exists only on this host"
     rc=2
   fi
 fi
