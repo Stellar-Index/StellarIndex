@@ -369,25 +369,35 @@ tests:
     exp_alerts:
     - exp_labels:
         source: reflector
-        severity: ticket
+        severity: informational
         team: stellarindex
         component: ingestion
       exp_annotations:
         runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/oracle-unknown-symbols.md
-        summary: Oracle reflector is publishing symbols the canonical allow-list does not map
+        summary: Oracle reflector is publishing a ticker we do not map yet — captured, not lost
         description: 'stellarindex_source_unknown_symbols_total{source="reflector"}
 
-          increased in the trailing 25 h. The oracle decoder met a symbol /
+          increased in the trailing 25 h: the decoder met a symbol / feed_id
 
-          feed_id with no canonical asset mapping. Until the decoders
+          with no canonical asset mapping. This is NOT a fault — an oracle
 
-          record such slots under `raw:` they are dropped from the price
+          listing a new token is routine, and the observations ARE captured
 
-          surface; either way the allow-list (ADR-0010 / 0014 / 0028) or
+          under `raw:<symbol>`, readable via
 
-          the RedStone feed registry needs extending, and the affected
+          /v1/oracle/streams?include_unmapped=true, so nothing is lost while
 
-          ledgers need a replay once it is. See the runbook.
+          this is open. What it earns is a mapping, so the token gets a real
+
+          identity rather than a raw one: extend the allow-list (ADR-0010 /
+
+          0014 / 0028) or the RedStone feed registry, then replay the affected
+
+          ledgers so existing history moves to the mapped identity. Worth
+
+          doing at leisure, which is why this is informational rather than a
+
+          ticket. See the runbook.
 
           '
 - interval: 1m
@@ -404,25 +414,35 @@ tests:
     exp_alerts:
     - exp_labels:
         source: band
-        severity: ticket
+        severity: informational
         team: stellarindex
         component: ingestion
       exp_annotations:
         runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/oracle-unknown-symbols.md
-        summary: Oracle band is publishing symbols the canonical allow-list does not map
+        summary: Oracle band is publishing a ticker we do not map yet — captured, not lost
         description: 'stellarindex_source_unknown_symbols_total{source="band"}
 
-          increased in the trailing 25 h. The oracle decoder met a symbol /
+          increased in the trailing 25 h: the decoder met a symbol / feed_id
 
-          feed_id with no canonical asset mapping. Until the decoders
+          with no canonical asset mapping. This is NOT a fault — an oracle
 
-          record such slots under `raw:` they are dropped from the price
+          listing a new token is routine, and the observations ARE captured
 
-          surface; either way the allow-list (ADR-0010 / 0014 / 0028) or
+          under `raw:<symbol>`, readable via
 
-          the RedStone feed registry needs extending, and the affected
+          /v1/oracle/streams?include_unmapped=true, so nothing is lost while
 
-          ledgers need a replay once it is. See the runbook.
+          this is open. What it earns is a mapping, so the token gets a real
+
+          identity rather than a raw one: extend the allow-list (ADR-0010 /
+
+          0014 / 0028) or the RedStone feed registry, then replay the affected
+
+          ledgers so existing history moves to the mapped identity. Worth
+
+          doing at leisure, which is why this is informational rather than a
+
+          ticket. See the runbook.
 
           '
   - eval_time: 3000m
@@ -430,25 +450,35 @@ tests:
     exp_alerts:
     - exp_labels:
         source: band
-        severity: ticket
+        severity: informational
         team: stellarindex
         component: ingestion
       exp_annotations:
         runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/oracle-unknown-symbols.md
-        summary: Oracle band is publishing symbols the canonical allow-list does not map
+        summary: Oracle band is publishing a ticker we do not map yet — captured, not lost
         description: 'stellarindex_source_unknown_symbols_total{source="band"}
 
-          increased in the trailing 25 h. The oracle decoder met a symbol /
+          increased in the trailing 25 h: the decoder met a symbol / feed_id
 
-          feed_id with no canonical asset mapping. Until the decoders
+          with no canonical asset mapping. This is NOT a fault — an oracle
 
-          record such slots under `raw:` they are dropped from the price
+          listing a new token is routine, and the observations ARE captured
 
-          surface; either way the allow-list (ADR-0010 / 0014 / 0028) or
+          under `raw:<symbol>`, readable via
 
-          the RedStone feed registry needs extending, and the affected
+          /v1/oracle/streams?include_unmapped=true, so nothing is lost while
 
-          ledgers need a replay once it is. See the runbook.
+          this is open. What it earns is a mapping, so the token gets a real
+
+          identity rather than a raw one: extend the allow-list (ADR-0010 /
+
+          0014 / 0028) or the RedStone feed registry, then replay the affected
+
+          ledgers so existing history moves to the mapped identity. Worth
+
+          doing at leisure, which is why this is informational rather than a
+
+          ticket. See the runbook.
 
           '
 - interval: 1m

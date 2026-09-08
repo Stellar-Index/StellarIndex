@@ -17,6 +17,25 @@ against.
 
 ### Added
 
+- **monitoring:** informational-severity alerts now fan out to their own
+  low-traffic Discord channel instead of the `silent` receiver, which
+  had no config block and delivered nowhere (#485). Kept separate from
+  `alerts` so a routine notice can never bury a ticket in the same feed;
+  with the webhook unset the receiver degrades to the stub it replaced,
+  so an unset URL is a no-op rather than a config error.
+
+### Changed
+
+- **monitoring:** `stellarindex_ingestion_oracle_unknown_symbols` is now
+  informational rather than a ticket. An oracle listing a new token is
+  routine business, not a fault of ours — we index what our sources
+  publish rather than holding opinions about which tickers deserve to
+  exist — and the observations are captured under `raw:<symbol>` either
+  way, so nothing is lost while it is open. It no longer competes in the
+  ticket queue with things that are actually broken.
+  `oracle_unrepresentable_symbols` stays a ticket: there the slot is
+  dropped with no row written at all, so it really is a loss.
+
 - **redstone:** the `earnUSDC_FUNDAMENTAL` feed is mapped, so the Gami
   earnUSDC vault's published value reaches the price surface instead of
   being dropped under `raw:`. The base is the vault's own Soroban

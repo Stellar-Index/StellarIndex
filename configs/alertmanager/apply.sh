@@ -75,6 +75,7 @@ am_url_for() {
     pages)            printf '%s' "${DISCORD_WEBHOOK_URL_PAGES:-}" ;;
     alerts)           printf '%s' "${DISCORD_WEBHOOK_URL_ALERTS:-}" ;;
     delivery-failure) printf '%s' "${HEALTHCHECKS_ALERT_DELIVERY_URL:-}" ;;
+    informational)    printf '%s' "${DISCORD_WEBHOOK_URL_INFORMATIONAL:-}" ;;
   esac
 }
 am_var_for() {
@@ -83,6 +84,7 @@ am_var_for() {
     pages)            printf 'DISCORD_WEBHOOK_URL_PAGES' ;;
     alerts)           printf 'DISCORD_WEBHOOK_URL_ALERTS' ;;
     delivery-failure) printf 'HEALTHCHECKS_ALERT_DELIVERY_URL' ;;
+    informational)    printf 'DISCORD_WEBHOOK_URL_INFORMATIONAL' ;;
   esac
 }
 AM_RECEIVERS="deadmansswitch pages alerts"
@@ -90,7 +92,7 @@ AM_RECEIVERS="deadmansswitch pages alerts"
 # the required set would mean the apply that RESTORES a broken chat
 # channel first fails on a check nobody has created yet — the worst
 # possible moment to introduce a new precondition.
-AM_OPTIONAL_RECEIVERS="delivery-failure"
+AM_OPTIONAL_RECEIVERS="delivery-failure informational"
 
 # --check-only is a RENDERER test: CI drives it with every URL empty on
 # purpose, to exercise the block-stripper. The fail-closed guard is an
@@ -142,6 +144,7 @@ HEALTHCHECKS_URL="${HEALTHCHECKS_DEADMANSSWITCH_URL:-}" \
 HEALTHCHECKS_DELIVERY_URL="${HEALTHCHECKS_ALERT_DELIVERY_URL:-}" \
 DISCORD_PAGES_URL="${DISCORD_WEBHOOK_URL_PAGES:-}" \
 DISCORD_ALERTS_URL="${DISCORD_WEBHOOK_URL_ALERTS:-}" \
+  DISCORD_INFORMATIONAL_URL="${DISCORD_WEBHOOK_URL_INFORMATIONAL:-}" \
 SOURCE="$SOURCE" \
 RENDERED="$RENDERED" \
 python3 - <<'PY'
@@ -154,6 +157,7 @@ subs = {
     "${HEALTHCHECKS_ALERT_DELIVERY_URL}":  os.environ.get("HEALTHCHECKS_DELIVERY_URL", "").strip(),
     "${DISCORD_WEBHOOK_URL_PAGES}":        os.environ.get("DISCORD_PAGES_URL", "").strip(),
     "${DISCORD_WEBHOOK_URL_ALERTS}":       os.environ.get("DISCORD_ALERTS_URL", "").strip(),
+    "${DISCORD_WEBHOOK_URL_INFORMATIONAL}": os.environ.get("DISCORD_INFORMATIONAL_URL", "").strip(),
 }
 
 

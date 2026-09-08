@@ -209,7 +209,8 @@ def main():
             problems.append(
                 f"{name}: catalogue Severity is {got!r} but the rule's "
                 f"labels.severity is {want!r}"
-                + (" — 'informational' routes to receiver `silent`, which has NO delivery"
+                + (" — 'informational' routes to receiver `chat-informational`, a "
+                   "deliberately quiet channel that must never carry something needing action"
                    if want == "informational" else ""))
 
     # ── The Severity legend's own arithmetic ─────────────────────────────
@@ -246,8 +247,8 @@ def main():
 
     for name in sorted(informational - set(register_rows)):
         problems.append(
-            f"{name}: severity is `informational`, which routes to `receiver: silent` — a "
-            f'receiver with NO delivery. Add a row to "{REGISTER_SECTION}" in {CATALOG} '
+            f"{name}: severity is `informational`, which routes to `receiver: chat-informational` "
+            f'— the quiet channel. Add a row to "{REGISTER_SECTION}" in {CATALOG} '
             "recording `silent-correct` or `needs-delivery` and why (#485). If it should "
             "reach a human, the answer is a different severity, not a register row.")
     for name in sorted(set(register_rows) - informational):

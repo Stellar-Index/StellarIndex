@@ -27,8 +27,8 @@ enforced 2026-04-23 onward).
   | Severity | Rules | AlertManager route | Delivery |
   | --- | --- | --- | --- |
   | `page` | 54 | `receiver: chat-page` | Discord **#stellarindex-pages**, `repeat_interval` 12 h. There is **no** PagerDuty leg — `pagerduty_configs` is unset, so nothing wakes anyone up. |
-  | `ticket` | 158 | `receiver: chat-default` | Discord **#stellarindex-alerts**, `repeat_interval` 24 h. |
-  | `informational` | 10 | `receiver: silent` | **Delivered to nobody, deliberately.** `silent` is declared with no `*_configs` block at all, which in Alertmanager means the alert is accepted and then dropped. It accumulates in the AlertManager UI and nothing else happens. |
+  | `ticket` | 157 | `receiver: chat-default` | Discord **#stellarindex-alerts**, `repeat_interval` 24 h. |
+  | `informational` | 11 | `receiver: chat-informational` | Discord **#stellarindex-informational**, a dedicated low-traffic channel kept separate from `alerts` so a routine notice cannot bury a ticket. `send_resolved: false`. If `DISCORD_WEBHOOK_URL_INFORMATIONAL` is unset the renderer strips the block and the receiver degrades to the old `silent` stub — delivered to nobody, which is a no-op rather than a config error. |
 
   **`informational` is not "a low-priority ticket".** There is no
   low-priority queue and nothing files a ticket: an `informational`
@@ -83,7 +83,7 @@ enforced 2026-04-23 onward).
 | `stellarindex_ingestion_orphan_events` | `rate(stellarindex_source_orphan_events_total[10m])` | > 10/min per source | ticket | [orphan-events](runbooks/orphan-events.md) |
 | `stellarindex_ingestion_decode_error` | `rate(stellarindex_source_decode_errors_total[5m])` | > 1/s sustained 5 min | ticket | [decode-errors](runbooks/decode-errors.md) |
 | `stellarindex_decoder_panicked` | `stellarindex_decoder_panics_total` | > 0 — a decoder's Matches/Decode panicked; the dispatcher skipped that one input and ingest continued, but the decoder keeps dropping every event of that shape until a fixed binary ships (#371 F1). Raw value, not `increase()`: a one-off panic creates a series born at 1 that `increase()` can never see. | page | [decoder-panicked](runbooks/decoder-panicked.md) |
-| `stellarindex_ingestion_oracle_unknown_symbols` | `sum by (source) (increase(stellarindex_source_unknown_symbols_total[25h]))` | > 0 sustained 30 min (an on-chain oracle publishes a symbol / feed_id the canonical allow-list does not map) | ticket | [oracle-unknown-symbols](runbooks/oracle-unknown-symbols.md) |
+| `stellarindex_ingestion_oracle_unknown_symbols` | `sum by (source) (increase(stellarindex_source_unknown_symbols_total[25h]))` | > 0 sustained 30 min (a source publishes a symbol / feed_id the canonical allow-list does not map — captured under `raw:`, not lost) | informational | [oracle-unknown-symbols](runbooks/oracle-unknown-symbols.md) |
 | `stellarindex_ingestion_oracle_unrepresentable_symbols` | `sum by (source) (increase(stellarindex_source_unrepresentable_symbols_total[25h]))`, or the same counter born inside the 25 h window (`m unless m offset 25h`) | > 0 sustained 30 min (an oracle publishes a feed_id the record layer cannot store even as `raw:` — the slot is dropped, no row written). Second arm for the same reason `decoder_panicked` reads the raw value: a `{source}` child born at 1 is invisible to `increase()` | ticket | [oracle-unknown-symbols](runbooks/oracle-unknown-symbols.md) |
 | `stellarindex_ingestion_discovery_drops` | `increase(stellarindex_discovery_dropped_hits_total[10m])` | > 0 sustained 10 min | informational | [discovery-drops](runbooks/discovery-drops.md) |
 | `stellarindex_served_value_drift` | `stellarindex_served_value_ok == 0` | sustained 26 h (two daily runs) | ticket | [served-value-drift](runbooks/served-value-drift.md) |
@@ -624,18 +624,25 @@ systemd unit's `Restart=on-abnormal` doesn't auto-recover from it.
 here.** `scripts/ci/lint-alerts-catalog.py` fails CI if one is
 missing, if a row names a rule that is no longer `informational`, or
 if a row's Triage cell does not begin with one of the two tokens
-below. The register exists because `informational` routes to
-`receiver: silent`, which has no `*_configs` block and therefore
-delivers to **nobody** — so putting a rule in this bucket is a
-decision to have no human hear it, and that decision should be
-written down rather than inherited from a copied YAML block.
+below. The register exists because putting a rule in this bucket is a
+decision about who hears it, and that decision should be written down
+rather than inherited from a copied YAML block.
+
+**Updated 2026-09-08:** `informational` no longer means undelivered.
+It routes to `chat-informational`, a dedicated low-traffic Discord
+channel kept separate from `alerts` so a routine notice cannot bury a
+ticket. The tokens below therefore now distinguish *how loud*, not
+*whether heard*: `silent-correct` means this belongs in that quiet
+channel and must never page or ticket. If the webhook is unset the
+receiver degrades to the old `silent` stub, so the register's original
+reading still holds on a host that has not configured it.
 
 Triage tokens:
 
-- `silent-correct` — genuinely dashboard-only. Nobody needs to be
-  told; the condition is unactionable, self-healing, structurally
-  unable to fire, or its consequence already has a delivered
-  (`ticket` / `page`) alert.
+- `silent-correct` — belongs in the quiet channel and nowhere else.
+  The condition is unactionable, self-healing, structurally unable to
+  fire, routine business rather than a fault, or its consequence
+  already has a `ticket` / `page` alert of its own.
 - `needs-delivery` — this should reach a human. It reports data
   loss, a stuck worker, a monitoring blind spot, or a
   customer-visible failure, and no delivered alert covers it.
@@ -659,11 +666,15 @@ place. A rule authored specifically to expose a silent failure mode,
 routed to a receiver that delivers to nobody, is that failure mode
 twice over.
 
-The register keeps its job: `informational` still means **delivered to
-nobody**, so a rule may only join this bucket with a written reason,
-and `lint-alerts-catalog.py` still fails CI on a missing or stale row. Counts as of 2026-09-08: 10 rules — 10 `silent-correct`,
-0 `needs-delivery`. The 11 `needs-delivery` rules were promoted to
-`ticket` and left this register; see #485.
+The register keeps its job: joining this bucket is still a decision that
+must carry a written reason, and `lint-alerts-catalog.py` still fails CI
+on a missing or stale row. What changed on 2026-09-08 is where the
+bucket goes — `chat-informational` rather than nobody — so the question
+a row answers is now "does this belong in the quiet channel and nowhere
+louder?" rather than "is silence right?". Counts as of 2026-09-08: 11
+rules — 11 `silent-correct`, 0 `needs-delivery`. The 11
+`needs-delivery` rules were promoted to `ticket` and left this
+register; see #485.
 
 <!-- informational-register:begin -->
 
@@ -676,6 +687,7 @@ and `lint-alerts-catalog.py` still fails CI on a missing or stale row. Counts as
 | `stellarindex_host_cpu_high` | infra | One host has been above 90% CPU for 10 min — either a runaway process or an undersized box; dashboards show the top consumer. | `silent-correct` — expected during backfills and heavy jobs, and the consequences that matter are delivered: `stellarindex_host_down` (ticket), `stellarindex_systemd_unit_failed` (ticket), `stellarindex_worker_panicked` (page). Delivering this would be pure noise. |
 | `stellarindex_host_memory_high` | infra | One host has been above 90% memory for 10 min, so the next allocation spike risks an OOMKill; Postgres `shared_buffers` is the usual culprit on a shared box. | `silent-correct` — same ladder as CPU: an actual OOMKill surfaces as `stellarindex_systemd_unit_failed` (ticket) or `stellarindex_worker_panicked` (page), both delivered. Revisit only if a memory-pressure incident is ever missed. |
 | `stellarindex_ingestion_discovery_drops` | ingestion | The SEP-41 discovery sink dropped hits for 10 min under recorder pressure or buffer saturation. | `silent-correct` — saturation, not loss: a dropped contract re-appears on its next event, so the condition is self-healing. Its hard-failure twin `stellarindex_ingestion_discovery_record_failures` is the one that needs an answer. |
+| `stellarindex_ingestion_oracle_unknown_symbols` | ingestion | An oracle we index (redstone / chainlink / reflector / band) is publishing a symbol or feed_id with no canonical asset mapping. The observations ARE captured, under `raw:<symbol>`, readable via `/v1/oracle/streams?include_unmapped=true` — nothing is lost while this is open. What it earns is a mapping, so the token gets a real identity, plus a replay of the affected ledgers. | `silent-correct` — a source listing a new token is routine business, not a fault of ours: we index what our sources publish rather than holding opinions about which tickers deserve to exist. It must never ticket or page, because nothing is broken and no data is lost; the quiet channel is the right loudness for "map this when convenient". Contrast `oracle_unrepresentable_symbols`, which stays a `ticket` because there the slot is dropped with NO row written and there is nothing to promote later. |
 | `stellarindex_price_divergence_warning` | divergence | Our aggregated price is more than 5% from the reference source, sustained 2 min. | `silent-correct` — two-tier by design: `stellarindex_price_divergence_critical` (ticket, 10%) is delivered. Both are inert anyway, because `stellarindex_our_price` and `stellarindex_reference_price` have no producer (no series on r1) — a separate defect from #485, already recorded in the rule file. |
 | `stellarindex_stellar_archive_publish_fail` | stellar | stellar-core failed to publish a checkpoint to our history archive. | `silent-correct` — structurally inert: nothing in the tree emits `stellarindex_stellar_archive_publish_errors_total` (allow-listed as known-inert in `lint-metric-refs.sh`; no series on r1) and r1 publishes no history archive. It cannot fire, so delivery is moot. Re-triage when the emitter lands with Phase-3 (ADR-0004). |
 | `stellarindex_timescale_compression_lag` | storage | Chunks on one hypertable are still uncompressed 24 h after that hypertable's own `compress_after` plus a `schedule_interval` elapsed; the compression policy or the TimescaleDB job scheduler is misfiring. | `silent-correct` — conditional on the row below. The consequence is delivered (`stellarindex_zfs_pool_low_space` ticket, `stellarindex_zfs_pool_critical_space` page) and the root cause is `stellarindex_timescale_job_failures_climbing`, which this register recommends delivering. If that one stays silent, this one must not. |
