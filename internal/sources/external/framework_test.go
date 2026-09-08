@@ -25,6 +25,32 @@ func TestRegistry_KnownSourcesClassified(t *testing.T) {
 	}
 }
 
+// TestRegistry_RetiredFXIdentityStaysUnregistered pins the outcome of
+// the polygon-forex removal. polygon.io renamed to massive.com, so
+// `polygon-forex` and `massive` named ONE upstream under two brands.
+// The retired entry carried IncludeInVWAP:true, which means re-adding
+// it — plausibly, since it would read as an independent FX vendor
+// sitting disabled beside a working one — double-counts massive's own
+// rates in VWAP and adds a third name to FXSources(). `massive` is the
+// surviving identity; assert both halves so a revert cannot be quiet.
+func TestRegistry_RetiredFXIdentityStaysUnregistered(t *testing.T) {
+	if _, ok := Registry["polygon-forex"]; ok {
+		t.Error("Registry has a `polygon-forex` entry again — it is the same upstream as `massive` under the pre-rename brand, and with IncludeInVWAP:true it double-counts those rates")
+	}
+	m, ok := Registry["massive"]
+	if !ok {
+		t.Fatal("Registry missing `massive` — the surviving fiat-FX identity")
+	}
+	if m.Subclass != SubclassFX {
+		t.Errorf("massive Subclass = %q, want %q", m.Subclass, SubclassFX)
+	}
+	for _, name := range FXSources() {
+		if name == "polygon-forex" {
+			t.Error("FXSources() names the retired `polygon-forex`; the forex-snap would read a duplicate identity")
+		}
+	}
+}
+
 // TestIsOnChain_Partition pins the on-chain/off-chain split that the
 // explorer's Stellar-network surfaces filter on. It enumerates EVERY
 // registered source, so adding a new one without classifying it here
@@ -206,8 +232,11 @@ func TestIsFXSource_RegistryDriven(t *testing.T) {
 	if !IsFXSource("exchangeratesapi") {
 		t.Error("IsFXSource(exchangeratesapi) = false, want true")
 	}
-	if !IsFXSource("exchangeratesapi") {
-		t.Error("IsFXSource(exchangeratesapi) = false, want true")
+	if !IsFXSource("massive") {
+		t.Error("IsFXSource(massive) = false, want true — it is the live fiat-FX feed")
+	}
+	if IsFXSource("polygon-forex") {
+		t.Error("IsFXSource(polygon-forex) = true, want false — the name is retired (see TestRegistry_RetiredFXIdentityStaysUnregistered)")
 	}
 	if IsFXSource("binance") {
 		t.Error("IsFXSource(binance) = true, want false (CEX, not FX)")

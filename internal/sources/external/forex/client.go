@@ -1,6 +1,6 @@
 // Package forex provides a fiat-currency rates feed for the
 // /v1/currencies surface. Source: massive.com REST API
-// (Polygon-shape endpoints + auth) — daily grain, ~200 currencies,
+// (REST aggregates + bearer auth) — daily grain, ~200 currencies,
 // requires an API key (env MASSIVE_API_KEY).
 //
 // The earlier currency-api/jsDelivr shim has been retired. What

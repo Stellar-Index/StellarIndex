@@ -120,7 +120,11 @@ var Registry = map[string]Metadata{
 	"coinbase": {Class: ClassExchange, Subclass: SubclassCEX, DefaultWeight: 100, IncludeInVWAP: true, Paid: false, BackfillAvailable: true, BackfillSafe: true},
 
 	// ─── Institutional FX feeds ──────────────────────────────────
-	// `massive` is the ACTIVE fiat-FX feed (massive.com = Polygon's backend).
+	// `massive` is the ACTIVE fiat-FX feed (massive.com — the same vendor
+	// that was branded polygon.io before the rename, not a second one).
+	// There is deliberately NO `polygon-forex` entry: it named this same
+	// upstream under the dead brand and carried IncludeInVWAP:true, so
+	// enabling it would have double-counted these rates. Do not re-add it.
 	// It runs as the internal/sources/external/forex worker in the API binary and
 	// polls hourly but writes one row per ticker per UTC day to the
 	// `fx_quotes` table — every write buckets to Truncate(24 * time.Hour),

@@ -26,6 +26,24 @@ against.
 
 ### Changed
 
+- **sources:** the last two live-code comments that still spoke of the
+  retired FX identity as a distinct vendor are corrected, and the reason
+  the name is gone is recorded where a reader will meet it. The registry
+  called `massive` "massive.com = Polygon's backend", which inverts the
+  fact — polygon.io *renamed to* massive.com, so there is one vendor, not
+  a brand sitting on top of another's backend — and the forex package doc
+  still described the endpoints as "Polygon-shape". The registry comment
+  now states outright that no `polygon-forex` entry exists and that the
+  retired row's `IncludeInVWAP:true` is why re-adding it would
+  double-count these rates. Comments only; no registry entry, class,
+  subclass, metric label or served value changes.
+  `TestRegistry_RetiredFXIdentityStaysUnregistered` pins the invariant in
+  both directions (the retired name is absent from `Registry` and from
+  `FXSources()`; `massive` is present and `SubclassFX`), and a duplicated
+  `IsFXSource("exchangeratesapi")` assertion — left behind when the
+  connector removal substituted names in place — now carries the negative
+  case it was meant to cover.
+
 - **monitoring:** `stellarindex_ingestion_oracle_unknown_symbols` is now
   informational rather than a ticket. An oracle listing a new token is
   routine business, not a fault of ours — we index what our sources
