@@ -964,7 +964,8 @@ func TestChunkRestampResumeHint_CarriesEveryPopulationFlag(t *testing.T) {
 		Write: true, Generation: 1_756_800_000, MaxGeneration: 0,
 	}
 	copts := chunkRestampOptions{Batch: 5000, MinFreeBytes: 1 << 40, AllowLiveAdjacent: true}
-	got := chunkRestampResumeHint("/etc/stellarindex.toml", from, to, opts, copts)
+	run := newXLMBaseRestampRun(newFakeChunkStore(nil), opts)
+	got := chunkRestampResumeHint("/etc/stellarindex.toml", from, to, run, opts, copts)
 	want := "RESUME: stellarindex-ops usd-volume-restamp -config /etc/stellarindex.toml -tier xlm-base -chunks -from 2026-01-01 -to 2026-07-19 -generation 1756800000" +
 		" -fill-null -slice 30m0s -sources sdex,soroswap -max-generation 0 -chunk-batch 5000 -min-free-bytes 1099511627776 -allow-live-adjacent -write"
 	if !strings.Contains(got, want) {
@@ -974,7 +975,7 @@ func TestChunkRestampResumeHint_CarriesEveryPopulationFlag(t *testing.T) {
 	// is the default, and so are the batch, slice, and no sources.
 	opts = xlmBaseRestampOptions{Slice: time.Hour, Generation: 7, MaxGeneration: 7}
 	copts = chunkRestampOptions{Batch: defaultChunkBatch}
-	got = chunkRestampResumeHint("/etc/x.toml", from, to, opts, copts)
+	got = chunkRestampResumeHint("/etc/x.toml", from, to, newXLMBaseRestampRun(newFakeChunkStore(nil), opts), opts, copts)
 	for _, stray := range []string{"-max-generation", "-sources", "-slice", "-chunk-batch", "-min-free-bytes", "-allow-live-adjacent", "-write", "-fill-null"} {
 		if strings.Contains(got, stray) {
 			t.Errorf("default run's resume hint carries %s:\n%s", stray, got)

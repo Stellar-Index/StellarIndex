@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"math/big"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -22,9 +23,9 @@ import (
 // — the corrective WRITE half of verify-usd-volume (W5.3, v1-launch-plan;
 // docs/operations/usd-volume-rederive-2026-08.md §5).
 //
-// It carries two TIERS, selected by -tier, because the usd_volume column
-// holds two kinds of number and they are repairable by two different
-// means:
+// It carries four TIERS, selected by -tier, because the usd_volume column
+// holds two kinds of number and the estimated kind is reached by three
+// different routes:
 //
 //	-tier exact (default) — tiers 1/2/2b, where usd_volume is a pure
 //	  decimal rescaling of an amount already on the row
@@ -43,7 +44,19 @@ import (
 //	  own thin book (a 43x under-valuation on the measured row) or left
 //	  NULL (~31% of the population). See usd_volume_restamp_xlmbase.go.
 //
-// Discipline shared by both tiers:
+//	-tier xlm-quote — the MIRROR of xlm-base (~18.0M rows on r1): the
+//	  DEX trades the pool stored the other way round, XLM in the quote
+//	  leg. `quote_amount/1e7 x XLM/USD at ts`, through the same anchor.
+//
+//	-tier cex-fx — the off-chain population (~12.6M rows on r1): CEX
+//	  trades quoted in a non-USD fiat (`fiat:EUR`, `fiat:GBP`), valued
+//	  from the `fx_quotes` vendor feed at or before the trade. prices_1m
+//	  holds no fiat pair at all, which is why these rows are NULL.
+//
+// Both mirrors live in usd_volume_restamp_mirrors.go and share the
+// xlm-base tier's run, walk, chunk driver and money rules.
+//
+// Discipline shared by every tier:
 //   - fail-closed DRY RUN by default; -write applies (opsutil.WriteGate);
 //   - bounded window: -from/-to UTC days (inclusive), walked oldest →
 //     newest one -slice at a time so no single UPDATE spans more than one
@@ -58,29 +71,39 @@ import (
 //     run under run-heavy-job.sh trips the ops_job stall alerts;
 //   - the tier decision and the value both come from the SAME functions
 //     the insert path uses (timescale.ClassifyUSDVolumeTier for the exact
-//     tiers, tradeUSDVolumeViaXLMBaseAnchor for the anchor) — never
-//     re-spelled here.
+//     tiers, tradeUSDVolumeViaXLMBaseAnchor for the two XLM anchors,
+//     tradeUSDVolumeViaFX for the fiat quotes) — never re-spelled here;
+//   - a row the anchor or the FX feed cannot price is REPORTED and left
+//     exactly as it is: a stored NULL stays NULL, a stored value is never
+//     blanked, and neither is replaced by a second-choice estimate;
+//   - a pair with no trustworthy leg — neither XLM, nor a declared USD
+//     peg, nor a supported fiat — is never priced at all. The ~54M
+//     token/token rows on r1 are outside every tier's scan AND its Go
+//     gate, deliberately: their only available rate is the tier-3b bridge
+//     a counterparty authors (the 2026-08-04 and 2026-08-11 incidents).
 //
 // Acceptance after a run: `verify-usd-volume -day <last> -days <N>` over
 // the span.
 //
 // Usage: usd-volume-restamp -config PATH -from YYYY-MM-DD -to YYYY-MM-DD
-// [-tier exact|xlm-base] [-slice DUR] [-sources a,b] [-fill-null]
-// [-heartbeat PATH] [-allow-live-overlap] [-write]
+// [-tier exact|xlm-base|xlm-quote|cex-fx] [-slice DUR] [-sources a,b]
+// [-fill-null] [-heartbeat PATH] [-allow-live-overlap] [-write]
 // [-chunks [-min-free-bytes N] [-generation N] [-allow-live-adjacent]
 // [-resume-paused-policy]]
-// and, for -tier xlm-base only: [-report] [-sample N] [-batch N]
-// [-min-rel-delta F] [-max-generation N] [-chunk-batch N].
+// and, for the ESTIMATED tiers only: [-report] [-sample N] [-batch N]
+// [-min-rel-delta F] [-max-generation N] [-chunk-batch N];
+// for -tier cex-fx only: [-fx-max-staleness DUR].
 //
 // `-chunks` is the chunk-by-chunk walk of usd_volume_restamp_chunks.go,
-// available to BOTH tiers: take the run lock, pause the trades
+// available to EVERY tier: take the run lock, pause the trades
 // compression policy, decompress each compressed `trades` chunk in the
 // window, restamp inside it, re-compress it, re-enable the policy,
 // release the lock. It exists because an in-place walk measured ~1,574
-// rows/min against compressed chunks on 2026-09-03 — a rate both tiers
-// pay, since both write the same column of the same chunks. Each tier
-// supplies its own per-chunk restamp (usd_volume_restamp_chunks_exact.go,
-// usd_volume_restamp_chunks_xlmbase.go); everything around it — the lock,
+// rows/min against compressed chunks on 2026-09-03 — a rate every tier
+// pays, since they write the same column of the same chunks. The three
+// estimated tiers share one per-chunk restamp
+// (usd_volume_restamp_chunks_estimated.go) and the exact tier has its own
+// (usd_volume_restamp_chunks_exact.go); everything around it — the lock,
 // the policy dance, the free-space pre-flight, the resume line — is one
 // driver. See that file's header.
 func usdVolumeRestamp(args []string) error { //nolint:gocognit,gocyclo,funlen // linear: parse, validate the tier's flag set, open+wire the store, run the live-overlap guard, dispatch — splitting scatters each guard away from the flag it guards.
@@ -88,22 +111,27 @@ func usdVolumeRestamp(args []string) error { //nolint:gocognit,gocyclo,funlen //
 	cfgPath := fs.String("config", "/etc/stellarindex.toml", "path to stellarindex.toml (Postgres DSN + the operator's USD peg list)")
 	fromFlag := fs.String("from", "", "first UTC day of the window, YYYY-MM-DD (required)")
 	toFlag := fs.String("to", "", "last UTC day of the window, YYYY-MM-DD, inclusive (required; must not be today — that chunk is still being written)")
-	tier := fs.String("tier", restampTierExact, "which usd_volume tier to repair: "+restampTierExact+" (the SQL peg identity) or "+restampTierXLMBase+" (the tier-4 XLM anchor, re-derived in Go — issue #372)")
+	tier := fs.String("tier", restampTierExact, "which usd_volume tier to repair: "+restampTierExact+" (the SQL peg identity), "+
+		restampTierXLMBase+" (the tier-4 XLM anchor, re-derived in Go — issue #372), "+restampTierXLMQuote+" (its mirror: DEX trades whose QUOTE leg is XLM) or "+
+		restampTierCEXFX+" (off-chain CEX trades quoted in a non-USD fiat, valued from fx_quotes)")
 	slice := fs.Duration("slice", time.Hour, "time span of one planning/UPDATE window; bounds the per-transaction decompression + lock footprint")
 	sources := fs.String("sources", "", "comma-separated source allow-list (default: every group the tier owns)")
 	fillNull := fs.Bool("fill-null", false, "also stamp rows whose usd_volume is NULL (a COVERAGE change; off by default)")
 	heartbeat := fs.String("heartbeat", "", "node_exporter textfile path for the liveness/progress gauges. Empty = "+opsutil.DefaultTextfileDir+"/ops_job_usd_volume_restamp.prom when that directory exists (r1), otherwise no heartbeat at all")
 	allowLiveOverlap := fs.Bool("allow-live-overlap", false, "DANGEROUS: bypass the live-cursor guard and restamp a window the live ingest tail has not passed. Only pass this if you have independently verified the indexer will not write this range concurrently.")
-	report := fs.Bool("report", false, "-tier "+restampTierXLMBase+" only: print the full decision block (candidates, NULL->value population, relative-move distribution, USD sums, extremes, sample) and write nothing. Refuses -write.")
-	sample := fs.Int("sample", 10, "-tier "+restampTierXLMBase+" only: how many changed rows to print in the report's sample (deterministic reservoir)")
-	batch := fs.Int("batch", defaultRestampBatch, "-tier "+restampTierXLMBase+" only: rows per UPDATE transaction")
-	minRelDelta := fs.String("min-rel-delta", "", "-tier "+restampTierXLMBase+" only: skip writing rows whose relative move |new-old|/|old| is below this fraction (0.01 = 1%). Empty/0 = write every row that differs. Never skips a NULL fill. RECOMMENDED 0.001 for a full-window run: it drops ~8% of the write set that moves <0.1% purely from prices_1m finalisation — see the report footer.")
-	maxGeneration := fs.Int64("max-generation", -1, "-tier "+restampTierXLMBase+" only: only consider rows at derive_generation <= this. -1 = the run's own generation (everything). 0 targets exactly the never-re-derived population.")
+	report := fs.Bool("report", false, "estimated tiers only: print the full decision block (candidates, NULL->value population, relative-move distribution, USD sums, extremes, sample) and write nothing. Refuses -write.")
+	sample := fs.Int("sample", 10, "estimated tiers only: how many changed rows to print in the report's sample (deterministic reservoir)")
+	batch := fs.Int("batch", defaultRestampBatch, "estimated tiers only: rows per UPDATE transaction")
+	minRelDelta := fs.String("min-rel-delta", "", "estimated tiers only: skip writing rows whose relative move |new-old|/|old| is below this fraction (0.01 = 1%). Empty/0 = write every row that differs. Never skips a NULL fill. RECOMMENDED 0.001 for a full-window run: it drops ~8% of the write set that moves <0.1% purely from prices_1m finalisation — see the report footer.")
+	maxGeneration := fs.Int64("max-generation", -1, "estimated tiers only: only consider rows at derive_generation <= this. -1 = the run's own generation (everything). 0 targets exactly the never-re-derived population.")
 	chunks := fs.Bool("chunks", false, "EITHER tier: chunk-by-chunk mode — pause the trades compression policy, then for each trades chunk in the window: decompress_chunk (if it was compressed), restamp inside it, compress_chunk (if it was compressed); re-enable the policy on exit. Use for a window whose chunks are compressed (anything older than the policy's 7 days): in-place UPDATEs into compressed chunks measured ~1,574 rows/min. Dry run prints the chunk plan and decompresses nothing; -write first checks free space on the data volume (> 2 x the largest chunk's uncompressed size, re-checked before every decompress) and refuses a window reaching into the policy's lag (see -allow-live-adjacent). Run on the database host.")
-	chunkBatch := fs.Int("chunk-batch", defaultChunkBatch, "-chunks with -tier "+restampTierXLMBase+" only: rows per UPDATE transaction inside a decompressed chunk. The exact tier's transaction is one -slice window and takes no row batch.")
+	chunkBatch := fs.Int("chunk-batch", defaultChunkBatch, "-chunks with an estimated tier only: rows per UPDATE transaction inside a decompressed chunk. The exact tier's transaction is one -slice window and takes no row batch.")
 	minFreeBytes := fs.Int64("min-free-bytes", 0, "-chunks only: OVERRIDE the free-space measurement with this many bytes, for a host where the data volume cannot be statfs'd (the tool warns loudly and trusts the figure). Check the database host yourself first.")
 	runGeneration := fs.Int64("generation", 0, "-chunks only: the derive_generation this run stamps (0 = now; a value in the future is refused). Pass the generation a failed run printed in its RESUME line so the whole span ends at ONE generation.")
 	allowLiveAdjacent := fs.Bool("allow-live-adjacent", false, "-chunks only: walk a window whose right edge reaches into the compression policy's lag (now - compress_after) anyway. Chunks there are deliberately uncompressed — the ledgerstream cursor-regression replay upserts into them — and are restamped in place and left uncompressed. Prefer the in-place walk (no -chunks) for that span.")
+	fxMaxStaleness := fs.Duration("fx-max-staleness", timescale.CEXFiatMaxQuoteStaleness, "-tier "+restampTierCEXFX+" only: how far back the nearest fx_quotes bucket AT OR BEFORE a trade may sit before the row is refused rather than valued. "+
+		"fx_quotes buckets are daily and weekday-only, so the default ("+timescale.CEXFiatMaxQuoteStaleness.String()+") is the live insert path's own lookback — the longest routine weekend/holiday gap. "+
+		"NARROWING it leaves more rows unpriced (reported, never guessed); widening it is refused, because the resolver would decline the quote anyway.")
 	resumePausedPolicy := fs.Bool("resume-paused-policy", false, "-chunks only: proceed when the trades compression policy is ALREADY unscheduled at start (a previous attempt killed before its re-enable) and re-enable it at exit. Without this flag that state is a refusal; the alternative is to re-enable the policy by hand first.")
 	gate := opsutil.RegisterWriteGate(fs)
 	if err := fs.Parse(args); err != nil {
@@ -122,6 +150,9 @@ func usdVolumeRestamp(args []string) error { //nolint:gocognit,gocyclo,funlen //
 	}
 	if *minFreeBytes < 0 {
 		return fmt.Errorf("usd-volume-restamp: -min-free-bytes must be >= 0, got %d", *minFreeBytes)
+	}
+	if err := validateRestampFXStaleness(*fxMaxStaleness); err != nil {
+		return err
 	}
 	if err := validateRestampGeneration(*runGeneration, time.Now()); err != nil {
 		return err
@@ -166,7 +197,7 @@ func usdVolumeRestamp(args []string) error { //nolint:gocognit,gocyclo,funlen //
 	// it needs the same wiring every trade writer gets — from the single
 	// blessed installer, never a hand-tuned resolver (the drift class
 	// InstallUSDVolumeResolution exists to close).
-	if *tier == restampTierXLMBase {
+	if restampTierIsEstimated(*tier) {
 		if err := timescale.InstallUSDVolumeResolution(store, cfg.Trades.USDPeggedClassicAssets, cfg.Supply.SACWrappers); err != nil {
 			return fmt.Errorf("usd-volume-restamp: install usd-volume resolution: %w", err)
 		}
@@ -203,7 +234,7 @@ func usdVolumeRestamp(args []string) error { //nolint:gocognit,gocyclo,funlen //
 		ResumePausedPolicy: *resumePausedPolicy,
 	}
 
-	if *tier == restampTierXLMBase {
+	if restampTierIsEstimated(*tier) {
 		xopts := xlmBaseRestampOptions{
 			Allow:         restampSourceAllowList(*sources),
 			FillNull:      *fillNull,
@@ -218,10 +249,19 @@ func usdVolumeRestamp(args []string) error { //nolint:gocognit,gocyclo,funlen //
 			Heartbeat:     hb,
 		}
 		var rerr error
-		if *chunks {
+		switch {
+		case *tier == restampTierXLMBase && *chunks:
 			rerr = runXLMBaseChunkRestamp(ctx, store, *cfgPath, from, to, xopts, copts)
-		} else {
+		case *tier == restampTierXLMBase:
 			rerr = runXLMBaseRestamp(ctx, store, *cfgPath, from, to, xopts)
+		case *tier == restampTierXLMQuote && *chunks:
+			rerr = runXLMQuoteChunkRestamp(ctx, store, *cfgPath, from, to, xopts, copts)
+		case *tier == restampTierXLMQuote:
+			rerr = runXLMQuoteRestamp(ctx, store, *cfgPath, from, to, xopts)
+		case *chunks:
+			rerr = runCEXFiatChunkRestamp(ctx, store, *cfgPath, from, to, xopts, copts, *fxMaxStaleness)
+		default:
+			rerr = runCEXFiatRestamp(ctx, store, *cfgPath, from, to, xopts, *fxMaxStaleness)
 		}
 		ok = rerr == nil
 		return rerr
@@ -280,22 +320,37 @@ func exactRestampSummary(cfgPath string, from, to time.Time, rows, groupDays int
 	return b.String()
 }
 
-// The two -tier values. Named constants so the flag help, the dispatch
-// and the flag-compatibility check cannot disagree about the spelling.
+// The -tier values. Named constants so the flag help, the dispatch and
+// the flag-compatibility check cannot disagree about the spelling.
 const (
-	restampTierExact   = "exact"
-	restampTierXLMBase = "xlm-base"
+	restampTierExact    = "exact"
+	restampTierXLMBase  = "xlm-base"
+	restampTierXLMQuote = "xlm-quote"
+	restampTierCEXFX    = "cex-fx"
 )
+
+// restampTiers is every accepted -tier, in the order the help prints
+// them: the SQL identity first, then the three estimated re-derives.
+var restampTiers = []string{restampTierExact, restampTierXLMBase, restampTierXLMQuote, restampTierCEXFX}
+
+// restampTierIsEstimated reports whether a tier's value is a function of
+// a RATE at the row's timestamp rather than of the row alone. The three
+// estimated tiers share a run, a flag set and a chunk tier; the exact
+// tier shares none of them, which is what the flag rules below encode.
+func restampTierIsEstimated(tier string) bool {
+	return tier == restampTierXLMBase || tier == restampTierXLMQuote || tier == restampTierCEXFX
+}
 
 // defaultRestampBatch is the in-place walk's -batch default: the rows one
 // UPDATE transaction may decompress out of a compressed chunk.
 const defaultRestampBatch = 2000
 
-// restampXLMBaseOnlyFlags are the flags that only mean something for
-// `-tier xlm-base`. Passing one with `-tier exact` is an ERROR rather
-// than a silent no-op: an operator who typed `-report` and got a write
-// run, or who typed `-min-rel-delta 0.3` and got every row rewritten,
-// has been actively misled by the tool on a money column.
+// restampEstimatedOnlyFlags are the flags that only mean something for
+// an ESTIMATED tier (xlm-base, xlm-quote, cex-fx). Passing one with
+// `-tier exact` is an ERROR rather than a silent no-op: an operator who
+// typed `-report` and got a write run, or who typed `-min-rel-delta 0.3`
+// and got every row rewritten, has been actively misled by the tool on a
+// money column.
 //
 // `-chunks` and its own flags are NOT on this list: both tiers write into
 // the same compressed chunks and pay the same price for it (the exact
@@ -306,10 +361,16 @@ const defaultRestampBatch = 2000
 // is the run's own generation), and the two row-batch knobs — the exact
 // tier's per-transaction bound is its `-slice` window, so `-batch` and
 // `-chunk-batch` would be silently ignored.
-var restampXLMBaseOnlyFlags = []string{"report", "sample", "batch", "min-rel-delta", "max-generation", "chunk-batch"}
+var restampEstimatedOnlyFlags = []string{"report", "sample", "batch", "min-rel-delta", "max-generation", "chunk-batch"}
+
+// restampCEXFXOnlyFlags are the flags that only mean something for
+// `-tier cex-fx`. Same posture, in the other direction: `-fx-max-staleness`
+// typed with `-tier xlm-base` would be an operator narrowing a tolerance
+// that tier does not have, and reading the run's report as if it had.
+var restampCEXFXOnlyFlags = []string{"fx-max-staleness"}
 
 // restampChunkOnlyFlags are the flags that only mean something with
-// `-chunks`. Same posture as [restampXLMBaseOnlyFlags]: passing one
+// `-chunks`. Same posture as [restampEstimatedOnlyFlags]: passing one
 // without the mode is an error, not a silent no-op — `-min-free-bytes`
 // typed without `-chunks` would otherwise run the slow in-place walk the
 // operator was trying to avoid.
@@ -339,27 +400,66 @@ func validateRestampChunkFlags(chunks bool, set map[string]bool) error {
 	return nil
 }
 
-// validateRestampTierFlags rejects an unknown -tier and any xlm-base-only
-// flag passed alongside -tier exact.
+// validateRestampTierFlags rejects an unknown -tier, an estimated-tier
+// flag passed alongside -tier exact, and a cex-fx flag passed with any
+// other tier.
 func validateRestampTierFlags(tier string, set map[string]bool) error {
-	switch tier {
-	case restampTierExact:
-		var stray []string
-		for _, f := range restampXLMBaseOnlyFlags {
-			if set[f] {
-				stray = append(stray, "-"+f)
-			}
-		}
-		if len(stray) > 0 {
-			return fmt.Errorf("usd-volume-restamp: %s only apply to -tier %s; you passed -tier %s, where they would be silently ignored",
-				strings.Join(stray, ", "), restampTierXLMBase, restampTierExact)
-		}
-		return nil
-	case restampTierXLMBase:
-		return nil
-	default:
-		return fmt.Errorf("usd-volume-restamp: -tier %q: want %q or %q", tier, restampTierExact, restampTierXLMBase)
+	if tier != restampTierExact && !restampTierIsEstimated(tier) {
+		return fmt.Errorf("usd-volume-restamp: -tier %q: want one of %s", tier, strings.Join(quoteAll(restampTiers), ", "))
 	}
+	// The fiat as-of tolerance belongs to cex-fx alone, whichever other
+	// tier was asked for.
+	if tier != restampTierCEXFX {
+		if stray := strayRestampFlags(restampCEXFXOnlyFlags, set); len(stray) > 0 {
+			return fmt.Errorf("usd-volume-restamp: %s only apply to -tier %s (the fiat as-of tolerance); you passed -tier %s, where they would be silently ignored",
+				strings.Join(stray, ", "), restampTierCEXFX, tier)
+		}
+	}
+	if tier == restampTierExact {
+		if stray := strayRestampFlags(restampEstimatedOnlyFlags, set); len(stray) > 0 {
+			return fmt.Errorf("usd-volume-restamp: %s only apply to the estimated tiers (%s, %s, %s); you passed -tier %s, where they would be silently ignored",
+				strings.Join(stray, ", "), restampTierXLMBase, restampTierXLMQuote, restampTierCEXFX, restampTierExact)
+		}
+	}
+	return nil
+}
+
+// strayRestampFlags returns the flags from `names` the operator actually
+// passed, spelled with their leading dash.
+func strayRestampFlags(names []string, set map[string]bool) []string {
+	var stray []string
+	for _, f := range names {
+		if set[f] {
+			stray = append(stray, "-"+f)
+		}
+	}
+	return stray
+}
+
+// quoteAll renders a list for an error message, each element quoted.
+func quoteAll(in []string) []string {
+	out := make([]string, len(in))
+	for i, s := range in {
+		out[i] = strconv.Quote(s)
+	}
+	return out
+}
+
+// validateRestampFXStaleness bounds the cex-fx as-of tolerance. Wider
+// than the live insert path's own fx_quotes lookback is refused rather
+// than honoured: the resolver declines a quote that stale, so the run
+// would report a tolerance it never actually applied — and any row it
+// did write past that bound would carry a value InsertTrade would not.
+func validateRestampFXStaleness(d time.Duration) error {
+	switch {
+	case d <= 0:
+		return fmt.Errorf("usd-volume-restamp: -fx-max-staleness must be > 0, got %s", d)
+	case d > timescale.CEXFiatMaxQuoteStaleness:
+		return fmt.Errorf("usd-volume-restamp: -fx-max-staleness %s exceeds the live insert path's own fx_quotes lookback (%s): "+
+			"the resolver declines a quote that stale, so the run would report a tolerance it never applied. Narrow it, or leave it at the default",
+			d, timescale.CEXFiatMaxQuoteStaleness)
+	}
+	return nil
 }
 
 // restampLiveOverlapGuard resolves the window's top ledger and applies

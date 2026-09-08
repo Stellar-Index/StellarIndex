@@ -2,6 +2,8 @@ package timescale
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"fmt"
 	"math"
 	"math/big"
@@ -314,6 +316,45 @@ func (s *Store) fxQuotesSnapAtOrBefore(
 		return nil, time.Time{}, "", fmt.Errorf("timescale: fxQuotesSnapAtOrBefore rows: %w", err)
 	}
 	return fxSnapFromRows(pair, got)
+}
+
+// fxQuoteBucketAtOrBeforeSelect finds the newest bucket for one ticker
+// at or before a cutoff, within a lookback floor. The floor is what lets
+// TimescaleDB prune to the window's chunks instead of walking the
+// hypertable to genesis on a miss (the same rationale as
+// [fxQuotesSnapLookback]); it also IS the as-of tolerance for the caller
+// below, which is why it is a parameter rather than the constant.
+const fxQuoteBucketAtOrBeforeSelect = `
+	SELECT bucket
+	  FROM fx_quotes
+	 WHERE ticker = $1
+	   AND bucket <= $2
+	   AND bucket >= $3
+	 ORDER BY bucket DESC
+	 LIMIT 1
+`
+
+// FXQuoteBucketAtOrBefore returns the newest `fx_quotes` bucket for
+// ticker at or before `at`, looking back no further than `lookback`.
+// ok=false means the table holds no quote for that ticker in
+// [at-lookback, at] — the caller must then REFUSE to price rather than
+// reach forward to a later bucket or extrapolate from an older one.
+//
+// AT OR BEFORE, never after: a rate published after the trade is
+// information the trade did not have, and using it would make a
+// backfilled value depend on when the operator ran the tool.
+func (s *Store) FXQuoteBucketAtOrBefore(ctx context.Context, ticker string, at time.Time, lookback time.Duration) (time.Time, bool, error) {
+	var bucket time.Time
+	err := s.db.QueryRowContext(ctx, fxQuoteBucketAtOrBeforeSelect,
+		ticker, at.UTC(), at.UTC().Add(-lookback)).Scan(&bucket)
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+		return time.Time{}, false, nil
+	case err != nil:
+		return time.Time{}, false, fmt.Errorf("timescale: fx quote bucket for %s at or before %s: %w",
+			ticker, at.Format(time.RFC3339), err)
+	}
+	return bucket.UTC(), true, nil
 }
 
 // LatestFXBucketPerTicker returns the most-recent (ticker, bucket)

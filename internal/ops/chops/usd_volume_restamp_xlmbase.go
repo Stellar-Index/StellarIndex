@@ -53,10 +53,29 @@ type xlmBaseRestampStore interface {
 	ApplyXLMBaseUSDVolumeRestamp(ctx context.Context, plan *timescale.XLMBaseRestampPlan, generation int64, batch int) (int64, error)
 }
 
-// xlmBaseRestampRun carries one `-tier xlm-base` invocation's fixed
+// xlmBaseRestampRun carries one ESTIMATED tier's invocation: its fixed
 // inputs and its running totals across days (or chunks).
+//
+// It is named for the tier it was built for (#372) and now carries every
+// estimated tier — xlm-base, xlm-quote and cex-fx all walk a window in
+// -slice steps, plan a row list through the live valuation function,
+// apply it in -batch transactions and report the same dispositions. What
+// varies is the [estimatedTierProfile] below; renaming this type across
+// the tree would bury that in churn.
 type xlmBaseRestampRun struct {
-	store xlmBaseRestampStore
+	// tier is the -tier value this run repairs; plan and apply are that
+	// tier's own halves of the walk.
+	tier  string
+	scope string
+	plan  estimatedPlan
+	apply xlmBaseApply
+	// headerFlags / resumeFlags are the tier-specific flags the header
+	// and the RESUME line carry; empty for a tier with none.
+	headerFlags string
+	resumeFlags string
+	// scanLabel / declineLabel are the report's two tier-specific lines.
+	scanLabel    string
+	declineLabel string
 
 	allow       map[string]bool
 	fillNull    bool
@@ -93,16 +112,21 @@ type xlmBaseRestampRun struct {
 // of only its first slice.
 const xlmBaseSampleSeed = 0x53544c4c // "STLL"
 
-// runXLMBaseRestamp is the `-tier xlm-base` entry point, called by
-// usdVolumeRestamp once the shared window/flag validation has passed.
+// runXLMBaseRestamp is the `-tier xlm-base` in-place entry point, called
+// by usdVolumeRestamp once the shared window/flag validation has passed.
 func runXLMBaseRestamp(ctx context.Context, store xlmBaseRestampStore, cfgPath string, from, to time.Time, opts xlmBaseRestampOptions) error {
-	run := newXLMBaseRestampRun(store, opts)
+	return runEstimatedRestamp(ctx, newXLMBaseRestampRun(store, opts), cfgPath, from, to, opts)
+}
 
-	sources := timescale.DEXSourceNames()
-	fmt.Fprintf(os.Stderr, "usd-volume-restamp: tier=xlm-base window [%s, %s] slice=%s batch=%d generation=%d max-generation=%d fill_null=%v min_rel_delta=%s\n",
-		from.Format(time.DateOnly), to.Format(time.DateOnly), opts.Slice, opts.Batch,
-		opts.Generation, opts.MaxGeneration, opts.FillNull, ratPercent(opts.MinRelDelta))
-	fmt.Fprintf(os.Stderr, "usd-volume-restamp: DEX sources in scope: %s\n", strings.Join(sources, ", "))
+// runEstimatedRestamp is the in-place day walk for whichever estimated
+// tier the run carries: one UTC day at a time, oldest first, each day in
+// -slice windows. Every tier walks it the same way — what differs is the
+// population the run's planner returns.
+func runEstimatedRestamp(ctx context.Context, run *xlmBaseRestampRun, cfgPath string, from, to time.Time, opts xlmBaseRestampOptions) error {
+	fmt.Fprintf(os.Stderr, "usd-volume-restamp: tier=%s window [%s, %s] slice=%s batch=%d generation=%d max-generation=%d fill_null=%v min_rel_delta=%s%s\n",
+		run.tier, from.Format(time.DateOnly), to.Format(time.DateOnly), opts.Slice, opts.Batch,
+		opts.Generation, opts.MaxGeneration, opts.FillNull, ratPercent(opts.MinRelDelta), run.headerFlags)
+	fmt.Fprintf(os.Stderr, "usd-volume-restamp: %s\n", run.scope)
 
 	for day := from; !day.After(to); day = day.AddDate(0, 0, 1) {
 		if err := run.day(ctx, day); err != nil {
@@ -115,12 +139,69 @@ func runXLMBaseRestamp(ctx context.Context, store xlmBaseRestampStore, cfgPath s
 	return nil
 }
 
-// newXLMBaseRestampRun builds a run from its resolved options. Shared by
-// the day walk and the chunk walk so the two cannot drift in what a run
-// carries.
+// estimatedPlan is a tier's window planner: the store method that scans
+// [lo, hi) and decides every row in it. The seam is what lets one run
+// type carry three tiers — the driver, the walk, the batching and the
+// reporting are identical, and only the population differs.
+type estimatedPlan func(ctx context.Context, p timescale.RestampScanParams) (*timescale.RestampPlan, error)
+
+// estimatedTierProfile is everything that distinguishes one estimated
+// tier's run from another's.
+type estimatedTierProfile struct {
+	// Tier is the -tier value, printed in every header, summary and
+	// RESUME line.
+	Tier string
+	// Scope is the operator-facing description of the population about
+	// to be scanned, printed before the first read.
+	Scope string
+	// Plan is the tier's window planner; Apply its write half for a walk
+	// that is not inside a decompressed chunk (the chunk walk passes the
+	// guarded in-chunk apply per chunk instead).
+	Plan  estimatedPlan
+	Apply xlmBaseApply
+	// HeaderFlags and ResumeFlags are the tier's own flags, rendered for
+	// the run header and for the RESUME line. Empty for a tier with none.
+	HeaderFlags string
+	ResumeFlags string
+	// ScanLabel names the SQL predicate the tier scans with, and
+	// DeclineLabel what its valuer is, for the report's two lines that
+	// cannot be written tier-agnostically.
+	ScanLabel    string
+	DeclineLabel string
+}
+
+// xlmBaseTierProfile is the #372 anchor re-derive's profile.
+func xlmBaseTierProfile(store xlmBaseRestampStore) estimatedTierProfile {
+	return estimatedTierProfile{
+		Tier:         restampTierXLMBase,
+		Scope:        "DEX sources in scope: " + strings.Join(timescale.DEXSourceNames(), ", "),
+		Plan:         store.PlanXLMBaseUSDVolumeRestamp,
+		Apply:        store.ApplyXLMBaseUSDVolumeRestamp,
+		ScanLabel:    "source=DEX, base=XLM form",
+		DeclineLabel: "anchor declined",
+	}
+}
+
+// newXLMBaseRestampRun builds an xlm-base run from its resolved options.
+// Shared by the day walk and the chunk walk so the two cannot drift in
+// what a run carries.
 func newXLMBaseRestampRun(store xlmBaseRestampStore, opts xlmBaseRestampOptions) *xlmBaseRestampRun {
+	return newEstimatedRestampRun(opts, xlmBaseTierProfile(store))
+}
+
+// newEstimatedRestampRun builds a run for whichever estimated tier the
+// profile describes.
+func newEstimatedRestampRun(opts xlmBaseRestampOptions, p estimatedTierProfile) *xlmBaseRestampRun {
 	return &xlmBaseRestampRun{
-		store:       store,
+		tier:         p.Tier,
+		scope:        p.Scope,
+		plan:         p.Plan,
+		apply:        p.Apply,
+		headerFlags:  p.HeaderFlags,
+		resumeFlags:  p.ResumeFlags,
+		scanLabel:    p.ScanLabel,
+		declineLabel: p.DeclineLabel,
+
 		allow:       opts.Allow,
 		fillNull:    opts.FillNull,
 		slice:       opts.Slice,
@@ -146,8 +227,8 @@ func (r *xlmBaseRestampRun) summary(cfgPath string, from, to time.Time) string {
 	if r.write {
 		verb = "restamped"
 	}
-	fmt.Fprintf(&b, "\nusd-volume-restamp: %s %d row(s) in [%s, %s] (tier xlm-base)\n",
-		verb, r.totals.Changed, from.Format(time.DateOnly), to.Format(time.DateOnly))
+	fmt.Fprintf(&b, "\nusd-volume-restamp: %s %d row(s) in [%s, %s] (tier %s)\n",
+		verb, r.totals.Changed, from.Format(time.DateOnly), to.Format(time.DateOnly), r.tier)
 	if r.write && r.written != r.totals.Changed {
 		// The write set IS the plan, so these can only diverge when a
 		// concurrent writer moved a row past the generation guard between
@@ -156,7 +237,7 @@ func (r *xlmBaseRestampRun) summary(cfgPath string, from, to time.Time) string {
 		fmt.Fprintf(&b, "WARNING: %d row(s) planned but %d row(s) changed — a concurrent writer moved rows past the derive_generation guard\n",
 			r.totals.Changed, r.written)
 	}
-	b.WriteString(xlmBaseRestampFollowUp(from, to))
+	b.WriteString(r.followUp(from, to))
 	fmt.Fprintf(&b, "acceptance: stellarindex-ops verify-usd-volume -config %s -day %s -days %d\n",
 		cfgPath, to.Format(time.DateOnly), int(to.Sub(from).Hours()/24)+1)
 	return b.String()
@@ -213,6 +294,16 @@ var xlmBaseRestampCAGGs = []timescale.CAGGSpec{
 	// Must trail prices_1m.
 	{Name: "twap_1h", MinWindow: 3 * time.Hour},
 	{Name: "twap_1d", MinWindow: 3 * 24 * time.Hour},
+}
+
+// followUp is the run's post-write block: the ordered CAGG refresh every
+// tier must be followed by, plus the `-min-rel-delta` guidance that only
+// the #372 anchor re-derive has measurements for.
+func (r *xlmBaseRestampRun) followUp(from, to time.Time) string {
+	if r.tier == restampTierXLMBase {
+		return xlmBaseRestampFollowUp(from, to)
+	}
+	return restampCAGGFollowUp(from, to)
 }
 
 // xlmBaseRestampFollowUp renders the operator's post-write follow-up: the
@@ -337,7 +428,7 @@ type xlmBaseApply func(ctx context.Context, plan *timescale.XLMBaseRestampPlan, 
 // walk plans (and, in full mode under -write, applies) [lo, hi) in
 // -slice windows with the store's own apply.
 func (r *xlmBaseRestampRun) walk(ctx context.Context, lo, hi time.Time, mode xlmBaseWalkMode) (xlmBaseWalk, error) {
-	return r.walkWith(ctx, lo, hi, mode, r.store.ApplyXLMBaseUSDVolumeRestamp)
+	return r.walkWith(ctx, lo, hi, mode, r.apply)
 }
 
 // walkWith is [xlmBaseRestampRun.walk] with the apply chosen by the
@@ -353,7 +444,7 @@ func (r *xlmBaseRestampRun) walkWith(ctx context.Context, lo, hi time.Time, mode
 		if e.After(hi) {
 			e = hi
 		}
-		plan, err := r.store.PlanXLMBaseUSDVolumeRestamp(ctx, timescale.XLMBaseRestampParams{
+		plan, err := r.plan(ctx, timescale.RestampScanParams{
 			From: s, To: e, Sources: r.allow, FillNull: r.fillNull,
 			MaxGeneration: r.maxGen, MinRelDelta: r.minRelDelta,
 		})
@@ -423,9 +514,10 @@ func (r *xlmBaseRestampRun) observe(plan *timescale.XLMBaseRestampPlan) {
 // failed re-checks it cheaply rather than re-writing it.
 func (r *xlmBaseRestampRun) printResumeHint(cfgPath string, failed, to time.Time, opts xlmBaseRestampOptions) {
 	var b strings.Builder
-	fmt.Fprintf(&b, "\nRESUME: stellarindex-ops usd-volume-restamp -config %s -tier xlm-base -from %s -to %s",
-		cfgPath, failed.Format(time.DateOnly), to.Format(time.DateOnly))
+	fmt.Fprintf(&b, "\nRESUME: stellarindex-ops usd-volume-restamp -config %s -tier %s -from %s -to %s",
+		cfgPath, r.tier, failed.Format(time.DateOnly), to.Format(time.DateOnly))
 	b.WriteString(xlmBaseResumeFlags(opts))
+	b.WriteString(r.resumeFlags)
 	if opts.Batch != defaultRestampBatch {
 		fmt.Fprintf(&b, " -batch %d", opts.Batch)
 	}
@@ -444,12 +536,15 @@ func (r *xlmBaseRestampRun) printReport(from, to time.Time) {
 	days := int(to.Sub(from).Hours()/24) + 1
 	fmt.Printf("\n=== usd-volume-restamp REPORT — tier xlm-base — [%s, %s] (%d day(s)) ===\n",
 		from.Format(time.DateOnly), to.Format(time.DateOnly), days)
-	fmt.Printf("scanned (source=DEX, base=XLM form, derive_generation <= %d)   %d\n", r.maxGen, s.Scanned)
-	fmt.Printf("  quote leg USD-pegged (EXACT tier, `-tier exact` owns these)  %d\n", s.QuotePegged)
-	fmt.Printf("  not DEX / base not an XLM form                               %d\n", s.NotDEX)
+	fmt.Printf("scanned (%s, derive_generation <= %d)   %d\n", r.scanLabel, r.maxGen, s.Scanned)
+	fmt.Printf("  a leg is USD-pegged (EXACT tier, `-tier exact` owns these)   %d\n", s.QuotePegged)
+	fmt.Printf("  outside this tier's source/leg scope                         %d\n", s.NotDEX)
 	fmt.Printf("  unparseable amount or stored value                           %d\n", s.Unparseable)
-	fmt.Printf("  anchor declined, stored NULL   (coverage NOT recoverable)    %d\n", s.AnchorDeclinedNull)
-	fmt.Printf("  anchor declined, stored VALUE  (STAYS WRONG after this run)  %d\n", s.AnchorDeclinedStored)
+	fmt.Printf("  %s, stored NULL   (coverage NOT recoverable)    %d\n", r.declineLabel, s.AnchorDeclinedNull)
+	fmt.Printf("  %s, stored VALUE  (STAYS WRONG after this run)  %d\n", r.declineLabel, s.AnchorDeclinedStored)
+	if s.FXDeclinedStale > 0 {
+		fmt.Printf("    of those, refused for want of a quote within the as-of tolerance  %d\n", s.FXDeclinedStale)
+	}
 	fmt.Printf("  already correct                                              %d\n", s.Unchanged)
 	fmt.Printf("  suppressed by -min-rel-delta                                 %d\n", s.BelowMinRelDelta)
 	fmt.Printf("  WOULD CHANGE                                                 %d\n", s.Changed)

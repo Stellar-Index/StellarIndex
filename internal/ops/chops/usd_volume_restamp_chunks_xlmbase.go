@@ -33,80 +33,19 @@ type xlmBaseChunkStore interface {
 	ApplyXLMBaseUSDVolumeRestampInChunk(ctx context.Context, c timescale.TradeChunk, plan *timescale.XLMBaseRestampPlan, generation int64, batch int) (int64, error)
 }
 
-// xlmBaseChunkTier drives the xlm-base re-derive through [runChunkRestamp].
-type xlmBaseChunkTier struct {
-	run   *xlmBaseRestampRun
-	store xlmBaseChunkStore
-	opts  xlmBaseRestampOptions
-}
-
 // runXLMBaseChunkRestamp is the `-tier xlm-base -chunks` entry point,
 // called by usdVolumeRestamp once the shared window/flag/live-tail
-// validation has passed.
+// validation has passed. The per-chunk half is the shared estimated-tier
+// one (usd_volume_restamp_chunks_estimated.go); what this tier supplies
+// is its planner and its own guarded in-chunk apply.
 func runXLMBaseChunkRestamp(ctx context.Context, store xlmBaseChunkStore, cfgPath string, from, to time.Time, opts xlmBaseRestampOptions, copts chunkRestampOptions) error {
 	run := newXLMBaseRestampRun(store, opts)
 	run.batch = copts.Batch
-	return runChunkRestamp(ctx, store, cfgPath, from, to, copts, &xlmBaseChunkTier{run: run, store: store, opts: opts})
-}
-
-func (t *xlmBaseChunkTier) write() bool { return t.run.write }
-
-func (t *xlmBaseChunkTier) header(from, to time.Time, copts chunkRestampOptions) string {
-	return fmt.Sprintf("usd-volume-restamp: tier=xlm-base mode=chunks window [%s, %s] slice=%s chunk_batch=%d generation=%d max-generation=%d fill_null=%v min_rel_delta=%s\n",
-		from.Format(time.DateOnly), to.Format(time.DateOnly), t.opts.Slice, copts.Batch,
-		t.opts.Generation, t.opts.MaxGeneration, t.opts.FillNull, ratPercent(t.opts.MinRelDelta))
-}
-
-// probe plans [lo, hi) slice by slice, folding NOTHING into the report,
-// and stops at the first slice that would change a row.
-func (t *xlmBaseChunkTier) probe(ctx context.Context, lo, hi time.Time) (bool, error) {
-	w, err := t.run.walk(ctx, lo, hi, xlmBaseWalkProbe)
-	if err != nil {
-		return false, err
+	inChunk := func(ctx context.Context, c timescale.TradeChunk, plan *timescale.RestampPlan, generation int64, batch int) (int64, error) {
+		return store.ApplyXLMBaseUSDVolumeRestampInChunk(ctx, c, plan, generation, batch)
 	}
-	return w.stats.Changed > 0, nil
-}
-
-// preview is the dry run's pass over the chunk as it is.
-func (t *xlmBaseChunkTier) preview(ctx context.Context, lo, hi time.Time) (string, error) {
-	w, err := t.run.walk(ctx, lo, hi, xlmBaseWalkFull)
-	if err != nil {
-		return "", err
-	}
-	t.run.totals.Merge(w.stats)
-	return fmt.Sprintf("would change %d row(s) (scanned %d, null-fill %d, already correct %d)",
-		w.stats.Changed, w.stats.Scanned, w.stats.NullFilled, w.stats.Unchanged), nil
-}
-
-// restamp re-derives the chunk's slice inside the decompressed chunk. The
-// outcome carries the rows written even when the walk failed part-way.
-func (t *xlmBaseChunkTier) restamp(ctx context.Context, c timescale.TradeChunk, lo, hi time.Time) (chunkRestampOutcome, error) {
-	inChunk := func(ctx context.Context, plan *timescale.XLMBaseRestampPlan, generation int64, batch int) (int64, error) {
-		return t.store.ApplyXLMBaseUSDVolumeRestampInChunk(ctx, c, plan, generation, batch)
-	}
-	w, err := t.run.walkWith(ctx, lo, hi, xlmBaseWalkFull, inChunk)
-	out := chunkRestampOutcome{
-		Written: w.written,
-		Note:    fmt.Sprintf("changed %d row(s) (planned %d)", w.written, w.stats.Changed),
-	}
-	if err != nil {
-		return out, err
-	}
-	t.run.totals.Merge(w.stats)
-	return out, nil
-}
-
-func (t *xlmBaseChunkTier) tick(watermark time.Time) {
-	t.run.hb.Progress(t.run.progress, uint64(watermark.Unix())) //nolint:gosec // post-1970 timestamp
-}
-
-func (t *xlmBaseChunkTier) finish(cfgPath string, from, to time.Time) string {
-	t.run.printReport(from, to)
-	return t.run.summary(cfgPath, from, to)
-}
-
-func (t *xlmBaseChunkTier) resume(cfgPath string, from, to time.Time, copts chunkRestampOptions) string {
-	return chunkRestampResumeHint(cfgPath, from, to, t.opts, copts)
+	return runChunkRestamp(ctx, store, cfgPath, from, to, copts,
+		&estimatedChunkTier{run: run, opts: opts, inChunk: inChunk})
 }
 
 // chunkRestampResumeHint is the chunk walk's RESUME line: the same
@@ -114,11 +53,12 @@ func (t *xlmBaseChunkTier) resume(cfgPath string, from, to time.Time, copts chun
 // population. Finished chunks are probed read-only and skipped; the
 // failed chunk was re-compressed unless the error above says LEFT
 // DECOMPRESSED.
-func chunkRestampResumeHint(cfgPath string, from, to time.Time, opts xlmBaseRestampOptions, copts chunkRestampOptions) string {
+func chunkRestampResumeHint(cfgPath string, from, to time.Time, run *xlmBaseRestampRun, opts xlmBaseRestampOptions, copts chunkRestampOptions) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "\nRESUME: stellarindex-ops usd-volume-restamp -config %s -tier xlm-base -chunks -from %s -to %s -generation %d",
-		cfgPath, from.Format(time.DateOnly), to.Format(time.DateOnly), opts.Generation)
+	fmt.Fprintf(&b, "\nRESUME: stellarindex-ops usd-volume-restamp -config %s -tier %s -chunks -from %s -to %s -generation %d",
+		cfgPath, run.tier, from.Format(time.DateOnly), to.Format(time.DateOnly), opts.Generation)
 	b.WriteString(xlmBaseResumeFlags(opts))
+	b.WriteString(run.resumeFlags)
 	if copts.Batch != defaultChunkBatch {
 		fmt.Fprintf(&b, " -chunk-batch %d", copts.Batch)
 	}

@@ -79,10 +79,10 @@ func TestValidateRestampTierFlags(t *testing.T) {
 		t.Fatalf("-tier xlm-base with its own flags: %v", err)
 	}
 	err := validateRestampTierFlags("estimated", nil)
-	if err == nil || !strings.Contains(err.Error(), `want "exact" or "xlm-base"`) {
+	if err == nil || !strings.Contains(err.Error(), `want one of "exact", "xlm-base", "xlm-quote", "cex-fx"`) {
 		t.Fatalf("unknown tier: err = %v", err)
 	}
-	for _, f := range restampXLMBaseOnlyFlags {
+	for _, f := range restampEstimatedOnlyFlags {
 		err := validateRestampTierFlags(restampTierExact, map[string]bool{f: true})
 		if err == nil || !strings.Contains(err.Error(), "-"+f) {
 			t.Errorf("-tier exact with -%s: err = %v, want a refusal naming the flag", f, err)

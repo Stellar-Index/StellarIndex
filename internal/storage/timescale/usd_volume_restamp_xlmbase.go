@@ -135,28 +135,9 @@ import (
 //     tier 1/2 — exact, and `usd-volume-restamp -tier exact`'s job. Rows
 //     of the two tiers never overlap.
 
-// xlmBaseRestampSelect is the candidate scan for one bounded window.
-//
-// The SQL half filters only on things whose SQL spelling is exactly their
-// Go spelling — the source name, the two XLM wire forms, the time window
-// and the generation guard. Everything that requires the operator's peg
-// configuration (i.e. whether the QUOTE leg is USD-pegged, which is keyed
-// on code+issuer plus the SAC-wrapper map) is decided in Go by
-// [usdVolumeDecimals]. `base_asset = ANY(...)` rides
-// `trades_pair_source_ts_idx` / `trades_base_ts_idx`, so the scan is an
-// index walk over one chunk rather than a chunk seq-scan.
-const xlmBaseRestampSelect = `
-	SELECT source, ledger, tx_hash, op_index, ts,
-	       base_asset, quote_asset,
-	       base_amount::text, quote_amount::text,
-	       usd_volume::text, derive_generation
-	  FROM trades
-	 WHERE ts >= $1 AND ts < $2
-	   AND source     = ANY($3)
-	   AND base_asset = ANY($4)
-	   AND derive_generation <= $5
-	 ORDER BY ts, source, ledger, tx_hash, op_index
-`
+// The candidate scan for one bounded window is the shared one
+// ([restampScanSelect], usd_volume_restamp_legs.go) with this tier's leg:
+// `base_asset = ANY(<the two XLM wire forms>)`.
 
 // XLMBaseRestampParams scopes one window of the XLM-base re-derive.
 type XLMBaseRestampParams struct {
@@ -261,6 +242,13 @@ type XLMBaseRestampStats struct {
 	// BelowMinRelDelta counts rows suppressed from the write set by
 	// MinRelDelta.
 	BelowMinRelDelta int64
+	// FXDeclinedStale counts rows the cex-fx tier refused because the
+	// nearest fx_quote at or before the trade is outside the as-of
+	// tolerance (see [Store.PlanCEXFiatUSDVolumeRestamp]). A CROSS-CUT of
+	// AnchorDeclinedNull/Stored — it says WHY those rows were declined,
+	// not where they were filed — so [XLMBaseRestampStats.Residual]
+	// ignores it, exactly as it ignores NullCandidates.
+	FXDeclinedStale int64
 
 	// SumStored / SumWant are the USD sums over the CHANGED rows, so the
 	// operator can read the aggregate effect of the run before running
@@ -315,17 +303,7 @@ func xlmAssetForms() []string {
 // xlmBaseRestampSources resolves the scan's source list: the DEX registry
 // filtered by the caller's allow-list.
 func xlmBaseRestampSources(allow map[string]bool) []string {
-	all := DEXSourceNames()
-	if len(allow) == 0 {
-		return all
-	}
-	out := make([]string, 0, len(all))
-	for _, s := range all {
-		if allow[s] {
-			out = append(out, s)
-		}
-	}
-	return out
+	return restampScanSources(DEXSourceNames(), allow)
 }
 
 // xlmBaseRestampScan is one candidate row straight off the SELECT, before
@@ -370,7 +348,8 @@ const (
 	xlmBaseBelowMinRelDelta
 )
 
-// xlmBaseRestampDecide judges ONE scanned row.
+// xlmBaseRestampDecide judges ONE scanned row for the xlm-base tier: the
+// shared decision skeleton ([restampDecide]) with this tier's gate.
 //
 // `anchor` is injected rather than called directly so the decision rules
 // are testable without a live prices_1m; production passes a closure over
@@ -384,102 +363,12 @@ func xlmBaseRestampDecide(
 	minRelDelta *big.Rat,
 	anchor func(canonical.Trade) *string,
 ) (XLMBaseRestampRow, xlmBaseDisposition) {
-	out := XLMBaseRestampRow{
-		Source: row.Source, Ledger: row.Ledger, TxHash: row.TxHash,
-		OpIndex: row.OpIndex, TS: row.TS,
-		BaseAsset: row.BaseAsset, QuoteAsset: row.QuoteAsset,
-		Stored: row.Stored,
-	}
-	trade, disp, inTier := xlmBaseRestampScope(row, spec)
-	if !inTier {
-		return out, disp
-	}
-	want := anchor(trade)
-	if want == nil {
-		return out, xlmBaseAnchorDeclined
-	}
-	out.Want = *want
-	wantRat, wok := new(big.Rat).SetString(out.Want)
-	if !wok {
-		return out, xlmBaseUnparseable
-	}
-	if row.Stored == nil {
-		out.NullFill = true
-		out.AbsDelta = new(big.Rat).Abs(wantRat)
-		if !fillNull {
-			return out, xlmBaseSkipNull
-		}
-		return out, xlmBaseWrite
-	}
-	storedRat, sok := new(big.Rat).SetString(*row.Stored)
-	if !sok {
-		// A NUMERIC that does not render as a decimal is reportable, not
-		// silently rewritable — same posture as the exact-tier tool.
-		return out, xlmBaseUnparseable
-	}
-	if storedRat.Cmp(wantRat) == 0 {
-		return out, xlmBaseUnchanged
-	}
-	out.AbsDelta = new(big.Rat).Abs(new(big.Rat).Sub(wantRat, storedRat))
-	if storedRat.Sign() != 0 {
-		out.RelDelta = new(big.Rat).Quo(out.AbsDelta, new(big.Rat).Abs(storedRat))
-		out.RelOK = true
-	}
-	if minRelDelta != nil && minRelDelta.Sign() > 0 && out.RelOK && out.RelDelta.Cmp(minRelDelta) < 0 {
-		return out, xlmBaseBelowMinRelDelta
-	}
-	return out, xlmBaseWrite
-}
-
-// xlmBaseRestampScope decides whether one scanned row is IN this tier and
-// rebuilds it into the [canonical.Trade] the decoder produced, so the
-// anchor can be asked about the same object the insert path was.
-//
-// The tier decision itself is [xlmBaseTierFor], which sits beside
-// [tradeUSDVolume] so the branch order and the population it selects
-// cannot drift apart. What is left here is the row-shaped part: parsing
-// the two asset ids and the two amounts, with [tradeUSDVolume]'s own
-// positive-amount bail-outs.
-func xlmBaseRestampScope(row xlmBaseRestampScan, spec *USDVolumeQuoteSpec) (canonical.Trade, xlmBaseDisposition, bool) {
-	base, err := canonical.ParseAsset(row.BaseAsset)
-	if err != nil {
-		return canonical.Trade{}, xlmBaseUnparseable, false
-	}
-	quote, qerr := canonical.ParseAsset(row.QuoteAsset)
-	if qerr != nil {
-		return canonical.Trade{}, xlmBaseUnparseable, false
-	}
-	baseAmt, bok := new(big.Int).SetString(row.BaseAmount, 10)
-	quoteAmt, qok := new(big.Int).SetString(row.QuoteAmount, 10)
-	if !bok || !qok || baseAmt.Sign() <= 0 || quoteAmt.Sign() <= 0 {
-		// [tradeUSDVolume] bails on a non-positive quote before any tier,
-		// and the anchor bails on a non-positive base.
-		return canonical.Trade{}, xlmBaseUnparseable, false
-	}
-	trade := canonical.Trade{
-		Source:      row.Source,
-		Ledger:      row.Ledger,
-		TxHash:      row.TxHash,
-		OpIndex:     row.OpIndex,
-		Timestamp:   row.TS,
-		Pair:        canonical.Pair{Base: base, Quote: quote},
-		BaseAmount:  canonical.NewAmount(baseAmt),
-		QuoteAmount: canonical.NewAmount(quoteAmt),
-	}
-	// The SQL scan already bounds source and base_asset, but re-asserting
-	// the tier in Go keeps its definition in ONE place and makes a
-	// widened scan fail CLOSED rather than silently valuing, say, a
-	// non-XLM base off a 1e7 divisor it may not have.
-	switch xlmBaseTierFor(trade, spec) {
-	case xlmBaseTierQuotePegged:
-		return canonical.Trade{}, xlmBaseQuotePegged, false
-	case xlmBaseTierOutOfScope:
-		return canonical.Trade{}, xlmBaseNotDEX, false
-	case xlmBaseTierOwns:
-		return trade, xlmBaseWrite, true
-	default:
-		return canonical.Trade{}, xlmBaseNotDEX, false
-	}
+	// The anchor cannot fail — it reads the resolver, which reports a miss
+	// as "no value" — so the shared skeleton's error return is dropped
+	// here rather than pushed onto every caller.
+	row2, disp, _ := restampDecide(row, spec, xlmBaseTierFor,
+		func(t canonical.Trade) (*string, error) { return anchor(t), nil }, fillNull, minRelDelta)
+	return row2, disp
 }
 
 // PlanXLMBaseUSDVolumeRestamp scans one bounded window and returns the
@@ -495,58 +384,16 @@ func xlmBaseRestampScope(row xlmBaseRestampScan, spec *USDVolumeQuoteSpec) (cano
 // is a configuration error dressed as a finding. Refused up front, in the
 // same spirit as [Store.reDeriveNullVolumeGuard].
 func (s *Store) PlanXLMBaseUSDVolumeRestamp(ctx context.Context, p XLMBaseRestampParams) (*XLMBaseRestampPlan, error) {
-	if !p.To.After(p.From) {
-		return nil, fmt.Errorf("timescale: xlm-base restamp: empty window [%s, %s)", p.From, p.To)
-	}
-	if s.usdVolumeFXResolver == nil {
-		return nil, fmt.Errorf("timescale: xlm-base restamp: no USD-volume FX resolver installed — " +
-			"the XLM anchor cannot resolve XLM/USD and every row would report as unpriceable; " +
-			"call InstallUSDVolumeResolution with the operator's usd_pegged_classic_assets first")
-	}
-	sources := xlmBaseRestampSources(p.Sources)
-	if len(sources) == 0 {
-		return &XLMBaseRestampPlan{Stats: NewXLMBaseRestampStats()}, nil
-	}
-	anchor := func(t canonical.Trade) *string {
-		return tradeUSDVolumeViaXLMBaseAnchorFor(ctx, t, s.usdVolumeFXResolver)
-	}
-
-	rows, err := s.db.QueryContext(ctx, xlmBaseRestampSelect,
-		p.From.UTC(), p.To.UTC(), sources, xlmAssetForms(), p.MaxGeneration)
-	if err != nil {
-		return nil, fmt.Errorf("timescale: xlm-base restamp scan [%s, %s): %w",
-			p.From.Format(time.RFC3339), p.To.Format(time.RFC3339), err)
-	}
-	defer func() { _ = rows.Close() }()
-
-	plan := &XLMBaseRestampPlan{Stats: NewXLMBaseRestampStats()}
-	for rows.Next() {
-		var (
-			r      xlmBaseRestampScan
-			ledger int64
-			opIdx  int64
-			stored sql.NullString
-		)
-		if err := rows.Scan(&r.Source, &ledger, &r.TxHash, &opIdx, &r.TS,
-			&r.BaseAsset, &r.QuoteAsset, &r.BaseAmount, &r.QuoteAmount,
-			&stored, &r.Generation); err != nil {
-			return nil, fmt.Errorf("timescale: xlm-base restamp scan row: %w", err)
-		}
-		//nolint:gosec // ledger/op_index are non-negative `integer` columns (CHECK-constrained in migration 0001)
-		r.Ledger, r.OpIndex = uint32(ledger), uint32(opIdx)
-		if stored.Valid {
-			v := stored.String
-			r.Stored = &v
-		}
-		r.TS = r.TS.UTC()
-		decision, disp := xlmBaseRestampDecide(r, s.usdVolumeQuoteSpec, p.FillNull, p.MinRelDelta, anchor)
-		plan.Record(decision, disp)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("timescale: xlm-base restamp scan rows [%s, %s): %w",
-			p.From.Format(time.RFC3339), p.To.Format(time.RFC3339), err)
-	}
-	return plan, nil
+	return s.planRestampTier(ctx, p, restampTierScan{
+		Tier:    "xlm-base",
+		Sources: xlmBaseRestampSources(p.Sources),
+		Leg:     restampLegBase,
+		Assets:  xlmAssetForms(),
+		Gate:    xlmBaseTierFor,
+		Value: func(t canonical.Trade) (*string, error) {
+			return tradeUSDVolumeViaXLMBaseAnchorFor(ctx, t, s.usdVolumeFXResolver), nil
+		},
+	})
 }
 
 // NewXLMBaseRestampStats initialises the sums + bucket map so callers
@@ -630,6 +477,7 @@ func (s *XLMBaseRestampStats) Merge(o XLMBaseRestampStats) {
 	s.NullFilled += o.NullFilled
 	s.NullCandidates += o.NullCandidates
 	s.BelowMinRelDelta += o.BelowMinRelDelta
+	s.FXDeclinedStale += o.FXDeclinedStale
 	if o.SumStored != nil {
 		s.SumStored.Add(s.SumStored, o.SumStored)
 	}
@@ -692,7 +540,7 @@ const xlmBaseRestampMaxBatch = (65535 - 3) / 6
 //     connection (the pgx-stdlib finding behind CHANGELOG 2026-08).
 //   - `batch <= 0` uses [xlmBaseRestampApplyBatch].
 func (s *Store) ApplyXLMBaseUSDVolumeRestamp(ctx context.Context, plan *XLMBaseRestampPlan, generation int64, batch int) (int64, error) {
-	return s.applyXLMBaseRestampBatches(ctx, plan, generation, batch, nil)
+	return s.ApplyUSDVolumeRestampPlan(ctx, plan, generation, batch)
 }
 
 // applyXLMBaseRestampBatches is the batch loop behind both applies. `before`,

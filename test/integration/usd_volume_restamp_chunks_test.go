@@ -730,9 +730,9 @@ func TestExactTierRestampChunks_RestampsInsideACompressedChunk(t *testing.T) {
 		t.Fatal("the rerun left the compression policy paused")
 	}
 
-	// ── 6. the xlm-base tier's row batch is still refused here ────────
+	// ── 6. the estimated tiers' row batch is still refused here ───────
 	out, err = captureStdout(t, func() error { return chops.Run(append(args, "-chunk-batch", "5000", "-write")) })
-	if err == nil || !strings.Contains(err.Error(), "-chunk-batch") || !strings.Contains(err.Error(), "-tier xlm-base") {
+	if err == nil || !strings.Contains(err.Error(), "-chunk-batch") || !strings.Contains(err.Error(), "estimated tiers") {
 		t.Fatalf("-chunk-batch with -tier exact: err = %v, want a refusal naming the flag\n%s", err, out)
 	}
 	sameSnapshot(t, before, snapshot(t), "refused run (-chunk-batch)")

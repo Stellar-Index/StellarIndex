@@ -79,6 +79,35 @@ against.
 
 ### Added
 
+- **ops:** `usd-volume-restamp` carries two more tiers, both driving the
+  existing chunk walk rather than a second one. `-tier xlm-quote`
+  (~18.0M rows on r1) is the mirror of `-tier xlm-base`: the on-chain
+  DEX trades the pool stored the other way round, XLM in the QUOTE leg,
+  valued at `quote_amount/1e7 x XLM/USD at ts` through the SAME anchor
+  the base tier calls — the row is handed to it mirrored, so there is
+  one spelling of that arithmetic and a change to it moves both tiers.
+  `-tier cex-fx` (~12.6M rows) is the off-chain half: CEX trades quoted
+  in a non-USD fiat (`fiat:EUR`, `fiat:GBP` today), valued from the
+  `fx_quotes` vendor feed at the most recent bucket AT OR BEFORE the
+  trade — never a later one, never an interpolation between two. A trade
+  whose nearest quote is more than `-fx-max-staleness` old (default 7
+  days, which is the live insert path's own `fx_quotes` lookback; wider
+  is refused, narrower is the operator's call) is REFUSED and counted,
+  not extrapolated to. prices_1m holds no fiat pair at all, which is why
+  that population is NULL today.
+
+  Both tiers keep the money rules the anchor re-derive established: a row
+  the anchor or the FX feed cannot price is reported and left exactly as
+  it is (a stored NULL stays NULL, a stored value is never blanked), the
+  `derive_generation <= gen` guard (INV-3) and `-fill-null` as the
+  opt-in are unchanged, the dry run is fail-closed, and the finished run
+  prints the same ordered CAGG refresh block. The three estimated tiers
+  now share one per-chunk restamp and one row-list scan, so a guard
+  cannot drift between them, and the scan's leg allow-list plus each
+  tier's Go gate keep the ~54M token/token rows unpriced — their only
+  available rate is the tier-3b bridge a counterparty authors (the
+  2026-08-04 and 2026-08-11 incidents).
+
 - **ops:** `usd-volume-restamp -chunks` now works with `-tier exact`, not
   only `-tier xlm-base`. The exact tier's repair population — ~10M rows
   across 2026-03..07, 2,306,054 in March alone — lives in compressed

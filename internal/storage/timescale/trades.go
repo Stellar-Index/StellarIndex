@@ -498,19 +498,22 @@ func dexSourceNames() []string {
 	return out
 }
 
-// xlmBaseTierVerdict says which usd_volume tier owns a stored trade, from
-// the tier-4 XLM anchor's point of view. See [xlmBaseTierFor].
-type xlmBaseTierVerdict int
+// restampTierVerdict says which usd_volume tier owns a stored trade, seen
+// from ONE re-derive tier's gate. Shared by [xlmBaseTierFor],
+// [xlmQuoteTierFor] and [cexFiatTierFor] so the three cannot disagree
+// about what "the exact tier owns this" means.
+type restampTierVerdict int
 
 const (
-	// xlmBaseTierOwns: the anchor is the branch [tradeUSDVolume] takes.
-	xlmBaseTierOwns xlmBaseTierVerdict = iota
-	// xlmBaseTierOutOfScope: not a DEX source, or the base leg is not an
-	// XLM form — the anchor declines such a trade outright.
-	xlmBaseTierOutOfScope
-	// xlmBaseTierQuotePegged: the QUOTE leg is a declared USD peg, so
-	// tier 1/2 values the trade EXACTLY and the anchor is never reached.
-	xlmBaseTierQuotePegged
+	// restampTierOwns: this tier is the branch [tradeUSDVolume] takes.
+	restampTierOwns restampTierVerdict = iota
+	// restampTierOutOfScope: the source's subclass or the tier's own leg
+	// is not what the tier needs — the tier's value function declines
+	// such a trade outright.
+	restampTierOutOfScope
+	// restampTierPegged: one leg is a declared USD peg, so tier 1/2/2b
+	// values the trade EXACTLY and this tier is never reached.
+	restampTierPegged
 )
 
 // xlmBaseTierFor mirrors [tradeUSDVolume]'s branch order for one stored
@@ -519,15 +522,88 @@ const (
 // which the waterfall takes the [tradeUSDVolumeViaXLMBaseAnchor] branch
 // ahead of the quote side. Every gate is the insert path's own call, not
 // a restatement of it.
-func xlmBaseTierFor(t canonical.Trade, quoteSpec *USDVolumeQuoteSpec) xlmBaseTierVerdict {
+func xlmBaseTierFor(t canonical.Trade, quoteSpec *USDVolumeQuoteSpec) restampTierVerdict {
 	md := external.Lookup(t.Source)
 	if md.Subclass != external.SubclassDEX || !isXLMAsset(t.Pair.Base) {
-		return xlmBaseTierOutOfScope
+		return restampTierOutOfScope
 	}
 	if _, pegged := usdVolumeDecimals(t.Pair.Quote, md, quoteSpec); pegged {
-		return xlmBaseTierQuotePegged
+		return restampTierPegged
 	}
-	return xlmBaseTierOwns
+	return restampTierOwns
+}
+
+// xlmQuoteTierFor is [xlmBaseTierFor]'s MIRROR: a DEX trade whose QUOTE
+// leg is an XLM form and whose BASE leg is neither an XLM form nor a
+// declared USD peg.
+//
+// The two tiers are deliberately DISJOINT. A trade with XLM on both legs
+// (`native` against the SAC wrapper) is the xlm-base tier's — the
+// waterfall reaches [tradeUSDVolumeViaXLMBaseAnchor] through the base leg
+// there, so a second tier claiming the same row would fight it at a
+// different generation. A USD-pegged base leg is tier 2b's, exactly
+// ([tradeUSDVolumeViaUSDBase] runs BEFORE any FX tier), and a USD-pegged
+// quote leg cannot occur here because the quote IS XLM — the check is
+// kept anyway so an operator who ever declared an XLM form as a peg gets
+// the exact tier rather than an estimate.
+func xlmQuoteTierFor(t canonical.Trade, quoteSpec *USDVolumeQuoteSpec) restampTierVerdict {
+	md := external.Lookup(t.Source)
+	if md.Subclass != external.SubclassDEX || !isXLMAsset(t.Pair.Quote) || isXLMAsset(t.Pair.Base) {
+		return restampTierOutOfScope
+	}
+	if _, pegged := usdVolumeDecimals(t.Pair.Quote, md, quoteSpec); pegged {
+		return restampTierPegged
+	}
+	if _, pegged := usdVolumeDecimals(t.Pair.Base, md, quoteSpec); pegged {
+		return restampTierPegged
+	}
+	return restampTierOwns
+}
+
+// cexFiatTierFor is the off-chain counterpart: a CEX trade quoted in a
+// NON-USD fiat currency, whose base leg is not a USD peg either.
+//
+// [tradeUSDVolumeViaFX] is the branch the waterfall takes for it — the
+// quote leg is a fiat asset, which resolves from `fx_quotes` and never
+// from prices_1m ([VWAPUSDFXResolver.usdPriceForFiat]), so the rate is a
+// vendor feed rather than a market any counterparty can author. A
+// USD-pegged quote (fiat:USD, or a crypto ticker whose FiatProxy is USD)
+// is tier 1 and exact; a USD-pegged base is tier 2b.
+func cexFiatTierFor(t canonical.Trade, quoteSpec *USDVolumeQuoteSpec) restampTierVerdict {
+	md := external.Lookup(t.Source)
+	if md.Subclass != external.SubclassCEX || t.Pair.Quote.Type != canonical.AssetFiat {
+		return restampTierOutOfScope
+	}
+	if _, pegged := usdVolumeDecimals(t.Pair.Quote, md, quoteSpec); pegged {
+		return restampTierPegged
+	}
+	if _, pegged := usdVolumeDecimals(t.Pair.Base, md, quoteSpec); pegged {
+		return restampTierPegged
+	}
+	return restampTierOwns
+}
+
+// cexSourceNames returns the registered source names whose subclass is
+// [external.SubclassCEX], sorted — the off-chain exchanges whose trades
+// the fiat-quote branch of this waterfall applies to. Read from the same
+// [external.Registry] the insert path consults, exactly as
+// [dexSourceNames] is.
+//
+// SubclassFX sources are deliberately NOT here. They are the connector-
+// path FX pollers (disabled in production), their pairs are fiat/fiat
+// rather than crypto/fiat, and they stamp amounts at 1e6 rather than the
+// CEX 1e8 — a different population with a different scale, which a
+// re-derive should take on deliberately rather than by inheriting a
+// subclass list.
+func cexSourceNames() []string {
+	out := make([]string, 0, len(external.Registry))
+	for name, md := range external.Registry {
+		if md.Subclass == external.SubclassCEX {
+			out = append(out, name)
+		}
+	}
+	sort.Strings(out)
+	return out
 }
 
 // tradeUSDVolumeViaXLMBaseAnchorFor is [tradeUSDVolumeViaXLMBaseAnchor]
@@ -535,6 +611,60 @@ func xlmBaseTierFor(t canonical.Trade, quoteSpec *USDVolumeQuoteSpec) xlmBaseTie
 // taking it from a caller that would have to look it up the same way.
 func tradeUSDVolumeViaXLMBaseAnchorFor(ctx context.Context, t canonical.Trade, r USDVolumeFXResolver) *string {
 	return tradeUSDVolumeViaXLMBaseAnchor(ctx, t, external.Lookup(t.Source).Subclass, r)
+}
+
+// tradeUSDVolumeViaXLMQuoteAnchorFor values a stored row whose XLM leg is
+// the QUOTE one: `quote_amount / 1e7 x XLM/USD at ts`.
+//
+// It is the SAME function as the base-side anchor, handed the trade with
+// its legs swapped — not a second spelling of the arithmetic. The anchor
+// values whichever leg it is given as the base, at the Stellar classic
+// 1e7 scale, through the installed resolver's XLM/USD rate at the row's
+// timestamp; mirroring the row is therefore the whole difference between
+// the two tiers, and a change to the anchor moves both at once.
+//
+// ONLY the XLM leg, deliberately. The live insert path reaches this
+// population through [tradeUSDVolumeViaFX], which additionally
+// cross-checks the two legs and stores the SMALLER when they diverge by
+// more than [usdLegAgreementFactor]. That cross-check defends a value
+// resting on a token leg an attacker can author (the tier-3b bridge, the
+// 2026-08-11 $182M fake print). Here the value rests on XLM — the
+// bridge's own anchor, and the one leg of a Stellar pair nobody can
+// author — so admitting the token leg could only DRAG the number down to
+// a rate the counterparty wrote. The mirror tier therefore stops at the
+// anchor, exactly as the xlm-base tier does, and a row it cannot price
+// that way is reported rather than valued.
+func tradeUSDVolumeViaXLMQuoteAnchorFor(ctx context.Context, t canonical.Trade, r USDVolumeFXResolver) *string {
+	return tradeUSDVolumeViaXLMBaseAnchorFor(ctx, mirrorTradeLegs(t), r)
+}
+
+// mirrorTradeLegs returns t with its two legs swapped — base for quote,
+// base_amount for quote_amount. Nothing else about the row changes, so
+// the mirrored trade is still the same trade to every gate that reads the
+// source, the timestamp or the primary key.
+func mirrorTradeLegs(t canonical.Trade) canonical.Trade {
+	t.Pair = canonical.Pair{Base: t.Pair.Quote, Quote: t.Pair.Base}
+	t.BaseAmount, t.QuoteAmount = t.QuoteAmount, t.BaseAmount
+	return t
+}
+
+// tradeUSDVolumeViaFiatQuoteFor values a stored OFF-CHAIN row quoted in a
+// non-USD fiat currency: `quote_amount / 10^<source scale> x <fiat>/USD
+// at ts`, through [tradeUSDVolumeViaFX] — the same function
+// [Store.InsertTrade] reaches for such a row today, with the source's own
+// registered amount scale (CS-040) and the resolver's fx_quotes-backed
+// fiat rate.
+//
+// The gates here are the ones that make the DEX-only halves of
+// [tradeUSDVolumeViaFX] (the two-leg cross-check, the single-leg ceiling)
+// unreachable and irrelevant: a CEX subclass and a fiat quote leg. A row
+// outside that shape is declined rather than valued.
+func tradeUSDVolumeViaFiatQuoteFor(ctx context.Context, t canonical.Trade, r USDVolumeFXResolver) *string {
+	md := external.Lookup(t.Source)
+	if md.Subclass != external.SubclassCEX || t.Pair.Quote.Type != canonical.AssetFiat {
+		return nil
+	}
+	return tradeUSDVolumeViaFX(ctx, t, md, r)
 }
 
 // baseAnchorEligible reports whether an asset can be valued from a

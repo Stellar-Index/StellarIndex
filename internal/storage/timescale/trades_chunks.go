@@ -416,7 +416,7 @@ func (s *Store) stillDecompressed(c TradeChunk) func(context.Context) error {
 // committed and reported; the caller stops the walk rather than letting the
 // next UPDATE run the per-row path.
 func (s *Store) ApplyXLMBaseUSDVolumeRestampInChunk(ctx context.Context, c TradeChunk, plan *XLMBaseRestampPlan, generation int64, batch int) (int64, error) {
-	return s.applyXLMBaseRestampBatches(ctx, plan, generation, batch, s.stillDecompressed(c))
+	return s.ApplyUSDVolumeRestampPlanInChunk(ctx, c, plan, generation, batch)
 }
 
 // RestampExactTierUSDVolumeInChunk is [Store.RestampExactTierUSDVolume]

@@ -1,5 +1,7 @@
 package canonical
 
+import "sort"
+
 // Off-chain fiat asset helpers — see ADR-0010.
 //
 // The Asset type carries an AssetFiat variant for off-chain fiat
@@ -73,6 +75,23 @@ var knownFiatCodes = map[string]struct{}{
 func IsKnownFiat(code string) bool {
 	_, ok := knownFiatCodes[code]
 	return ok
+}
+
+// KnownFiatCodes returns the ADR-0010 allow-list, sorted. A COPY: the
+// map above is the single source of truth and callers must not be able
+// to widen it.
+//
+// It exists for the readers that need the closed set rather than a
+// membership test — a query that has to bound itself to fiat-quoted rows
+// cannot ask [IsKnownFiat] per row, and hard-coding a second list beside
+// this one is how the two drift.
+func KnownFiatCodes() []string {
+	out := make([]string, 0, len(knownFiatCodes))
+	for code := range knownFiatCodes {
+		out = append(out, code)
+	}
+	sort.Strings(out)
+	return out
 }
 
 // NewFiatAsset constructs a fiat asset. Returns ErrInvalidAsset if
