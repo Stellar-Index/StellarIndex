@@ -30,6 +30,13 @@ against.
   for the `mc` calls and proves the objects landed by counting them at
   the destination instead of trusting the exit status.
 
+- **ops:** the same push now refuses a target it cannot prove is
+  remote. `mc` treats an unknown alias as a local path, so a typo in
+  the alias wrote the "off-site" copy to this host's own disk — and the
+  object count read it straight back and called it verified, turning
+  the backup into a second copy on the medium it exists to survive. The
+  alias must now be configured and must not resolve to loopback.
+
 - **ops:** `usd-volume-restamp -tier exact` planned its UPDATE without
   pinning a custom plan. Every slice of a day produces identical
   statement text, so Postgres promotes the prepared statement to a

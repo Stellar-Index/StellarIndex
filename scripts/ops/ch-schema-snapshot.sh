@@ -214,6 +214,32 @@ if [[ -n "$SNAPSHOT_MC_TARGET" ]]; then
   # healthy off-site push on every single run while the bucket stayed
   # empty. Prove the objects landed instead: count what is at the
   # destination and require it to match what we meant to send.
+  # The destination must be proven REMOTE before anything else. mc treats
+  # an unknown alias as a plain LOCAL PATH: `mc mirror ... typo/bucket/x`
+  # happily writes ./typo/bucket/x on this host, and the object count
+  # below then reads it straight back and calls it verified. A typo in
+  # the alias would therefore turn the off-site copy into a second local
+  # one that reports healthy — the exact failure this whole step exists
+  # to prevent. Require the alias to be configured, and require it not to
+  # point at loopback, since "off-site" is the property being claimed.
+  offsite_alias="${SNAPSHOT_MC_TARGET%%/*}"
+  alias_url=""
+  if command -v mc >/dev/null 2>&1 && "${mc_clean[@]}" mc alias list "$offsite_alias" >/dev/null 2>&1; then
+    alias_url=$("${mc_clean[@]}" mc alias list "$offsite_alias" 2>/dev/null |
+      awk '/URL/ { print $3; exit }')
+  fi
+  if [[ -z "$alias_url" ]]; then
+    note "OFFSITE PUSH REFUSED — '$offsite_alias' is not a configured mc alias, so the target would be written to LOCAL DISK on this host"
+    rc=2
+    SNAPSHOT_MC_TARGET=""
+  elif [[ "$alias_url" == *//127.0.0.1* || "$alias_url" == *//localhost* || "$alias_url" == *//::1* ]]; then
+    note "OFFSITE PUSH REFUSED — alias '$offsite_alias' resolves to $alias_url, which is this host; that is not off-site"
+    rc=2
+    SNAPSHOT_MC_TARGET=""
+  fi
+fi
+
+if [[ -n "$SNAPSHOT_MC_TARGET" ]]; then
   want=$(find "$work" -type f | wc -l | tr -d ' ')
   if command -v mc >/dev/null 2>&1; then
     "${mc_clean[@]}" mc mirror --overwrite "$work" "$SNAPSHOT_MC_TARGET/$day" >/dev/null 2>&1 || true
