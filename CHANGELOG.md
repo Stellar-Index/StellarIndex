@@ -15,6 +15,8 @@ against.
 
 ## [Unreleased]
 
+## [v0.65.0] — 2026-09-08
+
 ### Added
 
 - **dev:** `make branch-status` (`scripts/dev/branch-status.sh`) reports,
