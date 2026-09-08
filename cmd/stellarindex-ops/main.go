@@ -11,7 +11,8 @@
 // emit-incident, usage-rollup-backfill).
 //
 //   - Ingest / backfill (internal/ops/ingest): `backfill`,
-//     `backfill-external`, `backfill-chainlink`, `backfill-router`,
+//     `backfill-external`, `backfill-chainlink`, `backfill-index`,
+//     `backfill-router`,
 //     `detect-gaps`, `list-cursors`, `reap-cursors`, `resume-stalled`,
 //     `find-data-gaps`, `census-backfill`, `tag-routed-via`,
 //     `seed-soroswap-pairs`, `seed-protocol-contracts`,
@@ -127,6 +128,7 @@ var subcommands = map[string]func(args []string) error{
 	"backfill":                ingest.Run,
 	"backfill-external":       ingest.Run,
 	"backfill-chainlink":      ingest.Run,
+	"backfill-index":          ingest.Run,
 	"backfill-router":         ingest.Run,
 	"detect-gaps":             ingest.Run,
 	"list-cursors":            ingest.Run,
@@ -671,6 +673,8 @@ Subcommands:
                               -to   2024-12-31T00:00:00Z \
                               -granularity 1h
   backfill-chainlink -config PATH [-from-block N] [-to-block N] [-chunk-blocks N] [-sleep-ms N] [-dry-run]
+  backfill-index -config PATH -from RFC3339 -to RFC3339 [-pair P] [-chunk-days N] [-sleep-ms N] [-write]
+      Index-source (CoinGecko) history as ORACLE UPDATES, for windows no venue reaches.
                           Walk every configured Chainlink feed's
                           AnswerUpdated event log across the requested
                           block range and insert one OracleUpdate row
