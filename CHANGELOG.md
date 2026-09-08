@@ -50,6 +50,61 @@ against.
   with the webhook unset the receiver degrades to the stub it replaced,
   so an unset URL is a no-op rather than a config error.
 
+
+- **ops:** `usd-volume-restamp` carries two more tiers, both driving the
+  existing chunk walk rather than a second one. `-tier xlm-quote`
+  (~18.0M rows on r1) is the mirror of `-tier xlm-base`: the on-chain
+  DEX trades the pool stored the other way round, XLM in the QUOTE leg,
+  valued at `quote_amount/1e7 x XLM/USD at ts` through the SAME anchor
+  the base tier calls — the row is handed to it mirrored, so there is
+  one spelling of that arithmetic and a change to it moves both tiers.
+  `-tier cex-fx` (~12.6M rows) is the off-chain half: CEX trades quoted
+  in a non-USD fiat (`fiat:EUR`, `fiat:GBP` today), valued from the
+  `fx_quotes` vendor feed at the most recent bucket AT OR BEFORE the
+  trade — never a later one, never an interpolation between two. A trade
+  whose nearest quote is more than `-fx-max-staleness` old (default 7
+  days, which is the live insert path's own `fx_quotes` lookback; wider
+  is refused, narrower is the operator's call) is REFUSED and counted,
+  not extrapolated to. prices_1m holds no fiat pair at all, which is why
+  that population is NULL today.
+
+  Both tiers keep the money rules the anchor re-derive established: a row
+  the anchor or the FX feed cannot price is reported and left exactly as
+  it is (a stored NULL stays NULL, a stored value is never blanked), the
+  `derive_generation <= gen` guard (INV-3) and `-fill-null` as the
+  opt-in are unchanged, the dry run is fail-closed, and the finished run
+  prints the same ordered CAGG refresh block. The three estimated tiers
+  now share one per-chunk restamp and one row-list scan, so a guard
+  cannot drift between them, and the scan's leg allow-list plus each
+  tier's Go gate keep the ~54M token/token rows unpriced — their only
+  available rate is the tier-3b bridge a counterparty authors (the
+  2026-08-04 and 2026-08-11 incidents).
+
+- **ops:** `usd-volume-restamp -chunks` now works with `-tier exact`, not
+  only `-tier xlm-base`. The exact tier's repair population — ~10M rows
+  across 2026-03..07, 2,306,054 in March alone — lives in compressed
+  Timescale chunks, where an in-place UPDATE measured ~1,574 rows/min:
+  100+ hours. The flag combination used to be refused on the reasoning
+  that the exact tier writes a set-based UPDATE per slice rather than a
+  row batch, which is not what the cost depends on — a DML into a
+  compressed chunk is serviced by decompressing that chunk inside the
+  transaction whatever shape the statement has. Both tiers now drive ONE
+  chunk driver (decompress → restamp → re-compress per chunk, run lock,
+  compression-policy pause with a guaranteed re-enable on every exit
+  path, free-space pre-flight re-checked before each decompress,
+  live-adjacent refusal, probe-and-skip resume carrying `-generation`);
+  each tier supplies only what it does inside a decompressed chunk, so
+  the guards cannot drift apart between them. Every exact-tier invariant
+  is unchanged: the `pegged_leg / 10^decimals` identity, the
+  `derive_generation <= gen` guard (INV-3), `-fill-null` as an opt-in,
+  and a fail-closed dry run that counts and decompresses nothing.
+  `-chunk-batch` stays xlm-base-only and is refused rather than silently
+  ignored — the exact walk's per-transaction bound is `-slice`.
+
+- Explorer footer now credits CoinGecko as a price-data source. The
+  Analyst plan permits commercial use only with visible attribution,
+  so the credit is a licence condition rather than a courtesy.
+
 ### Changed
 
 - **sources:** the last two live-code comments that still spoke of the
@@ -94,6 +149,49 @@ against.
   below the vault's own share price (~1.01); that gap is theirs, and the
   decoder was checked against BTC and EUROC on the same oracle contract
   to rule out a scaling fault here.
+
+
+- **monitoring:** the oracle-staleness budget is now per **(source, asset)**
+  rather than per source. `stellarindex_oracle_stale` compared each pair's
+  age against `10 × stellarindex_oracle_resolution_seconds`, and resolution
+  is declared per source — so every asset on a feed shared one bound.
+  Staleness is not a source property: `reflector-cex` / `crypto:DAI` is a peg
+  asset Reflector republishes only when the price moves, so it ran 7-hour
+  gaps against the 50-minute source budget and breached it on **11.6%** of
+  evaluations with the feed working perfectly. Loosening the source's
+  declared resolution would have been a lie about its cadence and would have
+  loosened every other asset on it.
+
+  A new gauge `stellarindex_oracle_staleness_budget_seconds{source, asset}`
+  carries the threshold, emitted by the same call that emits
+  `stellarindex_oracle_last_update_unix` (`obs.RecordOracleUpdate`) so the two
+  can never drift onto different label sets. It defaults to
+  `10 × resolution` — the exact number the expression computed inline — so
+  **no un-overridden asset's alerting moves**; operators widen a single pair
+  with `[[oracle.staleness_overrides]]`, which requires a written `reason` and
+  the canonical asset identifier (`crypto:DAI`, not `DAI` — a bare or aliased
+  spelling is refused at startup rather than silently matching no series). An
+  override widens the bound, it does not remove it: past the wider bound the
+  pair tickets normally.
+
+  Shipped with exactly one override — `reflector-cex` / `crypto:DAI` at
+  **32400s (9h)**, 1.3× the widest observed gap, so a genuine DAI outage still
+  tickets within half a day.
+
+  Deploy order matters once: the rule reads a gauge only the new binary
+  emits, so roll the indexer before (or with) the rule files. A Prometheus
+  that reloaded the rule while an old indexer is still running finds no
+  budget series and the alert is blind until the restart — the same window
+  the old rule had whenever a source had not yet published its resolution.
+
+  `stellarindex_oracle_resolution_seconds` is unchanged and still per source:
+  the declared publication cadence genuinely is a property of the oracle, and
+  it is what seeds each source's default budget. What went away is the
+  `ignoring(asset) group_left()` join the old expression needed to bridge two
+  different label sets — with both sides now on `{job, instance, source,
+  asset}` the rule is a plain comparison, so neither that join's silent-empty
+  failure (wave-D ALERT-02) nor the `on (source)` duplicate-match error a
+  second scrape target would have caused is reachable any more.
 
 ### Fixed
 
@@ -156,105 +254,6 @@ against.
   backfill and `backfill-chainlink` appeared to have none. Both
   commands now carry their own description, and `backfill-index`
   documents its call budget.
-
-### Added
-
-- **ops:** `usd-volume-restamp` carries two more tiers, both driving the
-  existing chunk walk rather than a second one. `-tier xlm-quote`
-  (~18.0M rows on r1) is the mirror of `-tier xlm-base`: the on-chain
-  DEX trades the pool stored the other way round, XLM in the QUOTE leg,
-  valued at `quote_amount/1e7 x XLM/USD at ts` through the SAME anchor
-  the base tier calls — the row is handed to it mirrored, so there is
-  one spelling of that arithmetic and a change to it moves both tiers.
-  `-tier cex-fx` (~12.6M rows) is the off-chain half: CEX trades quoted
-  in a non-USD fiat (`fiat:EUR`, `fiat:GBP` today), valued from the
-  `fx_quotes` vendor feed at the most recent bucket AT OR BEFORE the
-  trade — never a later one, never an interpolation between two. A trade
-  whose nearest quote is more than `-fx-max-staleness` old (default 7
-  days, which is the live insert path's own `fx_quotes` lookback; wider
-  is refused, narrower is the operator's call) is REFUSED and counted,
-  not extrapolated to. prices_1m holds no fiat pair at all, which is why
-  that population is NULL today.
-
-  Both tiers keep the money rules the anchor re-derive established: a row
-  the anchor or the FX feed cannot price is reported and left exactly as
-  it is (a stored NULL stays NULL, a stored value is never blanked), the
-  `derive_generation <= gen` guard (INV-3) and `-fill-null` as the
-  opt-in are unchanged, the dry run is fail-closed, and the finished run
-  prints the same ordered CAGG refresh block. The three estimated tiers
-  now share one per-chunk restamp and one row-list scan, so a guard
-  cannot drift between them, and the scan's leg allow-list plus each
-  tier's Go gate keep the ~54M token/token rows unpriced — their only
-  available rate is the tier-3b bridge a counterparty authors (the
-  2026-08-04 and 2026-08-11 incidents).
-
-- **ops:** `usd-volume-restamp -chunks` now works with `-tier exact`, not
-  only `-tier xlm-base`. The exact tier's repair population — ~10M rows
-  across 2026-03..07, 2,306,054 in March alone — lives in compressed
-  Timescale chunks, where an in-place UPDATE measured ~1,574 rows/min:
-  100+ hours. The flag combination used to be refused on the reasoning
-  that the exact tier writes a set-based UPDATE per slice rather than a
-  row batch, which is not what the cost depends on — a DML into a
-  compressed chunk is serviced by decompressing that chunk inside the
-  transaction whatever shape the statement has. Both tiers now drive ONE
-  chunk driver (decompress → restamp → re-compress per chunk, run lock,
-  compression-policy pause with a guaranteed re-enable on every exit
-  path, free-space pre-flight re-checked before each decompress,
-  live-adjacent refusal, probe-and-skip resume carrying `-generation`);
-  each tier supplies only what it does inside a decompressed chunk, so
-  the guards cannot drift apart between them. Every exact-tier invariant
-  is unchanged: the `pegged_leg / 10^decimals` identity, the
-  `derive_generation <= gen` guard (INV-3), `-fill-null` as an opt-in,
-  and a fail-closed dry run that counts and decompresses nothing.
-  `-chunk-batch` stays xlm-base-only and is refused rather than silently
-  ignored — the exact walk's per-transaction bound is `-slice`.
-
-- Explorer footer now credits CoinGecko as a price-data source. The
-  Analyst plan permits commercial use only with visible attribution,
-  so the credit is a licence condition rather than a courtesy.
-### Changed
-
-- **monitoring:** the oracle-staleness budget is now per **(source, asset)**
-  rather than per source. `stellarindex_oracle_stale` compared each pair's
-  age against `10 × stellarindex_oracle_resolution_seconds`, and resolution
-  is declared per source — so every asset on a feed shared one bound.
-  Staleness is not a source property: `reflector-cex` / `crypto:DAI` is a peg
-  asset Reflector republishes only when the price moves, so it ran 7-hour
-  gaps against the 50-minute source budget and breached it on **11.6%** of
-  evaluations with the feed working perfectly. Loosening the source's
-  declared resolution would have been a lie about its cadence and would have
-  loosened every other asset on it.
-
-  A new gauge `stellarindex_oracle_staleness_budget_seconds{source, asset}`
-  carries the threshold, emitted by the same call that emits
-  `stellarindex_oracle_last_update_unix` (`obs.RecordOracleUpdate`) so the two
-  can never drift onto different label sets. It defaults to
-  `10 × resolution` — the exact number the expression computed inline — so
-  **no un-overridden asset's alerting moves**; operators widen a single pair
-  with `[[oracle.staleness_overrides]]`, which requires a written `reason` and
-  the canonical asset identifier (`crypto:DAI`, not `DAI` — a bare or aliased
-  spelling is refused at startup rather than silently matching no series). An
-  override widens the bound, it does not remove it: past the wider bound the
-  pair tickets normally.
-
-  Shipped with exactly one override — `reflector-cex` / `crypto:DAI` at
-  **32400s (9h)**, 1.3× the widest observed gap, so a genuine DAI outage still
-  tickets within half a day.
-
-  Deploy order matters once: the rule reads a gauge only the new binary
-  emits, so roll the indexer before (or with) the rule files. A Prometheus
-  that reloaded the rule while an old indexer is still running finds no
-  budget series and the alert is blind until the restart — the same window
-  the old rule had whenever a source had not yet published its resolution.
-
-  `stellarindex_oracle_resolution_seconds` is unchanged and still per source:
-  the declared publication cadence genuinely is a property of the oracle, and
-  it is what seeds each source's default budget. What went away is the
-  `ignoring(asset) group_left()` join the old expression needed to bridge two
-  different label sets — with both sides now on `{job, instance, source,
-  asset}` the rule is a plain comparison, so neither that join's silent-empty
-  failure (wave-D ALERT-02) nor the `on (source)` duplicate-match error a
-  second scrape target would have caused is reachable any more.
 
 ## [v0.64.0] — 2026-09-08
 
