@@ -960,6 +960,27 @@ type chartWindow struct {
 // Deliberately cheap — O(1) for the fixed-width grains, O(months) for
 // `1mo` — because it runs before every read of a walk that may be 24
 // pairs long.
+// TWO UNENFORCED PRECONDITIONS. The predicate is exact — verified over 155
+// holed-set variants across 1d/1w/1mo/1h, mid-bucket and on-grid `from`, EU
+// spring-forward and fall-back, 31-day months — but exact GIVEN both of these,
+// and neither is checked anywhere:
+//
+//  1. Every claimed bucket is a `time_bucket` grid point. True only because
+//     every read in the walk goes to `prices_<gran>` / `twap_<gran>`. Wire a
+//     non-CAGG reader into the walk and an off-grid bucket makes an
+//     INCOMPLETE set satisfy the count.
+//  2. The reader's closed-bucket clock is not ahead of the handler's. True
+//     only because the API and Postgres are co-located on one host at UTC
+//     (measured 23 ms apart). Splitting the API onto its own pods — which
+//     docs/architecture/ha-plan.md §3.6 plans — makes NTP skew of one bucket
+//     width enough to break it.
+//
+// Either way the failure is the dangerous kind: a 26-of-27 set reports as
+// covered, the walk stops early, and the series is silently truncated with NO
+// wire signal, because a clean `covered` stop deliberately does not set
+// `flags.stale`. Both were demonstrated when this was written. If you are
+// adding a reader to the walk or moving the API off the database host, that is
+// the moment this stops being latent.
 func (w chartWindow) covered(m *chartBucketMerge, now time.Time) bool {
 	if w.from.IsZero() || m.empty() {
 		return false

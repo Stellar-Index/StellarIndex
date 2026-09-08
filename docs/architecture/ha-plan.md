@@ -391,6 +391,28 @@ provisioned; cloud is pay-as-you-use for DR.
 - **Rolling deploy:** 1-at-a-time, 60 s drain, 30 s settle.
 - **Graceful shutdown:** 30 s for in-flight requests + SSE
   connections (SSE peers re-connect to the new pod automatically).
+- **Clock skew is a CORRECTNESS precondition here, not just a
+  hygiene one.** `chartWindow.covered` (`internal/api/v1/chart.go`)
+  stops a chart's multi-source walk once the merge holds as many
+  distinct buckets as the window's closed-bucket count. That count is
+  computed from the API host's clock. Today the predicate is exact —
+  verified over 155 holed-set variants — but only because the API and
+  Postgres sit on ONE host at UTC, measured 23 ms apart, so the
+  reader's closed-bucket clock can never be ahead of the handler's.
+  Split the API onto its own pods and that stops being structural.
+  With NTP skew of **one bucket width or more** an incomplete set —
+  26 of 27 buckets — satisfies the predicate, the walk stops early,
+  and the series is silently truncated **with no wire signal**: a
+  clean `covered` stop deliberately does not set `flags.stale`, so
+  nothing distinguishes it from a complete answer. Both failure modes
+  were demonstrated when the predicate was written.
+  **Before this section is implemented:** pin every API pod and the
+  database to the same NTP source, alert on offset exceeding the
+  narrowest served granularity (60 s for `1m`), and treat that alert
+  as chart-correctness, not host hygiene. The same precondition
+  breaks if a non-CAGG reader is ever wired into the walk — see the
+  note at `covered` — because it assumes every claimed bucket is a
+  `time_bucket` grid point.
 
 ### 3.7 stellarindex-aggregator
 
