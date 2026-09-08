@@ -1,0 +1,260 @@
+---
+# Local single-host Prometheus (ASH-8, diagnosed 2026-09-08).
+#
+# THE GAP. Both test nets reported `overall: degraded` at every check
+# while every unit was active. /v1/status derives background-service
+# liveness from PrometheusStatusBackend.Heartbeats(); neither test net
+# ran Prometheus, so that query always errored, status.go mapped the
+# error to hb = nil, every declared service graded `unknown`, and
+# rollupOverall turned that into `degraded`. Forever. The conservatism
+# is correct — refusing to claim "ok" about something unobserved beats
+# a false all-clear — so the fix is to make the observation possible,
+# not to soften the roll-up. `api.prometheus_url` was already pointing
+# at http://localhost:9090 (stellarindex.toml.j2 templates it
+# unconditionally); nothing was listening there. The API therefore
+# needs NO restart after this applies — the backend is already wired,
+# its queries simply start succeeding on the next poll.
+#
+# WHY NOT playbooks/monitoring.yml. That playbook + roles/prometheus
+# are the MULTI-HOST shape: roles/prometheus/tasks/01-preflight.yml
+# asserts a `prometheus_pair` group of exactly two hosts plus a
+# populated scrape-target group, and installs a pinned upstream tarball
+# under its own unit. A single-host inventory fails at the first
+# assert, which is why r1's Prometheus is managed out-of-band. This is
+# the missing single-host code path, and it mirrors r1 rather than
+# inventing a third shape: the DISTRO PACKAGE (r1 runs
+# `prometheus 2.45.3+ds` from apt, binary /usr/bin/prometheus, unit
+# prometheus.service) plus a scrape config of localhost targets.
+#
+# SCOPE. Alerting is out, on purpose (see the run_local_prometheus
+# comment in defaults/main.yml and the header of
+# templates/local-prometheus.yml.j2): the status endpoint needs the
+# scrape layer, and Incidents() reads the `ALERTS` series Prometheus
+# synthesizes for itself, so an empty rule set answers honestly instead
+# of erroring.
+#
+# Gated on `run_local_prometheus` (default false — r1 keeps its
+# out-of-band stack) with its own tag, so it applies alone:
+#
+#   ansible-playbook -i inventory/testnet.yml playbooks/archival-node.yml \
+#     -e secrets_file=../inventory/testnet.secrets.yml \
+#     --tags local-prometheus --check --diff
+#   ansible-playbook -i inventory/testnet.yml playbooks/archival-node.yml \
+#     -e secrets_file=../inventory/testnet.secrets.yml --tags local-prometheus
+
+# Ubuntu ships `prometheus` in the `universe` component on both jammy
+# and noble — the same package + component the redis/postgres exporters
+# in 16-prometheus-exporters.yml come from, so a host that got those
+# already has the source enabled. The package brings /usr/bin/promtool
+# with it, which the config task below validates against.
+- name: Install the prometheus Debian package
+  ansible.builtin.apt:
+    name: prometheus
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+# `--check --diff` is the documented review path in this repo, and it
+# would otherwise ABORT the first dry run on a host that does not have
+# the package yet: check mode never really installs it, so
+# /etc/prometheus stays absent, and the copy/template module fails hard
+# on a missing destination directory ("Destination directory
+# /etc/prometheus does not exist") rather than previewing anything.
+# Stat it once and let the two tasks that write inside package-created
+# directories preview-skip in that one case, with the debug below
+# saying so. Every later dry run — and every real apply — is unaffected.
+- name: Stat the package-owned config dir (dry-run guard)
+  ansible.builtin.stat:
+    path: /etc/prometheus
+  register: local_prom_confdir
+  changed_when: false
+
+- name: Explain the reduced preview on a host without the package
+  when:
+    - ansible_check_mode
+    - not local_prom_confdir.stat.exists
+  ansible.builtin.debug:
+    msg: >-
+      --check: /etc/prometheus does not exist because check mode did not
+      really install the prometheus package, so the scrape config and the
+      systemd memory drop-in cannot be previewed on this run. Everything
+      else previews normally; re-run --check --diff after the first real
+      apply to review those two files.
+
+# /etc/prometheus/prometheus.yml is a dpkg conffile. Overwriting it is
+# the same thing r1's operator install does (configs/prometheus/README.md),
+# and unattended-upgrades runs --force-confold, so a package upgrade
+# keeps this file rather than clobbering it. Ownership matches the
+# package's own (root:root 0644; prometheus reads it as `prometheus`).
+#
+# `validate` runs promtool against the staged temp file BEFORE it is
+# moved into place, so a malformed render can never take the running
+# Prometheus down — it fails the task with the parse error instead.
+# Ansible skips validate under --check (nothing is staged).
+- name: Template the Prometheus scrape config
+  when: local_prom_confdir.stat.exists or not ansible_check_mode
+  ansible.builtin.template:
+    src: local-prometheus.yml.j2
+    dest: /etc/prometheus/prometheus.yml
+    owner: root
+    group: root
+    mode: "0644"
+    validate: "/usr/bin/promtool check config %s"
+  notify: Restart prometheus
+
+# Flags the Debian unit appends via `EnvironmentFile=/etc/default/prometheus`
+# → `$ARGS`. The unit's own ExecStart already supplies --config.file and
+# --storage.tsdb.path, so only the overrides belong here.
+- name: Template /etc/default/prometheus (bind + retention flags)
+  ansible.builtin.copy:
+    dest: /etc/default/prometheus
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      # Managed by ansible (archival-node role / 23-local-prometheus.yml).
+      # Sourced by the Debian-shipped prometheus.service via EnvironmentFile;
+      # appended to its ExecStart as $ARGS.
+      #
+      # Loopback bind: the only consumer is the API on this same box
+      # (api.prometheus_url = http://localhost:9090). 9090 is in no
+      # inventory's internal_allow_ports, so nftables blocks it anyway —
+      # this is the defence-in-depth half, matching the exporters.
+      # Operator UI access is `ssh -L 9090:localhost:9090 <host>`.
+      #
+      # Retention is bounded on BOTH axes so neither a long-lived host
+      # nor a sudden series explosion can fill the disk; whichever limit
+      # trips first evicts.
+      ARGS="--web.listen-address={{ local_prometheus_listen }} --storage.tsdb.retention.time={{ local_prometheus_retention_time }} --storage.tsdb.retention.size={{ local_prometheus_retention_size }}"
+  notify: Restart prometheus
+
+- name: Ensure the prometheus systemd drop-in dir
+  ansible.builtin.file:
+    path: /etc/systemd/system/prometheus.service.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+# The memory cap is not paranoia about Prometheus, it is about the VM
+# it shares. testnet.yml records a real OOM on this hardware —
+# ClickHouse plus captive-core exhausted committable memory and the API
+# crash-looped despite free RAM — and carries vm_overcommit_memory: 0
+# and a 4 GiB ClickHouse cap because of it. A monitoring daemon that
+# can starve the thing it monitors is worse than none, so the ceiling
+# is declared rather than assumed. MemoryHigh reclaims and throttles
+# first; MemoryMax is the hard stop.
+- name: Cap prometheus memory (systemd drop-in)
+  # Same dry-run guard as the scrape config: check mode does not really
+  # create the drop-in dir the task above declares.
+  when: local_prom_confdir.stat.exists or not ansible_check_mode
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/prometheus.service.d/10-memory-cap.conf
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      # Managed by ansible (archival-node role / 23-local-prometheus.yml).
+      [Service]
+      MemoryHigh={{ local_prometheus_memory_high }}
+      MemoryMax={{ local_prometheus_memory_max }}
+  notify: Restart prometheus
+
+- name: Enable + start prometheus
+  ansible.builtin.systemd:
+    name: prometheus
+    state: started
+    enabled: true
+    daemon_reload: true
+
+# Flush the restart before verifying: handlers otherwise run at the end
+# of the play, and the check below would read the PREVIOUS config's
+# targets on the very run that changed them (on a first install, the
+# package's own stock prometheus.yml).
+#
+# flush_handlers has no per-handler form, so this also runs anything
+# else still pending — which costs nothing here, because this file is
+# the LAST import in the role and the play has no post_tasks, so "now"
+# and "end of play" are the same moment. It is skipped along with the
+# rest of the file when run_local_prometheus is false (verified: a
+# when-guarded flush_handlers skips rather than flushing, so an r1 run
+# keeps its normal end-of-play handler ordering).
+- name: Apply pending prometheus restarts before verifying
+  ansible.builtin.meta: flush_handlers
+
+# The bind + retention flags above reach the process only if the
+# packaged unit's ExecStart really does end in `$ARGS` sourced from
+# /etc/default/prometheus. That is the Debian packaging's shape, but an
+# assumption that silently no-ops is exactly the kind that leaves a box
+# on the 15-day default with a public bind and nothing to show for it.
+# /api/v1/status/flags reports the EFFECTIVE values, so ask the process.
+#
+# Reachable whichever way the assumption falls: an unapplied
+# --web.listen-address leaves the default 0.0.0.0 bind, which still
+# answers on loopback — so a failure here is a real finding, not a
+# connection error.
+- name: Read the effective Prometheus flags
+  when: not ansible_check_mode
+  ansible.builtin.uri:
+    url: "http://{{ local_prometheus_listen }}/api/v1/status/flags"
+    return_content: true
+  register: local_prom_flags
+  changed_when: false
+  retries: 10
+  delay: 2
+  until: local_prom_flags.status is defined and local_prom_flags.status == 200
+
+- name: Assert the bind + retention flags actually applied
+  when: not ansible_check_mode
+  ansible.builtin.assert:
+    that:
+      - local_prom_flags.json.data['storage.tsdb.retention.time'] | default('') == local_prometheus_retention_time
+      - local_prometheus_listen in (local_prom_flags.json.data['web.listen-address'] | default('') | string)
+    fail_msg: >-
+      /etc/default/prometheus did not reach the process: effective
+      web.listen-address={{ local_prom_flags.json.data['web.listen-address'] | default('?') }},
+      storage.tsdb.retention.time={{ local_prom_flags.json.data['storage.tsdb.retention.time'] | default('?') }}.
+      The packaged prometheus.service is expected to source
+      EnvironmentFile=/etc/default/prometheus and append $ARGS to its
+      ExecStart; check `systemctl cat prometheus`. Until this holds the
+      host is on the packaging defaults (15 d retention, 0.0.0.0 bind).
+
+# Prove the scrape layer on the host instead of assuming it, the same
+# posture 22-clickhouse-exporter.yml takes for its hot-reloaded
+# endpoint. This asserts EXACTLY the query /v1/status runs, and
+# requires the returned job set to equal the stellarindex-* jobs this
+# inventory actually declares — so a host with run_aggregator: false
+# passes on {api, indexer} and would FAIL if an aggregator target had
+# crept into the derivation.
+#
+# This checks the SCRAPE, not the services: Prometheus records `up 0`
+# for a target it failed to reach, so the series exists either way and
+# the assertion is stable even while a unit is restarting. Whether
+# those services are healthy is what /v1/status is for.
+#
+# Skipped under --check: nothing was written there, so `until` could
+# never hold and the preview would fail spuriously.
+- name: Verify Prometheus has scraped the jobs /v1/status reads
+  when:
+    - not ansible_check_mode
+    - run_stellarindex | bool
+  vars:
+    _si_jobs: >-
+      {{ local_prometheus_scrape_jobs | map(attribute='job')
+         | select('match', '^stellarindex-') | list | sort }}
+  ansible.builtin.uri:
+    url: "http://{{ local_prometheus_listen }}/api/v1/query"
+    method: POST
+    body_format: form-urlencoded
+    body:
+      query: 'timestamp(up{job=~"stellarindex-indexer|stellarindex-aggregator|stellarindex-api"})'
+    return_content: true
+  register: local_prom_up
+  changed_when: false
+  retries: 20
+  delay: 3
+  until: >-
+    local_prom_up.status is defined
+    and local_prom_up.status == 200
+    and (local_prom_up.json.data.result | default([])
+         | map(attribute='metric.job') | list | sort) == _si_jobs

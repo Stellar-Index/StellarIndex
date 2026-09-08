@@ -25,9 +25,19 @@
 # configs/prometheus/rules.r1/ (the R1 rule overlay, kept in lockstep
 # with deploy/monitoring/rules/ by scripts/ci/lint-rule-equivalence)
 # and configs/alertmanager/alertmanager.r1.yml + apply.sh. Wiring the
-# single-box path into this playbook needs a single-host code path in
-# the role, not an inventory edit — it is on the L4 cutover backlog
-# with the other multi-host cluster playbooks (configs/ansible/README.md).
+# single-box path into THIS playbook still needs a single-host code
+# path in the prometheus role, and that is still on the L4 cutover
+# backlog with the other multi-host cluster playbooks
+# (configs/ansible/README.md).
+#
+# A single-host SCRAPE-ONLY path does exist now, in the other role:
+# roles/archival-node/tasks/23-local-prometheus.yml, gated on
+# `run_local_prometheus` (default false) with tag `local-prometheus`.
+# It installs the distro `prometheus` package and a localhost scrape
+# config derived from the host's run_* switches — no Alertmanager and
+# no rule files, because its purpose is the metrics backend /v1/status
+# reads (ASH-8). The two test nets use it; r1 does not. It is NOT a
+# replacement for this playbook on a multi-host deployment.
 #
 # Per-deployment configuration (set in inventory `vars:`):
 #   - alertmanager_healthchecks_deadmansswitch_url

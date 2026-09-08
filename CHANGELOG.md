@@ -67,6 +67,36 @@ against.
   block, which is what an operator reads while triaging, still claimed
   every informational rule routes there. No alert expression, label,
   route or served value changes.
+### Added
+
+- **ops:** the archival-node role gained a single-host Prometheus path
+  (`23-local-prometheus.yml`, gated on `run_local_prometheus`, default
+  false, tag `local-prometheus`), and both test nets turn it on. They had
+  been reporting `overall: degraded` at every check while every unit was
+  active: `/v1/status` derives background-service liveness from
+  `PrometheusStatusBackend.Heartbeats()`, neither net ran Prometheus, so
+  the query always errored, every declared service graded `unknown`, and
+  the roll-up degraded — permanently. The conservatism is correct; what
+  was missing was anything to scrape. `api.prometheus_url` already
+  pointed at `localhost:9090`, so nothing about the API changes and it
+  needs no restart. The path mirrors what r1 runs out-of-band (the distro
+  `prometheus` package, unit `prometheus.service`, localhost targets)
+  rather than the multi-host `roles/prometheus`, which asserts a
+  two-host `prometheus_pair` group and cannot run on one box.
+
+  The scrape list is DERIVED from the same `run_*` switches that decide
+  which services the host installs, never hardcoded: with
+  `run_aggregator: false` the test nets get no `stellarindex-aggregator`
+  target, because a target for a service that is not installed is the
+  same class of bug — and it would not even fail honestly, since
+  Prometheus stamps `up 0` at the scrape time of a failed scrape, so a
+  dead target reads as a fresh heartbeat. Retention is bounded on both
+  axes (7 d, 4 GB) and memory is capped by a systemd drop-in
+  (`MemoryHigh=768M`, `MemoryMax=1G`) so a monitoring daemon cannot
+  starve the 20 GB VMs it monitors. Alerting is deliberately out of
+  scope: `/v1/status` needs the scrape layer, and `Incidents()` reads the
+  `ALERTS` series Prometheus synthesizes for itself, so an empty rule set
+  answers "nothing firing" instead of erroring.
 
 ## [v0.65.0] — 2026-09-08
 
