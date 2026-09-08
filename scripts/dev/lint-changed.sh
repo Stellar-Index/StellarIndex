@@ -166,6 +166,7 @@ fi
 # ── Classification ──────────────────────────────────────────────────────────
 sh_files=(); test_scripts=(); go_files=(); go_dirs=(); wf_files=()
 mig_files=(); md_files=(); baseline_files=(); lake_files=(); parity=0; other=()
+rules_files=()
 
 add_unique() { # add_unique <value> — appends to go_dirs if absent
     local v="$1" d
@@ -193,6 +194,13 @@ for f in "${changed[@]}"; do
             wf_files+=("$f"); hit=1 ;;
         migrations/*.sql|*/migrations/*.sql) mig_files+=("$f"); hit=1 ;;
         scripts/ci/*.baseline|*/scripts/ci/*.baseline) baseline_files+=("$f"); hit=1 ;;
+        # Prometheus alert rules and their promtool fixtures. Scoped to these
+        # three directories on purpose: an unrelated *.yml must not drag in
+        # the monitoring suite.
+        configs/prometheus/rules.r1/*.yml|*/configs/prometheus/rules.r1/*.yml| \
+        deploy/monitoring/rules/*.yml|*/deploy/monitoring/rules/*.yml| \
+        deploy/monitoring/rule-tests/*.yml|*/deploy/monitoring/rule-tests/*.yml)
+            rules_files+=("$f"); hit=1 ;;
     esac
     case "$f" in
         scripts/dev/verify.sh|*/scripts/dev/verify.sh|.github/workflows/ci.yml|*/.github/workflows/ci.yml)
@@ -351,6 +359,29 @@ if [ "${#go_files[@]}" -gt 0 ]; then
     fi
     add_step "go vet" "${#go_dirs[@]} package(s)" go vet "${go_dirs[@]}"
     add_step "go build" "${#go_dirs[@]} package(s)" go build "${go_dirs[@]}"
+fi
+
+# 7b. Prometheus alert rules. A 16-file diff touching 14 rule YAMLs used to
+#     select exactly ONE lint here (lint-doc-links, for its two .md files):
+#     none of the six gates that actually judge such a diff was wired to the
+#     type, so the first thing to grade an alert-rule change was verify.sh.
+#     The four below cost about 2.1 s together, measured 2026-09-08:
+#     lint-rule-equivalence 0.11 s, lint-alerts-catalog 0.40 s,
+#     lint-runbook-annotations 0.41 s, lint-rule-structure 1.18 s.
+#     The other two are deferred by cost, not by relevance — see below.
+if [ "${#rules_files[@]}" -gt 0 ]; then
+    add_step "lint-rule-equivalence" "whole tree; ${#rules_files[@]} rule file(s) changed" \
+        go run ./scripts/ci/lint-rule-equivalence deploy/monitoring/rules configs/prometheus/rules.r1 scripts/ci/rule-equivalence.baseline
+    add_step "lint-alerts-catalog" "" python3 "$ci_dir/lint-alerts-catalog.py"
+    add_step "lint-runbook-annotations" "" python3 "$ci_dir/lint-runbook-annotations.py"
+    add_step "lint-rule-structure" "" python3 "$ci_dir/lint-rule-structure.py"
+    # Deferred on measured cost. Both are relevant to every rule change and
+    # both run in verify.sh; neither belongs in a pre-commit hook.
+    defer "lint-metric-refs" "${#rules_files[@]} rule file(s) changed; lint-metric-refs (90 s, whole tree) runs in scripts/dev/verify.sh"
+    # promtool is what catches a fixture still asserting an old severity —
+    # exactly the omission made in 132d8f8b0 — so the deferral is a real gap
+    # in this gate's reach, not a redundancy. Named so it is visible.
+    defer "monitoring-check" "${#rules_files[@]} rule file(s) changed; promtool rule tests (56 s alone, 146 s via make monitoring-check) run in scripts/dev/verify.sh — this is the gate that catches a stale exp_labels severity"
 fi
 
 # 8. Lake reads.

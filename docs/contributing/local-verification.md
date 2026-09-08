@@ -121,6 +121,7 @@ cheapest first.
 | `.github/workflows/*.yml` | `lint-actions-pinning` scoped; `actionlint`; `zizmor --offline` |
 | `migrations/*.sql` | `lint-migrations`, `lint-migration-immutability`, `lint-migration-commands`, `lint-migration-compat` |
 | `*.go`/`*.sql` naming a duplicate-bearing table | `lint-lake-dedup` |
+| `configs/prometheus/rules.r1/*.yml`, `deploy/monitoring/rules/*.yml`, `deploy/monitoring/rule-tests/*.yml` | `lint-rule-equivalence` (0.11 s), `lint-alerts-catalog` (0.40 s), `lint-runbook-annotations` (0.41 s), `lint-rule-structure` (1.18 s) — about 2.1 s together. `lint-metric-refs` (90 s) and the promtool rule tests (56 s alone, 146 s via `make monitoring-check`) are **deferred** to `scripts/dev/verify.sh` on cost. The promtool deferral is a real gap in this gate's reach, not a redundancy: promtool is what catches a fixture still asserting an old `exp_labels` severity, which is exactly the omission made in `132d8f8b0`. |
 | `scripts/dev/verify.sh`, `.github/workflows/ci.yml` | `check-verify-parity` |
 | `*.md` | `lint-doc-links` scoped to the changed files (link targets still resolve against the whole tree); `lint-docs` takes no file list and stays **deferred** to `scripts/dev/verify.sh` |
 
