@@ -164,5 +164,12 @@ gcp-key*.json
 /*.local.md
 /CLAUDE.md
 
+# Legal/privacy implementation planning. The repo is PUBLIC: a document that
+# works through what the terms and privacy notice should claim, and which
+# retention periods are still undecided, is deliberation rather than a
+# statement of what is deployed. Publishing a draft policy alongside the live
+# one invites someone to quote the wrong one back at us.
+/docs/operations/legal-privacy-implementation-plan.md
+
 # pnpm's per-project fallback store, created when the configured store is on another device.
 .pnpm-store/
