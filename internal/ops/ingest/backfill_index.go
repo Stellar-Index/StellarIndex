@@ -39,6 +39,15 @@ import (
 // backfillIndexPlan is the validated shape of a backfill-index invocation:
 // every flag resolved, parsed and checked, so the run loop below deals only
 // with the walk itself. Splitting it out is what keeps either half readable.
+// coingeckoHourlyChunkDays is the window width at or below which
+// CoinGecko serves hourly points instead of daily ones. It is the API's
+// own threshold, not a tunable of ours.
+const coingeckoHourlyChunkDays = 90
+
+// hourlyHistoryStart is the earliest date CoinGecko has hourly data for.
+// Daily history reaches back to 2013; hourly does not exist before this.
+var hourlyHistoryStart = time.Date(2018, time.January, 1, 0, 0, 0, 0, time.UTC)
+
 type backfillIndexPlan struct {
 	cfgPath       string
 	source        string
@@ -88,6 +97,21 @@ func parseBackfillIndexArgs(args []string) (backfillIndexPlan, error) {
 	if *chunkDays < 1 {
 		return plan, errors.New("backfill-index: -chunk-days must be at least 1")
 	}
+	// CoinGecko picks granularity from the window WIDTH and gives the
+	// caller no say: <=90 days returns hourly, wider returns daily. Hourly
+	// history only exists from 2018, so a pre-2018 window walked in
+	// <=90-day chunks asks for a series the API does not have and comes
+	// back EMPTY — no error, no warning, just zero rows. Refuse it here
+	// with the remedy rather than let the run look like a coverage gap in
+	// the source.
+	if from.Before(hourlyHistoryStart) && *chunkDays <= coingeckoHourlyChunkDays {
+		return plan, fmt.Errorf(
+			"backfill-index: -chunk-days %d over a window starting %s returns HOURLY data, "+
+				"which CoinGecko only has from %s — the request would return zero rows without an error. "+
+				"Pass -chunk-days greater than %d to get daily points",
+			*chunkDays, from.Format("2006-01-02"),
+			hourlyHistoryStart.Format("2006-01-02"), coingeckoHourlyChunkDays)
+	}
 	pair, err := canonical.ParsePair(*pairArg)
 	if err != nil {
 		return plan, fmt.Errorf("-pair: %w", err)
@@ -105,7 +129,11 @@ func BackfillIndex(args []string) error {
 	if err != nil {
 		return err
 	}
-	cfg, err := config.Load(plan.cfgPath)
+	// LoadWithEnv, never bare Load: r1 carries the real postgres
+	// credentials in STELLARINDEX_POSTGRES_DSN, and a bare Load ignores
+	// the override and falls back to the file's password-less DSN. That
+	// is the C3-14 bug class the archive commands already guard against.
+	cfg, err := config.LoadWithEnv(plan.cfgPath)
 	if err != nil {
 		return fmt.Errorf("config: %w", err)
 	}
