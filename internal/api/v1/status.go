@@ -749,6 +749,17 @@ const statusHeartbeatStaleAfter = 60 * time.Second
 // 200ms target and p99 2096ms against 500ms — both rendered in red
 // directly beneath the green banner. A status page that contradicts
 // its own panels is worse than no status page.
+// TICKET incidents are deliberately NOT an input, and the omission is worth
+// stating because the payload invites the question: `incidents.active_count`
+// sits in the same response as `overall`, so a reader can see "ok" beside 8
+// active incidents. Measured on r1 2026-09-08: overall ok, 30 ticket + 1
+// informational alerts firing, 0 page. That is the rule working — `page` is
+// the severity that means customers are affected, `ticket` means someone
+// should look during working hours — but it is one step from the S31 finding
+// above, where a green banner sat over red panels. If `overall` is ever meant
+// to reflect open tickets, that is a change to what "ok" PROMISES on a public
+// surface, not a tuning knob; it belongs in a decision, not a patch.
+//
 //   - "unknown": every service is unknown (or has a zero LastSeen).
 //     Distinct from "down" — we have no signal at all, rather than
 //     a definite negative one. F-0055: this branch was missing
