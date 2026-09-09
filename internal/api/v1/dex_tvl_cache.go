@@ -264,6 +264,31 @@ type tvlProtocolResult struct {
 	pools []DEXTVLPoolView
 }
 
+// dexTVLDerivation names one protocol this cache can compute a figure
+// for, paired with the refresh that computes it.
+type dexTVLDerivation struct {
+	name    string
+	refresh func(context.Context, *tvlValuer, time.Time) (*tvlProtocolResult, error)
+}
+
+// derivations is the CLOSED set of protocols the snapshot derives a TVL
+// figure for. Refresh walks it; nothing else may add to the snapshot.
+//
+// It is a method rather than an anonymous slice inside Refresh so the
+// scope guard (TestDEXTVLScope_PooledProtocolIsDerivedOrExplicitlyExcluded)
+// can ask which protocols HAVE a derivation without the list being
+// re-typed into a second place that rots. A pooled protocol that is not
+// in here must name itself in dexTVLScopeExclusions instead — the
+// headline may omit a protocol, never silently.
+func (c *DEXTVLCache) derivations() []dexTVLDerivation {
+	return []dexTVLDerivation{
+		{"soroswap", c.refreshSoroswap},
+		{"aquarius", c.refreshAquarius},
+		{"phoenix", c.refreshPhoenix},
+		{"comet", c.refreshComet},
+	}
+}
+
 // Refresh recomputes the snapshot. Per-protocol failures keep that
 // protocol's previous entry (a transient read hiccup shouldn't blank
 // a healthy figure) and are joined into the returned error for the
@@ -284,15 +309,7 @@ func (c *DEXTVLCache) Refresh(ctx context.Context) error {
 	var carried []string
 	carriedSet := map[string]bool{}
 
-	for _, p := range []struct {
-		name    string
-		refresh func(context.Context, *tvlValuer, time.Time) (*tvlProtocolResult, error)
-	}{
-		{"soroswap", c.refreshSoroswap},
-		{"aquarius", c.refreshAquarius},
-		{"phoenix", c.refreshPhoenix},
-		{"comet", c.refreshComet},
-	} {
+	for _, p := range c.derivations() {
 		if res, err := p.refresh(ctx, valuer, now); err != nil {
 			errs = append(errs, fmt.Errorf("%s tvl: %w", p.name, err))
 			if carryPrev(next, prev, p.name) {

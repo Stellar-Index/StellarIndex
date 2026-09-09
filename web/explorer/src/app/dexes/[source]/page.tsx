@@ -14,9 +14,15 @@ import { SourceVolumeHistory } from './SourceVolumeHistory';
 import { CURRENT_NETWORK } from '@/lib/networks';
 
 // Curated list of DEX sources with friendly names + audit links.
-// Mirrors the 5 cards on /dexes; per-DEX detail pages are
+// Mirrors the DEX cards on /dexes; per-DEX detail pages are
 // statically pre-rendered for these slugs only. New DEXes added
 // here automatically get a /dexes/<source> page.
+//
+// A Subclass=DEX source MISSING from this map is not a missing page but
+// a broken one: sitemap.ts emits /dexes/<name> for every subclass=dex
+// source it reads off /v1/sources, so the URL is published and then
+// 404s. scripts/ci/lint-protocol-registry-sync.sh §2 cross-checks this
+// map (and ALL_DEXES in DexesView) against the Go source registry.
 const DEX_INFO: Record<
   string,
   { name: string; type: string; status: string; contractsUrl?: string; blurb: string }
@@ -56,6 +62,13 @@ const DEX_INFO: Record<
     status: 'experimental',
     blurb:
       'Balancer-style multi-asset pool. Shared ("POOL", <event>) topic across every Comet pool contract.',
+  },
+  sushiswap_v3: {
+    name: 'SushiSwap V3',
+    type: 'Concentrated liquidity (Soroban)',
+    status: 'live',
+    blurb:
+      'Concentrated-liquidity AMM, factory-gated on a single pool factory. Each pool below is one V3 pool contract. Depth sits in per-position tick ranges rather than one two-sided reserve, so this venue carries no reserve or TVL figure — see the note under the table.',
   },
 };
 
@@ -156,6 +169,24 @@ export default async function SourceDetailPage({
             protocol analytics page
           </Link>
           ; the TVL stat above is derived from the same snapshots.
+        </p>
+      )}
+      {source === 'sushiswap_v3' && (
+        <p className="text-xs text-ink-muted">
+          No reserve or TVL figure is served for {info.name}, and that is a
+          methodology decision rather than a gap: a concentrated-liquidity pool
+          spreads its depth across per-position tick ranges, so the pool&apos;s
+          token balances are not a two-sided reserve and summing them would
+          answer a different question than the one asked. Running the
+          constant-product path over them anyway would put a meaningless number
+          on this page, so none is derived —{' '}
+          <code className="font-mono">/v1/protocols/sushiswap_v3/tvl</code>{' '}
+          says the same thing, and the venue is named in the{' '}
+          <Link href="/dexes" className="text-brand-600 hover:underline">
+            headline TVL
+          </Link>
+          &apos;s <code className="font-mono">excluded</code> list. Swap volume,
+          trades and pools above are complete.
         </p>
       )}
       {(source === 'phoenix' || source === 'comet') && (

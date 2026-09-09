@@ -33,7 +33,12 @@ That distinction is load-bearing for anyone reading these rows:
 - **Reserve-based TVL is wrong here.** A V3 pool's token balances say
   nothing about how much of that liquidity is in range. Stellar Index
   therefore derives **no** TVL for this source, rather than deriving a
-  number that would be quietly incorrect.
+  number that would be quietly incorrect. That decision is on the wire,
+  not just in this file: the source is named in `tvl_total.excluded` on
+  `GET /v1/protocols` with the reason, and `GET
+  /v1/protocols/sushiswap_v3/tvl` answers 404 with the same sentence.
+  It is never a zero. See
+  [methodology/dex-tvl.md](../methodology/dex-tvl.md).
 - **Reserve-based pricing is wrong here.** No price is computed from
   the pool state. Every trade row carries the two realised swap
   amounts, which are exact and need no curve model at all.
