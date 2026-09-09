@@ -93,6 +93,21 @@ against.
   every informational rule routes there. No alert expression, label,
   route or served value changes.
 
+### Changed
+
+- **ci(ansible-drift):** the weekly drift check reports what it found
+  where a person will see it. The verdict now renders a job summary
+  naming every task that would change on r1, the file that declares it
+  and the host path it would touch, and raises one
+  `::error file=…,line=…::` annotation per drifted task against the
+  role's `- name:` line — replacing a single unnamed "drift detected"
+  above ~1,800 lines of ansible stdout. An aborted preview is now its own
+  verdict: the gate reads `failed=` out of the `PLAY RECAP`, names the
+  task that errored, and states that the run's `changed=` count is a
+  prefix of the role rather than a result, so a truncated run can never
+  read as "codified = live". The verdict step also runs when the playbook
+  step fails, which is what makes that classification reachable.
+
 ### Added
 
 - **ops:** the archival-node role gained a single-host Prometheus path

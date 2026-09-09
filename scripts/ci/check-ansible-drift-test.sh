@@ -78,9 +78,10 @@ BASELINE_3='Ensure migrations dir exists on r1  # rsync rewrites the dir metadat
 Sync migrations from repo to r1  # archive-mode mtime compare against a fresh checkout
 Enable + start disable-thp service  # Type=oneshot without RemainAfterExit'
 
-# recap <n> — a PLAY RECAP banner + host line reporting changed=<n>.
+# recap <n> [<failed>] — a PLAY RECAP banner + host line reporting
+# changed=<n> and failed=<failed> (default 0).
 recap() {
-  printf 'PLAY RECAP *********************************************************************\nr1                         : ok=214  changed=%s   unreachable=0    failed=0    skipped=53   rescued=0    ignored=3\n' "$1"
+  printf 'PLAY RECAP *********************************************************************\nr1                         : ok=214  changed=%s   unreachable=0    failed=%s    skipped=53   rescued=0    ignored=3\n' "$1" "${2:-0}"
 }
 
 # task <name> <status> — one ansible task block.
@@ -210,6 +211,55 @@ run "$(
 )" '# just a comment
    # indented comment'
 expect 'comment-only baseline yields no allowance' 1 'Sync migrations from repo to r1'
+
+# ── 7. An ABORTED preview is not a verdict (#496) ────────────────────
+# A task that errors under `--check` is fatal, so ansible stops the play
+# and every task after it is never evaluated. Both the 2026-08-10 and
+# 2026-08-24 scheduled runs died this way on `Could not find the
+# requested service <unit>` — a unit the role installs that was new in
+# the repo and not yet on r1. The recap they left behind describes a
+# PREFIX of the role; reading its changed count as a result is the
+# mistake, so the gate must say so in those words.
+run "$(
+  task 'Apt update (cache max 1 h)' changed
+  printf 'TASK [archival-node : Enable + start verify-archive / completeness / supply-snapshot timers] ***\n'
+  printf 'failed: [r1] (item=census-rollup.timer) => {"ansible_loop_var": "item", "changed": false, "item": "census-rollup.timer", "msg": "Could not find the requested service census-rollup.timer: host"}\n\n'
+  recap 1 1
+)" 'Apt update (cache max 1 h)  # fixture'
+expect 'a task error aborts the preview → fails, not a verdict' 1 'ABORTED'
+expect 'the aborted preview names the failing task' 1 'Enable + start verify-archive / completeness / supply-snapshot timers'
+expect 'the aborted preview says the count is a prefix' 1 'PREFIX'
+
+# The abort verdict must win over the allowance: every changed task here
+# IS enumerated, and pre-fix that combination exited 0 — a truncated run
+# reading as "codified = live" is the worst outcome available.
+run "$(
+  task 'Sync migrations from repo to r1' changed
+  printf 'TASK [archival-node : Enable sla-probe.timer] ***\n'
+  printf 'fatal: [r1]: FAILED! => {"changed": false, "msg": "Could not find the requested service sla-probe.timer: host"}\n\n'
+  recap 1 1
+)" "$BASELINE_3"
+expect 'an abort is not cleared by a fully-enumerated changed set' 1 'ABORTED'
+
+# ── 8. The report names files, not just a count (#496) ───────────────
+# "r1 has unapplied changes" is unactionable; "these tasks would change,
+# and here is what they touch" is a 20-minute fix. The job summary is
+# where a person actually lands, so the drifted tasks must be there.
+SUMMARY_OUT="$TMP/summary.md"
+: > "$SUMMARY_OUT"
+printf '%s\n' "$(
+  printf 'TASK [archival-node : Install the Caddyfile] ***************\n'
+  printf -- '--- before: /etc/caddy/Caddyfile\n+++ after: /tmp/tmpXYZ/Caddyfile.j2\n@@ -1 +1 @@\n-# a\n+# b\n\n'
+  printf 'changed: [r1]\n\n'
+  recap 1
+)" > "$TMP/drift.out"
+printf '%s\n' "$BASELINE_3" > "$TMP/baseline"
+GITHUB_STEP_SUMMARY="$SUMMARY_OUT" ANSIBLE_DRIFT_BASELINE="$TMP/baseline" \
+  bash "$GATE" "$TMP/drift.out" >/dev/null 2>&1
+RC=$?
+OUT="$(cat "$SUMMARY_OUT")"
+expect 'the job summary names the drifted task' 1 'Install the Caddyfile'
+expect 'the job summary names the host path it would touch' 1 '/etc/caddy/Caddyfile'
 
 echo
 echo "check-ansible-drift-test: ${pass} passed, ${fail} failed"

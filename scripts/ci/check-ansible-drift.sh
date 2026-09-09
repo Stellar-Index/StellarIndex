@@ -62,6 +62,54 @@ cd "$(dirname "$0")/../.."
 BASELINE="${ANSIBLE_DRIFT_BASELINE:-scripts/ci/ansible-drift.baseline}"
 RUNBOOK="docs/operations/r1-ansible-drift-2026-07-03.md"
 
+# ── The report (#496) ────────────────────────────────────────────────
+# A weekly check that reliably finds something and is reliably ignored
+# is worse than none: it teaches everyone to skip the notification. The
+# verdict below therefore renders into the run's JOB SUMMARY — the page
+# a person actually lands on — and NAMES the tasks and the host paths
+# that would change. "r1 has unapplied changes" is unactionable; "these
+# six tasks would change, here are their files" was a twenty-minute fix
+# on 2026-09-08.
+#
+# Every drifted task also gets its own `::error file=…,line=…::`
+# annotation, resolved back to the `- name:` line in the role, so the
+# finding is attached to the code rather than buried in ~1,800 lines of
+# ansible stdout.
+#
+# Unset GITHUB_STEP_SUMMARY (a local run, the fixture tests) writes no
+# summary and changes nothing else.
+SUMMARY_FILE="${GITHUB_STEP_SUMMARY:-}"
+summary() {
+  [ -n "$SUMMARY_FILE" ] || return 0
+  printf '%s\n' "$*" >> "$SUMMARY_FILE"
+}
+
+# where_defined <task name> → "<path>:<line>" for the `- name:` that
+# declares it, or empty. Literal match (task names carry em dashes,
+# slashes and plus signs), then an exact compare on the stripped line so
+# `Install X` does not match `Install X units`.
+where_defined() {
+  local needle="$1" hit
+  while IFS= read -r hit; do
+    [ -z "$hit" ] && continue
+    local path line text
+    path="${hit%%:*}"
+    line="${hit#*:}"
+    line="${line%%:*}"
+    text="${hit#"$path":"$line":}"
+    # strip leading whitespace + the list dash
+    text="${text#"${text%%[![:space:]]*}"}"
+    text="${text#- }"
+    text="${text#name: }"
+    text="${text%"${text##*[![:space:]]}"}"
+    if [ "$text" = "$needle" ]; then
+      printf '%s:%s\n' "$path" "$line"
+      return 0
+    fi
+  done < <(grep -rnF -- "name: $needle" configs/ansible 2>/dev/null || true)
+  return 0
+}
+
 if [ "$#" -ne 1 ]; then
   echo "usage: check-ansible-drift.sh <ansible --check --diff output file>" >&2
   exit 2
@@ -70,6 +118,10 @@ DRIFT_OUT="$1"
 
 if [ ! -s "$DRIFT_OUT" ]; then
   echo "ansible-drift ❌ dry-run output '$DRIFT_OUT' is missing or empty — the playbook never produced output. This is NOT a drift signal." >&2
+  summary "## ansible-drift ❌ no dry-run output"
+  summary ""
+  summary "\`$DRIFT_OUT\` is missing or empty — the playbook never produced output."
+  summary "This is **not** a drift signal: look at the playbook step above."
   exit 1
 fi
 if [ ! -f "$BASELINE" ]; then
@@ -81,7 +133,8 @@ fi
 # One entry per line: `<task name>  # <reason>`. The reason is required.
 allowed_file="$(mktemp)"
 changed_file="$(mktemp)"
-trap 'rm -f "$allowed_file" "$changed_file"' EXIT
+detail_file="$(mktemp)"
+trap 'rm -f "$allowed_file" "$changed_file" "$detail_file"' EXIT
 
 bad_entry=0
 while IFS= read -r line; do
@@ -124,16 +177,29 @@ ansible-drift ❌ ansible produced no PLAY RECAP — the dry-run failed
 (invalid vault password, unreachable host, or a task error). See the
 "Dry-run the playbook against r1" step above. This is NOT a drift signal.
 EOF
+  summary "## ansible-drift ❌ no PLAY RECAP"
+  summary ""
+  summary "The dry-run never finished — invalid vault password, unreachable host,"
+  summary "or a task error. **This is not a drift verdict**; read the playbook step."
   exit 1
 fi
 
 recap_changed=0
+recap_failed=0
 while IFS= read -r line; do
   [ -z "$line" ] && continue
   # sigpipe-ok: the producer is a printf of ONE PLAY RECAP line, so grep -oE
   # emits at most a handful of `changed=N` tokens — bytes, not kilobytes.
   n="$(printf '%s' "$line" | grep -oE 'changed=[0-9]+' | head -1 | cut -d= -f2)"
   recap_changed=$((recap_changed + ${n:-0}))
+  # Parameter expansion, no pipeline: one recap line carries at most one
+  # `failed=` token, and this avoids another early-exit consumer under
+  # pipefail (scripts/ci/lint-shell-sigpipe.sh).
+  f=0
+  case "$line" in
+    *failed=*) f="${line##*failed=}"; f="${f%%[!0-9]*}" ;;
+  esac
+  recap_failed=$((recap_failed + ${f:-0}))
 done <<EOF
 $recap_lines
 EOF
@@ -161,7 +227,112 @@ awk '
 
 parsed_count="$(wc -l < "$changed_file" | tr -d ' ')"
 
+# ── What each changed task would touch ───────────────────────────────
+# `--diff` prints `--- before: <host path>` for a file it would rewrite,
+# and `(item=<unit>)` for a loop. Both answer "which file?", which is the
+# half of the report that makes a finding actionable rather than a count.
+awk '
+  /^TASK \[/ || /^RUNNING HANDLER \[/ {
+    name = $0
+    sub(/^[^[]*\[/, "", name)
+    sub(/\][[:space:]]*\**[[:space:]]*$/, "", name)
+    sub(/^[A-Za-z0-9_.\/-]+ : /, "", name)
+    task = name
+    next
+  }
+  /^PLAY RECAP/ { task = ""; next }
+  /^--- before: / {
+    if (task != "") {
+      p = substr($0, 13)
+      if (!index(paths[task], p)) paths[task] = paths[task] (paths[task] == "" ? "" : ", ") p
+    }
+    next
+  }
+  /^changed: \[/ {
+    if (task == "") next
+    it = ""
+    if (match($0, /\(item=[^)]*\)/)) it = substr($0, RSTART + 6, RLENGTH - 7)
+    if (it != "") items[task] = items[task] (items[task] == "" ? "" : ", ") it
+    hit[task] = 1
+  }
+  END {
+    for (t in hit) {
+      d = paths[t]
+      if (items[t] != "") d = d (d == "" ? "" : "; ") "items: " items[t]
+      if (d != "") printf "%s\t%s\n", t, d
+    }
+  }
+' "$DRIFT_OUT" > "$detail_file"
+
+# detail_for <task> → the host paths / loop items that task would touch.
+detail_for() {
+  awk -F'\t' -v t="$1" '$1 == t { print $2; exit }' "$detail_file"
+}
+
 echo "ansible-drift: PLAY RECAP reports changed=$recap_changed; parsed $parsed_count changed task block(s); $allowed_count enumerated allowance(s)."
+
+# 1b — an ABORTED preview. A task that errors under `--check` is fatal,
+# so ansible stops the play and every task after it is never evaluated:
+# the run reports a recap, but that recap describes a PREFIX of the role,
+# not the role. This is what the weekly run hit on 2026-08-10 (ok=192,
+# census-rollup.timer) and 2026-08-24 (ok=117, sla-probe.timer) — in both
+# cases the drift the run existed to report sat in the tasks that never
+# ran. Fail with the failing task NAMED, and never let a truncated pass
+# read as "codified = live".
+if [ "$recap_failed" -gt 0 ]; then
+  failing="$(awk '
+    /^TASK \[/ || /^RUNNING HANDLER \[/ {
+      name = $0
+      sub(/^[^[]*\[/, "", name); sub(/\][[:space:]]*\**[[:space:]]*$/, "", name)
+      sub(/^[A-Za-z0-9_.\/-]+ : /, "", name)
+      task = name; next
+    }
+    /^fatal: \[/ || /^failed: \[/ {
+      if (task == "" || done[task]) next
+      done[task] = 1
+      msg = ""
+      if (match($0, /"msg": "[^"]*"/)) msg = substr($0, RSTART + 8, RLENGTH - 9)
+      printf "%s\t%s\n", task, msg
+    }
+  ' "$DRIFT_OUT")"
+  {
+    echo "::error::ansible-drift: the dry-run ABORTED — $recap_failed task(s) errored, so this run covered only the tasks BEFORE the failure and its changed=$recap_changed is a PREFIX, not a verdict."
+    if [ -n "$failing" ]; then
+      echo "failed task(s):"
+      printf '%s\n' "$failing" | while IFS="$(printf '\t')" read -r t m; do
+        loc="$(where_defined "$t")"
+        echo "  ✗ ${t}${loc:+  (${loc})}${m:+ — ${m}}"
+        if [ -n "$loc" ]; then
+          echo "::error file=${loc%%:*},line=${loc##*:}::ansible-drift: this task errored under --check and aborted the preview${m:+ — $m}"
+        fi
+      done
+    fi
+    cat <<EOF
+
+"Could not find the requested service <unit>" means the unit is INSTALLED
+BY THIS ROLE and is not on the host yet: --check never really wrote it.
+That is drift AND a broken preview. Guard the enable/start with the
+CHECK-MODE UNIT GUARD rule in
+configs/ansible/roles/archival-node/tasks/main.yml, and apply the role so
+the unit actually lands.
+EOF
+  } >&2
+  summary "## ansible-drift ❌ preview aborted — this is not a verdict"
+  summary ""
+  summary "\`$recap_failed\` task(s) errored under \`--check\`, so ansible stopped the play."
+  summary "Everything after the failure was never evaluated: \`changed=$recap_changed\` is a **prefix**, not a result."
+  summary ""
+  if [ -n "$failing" ]; then
+    summary "| failed task | where | message |"
+    summary "| --- | --- | --- |"
+    printf '%s\n' "$failing" | while IFS="$(printf '\t')" read -r t m; do
+      summary "| \`$t\` | \`$(where_defined "$t")\` | $m |"
+    done
+    summary ""
+  fi
+  summary "See the CHECK-MODE UNIT GUARD rule in \`configs/ansible/roles/archival-node/tasks/main.yml\`."
+  exit 1
+fi
 
 # 2 + 3 — the anti-vacuity guards. A callback/format change that makes
 # the parser silently see nothing must fail, not report "no drift".
@@ -175,11 +346,19 @@ sets stdout_callback=default, result_format=yaml) no longer matches what this
 script parses, or the play ran against more than one host. Fix the parser —
 do not raise an allowance to make this pass.
 EOF
+  summary "## ansible-drift ❌ parser/recap disagree"
+  summary ""
+  summary "PLAY RECAP says \`changed=$recap_changed\` but \`$parsed_count\` changed task block(s) parsed."
+  summary "Ansible's stdout format no longer matches this gate's parser. **This is not a drift verdict** — fix the parser, do not widen the allowance."
   exit 1
 fi
 
 if [ "$recap_changed" -eq 0 ]; then
   echo "ansible-drift ✅ codified = live (changed=0)."
+  summary "## ansible-drift ✅ codified = live"
+  summary ""
+  summary "The \`--check --diff\` pass of \`archival-node\` against r1 reported \`changed=0\`."
+  summary "Every task the role owns is already in the state the repo declares."
   exit 0
 fi
 
@@ -205,6 +384,36 @@ so the widening is reviewable. Do NOT add a task that is merely
 "repo-ahead-of-r1" — that is drift, and applying the playbook is the fix.
 EOF
   } >&2
+
+  # One annotation per drifted task, pinned to its `- name:` line, so the
+  # finding is attached to the code instead of ending up as a single
+  # unnamed "drift detected" line above ~1,800 lines of ansible stdout.
+  drift_count="$(printf '%s\n' "$unexpected" | grep -c . || true)"
+  summary "## ansible-drift ❌ $drift_count task(s) would change on r1"
+  summary ""
+  summary "\`--check --diff\` of \`archival-node\` against r1. Each row is a task whose"
+  summary "live state does not match the repo — either r1 needs the playbook applied,"
+  summary "or a hand fix on r1 needs codifying (see \`$RUNBOOK\`)."
+  summary ""
+  summary "| task | declared in | would touch |"
+  summary "| --- | --- | --- |"
+  while IFS= read -r t; do
+    [ -z "$t" ] && continue
+    loc="$(where_defined "$t")"
+    det="$(detail_for "$t")"
+    summary "| \`$t\` | \`${loc:-—}\` | ${det:-—} |"
+    if [ -n "$loc" ]; then
+      echo "::error file=${loc%%:*},line=${loc##*:}::ansible-drift: this task would change on r1 — codified ≠ live${det:+ ($det)}" >&2
+    else
+      echo "::error::ansible-drift: '$t' would change on r1 — codified ≠ live${det:+ ($det)}" >&2
+    fi
+  done <<EOF
+$unexpected
+EOF
+  summary ""
+  summary "**Fix:** apply the playbook (\`workflow_dispatch\` with \`apply=true\`), or codify the hand fix."
+  summary "A genuinely non-idempotent task belongs in \`$BASELINE\` with a reason and a"
+  summary "\`Baseline-Growth:\` commit trailer — a repo-ahead-of-r1 task does **not**."
   exit 1
 fi
 
@@ -213,6 +422,9 @@ fi
 # if the parser ever de-duplicates something the recap counts twice.
 if [ "$recap_changed" -gt "$allowed_count" ]; then
   echo "::error::ansible drift detected — changed=$recap_changed exceeds the $allowed_count enumerated allowance(s) in $BASELINE." >&2
+  summary "## ansible-drift ❌ more changed tasks than allowances"
+  summary ""
+  summary "\`changed=$recap_changed\` exceeds the \`$allowed_count\` enumerated allowance(s) in \`$BASELINE\`."
   exit 1
 fi
 
@@ -225,3 +437,24 @@ if [ -n "$stale" ]; then
 fi
 
 echo "ansible-drift ✅ every changed task is enumerated in $BASELINE."
+summary "## ansible-drift ✅ every changed task is enumerated"
+summary ""
+summary "\`changed=$recap_changed\`, and every one of them is a named, reasoned entry in"
+summary "\`$BASELINE\` — no unexplained drift on r1."
+summary ""
+summary "| task reporting changed | declared in | would touch |"
+summary "| --- | --- | --- |"
+while IFS= read -r t; do
+  [ -z "$t" ] && continue
+  summary "| \`$t\` | \`$(where_defined "$t")\` | $(detail_for "$t") |"
+done < <(sort -u "$changed_file")
+if [ -n "$stale" ]; then
+  summary ""
+  summary "Allowance(s) that did **not** fire this run — retire them if they have become idempotent:"
+  while IFS= read -r t; do
+    [ -z "$t" ] && continue
+    summary "- \`$t\`"
+  done <<EOF
+$stale
+EOF
+fi
