@@ -293,6 +293,150 @@ SQL
 expect_msg "AS-clone of an undeclared base reports drift" \
   "not declared" "$tmp/alias_orphan.sql" "$tmp/alias_orphan_live.sql"
 
+# ─── how the check FINDS the repo's intent (2026-09-09) ─────────────
+# Every case above hands the checker an explicit INTENT, so the branch
+# that runs when nothing sets one was never exercised — and it shipped
+# broken. That branch is not a corner: it is the by-hand shape
+# ch-schema-restore.md documents ("Run it by hand: ch-schema-drift.sh"),
+# the first thing an operator types when the unit goes red.
+#
+# Installed standalone at /usr/local/bin, the checkout-relative default
+# `dirname/../../../../..` does not fail — it CLAMPS at `/`, so the check
+# refused itself with
+#
+#   ch-schema-drift: repo intent //deploy/clickhouse/tier1_schema.sql is
+#   not readable — nothing to compare against
+#
+# a double-slashed path that cannot exist on any host. It reads as schema
+# drift and is a broken check, and while it stood the testnet had NO
+# ClickHouse schema-drift coverage at all. Reproducing it needs a copy of
+# the script OUTSIDE any checkout, which is what the fixture below is.
+
+fake_bin="$tmp/opt/bin"
+fake_share="$tmp/opt/share"
+mkdir -p "$fake_bin" "$fake_share"
+cp "$drift" "$fake_bin/ch-schema-drift.sh"
+installed="$fake_bin/ch-schema-drift.sh"
+
+# The host-side copy the role's "Ship the repo's Tier-1 lake DDL as the
+# drift check's intent side" task installs. It carries one table the live
+# fixture does not, so a run that reports THAT table can only have read
+# THIS file — provenance, not merely "something got compared".
+shipped="$fake_share/tier1_schema.sql"
+cp "$tmp/intent.sql" "$shipped"
+cat >> "$shipped" <<'SQL'
+
+CREATE TABLE IF NOT EXISTS stellar.shipped_copy_probe
+(
+    probe String
+)
+ENGINE = MergeTree
+ORDER BY probe;
+SQL
+
+# The same shipped copy without the probe, for the clean case.
+shipped_clean="$fake_share/tier1_schema_clean.sql"
+cp "$tmp/intent.sql" "$shipped_clean"
+
+ok()  { pass=$((pass + 1)); echo "ok   — $1"; }
+bad() { fail=$((fail + 1)); echo "FAIL — $1"; indent "$2"; }
+
+# by_hand <installed-intent> <live> — the installed script with INTENT
+# genuinely ABSENT from the environment (`env -u`, not the empty string),
+# which is what a bare `ch-schema-drift.sh` on a host actually gets.
+by_hand() {
+  env -u INTENT INSTALLED_INTENT="$1" LIVE_SCHEMA="$2" TEXTFILE_DIR=/dev/null \
+    bash "$installed" 2>&1
+}
+
+name="installed + no INTENT: falls back to the shipped copy and really compares"
+out="$(by_hand "$shipped_clean" "$tmp/live-ok.sql")"; rc=$?
+if [[ "$rc" -eq 0 ]] && grep -qF -- "compared 3 declared table(s)" <<<"$out"; then
+  ok "$name (rc=0, compared 3)"
+else
+  bad "$name: rc=$rc want 0, and output must say 'compared 3 declared table(s)'" "$out"
+fi
+
+name="installed + no INTENT: the compared file IS the shipped copy"
+out="$(by_hand "$shipped" "$tmp/live-ok.sql")"; rc=$?
+if [[ "$rc" -eq 1 ]] \
+  && grep -qF -- "DRIFT shipped_copy_probe" <<<"$out" \
+  && grep -qF -- "compared 4 declared table(s)" <<<"$out"; then
+  ok "$name (rc=1, named the table only that file declares)"
+else
+  bad "$name: rc=$rc want 1, naming 'DRIFT shipped_copy_probe' over 4 compared tables" "$out"
+fi
+
+name="installed + no INTENT + nothing shipped: refuses, and never builds a //path"
+out="$(by_hand "$fake_share/never-shipped.sql" "$tmp/live-ok.sql")"; rc=$?
+if [[ "$rc" -eq 2 ]] \
+  && grep -qF -- "no repo intent to compare against" <<<"$out" \
+  && grep -qF -- "$fake_share/never-shipped.sql" <<<"$out" \
+  && ! grep -qF -- "//deploy/clickhouse" <<<"$out" \
+  && ! grep -qF -- "compared " <<<"$out"; then
+  ok "$name (rc=2, names every candidate tried)"
+else
+  bad "$name: rc=$rc want 2, must name the candidate it tried and must not print '//deploy/clickhouse' or compare anything" "$out"
+fi
+
+# The refusal must stay a refusal. An INTENT the operator set explicitly
+# and that cannot be read is a HARD STOP — silently comparing against the
+# shipped copy instead would answer a question nobody asked, and would be
+# the "check that cannot find its reference passes anyway" failure this
+# whole script exists to prevent.
+name="explicit but unreadable INTENT still exits 2, never falls back"
+out="$(INTENT="$tmp/typo-tier1.sql" INSTALLED_INTENT="$shipped_clean" \
+       LIVE_SCHEMA="$tmp/live-ok.sql" TEXTFILE_DIR=/dev/null \
+       bash "$installed" 2>&1)"; rc=$?
+if [[ "$rc" -eq 2 ]] \
+  && grep -qF -- "is not readable" <<<"$out" \
+  && ! grep -qF -- "compared " <<<"$out"; then
+  ok "$name (rc=2)"
+else
+  bad "$name: rc=$rc want 2 with 'is not readable' and no comparison" "$out"
+fi
+
+# ─── the shipped-copy path is written in four places ────────────────
+# The script's fallback, the role default, the unit's Environment= and
+# the copy task's dest must name the SAME file. Three of the four already
+# agreed on 2026-09-09 and the script did not, which is exactly how the
+# by-hand run ended up reading a path no host has. Pinned rather than
+# trusted: these four live in four different files and nothing else
+# compares them.
+defaults_yml="$here/../defaults/main.yml"
+unit_j2="$here/../templates/systemd/ch-schema-drift.service.j2"
+ship_task="$here/../tasks/18-pgbackrest-backup.yml"
+
+# jinja_default <file> — the literal inside `default('…')` on the line
+# that reads ch_schema_drift_intent. Anchored on the variable name so a
+# neighbouring default() for something else cannot be picked up.
+jinja_default() {
+  sed -n "s/.*ch_schema_drift_intent | default('\([^']*\)').*/\1/p" "$1"
+}
+
+# The `${INSTALLED_INTENT:-…}` default, matched as text. Spelled without
+# the literal `${` so shellcheck does not read a deliberately-inert
+# pattern as a botched expansion (SC2016); an empty capture fails the
+# assertion below, so a rename cannot make this quietly stop looking.
+script_path="$(sed -n 's/^INSTALLED_INTENT=.*:-\(.*\)}"$/\1/p' "$drift")"
+role_path="$(sed -n 's/^ch_schema_drift_intent:[[:space:]]*"\(.*\)"[[:space:]]*$/\1/p' "$defaults_yml")"
+unit_path="$(jinja_default "$unit_j2")"
+ship_path="$(jinja_default "$ship_task")"
+
+name="the shipped-intent path agrees across script, role default, unit and copy task"
+if [[ -n "$script_path" && "$script_path" != *$'\n'* \
+   && "$role_path"   == "$script_path" \
+   && "$unit_path"   == "$script_path" \
+   && "$ship_path"   == "$script_path" ]]; then
+  ok "$name ($script_path)"
+else
+  bad "$name" \
+"ch-schema-drift.sh INSTALLED_INTENT : ${script_path:-<not found>}
+defaults/main.yml                   : ${role_path:-<not found>}
+ch-schema-drift.service.j2          : ${unit_path:-<not found>}
+18-pgbackrest-backup.yml dest       : ${ship_path:-<not found>}"
+fi
+
 echo
 echo "ch-schema-drift-test: $pass passed, $fail failed"
 [[ "$fail" -eq 0 ]]

@@ -62,6 +62,11 @@
 #   LIVE=1 ch-schema-drift.sh                # query ClickHouse directly
 #   LIVE_SCHEMA=/path/schema.sql ch-schema-drift.sh   # an explicit capture
 #
+# The intent side resolves from $INTENT, else the copy the archival-node
+# role ships to the host, else this checkout — see the block below the
+# variable defaults. A bare `ch-schema-drift.sh` on a host therefore
+# compares against the shipped copy; it does not need an environment.
+#
 # Exit code:
 #   0  no drift
 #   1  DRIFT — live differs from tier1_schema.sql on a compared attribute
@@ -74,13 +79,17 @@ set -uo pipefail
 # textfile-collector emitters and where scripts/ci/lint-metric-refs.sh
 # looks for the producer of a stellarindex_* metric named in an alert
 # rule (EMITTER_PATHS) — a .prom emitter outside those paths reads as a
-# dead alert reference to that linter. The repo root is five levels up
-# when run from a checkout; on r1 the script is installed standalone and
-# INTENT is set explicitly by the systemd unit, so this is only the
-# from-a-checkout default.
-repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../../.." && pwd)"
+# dead alert reference to that linter.
+#
+# INSTALLED_INTENT is where 18-pgbackrest-backup.yml's "Ship the repo's
+# Tier-1 lake DDL as the drift check's intent side" puts the founding DDL
+# on a host. It must stay equal to that task's dest, to the role's
+# ch_schema_drift_intent default (defaults/main.yml) and to the unit
+# template's fallback — ch-schema-drift-test.sh pins all four, because
+# these four copies of one path drifting apart is the whole bug.
+INSTALLED_INTENT="${INSTALLED_INTENT:-/usr/local/share/stellarindex/tier1_schema.sql}"
 
-INTENT="${INTENT:-$repo_root/deploy/clickhouse/tier1_schema.sql}"
+INTENT="${INTENT:-}"
 SNAPSHOT_DIR="${SNAPSHOT_DIR:-/var/lib/stellarindex/ch-schema-snapshot}"
 LIVE_SCHEMA="${LIVE_SCHEMA:-}"
 LIVE="${LIVE:-0}"
@@ -90,6 +99,52 @@ TEXTFILE_DIR="${TEXTFILE_DIR:-/var/lib/node_exporter/textfile_collector}"
 
 note() { echo "ch-schema-drift: $*" >&2; }
 ch() { curl -sSf --max-time 120 "$CH_HTTP" --data-binary "$1"; }
+
+# ─── where the repo's intent comes from ─────────────────────────────
+# Three candidates, tried in this order:
+#
+#   1. $INTENT — set by ch-schema-drift.service (Environment=INTENT=,
+#      rendered from the role's ch_schema_drift_intent), or by an
+#      operator aiming the check at one specific file. An explicit INTENT
+#      that cannot be read is a HARD STOP below, never quietly replaced
+#      by a fallback: a typo'd path must not silently compare against
+#      something the operator did not name.
+#   2. the copy the role SHIPS to the host. Neither r1 nor the test nets
+#      have a checkout — that is why the role ships the DDL at all — but
+#      until 2026-09-09 this script was the one link in that chain that
+#      did not know the path, so the by-hand run ch-schema-restore.md
+#      documents ("ch-schema-drift.sh", no environment) never found it.
+#   3. this checkout: the role's files/ dir is five levels below the repo
+#      root. Installed standalone at /usr/local/bin that arithmetic does
+#      not fail, it CLAMPS — `cd /usr/local/bin/../../../../..` is `/` —
+#      so INTENT became the literal `//deploy/clickhouse/tier1_schema.sql`
+#      the 2026-09-09 testnet triage printed, a path that cannot exist. A
+#      repo root is never `/`, so `/` means "not a checkout", and the
+#      candidate is offered only when the file is genuinely there.
+#
+# When none resolves, REFUSE (exit 2) and name every path tried. "Could
+# not check" must never read as "checked, and fine" — that equivalence is
+# what ADR-0043 exists to break — but the refusal has to say enough that
+# the operator can close it in one step instead of re-deriving this.
+checkout_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../../.." 2>/dev/null && pwd)"
+[[ "$checkout_root" == "/" ]] && checkout_root=""
+checkout_intent="${checkout_root:+$checkout_root/deploy/clickhouse/tier1_schema.sql}"
+
+if [[ -z "$INTENT" ]]; then
+  if [[ -r "$INSTALLED_INTENT" ]]; then
+    INTENT="$INSTALLED_INTENT"
+  elif [[ -n "$checkout_intent" && -r "$checkout_intent" ]]; then
+    INTENT="$checkout_intent"
+  else
+    note "no repo intent to compare against — INTENT is unset and no candidate is readable:"
+    note "    shipped copy   $INSTALLED_INTENT"
+    note "    this checkout  ${checkout_intent:-(not running from a checkout)}"
+    note "Re-apply the archival-node role (its \"Ship the repo's Tier-1 lake DDL\""
+    note "task installs the shipped copy), or set INTENT to a readable copy of"
+    note "deploy/clickhouse/tier1_schema.sql. See docs/operations/runbooks/ch-schema-restore.md."
+    exit 2
+  fi
+fi
 
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
