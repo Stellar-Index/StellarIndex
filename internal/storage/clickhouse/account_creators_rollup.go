@@ -151,6 +151,13 @@ const creatorsP23ArmSettings = boundedScanSettings +
 // population: about 150 bytes per distinct pair, so the 8 GiB budget is
 // reached near 55 M pairs against today's 21 M.
 //
+// The per-edge `creations` count INHERITS the one-leg-per-op assumption
+// documented on the post-P23 arm below: a second `sent` transfer leg for
+// one creation would double it, silently, the same way it would double
+// the board's accounts_created. The EDGE itself is robust to that — the
+// pair is still (creator, created) — so a graph traversal stays correct
+// even where the weight would not be. Same detector, same fix.
+//
 // optimize_aggregation_in_order exploits the working table's ORDER BY
 // (creator, ledger, created), whose leading key is this aggregation's
 // leading group key. The execution cap is the board's 1800 s rather than
