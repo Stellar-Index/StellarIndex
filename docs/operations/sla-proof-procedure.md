@@ -1,9 +1,10 @@
 ---
 title: SLA proof procedure (Task #77)
-last_verified: 2026-05-03
+last_verified: 2026-09-09
 status: ratified
 related:
   - test/load/scenarios/06-mixed-realistic.js
+  - scripts/ci/render-sla-proof.sh
   - docs/architecture/k6-load-tests-design-note.md §"How the proof report (#77) is generated"
   - docs/architecture/launch-readiness-backlog.md L5.* / L6.*
 ---
@@ -16,6 +17,20 @@ demands. The output of this procedure is a checked-in markdown
 file at `docs/operations/sla-proof-<YYYY-MM-DD>.md` with PASS /
 FAIL against each SLO threshold from
 [ADR-0009 `multi-window SLO`](../adr/0009-latency-budget.md).
+
+> **The report is generated, not written** (#378, 2026-09-09).
+> [`scripts/ci/render-sla-proof.sh`](../../scripts/ci/render-sla-proof.sh)
+> renders it from the k6 `--summary-export`, and
+> [`k6-weekly.yml`](../../.github/workflows/k6-weekly.yml) runs the
+> renderer and commits the result every Sunday. There is nothing to
+> transcribe by hand, and hand-editing a generated report is how a
+> number ends up in the tree that no export backs.
+>
+> **One thing is blocked on an operator and nothing else is:** the
+> repo secrets `K6_TARGET_STAGING` + `STELLARINDEX_LOAD_API_KEY`
+> are unset, so there is no target to measure. Until they exist the
+> weekly run correctly goes red and files an `sla-evidence` issue.
+> See [§Blocked on an operator](#blocked-on-an-operator).
 
 The k6 scenarios themselves are
 [Task #74](../architecture/launch-readiness-backlog.md) and live at
@@ -60,88 +75,103 @@ Before kicking off the run:
 
 ## Run
 
+Normally you do not run this by hand at all — `k6-weekly.yml`
+does, every Sunday at 02:00 UTC, and commits the report. Run it
+manually only for an off-cadence proof (a pre-launch or
+post-incident one). Two ways, and they produce the same file:
+
+**Dispatch the workflow** (preferred — it already knows the
+provenance):
+
 ```sh
-# Required env vars:
+gh workflow run k6-weekly.yml
+# optionally: -f scenario=06-mixed-realistic.js
+```
+
+**Or locally**, which is the only path when the run must happen
+from somewhere the runner cannot reach:
+
+```sh
 export K6_TARGET=https://api.staging.stellarindex.io/v1
 export STELLARINDEX_LOAD_API_KEY="<paste from vault — load-test key, not a production key>"
 
-# Optional — override the Prometheus output target if you want
-# the run isolated from the regular metrics stack:
-# export PROM_OUT=experimental-prometheus-rw
-
+started_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 # The canonical proof run (~13 min total: 30s ramp + 2m ramp +
-# 10m soak + 30s drain):
-make test-load-mixed
+# 10m soak + 30s drain). --summary-trend-stats is NOT optional:
+# k6 omits p(99) from its default export, and ADR-0009 claims
+# both p95 ≤ 200 ms AND p99 ≤ 500 ms, so an export taken without
+# it produces evidence for half the claim. The renderer refuses
+# such an export rather than emitting a report with "n/a" in it.
+k6 run \
+  --summary-export summary.json \
+  --summary-trend-stats 'avg,min,med,max,p(90),p(95),p(99)' \
+  test/load/scenarios/06-mixed-realistic.js
+ended_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+SLA_PROOF_TARGET="$K6_TARGET" \
+SLA_PROOF_SCENARIO=test/load/scenarios/06-mixed-realistic.js \
+SLA_PROOF_K6_VERSION="$(k6 version)" \
+SLA_PROOF_COMMIT="$(git rev-parse HEAD)" \
+SLA_PROOF_STARTED_AT="$started_at" \
+SLA_PROOF_ENDED_AT="$ended_at" \
+  scripts/ci/render-sla-proof.sh --summary summary.json
 ```
 
-Note the **start UTC** + **end UTC** of the run. The Grafana
-panel queries below use this window.
+The renderer writes
+`docs/operations/sla-proof-<end-date>.md` and prints the path.
+Commit it; that committed file is the deliverable, and it is the
+only thing
+[`check-sla-evidence.sh`](../../scripts/ci/check-sla-evidence.sh)
+counts as evidence.
 
-## Capture the artefacts
+`make test-load-mixed` still exists and is the right target for
+an exploratory run, but it takes no `--summary-export`, so its
+output cannot become a proof report.
 
-### 1. Grafana snapshot
+### What the renderer refuses
 
-Open the load-proof dashboard:
-`https://grafana.staging.stellarindex.io/d/load-proof/k6-load-proof?from=<start>&to=<end>`.
+It exits 2 and writes **nothing** when the run cannot support a
+labelled claim. Each refusal is a real failure mode, not a
+formality:
 
-Click **Share → Snapshot → External (Internet)** to mint a
-public snapshot URL. **Mint with no expiry**; the link goes into
-the markdown report and needs to outlive the dashboard.
+| Refusal | Why |
+| --- | --- |
+| A provenance variable is unset | A number with no target, window, method, scenario, commit or instrument attached proves nothing. |
+| The export has no `p(99)` | k6's default trend stats omit it; the report would read "n/a" for half of ADR-0009 while looking complete. |
+| The export records 0 requests | A run that issued nothing measured nothing. |
+| The export declares no thresholds | Nothing in it asserts a pass or a fail, so it is not the canonical proof run. |
+| The export is absent, empty or unparseable | The scenario did not complete. |
+| `SLA_PROOF_TARGET` carries `user:pass@` | The report is committed to a public repo and records the target verbatim. |
 
-Verify the snapshot includes (at minimum):
+A **breached** threshold is not a refusal. It renders (exit 1)
+with `Verdict: FAIL`, because a failing proof is a real
+measurement and is exactly the report an operator needs to see.
+The run goes red; the document is retained.
 
-- Per-endpoint p95 chart for the soak window.
-- Aggregate p95 / p99 chart.
-- Error-rate chart.
-- Concurrent indexer activity (proves we weren't load-testing
-  an idle stack).
+## Optional enrichment — BLOCKED, and not required
 
-### 2. Promql baseline reads
+Two capture steps in the pre-#378 version of this procedure
+cannot be performed today, and neither is load-bearing for the
+report:
 
-Capture the numeric quantiles over the **soak window only** (not
-the ramp), filtered to the k6 traffic only via the `tag` label:
+- **Grafana snapshots.** The procedure directed the operator at
+  `grafana.staging.stellarindex.io/d/load-proof/…`. **That host
+  does not exist.** No load-proof dashboard is provisioned
+  anywhere in `deploy/monitoring/`.
+- **Promql reads over `k6_*` series.** Those series only exist
+  when k6 streams to a remote-write sink, i.e. when
+  `K6_PROMETHEUS_RW_SERVER_URL` is set. It is unset, and k6
+  defaults it to the runner's own localhost — so passing
+  `--out experimental-prometheus-rw` without it silently discards
+  the run.
 
-```promql
-# /v1/price p95 over soak window
-histogram_quantile(0.95, sum by (le) (
-  rate(k6_http_req_duration_seconds_bucket{
-    endpoint="price", scenario="06-mixed-realistic"
-  }[10m])
-))
-
-# Aggregate p99
-histogram_quantile(0.99, sum by (le) (
-  rate(k6_http_req_duration_seconds_bucket{
-    scenario="06-mixed-realistic"
-  }[10m])
-))
-
-# Error rate
-sum(rate(k6_http_req_failed_total{scenario="06-mixed-realistic"}[10m]))
-  /
-sum(rate(k6_http_reqs_total{scenario="06-mixed-realistic"}[10m]))
-```
-
-Each query against the soak window. Numbers go into the report.
-
-## Write the report
-
-Clone the template at
-[`sla-proof-template.md`](sla-proof-template.md) to
-`docs/operations/sla-proof-<YYYY-MM-DD>.md`. Fill in:
-
-1. The run window (start / end UTC).
-2. The per-endpoint p95 / p99 / error-rate numbers from the
-   Promql captures above.
-3. The PASS / FAIL marker for each SLA row.
-4. The Grafana snapshot link.
-5. A one-line note on concurrent ingest activity ("indexer at
-   12 ledgers/min; aggregator publishing every 5s").
-6. Anything anomalous worth surfacing (a single 502 burst, a GC
-   pause, a momentary p99 spike) — better to over-report than
-   under-report.
-
-Open the PR. The report file is the deliverable.
+Both would have narrowed the percentiles to the **soak window**
+alone. The generated report is a **whole-run** aggregate instead
+and says so in its own "does not prove" section; that biases the
+numbers conservative (the ramp is the least-warm part of the
+run), so the claim is not overstated by the difference. If a sink
+is ever provisioned, the soak-window narrowing is the upgrade to
+make.
 
 ## Cadence
 
@@ -182,6 +212,22 @@ is the scheduled half of this procedure. What it does:
   `sla-evidence` tracking issue **and fails the run**; the issue
   closes itself once a run executes against a configured target and a
   dated proof report is inside the window.
+- **It renders and commits the report itself.**
+  [`scripts/ci/render-sla-proof.sh`](../../scripts/ci/render-sla-proof.sh)
+  turns the export into `docs/operations/sla-proof-<end-date>.md`, and
+  the run commits it through the contents API with the job token (no
+  credentialed checkout; every checkout in that workflow stays
+  `persist-credentials: false`). Failing to retain a measurement the run
+  actually took is itself a failure and reddens the run.
+- **The verdict is recomputed after the report lands.** Taken before, a
+  first healthy run would report "no proof inside the window" for the
+  absence of the file it had just written, and the feed would need two
+  weeks to call itself healthy once.
+- **A breached threshold is retained, not discarded.** k6 exits 99 on a
+  breach; the run step publishes that code instead of aborting, so the
+  breaching run still renders its `Verdict: FAIL` report. The run then
+  goes red on the code. Aborting at the k6 step would have meant the one
+  run that mattered most left nothing behind.
 - **The two jobs do not gate each other.** The evidence run carries no
   `needs:` on the compile job, and its issue/fail steps run with
   `always()`. Both are deliberate: a scenario syntax error, or a k6 run
@@ -195,10 +241,49 @@ scenario` all skipped — and no `sla-proof-<date>.md` has ever landed.
 A green badge for an alarm that has never measured anything is worse
 than no badge.
 
+The 2026-09-09 pass (#378) closed the other half of that: the run could
+measure, but it had no implementation of the promotion step — the
+instruction was to visit a Grafana host that does not exist — so even a
+successful run would have left nothing durable behind.
+
 The workflow deliberately does **not** point at production:
 `test/load/scenarios/lib/env.js` refuses production hosts, and
 mixed-realistic is a 300 rps × 10 min soak against a single
 production host.
+
+## Blocked on an operator
+
+Exactly two repo secrets, and nothing else:
+
+| Secret | State | Consequence |
+| --- | --- | --- |
+| `K6_TARGET_STAGING` | **unset** | No target. Nothing measures the claim; the weekly run goes red and files an `sla-evidence` issue. |
+| `STELLARINDEX_LOAD_API_KEY` | **unset** | Same; the scenarios refuse to start without a key. |
+
+Two further secrets are genuinely optional and their absence is
+handled, not silently swallowed:
+
+| Secret | State | Consequence |
+| --- | --- | --- |
+| `K6_PROMETHEUS_RW_SERVER_URL` | unset | No remote-write sink. The run warns and relies on the summary export, which is the primary artefact anyway. |
+| `ALERTMANAGER_URL_STAGING` | unset | Only the spike scenario uses it; the weekly runs mixed-realistic. |
+
+**Before minting `K6_TARGET_STAGING`:** its value is recorded
+**verbatim** in the proof report, which is committed to a public
+repo. That is deliberate — a proof that will not say what it
+measured proves nothing — so choose a hostname that is fine to
+publish. The credential is never recorded; it travels only in
+`STELLARINDEX_LOAD_API_KEY`, and the renderer refuses a target URL
+carrying `user:pass@`.
+
+The target must be **production-shaped and not production**:
+`test/load/scenarios/lib/env.js` refuses production hosts at
+scenario-init time, and mixed-realistic is a 300 rps × 10 min soak.
+Retiring the workflow is the other legitimate way to close the
+`sla-evidence` issue — but it means accepting no load-at-volume and
+no edge-path evidence at all, since `stellarindex-sla-probe`
+measures `localhost:3000` at concurrency 1, inside the box, past
+Caddy, TLS and DNS.
 
 ## What if staging isn't available?
 
@@ -218,7 +303,11 @@ production-shape infra.
   [`test/load/scenarios/06-mixed-realistic.js`](../../test/load/scenarios/06-mixed-realistic.js)
 - Design note:
   [`docs/architecture/k6-load-tests-design-note.md`](../architecture/k6-load-tests-design-note.md)
-- Report template:
+- Report generator (the source of truth for the report's shape):
+  [`scripts/ci/render-sla-proof.sh`](../../scripts/ci/render-sla-proof.sh)
+- Report generator self-test:
+  [`scripts/ci/render-sla-proof-test.sh`](../../scripts/ci/render-sla-proof-test.sh)
+- Report template (historical; superseded by the generator):
   [`sla-proof-template.md`](sla-proof-template.md)
 - ADR-0009 multi-window SLO:
   [`../adr/0009-latency-budget.md`](../adr/0009-latency-budget.md)

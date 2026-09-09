@@ -68,6 +68,39 @@ name: k6-weekly
 #      read "n/a" for the p99 <= 500 ms half of ADR-0009 while looking
 #      complete — exactly what the real 2026-06-13 export does.
 #
+# 2026-09-09 (#378, second pass) — the run still had no way to leave
+# anything DURABLE behind. `summary.json` and the step summary are both
+# ephemeral (a log rotates, an artifact expires at 90 days), and the only
+# thing scripts/ci/check-sla-evidence.sh has ever counted as evidence is a
+# committed docs/operations/sla-proof-<YYYY-MM-DD>.md. The sole
+# implementation of that promotion was a paragraph in
+# sla-proof-procedure.md instructing an operator to mint Grafana snapshots
+# from grafana.staging.stellarindex.io — a host that does not exist — and
+# to run promql over `k6_*` series that only exist when the (unset)
+# remote-write secret is set. So the durable half of the feed had no
+# implementation at all, on any branch, which is why the freshness leg has
+# been red since it was written. Four changes:
+#
+#   1. scripts/ci/render-sla-proof.sh renders the export into the dated
+#      report, with a provenance block naming the target, the run window,
+#      the method, the scenario, the commit and the k6 version, plus the
+#      sha256 of the export it was rendered from. It REFUSES (rc 2, writing
+#      nothing) when a headline metric or a provenance field is absent, so
+#      an unlabelled number cannot be published as a proof.
+#   2. The run commits that report through the contents API with the job
+#      token — no credentialed checkout, every checkout here stays
+#      `persist-credentials: false`. Failing to retain a measurement the
+#      run actually took is itself a failure and reddens the run.
+#   3. `Run scenario` no longer aborts the job on a non-zero k6 exit. k6
+#      exits 99 on a BREACHED threshold, which is a real measurement and
+#      the single most important report to retain; aborting there meant the
+#      one run that mattered most left nothing behind. The exit code is an
+#      output and the final step reddens the run on it.
+#   4. The verdict that drives the tracking issue and the exit status is
+#      recomputed AFTER the report lands. Taken before, a first healthy run
+#      would report rc 2 for the absence of the file it had just written,
+#      and the feed would need two weeks to call itself healthy once.
+#
 # Also: --out experimental-prometheus-rw is now conditional. k6 defaults
 # K6_PROMETHEUS_RW_SERVER_URL to the runner's own localhost, so passing it
 # with the secret unset silently discarded the run.
@@ -91,7 +124,13 @@ name: k6-weekly
 # workflow.
 #
 # Secrets (repo settings → Secrets) — K6_TARGET_STAGING is UNSET, which
-# is exactly what the tracking issue reports:
+# is exactly what the tracking issue reports. Note before minting it:
+# K6_TARGET_STAGING is recorded VERBATIM in the proof report this workflow
+# commits to a public repo. That is deliberate — a proof that will not say
+# what it measured proves nothing — so pick a host that is fine to
+# publish. The credential is never recorded; it travels only in
+# STELLARINDEX_LOAD_API_KEY, and the renderer refuses a target URL
+# carrying userinfo.
 #   - K6_TARGET_STAGING         — e.g. https://api.staging.stellarindex.io/v1
 #   - STELLARINDEX_LOAD_API_KEY — load-test API key (vault-minted)
 #   - K6_PROMETHEUS_RW_SERVER_URL — remote-write sink for the run's metrics
@@ -165,7 +204,13 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
-      contents: read
+      # `contents: write` is what makes the evidence DURABLE. The run
+      # publishes docs/operations/sla-proof-<YYYY-MM-DD>.md through the
+      # contents API using the job token — that committed file is the only
+      # thing scripts/ci/check-sla-evidence.sh counts as evidence, and a
+      # step summary or a 90-day artifact both age out. Scoped to this job
+      # (the compile job stays read-only) and used by exactly one step.
+      contents: write
       issues: write
     env:
       K6_TARGET: ${{ secrets.K6_TARGET_STAGING }}
@@ -220,9 +265,18 @@ jobs:
           k6-version: '0.50.0'
 
       - name: Run scenario
+        id: k6
         if: steps.gate.outputs.target_ready == 'true'
+        # This step deliberately does NOT fail on a non-zero k6 exit. k6
+        # exits 99 when a declared threshold is BREACHED — which is a real
+        # measurement and therefore real evidence, and a breached-threshold
+        # proof report is exactly the document an operator needs. Failing
+        # here would skip the render, so the only run that ever mattered
+        # most would be the one that left nothing behind. The exit code is
+        # published as an output and the "Fail the run" step below reddens
+        # the run on it.
         run: |
-          set -euo pipefail
+          set -uo pipefail
           mkdir -p "$REPORT_DIR"
 
           # The remote-write sink is OPTIONAL and must be proven present.
@@ -241,11 +295,20 @@ jobs:
                  "remote-write sink; the summary export is its only durable evidence."
           fi
 
+          # The run window is provenance, not decoration: it is what lets a
+          # reader line these client-side numbers up against the
+          # server-side histogram for the same minutes. Stamped here, in
+          # the step that actually runs k6, so it can never describe a
+          # different run.
+          started_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
           # --summary-trend-stats: k6's default trend stats are
           # avg,min,med,max,p(90),p(95) — p(99) is NOT among them, so a
           # naive export would land evidence missing one of the two
           # headline ADR-0009 numbers (p95 <= 200 ms AND p99 <= 500 ms)
-          # while still looking complete.
+          # while still looking complete. render-sla-proof.sh REFUSES such
+          # an export, so dropping this flag fails the run rather than
+          # publishing half a proof.
           k6 run \
             "${out_args[@]}" \
             --summary-export "$REPORT_DIR/summary.json" \
@@ -253,69 +316,166 @@ jobs:
             --tag run_id=${{ github.run_id }} \
             --tag run_attempt=${{ github.run_attempt }} \
             "test/load/scenarios/$SCENARIO"
+          k6_rc=$?
 
-      - name: Render the SLA evidence into the run summary
-        # Same house convention as public-dataset-check.yml's "Run summary":
-        # the headline numbers belong in $GITHUB_STEP_SUMMARY where an
-        # operator can read them without downloading an artifact. This is the
-        # INPUT an operator promotes to
-        # docs/operations/sla-proof-<YYYY-MM-DD>.md (the durable, in-git
-        # artefact check-sla-evidence.sh leg 2 measures) — an artifact and a
-        # run summary both age out, a committed report does not.
+          ended_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          # Captured then sliced, never `k6 version | head -1`: an
+          # early-exiting pipe consumer under pipefail is the #475 bug class
+          # (scripts/ci/lint-shell-sigpipe.sh).
+          k6_version="$(k6 version)"
+          k6_version="${k6_version%%$'\n'*}"
+
+          {
+            echo "k6_rc=${k6_rc}"
+            echo "started_at=${started_at}"
+            echo "ended_at=${ended_at}"
+            echo "k6_version=${k6_version}"
+          } >> "$GITHUB_OUTPUT"
+          echo "k6 exited ${k6_rc} (99 = a declared threshold was breached)."
+
+      - name: Render the durable SLA proof report
+        id: proof
+        # THE STEP THIS WORKFLOW WAS MISSING (#378). Everything before it
+        # is ephemeral: a job log rotates, a run summary rotates, an
+        # artifact expires at 90 days. `scripts/ci/render-sla-proof.sh`
+        # turns the export into docs/operations/sla-proof-<YYYY-MM-DD>.md,
+        # which the next step commits — and a committed file is the only
+        # thing scripts/ci/check-sla-evidence.sh has ever counted as
+        # evidence. Until now the only implementation of that promotion was
+        # a paragraph in sla-proof-procedure.md telling an operator to visit
+        # a Grafana host that does not exist, which is why no dated proof
+        # report has ever landed on any branch.
+        #
+        # The renderer is deterministic and offline, and is unit-tested by
+        # scripts/ci/render-sla-proof-test.sh on every PR. It REFUSES
+        # (rc 2, writing nothing) when the export lacks a headline metric or
+        # the run cannot name its own provenance, so this workflow cannot
+        # publish an unlabelled number as a proof.
+        #
+        # Note for whoever mints the secret: SLA_PROOF_TARGET is recorded
+        # VERBATIM in a report committed to a public repo. That is
+        # deliberate — a proof that will not say what it measured proves
+        # nothing — so K6_TARGET_STAGING must be a hostname that is fine to
+        # publish. The credential never appears; it travels only in
+        # STELLARINDEX_LOAD_API_KEY.
         if: always() && steps.gate.outputs.target_ready == 'true'
+        env:
+          SLA_PROOF_TARGET: ${{ env.K6_TARGET }}
+          SLA_PROOF_SCENARIO: test/load/scenarios/${{ env.SCENARIO }}
+          SLA_PROOF_K6_VERSION: ${{ steps.k6.outputs.k6_version }}
+          SLA_PROOF_COMMIT: ${{ github.sha }}
+          SLA_PROOF_STARTED_AT: ${{ steps.k6.outputs.started_at }}
+          SLA_PROOF_ENDED_AT: ${{ steps.k6.outputs.ended_at }}
+          SLA_PROOF_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          K6_RC: ${{ steps.k6.outputs.k6_rc }}
         run: |
           set -euo pipefail
-          summary="$REPORT_DIR/summary.json"
-          if [ ! -s "$summary" ]; then
+
+          if [ -n "${K6_PROMETHEUS_RW_SERVER_URL:-}" ]; then
+            export SLA_PROOF_PROM_SINK="prometheus remote-write (configured)"
+          else
+            export SLA_PROOF_PROM_SINK="none — the summary export is the only durable output"
+          fi
+          export SLA_PROOF_NOTE="k6 exited ${K6_RC:-?} (99 = a declared threshold was breached; 0 = clean)."
+
+          set +e
+          out="$(./scripts/ci/render-sla-proof.sh --summary "$REPORT_DIR/summary.json" 2>&1)"
+          rc=$?
+          set -e
+          printf '%s\n' "$out"
+
+          proof_path=""
+          if [ "$rc" -eq 0 ] || [ "$rc" -eq 1 ]; then
+            # The renderer prints the written path as its last line.
+            proof_path="${out##*$'\n'}"
+            # Keep a copy inside the uploaded artifact so the run's own
+            # bundle is self-contained even before the commit lands.
+            cp "$proof_path" "$REPORT_DIR/"
+            # From the H1 onward: the YAML front matter renders as a stray
+            # horizontal rule in a step summary. The committed file keeps it.
+            sed -n '/^# /,$p' "$proof_path" >> "$GITHUB_STEP_SUMMARY"
+          else
             {
               echo "## Weekly SLA evidence — \`$SCENARIO\`"
               echo
-              echo "**No summary was exported.** The scenario did not complete, so"
-              echo "this run produced no evidence. See the job log."
+              echo "**No proof report was produced.** The renderer refused the"
+              echo "export, so this run measured nothing that can be labelled:"
+              echo
+              echo '```'
+              printf '%s\n' "$out"
+              echo '```'
             } >> "$GITHUB_STEP_SUMMARY"
-            exit 0
           fi
-          python3 - "$summary" "$SCENARIO" >> "$GITHUB_STEP_SUMMARY" <<'PY'
-          import json
-          import sys
 
-          doc = json.load(open(sys.argv[1]))
-          metrics = doc.get("metrics", {})
-          dur = metrics.get("http_req_duration", {})
-          failed = metrics.get("http_req_failed", {})
-          reqs = metrics.get("http_reqs", {})
+          {
+            echo "proof_rc=${rc}"
+            echo "proof_path=${proof_path}"
+          } >> "$GITHUB_OUTPUT"
 
+      - name: Publish the proof report
+        id: publish
+        # What makes it DURABLE. Committed through the contents API with
+        # the job token rather than a credentialed checkout, so no step in
+        # this workflow ever holds push credentials on disk (every checkout
+        # here stays `persist-credentials: false`). A commit made with
+        # GITHUB_TOKEN does not re-trigger workflows, and ci.yml's
+        # push-to-main trigger ignores docs/** anyway, so this costs no CI.
+        #
+        # A failure here is a real failure: the run measured something and
+        # then failed to retain it, which is the #378 defect in a different
+        # spelling. It is NOT swallowed.
+        if: always() && steps.proof.outputs.proof_path != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          PROOF_PATH: ${{ steps.proof.outputs.proof_path }}
+          PROOF_RC: ${{ steps.proof.outputs.proof_rc }}
+          BRANCH: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          verdict=PASS
+          if [ "$PROOF_RC" = "1" ]; then verdict=FAIL; fi
 
-          def ms(value):
-              return "n/a" if value is None else "%.1f ms" % value
+          content="$(base64 -w0 "$PROOF_PATH")"
+          message="$(printf 'docs(sla): weekly SLA proof %s (%s)\n\nRendered by scripts/ci/render-sla-proof.sh from the k6 summary export\nof run %s. Scenario %s, commit %s.\n' \
+            "${PROOF_PATH##*/}" "$verdict" "${GITHUB_RUN_ID:-?}" "$SCENARIO" "${GITHUB_SHA:-?}")"
 
+          # An existing file at this path (a same-day re-run) needs its blob
+          # sha to update rather than 422. Absent file => empty sha => create.
+          existing="$(gh api "repos/${GH_REPO}/contents/${PROOF_PATH}?ref=${BRANCH}" \
+            --jq '.sha' 2>/dev/null || true)"
 
-          print("## Weekly SLA evidence — `%s`" % sys.argv[2])
-          print()
-          print("| Metric | Measured | ADR-0009 target |")
-          print("| --- | --- | --- |")
-          print("| http_req_duration p95 | %s | <= 200 ms |" % ms(dur.get("p(95)")))
-          print("| http_req_duration p99 | %s | <= 500 ms |" % ms(dur.get("p(99)")))
-          print("| http_req_duration med | %s | — |" % ms(dur.get("med")))
-          print("| error rate | %.3f %% | < 0.1 %% |" % (failed.get("value", 0) * 100))
-          print("| requests | %d (%.1f/s) | 300 rps soak |"
-                % (reqs.get("count", 0), reqs.get("rate", 0)))
-          print()
+          args=(--method PUT "repos/${GH_REPO}/contents/${PROOF_PATH}"
+                -f "message=${message}" -f "content=${content}" -f "branch=${BRANCH}")
+          if [ -n "$existing" ] && [ "$existing" != "null" ]; then
+            args+=(-f "sha=${existing}")
+          fi
+          gh api "${args[@]}" --jq '.commit.sha' > "$REPORT_DIR/published-commit.txt"
+          echo "Published ${PROOF_PATH} to ${BRANCH} as $(cat "$REPORT_DIR/published-commit.txt")."
 
-          # k6 serialises each threshold as {expression: LastFailed}, so a
-          # TRUE value means the threshold was BREACHED.
-          breached = sorted(
-              "`%s` %s" % (name, expr)
-              for name, metric in metrics.items()
-              if isinstance(metric, dict)
-              for expr, tripped in (metric.get("thresholds") or {}).items()
-              if tripped
-          )
-          if breached:
-              print("**Thresholds BREACHED:** " + ", ".join(breached))
-          else:
-              print("All declared thresholds passed.")
-          PY
+      - name: Re-assess the SLA evidence feed
+        id: verdict
+        # The verdict that drives the tracking issue and the run's exit
+        # status is taken AFTER the report has been rendered, not before.
+        # Taken before, a first successful run would still report rc 2 ("no
+        # proof inside the window") and go red for the absence of the very
+        # file it had just produced — the feed would need two weeks to
+        # report itself healthy once. Never fails; the steps below need to
+        # run.
+        if: always() && steps.gate.outcome == 'success'
+        run: |
+          set -euo pipefail
+          set +e
+          report="$(./scripts/ci/check-sla-evidence.sh 2>&1)"
+          rc=$?
+          set -e
+          echo "$report"
+          {
+            echo "verdict_rc=${rc}"
+            echo "report<<REPORT_EOF"
+            echo "$report"
+            echo "REPORT_EOF"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Upload the k6 summary export
         # Scoped to $REPORT_DIR, and only when the scenario actually ran.
@@ -337,16 +497,16 @@ jobs:
           retention-days: 90
 
       - name: Open or update the tracking issue (no SLA evidence)
-        # `always() && gate succeeded && ...`, not the implicit success():
+        # `always() && verdict computed && ...`, not the implicit success():
         # a failing `Run scenario` step must not suppress the report. The
-        # gate step never fails by design, so gating on its outcome means
+        # verdict step never fails by design, so gating on its outcome means
         # "the verdict was actually computed" (an aborted checkout leaves
         # verdict_rc empty, which would otherwise read as non-zero).
-        if: always() && steps.gate.outcome == 'success' && steps.gate.outputs.verdict_rc != '0'
+        if: always() && steps.verdict.outcome == 'success' && steps.verdict.outputs.verdict_rc != '0'
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-          REPORT: ${{ steps.gate.outputs.report }}
+          REPORT: ${{ steps.verdict.outputs.report }}
         run: |
           set -euo pipefail
           # Ensure the label exists (idempotent).
@@ -367,7 +527,18 @@ jobs:
           fi
 
       - name: Close the tracking issue (evidence feed healthy)
-        if: steps.gate.outputs.verdict_rc == '0'
+        # Keyed on the POST-run verdict, and additionally on this run having
+        # actually produced a proof report. Without the second clause a run
+        # that failed to measure anything would still close the issue on the
+        # strength of a report some earlier run landed inside the 45-day
+        # window — the feed would be reported healthy by a run that was not.
+        #
+        # A run whose thresholds BREACHED still closes this issue, and that
+        # is correct: this issue tracks whether the feed produces evidence,
+        # not whether the SLA held. A breached run produced a `Verdict:
+        # FAIL` proof report — evidence, and the most useful kind. The
+        # breach itself reddens the run through k6_rc below.
+        if: steps.verdict.outputs.verdict_rc == '0' && steps.proof.outputs.proof_path != ''
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
@@ -380,10 +551,39 @@ jobs:
           done
 
       - name: Fail the run when no SLA evidence was produced
-        if: always() && steps.gate.outcome == 'success' && steps.gate.outputs.verdict_rc != '0'
+        # Four independent ways this run can fail to leave evidence behind,
+        # each of which used to be survivable:
+        #
+        #   verdict_rc != 0  no target, or no dated proof inside the window
+        #                    even after this run (#316's defect).
+        #   k6_rc    != 0    the scenario breached a threshold, died, or was
+        #                    skipped entirely (a skipped step leaves the
+        #                    output empty, which is correctly != '0').
+        #   proof_rc == 2    the renderer REFUSED the export — no headline
+        #                    metric, or no provenance. Evidence that cannot
+        #                    be labelled is not evidence (#378).
+        #   publish failed   the run measured something and then failed to
+        #                    retain it; the step's own failure already
+        #                    reddens the job, and it is named here so the
+        #                    ::error:: says which limb broke.
+        #
         # The defect this replaces (#316): the scheduled run exited 0 with
         # every real step skipped, so a badge asserting "the SLA alarm ran"
         # was green for months while nothing measured anything.
+        if: >-
+          always() && steps.verdict.outcome == 'success' &&
+          (steps.verdict.outputs.verdict_rc != '0' ||
+           steps.k6.outputs.k6_rc != '0' ||
+           steps.proof.outputs.proof_rc == '2' ||
+           steps.publish.outcome == 'failure')
+        env:
+          VERDICT_RC: ${{ steps.verdict.outputs.verdict_rc }}
+          K6_RC: ${{ steps.k6.outputs.k6_rc }}
+          PROOF_RC: ${{ steps.proof.outputs.proof_rc }}
+          PUBLISH_OUTCOME: ${{ steps.publish.outcome }}
         run: |
-          echo "::error::No SLA evidence was produced by this run (check-sla-evidence rc=${{ steps.gate.outputs.verdict_rc }}) — see the sla-evidence tracking issue."
+          echo "::error::This run did not leave durable SLA evidence behind" \
+               "(check-sla-evidence rc=${VERDICT_RC:-?}, k6 rc=${K6_RC:-skipped}," \
+               "render rc=${PROOF_RC:-skipped}, publish=${PUBLISH_OUTCOME:-skipped})" \
+               "— see the sla-evidence tracking issue."
           exit 1
