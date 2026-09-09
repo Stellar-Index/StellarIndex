@@ -1,3 +1,30 @@
+-- si-apply-scope: operator
+-- si-cutover-object: stellar.contract_events_daily_v2
+-- si-cutover-object: stellar.contract_events_daily_v2_mv
+--
+-- NOT applied by any bootstrap. The objects named above are the CUT-OVER
+-- halves of an r1 migration: they exist only for its duration and are
+-- renamed onto stellar.contract_events_daily (and the v2 names dropped)
+-- when it completes. That is why they are deliberately ABSENT from
+-- tier1_schema.sql — codifying them would make a COMPLETED cut-over read as
+-- schema drift forever. si-cutover-object is what exempts them from the
+-- lint's "every operator-created object is also declared fresh-host" rule.
+--
+-- HISTORY — this file DID auto-apply until 2026-09-09. The archival-node
+-- role executed every deploy/clickhouse/*.sql it could glob wherever
+-- clickhouse_apply_schema is true (testnet.yml, futurenet.yml), so the
+-- paragraph below was false on those hosts and every fresh test-net
+-- provision built the v2 pair as an exact duplicate of
+-- stellar.contract_events_daily: same column list and order, same
+-- AggregatingMergeTree, same ORDER BY, an MV reading the same
+-- stellar.contract_events with the same SELECT into a second target. The
+-- live test nets still carry them; the drop is an operator step, not
+-- something this file or the role does.
+--
+-- Scope markers are enforced by scripts/ci/lint-ch-apply-scope.sh; the
+-- fresh-host apply set is declared in
+-- configs/ansible/roles/archival-node/tasks/08-clickhouse.yml.
+--
 -- contract_events_daily uniqExact → uniqCombined(17) rebuild (2026-07-09
 -- incident). Full design + reader evidence + measured numbers:
 --   docs/architecture/contract-events-daily-redesign.md

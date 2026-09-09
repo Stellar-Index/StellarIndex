@@ -513,6 +513,8 @@ lane_d() { # everything else
     echo "=== Migration backward-compat ===" && ./scripts/ci/lint-migration-compat.sh
     echo "=== Lake dedup (aggregating reads of duplicate-bearing archives) ===" && ./scripts/ci/lint-lake-dedup.sh
     echo "=== Lake dedup self-test ===" && ./scripts/ci/lint-lake-dedup-test.sh
+    echo "=== ClickHouse apply scope (deploy/clickhouse is not a bootstrap manifest) ===" && ./scripts/ci/lint-ch-apply-scope.sh
+    echo "=== ClickHouse apply scope self-test ===" && ./scripts/ci/lint-ch-apply-scope-test.sh
     echo "=== Shell SIGPIPE self-test ===" && ./scripts/ci/lint-shell-sigpipe-test.sh
     echo "=== Public-dataset drift-verdict self-test ===" && ./scripts/ci/check-public-dataset-test.sh
     echo "=== Fleet release-drift verdict self-test ===" && ./scripts/ci/check-fleet-release-drift-test.sh

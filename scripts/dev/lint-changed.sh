@@ -35,6 +35,8 @@
 #                            (whole migrations/ dir; each ~1 s).
 #   *.go / *.sql naming a    lint-lake-dedup (whole tree; it pre-filters on
 #   duplicate-bearing table  the same two table names this trigger uses).
+#   deploy/clickhouse/*.sql  lint-ch-apply-scope (whole tree, instant). Both
+#   + 08-clickhouse.yml      sides of the fresh-host/operator boundary.
 #   scripts/ci/*.baseline    lint-baseline-growth over the commit range. It
 #                            reads commit trailers, so it has nothing to say
 #                            about STAGED edits and is deferred there.
@@ -166,7 +168,7 @@ fi
 # ── Classification ──────────────────────────────────────────────────────────
 sh_files=(); test_scripts=(); go_files=(); go_dirs=(); wf_files=()
 mig_files=(); md_files=(); baseline_files=(); lake_files=(); parity=0; other=()
-rules_files=(); ansible_files=()
+rules_files=(); ansible_files=(); ch_files=()
 
 add_unique() { # add_unique <value> — appends to go_dirs if absent
     local v="$1" d
@@ -211,6 +213,16 @@ for f in "${changed[@]}"; do
     case "$f" in
         scripts/dev/verify.sh|*/scripts/dev/verify.sh|.github/workflows/ci.yml|*/.github/workflows/ci.yml)
             parity=1; hit=1 ;;
+    esac
+    # The ClickHouse apply-scope boundary. Both sides of it select the gate:
+    # a schema artifact (is it founding DDL or an operator migration?) and
+    # the task that declares the fresh-host apply set. Whole-tree and
+    # instant, so the trigger is the path, not a scope.
+    case "$f" in
+        deploy/clickhouse/*.sql|*/deploy/clickhouse/*.sql| \
+        configs/ansible/roles/archival-node/tasks/08-clickhouse.yml| \
+        */configs/ansible/roles/archival-node/tasks/08-clickhouse.yml)
+            ch_files+=("$f"); hit=1 ;;
     esac
     # The lake-dedup gate's own subject filter, applied here so the trigger
     # is exactly the set of files that gate would examine.
@@ -413,6 +425,13 @@ fi
 # 8. Lake reads.
 if [ "${#lake_files[@]}" -gt 0 ]; then
     add_step "lint-lake-dedup" "whole tree; ${#lake_files[@]} changed file(s) name a duplicate-bearing table" "$ci_dir/lint-lake-dedup.sh"
+fi
+
+# 8b. The ClickHouse fresh-host apply set. deploy/clickhouse/ holds one
+#     founding DDL and fifteen operator artifacts; the role used to glob and
+#     run all of them on every fresh test-net provision.
+if [ "${#ch_files[@]}" -gt 0 ]; then
+    add_step "lint-ch-apply-scope" "whole tree; ${#ch_files[@]} changed file(s) sit on the fresh-host/operator boundary" "$ci_dir/lint-ch-apply-scope.sh"
 fi
 
 # 9. A changed self-test is run. Last: these are the only steps whose cost

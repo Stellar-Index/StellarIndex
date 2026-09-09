@@ -1,3 +1,14 @@
+-- si-apply-scope: fresh-host
+--
+-- The founding DDL, and the only file a fresh provision applies. Every
+-- other deploy/clickhouse/*.sql is `si-apply-scope: operator` and is run by
+-- hand against an EXISTING deployment; each of the objects those files
+-- declare is declared here too, identically, which is what makes applying
+-- this file alone sufficient for a fresh host.
+-- Scope markers are enforced by scripts/ci/lint-ch-apply-scope.sh; the
+-- fresh-host apply set is declared in
+-- configs/ansible/roles/archival-node/tasks/08-clickhouse.yml.
+--
 -- Tier-1 raw lake schema (ADR-0034 / docs/architecture/clickhouse-migration-plan.md §5).
 -- Structural, decoder-INDEPENDENT decode of every ledger; raw XDR blobs retained
 -- so any protocol decoder (event / op / contract-call / ledger-entry-change) can

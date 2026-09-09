@@ -1,3 +1,13 @@
+-- si-apply-scope: operator
+--
+-- NOT applied by any bootstrap. An operator runs this against an EXISTING
+-- deployment (r1). It creates no object — the payload is an ALTER, and a
+-- FRESH host's deploy/clickhouse/tier1_schema.sql already declares the
+-- shape this ALTER migrates an old table to.
+-- Scope markers are enforced by scripts/ci/lint-ch-apply-scope.sh; the
+-- fresh-host apply set is declared in
+-- configs/ansible/roles/archival-node/tasks/08-clickhouse.yml.
+--
 -- stellar.transactions: add Soroban resource-metering columns (5.1-full Slice A).
 --
 -- Additive, DEFAULT 0 → metadata-only for existing parts (NO rewrite), O(1),

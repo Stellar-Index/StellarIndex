@@ -74,6 +74,62 @@
     timeout: 60
 
 # ── Schema (opt-in; fresh host only — never re-run against a live lake) ──
+#
+# THE APPLY SET IS AN ALLOW-LIST, NOT A GLOB (2026-09-09).
+#
+# This used to copy `deploy/clickhouse/*.sql` with with_fileglob and then
+# execute every file it found. That directory is not a bootstrap manifest:
+# `tier1_schema.sql` is the founding DDL, and the other files are OPERATOR
+# artifacts for the EXISTING deployment (r1) — a per-feature DDL mirror plus
+# its windowed-backfill runbook, or a genuine migration. Several say exactly
+# that in their own headers ("NOT auto-applied by any bootstrap", "A FRESH
+# deployment does NOT need this file", one of them "FREEZE-GATED: do NOT
+# run"), and every one of those claims was false wherever
+# clickhouse_apply_schema is true — testnet.yml and futurenet.yml. So each
+# fresh test-net provision ran the operator's migrations unattended.
+#
+# What that actually did, measured against the checked-in DDL: every CREATE
+# in every non-tier1 file is byte-identical to tier1_schema.sql's own, and
+# tier1 runs first, so most were pure no-ops behind `IF NOT EXISTS`. The two
+# that were not built the cut-over halves — stellar.ledger_entries_current_v2
+# (+_mv) and stellar.contract_events_daily_v2 (+_mv) — as exact duplicates of
+# their v1 tables, on a host that has no v1 to cut over FROM. Confirmed on the
+# live testnet host: identical column list and order, identical engine, ORDER
+# BY and indexes, MVs reading the same source with the same SELECT into a
+# second target. That host does double materialized-view write work and holds
+# a second copy of the same rows, forever, for nothing.
+#
+# The list below is DEFAULT-DENY: a new file dropped into deploy/clickhouse/
+# does not run here until someone adds it. The other half — so the deny
+# cannot rot into a silent omission — is scripts/ci/lint-ch-apply-scope.sh,
+# which fails CI unless every deploy/clickhouse/*.sql declares
+# `si-apply-scope: fresh-host|operator` in its header, the fresh-host set is
+# EXACTLY this list, and every object an operator artifact creates is also
+# declared by a fresh-host file (so a genuinely-new fresh-host table cannot
+# hide inside a migration).
+#
+# Deliberately NOT changed: clickhouse_apply_schema stays false on r1, whose
+# DDL is applied by hand.
+- name: Declare the fresh-host ClickHouse apply set
+  when: clickhouse_apply_schema | default(false) | bool
+  # scripts/ci/lint-ch-apply-scope.sh parses this exact key, so the
+  # allow-list has ONE home. tier1_schema.sql must be first: it CREATEs the
+  # `stellar` database everything else depends on.
+  ansible.builtin.set_fact:
+    clickhouse_fresh_host_schema:
+      - tier1_schema.sql
+
+- name: Remove any previously staged schema files
+  # Removed rather than merely re-created: a host provisioned before the
+  # allow-list still carries the 15 operator artifacts the old with_fileglob
+  # copied into /tmp/ch-schema. Leaving them there is an invitation to
+  # `cat /tmp/ch-schema/*.sql | clickhouse-client`, which is the defect
+  # again by hand.
+  when: clickhouse_apply_schema | default(false) | bool
+  ansible.builtin.file:
+    path: /tmp/ch-schema
+    state: absent
+
 - name: Create schema staging dir
   when: clickhouse_apply_schema | default(false) | bool
   ansible.builtin.file:
@@ -81,16 +137,17 @@
     state: directory
     mode: "0755"
 
-- name: Copy ClickHouse schema files
+- name: Copy the fresh-host ClickHouse schema files
   when: clickhouse_apply_schema | default(false) | bool
   ansible.builtin.copy:
-    src: "{{ item }}"
+    # playbook_dir is configs/ansible/playbooks, so three levels up is the
+    # repo root — the same anchor the ch-live-catchup copies below use.
+    src: "{{ playbook_dir }}/../../../deploy/clickhouse/{{ item }}"
     dest: /tmp/ch-schema/
     mode: "0644"
-  with_fileglob:
-    - "{{ playbook_dir }}/../../../deploy/clickhouse/*.sql"
+  loop: "{{ clickhouse_fresh_host_schema }}"
 
-- name: Apply ClickHouse tier1 schema (base lake) then the rest
+- name: Apply the fresh-host ClickHouse schema
   when: clickhouse_apply_schema | default(false) | bool
   # `|| true` used to swallow EVERY non-tier1 file's failure, so this task
   # reported success whether or not a single object was created. That is the
@@ -104,25 +161,45 @@
   # later file is usually independent of an earlier one, and aborting early
   # would leave a half-applied schema with no report of the rest), but the
   # failures are collected and the task fails at the end naming each one.
+  #
+  # The closing line is self-accounting (N of M). "applied every schema file
+  # cleanly" reads identically over an empty loop as over a real apply, and
+  # an allow-list that rendered empty is precisely the regression this task
+  # would otherwise report as success.
+  #
+  # The per-file blocks are UNROLLED by Jinja rather than walked by a shell
+  # `for f in $rest` loop: `ansible.builtin.shell` runs the body under
+  # /bin/sh (dash on this role's hosts), and a rendered-empty word-split
+  # loop is exactly the kind of dialect-sensitive construct that is a
+  # syntax error in one shell and a no-op in another. Unrolling makes the
+  # one-file list render as no blocks at all, which is unambiguous
+  # everywhere.
   ansible.builtin.shell: |
     set -u
     P={{ clickhouse_tcp_port | default(9300) }}
+    want={{ clickhouse_fresh_host_schema | length }}
     if ! clickhouse-client --port "$P" --multiquery < /tmp/ch-schema/tier1_schema.sql; then
       echo "FAILED: tier1_schema.sql (base lake) — nothing else was attempted" >&2
       exit 1
     fi
+    applied=1
     failed=""
-    for f in /tmp/ch-schema/*.sql; do
-      [ "$(basename "$f")" = tier1_schema.sql ] && continue
-      if ! clickhouse-client --port "$P" --multiquery < "$f"; then
-        failed="${failed} $(basename "$f")"
-      fi
-    done
+    {% for f in clickhouse_fresh_host_schema if f != 'tier1_schema.sql' %}
+    if clickhouse-client --port "$P" --multiquery < /tmp/ch-schema/{{ f }}; then
+      applied=$((applied + 1))
+    else
+      failed="${failed} {{ f }}"
+    fi
+    {% endfor %}
     if [ -n "$failed" ]; then
-      echo "FAILED to apply:${failed}" >&2
+      echo "FAILED to apply:${failed} (applied ${applied} of ${want} fresh-host schema file(s))" >&2
       exit 1
     fi
-    echo "applied every schema file cleanly"
+    if [ "$applied" -ne "$want" ]; then
+      echo "applied ${applied} of ${want} fresh-host schema file(s) — the allow-list did not render as declared" >&2
+      exit 1
+    fi
+    echo "applied ${applied} of ${want} fresh-host schema file(s) cleanly"
   changed_when: true
 
 # ─── Tier-1 lake self-healer (wave-D LID-1) ──────────────────────────

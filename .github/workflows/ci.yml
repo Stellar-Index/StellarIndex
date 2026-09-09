@@ -987,6 +987,33 @@ jobs:
         # readers, a max()-only rollup, a count() above a collapsing
         # subquery, and prose.
         run: ./scripts/ci/lint-lake-dedup-test.sh
+      - name: lint-ch-apply-scope
+        # deploy/clickhouse/ is not a bootstrap manifest. 08-clickhouse.yml
+        # used to with_fileglob the directory and execute every file, on
+        # every host with clickhouse_apply_schema true (testnet, futurenet)
+        # — so an OPERATOR's migration artifacts ran unattended on each
+        # fresh provision, including one whose header says "NOT auto-applied
+        # by any bootstrap" and one that says "FREEZE-GATED: do NOT run".
+        # Mostly invisible (tier1 runs first, so IF NOT EXISTS made the
+        # mirrors no-ops), except the two v2 cut-over pairs, which the test
+        # nets still carry as exact duplicates of their v1 tables: double MV
+        # write work and a second copy of the same rows, forever. The apply
+        # set is now a default-deny allow-list; this fails unless every
+        # deploy/clickhouse/*.sql declares its si-apply-scope, the allow-list
+        # matches the fresh-host set exactly, and every object an operator
+        # artifact creates is declared identically by a fresh-host file.
+        run: ./scripts/ci/lint-ch-apply-scope.sh
+      - name: lint-ch-apply-scope self-test
+        # Pins the gate against the real defect and each way back to it: the
+        # pre-fix shape, an unclassified new artifact (the case a
+        # migrations/ subdirectory fails OPEN on), an operator artifact in
+        # the allow-list, a fresh-host file missing from it, a new object
+        # hiding inside a migration, a mirror drifting from the founding
+        # DDL, a cut-over target codified into it, an ALTER or a
+        # non-re-runnable CREATE in a fresh-host file, and the glob
+        # reintroduced — while staying quiet on the task file's own prose
+        # about the glob it removed.
+        run: ./scripts/ci/lint-ch-apply-scope-test.sh
       - name: integration-shard self-test
         # 4-way integration-suite shard (2026-08-29): pins that the shards
         # PARTITION `go test -list` exactly (every test in exactly one
