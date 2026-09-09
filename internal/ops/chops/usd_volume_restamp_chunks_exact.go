@@ -154,6 +154,8 @@ func (t *exactChunkTier) tick(watermark time.Time) {
 	t.run.hb.Progress(t.run.progress, uint64(watermark.Unix())) //nolint:gosec // post-1970 timestamp
 }
 
+func (t *exactChunkTier) tickBytes(moved uint64) { t.run.hb.ProgressBytes(moved) }
+
 func (t *exactChunkTier) finish(cfgPath string, from, to time.Time) string {
 	return exactRestampSummary(cfgPath, from, to, t.rows, t.run.groupDays(), t.run.write)
 }

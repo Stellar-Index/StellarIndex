@@ -335,6 +335,8 @@ type stubChunkTier struct {
 	err     error
 	written int64
 	calls   int
+	// moved is the last cumulative byte movement the walk reported.
+	moved uint64
 }
 
 func (s *stubChunkTier) write() bool { return true }
@@ -352,6 +354,7 @@ func (s *stubChunkTier) restamp(context.Context, timescale.TradeChunk, time.Time
 	return chunkRestampOutcome{Written: s.written, Note: "changed 0 row(s)"}, s.err
 }
 func (s *stubChunkTier) tick(time.Time)                             {}
+func (s *stubChunkTier) tickBytes(m uint64)                         { s.moved = m }
 func (s *stubChunkTier) finish(string, time.Time, time.Time) string { return "stub finished\n" }
 func (s *stubChunkTier) resume(string, time.Time, time.Time, chunkRestampOptions) string {
 	return "\nRESUME: stub\n"

@@ -74,6 +74,24 @@ against.
   enough precision that a real basis-point gap never displays as `0.00%`.
   Snapshot cached for 30s behind a single flight — one stream read serves
   the whole set. Methodology: `docs/methodology/rwa-definition.md`.
+### Fixed
+
+- **ops/monitoring:** `stellarindex_ops_job_no_progress` no longer tickets on
+  every healthy `usd-volume-restamp -chunks` run. The walk must decompress a
+  Timescale chunk before it can restamp a row in it, and that phase completes
+  no rows — measured on r1 at 49+ minutes for a 17.3 GB chunk and about
+  1.5 hours for the 159.7 GB outlier at [2026-06-06, 2026-07-06), well past
+  the alert's 30-minute window and 15-minute `for`. The job now publishes a
+  second progress signal, `stellarindex_ops_job_progress_bytes_total`, fed by
+  a 30-second poll of the chunk's live on-disk size, and the alert requires
+  BOTH counters flat. The phase is not muted: a wedged decompress extends no
+  files, so the byte counter goes flat with the row counter and the alert
+  still fires. Measured on the deployed pair (TimescaleDB 2.26.4 / PG 15.17):
+  every sample moves through a `decompress_chunk`, and a `compress_chunk` —
+  which builds the compressed chunk inside its own transaction, invisible to
+  the polling session — stays flat but costs 0.52x the decompress on the same
+  chunk. Jobs that publish no byte movement keep exactly their previous alert
+  behaviour.
 
 ## [v0.66.1] — 2026-09-09
 

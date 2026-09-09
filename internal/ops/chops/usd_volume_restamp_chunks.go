@@ -157,6 +157,7 @@ import (
 // it; each tier extends it with its own plan/apply pair.
 type chunkRestampStore interface {
 	TradesChunksInRange(ctx context.Context, from, to time.Time) ([]timescale.TradeChunk, error)
+	TradesChunkBytes(ctx context.Context, c timescale.TradeChunk) (int64, error)
 	TradesDataVolumePath(ctx context.Context) (string, error)
 	TradesCompressionPolicy(ctx context.Context) (timescale.TradesCompressionPolicy, error)
 	SetJobScheduled(ctx context.Context, jobID int, scheduled bool) error
@@ -193,6 +194,11 @@ type chunkRestampTier interface {
 	// tick reports the run's cumulative progress to the job heartbeat at
 	// the slice boundary the walk has reached.
 	tick(watermark time.Time)
+	// tickBytes reports the run's cumulative OBSERVED byte movement to
+	// the job heartbeat — the second progress dimension, which is what
+	// keeps the walk visibly alive through a decompress that completes no
+	// rows. See [chunkRestampWalk.watchChunkBytes].
+	tickBytes(moved uint64)
 	// finish is the closing block, printed after the last chunk: whatever
 	// the tier reports on its own stdout, plus the summary the driver
 	// writes to its `out`.
@@ -238,6 +244,12 @@ type chunkRestampOptions struct {
 	// PolicyPoll is the interval between polls of that wait. Zero =
 	// defaultPolicyPoll. A seam for the tests.
 	PolicyPoll time.Duration
+	// ChunkBytesPoll is how often the walk re-reads the chunk's live
+	// on-disk size while it is working inside that chunk, which is what
+	// keeps the job's progress observable through a decompress that
+	// completes no rows. Zero = defaultChunkBytesPoll. A seam for the
+	// tests.
+	ChunkBytesPoll time.Duration
 	// FreeBytes measures free space on the filesystem holding path. nil =
 	// statfs. A seam for the tests.
 	FreeBytes func(path string) (uint64, error)
@@ -577,6 +589,139 @@ type chunkRestampWalk struct {
 	out         io.Writer
 	errw        io.Writer
 	reenableSQL string
+
+	// moved is the run's cumulative OBSERVED byte movement across every
+	// chunk it has worked inside — the second progress dimension the job
+	// heartbeat publishes. Owned here rather than by the tier so both
+	// tiers report one series with one definition; the tier only forwards
+	// it to its heartbeat.
+	moved uint64
+}
+
+// defaultChunkBytesPoll is how often the walk re-reads the chunk's live
+// on-disk size while it is inside that chunk.
+//
+// 30 s against a phase measured in HOURS: it only has to beat the alert's
+// 30-minute flat window with enough margin that a scrape gap or a slow
+// catalog read cannot manufacture a flat half-hour, and it must be far
+// enough apart that the poll is free next to the work. One row of
+// chunks_detailed_size every 30 s against a 1.5-hour decompress is 180
+// catalog reads for the whole phase.
+const defaultChunkBytesPoll = 30 * time.Second
+
+// watchChunkBytes publishes the chunk's live on-disk size as byte
+// progress for as long as the walk is inside that chunk, and returns the
+// stop that shuts the poll down.
+//
+// WHY THIS EXISTS. The walk cannot restamp a row in a compressed chunk
+// until the chunk is decompressed, and on r1 that decompress is the
+// longest single step of the run: 49+ minutes measured on a 17.3 GB
+// chunk, and about 1.5 hours on the 159.7 GB outlier at [2026-06-06,
+// 2026-07-06). Row progress is structurally zero for all of it, so
+// `stellarindex_ops_job_no_progress` (30 min flat + 15 min `for`)
+// ticketed on every healthy run — and an alert that fires on every
+// healthy run is one the operator stops reading, which is the blindness
+// the alert exists to prevent.
+//
+// WHY BYTES, AND WHY THESE BYTES. Muting the alert for the phase, or
+// widening its window past 1.5 hours, would blind it during the longest
+// and most dangerous step of the run — `running==1 ∧ fresh heartbeat ∧
+// flat progress` is real there (decompress_chunk takes a lock the
+// ledgerstream replay can hold; a stalled read never returns). So the
+// walk reports the work that IS happening instead. decompress_chunk
+// extends the chunk's OWN heap and indexes — relations that already
+// exist and are already in the catalog — and chunks_detailed_size sizes
+// them with pg_relation_size, which stats the files rather than reading
+// them through the writing transaction's snapshot. An observer session
+// therefore sees the figure climb continuously while a decompress runs,
+// and sees NOTHING move when one is wedged.
+//
+// Measured on TimescaleDB 2.26.4 / PG 15.17 (the deployed pair), one
+// chunk, one observer session polling chunks_detailed_size:
+//
+//	decompress_chunk  98.9 MB → 522 MB, EVERY sample moved (44.1 s)
+//	compress_chunk    flat at 547 MB for the whole statement (23.0 s),
+//	                  one step at commit
+//
+// The re-compress is the phase this cannot cover: TimescaleDB builds the
+// compressed chunk as a NEW relation inside the compressing transaction,
+// so the polling session's catalog snapshot cannot see it and the
+// chunk's own relation does not change until the commit-time truncate.
+// The poll runs across the whole bracket anyway — it costs one catalog
+// read per 30 s, it is uniform, and it picks the movement back up the
+// moment the commit lands.
+//
+// So the re-compress is NOT covered, and on the one outlier chunk it can
+// outlast the alert. Both counters are flat through it — progress_total
+// is ticked only after RestampTradesChunk returns, i.e. after the
+// deferred re-compress — and the alert fires at 45 min (a 30 min flat
+// window plus a 15 min `for`). Measured at 0.52x the decompress
+// (23.0 s against 44.1 s on the same chunk), the 159.7 GB outlier's
+// ~90 min decompress implies a ~47 min re-compress, which is over that
+// threshold. An earlier version of this comment claimed the 0.52x ratio
+// kept it inside the window; that is arithmetically wrong and is
+// corrected here rather than left as a claim nobody rechecks.
+//
+// This is accepted because it fails in the SAFE direction: an extra
+// ticket on one chunk, not a silence, and strictly better than the
+// pre-fix state that ticketed through the whole decompress of EVERY
+// chunk. The runbook tells the operator to confirm a `re-compressing`
+// ticket with pg_stat_activity before treating it as a hang.
+// TimescaleDB 2.26.4 publishes no compression-progress view to do better
+// with (timescaledb_information has none), and every cluster-wide
+// alternative — pg_database_size, WAL LSN, free space on the volume —
+// keeps moving while THIS job is wedged, which would be a mute wearing a
+// counter's clothes.
+//
+// FAIL-SOFT, like the heartbeat it feeds: a failed poll is skipped, not
+// raised. The size read is observability for a run whose actual work is
+// re-deriving a money column, and failing a multi-hour chunk because a
+// catalog read timed out would be strictly worse than losing a sample.
+// A poll that never succeeds leaves the counter flat, which is exactly
+// the state the alert already covers.
+func (w *chunkRestampWalk) watchChunkBytes(ctx context.Context, c timescale.TradeChunk) (stop func()) {
+	poll := w.copts.ChunkBytesPoll
+	if poll <= 0 {
+		poll = defaultChunkBytesPoll
+	}
+	done, stopped := make(chan struct{}), make(chan struct{})
+	go func() {
+		defer close(stopped)
+		t := time.NewTicker(poll)
+		defer t.Stop()
+		var last int64
+		var seeded bool
+		for {
+			select {
+			case <-done:
+				return
+			case <-ctx.Done():
+				return
+			case <-t.C:
+			}
+			n, err := w.chunks.TradesChunkBytes(ctx, c)
+			if err != nil {
+				continue
+			}
+			// |delta|, not the raw size: the figure climbs through a
+			// decompress and falls at a re-compress's commit, and BOTH
+			// are the storage moving. A counter that only credited growth
+			// would report nothing for half of what it watched.
+			if seeded && n != last {
+				delta := n - last
+				if delta < 0 {
+					delta = -delta
+				}
+				w.moved += uint64(delta) //nolint:gosec // delta is a non-negative byte difference
+				w.tier.tickBytes(w.moved)
+			}
+			last, seeded = n, true
+		}
+	}()
+	return func() {
+		close(done)
+		<-stopped
+	}
 }
 
 // chunk handles one chunk's slice [lo, hi) of the window.
@@ -609,6 +754,14 @@ func (w *chunkRestampWalk) chunk(ctx context.Context, idx, n int, c timescale.Tr
 			return fmt.Errorf("usd-volume-restamp: %s: pre-flight refused before the decompress (the chunk is untouched): %w", label, pf.Err)
 		}
 	}
+	// The decompress inside the bracket completes no rows for up to about
+	// 1.5 hours, so from here until the bracket returns the run's
+	// liveness is carried by the chunk's on-disk size instead — see
+	// [chunkRestampWalk.watchChunkBytes]. DEFERRED rather than stopped at
+	// the tail: the bracket lets a panic inside the work propagate (after
+	// putting the chunk back), and the poll goroutine must not outlive
+	// this call on that path either.
+	defer w.watchChunkBytes(ctx, c)()
 	// Every write inside the chunk goes through the tier's guarded apply,
 	// which reads the chunk's is_compressed ahead of the UPDATE.
 	var inside chunkRestampOutcome
