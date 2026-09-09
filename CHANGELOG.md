@@ -15,6 +15,8 @@ against.
 
 ## [Unreleased]
 
+## [v0.66.1] — 2026-09-09
+
 ### Fixed
 
 - Creators rollup: the graph arm no longer sets
