@@ -15,6 +15,8 @@ against.
 
 ## [Unreleased]
 
+## [v0.68.0] — 2026-09-09
+
 ### Fixed
 
 - **pipeline/gating:** a curated-set contract gate (ADR-0040 §1 mechanism 3 —
