@@ -92,12 +92,15 @@ var dexTVLScopeExclusions = []DEXTVLExclusion{
 	},
 	{
 		Subject: "blend",
-		Reason: "lending supplied-value is a different quantity from AMM pooled liquidity; it is " +
-			"published per-protocol as bespoke.tvl_usd and summing the two would flatter the headline",
+		Reason: "lending supplied-value is a different quantity from AMM pooled liquidity; Blend's " +
+			"current-state figure is served per-pool as tvl_usd on /v1/lending/pools/{pool}/reserves " +
+			"(ADR-0039, decoded from contract storage) and summing lending into an AMM headline " +
+			"would flatter it",
 	},
 	{
 		Subject: "sorocredit",
-		Reason:  "lending supplied-value, excluded on the same basis as blend",
+		Reason: "lending supplied-value, excluded on the same basis as blend; no current-state " +
+			"figure exists for it — its protocol block carries event and user counts only",
 	},
 	{
 		Subject: "defindex",

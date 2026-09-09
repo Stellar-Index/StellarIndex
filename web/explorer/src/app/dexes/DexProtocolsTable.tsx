@@ -8,6 +8,7 @@ import { apiGet, asExample } from '@/api/client';
 import { formatCompact } from '@/lib/format';
 import { sourceToneClass } from '@/lib/pillTone';
 import { SourceSparkline } from '@/components/SourceSparkline';
+import { DexTvlHeadline } from '@/app/protocols/ProtocolTvlPanel';
 import { useProtocolTvls, type ProtocolTvl } from './useProtocolTvls';
 
 interface VolumeBucket {
@@ -64,7 +65,25 @@ export function DexProtocolsTable() {
       r.trade_count_24h != null ||
       r.markets_count_24h != null,
   );
-  const tvls = useProtocolTvls().data ?? {};
+  const tvlQuery = useProtocolTvls();
+  const tvls = tvlQuery.data?.byProtocol ?? {};
+  const tvlTotal = tvlQuery.data?.total;
+
+  // The headline is the exact sum of the TVL column beneath it, so it
+  // may only appear when every protocol it sums is a visible row that
+  // actually shows a figure. This table is built from /v1/sources
+  // (DEX subclass), a DIFFERENT registry from the /v1/protocols rows
+  // the total is summed over — so a summed protocol can be missing
+  // here even when the server admitted it. A headline that does not
+  // reconcile with the column below is a bare number again, which is
+  // the one thing this surface exists not to serve.
+  const charted = new Set(rows.filter((r) => tvls[r.name] != null).map((r) => r.name));
+  const headline =
+    tvlTotal != null &&
+    tvlTotal.protocols.length > 0 &&
+    tvlTotal.protocols.every((p) => charted.has(p))
+      ? tvlTotal
+      : null;
 
   return (
     <Panel
@@ -74,6 +93,11 @@ export function DexProtocolsTable() {
       source={asExample('/v1/sources', { include: 'stats' })}
       bodyClassName="-mx-4"
     >
+      {headline && (
+        <div className="mx-4 mb-4">
+          <DexTvlHeadline total={headline} />
+        </div>
+      )}
       <div className="overflow-x-auto">
         <table className="min-w-full divide-y divide-line text-sm">
           <thead>

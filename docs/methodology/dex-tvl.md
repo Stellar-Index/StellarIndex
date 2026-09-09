@@ -139,7 +139,8 @@ claim by omission:
 |---|---|
 | Classic (CAP-38) liquidity pools | Indexed and served per-pool at `/v1/liquidity-pools` with two-sided reserves and an `as_of_ledger`, but not yet valued into a protocol row. Which protocol they attach to is an open product decision (#338) |
 | SDEX order book | Holds offers, not pooled reserves. Resting depth is a different quantity from locked value and is served separately at `/v1/sdex/orderbook` |
-| Blend, Sorocredit (lending) | Supplied-value is a different quantity from AMM pooled liquidity. It is published per-protocol as `bespoke.tvl_usd`; adding the two together would flatter the headline |
+| Blend (lending) | Supplied-value is a different quantity from AMM pooled liquidity. Blend's current-state figure is served per-pool as `tvl_usd` on `/v1/lending/pools/{pool}/reserves` (ADR-0039, decoded from contract storage); adding lending into an AMM headline would flatter it |
+| Sorocredit (lending) | Excluded on the same basis as Blend. No current-state figure exists for it — its protocol block carries event and user counts only |
 | DeFindex (vaults) | Vault capital is deployed into Blend strategy contracts, so counting vault AUM alongside the protocols holding those positions would double-count it |
 
 ## As-of

@@ -64,7 +64,7 @@ export function SourceStatsPanel({
   // source — the stat is only shown when a snapshot exists, never a
   // fabricated zero. A snapshot with unpriced pools is a lower bound
   // ("≥" prefix; provenance in the hover title).
-  const tvl = useProtocolTvls().data?.[source];
+  const tvl = useProtocolTvls().data?.byProtocol[source];
   const tvlValue = tvl ? Number(tvl.tvl_usd) : 0;
   // Only DEX protocols with an absolute reserve source have a
   // snapshot — the stat disappears entirely (not a dash) for CEX

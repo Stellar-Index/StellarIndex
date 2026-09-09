@@ -146,7 +146,7 @@ export function ProtocolTvlPanel({
  * `formatDecimalAmount` (BigInt + Intl). Nothing here calls `Number()`
  * on money: `usd` on the bars above is geometry, this is the figure.
  */
-function DexTvlHeadline({ total }: { total: DexTvlTotal }) {
+export function DexTvlHeadline({ total }: { total: DexTvlTotal }) {
   const figure = formatDecimalAmount(total.tvl_usd);
   // A total whose own decimal string will not parse is not renderable as
   // a number; showing the raw string would be a bare figure with no

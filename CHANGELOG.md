@@ -274,6 +274,43 @@ against.
   `chat-informational` receiver and the same bounded Discord Go template,
   gated on a new `alertmanager_discord_webhook_url_informational` role
   variable that degrades to a stub when unset.
+### Fixed
+
+- **api,docs:** the DEX TVL headline's scope exclusion for lending pointed
+  a reader at a field that does not exist (#338). Every `/v1/protocols`
+  response carries `tvl_total.excluded`, and `/v1/protocols/blend/tvl`
+  serves the matching entry as its 404 detail, so this sentence is the
+  answer a reader gets when they ask where the omitted number lives. It
+  said Blend's supplied-value "is published per-protocol as
+  `bespoke.tvl_usd`". There is no such field: the lending protocol block
+  carries event and user COUNTS only and says so itself
+  ("Pool-level figures are event/user COUNTS only… this block is
+  event-derived and window-scoped"). The only lending `tvl_usd` the API
+  serves is per-POOL, on `GET /v1/lending/pools/{pool}/reserves`
+  (ADR-0039, decoded from contract storage) — which is what the reason
+  now names. Sorocredit is split into its own entry rather than sharing
+  Blend's sentence, because it has no current-state figure at all and
+  the shared wording implied one. A new guard makes the class of defect
+  fail the build rather than age on the wire: an exclusion that claims
+  the figure is published or served elsewhere must NAME a `/v1` route,
+  and the route must be one `server.go` actually registers.
+
+### Changed
+
+- **web:** `/dexes` renders the served DEX TVL headline above its
+  protocol table. The page fetched `/v1/protocols` for its per-protocol
+  TVL column and discarded `tvl_total`, so the site's DEX page — the one
+  the "DEX TVL" promise names — showed the parts and never the whole,
+  while `/protocols` had rendered the headline since 39fe9d3e. It reuses
+  the same component, so the "≥" prefix, the hatch, the priced/total
+  split, the `basis` prose and the `excluded[]` disclosure are identical
+  on both pages. It applies the same reconciliation rule too: the
+  headline is the exact sum of the column beneath it, so it renders only
+  when every protocol it sums is a visible row showing a figure — this
+  table is built from `/v1/sources`, a different registry from the
+  `/v1/protocols` rows the total is summed over, so a summed protocol
+  can be missing here even when the server admitted it. Absent stays
+  absent: an omitted `tvl_total` renders nothing, never `$0.00`.
 
 ## [v0.65.0] — 2026-09-08
 
