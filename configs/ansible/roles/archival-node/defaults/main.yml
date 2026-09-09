@@ -576,6 +576,23 @@ stellarindex_enabled_sources:
   # inventing a NULL-asset trade.
   - "sushiswap_v3"
 
+  # upshift — the SECOND instance of exactly the defect described above,
+  # found 2026-09-09 hours after fixing the first. The Upshift/Gami
+  # tokenized-vault decoder (#503) is live in the deployed binaries — the
+  # indexer carries 73 `upshift` string references and ops 74 — and the
+  # completeness surface tracks the source and asserts a verdict about
+  # it. But it was never listed here, so no projector ran: there is a
+  # gap-detector cursor and NO projector cursor, coverage_pct 0,
+  # recognition_ok false, and a watermark sitting at exactly
+  # genesis_ledger - 1, meaning it had done nothing whatsoever since
+  # being registered.
+  #
+  # Two occurrences of one bug class is a pattern, not bad luck: shipping
+  # a decoder registers a source for completeness but does not run it,
+  # and nothing fails loudly in between. A CI gate for that invariant is
+  # being built separately; this entry is the immediate fix.
+  - "upshift"
+
 # Earliest ledger to backfill from on a fresh install (no persisted
 # cursor yet). 0 = refuse to start without a cursor — operator must
 # pick an explicit ledger to avoid accidental genesis re-ingest.
