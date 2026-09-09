@@ -36,11 +36,19 @@ indent() { while IFS= read -r l; do printf '       | %s\n' "$l"; done <<<"$1"; }
 ok()  { pass=$((pass + 1)); echo "ok   — $1"; }
 bad() { fail=$((fail + 1)); echo "FAIL — $1"; indent "$2"; }
 
+# no_sidecars is a path that does not exist, pinned into every helper
+# below: the convergence gate reads the deployed-versions sidecars, and a
+# harness that fell through to the host's real /var/lib/stellarindex/
+# deployed-versions would give a different verdict on r1 than on a laptop.
+# With no sidecar readable the gate is UNVERIFIED and the comparison runs
+# unchanged, which is the lane every pre-2026-09-09 case below expects.
+no_sidecars="$tmp/no-sidecars"
+
 # run <name> <want-rc> <intent-file> <live-file>
 run() {
   local name="$1" want="$2" intent="$3" live="$4" out rc
   out="$(INTENT="$intent" LIVE_SCHEMA="$live" TEXTFILE_DIR=/dev/null \
-         bash "$drift" 2>&1)"
+         DEPLOYED_VERSIONS_DIR="$no_sidecars" bash "$drift" 2>&1)"
   rc=$?
   if [[ "$rc" -eq "$want" ]]; then
     pass=$((pass + 1))
@@ -56,7 +64,7 @@ run() {
 expect_msg() {
   local name="$1" needle="$2" intent="$3" live="$4" out
   out="$(INTENT="$intent" LIVE_SCHEMA="$live" TEXTFILE_DIR=/dev/null \
-         bash "$drift" 2>&1)"
+         DEPLOYED_VERSIONS_DIR="$no_sidecars" bash "$drift" 2>&1)"
   if grep -qF -- "$needle" <<<"$out"; then
     pass=$((pass + 1))
     echo "ok   — $name (reported '$needle')"
@@ -147,6 +155,21 @@ FROM stellar.transactions;
 SQL
 
 mutate() { sed "$1" "$tmp/live-ok.sql" > "$2"; }
+
+# stamp <version> <ddl-file> <dest> — the shipped copy as the role's "Ship
+# the repo's Tier-1 lake DDL" task now writes it: the provenance header
+# it renders, then the DDL verbatim. Every fixture that stands in for the
+# SHIPPED copy goes through this, because an unstamped shipped copy is
+# itself a refusal now (see the provenance cases at the end of this file).
+stamp() {
+  {
+    printf '%s\n' '-- ch-schema-drift intent provenance — written by ansible at ship time.'
+    printf -- '-- Intent-Version: %s\n' "$1"
+    printf '%s\n' '-- Intent-Schema-Commit: 3ca9fb2e2 (2026-09-02)'
+    printf '%s\n' '-- Source: deploy/clickhouse/tier1_schema.sql'
+    cat "$2"
+  } > "$3"
+}
 
 # ─── the clean case ─────────────────────────────────────────────────
 run "clean: SHOW CREATE rendering of the same schema" 0 "$tmp/intent.sql" "$tmp/live-ok.sql"
@@ -334,7 +357,7 @@ installed="$fake_bin/ch-schema-drift.sh"
 # fixture does not, so a run that reports THAT table can only have read
 # THIS file — provenance, not merely "something got compared".
 shipped="$fake_share/tier1_schema.sql"
-cp "$tmp/intent.sql" "$shipped"
+stamp v0.67.0 "$tmp/intent.sql" "$shipped"
 cat >> "$shipped" <<'SQL'
 
 CREATE TABLE IF NOT EXISTS stellar.shipped_copy_probe
@@ -347,14 +370,14 @@ SQL
 
 # The same shipped copy without the probe, for the clean case.
 shipped_clean="$fake_share/tier1_schema_clean.sql"
-cp "$tmp/intent.sql" "$shipped_clean"
+stamp v0.67.0 "$tmp/intent.sql" "$shipped_clean"
 
 # by_hand <installed-intent> <live> — the installed script with INTENT
 # genuinely ABSENT from the environment (`env -u`, not the empty string),
 # which is what a bare `ch-schema-drift.sh` on a host actually gets.
 by_hand() {
   env -u INTENT INSTALLED_INTENT="$1" LIVE_SCHEMA="$2" TEXTFILE_DIR=/dev/null \
-    bash "$installed" 2>&1
+    DEPLOYED_VERSIONS_DIR="$no_sidecars" bash "$installed" 2>&1
 }
 
 name="installed + no INTENT: falls back to the shipped copy and really compares"
@@ -675,6 +698,264 @@ The shipped default must be the live sweep. With it false the daily unit
 compares an up-to-a-day-old capture, which is the state that reported 8
 live r1 tables as ABSENT on 2026-09-09 and that cannot fail when
 ClickHouse is down."
+fi
+
+# ─── IS THE INTENT SIDE ITSELF CURRENT? (2026-09-09) ────────────────
+# THE BLIND SPOT, measured on both test nets by extracting the
+# `transactions` DDL from each host's OWN shipped intent file and
+# comparing it to that host's live schema:
+#
+#   testnet    intent shipped 09-08 = POST-#482   live = PRE-#482  -> DRIFT (correct)
+#   futurenet  intent shipped 08-26 = PRE-#482    live = PRE-#482  -> CLEAN (false)
+#
+# Both hosts carried the SAME stale live schema. futurenet read clean
+# only because its intent file was stale by the same two weeks — the
+# intent side arrives by the SAME convergence this check is supposed to
+# police, so the check goes green exactly where a host is furthest
+# behind. Every case above this line hands the checker an intent whose
+# CURRENCY is never questioned, which is why 35 green assertions could
+# not see it.
+#
+# The fixtures below are the futurenet shape on purpose: an intent that
+# AGREES with live perfectly. A case built on a drifted pair would pass
+# for the wrong reason (it would refuse, but so would a check that
+# simply reported the drift).
+
+sidecar_dir="$tmp/deployed-versions"
+
+# sidecars <version-per-binary…> — rebuild the deployed-versions dir.
+# Written with `printf '%s'`, NO trailing newline: that is exactly how
+# tasks/deploy-one-binary.yml writes them (`copy: content:`), and reading
+# them with `cat` is what fed deploy.yml a mashed `v0.46.1v0.44.7…` token.
+sidecars() {
+  rm -rf "$sidecar_dir"; mkdir -p "$sidecar_dir"
+  local spec name ver
+  for spec in "$@"; do
+    name="${spec%%=*}"; ver="${spec#*=}"
+    printf '%s' "$ver" > "$sidecar_dir/$name"
+  done
+}
+
+# converge_run <intent> <live> [textfile-dir] — a host-shaped run: the
+# intent resolved as the SHIPPED copy, with real deployed-versions
+# sidecars beside it.
+converge_run() {
+  env -u INTENT INSTALLED_INTENT="$1" LIVE_SCHEMA="$2" \
+    DEPLOYED_VERSIONS_DIR="$sidecar_dir" TEXTFILE_DIR="${3:-/dev/null}" \
+    bash "$installed" 2>&1
+}
+
+prom_dir="$tmp/prov-textfiles"
+
+# The host: two release-managed binaries at v0.66.1/v0.67.0 and a
+# migrate sidecar two releases further back.
+sidecars stellarindex-api=v0.67.0 stellarindex-indexer=v0.66.1 stellarindex-migrate=v0.28.1
+
+stale_intent="$fake_share/tier1_stale.sql"
+stamp v0.63.0 "$tmp/intent.sql" "$stale_intent"
+current_intent="$fake_share/tier1_current.sql"
+stamp v0.66.1 "$tmp/intent.sql" "$current_intent"
+
+name="THE DEFECT: a stale intent that agrees with live must NOT read as clean"
+rm -rf "$prom_dir"
+out="$(converge_run "$stale_intent" "$tmp/live-ok.sql" "$prom_dir")"; rc=$?
+prom="$(cat "$prom_dir/ch_schema_drift.prom" 2>&1)"
+if [[ "$rc" -eq 2 ]] \
+  && grep -qF -- "NOT CONVERGED" <<<"$out" \
+  && grep -qF -- "v0.63.0" <<<"$out" \
+  && grep -qF -- "v0.66.1" <<<"$out" \
+  && ! grep -qF -- "compared " <<<"$out" \
+  && ! grep -qF -- "ch-schema-drift: DRIFT " <<<"$out"; then
+  ok "$name (rc=2, names both releases, no verdict rendered)"
+else
+  bad "$name: rc=$rc want 2. This is futurenet on 2026-09-09: an intent from v0.63.0 on a host running v0.66.1, agreeing with a live schema that is stale by the same amount. It must not report clean (that is the defect), and it must not report DRIFT either — that would blame the schema for a provisioning gap and send the operator to the wrong half of ch-schema-restore.md" "$out
+--- ch_schema_drift.prom ---
+$prom"
+fi
+
+name="not-converged is legible to Prometheus: converged 0, and NO divergent gauge"
+if grep -qxF -- "stellarindex_ch_schema_drift_intent_converged 0" <<<"$prom" \
+  && grep -qxF -- "stellarindex_ch_schema_drift_intent_verified 1" <<<"$prom" \
+  && ! grep -q -- "stellarindex_ch_schema_drift_divergent" <<<"$prom"; then
+  ok "$name"
+else
+  bad "$name" \
+"--- ch_schema_drift.prom ---
+$prom
+A not-converged run compared nothing, so publishing ANY divergent count
+would be an invented number — and leaving the previous run's file in
+place would leave node_exporter serving 'divergent 0' forever, which is
+the same false clean by a slower route. The three states must be
+separable: converged+clean (converged 1, divergent 0), converged+drifted
+(converged 1, divergent > 0), not-converged (converged 0, divergent absent)."
+fi
+
+name="NOT a mute: the same fixtures with a CURRENT intent still compare"
+rm -rf "$prom_dir"
+out="$(converge_run "$current_intent" "$tmp/live-ok.sql" "$prom_dir")"; rc=$?
+prom="$(cat "$prom_dir/ch_schema_drift.prom" 2>&1)"
+if [[ "$rc" -eq 0 ]] \
+  && grep -qF -- "compared 3 declared table(s)" <<<"$out" \
+  && grep -qxF -- "stellarindex_ch_schema_drift_intent_converged 1" <<<"$prom" \
+  && grep -qxF -- "stellarindex_ch_schema_drift_divergent 0" <<<"$prom"; then
+  ok "$name (rc=0, converged 1, divergent 0)"
+else
+  bad "$name: rc=$rc want 0 with 'compared 3 declared table(s)', intent_converged 1 and divergent 0. If the case above is green only because the gate refuses everything, the gate is a mute and not a fix" "$out
+--- ch_schema_drift.prom ---
+$prom"
+fi
+
+name="a CONVERGED host with real drift still reports DRIFT, not NOT CONVERGED"
+rm -rf "$prom_dir"
+out="$(converge_run "$current_intent" "$tmp/live-order.sql" "$prom_dir")"; rc=$?
+prom="$(cat "$prom_dir/ch_schema_drift.prom" 2>&1)"
+if [[ "$rc" -eq 1 ]] \
+  && grep -qF -- "DRIFT account_movements.order" <<<"$out" \
+  && ! grep -qF -- "NOT CONVERGED" <<<"$out" \
+  && grep -qxF -- "stellarindex_ch_schema_drift_intent_converged 1" <<<"$prom" \
+  && grep -qxF -- "stellarindex_ch_schema_drift_divergent 1" <<<"$prom"; then
+  ok "$name (rc=1, converged 1, divergent 1)"
+else
+  bad "$name: rc=$rc want 1. The convergence gate must not swallow the drift verdict it was added beside — testnet's correct DRIFT report is the half of the 2026-09-09 measurement that was already right" "$out
+--- ch_schema_drift.prom ---
+$prom"
+fi
+
+name="an intent NEWER than the host is converged (config applied ahead of a deploy)"
+newer_than_host="$fake_share/tier1_ahead.sql"
+stamp v0.99.0 "$tmp/intent.sql" "$newer_than_host"
+out="$(converge_run "$newer_than_host" "$tmp/live-ok.sql")"; rc=$?
+if [[ "$rc" -eq 0 ]] && ! grep -qF -- "NOT CONVERGED" <<<"$out"; then
+  ok "$name (rc=0)"
+else
+  bad "$name: rc=$rc want 0. Only intent-OLDER-than-host is a provisioning gap; a role applied between a tag cut and its deploy is normal and must stay quiet" "$out"
+fi
+
+name="stellarindex-migrate is excluded from the host baseline (#427)"
+# migrate legitimately lags — it gates no config surface and is omitted
+# from some deploys by design. Including it would make the host read
+# v0.28.1, so the v0.63.0 intent would score NEWER than the host and the
+# defect above would sail through with the gate installed.
+sidecars stellarindex-api=v0.66.1 stellarindex-migrate=v0.28.1
+out="$(converge_run "$stale_intent" "$tmp/live-ok.sql")"; rc=$?
+if [[ "$rc" -eq 2 ]] && grep -qF -- "NOT CONVERGED" <<<"$out" \
+  && grep -qF -- "v0.66.1" <<<"$out" && ! grep -qF -- "v0.28.1" <<<"$out"; then
+  ok "$name (host read as v0.66.1, not v0.28.1)"
+else
+  bad "$name: rc=$rc want 2 with the host read as v0.66.1. A migrate sidecar dragging the baseline back is how this gate would silently stop firing" "$out"
+fi
+
+name="the host baseline is the LOWEST managed binary, not the highest"
+# deploy.yml's own convention: config from a release is unapplied if ANY
+# binary predates it, so the oldest is the honest baseline. Taking the
+# highest here would refuse a host whose config IS in step with its
+# oldest binary.
+sidecars stellarindex-api=v0.67.0 stellarindex-indexer=v0.63.0
+between_intent="$fake_share/tier1_between.sql"
+stamp v0.65.0 "$tmp/intent.sql" "$between_intent"
+out="$(converge_run "$between_intent" "$tmp/live-ok.sql")"; rc=$?
+if [[ "$rc" -eq 0 ]] && ! grep -qF -- "NOT CONVERGED" <<<"$out"; then
+  ok "$name (v0.65.0 intent against v0.63.0/v0.67.0 binaries: converged)"
+else
+  bad "$name: rc=$rc want 0 — with the lowest (v0.63.0) as the baseline a v0.65.0 intent is current; reading the highest (v0.67.0) would refuse it" "$out"
+fi
+
+name="an UNSTAMPED shipped copy refuses — the side door stays shut"
+# The task that installs this script and the task that ships the DDL are
+# adjacent in one role, so a stamped script beside an unstamped shipped
+# intent means the ship did not converge. Without this, the whole gate is
+# bypassed by the one file state every host has TODAY.
+sidecars stellarindex-api=v0.67.0
+unstamped="$fake_share/tier1_unstamped.sql"
+cp "$tmp/intent.sql" "$unstamped"
+out="$(converge_run "$unstamped" "$tmp/live-ok.sql")"; rc=$?
+if [[ "$rc" -eq 2 ]] \
+  && grep -qF -- "NOT CONVERGED" <<<"$out" \
+  && grep -qF -- "no provenance stamp" <<<"$out" \
+  && ! grep -qF -- "compared " <<<"$out"; then
+  ok "$name (rc=2)"
+else
+  bad "$name: rc=$rc want 2. An unstamped SHIPPED copy cannot be vouched for by anything, and letting it through would leave the defect reachable on every host the new role has not reached" "$out"
+fi
+
+name="an unstamped intent the OPERATOR named is UNVERIFIED, never refused"
+# The by-hand invocation ch-schema-restore.md documents points INTENT at
+# a checkout's deploy/clickhouse/tier1_schema.sql, which no role stamps.
+# Refusing that would break the documented recovery path; passing it
+# silently would be the original defect. It compares, and says the
+# verdict is unvouched.
+out="$(INTENT="$tmp/intent.sql" LIVE_SCHEMA="$tmp/live-ok.sql" \
+       DEPLOYED_VERSIONS_DIR="$sidecar_dir" TEXTFILE_DIR="$prom_dir" \
+       bash "$installed" 2>&1)"; rc=$?
+prom="$(cat "$prom_dir/ch_schema_drift.prom" 2>&1)"
+if [[ "$rc" -eq 0 ]] \
+  && grep -qF -- "UNVOUCHED" <<<"$out" \
+  && grep -qF -- "compared 3 declared table(s)" <<<"$out" \
+  && grep -qxF -- "stellarindex_ch_schema_drift_intent_verified 0" <<<"$prom" \
+  && ! grep -q -- "stellarindex_ch_schema_drift_intent_converged" <<<"$prom"; then
+  ok "$name (rc=0, verified 0, no converged verdict claimed)"
+else
+  bad "$name: rc=$rc want 0, saying UNVOUCHED, comparing 3 tables, emitting intent_verified 0 and NO intent_converged — an absent verdict is honest, a fabricated one is not" "$out
+--- ch_schema_drift.prom ---
+$prom"
+fi
+
+# ─── the deployed-versions path is written in three places ──────────
+# Same genre as the shipped-intent four-path pin above: the script's
+# default, the role default and the unit's Environment= must name one
+# directory, and nothing else compares them.
+script_dv="$(sed -n 's/^DEPLOYED_VERSIONS_DIR=.*:-\(.*\)}"$/\1/p' "$drift")"
+role_dv="$(sed -n 's/^ch_schema_drift_deployed_versions_dir:[[:space:]]*"\(.*\)"[[:space:]]*$/\1/p' "$defaults_yml")"
+unit_dv="$(sed -n "s/.*ch_schema_drift_deployed_versions_dir | default('\([^']*\)').*/\1/p" "$unit_j2")"
+
+name="the deployed-versions path agrees across script, role default and unit"
+if [[ -n "$script_dv" && "$script_dv" != *$'\n'* \
+   && "$role_dv" == "$script_dv" && "$unit_dv" == "$script_dv" ]]; then
+  ok "$name ($script_dv)"
+else
+  bad "$name" \
+"ch-schema-drift.sh DEPLOYED_VERSIONS_DIR : ${script_dv:-<not found>}
+defaults/main.yml                        : ${role_dv:-<not found>}
+ch-schema-drift.service.j2               : ${unit_dv:-<not found>}
+A unit that exports a directory the script does not read leaves the
+convergence gate permanently UNVERIFIED — green-looking, and blind."
+fi
+
+# ─── the role must actually ship what the script parses ─────────────
+# The stamp is a contract between two files that nothing else compares:
+# the ship task WRITES `-- Intent-Version:`, the script READS it. If
+# either is renamed alone the gate goes quiet — verified 0 forever, which
+# is the pre-fix behaviour wearing a metric.
+name="the ship task writes the Intent-Version stamp the script parses"
+ship_writes="$(grep -c -- '-- Intent-Version:' "$ship_task")"
+script_reads="$(grep -c -- 'Intent-Version' "$drift")"
+if [[ "$ship_writes" -ge 1 && "$script_reads" -ge 1 ]] \
+  && grep -qF -- "lookup('file'" "$ship_task"; then
+  ok "$name"
+else
+  bad "$name" \
+"18-pgbackrest-backup.yml '-- Intent-Version:' lines : $ship_writes (want >= 1)
+ch-schema-drift.sh 'Intent-Version' references       : $script_reads (want >= 1)
+The ship task must render the stamp AND the DDL into one file (the
+lookup('file', …) that inlines deploy/clickhouse/tier1_schema.sql); a
+stamp shipped as a separate sidecar could be current while the DDL beside
+it was not, which is the same disagreement this stamp removes."
+fi
+
+# The refusal messages tell the operator to run `--tags ch-schema-drift`.
+# That instruction is only true while every task in the family carries the
+# tag: a targeted apply that re-ships the intent but skips the units — or
+# vice versa — leaves the host half-converged and the check still red.
+name="every ch-schema-drift task carries the tag its refusal message names"
+tagged="$(grep -c '^  tags: \[ch-schema-drift\]$' "$ship_task")"
+if [[ "$tagged" -eq 6 ]] && grep -qF -- "--tags ch-schema-drift" "$drift"; then
+  ok "$name (6 tasks tagged)"
+else
+  bad "$name" \
+"tasks tagged ch-schema-drift in 18-pgbackrest-backup.yml : $tagged (want 6:
+install script, share dir, resolve provenance, ship DDL, units, timer)
+The NOT CONVERGED message prints that tag as the fix; a tag that selects
+only part of the family is a runbook step that half-works."
 fi
 
 echo

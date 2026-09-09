@@ -45,6 +45,7 @@ Type=oneshot
 EnvironmentFile=-/etc/default/stellarindex-ops
 Environment=INTENT={{ ch_schema_drift_intent | default('/usr/local/share/stellarindex/tier1_schema.sql') }}
 Environment=SNAPSHOT_DIR={{ ch_schema_snapshot_dir | default('/var/lib/stellarindex/ch-schema-snapshot') }}
+Environment=DEPLOYED_VERSIONS_DIR={{ ch_schema_drift_deployed_versions_dir | default('/var/lib/stellarindex/deployed-versions') }}
 Environment=LIVE={{ 1 if drift_live else 0 }}
 ExecStart=/usr/local/bin/ch-schema-drift.sh
 # Exit 1 = drift, exit 2 = could-not-compare. BOTH are failures on

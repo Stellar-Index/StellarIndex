@@ -1,6 +1,6 @@
 ---
 title: Runbook — ClickHouse schema + state snapshot (ADR-0043 §2.1)
-last_verified: 2026-09-04
+last_verified: 2026-09-09
 status: draft
 severity: P3
 ---
@@ -280,6 +280,91 @@ divergence, and every message names the file it read
 (`ABSENT from the snapshot …/schema.sql (captured 20260908T054100Z)`)
 rather than claiming "the live schema".
 
+### What it compares *with* — an intent that can prove it is current
+
+The `live` side is now read straight off the server. The **intent** side
+is a file the archival-node role ships to the host, and until 2026-09-09
+that was the whole of it: the check's reference arrived by *the same
+convergence the check is supposed to police*. Measured that day on both
+test nets, by pulling the `transactions` DDL out of each host's own
+shipped `tier1_schema.sql` and comparing it to that host's live schema:
+
+| Host | Shipped intent | Live schema | Verdict |
+| --- | --- | --- | --- |
+| testnet | 2026-09-08 — post-#482 | pre-#482 | **DRIFT** — correct |
+| futurenet | 2026-08-26 — pre-#482 | pre-#482 | **clean** — false |
+
+Both hosts carried the *same* stale live schema
+(`transactions.ingested_at` last, where the repo has put it after `memo`
+since [#482](https://github.com/Stellar-Index/StellarIndex/pull/482)
+merged on 2026-09-02). testnet reported it. futurenet read clean only
+because its intent file was stale by the same two weeks — two wrongs
+reading as a right. **The check went green exactly where the host was
+furthest behind**, which is the one shape a control must never have.
+
+So the shipped copy now carries its own provenance, stamped by the role's
+*Ship the repo's Tier-1 lake DDL* task as `--` comments the parser
+already strips:
+
+```
+-- Intent-Version: v0.67.0                 the release the shipped copy came from
+-- Intent-Schema-Commit: e2465baf6 (2026-09-09)   when the DDL content last changed
+```
+
+and the check compares `Intent-Version` against **what this host is
+running** — the `deployed-versions` sidecars, the same "live source of
+record" [`deployed-versions.md`](../deployed-versions.md) names and
+`deploy.yml`'s config-apply baseline reads. Lowest tag across the
+release-managed binaries, `stellarindex-migrate` excluded, exactly as
+`deploy.yml` computes it (#427): config from a release is unapplied if
+*any* binary predates it, and `migrate` legitimately lags and gates no
+config surface. Only `Intent-Version` moves the verdict; the schema
+commit is there so the operator can see how old the DDL itself is
+without an SSH round-trip.
+
+**Three outcomes, not two.** When the intent predates the deployed
+release the check reports **`NOT CONVERGED`** — it does not pass, and it
+does *not* report drift. Reporting drift would blame the schema for a
+provisioning gap and send the operator into "decide which side is wrong"
+below, which is the wrong procedure and the one that ends with
+`tier1_schema.sql` edited to match a server it was never compared
+against. It is a refusal (exit `2`, this script's existing
+*could-not-compare*): a reference that is not the repo's current
+statement cannot answer whether live is what the repository says it
+should be. Nothing is compared, so no drift gauge is published.
+
+An **unstamped** intent splits by who supplied it. The shipped copy is
+stamped by the same role run that installs the script, so an unstamped
+*shipped* copy is itself a provisioning gap and refuses the same way. An
+intent the **operator** named — a checkout's
+`deploy/clickhouse/tier1_schema.sql`, a copy pulled down by hand — is
+stamped by nothing and is not refused: it compares, and says in the log
+and in the metric that its verdict is `UNVOUCHED`.
+
+A release that changes no config surface still moves the sidecars, so a
+host can read `NOT CONVERGED` while its DDL is in fact current. That
+costs one idempotent role run. The opposite error is what futurenet
+already had, and a 60M-ledger re-derive against an `ORDER BY` the repo
+does not declare does not error — it silently writes a mis-sorted table.
+This is also the position `scripts/ci/ansible-drift.baseline` already
+takes on this very task: repo-ahead-of-host "IS drift — the fix is to
+apply the playbook", not an allowance. And unlike a hardcoded expected
+count, the state is always clearable by an action the operator controls,
+so it cannot become the permanently-firing alert that is the same as no
+alert.
+
+**Clearing it** re-ships the intent from the current checkout:
+
+```sh
+cd configs/ansible
+ansible-playbook -i inventory/<host>.yml playbooks/archival-node.yml \
+  --tags ch-schema-drift
+```
+
+Then re-run the check. The verdict it gives afterwards is trustworthy —
+and if it is `DRIFT`, that drift is real and "decide which side is wrong"
+below applies.
+
 Column **types** are reported as `INFO`, never as drift: ClickHouse
 re-renders types, DEFAULTs, CODECs and TTLs in its own canonical form,
 and enforcing textual equality on those is a false-positive machine —
@@ -297,15 +382,21 @@ it) — an ungated allowlist elsewhere would be the same hole with a new
 address. Until then `stellarindex_ch_schema_drift_uncodified` makes the
 growth visible.
 
-Exit codes: `0` clean, `1` drift, **`2` could-not-compare**. Two is a
-failure on purpose — "we could not check" must never be recorded as
-"checked, and fine", which is the equivalence this whole ADR exists to
-break. The systemd unit sets no `SuccessExitStatus`.
+Exit codes: `0` clean, `1` drift, **`2` could-not-compare** — which
+covers both "ClickHouse is unreachable" and "the intent side is not
+current" (`NOT CONVERGED`). Two is a failure on purpose — "we could
+not check" must never be recorded as "checked, and fine", which is the
+equivalence this whole ADR exists to break. The systemd unit sets no
+`SuccessExitStatus`, and `ch-schema-drift.service` is not in the
+`stellarindex_systemd_unit_failed` exclusion list, so a refusal pages a
+ticket through that alert. The exit code does not distinguish the two
+kinds of refusal; the metrics below do.
 
 Run it by hand:
 
 ```sh
-# against live — the default; needs no snapshot and no environment
+# against live — the default; needs no snapshot and no environment.
+# Also checks its own intent against the deployed-versions sidecars.
 ch-schema-drift.sh
 
 # against the newest retained capture on the box (up to a day old)
@@ -325,11 +416,43 @@ it). Editing the repo to match live without understanding which is which
 codifies the incident.
 
 Metrics: `stellarindex_ch_schema_drift_divergent` (alert on `> 0`),
-`_tables`, `_uncodified`, `_last_run_unix` (staleness), and `_live`
+`_tables`, `_uncodified`, `_last_run_unix` (staleness), `_live`
 (`1` = the verdict came from a fresh sweep, `0` = from a captured file —
-a clean verdict is only as current as what it read). The alert rules
-themselves are not yet in `deploy/monitoring/rules/storage.yml` — the
-producer ships first; wiring the rule is a follow-up in that file.
+a clean verdict is only as current as what it read), and the convergence
+half added on 2026-09-09:
+
+| Series | Meaning |
+| --- | --- |
+| `_intent_verified` | `1` = both the intent's stamp and the host's release were readable, so `_intent_converged` is a real verdict. `0` = one side was unavailable; the drift verdict beside it is **unvouched**. This is the gate's own canary, the same idea as `stellarindex_binary_version_probe_success`. |
+| `_intent_converged` | `1` = the shipped intent is from a release at least as new as the one this host runs. `0` = `NOT CONVERGED`. **Absent** when unverified — an absent verdict is honest, a fabricated one is not. |
+| `_intent_info{intent_version,host_version}` | The two releases actually compared, so the gap is legible without SSH. |
+
+The three states are separable, and never by exit code alone:
+
+```promql
+# converged and clean
+stellarindex_ch_schema_drift_intent_converged == 1
+  and stellarindex_ch_schema_drift_divergent == 0
+
+# converged and drifted  — the ch-schema-restore procedure below applies
+stellarindex_ch_schema_drift_intent_converged == 1
+  and stellarindex_ch_schema_drift_divergent > 0
+
+# NOT CONVERGED — a provisioning gap; re-apply the role, then re-read
+stellarindex_ch_schema_drift_intent_converged == 0
+```
+
+A `NOT CONVERGED` run rewrites the textfile with **only** the
+`_last_run_unix` and convergence series: it compared nothing, so
+`_divergent` goes absent rather than carrying an invented count — and,
+more to the point, rather than leaving the previous run's `divergent 0`
+on the floor for node_exporter to serve indefinitely, which would be the
+same false clean by a slower route.
+
+The alert rules themselves are not yet in
+`deploy/monitoring/rules/storage.yml` — the producer ships first; wiring
+the rules (including one on `_intent_converged == 0`) is a follow-up in
+that file.
 
 Self-test: `configs/ansible/roles/archival-node/files/ch-schema-drift-test.sh` (hermetic, no
 ClickHouse required — mutates a ClickHouse-rendered fixture one attribute
@@ -345,6 +468,29 @@ at a time and asserts each is caught).
 
 ## Changelog
 
+- 2026-09-09 — **the drift check can tell whether its own reference is
+  current.** The intent side is a file the archival-node role ships, so
+  it arrived by the same convergence the check polices: measured that day
+  on both test nets, testnet (intent 09-08, post-#482) correctly reported
+  its pre-#482 live schema as DRIFT while futurenet (intent 08-26,
+  pre-#482) read **clean** off the *same* stale live schema, because its
+  intent was stale by the same two weeks. The check went green exactly
+  where the host was furthest behind. The shipped copy now carries
+  `-- Intent-Version:` and `-- Intent-Schema-Commit:`, stamped at ship
+  time, and the check compares the former against the release the host
+  runs (the `deployed-versions` sidecars — lowest managed binary,
+  `migrate` excluded, as `deploy.yml` computes it). An intent older than
+  the deployed release is a third outcome, `NOT CONVERGED`: exit `2`,
+  no comparison, no drift verdict, and no `_divergent` gauge — a
+  provisioning gap must not be reported as schema drift, which would send
+  the operator to the wrong half of this runbook. An unstamped *shipped*
+  copy refuses the same way; an unstamped intent the *operator* named
+  compares but is marked `UNVOUCHED`. New gauges
+  `stellarindex_ch_schema_drift_intent_verified`, `_intent_converged` and
+  `_intent_info`, which make converged-and-clean, converged-and-drifted
+  and not-converged separable in Prometheus. Coverage: 12 new assertions
+  in `configs/ansible/roles/archival-node/files/ch-schema-drift-test.sh`
+  (47 total), each proven red by mutation.
 - 2026-09-09 — **the drift check compares against live by default.** It
   had compared against the newest daily snapshot while calling itself
   "repo intent vs live", which cost both directions: 8 live r1 tables

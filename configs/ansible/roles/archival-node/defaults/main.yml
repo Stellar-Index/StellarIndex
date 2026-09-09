@@ -371,6 +371,16 @@ ch_schema_drift_enabled: true
 # Where the shipped copy of the repo's founding DDL lands on the host.
 # The comparison needs the repo's intent ON the box; r1 has no checkout.
 ch_schema_drift_intent: "/usr/local/share/stellarindex/tier1_schema.sql"
+# Where every ansible binary deploy records the tag it just installed, one
+# file per binary (docs/operations/deployed-versions.md — "the live source
+# of record"). The drift check reads it to answer "what release is this
+# host running", and REFUSES to render a verdict when the shipped intent
+# is stamped with an older release: the intent side arrives by the same
+# convergence the check polices, so a host the role has not reached
+# compares a stale repo against a stale server and reads CLEAN. Measured
+# on futurenet 2026-09-09. Same mechanism deploy.yml's config-apply
+# baseline reads — not a second one.
+ch_schema_drift_deployed_versions_dir: "/var/lib/stellarindex/deployed-versions"
 # true (DEFAULT since 2026-09-09) = the check runs its OWN SHOW CREATE
 #   sweep. This is the only reading that answers the question the unit's
 #   Description asks, and the only one that fails when ClickHouse is down
