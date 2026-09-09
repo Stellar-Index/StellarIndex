@@ -15,6 +15,48 @@ against.
 
 ## [Unreleased]
 
+### Fixed
+
+- **monitoring:** the two files that both render
+  `/etc/prometheus/alertmanager.yml` had diverged, and the only thing that
+  had ever held them together was a header comment saying they mirrored
+  each other. On 2026-09-08 the fix for #485 gave `severity: informational`
+  a real Discord receiver (`chat-informational`) in
+  `configs/alertmanager/alertmanager.r1.yml` and did not touch
+  `configs/ansible/roles/prometheus/templates/alertmanager.yml.j2`, which
+  went on routing informational to `silent` — a receiver with no `*_configs`
+  block, which accepts an alert and delivers it to nobody. Applying the
+  prometheus role would have silently restored the bug that had just been
+  fixed, to every one of the eleven informational rules the catalogue's
+  delivery register lists today. Nothing in CI could see it, because
+  nothing in CI read both files: the r1 path is amtool-validated in
+  `monitoring-rules`, the template is parse-checked in `ansible-check`, and
+  no gate compared them. The template now carries the same route, the same
+  `chat-informational` receiver and the same bounded Discord Go template,
+  gated on a new `alertmanager_discord_webhook_url_informational` role
+  variable that degrades to a stub when unset.
+
+### Added
+
+- **ci:** `scripts/ci/check-alertmanager-parity.sh` turns "both apply paths
+  produce the same routing" from a comment into a gate. It renders the
+  standalone config through `apply.sh`'s own renderer — via a new
+  `--render-only` mode, so the gate is not a second copy of the
+  block-stripper it is checking — and the Ansible template through Jinja
+  with matching inputs, then requires `global`, `route`, `inhibit_rules`
+  and every receiver to be equal. Both render branches are compared:
+  **wired** (every URL set) catches a routing or payload-bound divergence,
+  **dark** (every URL empty) catches a divergence in the degraded shape,
+  where `apply.sh`'s line-based Python walker and the template's
+  `{% if %}` can disagree about what is left behind — a difference that is
+  invisible until the day a webhook is unset. It runs in `monitoring-rules`,
+  which is unconditional, deliberately not in `ansible-check`, which is
+  gated on `configs/ansible/**`: the commit that introduced the divergence
+  touched only `configs/alertmanager/`, and a gate that the regression's
+  own diff would have skipped is not a gate. The self-test mutates a
+  fixture four ways and requires a red each time, including one that
+  diverges on the dark branch **only**.
+
 ## [v0.65.0] — 2026-09-08
 
 ### Added

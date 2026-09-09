@@ -1419,6 +1419,30 @@ jobs:
           printf 'HEALTHCHECKS_DEADMANSSWITCH_URL=https://hc-ping.com/x\nDISCORD_WEBHOOK_URL_PAGES=https://discord.com/api/webhooks/1/a\nDISCORD_WEBHOOK_URL_ALERTS=https://discord.com/api/webhooks/2/b\n' > "$S"
           ALERTMANAGER_SECRETS="$S" bash configs/alertmanager/apply.sh --check-only
           bash configs/alertmanager/apply-test.sh
+      - name: alertmanager apply-path parity (+ self-test)
+        # /etc/prometheus/alertmanager.yml has TWO producers — the r1
+        # standalone config validated in the step above, and the Ansible
+        # role template — and the only thing that had ever kept them in
+        # step was a header comment claiming they mirrored each other. On
+        # 2026-09-08 the fix for #485 routed `severity: informational` to
+        # a real Discord receiver in the first and not the second, so a
+        # role apply would have silently restored the bug it had just
+        # fixed (#501). Renders BOTH paths with identical inputs, on the
+        # wired and the all-URLs-empty branch, and fails on any
+        # structural difference.
+        #
+        # It belongs in THIS job, not in ansible-check: that job is gated
+        # on `configs/ansible/**`, and the commit that introduced the
+        # divergence touched only `configs/alertmanager/`. A gate the
+        # regression's own diff would have skipped is not a gate.
+        run: |
+          set -euo pipefail
+          # jinja2 + PyYAML are not guaranteed on the runner image, and
+          # the gate is fail-closed under CI=true — install them rather
+          # than let a missing import read as a pass.
+          python3 -m pip install --quiet 'Jinja2==3.1.6' 'PyYAML==6.0.2'
+          ./scripts/ci/check-alertmanager-parity.sh
+          ./scripts/ci/check-alertmanager-parity-test.sh
       - name: validate the rules-apply script (and that it still counts alerts)
         # apply-rules.sh verifies a deploy by asserting every alert it
         # extracted from the repo actually loaded on the host. That check

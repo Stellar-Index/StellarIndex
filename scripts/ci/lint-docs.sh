@@ -305,6 +305,9 @@ for pattern in "${stale_patterns[@]}"; do
     2>/dev/null | grep -v "node_modules\|_archive/\|discovery/" || true)
   if [ -n "$matches" ]; then
     err "Stale reference to '$pattern' in active docs:"
+    # shellcheck disable=SC2001  # per-LINE indent of a multi-line
+    # variable; ${var//…} has no line anchor, so the suggested
+    # parameter expansion cannot express this.
     echo "$matches" | sed 's/^/    /' >&2
   fi
 done
@@ -325,6 +328,7 @@ if [ -d internal ] || [ -d cmd ]; then
     grep -vE '//\s*(TODO|FIXME|XXX)\(#[0-9]+\)' || true)
   if [ -n "$bad_todos" ]; then
     err "TODO/FIXME/XXX without linked issue number (must be 'TODO(#123): …'):"
+    # shellcheck disable=SC2001  # per-LINE indent; see the note above.
     echo "$bad_todos" | sed 's/^/    /' >&2
   fi
 fi
@@ -489,8 +493,10 @@ fi
 # The grep below is name-presence only, so it never noticed that the
 # catalogue's SEVERITY column disagreed with the rules it described (190
 # of 203 rows, issue #362) — including 15 rows labelled `P3` whose rules
-# are `informational`, which alertmanager.r1.yml routes to a receiver
-# with no delivery at all. The YAML-aware
+# are `informational`, which alertmanager.r1.yml then routed to a
+# receiver with no delivery at all (fixed 2026-09-08: informational now
+# goes to chat-informational on BOTH apply paths, #485/#501). The
+# YAML-aware
 # scripts/ci/lint-alerts-catalog.py checks that column, and does the
 # name parity in BOTH directions across BOTH rule trees.
 

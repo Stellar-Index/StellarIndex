@@ -15,6 +15,19 @@
 {# 2026-09-07 outage those bounds exist to prevent, and the measured     #}
 {# worst case. Raw blocks (rather than the {{ "{{" }} escaping used for  #}
 {# the rest of the file) are what makes the two readable side by side.   #}
+{#                                                                        #}
+{# "MIRRORS" IS NOW ENFORCED, NOT ASSERTED (#501). That claim stood in    #}
+{# this header as a comment for four months and was false for one of      #}
+{# them: c0815d73e routed `severity: informational` to a new              #}
+{# chat-informational receiver in alertmanager.r1.yml and did not touch   #}
+{# this file, so an apply of the prometheus role would have silently      #}
+{# reinstated the #485 bug — every informational alert matched, routed   #}
+{# and delivered nowhere. Nothing in CI could see it, because nothing in #}
+{# CI read both files.                                                    #}
+{#                                                                        #}
+{# scripts/ci/check-alertmanager-parity.sh now renders BOTH paths with    #}
+{# identical inputs and fails on any structural difference. Change one    #}
+{# file, change the other, in the same commit.                            #}
 
 global:
   resolve_timeout: 5m
@@ -78,10 +91,14 @@ route:
       repeat_interval: 24h
       continue: false
 
-    # Informational — accumulates in the Alertmanager UI. No
-    # chat fanout (would dilute the page + ticket signal).
+    # Informational — a low-traffic Discord channel of its own, kept
+    # separate from `alerts` so a routine notice (an oracle publishing
+    # a ticker we do not map yet) can never bury a ticket in the same
+    # feed. With alertmanager_discord_webhook_url_informational unset
+    # the receiver renders as a stub, identical to the `silent` it
+    # replaced, so an unset URL is a no-op rather than a config error.
     - matchers: [severity = "informational"]
-      receiver: silent
+      receiver: chat-informational
       continue: false
 
 # ─── Inhibit rules ───────────────────────────────────────────────
@@ -196,6 +213,32 @@ receivers:
     # Healthchecks check SEPARATE from the deadmansswitch one.
 {% endif %}
 
+  # Informational fanout → a dedicated Discord channel. Same bounded
+  # template as chat-default: every interpolated field is capped and at
+  # most $max alerts render, because an unbounded body is what returned
+  # 400 for eleven hours and silently dropped every other alert with it.
+  - name: chat-informational
+{% if alertmanager_discord_webhook_url_informational %}
+    discord_configs:
+      - webhook_url: {{ alertmanager_discord_webhook_url_informational }}
+        send_resolved: false{% raw %}
+        title: '{{ printf "%.120s" .GroupLabels.alertname }}'
+        message: |
+          {{ $max := 3 }}{{ $shown := .Alerts }}{{ if gt (len .Alerts) $max }}{{ $shown = slice .Alerts 0 $max }}{{ end }}{{ range $shown }}{{ $sum := printf "%.160s" .Annotations.summary }}{{ $desc := printf "%.300s" (trimSpace .Annotations.description) }}
+          **[FYI]** {{ $sum }}{{ if ne $sum .Annotations.summary }} …{{ end }}
+          {{ $desc }}{{ if ne $desc (trimSpace .Annotations.description) }} …{{ end }}
+          {{ if .Annotations.runbook_url }}Runbook: {{ printf "%.200s" .Annotations.runbook_url }}{{ end }}
+          {{ end }}{{ if gt (len .Alerts) $max }}
+          … and {{ len (slice .Alerts $max) }} more in this group — see {{ printf "%.120s" .ExternalURL }}
+          {{ end }}
+{% endraw %}
+{% else %}
+    # No alertmanager_discord_webhook_url_informational — informational
+    # alerts are visible only in the Alertmanager UI. This is the same
+    # black hole `silent` is, and it is why the variable exists: set it
+    # to a channel of its own, NOT to the #alerts webhook.
+{% endif %}
+
   # ─── silent — A BLACK HOLE, ON PURPOSE ─────────────────────────
   #
   # READ THIS BEFORE ASSUMING THE EMPTY STANZA IS AN OVERSIGHT.
@@ -203,23 +246,21 @@ receivers:
   # `- name: silent` has no webhook_configs, no discord_configs and
   # no pagerduty_configs, and that is DELIBERATE: an Alertmanager
   # receiver with no *_configs block accepts the alert and delivers
-  # it to NOBODY. Every `severity: informational` rule routes here,
-  # so a firing informational alert reaches a human only if someone
-  # happens to open the Alertmanager UI. It does not reach Discord,
-  # it does not reach Healthchecks, and there is no PagerDuty leg
-  # anywhere in this file for any severity.
+  # it to NOBODY.
   #
-  # Do NOT "repair" this by adding a webhook. Whether each of those
-  # rules should be delivered is an open POLICY question tracked in
-  # issue #485; the per-alert triage that decides it lives in
-  # docs/operations/alerts-catalog.md, section "Informational alerts
-  # — delivery register", and `scripts/ci/lint-alerts-catalog.py`
-  # requires a register row for every informational rule so a new one
+  # NOTHING ROUTES HERE TODAY (#485/#501, 2026-09-08). `severity:
+  # informational` used to, which meant every informational alert was
+  # matched, routed and delivered nowhere; they now go to chat-informational
+  # above. The stanza is kept because it is the shape every receiver
+  # degrades to when its URL is unset — an operator reading a rendered
+  # config needs to recognise it — and removing it would make this
+  # template diverge from configs/alertmanager/alertmanager.r1.yml,
+  # which scripts/ci/check-alertmanager-parity.sh forbids.
+  #
+  # Do NOT route a severity here to quieten it. Whether a given
+  # informational alert deserves delivery is a POLICY question, and
+  # docs/operations/alerts-catalog.md's "Informational alerts —
+  # delivery register" is where it is answered; the register is
+  # enforced by scripts/ci/lint-alerts-catalog.py, so a new rule
   # cannot land in this bucket by accident.
-  #
-  # The one exception to "informational goes nowhere" is
-  # stellarindex_deadmansswitch: it carries severity=informational
-  # but the alertname-matched route above it fires first
-  # (`continue: false`), so it reaches Healthchecks.io and never
-  # reaches this receiver.
   - name: silent

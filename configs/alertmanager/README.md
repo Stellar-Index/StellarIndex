@@ -3,7 +3,15 @@
 Companion to [`configs/prometheus/prometheus.r1.yml`](../prometheus/prometheus.r1.yml)
 + [`configs/prometheus/rules.r1/`](../prometheus/rules.r1/).
 
-Two parallel apply paths produce the same routing:
+Two parallel apply paths produce the same routing — and that is
+enforced, not asserted. `scripts/ci/check-alertmanager-parity.sh`
+renders both with identical inputs and fails on any difference in
+`global`, `route`, `inhibit_rules` or `receivers`, on the wired and the
+all-URLs-empty branch. It exists because the claim stood here as prose
+for four months and was false for one of them (#501): the fix for #485
+gave `informational` a real Discord receiver in this file only, leaving
+the template one apply away from restoring the bug. **Change one file,
+change the other, in the same commit.**
 
 - **Standalone** (this directory): `apply.sh` env-substitutes the
   YAML and reloads systemd-managed Alertmanager. Use for one-off
@@ -25,7 +33,7 @@ vocabulary defined in the severity ladder in
 |----------|----------|---------|
 | `page` | `chat-page` (Discord `#stellarindex-pages`) | every 12 h while firing |
 | `ticket` | `chat-default` (Discord `#stellarindex-alerts`) | every 24 h while firing |
-| `informational` | `silent` (Alertmanager UI only) | — |
+| `informational` | `chat-informational` (Discord, its own low-traffic channel) | every 12 h while firing |
 | `stellarindex_deadmansswitch` | `deadmansswitch` (Healthchecks.io) | every 60 s |
 | `stellarindex_alertmanager_notifications_failing` | `alert-delivery-failure` (Healthchecks.io) **and** the severity route | every 1 h |
 
