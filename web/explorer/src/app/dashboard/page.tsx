@@ -293,7 +293,11 @@ function GettingStarted({
                 {s.done ? (
                   <CheckCircle2 className="mt-0.5 h-5 w-5 shrink-0 text-ok-500" />
                 ) : (
-                  <Circle className="mt-0.5 h-5 w-5 shrink-0 text-line-strong" />
+                  // line-strong is a hairline tint (1.40:1 on this card) —
+                  // invisible as a GLYPH, which is what this is. ink-faint
+                  // clears the 3:1 WCAG 1.4.11 floor for a graphic at
+                  // 4.69:1 while staying quieter than the done state.
+                  <Circle className="mt-0.5 h-5 w-5 shrink-0 text-ink-faint" />
                 )}
                 <div className="min-w-0">
                   <div

@@ -166,7 +166,7 @@ export function MarketsTable() {
               onClick={() => setVenue(key)}
               className={`rounded-md px-2.5 py-1 text-xs ${
                 venue === key
-                  ? 'bg-brand-600 text-white'
+                  ? 'bg-brand-fill text-white'
                   : 'border border-line text-ink-body hover:border-brand-500'
               }`}
             >

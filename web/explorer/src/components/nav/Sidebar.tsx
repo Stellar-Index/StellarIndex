@@ -313,7 +313,7 @@ function AccountCard({ onNavigate }: { onNavigate?: () => void }) {
           <Link
             href="/signup"
             onClick={onNavigate}
-            className="rounded-lg bg-brand-600 px-3 py-1.5 text-center text-sm font-medium text-white hover:bg-brand-700"
+            className="rounded-lg bg-brand-fill px-3 py-1.5 text-center text-sm font-medium text-white hover:bg-brand-fill-hover"
           >
             Sign up
           </Link>
@@ -364,7 +364,7 @@ function AccountMenu({ email }: { email?: string }) {
         aria-controls="sidebar-account-menu"
         className="flex w-full items-center gap-2.5 rounded-lg border border-line bg-surface px-2.5 py-2 text-left shadow-xs hover:bg-surface-subtle"
       >
-        <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-brand-600 text-xs font-semibold text-white">
+        <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-brand-fill text-xs font-semibold text-white">
           {initials}
         </span>
         <span className="min-w-0 flex-1">

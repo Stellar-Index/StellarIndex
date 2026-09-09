@@ -35,7 +35,7 @@ export function PriceSparklines({
           disabled={!has24}
           className={`rounded px-1.5 py-0.5 ${
             active === '24h'
-              ? 'bg-brand-600 text-white'
+              ? 'bg-brand-fill text-white'
               : 'text-ink-muted hover:text-brand-600 disabled:opacity-40'
           }`}
         >
@@ -47,7 +47,7 @@ export function PriceSparklines({
           disabled={!has7}
           className={`rounded px-1.5 py-0.5 ${
             active === '7d'
-              ? 'bg-brand-600 text-white'
+              ? 'bg-brand-fill text-white'
               : 'text-ink-muted hover:text-brand-600 disabled:opacity-40'
           }`}
         >

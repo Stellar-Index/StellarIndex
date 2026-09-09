@@ -154,7 +154,7 @@ export function HomeTryAPI() {
             onClick={() => pickExample(i)}
             className={`rounded-md px-2.5 py-1 text-xs ${
               i === activeIx
-                ? 'bg-brand-600 text-white'
+                ? 'bg-brand-fill text-white'
                 : 'bg-surface-subtle text-ink-body hover:bg-line'
             }`}
           >

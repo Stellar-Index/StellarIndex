@@ -237,7 +237,7 @@ export default async function IssuerDetailPage({ params }: { params: Params }) {
       {detail.scam_reason && (
         <div className="border-down/40 bg-down-subtle rounded-lg border-2 px-4 py-3">
           <div className="flex items-baseline gap-2">
-            <span className="bg-down rounded-sm px-2 py-0.5 text-[10px] font-bold tracking-wider text-white uppercase">
+            <span className="bg-down text-surface-canvas rounded-sm px-2 py-0.5 text-[10px] font-bold tracking-wider uppercase">
               Warning
             </span>
             <span className="text-down-strong text-sm font-medium">
