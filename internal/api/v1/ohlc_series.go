@@ -21,15 +21,15 @@ import (
 // boundaries (1m → :00, 1h → top of hour, 1d → 00:00 UTC, 1w →
 // Monday 00:00 UTC). Bucket end = `T + interval`.
 type OHLCSeriesBar struct {
-	T         time.Time `json:"t"`
-	O         string    `json:"o"`
-	H         string    `json:"h"`
-	L         string    `json:"l"`
-	C         string    `json:"c"`
-	VBase     string    `json:"v_base"`
-	VQuote    string    `json:"v_quote"`
-	N         int64     `json:"n"`
-	Truncated bool      `json:"truncated,omitempty"`
+	T         WireTime `json:"t"`
+	O         string   `json:"o"`
+	H         string   `json:"h"`
+	L         string   `json:"l"`
+	C         string   `json:"c"`
+	VBase     string   `json:"v_base"`
+	VQuote    string   `json:"v_quote"`
+	N         int64    `json:"n"`
+	Truncated bool     `json:"truncated,omitempty"`
 
 	// Sources is the set of venues that contributed to the bucket,
 	// carried from the CAGG's own `sources` column. It is deliberately
@@ -49,8 +49,8 @@ type OHLCSeriesResponse struct {
 	Base      string          `json:"base"`
 	Quote     string          `json:"quote"`
 	Interval  string          `json:"interval"`
-	From      time.Time       `json:"from"`
-	To        time.Time       `json:"to"`
+	From      WireTime        `json:"from"`
+	To        WireTime        `json:"to"`
 	Intervals []OHLCSeriesBar `json:"intervals"`
 }
 
@@ -279,8 +279,8 @@ func (s *Server) handleOHLCSeries(
 		Base:      pair.Base.String(),
 		Quote:     pair.Quote.String(),
 		Interval:  string(interval),
-		From:      from,
-		To:        to,
+		From:      WireTime(from),
+		To:        WireTime(to),
 		Intervals: bars,
 	}
 	// Fiat-quoted series are combined from USD/EUR-pegged stablecoin

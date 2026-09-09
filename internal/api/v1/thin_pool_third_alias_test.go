@@ -91,11 +91,11 @@ func newThinPoolFixture(t *testing.T, deepBase, deepQuote, thinBase, thinQuote s
 		snapshots: map[string]v1.PriceSnapshot{
 			deep: {
 				AssetID: deepBase, Quote: deepQuote, Price: thinPoolDeepPrice, PriceType: "vwap",
-				ObservedAt: time.Now().Add(-2 * time.Hour).UTC(),
+				ObservedAt: v1.WireTime(time.Now().Add(-2 * time.Hour).UTC()),
 			},
 			thin: {
 				AssetID: thinBase, Quote: thinQuote, Price: thinPoolThinPrice, PriceType: "vwap",
-				ObservedAt: time.Now().UTC(),
+				ObservedAt: v1.WireTime(time.Now().UTC()),
 			},
 		},
 		stale:   map[string]bool{deep: true, thin: false},

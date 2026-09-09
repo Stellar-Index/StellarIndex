@@ -2367,7 +2367,7 @@ func (s *Server) computeReadyz() (int, []byte) {
 		StatusRoot: "/v1/status",
 	}
 	render := func(status int, flags Flags) (int, []byte) {
-		env := Envelope{Data: resp, AsOf: time.Now().UTC(), Flags: flags}
+		env := Envelope{Data: resp, AsOf: WireTime(time.Now().UTC()), Flags: flags}
 		b, err := json.Marshal(env)
 		if err != nil {
 			return http.StatusInternalServerError, []byte(`{"error":"readyz render"}`)
@@ -2461,7 +2461,7 @@ func writeLivezLake(w http.ResponseWriter, code int, body []byte) {
 // rationale as computeReadyz).
 func (s *Server) computeLivezLake() (int, []byte) {
 	render := func(status int, body lakeHealth) (int, []byte) {
-		env := Envelope{Data: body, AsOf: time.Now().UTC()}
+		env := Envelope{Data: body, AsOf: WireTime(time.Now().UTC())}
 		b, err := json.Marshal(env)
 		if err != nil {
 			return http.StatusInternalServerError, []byte(`{"error":"livez render"}`)

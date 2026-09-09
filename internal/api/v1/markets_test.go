@@ -127,8 +127,8 @@ func TestMarkets_ReturnsPairsWithCursor(t *testing.T) {
 	ts1 := time.Unix(1_772_000_000, 0).UTC()
 	reader := &stubMarketsReader{
 		pairs: []v1.Market{
-			{Base: "native", Quote: "fiat:USD", LastTradeAt: ts1, TradeCount24h: 42},
-			{Base: "native", Quote: "fiat:EUR", LastTradeAt: ts1, TradeCount24h: 10},
+			{Base: "native", Quote: "fiat:USD", LastTradeAt: v1.WireTime(ts1), TradeCount24h: 42},
+			{Base: "native", Quote: "fiat:EUR", LastTradeAt: v1.WireTime(ts1), TradeCount24h: 10},
 		},
 		nextCur: "next-opaque",
 	}
@@ -281,7 +281,7 @@ func TestMarkets_LastTradeAtVsBucketCloseAt(t *testing.T) {
 		pairs: []v1.Market{
 			{
 				Base: "native", Quote: "fiat:USD",
-				LastTradeAt: lastTrade, BucketCloseAt: bucketClose, TradeCount24h: 42,
+				LastTradeAt: v1.WireTime(lastTrade), BucketCloseAt: v1.WireTime(bucketClose), TradeCount24h: 42,
 			},
 		},
 	}
@@ -316,13 +316,13 @@ func TestMarkets_LastTradeAtVsBucketCloseAt(t *testing.T) {
 	if len(env.Data) != 1 {
 		t.Fatalf("want 1 row, got %d", len(env.Data))
 	}
-	if !env.Data[0].LastTradeAt.Equal(lastTrade) {
+	if !env.Data[0].LastTradeAt.Time().Equal(lastTrade) {
 		t.Errorf("last_trade_at = %v, want %v", env.Data[0].LastTradeAt, lastTrade)
 	}
-	if !env.Data[0].BucketCloseAt.Equal(bucketClose) {
+	if !env.Data[0].BucketCloseAt.Time().Equal(bucketClose) {
 		t.Errorf("bucket_close_at = %v, want %v", env.Data[0].BucketCloseAt, bucketClose)
 	}
-	if env.Data[0].LastTradeAt.Equal(env.Data[0].BucketCloseAt) {
+	if env.Data[0].LastTradeAt.Time().Equal(env.Data[0].BucketCloseAt.Time()) {
 		t.Errorf("F-0065 regression: last_trade_at == bucket_close_at — the two should be distinct values")
 	}
 }

@@ -46,20 +46,20 @@ type Account struct {
 	KeyPrefix       string       `json:"key_prefix,omitempty"`
 	Tier            string       `json:"tier,omitempty"`
 	RateLimitPerMin int          `json:"rate_limit_per_min,omitempty"`
-	CreatedAt       time.Time    `json:"created_at,omitempty"`
+	CreatedAt       WireTime     `json:"created_at,omitempty"`
 	User            *AccountUser `json:"user,omitempty"`
 	AccountInfo     *AccountInfo `json:"account,omitempty"`
 }
 
 // AccountUser is the magic-link-session caller's user info.
 type AccountUser struct {
-	ID              string    `json:"id"`
-	Email           string    `json:"email"`
-	DisplayName     string    `json:"display_name,omitempty"`
-	Role            string    `json:"role,omitempty"`
-	IsStaff         bool      `json:"is_staff"`
-	EmailVerifiedAt time.Time `json:"email_verified_at,omitempty"`
-	LastLoginAt     time.Time `json:"last_login_at,omitempty"`
+	ID              string   `json:"id"`
+	Email           string   `json:"email"`
+	DisplayName     string   `json:"display_name,omitempty"`
+	Role            string   `json:"role,omitempty"`
+	IsStaff         bool     `json:"is_staff"`
+	EmailVerifiedAt WireTime `json:"email_verified_at,omitempty"`
+	LastLoginAt     WireTime `json:"last_login_at,omitempty"`
 }
 
 // AccountInfo is the magic-link-session caller's parent account.
@@ -237,8 +237,8 @@ func (s *Server) handleAccountMe(w http.ResponseWriter, r *http.Request) {
 					DisplayName:     sess.DisplayName,
 					Role:            sess.Role,
 					IsStaff:         sess.IsStaff,
-					EmailVerifiedAt: sess.EmailVerifiedAt,
-					LastLoginAt:     sess.LastLoginAt,
+					EmailVerifiedAt: WireTime(sess.EmailVerifiedAt),
+					LastLoginAt:     WireTime(sess.LastLoginAt),
 				},
 				AccountInfo: &AccountInfo{
 					ID:     sess.AccountID,
@@ -268,7 +268,7 @@ func (s *Server) handleAccountMe(w http.ResponseWriter, r *http.Request) {
 		KeyPrefix:       subject.KeyPrefix,
 		Tier:            string(subject.Tier),
 		RateLimitPerMin: subject.RateLimitPerMin,
-		CreatedAt:       subject.CreatedAt,
+		CreatedAt:       WireTime(subject.CreatedAt),
 	}
 	writeJSON(w, out, Flags{})
 }
@@ -305,7 +305,7 @@ func (s *Server) handleAccountUsage(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, r,
 			"https://api.stellarindex.io/errors/unauthorized",
 			"Authentication required", http.StatusUnauthorized,
-			"/v1/account/usage requires an API key or SEP-10 token")
+			"/v1/account/usage requires an API key (or a SEP-10 token, on a deployment running auth_mode=sep10 — a deployment accepts one or the other, never both)")
 		return
 	}
 	// The single UsageTracker-shared derivation (key:<KeyID> or
@@ -398,7 +398,7 @@ func (s *Server) handleAccountKeysCreate(w http.ResponseWriter, r *http.Request)
 		writeProblem(w, r,
 			"https://api.stellarindex.io/errors/unauthorized",
 			"Authentication required", http.StatusUnauthorized,
-			"/v1/account/keys requires an API key or SEP-10 token")
+			"/v1/account/keys requires an API key (or a SEP-10 token, on a deployment running auth_mode=sep10 — a deployment accepts one or the other, never both)")
 		return
 	}
 	if s.accounts == nil {
@@ -482,7 +482,7 @@ func (s *Server) handleAccountKeysCreate(w http.ResponseWriter, r *http.Request)
 			Label:     rec.Label,
 			Scopes:    rec.Scopes,
 		},
-		AsOf:  rec.CreatedAt,
+		AsOf:  WireTime(rec.CreatedAt),
 		Flags: Flags{},
 	})
 }
@@ -730,7 +730,7 @@ func (s *Server) handleAccountKeysList(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, r,
 			"https://api.stellarindex.io/errors/unauthorized",
 			"Authentication required", http.StatusUnauthorized,
-			"/v1/account/keys requires an API key or SEP-10 token")
+			"/v1/account/keys requires an API key (or a SEP-10 token, on a deployment running auth_mode=sep10 — a deployment accepts one or the other, never both)")
 		return
 	}
 	if s.accounts == nil {
@@ -766,7 +766,7 @@ func (s *Server) handleAccountKeysList(w http.ResponseWriter, r *http.Request) {
 			KeyPrefix:       k.KeyPrefix,
 			Tier:            string(k.Tier),
 			RateLimitPerMin: k.RateLimitPerMin,
-			CreatedAt:       k.CreatedAt,
+			CreatedAt:       WireTime(k.CreatedAt),
 		})
 	}
 	writeJSON(w, out, Flags{})
@@ -789,7 +789,7 @@ func (s *Server) handleAccountKeysRevoke(w http.ResponseWriter, r *http.Request)
 		writeProblem(w, r,
 			"https://api.stellarindex.io/errors/unauthorized",
 			"Authentication required", http.StatusUnauthorized,
-			"/v1/account/keys requires an API key or SEP-10 token")
+			"/v1/account/keys requires an API key (or a SEP-10 token, on a deployment running auth_mode=sep10 — a deployment accepts one or the other, never both)")
 		return
 	}
 	keyID := r.PathValue("keyID")

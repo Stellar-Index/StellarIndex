@@ -16,8 +16,8 @@ import (
 // Envelope is the shape of every 2xx JSON response. See
 // docs/reference/api-design.md §4.
 type Envelope struct {
-	Data any       `json:"data"`
-	AsOf time.Time `json:"as_of"`
+	Data any      `json:"data"`
+	AsOf WireTime `json:"as_of"`
 	// CoverageFrom is the earliest instant this deployment holds
 	// served-tier price history at for the pair the request named — the
 	// bottom of the range the response's emptiness can speak for.
@@ -29,7 +29,7 @@ type Envelope struct {
 	// (/v1/ohlc, /v1/history, /v1/chart, /v1/price/at) and only when the
 	// probe reached an answer; absent means UNKNOWN, never "from the
 	// beginning of time".
-	CoverageFrom *time.Time  `json:"coverage_from,omitempty"`
+	CoverageFrom *WireTime   `json:"coverage_from,omitempty"`
 	Sources      []string    `json:"sources,omitempty"`
 	Flags        Flags       `json:"flags"`
 	Pagination   *Pagination `json:"pagination,omitempty"`
@@ -171,14 +171,14 @@ type Pagination struct {
 // problem+json clothing. RFC 9457 §3.2 admits unknown members, so they ride here
 // rather than forcing that endpoint's contract to 200.
 type Problem struct {
-	Type            string     `json:"type"`
-	Title           string     `json:"title"`
-	Status          int        `json:"status"`
-	Detail          string     `json:"detail,omitempty"`
-	Instance        string     `json:"instance,omitempty"`
-	RequestID       string     `json:"request_id,omitempty"`
-	CoverageFrom    *time.Time `json:"coverage_from,omitempty"`
-	OutsideCoverage bool       `json:"outside_coverage,omitempty"`
+	Type            string    `json:"type"`
+	Title           string    `json:"title"`
+	Status          int       `json:"status"`
+	Detail          string    `json:"detail,omitempty"`
+	Instance        string    `json:"instance,omitempty"`
+	RequestID       string    `json:"request_id,omitempty"`
+	CoverageFrom    *WireTime `json:"coverage_from,omitempty"`
+	OutsideCoverage bool      `json:"outside_coverage,omitempty"`
 }
 
 // writeJSON writes the Envelope + 200. The convention everywhere in
@@ -186,7 +186,7 @@ type Problem struct {
 func writeJSON(w http.ResponseWriter, data any, flags Flags, sources ...string) {
 	writeEnvelope(w, Envelope{
 		Data:    data,
-		AsOf:    time.Now().UTC(),
+		AsOf:    WireTime(time.Now().UTC()),
 		Sources: sources,
 		Flags:   flags,
 	})
@@ -198,8 +198,8 @@ func writeJSON(w http.ResponseWriter, data any, flags Flags, sources ...string) 
 func writeJSONCoverage(w http.ResponseWriter, data any, flags Flags, coverageFrom *time.Time) {
 	writeEnvelope(w, Envelope{
 		Data:         data,
-		AsOf:         time.Now().UTC(),
-		CoverageFrom: coverageFrom,
+		AsOf:         WireTime(time.Now().UTC()),
+		CoverageFrom: wireTimePtr(coverageFrom),
 		Flags:        flags,
 	})
 }
@@ -216,7 +216,7 @@ func writeEnvelope(w http.ResponseWriter, env Envelope) {
 // is not plain 200 OK.
 func writeEnvelopeStatus(w http.ResponseWriter, status int, env Envelope) {
 	if env.AsOf.IsZero() {
-		env.AsOf = time.Now().UTC()
+		env.AsOf = WireTime(time.Now().UTC())
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
@@ -261,7 +261,7 @@ func writeProblemCoverage(
 		Detail:          detail,
 		Instance:        r.URL.RequestURI(),
 		RequestID:       middleware.RequestIDFrom(r),
-		CoverageFrom:    coverageFrom,
+		CoverageFrom:    wireTimePtr(coverageFrom),
 		OutsideCoverage: outsideCoverage,
 	}
 	w.Header().Set("Content-Type", "application/problem+json")

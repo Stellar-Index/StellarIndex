@@ -2005,12 +2005,18 @@ paths:
         so there is nothing to derive a served width from and the
         requested `granularity` is always the one served — a `1m`
         request on a long-lived pair therefore stops early rather than
-        being coarsened. Measured 2026-09-07 on `native`/`fiat:USD`:
+        being coarsened. Measured 2026-09-09 on `native`/`fiat:USD`:
         `granularity=1m` returned exactly 50 000 points ending
-        2018-02-21, while `granularity=1d` returned 2 183 points
-        running to yesterday. `flags.stale` is raised when the series
-        may be short. For a bounded window with an automatically
-        fitted width, use `/v1/chart`.
+        2018-02-21, while `granularity=1d` returned 3 341 points
+        spanning 2017-01-17 to yesterday. `flags.stale` is raised when
+        the series may be short. For a bounded window with an
+        automatically fitted width, use `/v1/chart`.
+
+        The base leg is named `asset` here, NOT `base`, and there is no
+        `base=` alias — unlike `/v1/history`, whose canonical spelling
+        is `base=` with `asset=` accepted as an alias. The two history
+        surfaces are deliberately asymmetric because this one is a
+        price series keyed like `/v1/price`, not a trade feed.
 
         `granularity=1m` may additionally be bounded to the last 90
         days (migration 0156); coarser widths hold the deployment's
@@ -9090,6 +9096,21 @@ paths:
         with its account secret key. Per SEP-10 §3.2 the response
         carries the unsigned XDR + the network passphrase the
         challenge was crafted for. Unauthenticated by design.
+
+        **Not enabled on the hosted deployment.** The server-side
+        verifier is implemented, but `api.stellarindex.io` has no
+        signing seed provisioned, so this route answers `503
+        sep10-unavailable`. Enabling it is an operator action, not a
+        code change: set the `STELLARINDEX_SEP10_SEED` (server signing
+        S-strkey) and `STELLARINDEX_SEP10_JWT_SECRET` (≥32 bytes)
+        environment variables — their names are configurable via
+        `[api.sep10] seed_env` / `jwt_secret_env` — on a deployment
+        that already has Redis, which the replay guard requires.
+
+        Note also that a JWT from `/v1/auth/sep10/token` is only
+        honoured on other routes when the deployment sets
+        `auth_mode = "sep10"`, which turns OFF `sip_*` API keys. Do
+        not plan on holding both credentials at once.
       parameters:
         - name: account
           in: query
@@ -9134,6 +9155,11 @@ paths:
         bearing the authenticated G-strkey. Per SEP-10 §3.3 the body
         carries `{transaction: <base64-XDR>}`. Unauthenticated by
         design — the SEP-10 protocol IS the authentication.
+
+        **Not enabled on the hosted deployment** — answers `503
+        sep10-unavailable` for the same reason as
+        `/v1/auth/sep10/challenge`, which carries the operator
+        configuration this route needs.
       requestBody:
         required: true
         content:
@@ -10954,11 +10980,19 @@ components:
         `Authorization: Bearer sip_…`. Create and manage keys from
         the customer dashboard at
         https://stellarindex.io/dashboard/keys (or bootstrap one via
-        `POST /v1/signup`). The same header also accepts SEP-10 JWTs
-        from `/v1/auth/sep10/token`. Anonymous access (no header) is
-        allowed on the public read endpoints at a lower per-IP
-        rate-limit tier — keys raise the limit and unlock the
-        /account/* self-service surface.
+        `POST /v1/signup`). Anonymous access (no header) is allowed on
+        the public read endpoints at a lower per-IP rate-limit tier —
+        keys raise the limit and unlock the /account/* self-service
+        surface.
+
+        This header does NOT also accept SEP-10 JWTs. A deployment
+        runs exactly one `auth_mode`, and the modes are mutually
+        exclusive: under the hosted deployment's `apikey_optional` a
+        bearer token is looked up as an API key, so a SEP-10 JWT is
+        rejected with 401. Only a deployment configured with
+        `auth_mode = "sep10"` verifies JWTs on this header, and such a
+        deployment stops accepting `sip_*` keys. See
+        `/v1/auth/sep10/challenge` for the hosted deployment's status.
     SessionCookie:
       type: apiKey
       in: cookie

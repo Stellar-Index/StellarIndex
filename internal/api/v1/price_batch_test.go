@@ -109,7 +109,7 @@ func TestPriceBatch_OmitsMissingAssets(t *testing.T) {
 		snapshots: map[string]v1.PriceSnapshot{
 			"native/fiat:USD": {
 				AssetID: "native", Quote: "fiat:USD",
-				Price: "0.12", PriceType: "last_trade", ObservedAt: t0,
+				Price: "0.12", PriceType: "last_trade", ObservedAt: v1.WireTime(t0),
 			},
 		},
 		sources: map[string][]string{
@@ -152,7 +152,7 @@ func TestPriceBatch_AliasResolvesXLM(t *testing.T) {
 		snapshots: map[string]v1.PriceSnapshot{
 			"crypto:XLM/fiat:USD": {
 				AssetID: "crypto:XLM", Quote: "fiat:USD",
-				Price: "0.12", PriceType: "vwap", ObservedAt: t0,
+				Price: "0.12", PriceType: "vwap", ObservedAt: v1.WireTime(t0),
 			},
 		},
 		sources: map[string][]string{"crypto:XLM/fiat:USD": {"binance"}},
@@ -241,7 +241,7 @@ func TestPriceBatch_StablecoinFallback(t *testing.T) {
 		snapshots: map[string]v1.PriceSnapshot{
 			usdt.String() + "/" + usdc.String(): {
 				AssetID: usdt.String(), Quote: usdc.String(),
-				Price: "1.001", PriceType: "vwap", ObservedAt: t0,
+				Price: "1.001", PriceType: "vwap", ObservedAt: v1.WireTime(t0),
 			},
 		},
 		sources: map[string][]string{
@@ -279,7 +279,7 @@ func TestPriceBatch_DeduplicatesIds(t *testing.T) {
 		snapshots: map[string]v1.PriceSnapshot{
 			"native/fiat:USD": {
 				AssetID: "native", Quote: "fiat:USD",
-				Price: "0.12", PriceType: "last_trade", ObservedAt: t0,
+				Price: "0.12", PriceType: "last_trade", ObservedAt: v1.WireTime(t0),
 			},
 		},
 	}
@@ -304,8 +304,8 @@ func TestPriceBatch_StaleFlagOR(t *testing.T) {
 	t0 := time.Unix(1_770_000_000, 0).UTC()
 	reader := &stubPriceReader{
 		snapshots: map[string]v1.PriceSnapshot{
-			"native/fiat:USD":   {AssetID: "native", Quote: "fiat:USD", Price: "0.12", PriceType: "last_trade", ObservedAt: t0},
-			"fiat:EUR/fiat:USD": {AssetID: "fiat:EUR", Quote: "fiat:USD", Price: "1.08", PriceType: "last_trade", ObservedAt: t0},
+			"native/fiat:USD":   {AssetID: "native", Quote: "fiat:USD", Price: "0.12", PriceType: "last_trade", ObservedAt: v1.WireTime(t0)},
+			"fiat:EUR/fiat:USD": {AssetID: "fiat:EUR", Quote: "fiat:USD", Price: "1.08", PriceType: "last_trade", ObservedAt: v1.WireTime(t0)},
 		},
 		stale: map[string]bool{
 			"fiat:EUR/fiat:USD": true,
@@ -414,7 +414,7 @@ func TestPriceBatchPost_OmitsMissingAssets(t *testing.T) {
 	t0 := time.Unix(1_770_000_000, 0).UTC()
 	reader := &stubPriceReader{
 		snapshots: map[string]v1.PriceSnapshot{
-			"native/fiat:USD": {AssetID: "native", Quote: "fiat:USD", Price: "0.12", PriceType: "last_trade", ObservedAt: t0},
+			"native/fiat:USD": {AssetID: "native", Quote: "fiat:USD", Price: "0.12", PriceType: "last_trade", ObservedAt: v1.WireTime(t0)},
 		},
 	}
 	srv := v1.New(v1.Options{Prices: reader})
@@ -459,7 +459,7 @@ func TestPriceBatchPost_LargeBatchAccepted(t *testing.T) {
 		ids = append(ids, id)
 		snapshots[id+"/fiat:JPY"] = v1.PriceSnapshot{
 			AssetID: id, Quote: "fiat:JPY",
-			Price: "150", PriceType: "last_trade", ObservedAt: t0,
+			Price: "150", PriceType: "last_trade", ObservedAt: v1.WireTime(t0),
 		}
 	}
 	reader := &stubPriceReader{snapshots: snapshots}
@@ -486,7 +486,7 @@ func TestPriceBatchPost_DefaultQuoteFiatUSD(t *testing.T) {
 	t0 := time.Unix(1_770_000_000, 0).UTC()
 	reader := &stubPriceReader{
 		snapshots: map[string]v1.PriceSnapshot{
-			"native/fiat:USD": {AssetID: "native", Quote: "fiat:USD", Price: "0.12", PriceType: "last_trade", ObservedAt: t0},
+			"native/fiat:USD": {AssetID: "native", Quote: "fiat:USD", Price: "0.12", PriceType: "last_trade", ObservedAt: v1.WireTime(t0)},
 		},
 	}
 	srv := v1.New(v1.Options{Prices: reader})
@@ -545,7 +545,7 @@ func TestPriceBatch_EchoesRequestedAssetNotStoreAlias(t *testing.T) {
 		snapshots: map[string]v1.PriceSnapshot{
 			"crypto:XLM/fiat:USD": {
 				AssetID: "crypto:XLM", Quote: "fiat:USD",
-				Price: "0.17", PriceType: "vwap", ObservedAt: t0,
+				Price: "0.17", PriceType: "vwap", ObservedAt: v1.WireTime(t0),
 			},
 		},
 	}

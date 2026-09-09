@@ -38,7 +38,7 @@ export default function MethodologyPage() {
           rows={[
             {
               term: 'exchange',
-              def: 'Real trading venues — DEXes (Soroswap, Phoenix, Aquarius, Comet, sdex), CEXes (Coinbase, Binance, Kraken). These are the only sources that contribute to the VWAP. Subdivided into dex / cex / fx for grouping.',
+              def: 'Real trading venues — DEXes (Soroswap, Phoenix, Aquarius, Comet, sdex), CEXes (Coinbase, Binance, Kraken, Bitstamp), FX vendors. These are the only sources that contribute to the VWAP. Subdivided into dex / cex / fx for grouping.',
             },
             {
               term: 'aggregator',
@@ -98,14 +98,47 @@ export default function MethodologyPage() {
           Soroswap.
         </p>
         <p>
-          Outliers are filtered before the average using a
-          per-asset statistical baseline (
-          <ADRRef id="0019" />). A trade that prints more than N
-          MAD-deviations from the rolling median is dropped from
-          that bucket; multiple consecutive outliers from the same
-          source flag the source as &ldquo;misbehaving&rdquo; and
-          mute its contribution.
+          <strong>The VWAP is not outlier-filtered by default.</strong>{' '}
+          <code className="rounded-sm bg-surface-subtle px-1 py-0.5 text-xs">
+            /v1/vwap
+          </code>{' '}
+          and{' '}
+          <code className="rounded-sm bg-surface-subtle px-1 py-0.5 text-xs">
+            /v1/twap
+          </code>{' '}
+          default{' '}
+          <code className="rounded-sm bg-surface-subtle px-1 py-0.5 text-xs">
+            outlier_sigma
+          </code>{' '}
+          to 0. Only{' '}
+          <code className="rounded-sm bg-surface-subtle px-1 py-0.5 text-xs">
+            /v1/ohlc
+          </code>{' '}
+          filters by default, because its High and Low have no
+          statistical robustness at all — one dust trade pins them.
+          Pass <code className="rounded-sm bg-surface-subtle px-1 py-0.5 text-xs">outlier_sigma</code>{' '}
+          explicitly on the other two if you need filtering.
         </p>
+        <p>
+          Do not read volume-weighting as an outlier defence. On a
+          sparse window a single print carries the whole result, and
+          because VWAP is Σquote / Σbase an actor supplying the quote
+          asset dominates the numerator for free. Time-weighting is
+          weaker still — TWAP has no volume term.
+        </p>
+        <p>
+          Separately from filtering, anomaly detection can refuse to
+          publish a bucket outright (<ADRRef id="0019" />
+          ); see <a href="#freeze" className="text-brand-600 hover:underline">freeze policy</a> below.
+        </p>
+        <Aside>
+          The authoritative per-endpoint defaults are served, not
+          written here: see{' '}
+          <code className="rounded-sm bg-surface-subtle px-1 py-0.5 text-xs">
+            aggregation.outlier_filter
+          </code>{' '}
+          on <code className="rounded-sm bg-surface-subtle px-1 py-0.5 text-xs">/v1/methodology</code>.
+        </Aside>
       </Section>
 
       <Section
@@ -126,9 +159,23 @@ export default function MethodologyPage() {
             (XLM/USDC, XLM/USDT, XLM/PYUSD, etc.).
           </li>
           <li>
-            The aggregator maps the pegged stablecoins to their fiat
-            at VWAP compute time: USDT, USDC, DAI, PYUSD, USDP → USD;
-            EURC, EUROC, EUROB → EUR; MXNe → MXN.
+            The aggregator maps operator-declared pegged stablecoins
+            to their fiat at VWAP compute time (<ADRRef id="0026" />
+            ). Which stablecoins those are is deployment
+            configuration, not a fixed list — this deployment&apos;s
+            live mapping is served as{' '}
+            <code className="rounded-sm bg-surface-subtle px-1 py-0.5 text-xs">
+              aggregation.stablecoin_fiat_proxy
+            </code>{' '}
+            on{' '}
+            <code className="rounded-sm bg-surface-subtle px-1 py-0.5 text-xs">
+              /v1/methodology
+            </code>
+            . A peg is declared by its full{' '}
+            <code className="rounded-sm bg-surface-subtle px-1 py-0.5 text-xs">
+              CODE-ISSUER
+            </code>{' '}
+            identity, never by code alone.
           </li>
           <li>
             <strong>Eager normalisation at ingest would hide a depeg

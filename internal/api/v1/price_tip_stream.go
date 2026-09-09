@@ -417,7 +417,7 @@ func (s *Server) tipStreamEvent(ctx context.Context, gen *streaming.Generator, a
 	flags := s.tipStreamFlags(ctx, asset, sources)
 	payload := tipStreamPayload{
 		Data:    snap,
-		AsOf:    time.Now().UTC(),
+		AsOf:    WireTime(time.Now().UTC()),
 		Sources: sources,
 		Flags:   flags,
 	}
@@ -511,7 +511,7 @@ func (l *tipDivergenceStallLog) admit(now time.Time) (suppressed uint64, ok bool
 // and streaming.
 type tipStreamPayload struct {
 	Data    PriceSnapshot `json:"data"`
-	AsOf    time.Time     `json:"as_of"`
+	AsOf    WireTime      `json:"as_of"`
 	Sources []string      `json:"sources,omitempty"`
 	Flags   Flags         `json:"flags"`
 }

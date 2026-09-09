@@ -5,7 +5,6 @@ import (
 	"errors"
 	"io"
 	"net/http"
-	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/auth"
 )
@@ -68,8 +67,8 @@ func (s *Server) handleSEP10Challenge(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, sep10ChallengeResponse{
 		Transaction:       ch.TransactionXDR,
 		NetworkPassphrase: ch.NetworkPassphrase,
-		IssuedAt:          ch.IssuedAt,
-		ValidUntil:        ch.ValidUntil,
+		IssuedAt:          WireTime(ch.IssuedAt),
+		ValidUntil:        WireTime(ch.ValidUntil),
 	}, Flags{})
 }
 
@@ -86,8 +85,8 @@ type sep10ChallengeResponse struct {
 	// IssuedAt + ValidUntil — convenience fields not in SEP-10 itself
 	// but useful for client UIs that need to display "challenge
 	// expires in N minutes".
-	IssuedAt   time.Time `json:"issued_at"`
-	ValidUntil time.Time `json:"valid_until"`
+	IssuedAt   WireTime `json:"issued_at"`
+	ValidUntil WireTime `json:"valid_until"`
 }
 
 // sep10TokenRequest is the wire shape for POST /v1/auth/sep10/token.
@@ -101,9 +100,9 @@ type sep10TokenRequest struct {
 // expires_at + the authenticated G-strkey for client convenience —
 // neither breaks the SEP-10 contract.
 type sep10TokenResponse struct {
-	Token     string    `json:"token"`
-	ExpiresAt time.Time `json:"expires_at"`
-	Account   string    `json:"account"`
+	Token     string   `json:"token"`
+	ExpiresAt WireTime `json:"expires_at"`
+	Account   string   `json:"account"`
 }
 
 // handleSEP10Token serves POST /v1/auth/sep10/token.
@@ -170,7 +169,7 @@ func (s *Server) handleSEP10Token(w http.ResponseWriter, r *http.Request) {
 
 	writeJSON(w, sep10TokenResponse{
 		Token:     tok.JWT,
-		ExpiresAt: tok.ExpiresAt,
+		ExpiresAt: WireTime(tok.ExpiresAt),
 		Account:   tok.Subject.Identifier,
 	}, Flags{})
 }

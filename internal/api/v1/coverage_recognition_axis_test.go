@@ -124,7 +124,7 @@ func TestHandleCoverageVerdicts_recognitionAxisPublishesItsNumbers(t *testing.T)
 	if !strings.Contains(rec.Detail, "23945 unrecognized shape(s)") {
 		t.Errorf("detail lost the audit's own wording: %q", rec.Detail)
 	}
-	if !rec.ComputedAt.Equal(now) {
+	if !rec.ComputedAt.Time().Equal(now) {
 		t.Errorf("computed_at = %v, want %v", rec.ComputedAt, now)
 	}
 }

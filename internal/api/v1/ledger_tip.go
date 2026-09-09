@@ -24,9 +24,9 @@ import (
 // upsert time); LagSeconds is its wall-clock age — the same lag
 // definition /v1/diagnostics/ingestion reports.
 type LedgerTipView struct {
-	LatestLedger uint32    `json:"latest_ledger"`
-	IngestedAt   time.Time `json:"ingested_at"`
-	LagSeconds   int64     `json:"lag_seconds"`
+	LatestLedger uint32   `json:"latest_ledger"`
+	IngestedAt   WireTime `json:"ingested_at"`
+	LagSeconds   int64    `json:"lag_seconds"`
 }
 
 // handleLedgerTip serves GET /v1/ledger/tip — a deliberately
@@ -97,7 +97,7 @@ func (s *Server) ledgerTip(ctx context.Context) (LedgerTipView, bool, error) {
 	}
 	return LedgerTipView{
 		LatestLedger: c.LastLedger,
-		IngestedAt:   c.UpdatedAt.UTC(),
+		IngestedAt:   WireTime(c.UpdatedAt.UTC()),
 		LagSeconds:   lag,
 	}, true, nil
 }

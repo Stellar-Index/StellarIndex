@@ -56,7 +56,7 @@ type GlobalAssetView struct {
 	PriceUSD       *string                  `json:"price_usd,omitempty"`
 	PriceAuthority aggregate.PriceAuthority `json:"price_authority,omitempty"`
 	PriceSources   []string                 `json:"price_sources,omitempty"`
-	PriceAsOf      *time.Time               `json:"price_as_of,omitempty"`
+	PriceAsOf      *WireTime                `json:"price_as_of,omitempty"`
 
 	// ─── Supply + market cap (catalogue-sourced) ──────────────────
 	//
@@ -178,7 +178,7 @@ func (s *Server) populateGlobalCryptoPrice(ctx context.Context, view GlobalAsset
 	view.PriceAuthority = res.Authority
 	view.PriceSources = res.Sources
 	asOf := res.AsOf
-	view.PriceAsOf = &asOf
+	view.PriceAsOf = wireTimePtr(&asOf)
 	// Crypto / stablecoin market cap stays on the per-asset surface
 	// (/v1/assets/{asset_id}'s F2 fields) — catalogue.CirculatingSupply
 	// is empty for those classes, so no inline computation here.
@@ -232,7 +232,7 @@ func (s *Server) populateFiatView(ctx context.Context, view GlobalAssetView, vc 
 		view.PriceUSD = &identity
 		view.PriceAuthority = aggregate.AuthorityVWAPNative
 		view.PriceSources = []string{"identity"}
-		view.PriceAsOf = &asOf
+		view.PriceAsOf = wireTimePtr(&asOf)
 		view.MarketCapUSD = computeFiatMarketCap(vc.CirculatingSupply, identity)
 		return view
 	}
@@ -246,7 +246,7 @@ func (s *Server) populateFiatView(ctx context.Context, view GlobalAssetView, vc 
 	view.PriceUSD = &price
 	view.PriceAuthority = aggregate.AuthorityVWAPNative
 	view.PriceSources = sources
-	view.PriceAsOf = &obs
+	view.PriceAsOf = wireTimePtr(&obs)
 	view.MarketCapUSD = computeFiatMarketCap(vc.CirculatingSupply, price)
 	return view
 }
@@ -324,7 +324,7 @@ func (s *Server) fiatUSDPriceFor(ctx context.Context, ticker string) (price stri
 	if err != nil {
 		return "", time.Time{}, nil, false
 	}
-	return snap.Price, snap.ObservedAt, srcs, true
+	return snap.Price, snap.ObservedAt.Time(), srcs, true
 }
 
 // fiatMarketCapUSD computes market_cap_usd for a fiat catalogue

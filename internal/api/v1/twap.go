@@ -18,11 +18,11 @@ import (
 // the window had more trades than the server's per-request cap;
 // see VWAPResult.Truncated for the same semantics.
 type TWAPResult struct {
-	From       time.Time `json:"from"`
-	To         time.Time `json:"to"`
-	Price      string    `json:"price"`
-	TradeCount int       `json:"trade_count"`
-	Truncated  bool      `json:"truncated"`
+	From       WireTime `json:"from"`
+	To         WireTime `json:"to"`
+	Price      string   `json:"price"`
+	TradeCount int      `json:"trade_count"`
+	Truncated  bool     `json:"truncated"`
 }
 
 // handleTWAP serves GET /v1/twap?base=...&quote=...&from=...&to=...
@@ -143,8 +143,8 @@ func (s *Server) handleTWAP(w http.ResponseWriter, r *http.Request) {
 		aggregate.ResolveDecimals(s.nonstandardDecimals, quote))
 
 	writeJSON(w, TWAPResult{
-		From:       from,
-		To:         to,
+		From:       WireTime(from),
+		To:         WireTime(to),
 		Price:      ratToDecimal(price, ohlcPriceDigits),
 		TradeCount: len(trades),
 		Truncated:  len(trades) == maxTrades,

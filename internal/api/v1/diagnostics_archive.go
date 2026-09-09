@@ -6,7 +6,6 @@ import (
 	"io/fs"
 	"net/http"
 	"os"
-	"time"
 )
 
 // ArchiveReportView is the wire shape of GET /v1/diagnostics/archive —
@@ -28,7 +27,7 @@ type ArchiveReportView struct {
 	// Schema is the daemon's report wire-format version ("1").
 	Schema string `json:"schema"`
 	// ScannedAt is when the daemon produced this report (RFC 3339 UTC).
-	ScannedAt time.Time `json:"scanned_at"`
+	ScannedAt WireTime `json:"scanned_at"`
 	// Range is the inclusive ledger range the daemon checked.
 	Range ArchiveRangeView `json:"range"`
 	// CrossAnchor holds the cross-anchor (/srv/history-archive) scan

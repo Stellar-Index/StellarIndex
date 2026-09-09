@@ -241,7 +241,7 @@ type PriceSnapshot struct {
 	// declaration from a fresh observation. That stamp is per process:
 	// it resets on every restart, so soon after a deploy the two sit
 	// close again and price_type is the durable signal.
-	ObservedAt time.Time `json:"observed_at"`
+	ObservedAt WireTime `json:"observed_at"`
 
 	// WindowSeconds is non-zero for VWAP/TWAP — the window size.
 	// Zero for last_trade.
@@ -725,7 +725,7 @@ func (s *Server) tryRedisVWAPFallback(ctx context.Context, asset, quote canonica
 		Quote:         quote.String(),
 		Price:         value,
 		PriceType:     "vwap",
-		ObservedAt:    observedAt,
+		ObservedAt:    WireTime(observedAt),
 		WindowSeconds: int(triangulationLookupWindow.Seconds()),
 	}
 	return snap, []string{}, isTriangulated, true
@@ -1530,7 +1530,7 @@ func (s *Server) crossDeclaredPegThroughXLM(
 		return PriceSnapshot{}, nil, false
 	}
 	observedAt := pegLeg.ObservedAt
-	if xlmLeg.ObservedAt.Before(observedAt) {
+	if xlmLeg.ObservedAt.Time().Before(observedAt.Time()) {
 		observedAt = xlmLeg.ObservedAt
 	}
 	// The product spans the wider of the two windows. A leg served off
@@ -1824,7 +1824,7 @@ func (s *Server) declaredPegSnapshot(asset, quote canonical.Asset) PriceSnapshot
 		Quote:      quote.String(),
 		Price:      declaredPegPrice,
 		PriceType:  "peg",
-		ObservedAt: s.pegDeclaredAt,
+		ObservedAt: WireTime(s.pegDeclaredAt),
 	}
 }
 
@@ -1915,7 +1915,7 @@ func (s *Server) tryFiatCrossRate(asset, quote canonical.Asset) (PriceSnapshot, 
 		Quote:      quote.String(),
 		Price:      priceStr,
 		PriceType:  "vwap",
-		ObservedAt: snap.PublishedAt,
+		ObservedAt: WireTime(snap.PublishedAt),
 	}, []string{"massive"}, true
 }
 
@@ -2566,7 +2566,7 @@ func LastTradeToSnapshot(t canonical.Trade, decimals int) PriceSnapshot {
 		Quote:      t.Pair.Quote.String(),
 		Price:      priceRatioDecimal(t, decimals),
 		PriceType:  "last_trade",
-		ObservedAt: t.Timestamp,
+		ObservedAt: WireTime(t.Timestamp),
 	}
 }
 
@@ -2591,7 +2591,7 @@ func VWAP1mToSnapshot(assetID, quote, vwap string, bucketStart time.Time) PriceS
 		Quote:         quote,
 		Price:         vwap,
 		PriceType:     "vwap",
-		ObservedAt:    bucketStart.Add(60 * time.Second),
+		ObservedAt:    WireTime(bucketStart.Add(60 * time.Second)),
 		WindowSeconds: 60,
 	}
 }
@@ -2697,7 +2697,7 @@ func (s *Server) handlePriceWindowed(w http.ResponseWriter, r *http.Request, ass
 				Quote:         quote.String(),
 				Price:         value,
 				PriceType:     "vwap",
-				ObservedAt:    time.Now().UTC(), // F-1305 semantics: cache TTL is window-bound + tick-refreshed
+				ObservedAt:    WireTime(time.Now().UTC()), // F-1305 semantics: cache TTL is window-bound + tick-refreshed
 				WindowSeconds: int(window / time.Second),
 			}
 			flags := Flags{Triangulated: triangulated, Frozen: s.lookupFrozen(r, asset, quote)}

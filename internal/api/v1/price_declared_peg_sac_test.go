@@ -60,11 +60,11 @@ func xlmCrossReader(pegLegAt, pivotAt time.Time) *recordingPriceReader {
 		snapshots: map[string]v1.PriceSnapshot{
 			pegAliasUSDCClassic + "/native": {
 				AssetID: pegAliasUSDCClassic, Quote: "native",
-				Price: "9.5", PriceType: "vwap", ObservedAt: pegLegAt, WindowSeconds: 60,
+				Price: "9.5", PriceType: "vwap", ObservedAt: v1.WireTime(pegLegAt), WindowSeconds: 60,
 			},
 			"crypto:XLM/fiat:USD": {
 				AssetID: "crypto:XLM", Quote: "fiat:USD",
-				Price: "0.10", PriceType: "vwap", ObservedAt: pivotAt, WindowSeconds: 60,
+				Price: "0.10", PriceType: "vwap", ObservedAt: v1.WireTime(pivotAt), WindowSeconds: 60,
 			},
 		},
 		sources: map[string][]string{
@@ -102,7 +102,7 @@ func TestPrice_DeclaredPegSACTwinServesTheClassicSpellingsCross(t *testing.T) {
 	if sac.Data.PriceType != "vwap" || sac.Data.WindowSeconds != 60 {
 		t.Errorf("SAC snapshot = %s/%d, want vwap/60", sac.Data.PriceType, sac.Data.WindowSeconds)
 	}
-	if !sac.Data.ObservedAt.Equal(pivotAt) {
+	if !sac.Data.ObservedAt.Time().Equal(pivotAt) {
 		t.Errorf("SAC observed_at = %s, want the older leg's %s", sac.Data.ObservedAt, pivotAt)
 	}
 	if sac.Data.AssetID != pegAliasUSDCSAC || sac.Data.Quote != "fiat:USD" {
@@ -139,15 +139,15 @@ func dormantBookVsFreshPoolReader(at time.Time, bookStale bool) *recordingPriceR
 		snapshots: map[string]v1.PriceSnapshot{
 			pegAliasUSDCClassic + "/native": {
 				AssetID: pegAliasUSDCClassic, Quote: "native",
-				Price: "9.5", PriceType: "vwap", ObservedAt: at, WindowSeconds: 60,
+				Price: "9.5", PriceType: "vwap", ObservedAt: v1.WireTime(at), WindowSeconds: 60,
 			},
 			pegAliasUSDCSAC + "/" + canonical.XLMSacContractID: {
 				AssetID: pegAliasUSDCSAC, Quote: canonical.XLMSacContractID,
-				Price: "20.0", PriceType: "vwap", ObservedAt: at, WindowSeconds: 60,
+				Price: "20.0", PriceType: "vwap", ObservedAt: v1.WireTime(at), WindowSeconds: 60,
 			},
 			"crypto:XLM/fiat:USD": {
 				AssetID: "crypto:XLM", Quote: "fiat:USD",
-				Price: "0.10", PriceType: "vwap", ObservedAt: at, WindowSeconds: 60,
+				Price: "0.10", PriceType: "vwap", ObservedAt: v1.WireTime(at), WindowSeconds: 60,
 			},
 		},
 		stale: map[string]bool{pegAliasUSDCClassic + "/native": bookStale},
@@ -264,11 +264,11 @@ func TestPrice_DeclaredPegXLMCrossReadsThePegsOwnSACBook(t *testing.T) {
 		snapshots: map[string]v1.PriceSnapshot{
 			pegAliasUSDCSAC + "/" + canonical.XLMSacContractID: {
 				AssetID: pegAliasUSDCSAC, Quote: canonical.XLMSacContractID,
-				Price: "10.0", PriceType: "vwap", ObservedAt: poolAt, WindowSeconds: 60,
+				Price: "10.0", PriceType: "vwap", ObservedAt: v1.WireTime(poolAt), WindowSeconds: 60,
 			},
 			"crypto:XLM/fiat:USD": {
 				AssetID: "crypto:XLM", Quote: "fiat:USD",
-				Price: "0.10", PriceType: "vwap", ObservedAt: poolAt, WindowSeconds: 60,
+				Price: "0.10", PriceType: "vwap", ObservedAt: v1.WireTime(poolAt), WindowSeconds: 60,
 			},
 		},
 	}}
@@ -285,7 +285,7 @@ func TestPrice_DeclaredPegXLMCrossReadsThePegsOwnSACBook(t *testing.T) {
 			t.Errorf("%s: served %s (%s), want the pool's cross 1.0000000000 (vwap), not the declaration",
 				spelling, env.Data.Price, env.Data.PriceType)
 		}
-		if !env.Data.ObservedAt.Equal(poolAt) {
+		if !env.Data.ObservedAt.Time().Equal(poolAt) {
 			t.Errorf("%s: observed_at = %s, want the pool's %s", spelling, env.Data.ObservedAt, poolAt)
 		}
 		if env.Data.AssetID != spelling {
@@ -318,7 +318,7 @@ func TestPrice_DeclaredPegSACTwinWithNoObservationServesTheDeclaration(t *testin
 	if env.Data.PriceType != "peg" {
 		t.Errorf("price_type = %q, want peg", env.Data.PriceType)
 	}
-	if !env.Data.ObservedAt.Equal(declaredPegAdoptedAt) {
+	if !env.Data.ObservedAt.Time().Equal(declaredPegAdoptedAt) {
 		t.Errorf("observed_at = %s, want the declaration stamp %s", env.Data.ObservedAt, declaredPegAdoptedAt)
 	}
 	if !env.Flags.Triangulated {
@@ -370,17 +370,17 @@ func TestPrice_NonPegSACAssetStillWalksTheDeclaredPegs(t *testing.T) {
 		snapshots: map[string]v1.PriceSnapshot{
 			pegAliasAquaSAC + "/" + pegAliasUSDCClassic: {
 				AssetID: pegAliasAquaSAC, Quote: pegAliasUSDCClassic,
-				Price: "0.0041", PriceType: "vwap", ObservedAt: poolAt, WindowSeconds: 60,
+				Price: "0.0041", PriceType: "vwap", ObservedAt: v1.WireTime(poolAt), WindowSeconds: 60,
 			},
 			// An XLM book for the same asset: present, and must not be
 			// consulted — the cross is the declared peg's route only.
 			pegAliasAquaSAC + "/native": {
 				AssetID: pegAliasAquaSAC, Quote: "native",
-				Price: "0.02", PriceType: "vwap", ObservedAt: poolAt, WindowSeconds: 60,
+				Price: "0.02", PriceType: "vwap", ObservedAt: v1.WireTime(poolAt), WindowSeconds: 60,
 			},
 			"crypto:XLM/fiat:USD": {
 				AssetID: "crypto:XLM", Quote: "fiat:USD",
-				Price: "0.10", PriceType: "vwap", ObservedAt: poolAt, WindowSeconds: 60,
+				Price: "0.10", PriceType: "vwap", ObservedAt: v1.WireTime(poolAt), WindowSeconds: 60,
 			},
 		},
 	}}
@@ -604,15 +604,15 @@ func withheldClassicBookLivePoolReader(at time.Time, classicErr error) *pegLegEr
 			snapshots: map[string]v1.PriceSnapshot{
 				pegAliasUSDCClassic + "/native": {
 					AssetID: pegAliasUSDCClassic, Quote: "native",
-					Price: "9.5", PriceType: "vwap", ObservedAt: at, WindowSeconds: 60,
+					Price: "9.5", PriceType: "vwap", ObservedAt: v1.WireTime(at), WindowSeconds: 60,
 				},
 				pegAliasUSDCSAC + "/" + canonical.XLMSacContractID: {
 					AssetID: pegAliasUSDCSAC, Quote: canonical.XLMSacContractID,
-					Price: "20.0", PriceType: "vwap", ObservedAt: at, WindowSeconds: 60,
+					Price: "20.0", PriceType: "vwap", ObservedAt: v1.WireTime(at), WindowSeconds: 60,
 				},
 				"crypto:XLM/fiat:USD": {
 					AssetID: "crypto:XLM", Quote: "fiat:USD",
-					Price: "0.10", PriceType: "vwap", ObservedAt: at, WindowSeconds: 60,
+					Price: "0.10", PriceType: "vwap", ObservedAt: v1.WireTime(at), WindowSeconds: 60,
 				},
 			},
 			sources: map[string][]string{
@@ -633,7 +633,7 @@ func assertDeclarationServed(t *testing.T, env pegEnvelope, spelling string) {
 		t.Errorf("%s: served %s (%s), want the declaration 1.000000000000 (peg)",
 			spelling, env.Data.Price, env.Data.PriceType)
 	}
-	if !env.Data.ObservedAt.Equal(declaredPegAdoptedAt) {
+	if !env.Data.ObservedAt.Time().Equal(declaredPegAdoptedAt) {
 		t.Errorf("%s: observed_at = %s, want the declaration stamp %s",
 			spelling, env.Data.ObservedAt, declaredPegAdoptedAt)
 	}
@@ -963,11 +963,11 @@ func flaggedPegLivePoolReader(at time.Time, f sacSpellingFixture) *scamGatedPegR
 			snapshots: map[string]v1.PriceSnapshot{
 				pool: {
 					AssetID: f.sac.String(), Quote: canonical.XLMSacContractID,
-					Price: "20.0", PriceType: "vwap", ObservedAt: at, WindowSeconds: 60,
+					Price: "20.0", PriceType: "vwap", ObservedAt: v1.WireTime(at), WindowSeconds: 60,
 				},
 				"crypto:XLM/fiat:USD": {
 					AssetID: "crypto:XLM", Quote: "fiat:USD",
-					Price: "0.10", PriceType: "vwap", ObservedAt: at, WindowSeconds: 60,
+					Price: "0.10", PriceType: "vwap", ObservedAt: v1.WireTime(at), WindowSeconds: 60,
 				},
 			},
 			sources: map[string][]string{
@@ -1105,7 +1105,7 @@ func TestPrice_XLMIdentitiesUnchangedOnTheCombinedPath(t *testing.T) {
 			snapshots: map[string]v1.PriceSnapshot{
 				"crypto:XLM/fiat:USD": {
 					AssetID: "crypto:XLM", Quote: "fiat:USD",
-					Price: "0.10", PriceType: "vwap", ObservedAt: at, WindowSeconds: 60,
+					Price: "0.10", PriceType: "vwap", ObservedAt: v1.WireTime(at), WindowSeconds: 60,
 				},
 			},
 			sources: map[string][]string{"crypto:XLM/fiat:USD": {"coinbase"}},

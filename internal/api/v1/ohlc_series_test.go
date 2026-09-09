@@ -18,7 +18,7 @@ import (
 // + price strings are formatted exactly as the storage NUMERIC
 // passthrough would produce them.
 func mkSeriesBar(t time.Time, o, h, l, c, vb, vq string, n int64) v1.OHLCSeriesBar {
-	return v1.OHLCSeriesBar{T: t, O: o, H: h, L: l, C: c, VBase: vb, VQuote: vq, N: n}
+	return v1.OHLCSeriesBar{T: v1.WireTime(t), O: o, H: h, L: l, C: c, VBase: vb, VQuote: vq, N: n}
 }
 
 // TestOHLCSeries_ReturnsIntervalsArray — the multi-bar mode wires

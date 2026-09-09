@@ -2809,8 +2809,8 @@ func (r storeMarketsReader) DistinctPairsExt(ctx context.Context, cursor string,
 		out[i] = v1.Market{
 			Base:          m.Pair.Base.String(),
 			Quote:         m.Pair.Quote.String(),
-			LastTradeAt:   m.LastTradeAt,
-			BucketCloseAt: m.BucketCloseAt,
+			LastTradeAt:   v1.WireTime(m.LastTradeAt),
+			BucketCloseAt: v1.WireTime(m.BucketCloseAt),
 			TradeCount24h: m.TradeCount24h,
 			Volume24hUSD:  m.Volume24hUSD,
 			LastPrice:     m.LastPrice,
@@ -2829,8 +2829,8 @@ func (r storeMarketsReader) SourceMarkets(ctx context.Context, source, cursor st
 		out[i] = v1.Market{
 			Base:          m.Pair.Base.String(),
 			Quote:         m.Pair.Quote.String(),
-			LastTradeAt:   m.LastTradeAt,
-			BucketCloseAt: m.BucketCloseAt,
+			LastTradeAt:   v1.WireTime(m.LastTradeAt),
+			BucketCloseAt: v1.WireTime(m.BucketCloseAt),
 			TradeCount24h: m.TradeCount24h,
 			Volume24hUSD:  m.Volume24hUSD,
 			LastPrice:     m.LastPrice,
@@ -2849,8 +2849,8 @@ func (r storeMarketsReader) AssetMarkets(ctx context.Context, asset, cursor stri
 		out[i] = v1.Market{
 			Base:          m.Pair.Base.String(),
 			Quote:         m.Pair.Quote.String(),
-			LastTradeAt:   m.LastTradeAt,
-			BucketCloseAt: m.BucketCloseAt,
+			LastTradeAt:   v1.WireTime(m.LastTradeAt),
+			BucketCloseAt: v1.WireTime(m.BucketCloseAt),
 			TradeCount24h: m.TradeCount24h,
 			Volume24hUSD:  m.Volume24hUSD,
 			LastPrice:     m.LastPrice,
@@ -2870,7 +2870,7 @@ func (r storeMarketsReader) AllPools(ctx context.Context, filter timescale.Pools
 			Source:        p.Source,
 			Base:          p.Pair.Base.String(),
 			Quote:         p.Pair.Quote.String(),
-			LastTradeAt:   p.LastTradeAt,
+			LastTradeAt:   v1.WireTime(p.LastTradeAt),
 			TradeCount24h: p.TradeCount24h,
 			Volume24hUSD:  p.Volume24hUSD,
 			LastPrice:     p.LastPrice,
@@ -2887,8 +2887,8 @@ func (r storeMarketsReader) PairMarket(ctx context.Context, base, quote canonica
 	return v1.Market{
 		Base:          m.Pair.Base.String(),
 		Quote:         m.Pair.Quote.String(),
-		LastTradeAt:   m.LastTradeAt,
-		BucketCloseAt: m.BucketCloseAt,
+		LastTradeAt:   v1.WireTime(m.LastTradeAt),
+		BucketCloseAt: v1.WireTime(m.BucketCloseAt),
 		TradeCount24h: m.TradeCount24h,
 		Volume24hUSD:  m.Volume24hUSD,
 		LastPrice:     m.LastPrice,
@@ -3554,7 +3554,7 @@ func convertOHLCBars(bars []timescale.OHLCBar) []v1.OHLCSeriesBar {
 	out := make([]v1.OHLCSeriesBar, len(bars))
 	for i, b := range bars {
 		out[i] = v1.OHLCSeriesBar{
-			T:       b.Bucket,
+			T:       v1.WireTime(b.Bucket),
 			O:       b.Open,
 			H:       b.High,
 			L:       b.Low,

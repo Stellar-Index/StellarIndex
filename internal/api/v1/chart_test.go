@@ -729,13 +729,13 @@ func TestChart_TruncatedFlagOnRetentionShortfall(t *testing.T) {
 	if env.Data.RequestedFrom == nil {
 		t.Fatal("RequestedFrom = nil on truncated response")
 	}
-	if !env.Data.DataStartsAt.Equal(pts[0].Bucket) {
+	if !env.Data.DataStartsAt.Time().Equal(pts[0].Bucket) {
 		t.Errorf("DataStartsAt = %v, want %v", env.Data.DataStartsAt, pts[0].Bucket)
 	}
 	// RequestedFrom should be ~365d before now.
-	delta := time.Since(*env.Data.RequestedFrom) - 365*24*time.Hour
+	delta := time.Since(env.Data.RequestedFrom.Time()) - 365*24*time.Hour
 	if delta < -10*time.Second || delta > 10*time.Second {
-		t.Errorf("RequestedFrom = %v ago, want ~365d", time.Since(*env.Data.RequestedFrom))
+		t.Errorf("RequestedFrom = %v ago, want ~365d", time.Since(env.Data.RequestedFrom.Time()))
 	}
 }
 

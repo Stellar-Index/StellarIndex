@@ -124,12 +124,12 @@ type marketsStaleReader interface {
 // Market but with a `source` dimension so the same physical pair
 // traded on two DEXes shows as two rows.
 type Pool struct {
-	Source        string    `json:"source"`
-	Base          string    `json:"base"`
-	Quote         string    `json:"quote"`
-	LastTradeAt   time.Time `json:"last_trade_at"`
-	TradeCount24h int64     `json:"trade_count_24h"`
-	Volume24hUSD  *string   `json:"volume_24h_usd,omitempty"`
+	Source        string   `json:"source"`
+	Base          string   `json:"base"`
+	Quote         string   `json:"quote"`
+	LastTradeAt   WireTime `json:"last_trade_at"`
+	TradeCount24h int64    `json:"trade_count_24h"`
+	Volume24hUSD  *string  `json:"volume_24h_usd,omitempty"`
 	// LastPrice is the most recent quote-per-base price observed
 	// for THIS pool — same wire shape as Market.LastPrice but
 	// per-source, so two venues trading the same pair surface
@@ -380,12 +380,12 @@ func (s *Server) handlePools(w http.ResponseWriter, r *http.Request) { //nolint:
 // saw spuriously-large staleness. The honest semantics are now
 // split across the two fields.
 type Market struct {
-	Base          string    `json:"base"`
-	Quote         string    `json:"quote"`
-	LastTradeAt   time.Time `json:"last_trade_at"`
-	BucketCloseAt time.Time `json:"bucket_close_at"`
-	TradeCount24h int64     `json:"trade_count_24h"`
-	Volume24hUSD  *string   `json:"volume_24h_usd,omitempty"`
+	Base          string   `json:"base"`
+	Quote         string   `json:"quote"`
+	LastTradeAt   WireTime `json:"last_trade_at"`
+	BucketCloseAt WireTime `json:"bucket_close_at"`
+	TradeCount24h int64    `json:"trade_count_24h"`
+	Volume24hUSD  *string  `json:"volume_24h_usd,omitempty"`
 	// LastPrice is the most recent quote-per-base price observed
 	// for this pair (cross-source) within the trailing 24h. Null
 	// when no recent prices_1m bucket has a non-null last_price.
@@ -399,15 +399,15 @@ type Market struct {
 	// RFP's "since inception = first recorded trade", queryable per
 	// market (board #44). Populated only with `?include=inception`;
 	// day precision.
-	FirstTradeAt *time.Time `json:"first_trade_at,omitempty"`
+	FirstTradeAt *WireTime `json:"first_trade_at,omitempty"`
 }
 
 // MarketVolumeBucket — one hourly USD-volume datapoint for the
 // /v1/markets sparkline. Hour is RFC 3339; volume_usd is
 // numeric-stringified for precision parity.
 type MarketVolumeBucket struct {
-	Hour      time.Time `json:"hour"`
-	VolumeUSD string    `json:"volume_usd"`
+	Hour      WireTime `json:"hour"`
+	VolumeUSD string   `json:"volume_usd"`
 }
 
 // handleMarkets serves GET /v1/markets.
@@ -650,7 +650,7 @@ func (s *Server) handleMarkets(w http.ResponseWriter, r *http.Request) { //nolin
 			for i, m := range rows {
 				if t, ok := firsts[m.Base+"|"+m.Quote]; ok {
 					tt := t
-					rows[i].FirstTradeAt = &tt
+					rows[i].FirstTradeAt = wireTimePtr(&tt)
 				}
 			}
 		}
@@ -679,7 +679,7 @@ func (s *Server) handleMarkets(w http.ResponseWriter, r *http.Request) { //nolin
 				}
 				out := make([]MarketVolumeBucket, len(series))
 				for j, p := range series {
-					out[j] = MarketVolumeBucket{Hour: p.Hour, VolumeUSD: p.VolumeUSD}
+					out[j] = MarketVolumeBucket{Hour: WireTime(p.Hour), VolumeUSD: p.VolumeUSD}
 				}
 				rows[i].VolumeHistory24h = out
 			}
@@ -697,7 +697,7 @@ func (s *Server) handleMarkets(w http.ResponseWriter, r *http.Request) { //nolin
 		Flags: Flags{Stale: stale},
 	}
 	if !observedAt.IsZero() {
-		env.AsOf = observedAt.UTC()
+		env.AsOf = WireTime(observedAt.UTC())
 	}
 	if next != "" {
 		env.Pagination = &Pagination{Next: next}

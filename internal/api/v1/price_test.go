@@ -110,7 +110,7 @@ func TestPrice_HappyPath(t *testing.T) {
 		Quote:      "fiat:USD",
 		Price:      "0.1242",
 		PriceType:  "last_trade",
-		ObservedAt: time.Unix(1745000000, 0).UTC(),
+		ObservedAt: v1.WireTime(time.Unix(1745000000, 0).UTC()),
 	}
 	reader := &stubPriceReader{
 		snapshots: map[string]v1.PriceSnapshot{"native/fiat:USD": snap},
@@ -440,7 +440,7 @@ func TestPrice_StablecoinFiatProxy_FallsThroughToClassicPeg(t *testing.T) {
 		Quote:      usdcClassic.String(),
 		Price:      "0.1626",
 		PriceType:  "vwap",
-		ObservedAt: time.Unix(1745000000, 0).UTC(),
+		ObservedAt: v1.WireTime(time.Unix(1745000000, 0).UTC()),
 	}
 	reader := &stubPriceReader{
 		snapshots: map[string]v1.PriceSnapshot{
@@ -1016,7 +1016,7 @@ func TestVWAP1mToSnapshot(t *testing.T) {
 		t.Errorf("WindowSeconds = %d, want 60 (1-minute CAGG)", got.WindowSeconds)
 	}
 	wantObserved := bucketStart.Add(60 * time.Second)
-	if !got.ObservedAt.Equal(wantObserved) {
+	if !got.ObservedAt.Time().Equal(wantObserved) {
 		t.Errorf("ObservedAt = %v, want %v (END of window, not start)", got.ObservedAt, wantObserved)
 	}
 }
@@ -1052,7 +1052,7 @@ func TestLastTradeToSnapshot(t *testing.T) {
 	if snap.Price != "0.0124200" {
 		t.Errorf("price = %q, want 0.0124200", snap.Price)
 	}
-	if snap.ObservedAt != tr.Timestamp {
+	if !snap.ObservedAt.Time().Equal(tr.Timestamp) {
 		t.Errorf("timestamp lost")
 	}
 }
@@ -1369,7 +1369,7 @@ func TestPrice_XLMAlias_NativeFallsThroughToCryptoXLM(t *testing.T) {
 				Quote:      "fiat:USD",
 				Price:      "0.1500",
 				PriceType:  "vwap",
-				ObservedAt: time.Now().UTC(),
+				ObservedAt: v1.WireTime(time.Now().UTC()),
 			},
 		},
 		stale:   map[string]bool{"crypto:XLM/fiat:USD": false},
@@ -1405,7 +1405,7 @@ func TestPrice_XLMAlias_CryptoXLMFallsThroughToNative(t *testing.T) {
 				Quote:      "fiat:USD",
 				Price:      "0.1500",
 				PriceType:  "vwap",
-				ObservedAt: time.Now().UTC(),
+				ObservedAt: v1.WireTime(time.Now().UTC()),
 			},
 		},
 		stale:   map[string]bool{"native/fiat:USD": false},
@@ -1427,8 +1427,8 @@ func TestPrice_XLMAlias_CryptoXLMFallsThroughToNative(t *testing.T) {
 func TestPrice_XLMAlias_PrefersFreshOverStale(t *testing.T) {
 	reader := &stubPriceReader{
 		snapshots: map[string]v1.PriceSnapshot{
-			"native/fiat:USD":     {AssetID: "native", Quote: "fiat:USD", Price: "0.1000", PriceType: "vwap", ObservedAt: time.Now().Add(-48 * time.Hour).UTC()},
-			"crypto:XLM/fiat:USD": {AssetID: "crypto:XLM", Quote: "fiat:USD", Price: "0.1500", PriceType: "vwap", ObservedAt: time.Now().UTC()},
+			"native/fiat:USD":     {AssetID: "native", Quote: "fiat:USD", Price: "0.1000", PriceType: "vwap", ObservedAt: v1.WireTime(time.Now().Add(-48 * time.Hour).UTC())},
+			"crypto:XLM/fiat:USD": {AssetID: "crypto:XLM", Quote: "fiat:USD", Price: "0.1500", PriceType: "vwap", ObservedAt: v1.WireTime(time.Now().UTC())},
 		},
 		stale: map[string]bool{
 			"native/fiat:USD":     true,
@@ -1496,7 +1496,7 @@ func TestPrice_StablecoinProxy_GateSkipsEmptyPeg(t *testing.T) {
 				"native/" + livePeg.String(): {
 					AssetID: "native", Quote: livePeg.String(),
 					Price: "0.1626", PriceType: "vwap",
-					ObservedAt: time.Unix(1745000000, 0).UTC(),
+					ObservedAt: v1.WireTime(time.Unix(1745000000, 0).UTC()),
 				},
 			},
 			sources: map[string][]string{"native/" + livePeg.String(): {"sdex"}},

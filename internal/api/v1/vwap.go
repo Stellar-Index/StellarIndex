@@ -40,14 +40,14 @@ import (
 // interpret a truncated price, so it is stated here and in the
 // OpenAPI description.
 type VWAPResult struct {
-	From             time.Time `json:"from"`
-	To               time.Time `json:"to"`
-	Price            string    `json:"price"`
-	BaseVolume       string    `json:"base_volume"`
-	QuoteVolume      string    `json:"quote_volume"`
-	TradeCount       int       `json:"trade_count"`
-	OutliersFiltered int       `json:"outliers_filtered"`
-	Truncated        bool      `json:"truncated"`
+	From             WireTime `json:"from"`
+	To               WireTime `json:"to"`
+	Price            string   `json:"price"`
+	BaseVolume       string   `json:"base_volume"`
+	QuoteVolume      string   `json:"quote_volume"`
+	TradeCount       int      `json:"trade_count"`
+	OutliersFiltered int      `json:"outliers_filtered"`
+	Truncated        bool     `json:"truncated"`
 }
 
 // handleVWAP serves GET /v1/vwap?base=...&quote=...&from=...&to=...&outlier_sigma=...
@@ -208,8 +208,8 @@ func (s *Server) handleVWAP(w http.ResponseWriter, r *http.Request) {
 	// (lookupDivergenceFlag); unconsulted here until now, a CS-087 false.
 	firing, checked := s.lookupDivergenceFlag(r.Context(), base)
 	writeJSON(w, VWAPResult{
-		From:             from,
-		To:               to,
+		From:             WireTime(from),
+		To:               WireTime(to),
 		Price:            ratToDecimal(price, ohlcPriceDigits),
 		BaseVolume:       aggregate.TotalBaseVolume(trades).String(),
 		QuoteVolume:      aggregate.TotalQuoteVolume(trades).String(),

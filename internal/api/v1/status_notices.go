@@ -188,7 +188,7 @@ func (s *Server) handleAdminStatusNoticeCreate(w http.ResponseWriter, r *http.Re
 
 	writeEnvelopeStatus(w, http.StatusCreated, Envelope{
 		Data:  statusNoticeView(created),
-		AsOf:  created.CreatedAt,
+		AsOf:  WireTime(created.CreatedAt),
 		Flags: Flags{},
 	})
 }

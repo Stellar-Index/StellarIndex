@@ -53,7 +53,7 @@ func TestComputeTip_EscalatesBeforeClosedBucket(t *testing.T) {
 		t.Fatalf("snap = type %q window %d, want escalated vwap at %d",
 			snap.PriceType, snap.WindowSeconds, tipEscalationWindowSeconds)
 	}
-	if time.Since(snap.ObservedAt) > 5*time.Second {
+	if time.Since(snap.ObservedAt.Time()) > 5*time.Second {
 		t.Fatalf("observed_at = %s — escalated tip must be NOW-anchored", snap.ObservedAt)
 	}
 	if len(sources) != 1 || sources[0] != "kraken" {

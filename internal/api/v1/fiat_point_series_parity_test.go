@@ -147,7 +147,7 @@ func (r *fiatConstituentReader) OHLCSeries(
 		closeP := new(big.Rat).SetFrac(last.QuoteAmount.BigInt(), last.BaseAmount.BigInt())
 		sort.Strings(sources) // array_agg(DISTINCT …) arrives sorted
 		out = append(out, v1.OHLCSeriesBar{
-			T:       b,
+			T:       v1.WireTime(b),
 			O:       open.FloatString(10),
 			H:       high.FloatString(10),
 			L:       low.FloatString(10),

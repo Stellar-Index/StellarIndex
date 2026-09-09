@@ -35,9 +35,9 @@ type AggregatorRow struct {
 	Protocol       string `json:"protocol"`
 	AutoDiscovered bool   `json:"auto_discovered"`
 
-	RoutedTrades24h    int64      `json:"routed_trades_24h"`
-	RoutedVolume24hUSD *string    `json:"routed_volume_24h_usd"`
-	LastRoutedAt       *time.Time `json:"last_routed_at"`
+	RoutedTrades24h    int64     `json:"routed_trades_24h"`
+	RoutedVolume24hUSD *string   `json:"routed_volume_24h_usd"`
+	LastRoutedAt       *WireTime `json:"last_routed_at"`
 
 	// Notes are honest coverage caveats for THIS row's stats — same
 	// idiom as ProtocolBespoke.Notes. Server-computed from Kind /
@@ -136,7 +136,7 @@ func (s *Server) handleAggregators(w http.ResponseWriter, r *http.Request) {
 			AutoDiscovered:     row.AutoDiscovered,
 			RoutedTrades24h:    row.RoutedTrades,
 			RoutedVolume24hUSD: row.RoutedVolume,
-			LastRoutedAt:       row.LastRoutedAt,
+			LastRoutedAt:       wireTimePtr(row.LastRoutedAt),
 			Notes:              aggregatorRowNotes(row.Kind, row.AutoDiscovered),
 		}
 	}

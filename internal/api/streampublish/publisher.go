@@ -193,7 +193,7 @@ func (p *Publisher) tickOnce(ctx context.Context, pair canonical.Pair, topic str
 			"err", err, "pair", pair.String())
 		return
 	}
-	if !p.shouldPublish(topic, snap.ObservedAt) {
+	if !p.shouldPublish(topic, snap.ObservedAt.Time()) {
 		return
 	}
 
@@ -210,7 +210,7 @@ func (p *Publisher) tickOnce(ctx context.Context, pair canonical.Pair, topic str
 		Flags   struct {
 			Stale bool `json:"stale"`
 		} `json:"flags"`
-	}{Data: snap, AsOf: snap.ObservedAt, Sources: sources, Flags: struct {
+	}{Data: snap, AsOf: snap.ObservedAt.Time(), Sources: sources, Flags: struct {
 		Stale bool `json:"stale"`
 	}{Stale: stale}})
 	if err != nil {

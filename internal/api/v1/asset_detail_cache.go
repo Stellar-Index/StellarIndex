@@ -165,7 +165,7 @@ func (c *assetDetailResponseCache) evictLocked() {
 func renderAssetDetailEnvelope(detail AssetDetail, flags Flags) ([]byte, error) {
 	env := Envelope{
 		Data:  detail,
-		AsOf:  time.Now().UTC(),
+		AsOf:  WireTime(time.Now().UTC()),
 		Flags: flags,
 	}
 	var buf bytes.Buffer

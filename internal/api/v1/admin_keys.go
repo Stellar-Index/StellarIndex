@@ -142,7 +142,7 @@ func (s *Server) handleAdminKeysCreate(w http.ResponseWriter, r *http.Request) {
 			Label:     rec.Label,
 			Scopes:    rec.Scopes,
 		},
-		AsOf:  rec.CreatedAt,
+		AsOf:  WireTime(rec.CreatedAt),
 		Flags: Flags{},
 	})
 }

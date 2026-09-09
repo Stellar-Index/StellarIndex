@@ -485,7 +485,20 @@ fitness issues.
    API key or SEP-10 token", and the SEP-10 half of that sentence
    currently cannot be satisfied. `/sdk` documents the flow as available.
 
-3. **Timezone leak on two endpoints.** `/v1/price/at` and
+   **Resolved in documentation 2026-09-09** (the deployment is
+   unchanged — enabling SEP-10 remains a product decision). SEP-10 is
+   implemented, not missing: the 503 is the `NoopSEP10Validator`
+   fallback taken when `STELLARINDEX_SEP10_SEED` /
+   `STELLARINDEX_SEP10_JWT_SECRET` are unset and `auth_mode` is not
+   `sep10`. Every doc that promised the flow now says it is unavailable
+   here and names that configuration. A second, sharper claim was found
+   and corrected alongside it: the OpenAPI security scheme and
+   `pkg/client` both said the bearer header accepts API keys **and**
+   SEP-10 JWTs. `middleware.authenticate` is a mutually exclusive switch
+   over the four `auth_mode` values, so no deployment accepts both —
+   enabling SEP-10 turns `sip_*` keys off.
+
+3. **Timezone leak — larger than two endpoints.** `/v1/price/at` and
    `/v1/history/since-inception` emit timestamps with a local UTC offset
    (`2026-09-07T11:00:00+02:00`, `2017-01-17T01:00:00+01:00`) where every
    other endpoint probed — and every spec example — uses `Z`. Valid
@@ -495,11 +508,29 @@ fitness issues.
    endpoints, so nothing in the explorer is affected today. Whether this
    is deliberate could not be determined from outside.
 
+   **Fixed 2026-09-09**, and it was not deliberate. A re-probe of every
+   reachable GET found **fourteen** leaking endpoints, not two: also
+   `/v1/price`, `/v1/history`, `/v1/chart`, `/v1/observations`,
+   `/v1/lending/pools`, `/v1/coverage`, `/v1/diagnostics/ingestion` and
+   all four `/v1/oracle/*` surfaces. The class is any json-tagged
+   `time.Time` whose value came from Postgres, since `timestamptz`
+   decodes into the process's local zone; the endpoints that looked
+   correct were the ones stamping `time.Now().UTC()` themselves. All 43
+   such fields now use a `WireTime` type that renders UTC unconditionally,
+   and two tests hold the line — one scans rendered payloads across
+   twelve endpoints, one fails the build on a new json-tagged
+   `time.Time` anywhere in the package.
+
 4. **Stale illustrative figure in the spec's own prose.** The
    `/history/since-inception` description states a `1d` request measured
    2026-09-07 returned 2 183 points. The live API returns **3 341**, and
    reaches back to 2017 rather than 2021. The route is fine; the
    measurement quoted in the doc is out of date.
+
+   **Fixed 2026-09-09** in the spec and in the handler comment carrying
+   the same measurement. Re-measured live: 3 341 points, 2017-01-17 →
+   2026-09-08. The `granularity=1m` half of the claim (50 000 points
+   ending 2018-02-21) was re-checked and still holds exactly.
 
 5. **No spec served from the API host.** `/v1/openapi.json`,
    `/openapi.json`, `/v1/openapi.yaml`, `/v1/spec` and `/v1/docs` all

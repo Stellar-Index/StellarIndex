@@ -160,7 +160,7 @@ func (s *Server) lookupPriceAt(ctx context.Context, asset, quote canonical.Asset
 				Quote:         quote.String(),
 				Price:         value,
 				PriceType:     "vwap",
-				ObservedAt:    bucketAt,
+				ObservedAt:    WireTime(bucketAt),
 				WindowSeconds: resSec,
 			}, true
 		}

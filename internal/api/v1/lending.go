@@ -34,15 +34,15 @@ type LendingReader interface {
 // these fields stand in until it ships and the wire shape is designed
 // to grow rather than version-bump.
 type LendingPool struct {
-	Protocol          string    `json:"protocol"`
-	Pool              string    `json:"pool"`
-	Auctions24h       int64     `json:"auctions_24h"`
-	AuctionsTotal     int64     `json:"auctions_total"`
-	UniqueUsers30d    int64     `json:"unique_users_30d"`
-	LastSeen          time.Time `json:"last_seen"`
-	NetSupplied30d    string    `json:"net_supplied_30d"`              // token base-units, window net-flow proxy
-	NetBorrowed30d    string    `json:"net_borrowed_30d"`              // token base-units, window net-flow proxy
-	Utilization30dPct *float64  `json:"utilization_30d_pct,omitempty"` // borrow/supply window ratio; null when net supply ≤ 0
+	Protocol          string   `json:"protocol"`
+	Pool              string   `json:"pool"`
+	Auctions24h       int64    `json:"auctions_24h"`
+	AuctionsTotal     int64    `json:"auctions_total"`
+	UniqueUsers30d    int64    `json:"unique_users_30d"`
+	LastSeen          WireTime `json:"last_seen"`
+	NetSupplied30d    string   `json:"net_supplied_30d"`              // token base-units, window net-flow proxy
+	NetBorrowed30d    string   `json:"net_borrowed_30d"`              // token base-units, window net-flow proxy
+	Utilization30dPct *float64 `json:"utilization_30d_pct,omitempty"` // borrow/supply window ratio; null when net supply ≤ 0
 }
 
 // handleLendingPools serves GET /v1/lending/pools.
@@ -97,7 +97,7 @@ func (s *Server) handleLendingPools(w http.ResponseWriter, r *http.Request) {
 			Auctions24h:       p.Auctions24h,
 			AuctionsTotal:     p.AuctionsTotal,
 			UniqueUsers30d:    p.UniqueUsers30d,
-			LastSeen:          p.LastSeen,
+			LastSeen:          WireTime(p.LastSeen),
 			NetSupplied30d:    p.NetSupplied30d,
 			NetBorrowed30d:    p.NetBorrowed30d,
 			Utilization30dPct: utilizationPct(p.NetSupplied30d, p.NetBorrowed30d),

@@ -100,13 +100,13 @@ func TestPrice_DeclaredPegServesTheObservedXLMCross(t *testing.T) {
 			// VWAP1mToSnapshot hands the reader's callers.
 			usdcClassicID + "/native": {
 				AssetID: usdcClassicID, Quote: "native",
-				Price: "9.5", PriceType: "vwap", ObservedAt: pegLegAt, WindowSeconds: 60,
+				Price: "9.5", PriceType: "vwap", ObservedAt: v1.WireTime(pegLegAt), WindowSeconds: 60,
 			},
 			// XLM's dollar market, stored under the CEX spelling — reached
 			// through the alias loop, one form away from `native`.
 			"crypto:XLM/fiat:USD": {
 				AssetID: "crypto:XLM", Quote: "fiat:USD",
-				Price: "0.10", PriceType: "vwap", ObservedAt: pivotAt, WindowSeconds: 60,
+				Price: "0.10", PriceType: "vwap", ObservedAt: v1.WireTime(pivotAt), WindowSeconds: 60,
 			},
 		},
 		sources: map[string][]string{
@@ -134,7 +134,7 @@ func TestPrice_DeclaredPegServesTheObservedXLMCross(t *testing.T) {
 	if !env.Flags.Triangulated {
 		t.Errorf("flags.triangulated = false, want true — the value is composed through XLM")
 	}
-	if !env.Data.ObservedAt.Equal(pivotAt) {
+	if !env.Data.ObservedAt.Time().Equal(pivotAt) {
 		t.Errorf("observed_at = %s, want the OLDER leg's %s — a derived price is only as fresh as its staler input",
 			env.Data.ObservedAt, pivotAt)
 	}
@@ -177,7 +177,7 @@ func TestPrice_DeclaredPegWithNoObservationServesTheDeclaration(t *testing.T) {
 	if env.Data.PriceType != "peg" {
 		t.Errorf("price_type = %q, want peg", env.Data.PriceType)
 	}
-	if !env.Data.ObservedAt.Equal(declaredPegAdoptedAt) {
+	if !env.Data.ObservedAt.Time().Equal(declaredPegAdoptedAt) {
 		t.Errorf("observed_at = %s, want the declaration stamp %s — a constant is not re-observed per request",
 			env.Data.ObservedAt, declaredPegAdoptedAt)
 	}
@@ -201,17 +201,17 @@ func TestPrice_DeclaredPegDirectUSDObservationWins(t *testing.T) {
 		snapshots: map[string]v1.PriceSnapshot{
 			usdcClassicID + "/fiat:USD": {
 				AssetID: usdcClassicID, Quote: "fiat:USD",
-				Price: "0.9700", PriceType: "vwap", ObservedAt: directAt,
+				Price: "0.9700", PriceType: "vwap", ObservedAt: v1.WireTime(directAt),
 			},
 			// Both cross legs are present and would compose to 0.95 —
 			// they must not be read.
 			usdcClassicID + "/native": {
 				AssetID: usdcClassicID, Quote: "native",
-				Price: "9.5", PriceType: "vwap", ObservedAt: directAt,
+				Price: "9.5", PriceType: "vwap", ObservedAt: v1.WireTime(directAt),
 			},
 			"crypto:XLM/fiat:USD": {
 				AssetID: "crypto:XLM", Quote: "fiat:USD",
-				Price: "0.10", PriceType: "vwap", ObservedAt: directAt,
+				Price: "0.10", PriceType: "vwap", ObservedAt: v1.WireTime(directAt),
 			},
 		},
 		sources: map[string][]string{
@@ -229,7 +229,7 @@ func TestPrice_DeclaredPegDirectUSDObservationWins(t *testing.T) {
 	if env.Data.Price != "0.9700" {
 		t.Errorf("price = %q, want the direct 0.9700", env.Data.Price)
 	}
-	if env.Data.PriceType != "vwap" || !env.Data.ObservedAt.Equal(directAt) {
+	if env.Data.PriceType != "vwap" || !env.Data.ObservedAt.Time().Equal(directAt) {
 		t.Errorf("snapshot = %s@%s, want the direct observation vwap@%s", env.Data.PriceType, env.Data.ObservedAt, directAt)
 	}
 	if env.Flags.Triangulated {
@@ -271,11 +271,11 @@ func TestPrice_DeclaredPegXLMLegPrefersAFreshForm(t *testing.T) {
 			snapshots: map[string]v1.PriceSnapshot{
 				staleNativeLeg: {
 					AssetID: usdcClassicID, Quote: "native",
-					Price: "9.5", PriceType: "vwap", ObservedAt: staleAt, WindowSeconds: 60,
+					Price: "9.5", PriceType: "vwap", ObservedAt: v1.WireTime(staleAt), WindowSeconds: 60,
 				},
 				"crypto:XLM/fiat:USD": {
 					AssetID: "crypto:XLM", Quote: "fiat:USD",
-					Price: "0.10", PriceType: "vwap", ObservedAt: pivotAt, WindowSeconds: 60,
+					Price: "0.10", PriceType: "vwap", ObservedAt: v1.WireTime(pivotAt), WindowSeconds: 60,
 				},
 			},
 			stale: map[string]bool{
@@ -286,7 +286,7 @@ func TestPrice_DeclaredPegXLMLegPrefersAFreshForm(t *testing.T) {
 		if withFresh {
 			reader.snapshots[freshSACLeg] = v1.PriceSnapshot{
 				AssetID: usdcClassicID, Quote: canonical.XLMSacContractID,
-				Price: "10.0", PriceType: "vwap", ObservedAt: freshAt, WindowSeconds: 60,
+				Price: "10.0", PriceType: "vwap", ObservedAt: v1.WireTime(freshAt), WindowSeconds: 60,
 			}
 			reader.stale[freshSACLeg] = false
 		}
@@ -306,10 +306,10 @@ func TestPrice_DeclaredPegXLMLegPrefersAFreshForm(t *testing.T) {
 		}
 		// The older of the two legs is the fresh peg leg, two minutes
 		// ago — not the three-day-old book the earlier form holds.
-		if !env.Data.ObservedAt.Equal(freshAt) {
+		if !env.Data.ObservedAt.Time().Equal(freshAt) {
 			t.Errorf("observed_at = %s, want the fresh leg's %s", env.Data.ObservedAt, freshAt)
 		}
-		if env.Data.ObservedAt.Before(now.Add(-time.Hour)) {
+		if env.Data.ObservedAt.Time().Before(now.Add(-time.Hour)) {
 			t.Errorf("observed_at = %s is not recent — the stale leg was served", env.Data.ObservedAt)
 		}
 	})
@@ -325,7 +325,7 @@ func TestPrice_DeclaredPegXLMLegPrefersAFreshForm(t *testing.T) {
 		if env.Data.Price != "0.9500000000" {
 			t.Errorf("price = %q, want 0.9500000000 — a stale observation still beats the declaration", env.Data.Price)
 		}
-		if !env.Data.ObservedAt.Equal(staleAt) {
+		if !env.Data.ObservedAt.Time().Equal(staleAt) {
 			t.Errorf("observed_at = %s, want the stale leg's %s", env.Data.ObservedAt, staleAt)
 		}
 		if !env.Flags.Stale {
@@ -375,18 +375,18 @@ func TestPrice_DeclaredPegIsNotStampedAsAFreshObservation(t *testing.T) {
 	}
 	// The stamp predates the FIRST request: it is the adoption time, not
 	// the request clock.
-	if first.Data.ObservedAt.After(firstRequestStart) {
+	if first.Data.ObservedAt.Time().After(firstRequestStart) {
 		t.Errorf("observed_at %s is after the first request began at %s — the constant is stamped with the request clock, not the declaration's adoption time",
 			first.Data.ObservedAt, firstRequestStart)
 	}
 	// A constant is not re-observed per request.
-	if !first.Data.ObservedAt.Equal(second.Data.ObservedAt) {
+	if !first.Data.ObservedAt.Time().Equal(second.Data.ObservedAt.Time()) {
 		t.Errorf("observed_at advanced between requests: %s then %s — a declaration is not an observation",
 			first.Data.ObservedAt, second.Data.ObservedAt)
 	}
 	// And it predates the response: an observed_at that equals the
 	// envelope's as_of reads as an observation taken this instant.
-	if !first.Data.ObservedAt.Before(first.AsOf) {
+	if !first.Data.ObservedAt.Time().Before(first.AsOf) {
 		t.Errorf("observed_at %s is not before as_of %s — the constant is still stamped with the clock",
 			first.Data.ObservedAt, first.AsOf)
 	}

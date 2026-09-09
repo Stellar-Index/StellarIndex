@@ -42,16 +42,24 @@
 // Three modes mirror the server's [config.APIConfig].AuthMode:
 //
 //   - **Anonymous** — no APIKey on the client; rate-limited per IP.
+//
 //   - **API key** — set Options.APIKey; sent as
 //     `Authorization: Bearer <key>` on every request.
-//   - **SEP-10** — the server-side verifier ships at
-//     `/v1/auth/sep10/{challenge,token}`. Obtain a JWT via the
-//     SEP-10 challenge → sign → verify flow and pass it as
+//
+//   - **SEP-10** — implemented server-side at
+//     `/v1/auth/sep10/{challenge,token}`, but NOT available on the
+//     hosted deployment: api.stellarindex.io has no signing seed
+//     provisioned, so both routes answer 503 `sep10-unavailable`.
+//     Do not build against it there.
+//
+//     On a deployment that does configure it, a JWT is passed as
 //     Options.APIKey (the SDK forwards any token verbatim in the
-//     `Authorization: Bearer` header — the server's auth
-//     middleware accepts `sip_*` (and legacy `rek_*`) API keys and SEP-10 JWTs at
-//     the same surface). A typed SEP-10 helper wrapping the two-
-//     step flow lands as a follow-up.
+//     `Authorization: Bearer` header). Note that a deployment runs
+//     exactly ONE auth mode: JWTs are honoured only under
+//     `auth_mode = "sep10"`, which stops `sip_*` (and legacy
+//     `rek_*`) API keys from working. The two credential types are
+//     alternatives, not peers on the same surface. A typed SEP-10
+//     helper wrapping the two-step flow lands as a follow-up.
 //
 // # Error handling
 //

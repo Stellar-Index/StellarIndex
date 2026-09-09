@@ -131,7 +131,7 @@ func (s *Server) ohlcSeriesFiatCombined(
 	for t, a := range acc {
 		out = append(out, a.finalize(t))
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].T.Before(out[j].T) })
+	sort.Slice(out, func(i, j int) bool { return out[i].T.Time().Before(out[j].T.Time()) })
 	// Match OHLCSeries' earliest-N-in-window semantics (ORDER BY bucket
 	// ASC LIMIT n): the handler sizes [from,to] to `limit` intervals, so
 	// this only bites when a caller passes an explicit wide window.
@@ -569,10 +569,10 @@ func newFiatCombine() *fiatCombine {
 }
 
 func (c *fiatCombine) add(b *OHLCSeriesBar) {
-	a := c.acc[b.T]
+	a := c.acc[b.T.Time()]
 	if a == nil {
 		a = newOHLCBucketAcc()
-		c.acc[b.T] = a
+		c.acc[b.T.Time()] = a
 	}
 	a.add(b, barScaleDecimals(b.Sources))
 }
@@ -604,7 +604,7 @@ func (s *Server) combineConstituentBars(
 			return err
 		}
 		for i := range bars {
-			if admit != nil && !admit(bars[i].T) {
+			if admit != nil && !admit(bars[i].T.Time()) {
 				continue
 			}
 			c.add(&bars[i])
@@ -716,7 +716,7 @@ func (a *ohlcBucketAcc) finalize(t time.Time) OHLCSeriesBar {
 	high := selectExtreme(a.highs, true)
 	low := selectExtreme(a.lows, false)
 	return OHLCSeriesBar{
-		T:      t,
+		T:      WireTime(t),
 		O:      ratToDecimal(open, ohlcPriceDigits),
 		H:      ratToDecimal(high, ohlcPriceDigits),
 		L:      ratToDecimal(low, ohlcPriceDigits),

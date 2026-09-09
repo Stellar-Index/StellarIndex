@@ -130,6 +130,60 @@ against.
 
 ### Fixed
 
+- **api:** every v1 timestamp now renders in UTC with a literal `Z`. Fourteen
+  endpoints were emitting the server's LOCAL offset — `/v1/price`,
+  `/v1/price/at`, `/v1/history`, `/v1/history/since-inception`, `/v1/chart`,
+  `/v1/observations`, `/v1/lending/pools`, `/v1/coverage`,
+  `/v1/diagnostics/ingestion` and the four `/v1/oracle/*` surfaces —
+  because a `time.Time` json field marshals in whatever location its value
+  carries, and `timestamptz` decodes into the process's local zone.
+  Production served `2026-06-01T02:00:00+02:00` and, on the same
+  since-inception grid, `2017-01-17T01:00:00+01:00`: the offset moved with
+  DST, so one series rendered two. Every string was schema-valid, so no
+  contract or status-code check could see it; a client bucketing by the
+  literal string mis-bucketed by an hour on price and trade history. All 43
+  json-tagged timestamp fields now use a `WireTime` type that always renders
+  UTC, byte-identical to before for values that were already UTC — so this
+  is a rendering fix, not a response-shape change.
+
+- **docs:** SEP-10 is no longer documented as an available authentication
+  method. It is implemented but not enabled: `api.stellarindex.io` has no
+  signing seed provisioned, so `/v1/auth/sep10/{challenge,token}` answer
+  `503 sep10-unavailable`, and `/sdk`, `pkg/client`, `getting-started.md`
+  and the OpenAPI security scheme all described the flow as usable. The
+  security scheme additionally claimed the bearer header accepts both API
+  keys and SEP-10 JWTs; the four `auth_mode` values are a mutually exclusive
+  switch, so no deployment accepts both. `/v1/account/keys`'s own 401 detail
+  said the same and now names the condition. Each site states what an
+  operator must set (`STELLARINDEX_SEP10_SEED`,
+  `STELLARINDEX_SEP10_JWT_SECRET`, plus Redis for the replay guard) rather
+  than promising the flow works. Whether to enable it stays a product
+  decision.
+
+- **api:** `/v1/methodology` served ADR-0007 under the title "Aggregation
+  policy + cache-key contract". The id and URL were right, so nothing 404'd
+  — but the real 0007 is "Redis as hot-path cache + rate-limit + ephemeral
+  state", so a reader following the reference arrived somewhere else. All
+  six reference titles are now the ADRs' own, verbatim, and a test holds
+  them there.
+
+- **web:** the hand-written `/methodology` page told readers the VWAP is
+  outlier-filtered before averaging. It is not: `/v1/vwap` and `/v1/twap`
+  default `outlier_sigma` to 0, and only `/v1/ohlc` filters by default —
+  a correction made in the served document on 2026-08-04 that the page
+  never received. The page also hard-coded eleven stablecoin→fiat peg
+  mappings where the deployment serves the operator-declared list, and
+  omitted Bitstamp and the FX venues from the exchange class. Facts the
+  endpoint owns are now stated from it or deferred to it, and a drift test
+  fails when the two disagree.
+
+- **openapi:** `/history/since-inception` quoted a `granularity=1d`
+  measurement of 2 183 points from 2026-09-07; the live figure is 3 341,
+  spanning 2017-01-17 to yesterday. Corrected in the spec and in the
+  matching handler comment, and the description now states that this
+  surface takes `asset` with no `base=` alias — the opposite of
+  `/v1/history` next door.
+
 - **dev:** `branch-status-test.sh` built its throwaway repository with
   `git -C "$tmp" init`, which honours an inherited `GIT_DIR` over its own
   `-C`. `lint-changed.sh` runs any changed `*-test.sh`, the pre-commit hook

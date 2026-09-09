@@ -103,9 +103,9 @@ type StatusRegion struct {
 }
 
 type StatusService struct {
-	Name     string    `json:"name"`
-	Status   string    `json:"status"` // "ok" | "down" | "unknown"
-	LastSeen time.Time `json:"last_seen,omitempty"`
+	Name     string   `json:"name"`
+	Status   string   `json:"status"` // "ok" | "down" | "unknown"
+	LastSeen WireTime `json:"last_seen,omitempty"`
 }
 
 type StatusLatency struct {
@@ -144,9 +144,9 @@ func (l StatusLatency) breached() bool {
 }
 
 type StatusFreshness struct {
-	LastAggregatorTick time.Time `json:"last_aggregator_tick,omitempty"`
-	ActiveSources      int       `json:"active_sources"`
-	TotalSources       int       `json:"total_sources"`
+	LastAggregatorTick WireTime `json:"last_aggregator_tick,omitempty"`
+	ActiveSources      int      `json:"active_sources"`
+	TotalSources       int      `json:"total_sources"`
 }
 
 type StatusIncidents struct {
@@ -365,7 +365,7 @@ func (p *PrometheusStatusBackend) Freshness(ctx context.Context) (StatusFreshnes
 		`max(timestamp(stellarindex_aggregator_vwap_writes_total))`); err == nil {
 		for _, s := range res {
 			if v, ok := s.Float(); ok && v > 0 {
-				out.LastAggregatorTick = time.Unix(int64(v), 0).UTC()
+				out.LastAggregatorTick = WireTime(time.Unix(int64(v), 0).UTC())
 			}
 		}
 	}
@@ -558,7 +558,7 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 			Deployment: s.regionDeployment,
 		},
 		Services: []StatusService{
-			{Name: "api", Status: "ok", LastSeen: time.Now().UTC()},
+			{Name: "api", Status: "ok", LastSeen: WireTime(time.Now().UTC())},
 		},
 	}
 
@@ -714,7 +714,7 @@ func heartbeatServices(names []string, hb map[string]time.Time) []StatusService 
 	for _, name := range names {
 		svc := StatusService{Name: name, Status: "unknown"}
 		if t, ok := hb[name]; ok && !t.IsZero() {
-			svc.LastSeen = t
+			svc.LastSeen = WireTime(t)
 			if now.Sub(t) <= statusHeartbeatStaleAfter {
 				svc.Status = "ok"
 			} else {

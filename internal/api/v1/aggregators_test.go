@@ -99,7 +99,7 @@ func TestAggregators_HappyPath(t *testing.T) {
 	if router.RoutedVolume24hUSD == nil || *router.RoutedVolume24hUSD != vol {
 		t.Errorf("RoutedVolume24hUSD = %v, want %q", router.RoutedVolume24hUSD, vol)
 	}
-	if router.LastRoutedAt == nil || !router.LastRoutedAt.Equal(lastAt) {
+	if router.LastRoutedAt == nil || !router.LastRoutedAt.Time().Equal(lastAt) {
 		t.Errorf("LastRoutedAt = %v, want %v", router.LastRoutedAt, lastAt)
 	}
 
