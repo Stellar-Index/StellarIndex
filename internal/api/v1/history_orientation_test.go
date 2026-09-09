@@ -332,7 +332,7 @@ func TestHistory_BothDirectionsMergeInKeysetOrder(t *testing.T) {
 		}
 	}
 	for i := 1; i < len(page.Data); i++ {
-		if !page.Data[i-1].Timestamp.Before(page.Data[i].Timestamp) {
+		if !page.Data[i-1].Timestamp.Time().Before(page.Data[i].Timestamp.Time()) {
 			t.Errorf("row %d ts %s is not after row %d ts %s — the merge must hold the keyset order",
 				i, page.Data[i].Timestamp, i-1, page.Data[i-1].Timestamp)
 		}
@@ -404,7 +404,7 @@ func TestHistory_PageBoundaryAcrossDirections(t *testing.T) {
 		if row.BaseAsset != aqua.String() || row.QuoteAsset != usdc.String() {
 			t.Errorf("row %d pair = %s/%s, want %s/%s", i, row.BaseAsset, row.QuoteAsset, aqua, usdc)
 		}
-		if i > 0 && !served[i-1].Timestamp.Before(row.Timestamp) {
+		if i > 0 && !served[i-1].Timestamp.Time().Before(row.Timestamp.Time()) {
 			t.Errorf("row %d ts %s is not after row %d ts %s — the drain must hold one order across pages",
 				i, row.Timestamp, i-1, served[i-1].Timestamp)
 		}

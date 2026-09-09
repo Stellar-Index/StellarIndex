@@ -90,7 +90,7 @@ type BackupPostgres struct {
 // BackupRun is one completed pgBackRest backup.
 type BackupRun struct {
 	// TS is the backup's completion time (UTC).
-	TS time.Time `json:"ts"`
+	TS WireTime `json:"ts"`
 	// SizeBytes is the database size the backup captured
 	// (`pgbackrest_backup_size_bytes`). Nil when the exporter has no
 	// per-backup row for it (e.g. the full aged out of `info` but the
@@ -111,7 +111,7 @@ type BackupRepo struct {
 	// type in this repo, parsed from pgBackRest's backup label
 	// (`YYYYMMDD-HHMMSS`, host-local clock — UTC on every host this
 	// role provisions). Nil when the repo has no backups.
-	LastBackupTS *time.Time `json:"last_backup_ts"`
+	LastBackupTS *WireTime `json:"last_backup_ts"`
 	// Retention is the repo's retention policy when known. The
 	// exporter does not publish pgBackRest's retention settings, so
 	// this is nil today; reserved so the panel's column exists.
@@ -124,11 +124,11 @@ type BackupRestoreDrill struct {
 	// LastRunTS is when the drill last wrote its textfile at all —
 	// node_exporter's mtime of restore_drill.prom. Nil = never ran on
 	// this host (or the textfile collector can't see it).
-	LastRunTS *time.Time `json:"last_run_ts"`
+	LastRunTS *WireTime `json:"last_run_ts"`
 	// LastSuccessTS is the last FULLY-clean run
 	// (`stellarindex_restore_drill_last_success_unix`, stamped only
 	// when every verification check passed and evidence was written).
-	LastSuccessTS *time.Time `json:"last_success_ts"`
+	LastSuccessTS *WireTime `json:"last_success_ts"`
 	// Result classifies the most recent run: "pass" (zero failed
 	// checks), "fail" (one or more), "unknown" (no run recorded).
 	Result string `json:"result"`
@@ -138,8 +138,8 @@ type BackupRestoreDrill struct {
 	// RestoredBackupTS / DurationSeconds are reserved: the drill does
 	// not export which backup it restored or how long it took yet
 	// (follow-up to scripts/ops/restore-drill.sh once PR #271 lands).
-	RestoredBackupTS *time.Time `json:"restored_backup_ts"`
-	DurationSeconds  *float64   `json:"duration_s"`
+	RestoredBackupTS *WireTime `json:"restored_backup_ts"`
+	DurationSeconds  *float64  `json:"duration_s"`
 }
 
 // BackupClickHouse is the lake-protection section (ADR-0043 §2.1: the
@@ -148,14 +148,14 @@ type BackupRestoreDrill struct {
 type BackupClickHouse struct {
 	// SchemaSnapshotLastTS is the last clean schema+state capture
 	// (`stellarindex_ch_schema_snapshot_last_success_unix`).
-	SchemaSnapshotLastTS *time.Time `json:"schema_snapshot_last_ts"`
+	SchemaSnapshotLastTS *WireTime `json:"schema_snapshot_last_ts"`
 	// SchemaSnapshotOffsiteLastTS is the last successful offsite push
 	// of that snapshot; nil on a host that acknowledged local-only.
-	SchemaSnapshotOffsiteLastTS *time.Time `json:"schema_snapshot_offsite_last_ts"`
+	SchemaSnapshotOffsiteLastTS *WireTime `json:"schema_snapshot_offsite_last_ts"`
 	// ZFSSnapshotLatestTS is reserved: no ZFS snapshot schedule
 	// exists for the lake pool today (ADR-0043 §2 rejects a data
 	// copy), so there is no producer and this is always nil.
-	ZFSSnapshotLatestTS *time.Time `json:"zfs_snapshot_latest_ts"`
+	ZFSSnapshotLatestTS *WireTime `json:"zfs_snapshot_latest_ts"`
 	// ReplicaLagSeconds is reserved: the lake is single-node today,
 	// so there is no replica and this is always nil.
 	ReplicaLagSeconds *float64 `json:"replica_lag_s"`
@@ -435,16 +435,16 @@ func buildBackupsSnapshot(ctx context.Context, logger *slog.Logger, src backupMe
 	pg := projectPostgres(now, results[0], results[1], results[2], results[3])
 	out.Postgres = pg.section
 	out.RestoreDrill = projectRestoreDrill(results[4], results[5], results[6])
-	out.ClickHouse.SchemaSnapshotLastTS = firstUnixTime(results[7])
-	out.ClickHouse.SchemaSnapshotOffsiteLastTS = firstUnixTime(results[8])
+	out.ClickHouse.SchemaSnapshotLastTS = wireTimePtr(firstUnixTime(results[7]))
+	out.ClickHouse.SchemaSnapshotOffsiteLastTS = wireTimePtr(firstUnixTime(results[8]))
 
 	out.Freshness = BackupFreshness{
 		Full:     freshnessVerdict(pg.fullAge, backupSLOFull),
 		Diff:     freshnessVerdict(pg.diffAge, backupSLODiff),
 		WAL:      freshnessVerdict(pg.walAge, backupSLOWAL),
 		Offsite:  freshnessVerdict(ageSince(now, pg.offsiteTS), backupSLOOffsite),
-		Drill:    freshnessVerdict(ageSince(now, out.RestoreDrill.LastSuccessTS), backupSLODrill),
-		Snapshot: freshnessVerdict(ageSince(now, out.ClickHouse.SchemaSnapshotLastTS), backupSLOSnapshot),
+		Drill:    freshnessVerdict(ageSince(now, wireTimeUnptr(out.RestoreDrill.LastSuccessTS)), backupSLODrill),
+		Snapshot: freshnessVerdict(ageSince(now, wireTimeUnptr(out.ClickHouse.SchemaSnapshotLastTS)), backupSLOSnapshot),
 	}
 	out.Freshness.Overall = overallFreshness(
 		out.Freshness.Full, out.Freshness.Diff, out.Freshness.WAL,
@@ -471,10 +471,10 @@ func projectPostgres(now time.Time, sinceLast, backupInfo, fullSizes, walSamples
 	var p postgresProjection
 	p.fullAge, p.diffAge = minAgeByType(sinceLast)
 	if p.fullAge != nil {
-		p.section.LastFull = &BackupRun{TS: now.Add(-*p.fullAge)}
+		p.section.LastFull = &BackupRun{TS: WireTime(now.Add(-*p.fullAge))}
 	}
 	if p.diffAge != nil {
-		p.section.LastDiff = &BackupRun{TS: now.Add(-*p.diffAge)}
+		p.section.LastDiff = &BackupRun{TS: WireTime(now.Add(-*p.diffAge))}
 	}
 	if p.section.LastFull != nil {
 		p.section.LastFull.SizeBytes, p.section.LastFull.Repo = newestFullSize(fullSizes)
@@ -569,7 +569,7 @@ func projectRepos(backupInfo []promSample) ([]BackupRepo, *time.Time) {
 	for _, k := range keys {
 		row := BackupRepo{Repo: k, Kind: repoKind(k)}
 		if t := repoLatest[k]; !t.IsZero() {
-			row.LastBackupTS = &t
+			row.LastBackupTS = wireTimePtr(&t)
 			if row.Kind == "offsite" && (offsiteTS == nil || t.After(*offsiteTS)) {
 				offsiteTS = &t
 			}
@@ -584,8 +584,8 @@ func projectRepos(backupInfo []promSample) ([]BackupRepo, *time.Time) {
 func projectRestoreDrill(success, failures, mtime []promSample) BackupRestoreDrill {
 	out := BackupRestoreDrill{
 		Result:        freshnessUnknown,
-		LastSuccessTS: firstUnixTime(success),
-		LastRunTS:     firstUnixTime(mtime),
+		LastSuccessTS: wireTimePtr(firstUnixTime(success)),
+		LastRunTS:     wireTimePtr(firstUnixTime(mtime)),
 	}
 	for _, s := range failures {
 		if v, ok := s.Float(); ok {

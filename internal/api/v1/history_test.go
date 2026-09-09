@@ -212,7 +212,7 @@ func (r *stubHistoryReader) OHLCSeries(ctx context.Context, pair canonical.Pair,
 	if r.ohlcByPair != nil {
 		var out []v1.OHLCSeriesBar
 		for _, b := range r.ohlcByPair[pair.String()] {
-			if !b.T.Before(from) && b.T.Before(to) {
+			if !b.T.Time().Before(from) && b.T.Time().Before(to) {
 				out = append(out, b)
 			}
 		}

@@ -416,7 +416,7 @@ Two runtime-auth classes are shipped in this snapshot:
 | Class | Auth | Default limit | Who |
 | ---- | ---- | ------------- | --- |
 | Anonymous | none | 60 rpm per IP | Public/demo callers |
-| Authenticated | `Authorization: Bearer sip_<64-hex>` or SEP-10 JWT | 1000 rpm per subject/key | Wallet, SDK, and operator clients |
+| Authenticated | `Authorization: Bearer sip_<64-hex>` (or a SEP-10 JWT, on a `auth_mode = "sep10"` deployment only — never both at once) | 1000 rpm per subject/key | Wallet, SDK, and operator clients |
 
 API keys are:
 
@@ -428,9 +428,25 @@ API keys are:
 - Scopes are reserved in the record model, but scope enforcement is not
   wired on runtime endpoints in this snapshot.
 
-SEP-10 (Stellar keypair auth) is shipped as the current wallet-facing
-auth bootstrap. Clients obtain a challenge, sign it, exchange it for a
-JWT, and then use that bearer token on authenticated routes.
+SEP-10 (Stellar keypair auth) is implemented — challenge, signature
+verification, replay guard and JWT issuance all ship in the binary —
+but it is NOT enabled on the hosted deployment, where both routes
+answer `503 sep10-unavailable` for want of a provisioned signing seed.
+Two things follow for anyone reading this as a contract:
+
+- Nothing on `api.stellarindex.io` can be authenticated with a SEP-10
+  JWT today. API keys are the only working credential.
+- The four `auth_mode` values are a mutually exclusive switch, not a
+  set of accepted credentials. A JWT is verified only under
+  `auth_mode = "sep10"`, and that mode stops `sip_*` keys working.
+  There is no configuration in which a route accepts both.
+
+Enabling it on a deployment is operator configuration:
+`STELLARINDEX_SEP10_SEED` + `STELLARINDEX_SEP10_JWT_SECRET`
+(names configurable under `[api.sep10]`), plus Redis for the replay
+guard. Whether the hosted deployment should adopt it — accepting the
+API-key trade-off and the master-key-only limitation documented in
+`internal/auth/sep10/doc.go` — is an open product decision.
 
 mTLS for internal service-to-service only (see [HA plan §6](../architecture/ha-plan.md#6-security-posture)).
 

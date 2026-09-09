@@ -114,7 +114,7 @@ func TestStatus_WithBackend_HappyPath(t *testing.T) {
 			},
 			latency: StatusLatency{P50Ms: 10, P95Ms: 80, P99Ms: 200, WindowSecs: 300},
 			freshness: StatusFreshness{
-				LastAggregatorTick: now,
+				LastAggregatorTick: WireTime(now),
 				ActiveSources:      14,
 				TotalSources:       18,
 			},
@@ -662,8 +662,8 @@ func TestRollupOverall_AllUnknownBranch(t *testing.T) {
 
 	// A service explicitly marked degraded → overall=degraded.
 	services = []StatusService{
-		{Name: "api", Status: "ok", LastSeen: time.Now()},
-		{Name: "indexer", Status: "degraded", LastSeen: time.Now()},
+		{Name: "api", Status: "ok", LastSeen: WireTime(time.Now())},
+		{Name: "indexer", Status: "degraded", LastSeen: WireTime(time.Now())},
 	}
 	if got := rollupOverall(services, false, false, false); got != "degraded" {
 		t.Errorf("any-degraded rollup = %q, want degraded", got)
@@ -681,9 +681,9 @@ func TestRollupOverall_AllUnknownBranch(t *testing.T) {
 func TestRollupOverallLatencyBreach(t *testing.T) {
 	t.Parallel()
 	healthy := []StatusService{
-		{Name: "api", Status: "ok", LastSeen: time.Now()},
-		{Name: "indexer", Status: "ok", LastSeen: time.Now()},
-		{Name: "aggregator", Status: "ok", LastSeen: time.Now()},
+		{Name: "api", Status: "ok", LastSeen: WireTime(time.Now())},
+		{Name: "indexer", Status: "ok", LastSeen: WireTime(time.Now())},
+		{Name: "aggregator", Status: "ok", LastSeen: WireTime(time.Now())},
 	}
 	if got := rollupOverall(healthy, false, false, false); got != "ok" {
 		t.Fatalf("healthy + within-SLO rollup = %q, want ok", got)

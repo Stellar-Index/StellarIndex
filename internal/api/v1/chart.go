@@ -34,11 +34,11 @@ type ChartSeries struct {
 	PriceType     string             `json:"price_type"` // "vwap" | "twap" | "market_cap"
 	Points        []HistoryPointWire `json:"points"`
 	Truncated     bool               `json:"truncated"`                // true when the requested window starts before the earliest available data
-	DataStartsAt  *time.Time         `json:"data_starts_at,omitempty"` // earliest bucket timestamp present in the result; only populated when Truncated
-	RequestedFrom *time.Time         `json:"requested_from,omitempty"` // window start the consumer asked for; only populated when Truncated
+	DataStartsAt  *WireTime          `json:"data_starts_at,omitempty"` // earliest bucket timestamp present in the result; only populated when Truncated
+	RequestedFrom *WireTime          `json:"requested_from,omitempty"` // window start the consumer asked for; only populated when Truncated
 	Discontinuous bool               `json:"discontinuous"`            // true when points skip at least one whole bucket between two served buckets
-	GapStartsAt   *time.Time         `json:"gap_starts_at,omitempty"`  // last bucket before the WIDEST interior gap; only populated when Discontinuous
-	GapEndsAt     *time.Time         `json:"gap_ends_at,omitempty"`    // first bucket after it; only populated when Discontinuous
+	GapStartsAt   *WireTime          `json:"gap_starts_at,omitempty"`  // last bucket before the WIDEST interior gap; only populated when Discontinuous
+	GapEndsAt     *WireTime          `json:"gap_ends_at,omitempty"`    // first bucket after it; only populated when Discontinuous
 }
 
 // markDiscontinuity stamps the interior-gap signal onto a series that is
@@ -78,15 +78,15 @@ type ChartSeries struct {
 // rather than guessing — a false gap claim is worse than none.
 func (c *ChartSeries) markDiscontinuity() {
 	for i := 1; i < len(c.Points); i++ {
-		next := chartBucketStep(c.Points[i-1].T, c.Granularity)
+		next := chartBucketStep(c.Points[i-1].T.Time(), c.Granularity)
 		if next.IsZero() {
 			return // unknown grain: no grid to measure a gap against
 		}
-		if !c.Points[i].T.After(next) {
+		if !c.Points[i].T.Time().After(next) {
 			continue // the very next bucket (or the same one)
 		}
-		gap := c.Points[i].T.Sub(c.Points[i-1].T)
-		if c.Discontinuous && gap <= c.GapEndsAt.Sub(*c.GapStartsAt) {
+		gap := c.Points[i].T.Time().Sub(c.Points[i-1].T.Time())
+		if c.Discontinuous && gap <= c.GapEndsAt.Time().Sub(c.GapStartsAt.Time()) {
 			continue
 		}
 		from, to := c.Points[i-1].T, c.Points[i].T
@@ -306,7 +306,7 @@ func (s *Server) handleChart(w http.ResponseWriter, r *http.Request) {
 
 	wire := make([]HistoryPointWire, len(points))
 	for i, p := range points {
-		wire[i] = HistoryPointWire{T: p.Bucket, P: p.VWAP, VUSD: p.VolumeUSD}
+		wire[i] = HistoryPointWire{T: WireTime(p.Bucket), P: p.VWAP, VUSD: p.VolumeUSD}
 	}
 
 	series := ChartSeries{
@@ -331,8 +331,8 @@ func (s *Server) handleChart(w http.ResponseWriter, r *http.Request) {
 			startsAt := points[0].Bucket
 			requested := from
 			series.Truncated = true
-			series.DataStartsAt = &startsAt
-			series.RequestedFrom = &requested
+			series.DataStartsAt = wireTimePtr(&startsAt)
+			series.RequestedFrom = wireTimePtr(&requested)
 		}
 	}
 
@@ -568,7 +568,7 @@ func (s *Server) handleChartTWAP(
 
 	wire := make([]HistoryPointWire, len(points))
 	for i, p := range points {
-		wire[i] = HistoryPointWire{T: p.Bucket, P: p.VWAP, VUSD: p.VolumeUSD}
+		wire[i] = HistoryPointWire{T: WireTime(p.Bucket), P: p.VWAP, VUSD: p.VolumeUSD}
 	}
 
 	series := ChartSeries{
@@ -584,8 +584,8 @@ func (s *Server) handleChartTWAP(
 			startsAt := points[0].Bucket
 			requested := from
 			series.Truncated = true
-			series.DataStartsAt = &startsAt
-			series.RequestedFrom = &requested
+			series.DataStartsAt = wireTimePtr(&startsAt)
+			series.RequestedFrom = wireTimePtr(&requested)
 		}
 	}
 	writeChartJSON(w, series, Flags{Triangulated: walk.proxied, Stale: walk.degraded})
@@ -680,7 +680,7 @@ func (s *Server) handleChartFiat(
 			continue
 		}
 		wire = append(wire, HistoryPointWire{
-			T: p.Bucket,
+			T: WireTime(p.Bucket),
 			P: fmt.Sprintf("%.10f", rate),
 			// FX rates have no volume — omit v_usd entirely.
 		})
@@ -689,12 +689,12 @@ func (s *Server) handleChartFiat(
 
 	// Retention-truncation signal — same shape as the crypto path.
 	if !from.IsZero() && len(wire) > 0 {
-		if grace := chartGranularityGrace(gran); wire[0].T.Sub(from) > grace {
+		if grace := chartGranularityGrace(gran); wire[0].T.Time().Sub(from) > grace {
 			startsAt := wire[0].T
 			requested := from
 			series.Truncated = true
 			series.DataStartsAt = &startsAt
-			series.RequestedFrom = &requested
+			series.RequestedFrom = wireTimePtr(&requested)
 		}
 	}
 
@@ -763,12 +763,12 @@ func (s *Server) handleChartFiatCross(
 
 	// Retention-truncation signal — same shape as the direct path.
 	if !from.IsZero() && len(wire) > 0 {
-		if grace := chartGranularityGrace(gran); wire[0].T.Sub(from) > grace {
+		if grace := chartGranularityGrace(gran); wire[0].T.Time().Sub(from) > grace {
 			startsAt := wire[0].T
 			requested := from
 			series.Truncated = true
 			series.DataStartsAt = &startsAt
-			series.RequestedFrom = &requested
+			series.RequestedFrom = wireTimePtr(&requested)
 		}
 	}
 	writeChartJSON(w, series, Flags{Triangulated: len(wire) > 0})
@@ -807,7 +807,7 @@ func crossFiatChartPoints(basePts, quotePts []FXQuotePoint) []HistoryPointWire {
 			}
 			cross := new(big.Rat).Quo(qr, br)
 			wire = append(wire, HistoryPointWire{
-				T: b.Bucket,
+				T: WireTime(b.Bucket),
 				P: ratToDecimal(cross, ohlcPriceDigits),
 				// FX rates have no volume — omit v_usd entirely.
 			})
@@ -1913,7 +1913,7 @@ func (s *Server) handleChartMarketCap(
 			continue
 		}
 		wire = append(wire, HistoryPointWire{
-			T: p.Bucket,
+			T: WireTime(p.Bucket),
 			P: new(big.Rat).Mul(m2, rate).FloatString(2),
 		})
 	}
@@ -1927,12 +1927,12 @@ func (s *Server) handleChartMarketCap(
 		Points:      wire,
 	}
 	if !from.IsZero() && len(wire) > 0 {
-		if grace := chartGranularityGrace(gran); wire[0].T.Sub(from) > grace {
+		if grace := chartGranularityGrace(gran); wire[0].T.Time().Sub(from) > grace {
 			startsAt := wire[0].T
 			requested := from
 			series.Truncated = true
 			series.DataStartsAt = &startsAt
-			series.RequestedFrom = &requested
+			series.RequestedFrom = wireTimePtr(&requested)
 		}
 	}
 	writeChartJSON(w, series, Flags{})
@@ -2120,12 +2120,12 @@ func (s *Server) handleChartMarketCapCrypto(
 		Points:      wire,
 	}
 	if !from.IsZero() && len(wire) > 0 {
-		if grace := chartGranularityGrace(gran); wire[0].T.Sub(from) > grace {
+		if grace := chartGranularityGrace(gran); wire[0].T.Time().Sub(from) > grace {
 			startsAt := wire[0].T
 			requested := from
 			series.Truncated = true
 			series.DataStartsAt = &startsAt
-			series.RequestedFrom = &requested
+			series.RequestedFrom = wireTimePtr(&requested)
 		}
 	}
 	writeChartJSON(w, series, Flags{Triangulated: walk.proxied, Stale: walk.degraded})
@@ -2153,7 +2153,7 @@ func marketCapPoints(pricePts []HistoryPoint, supPts []timescale.SupplyDayPoint,
 		if err != nil {
 			continue
 		}
-		wire = append(wire, HistoryPointWire{T: pp.Bucket, P: mc})
+		wire = append(wire, HistoryPointWire{T: WireTime(pp.Bucket), P: mc})
 	}
 	return wire
 }

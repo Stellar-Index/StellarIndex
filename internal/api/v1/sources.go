@@ -25,9 +25,9 @@ type SourcesStatsReader interface {
 // number of trades in the hour (powers the trade-count line above the
 // $-volume bars on the source page chart).
 type VolumeBucket struct {
-	Hour       time.Time `json:"hour"`
-	VolumeUSD  string    `json:"volume_usd"`
-	TradeCount int64     `json:"trade_count"`
+	Hour       WireTime `json:"hour"`
+	VolumeUSD  string   `json:"volume_usd"`
+	TradeCount int64    `json:"trade_count"`
 }
 
 // buildSourceVolumeHistory projects the per-(source, hour) raw buckets
@@ -57,7 +57,7 @@ func buildSourceVolumeHistory(buckets []timescale.SourceVolumeBucket, hours int)
 			if vol == "" {
 				vol = "0"
 			}
-			series = append(series, VolumeBucket{Hour: hour, VolumeUSD: vol, TradeCount: hr.count})
+			series = append(series, VolumeBucket{Hour: WireTime(hour), VolumeUSD: vol, TradeCount: hr.count})
 		}
 		out[src] = series
 	}

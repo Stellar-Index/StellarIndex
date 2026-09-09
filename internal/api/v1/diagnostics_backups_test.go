@@ -169,7 +169,7 @@ func TestBuildBackupsSnapshot_Projection(t *testing.T) {
 		t.Errorf("source_status = %q, want ok", got.SourceStatus)
 	}
 	wantFull := now.Add(-5 * 24 * time.Hour)
-	if got.Postgres.LastFull == nil || !got.Postgres.LastFull.TS.Equal(wantFull) {
+	if got.Postgres.LastFull == nil || !got.Postgres.LastFull.TS.Time().Equal(wantFull) {
 		t.Fatalf("last_full = %+v, want ts %v", got.Postgres.LastFull, wantFull)
 	}
 	if got.Postgres.LastFull.SizeBytes == nil || *got.Postgres.LastFull.SizeBytes != 123456789 {
@@ -178,7 +178,7 @@ func TestBuildBackupsSnapshot_Projection(t *testing.T) {
 	if got.Postgres.LastFull.Repo != "1" {
 		t.Errorf("last_full.repo = %q, want 1", got.Postgres.LastFull.Repo)
 	}
-	if got.Postgres.LastDiff == nil || !got.Postgres.LastDiff.TS.Equal(now.Add(-10*time.Hour)) {
+	if got.Postgres.LastDiff == nil || !got.Postgres.LastDiff.TS.Time().Equal(now.Add(-10*time.Hour)) {
 		t.Errorf("last_diff = %+v", got.Postgres.LastDiff)
 	}
 	if got.Postgres.WALArchiveMaxAgeSeconds == nil || *got.Postgres.WALArchiveMaxAgeSeconds != 120 {
@@ -190,11 +190,11 @@ func TestBuildBackupsSnapshot_Projection(t *testing.T) {
 	}
 	r1, r2 := got.Postgres.Repos[0], got.Postgres.Repos[1]
 	if r1.Repo != "1" || r1.Kind != "local" || r1.LastBackupTS == nil ||
-		!r1.LastBackupTS.Equal(time.Date(2026, 8, 29, 2, 0, 3, 0, time.UTC)) {
+		!r1.LastBackupTS.Time().Equal(time.Date(2026, 8, 29, 2, 0, 3, 0, time.UTC)) {
 		t.Errorf("repo1 = %+v, want local / newest = the diff's own start 2026-08-29T02:00:03Z", r1)
 	}
 	if r2.Repo != "2" || r2.Kind != "offsite" || r2.LastBackupTS == nil ||
-		!r2.LastBackupTS.Equal(time.Date(2026, 8, 17, 2, 0, 1, 0, time.UTC)) {
+		!r2.LastBackupTS.Time().Equal(time.Date(2026, 8, 17, 2, 0, 1, 0, time.UTC)) {
 		t.Errorf("repo2 = %+v, want offsite / 2026-08-17T02:00:01Z", r2)
 	}
 	if r1.Retention != nil || r2.Retention != nil {
@@ -205,13 +205,13 @@ func TestBuildBackupsSnapshot_Projection(t *testing.T) {
 		t.Errorf("drill = %+v, want pass / 0 failed checks", got.RestoreDrill)
 	}
 	if got.RestoreDrill.LastRunTS == nil || got.RestoreDrill.LastSuccessTS == nil ||
-		!got.RestoreDrill.LastRunTS.Equal(now.Add(-20*24*time.Hour)) {
+		!got.RestoreDrill.LastRunTS.Time().Equal(now.Add(-20*24*time.Hour)) {
 		t.Errorf("drill timestamps = %+v", got.RestoreDrill)
 	}
 	if got.RestoreDrill.RestoredBackupTS != nil || got.RestoreDrill.DurationSeconds != nil {
 		t.Errorf("reserved drill fields must be nil: %+v", got.RestoreDrill)
 	}
-	if got.ClickHouse.SchemaSnapshotLastTS == nil || !got.ClickHouse.SchemaSnapshotLastTS.Equal(now.Add(-6*time.Hour)) {
+	if got.ClickHouse.SchemaSnapshotLastTS == nil || !got.ClickHouse.SchemaSnapshotLastTS.Time().Equal(now.Add(-6*time.Hour)) {
 		t.Errorf("snapshot ts = %v", got.ClickHouse.SchemaSnapshotLastTS)
 	}
 	if got.ClickHouse.SchemaSnapshotOffsiteLastTS != nil || got.ClickHouse.ZFSSnapshotLatestTS != nil || got.ClickHouse.ReplicaLagSeconds != nil {
@@ -230,7 +230,7 @@ func TestBuildBackupsSnapshot_Projection(t *testing.T) {
 	if f.Offsite.Status != freshnessStale {
 		t.Errorf("offsite verdict = %q, want stale (12d > 8d)", f.Offsite.Status)
 	}
-	if f.Offsite.AgeSeconds == nil || *f.Offsite.AgeSeconds != int64(now.Sub(*r2.LastBackupTS)/time.Second) {
+	if f.Offsite.AgeSeconds == nil || *f.Offsite.AgeSeconds != int64(now.Sub(r2.LastBackupTS.Time())/time.Second) {
 		t.Errorf("offsite age = %v", f.Offsite.AgeSeconds)
 	}
 	if f.Overall != freshnessStale {

@@ -325,7 +325,7 @@ func (s *Server) observationsStreamEvent(gen *streaming.Generator, pair canonica
 
 	body, err := json.Marshal(observationsStreamPayload{
 		Data:    rows,
-		AsOf:    time.Now().UTC(),
+		AsOf:    WireTime(time.Now().UTC()),
 		Sources: srcs,
 		Flags:   Flags{SingleSource: len(srcs) == 1},
 	})
@@ -344,7 +344,7 @@ func (s *Server) observationsStreamEvent(gen *streaming.Generator, pair canonica
 // both polling and streaming.
 type observationsStreamPayload struct {
 	Data    []TradeRow `json:"data"`
-	AsOf    time.Time  `json:"as_of"`
+	AsOf    WireTime   `json:"as_of"`
 	Sources []string   `json:"sources,omitempty"`
 	Flags   Flags      `json:"flags"`
 }

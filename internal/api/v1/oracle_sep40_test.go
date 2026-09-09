@@ -113,7 +113,7 @@ func TestOracleLastPrice_StablecoinFiatProxyFallback(t *testing.T) {
 		Quote:      usdcClassic.String(),
 		Price:      "0.1626",
 		PriceType:  "vwap",
-		ObservedAt: time.Unix(1_770_000_000, 0).UTC(),
+		ObservedAt: v1.WireTime(time.Unix(1_770_000_000, 0).UTC()),
 	}
 	reader := &stubPriceReader{
 		snapshots: map[string]v1.PriceSnapshot{
@@ -163,7 +163,7 @@ func TestOracleXLastPrice_StablecoinFiatProxyFallback(t *testing.T) {
 		Quote:      usdcClassic.String(),
 		Price:      "0.1626",
 		PriceType:  "vwap",
-		ObservedAt: time.Unix(1_770_000_000, 0).UTC(),
+		ObservedAt: v1.WireTime(time.Unix(1_770_000_000, 0).UTC()),
 	}
 	reader := &stubPriceReader{
 		snapshots: map[string]v1.PriceSnapshot{
@@ -258,7 +258,7 @@ func TestOracleLastPrice_AliasResolvesXLM(t *testing.T) {
 		snapshots: map[string]v1.PriceSnapshot{
 			"crypto:XLM/fiat:USD": {
 				AssetID: "crypto:XLM", Quote: "fiat:USD",
-				Price: "0.12", PriceType: "vwap", ObservedAt: t0,
+				Price: "0.12", PriceType: "vwap", ObservedAt: v1.WireTime(t0),
 			},
 		},
 		sources: map[string][]string{"crypto:XLM/fiat:USD": {"binance"}},
@@ -285,7 +285,7 @@ func TestOracleLastPrice_HappyPath(t *testing.T) {
 		snapshots: map[string]v1.PriceSnapshot{
 			"native/fiat:USD": {
 				AssetID: "native", Quote: "fiat:USD",
-				Price: "0.12", PriceType: "vwap", ObservedAt: t0,
+				Price: "0.12", PriceType: "vwap", ObservedAt: v1.WireTime(t0),
 			},
 		},
 		sources: map[string][]string{
@@ -310,7 +310,7 @@ func TestOracleLastPrice_HappyPath(t *testing.T) {
 	if env.Data.Price != "0.12" {
 		t.Errorf("price = %q", env.Data.Price)
 	}
-	if !env.Data.Timestamp.Equal(t0) {
+	if !env.Data.Timestamp.Time().Equal(t0) {
 		t.Errorf("timestamp = %v, want %v", env.Data.Timestamp, t0)
 	}
 	if len(env.Sources) != 2 {
@@ -409,7 +409,7 @@ func TestOracleXLastPrice_AliasResolvesXLM(t *testing.T) {
 		snapshots: map[string]v1.PriceSnapshot{
 			"crypto:XLM/fiat:USD": {
 				AssetID: "crypto:XLM", Quote: "fiat:USD",
-				Price: "0.12", PriceType: "vwap", ObservedAt: t0,
+				Price: "0.12", PriceType: "vwap", ObservedAt: v1.WireTime(t0),
 			},
 		},
 	}
@@ -494,7 +494,7 @@ func TestOracleXLastPrice_HappyPath(t *testing.T) {
 		snapshots: map[string]v1.PriceSnapshot{
 			"native/fiat:EUR": {
 				AssetID: "native", Quote: "fiat:EUR",
-				Price: "0.10", PriceType: "vwap", ObservedAt: t0,
+				Price: "0.10", PriceType: "vwap", ObservedAt: v1.WireTime(t0),
 			},
 		},
 	}
@@ -559,9 +559,9 @@ func TestOraclePrices_HappyPath(t *testing.T) {
 	reader := &stubPriceReader{
 		recent: map[string][]v1.PriceSnapshot{
 			"native/fiat:USD": {
-				{AssetID: "native", Quote: "fiat:USD", Price: "0.12", PriceType: "vwap", ObservedAt: t0},
-				{AssetID: "native", Quote: "fiat:USD", Price: "0.13", PriceType: "vwap", ObservedAt: t0.Add(-1 * time.Minute)},
-				{AssetID: "native", Quote: "fiat:USD", Price: "0.14", PriceType: "vwap", ObservedAt: t0.Add(-2 * time.Minute)},
+				{AssetID: "native", Quote: "fiat:USD", Price: "0.12", PriceType: "vwap", ObservedAt: v1.WireTime(t0)},
+				{AssetID: "native", Quote: "fiat:USD", Price: "0.13", PriceType: "vwap", ObservedAt: v1.WireTime(t0.Add(-1 * time.Minute))},
+				{AssetID: "native", Quote: "fiat:USD", Price: "0.14", PriceType: "vwap", ObservedAt: v1.WireTime(t0.Add(-2 * time.Minute))},
 			},
 		},
 	}
@@ -627,8 +627,8 @@ func TestOraclePrices_StablecoinFiatProxyFallback(t *testing.T) {
 		// returns three closed buckets.
 		recent: map[string][]v1.PriceSnapshot{
 			"native/" + usdcClassic.String(): {
-				{AssetID: "native", Quote: usdcClassic.String(), Price: "0.1626", PriceType: "vwap", ObservedAt: t0},
-				{AssetID: "native", Quote: usdcClassic.String(), Price: "0.1625", PriceType: "vwap", ObservedAt: t0.Add(-1 * time.Minute)},
+				{AssetID: "native", Quote: usdcClassic.String(), Price: "0.1626", PriceType: "vwap", ObservedAt: v1.WireTime(t0)},
+				{AssetID: "native", Quote: usdcClassic.String(), Price: "0.1625", PriceType: "vwap", ObservedAt: v1.WireTime(t0.Add(-1 * time.Minute))},
 			},
 		},
 	}
@@ -681,11 +681,11 @@ func oracleFallbackCrossReader() (*stubPriceReader, canonical.Asset) {
 		snapshots: map[string]v1.PriceSnapshot{
 			usdcClassic.String() + "/native": {
 				AssetID: usdcClassic.String(), Quote: "native",
-				Price: "9.5", PriceType: "vwap", ObservedAt: at, WindowSeconds: 60,
+				Price: "9.5", PriceType: "vwap", ObservedAt: v1.WireTime(at), WindowSeconds: 60,
 			},
 			"crypto:XLM/fiat:USD": {
 				AssetID: "crypto:XLM", Quote: "fiat:USD",
-				Price: "0.10", PriceType: "vwap", ObservedAt: at, WindowSeconds: 60,
+				Price: "0.10", PriceType: "vwap", ObservedAt: v1.WireTime(at), WindowSeconds: 60,
 			},
 		},
 		sources: map[string][]string{

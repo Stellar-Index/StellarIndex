@@ -206,13 +206,20 @@ func (s *Server) handleMethodology(w http.ResponseWriter, r *http.Request) {
 		},
 		SourceClasses: classes,
 		Sources:       sources,
+		// Titles are the referenced ADRs' OWN titles, verbatim, and
+		// TestMethodology_ReferenceTitlesMatchTheADRs holds them to it.
+		// They used to be paraphrases, which is how ADR-0007 came to be
+		// served as "Aggregation policy + cache-key contract" — a
+		// document that does not exist. The real 0007 is about Redis,
+		// so a reader who followed the reference got something other
+		// than what the reference promised.
 		References: []MethodologyReference{
-			{ID: "ADR-0007", Title: "Aggregation policy + cache-key contract", URL: "/research/adr/0007"},
-			{ID: "ADR-0015", Title: "Closed-bucket rate-serving + cross-region answer agreement", URL: "/research/adr/0015"},
-			{ID: "ADR-0018", Title: "Three API consistency surfaces (closed-bucket, tip, observations)", URL: "/research/adr/0018"},
-			{ID: "ADR-0019", Title: "Anomaly detection + freeze policy", URL: "/research/adr/0019"},
-			{ID: "ADR-0020", Title: "/v1/chart timeframe + granularity contract", URL: "/research/adr/0020"},
-			{ID: "ADR-0026", Title: "Stablecoin-fiat proxy late binding (aggregator policy, not decoder policy)", URL: "/research/adr/0026"},
+			{ID: "ADR-0007", Title: "Redis as hot-path cache + rate-limit + ephemeral state", URL: "/research/adr/0007"},
+			{ID: "ADR-0015", Title: "API rates served from last-closed bucket, never in-progress", URL: "/research/adr/0015"},
+			{ID: "ADR-0018", Title: "API consistency surfaces — closed-bucket, tip, and observations", URL: "/research/adr/0018"},
+			{ID: "ADR-0019", Title: "Anomaly response policy and confidence scoring — per-asset statistical baselines", URL: "/research/adr/0019"},
+			{ID: "ADR-0020", Title: "Chart API contract — timeframe + granularity + price_type", URL: "/research/adr/0020"},
+			{ID: "ADR-0026", Title: "Stablecoin → fiat proxy is late-binding aggregator policy, not eager ingest normalisation", URL: "/research/adr/0026"},
 		},
 	}
 

@@ -144,7 +144,7 @@ func (s *chartOHLCStore) OHLCSeries(
 	out := make([]v1.OHLCSeriesBar, 0, len(rows))
 	for _, r := range rows {
 		out = append(out, v1.OHLCSeriesBar{
-			T: r.bucket, O: r.price, H: r.price, L: r.price, C: r.price,
+			T: v1.WireTime(r.bucket), O: r.price, H: r.price, L: r.price, C: r.price,
 			VBase: "1000000000", VQuote: "160000000", N: 12,
 			Sources: []string{"sdex"},
 		})
@@ -219,7 +219,7 @@ func chartBucketDays(t *testing.T, env chartEnvelope) []time.Time {
 	t.Helper()
 	out := make([]time.Time, 0, len(env.Data.Points))
 	for _, p := range env.Data.Points {
-		out = append(out, p.T.UTC())
+		out = append(out, p.T.Time().UTC())
 	}
 	return out
 }
@@ -254,7 +254,7 @@ func TestChart_HoledAliasSeriesStillReachesTheProxyWalk(t *testing.T) {
 	// answered.
 	byDay := map[time.Time]string{}
 	for _, p := range env.Data.Points {
-		byDay[p.T.UTC()] = p.P
+		byDay[p.T.Time().UTC()] = p.P
 	}
 	for _, n := range holedCEXDays() {
 		if got := byDay[holedDay(n)]; got != holedCEXPrice {
@@ -304,7 +304,7 @@ func TestChart_AgreesWithOHLCOnThePopulationItServes(t *testing.T) {
 	}
 	ohlcDays := make([]time.Time, 0, len(ohlc.Data.Intervals))
 	for _, b := range ohlc.Data.Intervals {
-		ohlcDays = append(ohlcDays, b.T.UTC())
+		ohlcDays = append(ohlcDays, b.T.Time().UTC())
 	}
 
 	inOHLC := map[time.Time]bool{}
@@ -397,21 +397,21 @@ func TestChart_ABucketRendersTheSameInEveryWindow(t *testing.T) {
 
 	byDayWide := map[time.Time]string{}
 	for _, p := range wide.Data.Points {
-		byDayWide[p.T.UTC()] = p.P
+		byDayWide[p.T.Time().UTC()] = p.P
 	}
 	if len(narrow.Data.Points) == 0 {
 		t.Fatal("the 1mo window served nothing at all")
 	}
 	for _, p := range narrow.Data.Points {
-		want, ok := byDayWide[p.T.UTC()]
+		want, ok := byDayWide[p.T.Time().UTC()]
 		if !ok {
 			t.Errorf("%s served in the 1mo window and absent from the 1y window",
-				p.T.UTC().Format(time.RFC3339))
+				p.T.Time().UTC().Format(time.RFC3339))
 			continue
 		}
 		if p.P != want {
 			t.Errorf("%s = %q in the 1mo window and %q in the 1y window — a bucket must not depend "+
-				"on the window that contains it", p.T.UTC().Format(time.RFC3339), p.P, want)
+				"on the window that contains it", p.T.Time().UTC().Format(time.RFC3339), p.P, want)
 		}
 	}
 }
@@ -442,11 +442,11 @@ func TestChart_DiscontinuousSignal(t *testing.T) {
 	if env.Data.GapStartsAt == nil || env.Data.GapEndsAt == nil {
 		t.Fatal("gap_starts_at / gap_ends_at not populated on a discontinuous series")
 	}
-	if got, want := env.Data.GapStartsAt.UTC(), holedDay(31); !got.Equal(want) {
+	if got, want := env.Data.GapStartsAt.Time().UTC(), holedDay(31); !got.Equal(want) {
 		t.Errorf("gap_starts_at = %s, want %s (last bucket before the break)",
 			got.Format(time.RFC3339), want.Format(time.RFC3339))
 	}
-	if got, want := env.Data.GapEndsAt.UTC(), holedDay(5); !got.Equal(want) {
+	if got, want := env.Data.GapEndsAt.Time().UTC(), holedDay(5); !got.Equal(want) {
 		t.Errorf("gap_ends_at = %s, want %s (first bucket after it)",
 			got.Format(time.RFC3339), want.Format(time.RFC3339))
 	}
@@ -882,7 +882,7 @@ func TestChart_MonthlyGranularityIsNotDiscontinuous(t *testing.T) {
 	if env.Data.Discontinuous {
 		t.Errorf("discontinuous = true over 12 contiguous calendar months, naming %v → %v as a gap — "+
 			"a 31-day month is not a hole",
-			env.Data.GapStartsAt.UTC().Format("2006-01-02"), env.Data.GapEndsAt.UTC().Format("2006-01-02"))
+			env.Data.GapStartsAt.Time().UTC().Format("2006-01-02"), env.Data.GapEndsAt.Time().UTC().Format("2006-01-02"))
 	}
 }
 
@@ -904,10 +904,10 @@ func TestChart_MonthlyGranularityReportsARealGap(t *testing.T) {
 	if !env.Data.Discontinuous {
 		t.Fatal("discontinuous = false over a series that skips March, April and May")
 	}
-	if got := env.Data.GapStartsAt.UTC(); !got.Equal(time.Date(2025, 2, 1, 0, 0, 0, 0, time.UTC)) {
+	if got := env.Data.GapStartsAt.Time().UTC(); !got.Equal(time.Date(2025, 2, 1, 0, 0, 0, 0, time.UTC)) {
 		t.Errorf("gap_starts_at = %s, want 2025-02-01", got.Format("2006-01-02"))
 	}
-	if got := env.Data.GapEndsAt.UTC(); !got.Equal(time.Date(2025, 6, 1, 0, 0, 0, 0, time.UTC)) {
+	if got := env.Data.GapEndsAt.Time().UTC(); !got.Equal(time.Date(2025, 6, 1, 0, 0, 0, 0, time.UTC)) {
 		t.Errorf("gap_ends_at = %s, want 2025-06-01", got.Format("2006-01-02"))
 	}
 }
@@ -1042,7 +1042,7 @@ func TestChart_InteriorHoleInsideTheWindowStillWalks(t *testing.T) {
 	env := getChart(t, ts.URL+"/v1/chart?asset=native&quote=fiat:USD&timeframe=1y&granularity=1d")
 	byDay := map[time.Time]string{}
 	for _, p := range env.Data.Points {
-		byDay[p.T.UTC()] = p.P
+		byDay[p.T.Time().UTC()] = p.P
 	}
 	if got, ok := byDay[holedDay(missing)]; !ok || got != holedPoolPrice {
 		t.Fatalf("day -%d = %q (present=%v), want the proxy's %q — the window is NOT covered while a "+

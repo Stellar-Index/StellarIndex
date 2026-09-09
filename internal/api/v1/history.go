@@ -171,16 +171,16 @@ var ErrUnknownGranularity = fmt.Errorf("unknown granularity")
 // pre-computed decimal for consumer convenience — the storage layer
 // never persists a derived price, so we compute at response time.
 type TradeRow struct {
-	Source      string    `json:"source"`
-	Ledger      uint32    `json:"ledger"`
-	TxHash      string    `json:"tx_hash"`
-	OpIndex     uint32    `json:"op_index"`
-	Timestamp   time.Time `json:"ts"`
-	BaseAsset   string    `json:"base_asset"`
-	QuoteAsset  string    `json:"quote_asset"`
-	BaseAmount  string    `json:"base_amount"`
-	QuoteAmount string    `json:"quote_amount"`
-	Price       string    `json:"price"` // quote/base as decimal
+	Source      string   `json:"source"`
+	Ledger      uint32   `json:"ledger"`
+	TxHash      string   `json:"tx_hash"`
+	OpIndex     uint32   `json:"op_index"`
+	Timestamp   WireTime `json:"ts"`
+	BaseAsset   string   `json:"base_asset"`
+	QuoteAsset  string   `json:"quote_asset"`
+	BaseAmount  string   `json:"base_amount"`
+	QuoteAmount string   `json:"quote_amount"`
+	Price       string   `json:"price"` // quote/base as decimal
 	// BaseDecimals / QuoteDecimals are the smallest-unit scale for each
 	// side's amount: divide base_amount by 10^base_decimals (and quote by
 	// 10^quote_decimals) to get whole-asset units.
@@ -223,7 +223,7 @@ func tradeRowFrom(t canonical.Trade, decimals int) TradeRow {
 		Ledger:      t.Ledger,
 		TxHash:      t.TxHash,
 		OpIndex:     t.OpIndex,
-		Timestamp:   t.Timestamp,
+		Timestamp:   WireTime(t.Timestamp),
 		BaseAsset:   t.Pair.Base.String(),
 		QuoteAsset:  t.Pair.Quote.String(),
 		BaseAmount:  t.BaseAmount.String(),
@@ -429,8 +429,9 @@ func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) { //nolin
 	// Probed over both legs' alias families and both stored directions —
 	// see historyCoverageSet: that is exactly what the page read above
 	// spans, so the floor describes rows this page can return.
-	env.CoverageFrom, env.Flags.OutsideCoverage = s.coverageAnnotationIfEmpty(
+	coverageFrom, outsideCoverage := s.coverageAnnotationIfEmpty(
 		r.Context(), historyCoverageSet(pair), to, historyPageIsAmbiguous(len(trades), afterTs))
+	env.CoverageFrom, env.Flags.OutsideCoverage = wireTimePtr(coverageFrom), outsideCoverage
 	env.Pagination = historyNextCursor(next)
 	writeEnvelope(w, env)
 }
@@ -628,8 +629,8 @@ type HistorySeries struct {
 	Granularity   string             `json:"granularity"` // "1m" / "15m" / "1h" / etc.
 	Points        []HistoryPointWire `json:"points"`
 	Discontinuous bool               `json:"discontinuous"`           // true when points skip at least one whole bucket
-	GapStartsAt   *time.Time         `json:"gap_starts_at,omitempty"` // last bucket before the WIDEST interior gap
-	GapEndsAt     *time.Time         `json:"gap_ends_at,omitempty"`   // first bucket after it
+	GapStartsAt   *WireTime          `json:"gap_starts_at,omitempty"` // last bucket before the WIDEST interior gap
+	GapEndsAt     *WireTime          `json:"gap_ends_at,omitempty"`   // first bucket after it
 }
 
 // markDiscontinuity stamps the interior-gap signal, delegating to
@@ -654,9 +655,9 @@ func (h *HistorySeries) markDiscontinuity() {
 // internal type usable by tests + adapters without leaking wire-
 // shape assumptions.
 type HistoryPointWire struct {
-	T    time.Time `json:"t"`
-	P    string    `json:"p"`
-	VUSD *string   `json:"v_usd,omitempty"`
+	T    WireTime `json:"t"`
+	P    string   `json:"p"`
+	VUSD *string  `json:"v_usd,omitempty"`
 }
 
 const (
@@ -680,10 +681,10 @@ const (
 	// alone: /v1/history/since-inception has no window parameter at
 	// all, so how many buckets its grid holds is a property of the
 	// DATA, not of the request, and there is nothing to compare against
-	// the cap without reading first. Measured on production 2026-09-07,
+	// the cap without reading first. Measured on production 2026-09-09,
 	// `?granularity=1m` on the flagship pair returns exactly 50,000
-	// points ending 2018-02-21 while `?granularity=1d` returns 2,183
-	// spanning to yesterday — the same silent truncation, reachable
+	// points ending 2018-02-21 while `?granularity=1d` returns 3,341
+	// spanning 2017-01-17 to yesterday — the same silent truncation, reachable
 	// only by a signal computed AFTER a read, which is a different
 	// change to a different budget. Plain /v1/history is not this shape
 	// either: it pages raw trades through `limit`/`cursor` and takes no
@@ -811,7 +812,7 @@ func (s *Server) handleHistorySinceInception(w http.ResponseWriter, r *http.Requ
 
 	wire := make([]HistoryPointWire, len(points))
 	for i, p := range points {
-		wire[i] = HistoryPointWire{T: p.Bucket, P: p.VWAP, VUSD: p.VolumeUSD}
+		wire[i] = HistoryPointWire{T: WireTime(p.Bucket), P: p.VWAP, VUSD: p.VolumeUSD}
 	}
 
 	series := HistorySeries{

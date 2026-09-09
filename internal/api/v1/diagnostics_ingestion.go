@@ -228,7 +228,7 @@ type BackfillCoverageRow struct {
 	// "data is X minutes old" so the status page can mark stale
 	// reads; nil if the row hasn't been written yet (first 30 min
 	// post-deploy before the detector's first cycle).
-	CoverageSnapshotAt *time.Time `json:"coverage_snapshot_at,omitempty"`
+	CoverageSnapshotAt *WireTime `json:"coverage_snapshot_at,omitempty"`
 
 	// CompletenessPct is the ADR-0033 Phase 6 watermark coverage:
 	// (watermark - genesis + 1) / (tip - genesis + 1), where the
@@ -263,7 +263,7 @@ type BackfillCoverageRow struct {
 	// page actually reads.
 	CompletenessLakeComplete bool `json:"completeness_lake_complete,omitempty"`
 	// CompletenessComputedAt is when compute-completeness last ran.
-	CompletenessComputedAt *time.Time `json:"completeness_computed_at,omitempty"`
+	CompletenessComputedAt *WireTime `json:"completeness_computed_at,omitempty"`
 }
 
 // sourceGenesisLedger is the operator-curated map of "what's the
@@ -804,7 +804,7 @@ func (s *Server) overlaySourceCoverageV2(ctx context.Context, rows *[]BackfillCo
 		(*rows)[i].DensityPct = density
 		(*rows)[i].CoveredLedgers = covered
 		(*rows)[i].GapFreePct = gapFree
-		(*rows)[i].CoverageSnapshotAt = &oldest
+		(*rows)[i].CoverageSnapshotAt = wireTimePtr(&oldest)
 		// Window-scope the denominator so covered/expected stays
 		// coherent with density_pct (see godoc). Guarded: never zero a
 		// populated row if a snapshot somehow carries expected=0.
@@ -864,7 +864,7 @@ func (s *Server) overlayCompleteness(ctx context.Context, rows *[]BackfillCovera
 		(*rows)[i].CompletenessWatermark = int64(sn.Watermark)
 		(*rows)[i].CompletenessComplete = sn.Complete
 		(*rows)[i].CompletenessLakeComplete = sn.LakeComplete
-		(*rows)[i].CompletenessComputedAt = &computedAt
+		(*rows)[i].CompletenessComputedAt = wireTimePtr(&computedAt)
 	}
 }
 

@@ -71,7 +71,7 @@ func TestPublisher_PublishesOnNewBucket(t *testing.T) {
 	bucket1 := time.Date(2026, 5, 2, 12, 0, 0, 0, time.UTC)
 	reader.SetSnapshot(asset, quote, v1.PriceSnapshot{
 		AssetID: "native", Quote: "fiat:USD", Price: "0.07",
-		PriceType: "vwap", ObservedAt: bucket1, WindowSeconds: 60,
+		PriceType: "vwap", ObservedAt: v1.WireTime(bucket1), WindowSeconds: 60,
 	})
 
 	pub := streampublish.New(hub, reader, time.Second, nil)
@@ -103,7 +103,7 @@ func TestPublisher_PublishesOnNewBucket(t *testing.T) {
 		if err := json.Unmarshal(ev.Data, &payload); err != nil {
 			t.Fatalf("unmarshal payload: %v", err)
 		}
-		if !payload.Data.ObservedAt.Equal(bucket1) {
+		if !payload.Data.ObservedAt.Time().Equal(bucket1) {
 			t.Errorf("payload ObservedAt = %v, want %v", payload.Data.ObservedAt, bucket1)
 		}
 		if payload.Data.Price != "0.07" {
@@ -125,7 +125,7 @@ func TestPublisher_PublishesOnNewBucket(t *testing.T) {
 	bucket2 := bucket1.Add(time.Minute)
 	reader.SetSnapshot(asset, quote, v1.PriceSnapshot{
 		AssetID: "native", Quote: "fiat:USD", Price: "0.0712",
-		PriceType: "vwap", ObservedAt: bucket2, WindowSeconds: 60,
+		PriceType: "vwap", ObservedAt: v1.WireTime(bucket2), WindowSeconds: 60,
 	})
 
 	select {
@@ -136,7 +136,7 @@ func TestPublisher_PublishesOnNewBucket(t *testing.T) {
 		if err := json.Unmarshal(ev.Data, &payload); err != nil {
 			t.Fatalf("unmarshal payload (bucket2): %v", err)
 		}
-		if !payload.Data.ObservedAt.Equal(bucket2) {
+		if !payload.Data.ObservedAt.Time().Equal(bucket2) {
 			t.Errorf("bucket2 ObservedAt = %v, want %v", payload.Data.ObservedAt, bucket2)
 		}
 	case <-time.After(2 * time.Second):
@@ -162,7 +162,7 @@ func TestPublisher_TwoSubscribersIdenticalPayload(t *testing.T) {
 	reader.SetSnapshot(asset, quote, v1.PriceSnapshot{
 		AssetID: "native", Quote: "fiat:USD", Price: "0.07",
 		PriceType:  "vwap",
-		ObservedAt: time.Date(2026, 5, 2, 12, 0, 0, 0, time.UTC),
+		ObservedAt: v1.WireTime(time.Date(2026, 5, 2, 12, 0, 0, 0, time.UTC)),
 	})
 
 	pub := streampublish.New(hub, reader, time.Second, nil)
@@ -252,7 +252,7 @@ func TestPublisher_ReaderErrorContinues(t *testing.T) {
 	reader.mu.Unlock()
 	reader.SetSnapshot(asset, quote, v1.PriceSnapshot{
 		AssetID: "native", Quote: "fiat:USD", Price: "0.07",
-		ObservedAt: time.Date(2026, 5, 2, 12, 0, 0, 0, time.UTC),
+		ObservedAt: v1.WireTime(time.Date(2026, 5, 2, 12, 0, 0, 0, time.UTC)),
 	})
 
 	select {

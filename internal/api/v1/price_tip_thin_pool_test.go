@@ -170,7 +170,7 @@ func TestPriceTip_ThinPoolThirdAlias_ClassicQuoteFallsToTheClosedBook(t *testing
 		snapshots: map[string]v1.PriceSnapshot{
 			pegAliasAquaClassic + "/" + pegAliasUSDCClassic: {
 				AssetID: pegAliasAquaClassic, Quote: pegAliasUSDCClassic,
-				Price: "0.0010", PriceType: "vwap", ObservedAt: now.Add(-40 * time.Second),
+				Price: "0.0010", PriceType: "vwap", ObservedAt: v1.WireTime(now.Add(-40 * time.Second)),
 			},
 		},
 		sources: map[string][]string{pegAliasAquaClassic + "/" + pegAliasUSDCClassic: {"sdex"}},

@@ -47,7 +47,7 @@ func TestPrice_NonstandardDecimals_NormalizesFlaggedBaseLeg(t *testing.T) {
 			Quote:         "fiat:USD",
 			Price:         "41.32",
 			PriceType:     "vwap",
-			ObservedAt:    time.Unix(1745000000, 0).UTC(),
+			ObservedAt:    v1.WireTime(time.Unix(1745000000, 0).UTC()),
 			WindowSeconds: 60,
 		}},
 		sources: map[string][]string{key: {"aquarius"}},
@@ -79,7 +79,7 @@ func TestPrice_NonstandardDecimals_NormalizesFlaggedQuoteLeg(t *testing.T) {
 			Quote:         flaggedAsset,
 			Price:         "41.32",
 			PriceType:     "vwap",
-			ObservedAt:    time.Unix(1745000000, 0).UTC(),
+			ObservedAt:    v1.WireTime(time.Unix(1745000000, 0).UTC()),
 			WindowSeconds: 60,
 		}},
 		sources: map[string][]string{key: {"aquarius"}},
@@ -111,7 +111,7 @@ func TestPrice_NonstandardDecimals_UnflaggedPairServesNormally(t *testing.T) {
 		Quote:      "fiat:USD",
 		Price:      "0.1242",
 		PriceType:  "last_trade",
-		ObservedAt: time.Unix(1745000000, 0).UTC(),
+		ObservedAt: v1.WireTime(time.Unix(1745000000, 0).UTC()),
 	}
 	reader := &stubPriceReader{
 		snapshots: map[string]v1.PriceSnapshot{"native/fiat:USD": snap},
@@ -300,7 +300,7 @@ func TestOHLCSeries_NonstandardDecimals_NormalizesBarsNotVolumes(t *testing.T) {
 	cache := nonstandardDecimalsCacheWith(t, flaggedAsset, 9)
 	t0 := time.Date(2026, 7, 1, 12, 0, 0, 0, time.UTC)
 	reader := &stubHistoryReader{ohlcBars: []v1.OHLCSeriesBar{{
-		T: t0,
+		T: v1.WireTime(t0),
 		// Raw CAGG ratios (quote_amount/base_amount on smallest units):
 		// true price is 100x these for a 9dp base vs 7dp quote.
 		O: "2.5", H: "3", L: "2", C: "2.5",
@@ -343,7 +343,7 @@ func TestOHLCSeries_NonstandardDecimals_7dpByteIdentical(t *testing.T) {
 	cache := nonstandardDecimalsCacheWith(t, flaggedAsset, 9) // flagged asset NOT in this pair
 	t0 := time.Date(2026, 7, 1, 12, 0, 0, 0, time.UTC)
 	reader := &stubHistoryReader{ohlcBars: []v1.OHLCSeriesBar{{
-		T: t0, O: "0.16", H: "0.17", L: "0.15", C: "0.165",
+		T: v1.WireTime(t0), O: "0.16", H: "0.17", L: "0.15", C: "0.165",
 		VBase: "1000", VQuote: "165", N: 4,
 	}}}
 	srv := v1.New(v1.Options{
@@ -503,7 +503,7 @@ func TestPriceBatch_NonstandardDecimals_Normalizes(t *testing.T) {
 	reader := &stubPriceReader{
 		snapshots: map[string]v1.PriceSnapshot{key: {
 			AssetID: flaggedAsset, Quote: "fiat:USD", Price: "41.32",
-			PriceType: "vwap", ObservedAt: time.Unix(1745000000, 0).UTC(),
+			PriceType: "vwap", ObservedAt: v1.WireTime(time.Unix(1745000000, 0).UTC()),
 		}},
 		sources: map[string][]string{key: {"aquarius"}},
 	}
@@ -530,7 +530,7 @@ func TestOraclePrices_NonstandardDecimals_Normalizes(t *testing.T) {
 	reader := &stubPriceReader{
 		recent: map[string][]v1.PriceSnapshot{key: {{
 			AssetID: flaggedAsset, Quote: "fiat:USD", Price: "41.32",
-			PriceType: "vwap", ObservedAt: time.Unix(1745000000, 0).UTC(),
+			PriceType: "vwap", ObservedAt: v1.WireTime(time.Unix(1745000000, 0).UTC()),
 		}}},
 	}
 	srv := v1.New(v1.Options{Prices: reader, NonstandardDecimals: cache})

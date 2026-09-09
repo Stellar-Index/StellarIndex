@@ -113,7 +113,7 @@ func TestLendingPools_HappyPath(t *testing.T) {
 	if first.UniqueUsers30d != 4 {
 		t.Errorf("UniqueUsers30d = %d", first.UniqueUsers30d)
 	}
-	if !first.LastSeen.Equal(lastSeen) {
+	if !first.LastSeen.Time().Equal(lastSeen) {
 		t.Errorf("LastSeen = %v, want %v", first.LastSeen, lastSeen)
 	}
 	if first.NetSupplied30d != "1000" || first.NetBorrowed30d != "400" {

@@ -94,7 +94,7 @@ type CoverageVerdictView struct {
 	FirstProblemLedger uint32 `json:"first_problem_ledger,omitempty"`
 	Detail             string `json:"detail,omitempty"`
 	// ComputedAt is when the audit run produced this verdict.
-	ComputedAt time.Time `json:"computed_at"`
+	ComputedAt WireTime `json:"computed_at"`
 }
 
 // NotApplicableSourceView is one source that does not exist on the
@@ -163,7 +163,7 @@ type RecognitionAxisView struct {
 	// Detail is the audit's own description, verbatim.
 	Detail string `json:"detail,omitempty"`
 	// ComputedAt is when the audit run produced this census.
-	ComputedAt time.Time `json:"computed_at"`
+	ComputedAt WireTime `json:"computed_at"`
 }
 
 // recognitionAxisMeaning is [RecognitionAxisView.Meaning]. Constant
@@ -310,7 +310,7 @@ func (s *Server) handleCoverageVerdicts(w http.ResponseWriter, r *http.Request) 
 			CoveragePct:            sn.CoveragePct,
 			FirstProblemLedger:     sn.FirstProblem,
 			Detail:                 sn.Detail,
-			ComputedAt:             sn.ComputedAt,
+			ComputedAt:             WireTime(sn.ComputedAt),
 		})
 		if sn.Complete {
 			view.CompleteSources++
@@ -339,7 +339,7 @@ func recognitionAxisView(sn timescale.CompletenessSnapshot) *RecognitionAxisView
 		TipLedger:           sn.Tip,
 		Meaning:             recognitionAxisMeaning,
 		Detail:              sn.Detail,
-		ComputedAt:          sn.ComputedAt,
+		ComputedAt:          WireTime(sn.ComputedAt),
 	}
 	// Typed counts only when the audit's own format parses; otherwise
 	// omitted, never zeroed (see RecognitionAxisView.UnrecognizedShapes).

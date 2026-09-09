@@ -5,7 +5,6 @@ import (
 	"errors"
 	"net/http"
 	"strconv"
-	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
@@ -21,9 +20,9 @@ import (
 // matches what an on-chain SEP-40 oracle returns" contract that
 // integrators rely on.
 type SEP40Price struct {
-	Asset     string    `json:"asset"`
-	Price     string    `json:"price"`
-	Timestamp time.Time `json:"timestamp"`
+	Asset     string   `json:"asset"`
+	Price     string   `json:"price"`
+	Timestamp WireTime `json:"timestamp"`
 }
 
 // handleOracleLastPrice serves GET /v1/oracle/lastprice?asset=<id>.

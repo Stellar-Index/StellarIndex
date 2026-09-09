@@ -149,7 +149,7 @@ func TestPriceTip_NonstandardDecimals_FallbackNormalizes(t *testing.T) {
 		Prices: &stubPriceReader{
 			snapshots: map[string]v1.PriceSnapshot{key: {
 				AssetID: flaggedAsset, Quote: "fiat:USD", Price: "41.32",
-				PriceType: "last_trade", ObservedAt: time.Unix(1745000000, 0).UTC(),
+				PriceType: "last_trade", ObservedAt: v1.WireTime(time.Unix(1745000000, 0).UTC()),
 			}},
 			sources: map[string][]string{key: {"aquarius"}},
 		},
@@ -176,7 +176,7 @@ func TestOracleXLastPrice_NonstandardDecimals_Normalizes(t *testing.T) {
 		Prices: &stubPriceReader{
 			snapshots: map[string]v1.PriceSnapshot{key: {
 				AssetID: flaggedAsset, Quote: "fiat:USD", Price: "41.32",
-				PriceType: "vwap", ObservedAt: time.Unix(1745000000, 0).UTC(),
+				PriceType: "vwap", ObservedAt: v1.WireTime(time.Unix(1745000000, 0).UTC()),
 			}},
 			sources: map[string][]string{key: {"aquarius"}},
 		},
@@ -287,7 +287,7 @@ func TestPrice_StablecoinProxy_NonstandardDecimals_Normalizes(t *testing.T) {
 		Prices: &stubPriceReader{
 			snapshots: map[string]v1.PriceSnapshot{key: {
 				AssetID: flaggedAsset, Quote: usdc.String(), Price: "41.32",
-				PriceType: "vwap", ObservedAt: time.Unix(1745000000, 0).UTC(),
+				PriceType: "vwap", ObservedAt: v1.WireTime(time.Unix(1745000000, 0).UTC()),
 			}},
 			sources: map[string][]string{key: {"aquarius"}},
 		},

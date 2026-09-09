@@ -131,7 +131,7 @@ func (s *Server) handleNetworkStats(w http.ResponseWriter, r *http.Request) {
 	}
 	env := Envelope{Data: out, Flags: Flags{Stale: stale}}
 	if !observedAt.IsZero() {
-		env.AsOf = observedAt.UTC()
+		env.AsOf = WireTime(observedAt.UTC())
 	}
 	writeEnvelope(w, env)
 }

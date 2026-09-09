@@ -151,7 +151,7 @@ func TestAccountMe_Authenticated(t *testing.T) {
 	if env.Data.RateLimitPerMin != 600 {
 		t.Errorf("RateLimitPerMin = %d", env.Data.RateLimitPerMin)
 	}
-	if !env.Data.CreatedAt.Equal(now) {
+	if !env.Data.CreatedAt.Time().Equal(now) {
 		t.Errorf("CreatedAt = %v", env.Data.CreatedAt)
 	}
 }

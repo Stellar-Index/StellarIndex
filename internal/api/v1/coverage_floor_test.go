@@ -1139,8 +1139,8 @@ type fiatSeriesEnvelope struct {
 // base volume are integer strings it reproduces exactly.
 func assertBookBar(t *testing.T, got, want v1.OHLCSeriesBar) {
 	t.Helper()
-	if !got.T.Equal(want.T) {
-		t.Errorf("t = %s, want %s", got.T.Format(time.RFC3339), want.T.Format(time.RFC3339))
+	if !got.T.Time().Equal(want.T.Time()) {
+		t.Errorf("t = %s, want %s", got.T.Time().Format(time.RFC3339), want.T.Time().Format(time.RFC3339))
 	}
 	if got.N != want.N {
 		t.Errorf("n = %d, want %d", got.N, want.N)

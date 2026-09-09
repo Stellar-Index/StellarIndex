@@ -1014,7 +1014,7 @@ func (s *Server) handleAssetListFromAssets(
 	// and writeEnvelope defaults as_of to now.
 	env := Envelope{Data: out, Flags: Flags{Stale: stale}}
 	if !observedAt.IsZero() {
-		env.AsOf = observedAt.UTC()
+		env.AsOf = WireTime(observedAt.UTC())
 	}
 	if hasMore && len(out) > 0 {
 		// Keyset cursor from the RAW last row, encoded by the store so it

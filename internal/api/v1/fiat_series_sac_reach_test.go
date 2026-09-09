@@ -287,9 +287,9 @@ func TestFiatSeries_ABucketRendersTheSameInEveryWindow(t *testing.T) {
 			}
 			for i := range wide.Data.Intervals {
 				bar := wide.Data.Intervals[i]
-				day := bar.T.UTC().Format("2006-01-02")
+				day := bar.T.Time().UTC().Format("2006-01-02")
 				alone := sacReachSeries(t, ts, pegAliasAquaClassic,
-					bar.T.UTC().Format(time.RFC3339), bar.T.UTC().AddDate(0, 0, 1).Format(time.RFC3339))
+					bar.T.Time().UTC().Format(time.RFC3339), bar.T.Time().UTC().AddDate(0, 0, 1).Format(time.RFC3339))
 				if len(alone.Data.Intervals) != 1 {
 					t.Fatalf("%s served %d bars when asked for alone", day, len(alone.Data.Intervals))
 				}

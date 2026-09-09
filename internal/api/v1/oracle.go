@@ -176,11 +176,11 @@ func (s *Server) buildVerifiedSACs() map[string]canonical.Asset {
 // report both the normalised decimal AND the raw integer + decimals
 // scale so sophisticated clients can verify the rendering.
 type OracleReading struct {
-	Source     string    `json:"source"`
-	ContractID string    `json:"contract_id,omitempty"`
-	Asset      string    `json:"asset"`
-	Quote      string    `json:"quote"`
-	Timestamp  time.Time `json:"ts"`
+	Source     string   `json:"source"`
+	ContractID string   `json:"contract_id,omitempty"`
+	Asset      string   `json:"asset"`
+	Quote      string   `json:"quote"`
+	Timestamp  WireTime `json:"ts"`
 
 	// Price is the human-facing decimal string at Decimals scale.
 	Price string `json:"price"`
@@ -384,7 +384,7 @@ func oracleReadingFrom(u canonical.OracleUpdate) OracleReading {
 		ContractID: u.ContractID,
 		Asset:      u.Asset.String(),
 		Quote:      u.Quote.String(),
-		Timestamp:  u.Timestamp,
+		Timestamp:  WireTime(u.Timestamp),
 		Price:      scaledDecimalString(u.Price.BigInt(), u.Decimals),
 		PriceRaw:   u.Price.String(),
 		Decimals:   u.Decimals,

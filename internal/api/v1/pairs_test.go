@@ -91,7 +91,7 @@ func TestPairs_NotFoundReturnsEmptyArray(t *testing.T) {
 func TestPairs_FoundReturnsSingleElement(t *testing.T) {
 	ts1 := time.Unix(1_772_000_000, 0).UTC()
 	reader := &stubMarketsReader{
-		pair:      v1.Market{Base: "native", Quote: "fiat:USD", LastTradeAt: ts1, TradeCount24h: 99},
+		pair:      v1.Market{Base: "native", Quote: "fiat:USD", LastTradeAt: v1.WireTime(ts1), TradeCount24h: 99},
 		pairFound: true,
 	}
 	srv := v1.New(v1.Options{Markets: reader})

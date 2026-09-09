@@ -456,7 +456,7 @@ func (s *Server) tipWindowVWAP(ctx context.Context, asset, quote canonical.Asset
 		Quote:         quote.String(),
 		Price:         ratToDecimal(price, ohlcPriceDigits),
 		PriceType:     "vwap",
-		ObservedAt:    now,
+		ObservedAt:    WireTime(now),
 		WindowSeconds: windowSeconds,
 	}, sources, true
 }

@@ -41,7 +41,7 @@ func TestMarketCapPoints_ForwardFill(t *testing.T) {
 		t.Fatalf("got %d points, want %d: %+v", len(got), len(want), got)
 	}
 	for i, w := range want {
-		if !got[i].T.Equal(w.t) || got[i].P != w.p {
+		if !got[i].T.Time().Equal(w.t) || got[i].P != w.p {
 			t.Errorf("point %d = (%s, %s), want (%s, %s)", i, got[i].T, got[i].P, w.t, w.p)
 		}
 	}
@@ -61,7 +61,7 @@ func TestMarketCapPoints_SkipBeforeFirstSupply(t *testing.T) {
 	if len(got) != 1 {
 		t.Fatalf("got %d points, want 1: %+v", len(got), got)
 	}
-	if !got[0].T.Equal(day(2026, 6, 5)) || got[0].P != "500.00" {
+	if !got[0].T.Time().Equal(day(2026, 6, 5)) || got[0].P != "500.00" {
 		t.Errorf("got (%s, %s), want (2026-06-05, 500.00)", got[0].T, got[0].P)
 	}
 }

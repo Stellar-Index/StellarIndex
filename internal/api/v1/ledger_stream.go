@@ -231,7 +231,7 @@ func sendStreamEvent(ctx context.Context, ch chan<- streaming.Event, ev streamin
 // type.
 type ledgerStreamPayload struct {
 	Data LedgerTipView `json:"data"`
-	AsOf time.Time     `json:"as_of"`
+	AsOf WireTime      `json:"as_of"`
 }
 
 // ledgerStreamEvent builds one ledger_update SSE event. Returns
@@ -241,7 +241,7 @@ type ledgerStreamPayload struct {
 func ledgerStreamEvent(gen *streaming.Generator, view LedgerTipView) (streaming.Event, bool) {
 	body, err := json.Marshal(ledgerStreamPayload{
 		Data: view,
-		AsOf: time.Now().UTC(),
+		AsOf: WireTime(time.Now().UTC()),
 	})
 	if err != nil {
 		return streaming.Event{}, false

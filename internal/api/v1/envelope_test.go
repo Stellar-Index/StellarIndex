@@ -36,7 +36,7 @@ func TestWriteJSON_DefaultEnvelopeShape(t *testing.T) {
 	if err := json.NewDecoder(res.Body).Decode(&got); err != nil {
 		t.Fatalf("decode envelope: %v", err)
 	}
-	if got.AsOf.Before(before) || got.AsOf.After(after) {
+	if got.AsOf.Time().Before(before) || got.AsOf.Time().After(after) {
 		t.Errorf("AsOf %v outside [%v, %v]", got.AsOf, before, after)
 	}
 	if got.Sources != nil {
@@ -84,14 +84,14 @@ func TestWriteEnvelope_PreservesAsOf(t *testing.T) {
 	rec := httptest.NewRecorder()
 	writeEnvelope(rec, Envelope{
 		Data: "x",
-		AsOf: custom,
+		AsOf: WireTime(custom),
 	})
 
 	var got Envelope
 	if err := json.NewDecoder(rec.Body).Decode(&got); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if !got.AsOf.Equal(custom) {
+	if !got.AsOf.Time().Equal(custom) {
 		t.Errorf("AsOf = %v, want %v (writeEnvelope must preserve pre-set value)", got.AsOf, custom)
 	}
 }
@@ -113,7 +113,7 @@ func TestWriteEnvelope_FillsZeroAsOf(t *testing.T) {
 	if got.AsOf.IsZero() {
 		t.Fatal("AsOf is zero — writeEnvelope should have filled it")
 	}
-	if got.AsOf.Before(before) || got.AsOf.After(after) {
+	if got.AsOf.Time().Before(before) || got.AsOf.Time().After(after) {
 		t.Errorf("AsOf %v outside [%v, %v]", got.AsOf, before, after)
 	}
 }
@@ -136,7 +136,7 @@ func TestWriteEnvelope_PreservesPagination(t *testing.T) {
 	rec := httptest.NewRecorder()
 	writeEnvelope(rec, Envelope{
 		Data:       []string{"a", "b"},
-		AsOf:       time.Unix(1700000000, 0).UTC(),
+		AsOf:       WireTime(time.Unix(1700000000, 0).UTC()),
 		Pagination: &Pagination{Next: "cursor-xyz"},
 	})
 

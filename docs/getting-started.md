@@ -134,18 +134,37 @@ curl -fsSL https://api.stellarindex.io/v1/account/me \
 > must complete the link emailed at signup before it authenticates;
 > the `email_verification_sent` field tells you which mode you're in.
 
-### Account-bound keys (SEP-10)
+### Account-bound keys (SEP-10) — not available on the hosted API
+
+> **This flow does not work against `api.stellarindex.io` today.**
+> `/v1/auth/sep10/challenge` and `/v1/auth/sep10/token` both answer
+> `503 sep10-unavailable`: the verifier is implemented, but the hosted
+> deployment has no SEP-10 signing seed provisioned. Use the API key
+> flow above.
+>
+> A second constraint applies even where SEP-10 *is* configured: a
+> deployment runs exactly one `auth_mode`, and a SEP-10 JWT is only
+> honoured under `auth_mode = "sep10"` — which turns off `sip_*` API
+> keys. Enabling SEP-10 is a deliberate swap of the deployment's
+> credential type, not an addition alongside keys.
 
 For a key cryptographically scoped to a single Stellar account
-(G-strkey), authenticate via SEP-10 Web Auth and mint through
-`/v1/account/keys`. The account's signature authorises the key:
+(G-strkey), a deployment configured for SEP-10 lets a client
+authenticate via SEP-10 Web Auth and mint through `/v1/account/keys`.
+The account's signature authorises the key:
 
 ```sh
-curl -fsSL -X POST https://api.stellarindex.io/v1/account/keys \
+# Requires a deployment with auth_mode = "sep10" and a signing seed.
+curl -fsSL -X POST https://your-sep10-deployment.example/v1/account/keys \
      -H "Authorization: Bearer $YOUR_SEP10_TOKEN" \
      -H "Content-Type: application/json" \
      -d '{"label":"my laptop"}'
 ```
+
+Operators enabling it set `STELLARINDEX_SEP10_SEED` (server signing
+S-strkey) and `STELLARINDEX_SEP10_JWT_SECRET` (≥32 bytes) — names
+configurable via `[api.sep10] seed_env` / `jwt_secret_env` — on a
+deployment that already has Redis, which the replay guard requires.
 
 Rotation is `POST /v1/account/keys`; revocation is
 `DELETE /v1/account/keys/{keyID}` — self-service, scoped to the

@@ -151,10 +151,10 @@ export default function SDKPage() {
         </h1>
         <p className="text-ink-body max-w-2xl text-base">
           Typed, SemVer-stable, no surprises. Anonymous mode for the public
-          tier; bearer-token mode for API keys and SEP-10 JWTs. The SDK covers
-          the pricing/read surface — prices, history, OHLC, markets, the asset
-          catalogue, and account self-service — with ~36 typed methods; SSE
-          streams and the explorer read surface are reachable over plain HTTP.
+          tier; bearer-token mode for API keys. The SDK covers the pricing/read
+          surface — prices, history, OHLC, markets, the asset catalogue, and
+          account self-service — with ~36 typed methods; SSE streams and the
+          explorer read surface are reachable over plain HTTP.
         </p>
       </header>
 
@@ -239,8 +239,8 @@ export default function SDKPage() {
             }
           />
           <Mode
-            term="SEP-10"
-            def="Verified at /v1/auth/sep10/{challenge,token}. Pass the resulting JWT as Options.APIKey; the SDK forwards it verbatim."
+            term="SEP-10 — not available here"
+            def="Implemented at /v1/auth/sep10/{challenge,token}, but this deployment has no signing seed provisioned, so both routes answer 503 sep10-unavailable. Use an API key. Where an operator does enable SEP-10, the JWT goes in Options.APIKey and replaces API keys rather than joining them: a deployment verifies one credential type or the other, never both."
           />
         </dl>
       </section>

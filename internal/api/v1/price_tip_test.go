@@ -148,7 +148,7 @@ func TestPriceTip_FallbackWhenWindowEmpty(t *testing.T) {
 				Quote:      "fiat:USD",
 				Price:      "0.1242",
 				PriceType:  "last_trade",
-				ObservedAt: time.Unix(1745000000, 0).UTC(),
+				ObservedAt: v1.WireTime(time.Unix(1745000000, 0).UTC()),
 			},
 		},
 		sources: map[string][]string{"native/fiat:USD": {"sdex"}},
@@ -289,7 +289,7 @@ func TestPriceTip_StablecoinFiatProxyFallback(t *testing.T) {
 				Quote:      usdcClassic.String(),
 				Price:      "0.1626",
 				PriceType:  "vwap",
-				ObservedAt: time.Unix(1745000000, 0).UTC(),
+				ObservedAt: v1.WireTime(time.Unix(1745000000, 0).UTC()),
 			},
 		},
 		sources: map[string][]string{

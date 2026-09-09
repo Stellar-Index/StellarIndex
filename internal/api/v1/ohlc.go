@@ -38,16 +38,16 @@ const ohlcDefaultOutlierSigma = 4.0
 // the newest print either way. See VWAPResult.Truncated for the same
 // semantics and the F-1319 note on which end survives.
 type OHLCBar struct {
-	From        time.Time `json:"from"`
-	To          time.Time `json:"to"`
-	Open        string    `json:"open"`
-	High        string    `json:"high"`
-	Low         string    `json:"low"`
-	Close       string    `json:"close"`
-	BaseVolume  string    `json:"base_volume"`
-	QuoteVolume string    `json:"quote_volume"`
-	TradeCount  int       `json:"trade_count"`
-	Truncated   bool      `json:"truncated"`
+	From        WireTime `json:"from"`
+	To          WireTime `json:"to"`
+	Open        string   `json:"open"`
+	High        string   `json:"high"`
+	Low         string   `json:"low"`
+	Close       string   `json:"close"`
+	BaseVolume  string   `json:"base_volume"`
+	QuoteVolume string   `json:"quote_volume"`
+	TradeCount  int      `json:"trade_count"`
+	Truncated   bool     `json:"truncated"`
 }
 
 // ohlcPriceDigits is how many fractional digits the wire OHLC
@@ -202,8 +202,8 @@ func (s *Server) handleOHLC(w http.ResponseWriter, r *http.Request) {
 	bar.Close = aggregate.AdjustPrice(bar.Close, baseDec, quoteDec)
 
 	writeJSON(w, OHLCBar{
-		From:        from,
-		To:          to,
+		From:        WireTime(from),
+		To:          WireTime(to),
 		Open:        ratToDecimal(bar.Open, ohlcPriceDigits),
 		High:        ratToDecimal(bar.High, ohlcPriceDigits),
 		Low:         ratToDecimal(bar.Low, ohlcPriceDigits),

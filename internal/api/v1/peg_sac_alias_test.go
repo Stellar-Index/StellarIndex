@@ -302,7 +302,7 @@ func TestChart_DeclaredPeg_FiatUSD_CrossesThroughXLM(t *testing.T) {
 	if got := env.Data.Points[0].VUSD; got == nil || *got != vol0 {
 		t.Errorf("points[0].v_usd = %v, want %s (the asset leg's own USD volume)", got, vol0)
 	}
-	if !env.Data.Points[1].T.Equal(t0.Add(time.Hour)) {
+	if !env.Data.Points[1].T.Time().Equal(t0.Add(time.Hour)) {
 		t.Errorf("points[1].t = %s, want %s", env.Data.Points[1].T, t0.Add(time.Hour))
 	}
 	if !env.Flags.Triangulated {
