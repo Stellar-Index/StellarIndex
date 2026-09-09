@@ -37,6 +37,10 @@ echo "=== Focused repository contracts ==="
 ./scripts/ci/lint-migrations.sh
 
 echo "=== Unit tests (without race; fast loop only) ==="
-go test -timeout 2m ./...
+# 4m, not 2m: internal/api/v1 measures 38s here without -race (78s with
+# it, which is why the Makefile's racing target allows 8m). A cap set
+# near the real runtime fails slow-but-correct runs; the point of the cap
+# is to bound a hang, and a hang never finishes at any cap.
+go test -timeout 4m ./...
 
 echo "check: PASS (portable profile; run make prepush before pushing)"

@@ -167,7 +167,19 @@ vet: ## go vet
 
 .PHONY: test
 test: ## Run unit tests with race detector
-	$(GO) test -race -timeout 2m ./...
+	# TIMEOUT RATIONALE. This bounds a HANG, not slowness — a deadlocked
+	# test never finishes, so any generous cap catches it, while a cap set
+	# close to the real runtime turns a slow-but-correct run into a false
+	# failure that trains people to re-run the gate.
+	#
+	# It was 2m, which was 54% headroom over the slowest package rather
+	# than a safety margin: internal/api/v1 measures 78s under -race on a
+	# fast host (2026-09-09), and that package is legitimately slow — it
+	# holds deliberate stall and timing tests (a sustained-stall log check
+	# at 4.3s, three divergence/emission-delay tests at 2-3s each). The
+	# containerised lane is slower again, and this repo routinely runs
+	# concurrent agents, so 2m failed there while passing on the host.
+	$(GO) test -race -timeout 8m ./...
 
 .PHONY: test-cover
 test-cover: ## Unit tests + coverage report + floor check (report-only)
