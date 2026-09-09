@@ -317,6 +317,7 @@
     group: root
     mode: "0755"
   when: ch_schema_drift_enabled | default(true)
+  tags: [ch-schema-drift]
 
 - name: Ensure the shared stellarindex data directory exists
   ansible.builtin.file:
@@ -326,15 +327,87 @@
     group: root
     mode: "0755"
   when: ch_schema_drift_enabled | default(true)
+  tags: [ch-schema-drift]
+
+# INTENT PROVENANCE (2026-09-09). The shipped copy of tier1_schema.sql
+# is the drift check's REFERENCE, and until now it arrived by the same
+# convergence the check is supposed to police — so a host the role had
+# not reached compared last fortnight's repo against today's server and
+# called the agreement clean. Measured on the test nets that morning:
+# futurenet's intent (shipped 08-26, pre-#482) agreed with futurenet's
+# live schema (also pre-#482) and read CLEAN, while testnet — same stale
+# live schema, but a 09-08 intent — correctly reported drift. The check
+# went green exactly where the host was furthest behind.
+#
+# The fix is to make the reference self-describing. These two facts are
+# stamped into the shipped file as `--` comments (inert to the check's
+# parser, which strips line comments before it sees a statement):
+#
+#   Intent-Version        the release the shipped copy came from. This is
+#                         the one the check COMPARES, against the release
+#                         the host is running (its deployed-versions
+#                         sidecars). `--abbrev=0`, so it moves only when
+#                         a tag is cut — not on every commit, which would
+#                         make this task non-idempotent forever and force
+#                         an entry into scripts/ci/ansible-drift.baseline.
+#   Intent-Schema-Commit  the commit that last CHANGED the DDL, with its
+#                         date. Pure diagnostics: it tells the operator
+#                         how old the content itself is, and it moves only
+#                         when deploy/clickhouse/tier1_schema.sql moves.
+#
+# Deliberately NOT stamped: HEAD's sha and a ship timestamp. Either would
+# differ on every apply, turning a task that is idempotent between DDL
+# changes into one that reports `changed` on every weekly ansible-drift
+# run — the "not a place to park drift" allowance that file refuses to
+# grow.
+#
+# Best-effort by design (`failed_when: false`, `unknown` fallbacks): a
+# controller that is not a git checkout must not abort an archival-node
+# apply. An `unknown` stamp is not a silent pass — the check reports
+# stellarindex_ch_schema_drift_intent_verified 0 and says in the log that
+# its verdict is unvouched.
+- name: Resolve the repo provenance of the Tier-1 lake DDL
+  ansible.builtin.shell:
+    executable: /bin/bash
+    chdir: "{{ playbook_dir }}/../../.."
+    cmd: |
+      set -u
+      rel="$(git describe --tags --abbrev=0 2>/dev/null)"
+      sha="$(git log -1 --format='%h (%cs)' -- deploy/clickhouse/tier1_schema.sql 2>/dev/null)"
+      printf '%s\n' "${rel:-unknown}"
+      printf '%s\n' "${sha:-unknown}"
+  delegate_to: localhost
+  become: false
+  run_once: true
+  changed_when: false
+  check_mode: false
+  failed_when: false
+  register: ch_schema_drift_provenance
+  when: ch_schema_drift_enabled | default(true)
+  tags: [ch-schema-drift]
 
 - name: Ship the repo's Tier-1 lake DDL as the drift check's intent side
   ansible.builtin.copy:
-    src: "{{ playbook_dir }}/../../../deploy/clickhouse/tier1_schema.sql"
+    # `content:` rather than `src:` so the provenance header and the DDL
+    # land as ONE file with one checksum. A sidecar provenance file could
+    # be shipped while the DDL beside it was not, which is the same
+    # two-things-that-can-disagree shape this stamp exists to remove.
+    content: |
+      -- ch-schema-drift intent provenance — written by ansible at ship time.
+      -- Do not edit by hand: re-apply the archival-node role instead.
+      -- Read by configs/ansible/roles/archival-node/files/ch-schema-drift.sh,
+      -- which refuses to render a verdict when Intent-Version predates the
+      -- release this host is running (docs/operations/runbooks/ch-schema-restore.md).
+      -- Intent-Version: {{ (ch_schema_drift_provenance.stdout_lines | default(['unknown', 'unknown']))[0] | default('unknown') }}
+      -- Intent-Schema-Commit: {{ (ch_schema_drift_provenance.stdout_lines | default(['unknown', 'unknown']))[1] | default('unknown') }}
+      -- Source: deploy/clickhouse/tier1_schema.sql
+      {{ lookup('file', playbook_dir + '/../../../deploy/clickhouse/tier1_schema.sql') }}
     dest: "{{ ch_schema_drift_intent | default('/usr/local/share/stellarindex/tier1_schema.sql') }}"
     owner: root
     group: root
     mode: "0644"
   when: ch_schema_drift_enabled | default(true)
+  tags: [ch-schema-drift]
 
 - name: Install ClickHouse schema-drift systemd units
   ansible.builtin.template:
@@ -348,6 +421,7 @@
     - ch-schema-drift.timer
   register: ch_schema_drift_units
   when: ch_schema_drift_enabled | default(true)
+  tags: [ch-schema-drift]
 
 - name: Enable + start the ClickHouse schema-drift timer
   ansible.builtin.systemd:
@@ -359,6 +433,7 @@
     - ch_schema_drift_enabled | default(true)
     # check-mode guard — see the pgBackRest timer note above.
     - not (ansible_check_mode and ch_schema_drift_units is changed)
+  tags: [ch-schema-drift]
 
 # ─── Restore-drill (audit-2026-07-23 REL-backup-restore) ──────────────
 # CS-110: a backup that has never been restored is a hope, not a

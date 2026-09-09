@@ -15,6 +15,66 @@ against.
 
 ## [Unreleased]
 
+### Fixed
+
+- **ops:** `ch-schema-drift` can now tell whether its *own reference* is
+  current, and says so. The check compares repo intent against the live
+  ClickHouse schema — but the intent side is
+  `/usr/local/share/stellarindex/tier1_schema.sql`, a file the
+  archival-node role ships, so **the reference arrived by the same
+  convergence the check is supposed to police**. Measured 2026-09-09 on
+  both test nets by extracting the `transactions` DDL from each host's own
+  shipped intent and comparing it to that host's live schema: testnet
+  (intent shipped 09-08, post-#482) correctly reported its pre-#482 live
+  schema as DRIFT, while **futurenet (intent shipped 08-26, pre-#482) read
+  clean off the *same* stale live schema** — two wrongs reading as a
+  right. The check went green exactly where the host was furthest behind,
+  which is the one shape a control must never have. Reading live by
+  default (the same day's other fix) does not touch this; it corrected the
+  live side.
+
+  The shipped copy now carries provenance stamped at ship time —
+  `-- Intent-Version:` (the release it came from, `--abbrev=0` so it moves
+  only at a tag cut) and `-- Intent-Schema-Commit:` (when the DDL content
+  last changed) — and the check compares the former against **what the
+  host is running**. That second half is not a new mechanism: it is the
+  `/var/lib/stellarindex/deployed-versions` sidecars that
+  `docs/operations/deployed-versions.md` names as the live source of
+  record, read exactly as `deploy.yml`'s config-apply baseline reads them
+  — lowest tag across the release-managed binaries with
+  `stellarindex-migrate` excluded (#427), because config from a release is
+  unapplied if *any* binary predates it and `migrate` legitimately lags.
+
+  **An intent older than the deployed release is a third outcome, not a
+  pass and not drift.** `NOT CONVERGED` refuses (exit `2`, the script's
+  existing could-not-compare) and compares nothing. Reporting drift there
+  would blame the schema for a provisioning gap and send the operator into
+  "decide which side is wrong", which ends with `tier1_schema.sql` edited
+  to match a server it was never compared against. An unstamped *shipped*
+  copy refuses the same way — that is the file state every host has today,
+  and letting it through would leave the defect reachable. An unstamped
+  intent the *operator* named (the by-hand run the runbook documents)
+  still compares, marked `UNVOUCHED` in the log and in the metric.
+
+  New gauges `stellarindex_ch_schema_drift_intent_verified`,
+  `_intent_converged` and `_intent_info{intent_version,host_version}` make
+  the three states separable in Prometheus: converged-and-clean,
+  converged-and-drifted, and not-converged. A refusal rewrites the
+  textfile with only the convergence series, so `_divergent` goes absent
+  rather than leaving the previous run's `0` for node_exporter to serve
+  indefinitely. The six drift tasks now carry `tags: [ch-schema-drift]`,
+  so the targeted apply the refusal message prints re-ships script, intent
+  and units together. Coverage: 12 new assertions (47 total) in
+  `configs/ansible/roles/archival-node/files/ch-schema-drift-test.sh`,
+  each proven red by mutation, including the futurenet shape itself — a
+  stale intent that agrees perfectly with a stale live schema.
+
+  **Deploy note:** a role change. It takes effect on a host only after
+  `ansible-playbook -i inventory/<host>.yml playbooks/archival-node.yml
+  --tags ch-schema-drift` re-ships the stamped intent and reinstalls the
+  script. Expect the first post-apply run on a host whose binaries are
+  ahead of its config to report `NOT CONVERGED` — that is the finding.
+
 ## [v0.67.0] — 2026-09-09
 
 ### Added

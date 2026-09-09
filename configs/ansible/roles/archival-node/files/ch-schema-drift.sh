@@ -105,6 +105,13 @@ live_explicit="${LIVE-}"
 CH_HTTP="${CH_HTTP:-http://127.0.0.1:8123/}"
 CH_DATABASE="${CH_DATABASE:-stellar}"
 TEXTFILE_DIR="${TEXTFILE_DIR:-/var/lib/node_exporter/textfile_collector}"
+# Where every ansible binary deploy records the tag it just installed —
+# one file per binary, contents = the tag, mtime = the deploy
+# (docs/operations/deployed-versions.md, "the live source of record").
+# This is the SAME "what is this host running" mechanism deploy.yml's
+# config-apply baseline and the binary-version-skew probe read; the
+# convergence gate below reuses it rather than inventing a second one.
+DEPLOYED_VERSIONS_DIR="${DEPLOYED_VERSIONS_DIR:-/var/lib/stellarindex/deployed-versions}"
 
 note() { echo "ch-schema-drift: $*" >&2; }
 ch() { curl -sSf --max-time 120 "$CH_HTTP" --data-binary "$1"; }
@@ -345,6 +352,228 @@ parse_schema() {
 if [[ ! -r "$INTENT" ]]; then
   note "repo intent $INTENT is not readable — nothing to compare against"
   exit 2
+fi
+
+# ─── is the INTENT side itself current? (2026-09-09) ────────────────
+# THE BLIND SPOT this closes, measured on both test nets that morning by
+# extracting the `transactions` DDL from each host's OWN shipped intent
+# file and diffing it against that host's live schema:
+#
+#   testnet    intent shipped 09-08 = POST-#482   live = PRE-#482  -> DRIFT (correct)
+#   futurenet  intent shipped 08-26 = PRE-#482    live = PRE-#482  -> CLEAN (false)
+#
+# Both hosts carry the SAME stale live schema (transactions.ingested_at
+# last, where the repo has put it after `memo` since #482 merged
+# 2026-09-02). testnet reported it. futurenet read CLEAN — not because
+# anything was right, but because its intent file was two weeks stale as
+# well. Two wrongs reading as a right.
+#
+# The structural cause: the intent side ARRIVES BY THE SAME CONVERGENCE
+# THE CHECK IS SUPPOSED TO POLICE. /usr/local/share/stellarindex/
+# tier1_schema.sql is shipped by the archival-node role, so a host that
+# has not had the role applied compares last fortnight's repo against
+# today's server and calls the agreement clean. The check goes green
+# EXACTLY WHEN A HOST IS FURTHEST BEHIND, which is the one shape a
+# control must never have. Reading live by default (the 2026-09-09 fix
+# above) does not touch this: it corrected the LIVE side.
+#
+# So the intent side now carries provenance, stamped at ship time by the
+# role's "Ship the repo's Tier-1 lake DDL" task:
+#
+#   -- Intent-Version: v0.67.0                the release the shipped copy came from
+#   -- Intent-Schema-Commit: <sha> (<date>)   when the DDL content last changed
+#
+# and the check compares Intent-Version against WHAT THIS HOST IS
+# RUNNING. That second half is deliberately not a new mechanism: it is
+# the deployed-versions sidecar, the same "live source of record" that
+# deploy.yml's config-apply baseline reads and that
+# docs/operations/deployed-versions.md names — lowest tag across the
+# release-managed binaries, stellarindex-migrate excluded, exactly as
+# deploy.yml computes it (#427). Lowest, because config from a release
+# is unapplied if ANY binary predates it; migrate excluded because it
+# legitimately lags and gates no config surface.
+#
+# THREE OUTCOMES, not two. When the intent predates the deployed release
+# the check does NOT report drift, and does not pass. Reporting drift
+# would blame the schema for a provisioning gap and send the operator to
+# ch-schema-restore.md's "decide which side is wrong" procedure — the
+# wrong runbook, and the one that ends in someone editing tier1_schema.sql
+# to match a server it was never compared against. It is a REFUSAL:
+# exit 2, this script's existing "could not check", because a reference
+# that is not the repo's current statement cannot answer "is live what
+# the repository says it should be". The three states are distinguishable
+# in the metric surface, never by exit code alone:
+#
+#   converged + clean     intent_converged 1, divergent 0
+#   converged + drifted   intent_converged 1, divergent > 0
+#   NOT CONVERGED         intent_converged 0, divergent ABSENT (nothing compared)
+#
+# Why a false refusal is the cheap direction. A release that changes no
+# config surface still moves the sidecars, so a host can read NOT
+# CONVERGED while its DDL is in fact current. That costs one idempotent
+# `ansible-playbook … archival-node.yml` run. The opposite error costs
+# what futurenet already had: a 60M-ledger re-derive against an ORDER BY
+# the repo does not declare, which does not error — it silently writes a
+# mis-sorted table. This is also the position the tree already takes:
+# scripts/ci/ansible-drift.baseline names this very task among the seven
+# changed-with-no-entry tasks and rules that repo-ahead-of-host "IS
+# drift — the fix is to apply the playbook", not an allowance. And
+# unlike the absent-binary count binary-version-skew.yml rejects, this
+# state is always CLEARABLE by an action the operator controls, so it
+# cannot become the permanently-firing alert that is the same as no alert.
+
+# version_core <string> — the leading vMAJOR.MINOR.PATCH, or empty.
+# BOTH sides are truncated the same way, so the comparison is symmetric.
+# The bootstrap path (14-stellarindex-services.yml) writes sidecars as
+# `git describe --tags --always --dirty`, e.g. v0.47.2-3-g1a2b3c4-dirty;
+# truncating that to v0.47.2 understates how new the host is, which errs
+# toward "converged" — the quiet direction for a value that is only ever
+# a tie-breaker.
+version_core() {
+  local v="$1"
+  [[ "$v" =~ (v[0-9]+\.[0-9]+\.[0-9]+) ]] && printf '%s' "${BASH_REMATCH[1]}"
+}
+
+# version_lt <a> <b> — true when a orders strictly before b.
+# `sort -V` reads to EOF, so this is not the `| head` shape
+# scripts/ci/lint-shell-sigpipe.sh refuses under pipefail.
+version_lt() {
+  [[ "$1" == "$2" ]] && return 1
+  local ordered
+  ordered="$(printf '%s\n%s\n' "$1" "$2" | sort -V)"
+  [[ "${ordered%%$'\n'*}" == "$1" ]]
+}
+
+# emit_intent_metrics <verified> <converged-or-empty> — the .prom for a
+# run that made NO comparison. Written on every refusal below, because a
+# refusal that wrote nothing would leave node_exporter serving the LAST
+# run's `divergent 0` forever, which is the same false clean by a slower
+# route.
+emit_intent_metrics() {
+  [[ "$TEXTFILE_DIR" == "/dev/null" ]] && return 0
+  local verified="$1" converged="$2" out tmp
+  mkdir -p "$TEXTFILE_DIR"
+  out="$TEXTFILE_DIR/ch_schema_drift.prom"
+  tmp="$out.tmp.$$"
+  {
+    echo "# HELP stellarindex_ch_schema_drift_last_run_unix Unix time of the most recent completed repo-vs-live ClickHouse schema comparison."
+    echo "# TYPE stellarindex_ch_schema_drift_last_run_unix gauge"
+    echo "stellarindex_ch_schema_drift_last_run_unix $(date +%s)"
+    echo "# HELP stellarindex_ch_schema_drift_intent_verified 1 = the check established BOTH the shipped intent's release stamp and the release this host runs, so intent_converged is a real verdict. 0 = one side was unavailable and no convergence verdict exists."
+    echo "# TYPE stellarindex_ch_schema_drift_intent_verified gauge"
+    echo "stellarindex_ch_schema_drift_intent_verified $verified"
+    if [[ -n "$converged" ]]; then
+      echo "# HELP stellarindex_ch_schema_drift_intent_converged 1 = the shipped intent is from a release at least as new as the one this host runs. 0 = NOT CONVERGED: the intent predates the deployed release, so no comparison was made and the drift gauges are absent for that run."
+      echo "# TYPE stellarindex_ch_schema_drift_intent_converged gauge"
+      echo "stellarindex_ch_schema_drift_intent_converged $converged"
+    fi
+  } > "$tmp"
+  chmod 644 "$tmp"
+  mv "$tmp" "$out"
+}
+
+intent_release="$(sed -n 's/^-- *Intent-Version: *\([^ ]*\).*$/\1/p' "$INTENT")"
+intent_release="${intent_release%%$'\n'*}"
+intent_schema_commit="$(sed -n 's/^-- *Intent-Schema-Commit: *\(.*[^ ]\) *$/\1/p' "$INTENT")"
+intent_schema_commit="${intent_schema_commit%%$'\n'*}"
+intent_stamped=0
+[[ -n "$intent_release" ]] && intent_stamped=1
+intent_release="$(version_core "$intent_release")"
+
+# The host's release: lowest core version across the release-managed
+# sidecars, migrate excluded. `awk 1` rather than `cat` because
+# tasks/deploy-one-binary.yml writes these with `copy: content:`, which
+# emits NO trailing newline — the bug that fed deploy.yml a mashed
+# `v0.46.1v0.44.7v0.28.1` token and failed every deploy closed.
+host_release=""
+if [[ -d "$DEPLOYED_VERSIONS_DIR" ]]; then
+  host_cores=""
+  for sidecar in "$DEPLOYED_VERSIONS_DIR"/stellarindex-*; do
+    [[ -f "$sidecar" ]] || continue
+    case "$sidecar" in */stellarindex-migrate) continue ;; esac
+    sidecar_raw="$(awk 1 "$sidecar" 2>/dev/null)"
+    sidecar_core="$(version_core "${sidecar_raw%%$'\n'*}")"
+    [[ -n "$sidecar_core" ]] && host_cores+="$sidecar_core"$'\n'
+  done
+  if [[ -n "$host_cores" ]]; then
+    host_release="$(printf '%s' "$host_cores" | sort -V)"
+    host_release="${host_release%%$'\n'*}"
+  fi
+fi
+
+intent_verified=0
+intent_converged=""
+if [[ -n "$intent_release" && -n "$host_release" ]]; then
+  intent_verified=1
+  intent_converged=1
+  if version_lt "$intent_release" "$host_release"; then
+    intent_converged=0
+    note "NOT CONVERGED: the repo intent PREDATES the release this host is running."
+    note "    intent   $INTENT"
+    note "    stamped  $intent_release${intent_schema_commit:+ (DDL last changed $intent_schema_commit)}"
+    note "    host     $host_release (lowest across $DEPLOYED_VERSIONS_DIR, migrate excluded)"
+    note "Reported as neither drift nor clean on purpose: this is a PROVISIONING"
+    note "gap, and a reference that is not the repo's current statement cannot"
+    note "answer whether live matches the repo. It is the shape measured on"
+    note "futurenet on 2026-09-09, where a two-week-old intent agreed with a"
+    note "two-week-old live schema and this check read CLEAN."
+    note "Re-apply the archival-node role, which re-ships the intent:"
+    note "    cd configs/ansible && ansible-playbook -i inventory/<host>.yml \\"
+    note "        playbooks/archival-node.yml --tags ch-schema-drift"
+    note "Then re-run this check; the verdict it gives afterwards is trustworthy."
+    note "See docs/operations/runbooks/ch-schema-restore.md."
+    emit_intent_metrics 1 0
+    exit 2
+  fi
+elif [[ "$intent_stamped" -eq 0 && "$INTENT" == "$INSTALLED_INTENT" ]]; then
+  # An intent the role has NOT stamped is itself a provisioning gap when
+  # it is the SHIPPED copy: the task that installs this script and the
+  # task that ships the DDL are adjacent in the same role, so a stamped
+  # script beside an unstamped shipped intent means the ship did not
+  # converge. Refusing here closes the side door the warning below would
+  # otherwise leave open. An intent the OPERATOR named — a checkout's
+  # deploy/clickhouse/tier1_schema.sql, a copy pulled down for a by-hand
+  # comparison — is not shipped by anything and carries no stamp by
+  # construction; that run is UNVERIFIED, not refused, because refusing
+  # it would break the by-hand invocation ch-schema-restore.md documents.
+  note "NOT CONVERGED: the SHIPPED intent carries no provenance stamp."
+  note "    intent   $INTENT"
+  note "The archival-node role stamps every copy it ships with an"
+  note "\"-- Intent-Version:\" line. An unstamped shipped copy was installed by a"
+  note "role older than this check, so nothing can vouch that it is the repo's"
+  note "current DDL — which is exactly how futurenet checked a two-week-old"
+  note "intent against a two-week-old live schema and read CLEAN on 2026-09-09."
+  note "Re-apply the archival-node role:"
+  note "    cd configs/ansible && ansible-playbook -i inventory/<host>.yml \\"
+  note "        playbooks/archival-node.yml --tags ch-schema-drift"
+  note "See docs/operations/runbooks/ch-schema-restore.md."
+  emit_intent_metrics 0 0
+  exit 2
+fi
+
+if [[ "$intent_verified" -eq 0 ]]; then
+  # UNVERIFIED: the comparison still runs — it is the best answer
+  # available and suppressing it would lose real drift — but the verdict
+  # is explicitly unvouched, in the log and in the metric, so a clean
+  # result here can never be mistaken for a converged clean.
+  note "WARNING: cannot verify that the intent side is current; the verdict below"
+  note "is UNVOUCHED (stellarindex_ch_schema_drift_intent_verified 0)."
+  if [[ "$intent_stamped" -eq 0 ]]; then
+    note "    no \"-- Intent-Version:\" stamp in $INTENT"
+  elif [[ -z "$intent_release" ]]; then
+    # The role ships `unknown` when the controller is not a git checkout.
+    # Distinct from "no stamp": the ship task DID run, it just could not
+    # resolve a release, so the fix is on the controller, not the host.
+    note "    the \"-- Intent-Version:\" stamp in $INTENT names no release"
+    note "    (the controller could not resolve one when the role shipped it)"
+  else
+    note "    intent stamped $intent_release"
+  fi
+  if [[ -z "$host_release" ]]; then
+    note "    no readable release-managed sidecar under $DEPLOYED_VERSIONS_DIR"
+  else
+    note "    host running $host_release"
+  fi
 fi
 
 # WHICH LIVE SIDE, and why the default is a fresh sweep (2026-09-09).
@@ -591,6 +820,24 @@ if [[ "$TEXTFILE_DIR" != "/dev/null" ]]; then
     echo "# HELP stellarindex_ch_schema_drift_live 1 = the comparison read a fresh SHOW CREATE sweep off ClickHouse; 0 = it read a captured file (a daily snapshot, or an operator-named capture). A 0-divergent verdict is only as current as what it read."
     echo "# TYPE stellarindex_ch_schema_drift_live gauge"
     echo "stellarindex_ch_schema_drift_live $live_is_fresh"
+    # The convergence half. intent_verified is this gate's own canary
+    # (same idea as stellarindex_binary_version_probe_success): a 0 says
+    # the drift verdict beside it is UNVOUCHED because the intent's
+    # provenance or the host's release could not be read. A run that
+    # reaches here is by construction converged-or-unverified — the
+    # not-converged path refuses above and never emits these gauges
+    # alongside a divergent count.
+    echo "# HELP stellarindex_ch_schema_drift_intent_verified 1 = the check established BOTH the shipped intent's release stamp and the release this host runs, so intent_converged is a real verdict. 0 = one side was unavailable and no convergence verdict exists."
+    echo "# TYPE stellarindex_ch_schema_drift_intent_verified gauge"
+    echo "stellarindex_ch_schema_drift_intent_verified $intent_verified"
+    if [[ -n "$intent_converged" ]]; then
+      echo "# HELP stellarindex_ch_schema_drift_intent_info The provenance of the intent side actually compared, and the release this host is running."
+      echo "# TYPE stellarindex_ch_schema_drift_intent_info gauge"
+      echo "stellarindex_ch_schema_drift_intent_info{intent_version=\"$intent_release\",host_version=\"$host_release\"} 1"
+      echo "# HELP stellarindex_ch_schema_drift_intent_converged 1 = the shipped intent is from a release at least as new as the one this host runs. 0 = NOT CONVERGED: the intent predates the deployed release, so no comparison was made and the drift gauges are absent for that run."
+      echo "# TYPE stellarindex_ch_schema_drift_intent_converged gauge"
+      echo "stellarindex_ch_schema_drift_intent_converged $intent_converged"
+    fi
   } > "$tmp"
   chmod 644 "$tmp"
   mv "$tmp" "$out"
