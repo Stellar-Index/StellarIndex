@@ -62,6 +62,15 @@ Re-derive the flagged source from the certified lake, then re-verify:
   returns `complete=true`. Run chunked + off-peak (the SDEX/heavy re-derives
   blow ClickHouse's per-query memory limit over large windows).
 
+  Since CS-095 this manual re-verify is a way to clear the gauge SOONER, not
+  the only way: the nightly `-pass` floors a source whose prior projection
+  verdict is failing at its genesis, so it re-verifies the whole served range
+  on its own and publishes `complete=true` once the repair earns it. Before
+  CS-095 the pass resumed a red source's projection reconcile from the LAKE
+  watermark (at tip whenever the lake is clean), so it reconciled `[tip, tip]`,
+  never re-saw the failing range, and carried the red forward every night — a
+  repaired source stayed red until someone ran the command above by hand.
+
 ## Root cause analysis
 
 A served<>lake divergence: dropped rows (a decoder bug fixed forward-only, e.g.
@@ -103,6 +112,11 @@ The `detail` column names the per-target Δ and window.
 
 ## Changelog
 
+- 2026-09-09 — CS-095: the nightly `-pass` now re-verifies a source whose prior
+  projection verdict was failing, instead of resuming it from the lake
+  watermark and carrying the red forward forever. Mitigation section updated:
+  the manual `compute-completeness -ch -source <X>` is now a way to clear the
+  gauge sooner, not the only way.
 - 2026-08-29 — re-verified against HEAD (runbook Wave L, #319): the
   "SEP-41 is EXCLUDED from the verdict" bullet is obsolete — P1-7 is DONE and
   `sep41_transfers`/`sep41_supply_events` have been promoted into the

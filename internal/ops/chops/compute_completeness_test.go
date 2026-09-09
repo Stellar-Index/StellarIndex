@@ -5,6 +5,7 @@ package chops
 
 import (
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -1199,7 +1200,10 @@ func TestProjectionFloor_PassResumesEachSourceFromItsWatermark(t *testing.T) {
 	// A healthy source resumes at its watermark (≈ prior tip): it reconciles ONLY
 	// the new suffix, so its verdict is identical to the old wrapper's
 	// `-from = watermark` run — verdicts unchanged for a healthy source.
-	if got := projectionFloor(healthyGenesis, true, tip-100, 0); got != tip-100 {
+	// Healthy = the prior projection verdict was CLEAN; that is the ground the
+	// resume is standing on.
+	clean := priorProjection{known: true, ok: true, tip: tip}
+	if got := projectionFloor(healthyGenesis, true, clean, tip-100, 0); got != tip-100 {
 		t.Fatalf("healthy source floor = %d, want its watermark %d — -pass must resume from the watermark, not re-reconcile from genesis every night", got, tip-100)
 	}
 
@@ -1207,7 +1211,7 @@ func TestProjectionFloor_PassResumesEachSourceFromItsWatermark(t *testing.T) {
 	// old driver walked [watermark, tip] in ~344 chunks, each re-running the 60s
 	// recognition scan; -pass runs recognition once and this floor scopes only
 	// aquarius's projection.
-	if got := projectionFloor(aquariusGenesis, true, 55_363_631, 0); got != 55_363_631 {
+	if got := projectionFloor(aquariusGenesis, true, clean, 55_363_631, 0); got != 55_363_631 {
 		t.Fatalf("aquarius floor = %d, want its watermark 55363631 (the range the old driver re-scanned recognition for ~344 times)", got)
 	}
 }
@@ -1221,12 +1225,14 @@ func TestProjectionFloor_PassResumesEachSourceFromItsWatermark(t *testing.T) {
 // pass does the full-history reconcile that seeds it.
 func TestProjectionFloor_PassSeedsNeverVerifiedSourceFromGenesis(t *testing.T) {
 	const blendEmitterGenesis = uint32(51_499_914)
-	if got := projectionFloor(blendEmitterGenesis, true, 0 /* never seeded */, 0); got != blendEmitterGenesis {
+	unseeded := priorProjection{} // no verdict has ever been written
+	if got := projectionFloor(blendEmitterGenesis, true, unseeded, 0 /* never seeded */, 0); got != blendEmitterGenesis {
 		t.Fatalf("never-seeded source floor = %d, want genesis %d (full-history seed on its first pass)", got, blendEmitterGenesis)
 	}
 	// A watermark below genesis (a reset/garbage row) clamps to genesis —
 	// nothing exists below it to reconcile.
-	if got := projectionFloor(blendEmitterGenesis, true, 40_000_000, 0); got != blendEmitterGenesis {
+	clean := priorProjection{known: true, ok: true, tip: 63_000_000}
+	if got := projectionFloor(blendEmitterGenesis, true, clean, 40_000_000, 0); got != blendEmitterGenesis {
 		t.Errorf("sub-genesis watermark must clamp to genesis %d, got %d", blendEmitterGenesis, got)
 	}
 }
@@ -1236,12 +1242,22 @@ func TestProjectionFloor_PassSeedsNeverVerifiedSourceFromGenesis(t *testing.T) {
 // so the per-source / manual paths are untouched by the pass fix.
 func TestProjectionFloor_NonPassIsTheUnchangedIncrementalFloor(t *testing.T) {
 	const genesis = uint32(50_746_266)
-	// -from above genesis raises the floor.
-	if got := projectionFloor(genesis, false, 999_999, 63_000_000); got != 63_000_000 {
-		t.Errorf("non-pass -from above genesis = %d, want 63000000", got)
+	// -from above genesis raises the floor. The prior verdict — clean OR
+	// failing — must not widen an OPERATOR-stated window: outside -pass the
+	// floor is stated, not derived, so a targeted chunked re-verify keeps
+	// costing exactly what the operator asked for.
+	for _, prior := range []priorProjection{
+		{known: true, ok: true, tip: 63_000_000},
+		{known: true, ok: false, tip: 63_000_000},
+		{},
+	} {
+		if got := projectionFloor(genesis, false, prior, 999_999, 63_000_000); got != 63_000_000 {
+			t.Errorf("non-pass -from above genesis with prior %+v = %d, want 63000000", prior, got)
+		}
 	}
 	// -from of 0 floors at genesis; the prior watermark is IGNORED outside -pass.
-	if got := projectionFloor(genesis, false, 63_000_000 /* must be ignored */, 0); got != genesis {
+	clean := priorProjection{known: true, ok: true, tip: 63_000_000}
+	if got := projectionFloor(genesis, false, clean, 63_000_000 /* must be ignored */, 0); got != genesis {
 		t.Errorf("non-pass full run = %d, want genesis %d (watermark must be ignored outside -pass)", got, genesis)
 	}
 }
@@ -1323,5 +1339,173 @@ func TestSubstrateFloorLoss(t *testing.T) {
 	// even if it fired.
 	if _, lost, _ := substrateFloorLoss(genesis, genesis, genesis, true); lost {
 		t.Error("double-count: a full scan (subScanFrom<=genesis) must not also report floor loss")
+	}
+}
+
+// ─── CS-095: a red source must be re-verifiable by the deployed nightly ───
+
+// passProjectionVerdict composes the four pure decisions the -pass driver makes
+// for ONE single-target source, in the driver's own order and with the driver's
+// own functions:
+//
+//	projectionFloor → targetScope (projectionScopes) → strictPerLedgerDelta
+//	(reconcileTarget) → projectionClaim
+//
+// Nothing between them is re-implemented here: `expected` stands in for the
+// ClickHouse re-derive (ReDeriveOutputCountsByKindFromEvents) and `actual` for
+// store.CountRowsByLedger, and every decision taken on them is the production
+// function. It returns what the run would publish — projection_ok,
+// projection_verified_from, and the verdict detail.
+func passProjectionVerdict(genesis, hi uint32, expected, actual map[uint32]int, priorWatermark uint32, prior priorProjection) (bool, uint32, string) {
+	// store.MinLedger(table, "ledger", filter, genesis, hi) — the served
+	// tier's own bottom edge over the reconcile window.
+	servedMin, haveServedRows := hi, false
+	for ledger := range actual {
+		if ledger >= genesis && ledger <= hi && (!haveServedRows || ledger < servedMin) {
+			servedMin, haveServedRows = ledger, true
+		}
+	}
+	projFrom := projectionFloor(genesis, true /* -pass */, prior, priorWatermark, 0)
+	servedFrom := targetScope(servedMin, haveServedRows, genesis, 0, hi).From
+	sc := targetScope(servedMin, haveServedRows, genesis, projFrom, hi)
+	delta, detail := strictPerLedgerDelta("trades", clipCounts(expected, sc), clipCounts(actual, sc), sc.From, sc.To)
+	ok, claim := projectionClaim(servedFrom, sc.From, hi, delta == 0, detail, prior)
+	return ok, servedFrom, claim
+}
+
+// r1's sushiswap_v3 as measured 2026-09-09: the pool factory was deployed at
+// ledger 61,487,379 and nobody traded through it for 5,716 ledgers, so the
+// served tier's oldest trade is 61,493,095 and there are ZERO trades below it.
+const (
+	sushiGenesis    = uint32(61_487_379)
+	sushiFirstTrade = uint32(61_493_095)
+	sushiTip        = uint32(64_352_012)
+)
+
+// sushiCounts is the reconcile input for a fully backfilled sushiswap_v3: lake
+// and served agree on every ledger that carries a trade, and the
+// [genesis, first-trade) prefix carries none on either side.
+func sushiCounts() map[uint32]int {
+	return map[uint32]int{sushiFirstTrade: 3, 62_000_000: 4, 63_500_000: 7, sushiTip: 1}
+}
+
+// TestPassProjection_RepairedSourceIsReVerifiedNotCarriedRed pins CS-095.
+//
+// sushiswap_v3 entered the catalogue with zero served rows (#350: "no rows are
+// served until an operator enables it and runs the history replay"), so its
+// first -pass verdict was an EARNED projection_ok=false — expected 81,175
+// against served 0. The operator then enabled it and replayed to tip. On r1
+// 2026-09-09 it was STILL complete=false with every other axis green
+// (lake_complete, substrate_ok, recognition_ok true, coverage_pct 1, watermark
+// at tip) and projection_verified_from=61,493,095.
+//
+// The cause is the FLOOR, not the claim: -pass resumed the PROJECTION reconcile
+// from the LAKE watermark, which sits at tip whenever the lake is clean. So the
+// pass reconciled [tip, tip], never re-saw the range that had failed, and
+// projectionClaim rule 4 correctly refused to upgrade a failing prior verdict it
+// had no evidence for. Every subsequent pass repeated it, so the row could not
+// go green by any automated path — only by an operator's manual full re-verify.
+// The deployed driver (run-compute-completeness.sh) makes exactly ONE `-pass`
+// call and nothing else, so that is the only path that matters.
+func TestPassProjection_RepairedSourceIsReVerifiedNotCarriedRed(t *testing.T) {
+	counts := sushiCounts()
+	ok, verifiedFrom, detail := passProjectionVerdict(
+		sushiGenesis, sushiTip, counts, counts,
+		sushiTip, // lake watermark: at tip, because the lake is clean
+		priorProjection{known: true, ok: false, tip: sushiTip}, // the earned pre-backfill false
+	)
+	if !ok {
+		t.Fatalf("projection_ok = false for a fully backfilled source — the pass must re-verify a red source, not carry its failure forever: %s", detail)
+	}
+	// The corrected claim covers the FULL range the served tier holds, not a
+	// one-ledger suffix of it.
+	if verifiedFrom != sushiFirstTrade {
+		t.Errorf("projection_verified_from = %d, want %d (the served tier's own bottom edge)", verifiedFrom, sushiFirstTrade)
+	}
+	want := fmt.Sprintf("projection: verified [%d,%d] — the full range the served tier holds", sushiFirstTrade, sushiTip)
+	if detail != want {
+		t.Errorf("detail = %q, want %q", detail, want)
+	}
+}
+
+// TestPassProjection_RealHoleStillReadsIncomplete is the other direction, and
+// the one that proves CS-095 did not weaken the alert: the SAME source shape
+// with a genuine projection hole must still fail — and now fails on EVIDENCE
+// (rule 1, naming the offending ledger) rather than on a carried verdict.
+func TestPassProjection_RealHoleStillReadsIncomplete(t *testing.T) {
+	const holeLedger = uint32(62_000_000)
+	expected := sushiCounts()
+	actual := sushiCounts()
+	delete(actual, holeLedger) // the projector dropped this ledger's trades
+
+	// prior verdict and prior watermark come from the SAME snapshot row, so a
+	// fixture may not decouple them: known=false means no row exists, which
+	// means watermark 0.
+	for _, tc := range []struct {
+		name      string
+		prior     priorProjection
+		watermark uint32
+	}{
+		{"already red", priorProjection{known: true, ok: false, tip: sushiTip}, sushiTip},
+		{"never seeded", priorProjection{}, 0},
+	} {
+		ok, _, detail := passProjectionVerdict(sushiGenesis, sushiTip, expected, actual, tc.watermark, tc.prior)
+		if ok {
+			t.Fatalf("%s: projection_ok = true over a real hole at ledger %d — the completeness alert would stop firing on a genuine served<>lake gap", tc.name, holeLedger)
+		}
+		if want := fmt.Sprintf("ledger=%d expected=%d served=0", holeLedger, expected[holeLedger]); !strings.Contains(detail, want) {
+			t.Errorf("%s: detail = %q, want it to localize the hole (%s)", tc.name, detail, want)
+		}
+	}
+}
+
+// TestPassProjection_NeverBackfilledSourceStillReadsIncomplete is the upshift
+// adversarial fixture from 2026-09-09: the lake holds the source's events, the
+// served tier holds NOTHING, the watermark sits at genesis-1 and coverage is 0.
+// An empty target floors at genesis and must reconcile expected>0 against
+// served=0 and FAIL. "There is no data, so there is nothing to check" is the
+// fail-open this whole verdict exists to prevent, and lowering the pass floor
+// must not open it.
+func TestPassProjection_NeverBackfilledSourceStillReadsIncomplete(t *testing.T) {
+	const upshiftGenesis = uint32(62_623_313)
+	expected := map[uint32]int{upshiftGenesis: 2, 63_000_000: 5, sushiTip: 1}
+
+	for _, tc := range []struct {
+		name      string
+		prior     priorProjection
+		watermark uint32
+	}{
+		{"first pass ever", priorProjection{}, 0},
+		{"already red", priorProjection{known: true, ok: false, tip: sushiTip}, upshiftGenesis - 1},
+		// A stale CLEAN verdict must not launder it either: the empty target
+		// still floors at genesis, so the reconcile finds expected>0 against
+		// served=0 and fails on rule 1 before any carry is consulted.
+		{"stale clean verdict", priorProjection{known: true, ok: true, tip: sushiTip}, upshiftGenesis - 1},
+	} {
+		ok, verifiedFrom, detail := passProjectionVerdict(
+			upshiftGenesis, sushiTip, expected, map[uint32]int{}, tc.watermark, tc.prior)
+		if ok {
+			t.Errorf("%s: projection_ok = true for a source with NOTHING projected: %s", tc.name, detail)
+		}
+		if verifiedFrom != upshiftGenesis {
+			t.Errorf("%s: projection_verified_from = %d, want genesis %d (an empty target fails CLOSED at genesis)", tc.name, verifiedFrom, upshiftGenesis)
+		}
+	}
+}
+
+// TestProjectionFloor_CleanPriorKeepsTheCheapResume pins the COST half of
+// CS-095: only a RED source pays the full re-verify. A source whose prior
+// projection verdict is clean keeps resuming at its watermark, so the nightly
+// pass's workload is unchanged for every green source in the catalogue — the
+// property that keeps this fix from re-introducing the timeout -pass exists to
+// remove.
+func TestProjectionFloor_CleanPriorKeepsTheCheapResume(t *testing.T) {
+	clean := priorProjection{known: true, ok: true, tip: sushiTip}
+	if got := projectionFloor(sushiGenesis, true, clean, sushiTip, 0); got != sushiTip {
+		t.Errorf("clean-prior floor = %d, want its watermark %d — a green source must not be dragged into a full re-derive", got, sushiTip)
+	}
+	failing := priorProjection{known: true, ok: false, tip: sushiTip}
+	if got := projectionFloor(sushiGenesis, true, failing, sushiTip, 0); got != sushiGenesis {
+		t.Errorf("failing-prior floor = %d, want genesis %d — a red source has no verified ground to resume from", got, sushiGenesis)
 	}
 }
