@@ -17,6 +17,16 @@ against.
 
 ### Added
 
+- **docs:** `docs/operations/branch-triage.md` — how to decide what a stale
+  branch still carries, and the result of running it on 2026-09-09. Of 144
+  local branches, 143 were already landed and one carries unmerged work
+  (`fix/legal-pages-draft`: the only terms-of-service and privacy-policy
+  draft that exists anywhere, against a `main` that ships accounts and
+  magic-link sign-in with neither page). The file records the delete lists,
+  three narrow residues worth harvesting before their branches go, and
+  three branches that would REGRESS `main` if merged despite reading like
+  open work.
+
 - **ci:** `lint-yaml-duplicate-keys` refuses a YAML mapping that declares
   the same key twice, across the ansible, Prometheus, alertmanager and
   workflow trees. YAML keeps the LAST occurrence, so a duplicate reads in
@@ -29,7 +39,36 @@ against.
   collapses them.
 
 
+### Changed
+
+- **dev:** `branch-status.sh` judges landing by patch id as well as
+  ancestry. This repository lands work by squash or rebase, both of which
+  re-author the commit — so the tip is not an ancestor, no file matches,
+  and a landed branch is the same shape as a forgotten one. The ancestor
+  test alone called 11 of 144 branches landed where the real figure was
+  143, and reported the other 132 as "would delete ~500 files": a report
+  nobody can act on, which is the failure the script was written to
+  prevent wearing different clothes. `git cherry` closes the rebase and
+  cherry-pick half; a multi-commit squash still reads as unlanded,
+  correctly, because the script will not guess — `branch-triage.md` §2 has
+  the by-hand procedure. Costs 38 s over 143 branches against 9 s;
+  `--no-patch-id` buys that back.
+
 ### Fixed
+
+- **dev:** `branch-status-test.sh` built its throwaway repository with
+  `git -C "$tmp" init`, which honours an inherited `GIT_DIR` over its own
+  `-C`. `lint-changed.sh` runs any changed `*-test.sh`, the pre-commit hook
+  runs `lint-changed`, and a hook is invoked with `GIT_DIR` and
+  `GIT_INDEX_FILE` exported — so committing a change to this file made the
+  fixture initialise and then commit into the LIVE repository. Observed
+  2026-09-09: `core.bare` set on the real checkout (detaching the main
+  working tree), three fixture commits on `main`, and four fixture branches
+  left behind, with nothing in the output to say so. The fixture now strips
+  the redirect variables and then asks git — via
+  `rev-parse --absolute-git-dir` — to confirm the repository it created is
+  the one under `$tmp`, refusing to run otherwise. Both layers are verified
+  against a reproduction of the leak.
 
 - **ansible:** a `--check` run of the `archival-node` role aborted the
   moment it reached a task enabling a unit the role itself installs and
