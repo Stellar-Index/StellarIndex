@@ -17,6 +17,25 @@ against.
 
 ### Fixed
 
+- **api/assets:** `GET /v1/assets/{id}` no longer times out for non-classic
+  assets. The existence check sent everything but classic assets to an
+  unbounded `SELECT EXISTS` over the `trades` hypertable, which cannot be
+  chunk-pruned and so appended every chunk back to 2017. It survived only
+  while `trades` was quiet and `LIMIT 1` got lucky; with a usd-volume
+  restamp decompressing chunks it blew the 15 s request budget and served
+  503. It is now a window-bounded, alias-complete index probe, answering
+  for the same trailing window `/v1/assets` lists — so the detail route
+  cannot 404 an asset the listing shows.
+
+  XLM is exempt from that window entirely: the native asset exists on
+  every Stellar network from the genesis ledger, so it is answered
+  without seeking trade evidence. Bounding it would have returned 404 on
+  a network with no recent XLM trades — measured, futurenet had none in
+  the window while testnet had 2,030.
+
+
+### Fixed
+
 - **ops:** `ch-schema-drift` can now tell whether its *own reference* is
   current, and says so. The check compares repo intent against the live
   ClickHouse schema — but the intent side is
