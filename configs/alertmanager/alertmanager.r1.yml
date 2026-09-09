@@ -219,8 +219,10 @@ receivers:
   # moved to chat-informational above. It is kept because that is
   # exactly the shape chat-informational degrades to when
   # DISCORD_WEBHOOK_URL_INFORMATIONAL is unset, so the stub stays a
-  # named, documented state rather than an accident. There is no
-  # PagerDuty leg anywhere in this file, for any severity.
+  # named, documented state rather than an accident. Removing it would
+  # also diverge this file from the Ansible template that renders the
+  # same config, which scripts/ci/check-alertmanager-parity.sh forbids.
+  # There is no PagerDuty leg anywhere in this file, for any severity.
   #
   # Do NOT route anything here to quiet it. Which alerts may be
   # informational at all is a POLICY decision recorded per-alert in

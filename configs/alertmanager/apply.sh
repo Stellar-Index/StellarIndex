@@ -48,10 +48,31 @@ set -euo pipefail
 # render branches at PR time — pre-gate, a malformed edit that broke
 # the block-stripper's indentation assumptions produced a silently
 # receiver-less Alertmanager, discovered only at the next hand apply.
+#
+# --render-only <path>: render to <path> and stop BEFORE amtool. Exists
+# so scripts/ci/check-alertmanager-parity.sh can compare this file's
+# rendering against the Ansible template's using THIS renderer rather
+# than a second copy of the block-stripper — a parity gate built on a
+# reimplementation of the thing it checks proves only that the two
+# copies agree. It runs in the `ansible` CI job, which has jinja2 but
+# not amtool; --check-only remains the validating mode.
 CHECK_ONLY=false
-if [ "${1:-}" = "--check-only" ]; then
-  CHECK_ONLY=true
-fi
+RENDER_ONLY=false
+RENDER_OUT=""
+case "${1:-}" in
+  --check-only)
+    CHECK_ONLY=true
+    ;;
+  --render-only)
+    RENDER_ONLY=true
+    CHECK_ONLY=true # suppress the install-time fail-closed guard below
+    RENDER_OUT="${2:-}"
+    if [ -z "$RENDER_OUT" ]; then
+      echo "error: --render-only needs an output path" >&2
+      exit 1
+    fi
+    ;;
+esac
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &>/dev/null && pwd)"
 SOURCE="${SCRIPT_DIR}/alertmanager.r1.yml"
@@ -203,6 +224,11 @@ for marker, url in subs.items():
 
 open(os.environ["RENDERED"], "w").write(src)
 PY
+
+if [ "$RENDER_ONLY" = true ]; then
+  cat "$RENDERED" > "$RENDER_OUT"
+  exit 0
+fi
 
 if ! amtool check-config "$RENDERED"; then
   echo "error: alertmanager config failed validation" >&2

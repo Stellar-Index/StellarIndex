@@ -86,6 +86,14 @@ alertmanager_pagerduty_key: ""
 alertmanager_discord_webhook_url_pages: ""
 # Ticket-tier + default → the #alerts Discord channel.
 alertmanager_discord_webhook_url_alerts: ""
+# Informational-tier → a low-traffic channel of its OWN. Deliberately
+# not the #alerts webhook: the whole point of the separation is that a
+# routine notice (an oracle listing a ticker we do not map yet) cannot
+# bury a ticket in the same feed. Empty = the receiver renders as a
+# stub and informational alerts are visible only in the Alertmanager
+# UI — the pre-#485 behaviour, in which every informational alert was
+# matched, routed and delivered nowhere.
+alertmanager_discord_webhook_url_informational: ""
 
 # Healthchecks.io deadmansswitch endpoint. The
 # `stellarindex_deadmansswitch` alert fires every 60 s while

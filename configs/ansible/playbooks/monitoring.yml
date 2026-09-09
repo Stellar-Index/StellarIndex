@@ -43,6 +43,12 @@
 #   - alertmanager_healthchecks_deadmansswitch_url
 #   - alertmanager_discord_webhook_url_pages   (page tier → #pages; empty → no fanout)
 #   - alertmanager_discord_webhook_url_alerts  (ticket tier → #alerts; empty → no fanout)
+#   - alertmanager_discord_webhook_url_informational
+#         (informational tier → its OWN low-traffic channel, not #alerts;
+#          empty → no fanout, which is the #485 black hole)
+#   - alertmanager_healthchecks_alert_delivery_url
+#         (out-of-band leg for a refused chat delivery; empty → the only
+#          signal of a delivery outage travels the failing path)
 #   - alertmanager_pagerduty_key               (optional)
 #
 # Secret handling: pass the webhook URLs via ansible-vault (e.g. an
@@ -60,6 +66,14 @@
 # preferred long-term arrangement (one place to edit; multi-region
 # consistency); the standalone files stay valid for one-off
 # emergency edits without needing an ansible run.
+#
+# "Both arrangements produce the same routing" is a GATE now, not a
+# claim: scripts/ci/check-alertmanager-parity.sh renders the two with
+# identical inputs and fails on any structural difference. It was added
+# after the sentence above was false for a month (#501) — the fix for
+# #485 gave informational alerts a Discord receiver in the standalone
+# file only, so running THIS playbook would have silently routed them
+# back to a receiver that delivers to nobody.
 
 - name: Monitoring (Prometheus + Alertmanager)
   hosts: archival_nodes

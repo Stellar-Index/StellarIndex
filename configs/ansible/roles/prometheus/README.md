@@ -42,6 +42,12 @@ emitted metrics. Design rationale lives in
     for the `ticket` route (#alerts channel). Discord webhooks are
     locked to one channel each; point both vars at the same webhook
     if you only want a single channel.
+  - `alertmanager_discord_webhook_url_informational` — Discord webhook
+    URL for the `informational` route. Give it a channel of its own:
+    the separation is the point, so a routine notice cannot bury a
+    ticket. Empty means informational alerts are visible only in the
+    Alertmanager UI — the pre-#485 behaviour, under which every
+    informational alert was matched, routed and delivered to nobody.
   - `alertmanager_healthchecks_alert_delivery_url` — Healthchecks
     URL for `stellarindex_alertmanager_notifications_failing`, on a
     check SEPARATE from the deadmansswitch one. Without it, the only
@@ -141,7 +147,9 @@ on `prometheus_pair`. No manual scrape-config edits.
 ```
 page          → chat-page    (Discord #pages + PagerDuty when wired)
 ticket        → chat-default  (Discord #alerts)
-informational → silent        (Alertmanager UI only — no fanout)
+informational → chat-informational (Discord, its own low-traffic
+                channel — NOT #alerts, so a routine notice cannot
+                bury a ticket in the same feed)
 
 stellarindex_alertmanager_notifications_failing
               → alert-delivery-failure (Healthchecks, out of band)
@@ -155,7 +163,8 @@ description exceeds 4096 characters is rejected with HTTP 400, which
 Alertmanager treats as unrecoverable, killing the receiver for every
 alert routed to it. Keep the templates byte-identical to the ones in
 `configs/alertmanager/alertmanager.r1.yml` and re-measure if you
-change them.
+change them — `scripts/ci/check-alertmanager-parity.sh` fails the build
+if they drift apart, in either direction.
 
 Inhibit rules:
 - A `page`-severity alert for a given `(alertname, service)`

@@ -292,6 +292,8 @@ echo "=== Deploy workflow input-validation self-test ===" && ./scripts/ci/deploy
 echo "=== Jinja template parse gate ===" && ./scripts/ci/lint-jinja-templates.sh
 echo "=== Jinja template parse gate self-test ===" && ./scripts/ci/lint-jinja-templates-test.sh
 echo "=== ClickHouse Prometheus endpoint self-test ===" && ./scripts/ci/clickhouse-exporter-test.sh
+echo "=== Alertmanager apply-path parity ===" && ./scripts/ci/check-alertmanager-parity.sh
+echo "=== Alertmanager apply-path parity self-test ===" && ./scripts/ci/check-alertmanager-parity-test.sh
 echo "=== pgBackRest backup wrapper self-test ===" && ./scripts/ci/pgbackrest-backup-test.sh
 echo "=== API-smoke textfile self-test ===" && ./scripts/ci/smoke-textfile-test.sh
 echo "=== Served-value harness scheduling + cadence ===" && ./scripts/ci/lint-served-value-cadence.sh
