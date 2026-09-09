@@ -30,10 +30,16 @@ import (
 // cache still earns its place by keeping the status page's poll off
 // the database, but do not size risk decisions on the old number —
 // it was off by roughly 1000x. The handler caps
-// it at 8s and returns 503 on overrun (#29). The real
-// query-cheapening fix is the documented-but-missing
-// `(base_asset, quote_asset, source, ts DESC)` index — see the note
-// on [HistoryReader.LatestTradePerSource] and the durable follow-up.
+// it at 8s and returns 503 on overrun (#29).
+//
+// This paragraph used to end by calling
+// `(base_asset, quote_asset, source, ts DESC)` the
+// "documented-but-missing" real fix. That sentence was left in place
+// when the correction above was appended, so it contradicted the
+// sentence three lines before it and sent readers chasing an index
+// that already exists. Verified on r1 2026-09-09:
+// `trades_pair_source_ts_idx ON trades (base_asset, quote_asset,
+// source, ts DESC, ledger DESC)`. There is no missing index.
 //
 // The status page polls one fixed key (`native|fiat:USD|`) every
 // ~2 min, so SWR gives a ~100% hit rate after warm-up with zero
