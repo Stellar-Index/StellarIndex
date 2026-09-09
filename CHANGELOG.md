@@ -17,6 +17,17 @@ against.
 
 ### Added
 
+- **ci:** `lint-git-fixture-isolation` requires a script that creates a
+  git repository to clear `GIT_DIR` and its siblings first. `git init`
+  honours an INHERITED `GIT_DIR` ahead of its own `-C`, a git hook exports
+  one, and `lint-changed` — which the pre-commit hook runs — dispatches
+  changed `*-test.sh` files. So a test that builds a fixture re-initialised
+  the LIVE repository: `core.bare` set on the real checkout, fixture commits
+  and branches on the default branch, and git reporting only
+  `warning: re-init`. Eight scripts carried the hazard, one with a clearing
+  that ran 79 lines AFTER its own init — so grepping for the unset could not
+  tell safe from unsafe.
+
 - **docs:** `docs/operations/branch-triage.md` — how to decide what a stale
   branch still carries, and the result of running it on 2026-09-09. Of 144
   local branches, 143 were already landed and one carries unmerged work
@@ -39,6 +50,55 @@ against.
   collapses them.
 
 
+
+- **ops:** the archival-node role gained a single-host Prometheus path
+  (`23-local-prometheus.yml`, gated on `run_local_prometheus`, default
+  false, tag `local-prometheus`), and both test nets turn it on. They had
+  been reporting `overall: degraded` at every check while every unit was
+  active: `/v1/status` derives background-service liveness from
+  `PrometheusStatusBackend.Heartbeats()`, neither net ran Prometheus, so
+  the query always errored, every declared service graded `unknown`, and
+  the roll-up degraded — permanently. The conservatism is correct; what
+  was missing was anything to scrape. `api.prometheus_url` already
+  pointed at `localhost:9090`, so nothing about the API changes and it
+  needs no restart. The path mirrors what r1 runs out-of-band (the distro
+  `prometheus` package, unit `prometheus.service`, localhost targets)
+  rather than the multi-host `roles/prometheus`, which asserts a
+  two-host `prometheus_pair` group and cannot run on one box.
+
+  The scrape list is DERIVED from the same `run_*` switches that decide
+  which services the host installs, never hardcoded: with
+  `run_aggregator: false` the test nets get no `stellarindex-aggregator`
+  target, because a target for a service that is not installed is the
+  same class of bug — and it would not even fail honestly, since
+  Prometheus stamps `up 0` at the scrape time of a failed scrape, so a
+  dead target reads as a fresh heartbeat. Retention is bounded on both
+  axes (7 d, 4 GB) and memory is capped by a systemd drop-in
+  (`MemoryHigh=768M`, `MemoryMax=1G`) so a monitoring daemon cannot
+  starve the 20 GB VMs it monitors. Alerting is deliberately out of
+  scope: `/v1/status` needs the scrape layer, and `Incidents()` reads the
+  `ALERTS` series Prometheus synthesizes for itself, so an empty rule set
+  answers "nothing firing" instead of erroring.
+
+- **ci:** `scripts/ci/check-alertmanager-parity.sh` turns "both apply paths
+  produce the same routing" from a comment into a gate. It renders the
+  standalone config through `apply.sh`'s own renderer — via a new
+  `--render-only` mode, so the gate is not a second copy of the
+  block-stripper it is checking — and the Ansible template through Jinja
+  with matching inputs, then requires `global`, `route`, `inhibit_rules`
+  and every receiver to be equal. Both render branches are compared:
+  **wired** (every URL set) catches a routing or payload-bound divergence,
+  **dark** (every URL empty) catches a divergence in the degraded shape,
+  where `apply.sh`'s line-based Python walker and the template's
+  `{% if %}` can disagree about what is left behind — a difference that is
+  invisible until the day a webhook is unset. It runs in `monitoring-rules`,
+  which is unconditional, deliberately not in `ansible-check`, which is
+  gated on `configs/ansible/**`: the commit that introduced the divergence
+  touched only `configs/alertmanager/`, and a gate that the regression's
+  own diff would have skipped is not a gate. The self-test mutates a
+  fixture four ways and requires a red each time, including one that
+  diverges on the dark branch **only**.
+
 ### Changed
 
 - **dev:** `branch-status.sh` judges landing by patch id as well as
@@ -53,6 +113,20 @@ against.
   correctly, because the script will not guess — `branch-triage.md` §2 has
   the by-hand procedure. Costs 38 s over 143 branches against 9 s;
   `--no-patch-id` buys that back.
+
+
+- **ci(ansible-drift):** the weekly drift check reports what it found
+  where a person will see it. The verdict now renders a job summary
+  naming every task that would change on r1, the file that declares it
+  and the host path it would touch, and raises one
+  `::error file=…,line=…::` annotation per drifted task against the
+  role's `- name:` line — replacing a single unnamed "drift detected"
+  above ~1,800 lines of ansible stdout. An aborted preview is now its own
+  verdict: the gate reads `failed=` out of the `PLAY RECAP`, names the
+  task that errored, and states that the run's `changed=` count is a
+  prefix of the role rather than a result, so a truncated run can never
+  read as "codified = live". The verdict step also runs when the playbook
+  step fails, which is what makes that classification reachable.
 
 ### Fixed
 
@@ -146,51 +220,6 @@ against.
   every informational rule routes there. No alert expression, label,
   route or served value changes.
 
-### Changed
-
-- **ci(ansible-drift):** the weekly drift check reports what it found
-  where a person will see it. The verdict now renders a job summary
-  naming every task that would change on r1, the file that declares it
-  and the host path it would touch, and raises one
-  `::error file=…,line=…::` annotation per drifted task against the
-  role's `- name:` line — replacing a single unnamed "drift detected"
-  above ~1,800 lines of ansible stdout. An aborted preview is now its own
-  verdict: the gate reads `failed=` out of the `PLAY RECAP`, names the
-  task that errored, and states that the run's `changed=` count is a
-  prefix of the role rather than a result, so a truncated run can never
-  read as "codified = live". The verdict step also runs when the playbook
-  step fails, which is what makes that classification reachable.
-
-### Added
-
-- **ops:** the archival-node role gained a single-host Prometheus path
-  (`23-local-prometheus.yml`, gated on `run_local_prometheus`, default
-  false, tag `local-prometheus`), and both test nets turn it on. They had
-  been reporting `overall: degraded` at every check while every unit was
-  active: `/v1/status` derives background-service liveness from
-  `PrometheusStatusBackend.Heartbeats()`, neither net ran Prometheus, so
-  the query always errored, every declared service graded `unknown`, and
-  the roll-up degraded — permanently. The conservatism is correct; what
-  was missing was anything to scrape. `api.prometheus_url` already
-  pointed at `localhost:9090`, so nothing about the API changes and it
-  needs no restart. The path mirrors what r1 runs out-of-band (the distro
-  `prometheus` package, unit `prometheus.service`, localhost targets)
-  rather than the multi-host `roles/prometheus`, which asserts a
-  two-host `prometheus_pair` group and cannot run on one box.
-
-  The scrape list is DERIVED from the same `run_*` switches that decide
-  which services the host installs, never hardcoded: with
-  `run_aggregator: false` the test nets get no `stellarindex-aggregator`
-  target, because a target for a service that is not installed is the
-  same class of bug — and it would not even fail honestly, since
-  Prometheus stamps `up 0` at the scrape time of a failed scrape, so a
-  dead target reads as a fresh heartbeat. Retention is bounded on both
-  axes (7 d, 4 GB) and memory is capped by a systemd drop-in
-  (`MemoryHigh=768M`, `MemoryMax=1G`) so a monitoring daemon cannot
-  starve the 20 GB VMs it monitors. Alerting is deliberately out of
-  scope: `/v1/status` needs the scrape layer, and `Incidents()` reads the
-  `ALERTS` series Prometheus synthesizes for itself, so an empty rule set
-  answers "nothing firing" instead of erroring.
 ### Security
 
 - **migrate,config,api:** a Postgres password can no longer reach the deploy
@@ -245,27 +274,6 @@ against.
   `chat-informational` receiver and the same bounded Discord Go template,
   gated on a new `alertmanager_discord_webhook_url_informational` role
   variable that degrades to a stub when unset.
-
-### Added
-
-- **ci:** `scripts/ci/check-alertmanager-parity.sh` turns "both apply paths
-  produce the same routing" from a comment into a gate. It renders the
-  standalone config through `apply.sh`'s own renderer — via a new
-  `--render-only` mode, so the gate is not a second copy of the
-  block-stripper it is checking — and the Ansible template through Jinja
-  with matching inputs, then requires `global`, `route`, `inhibit_rules`
-  and every receiver to be equal. Both render branches are compared:
-  **wired** (every URL set) catches a routing or payload-bound divergence,
-  **dark** (every URL empty) catches a divergence in the degraded shape,
-  where `apply.sh`'s line-based Python walker and the template's
-  `{% if %}` can disagree about what is left behind — a difference that is
-  invisible until the day a webhook is unset. It runs in `monitoring-rules`,
-  which is unconditional, deliberately not in `ansible-check`, which is
-  gated on `configs/ansible/**`: the commit that introduced the divergence
-  touched only `configs/alertmanager/`, and a gate that the regression's
-  own diff would have skipped is not a gate. The self-test mutates a
-  fixture four ways and requires a red each time, including one that
-  diverges on the dark branch **only**.
 
 ## [v0.65.0] — 2026-09-08
 
