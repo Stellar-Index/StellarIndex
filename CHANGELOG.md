@@ -15,6 +15,8 @@ against.
 
 ## [Unreleased]
 
+## [v0.69.0] — 2026-09-10
+
 ### Fixed
 
 - **ops/completeness:** a source whose ADR-0033 projection verdict went red
