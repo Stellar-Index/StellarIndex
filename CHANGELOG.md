@@ -15,6 +15,16 @@ against.
 
 ## [Unreleased]
 
+### Fixed
+
+- Creators rollup: the graph arm no longer sets
+  `optimize_aggregation_in_order` beside an external-group-by limit. In-order
+  aggregation cannot spill to disk, so the setting silently cancelled the
+  spill limit and the step failed at the memory ceiling instead of going to
+  disk, leaving the creator edge tables empty and the account-graph endpoint
+  serving its warming response. A regression test now refuses any rollup
+  statement that pairs the two settings.
+
 ## [v0.66.0] — 2026-09-09
 
 ### Added

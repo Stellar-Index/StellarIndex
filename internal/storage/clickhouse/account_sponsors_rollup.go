@@ -135,10 +135,13 @@ const sponsorsGatedArmSettings = boundedScanSettings +
 // BELOW this cycle's existing peak, the board join's 4.09 GiB, so the
 // graph arm does not move the cycle's ceiling.
 //
-// No optimize_aggregation_in_order here, unlike the sibling creator arm:
-// the working table is ORDER BY (lseq, tidx, oidx) and this aggregation
-// groups by sponsor, which is not a prefix of it — there is no order to
-// exploit. The execution cap is 1800 s rather than the walk's 600 s
+// No optimize_aggregation_in_order here: the working table is ORDER BY
+// (lseq, tidx, oidx) and this aggregation groups by sponsor, which is not
+// a prefix of it, so there is no order to exploit. The sibling creator
+// arm did once set it, where the order DID match, and that is why this
+// step survived a cycle the creator one died in — in-order aggregation
+// cannot spill, so it cancels the external-group-by limit above.
+// The execution cap is 1800 s rather than the walk's 600 s
 // because this step is not walked: a pair can span lake partitions, so a
 // per-window aggregation would emit the same edge more than once.
 const sponsorEdgesSettings = boundedScanSettings + ", max_execution_time = 1800"

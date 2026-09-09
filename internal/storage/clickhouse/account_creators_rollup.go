@@ -158,15 +158,26 @@ const creatorsP23ArmSettings = boundedScanSettings +
 // pair is still (creator, created) — so a graph traversal stays correct
 // even where the weight would not be. Same detector, same fix.
 //
-// optimize_aggregation_in_order exploits the working table's ORDER BY
-// (creator, ledger, created), whose leading key is this aggregation's
-// leading group key. The execution cap is the board's 1800 s rather than
+// The execution cap is the board's 1800 s rather than
 // the walk's 600 s: this step is not walked — a (creator, created) pair
 // can span lake partitions, so a per-window aggregation would emit the
 // same edge more than once — and 1800 s is a 73x margin on the measured
 // time, on a box that also runs galexie and the sibling rollups.
-const creatorEdgesSettings = boundedScanSettings +
-	", optimize_aggregation_in_order = 1, max_execution_time = 1800"
+// creatorEdgesSettings deliberately does NOT set
+// optimize_aggregation_in_order. In-order aggregation cannot spill, so
+// it silently cancels the max_bytes_before_external_group_by in
+// boundedScanSettings and converts an aggregation that would have gone
+// to disk into a memory-limit failure. This step aggregates 24.8 M
+// creation events into 20.96 M (creator, created) pairs; with the
+// setting it died at the 8 GiB ceiling on 2026-09-09, without it the
+// same aggregation completes inside 512 MiB.
+//
+// Note that in-order aggregation WAS applicable here — the working table
+// sorts by (creator, ledger, created) and `creator` is this aggregation's
+// leading group key — which is exactly what makes the trap worth a
+// comment. The setting was not a mistake about the sort order; it is
+// unsafe beside a spill limit however well the order matches.
+const creatorEdgesSettings = boundedScanSettings + ", max_execution_time = 1800"
 
 // creatorsRollupStatements is the full recompute cycle: truncate the
 // working table, WALK the archive one lake partition at a time landing
