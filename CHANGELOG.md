@@ -15,6 +15,8 @@ against.
 
 ## [Unreleased]
 
+## [v0.66.0] — 2026-09-09
+
 ### Added
 
 - **sources:** `upshift` — the Upshift tokenized vaults on Stellar
@@ -233,6 +235,61 @@ against.
   fixture four ways and requires a red each time, including one that
   diverges on the dark branch **only**.
 
+
+- **web:** two source-derived a11y guards, both of which fail on the day a
+  new call site repeats the mistake rather than at the next audit.
+  `color-contrast.a11y.test.ts` recomputes the WCAG formula over the
+  shipped palette and over every class string in `src/`, and asserts no
+  pair below 4.5:1 (2,320 foreground occurrences today); it also asserts
+  the stylesheet still ships a single dark palette, so the matrix cannot
+  silently go half-covered if a light theme lands. Its rule for fills is
+  derived, not listed: a token bright enough to be READ on the dark canvas
+  is too bright to sit behind white. `keyboard-operable.a11y.test.ts`
+  asserts every clickable table row contains a real `<button>` with a name,
+  a focus style and a state attribute, that every click-to-dismiss overlay
+  routes through `useDialog` for its Escape path, and that nothing uses a
+  positive `tabIndex`. Both were verified red against the pre-fix tree:
+  the contrast pack over 349 offending sites and at the direction pills'
+  original 2.23:1 / 3.53:1, the keyboard pack naming all three click-only
+  rows — including the two pool-depth expanders that the existing
+  `/divergences` test could not see.
+
+
+- **web:** `src/lib/route-graph.ts` — the link-graph walk, extracted from
+  `route-reachability.test.ts` so `crawl-surface.test.ts` shares one
+  implementation rather than growing a second notion of "reachable".
+  Test-only, like `lib/nav-shell`. `crawl-surface.test.ts` gains four
+  assertions on top of it: the sitemap submits nothing a reader cannot
+  navigate to (an orphaned island now fails the suite instead of waiting
+  to be noticed), every entry names a real `page.tsx`, every page the nav
+  offers is submitted, and the query-param shells stay out of the index.
+
+- **docs:** `docs/operations/api-explorer-coverage.md` — every path in the
+  OpenAPI contract against whether the explorer consumes it and whether a
+  reader can reach it, at three levels (not consumed / consumed but
+  unreachable / reachable), plus a discoverability audit and the
+  spec-versus-running-API differences. 126 paths: 101 reachable, 0
+  consumed-but-unreachable, 21 not consumed, 4 operational.
+- **ci:** `scripts/ci/render-sla-proof.sh` renders a k6 `--summary-export`
+  into `docs/operations/sla-proof-<YYYY-MM-DD>.md`, and `k6-weekly.yml`
+  now runs it and commits the result (#378). The weekly run could already
+  measure and report; it had no implementation of the step that makes the
+  measurement durable. Its export lives in a 90-day artifact, its numbers
+  in a job page, and the only artefact `check-sla-evidence.sh` counts is a
+  committed dated report — whose sole "procedure" directed an operator to
+  mint Grafana snapshots from `grafana.staging.stellarindex.io`, a host
+  that does not exist, and to run promql over `k6_*` series that only
+  exist when an unset remote-write secret is set. No dated proof report
+  has ever landed on any branch. The generated report names its own
+  provenance — target, run window, method, scenario, commit, k6 version,
+  and the sha256 of the export it came from — and the renderer REFUSES
+  (writing nothing) when a headline metric or a provenance field is
+  absent, so an unlabelled number cannot be published as a proof. The
+  refusal that matters most: k6's default trend stats omit `p(99)`, so an
+  export taken without `--summary-trend-stats` renders a document that
+  reads "n/a" for half of ADR-0009 while looking complete — which is the
+  exact shape of the real checked-in 2026-06-13 export.
+
 ### Changed
 
 - **dev:** `branch-status.sh` judges landing by patch id as well as
@@ -261,6 +318,53 @@ against.
   prefix of the role rather than a result, so a truncated run can never
   read as "codified = live". The verdict step also runs when the playbook
   step fails, which is what makes that classification reachable.
+
+
+- **web:** `/dexes` renders the served DEX TVL headline above its
+  protocol table. The page fetched `/v1/protocols` for its per-protocol
+  TVL column and discarded `tvl_total`, so the site's DEX page — the one
+  the "DEX TVL" promise names — showed the parts and never the whole,
+  while `/protocols` had rendered the headline since 39fe9d3e. It reuses
+  the same component, so the "≥" prefix, the hatch, the priced/total
+  split, the `basis` prose and the `excluded[]` disclosure are identical
+  on both pages. It applies the same reconciliation rule too: the
+  headline is the exact sum of the column beneath it, so it renders only
+  when every protocol it sums is a visible row showing a figure — this
+  table is built from `/v1/sources`, a different registry from the
+  `/v1/protocols` rows the total is summed over, so a summed protocol
+  can be missing here even when the server admitted it. Absent stays
+  absent: an omitted `tvl_total` renders nothing, never `$0.00`.
+
+- **web:** the status page's per-source completeness tones are a
+  `{ bar, label }` pair rather than one space-joined string pulled apart by
+  `.split(' ')` at each use. The two classes have always been applied to
+  two different elements; written as one string they read as a background
+  and a foreground applied together, which is both misleading and the kind
+  of thing a contrast scan has to be told to ignore.
+
+- **ci:** three further changes to `k6-weekly.yml` so a run that measures
+  cannot also leave nothing behind (#378). `Run scenario` no longer aborts
+  the job on a non-zero k6 exit: k6 exits 99 on a BREACHED threshold,
+  which is a real measurement and the single most valuable report to
+  retain, so the code is published as an output and the final step reddens
+  the run on it. The evidence verdict driving the tracking issue and the
+  exit status is recomputed AFTER the report lands — taken before, a first
+  healthy run would go red for the absence of the file it had just written
+  and the feed would need two weeks to call itself healthy once. And the
+  tracking issue no longer closes unless THIS run produced a proof, so a
+  run that measured nothing cannot report the feed healthy on the strength
+  of an earlier run's report still inside the 45-day window. The evidence
+  job takes `contents: write` for the commit, which goes through the
+  contents API with the job token; every checkout in the workflow stays
+  `persist-credentials: false`.
+
+- **docs:** `sla-proof-procedure.md` documents the generated path and
+  states precisely what is blocked on an operator — `K6_TARGET_STAGING`
+  and `STELLARINDEX_LOAD_API_KEY` are unset, so there is no target and
+  nothing measures the p95 ≤ 200 ms claim. The two capture steps that
+  cannot be performed (Grafana snapshots, promql over `k6_*`) are marked
+  BLOCKED with the reason rather than left as instructions, and
+  `sla-proof-template.md` is marked superseded by the generator.
 
 ### Fixed
 
@@ -429,6 +533,72 @@ against.
   every informational rule routes there. No alert expression, label,
   route or served value changes.
 
+
+- **api,docs:** the DEX TVL headline's scope exclusion for lending pointed
+  a reader at a field that does not exist (#338). Every `/v1/protocols`
+  response carries `tvl_total.excluded`, and `/v1/protocols/blend/tvl`
+  serves the matching entry as its 404 detail, so this sentence is the
+  answer a reader gets when they ask where the omitted number lives. It
+  said Blend's supplied-value "is published per-protocol as
+  `bespoke.tvl_usd`". There is no such field: the lending protocol block
+  carries event and user COUNTS only and says so itself
+  ("Pool-level figures are event/user COUNTS only… this block is
+  event-derived and window-scoped"). The only lending `tvl_usd` the API
+  serves is per-POOL, on `GET /v1/lending/pools/{pool}/reserves`
+  (ADR-0039, decoded from contract storage) — which is what the reason
+  now names. Sorocredit is split into its own entry rather than sharing
+  Blend's sentence, because it has no current-state figure at all and
+  the shared wording implied one. A new guard makes the class of defect
+  fail the build rather than age on the wire: an exclusion that claims
+  the figure is published or served elsewhere must NAME a `/v1` route,
+  and the route must be one `server.go` actually registers.
+
+
+- **web:** `brand-600` is legible again. It was `#4270f0`, which measured
+  4.29:1 on `surface` and 3.95:1 on `surface-muted` — a WCAG 1.4.3 AA
+  failure on ~380 link sites, i.e. on most of the clickable text in the
+  explorer. The earlier pass could not lift it because the same token was
+  also a white-text FILL, and a fill has to go DARKER to carry white while
+  ink has to go LIGHTER to sit on a dark surface. That conflict is now
+  resolved by finishing the role split the `brand-fill` steps were created
+  for: eleven segmented controls, the sidebar sign-up button and the
+  account avatar move onto `bg-brand-fill` (4.37:1 → 6.38:1, and the
+  sidebar's `hover:bg-brand-700` 2.30:1 → 9.57:1), leaving `brand-600` free
+  to be ink only. It is now `#6087f2` — same hue, higher lightness — and
+  clears AA on every background it lands on: surface-canvas 5.86:1,
+  surface-subtle 5.70:1, surface 5.58:1, surface-muted 5.13:1, brand-50
+  4.82:1.
+
+- **web:** the issuer scam badge read `bg-down text-white` at 3.53:1 — the
+  same white-on-brand mistake the direction pills had already been fixed
+  for, in the one place on the site that warns people off a malicious
+  issuer. It now takes the canvas ink the pills take (5.58:1). The
+  dashboard checklist's unchecked bullet was `text-line-strong`, a
+  hairline tint at 1.40:1 on its card — below even the 3:1 WCAG 1.4.11
+  floor for a graphic; now `text-ink-faint` at 4.69:1.
+
+
+- **web:** `/bridges` and `/external/assets` are now in `sitemap.xml`.
+  Both are linked from the nav, indexable and canonical-tagged, and both
+  were simply never added — the same omission already recorded in that
+  file for the seven chain-explorer hubs, repeated by the two newest
+  pages of those families. `/external/assets` was the sharper case: its
+  per-currency children were being submitted while the hub that indexes
+  them was not.
+
+- **web:** the four query-param entity shells — `/contract?id=`,
+  `/ledger?seq=`, `/tx?hash=` and `/operation?tx=&i=` — are now
+  `robots: { index: false, follow: true }`, matching every canonical
+  counterpart (`/contracts/[id]`, `/ledgers/[seq]`,
+  `/transactions/[hash]`, `/accounts/[g]`), which already carried it.
+  Each renders entirely from its query string and tags itself
+  `canonical: '/<route>'`, so the one URL a crawler can construct — and
+  the one every parameterised hit is consolidated onto — is the bare
+  path, which renders an empty shell. The first three exist specifically
+  to catch inbound legacy links, so they are the likeliest of all these
+  pages to be crawled. `follow: true` keeps the outbound links flowing;
+  only the empty shell is withheld.
+
 ### Security
 
 - **migrate,config,api:** a Postgres password can no longer reach the deploy
@@ -483,181 +653,6 @@ against.
   `chat-informational` receiver and the same bounded Discord Go template,
   gated on a new `alertmanager_discord_webhook_url_informational` role
   variable that degrades to a stub when unset.
-### Fixed
-
-- **api,docs:** the DEX TVL headline's scope exclusion for lending pointed
-  a reader at a field that does not exist (#338). Every `/v1/protocols`
-  response carries `tvl_total.excluded`, and `/v1/protocols/blend/tvl`
-  serves the matching entry as its 404 detail, so this sentence is the
-  answer a reader gets when they ask where the omitted number lives. It
-  said Blend's supplied-value "is published per-protocol as
-  `bespoke.tvl_usd`". There is no such field: the lending protocol block
-  carries event and user COUNTS only and says so itself
-  ("Pool-level figures are event/user COUNTS only… this block is
-  event-derived and window-scoped"). The only lending `tvl_usd` the API
-  serves is per-POOL, on `GET /v1/lending/pools/{pool}/reserves`
-  (ADR-0039, decoded from contract storage) — which is what the reason
-  now names. Sorocredit is split into its own entry rather than sharing
-  Blend's sentence, because it has no current-state figure at all and
-  the shared wording implied one. A new guard makes the class of defect
-  fail the build rather than age on the wire: an exclusion that claims
-  the figure is published or served elsewhere must NAME a `/v1` route,
-  and the route must be one `server.go` actually registers.
-
-### Changed
-
-- **web:** `/dexes` renders the served DEX TVL headline above its
-  protocol table. The page fetched `/v1/protocols` for its per-protocol
-  TVL column and discarded `tvl_total`, so the site's DEX page — the one
-  the "DEX TVL" promise names — showed the parts and never the whole,
-  while `/protocols` had rendered the headline since 39fe9d3e. It reuses
-  the same component, so the "≥" prefix, the hatch, the priced/total
-  split, the `basis` prose and the `excluded[]` disclosure are identical
-  on both pages. It applies the same reconciliation rule too: the
-  headline is the exact sum of the column beneath it, so it renders only
-  when every protocol it sums is a visible row showing a figure — this
-  table is built from `/v1/sources`, a different registry from the
-  `/v1/protocols` rows the total is summed over, so a summed protocol
-  can be missing here even when the server admitted it. Absent stays
-  absent: an omitted `tvl_total` renders nothing, never `$0.00`.
-### Fixed
-
-- **web:** `brand-600` is legible again. It was `#4270f0`, which measured
-  4.29:1 on `surface` and 3.95:1 on `surface-muted` — a WCAG 1.4.3 AA
-  failure on ~380 link sites, i.e. on most of the clickable text in the
-  explorer. The earlier pass could not lift it because the same token was
-  also a white-text FILL, and a fill has to go DARKER to carry white while
-  ink has to go LIGHTER to sit on a dark surface. That conflict is now
-  resolved by finishing the role split the `brand-fill` steps were created
-  for: eleven segmented controls, the sidebar sign-up button and the
-  account avatar move onto `bg-brand-fill` (4.37:1 → 6.38:1, and the
-  sidebar's `hover:bg-brand-700` 2.30:1 → 9.57:1), leaving `brand-600` free
-  to be ink only. It is now `#6087f2` — same hue, higher lightness — and
-  clears AA on every background it lands on: surface-canvas 5.86:1,
-  surface-subtle 5.70:1, surface 5.58:1, surface-muted 5.13:1, brand-50
-  4.82:1.
-
-- **web:** the issuer scam badge read `bg-down text-white` at 3.53:1 — the
-  same white-on-brand mistake the direction pills had already been fixed
-  for, in the one place on the site that warns people off a malicious
-  issuer. It now takes the canvas ink the pills take (5.58:1). The
-  dashboard checklist's unchecked bullet was `text-line-strong`, a
-  hairline tint at 1.40:1 on its card — below even the 3:1 WCAG 1.4.11
-  floor for a graphic; now `text-ink-faint` at 4.69:1.
-
-### Added
-
-- **web:** two source-derived a11y guards, both of which fail on the day a
-  new call site repeats the mistake rather than at the next audit.
-  `color-contrast.a11y.test.ts` recomputes the WCAG formula over the
-  shipped palette and over every class string in `src/`, and asserts no
-  pair below 4.5:1 (2,320 foreground occurrences today); it also asserts
-  the stylesheet still ships a single dark palette, so the matrix cannot
-  silently go half-covered if a light theme lands. Its rule for fills is
-  derived, not listed: a token bright enough to be READ on the dark canvas
-  is too bright to sit behind white. `keyboard-operable.a11y.test.ts`
-  asserts every clickable table row contains a real `<button>` with a name,
-  a focus style and a state attribute, that every click-to-dismiss overlay
-  routes through `useDialog` for its Escape path, and that nothing uses a
-  positive `tabIndex`. Both were verified red against the pre-fix tree:
-  the contrast pack over 349 offending sites and at the direction pills'
-  original 2.23:1 / 3.53:1, the keyboard pack naming all three click-only
-  rows — including the two pool-depth expanders that the existing
-  `/divergences` test could not see.
-
-### Changed
-
-- **web:** the status page's per-source completeness tones are a
-  `{ bar, label }` pair rather than one space-joined string pulled apart by
-  `.split(' ')` at each use. The two classes have always been applied to
-  two different elements; written as one string they read as a background
-  and a foreground applied together, which is both misleading and the kind
-  of thing a contrast scan has to be told to ignore.
-### Fixed
-
-- **web:** `/bridges` and `/external/assets` are now in `sitemap.xml`.
-  Both are linked from the nav, indexable and canonical-tagged, and both
-  were simply never added — the same omission already recorded in that
-  file for the seven chain-explorer hubs, repeated by the two newest
-  pages of those families. `/external/assets` was the sharper case: its
-  per-currency children were being submitted while the hub that indexes
-  them was not.
-
-- **web:** the four query-param entity shells — `/contract?id=`,
-  `/ledger?seq=`, `/tx?hash=` and `/operation?tx=&i=` — are now
-  `robots: { index: false, follow: true }`, matching every canonical
-  counterpart (`/contracts/[id]`, `/ledgers/[seq]`,
-  `/transactions/[hash]`, `/accounts/[g]`), which already carried it.
-  Each renders entirely from its query string and tags itself
-  `canonical: '/<route>'`, so the one URL a crawler can construct — and
-  the one every parameterised hit is consolidated onto — is the bare
-  path, which renders an empty shell. The first three exist specifically
-  to catch inbound legacy links, so they are the likeliest of all these
-  pages to be crawled. `follow: true` keeps the outbound links flowing;
-  only the empty shell is withheld.
-
-### Added
-
-- **web:** `src/lib/route-graph.ts` — the link-graph walk, extracted from
-  `route-reachability.test.ts` so `crawl-surface.test.ts` shares one
-  implementation rather than growing a second notion of "reachable".
-  Test-only, like `lib/nav-shell`. `crawl-surface.test.ts` gains four
-  assertions on top of it: the sitemap submits nothing a reader cannot
-  navigate to (an orphaned island now fails the suite instead of waiting
-  to be noticed), every entry names a real `page.tsx`, every page the nav
-  offers is submitted, and the query-param shells stay out of the index.
-
-- **docs:** `docs/operations/api-explorer-coverage.md` — every path in the
-  OpenAPI contract against whether the explorer consumes it and whether a
-  reader can reach it, at three levels (not consumed / consumed but
-  unreachable / reachable), plus a discoverability audit and the
-  spec-versus-running-API differences. 126 paths: 101 reachable, 0
-  consumed-but-unreachable, 21 not consumed, 4 operational.
-- **ci:** `scripts/ci/render-sla-proof.sh` renders a k6 `--summary-export`
-  into `docs/operations/sla-proof-<YYYY-MM-DD>.md`, and `k6-weekly.yml`
-  now runs it and commits the result (#378). The weekly run could already
-  measure and report; it had no implementation of the step that makes the
-  measurement durable. Its export lives in a 90-day artifact, its numbers
-  in a job page, and the only artefact `check-sla-evidence.sh` counts is a
-  committed dated report — whose sole "procedure" directed an operator to
-  mint Grafana snapshots from `grafana.staging.stellarindex.io`, a host
-  that does not exist, and to run promql over `k6_*` series that only
-  exist when an unset remote-write secret is set. No dated proof report
-  has ever landed on any branch. The generated report names its own
-  provenance — target, run window, method, scenario, commit, k6 version,
-  and the sha256 of the export it came from — and the renderer REFUSES
-  (writing nothing) when a headline metric or a provenance field is
-  absent, so an unlabelled number cannot be published as a proof. The
-  refusal that matters most: k6's default trend stats omit `p(99)`, so an
-  export taken without `--summary-trend-stats` renders a document that
-  reads "n/a" for half of ADR-0009 while looking complete — which is the
-  exact shape of the real checked-in 2026-06-13 export.
-
-### Changed
-
-- **ci:** three further changes to `k6-weekly.yml` so a run that measures
-  cannot also leave nothing behind (#378). `Run scenario` no longer aborts
-  the job on a non-zero k6 exit: k6 exits 99 on a BREACHED threshold,
-  which is a real measurement and the single most valuable report to
-  retain, so the code is published as an output and the final step reddens
-  the run on it. The evidence verdict driving the tracking issue and the
-  exit status is recomputed AFTER the report lands — taken before, a first
-  healthy run would go red for the absence of the file it had just written
-  and the feed would need two weeks to call itself healthy once. And the
-  tracking issue no longer closes unless THIS run produced a proof, so a
-  run that measured nothing cannot report the feed healthy on the strength
-  of an earlier run's report still inside the 45-day window. The evidence
-  job takes `contents: write` for the commit, which goes through the
-  contents API with the job token; every checkout in the workflow stays
-  `persist-credentials: false`.
-
-- **docs:** `sla-proof-procedure.md` documents the generated path and
-  states precisely what is blocked on an operator — `K6_TARGET_STAGING`
-  and `STELLARINDEX_LOAD_API_KEY` are unset, so there is no target and
-  nothing measures the p95 ≤ 200 ms claim. The two capture steps that
-  cannot be performed (Grafana snapshots, promql over `k6_*`) are marked
-  BLOCKED with the reason rather than left as instructions, and
-  `sla-proof-template.md` is marked superseded by the generator.
 
 ## [v0.65.0] — 2026-09-08
 
