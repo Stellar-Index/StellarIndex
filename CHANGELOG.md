@@ -61,6 +61,17 @@ against.
   `internal/sources/redstone` imports for its `earnUSDC_FUNDAMENTAL` feed
   base, so a published price and the activity underneath it cannot drift
   onto two different asset ids.
+- **api:** the DEX TVL headline declares two more standing scope
+  exclusions — `sushiswap_v3` (concentrated liquidity: depth sits in
+  per-position tick ranges, so a pool's token balances are not a
+  two-sided reserve and no reserve-derived figure is computed at all
+  rather than a wrong one) and `soroswap-router` (routes through pairs
+  already summed under `soroswap`). A new guard,
+  `TestDEXTVLScope_PooledProtocolIsDerivedOrExplicitlyExcluded`, fails
+  when an `amm`/`dex` protocol is neither summed into the total nor named
+  in the exclusions, so the headline can omit a protocol but never
+  silently. The derivation set moved out of an anonymous slice inside
+  `Refresh` so the guard reads it rather than a second copy (#350).
 
 - **ci:** `lint-git-fixture-isolation` requires a script that creates a
   git repository to clear `GIT_DIR` and its siblings first. `git init`
@@ -174,6 +185,26 @@ against.
   step fails, which is what makes that classification reachable.
 
 ### Fixed
+
+- **explorer:** `/dexes/sushiswap_v3` returned 404 while `sitemap.xml`
+  published the URL. `sitemap.ts` emits `/dexes/<name>` for every
+  `subclass=dex` source it reads off `/v1/sources`, but the page's
+  `DEX_INFO` map — which feeds `generateStaticParams` — was a hand-kept
+  list of five, so enabling a sixth DEX put a known-broken URL in the
+  sitemap and 404'd the link the `/dexes` protocol table renders for its
+  own row. The venue was also absent from the `ALL_DEXES` source-filter
+  chips. Both maps now carry `sushiswap_v3`, and
+  `lint-protocol-registry-sync` §2 cross-checks all three sets so the
+  next DEX cannot ship the same way (#350).
+
+- **api:** `GET /v1/protocols/sushiswap_v3/tvl` blamed its 404 on
+  deployment wiring ("this protocol's pooled-liquidity derivation is not
+  wired on this deployment"), a reason an operator could act on. The real
+  reason is permanent: concentrated liquidity has no two-sided reserve to
+  sum. The refusal now says that, and the headline `tvl_total.excluded`
+  names the protocol, so a reader adding up `/v1/protocols` can see which
+  indexed AMM the total omits and why instead of inferring it from silence
+  (#350).
 
 - **dev:** `branch-status-test.sh` built its throwaway repository with
   `git -C "$tmp" init`, which honours an inherited `GIT_DIR` over its own

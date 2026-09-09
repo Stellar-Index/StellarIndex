@@ -45,7 +45,18 @@ const PAGE_LIMIT = 100;
 // Subclass=DEX entries. Frontend doesn't have an /v1/sources?role=
 // filter yet, so the pill row is static — keeps the chips visible
 // before the first /v1/pools response lands.
-const ALL_DEXES = ['aquarius', 'comet', 'phoenix', 'sdex', 'soroswap'];
+//
+// scripts/ci/lint-protocol-registry-sync.sh §2 fails on any drift
+// between this list, DEX_INFO in dexes/[source]/page.tsx and the Go
+// registry, so a new DEX cannot ship with no chip and no page.
+const ALL_DEXES = [
+  'aquarius',
+  'comet',
+  'phoenix',
+  'sdex',
+  'soroswap',
+  'sushiswap_v3',
+];
 
 // Source-name annotations that appear next to the source chip.
 // Comet's only mainnet deployment is Blend's backstop pool —

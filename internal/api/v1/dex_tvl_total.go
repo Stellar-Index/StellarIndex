@@ -91,6 +91,22 @@ var dexTVLScopeExclusions = []DEXTVLExclusion{
 			"different quantity from locked value and is served separately at /v1/sdex/orderbook",
 	},
 	{
+		Subject: "sushiswap_v3",
+		Reason: "concentrated liquidity is not constant product: a V3 pool spreads its depth " +
+			"across per-position tick ranges, so the pool's token balances are not a two-sided " +
+			"reserve and their sum is not the pool's value — that needs the live sqrt price read " +
+			"against every open position's bounds, which is not captured as current state. " +
+			"Running the reserve path over the balances anyway would produce a number with no " +
+			"meaning, so no figure is derived at all; the protocol's swaps are served at " +
+			"/v1/pools and its per-contract coverage at /v1/protocols/{name}",
+	},
+	{
+		Subject: "soroswap-router",
+		Reason: "the router holds no liquidity of its own — its rows are multi-hop swap intents " +
+			"routed through the same Soroswap pairs already summed under soroswap, so adding it " +
+			"would double-count those pools",
+	},
+	{
 		Subject: "blend",
 		Reason: "lending supplied-value is a different quantity from AMM pooled liquidity; Blend's " +
 			"current-state figure is served per-pool as tvl_usd on /v1/lending/pools/{pool}/reserves " +

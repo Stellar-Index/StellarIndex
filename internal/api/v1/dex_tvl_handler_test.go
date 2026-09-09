@@ -213,6 +213,12 @@ func TestHandleProtocolTVL_Refusals(t *testing.T) {
 	}{
 		{"unknown protocol", warm, "/v1/protocols/nope/tvl", http.StatusNotFound, "protocol-not-found", "unknown protocol name"},
 		{"known, no derivation (standing exclusion)", warm, "/v1/protocols/sdex/tvl", http.StatusNotFound, "protocol-tvl-not-derived", "order book"},
+		// A concentrated-liquidity AMM is UNDERIVABLE, not unwired: no
+		// two-sided reserve exists to sum, and the constant-product path
+		// would answer with a figure that means nothing. The refusal must
+		// say that rather than blaming this deployment's wiring — and it
+		// must never be a zero.
+		{"known, no derivation (concentrated liquidity)", warm, "/v1/protocols/sushiswap_v3/tvl", http.StatusNotFound, "protocol-tvl-not-derived", "concentrated liquidity"},
 		{"known, derivation not wired", warm, "/v1/protocols/soroswap/tvl", http.StatusNotFound, "protocol-tvl-not-derived", "not wired"},
 		{"no cache wired", nil, "/v1/protocols/aquarius/tvl", http.StatusServiceUnavailable, "dex-tvl-unavailable", "hasn't wired"},
 		{"cache not yet refreshed", cold, "/v1/protocols/aquarius/tvl", http.StatusServiceUnavailable, "dex-tvl-unavailable", "not completed"},
