@@ -1559,6 +1559,15 @@ type registryObservation struct {
 // `limit`, is exactly the market's newest `limit`, so the arms may be
 // limited individually. Ties on (ts, ledger) are broken by the
 // database, as they were when this read spanned one direction.
+//
+// Unbounded in time on purpose, and for the same two reasons as
+// [Store.LatestTradePerSource] — read the "no time bound, deliberately"
+// section there. The `ORDER BY ts DESC … LIMIT` lets this one stop
+// early for any market with recent trades, on top of that; the walk
+// only runs its length for a market with none, which is precisely the
+// market a recency bound would answer WRONG. This read backs
+// /v1/price's last-trade arm, so a window here would stop serving a
+// price for a quiet market rather than merely slow it down.
 func (s *Store) LatestTradesForPair(ctx context.Context, p canonical.Pair, limit int) ([]canonical.Trade, error) {
 	if limit <= 0 {
 		limit = 100
@@ -1639,6 +1648,50 @@ func (s *Store) LatestTradesForPair(ctx context.Context, p canonical.Pair, limit
 // the same whichever way round the market is asked for, and it is the
 // same row /v1/history serves last for that source — it orders on
 // those four components too.
+//
+// # This read carries no time bound, deliberately
+//
+// It is the last unbounded per-key walk of `trades` on a request path,
+// and it stays that way. Re-derived 2026-09-09 against the sibling
+// finding raised while [Store.HasAsset]'s unbounded arm was fixed, and
+// written down here because the shape invites the same conclusion every
+// time somebody greps for it.
+//
+//  1. It is not the HasAsset shape. That one bound `base_asset = $1 OR
+//     quote_asset = $1`. `trades` is compressed with
+//     compress_segmentby = 'base_asset, quote_asset, source' (migration
+//     0001), so a compressed chunk is indexed on those three columns in
+//     that order: a lone `quote_asset` predicate has no leading
+//     equality to seek on and every compressed chunk had to be scanned.
+//     Each arm HERE binds `base_asset = $n AND quote_asset = $m` — the
+//     leading two segmentby columns — so every chunk, compressed or
+//     not, is an index SEEK. Same table, same absence of a time bound,
+//     different cost class. [TestRawTradeReadsSpanBothStoredDirections]
+//     pins the arms that make it so.
+//  2. Measured, not asserted. On r1 2026-08-03: 49 ms (native/fiat:USD),
+//     289 ms (heaviest pair), 47 ms to prove a novel pair EMPTY — the
+//     full-history walk, the worst case, over every chunk. The note in
+//     internal/api/v1/history_cache.go records those numbers as an
+//     explicit retraction of an earlier "probes every chunk — multiple
+//     seconds" claim that was off by ~1000x. EXPLAIN on r1 2026-09-05,
+//     when the second arm landed, put the cost at exactly 2x with the
+//     skip scan surviving on both arms.
+//  3. No window preserves the answer. This surface reports the last
+//     trade seen from each source; `ts >= now() - W` turns that into
+//     "…within W", so a market whose last trade predates W reports
+//     NOTHING where it reported a real trade. Unlike HasAsset — which
+//     could answer XLM's existence from first principles and does
+//     ([Store.HasAsset], fixed 2026-09-09 for exactly this reason) —
+//     there is no first-principles answer to "what traded last": the
+//     answer IS the unbounded question. The cost lands on the quiet
+//     networks, which is where it is invisible in testing: futurenet
+//     had ZERO XLM trades in a 14-day window on 2026-09-09 while
+//     testnet had 2,030 in the same window.
+//
+// So the affordability comes from the segmentby prefix and the answer's
+// completeness comes from the absence of a window; changing either
+// breaks the other. [TestLatestTradeReadsTakeNoRecencyBound] pins the
+// window's absence, on both the SQL and the bound-argument channel.
 func (s *Store) LatestTradePerSource(ctx context.Context, p canonical.Pair, sourceFilter string) ([]canonical.Trade, error) {
 	const q = `
         (SELECT DISTINCT ON (source)
