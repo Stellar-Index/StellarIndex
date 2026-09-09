@@ -54,7 +54,13 @@ const (
 func publishedAvailability(t *testing.T) string {
 	t.Helper()
 	page := readRepoFile(t, slaPage)
-	re := regexp.MustCompile(`Availability</td>\s*<td[^>]*>&ge; ([0-9]+\.[0-9]+) %`)
+	// Whitespace-tolerant on BOTH sides of the label and around the figure.
+	// The first version required `Availability</td>` to be adjacent, so when
+	// the tree was reformatted and prettier broke that cell across three
+	// lines, this gate stopped matching — a formatter silently disabled a
+	// consistency check while the published figure was untouched. The value
+	// is what this test is about; its layout is not.
+	re := regexp.MustCompile(`Availability\s*</td>\s*<td[^>]*>\s*&ge;\s*([0-9]+\.[0-9]+)\s*%`)
 	m := re.FindStringSubmatch(page)
 	if m == nil {
 		t.Fatalf("%s no longer states an availability objective as '&ge; NN.N %%' in the targets table", slaPage)
