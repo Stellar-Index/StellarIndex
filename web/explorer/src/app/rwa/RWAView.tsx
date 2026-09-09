@@ -6,7 +6,12 @@ import { useQuery } from '@tanstack/react-query';
 import { Panel } from '@/components/reveal';
 import { apiGetData, asExample } from '@/api/client';
 import type { components } from '@/api/types';
-import { formatCompact, formatDecimalAmount } from '@/lib/format';
+import {
+  formatCompact,
+  formatDecimalAmount,
+  formatOraclePrice,
+  formatRelative,
+} from '@/lib/format';
 import { hasDirectoryScamFlag } from '@/lib/directory-tags';
 import { truncateMiddle } from '@/components/ui/Mono';
 import {
@@ -46,6 +51,29 @@ const VALUATION_REASON: Record<string, string> = {
     'Withheld — a price exists but its liquidity is below the floor at which a market cap would mean anything.',
   supply_unavailable:
     'A price exists but no circulating-supply reading does, so no market cap can be computed.',
+};
+
+/**
+ * Why a premium or discount is not a number. Same rule as the valuation
+ * column above it: the cell renders the reason, never a dash on its own
+ * and never a zero — "0.00%" reads as "trades at par", which is a
+ * finding, and a comparison that was never made is not that finding.
+ */
+const PREMIUM_REASON: Record<string, string> = {
+  withheld_issuer_flagged:
+    'Withheld — the issuer carries a scam-class directory flag. No valuation is published for it, including an independent one: handing an impersonator the real instrument’s value would be a larger claim than the one the flag suppressed.',
+  no_reference_feed:
+    'No independent oracle publishes a valuation for this instrument.',
+  reference_not_instrument_scoped:
+    'An oracle prices an instrument of this name, but it prices an off-chain quantity in its own unit — a troy ounce of spot metal, one fund share — not one token. Their ratio would be a unit conversion, not a premium.',
+  reference_not_usd_denominated:
+    'The oracle’s value for this instrument is denominated in the reserve asset it is a claim on, not in dollars, so it is a ratio rather than a price. It is not converted here.',
+  no_market_price:
+    'An independent valuation exists, but no Stellar market price does, so there is nothing to compare it against.',
+  market_price_not_observed:
+    'The price on this row is a declared peg or a derived rate rather than a market observation. Measuring a premium against it would report the issuer’s own claim as a market finding.',
+  reference_not_positive:
+    'The oracle published a non-positive value, which cannot be a denominator.',
 };
 
 /**
@@ -278,6 +306,16 @@ function HeadlineStats({
             valuation and contribute nothing to the total.{' '}
           </>
         )}
+        {summary.assets_with_reference > 0 && (
+          <>
+            <strong>Compared against the instrument.</strong>{' '}
+            {summary.assets_with_reference} of {summary.assets} carry an
+            independent oracle valuation of the instrument they anchor to, and{' '}
+            {summary.assets_compared} of those also have a Stellar market price
+            to measure it against. The rest state which requirement stopped the
+            comparison rather than showing a zero.{' '}
+          </>
+        )}
         {summary.basis}
       </p>
     </div>
@@ -294,6 +332,8 @@ function AssetTable({ assets }: { assets: RWAAsset[] }) {
           <Th>Anchor</Th>
           <Th align="right">Market cap</Th>
           <Th align="right">Price</Th>
+          <Th align="right">Instrument value</Th>
+          <Th align="right">vs instrument</Th>
           <Th align="right">24h volume</Th>
           <Th align="right">First seen</Th>
         </TR>
@@ -359,6 +399,12 @@ function AssetRow({ asset }: { asset: RWAAsset }) {
       <Td align="right">{cap ?? <Withheld reason={reason} />}</Td>
       <Td align="right">{price ?? <Withheld reason={reason} />}</Td>
       <Td align="right">
+        <ReferenceCell asset={asset} />
+      </Td>
+      <Td align="right">
+        <PremiumCell premium={asset.premium} />
+      </Td>
+      <Td align="right">
         {volume == null ? (
           <span
             className="text-ink-faint"
@@ -393,6 +439,70 @@ function Withheld({ reason }: { reason?: string }) {
       title={reason ?? 'Not available'}
     >
       Unavailable
+    </span>
+  );
+}
+
+/**
+ * An independent oracle's valuation of the instrument the token declares
+ * it anchors to — deliberately NOT labelled as the token's price. The
+ * publisher and the vintage sit under the figure because a valuation
+ * whose age is invisible invites a comparison it cannot support.
+ */
+function ReferenceCell({ asset }: { asset: RWAAsset }) {
+  const ref = asset.reference;
+  if (!ref) {
+    return <Withheld reason={PREMIUM_REASON[asset.premium.status]} />;
+  }
+  return (
+    <div>
+      <div className="tnum">${formatOraclePrice(ref.price_usd)}</div>
+      <div className="text-ink-faint text-[11px]">
+        {ref.source} · {formatRelative(ref.as_of)}
+        {ref.stale && (
+          <span
+            className="text-ink-muted ml-1"
+            title="Older than 72 hours — the longest ordinary gap between two strikes of a real-world instrument's value. Shown, not withheld: a value struck last week is still the last one published."
+          >
+            stale
+          </span>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * The gap between what the market pays for the token and what an
+ * independent party says the instrument is worth — the number a holder
+ * of a tokenized treasury actually needs.
+ *
+ * A refused comparison renders as a word, never as "0.00%": par is a
+ * finding, and a comparison that was never made is not that finding.
+ */
+function PremiumCell({ premium }: { premium: RWAAsset['premium'] }) {
+  if (premium.status !== 'published' || premium.pct == null) {
+    return <Withheld reason={PREMIUM_REASON[premium.status]} />;
+  }
+  const pct = Number(premium.pct);
+  if (!Number.isFinite(pct)) {
+    return <Withheld reason={PREMIUM_REASON[premium.status]} />;
+  }
+  const tone =
+    pct > 0 ? 'text-up' : pct < 0 ? 'text-down' : 'text-ink-body';
+  return (
+    <span
+      className={`tnum font-medium ${tone}`}
+      title={
+        pct === 0
+          ? 'The market price equals the independent valuation.'
+          : pct > 0
+            ? 'The token trades ABOVE the independent valuation of the instrument.'
+            : 'The token trades BELOW the independent valuation of the instrument.'
+      }
+    >
+      {pct > 0 ? '+' : ''}
+      {pct.toFixed(2)}%
     </span>
   );
 }
@@ -484,6 +594,25 @@ function DefinitionPanel({
           {definition.anchor_classes.join(', ')}
         </span>
         . Fiat-anchored tokens are stablecoins and are counted elsewhere.
+      </p>
+      <p className="text-ink-muted mt-3 text-xs leading-relaxed">
+        <strong className="text-ink-body">
+          What the instrument comparison rests on.
+        </strong>{' '}
+        The right-hand columns put an independent oracle&rsquo;s valuation of
+        the real-world instrument beside what the Stellar market pays for the
+        token. That the two are the same quantity comes from the issuer&rsquo;s
+        own domain-bound declaration and the independent recognition of its
+        account — the same evidence that admitted the asset — and is not a
+        separate measurement. A comparison is published only for the
+        instruments whose oracle feed prices one token: a feed that prices a
+        troy ounce of spot metal or one share of a fund is measuring something
+        else, and its ratio to a token price would be a unit conversion wearing
+        a premium&rsquo;s clothes. Comparable instruments:{' '}
+        <span className="font-mono">
+          {definition.comparable_instrument_codes.join(', ')}
+        </span>
+        .
       </p>
       {refusedTotal > 0 && (
         <details className="group border-line mt-3 rounded-lg border">

@@ -36,6 +36,14 @@ function asset(over: Partial<Schemas['RWAAsset']> = {}): Schemas['RWAAsset'] {
       price_usd: '1.0412',
       market_cap_usd: '1284500.00',
     },
+    reference: {
+      price_usd: '1.07403800',
+      source: 'redstone',
+      feed: 'rwa:USTRY',
+      quote: 'fiat:USD',
+      as_of: '2026-09-09T15:08:40Z',
+    },
+    premium: { status: 'published', pct: '-3.0574' },
     circulating_supply: '12336218000000',
     volume_24h_usd: '8214.55',
     first_seen_ledger: 55008233,
@@ -65,6 +73,7 @@ function view(over: Partial<View> = {}): View {
         'hack',
         'phishing',
       ],
+      comparable_instrument_codes: ['CETES', 'TESOURO', 'USTRY'],
       documentation_url:
         'https://stellarindex.io/docs/methodology/rwa-definition',
     },
@@ -76,6 +85,8 @@ function view(over: Partial<View> = {}): View {
       assets_unvalued: 0,
       lower_bound: false,
       earliest_first_seen_ledger: 55008233,
+      assets_with_reference: 1,
+      assets_compared: 1,
       basis:
         'Sum of the published market caps of the assets meeting the four-requirement definition.',
     },
@@ -256,6 +267,8 @@ describe('RWAView', () => {
           assets_valued: 0,
           assets_unvalued: 0,
           lower_bound: false,
+          assets_with_reference: 0,
+          assets_compared: 0,
           basis: 'No asset currently meets the definition.',
         },
         by_class: [],
@@ -282,5 +295,108 @@ describe('RWAView', () => {
     expect(
       screen.queryByText(/No asset currently meets the definition/),
     ).not.toBeInTheDocument();
+  });
+
+  it('shows the discount to the instrument valuation, with its publisher and vintage', async () => {
+    apiGetData.mockResolvedValue(view());
+    renderView();
+
+    // The independent valuation, at the oracle's own scale.
+    expect(await screen.findByText('$1.0740')).toBeInTheDocument();
+    // Who published it and when — a valuation whose age is invisible
+    // invites a comparison it cannot support.
+    expect(screen.getByText(/redstone/)).toBeInTheDocument();
+    // And the gap itself, signed against the instrument.
+    expect(screen.getByText('-3.06%')).toBeInTheDocument();
+    // Coverage of the comparison, so the blanks are not read as zeros.
+    expect(
+      screen.getByText(/carry an independent oracle valuation/),
+    ).toBeInTheDocument();
+  });
+
+  it('renders a refused comparison as words, never as 0.00%', async () => {
+    apiGetData.mockResolvedValue(
+      view({
+        assets: [
+          asset({
+            code: 'XAU',
+            reference: undefined,
+            premium: { status: 'reference_not_instrument_scoped' },
+          }),
+        ],
+      }),
+    );
+    renderView();
+
+    await screen.findByText('XAU');
+    // Zero would read as "trades at par" — a finding, and not the one
+    // the data supports.
+    expect(screen.queryByText('0.00%')).not.toBeInTheDocument();
+    expect(screen.queryByText('-0.00%')).not.toBeInTheDocument();
+    // Both the instrument-value and the premium cell say the word.
+    expect(screen.getAllByText('Unavailable').length).toBeGreaterThanOrEqual(2);
+    // Both cells state the same reason: the oracle prices something
+    // else, so neither a value nor a gap can be published.
+    expect(
+      screen.getAllByTitle(/off-chain quantity in its own unit/).length,
+    ).toBeGreaterThanOrEqual(2);
+  });
+
+  it('gives a flagged issuer no independent instrument valuation either', async () => {
+    apiGetData.mockResolvedValue(
+      view({
+        assets: [
+          asset({
+            issuer_directory_tags: ['issuer', 'malicious'],
+            valuation: { status: 'withheld_issuer_flagged' },
+            reference: undefined,
+            premium: { status: 'withheld_issuer_flagged' },
+          }),
+        ],
+        summary: {
+          ...view().summary,
+          market_cap_usd: undefined,
+          assets_valued: 0,
+          assets_unvalued: 1,
+          lower_bound: true,
+          assets_with_reference: 0,
+          assets_compared: 0,
+        },
+      }),
+    );
+    renderView();
+
+    expect(await screen.findByText('Flagged')).toBeInTheDocument();
+    // No figure of any kind reaches a flagged issuer's row — not this
+    // platform's, and not a third party's valuation of the real
+    // instrument, which would be the larger claim of the two.
+    expect(screen.queryByText('$1.0740')).not.toBeInTheDocument();
+    expect(screen.queryByText(/redstone/)).not.toBeInTheDocument();
+    expect(screen.queryByText('-3.06%')).not.toBeInTheDocument();
+  });
+
+  it('labels a stale instrument valuation rather than hiding it', async () => {
+    apiGetData.mockResolvedValue(
+      view({
+        assets: [
+          asset({
+            reference: {
+              price_usd: '1.07403800',
+              source: 'redstone',
+              feed: 'rwa:USTRY',
+              quote: 'fiat:USD',
+              as_of: '2026-08-01T00:00:00Z',
+              stale: true,
+            },
+          }),
+        ],
+      }),
+    );
+    renderView();
+
+    expect(await screen.findByText('$1.0740')).toBeInTheDocument();
+    expect(screen.getByText('stale')).toBeInTheDocument();
+    // Labelled, not withheld: it is still the last value published.
+    expect(screen.getByText('-3.06%')).toBeInTheDocument();
   });
 });

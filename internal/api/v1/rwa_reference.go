@@ -1,0 +1,428 @@
+package v1
+
+import (
+	"context"
+	"math/big"
+	"sort"
+	"strings"
+	"time"
+
+	"github.com/Stellar-Index/StellarIndex/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/rwa"
+	"github.com/Stellar-Index/StellarIndex/internal/sources/external"
+)
+
+// Oracle NAV reference and premium/discount for /v1/rwa/assets.
+//
+// A tokenized treasury has two prices: what an independent oracle says
+// the instrument is worth, and what the Stellar market will pay for the
+// token. The gap between them is the number a holder of a tokenized
+// treasury actually needs, and it is the one figure on this surface that
+// no query over public chain data alone can produce — it needs both the
+// oracle stream and the gated market price, which this index holds
+// together.
+//
+// Four rules decide whether the gap may be published. Each removes a way
+// of publishing a number that means something other than what it says.
+//
+// R-A — THE REFERENCE MUST BE DOLLARS. A feed's value is denominated in
+// whatever the registry says it is denominated in, and a bare
+// `_FUNDAMENTAL` feed publishes net asset value in the token's RESERVE
+// asset — a RATIO, not a dollar figure. Registering two such feeds as
+// USD once served "a BTC-backed token is worth $1.00" for a token its
+// own USD sibling priced at $78,313 (D8, internal/sources/redstone
+// feeds.go). So the quote is read off the STORED ROW and must be
+// `fiat:USD`; a row quoted in anything else is refused with that as the
+// stated reason, never unit-converted into dollars here.
+//
+// R-B — THE REFERENCE MUST PRICE A TOKEN. `rwa:XAU` is spot gold per
+// troy ounce and `rwa:SPXU` is one share of an exchange-traded fund;
+// neither is one token of anything. [rwa.TokenizedInstrumentCode] is the
+// allow-list, and it fails closed.
+//
+// R-C — THE PUBLISHER MUST BE AN ORACLE. Only sources the registry
+// classes [external.ClassOracle] qualify. Aggregators and the
+// authority-sanity feeds write into the same hypertable for divergence
+// comparison; a premium measured against an aggregator's own guess at
+// the market price would be the market compared with itself.
+//
+// R-D — THE MARKET PRICE MUST BE OBSERVED. A price carried on
+// `price_basis` is a declared peg or a transitive derivation rather than
+// a market's opinion. Measuring a premium against a declared peg reports
+// the issuer's own claim back as a market finding.
+//
+// A row failing any of them carries no premium figure and says which
+// rule refused it. None of them ever produces a zero.
+
+// rwaReferenceTTL bounds the reuse of one oracle-stream snapshot.
+//
+// The RWA feeds publish on a cadence of seconds to minutes, so 30s keeps
+// the surface off a per-request hypertable scan while never showing a
+// figure materially older than an uncached read would have. Deliberately
+// far shorter than [rwaMembershipTTL]: membership moves daily, a price
+// does not.
+const rwaReferenceTTL = 30 * time.Second
+
+// rwaReferenceStaleAfter is the age past which a reference is served
+// with `stale: true`.
+//
+// 72 hours is the longest ordinary gap between two strikes of a
+// real-world instrument's value: a Friday figure read on the following
+// Monday, plus one public holiday. Shorter would flag every weekend on a
+// treasury fund, whose value is struck on business days by construction.
+//
+// It LABELS, it does not withhold. A NAV struck last Friday is the
+// current NAV on Monday morning, and suppressing it would hide the only
+// independent valuation the surface has. The outer bound is enforced
+// elsewhere and is absolute: LatestOracleStreams returns nothing older
+// than 7 days, so a feed that went dark leaves the row with no reference
+// at all rather than an ancient one.
+const rwaReferenceStaleAfter = 72 * time.Hour
+
+// ─── wire shape ─────────────────────────────────────────────────────
+
+// RWAReference is an independent oracle's valuation of the real-world
+// instrument an admitted token declares it anchors to.
+//
+// It is NOT this platform's price for the token, and it is not derived
+// from any Stellar market. Both figures are served so a reader can see
+// the two independently rather than only their ratio.
+type RWAReference struct {
+	// PriceUSD is the oracle's published value, verbatim at the feed's
+	// own decimal scale (decimal string — ADR-0003). Not re-rounded: the
+	// scale is the oracle's statement of its own precision.
+	PriceUSD string `json:"price_usd"`
+	// Source is the registered oracle that published it.
+	Source string `json:"source"`
+	// Feed is the canonical asset id of the instrument the oracle
+	// priced — `rwa:<CODE>`. Present so a reader can pull the same row
+	// from /v1/oracle/latest and check this figure against its origin.
+	Feed string `json:"feed"`
+	// Quote is the denominator, always `fiat:USD` on a served row. It is
+	// on the wire rather than assumed because a NAV feed denominated in
+	// a reserve asset is a ratio, and the difference is invisible in the
+	// number alone.
+	Quote string `json:"quote"`
+	// AsOf is when the oracle published it. The market price beside it
+	// carries the response's own as_of, so the two vintages are
+	// separately visible.
+	AsOf WireTime `json:"as_of"`
+	// Stale marks a reference older than 72h — served, but labelled.
+	Stale bool `json:"stale,omitempty"`
+}
+
+// RWAPremium is the token's market price measured against the oracle's
+// valuation of the instrument, or the reason there is no such figure.
+type RWAPremium struct {
+	Status string `json:"status"`
+	// Pct is (market − reference) / reference × 100 as a decimal string:
+	// positive when the token trades ABOVE the instrument's independent
+	// valuation, negative when below. Present only when Status is
+	// published. Never zero-filled — a status other than published
+	// means the comparison could not be made, which is a different
+	// statement from "it trades at par".
+	Pct *string `json:"pct,omitempty"`
+}
+
+// RWAPremium status values.
+const (
+	// RWAPremiumPublished — both figures exist and are comparable.
+	RWAPremiumPublished = "published"
+	// RWAPremiumIssuerFlagged — the issuer carries a scam-class
+	// directory tag. No valuation of any kind is published for it,
+	// including a third party's: an impersonator handed a real
+	// instrument's NAV is exactly the claim the flag exists to deny.
+	RWAPremiumIssuerFlagged = "withheld_issuer_flagged"
+	// RWAPremiumNoReference — no oracle publishes a feed for this
+	// instrument code.
+	RWAPremiumNoReference = "no_reference_feed"
+	// RWAPremiumNotInstrumentScoped — a feed of this code exists but
+	// prices an off-chain quantity in its own unit (a troy ounce of spot
+	// metal, one fund share) rather than one token. Its ratio to a token
+	// price would be a unit conversion wearing a premium's clothes.
+	RWAPremiumNotInstrumentScoped = "reference_not_instrument_scoped"
+	// RWAPremiumReferenceNotUSD — a feed exists but its stored quote is
+	// not fiat:USD, so its value is a ratio in a reserve asset and is
+	// not a dollar figure (D8). Not converted here.
+	RWAPremiumReferenceNotUSD = "reference_not_usd_denominated"
+	// RWAPremiumNoMarketPrice — a reference exists but no served USD
+	// market price does, so there is nothing to compare it against. The
+	// reference itself is still published.
+	RWAPremiumNoMarketPrice = "no_market_price"
+	// RWAPremiumMarketNotObserved — the served price is a declared peg
+	// or a transitive derivation, not a market observation. A premium
+	// against it would report the issuer's own claim as a market
+	// finding.
+	RWAPremiumMarketNotObserved = "market_price_not_observed"
+	// RWAPremiumReferenceNotPositive — the oracle published a
+	// non-positive value. Nothing is divided by it.
+	RWAPremiumReferenceNotPositive = "reference_not_positive"
+)
+
+// ─── snapshot ───────────────────────────────────────────────────────
+
+// rwaReference is one admissible reference, reduced from an oracle row.
+type rwaReference struct {
+	priceUSD *big.Rat
+	// wire is the published decimal string at the feed's own scale.
+	wire   string
+	source string
+	feed   string
+	asOf   time.Time
+}
+
+// rwaReferences is one oracle-stream snapshot reduced to what this
+// surface may publish, keyed by upper-cased instrument code.
+type rwaReferences struct {
+	// byCode holds the references that passed R-A, R-B and R-C.
+	byCode map[string]rwaReference
+	// nonUSD records the codes whose only oracle rows are denominated in
+	// something other than dollars, so a row can state THAT as the
+	// reason rather than the weaker "no feed". Keyed the same way; the
+	// value is the quote's canonical id.
+	nonUSD map[string]string
+	// available is false when no oracle reader is wired or the read
+	// failed. Distinguished from "the oracles publish nothing for these
+	// instruments", which is a finding.
+	available bool
+}
+
+// rwaReferenceSnapshot reduces one oracle-stream read to the references
+// this surface may publish.
+//
+// It runs over the SAME rows /v1/oracle/streams serves — one per
+// (source, asset, quote) in the trailing 7d — rather than a per-code
+// query, for two reasons. One read serves the whole set, so the surface
+// costs the lake a single scan however many members it has. And the 7d
+// window is then not a threshold invented here: a feed absent from that
+// window is not an active stream, and the row correctly carries no
+// reference instead of a figure from a source that has gone quiet.
+func rwaReferenceSnapshotFrom(updates []canonical.OracleUpdate) rwaReferences {
+	out := rwaReferences{
+		byCode:    map[string]rwaReference{},
+		nonUSD:    map[string]string{},
+		available: true,
+	}
+	for _, u := range updates {
+		// R-B, and the namespace gate: only ADR-0028 instrument feeds,
+		// and only those that price one token.
+		if u.Asset.Type != canonical.AssetRWA {
+			continue
+		}
+		if !rwa.TokenizedInstrumentCode(u.Asset.Code) {
+			continue
+		}
+		// R-C — an oracle, not an aggregator writing into the same table
+		// for divergence comparison.
+		if external.Lookup(u.Source).Class != external.ClassOracle {
+			continue
+		}
+		key := strings.ToUpper(strings.TrimSpace(u.Asset.Code))
+		// R-A — dollars, read off the stored row.
+		if !isUSDQuote(u.Quote) {
+			// Keep only the first, so the reason is stable when a code
+			// has several non-USD legs.
+			if _, seen := out.nonUSD[key]; !seen {
+				out.nonUSD[key] = u.Quote.String()
+			}
+			continue
+		}
+		ref := rwaReference{
+			priceUSD: ratFromScaledInt(u.Price.BigInt(), u.Decimals),
+			wire:     scaledDecimalString(u.Price.BigInt(), u.Decimals),
+			source:   u.Source,
+			feed:     u.Asset.String(),
+			asOf:     u.Timestamp,
+		}
+		// Several oracles may price the same instrument. Take the most
+		// recent, and break an exact tie on source name so the served
+		// figure does not depend on the order the scan returned rows.
+		if prev, ok := out.byCode[key]; ok {
+			if prev.asOf.After(ref.asOf) ||
+				(prev.asOf.Equal(ref.asOf) && prev.source <= ref.source) {
+				continue
+			}
+		}
+		out.byCode[key] = ref
+	}
+	// A code whose USD leg was admitted is not missing a reference, so
+	// drop any non-USD note for it: the reason must describe the row
+	// that would be served, not one that was passed over.
+	for code := range out.byCode {
+		delete(out.nonUSD, code)
+	}
+	return out
+}
+
+// isUSDQuote reports whether an oracle row's denominator is the dollar.
+// Exact on the canonical fiat asset — never a code comparison, because
+// `crypto:USDC` and `fiat:USD` are different denominators and the
+// difference is what R-A is about.
+func isUSDQuote(q canonical.Asset) bool {
+	return q.Type == canonical.AssetFiat && q.Code == "USD"
+}
+
+// ratFromScaledInt turns a fixed-point oracle value into an exact
+// rational (ADR-0003 — never a float on a money path).
+func ratFromScaledInt(value *big.Int, decimals uint8) *big.Rat {
+	if value == nil {
+		return nil
+	}
+	r := new(big.Rat).SetInt(value)
+	if decimals == 0 {
+		return r
+	}
+	scale := new(big.Int).Exp(big.NewInt(10), big.NewInt(int64(decimals)), nil)
+	return r.Quo(r, new(big.Rat).SetInt(scale))
+}
+
+// cachedRWAReferences returns the reference snapshot, refreshed at most
+// once per TTL window and shared across concurrent requests by a
+// single-flight gate — the same shape [Server.cachedRWAMembership] uses.
+//
+// On a failed read it serves the last good snapshot when there is one,
+// and an UNAVAILABLE snapshot when there is not. Unavailable is not the
+// same as empty: an empty snapshot would tell every row "no oracle
+// publishes your instrument", which is a finding, and a read that did
+// not answer is not entitled to make it.
+func (s *Server) cachedRWAReferences(ctx context.Context) rwaReferences {
+	if s.oracle == nil {
+		return rwaReferences{}
+	}
+	s.rwaRefMu.Lock()
+	if s.rwaRefCache != nil && time.Since(s.rwaRefAt) < rwaReferenceTTL {
+		snap := *s.rwaRefCache
+		s.rwaRefMu.Unlock()
+		return snap
+	}
+	if ch := s.rwaRefFlight; ch != nil {
+		s.rwaRefMu.Unlock()
+		select {
+		case <-ch:
+			s.rwaRefMu.Lock()
+			var snap rwaReferences
+			if s.rwaRefCache != nil {
+				snap = *s.rwaRefCache
+			}
+			s.rwaRefMu.Unlock()
+			return snap
+		case <-ctx.Done():
+			return rwaReferences{}
+		}
+	}
+	done := make(chan struct{})
+	s.rwaRefFlight = done
+	s.rwaRefMu.Unlock()
+
+	var built rwaReferences
+	updates, err := s.oracle.LatestOracleStreams(ctx)
+	if err != nil {
+		s.logger.Warn("rwa references: oracle stream read failed", "err", err)
+	} else {
+		built = rwaReferenceSnapshotFrom(updates)
+	}
+
+	s.rwaRefMu.Lock()
+	if built.available {
+		s.rwaRefCache = &built
+		s.rwaRefAt = time.Now()
+	} else if s.rwaRefCache != nil {
+		built = *s.rwaRefCache
+	}
+	s.rwaRefFlight = nil
+	s.rwaRefMu.Unlock()
+	close(done)
+	return built
+}
+
+// ─── per-row application ────────────────────────────────────────────
+
+// rwaApplyReference attaches the oracle reference and the premium to one
+// served row, or the reason neither is there.
+//
+// The order of the refusals is the order of the rules, and it is
+// load-bearing for the reason reported: a flagged issuer is answered as
+// flagged before anything else is consulted, because that refusal is
+// about who is asking rather than about what the data holds.
+func rwaApplyReference(a *RWAAsset, snap rwaReferences, now time.Time) {
+	// The scam-flag suppression comes first and covers the reference
+	// too. /v1/assets withholds this issuer's own price; handing it a
+	// real instrument's independent NAV instead would publish a larger
+	// claim through the gap — a dollar figure on an impersonator, from a
+	// source that never named it.
+	if a.Valuation.Status == RWAValuationIssuerFlagged {
+		a.Premium = RWAPremium{Status: RWAPremiumIssuerFlagged}
+		return
+	}
+	if !snap.available {
+		a.Premium = RWAPremium{Status: RWAPremiumNoReference}
+		return
+	}
+
+	key := strings.ToUpper(strings.TrimSpace(a.Code))
+	ref, ok := snap.byCode[key]
+	if !ok {
+		switch {
+		case rwa.OffChainReferenceCode(a.Code):
+			a.Premium = RWAPremium{Status: RWAPremiumNotInstrumentScoped}
+		case snap.nonUSD[key] != "":
+			a.Premium = RWAPremium{Status: RWAPremiumReferenceNotUSD}
+		default:
+			a.Premium = RWAPremium{Status: RWAPremiumNoReference}
+		}
+		return
+	}
+
+	a.Reference = &RWAReference{
+		PriceUSD: ref.wire,
+		Source:   ref.source,
+		Feed:     ref.feed,
+		Quote:    "fiat:USD",
+		AsOf:     WireTime(ref.asOf),
+		Stale:    now.Sub(ref.asOf) > rwaReferenceStaleAfter,
+	}
+
+	market := ratFromOptionalString(a.Valuation.PriceUSD)
+	switch {
+	case market == nil:
+		a.Premium = RWAPremium{Status: RWAPremiumNoMarketPrice}
+	case a.Valuation.PriceBasis != "":
+		// R-D. The price is served — it is on the row above — but it is
+		// the issuer's declared peg or a hop through another market, and
+		// a premium measured against either is circular.
+		a.Premium = RWAPremium{Status: RWAPremiumMarketNotObserved}
+	case ref.priceUSD == nil || ref.priceUSD.Sign() <= 0:
+		a.Premium = RWAPremium{Status: RWAPremiumReferenceNotPositive}
+	default:
+		pct := new(big.Rat).Sub(market, ref.priceUSD)
+		pct.Quo(pct, ref.priceUSD)
+		pct.Mul(pct, big.NewRat(100, 1))
+		s := pct.FloatString(4)
+		a.Premium = RWAPremium{Status: RWAPremiumPublished, Pct: &s}
+	}
+}
+
+// rwaReferenceCounts totals how much of the set carries an independent
+// valuation and how much of it is comparable, so a reader of the
+// headline knows the coverage of the comparison without counting rows.
+func rwaReferenceCounts(assets []RWAAsset) (referenced, compared int) {
+	for _, a := range assets {
+		if a.Reference != nil {
+			referenced++
+		}
+		if a.Premium.Status == RWAPremiumPublished {
+			compared++
+		}
+	}
+	return referenced, compared
+}
+
+// rwaComparableCodes is the served vocabulary of instrument codes whose
+// oracle feed prices one token, sorted, so a consumer reads the rule
+// from the response rather than from whichever rows carry a reference
+// today.
+func rwaComparableCodes() []string {
+	out := rwa.TokenizedInstrumentCodes()
+	sort.Strings(out)
+	return out
+}

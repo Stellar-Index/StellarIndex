@@ -105,6 +105,14 @@ type RWADefinition struct {
 	RecognitionTags []string `json:"recognition_tags"`
 	// ScamFlagTags is the vocabulary that excludes an issuer outright.
 	ScamFlagTags []string `json:"scam_flag_tags"`
+	// ComparableInstrumentCodes is the closed set of ADR-0028 oracle
+	// codes whose feed prices ONE TOKEN, and against which a market
+	// price may therefore be compared. A code outside it — spot metal
+	// per troy ounce, one share of a fund — is priced in its own unit,
+	// and its ratio to a token price would be a unit conversion rather
+	// than a premium. Served so a consumer reads the rule instead of
+	// inferring it from which rows carry a reference today.
+	ComparableInstrumentCodes []string `json:"comparable_instrument_codes"`
 	// DocumentationURL points at the prose statement of the rule.
 	DocumentationURL string `json:"documentation_url"`
 }
@@ -131,6 +139,14 @@ type RWASummary struct {
 	// start of a sampling window. 0 (omitted) when no member carried a
 	// first-seen ledger.
 	EarliestFirstSeenLedger uint32 `json:"earliest_first_seen_ledger,omitempty"`
+	// AssetsWithReference counts the members carrying an independent
+	// oracle valuation of their instrument; AssetsCompared counts the
+	// subset where a market price could also be measured against it.
+	// Both are served because the difference between them is the
+	// coverage of the premium column, and a reader who saw only the
+	// premiums would take the gaps for zeros.
+	AssetsWithReference int `json:"assets_with_reference"`
+	AssetsCompared      int `json:"assets_compared"`
 	// Basis is a one-line statement of what was measured and how it was
 	// valued, in the same posture the DEX TVL headline takes.
 	Basis string `json:"basis"`
@@ -203,6 +219,16 @@ type RWAAsset struct {
 	AnchorAsset string `json:"anchor_asset,omitempty"`
 	// Valuation is the money, or the reason there is none.
 	Valuation RWAValuation `json:"valuation"`
+	// Reference is an independent oracle's valuation of the real-world
+	// instrument this token declares it anchors to — not this platform's
+	// price for the token, and not derived from any Stellar market.
+	// Absent when no comparable feed qualifies; Premium.Status says why.
+	Reference *RWAReference `json:"reference,omitempty"`
+	// Premium is the token's market price measured against that
+	// reference, or the reason the comparison could not be made. Always
+	// present, always with a status — an absent premium and a premium of
+	// zero are different findings and the wire keeps them apart.
+	Premium RWAPremium `json:"premium"`
 	// CirculatingSupply is a raw chain fact and is served even when the
 	// valuation is withheld, in the smallest integer unit.
 	CirculatingSupply *string `json:"circulating_supply,omitempty"`
@@ -456,6 +482,14 @@ func (s *Server) handleRWAAssets(w http.ResponseWriter, r *http.Request) {
 	}
 
 	view.Assets = s.rwaAssetRows(m, rows)
+	// The reference is attached AFTER the valuation, never before: it
+	// reads the gated row (including the scam-flag suppression) and must
+	// not be able to put a figure on a row the gates emptied.
+	refs := s.cachedRWAReferences(r.Context())
+	now := time.Now()
+	for i := range view.Assets {
+		rwaApplyReference(&view.Assets[i], refs, now)
+	}
 	view.Summary = rwaSummarise(view.Assets, m.truncated)
 	view.ByClass = rwaByClass(view.Assets)
 	view.ByIssuer = rwaByIssuer(view.Assets)
@@ -475,10 +509,11 @@ func rwaDefinition() RWADefinition {
 			"issuer independently recognised in the curated account directory and not scam-flagged",
 			"real-world instrument by SEP-1 anchor_asset_type or by an ADR-0028 oracle feed",
 		},
-		AnchorClasses:    rwa.AnchorClasses(),
-		RecognitionTags:  rwa.RecognitionTags(),
-		ScamFlagTags:     append([]string(nil), timescale.DirectoryScamFlagTags...),
-		DocumentationURL: "https://stellarindex.io/docs/methodology/rwa-definition",
+		AnchorClasses:             rwa.AnchorClasses(),
+		RecognitionTags:           rwa.RecognitionTags(),
+		ScamFlagTags:              append([]string(nil), timescale.DirectoryScamFlagTags...),
+		ComparableInstrumentCodes: rwaComparableCodes(),
+		DocumentationURL:          "https://stellarindex.io/docs/methodology/rwa-definition",
 	}
 }
 
@@ -676,6 +711,7 @@ func rwaSummarise(assets []RWAAsset, truncated bool) RWASummary {
 			earliest = a.FirstSeenLedger
 		}
 	}
+	referenced, compared := rwaReferenceCounts(assets)
 	return RWASummary{
 		Assets:                  len(assets),
 		Issuers:                 len(issuers),
@@ -684,14 +720,16 @@ func rwaSummarise(assets []RWAAsset, truncated bool) RWASummary {
 		AssetsUnvalued:          len(assets) - valued,
 		LowerBound:              len(assets)-valued > 0,
 		EarliestFirstSeenLedger: earliest,
-		Basis:                   rwaBasis(len(assets), valued, truncated),
+		AssetsWithReference:     referenced,
+		AssetsCompared:          compared,
+		Basis:                   rwaBasis(len(assets), valued, compared, truncated),
 		Truncated:               truncated,
 	}
 }
 
 // rwaBasis states what the total measured, in prose, so a reader of the
 // figure gets its scope without having to reconstruct it from counts.
-func rwaBasis(total, valued int, truncated bool) string {
+func rwaBasis(total, valued, compared int, truncated bool) string {
 	var b strings.Builder
 	b.WriteString("Sum of the published market caps of the assets meeting the four-requirement definition. ")
 	b.WriteString("Market cap is circulating supply times the served USD price, both as /v1/assets serves them, ")
@@ -703,6 +741,15 @@ func rwaBasis(total, valued int, truncated bool) string {
 		b.WriteString("Every asset in the set publishes a valuation.")
 	default:
 		b.WriteString("Assets whose valuation is withheld or unavailable contribute nothing and are counted separately, so the total is a LOWER BOUND on the value of the set.")
+	}
+	if compared > 0 {
+		// The comparison rests on the issuer's own domain-bound
+		// declaration that this token anchors to the named instrument.
+		// That is the evidence that admitted the asset, and it is not a
+		// verified statement of denomination — so the surface says so
+		// beside the figure rather than letting a percentage imply a
+		// certainty nobody established.
+		b.WriteString(" Premium and discount compare the token's market price against an independent oracle's valuation of the instrument the issuer declares it anchors to; the correspondence between one token and one unit of that instrument is the issuer's own declaration, not an independent measurement.")
 	}
 	if truncated {
 		b.WriteString(" The issuer cap bound this rebuild, so the set is known to be incomplete.")

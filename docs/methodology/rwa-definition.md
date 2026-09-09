@@ -199,6 +199,67 @@ a zero there reads as a real total of zero dollars. `summary.lower_bound`
 is true whenever any member is unvalued, so the total is less than the
 value of the set.
 
+## Premium and discount to the instrument's value
+
+A tokenized treasury has two prices: what an independent oracle says the
+instrument is worth, and what the Stellar market will pay for the token.
+The gap between them is the number a holder actually needs, and it is the
+one figure here that neither the chain nor an oracle produces alone.
+
+Each row carries `reference` — an oracle's valuation of the real-world
+instrument, with its publisher, the canonical feed id, its denominator
+and its vintage — and `premium`, the market price measured against it:
+
+```
+premium.pct = (market − reference) ÷ reference × 100
+```
+
+Positive means the token trades **above** the instrument's independent
+valuation, negative **below**. Exact rational arithmetic, served as a
+decimal string.
+
+### The four rules that gate it
+
+Each one removes a way of publishing a number that means something other
+than what it says. A row failing any of them carries no figure and states
+which rule refused it in `premium.status`.
+
+| Rule | Refusal |
+| --- | --- |
+| The oracle value must be **dollars**. A bare `_FUNDAMENTAL` feed publishes net asset value in the token's *reserve* asset, so its value is a ratio, not a price. The denominator is read off the stored row and must be `fiat:USD`; it is never converted here. | `reference_not_usd_denominated` |
+| The feed must price **one token**. `rwa:XAU` is spot gold per troy ounce and `rwa:SPXU` is one share of an exchange-traded fund. Neither is one token of anything, and a ratio to a token price would be a unit conversion published as a premium. | `reference_not_instrument_scoped` |
+| The publisher must be an **oracle**. Aggregators write into the same table for divergence comparison; a premium against an aggregator's read of the market compares the market with itself. | `no_reference_feed` |
+| The market price must be **observed**. A price carried on `price_basis` is a declared peg or a transitive derivation, and a premium against either reports the issuer's own claim back as a market finding. | `market_price_not_observed` |
+
+A scam-flagged issuer gets no valuation of any kind, including a third
+party's (`withheld_issuer_flagged`). Handing an impersonator the real
+instrument's net asset value would publish a *larger* claim than the one
+the flag suppressed — a dollar figure on the impersonator, sourced from
+an oracle that never named it.
+
+The comparable-instrument list is an **allow-list**, served as
+`definition.comparable_instrument_codes`. A code added to ADR-0028
+without being classified gets no reference at all rather than a
+comparison nobody vouched for, and the classification is pinned by a test
+that fails on any unclassified code.
+
+### What the comparison rests on
+
+That one unit of the token is one unit of the named instrument. The
+evidence is the issuer's own domain-bound SEP-1 declaration (R2) plus the
+independent recognition of the issuing account (R3) — the same evidence
+that admitted the asset — and **not** a separate measurement of
+denomination. The surface states this beside the figure rather than
+letting a percentage imply a certainty nobody established.
+
+An unavailable comparison is **absent**, never `0`. Zero would read as
+"trades at par", which is a finding; a comparison that was never made is
+not that finding. A reference older than 72 hours — the longest ordinary
+gap between two strikes of a real-world instrument's value — is labelled
+`stale` rather than withheld, because a value struck last Friday is still
+the last one published. The outer bound is absolute: a feed silent for
+seven days leaves the row with no reference at all.
+
 ## Coverage
 
 `summary.earliest_first_seen_ledger` is the lowest ledger any member was
@@ -207,11 +268,25 @@ true first appearance, not the start of a sampling window — the same
 distinction that separates a complete index from a query over a
 retention window.
 
+`summary.assets_with_reference` and `summary.assets_compared` state the
+coverage of the instrument comparison: how many members carry an
+independent valuation, and how many of those also have a market price to
+measure it against. Both are served because the difference between them
+is exactly the set of blank premium cells, and a reader who saw only the
+premiums would take the blanks for zeros.
+
 The membership set is rebuilt at most once per ten minutes, off the
 request path. Its inputs move on daily cadences (the SEP-1 refresh cron
 and the directory sync), so the window is well inside the rate at which
 the answer can change. On a rebuild failure the previous set is served
 rather than an empty one.
+
+The oracle reference snapshot is cached separately and for 30 seconds
+only. It is a price: reusing a ten-minute-old net asset value against a
+live market price would report a premium neither figure supports. One
+stream read serves the whole set however many members it has, and a read
+that does not answer leaves the previous snapshot in place rather than
+telling every row that no oracle publishes its instrument.
 
 ## Known limits
 
@@ -238,9 +313,12 @@ rather than an empty one.
 
 ## References
 
-- Implementation: `internal/rwa` (the definition),
+- Implementation: `internal/rwa` (the definition and the
+  comparable-instrument classification),
   `internal/storage/timescale/sep1_bound_currencies.go` (the provenance
-  rule), `internal/api/v1/rwa.go` (the read path and wire shape).
+  rule), `internal/api/v1/rwa.go` (the read path and wire shape),
+  `internal/api/v1/rwa_reference.go` (the oracle reference and the
+  premium).
 - [ADR-0028](../adr/0028-rwa-asset-representation.md) — the `rwa:`
   reference-asset namespace and the oracle feed allow-list R4 reads.
 - [dex-tvl.md](dex-tvl.md) — the same posture applied to a different
