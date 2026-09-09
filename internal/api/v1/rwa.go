@@ -512,7 +512,7 @@ func rwaDefinition() RWADefinition {
 		AnchorClasses:             rwa.AnchorClasses(),
 		RecognitionTags:           rwa.RecognitionTags(),
 		ScamFlagTags:              append([]string(nil), timescale.DirectoryScamFlagTags...),
-		ComparableInstrumentCodes: rwaComparableCodes(),
+		ComparableInstrumentCodes: rwa.TokenizedInstrumentCodes(),
 		DocumentationURL:          "https://stellarindex.io/docs/methodology/rwa-definition",
 	}
 }

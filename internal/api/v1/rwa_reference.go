@@ -3,7 +3,6 @@ package v1
 import (
 	"context"
 	"math/big"
-	"sort"
 	"strings"
 	"time"
 
@@ -415,14 +414,4 @@ func rwaReferenceCounts(assets []RWAAsset) (referenced, compared int) {
 		}
 	}
 	return referenced, compared
-}
-
-// rwaComparableCodes is the served vocabulary of instrument codes whose
-// oracle feed prices one token, sorted, so a consumer reads the rule
-// from the response rather than from whichever rows carry a reference
-// today.
-func rwaComparableCodes() []string {
-	out := rwa.TokenizedInstrumentCodes()
-	sort.Strings(out)
-	return out
 }

@@ -488,8 +488,7 @@ function PremiumCell({ premium }: { premium: RWAAsset['premium'] }) {
   if (!Number.isFinite(pct)) {
     return <Withheld reason={PREMIUM_REASON[premium.status]} />;
   }
-  const tone =
-    pct > 0 ? 'text-up' : pct < 0 ? 'text-down' : 'text-ink-body';
+  const tone = pct > 0 ? 'text-up' : pct < 0 ? 'text-down' : 'text-ink-body';
   return (
     <span
       className={`tnum font-medium ${tone}`}
@@ -604,11 +603,11 @@ function DefinitionPanel({
         token. That the two are the same quantity comes from the issuer&rsquo;s
         own domain-bound declaration and the independent recognition of its
         account — the same evidence that admitted the asset — and is not a
-        separate measurement. A comparison is published only for the
-        instruments whose oracle feed prices one token: a feed that prices a
-        troy ounce of spot metal or one share of a fund is measuring something
-        else, and its ratio to a token price would be a unit conversion wearing
-        a premium&rsquo;s clothes. Comparable instruments:{' '}
+        separate measurement. A comparison is published only for the instruments
+        whose oracle feed prices one token: a feed that prices a troy ounce of
+        spot metal or one share of a fund is measuring something else, and its
+        ratio to a token price would be a unit conversion wearing a
+        premium&rsquo;s clothes. Comparable instruments:{' '}
         <span className="font-mono">
           {definition.comparable_instrument_codes.join(', ')}
         </span>
