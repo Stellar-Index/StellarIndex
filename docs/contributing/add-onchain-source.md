@@ -1,6 +1,6 @@
 ---
 title: Checklist — add an on-chain source (Soroban)
-last_verified: 2026-07-01
+last_verified: 2026-09-09
 status: current
 ---
 
@@ -48,9 +48,28 @@ For a contract-gated (factory-anchored) source, also add a `GatedMeta` entry in
 - [ ] Add a migration (→ [add-migration.md](add-migration.md)) + the `Store.Insert<X>`
       writer/reader in `internal/storage/timescale`.
 
+## 4 — Actually run it (the step that shipped broken twice)
+Everything above makes the decoder *possible*. Only this makes it *happen*: the
+deployed indexer runs the sources named in `[ingestion] enabled_sources`, and that
+list comes from **one** place.
+- [ ] `configs/ansible/roles/archival-node/defaults/main.yml` →
+      **`stellarindex_enabled_sources`**. If the source is not ready to serve, put it
+      in the sibling **`stellarindex_sources_not_yet_enabled`** map with a reason, and
+      keep it out of the compute-completeness catalogue
+      (`internal/ops/chops/reconciliation_catalogue.go`) until it is — a source we do
+      not run must not publish a verdict about itself.
+
+Skipping this is silent by construction: the archive stays complete, the lake holds
+the events, `/v1/coverage` reports the source INCOMPLETE forever with
+`watermark_ledger` one below genesis, and the served tier is empty. `sushiswap_v3`
+sat that way until 2026-09-09; `upshift` (#503) was found hours later.
+
 ## Guards that will catch mistakes
 `TestIsProjectedEvent_TableDriven` fails if the sink/projector arms drift; `config.Validate`
-rejects an `enabled_sources` name missing from `KnownSources`; `lint-imports.sh` enforces boundaries.
+rejects an `enabled_sources` name missing from `KnownSources`; `lint-imports.sh` enforces
+boundaries; `scripts/ci/lint-source-enablement.sh` fails when a `KnownSources` name is
+neither enabled nor declared not-yet-enabled, and when a declared-unrun source is still
+tracked by the completeness catalogue.
 
 ## Done when
 Unit + fixture tests pass; `bash scripts/dev/verify.sh` is green; enabling the source and
