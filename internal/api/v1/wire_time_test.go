@@ -10,6 +10,7 @@ import (
 	"go/parser"
 	"go/token"
 	"io/fs"
+	"path/filepath"
 	"reflect"
 	"strconv"
 	"strings"
@@ -133,53 +134,66 @@ func TestWireTime_OutOfRangeYearRendersNull(t *testing.T) {
 // A new endpoint that reaches for time.Time on the wire fails HERE,
 // at the point the field is declared, rather than in production.
 func TestWireTime_NoRawTimeOnTheWire(t *testing.T) {
+	// Both directories that marshal JSON to a v1 client: the handlers,
+	// and the SSE producer whose payload is documented as field-
+	// compatible with /v1/price. The producer is a separate package and
+	// was leaking the same way — an envelope built there is no less on
+	// the wire for living next door.
+	dirs := []string{".", filepath.Join("..", "streampublish")}
+
 	fset := token.NewFileSet()
-	pkgs, err := parser.ParseDir(fset, ".", func(fi fs.FileInfo) bool {
-		return !strings.HasSuffix(fi.Name(), "_test.go")
-	}, 0)
-	if err != nil {
-		t.Fatalf("parse package: %v", err)
-	}
-	if len(pkgs) == 0 {
-		t.Fatal("parsed no packages — the scan would pass vacuously")
+	var pkgFiles []*ast.File
+	for _, dir := range dirs {
+		pkgs, err := parser.ParseDir(fset, dir, func(fi fs.FileInfo) bool {
+			return !strings.HasSuffix(fi.Name(), "_test.go")
+		}, 0)
+		if err != nil {
+			t.Fatalf("parse %s: %v", dir, err)
+		}
+		if len(pkgs) == 0 {
+			t.Fatalf("parsed no packages in %s — the scan would pass vacuously", dir)
+		}
+		for _, pkg := range pkgs {
+			for _, file := range pkg.Files {
+				pkgFiles = append(pkgFiles, file)
+			}
+		}
 	}
 
 	var offenders []string
 	files := 0
 	fieldsChecked := 0
-	for _, pkg := range pkgs {
-		for _, file := range pkg.Files {
-			files++
-			ast.Inspect(file, func(n ast.Node) bool {
-				st, ok := n.(*ast.StructType)
-				if !ok || st.Fields == nil {
-					return true
-				}
-				for _, f := range st.Fields.List {
-					if f.Tag == nil {
-						continue
-					}
-					tag, err := strconv.Unquote(f.Tag.Value)
-					if err != nil {
-						continue
-					}
-					if _, ok := reflect.StructTag(tag).Lookup("json"); !ok {
-						continue
-					}
-					fieldsChecked++
-					if !isRawTimeTime(f.Type) {
-						continue
-					}
-					name := "<embedded>"
-					if len(f.Names) > 0 {
-						name = f.Names[0].Name
-					}
-					offenders = append(offenders, fmt.Sprintf("%s: field %s",
-						fset.Position(f.Pos()), name))
-				}
+	for _, file := range pkgFiles {
+		files++
+		ast.Inspect(file, func(n ast.Node) bool {
+			st, ok := n.(*ast.StructType)
+			if !ok || st.Fields == nil {
 				return true
-			})
-		}
+			}
+			for _, f := range st.Fields.List {
+				if f.Tag == nil {
+					continue
+				}
+				tag, err := strconv.Unquote(f.Tag.Value)
+				if err != nil {
+					continue
+				}
+				if _, ok := reflect.StructTag(tag).Lookup("json"); !ok {
+					continue
+				}
+				fieldsChecked++
+				if !isRawTimeTime(f.Type) {
+					continue
+				}
+				name := "<embedded>"
+				if len(f.Names) > 0 {
+					name = f.Names[0].Name
+				}
+				offenders = append(offenders, fmt.Sprintf("%s: field %s",
+					fset.Position(f.Pos()), name))
+			}
+			return true
+		})
 	}
 	if files == 0 || fieldsChecked == 0 {
 		t.Fatalf("scanned %d files / %d json-tagged fields — the scan would pass vacuously",

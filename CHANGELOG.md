@@ -144,7 +144,9 @@ against.
   literal string mis-bucketed by an hour on price and trade history. All 43
   json-tagged timestamp fields now use a `WireTime` type that always renders
   UTC, byte-identical to before for values that were already UTC — so this
-  is a rendering fix, not a response-shape change.
+  is a rendering fix, not a response-shape change. The SSE producer behind
+  `/v1/price/stream` carried the same leak in its own package and is fixed
+  with it; the scan that enforces the rule covers both directories.
 
 - **docs:** SEP-10 is no longer documented as an available authentication
   method. It is implemented but not enabled: `api.stellarindex.io` has no

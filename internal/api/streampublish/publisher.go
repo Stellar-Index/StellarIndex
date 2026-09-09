@@ -203,14 +203,19 @@ func (p *Publisher) tickOnce(ctx context.Context, pair canonical.Pair, topic str
 	// {snapshot, sources, stale} shape that matched neither). as_of is
 	// the bucket's ObservedAt — deterministic, preserving the
 	// byte-identical cross-region property this package's docs promise.
+	// AsOf is v1.WireTime, not time.Time, for the same reason every
+	// timestamp on the v1 wire is: ObservedAt carries whatever location
+	// the stored bucket decoded into, and a plain time.Time field would
+	// publish the server's local offset to SSE subscribers while the
+	// field-compatible /v1/price response published `Z`.
 	payload, err := json.Marshal(struct {
 		Data    v1.PriceSnapshot `json:"data"`
-		AsOf    time.Time        `json:"as_of"`
+		AsOf    v1.WireTime      `json:"as_of"`
 		Sources []string         `json:"sources,omitempty"`
 		Flags   struct {
 			Stale bool `json:"stale"`
 		} `json:"flags"`
-	}{Data: snap, AsOf: snap.ObservedAt.Time(), Sources: sources, Flags: struct {
+	}{Data: snap, AsOf: snap.ObservedAt, Sources: sources, Flags: struct {
 		Stale bool `json:"stale"`
 	}{Stale: stale}})
 	if err != nil {
