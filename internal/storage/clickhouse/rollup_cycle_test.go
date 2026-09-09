@@ -343,6 +343,61 @@ func TestRollupCyclesStageBeforeTheyExchange(t *testing.T) {
 	}
 }
 
+// TestRollupCyclesSwapEveryStagingArmTheyFill is the guard for a SILENT
+// no-op: a cycle that fills a staging table and then forgets to name it
+// in its EXCHANGE. Nothing fails — the cycle runs green, the staging arm
+// holds correct rows nobody reads, and the LIVE table keeps whatever it
+// held when the pair was last swapped, forever. A served surface backed
+// by that table would then be frozen at its first cycle while every
+// sibling advanced, which is indistinguishable from a stale rollup and
+// far harder to trace.
+//
+// Each cycle now fills four staging arms — a board, a stats table and the
+// two sort orders of its graph edges (#351) — so the pairing is no longer
+// small enough to keep straight by reading.
+func TestRollupCyclesSwapEveryStagingArmTheyFill(t *testing.T) {
+	staging := regexp.MustCompile(`stellar\.[a-z0-9_]+_staging`)
+	for name, steps := range rollupCycles() {
+		t.Run(name, func(t *testing.T) {
+			filled, swapped := map[string]bool{}, map[string]bool{}
+			for _, step := range steps {
+				if strings.Contains(step.sql, "EXCHANGE TABLES") {
+					for _, m := range staging.FindAllString(step.sql, -1) {
+						swapped[m] = true
+					}
+					continue
+				}
+				if !strings.HasPrefix(strings.TrimSpace(step.sql), "INSERT INTO") {
+					continue
+				}
+				// Only the INSERT TARGET counts as filled. A staging arm a
+				// step merely READS — the reverse-ordered edge arm is
+				// filled FROM its sibling — is that sibling's obligation,
+				// and is caught on the sibling's own step.
+				head := strings.SplitN(step.sql, "\n", 2)[0]
+				for _, m := range staging.FindAllString(head, -1) {
+					filled[m] = true
+				}
+			}
+			if len(filled) == 0 {
+				t.Fatal("cycle fills no staging arm")
+			}
+			for arm := range filled {
+				if !swapped[arm] {
+					t.Errorf("%s is filled but never EXCHANGEd — the live table it "+
+						"stages for would keep last cycle's rows forever, silently", arm)
+				}
+			}
+			for arm := range swapped {
+				if !filled[arm] {
+					t.Errorf("%s is EXCHANGEd but never filled — the swap would put an "+
+						"empty (or previous-cycle) table live", arm)
+				}
+			}
+		})
+	}
+}
+
 // TestRollupCyclesBudgetIsNotRaised: the fix for a step that outgrew its
 // memory budget is to make the step smaller, never to make the budget
 // bigger. A ceiling above the ops-batch class buys one more cycle and

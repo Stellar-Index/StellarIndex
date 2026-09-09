@@ -72,6 +72,84 @@ against.
   in the exclusions, so the headline can omit a protocol but never
   silently. The derivation set moved out of an anonymous slice inside
   `Refresh` so the guard reads it rather than a second copy (#350).
+- **api + explorer:** `GET /v1/accounts/{g_strkey}/graph` — the sponsorship
+  and account-creation GRAPH for one account, traversable in both
+  directions, plus an account-page panel that renders it (#351). The two
+  league tables that shipped earlier rank accounts; neither can answer
+  "where did this account come from", because both aggregations are keyed
+  by the actor and hold no edge at all. Two rollup cycles now also build
+  one, each in its own two sort orders — `account_creator_edges{,_by_created}`
+  from the creator cycle's working table, `account_sponsor_edges{,_by_sponsored}`
+  from the sponsor cycle's — so each direction of the read is a
+  primary-key range and neither is a scan.
+
+  **Cardinality is the whole shape of the endpoint, and it follows the
+  measured data rather than a guess.** Inbound is small: measured on r1
+  2026-09-09 over lake partition 63, no created account has more than 9
+  distinct creators and no sponsored account more than 8 distinct
+  sponsors, so both inbound sides are served whole under a 25-edge cap
+  with the EXACT total and a `truncated` flag beside them. Outbound is
+  not: the busiest sponsor covers 785,543 distinct accounts and the
+  busiest creator 193,015, so the default response carries outbound
+  SUMMARIES only and no edge list, and the list is served only when
+  `?relation=created|sponsored` names a direction — keyset-paged, 500
+  rows per page at most, over-cap limits refused with a 400 rather than
+  clamped in silence. The account-page panel pages 25 at a time and
+  states "showing N of M" against the summary count, so a page never
+  reads as the whole relationship.
+
+  **An edge is one distinct PAIR, not one operation**, and that collapse
+  is what makes the inbound direction bounded at all. An address can be
+  created more than once — CreateAccount and AccountMerge are both
+  repeatable and some services recycle addresses continuously: over that
+  same partition, 41,358 of 418,016 created addresses carry more than one
+  creation and the widest carries 29,634, matched 1:1 by 352 merges
+  against 352 creations in a sampled 20,000-ledger slice. So `created_by`
+  is a LIST with a `creations` count per edge, never a single "creator"
+  field, and the whole archive's 24,824,706 creation events collapse to
+  20,954,070 edges.
+
+  **Revocations are represented at ACCOUNT level and nowhere else, on
+  purpose.** `RevokeSponsorship` names the entry it revokes inside
+  `body_xdr`, which these cycles deliberately do not decode (reading that
+  column costs 61.06 GiB against 12.05 GiB over the same window), so a
+  revocation cannot be attributed to an edge at all — and an arrangement
+  also lapses silently when the sponsored entry is deleted or the account
+  merges away, which emits no operation. Every sponsorship figure on the
+  wire is therefore named `sponsorships_started`, `revocations_issued` sits
+  on the outbound summary as the account-level fact it is, there is no
+  per-edge current/revoked flag, and an always-present `note` says so in
+  the payload rather than only in the docs. A handler test fails the build
+  if a field named `revoked`, `is_current`, `currently_sponsoring` or
+  `active_sponsorships` ever appears.
+
+  Coverage is served per ARM rather than merged, because the two arms are
+  separate cycles over separate sources with different floors: creation
+  history reaches ledger 3, sponsorship history only reaches 32,747,295,
+  where the feature began to exist on the network. Creation coverage spans
+  both sides of the Protocol 23 boundary — the creator cycle reads the
+  classic and CAP-67 arms — so it is continuous to the tip (64,346,048
+  measured), and a test fails if it ever stops at or below 58,762,517.
+
+  The new rollup steps do not move either cycle's memory ceiling: the
+  creation-edge aggregation measures 3.14 GiB / 24.5 s against that
+  cycle's existing 3.31 GiB board join, and the sponsorship-edge
+  aggregation 4.01 GiB / 28.1 s against its 4.09 GiB — both below, both at
+  `max_threads=2` on r1 2026-09-09. The sponsorship edges are a
+  decomposition of the board rather than a second opinion about it: their
+  4,088,814 pairs and 9,987,381 events equal the live board's
+  `distinct_sponsored_total` and `sponsorships_total` exactly. Every edge
+  table is filled into a staging arm and swapped in the SAME `EXCHANGE` as
+  its board, so a served read never sees a half-built graph and the graph
+  can never describe a different cycle from the board beside it.
+
+  **Operator note:** the four new tables (eight with staging) are in
+  `deploy/clickhouse/account_{creators,sponsors}_rollup.sql` and
+  `tier1_schema.sql` as additive `CREATE TABLE IF NOT EXISTS` statements,
+  which is the shape the deploy config-apply gate can clear on evidence —
+  but they must be applied to r1 by hand before the first cycle after this
+  deploys. Until they exist and a cycle has exchanged them, the endpoint
+  serves a warming 503 rather than "this account was created by nobody".
 
 - **ci:** `lint-git-fixture-isolation` requires a script that creates a
   git repository to clear `GIT_DIR` and its siblings first. `git init`

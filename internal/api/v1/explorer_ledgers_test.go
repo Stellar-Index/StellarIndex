@@ -32,16 +32,29 @@ type stubExplorerReader struct {
 	// accountCreators backs GET /v1/accounts/creators; creatorsLimit
 	// records the limit the handler asked for, so a test can pin the
 	// handler's clamping rather than trusting it.
-	accountCreators  clickhouse.AccountCreators
-	creatorsLimit    int
-	accountSponsors  clickhouse.AccountSponsors
-	sponsorsLimit    int
-	contractActivity clickhouse.ContractActivitySummary
-	holders          []clickhouse.AssetHolder
-	holderCount      int64
-	wealth           []clickhouse.AccountWealth
-	pairStates       map[string]clickhouse.SoroswapPairState
-	tokenDisplays    map[string]clickhouse.TokenDisplayMeta
+	accountCreators clickhouse.AccountCreators
+	creatorsLimit   int
+	accountSponsors clickhouse.AccountSponsors
+	sponsorsLimit   int
+	// accountGraph backs GET /v1/accounts/{g}/graph. graphCreatedEdges /
+	// graphSponsoredEdges are the FULL outbound edge sets; the stub
+	// applies the keyset cursor and the limit the way the ClickHouse
+	// statement does, so a pagination test exercises the handler's real
+	// contract instead of a pre-sliced fixture. graphRelation /
+	// graphLimit / graphCursor record what the handler asked for, so a
+	// test can pin the parsing rather than trust it.
+	accountGraph        clickhouse.AccountGraph
+	graphCreatedEdges   []clickhouse.AccountGraphEdge
+	graphSponsoredEdges []clickhouse.AccountGraphEdge
+	graphRelation       string
+	graphLimit          int
+	graphCursor         string
+	contractActivity    clickhouse.ContractActivitySummary
+	holders             []clickhouse.AssetHolder
+	holderCount         int64
+	wealth              []clickhouse.AccountWealth
+	pairStates          map[string]clickhouse.SoroswapPairState
+	tokenDisplays       map[string]clickhouse.TokenDisplayMeta
 	// tokenDisplaysErr fails ONLY TokenDisplays, so tests can exercise a
 	// display-lookup outage while the reserve read itself succeeds.
 	tokenDisplaysErr error
@@ -265,6 +278,39 @@ func (s *stubExplorerReader) AccountSponsors(_ context.Context, limit int) (clic
 	out := s.accountSponsors
 	if limit < len(out.Board) {
 		out.Board = out.Board[:limit]
+	}
+	return out, true, nil
+}
+
+func (s *stubExplorerReader) AccountGraph(_ context.Context, _, relation string, limit int, cursor string) (clickhouse.AccountGraph, bool, error) {
+	s.graphRelation, s.graphLimit, s.graphCursor = relation, limit, cursor
+	if s.err != nil {
+		return clickhouse.AccountGraph{}, false, s.err
+	}
+	// The creation arm's span is the stub's "a cycle has run" signal, the
+	// same guard the real reader applies to both arms.
+	if s.accountGraph.CreationCoverage.ThruLedger == 0 {
+		return clickhouse.AccountGraph{}, false, nil
+	}
+	out := s.accountGraph
+	out.Page = nil
+	if relation == "" {
+		return out, true, nil
+	}
+	full := s.graphSponsoredEdges
+	if relation == clickhouse.GraphRelationCreated {
+		full = s.graphCreatedEdges
+	}
+	// Keyset semantics, exactly as the statement's `counterparty > ?
+	// ORDER BY counterparty LIMIT ?` behaves.
+	for _, e := range full {
+		if e.Account <= cursor {
+			continue
+		}
+		if len(out.Page) >= limit {
+			break
+		}
+		out.Page = append(out.Page, e)
 	}
 	return out, true, nil
 }

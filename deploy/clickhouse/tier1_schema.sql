@@ -879,6 +879,47 @@ ORDER BY metric;
 CREATE TABLE IF NOT EXISTS stellar.account_creators_stats_staging
 AS stellar.account_creators_stats;
 
+-- Creation GRAPH edges (#351) — one row per DISTINCT (creator, created)
+-- pair, held in both sort orders so each direction of "who created whom"
+-- is a primary-key range read. The collapse to distinct pairs is what
+-- bounds the inbound direction: an address can be created, merged and
+-- created again, and the widest such address measured on r1 carries
+-- 29,634 creation events but only ONE creator. Full rationale and the
+-- measurements in deploy/clickhouse/account_creators_rollup.sql.
+CREATE TABLE IF NOT EXISTS stellar.account_creator_edges
+(
+    creator        String,
+    created        String,
+    creations      UInt64,
+    funded_stroops Int128,
+    first_ledger   UInt32,
+    last_ledger    UInt32,
+    first_at       DateTime('UTC'),
+    last_at        DateTime('UTC')
+)
+ENGINE = MergeTree
+ORDER BY (creator, created);
+
+CREATE TABLE IF NOT EXISTS stellar.account_creator_edges_staging
+AS stellar.account_creator_edges;
+
+CREATE TABLE IF NOT EXISTS stellar.account_creator_edges_by_created
+(
+    created        String,
+    creator        String,
+    creations      UInt64,
+    funded_stroops Int128,
+    first_ledger   UInt32,
+    last_ledger    UInt32,
+    first_at       DateTime('UTC'),
+    last_at        DateTime('UTC')
+)
+ENGINE = MergeTree
+ORDER BY (created, creator);
+
+CREATE TABLE IF NOT EXISTS stellar.account_creator_edges_by_created_staging
+AS stellar.account_creator_edges_by_created;
+
 
 -- ── account_sponsors — see deploy/clickhouse/account_sponsors_rollup.sql ──
 -- Sponsor -> sponsored-account league table (#351), aggregated from the
@@ -934,6 +975,45 @@ ORDER BY metric;
 
 CREATE TABLE IF NOT EXISTS stellar.account_sponsors_stats_staging
 AS stellar.account_sponsors_stats;
+
+-- Sponsorship GRAPH edges (#351) — one row per DISTINCT
+-- (sponsor, sponsored) pair, held in both sort orders so each direction
+-- is a primary-key range read. HISTORY, like the board: an edge means an
+-- arrangement was STARTED, never that one is in force, and no per-edge
+-- revoked flag exists because RevokeSponsorship names its target inside
+-- body_xdr, which this cycle does not decode. Full rationale and the
+-- measurements in deploy/clickhouse/account_sponsors_rollup.sql.
+CREATE TABLE IF NOT EXISTS stellar.account_sponsor_edges
+(
+    sponsor              String,
+    sponsored            String,
+    sponsorships_started UInt64,
+    first_ledger         UInt32,
+    last_ledger          UInt32,
+    first_at             DateTime('UTC'),
+    last_at              DateTime('UTC')
+)
+ENGINE = MergeTree
+ORDER BY (sponsor, sponsored);
+
+CREATE TABLE IF NOT EXISTS stellar.account_sponsor_edges_staging
+AS stellar.account_sponsor_edges;
+
+CREATE TABLE IF NOT EXISTS stellar.account_sponsor_edges_by_sponsored
+(
+    sponsored            String,
+    sponsor              String,
+    sponsorships_started UInt64,
+    first_ledger         UInt32,
+    last_ledger          UInt32,
+    first_at             DateTime('UTC'),
+    last_at              DateTime('UTC')
+)
+ENGINE = MergeTree
+ORDER BY (sponsored, sponsor);
+
+CREATE TABLE IF NOT EXISTS stellar.account_sponsor_edges_by_sponsored_staging
+AS stellar.account_sponsor_edges_by_sponsored;
 
 -- contract_instance_changes — per-contract instance-executable timeline
 -- index for the explorer's code-history + wasm reads (open-fixes

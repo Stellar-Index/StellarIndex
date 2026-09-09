@@ -139,6 +139,35 @@ const creatorsBoardSettings = boundedScanSettings +
 const creatorsP23ArmSettings = boundedScanSettings +
 	", query_plan_join_swap_table = 0, max_execution_time = 1800"
 
+// creatorEdgesSettings is the settings clause for the graph arm's one
+// aggregation: 24,824,706 creation events in the working table collapsed
+// to 20,954,070 distinct (creator, created) pairs.
+//
+// Measured on r1 2026-09-09 at max_threads=2: 3.14 GiB / 24.5 s. That is
+// BELOW this cycle's existing peak — creatorsBoardSettings' join against
+// the live account population, 3.31 GiB — so the graph arm does not move
+// the cycle's ceiling, and the figure a future ceiling must be sized
+// from is still the board's. Headroom here is a stated function of one
+// population: about 150 bytes per distinct pair, so the 8 GiB budget is
+// reached near 55 M pairs against today's 21 M.
+//
+// The per-edge `creations` count INHERITS the one-leg-per-op assumption
+// documented on the post-P23 arm below: a second `sent` transfer leg for
+// one creation would double it, silently, the same way it would double
+// the board's accounts_created. The EDGE itself is robust to that — the
+// pair is still (creator, created) — so a graph traversal stays correct
+// even where the weight would not be. Same detector, same fix.
+//
+// optimize_aggregation_in_order exploits the working table's ORDER BY
+// (creator, ledger, created), whose leading key is this aggregation's
+// leading group key. The execution cap is the board's 1800 s rather than
+// the walk's 600 s: this step is not walked — a (creator, created) pair
+// can span lake partitions, so a per-window aggregation would emit the
+// same edge more than once — and 1800 s is a 73x margin on the measured
+// time, on a box that also runs galexie and the sibling rollups.
+const creatorEdgesSettings = boundedScanSettings +
+	", optimize_aggregation_in_order = 1, max_execution_time = 1800"
+
 // creatorsRollupStatements is the full recompute cycle: truncate the
 // working table, WALK the archive one lake partition at a time landing
 // that partition's deduplicated creations from BOTH sides of the
@@ -344,12 +373,44 @@ var creatorsRollupStatements = []rollupStep{
 	     FROM stellar.account_creators_rollup_staging
 	 )
 	 SETTINGS max_threads = 2, max_execution_time = 600`},
-	// Swap both live tables in one metadata transaction: a board swapped
+	// ── The graph arm (#351) ───────────────────────────────────────
+	// The board says WHO created the most. These two say WHOM — one row
+	// per distinct (creator, created) pair, held in both sort orders so
+	// each direction of the question is a primary-key range read. Same
+	// working table, so the edges and the board cannot describe
+	// different data.
+	{sql: `TRUNCATE TABLE stellar.account_creator_edges_staging`},
+	{sql: `TRUNCATE TABLE stellar.account_creator_edges_by_created_staging`},
+	{sql: `INSERT INTO stellar.account_creator_edges_staging
+	     (creator, created, creations, funded_stroops, first_ledger, last_ledger, first_at, last_at)
+	 SELECT creator, created,
+	        toUInt64(count()) AS creations,
+	        toInt128(sum(amount)) AS funded_stroops,
+	        min(ledger) AS first_ledger,
+	        max(ledger) AS last_ledger,
+	        min(closed_at) AS first_at,
+	        max(closed_at) AS last_at
+	 FROM stellar.account_creators_ops
+	 GROUP BY creator, created
+	 ` + creatorEdgesSettings},
+	// The reverse ordering is filled FROM the staging arm just written,
+	// not by re-aggregating the archive: the second direction costs a
+	// re-sort of 21 M already-collapsed rows rather than a second pass
+	// over 24.8 M creation events.
+	{sql: `INSERT INTO stellar.account_creator_edges_by_created_staging
+	     (created, creator, creations, funded_stroops, first_ledger, last_ledger, first_at, last_at)
+	 SELECT created, creator, creations, funded_stroops, first_ledger, last_ledger, first_at, last_at
+	 FROM stellar.account_creator_edges_staging
+	 ` + boundedScanSettings + `, max_execution_time = 1800`},
+	// Swap every live table in one metadata transaction: a board swapped
 	// new beside last cycle's span would be the exact overstatement this
-	// surface exists to avoid. The working table is not served and is
-	// never swapped.
+	// surface exists to avoid, and a graph swapped beside a board built
+	// from a different cycle's working table would be the same defect one
+	// level down. The working table is not served and is never swapped.
 	{sql: `EXCHANGE TABLES stellar.account_creators_rollup_staging AND stellar.account_creators_rollup,
-	                 stellar.account_creators_stats_staging AND stellar.account_creators_stats`},
+	                 stellar.account_creators_stats_staging AND stellar.account_creators_stats,
+	                 stellar.account_creator_edges_staging AND stellar.account_creator_edges,
+	                 stellar.account_creator_edges_by_created_staging AND stellar.account_creator_edges_by_created`},
 }
 
 // RunCreatorsRollup executes one full recompute + atomic exchange.

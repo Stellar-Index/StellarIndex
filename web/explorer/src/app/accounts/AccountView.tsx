@@ -22,6 +22,7 @@ import { AccountMovementsPanel } from './AccountMovements';
 import { AccountDefiPositionsPanel } from './AccountDefiPositions';
 import { AccountActivitySummaryPanel } from './AccountActivitySummary';
 import { AccountTradesPanel } from './AccountTrades';
+import { AccountGraphPanel } from './AccountGraph';
 import { AccountsAnalytics } from './AccountsAnalytics';
 import { useIssuers } from '@/api/hooks';
 import { apiGet, asExample } from '@/api/client';
@@ -198,6 +199,8 @@ export function AccountView({ id: idProp }: { id?: string } = {}) {
       <AccountDefiPositionsPanel id={id} />
 
       <AccountTradesPanel id={id} />
+
+      <AccountGraphPanel id={id} />
 
       <TransactionsPanel
         id={id}

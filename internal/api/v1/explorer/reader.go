@@ -301,6 +301,13 @@ type ExplorerReader interface {
 	// carries a live sponsored set. ok=false while the rollup hasn't
 	// completed a cycle, or when it carries a board with no span.
 	AccountSponsors(ctx context.Context, limit int) (clickhouse.AccountSponsors, bool, error)
+	// AccountGraph is one account's neighbourhood in the sponsorship and
+	// account-creation graph: the inbound edges (bounded — who created
+	// or sponsored this account), both outbound summaries, and, when
+	// `relation` names one, a keyset page of that outbound direction.
+	// ok=false while either graph arm is unbuilt, which the handler
+	// serves as a warming 503 rather than as "no relationships".
+	AccountGraph(ctx context.Context, account, relation string, limit int, cursor string) (clickhouse.AccountGraph, bool, error)
 	// ContractActivitySummaryFor is the per-contract liveness card
 	// (first/last seen + daily active-ledger series; ok=false when the
 	// active-ledgers index isn't usable — callers omit the card).
