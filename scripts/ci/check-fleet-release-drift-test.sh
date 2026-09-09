@@ -1,4 +1,10 @@
 #!/usr/bin/env bash
+# shellcheck disable=SC2016
+# SC2016 (expressions don't expand in single quotes) is the POINT here: the
+# single-quoted strings are literal fixture text — forged payloads and
+# template bodies that must reach the code under test unexpanded. Pre-dates
+# this file's GIT_DIR guard; silenced when that guard pulled the file into
+# the changed-file lint's scope.
 # check-fleet-release-drift-test.sh — fixture tests for the test-net
 # release-drift tripwire (scripts/ci/check-fleet-release-drift.sh).
 #
@@ -33,6 +39,14 @@
 #
 # Run: bash scripts/ci/check-fleet-release-drift-test.sh
 set -uo pipefail
+
+# `git init` honours an INHERITED GIT_DIR ahead of its own `-C`, and a git
+# hook exports GIT_DIR/GIT_INDEX_FILE. lint-changed dispatches test scripts,
+# and the pre-commit hook runs lint-changed — so without this a fixture's
+# init re-initialises the REAL repository: core.bare set on the live
+# checkout, fixture commits on main, and git says only "warning: re-init".
+unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY \
+      GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_COMMON_DIR
 
 cd "$(dirname "$0")/../.." || exit 1
 CHECK="$PWD/scripts/ci/check-fleet-release-drift.sh"

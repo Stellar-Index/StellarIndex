@@ -34,6 +34,14 @@
 # Run: bash scripts/ci/lint-baseline-growth-test.sh
 set -uo pipefail
 
+# `git init` honours an INHERITED GIT_DIR ahead of its own `-C`, and a git
+# hook exports GIT_DIR/GIT_INDEX_FILE. lint-changed dispatches test scripts,
+# and the pre-commit hook runs lint-changed — so without this a fixture's
+# init re-initialises the REAL repository: core.bare set on the live
+# checkout, fixture commits on main, and git says only "warning: re-init".
+unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY \
+      GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_COMMON_DIR
+
 cd "$(dirname "$0")/../.." || exit 1
 GATE="$PWD/scripts/ci/lint-baseline-growth.sh"
 

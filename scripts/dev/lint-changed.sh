@@ -271,6 +271,12 @@ if [ "${#sh_files[@]}" -gt 0 ]; then
     else
         defer "lint-shell-sigpipe" "none of the changed scripts sets pipefail or -e (nothing for it to catch)"
     fi
+    # A script that builds a git fixture must clear GIT_DIR first: `git
+    # init` honours an inherited one over its own `-C`, a hook exports it,
+    # and THIS dispatcher is what the pre-commit hook runs. Scoped to the
+    # changed scripts, so it costs nothing on an unrelated commit.
+    add_step "lint-git-fixture-isolation" "scoped to ${#sh_files[@]} script(s)" \
+        "$ci_dir/lint-git-fixture-isolation.sh" "${sh_files[@]}"
     if command -v shellcheck >/dev/null 2>&1; then
         add_step "shellcheck" "" shellcheck -x "${sh_files[@]}"
     else
