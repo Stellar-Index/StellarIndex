@@ -540,6 +540,20 @@ stellarindex_enabled_sources:
   - "sdex"
   - "cctp"
   - "rozo"
+  # sushiswap_v3 — the decoder landed in 3f575923e and the source is
+  # reported by the completeness surface, but it was never added here, so
+  # r1 served ZERO sushiswap trades while its archive read "complete":
+  # substrate verified and hash-chained from genesis 61487379, projection
+  # empty. That combination is the one the completeness verdict exists to
+  # catch, and it was the sole incomplete source of 21.
+  #
+  # Safe to enable without any pool list: the registry self-populates from
+  # the factory's own `pool_created` events (ADR-0035 trust root,
+  # CD3KRKGD…GLYF), of which the lake holds 58 from ledger 61487379 — the
+  # same genesis the completeness surface reports. A pool whose token
+  # mapping is still unknown fails CLOSED (no row, counted) rather than
+  # inventing a NULL-asset trade.
+  - "sushiswap_v3"
 
 # Earliest ledger to backfill from on a fresh install (no persisted
 # cursor yet). 0 = refuse to start without a cursor — operator must
