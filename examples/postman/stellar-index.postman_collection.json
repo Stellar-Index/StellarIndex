@@ -39436,6 +39436,313 @@
               ]
             },
             {
+              "name": "graph",
+              "description": "",
+              "item": [
+                {
+                  "name": "The account's sponsorship and account-creation graph, both directions.",
+                  "request": {
+                    "name": "The account's sponsorship and account-creation graph, both directions.",
+                    "description": {
+                      "content": "One account's neighbourhood in the two relationships the\nsponsor/creator league tables aggregate: who created and\nsponsored THIS account (inbound), and whom it created and\nsponsored (outbound). The per-account counterpart of\n`/accounts/creators` and `/accounts/sponsors`, and the only\nsurface that answers the inbound question.\n\nEVERYTHING HERE IS HISTORY, and the always-present `note` says\nso. A creation edge is immutable. A sponsorship edge means an\narrangement was **started**, never that one is in force:\n`RevokeSponsorship` names the entry it revokes inside XDR this\nindex does not decode, so `revocations_issued` is an\nACCOUNT-level figure that cannot be attributed to any edge, and\nan arrangement also lapses silently when the sponsored entry is\ndeleted or the account merges away. No field here may be read as\nlive sponsorship state; observing that needs each ledger entry's\n`sponsoringID`, which is not projected.\n\nCARDINALITY IS THE SHAPE. Inbound is bounded by construction —\nat most 25 edges per direction with the EXACT total and a\n`truncated` flag beside it (measured ceilings on the real chain:\n9 distinct creators, 8 distinct sponsors). Outbound is NOT\nbounded — the busiest sponsor covers 785,543 distinct accounts —\nso the default response carries outbound SUMMARIES only, and the\nedge list is served only when `?relation=` names a direction,\nkeyset-paged with `?cursor=` (echo back `next_cursor`; the\ncursor is the last served counterparty's account id).\n\nOne edge is one distinct PAIR, not one operation: `creations`\nand `sponsorships_started` carry the operation counts. An\naddress created, merged away and created again yields ONE\ncreation edge with `creations` above 1 — which is why\n`created_by` is a list rather than a single value.\n\n`coverage` carries the two arms SEPARATELY because they are\nseparate cycles over separate sources: creation history reaches\ngenesis, sponsorship history only reaches protocol 14's\nactivation, where the feature began to exist. Merging them would\npresent that floor as a gap. Creation coverage spans both sides\nof the Protocol 23 boundary, so it is continuous to the tip.\n\nStroops-denominated values are decimal strings (ADR-0003).\n",
+                      "type": "text/plain"
+                    },
+                    "url": {
+                      "path": [
+                        "accounts",
+                        ":g_strkey",
+                        "graph"
+                      ],
+                      "host": [
+                        "{{baseUrl}}"
+                      ],
+                      "query": [
+                        {
+                          "disabled": false,
+                          "description": {
+                            "content": "Which OUTBOUND edge list to page. Omitted (the default)\nreturns the inbound edges and both outbound summaries and no\nedge list at all — the unbounded direction is opt-in.\n (This can only be one of created,sponsored)",
+                            "type": "text/plain"
+                          },
+                          "key": "relation",
+                          "value": "created"
+                        },
+                        {
+                          "disabled": false,
+                          "description": {
+                            "content": "Maximum outbound edges to return (1-500, default 50). Out-of-range values return 400.",
+                            "type": "text/plain"
+                          },
+                          "key": "limit",
+                          "value": "50"
+                        },
+                        {
+                          "disabled": false,
+                          "description": {
+                            "content": "Opaque keyset cursor from a prior response's next_cursor.",
+                            "type": "text/plain"
+                          },
+                          "key": "cursor",
+                          "value": "<string>"
+                        }
+                      ],
+                      "variable": [
+                        {
+                          "type": "any",
+                          "value": "<string>",
+                          "key": "g_strkey",
+                          "disabled": false,
+                          "description": {
+                            "content": "(Required) G-strkey account id.",
+                            "type": "text/plain"
+                          }
+                        }
+                      ]
+                    },
+                    "header": [
+                      {
+                        "key": "Accept",
+                        "value": "application/json"
+                      }
+                    ],
+                    "method": "GET",
+                    "body": {},
+                    "auth": null
+                  },
+                  "response": [
+                    {
+                      "name": "The account's creation and sponsorship neighbourhood.",
+                      "originalRequest": {
+                        "url": {
+                          "path": [
+                            "accounts",
+                            ":g_strkey",
+                            "graph"
+                          ],
+                          "host": [
+                            "{{baseUrl}}"
+                          ],
+                          "query": [
+                            {
+                              "disabled": false,
+                              "description": {
+                                "content": "Which OUTBOUND edge list to page. Omitted (the default)\nreturns the inbound edges and both outbound summaries and no\nedge list at all — the unbounded direction is opt-in.\n (This can only be one of created,sponsored)",
+                                "type": "text/plain"
+                              },
+                              "key": "relation",
+                              "value": "created"
+                            },
+                            {
+                              "disabled": false,
+                              "description": {
+                                "content": "Maximum outbound edges to return (1-500, default 50). Out-of-range values return 400.",
+                                "type": "text/plain"
+                              },
+                              "key": "limit",
+                              "value": "50"
+                            },
+                            {
+                              "disabled": false,
+                              "description": {
+                                "content": "Opaque keyset cursor from a prior response's next_cursor.",
+                                "type": "text/plain"
+                              },
+                              "key": "cursor",
+                              "value": "<string>"
+                            }
+                          ],
+                          "variable": [
+                            {
+                              "disabled": false,
+                              "description": {
+                                "content": "(Required) G-strkey account id.",
+                                "type": "text/plain"
+                              },
+                              "type": "any",
+                              "value": "<string>",
+                              "key": "g_strkey"
+                            }
+                          ]
+                        },
+                        "header": [
+                          {
+                            "key": "Accept",
+                            "value": "application/json"
+                          }
+                        ],
+                        "method": "GET",
+                        "body": {}
+                      },
+                      "status": "OK",
+                      "code": 200,
+                      "header": [
+                        {
+                          "key": "Content-Type",
+                          "value": "application/json"
+                        }
+                      ],
+                      "body": "{\n  \"data\": {\n    \"account\": \"<string>\",\n    \"inbound\": {\n      \"created_by\": {\n        \"edges\": [\n          {\n            \"account\": \"<string>\",\n            \"first_ledger\": \"<integer>\",\n            \"last_ledger\": \"<integer>\",\n            \"first_at\": \"<dateTime>\",\n            \"last_at\": \"<dateTime>\",\n            \"creations\": \"<integer>\",\n            \"funded_stroops\": \"<string>\",\n            \"sponsorships_started\": \"<integer>\"\n          },\n          {\n            \"account\": \"<string>\",\n            \"first_ledger\": \"<integer>\",\n            \"last_ledger\": \"<integer>\",\n            \"first_at\": \"<dateTime>\",\n            \"last_at\": \"<dateTime>\",\n            \"creations\": \"<integer>\",\n            \"funded_stroops\": \"<string>\",\n            \"sponsorships_started\": \"<integer>\"\n          }\n        ],\n        \"total\": \"<integer>\",\n        \"truncated\": \"<boolean>\"\n      },\n      \"sponsored_by\": {\n        \"edges\": [\n          {\n            \"account\": \"<string>\",\n            \"first_ledger\": \"<integer>\",\n            \"last_ledger\": \"<integer>\",\n            \"first_at\": \"<dateTime>\",\n            \"last_at\": \"<dateTime>\",\n            \"creations\": \"<integer>\",\n            \"funded_stroops\": \"<string>\",\n            \"sponsorships_started\": \"<integer>\"\n          },\n          {\n            \"account\": \"<string>\",\n            \"first_ledger\": \"<integer>\",\n            \"last_ledger\": \"<integer>\",\n            \"first_at\": \"<dateTime>\",\n            \"last_at\": \"<dateTime>\",\n            \"creations\": \"<integer>\",\n            \"funded_stroops\": \"<string>\",\n            \"sponsorships_started\": \"<integer>\"\n          }\n        ],\n        \"total\": \"<integer>\",\n        \"truncated\": \"<boolean>\"\n      }\n    },\n    \"outbound\": {\n      \"created\": {\n        \"accounts\": \"<integer>\",\n        \"creations\": \"<integer>\",\n        \"funded_stroops\": \"<string>\",\n        \"first_ledger\": \"<integer>\",\n        \"last_ledger\": \"<integer>\",\n        \"first_at\": \"<dateTime>\",\n        \"last_at\": \"<dateTime>\"\n      },\n      \"sponsored\": {\n        \"accounts\": \"<integer>\",\n        \"sponsorships_started\": \"<integer>\",\n        \"revocations_issued\": \"<integer>\",\n        \"first_ledger\": \"<integer>\",\n        \"last_ledger\": \"<integer>\",\n        \"first_at\": \"<dateTime>\",\n        \"last_at\": \"<dateTime>\"\n      }\n    },\n    \"coverage\": {\n      \"creation\": {\n        \"from_ledger\": \"<integer>\",\n        \"thru_ledger\": \"<integer>\",\n        \"from_time\": \"<dateTime>\",\n        \"thru_time\": \"<dateTime>\",\n        \"computed_at\": \"<dateTime>\"\n      },\n      \"sponsorship\": {\n        \"from_ledger\": \"<integer>\",\n        \"thru_ledger\": \"<integer>\",\n        \"from_time\": \"<dateTime>\",\n        \"thru_time\": \"<dateTime>\",\n        \"computed_at\": \"<dateTime>\"\n      }\n    },\n    \"note\": \"<string>\",\n    \"relation\": \"created\",\n    \"edges\": [\n      {\n        \"account\": \"<string>\",\n        \"first_ledger\": \"<integer>\",\n        \"last_ledger\": \"<integer>\",\n        \"first_at\": \"<dateTime>\",\n        \"last_at\": \"<dateTime>\",\n        \"creations\": \"<integer>\",\n        \"funded_stroops\": \"<string>\",\n        \"sponsorships_started\": \"<integer>\"\n      },\n      {\n        \"account\": \"<string>\",\n        \"first_ledger\": \"<integer>\",\n        \"last_ledger\": \"<integer>\",\n        \"first_at\": \"<dateTime>\",\n        \"last_at\": \"<dateTime>\",\n        \"creations\": \"<integer>\",\n        \"funded_stroops\": \"<string>\",\n        \"sponsorships_started\": \"<integer>\"\n      }\n    ],\n    \"next_cursor\": \"<string>\"\n  }\n}",
+                      "cookie": [],
+                      "_postman_previewlanguage": "json"
+                    },
+                    {
+                      "name": "Client-supplied parameters didn't validate.",
+                      "originalRequest": {
+                        "url": {
+                          "path": [
+                            "accounts",
+                            ":g_strkey",
+                            "graph"
+                          ],
+                          "host": [
+                            "{{baseUrl}}"
+                          ],
+                          "query": [
+                            {
+                              "disabled": false,
+                              "description": {
+                                "content": "Which OUTBOUND edge list to page. Omitted (the default)\nreturns the inbound edges and both outbound summaries and no\nedge list at all — the unbounded direction is opt-in.\n (This can only be one of created,sponsored)",
+                                "type": "text/plain"
+                              },
+                              "key": "relation",
+                              "value": "created"
+                            },
+                            {
+                              "disabled": false,
+                              "description": {
+                                "content": "Maximum outbound edges to return (1-500, default 50). Out-of-range values return 400.",
+                                "type": "text/plain"
+                              },
+                              "key": "limit",
+                              "value": "50"
+                            },
+                            {
+                              "disabled": false,
+                              "description": {
+                                "content": "Opaque keyset cursor from a prior response's next_cursor.",
+                                "type": "text/plain"
+                              },
+                              "key": "cursor",
+                              "value": "<string>"
+                            }
+                          ],
+                          "variable": [
+                            {
+                              "disabled": false,
+                              "description": {
+                                "content": "(Required) G-strkey account id.",
+                                "type": "text/plain"
+                              },
+                              "type": "any",
+                              "value": "<string>",
+                              "key": "g_strkey"
+                            }
+                          ]
+                        },
+                        "header": [
+                          {
+                            "key": "Accept",
+                            "value": "application/problem+json"
+                          }
+                        ],
+                        "method": "GET",
+                        "body": {}
+                      },
+                      "status": "Bad Request",
+                      "code": 400,
+                      "header": [
+                        {
+                          "key": "Content-Type",
+                          "value": "application/problem+json"
+                        }
+                      ],
+                      "body": "{\n  \"type\": \"<uri>\",\n  \"title\": \"<string>\",\n  \"status\": \"<integer>\",\n  \"detail\": \"<string>\",\n  \"instance\": \"<string>\",\n  \"request_id\": \"<string>\",\n  \"coverage_from\": \"<dateTime>\",\n  \"outside_coverage\": \"<boolean>\"\n}",
+                      "cookie": [],
+                      "_postman_previewlanguage": "json"
+                    },
+                    {
+                      "name": "Server is degraded (dependency outage, startup, shutdown).",
+                      "originalRequest": {
+                        "url": {
+                          "path": [
+                            "accounts",
+                            ":g_strkey",
+                            "graph"
+                          ],
+                          "host": [
+                            "{{baseUrl}}"
+                          ],
+                          "query": [
+                            {
+                              "disabled": false,
+                              "description": {
+                                "content": "Which OUTBOUND edge list to page. Omitted (the default)\nreturns the inbound edges and both outbound summaries and no\nedge list at all — the unbounded direction is opt-in.\n (This can only be one of created,sponsored)",
+                                "type": "text/plain"
+                              },
+                              "key": "relation",
+                              "value": "created"
+                            },
+                            {
+                              "disabled": false,
+                              "description": {
+                                "content": "Maximum outbound edges to return (1-500, default 50). Out-of-range values return 400.",
+                                "type": "text/plain"
+                              },
+                              "key": "limit",
+                              "value": "50"
+                            },
+                            {
+                              "disabled": false,
+                              "description": {
+                                "content": "Opaque keyset cursor from a prior response's next_cursor.",
+                                "type": "text/plain"
+                              },
+                              "key": "cursor",
+                              "value": "<string>"
+                            }
+                          ],
+                          "variable": [
+                            {
+                              "disabled": false,
+                              "description": {
+                                "content": "(Required) G-strkey account id.",
+                                "type": "text/plain"
+                              },
+                              "type": "any",
+                              "value": "<string>",
+                              "key": "g_strkey"
+                            }
+                          ]
+                        },
+                        "header": [
+                          {
+                            "key": "Accept",
+                            "value": "application/problem+json"
+                          }
+                        ],
+                        "method": "GET",
+                        "body": {}
+                      },
+                      "status": "Service Unavailable",
+                      "code": 503,
+                      "header": [
+                        {
+                          "key": "Content-Type",
+                          "value": "application/problem+json"
+                        }
+                      ],
+                      "body": "{\n  \"type\": \"<uri>\",\n  \"title\": \"<string>\",\n  \"status\": \"<integer>\",\n  \"detail\": \"<string>\",\n  \"instance\": \"<string>\",\n  \"request_id\": \"<string>\",\n  \"coverage_from\": \"<dateTime>\",\n  \"outside_coverage\": \"<boolean>\"\n}",
+                      "cookie": [],
+                      "_postman_previewlanguage": "json"
+                    }
+                  ],
+                  "event": [],
+                  "protocolProfileBehavior": {
+                    "disableBodyPruning": true
+                  }
+                }
+              ]
+            },
+            {
               "name": "activity",
               "description": "",
               "item": [
@@ -39717,7 +40024,7 @@
                   "value": "application/json"
                 }
               ],
-              "body": "{\n  \"data\": {\n    \"entries\": {\n      \"key_0\": {\n        \"name\": \"<string>\",\n        \"tags\": [\n          \"<string>\",\n          \"<string>\"\n        ],\n        \"source\": \"<string>\",\n        \"domain\": \"<string>\"\n      },\n      \"key_1\": {\n        \"name\": \"<string>\",\n        \"tags\": [\n          \"<string>\",\n          \"<string>\"\n        ],\n        \"source\": \"<string>\",\n        \"domain\": \"<string>\"\n      }\n    }\n  }\n}",
+              "body": "{\n  \"data\": {\n    \"entries\": {\n      \"key_0\": {\n        \"name\": \"<string>\",\n        \"tags\": [\n          \"<string>\",\n          \"<string>\"\n        ],\n        \"source\": \"<string>\",\n        \"domain\": \"<string>\"\n      }\n    }\n  }\n}",
               "cookie": [],
               "_postman_previewlanguage": "json"
             },
@@ -39900,7 +40207,7 @@
                   "value": "application/json"
                 }
               ],
-              "body": "{\n  \"data\": {\n    \"query\": \"<string>\",\n    \"kind\": \"contract\",\n    \"canonical\": \"<string>\",\n    \"href\": \"<string>\",\n    \"supported\": \"<boolean>\",\n    \"note\": \"<string>\"\n  }\n}",
+              "body": "{\n  \"data\": {\n    \"query\": \"<string>\",\n    \"kind\": \"unknown\",\n    \"canonical\": \"<string>\",\n    \"href\": \"<string>\",\n    \"supported\": \"<boolean>\",\n    \"note\": \"<string>\"\n  }\n}",
               "cookie": [],
               "_postman_previewlanguage": "json"
             },

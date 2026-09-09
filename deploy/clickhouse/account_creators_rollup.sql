@@ -167,3 +167,87 @@ ORDER BY metric;
 
 CREATE TABLE IF NOT EXISTS stellar.account_creators_stats_staging
 AS stellar.account_creators_stats;
+
+-- ── Creation GRAPH edges (#351) ─────────────────────────────────────
+--
+-- The board above answers "who created the most accounts". These two
+-- tables answer the graph question the same issue asks, in both
+-- directions: whom did an account create, and — the direction the board
+-- cannot serve at all — who created THIS account.
+--
+-- ONE ROW PER DISTINCT (creator, created) PAIR, NOT PER CREATION, and
+-- the collapse is what makes the inbound direction bounded. An account
+-- can be created more than once: CreateAccount and AccountMerge are both
+-- repeatable, and some services recycle an address continuously.
+-- Measured on r1 2026-09-09 over lake partition 63 (ledgers
+-- 63,000,000-63,999,999), 41,358 of 418,016 distinct created accounts
+-- carry more than one creation row and the widest carries 29,634 — which
+-- is recycling and not duplication: a sampled 20,000-ledger slice of
+-- that address holds 352 creations against 352 AccountMerge operations
+-- sourced by it. Collapsed to distinct pairs the same window holds
+-- 419,977 edges and NO created account has more than 9 distinct
+-- creators (p99.99 = 4.4). Serving creation EVENTS inbound would have
+-- made "who created this account" a 29,634-row answer for a single
+-- address.
+--
+-- Whole-archive shape measured the same day: 24,824,706 creation events
+-- collapse to 20,954,070 distinct pairs.
+--
+-- TWO TABLES, ONE CONTENT, TWO SORT ORDERS. Each direction is then a
+-- primary-key range read and neither is a scan — the same fix class as
+-- stellar.ops_by_source, which exists because a served route left to a
+-- skip-index scan measured 110x slower than a PK-prefixed one. The
+-- by_created twin is filled FROM the by-creator staging arm rather than
+-- by re-aggregating the archive, so the second ordering costs a re-sort
+-- of 21 M already-aggregated rows and not a second pass over 24.8 M.
+--
+-- WHY NOT READ stellar.account_creators_ops DIRECTLY. It is already
+-- ORDER BY (creator, ...), so the outbound direction would in principle
+-- work off it. It is a WORKING table: the cycle TRUNCATEs it and refills
+-- it over 65 walked windows, so for the length of a cycle it holds a
+-- PARTIAL archive. These two are staged and EXCHANGEd with the board, so
+-- a served read never sees a half-built graph.
+--
+-- COST. The aggregation measured 3.14 GiB / 24.5 s on r1 2026-09-09 at
+-- max_threads=2 over the whole working table. That is BELOW the cycle's
+-- existing peak — the board's account-population join, 3.31 GiB — so the
+-- cycle's ceiling is unchanged by these steps. The headroom is a stated
+-- function of one population: about 150 bytes per distinct pair, so the
+-- 8 GiB budget is reached near 55 M pairs against today's 21 M.
+CREATE TABLE IF NOT EXISTS stellar.account_creator_edges
+(
+    creator        String,
+    created        String,
+    -- creations counts the CreateAccount operations behind this ONE
+    -- edge; it exceeds 1 exactly for the recycling case above.
+    -- funded_stroops sums their starting balances and is legitimately 0
+    -- for CAP-33 sponsored creations, which pay no reserve of their own.
+    creations      UInt64,
+    funded_stroops Int128,
+    first_ledger   UInt32,
+    last_ledger    UInt32,
+    first_at       DateTime('UTC'),
+    last_at        DateTime('UTC')
+)
+ENGINE = MergeTree
+ORDER BY (creator, created);
+
+CREATE TABLE IF NOT EXISTS stellar.account_creator_edges_staging
+AS stellar.account_creator_edges;
+
+CREATE TABLE IF NOT EXISTS stellar.account_creator_edges_by_created
+(
+    created        String,
+    creator        String,
+    creations      UInt64,
+    funded_stroops Int128,
+    first_ledger   UInt32,
+    last_ledger    UInt32,
+    first_at       DateTime('UTC'),
+    last_at        DateTime('UTC')
+)
+ENGINE = MergeTree
+ORDER BY (created, creator);
+
+CREATE TABLE IF NOT EXISTS stellar.account_creator_edges_by_created_staging
+AS stellar.account_creator_edges_by_created;

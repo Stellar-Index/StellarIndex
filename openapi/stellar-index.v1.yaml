@@ -10831,6 +10831,136 @@ paths:
         "400": { $ref: "#/components/responses/BadRequest" }
         "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
+  /accounts/{g_strkey}/graph:
+    get:
+      operationId: getAccountGraph
+      x-stability: experimental
+      tags: [explorer]
+      summary: The account's sponsorship and account-creation graph, both directions.
+      description: |
+        One account's neighbourhood in the two relationships the
+        sponsor/creator league tables aggregate: who created and
+        sponsored THIS account (inbound), and whom it created and
+        sponsored (outbound). The per-account counterpart of
+        `/accounts/creators` and `/accounts/sponsors`, and the only
+        surface that answers the inbound question.
+
+        EVERYTHING HERE IS HISTORY, and the always-present `note` says
+        so. A creation edge is immutable. A sponsorship edge means an
+        arrangement was **started**, never that one is in force:
+        `RevokeSponsorship` names the entry it revokes inside XDR this
+        index does not decode, so `revocations_issued` is an
+        ACCOUNT-level figure that cannot be attributed to any edge, and
+        an arrangement also lapses silently when the sponsored entry is
+        deleted or the account merges away. No field here may be read as
+        live sponsorship state; observing that needs each ledger entry's
+        `sponsoringID`, which is not projected.
+
+        CARDINALITY IS THE SHAPE. Inbound is bounded by construction —
+        at most 25 edges per direction with the EXACT total and a
+        `truncated` flag beside it (measured ceilings on the real chain:
+        9 distinct creators, 8 distinct sponsors). Outbound is NOT
+        bounded — the busiest sponsor covers 785,543 distinct accounts —
+        so the default response carries outbound SUMMARIES only, and the
+        edge list is served only when `?relation=` names a direction,
+        keyset-paged with `?cursor=` (echo back `next_cursor`; the
+        cursor is the last served counterparty's account id).
+
+        One edge is one distinct PAIR, not one operation: `creations`
+        and `sponsorships_started` carry the operation counts. An
+        address created, merged away and created again yields ONE
+        creation edge with `creations` above 1 — which is why
+        `created_by` is a list rather than a single value.
+
+        `coverage` carries the two arms SEPARATELY because they are
+        separate cycles over separate sources: creation history reaches
+        genesis, sponsorship history only reaches protocol 14's
+        activation, where the feature began to exist. Merging them would
+        present that floor as a gap. Creation coverage spans both sides
+        of the Protocol 23 boundary, so it is continuous to the tip.
+
+        Stroops-denominated values are decimal strings (ADR-0003).
+      parameters:
+        - { name: g_strkey, in: path, required: true, description: G-strkey account id., schema: { type: string } }
+        - name: relation
+          in: query
+          description: |
+            Which OUTBOUND edge list to page. Omitted (the default)
+            returns the inbound edges and both outbound summaries and no
+            edge list at all — the unbounded direction is opt-in.
+          schema: { type: string, enum: [created, sponsored] }
+        - { name: limit, in: query, description: "Maximum outbound edges to return (1-500, default 50). Out-of-range values return 400.", schema: { type: integer, minimum: 1, maximum: 500, default: 50 } }
+        - { name: cursor, in: query, description: Opaque keyset cursor from a prior response's next_cursor., schema: { type: string } }
+      responses:
+        "200":
+          description: The account's creation and sponsorship neighbourhood.
+          content:
+            application/json:
+              example:
+                data:
+                  account: GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN
+                  inbound:
+                    created_by:
+                      edges:
+                      - account: GAUA7XL5K54CC2DDGP77FJ2YBHRJLT36CPZDXWPM6MP7MANOGG77PNJU
+                        creations: 1
+                        funded_stroops: '20000000'
+                        first_ledger: 52651627
+                        last_ledger: 52651627
+                        first_at: '2024-07-20T03:10:32Z'
+                        last_at: '2024-07-20T03:10:32Z'
+                      total: 1
+                      truncated: false
+                    sponsored_by:
+                      edges:
+                      - account: GDB3RSSWTUXO7MBTNMHUP3DRBIUR3QRV2CVFRAKMN4GM2B4QNGEUT6CU
+                        sponsorships_started: 2
+                        first_ledger: 60000001
+                        last_ledger: 63000004
+                        first_at: '2025-10-19T01:44:46Z'
+                        last_at: '2026-08-17T19:43:29Z'
+                      total: 1
+                      truncated: false
+                  outbound:
+                    created:
+                      accounts: 0
+                      creations: 0
+                      funded_stroops: '0'
+                    sponsored:
+                      accounts: 0
+                      sponsorships_started: 0
+                      revocations_issued: 0
+                  coverage:
+                    creation:
+                      from_ledger: 3
+                      thru_ledger: 64346048
+                      from_time: '2015-09-30T16:46:00Z'
+                      thru_time: '2026-09-09T11:02:56Z'
+                      computed_at: '2026-09-09T12:00:00Z'
+                    sponsorship:
+                      from_ledger: 32747295
+                      thru_ledger: 64346120
+                      from_time: '2020-11-23T15:20:18Z'
+                      thru_time: '2026-09-09T11:14:08Z'
+                      computed_at: '2026-09-09T12:00:00Z'
+                  note: >-
+                    History, not live state. Creation edges are immutable. Sponsorship
+                    edges count arrangements STARTED and are never a count of sponsorships
+                    in force.
+                as_of: '2026-09-09T12:05:00Z'
+                flags:
+                  stale: false
+                  reduced_redundancy: false
+                  triangulated: false
+                  divergence_warning: false
+                  divergence_checked: false
+              schema:
+                type: object
+                properties:
+                  data: { $ref: "#/components/schemas/AccountGraph" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
+
   /accounts/{g_strkey}/activity:
     get:
       operationId: getAccountActivity
@@ -11814,6 +11944,164 @@ components:
             which structurally cannot (soroswap, off-chain CEX/FX) — an
             empty page means "no attributed trades", not "never traded".
       required: [account, trades, note]
+    AccountGraphEdge:
+      type: object
+      description: |
+        One edge of the account graph — a counterparty plus the weight of
+        the relationship with it. ONE ROW PER DISTINCT PAIR, never per
+        operation.
+
+        Creation edges carry `creations` + `funded_stroops`; sponsorship
+        edges carry `sponsorships_started`. A sponsorship edge has no
+        `funded_stroops` because sponsorship moves no balance, and a zero
+        there would read as a fact.
+      properties:
+        account:
+          type: string
+          description: |
+            The other end: the creator/sponsor on an inbound edge, the
+            created/sponsored account on an outbound one.
+        creations:
+          type: integer
+          description: |
+            Creation edges only. CreateAccount operations behind this
+            pair. Above 1 means the address was created, merged away and
+            created again by the same funder.
+        funded_stroops:
+          type: string
+          description: |
+            Creation edges only. Starting balances summed over those
+            creations, as a decimal string. "0" is a REAL value — a
+            CAP-33 sponsored creation pays no reserve of its own.
+        sponsorships_started:
+          type: integer
+          description: |
+            Sponsorship edges only. Arrangements this pair BEGAN. Never a
+            count of arrangements still in force.
+        first_ledger: { type: integer }
+        last_ledger: { type: integer }
+        first_at: { type: string, format: date-time }
+        last_at: { type: string, format: date-time }
+      required: [account, first_ledger, last_ledger, first_at, last_at]
+    AccountGraphInbound:
+      type: object
+      description: |
+        One inbound direction: the capped edge slice plus the EXACT
+        number of edges that exist, so truncation is stated rather than
+        inferred from a short list.
+      properties:
+        edges: { type: array, items: { $ref: "#/components/schemas/AccountGraphEdge" } }
+        total: { type: integer, description: Exact number of inbound edges, independent of the cap. }
+        truncated: { type: boolean, description: True when `total` exceeds the served slice. }
+      required: [edges, total, truncated]
+    AccountGraphCreatedSide:
+      type: object
+      description: |
+        Whole-history summary of every account this one created.
+        `accounts` counts distinct addresses, `creations` counts
+        operations; they diverge for a funder that recycles addresses, so
+        neither substitutes for the other. The ledger/time span is ABSENT
+        when `accounts` is 0 — an account that created nothing has no
+        span, and a zero there would read as genesis.
+      properties:
+        accounts: { type: integer }
+        creations: { type: integer }
+        funded_stroops: { type: string, description: Decimal string (ADR-0003). }
+        first_ledger: { type: integer }
+        last_ledger: { type: integer }
+        first_at: { type: string, format: date-time }
+        last_at: { type: string, format: date-time }
+      required: [accounts, creations, funded_stroops]
+    AccountGraphSponsoredSide:
+      type: object
+      description: |
+        Whole-history summary of every account this one has sponsored.
+        Nothing here is a live-state figure.
+      properties:
+        accounts: { type: integer }
+        sponsorships_started: { type: integer, description: Arrangements STARTED, never arrangements in force. }
+        revocations_issued:
+          type: integer
+          description: |
+            RevokeSponsorship operations this account was the SOURCE of.
+            An account-level fact that CANNOT be attributed to any edge:
+            the revoked entry is named inside body_xdr, which this index
+            does not decode. Also a lower bound on arrangements that
+            ended, because an entry stops being sponsored when it is
+            deleted too, and that emits no operation at all.
+        first_ledger: { type: integer }
+        last_ledger: { type: integer }
+        first_at: { type: string, format: date-time }
+        last_at: { type: string, format: date-time }
+      required: [accounts, sponsorships_started, revocations_issued]
+    AccountGraphCoverage:
+      type: object
+      description: |
+        One arm's data-derived span (ADR-0031) and the time the rollup
+        cycle behind it ran. Not a claim about the chain: compare
+        `thru_ledger` against the tip to see how current it is.
+      properties:
+        from_ledger: { type: integer }
+        thru_ledger: { type: integer }
+        from_time: { type: string, format: date-time }
+        thru_time: { type: string, format: date-time }
+        computed_at: { type: string, format: date-time }
+      required: [from_ledger, thru_ledger, from_time, thru_time, computed_at]
+    AccountGraph:
+      type: object
+      description: |
+        An account's neighbourhood in the sponsorship and
+        account-creation graph. Always carries `note` — the
+        history-not-live-state contract applies to every response,
+        including an empty one.
+      properties:
+        account: { type: string }
+        inbound:
+          type: object
+          description: Where this account came from. Bounded by construction.
+          properties:
+            created_by: { $ref: "#/components/schemas/AccountGraphInbound" }
+            sponsored_by: { $ref: "#/components/schemas/AccountGraphInbound" }
+          required: [created_by, sponsored_by]
+        outbound:
+          type: object
+          description: |
+            What this account has done to others, as whole-history
+            summaries. The edge lists behind these are paged separately
+            via `?relation=`.
+          properties:
+            created: { $ref: "#/components/schemas/AccountGraphCreatedSide" }
+            sponsored: { $ref: "#/components/schemas/AccountGraphSponsoredSide" }
+          required: [created, sponsored]
+        relation:
+          type: string
+          enum: [created, sponsored]
+          description: Which outbound direction was paged; absent when none was requested.
+        edges:
+          type: array
+          description: The requested outbound direction's page, ascending by counterparty account id. Absent when no relation was requested.
+          items: { $ref: "#/components/schemas/AccountGraphEdge" }
+        next_cursor:
+          type: string
+          description: |
+            The last served edge's account id — echo back as `?cursor=`
+            for the next page. Emitted only on a FULL page, so its
+            absence means "that was everything".
+        coverage:
+          type: object
+          description: |
+            The two arms' spans, kept SEPARATE because they are separate
+            cycles over separate sources with different floors.
+          properties:
+            creation: { $ref: "#/components/schemas/AccountGraphCoverage" }
+            sponsorship: { $ref: "#/components/schemas/AccountGraphCoverage" }
+          required: [creation, sponsorship]
+        note:
+          type: string
+          description: |
+            Always present. States that every figure is history and that
+            no sponsorship figure is a count of arrangements in force.
+      required: [account, inbound, outbound, coverage, note]
     DashboardKey:
       type: object
       description: |

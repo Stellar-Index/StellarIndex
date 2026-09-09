@@ -41,8 +41,8 @@ level 3. The chain to `/` is what matters, not the hop count.
 
 | | Count |
 |---|---:|
-| Paths in the OpenAPI contract | **126** |
-| Level 3 — reachable | **101** |
+| Paths in the OpenAPI contract | **127** |
+| Level 3 — reachable | **102** |
 | Level 2 — consumed but unreachable | **0** |
 | Level 1 — not consumed | **21** |
 | Deliberately excluded (operational) | **4** |
@@ -237,6 +237,7 @@ page carries.
 | `/accounts/{g_strkey}/positions` | GET | 3 | app/accounts/AccountDefiPositions.tsx | /accounts, /accounts/[g] |
 | `/accounts/{g_strkey}/trades` | GET | 3 | app/accounts/AccountTrades.tsx | /accounts, /accounts/[g] |
 | `/accounts/{g_strkey}/activity` | GET | 3 | app/accounts/AccountActivitySummary.tsx | /accounts, /accounts/[g] |
+| `/accounts/{g_strkey}/graph` | GET | 3 | app/accounts/AccountGraph.tsx | /accounts, /accounts/[g] |
 | `/search` | GET | 3 | components/nav/SearchModal.tsx | global nav chrome; /, /accounts, /accounts/[g] |
 
 ## Level 1 — the 21 stranded endpoints

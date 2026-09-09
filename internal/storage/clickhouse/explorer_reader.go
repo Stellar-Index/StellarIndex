@@ -171,6 +171,16 @@ type ExplorerReader struct {
 	// board, which would read as "nobody has ever sponsored an account".
 	accountSponsorsProbe schemaProbe
 
+	// accountCreatorEdgesProbe / accountSponsorEdgesProbe probe the two
+	// graph edge tables the same two cycles now build (#351,
+	// deploy/clickhouse/account_{creators,sponsors}_rollup.sql).
+	// requireRows on both: an existing-but-empty edge table would make
+	// GET /v1/accounts/{g}/graph answer "this account was created by
+	// nobody and sponsored nobody", which is a claim rather than an
+	// absence — the handler 503s instead.
+	accountCreatorEdgesProbe schemaProbe
+	accountSponsorEdgesProbe schemaProbe
+
 	// holdersRollupProbe probes stellar.asset_holders_rollup (inventory
 	// #4, deploy/clickhouse/asset_holders_rollup.sql). Present +
 	// non-empty → AssetHolders serves keyed precomputed boards; absent →

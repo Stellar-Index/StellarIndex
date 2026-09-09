@@ -126,6 +126,23 @@ const factsCTE = `
 const sponsorsGatedArmSettings = boundedScanSettings +
 	", query_plan_join_swap_table = 0, max_execution_time = 1800"
 
+// sponsorEdgesSettings is the settings clause for the graph arm's one
+// aggregation: the working table's 20,016,173 sponsorship operations
+// re-derived through perTxCTE and collapsed to 4,088,814 distinct
+// (sponsor, sponsored) pairs.
+//
+// Measured on r1 2026-09-09 at max_threads=2: 4.01 GiB / 28.1 s — just
+// BELOW this cycle's existing peak, the board join's 4.09 GiB, so the
+// graph arm does not move the cycle's ceiling.
+//
+// No optimize_aggregation_in_order here, unlike the sibling creator arm:
+// the working table is ORDER BY (lseq, tidx, oidx) and this aggregation
+// groups by sponsor, which is not a prefix of it — there is no order to
+// exploit. The execution cap is 1800 s rather than the walk's 600 s
+// because this step is not walked: a pair can span lake partitions, so a
+// per-window aggregation would emit the same edge more than once.
+const sponsorEdgesSettings = boundedScanSettings + ", max_execution_time = 1800"
+
 // sponsorsRollupStatements is the full recompute cycle.
 //
 // Step 2 is the only pass over stellar.operations, and it is WALKED: one
@@ -295,11 +312,48 @@ var sponsorsRollupStatements = []rollupStep{
 	     SELECT 'thru_time', toInt64(toUnixTimestamp(max(ctime))) FROM stellar.account_sponsors_ops
 	 )
 	 ` + boundedScanSettings + `, max_execution_time = 900`},
-	// Board and the span that qualifies it swap in one metadata
-	// transaction — a board beside a stale span is the overstatement this
-	// surface exists to avoid.
+	// ── The graph arm (#351) ───────────────────────────────────────
+	// The board says WHO sponsored the most. These two say WHOM — one
+	// row per distinct (sponsor, sponsored) pair, in both sort orders so
+	// each direction is a primary-key range read. Derived from the same
+	// per-transaction attribution the board uses and from the same
+	// working table, so the two cannot describe different data: measured
+	// on r1 2026-09-09 the pair count equals the board's
+	// distinct_sponsored_total (4,088,814) and the event sum equals its
+	// sponsorships_total (9,987,381), exactly.
+	{sql: `TRUNCATE TABLE stellar.account_sponsor_edges_staging`},
+	{sql: `TRUNCATE TABLE stellar.account_sponsor_edges_by_sponsored_staging`},
+	{sql: `INSERT INTO stellar.account_sponsor_edges_staging
+	     (sponsor, sponsored, sponsorships_started, first_ledger, last_ledger, first_at, last_at)
+	 WITH` + perTxCTE + `
+	 SELECT sponsor, sponsored,
+	        toUInt64(count()) AS sponsorships_started,
+	        min(lseq) AS first_ledger,
+	        max(lseq) AS last_ledger,
+	        toDateTime(min(ctime), 'UTC') AS first_at,
+	        toDateTime(max(ctime), 'UTC') AS last_at
+	 FROM (
+	     SELECT sponsor, arrayJoin(sponsored_set) AS sponsored, lseq, ctime
+	     FROM per_tx WHERE n_sponsors = 1
+	 )
+	 GROUP BY sponsor, sponsored
+	 ` + sponsorEdgesSettings},
+	// Reverse ordering filled FROM the staging arm just written, so the
+	// per-transaction attribution is derived once per cycle rather than
+	// twice.
+	{sql: `INSERT INTO stellar.account_sponsor_edges_by_sponsored_staging
+	     (sponsored, sponsor, sponsorships_started, first_ledger, last_ledger, first_at, last_at)
+	 SELECT sponsored, sponsor, sponsorships_started, first_ledger, last_ledger, first_at, last_at
+	 FROM stellar.account_sponsor_edges_staging
+	 ` + boundedScanSettings + `, max_execution_time = 1800`},
+	// Board, the span that qualifies it, and the graph it decomposes into
+	// swap in one metadata transaction — a board beside a stale span is
+	// the overstatement this surface exists to avoid, and a graph beside
+	// a board from a different cycle is the same defect one level down.
 	{sql: `EXCHANGE TABLES stellar.account_sponsors_rollup_staging AND stellar.account_sponsors_rollup,
-	                 stellar.account_sponsors_stats_staging AND stellar.account_sponsors_stats`},
+	                 stellar.account_sponsors_stats_staging AND stellar.account_sponsors_stats,
+	                 stellar.account_sponsor_edges_staging AND stellar.account_sponsor_edges,
+	                 stellar.account_sponsor_edges_by_sponsored_staging AND stellar.account_sponsor_edges_by_sponsored`},
 }
 
 // RunSponsorsRollup executes one full recompute + atomic exchange.

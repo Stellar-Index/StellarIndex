@@ -147,6 +147,7 @@ var uncoveredOperations = map[string]string{
 	"GET /accounts/{g_strkey}/positions":        "explorer surface — SDK is pricing-first",
 	"GET /accounts/{g_strkey}/trades":           "explorer surface — SDK is pricing-first",
 	"GET /accounts/{g_strkey}/activity":         "explorer surface — SDK is pricing-first",
+	"GET /accounts/{g_strkey}/graph":            "sponsorship/creation graph — explorer surface; SDK is pricing-first",
 	"GET /search":                               "explorer surface — SDK is pricing-first",
 	"GET /network/throughput":                   "explorer chart feed — SDK is pricing-first",
 

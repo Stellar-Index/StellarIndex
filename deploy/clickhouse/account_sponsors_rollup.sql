@@ -174,3 +174,80 @@ ORDER BY metric;
 
 CREATE TABLE IF NOT EXISTS stellar.account_sponsors_stats_staging
 AS stellar.account_sponsors_stats;
+
+-- ── Sponsorship GRAPH edges (#351) ──────────────────────────────────
+--
+-- The board above answers "who has sponsored the most". These two
+-- answer the graph question in both directions: whom has an account
+-- sponsored, and who has sponsored THIS account.
+--
+-- HISTORY, EXACTLY AS THE BOARD IS. An edge means "this sponsor began at
+-- least one sponsorship arrangement covering this account", never "is
+-- currently sponsoring it". The column is named sponsorships_started for
+-- that reason, and there is deliberately no per-edge revoked/current
+-- flag: RevokeSponsorship names the entry it revokes inside body_xdr,
+-- which this cycle does not decode (see the header for what reading that
+-- column costs), so a revocation cannot be attributed to an EDGE at all
+-- — only to the account that issued it, which the board already carries
+-- as revocations_issued. An entry also stops being sponsored when it is
+-- simply deleted or the account merges away, and neither emits an
+-- operation. A "currently sponsoring" edge computed from this source
+-- would therefore overstate twice over; observing the live set needs the
+-- sponsoringID inside each ledger entry, which is not projected.
+--
+-- ONE ROW PER DISTINCT (sponsor, sponsored) PAIR. Measured on r1
+-- 2026-09-09 over the whole working table, 9,987,381 attributed End
+-- operations collapse to 4,088,814 distinct pairs — and that pair count
+-- equals the board's own distinct_sponsored_total exactly, while the
+-- event count equals its sponsorships_total exactly, so these tables are
+-- a decomposition of the board rather than a second opinion about it.
+--
+-- INBOUND IS SMALL, OUTBOUND IS NOT. Over lake partition 63 no sponsored
+-- account has more than 8 distinct sponsors (p99.9 = 7), while the top
+-- sponsor covers 785,543 distinct accounts. That asymmetry is why the
+-- served surface bounds the inbound side with a cap and pages the
+-- outbound side with a keyset cursor.
+--
+-- TWO TABLES, ONE CONTENT, TWO SORT ORDERS — same reasoning as the
+-- sibling creator edges: each direction is a primary-key range read,
+-- and the by_sponsored twin is filled FROM the by-sponsor staging arm
+-- rather than by re-deriving the per-transaction attribution twice.
+--
+-- COST. The aggregation measured 4.01 GiB / 28.1 s on r1 2026-09-09 at
+-- max_threads=2 over the 20,016,173-row working table — just BELOW this
+-- cycle's existing peak, the board join's 4.09 GiB, so the cycle's
+-- ceiling is unchanged by these steps.
+CREATE TABLE IF NOT EXISTS stellar.account_sponsor_edges
+(
+    sponsor              String,
+    sponsored            String,
+    -- Arrangements STARTED between this pair. Not a count of
+    -- arrangements still in force — see the note above for why no such
+    -- count is derivable from this source.
+    sponsorships_started UInt64,
+    first_ledger         UInt32,
+    last_ledger          UInt32,
+    first_at             DateTime('UTC'),
+    last_at              DateTime('UTC')
+)
+ENGINE = MergeTree
+ORDER BY (sponsor, sponsored);
+
+CREATE TABLE IF NOT EXISTS stellar.account_sponsor_edges_staging
+AS stellar.account_sponsor_edges;
+
+CREATE TABLE IF NOT EXISTS stellar.account_sponsor_edges_by_sponsored
+(
+    sponsored            String,
+    sponsor              String,
+    sponsorships_started UInt64,
+    first_ledger         UInt32,
+    last_ledger          UInt32,
+    first_at             DateTime('UTC'),
+    last_at              DateTime('UTC')
+)
+ENGINE = MergeTree
+ORDER BY (sponsored, sponsor);
+
+CREATE TABLE IF NOT EXISTS stellar.account_sponsor_edges_by_sponsored_staging
+AS stellar.account_sponsor_edges_by_sponsored;
