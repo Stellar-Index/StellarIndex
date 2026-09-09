@@ -17,6 +17,45 @@ against.
 
 ### Fixed
 
+- **pipeline/gating:** a curated-set contract gate (ADR-0040 §1 mechanism 3 —
+  `comet`, `blend_emitter`, `upshift`) is now seeded from code at warm time
+  instead of waiting for an operator command. `GatedRegistryOptions` warmed
+  every gated registry from the `protocol_contracts` table alone and never
+  read `GatedMeta.CuratedSet`, so the in-code trust root of a source with no
+  factory and no creation events reached exactly one consumer: the
+  `seed-protocol-contracts` CLI. Until somebody remembered to run it, that
+  source had no rows in the table at all — measured on r1 2026-09-09,
+  `protocol_contracts` held aquarius 352, blend 29, defindex 16,
+  sushiswap_v3 58 and **upshift 0** — so `GET /v1/protocols/{name}` served an
+  empty contract roster, the explorer's contract-attribution overlay tagged
+  neither vault, and the only line naming it read
+  `gated registry warmed source=upshift factories=null children=0`, which is
+  indistinguishable from a protocol that has not deployed a pool yet. The
+  decode path itself survived only on a redundancy: each curated decoder's own
+  constructor re-installs its `MainnetGatedSet()`, which is not something the
+  layer that *declares* the trust root may depend on (`blend`'s constructor
+  deliberately installs no children at all).
+
+  The warm now seeds `CuratedSet` into every registry it builds (a pure,
+  hook-free constructor option, so the read-only recognition/completeness
+  audits gate correctly without writing anything) and, on the indexer path
+  only, reconciles the missing rows into `protocol_contracts` through the same
+  writer the CLI uses — same `factory_id = "curated"` provenance, same
+  `first_ledger`, and rows already present are left alone so a restart does
+  not re-stamp `observed_at`.
+
+  Two adjacent silences closed with it: a gated source that warms an EMPTY
+  contract gate now logs a WARN naming the source and the remedy rather than
+  a bare `children=0` (that state is unreachable for curated sources now, but
+  a factory-anchored source whose genesis walk has not run can still be in
+  it — it cannot be seeded from code, so the honest answer is to say so, not
+  to refuse to boot a host whose lake is still filling); and
+  `seed-protocol-contracts` on a curated source with an empty `CuratedSet`
+  now fails instead of reporting "upserted 0 child contract(s)" and exiting 0.
+
+
+### Fixed
+
 - **api/assets:** `GET /v1/assets/{id}` no longer times out for non-classic
   assets. The existence check sent everything but classic assets to an
   unbounded `SELECT EXISTS` over the `trades` hypertable, which cannot be

@@ -64,12 +64,48 @@ the events, `/v1/coverage` reports the source INCOMPLETE forever with
 `watermark_ledger` one below genesis, and the served tier is empty. `sushiswap_v3`
 sat that way until 2026-09-09; `upshift` (#503) was found hours later.
 
+### 4b — Seed the contract gate (contract-gated sources only)
+
+A gated decoder (ADR-0035/0040) only decodes events from contracts in its
+`contractid.Registry`, and that registry is warmed by
+`pipeline.GatedRegistryOptions` from the `protocol_contracts` table. Which half
+of this you owe depends on the gate mechanism:
+
+- [ ] **Factory-anchored** (`Factories` non-empty — blend, aquarius, defindex,
+      phoenix, sushiswap_v3): the children are discovered from the factory's
+      creation events, so there is nothing in code to seed them with.
+      `stellarindex-ops seed-protocol-contracts -source <name>` is a **deploy
+      precondition** (ADR-0040 §2.4) — run it once the lake covers the factory
+      genesis. Until it runs the warm logs a WARN naming the source and the
+      remedy; a fresh host legitimately sits there for a while, which is why the
+      indexer warns rather than refusing to boot.
+- [ ] **Curated-set** (`Factories` empty — comet, blend_emitter, upshift; ADR-0040
+      §1 mechanism 3): the trust root is the in-code `<pkg>.MainnetGatedSet()`.
+      Put it on the `GatedMeta` entry's **`CuratedSet`** field. That field is the
+      whole mechanism: the warm seeds it into every registry it builds and, on the
+      indexer path, reconciles it into `protocol_contracts` so the roster reads
+      (`GET /v1/protocols/{name}`, the explorer's contract attribution) agree with
+      the gate. No operator command is required. Omitting it declares a gate with
+      no trust root — every event dropped, and `seed-protocol-contracts` reporting
+      "upserted 0 child contract(s)" with exit 0.
+
+`upshift` shipped with `CuratedSet` set but nothing outside the CLI reading it:
+on r1 (2026-09-09) `protocol_contracts` held aquarius 352, blend 29, defindex 16,
+sushiswap_v3 58 and upshift **0**, `/v1/protocols/upshift` served an empty
+contract roster, and the only line about it read
+`gated registry warmed source=upshift factories=null children=0` — a line that
+reads identically for a protocol with no pools yet.
+
 ## Guards that will catch mistakes
 `TestIsProjectedEvent_TableDriven` fails if the sink/projector arms drift; `config.Validate`
 rejects an `enabled_sources` name missing from `KnownSources`; `lint-imports.sh` enforces
 boundaries; `scripts/ci/lint-source-enablement.sh` fails when a `KnownSources` name is
 neither enabled nor declared not-yet-enabled, and when a declared-unrun source is still
-tracked by the completeness catalogue.
+tracked by the completeness catalogue;
+`TestGatedSources_curatedOnlyDeclaresTrustRoot` fails when a curated-only `GatedMeta`
+entry declares no `CuratedSet`, and
+`TestGatedRegistryOptions_curatedSetSeededWithEmptyTable` fails if the registry warm
+stops installing that set for a source whose `protocol_contracts` rows are missing.
 
 ## Done when
 Unit + fixture tests pass; `bash scripts/dev/verify.sh` is green; enabling the source and
