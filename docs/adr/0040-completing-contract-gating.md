@@ -28,6 +28,30 @@ superseded_by: null
 > discovery. Building the sweep (§1 mechanism #3's "operator sweep,
 > off the hot path") remains open work; not made here.
 
+> **Amendment (2026-09-09).** §1 mechanism 3 and §2 step 1 describe a
+> curated set as "seeded via `seed-protocol-contracts`" — an operator
+> command run once per deployment. That made the mechanism silent when
+> the command was not run: `pipeline.GatedRegistryOptions` warmed every
+> registry from the `protocol_contracts` table alone and never read
+> `GatedMeta.CuratedSet`, so a curated source's declared trust root
+> reached nothing but the CLI. Measured on r1 the day `upshift` was
+> first enabled: `protocol_contracts` held aquarius 352, blend 29,
+> defindex 16, sushiswap_v3 58 and upshift 0, `/v1/protocols/upshift`
+> served an empty contract roster, the explorer attributed neither
+> vault, and the sole log line read `gated registry warmed
+> source=upshift factories=null children=0`. The decode gate itself was
+> spared only by a redundancy — each curated decoder's own `NewDecoder`
+> re-installs its `MainnetGatedSet()` — which the layer that *declares*
+> the trust root must not depend on. The warm now seeds `CuratedSet`
+> into every registry it builds and, on the indexer path only,
+> reconciles it into `protocol_contracts` (provenance
+> `factory_id = "curated"`, unchanged), so the declared trust root
+> reaches every consumer of the warm on boot and the roster agrees with
+> the gate.
+> `seed-protocol-contracts -source <name>` remains the mechanism for
+> FACTORY-anchored sources, where the deploy-precondition framing in §2
+> step 4 still holds exactly as written.
+
 ## Context
 
 ADR-0035 established that Soroban decoders must gate `Matches()` on

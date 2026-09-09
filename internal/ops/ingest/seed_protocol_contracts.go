@@ -23,11 +23,18 @@ import (
 // factory genesis ledger forward in the Postgres soroban_events lake and
 // upserts every announced child contract into protocol_contracts.
 //
-// Run once per gated source as a DEPLOY PRECONDITION before relying on the
-// gate — like the migration 0057-0060 re-derive. Until it runs, the
-// decoder's registry is empty and (correctly, per ADR-0035) drops every
-// child event; after it runs, the indexer keeps the table current live and
-// every consumer warms a complete registry from it.
+// Run once per FACTORY-anchored source as a DEPLOY PRECONDITION before
+// relying on the gate — like the migration 0057-0060 re-derive. Until it
+// runs, that decoder's registry holds no discovered children and
+// (correctly, per ADR-0035) drops their events; after it runs, the indexer
+// keeps the table current live and every consumer warms a complete
+// registry from it.
+//
+// CURATED-set sources (ADR-0040 §1 mechanism 3) no longer need it as a
+// precondition: their trust root is in code, and the indexer's gated
+// registry warm seeds it and reconciles it into protocol_contracts on
+// every boot. Running it for them stays useful as a repair step (e.g. to
+// re-stamp the table from a read-only host).
 //
 // Idempotent: the factory creation events are immutable history and
 // UpsertProtocolContract is ON CONFLICT DO UPDATE, so re-running re-walks
@@ -105,9 +112,12 @@ func seedProtocolContracts(args []string) error {
 // seedOneGatedSource walks one source's factory creation events and
 // upserts each announced child. Returns the number of children seeded.
 //
-// Curated-only sources (no factory namespace — comet, ADR-0040 §1
-// mechanism 3) have no creation events to walk: their in-code curated
-// set is upserted directly with provenance factory_id = "curated".
+// Curated-only sources (no factory namespace — comet, blend_emitter,
+// upshift; ADR-0040 §1 mechanism 3) have no creation events to walk:
+// their in-code curated set is upserted directly with provenance
+// factory_id = pipeline.CuratedFactoryID. The indexer now reconciles
+// that same set at warm time, so running this for a curated source is a
+// repair/verification step rather than a deploy precondition.
 func seedOneGatedSource(ctx context.Context, store *timescale.Store, source string, hi uint32) (int, error) {
 	meta, ok := pipeline.GatedMetaFor(source)
 	if !ok {
@@ -115,14 +125,12 @@ func seedOneGatedSource(ctx context.Context, store *timescale.Store, source stri
 	}
 
 	if len(meta.Factories) == 0 {
-		seeded := 0
-		for _, id := range meta.CuratedSet {
-			if err := store.UpsertProtocolContract(ctx, source, id, "curated", meta.Genesis); err != nil {
-				return seeded, fmt.Errorf("%s: upsert curated contract %s: %w", source, id, err)
-			}
-			seeded++
-		}
-		return seeded, nil
+		// One writer for curated rows (pipeline.SeedCuratedContracts), so
+		// this walk and the indexer's warm-time reconcile cannot drift
+		// into different provenance or first_ledger. have=nil: the CLI's
+		// documented contract is a full idempotent re-seed. An empty
+		// CuratedSet is an error there, not a zero-row success.
+		return pipeline.SeedCuratedContracts(ctx, store, source, meta, nil)
 	}
 
 	// Build the source's decoder with a hook that upserts each newly
