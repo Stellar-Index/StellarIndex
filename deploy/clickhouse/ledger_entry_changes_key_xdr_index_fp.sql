@@ -1,3 +1,13 @@
+-- si-apply-scope: operator
+--
+-- NOT applied by any bootstrap. An operator runs this against an EXISTING
+-- deployment (r1). It creates no object — the payload is an ALTER, and a
+-- FRESH host's deploy/clickhouse/tier1_schema.sql already declares the
+-- shape this ALTER migrates an old table to.
+-- Scope markers are enforced by scripts/ci/lint-ch-apply-scope.sh; the
+-- fresh-host apply set is declared in
+-- configs/ansible/roles/archival-node/tasks/08-clickhouse.yml.
+--
 -- ledger_entry_changes.idx_lec_key_xdr false-positive-rate retune:
 -- bloom_filter(0.01) → bloom_filter(0.0001) (audit-2026-07-23 C-F1). Full
 -- rationale + the measured evidence: deploy/clickhouse/tier1_schema.sql (the

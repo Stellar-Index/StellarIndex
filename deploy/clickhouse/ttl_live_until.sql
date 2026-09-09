@@ -1,3 +1,14 @@
+-- si-apply-scope: operator
+--
+-- NOT applied by any bootstrap. An operator runs this against an EXISTING
+-- deployment (r1) for the DDL below plus the backfill runbook it carries. A
+-- FRESH host gets these objects from deploy/clickhouse/tier1_schema.sql,
+-- which declares each of them identically — the gate named below pins that,
+-- so the DDL here is a mirror and the runbook is the reason the file exists.
+-- Scope markers are enforced by scripts/ci/lint-ch-apply-scope.sh; the
+-- fresh-host apply set is declared in
+-- configs/ansible/roles/archival-node/tasks/08-clickhouse.yml.
+--
 -- ttl_live_until: slim TTL-liveness projection — key_hash → liveUntilLedgerSeq,
 -- MV-maintained from stellar.ledger_entry_changes (v0.21.4 headline fix).
 --

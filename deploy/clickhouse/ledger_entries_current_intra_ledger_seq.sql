@@ -1,3 +1,31 @@
+-- si-apply-scope: operator
+-- si-cutover-object: stellar.ledger_entries_current_v2
+-- si-cutover-object: stellar.ledger_entries_current_v2_mv
+--
+-- NOT applied by any bootstrap. The objects named above are the CUT-OVER
+-- halves of an r1 migration: they exist only for its duration and are
+-- renamed onto stellar.ledger_entries_current (and the v2 names dropped)
+-- when it completes. That is why they are deliberately ABSENT from
+-- tier1_schema.sql — codifying them would make a COMPLETED cut-over read as
+-- schema drift forever. si-cutover-object is what exempts them from the
+-- lint's "every operator-created object is also declared fresh-host" rule.
+--
+-- HISTORY — this file DID auto-apply until 2026-09-09. The archival-node
+-- role executed every deploy/clickhouse/*.sql it could glob wherever
+-- clickhouse_apply_schema is true (testnet.yml, futurenet.yml), so the
+-- paragraph below was false on those hosts and every fresh test-net
+-- provision built the v2 pair as an exact duplicate of
+-- stellar.ledger_entries_current: same column list and order, same
+-- ReplacingMergeTree(version), same ORDER BY and indexes, an MV reading the
+-- same stellar.ledger_entry_changes with the same SELECT into a second
+-- target. (The Step-0 ALTER was already a no-op there — tier1 declares
+-- intra_ledger_seq.) The live test nets still carry them; the drop is an
+-- operator step, not something this file or the role does.
+--
+-- Scope markers are enforced by scripts/ci/lint-ch-apply-scope.sh; the
+-- fresh-host apply set is declared in
+-- configs/ansible/roles/archival-node/tasks/08-clickhouse.yml.
+--
 -- ledger_entries_current version rebuild: ReplacingMergeTree(ledger_seq) →
 -- ReplacingMergeTree(version), version = (ledger_seq << 32) | intra_ledger_seq
 -- (audit-2026-07-16 C2-4c / CS-021 broadened). Full rationale + reader blast
@@ -12,9 +40,13 @@
 -- this file — tier1_schema.sql's canonical DDL already uses the composite
 -- version. It is the direct sibling of deploy/clickhouse/contract_events_daily_v2.sql
 -- (that one changed an AggregateFunction state format; this one changes the
--- ReplacingMergeTree version column). ***FREEZE-GATED: do NOT run under the
--- current deploy freeze — this is the codified migration, executed by an
--- operator as a separate, post-freeze step.***
+-- ReplacingMergeTree version column). ***OPERATOR-GATED: this is the codified
+-- migration, run as a separate, deliberately scheduled step — never as part
+-- of a provision, a deploy, or a release. Check the freeze status of the day
+-- before running it.*** (Until 2026-09-09 this paragraph asserted a specific
+-- freeze was in force. A dated ops fact goes stale in place and then reads as
+-- current, so what is stated here now is the durable property; the freeze
+-- calendar lives with the operator, not in this file.)
 --
 -- The defect: ledger_seq alone is not unique per key within a ledger — a single
 -- ledger can hold several changes to one storage key (update-then-remove,
