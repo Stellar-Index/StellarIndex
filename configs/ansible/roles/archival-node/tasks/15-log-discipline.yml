@@ -346,6 +346,7 @@
   loop:
     - config-assertions.service
     - config-assertions.timer
+  register: config_assertions_units
   tags: [log-discipline, config-assertions]
 
 - name: Enable the config-assertions timer
@@ -354,6 +355,9 @@
     enabled: true
     state: started
     daemon_reload: true
+  when:
+    # Role-installed unit — CHECK-MODE UNIT GUARD, tasks/main.yml.
+    - not (ansible_check_mode and config_assertions_units is changed)
   tags: [log-discipline, config-assertions]
 
 - name: ClickHouse server tuning drop-in (formerly hand-managed)

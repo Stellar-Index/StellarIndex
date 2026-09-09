@@ -17,6 +17,31 @@ against.
 
 ### Fixed
 
+- **ansible:** a `--check` run of the `archival-node` role aborted the
+  moment it reached a task enabling a unit the role itself installs and
+  the host did not have yet. `--check` never really writes the unit
+  file, so systemd answers `Could not find the requested service
+  <unit>`, and that module error is fatal: the play stops and every task
+  after it is never evaluated. Two of the weekly `ansible-drift` runs
+  died exactly this way — 2026-08-10 at the `verify-archive /
+  completeness / supply-snapshot` timer loop over a `census-rollup.timer`
+  that had never been applied (ok=192), 2026-08-24 at `sla-probe.timer`
+  (ok=117) — so both produced no drift verdict at all, and the drift they
+  were sitting on lived in the tasks that never ran. 25 enable/start
+  tasks and 13 restart handlers covering ROLE-INSTALLED units now carry
+  the check-mode guard; the rule and the reason for its shape are stated
+  once in `configs/ansible/roles/archival-node/tasks/main.yml`. Tasks for
+  PACKAGED units (postgres, redis, clickhouse-server, nftables, caddy,
+  the apt exporters) are deliberately left unguarded — apt put those
+  units on the host, so check mode can evaluate them, and a guard there
+  would suppress a genuine "would start postgres" finding.
+
+- **ansible:** the `archival-node` playbook carried two `pre_tasks:`
+  keys. YAML keeps the last duplicate mapping key and drops the rest, so
+  the region-secrets assert added on 2026-09-08 silently deleted the
+  "Confirm Ubuntu 22.04 or 24.04 LTS" guard — present in the file,
+  absent from every run. Both asserts are now one list.
+
 - **docs(runbook):** the `oracle-unknown-symbols` runbook's first
   diagnostic step could not work. It told the operator to `journalctl |
   grep` the indexer for the unmapped symbol, and **no oracle decoder
@@ -67,6 +92,7 @@ against.
   block, which is what an operator reads while triaging, still claimed
   every informational rule routes there. No alert expression, label,
   route or served value changes.
+
 ### Added
 
 - **ops:** the archival-node role gained a single-host Prometheus path

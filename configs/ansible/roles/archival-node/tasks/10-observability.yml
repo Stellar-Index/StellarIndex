@@ -450,6 +450,7 @@
       [Install]
       WantedBy=timers.target
   notify: daemon-reload
+  register: galexie_catchup_probe_timer
 
 - name: enable the galexie catchup-probe timer
   ansible.builtin.systemd:
@@ -457,6 +458,9 @@
     enabled: true
     state: started
     daemon_reload: true
+  when:
+    # Role-installed unit — CHECK-MODE UNIT GUARD, tasks/main.yml.
+    - not (ansible_check_mode and galexie_catchup_probe_timer is changed)
 
 # ── Stellar-stack upstream version-lag probe ─────────────────────────
 #
@@ -719,6 +723,7 @@
       [Install]
       WantedBy=timers.target
   notify: Reload systemd
+  register: stellar_stack_version_probe_timer
 
 - name: enable the stellar-stack version-lag probe timer
   ansible.builtin.systemd:
@@ -726,6 +731,9 @@
     enabled: true
     state: started
     daemon_reload: true
+  when:
+    # Role-installed unit — CHECK-MODE UNIT GUARD, tasks/main.yml.
+    - not (ansible_check_mode and stellar_stack_version_probe_timer is changed)
 
 # ── StellarIndex OWN-binary version-skew probe ────────────────────
 # The probe above watches THIRD-PARTY components (core, archivist,
@@ -1029,6 +1037,7 @@
       [Install]
       WantedBy=timers.target
   notify: Reload systemd
+  register: ledger_meta_decode_probe_timer
   tags: [observability, protocol-guard]
 
 - name: enable the ledger-meta decode probe timer
@@ -1037,6 +1046,9 @@
     enabled: true
     state: started
     daemon_reload: true
+  when:
+    # Role-installed unit — CHECK-MODE UNIT GUARD, tasks/main.yml.
+    - not (ansible_check_mode and ledger_meta_decode_probe_timer is changed)
   tags: [observability, protocol-guard]
 
 # ── TimescaleDB job/CAGG health probe ─────────────────────────────

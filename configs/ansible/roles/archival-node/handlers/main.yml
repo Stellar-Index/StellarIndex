@@ -1,4 +1,20 @@
 ---
+# CHECK-MODE UNIT GUARD (tasks/main.yml holds the rule and the history).
+# Handlers that restart a unit THIS ROLE installs carry
+# `when: not ansible_check_mode` — the blunter form, on purpose:
+#
+#   - the notifying task's register may live in a task file the current
+#     `--tags` selection skipped, so the precise
+#     `not (ansible_check_mode and <register> is changed)` used on the
+#     enable/start tasks would evaluate an undefined variable here;
+#   - `state: restarted` asserts no state to preview. It reports changed
+#     whenever it is notified, so skipping it in check mode costs the
+#     drift report nothing, while NOT skipping it aborts the whole
+#     preview the first time a notified unit is not yet on the host.
+#
+# Handlers for PACKAGED units (postgres, clickhouse-server, redis,
+# nftables, ssh, journald, rsyslog, caddy, the apt exporters) are left
+# unguarded: apt put those units on the host, so systemd can find them.
 - name: Reload systemd
   ansible.builtin.systemd:
     daemon_reload: true
@@ -19,16 +35,19 @@
   ansible.builtin.systemd:
     name: stellar-core
     state: restarted
+  when: not ansible_check_mode  # role-installed unit; see the note above
 
 - name: Restart galexie
   ansible.builtin.systemd:
     name: galexie
     state: restarted
+  when: not ansible_check_mode  # role-installed unit; see the note above
 
 - name: Restart minio
   ansible.builtin.systemd:
     name: minio
     state: restarted
+  when: not ansible_check_mode  # role-installed unit; see the note above
 
 - name: Restart clickhouse-server
   ansible.builtin.systemd:
@@ -39,11 +58,14 @@
   ansible.builtin.systemd:
     name: stellarindex-indexer
     state: restarted
+  when: not ansible_check_mode  # role-installed unit; see the note above
 
 - name: Restart stellarindex-aggregator
   # No-op on test nets (run_aggregator=false) — the unit isn't installed
   # there, so a config-change notify must not try to restart a missing unit.
-  when: run_aggregator | default(true) | bool
+  when:
+    - run_aggregator | default(true) | bool
+    - not ansible_check_mode  # role-installed unit; see the note above
   ansible.builtin.systemd:
     name: stellarindex-aggregator
     state: restarted
@@ -52,6 +74,7 @@
   ansible.builtin.systemd:
     name: stellarindex-api
     state: restarted
+  when: not ansible_check_mode  # role-installed unit; see the note above
 
 # Timer-driven oneshot units (verify-archive-tier-a /
 # archive-completeness / supply-snapshot): a unit-file change is
@@ -61,16 +84,19 @@
   ansible.builtin.systemd:
     name: verify-archive-tier-a.timer
     state: restarted
+  when: not ansible_check_mode  # role-installed unit; see the note above
 
 - name: Restart archive-completeness.timer
   ansible.builtin.systemd:
     name: archive-completeness.timer
     state: restarted
+  when: not ansible_check_mode  # role-installed unit; see the note above
 
 - name: Restart supply-snapshot.timer
   ansible.builtin.systemd:
     name: supply-snapshot.timer
     state: restarted
+  when: not ansible_check_mode  # role-installed unit; see the note above
 
 - name: Restart node_exporter
   # Legacy handler kept for any pre-#33 task references; new tasks
@@ -145,16 +171,19 @@
     - indexer
     - aggregator
     - api
+  when: not ansible_check_mode  # role-installed unit; see the note above
 
 - name: Restart stellarindex-smoke timer
   ansible.builtin.systemd:
     name: stellarindex-smoke.timer
     state: restarted
+  when: not ansible_check_mode  # role-installed unit; see the note above
 
 - name: Restart stellarindex-sla-probe timer
   ansible.builtin.systemd:
     name: stellarindex-sla-probe.timer
     state: restarted
+  when: not ansible_check_mode  # role-installed unit; see the note above
 
 - name: Restart redis
   ansible.builtin.systemd:
@@ -199,3 +228,4 @@
     name: cap67-movements.service
     state: restarted
     daemon_reload: true
+  when: not ansible_check_mode  # role-installed unit; see the note above

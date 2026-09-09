@@ -254,6 +254,7 @@
   notify:
     - Reload systemd
     - Restart stellarindex-indexer
+  register: stellarindex_indexer_unit
 
 - name: Enable + start stellarindex-indexer
   ansible.builtin.systemd:
@@ -261,6 +262,9 @@
     state: started
     enabled: true
     daemon_reload: true
+  when:
+    # Role-installed unit — CHECK-MODE UNIT GUARD, tasks/main.yml.
+    - not (ansible_check_mode and stellarindex_indexer_unit is changed)
 
 # ──── Aggregator service ──────────────────────────────────────────────
 # Reads Timescale `trades` rows + writes CAGG rollups (per-window VWAP/TWAP).
@@ -282,9 +286,13 @@
   notify:
     - Reload systemd
     - Restart stellarindex-aggregator
+  register: stellarindex_aggregator_unit
 
 - name: Enable + start stellarindex-aggregator
-  when: run_aggregator | default(true) | bool
+  when:
+    - run_aggregator | default(true) | bool
+    # Role-installed unit — CHECK-MODE UNIT GUARD, tasks/main.yml.
+    - not (ansible_check_mode and stellarindex_aggregator_unit is changed)
   ansible.builtin.systemd:
     name: stellarindex-aggregator
     state: started
@@ -312,6 +320,7 @@
   notify:
     - Reload systemd
     - Restart stellarindex-api
+  register: stellarindex_api_unit
 
 - name: Enable + start stellarindex-api
   ansible.builtin.systemd:
@@ -319,6 +328,9 @@
     state: started
     enabled: true
     daemon_reload: true
+  when:
+    # Role-installed unit — CHECK-MODE UNIT GUARD, tasks/main.yml.
+    - not (ansible_check_mode and stellarindex_api_unit is changed)
 
 # ──── Timer-driven oneshot units ──────────────────────────────────────
 # verify-archive Tier A (nightly chain-link integrity, ADR-0016),
@@ -792,6 +804,7 @@
   #
   # Untagged behaviour is unchanged: a plain run still includes these,
   # because ansible only filters when --tags is passed.
+  register: ops_job_units
   tags: [ops-jobs]
 
 - name: Enable + start verify-archive / completeness / supply-snapshot timers
@@ -822,6 +835,16 @@
     - data-freshness.timer
     - ch-supply.timer
     - issuer-flags.timer
+  when:
+    # Role-installed units — CHECK-MODE UNIT GUARD, tasks/main.yml. This
+    # is the task that aborted the 2026-08-10 weekly drift run 42 tasks
+    # early: census-rollup.timer had been added to the loop above and
+    # never applied, so `--check` left it off the host and systemd
+    # answered "Could not find the requested service". The register is
+    # the whole loop, so ONE new unit stands the preview down for all
+    # twelve — but in that state the install task above is already
+    # naming the drift.
+    - not (ansible_check_mode and ops_job_units is changed)
   tags: [ops-jobs]
 
 # ── archive-completeness — only where its cross-anchor is correct ────
@@ -840,6 +863,7 @@
         - archive-completeness.service
         - archive-completeness.timer
       notify: Reload systemd
+      register: archive_completeness_units
 
     - name: Enable + start archive-completeness.timer
       ansible.builtin.systemd:
@@ -847,6 +871,9 @@
         state: started
         enabled: true
         daemon_reload: true
+      when:
+        # Role-installed unit — CHECK-MODE UNIT GUARD, tasks/main.yml.
+        - not (ansible_check_mode and archive_completeness_units is changed)
 
 - name: Remove archive-completeness where its cross-anchor is not network-correct
   when: not (archive_completeness_enabled | bool)
@@ -904,6 +931,7 @@
         - verify-served-values.service
         - verify-served-values.timer
       notify: Reload systemd
+      register: verify_served_values_units
 
     - name: Enable + start verify-served-values.timer
       ansible.builtin.systemd:
@@ -911,6 +939,9 @@
         state: started
         enabled: true
         daemon_reload: true
+      when:
+        # Role-installed unit — CHECK-MODE UNIT GUARD, tasks/main.yml.
+        - not (ansible_check_mode and verify_served_values_units is changed)
 
 - name: Remove verify-served-values where its ground truth is not network-correct
   # Paired with the install block above, and tagged alongside it, so
@@ -978,6 +1009,7 @@
         - verify-archive-tier-b.service
         - verify-archive-tier-b.timer
       notify: Reload systemd
+      register: verify_archive_tier_b_units
 
     - name: Enable + start verify-archive-tier-b.timer
       ansible.builtin.systemd:
@@ -985,6 +1017,9 @@
         state: started
         enabled: true
         daemon_reload: true
+      when:
+        # Role-installed unit — CHECK-MODE UNIT GUARD, tasks/main.yml.
+        - not (ansible_check_mode and verify_archive_tier_b_units is changed)
 
 # Converge a net provisioned BEFORE the gate above existed: the units are
 # on disk and the timer is enabled, so every nightly run leaves a failed
@@ -1057,6 +1092,7 @@
   notify:
     - Reload systemd
     - Restart cap67-movements
+  register: cap67_movements_unit
 
 - name: Enable + (re)start the cap67-movements follow daemon (5.3, real-time movements)
   # Long-lived daemon: catches up to the contiguous tip, then follows at
@@ -1082,6 +1118,9 @@
     state: started
     enabled: true
     daemon_reload: true
+  when:
+    # Role-installed unit — CHECK-MODE UNIT GUARD, tasks/main.yml.
+    - not (ansible_check_mode and cap67_movements_unit is changed)
 
 # ──── Tier D weekly cron (multi-peer fork-detection) ──────────────────
 # Per ADR-0016 §7.4: each region runs verify-archive Tier D weekly to

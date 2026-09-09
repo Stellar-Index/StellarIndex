@@ -600,6 +600,7 @@
   # decided by the effective-checksum compare above (no ExecReload, so a
   # real [Service] change — ExecStart/Environment — still restarts).
   notify: Reload systemd
+  register: galexie_unit
 
 - name: Enable + start galexie
   ansible.builtin.systemd:
@@ -607,6 +608,9 @@
     state: started
     enabled: true
     daemon_reload: true
+  when:
+    # Role-installed unit — CHECK-MODE UNIT GUARD, tasks/main.yml.
+    - not (ansible_check_mode and galexie_unit is changed)
 
 # #26 standing fix: schedule the hardened galexie-archive-fill so the
 # durable full-mirror (ADR-0016) can never silently fall ~23 days
@@ -623,6 +627,7 @@
     - galexie-archive-fill.timer
   notify: Reload systemd
   when: (stellar_network | default('pubnet')) == 'pubnet'
+  register: galexie_archive_fill_units
 
 - name: Enable + start galexie-archive-fill.timer
   ansible.builtin.systemd:
@@ -630,7 +635,10 @@
     state: started
     enabled: true
     daemon_reload: true
-  when: (stellar_network | default('pubnet')) == 'pubnet'
+  when:
+    - (stellar_network | default('pubnet')) == 'pubnet'
+    # Role-installed unit — CHECK-MODE UNIT GUARD, tasks/main.yml.
+    - not (ansible_check_mode and galexie_archive_fill_units is changed)
 
 # Converge a test net that was provisioned BEFORE the pubnet gate above
 # existed: the units are already on disk, the timer is enabled, and every
@@ -678,6 +686,7 @@
     - galexie-archive-tip-lag.service
     - galexie-archive-tip-lag.timer
   notify: Reload systemd
+  register: galexie_archive_tip_lag_units
 
 - name: Enable + start galexie-archive-tip-lag.timer
   ansible.builtin.systemd:
@@ -685,6 +694,9 @@
     state: started
     enabled: true
     daemon_reload: true
+  when:
+    # Role-installed unit — CHECK-MODE UNIT GUARD, tasks/main.yml.
+    - not (ansible_check_mode and galexie_archive_tip_lag_units is changed)
 
 # DR-asset shape guard: hourly partition-contiguity scan of the
 # durable mirror (holes/overlaps other than the declared trim page).
@@ -697,6 +709,7 @@
     - galexie-archive-contiguity.service
     - galexie-archive-contiguity.timer
   notify: Reload systemd
+  register: galexie_archive_contiguity_units
 
 - name: Enable + start galexie-archive-contiguity.timer
   ansible.builtin.systemd:
@@ -704,3 +717,6 @@
     state: started
     enabled: true
     daemon_reload: true
+  when:
+    # Role-installed unit — CHECK-MODE UNIT GUARD, tasks/main.yml.
+    - not (ansible_check_mode and galexie_archive_contiguity_units is changed)

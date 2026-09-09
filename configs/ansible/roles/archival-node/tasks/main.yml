@@ -4,6 +4,40 @@
 #
 #   ansible-playbook ... --tags zfs,postgres
 #   ansible-playbook ... --skip-tags minio
+#
+# ── CHECK-MODE UNIT GUARD ────────────────────────────────────────────
+# `--check` never really writes a file, so a task that enables or starts
+# a unit THIS ROLE installs fails outright ("Could not find the requested
+# service X") whenever that unit is new in the repo and not yet on the
+# host. The module error is fatal, so one such task ABORTS THE PREVIEW
+# for every task after it — which is how the weekly ansible-drift run
+# lost its verdict on 2026-08-10 (census-rollup.timer, 42 tasks early)
+# and 2026-08-24 (sla-probe.timer). The abort hides the very drift the
+# run exists to report.
+#
+# THE RULE, and it is narrow:
+#
+#   ROLE-INSTALLED unit (rendered from templates/systemd/*.j2, or copied
+#   into /etc/systemd/system by a task in this role) — register the
+#   install task and guard the enable/start with
+#
+#       when: not (ansible_check_mode and <register> is changed)
+#
+#   The guard fires ONLY when the unit file itself would change on this
+#   run, which in check mode is exactly the case where the enable cannot
+#   be evaluated honestly. When the unit file is in step the preview
+#   still runs, so "would start stellarindex-indexer" is still reported.
+#
+#   PACKAGED unit (postgres, redis, clickhouse-server, nftables, caddy,
+#   the prometheus exporters, fail2ban, ssh, rsyslog…) — DO NOT GUARD.
+#   The unit is on the host because the package put it there, so check
+#   mode can evaluate it, and a guard would suppress a real
+#   "would start postgres" finding: a stopped database is drift.
+#
+#   HANDLERS on role-installed units use the blunter `not
+#   ansible_check_mode` (see handlers/main.yml) — a handler's register
+#   may belong to a task file the current --tags selection skipped, and
+#   `state: restarted` asserts no state to preview anyway.
 
 - name: "Preflight checks"
   ansible.builtin.import_tasks: 01-preflight.yml

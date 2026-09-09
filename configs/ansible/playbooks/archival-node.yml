@@ -18,16 +18,6 @@
   force_handlers: true  # #307: a failure after an acked galexie render must still flush Restart galexie (else a permanent 'false same')
   gather_facts: true
 
-  pre_tasks:
-    - name: Confirm Ubuntu 22.04 or 24.04 LTS
-      ansible.builtin.assert:
-        that:
-          - ansible_facts.distribution == "Ubuntu"
-          - ansible_facts.distribution_major_version in ["22", "24"]
-        fail_msg: >-
-          This role targets Ubuntu 22.04 or 24.04 LTS. Got
-          {{ ansible_facts.distribution }} {{ ansible_facts.distribution_version }}.
-
   # Vault-encrypted region secrets (postgres passwords, MinIO keys,
   # healthcheck ping URLs). Wired 2026-07-03 — previously the README
   # implied it but nothing loaded the file, so every secret-using task
@@ -45,7 +35,24 @@
   vars_files:
     - "{{ secrets_file | default('../inventory/r1.secrets.yml') }}"
 
+  # ONE `pre_tasks:` key only. YAML keeps the LAST duplicate mapping key
+  # and silently drops the rest, so when the region-secrets assert below
+  # arrived as a second `pre_tasks:` block it deleted the OS assert that
+  # used to sit above `vars_files:` — the guard was gone from every run
+  # while still reading as present in the file. `ansible-playbook
+  # --syntax-check` warns ("Found duplicate mapping key 'pre_tasks'",
+  # "Using last defined value only"); a new pre-task belongs in this
+  # list, never in a new block.
   pre_tasks:
+    - name: Confirm Ubuntu 22.04 or 24.04 LTS
+      ansible.builtin.assert:
+        that:
+          - ansible_facts.distribution == "Ubuntu"
+          - ansible_facts.distribution_major_version in ["22", "24"]
+        fail_msg: >-
+          This role targets Ubuntu 22.04 or 24.04 LTS. Got
+          {{ ansible_facts.distribution }} {{ ansible_facts.distribution_version }}.
+
     - name: Refuse a secrets file that does not belong to this inventory
       ansible.builtin.assert:
         that:

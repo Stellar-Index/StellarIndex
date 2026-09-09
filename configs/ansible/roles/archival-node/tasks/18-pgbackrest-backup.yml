@@ -425,7 +425,12 @@
     enabled: true
     state: started
     daemon_reload: true
-  when: pgbackrest_backup_enabled | default(true)
+  when:
+    - pgbackrest_backup_enabled | default(true)
+    # Role-installed unit — CHECK-MODE UNIT GUARD, tasks/main.yml. The
+    # three timers above and the off-site one below already carry this
+    # guard; this one was the odd task out.
+    - not (ansible_check_mode and restore_drill_units is changed)
   tags: [ops-jobs]
 
 # ─── OFF-SITE restore-drill, repo2 (2026-09-04) ───────────────────────
