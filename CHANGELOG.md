@@ -311,6 +311,59 @@ against.
   `/v1/protocols` rows the total is summed over, so a summed protocol
   can be missing here even when the server admitted it. Absent stays
   absent: an omitted `tvl_total` renders nothing, never `$0.00`.
+### Fixed
+
+- **web:** `brand-600` is legible again. It was `#4270f0`, which measured
+  4.29:1 on `surface` and 3.95:1 on `surface-muted` — a WCAG 1.4.3 AA
+  failure on ~380 link sites, i.e. on most of the clickable text in the
+  explorer. The earlier pass could not lift it because the same token was
+  also a white-text FILL, and a fill has to go DARKER to carry white while
+  ink has to go LIGHTER to sit on a dark surface. That conflict is now
+  resolved by finishing the role split the `brand-fill` steps were created
+  for: eleven segmented controls, the sidebar sign-up button and the
+  account avatar move onto `bg-brand-fill` (4.37:1 → 6.38:1, and the
+  sidebar's `hover:bg-brand-700` 2.30:1 → 9.57:1), leaving `brand-600` free
+  to be ink only. It is now `#6087f2` — same hue, higher lightness — and
+  clears AA on every background it lands on: surface-canvas 5.86:1,
+  surface-subtle 5.70:1, surface 5.58:1, surface-muted 5.13:1, brand-50
+  4.82:1.
+
+- **web:** the issuer scam badge read `bg-down text-white` at 3.53:1 — the
+  same white-on-brand mistake the direction pills had already been fixed
+  for, in the one place on the site that warns people off a malicious
+  issuer. It now takes the canvas ink the pills take (5.58:1). The
+  dashboard checklist's unchecked bullet was `text-line-strong`, a
+  hairline tint at 1.40:1 on its card — below even the 3:1 WCAG 1.4.11
+  floor for a graphic; now `text-ink-faint` at 4.69:1.
+
+### Added
+
+- **web:** two source-derived a11y guards, both of which fail on the day a
+  new call site repeats the mistake rather than at the next audit.
+  `color-contrast.a11y.test.ts` recomputes the WCAG formula over the
+  shipped palette and over every class string in `src/`, and asserts no
+  pair below 4.5:1 (2,320 foreground occurrences today); it also asserts
+  the stylesheet still ships a single dark palette, so the matrix cannot
+  silently go half-covered if a light theme lands. Its rule for fills is
+  derived, not listed: a token bright enough to be READ on the dark canvas
+  is too bright to sit behind white. `keyboard-operable.a11y.test.ts`
+  asserts every clickable table row contains a real `<button>` with a name,
+  a focus style and a state attribute, that every click-to-dismiss overlay
+  routes through `useDialog` for its Escape path, and that nothing uses a
+  positive `tabIndex`. Both were verified red against the pre-fix tree:
+  the contrast pack over 349 offending sites and at the direction pills'
+  original 2.23:1 / 3.53:1, the keyboard pack naming all three click-only
+  rows — including the two pool-depth expanders that the existing
+  `/divergences` test could not see.
+
+### Changed
+
+- **web:** the status page's per-source completeness tones are a
+  `{ bar, label }` pair rather than one space-joined string pulled apart by
+  `.split(' ')` at each use. The two classes have always been applied to
+  two different elements; written as one string they read as a background
+  and a foreground applied together, which is both misleading and the kind
+  of thing a contrast scan has to be told to ignore.
 
 ## [v0.65.0] — 2026-09-08
 

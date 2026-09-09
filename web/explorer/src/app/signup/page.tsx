@@ -99,7 +99,7 @@ export default function SignupPage() {
                   <td className="whitespace-nowrap px-4 py-3 text-sm font-semibold text-ink">
                     {tier.name}
                     {tier.highlight && (
-                      <span className="ml-2 inline-flex items-center rounded-full bg-brand-600 px-2 py-0.5 text-xs font-medium text-white">
+                      <span className="ml-2 inline-flex items-center rounded-full bg-brand-fill px-2 py-0.5 text-xs font-medium text-white">
                         you are here
                       </span>
                     )}

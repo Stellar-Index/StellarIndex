@@ -192,7 +192,7 @@ export function NetworkView() {
                 onClick={() => setMetric(m.key)}
                 className={`rounded-md px-2.5 py-1 text-xs ${
                   metric === m.key
-                    ? 'bg-brand-600 text-white'
+                    ? 'bg-brand-fill text-white'
                     : 'border-line text-ink-body hover:border-brand-500 border'
                 }`}
               >

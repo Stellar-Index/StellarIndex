@@ -2053,11 +2053,17 @@ function BackfillCoverageTable({
                       : pct >= 50
                         ? 'warn'
                         : ('bad' as const);
+              // Two colours for two ELEMENTS — the meter fill and the
+              // percentage beside it. They were one space-joined string
+              // pulled apart by .split(' ') at each use, which reads as a
+              // bg/text pair applied together (it never is: the fill sits
+              // on the meter track, the label on the card). Naming the two
+              // roles is what keeps a contrast scan honest about them.
               const colors = {
-                ok: 'bg-ok-500 text-ok-700',
-                warn: 'bg-warn-500 text-warn-700',
-                bad: 'bg-bad-500 text-bad-700',
-                pending: 'bg-line text-ink-muted',
+                ok: { bar: 'bg-ok-500', label: 'text-ok-700' },
+                warn: { bar: 'bg-warn-500', label: 'text-warn-700' },
+                bad: { bar: 'bg-bad-500', label: 'text-bad-700' },
+                pending: { bar: 'bg-line', label: 'text-ink-muted' },
               };
               return (
                 <tr key={r.source}>
@@ -2098,11 +2104,11 @@ function BackfillCoverageTable({
                         )}
                         <div className="bg-surface-subtle h-1.5 w-16 overflow-hidden rounded-full">
                           <div
-                            className={`h-full ${colors[tone].split(' ')[0]}`}
+                            className={`h-full ${colors[tone].bar}`}
                             style={{ width: `${Math.max(2, pct)}%` }}
                           />
                         </div>
-                        <span className={`tnum ${colors[tone].split(' ')[1]}`}>
+                        <span className={`tnum ${colors[tone].label}`}>
                           {pct.toFixed(1)}%
                         </span>
                       </div>

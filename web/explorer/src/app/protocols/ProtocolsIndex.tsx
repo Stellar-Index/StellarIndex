@@ -332,7 +332,7 @@ function FilterChip({
       onClick={onClick}
       className={`rounded-full px-2 py-0.5 font-mono text-[10px] uppercase tracking-wider focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-brand-500 ${
         active
-          ? 'bg-brand-600 text-white'
+          ? 'bg-brand-fill text-white'
           : 'bg-surface-subtle text-ink-body hover:bg-line'
       }`}
     >
