@@ -259,10 +259,19 @@ type Server struct {
 	// payloads and the curated directory) move on daily cadences. It
 	// holds NO valuation: membership is decided before any number is
 	// attached.
-	rwaMu                  sync.Mutex
-	rwaCache               *rwaMembership
-	rwaAt                  time.Time
-	rwaFlight              chan struct{}
+	rwaMu     sync.Mutex
+	rwaCache  *rwaMembership
+	rwaAt     time.Time
+	rwaFlight chan struct{}
+	// Oracle reference snapshot for the same surface — the independent
+	// per-instrument valuations the premium/discount is measured
+	// against. Separate from the membership cache and much shorter-lived
+	// because it is a PRICE: a ten-minute-old NAV compared against a live
+	// market price would report a premium that neither figure supports.
+	rwaRefMu               sync.Mutex
+	rwaRefCache            *rwaReferences
+	rwaRefAt               time.Time
+	rwaRefFlight           chan struct{}
 	soroswapPairs          SoroswapPairsReader
 	networkStats           NetworkStatsReader
 	aggregators            AggregatorsReader

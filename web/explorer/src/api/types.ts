@@ -6372,6 +6372,27 @@ export interface components {
             recognition_tags: string[];
             /** @description Curated-directory tags that exclude an issuer outright. Same vocabulary the price-withholding gate reads. */
             scam_flag_tags: string[];
+            /**
+             * @description The CURATED set of Stellar `(code, issuer)` pairs this surface
+             *     will compare against an oracle feed, and the feed each pair is
+             *     bound to.
+             *
+             *     Keyed on the PAIR, never on the code. Asset codes are not
+             *     unique on Stellar — any account may issue a token called
+             *     `USTRY` — so a reference joined on the code alone answers every
+             *     one of them with the real instrument's net asset value, and an
+             *     unrelated token trading at $0.20 is published at an 81%
+             *     discount to a security it has nothing to do with.
+             *
+             *     Fail-closed and enumerated, the curated-set mechanism ADR-0040
+             *     sanctions for gates whose membership cannot be derived on
+             *     chain. A pair absent from this list carries
+             *     `premium.status: reference_not_bound` and no figure, whatever
+             *     the token is called. The list is served in full so a consumer
+             *     can audit every binding rather than inferring the rule from
+             *     which rows carry a figure today.
+             */
+            bound_instruments: components["schemas"]["RWABoundInstrument"][];
             /** @description The definition in prose, with the evidence behind each requirement. */
             documentation_url: string;
         };
@@ -6408,6 +6429,19 @@ export interface components {
              *     one.
              */
             earliest_first_seen_ledger?: number;
+            /**
+             * @description Members carrying an independent oracle valuation of their
+             *     instrument.
+             */
+            assets_with_reference: number;
+            /**
+             * @description Members where that valuation could also be measured against a
+             *     market price, i.e. rows with `premium.status: published`.
+             *     Served beside `assets_with_reference` because the difference
+             *     is the coverage of the premium column — a reader who saw only
+             *     the premiums would take the gaps for zeros.
+             */
+            assets_compared: number;
             /** @description One-line statement of what the total measured and how it was valued. */
             basis: string;
             /** @description True when a rebuild cap bound the set, so it is known to be incomplete. Absent when false. */
@@ -6452,6 +6486,8 @@ export interface components {
             /** @description The off-chain instrument the issuer declared this token anchors to, verbatim. */
             anchor_asset?: string;
             valuation: components["schemas"]["RWAValuation"];
+            reference?: components["schemas"]["RWAReference"];
+            premium: components["schemas"]["RWAPremium"];
             /**
              * @description Raw chain fact in the smallest integer unit. Served even when
              *     the valuation is withheld — a supply is not a price claim.
@@ -6509,6 +6545,169 @@ export interface components {
             price_basis?: "declared_peg" | "transitive";
             /** @description Circulating supply times the served USD price (decimal string). Present only when status is published. */
             market_cap_usd?: string;
+        };
+        /**
+         * @description One curated binding: the exact Stellar `(code, issuer)` and the
+         *     oracle feed whose instrument it is.
+         */
+        RWABoundInstrument: {
+            /**
+             * @description Classic asset code, matched EXACTLY — a case variant is a different token.
+             * @example USTRY
+             */
+            code: string;
+            /**
+             * @description Issuer G-address, matched exactly. Half of the identity, and the half a code-keyed join drops.
+             * @example GCRYUGD5NVARGXT56XEZI5CIFCQETYHAPQQTHO2O3IQZTHDH4LATMYWC
+             */
+            issuer: string;
+            /**
+             * @description Canonical `rwa:<CODE>` id of the oracle feed, ready for `/oracle/latest`.
+             * @example rwa:USTRY
+             */
+            feed: string;
+        };
+        /**
+         * @description An independent oracle's valuation of the real-world instrument an
+         *     admitted token declares it anchors to.
+         *
+         *     NOT this platform's price for the token, and not derived from any
+         *     Stellar market — the two figures are served separately so a
+         *     reader can see each on its own rather than only their ratio.
+         *
+         *     Five rules decide whether a reference may be published, and a row
+         *     that fails one carries no reference and states which rule refused
+         *     it in `premium.status`:
+         *
+         *     1. The pair must be BOUND. Identity on Stellar is
+         *        `(code, issuer)`, never the code — see
+         *        `definition.bound_instruments`. An unbound pair gets no
+         *        reference whatever its token is called.
+         *     2. The value must be DOLLARS. A bare `_FUNDAMENTAL` oracle feed
+         *        publishes net asset value in the token's RESERVE asset, so its
+         *        value is a ratio and not a dollar figure. The denominator is
+         *        read off the stored row and must be `fiat:USD`; it is never
+         *        converted here.
+         *     3. The feed must price ONE TOKEN. No binding may target a feed
+         *        that prices an off-chain quantity in its own unit — `rwa:XAU`
+         *        is spot gold per troy ounce, `rwa:SPXU` is one fund share.
+         *     4. The publisher must be an oracle. Aggregators write into the
+         *        same table for divergence comparison; a premium against an
+         *        aggregator's read of the market compares the market with
+         *        itself.
+         *     5. The issuer must not be scam-flagged. A flagged issuer's token
+         *        gets no valuation of any kind, including a third party's:
+         *        handing an impersonator the real instrument's NAV would
+         *        publish a larger claim than the one the flag suppressed.
+         */
+        RWAReference: {
+            /**
+             * @description The oracle's published value, verbatim at the feed's own
+             *     decimal scale (decimal string — ADR-0003). Not re-rounded:
+             *     the scale is the oracle's statement of its own precision.
+             * @example 1.07403800
+             */
+            price_usd: string;
+            /**
+             * @description The registered oracle that published it.
+             * @example redstone
+             */
+            source: string;
+            /**
+             * @description Canonical asset id of the instrument the oracle priced,
+             *     `rwa:<CODE>`. Present so the same row can be pulled from
+             *     `/oracle/latest` and checked against its origin.
+             * @example rwa:USTRY
+             */
+            feed: string;
+            /**
+             * @description The denominator — always `fiat:USD` on a served row. On the
+             *     wire rather than assumed because a NAV feed denominated in a
+             *     reserve asset is a ratio, and the difference is invisible in
+             *     the number alone.
+             * @example fiat:USD
+             */
+            quote: string;
+            /**
+             * Format: date-time
+             * @description When the oracle published it. The market price beside it
+             *     carries the response's own `as_of`, so the two vintages stay
+             *     separately visible.
+             */
+            as_of: string;
+            /**
+             * @description True when the reference is older than 72h — the longest
+             *     ordinary gap between two strikes of a real-world instrument's
+             *     value (a Friday figure read on the following Monday, plus a
+             *     public holiday). It LABELS the figure; it does not withhold
+             *     it, because a NAV struck last Friday is the current NAV on
+             *     Monday. The outer bound is absolute and enforced upstream: a
+             *     feed silent for 7 days leaves the row with no reference at
+             *     all. Absent when false.
+             */
+            stale?: boolean;
+        };
+        /**
+         * @description The token's market price measured against the oracle's valuation
+         *     of the instrument, or the reason there is no such figure.
+         *
+         *     Always present on a row. An absent premium and a premium of zero
+         *     are different findings and the wire keeps them apart: `pct` is
+         *     omitted whenever `status` is not `published`, never zero-filled.
+         *
+         *     What the comparison rests on: that one unit of the token is one
+         *     unit of the named instrument. The evidence is the issuer's own
+         *     domain-bound SEP-1 declaration plus the independent recognition
+         *     of the issuing account — the same evidence that admitted the
+         *     asset — and not an independent measurement of denomination.
+         */
+        RWAPremium: {
+            /**
+             * @description Each value means one thing and only one thing; in particular a
+             *     failed read, an unbound pair and a genuine absence are three
+             *     different statements and are never collapsed.
+             *
+             *     `published` — both figures exist and are comparable.
+             *     `withheld_issuer_flagged` — the issuer carries a scam-class
+             *     directory tag; no valuation of any kind is published for it.
+             *     `reference_not_bound` — no curated binding ties this exact
+             *     `(code, issuer)` to a feed. Usually a code collision: a token
+             *     wearing an instrument's ticker that no oracle has priced. See
+             *     `definition.bound_instruments`.
+             *     `no_reference_feed` — the pair IS bound, but the oracle stream
+             *     carries no row for its feed.
+             *     `reference_unavailable` — the oracle read did not answer, so
+             *     nothing is known either way. NOT an absence: a failed read has
+             *     not learned what the oracles carry, and must not report it.
+             *     `reference_expired` — the bound feed's most recent observation
+             *     is older than the seven-day window an active stream is defined
+             *     by. Reached only when a snapshot is carried across a sustained
+             *     read failure.
+             *     `reference_not_instrument_scoped` — an oracle feed of this
+             *     code exists but prices an off-chain quantity in its own unit
+             *     (a troy ounce of spot metal, one fund share) rather than one
+             *     token, so no binding may target it.
+             *     `reference_not_usd_denominated` — the bound feed's stored
+             *     quote is not `fiat:USD`, so its value is a ratio in a reserve
+             *     asset. Not converted here.
+             *     `no_market_price` — a reference exists but no served USD
+             *     market price does. The reference itself is still published.
+             *     `market_price_not_observed` — the served price is a declared
+             *     peg or a transitive derivation, so a premium against it would
+             *     report the issuer's own claim as a market finding.
+             *     `reference_not_positive` — the oracle published a
+             *     non-positive value; nothing is divided by it.
+             * @enum {string}
+             */
+            status: "published" | "withheld_issuer_flagged" | "reference_not_bound" | "no_reference_feed" | "reference_unavailable" | "reference_expired" | "reference_not_instrument_scoped" | "reference_not_usd_denominated" | "no_market_price" | "market_price_not_observed" | "reference_not_positive";
+            /**
+             * @description (market − reference) ÷ reference × 100 as a decimal string:
+             *     POSITIVE when the token trades above the instrument's
+             *     independent valuation, negative when below. Present only when
+             *     `status` is `published`.
+             * @example -3.0574
+             */
+            pct?: string;
         };
         /** @description One row of the per-declared-class breakdown. */
         RWAGroupTotal: {
@@ -14895,6 +15094,28 @@ export interface operations {
                      *             "hack",
                      *             "phishing"
                      *           ],
+                     *           "bound_instruments": [
+                     *             {
+                     *               "code": "CETES",
+                     *               "issuer": "GCRYUGD5NVARGXT56XEZI5CIFCQETYHAPQQTHO2O3IQZTHDH4LATMYWC",
+                     *               "feed": "rwa:CETES"
+                     *             },
+                     *             {
+                     *               "code": "TESOURO",
+                     *               "issuer": "GCRYUGD5NVARGXT56XEZI5CIFCQETYHAPQQTHO2O3IQZTHDH4LATMYWC",
+                     *               "feed": "rwa:TESOURO"
+                     *             },
+                     *             {
+                     *               "code": "USDY",
+                     *               "issuer": "GAJMPX5NBOG6TQFPQGRABJEEB2YE7RFRLUKJDZAZGAD5GFX4J7TADAZ6",
+                     *               "feed": "rwa:USDY"
+                     *             },
+                     *             {
+                     *               "code": "USTRY",
+                     *               "issuer": "GCRYUGD5NVARGXT56XEZI5CIFCQETYHAPQQTHO2O3IQZTHDH4LATMYWC",
+                     *               "feed": "rwa:USTRY"
+                     *             }
+                     *           ],
                      *           "documentation_url": "https://stellarindex.io/docs/methodology/rwa-definition"
                      *         },
                      *         "summary": {
@@ -14905,7 +15126,9 @@ export interface operations {
                      *           "assets_unvalued": 1,
                      *           "lower_bound": true,
                      *           "earliest_first_seen_ledger": 55008233,
-                     *           "basis": "Sum of the published market caps of the assets meeting the four-requirement definition. Market cap is circulating supply times the served USD price, both as /v1/assets serves them, under the same substance, dust-liquidity and scam-issuer gates. Assets whose valuation is withheld or unavailable contribute nothing and are counted separately, so the total is a LOWER BOUND on the value of the set."
+                     *           "assets_with_reference": 2,
+                     *           "assets_compared": 1,
+                     *           "basis": "Sum of the published market caps of the assets meeting the four-requirement definition. Market cap is circulating supply times the served USD price, both as /v1/assets serves them, under the same substance, dust-liquidity and scam-issuer gates. Assets whose valuation is withheld or unavailable contribute nothing and are counted separately, so the total is a LOWER BOUND on the value of the set. Premium and discount compare the token's market price against an independent oracle's valuation of the instrument the issuer declares it anchors to; the correspondence between one token and one unit of that instrument is the issuer's own declaration, not an independent measurement."
                      *         },
                      *         "assets": [
                      *           {
@@ -14927,6 +15150,17 @@ export interface operations {
                      *               "price_usd": "1.0412",
                      *               "market_cap_usd": "1284500.00"
                      *             },
+                     *             "reference": {
+                     *               "price_usd": "1.07403800",
+                     *               "source": "redstone",
+                     *               "feed": "rwa:USTRY",
+                     *               "quote": "fiat:USD",
+                     *               "as_of": "2026-09-09T15:08:40Z"
+                     *             },
+                     *             "premium": {
+                     *               "status": "published",
+                     *               "pct": "-3.0574"
+                     *             },
                      *             "circulating_supply": "12336218000000",
                      *             "volume_24h_usd": "8214.55",
                      *             "first_seen_ledger": 55008233,
@@ -14946,6 +15180,16 @@ export interface operations {
                      *             "anchor_asset": "Brazilian Tesouro Bonds",
                      *             "valuation": {
                      *               "status": "unpriced"
+                     *             },
+                     *             "reference": {
+                     *               "price_usd": "0.24538100",
+                     *               "source": "redstone",
+                     *               "feed": "rwa:TESOURO",
+                     *               "quote": "fiat:USD",
+                     *               "as_of": "2026-09-09T15:06:10Z"
+                     *             },
+                     *             "premium": {
+                     *               "status": "no_market_price"
                      *             },
                      *             "circulating_supply": "410000000",
                      *             "first_seen_ledger": 56828412,
