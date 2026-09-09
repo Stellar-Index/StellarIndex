@@ -244,9 +244,12 @@ and an entry needs all three of:
 
 1. the issuer's domain-bound SEP-1 entry for that exact pair, naming the
    instrument (requirement R2);
-2. the curated directory attributing that account to the entity the
-   feed's own ADR-0028 attribution names — the two attributions must
-   *agree*;
+2. the curated directory attributing that account to a named entity.
+   Where ADR-0028 also attributes the feed to an entity the two must
+   *agree* — but ADR-0028 attributes only some feeds that way (USDY,
+   USST, XAUm, deJAAA, deJTRSY) and lists CETES, USTRY, TESOURO, GILTS,
+   KTB and SPXU by ticker alone. For a ticker-only feed this cannot be
+   met by matching attributions and requirement 3 carries the binding;
 3. something tying the feed to that issuer specifically rather than to an
    instrument of that name. Price agreement between the token's Stellar
    market price and the feed is the strongest form; a documented

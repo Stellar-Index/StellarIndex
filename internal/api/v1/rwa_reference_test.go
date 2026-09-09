@@ -432,11 +432,11 @@ func TestRWAAssets_ReferenceIsBoundToTheIssuerNotTheCode(t *testing.T) {
 	}
 }
 
-// TestRWAAssets_ReferenceBindingIsNotCaseFolded — the code-keyed join
+// TestRWAAssets_ReferenceRefusesAnUnboundIssuerForABoundCode — the code-keyed join
 // folded case, so XAUM matched the XAUm feed. A binding names the exact
 // (code, issuer) the chain carries; a case variant under an unbound
 // issuer is a different token.
-func TestRWAAssets_ReferenceBindingIsNotCaseFolded(t *testing.T) {
+func TestRWAAssets_ReferenceRefusesAnUnboundIssuerForABoundCode(t *testing.T) {
 	srv := rwaServerWithOracle(t,
 		[]timescale.Sep1BoundCurrency{
 			rwaBound("CETES", rwaOtherRecognisedIssuer, "example.test", "bond"),
