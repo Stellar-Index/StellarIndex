@@ -15,6 +15,54 @@ against.
 
 ## [Unreleased]
 
+### Added
+
+- **ci:** `scripts/ci/render-sla-proof.sh` renders a k6 `--summary-export`
+  into `docs/operations/sla-proof-<YYYY-MM-DD>.md`, and `k6-weekly.yml`
+  now runs it and commits the result (#378). The weekly run could already
+  measure and report; it had no implementation of the step that makes the
+  measurement durable. Its export lives in a 90-day artifact, its numbers
+  in a job page, and the only artefact `check-sla-evidence.sh` counts is a
+  committed dated report — whose sole "procedure" directed an operator to
+  mint Grafana snapshots from `grafana.staging.stellarindex.io`, a host
+  that does not exist, and to run promql over `k6_*` series that only
+  exist when an unset remote-write secret is set. No dated proof report
+  has ever landed on any branch. The generated report names its own
+  provenance — target, run window, method, scenario, commit, k6 version,
+  and the sha256 of the export it came from — and the renderer REFUSES
+  (writing nothing) when a headline metric or a provenance field is
+  absent, so an unlabelled number cannot be published as a proof. The
+  refusal that matters most: k6's default trend stats omit `p(99)`, so an
+  export taken without `--summary-trend-stats` renders a document that
+  reads "n/a" for half of ADR-0009 while looking complete — which is the
+  exact shape of the real checked-in 2026-06-13 export.
+
+### Changed
+
+- **ci:** three further changes to `k6-weekly.yml` so a run that measures
+  cannot also leave nothing behind (#378). `Run scenario` no longer aborts
+  the job on a non-zero k6 exit: k6 exits 99 on a BREACHED threshold,
+  which is a real measurement and the single most valuable report to
+  retain, so the code is published as an output and the final step reddens
+  the run on it. The evidence verdict driving the tracking issue and the
+  exit status is recomputed AFTER the report lands — taken before, a first
+  healthy run would go red for the absence of the file it had just written
+  and the feed would need two weeks to call itself healthy once. And the
+  tracking issue no longer closes unless THIS run produced a proof, so a
+  run that measured nothing cannot report the feed healthy on the strength
+  of an earlier run's report still inside the 45-day window. The evidence
+  job takes `contents: write` for the commit, which goes through the
+  contents API with the job token; every checkout in the workflow stays
+  `persist-credentials: false`.
+
+- **docs:** `sla-proof-procedure.md` documents the generated path and
+  states precisely what is blocked on an operator — `K6_TARGET_STAGING`
+  and `STELLARINDEX_LOAD_API_KEY` are unset, so there is no target and
+  nothing measures the p95 ≤ 200 ms claim. The two capture steps that
+  cannot be performed (Grafana snapshots, promql over `k6_*`) are marked
+  BLOCKED with the reason rather than left as instructions, and
+  `sla-proof-template.md` is marked superseded by the generator.
+
 ## [v0.65.0] — 2026-09-08
 
 ### Added

@@ -1083,7 +1083,28 @@ jobs:
         # itself runs weekly against secrets that do not exist, so this is
         # the only place it is exercised on a PR. No network, no k6, no
         # token.
+        # 2026-09-09 (#378): six further wiring assertions cover the
+        # DURABLE half — the run must execute render-sla-proof.sh, hold
+        # `contents: write`, commit the report, recompute the verdict
+        # AFTER the report lands, retain a threshold breach as evidence
+        # while still reddening the run, and refuse to close the tracking
+        # issue on a run that produced no proof of its own.
         run: ./scripts/ci/check-sla-evidence-test.sh
+      - name: render-sla-proof self-test
+        # #378: the weekly run measured and then left nothing behind —
+        # summary.json expires with the artifact, the step summary ages out
+        # with the job page, and the only artefact check-sla-evidence.sh
+        # counts is a committed docs/operations/sla-proof-<YYYY-MM-DD>.md
+        # whose sole "implementation" was a manual procedure pointing at a
+        # Grafana host that does not exist. render-sla-proof.sh is that
+        # implementation; these fixtures pin its REFUSALS above all — a
+        # p99-less export (k6's default trend stats omit p(99), so the real
+        # checked-in export is exactly that shape), a zero-request run, a
+        # threshold-less export, and each provenance field missing on its
+        # own — because a renderer that emits a report regardless of input
+        # re-creates the false-evidence artifact under a new name. No
+        # network, no k6, no token.
+        run: ./scripts/ci/render-sla-proof-test.sh
       - name: check-public-dataset self-test
         # backup-restore-6 (audit-2026-08-29): fixtures for the
         # aws-public-blockchain drift verdict public-dataset-check.yml

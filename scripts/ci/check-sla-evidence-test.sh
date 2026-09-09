@@ -128,7 +128,7 @@ unset K6_TARGET STELLARINDEX_LOAD_API_KEY
 # reports clean by printing nothing. run_wiring therefore captures the
 # interpreter's exit status AND counts the assertions it actually emitted,
 # and the caller treats either a non-zero rc or a short count as a failure.
-WIRING_EXPECTED=12
+WIRING_EXPECTED=19
 
 # run_wiring <workflow-path> <makefile-path> <scenario-dir>
 # Sets WIRING_OUT / WIRING_RC / WIRING_SEEN.
@@ -327,6 +327,127 @@ check("no scenario uses object spread (the pinned k6's babel cannot parse it)",
       scanned > 0 and not offenders,
       "%s — rewrite as Object.assign({}, a, {...}); `k6 archive` dies with "
       "\"Unexpected token\" and the weekly run cannot execute" % offenders)
+
+# -- The DURABLE half: a run must leave something behind (#378) ---------
+# Everything above proves the run measures and reports. None of it proves
+# the run RETAINS anything. summary.json lives in a 90-day artifact and
+# the step summary lives in a job page; the only artefact
+# check-sla-evidence.sh has ever counted is a committed
+# docs/operations/sla-proof-<YYYY-MM-DD>.md, and until #378 the sole
+# implementation of that promotion was a paragraph of manual procedure
+# pointing at a Grafana host that does not exist. Six assertions pin the
+# machinery that closes the loop.
+RENDERER = os.path.join("scripts", "ci", "render-sla-proof.sh")
+# EXECUTED, not merely mentioned — the same `./`-or-`bash ` prefix rule
+# check-verify-parity.sh uses. Matching a bare path would be satisfied by
+# the publish step naming the renderer in its commit message, which is a
+# gate that passes on a comment.
+RUNS_RENDERER = re.compile(r"(\./|bash +)scripts/ci/render-sla-proof\.sh")
+
+
+def runs_renderer(step):
+    return bool(RUNS_RENDERER.search(step.get("run") or ""))
+
+
+render_steps = [
+    (jname, idx, st)
+    for jname, job in jobs.items()
+    for idx, st in enumerate(steps_of(job))
+    if runs_renderer(st)
+]
+check("the run renders the durable dated proof report",
+      bool(render_steps),
+      "no step runs %s: the run can export summary.json and still leave no "
+      "docs/operations/sla-proof-<YYYY-MM-DD>.md, which is the only thing "
+      "check-sla-evidence.sh counts as evidence" % RENDERER)
+
+check("the proof renderer exists and is executable",
+      os.access(RENDERER, os.X_OK),
+      "%s is missing or not executable — the render step would fail every "
+      "week for a reason unrelated to the SLA" % RENDERER)
+
+publish_steps = [
+    st for job in jobs.values() for st in steps_of(job)
+    if "gh api" in (st.get("run") or "") and "contents/" in (st.get("run") or "")
+]
+check("the rendered report is committed, not merely uploaded",
+      bool(publish_steps),
+      "nothing commits the report. An artifact expires at 90 days and a run "
+      "summary ages out with the job page, so a run that renders but does "
+      "not publish still leaves the freshness leg permanently red")
+
+render_jobs = sorted({jname for jname, _, _ in render_steps})
+missing_write = [
+    j for j in render_jobs
+    if (jobs[j].get("permissions") or {}).get("contents") != "write"
+]
+check("the evidence job can actually write the report to the repo",
+      bool(render_jobs) and not missing_write,
+      "job(s) %s render a proof report but do not hold contents: write, so "
+      "the commit that makes it durable cannot succeed" % missing_write)
+
+# The verdict that drives the tracking issue and the exit status must be
+# recomputed AFTER the report lands. Taken before, a first healthy run
+# reports "no proof inside the window" for the absence of the file it just
+# wrote, and the feed needs two weeks to call itself healthy once.
+stale_verdict = []
+for jname, job in jobs.items():
+    sts = steps_of(job)
+    render_at = [i for i, st in enumerate(sts) if runs_renderer(st)]
+    if not render_at:
+        continue
+    consumed = set()
+    for st in sts:
+        cond = str(st.get("if", ""))
+        if "verdict_rc" in cond:
+            consumed.update(
+                re.findall(r"steps\.([A-Za-z0-9_-]+)\.outputs\.verdict_rc", cond))
+    for sid in sorted(consumed):
+        at = [i for i, st in enumerate(sts) if st.get("id") == sid]
+        if at and at[0] < max(render_at):
+            stale_verdict.append("%s.%s" % (jname, sid))
+check("the verdict driving the issue is recomputed AFTER the report lands",
+      bool(render_steps) and not stale_verdict,
+      "step id(s) %s produce the consumed verdict_rc BEFORE the render step; "
+      "a first healthy run would go red for the absence of the report it had "
+      "just written" % stale_verdict)
+
+# k6 exits 99 when a declared threshold is BREACHED. That is a real
+# measurement and the single most valuable report to retain, so the step
+# must publish the code rather than abort the job on it — and something
+# must still redden the run.
+k6_rc_published = [
+    st for job in jobs.values() for st in steps_of(job)
+    if re.search(r"\bk6 run\b", st.get("run") or "")
+    and "k6_rc=" in (st.get("run") or "")
+]
+red_on_k6 = any(
+    "k6_rc !=" in str(st.get("if", ""))
+    for job in jobs.values() for st in steps_of(job)
+    if "exit 1" in (st.get("run") or "")
+)
+check("a breached threshold is retained as evidence AND reddens the run",
+      bool(k6_rc_published) and red_on_k6,
+      "the k6 step must publish k6_rc (so a breach still reaches the "
+      "renderer) and a fail step must redden the run on it; otherwise "
+      "either the most important proof is never written, or a breach "
+      "passes quietly")
+
+# A run that measured nothing must not close the tracking issue on the
+# strength of a report some EARLIER run landed inside the 45-day window.
+close_steps = [
+    st for job in jobs.values() for st in steps_of(job)
+    if "issue close" in (st.get("run") or "")
+]
+unguarded_close = [
+    str(st.get("name", "?")) for st in close_steps
+    if "proof_path" not in str(st.get("if", ""))
+]
+check("the tracking issue only closes on a run that itself produced a proof",
+      bool(close_steps) and not unguarded_close,
+      "step(s) %s close the sla-evidence issue without requiring THIS run to "
+      "have rendered a report — a run that measured nothing would report the "
+      "feed healthy" % unguarded_close)
 PY
 )"
   WIRING_RC=$?
