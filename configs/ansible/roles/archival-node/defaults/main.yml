@@ -576,6 +576,32 @@ stellarindex_enabled_sources:
   # inventing a NULL-asset trade.
   - "sushiswap_v3"
 
+# The declared counterpart of the list above: every source whose decoder
+# has shipped (it is in internal/config/validate.go's KnownSources) but
+# which we deliberately do NOT run yet — a work-in-progress, or one
+# awaiting a product decision.
+#
+#   stellarindex_sources_not_yet_enabled:
+#     <source>: "<why it is written but not run>"
+#
+# No ansible task or template reads this. It exists so that "written but
+# not enabled" is a DECISION with a name on it instead of an omission,
+# and it is enforced by scripts/ci/lint-source-enablement.sh: every
+# KnownSources name must appear either in the list above or here, so
+# shipping a decoder now forces this file open whichever answer you give.
+# That is the whole point — the two production occurrences of this bug
+# (sushiswap_v3, fixed 2026-09-09 in 72ad4ad4d; upshift, #503) were both
+# six Go edits with nobody ever opening the deployment default.
+#
+# A waiver here is NOT a licence to keep claiming a verdict. The same gate
+# refuses any name that is still a reconSource in the compute-completeness
+# catalogue (internal/ops/chops/reconciliation_catalogue.go), because a
+# source we do not run can only ever publish complete=false,
+# coverage_pct=0, watermark_ledger=genesis-1 on /v1/coverage — the
+# permanently-red row that teaches everyone to ignore the board. Deferring
+# the source means deferring the claim about it too.
+stellarindex_sources_not_yet_enabled: {}
+
 # Earliest ledger to backfill from on a fresh install (no persisted
 # cursor yet). 0 = refuse to start without a cursor — operator must
 # pick an explicit ledger to avoid accidental genesis re-ingest.

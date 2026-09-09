@@ -75,6 +75,60 @@ against.
   script. Expect the first post-apply run on a host whose binaries are
   ahead of its config to report `NOT CONVERGED` — that is the finding.
 
+### Added
+
+- **ci:** `scripts/ci/lint-source-enablement.sh` — a mechanical guard for
+  "registered, tracked, and never actually run", the bug class that reached
+  production twice in as many days. A decoder ships and is wired into every
+  site the completeness verdict reads — projector registry, sink, gated
+  registry, the compute-completeness reconciliation catalogue, gap-detector
+  targets, `sourcenet`, the source metadata registry — so `/v1/coverage`
+  starts asserting a verdict about it. But the name is never added to
+  `stellarindex_enabled_sources` in the archival-node defaults, which is the
+  only path to `[ingestion] enabled_sources` in `/etc/stellarindex.toml` and
+  therefore the only thing that starts a projector for it. The archive is
+  complete, the lake holds the events, the served tier is permanently EMPTY,
+  and the source reads INCOMPLETE forever with `watermark_ledger` one below
+  genesis. Nothing crashes and no unit fails, so nobody notices:
+  `sushiswap_v3` sat that way from `3f575923e` until `72ad4ad4d`
+  (2026-09-09) as the sole incomplete source of 21 and the standing cause of
+  `stellarindex_completeness_incomplete`; `upshift` (#503) was found hours
+  later in exactly the same state — decoder live in the deployed binaries,
+  no `projector` cursor, `recognition_ok: false`, `coverage_pct: 0`.
+
+  The gate cross-checks four registries and fails on six shapes.
+  `config.KnownSources` must be a subset of the pubnet enabled list plus the
+  declared not-yet-enabled set; the enabled list must be a subset of
+  `KnownSources` (an unknown name is a boot failure on the next apply); a
+  name may not be both enabled and declared unrun; the reconciliation
+  catalogue must be a subset of `KnownSources` plus the sources the
+  projector registers unconditionally (the sep41 domain), which closes the
+  route of registering for completeness without ever being nameable in
+  `enabled_sources`; and a waiver must name a source that still exists.
+
+  The escape hatch is `stellarindex_sources_not_yet_enabled`, a reasoned map
+  living directly beneath the list it exempts, so enabling a source is a
+  one-line move between two blocks in the same file. It is on the ansible
+  side deliberately: the defect is six Go edits with nobody opening the
+  deployment default, and now shipping a decoder forces that file open
+  whichever answer is given. **A waiver is not a licence to keep claiming a
+  verdict** — the gate refuses any name that is still a `reconSource` in the
+  completeness catalogue, because a source we do not run can only ever
+  publish `complete=false, coverage_pct=0, watermark=genesis-1`, the
+  permanently red row that teaches everyone to ignore the board. Deferring
+  the source means deferring the claim. `sushiswap_v3` shipped with that
+  deferral declared in prose in this file; a declaration in a 26,000-line
+  changelog is not a mechanism.
+
+  Every extraction is strict and floored — an unparseable line inside any of
+  the five blocks is a hard failure, not a skipped entry — so the gate
+  cannot go quietly vacuous over an empty subject set. Verified against both
+  real occurrences: RED on the reconstructed pre-`72ad4ad4d` tree naming
+  `sushiswap_v3` (and green the moment that commit's one-line fix is
+  applied), and RED on `upshift` at today's main until the operator enables
+  it. `scripts/ci/lint-source-enablement-test.sh` proves each of the six
+  checks, the vacuity guards and the escape hatch by mutation (20 cases).
+
 ## [v0.67.0] — 2026-09-09
 
 ### Added

@@ -891,6 +891,26 @@ jobs:
         # the constants stay within [period+slack, 2*period) of the
         # Ansible-deployed compute-completeness.timer.
         run: ./scripts/ci/lint-completeness-staleness.sh
+      - name: lint-source-enablement
+        # "Registered, tracked, and never actually run" — the same defect
+        # twice on production. A decoder ships, gets a reconSource entry in
+        # the compute-completeness catalogue so /v1/coverage asserts a
+        # verdict about it, and is never added to
+        # stellarindex_enabled_sources in the archival-node defaults — the
+        # only path to `[ingestion] enabled_sources`. No projector runs, the
+        # served tier stays empty, and the source reads INCOMPLETE forever
+        # with watermark == genesis-1. Nothing else fails, so nobody
+        # notices: sushiswap_v3 sat that way until 72ad4ad4d (2026-09-09),
+        # upshift (#503) was found hours later. Escape hatch is the declared
+        # stellarindex_sources_not_yet_enabled map, which the gate refuses to
+        # let you use on a source the completeness catalogue still tracks.
+        run: ./scripts/ci/lint-source-enablement.sh
+      - name: lint-source-enablement self-test
+        # Each of the gate's six checks proven red by mutation, plus the
+        # vacuity cases (emptied list, moved KnownSources declaration,
+        # deleted waiver key) proven to FAIL rather than report OK over an
+        # empty subject set.
+        run: ./scripts/ci/lint-source-enablement-test.sh
       - name: lint-served-value-cadence
         # The served-value truth harness (CS-010's only monitored check on
         # the NUMBER rather than the pipe) shipped with three alerts, a

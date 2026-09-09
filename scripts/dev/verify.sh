@@ -272,6 +272,8 @@ echo "=== Migration immutability self-test ===" && ./scripts/ci/lint-migration-i
 echo "=== Migration header commands ===" && ./scripts/ci/lint-migration-commands.sh
 echo "=== Migration header commands self-test ===" && ./scripts/ci/lint-migration-commands-test.sh
 echo "=== Completeness-staleness calibration ===" && ./scripts/ci/lint-completeness-staleness.sh
+echo "=== Source enablement (tracked ⇒ run, or declared) ===" && ./scripts/ci/lint-source-enablement.sh
+echo "=== Source enablement self-test ===" && ./scripts/ci/lint-source-enablement-test.sh
 echo "=== Pre-push integration-routing self-test ===" && ./scripts/ci/prepush-integration-required-test.sh
 echo "=== Integration-shard partition self-test ===" && ./scripts/ci/integration-shard-test.sh
 echo "=== Shell SIGPIPE (pipe-into-head) ===" && ./scripts/ci/lint-shell-sigpipe.sh
