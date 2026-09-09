@@ -76,7 +76,7 @@ func computeCompleteness(args []string) error { //nolint:funlen,gocognit,gocyclo
 	skipSubstrate := fs.Bool("skip-substrate", false, "Skip the hash-chain re-scan and CARRY the prior substrate verdict — fast per-source iteration once substrate is proven. This run scans nothing, so it can only CONFIRM a prior clean verdict that already reached this run's tip; a FAILING or short prior verdict publishes substrate_ok=false with the unverified band named in the detail (C4-057). It no longer asserts substrate_ok=true unconditionally.")
 	skipRecognition := fs.Bool("skip-recognition", false, "Trust the prior recognition audit (recognition_ok=true) instead of re-scanning all topic shapes — the global DistinctTopicShapes scan is the load-heaviest step; skip it for gentle projection-only iteration once recognition is verified")
 	fromLedger := fs.Uint("from", 0, "INCREMENTAL verify: only check [from, tip], trusting [genesis, from] as already verified (substrate + recognition + projection all scoped to [from, tip]); the watermark still extends to tip when the window is clean. 0 = full verify from each source's genesis. The completeness timer passes min(watermark) from the prior snapshots so each run re-checks only new ledgers — minutes, not hours. An incremental run can only CONFIRM or DOWNGRADE the served `complete` axis, never upgrade it: a range it did not reconcile is carried from the prior verdict, and a FAILING prior verdict is cleared only by a full run (INV-5 — see projectionClaim).")
-	pass := fs.Bool("pass", false, "WHOLE-PASS mode: prove recognition + substrate ONCE at full range for the ENTIRE source catalogue, then reconcile EACH source's projection incrementally from its own prior watermark (projectionFloor). One process replaces the per-source, per-chunk driver that re-ran the load-heaviest global recognition scan (DistinctTopicShapes, ~60s) on EVERY 25k chunk — the nightly timeout that froze the alphabetical tail's verdicts. Because substrate is proven at FULL tip, its write advances the tip and is never blocked by the CS-083 guard (the low-tip substrate flap). Every catalogue source gets a verdict — a never-seeded source reconciles from genesis on its first pass. Requires -ch; incompatible with -source / -from / -skip-substrate / -skip-recognition (the per-chunk knobs it replaces).")
+	pass := fs.Bool("pass", false, "WHOLE-PASS mode: prove recognition + substrate ONCE at full range for the ENTIRE source catalogue, then reconcile EACH source's projection incrementally from its own prior watermark (projectionFloor). One process replaces the per-source, per-chunk driver that re-ran the load-heaviest global recognition scan (DistinctTopicShapes, ~60s) on EVERY 25k chunk — the nightly timeout that froze the alphabetical tail's verdicts. Because substrate is proven at FULL tip, its write advances the tip and is never blocked by the CS-083 guard (the low-tip substrate flap). Every catalogue source gets a verdict — a never-seeded source, and a source whose prior projection verdict was FAILING, both reconcile from genesis (a red source has no verified ground to resume from, so the pass re-verifies it rather than carrying the failure forward forever). Requires -ch; incompatible with -source / -from / -skip-substrate / -skip-recognition (the per-chunk knobs it replaces).")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -477,9 +477,12 @@ func computeCompleteness(args []string) error { //nolint:funlen,gocognit,gocyclo
 		// [genesis, projFrom] as previously verified. In -pass mode projFrom is
 		// THIS source's own prior watermark, so substrate + recognition stay
 		// proven once at full range for the whole pass while only projection is
-		// scoped per source (projectionFloor). Outside -pass it is the existing
-		// global max(genesis, -from) incremental floor — byte-for-byte unchanged.
-		projFrom := projectionFloor(genesis, *pass, priorWatermark[src.name], *fromLedger)
+		// scoped per source (projectionFloor) — unless the prior PROJECTION
+		// verdict was failing, in which case there is no verified ground to
+		// resume from and the source re-verifies from genesis (CS-095). Outside
+		// -pass it is the existing global max(genesis, -from) incremental floor
+		// — byte-for-byte unchanged.
+		projFrom := projectionFloor(genesis, *pass, priorProj[src.name], priorWatermark[src.name], *fromLedger)
 		// A pending replay-rewind window overrides the incremental floor:
 		// the replay rewrote served rows below the watermark, so the range
 		// MUST be re-reconciled before any claim — carried or fresh — may
@@ -707,11 +710,43 @@ func computeCompleteness(args []string) error { //nolint:funlen,gocognit,gocyclo
 // freshly reset source) floors at genesis and its first pass does the
 // full-history reconcile that seeds it, so every catalogue source gets a verdict.
 //
+// A source whose prior PROJECTION verdict was FAILING resumes from genesis too,
+// and that is the CS-095 fix. `priorWatermark` is the LAKE
+// (substrate ∧ recognition) watermark — it sits AT tip whenever the lake is
+// clean, which is precisely the wrong-axis floor [projectionClaim] was added to
+// GUARD against rather than to fix. Reading it as the projection axis's resume
+// point makes a red source structurally unclearable by the deployed nightly:
+// the pass reconciles only [tip, tip], never re-sees the range that pinned
+// `projection_ok=false`, and [projectionClaim] rule 4 then (correctly) refuses
+// to upgrade a failing prior verdict it has no evidence for. Every subsequent
+// pass repeats that, forever, so a source stays red long after its gap is
+// repaired — measured on r1 2026-09-09 for `sushiswap_v3`, which entered the
+// catalogue with zero served rows (an EARNED false: expected 81,175 vs served
+// 0), was then backfilled to its cursor at tip, and could not go green again.
+// The runbook's manual remedy for exactly this is "re-run without -from"; this
+// makes the nightly do it, per source, only where it is owed.
+//
+// The floor only ever moves DOWN, so a run can only ever verify MORE. Nothing
+// here can publish a claim: [projectionClaim] is untouched and still requires
+// the run to have covered [servedFrom, hi] before rule 2 lets a `true` out, so
+// a genuinely-missing projection re-derives its whole served range every pass,
+// finds expected>0 against served=0, and fails on rule 1 with the offending
+// ledger named — a STRONGER verdict than the carried false it replaces. A
+// source whose prior projection verdict is CLEAN is untouched and keeps
+// resuming at its watermark, so the pass's cost is unchanged for every green
+// source; only a red one pays the full re-verify, which is the same work the
+// operator was already required to do by hand.
+//
 // Outside -pass it is the existing max(genesis, -from) incremental floor, so the
-// per-chunk driver's behaviour is unchanged. Never below genesis (nothing exists
-// there to reconcile). Pure — unit-testable.
-func projectionFloor(genesis uint32, pass bool, priorWatermark uint32, fromLedger uint) uint32 {
+// per-chunk driver's behaviour is unchanged: there the floor is OPERATOR-stated
+// rather than derived, and silently widening a targeted `-from` run is not this
+// function's call to make. Never below genesis (nothing exists there to
+// reconcile). Pure — unit-testable.
+func projectionFloor(genesis uint32, pass bool, prior priorProjection, priorWatermark uint32, fromLedger uint) uint32 {
 	if pass {
+		if !prior.known || !prior.ok {
+			return genesis
+		}
 		if priorWatermark > genesis {
 			return priorWatermark
 		}

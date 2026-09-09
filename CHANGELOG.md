@@ -15,6 +15,36 @@ against.
 
 ## [Unreleased]
 
+### Fixed
+
+- **ops/completeness:** a source whose ADR-0033 projection verdict went red
+  could never go green again by any automated path. `compute-completeness
+  -pass` — the ONE call the deployed nightly makes — resumed each source's
+  PROJECTION reconcile from `priorWatermark`, which is the LAKE
+  (substrate ∧ recognition) watermark and sits AT tip whenever the lake is
+  clean. A red source therefore reconciled `[tip, tip]`, never re-saw the range
+  that had pinned `projection_ok=false`, and `projectionClaim` rule 4 correctly
+  refused to upgrade a failing prior verdict it had no evidence for — every
+  night, forever. That wrong-axis floor is the same one `projectionClaim` was
+  added to GUARD against (INV-5) rather than to fix. Measured on r1 2026-09-09:
+  `sushiswap_v3` entered the catalogue with zero served rows (#350 shipped it
+  disabled, so its first pass earned an honest `false` — expected 81,175 against
+  served 0), was then enabled and replayed to its cursor at tip, and still read
+  `complete: false` with every other axis green (`lake_complete`,
+  `substrate_ok`, `recognition_ok` true, `coverage_pct` 1, watermark at tip,
+  `projection_verified_from` 61,493,095). In `-pass` mode a source whose prior
+  projection verdict is FAILING or ABSENT now floors at genesis and re-verifies,
+  exactly as the runbook already told an operator to do by hand. The floor only
+  ever moves DOWN, so a run can only verify MORE: `projectionClaim` is untouched
+  and still requires the run to have covered `[projection_verified_from,
+  watermark]` before rule 2 lets a `true` out, so a source that is genuinely
+  missing projected rows now re-derives its whole served range every pass and
+  fails on evidence with the offending ledger named, instead of on a carried
+  verdict. A source whose prior projection verdict is CLEAN is untouched and
+  keeps resuming at its watermark, so the nightly's cost is unchanged for every
+  green source; only a red one pays the full re-verify. Outside `-pass` the
+  floor is operator-stated (`-from`) and is unchanged.
+
 ## [v0.68.0] — 2026-09-09
 
 ### Fixed
