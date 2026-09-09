@@ -54,12 +54,19 @@
 #     wrong causal note in this file is what sent an earlier
 #     investigation to the Actions secret settings for a week.
 #
-# The list did NOT grow. The same measurement found six changed tasks
+# The list did NOT grow. The same measurement found SEVEN changed tasks
 # with no entry here — "Install ClickHouse schema-snapshot script",
 # "Ship the repo's Tier-1 lake DDL as the drift check's intent side",
 # "Install galexie-archive-contiguity scan", "Template /etc/default/
-# node-healthcheck with ping URL", "Install the Caddyfile" and its
-# "Reload caddy" handler — and every one whose diff was readable is
+# node-healthcheck with ping URL", "Template /etc/default/stellarindex-ops
+# (env vars for stellarindex-ops batch jobs)", "Install the Caddyfile"
+# and its "Reload caddy" handler. (The count read six here until
+# 2026-09-09, when run 34123154859's output was re-read against the gate:
+# the stellarindex-ops env file was left out. Both it and the
+# node-healthcheck one are `no_log: true`, so they print no diff and are
+# the two easiest to skip while eyeballing a log — which is the argument
+# for the gate rendering the list rather than a person transcribing it.)
+# Every one whose diff was readable is
 # repo-ahead-of-r1 (the Caddyfile differs by a CLAUDE.md → AGENTS.md
 # comment; the Tier-1 DDL by the account_creators / account_sponsors
 # tables from #351; the contiguity scan by the 2026-09-05 read-failure
