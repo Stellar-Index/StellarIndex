@@ -9,6 +9,13 @@ export const metadata: Metadata = {
   title: 'Contract — Stellar contract detail',
   description:
     'Recent contract events for a single Soroban contract on Stellar — ledger, transaction, event type, and topic, straight from the certified raw lake.',
+  // noindex, like the canonical /contracts/[id] it redirects to. The page
+  // body is entirely ?id=-driven, so the bare URL — which is what
+  // `canonical` points every ?id= hit at, and the only form a crawler can
+  // construct — is an empty shell. This route exists precisely to catch
+  // inbound legacy links, so it WILL be crawled; left indexable it
+  // consolidates those hits onto a blank soft-404.
+  robots: { index: false, follow: true },
 };
 
 /**

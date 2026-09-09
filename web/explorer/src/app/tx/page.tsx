@@ -9,6 +9,10 @@ export const metadata: Metadata = {
   title: 'Transaction — Stellar transaction detail',
   description:
     'Full detail for a single Stellar transaction: summary, decoded operations, and the contract events it emitted.',
+  // noindex, like the canonical /transactions/[hash] it redirects to —
+  // see the note on /contract: a ?hash=-driven shell whose bare,
+  // self-canonical URL is the only form a crawler can build.
+  robots: { index: false, follow: true },
 };
 
 /**

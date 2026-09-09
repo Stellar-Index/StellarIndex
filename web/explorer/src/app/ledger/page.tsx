@@ -9,6 +9,10 @@ export const metadata: Metadata = {
   title: 'Ledger — Stellar ledger detail',
   description:
     'Full detail for a single Stellar ledger: header (hashes, protocol version, total coins, fee pool) and every transaction it closed.',
+  // noindex, like the canonical /ledgers/[seq] it redirects to — see the
+  // note on /contract: a ?seq=-driven shell whose bare, self-canonical
+  // URL is the only form a crawler can build.
+  robots: { index: false, follow: true },
 };
 
 /**
