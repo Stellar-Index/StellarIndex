@@ -5,7 +5,8 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { DexProtocolsTable } from './DexProtocolsTable';
 
 vi.mock('@/api/client', async () => {
-  const actual = await vi.importActual<typeof import('@/api/client')>('@/api/client');
+  const actual =
+    await vi.importActual<typeof import('@/api/client')>('@/api/client');
   return { ...actual, apiGet: vi.fn() };
 });
 
@@ -43,26 +44,49 @@ describe('DexProtocolsTable TVL column', () => {
       // /v1/sources
       return {
         data: [
-          { name: 'soroswap', class: 'exchange', subclass: 'dex', trade_count_24h: 10, volume_24h_usd: '5000' },
-          { name: 'phoenix', class: 'exchange', subclass: 'dex', trade_count_24h: 2, volume_24h_usd: '100' },
+          {
+            name: 'soroswap',
+            class: 'exchange',
+            subclass: 'dex',
+            trade_count_24h: 10,
+            volume_24h_usd: '5000',
+          },
+          {
+            name: 'phoenix',
+            class: 'exchange',
+            subclass: 'dex',
+            trade_count_24h: 2,
+            volume_24h_usd: '100',
+          },
         ],
       };
     });
 
-    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
     render(
       <QueryClientProvider client={client}>
         <DexProtocolsTable />
       </QueryClientProvider>,
     );
 
-    expect(await screen.findByRole('columnheader', { name: 'TVL' })).toBeInTheDocument();
+    expect(
+      await screen.findByRole('columnheader', { name: 'TVL' }),
+    ).toBeInTheDocument();
     // Lower-bound marker + compact formatting + basis as the hover title.
-    await waitFor(() => expect(screen.getByText(/≥\s*\$2\.5M/)).toBeInTheDocument());
-    expect(screen.getByText(/≥\s*\$2\.5M/)).toHaveAttribute('title', 'current pair reserves');
+    await waitFor(() =>
+      expect(screen.getByText(/≥\s*\$2\.5M/)).toBeInTheDocument(),
+    );
+    expect(screen.getByText(/≥\s*\$2\.5M/)).toHaveAttribute(
+      'title',
+      'current pair reserves',
+    );
     // phoenix has no snapshot → its TVL cell is an em-dash (the row
     // renders one for TVL; its other cells hold real numbers).
-    const phoenixRow = screen.getByRole('link', { name: 'phoenix' }).closest('tr');
+    const phoenixRow = screen
+      .getByRole('link', { name: 'phoenix' })
+      .closest('tr');
     expect(phoenixRow?.textContent).toContain('—');
   });
 });
@@ -74,7 +98,9 @@ describe('DexProtocolsTable TVL column', () => {
 // no-activity claim.
 describe('DexProtocolsTable availability', () => {
   function renderTable() {
-    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
     return render(
       <QueryClientProvider client={client}>
         <DexProtocolsTable />
@@ -86,7 +112,9 @@ describe('DexProtocolsTable availability', () => {
     vi.mocked(apiGet).mockRejectedValue(new Error('HTTP 503'));
     renderTable();
     await waitFor(() =>
-      expect(screen.getByText(/Protocol list unavailable right now/)).toBeInTheDocument(),
+      expect(
+        screen.getByText(/Protocol list unavailable right now/),
+      ).toBeInTheDocument(),
     );
     expect(
       screen.queryByText(/No DEX protocols reporting 24h activity/),
@@ -97,9 +125,13 @@ describe('DexProtocolsTable availability', () => {
     vi.mocked(apiGet).mockResolvedValue({ data: [] });
     renderTable();
     await waitFor(() =>
-      expect(screen.getByText(/No DEX protocols reporting 24h activity/)).toBeInTheDocument(),
+      expect(
+        screen.getByText(/No DEX protocols reporting 24h activity/),
+      ).toBeInTheDocument(),
     );
-    expect(screen.queryByText(/Protocol list unavailable/)).not.toBeInTheDocument();
+    expect(
+      screen.queryByText(/Protocol list unavailable/),
+    ).not.toBeInTheDocument();
   });
 });
 
@@ -120,8 +152,11 @@ describe('DexProtocolsTable headline total', () => {
     unpriced_pools: 2,
     as_of_ledger: 58_400_100,
     as_of: '2026-07-29T00:00:00Z',
-    basis: 'exact sum of the published per-protocol tvl_usd for phoenix, soroswap',
-    excluded: [{ subject: 'sdex', reason: 'the classic order book holds offers' }],
+    basis:
+      'exact sum of the published per-protocol tvl_usd for phoenix, soroswap',
+    excluded: [
+      { subject: 'sdex', reason: 'the classic order book holds offers' },
+    ],
   };
 
   function mockAPI(opts: { total?: unknown; phoenixTvl?: boolean }) {
@@ -166,15 +201,29 @@ describe('DexProtocolsTable headline total', () => {
       }
       return {
         data: [
-          { name: 'soroswap', class: 'exchange', subclass: 'dex', trade_count_24h: 10, volume_24h_usd: '5000' },
-          { name: 'phoenix', class: 'exchange', subclass: 'dex', trade_count_24h: 2, volume_24h_usd: '100' },
+          {
+            name: 'soroswap',
+            class: 'exchange',
+            subclass: 'dex',
+            trade_count_24h: 10,
+            volume_24h_usd: '5000',
+          },
+          {
+            name: 'phoenix',
+            class: 'exchange',
+            subclass: 'dex',
+            trade_count_24h: 2,
+            volume_24h_usd: '100',
+          },
         ],
       };
     });
   }
 
   function renderTable() {
-    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
     return render(
       <QueryClientProvider client={client}>
         <DexProtocolsTable />
@@ -191,7 +240,9 @@ describe('DexProtocolsTable headline total', () => {
     // "≥" too, and an unscoped match would pass on either.
     const card = label.parentElement as HTMLElement;
     // Money comes off the DECIMAL STRING, grouped — never Number().
-    await waitFor(() => expect(card.textContent).toMatch(/≥\s*\$2,600,000\.00/));
+    await waitFor(() =>
+      expect(card.textContent).toMatch(/≥\s*\$2,600,000\.00/),
+    );
     // Lower bound: the priced/total split, so the headline degrades
     // exactly the way its parts do.
     expect(screen.getByText(/40 of 42 pools priced/)).toBeInTheDocument();
@@ -208,8 +259,12 @@ describe('DexProtocolsTable headline total', () => {
     mockAPI({ total, phoenixTvl: false });
     renderTable();
 
-    expect(await screen.findByRole('columnheader', { name: 'TVL' })).toBeInTheDocument();
-    await waitFor(() => expect(screen.getByText(/\$2\.5M/)).toBeInTheDocument());
+    expect(
+      await screen.findByRole('columnheader', { name: 'TVL' }),
+    ).toBeInTheDocument();
+    await waitFor(() =>
+      expect(screen.getByText(/\$2\.5M/)).toBeInTheDocument(),
+    );
     expect(screen.queryByText('Total value locked')).not.toBeInTheDocument();
     expect(screen.queryByText(/\$2,600,000\.00/)).not.toBeInTheDocument();
   });
@@ -221,8 +276,12 @@ describe('DexProtocolsTable headline total', () => {
     mockAPI({ phoenixTvl: true });
     renderTable();
 
-    expect(await screen.findByRole('columnheader', { name: 'TVL' })).toBeInTheDocument();
-    await waitFor(() => expect(screen.getByText(/\$2\.5M/)).toBeInTheDocument());
+    expect(
+      await screen.findByRole('columnheader', { name: 'TVL' }),
+    ).toBeInTheDocument();
+    await waitFor(() =>
+      expect(screen.getByText(/\$2\.5M/)).toBeInTheDocument(),
+    );
     expect(screen.queryByText('Total value locked')).not.toBeInTheDocument();
     expect(screen.queryByText(/\$0\.00/)).not.toBeInTheDocument();
   });

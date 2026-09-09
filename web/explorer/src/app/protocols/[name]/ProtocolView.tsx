@@ -73,8 +73,8 @@ export function ProtocolView({ name, label }: { name: string; label: string }) {
         >
           <p>
             The protocol directory is unreachable right now:{' '}
-            {error instanceof Error ? error.message : 'unknown error'}. Retry, or
-            check{' '}
+            {error instanceof Error ? error.message : 'unknown error'}. Retry,
+            or check{' '}
             <a
               href="/status"
               target="_blank"
@@ -93,7 +93,11 @@ export function ProtocolView({ name, label }: { name: string; label: string }) {
   if (isLoading || !data) {
     return (
       <Shell name={name} label={label}>
-        <Panel title={label} source={source} bodyClassName="text-sm text-ink-muted">
+        <Panel
+          title={label}
+          source={source}
+          bodyClassName="text-sm text-ink-muted"
+        >
           Loading on-chain analytics…
         </Panel>
       </Shell>
@@ -107,16 +111,18 @@ export function ProtocolView({ name, label }: { name: string; label: string }) {
   return (
     <Shell name={name} label={label}>
       {/* ── Header ── */}
-      <header className="space-y-3 border-b border-line pb-5">
+      <header className="border-line space-y-3 border-b pb-5">
         <div className="flex flex-wrap items-center gap-3">
           <h1 className="text-3xl font-semibold tracking-tight">{label}</h1>
           <CategoryChip category={data.category} />
           <CompletenessBadge completeness={data.completeness} />
         </div>
-        <p className="max-w-3xl text-sm text-ink-body">
-          {data.description}
-        </p>
-        <AtAGlance data={data} analyticsAvailable={analyticsAvailable} windowDays={windowDays} />
+        <p className="text-ink-body max-w-3xl text-sm">{data.description}</p>
+        <AtAGlance
+          data={data}
+          analyticsAvailable={analyticsAvailable}
+          windowDays={windowDays}
+        />
         <ProtocolCrossLinks name={name} category={data.category} />
       </header>
 
@@ -168,10 +174,12 @@ export function ProtocolView({ name, label }: { name: string; label: string }) {
           <TimeSeriesChart
             // Today's accumulating UTC bucket is dropped — a partial day
             // plotted as a full one ends the series on a phantom cliff.
-            points={dropPartialTrailingDay(data.activity_series ?? []).map((p) => ({
-              date: p.date ?? '',
-              value: p.events ?? 0,
-            }))}
+            points={dropPartialTrailingDay(data.activity_series ?? []).map(
+              (p) => ({
+                date: p.date ?? '',
+                value: p.events ?? 0,
+              }),
+            )}
             label="Daily on-chain events"
             unit="events"
             tone="emerald"
@@ -220,15 +228,27 @@ export function ProtocolView({ name, label }: { name: string; label: string }) {
 // Sources with a dedicated DEX detail page (/dexes/[source]).
 const DEX_PAGES = new Set(['soroswap', 'phoenix', 'aquarius', 'sdex', 'comet']);
 
-function ProtocolCrossLinks({ name, category }: { name: string; category: string }) {
+function ProtocolCrossLinks({
+  name,
+  category,
+}: {
+  name: string;
+  category: string;
+}) {
   const isDex = category === 'dex' || category === 'amm';
   return (
     <div className="flex flex-wrap gap-3 pt-1 text-xs">
-      <Link href={`/sources/${encodeURIComponent(name)}`} className="text-brand-600 hover:underline">
+      <Link
+        href={`/sources/${encodeURIComponent(name)}`}
+        className="text-brand-600 hover:underline"
+      >
         Source registry →
       </Link>
       {isDex && DEX_PAGES.has(name) && (
-        <Link href={`/dexes/${encodeURIComponent(name)}`} className="text-brand-600 hover:underline">
+        <Link
+          href={`/dexes/${encodeURIComponent(name)}`}
+          className="text-brand-600 hover:underline"
+        >
           Pools &amp; chart →
         </Link>
       )}
@@ -280,7 +300,7 @@ function Shell({
 function CategoryChip({ category }: { category: string }) {
   return (
     <span
-      className={`rounded-sm px-2 py-0.5 font-mono text-xs uppercase tracking-wider ${categoryTone(category)}`}
+      className={`rounded-sm px-2 py-0.5 font-mono text-xs tracking-wider uppercase ${categoryTone(category)}`}
     >
       {category}
     </span>
@@ -295,7 +315,7 @@ function CompletenessBadge({
   if (!completeness) {
     return (
       <span
-        className="rounded-sm bg-surface-subtle px-2 py-0.5 text-[11px] uppercase tracking-wider text-ink-muted"
+        className="bg-surface-subtle text-ink-muted rounded-sm px-2 py-0.5 text-[11px] tracking-wider uppercase"
         title="No completeness verdict recorded for this source yet."
       >
         Coverage unknown
@@ -305,7 +325,7 @@ function CompletenessBadge({
   if (completeness.complete) {
     return (
       <span
-        className="rounded-sm bg-up-subtle px-2 py-0.5 text-[11px] font-medium uppercase tracking-wider text-up-strong"
+        className="bg-up-subtle text-up-strong rounded-sm px-2 py-0.5 text-[11px] font-medium tracking-wider uppercase"
         title={`Verified complete to ledger #${completeness.watermark_ledger.toLocaleString('en-US')} (ADR-0033 substrate + recognition + projection reconcile).`}
       >
         ✓ Verified complete
@@ -314,7 +334,7 @@ function CompletenessBadge({
   }
   return (
     <span
-      className="rounded-sm bg-warn-50 px-2 py-0.5 text-[11px] font-medium uppercase tracking-wider text-warn-700"
+      className="bg-warn-50 text-warn-700 rounded-sm px-2 py-0.5 text-[11px] font-medium tracking-wider uppercase"
       title={`Partial coverage to ledger #${completeness.watermark_ledger.toLocaleString('en-US')}.`}
     >
       Partial coverage
@@ -334,8 +354,8 @@ function Kpi({
   mono?: boolean;
 }) {
   return (
-    <div className="rounded-lg border border-line bg-surface p-3">
-      <div className="text-[10px] uppercase tracking-wider text-ink-muted">
+    <div className="border-line bg-surface rounded-lg border p-3">
+      <div className="text-ink-muted text-[10px] tracking-wider uppercase">
         {label}
       </div>
       <div
@@ -369,29 +389,50 @@ function AtAGlance({
 
   const bits: React.ReactNode[] = [];
   bits.push(
-    <Glance key="contracts" label={formatCompact(data.contract_count)} unit="contracts" />,
+    <Glance
+      key="contracts"
+      label={formatCompact(data.contract_count)}
+      unit="contracts"
+    />,
   );
   if (data.factories.length > 0) {
     bits.push(
-      <Glance key="factories" label={String(data.factories.length)} unit={data.factories.length === 1 ? 'factory' : 'factories'} />,
+      <Glance
+        key="factories"
+        label={String(data.factories.length)}
+        unit={data.factories.length === 1 ? 'factory' : 'factories'}
+      />,
     );
   }
   if (analyticsAvailable && data.events_total != null) {
     bits.push(
-      <Glance key="events" label={formatCompact(data.events_total)} unit={`events · ${windowDays}d`} />,
+      <Glance
+        key="events"
+        label={formatCompact(data.events_total)}
+        unit={`events · ${windowDays}d`}
+      />,
     );
   }
   bits.push(
-    <Glance key="e24" label={formatCompact(data.events_24h)} unit="events · 24h" />,
+    <Glance
+      key="e24"
+      label={formatCompact(data.events_24h)}
+      unit="events · 24h"
+    />,
   );
   if (topEvent) {
     bits.push(
-      <Glance key="top" label={topEvent.event_type ?? ''} unit="busiest event" mono />,
+      <Glance
+        key="top"
+        label={topEvent.event_type ?? ''}
+        unit="busiest event"
+        mono
+      />,
     );
   }
 
   return (
-    <p className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-ink-muted">
+    <p className="text-ink-muted flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
       {bits.map((b, i) => (
         <span key={i} className="flex items-center gap-x-3">
           {i > 0 && (
@@ -418,7 +459,7 @@ function Glance({
   return (
     <span>
       <span
-        className={`tabular-nums text-ink-body ${mono ? 'font-mono' : 'font-semibold'}`}
+        className={`text-ink-body tabular-nums ${mono ? 'font-mono' : 'font-semibold'}`}
       >
         {label}
       </span>{' '}
@@ -458,25 +499,25 @@ function EventBreakdown({
             <li key={b.event_type}>
               <div className="mb-1 flex items-baseline justify-between gap-3 text-xs">
                 <span
-                  className="truncate font-mono text-ink-body"
+                  className="text-ink-body truncate font-mono"
                   title={b.event_type}
                 >
                   {b.event_type}
                 </span>
-                <span className="shrink-0 tabular-nums text-ink-muted">
-                  <span className="font-mono text-ink-body">
+                <span className="text-ink-muted shrink-0 tabular-nums">
+                  <span className="text-ink-body font-mono">
                     {formatCompact(count)}
                   </span>{' '}
                   · {pct.toFixed(pct >= 10 ? 0 : 1)}%
                 </span>
               </div>
               <div
-                className="h-2.5 overflow-hidden rounded-full bg-surface-subtle"
+                className="bg-surface-subtle h-2.5 overflow-hidden rounded-full"
                 role="img"
                 aria-label={`${b.event_type}: ${b.count} events, ${pct.toFixed(1)}% of total`}
               >
                 <div
-                  className="h-full rounded-full bg-brand-500 motion-safe:transition-[width]"
+                  className="bg-brand-500 h-full rounded-full motion-safe:transition-[width]"
                   style={{ width: `${Math.max(barPct, 1.5)}%` }}
                 />
               </div>
@@ -489,9 +530,11 @@ function EventBreakdown({
           type="button"
           onClick={() => setExpanded((v) => !v)}
           aria-expanded={expanded}
-          className="rounded-sm text-xs font-medium text-brand-600 hover:underline focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-brand-500/60"
+          className="text-brand-600 focus-visible:ring-brand-500/60 rounded-sm text-xs font-medium hover:underline focus-visible:ring-2 focus-visible:outline-hidden"
         >
-          {expanded ? 'Show fewer' : `+${overflow} more event ${overflow === 1 ? 'type' : 'types'}`}
+          {expanded
+            ? 'Show fewer'
+            : `+${overflow} more event ${overflow === 1 ? 'type' : 'types'}`}
         </button>
       )}
     </div>
@@ -528,7 +571,7 @@ function SortHeader({
       <button
         type="button"
         onClick={() => setSortKey(keyName)}
-        className={`ml-auto flex items-center gap-1 rounded-sm uppercase tracking-wider focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-brand-500/60 ${active ? 'text-brand-600' : 'hover:text-ink-body'}`}
+        className={`focus-visible:ring-brand-500/60 ml-auto flex items-center gap-1 rounded-sm tracking-wider uppercase focus-visible:ring-2 focus-visible:outline-hidden ${active ? 'text-brand-600' : 'hover:text-ink-body'}`}
       >
         {label}
         <span aria-hidden className="text-[8px]">
@@ -575,7 +618,10 @@ function ContractRoster({
             (b.events ?? 0) - (a.events ?? 0)
         : (a: ProtocolContract, b: ProtocolContract) =>
             (b.last_seen ?? '').localeCompare(a.last_seen ?? '');
-    const i = contracts.filter((c) => c.kind !== 'factory').slice().sort(cmp);
+    const i = contracts
+      .filter((c) => c.kind !== 'factory')
+      .slice()
+      .sort(cmp);
     return { factories: f, instances: i };
   }, [contracts, sortKey]);
 
@@ -615,9 +661,9 @@ function ContractRoster({
       bodyClassName="-mx-4"
     >
       <div className="overflow-x-auto">
-        <table className="min-w-full divide-y divide-line text-sm">
+        <table className="divide-line min-w-full divide-y text-sm">
           <thead>
-            <tr className="text-left text-[10px] uppercase tracking-wider text-ink-muted">
+            <tr className="text-ink-muted text-left text-[10px] tracking-wider uppercase">
               <th scope="col" className="px-4 py-2">
                 Role
               </th>
@@ -643,12 +689,9 @@ function ContractRoster({
               />
             </tr>
           </thead>
-          <tbody className="divide-y divide-line-subtle">
+          <tbody className="divide-line-subtle divide-y">
             {[...factories, ...visibleInstances].map((c) => (
-              <tr
-                key={c.contract_id}
-                className="hover:bg-surface-muted"
-              >
+              <tr key={c.contract_id} className="hover:bg-surface-muted">
                 <td className="px-4 py-2">
                   <RoleChip kind={c.kind} />
                 </td>
@@ -666,13 +709,13 @@ function ContractRoster({
                       // Human asset pair ("XLM/USDC") prominent; the raw token
                       // contracts hang off the tooltip for the on-chain reader.
                       <span
-                        className="font-medium text-ink-body"
+                        className="text-ink-body font-medium"
                         title={(c.tokens ?? []).join(' · ')}
                       >
                         {c.pair}
                       </span>
                     ) : c.token0 || c.token1 ? (
-                      <span className="font-mono text-[11px] text-ink-muted">
+                      <span className="text-ink-muted font-mono text-[11px]">
                         {shortId(c.token0)} / {shortId(c.token1)}
                       </span>
                     ) : (
@@ -680,7 +723,7 @@ function ContractRoster({
                     )}
                   </td>
                 )}
-                <td className="px-4 py-2 text-right font-mono tabular-nums text-ink-body">
+                <td className="text-ink-body px-4 py-2 text-right font-mono tabular-nums">
                   {c.events != null && c.events > 0 ? (
                     formatCompact(c.events)
                   ) : (
@@ -692,7 +735,7 @@ function ContractRoster({
                 <td className="px-4 py-2 text-right">
                   {c.last_seen ? (
                     <span
-                      className="font-mono text-xs text-ink-muted"
+                      className="text-ink-muted font-mono text-xs"
                       title={formatTimestamp(c.last_seen)}
                     >
                       {relativeAge(c.last_seen)}
@@ -712,7 +755,7 @@ function ContractRoster({
             type="button"
             onClick={() => setExpanded((v) => !v)}
             aria-expanded={expanded}
-            className="rounded-sm text-xs font-medium text-brand-600 hover:underline focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-brand-500/60"
+            className="text-brand-600 focus-visible:ring-brand-500/60 rounded-sm text-xs font-medium hover:underline focus-visible:ring-2 focus-visible:outline-hidden"
           >
             {expanded
               ? 'Show fewer'
@@ -731,7 +774,7 @@ const ROSTER_TOP_N = 25;
 function RoleChip({ kind }: { kind?: string }) {
   if (kind === 'factory') {
     return (
-      <span className="rounded-sm bg-warn-50 px-1.5 py-0.5 text-[9px] font-medium uppercase tracking-wider text-warn-700">
+      <span className="bg-warn-50 text-warn-700 rounded-sm px-1.5 py-0.5 text-[9px] font-medium tracking-wider uppercase">
         factory
       </span>
     );
@@ -739,7 +782,7 @@ function RoleChip({ kind }: { kind?: string }) {
   if (kind === 'module') {
     return (
       <span
-        className="rounded-sm bg-brand-50 px-1.5 py-0.5 text-[9px] font-medium uppercase tracking-wider text-brand-700"
+        className="bg-brand-50 text-brand-700 rounded-sm px-1.5 py-0.5 text-[9px] font-medium tracking-wider uppercase"
         title="A sub-module contract that belongs to this protocol but emits on its own address (e.g. the Blend Backstop insurance module)."
       >
         module
@@ -747,7 +790,7 @@ function RoleChip({ kind }: { kind?: string }) {
     );
   }
   return (
-    <span className="rounded-sm bg-surface-subtle px-1.5 py-0.5 text-[9px] uppercase tracking-wider text-ink-body">
+    <span className="bg-surface-subtle text-ink-body rounded-sm px-1.5 py-0.5 text-[9px] tracking-wider uppercase">
       instance
     </span>
   );
@@ -760,7 +803,7 @@ function Footer({ data, name }: { data: ProtocolDetail; name: string }) {
     <Panel title="Protocol identity" bodyClassName="space-y-4">
       {data.factories.length > 0 && (
         <div>
-          <div className="mb-1.5 text-[10px] uppercase tracking-wider text-ink-muted">
+          <div className="text-ink-muted mb-1.5 text-[10px] tracking-wider uppercase">
             Verified factories ({data.factories.length})
           </div>
           <ul className="flex flex-wrap gap-2">
@@ -768,7 +811,7 @@ function Footer({ data, name }: { data: ProtocolDetail; name: string }) {
               <li key={f}>
                 <Link
                   href={`/contracts/${encodeURIComponent(f)}/`}
-                  className="inline-flex items-center rounded-sm border border-line px-2 py-1 font-mono text-[11px] text-brand-600 hover:border-brand-500 hover:underline"
+                  className="border-line text-brand-600 hover:border-brand-500 inline-flex items-center rounded-sm border px-2 py-1 font-mono text-[11px] hover:underline"
                 >
                   {shortId(f)}
                 </Link>
@@ -780,14 +823,14 @@ function Footer({ data, name }: { data: ProtocolDetail; name: string }) {
 
       {data.event_kinds.length > 0 && (
         <div>
-          <div className="mb-1.5 text-[10px] uppercase tracking-wider text-ink-muted">
+          <div className="text-ink-muted mb-1.5 text-[10px] tracking-wider uppercase">
             Decoder event vocabulary
           </div>
           <ul className="flex flex-wrap gap-1.5">
             {data.event_kinds.map((k) => (
               <li
                 key={k}
-                className="rounded-full bg-surface-subtle px-2 py-0.5 font-mono text-[10px] text-ink-body"
+                className="bg-surface-subtle text-ink-body rounded-full px-2 py-0.5 font-mono text-[10px]"
               >
                 {k}
               </li>
@@ -796,13 +839,13 @@ function Footer({ data, name }: { data: ProtocolDetail; name: string }) {
         </div>
       )}
 
-      <div className="flex flex-wrap gap-x-6 gap-y-2 border-t border-line pt-3 text-xs">
+      <div className="border-line flex flex-wrap gap-x-6 gap-y-2 border-t pt-3 text-xs">
         {data.verification_page && (
           <a
             href={`https://github.com/Stellar-Index/StellarIndex/blob/main/${data.verification_page}`}
             target="_blank"
             rel="noopener noreferrer"
-            className="inline-flex items-center gap-1 text-brand-600 hover:underline"
+            className="text-brand-600 inline-flex items-center gap-1 hover:underline"
           >
             Verification write-up
             <ExternalLink className="h-3 w-3" aria-hidden />
@@ -812,7 +855,7 @@ function Footer({ data, name }: { data: ProtocolDetail; name: string }) {
           href={`${API_BASE_URL}/v1/protocols/${encodeURIComponent(name)}`}
           target="_blank"
           rel="noopener noreferrer"
-          className="inline-flex items-center gap-1 text-ink-muted hover:text-brand-600"
+          className="text-ink-muted hover:text-brand-600 inline-flex items-center gap-1"
         >
           Raw API (/v1/protocols/{name})
           <ExternalLink className="h-3 w-3" aria-hidden />
@@ -826,7 +869,7 @@ function Footer({ data, name }: { data: ProtocolDetail; name: string }) {
 
 function AnalyticsUnavailable() {
   return (
-    <p className="py-6 text-center text-sm text-ink-muted">
+    <p className="text-ink-muted py-6 text-center text-sm">
       Lake analytics unavailable — the certified-lake reader is currently
       unreachable. The contract registry below is served independently and is
       unaffected.
@@ -835,7 +878,7 @@ function AnalyticsUnavailable() {
 }
 
 function EmptyAnalytics({ text }: { text: string }) {
-  return <p className="py-6 text-center text-sm text-ink-muted">{text}</p>;
+  return <p className="text-ink-muted py-6 text-center text-sm">{text}</p>;
 }
 
 // ─── helpers ─────────────────────────────────────────────────────────────────

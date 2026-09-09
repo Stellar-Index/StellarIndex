@@ -44,7 +44,8 @@ export function CallbackHandler() {
     // page navigation so the API's Set-Cookie applies and the
     // 303 redirect lands the browser on the post-login page.
     const next = params.get('next') ?? '/dashboard';
-    const safeNext = next.startsWith('/') && !next.startsWith('//') ? next : '/dashboard';
+    const safeNext =
+      next.startsWith('/') && !next.startsWith('//') ? next : '/dashboard';
     const url = new URL(`${API_BASE_URL}/v1/auth/callback`);
     url.searchParams.set('token', token);
     url.searchParams.set('next', safeNext);
@@ -58,7 +59,7 @@ export function CallbackHandler() {
 
   if (state.kind === 'error') {
     return (
-      <div className="space-y-3 rounded-md border border-bad-300 bg-bad-50 p-4 text-sm text-bad-700">
+      <div className="border-bad-300 bg-bad-50 text-bad-700 space-y-3 rounded-md border p-4 text-sm">
         <div className="flex items-center justify-center gap-2 font-medium">
           <AlertCircle className="h-4 w-4" />
           Couldn&apos;t sign you in
@@ -74,18 +75,21 @@ export function CallbackHandler() {
   }
   if (state.kind === 'redirecting') {
     return (
-      <div className="space-y-2 text-sm text-ink-body">
-        <div className="flex items-center justify-center gap-2 font-medium text-ink">
-          <CheckCircle2 className="h-4 w-4 text-up" />
+      <div className="text-ink-body space-y-2 text-sm">
+        <div className="text-ink flex items-center justify-center gap-2 font-medium">
+          <CheckCircle2 className="text-up h-4 w-4" />
           Signing you in…
         </div>
-        <p>Verifying your link with the API. You&apos;ll be redirected to your account.</p>
+        <p>
+          Verifying your link with the API. You&apos;ll be redirected to your
+          account.
+        </p>
       </div>
     );
   }
   return (
-    <div className="space-y-2 text-sm text-ink-body">
-      <div className="flex items-center justify-center gap-2 font-medium text-ink">
+    <div className="text-ink-body space-y-2 text-sm">
+      <div className="text-ink flex items-center justify-center gap-2 font-medium">
         <Loader2 className="h-4 w-4 animate-spin" />
         Verifying your sign-in link…
       </div>

@@ -97,7 +97,8 @@ export function breadcrumbJsonLd(
         position: i + 1,
         name: c.label,
       };
-      if (c.href) li.item = new URL(c.href, CURRENT_NETWORK.explorerUrl).toString();
+      if (c.href)
+        li.item = new URL(c.href, CURRENT_NETWORK.explorerUrl).toString();
       return li;
     }),
   };

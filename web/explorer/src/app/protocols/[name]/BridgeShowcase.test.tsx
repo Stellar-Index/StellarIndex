@@ -2,12 +2,18 @@ import { describe, it, expect, vi } from 'vitest';
 import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
-import { flowLines, perChainLines, donutSlices, chainColor } from './BridgeShowcase';
+import {
+  flowLines,
+  perChainLines,
+  donutSlices,
+  chainColor,
+} from './BridgeShowcase';
 import { BespokeSection } from './BespokeSection';
 import type { Bespoke, BespokeBreakdown } from './BespokeSection';
 
 vi.mock('@/api/client', async () => {
-  const actual = await vi.importActual<typeof import('@/api/client')>('@/api/client');
+  const actual =
+    await vi.importActual<typeof import('@/api/client')>('@/api/client');
   return { ...actual, apiGet: vi.fn() };
 });
 
@@ -17,7 +23,11 @@ vi.mock('@/api/client', async () => {
 vi.mock('@/components/charts/LineChart', () => ({
   LineChart: (props: {
     data: { time: number; value: number }[];
-    series?: { label: string; data: { time: number; value: number }[]; color?: string }[];
+    series?: {
+      label: string;
+      data: { time: number; value: number }[];
+      color?: string;
+    }[];
     timeVisible?: boolean;
     ariaLabel?: string;
   }) => (
@@ -26,7 +36,9 @@ vi.mock('@/components/charts/LineChart', () => ({
       role="img"
       aria-label={props.ariaLabel}
       data-points={props.data.length}
-      data-series={(props.series ?? []).map((s) => `${s.label}:${s.data.length}`).join('|')}
+      data-series={(props.series ?? [])
+        .map((s) => `${s.label}:${s.data.length}`)
+        .join('|')}
       data-colors={(props.series ?? []).map((s) => s.color ?? '').join('|')}
       data-timevisible={String(props.timeVisible ?? false)}
     />
@@ -133,7 +145,9 @@ const rozoBespoke: Bespoke = {
 // pills + the ?days= refetch live at section level (lifted 2026-07-30) and
 // BridgeShowcase consumes the section's window as props.
 function renderIt(name: string, initial: Bespoke) {
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
   return render(
     <QueryClientProvider client={client}>
       <BespokeSection
@@ -148,7 +162,10 @@ function renderIt(name: string, initial: Bespoke) {
 describe('flowLines', () => {
   it('pairs the exact-name inbound + outbound totals, ignoring per-chain and cumulative series', () => {
     const lines = flowLines(cctpBespoke.series!);
-    expect(lines.map((l) => l.label)).toEqual(['Inbound (USDC)', 'Outbound (USDC)']);
+    expect(lines.map((l) => l.label)).toEqual([
+      'Inbound (USDC)',
+      'Outbound (USDC)',
+    ]);
     expect(lines[0].tone).not.toBe(lines[1].tone);
     expect(lines[0].data).toHaveLength(2);
   });
@@ -179,7 +196,10 @@ describe('flowLines', () => {
           { date: '2026-07-29T14:00', value: '2' },
         ],
       },
-      { name: 'Outbound (USDC)', points: [{ date: '2026-07-29T13:00', value: '3' }] },
+      {
+        name: 'Outbound (USDC)',
+        points: [{ date: '2026-07-29T13:00', value: '3' }],
+      },
     ]);
     // Consecutive hourly buckets are exactly 3600s apart.
     expect(lines[0].data[1].time - lines[0].data[0].time).toBe(3600);
@@ -240,30 +260,47 @@ describe('BridgeShowcase', () => {
     for (const label of ['24h', '7d', '30d', '90d']) {
       expect(screen.getByRole('button', { name: label })).toBeInTheDocument();
     }
-    expect(screen.getByRole('button', { name: '90d' })).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getByRole('button', { name: '90d' })).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    );
 
-    await waitFor(() => expect(screen.getAllByTestId('line-chart').length).toBeGreaterThan(0));
+    await waitFor(() =>
+      expect(screen.getAllByTestId('line-chart').length).toBeGreaterThan(0),
+    );
     const charts = screen.getAllByTestId('line-chart');
 
     // The all-time cumulative headline renders as a single-series chart.
     expect(screen.getByText('Cumulative net inflow')).toBeInTheDocument();
-    const cumulativeChart = charts.find((c) => c.getAttribute('data-points') === '2');
+    const cumulativeChart = charts.find(
+      (c) => c.getAttribute('data-points') === '2',
+    );
     expect(cumulativeChart).toBeDefined();
-    expect(cumulativeChart!.getAttribute('aria-label')).toMatch(/Cumulative net USDC inflow/);
+    expect(cumulativeChart!.getAttribute('aria-label')).toMatch(
+      /Cumulative net USDC inflow/,
+    );
 
     // The combined flow chart carries BOTH totals lines (per-chain and
     // cumulative series stay off it).
     expect(
       charts.some(
-        (c) => c.getAttribute('data-series') === 'Inbound (USDC):2|Outbound (USDC):2',
+        (c) =>
+          c.getAttribute('data-series') ===
+          'Inbound (USDC):2|Outbound (USDC):2',
       ),
     ).toBe(true);
 
     // Per-chain multi-line charts render with bare chain labels.
-    expect(charts.some((c) => c.getAttribute('data-series') === 'Base:2|Solana:1')).toBe(true);
-    expect(charts.some((c) => c.getAttribute('data-series') === 'Ethereum:1')).toBe(true);
+    expect(
+      charts.some((c) => c.getAttribute('data-series') === 'Base:2|Solana:1'),
+    ).toBe(true);
+    expect(
+      charts.some((c) => c.getAttribute('data-series') === 'Ethereum:1'),
+    ).toBe(true);
     expect(screen.getByText('Inflows by source chain')).toBeInTheDocument();
-    expect(screen.getByText('Outflows by destination chain')).toBeInTheDocument();
+    expect(
+      screen.getByText('Outflows by destination chain'),
+    ).toBeInTheDocument();
 
     // Donuts: friendly headings + shares + honest unverified label.
     expect(screen.getByText('Where funds come from')).toBeInTheDocument();
@@ -327,22 +364,33 @@ describe('BridgeShowcase', () => {
 
     fireEvent.click(screen.getByRole('button', { name: '24h' }));
     await waitFor(() =>
-      expect(vi.mocked(apiGet)).toHaveBeenCalledWith('/v1/protocols/cctp?days=1'),
+      expect(vi.mocked(apiGet)).toHaveBeenCalledWith(
+        '/v1/protocols/cctp?days=1',
+      ),
     );
     await waitFor(() =>
       expect(
         screen
           .getAllByTestId('line-chart')
           .some(
-            (c) => c.getAttribute('data-series') === 'Inbound (USDC):3|Outbound (USDC):1',
+            (c) =>
+              c.getAttribute('data-series') ===
+              'Inbound (USDC):3|Outbound (USDC):1',
           ),
       ).toBe(true),
     );
     const flow = screen
       .getAllByTestId('line-chart')
-      .find((c) => c.getAttribute('data-series') === 'Inbound (USDC):3|Outbound (USDC):1');
+      .find(
+        (c) =>
+          c.getAttribute('data-series') ===
+          'Inbound (USDC):3|Outbound (USDC):1',
+      );
     expect(flow!.getAttribute('data-timevisible')).toBe('true');
-    expect(screen.getByRole('button', { name: '24h' })).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getByRole('button', { name: '24h' })).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    );
 
     // Cumulative headline still shows the INITIAL all-time series (2 points),
     // not the refetched window's copy.
@@ -361,17 +409,23 @@ describe('BridgeShowcase', () => {
 
     fireEvent.click(screen.getByRole('button', { name: '7d' }));
     await waitFor(() =>
-      expect(vi.mocked(apiGet)).toHaveBeenCalledWith('/v1/protocols/rozo?days=7'),
+      expect(vi.mocked(apiGet)).toHaveBeenCalledWith(
+        '/v1/protocols/rozo?days=7',
+      ),
     );
     await waitFor(() =>
-      expect(screen.getByText('No transfers in this window.')).toBeInTheDocument(),
+      expect(
+        screen.getByText('No transfers in this window.'),
+      ).toBeInTheDocument(),
     );
     expect(screen.queryByTestId('line-chart')).not.toBeInTheDocument();
   });
 
   it('renders the single settled-volume line for rozo without donuts or extra panels', async () => {
     renderIt('rozo', rozoBespoke);
-    await waitFor(() => expect(screen.getAllByTestId('line-chart')).toHaveLength(1));
+    await waitFor(() =>
+      expect(screen.getAllByTestId('line-chart')).toHaveLength(1),
+    );
     expect(screen.getAllByTestId('line-chart')[0]).toHaveAttribute(
       'data-series',
       'Settled volume (USDC):1',

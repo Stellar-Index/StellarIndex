@@ -47,9 +47,14 @@ export function displayUnits(baseUnits: string, decimals: number): string {
   const n = Number(`${whole}.${frac || '0'}`);
   if (!Number.isFinite(n)) return `${whole}`;
   if (n >= 1000) {
-    return new Intl.NumberFormat('en-US', { notation: 'compact', maximumFractionDigits: 2 }).format(n);
+    return new Intl.NumberFormat('en-US', {
+      notation: 'compact',
+      maximumFractionDigits: 2,
+    }).format(n);
   }
-  return new Intl.NumberFormat('en-US', { maximumSignificantDigits: 6 }).format(n);
+  return new Intl.NumberFormat('en-US', { maximumSignificantDigits: 6 }).format(
+    n,
+  );
 }
 
 /** Short label for a canonical asset_id ("native" → XLM; "CODE-ISSUER" → CODE). */
@@ -73,7 +78,7 @@ export function PoolDepthDetail({ row }: { row: PoolDepthRow }) {
 
   if (row.depth.length === 0) {
     return (
-      <p className="text-xs text-ink-muted">
+      <p className="text-ink-muted text-xs">
         One side of this pool is empty — no meaningful depth.
       </p>
     );
@@ -88,7 +93,10 @@ export function PoolDepthDetail({ row }: { row: PoolDepthRow }) {
   const bValInA =
     scaledUnits(row.reserve_b.reserve, row.reserve_b.decimals) * midBinA;
   const donutOk =
-    Number.isFinite(aVal) && aVal > 0 && Number.isFinite(bValInA) && bValInA > 0;
+    Number.isFinite(aVal) &&
+    aVal > 0 &&
+    Number.isFinite(bValInA) &&
+    bValInA > 0;
 
   const directions = [
     {
@@ -121,7 +129,7 @@ export function PoolDepthDetail({ row }: { row: PoolDepthRow }) {
             assets. */}
         {directions.map((d) => (
           <div key={d.key} className="space-y-1.5">
-            <h3 className="text-[11px] font-medium uppercase tracking-wider text-ink-muted">
+            <h3 className="text-ink-muted text-[11px] font-medium tracking-wider uppercase">
               {d.heading}
             </h3>
             <HBarList
@@ -134,7 +142,7 @@ export function PoolDepthDetail({ row }: { row: PoolDepthRow }) {
 
       {donutOk && (
         <div className="space-y-1.5">
-          <h3 className="text-[11px] font-medium uppercase tracking-wider text-ink-muted">
+          <h3 className="text-ink-muted text-[11px] font-medium tracking-wider uppercase">
             Reserve composition — valued at the pool&apos;s mid price
           </h3>
           <DonutChart
@@ -146,19 +154,19 @@ export function PoolDepthDetail({ row }: { row: PoolDepthRow }) {
             ]}
             formatValue={(n) => `≈${formatCompact(n)} ${a}`}
           />
-          <p className="text-[11px] leading-relaxed text-ink-muted">
-            A constant-product pool holds ≈50/50 by value at its own mid
-            price — a skewed split signals a one-sided or draining pool.
+          <p className="text-ink-muted text-[11px] leading-relaxed">
+            A constant-product pool holds ≈50/50 by value at its own mid price —
+            a skewed split signals a one-sided or draining pool.
           </p>
         </div>
       )}
 
-      <p className="text-[11px] leading-relaxed text-ink-muted">
-        Depth bars show the largest trade whose average execution price
-        stays within the tier of the mid price, under the constant-product
-        model ({row.fee_bps} bps fee on input), from reserves as of ledger{' '}
-        {row.as_of_ledger.toLocaleString('en-US')} — a model estimate, not
-        an order book. Pool id {row.pool}.
+      <p className="text-ink-muted text-[11px] leading-relaxed">
+        Depth bars show the largest trade whose average execution price stays
+        within the tier of the mid price, under the constant-product model (
+        {row.fee_bps} bps fee on input), from reserves as of ledger{' '}
+        {row.as_of_ledger.toLocaleString('en-US')} — a model estimate, not an
+        order book. Pool id {row.pool}.
       </p>
     </div>
   );

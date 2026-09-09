@@ -88,7 +88,13 @@ const SWATCHES: { name: string; vars: { label: string; cls: string }[] }[] = [
   },
 ];
 
-function Block({ title, children }: { title: string; children: React.ReactNode }) {
+function Block({
+  title,
+  children,
+}: {
+  title: string;
+  children: React.ReactNode;
+}) {
   return (
     <div className="space-y-4">
       <SectionHeader title={title} />
@@ -116,8 +122,12 @@ export default function StyleGuidePage() {
                 <CardBody className="flex flex-wrap gap-2">
                   {g.vars.map((v) => (
                     <div key={v.label} className="text-center">
-                      <div className={`h-12 w-12 rounded-lg border border-line ${v.cls}`} />
-                      <div className="mt-1 text-[11px] text-ink-muted">{v.label}</div>
+                      <div
+                        className={`border-line h-12 w-12 rounded-lg border ${v.cls}`}
+                      />
+                      <div className="text-ink-muted mt-1 text-[11px]">
+                        {v.label}
+                      </div>
                     </div>
                   ))}
                 </CardBody>
@@ -130,15 +140,18 @@ export default function StyleGuidePage() {
         <Block title="Typography">
           <Card>
             <CardBody className="space-y-3">
-              <p className="text-display font-semibold text-ink">Display 56</p>
-              <p className="text-h1 font-semibold text-ink">Heading 1 · 32</p>
-              <p className="text-h2 font-semibold text-ink">Heading 2 · 24</p>
-              <p className="text-h3 font-semibold text-ink">Heading 3 · 20</p>
-              <p className="text-base text-ink-body">
-                Body — Inter at 16px. The quick brown fox jumps over the lazy dog. 0123456789.
+              <p className="text-display text-ink font-semibold">Display 56</p>
+              <p className="text-h1 text-ink font-semibold">Heading 1 · 32</p>
+              <p className="text-h2 text-ink font-semibold">Heading 2 · 24</p>
+              <p className="text-h3 text-ink font-semibold">Heading 3 · 20</p>
+              <p className="text-ink-body text-base">
+                Body — Inter at 16px. The quick brown fox jumps over the lazy
+                dog. 0123456789.
               </p>
-              <p className="text-sm text-ink-muted">Muted small — secondary copy and labels.</p>
-              <p className="font-mono text-sm tnum text-ink-body">
+              <p className="text-ink-muted text-sm">
+                Muted small — secondary copy and labels.
+              </p>
+              <p className="tnum text-ink-body font-mono text-sm">
                 Mono / tabular — 1,234,567.89 · GA5Z…KZVN · 0xdAC1…1ec7
               </p>
             </CardBody>
@@ -190,13 +203,26 @@ export default function StyleGuidePage() {
         <Block title="Metrics">
           <StatGrid cols={4}>
             <StatCell>
-              <Stat label="24h volume" value="$4.21M" sub="+12.4% vs prev" icon={<Coins className="h-3.5 w-3.5" />} />
+              <Stat
+                label="24h volume"
+                value="$4.21M"
+                sub="+12.4% vs prev"
+                icon={<Coins className="h-3.5 w-3.5" />}
+              />
             </StatCell>
             <StatCell>
-              <Stat label="Active markets" value="318" icon={<Activity className="h-3.5 w-3.5" />} />
+              <Stat
+                label="Active markets"
+                value="318"
+                icon={<Activity className="h-3.5 w-3.5" />}
+              />
             </StatCell>
             <StatCell>
-              <Stat label="Protocols" value="17" icon={<Boxes className="h-3.5 w-3.5" />} />
+              <Stat
+                label="Protocols"
+                value="17"
+                icon={<Boxes className="h-3.5 w-3.5" />}
+              />
             </StatCell>
             <StatCell>
               <Stat label="Latest ledger" value="62,829,354" />
@@ -223,9 +249,12 @@ export default function StyleGuidePage() {
                   ['AQUA', '$0.0038', '−3.4%', '$214K'],
                 ].map((r) => (
                   <TR key={r[0]}>
-                    <Td className="font-medium text-ink">{r[0]}</Td>
+                    <Td className="text-ink font-medium">{r[0]}</Td>
                     <Td align="right">{r[1]}</Td>
-                    <Td align="right" className={r[2].startsWith('−') ? 'text-down' : 'text-up'}>
+                    <Td
+                      align="right"
+                      className={r[2].startsWith('−') ? 'text-down' : 'text-up'}
+                    >
                       {r[2]}
                     </Td>
                     <Td align="right">{r[3]}</Td>
@@ -240,7 +269,11 @@ export default function StyleGuidePage() {
         <Block title="Forms">
           <Card>
             <CardBody className="grid max-w-xl gap-4">
-              <Field label="API key name" htmlFor="sg-name" hint="A label to recognise this key.">
+              <Field
+                label="API key name"
+                htmlFor="sg-name"
+                hint="A label to recognise this key."
+              >
                 <Input id="sg-name" placeholder="Production server" />
               </Field>
               <Field label="Plan" htmlFor="sg-plan">
@@ -250,7 +283,12 @@ export default function StyleGuidePage() {
                   <option value="scale">Scale</option>
                 </Select>
               </Field>
-              <Field label="Email" htmlFor="sg-email" error="Enter a valid email address." required>
+              <Field
+                label="Email"
+                htmlFor="sg-email"
+                error="Enter a valid email address."
+                required
+              >
                 <Input id="sg-email" defaultValue="not-an-email" />
               </Field>
             </CardBody>
@@ -265,10 +303,17 @@ export default function StyleGuidePage() {
                 eyebrow="Protocol"
                 title="Soroswap"
                 description="AMM · 4 factories"
-                actions={<Badge tone="ok" dot>live</Badge>}
+                actions={
+                  <Badge tone="ok" dot>
+                    live
+                  </Badge>
+                }
               />
               <CardBody>
-                <Mono value="CAS3FL6TLZKDGGSISDBWGGPXT3NRR4DYTZD7YOD3HMYO6LTJUVGRVEAM" truncate />
+                <Mono
+                  value="CAS3FL6TLZKDGGSISDBWGGPXT3NRR4DYTZD7YOD3HMYO6LTJUVGRVEAM"
+                  truncate
+                />
               </CardBody>
               <CardFooter>
                 <span>Updated 2m ago</span>
@@ -279,9 +324,12 @@ export default function StyleGuidePage() {
             </Card>
             <div className="space-y-4">
               <Callout tone="info" title="Heads up">
-                Reference prices cross-check on-chain quotes; they are not primary feeds.
+                Reference prices cross-check on-chain quotes; they are not
+                primary feeds.
               </Callout>
-              <Callout tone="warn">A source is reporting degraded freshness.</Callout>
+              <Callout tone="warn">
+                A source is reporting degraded freshness.
+              </Callout>
               <Skeleton className="h-10 w-full" />
               <EmptyState
                 icon={<Search className="h-5 w-5" />}

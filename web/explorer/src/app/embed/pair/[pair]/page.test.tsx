@@ -41,7 +41,8 @@ describe('EmbedPairPage — live price refresh (W8.10)', () => {
             data: { price, observed_at: '2026-08-16T00:00:00Z' },
           });
         }
-        if (url.includes('/v1/chart')) return jsonResponse({ data: { points: [] } });
+        if (url.includes('/v1/chart'))
+          return jsonResponse({ data: { points: [] } });
         throw new Error(`unexpected fetch: ${url}`);
       }),
     );
@@ -53,7 +54,9 @@ describe('EmbedPairPage — live price refresh (W8.10)', () => {
     expect(screen.queryByText('0.250000')).not.toBeInTheDocument();
     // And the poll queried the pair's OWN quote, not a USD conversion.
     const calls = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls;
-    const pollUrl = calls.map((c) => String(c[0])).find((u, i) => u.includes('/v1/price') && i > 0);
+    const pollUrl = calls
+      .map((c) => String(c[0]))
+      .find((u, i) => u.includes('/v1/price') && i > 0);
     expect(pollUrl).toContain('quote=USDC-GABC');
   });
 
@@ -70,7 +73,8 @@ describe('EmbedPairPage — live price refresh (W8.10)', () => {
           }
           throw new Error('offline'); // poll fails
         }
-        if (url.includes('/v1/chart')) return jsonResponse({ data: { points: [] } });
+        if (url.includes('/v1/chart'))
+          return jsonResponse({ data: { points: [] } });
         throw new Error(`unexpected fetch: ${url}`);
       }),
     );

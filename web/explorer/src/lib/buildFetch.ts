@@ -141,7 +141,10 @@ const RETRY_AFTER_CAP_MS = 60_000;
  * fans out many pages, and un-jittered backoff re-synchronises them into the
  * next window together.
  */
-export function throttleDelayMs(retryAfter: string | null, waitIndex: number): number {
+export function throttleDelayMs(
+  retryAfter: string | null,
+  waitIndex: number,
+): number {
   if (retryAfter) {
     const secs = Number(retryAfter);
     if (Number.isFinite(secs) && secs >= 0) {
@@ -243,7 +246,9 @@ async function fetchWithRetry<T>(
         // correct response to a 429; retrying faster is not.
         lastErr = new Error('HTTP 429');
         if (throttleWaits < MAX_THROTTLE_WAITS) {
-          await sleep(throttleDelayMs(res.headers.get('retry-after'), throttleWaits));
+          await sleep(
+            throttleDelayMs(res.headers.get('retry-after'), throttleWaits),
+          );
           throttleWaits++;
           attempt--; // this round was throttled, not attempted
         }
@@ -261,7 +266,9 @@ async function fetchWithRetry<T>(
         // and then fails-hard below, keeping the last good deploy live.
         lastErr = new Error(`HTTP ${res.status}`);
         if (unavailableWaits < MAX_UNAVAILABLE_WAITS) {
-          await sleep(throttleDelayMs(res.headers.get('retry-after'), unavailableWaits));
+          await sleep(
+            throttleDelayMs(res.headers.get('retry-after'), unavailableWaits),
+          );
           unavailableWaits++;
           attempt--; // this round was unavailable, not a spent attempt
         }
@@ -313,7 +320,9 @@ export function failBuild(message: string): void {
   // Export the shell/fallback routes (the same null-safe paths the CI stub
   // uses) and let the client fetch live from the test-net API at runtime.
   if (CURRENT_NETWORK_ID !== 'mainnet') return;
-  throw new BuildFetchError(`${message} (fail-hard: see src/lib/buildFetch.ts)`);
+  throw new BuildFetchError(
+    `${message} (fail-hard: see src/lib/buildFetch.ts)`,
+  );
 }
 
 /**

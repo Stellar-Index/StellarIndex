@@ -18,7 +18,10 @@ import {
   THead,
   TR,
 } from '@/components/ui';
-import { DivergingColumns, type DivergingBucket } from '@/components/charts/Bars';
+import {
+  DivergingColumns,
+  type DivergingBucket,
+} from '@/components/charts/Bars';
 import { apiGet, asExample } from '@/api/client';
 import { useLedgerFollow } from '@/lib/live/hooks';
 import type { components } from '@/api/types';
@@ -54,7 +57,9 @@ const DAY_FMT = new Intl.DateTimeFormat('en-US', {
  * with USDC units into one bar would be a fabricated total. Exported for
  * its test.
  */
-export function buildMovementFlow(movements: AccountMovement[]): DivergingBucket[] {
+export function buildMovementFlow(
+  movements: AccountMovement[],
+): DivergingBucket[] {
   const byDay = new Map<string, { pos: number; neg: number; ms: number }>();
   for (const m of movements) {
     const ms = Date.parse(m.ledger_close_time);
@@ -68,7 +73,11 @@ export function buildMovementFlow(movements: AccountMovement[]): DivergingBucket
   }
   return Array.from(byDay.entries())
     .sort(([x], [y]) => (x < y ? -1 : 1))
-    .map(([, b]) => ({ label: DAY_FMT.format(new Date(b.ms)), pos: b.pos, neg: b.neg }));
+    .map(([, b]) => ({
+      label: DAY_FMT.format(new Date(b.ms)),
+      pos: b.pos,
+      neg: b.neg,
+    }));
 }
 
 const G_RE = /^G[A-Z2-7]{55}$/;
@@ -147,7 +156,13 @@ export function AccountMovementsPanel({ id }: { id: string }) {
 
   const { data, isLoading, isError, error, isFetching } =
     useQuery<AccountMovementsResp>({
-      queryKey: ['/v1/accounts/{id}/movements', id, cursor ?? 'tip', kind, direction],
+      queryKey: [
+        '/v1/accounts/{id}/movements',
+        id,
+        cursor ?? 'tip',
+        kind,
+        direction,
+      ],
       enabled: id.length > 0,
       retry: false,
       placeholderData: keepPreviousData,
@@ -179,8 +194,8 @@ export function AccountMovementsPanel({ id }: { id: string }) {
 
   const filters = (
     <div className="flex flex-wrap items-center gap-4 text-xs">
-      <label className="flex items-center gap-2 text-ink-muted">
-        <span className="uppercase tracking-wider">Kind</span>
+      <label className="text-ink-muted flex items-center gap-2">
+        <span className="tracking-wider uppercase">Kind</span>
         <Select
           value={kind}
           onChange={(e) => updateKind(e.target.value)}
@@ -194,8 +209,8 @@ export function AccountMovementsPanel({ id }: { id: string }) {
           ))}
         </Select>
       </label>
-      <label className="flex items-center gap-2 text-ink-muted">
-        <span className="uppercase tracking-wider">Direction</span>
+      <label className="text-ink-muted flex items-center gap-2">
+        <span className="tracking-wider uppercase">Direction</span>
         <Select
           value={direction}
           onChange={(e) => updateDirection(e.target.value)}
@@ -217,9 +232,14 @@ export function AccountMovementsPanel({ id }: { id: string }) {
 
   if (isError) {
     return (
-      <Panel title="Activity (movements)" hint={panelHint} source={source} bodyClassName="space-y-3">
+      <Panel
+        title="Activity (movements)"
+        hint={panelHint}
+        source={source}
+        bodyClassName="space-y-3"
+      >
         {filters}
-        <p className="text-sm text-ink-body">
+        <p className="text-ink-body text-sm">
           The movements lookup failed — reload to retry
           {error instanceof Error ? `: ${error.message}` : ''}.
         </p>
@@ -229,9 +249,14 @@ export function AccountMovementsPanel({ id }: { id: string }) {
 
   if (isLoading || !data) {
     return (
-      <Panel title="Activity (movements)" hint={panelHint} source={source} bodyClassName="space-y-3">
+      <Panel
+        title="Activity (movements)"
+        hint={panelHint}
+        source={source}
+        bodyClassName="space-y-3"
+      >
         {filters}
-        <p className="text-sm text-ink-muted">Loading…</p>
+        <p className="text-ink-muted text-sm">Loading…</p>
       </Panel>
     );
   }
@@ -261,7 +286,7 @@ export function AccountMovementsPanel({ id }: { id: string }) {
 
       {movements.length > 0 && flow.length >= 2 && (
         <div className="space-y-1">
-          <div className="text-[11px] uppercase tracking-wider text-ink-muted">
+          <div className="text-ink-muted text-[11px] tracking-wider uppercase">
             Daily flow — the {movements.length} loaded movements (counts, not
             value)
           </div>
@@ -276,7 +301,7 @@ export function AccountMovementsPanel({ id }: { id: string }) {
       )}
 
       {movements.length === 0 ? (
-        <p className="text-sm text-ink-muted">
+        <p className="text-ink-muted text-sm">
           {kind || direction
             ? 'No movements match this filter.'
             : 'No movements observed for this account yet.'}
@@ -297,7 +322,10 @@ export function AccountMovementsPanel({ id }: { id: string }) {
             </THead>
             <TBody>
               {movements.map((m) => (
-                <MovementRow key={`${m.tx_hash}-${m.op_index}-${m.leg_index}`} m={m} />
+                <MovementRow
+                  key={`${m.tx_hash}-${m.op_index}-${m.leg_index}`}
+                  m={m}
+                />
               ))}
             </TBody>
           </Table>
@@ -309,7 +337,7 @@ export function AccountMovementsPanel({ id }: { id: string }) {
           <button
             type="button"
             onClick={() => setCursor(undefined)}
-            className="rounded-md border border-line px-2.5 py-1 text-ink-body hover:border-brand-500"
+            className="border-line text-ink-body hover:border-brand-500 rounded-md border px-2.5 py-1"
           >
             ← Newest
           </button>
@@ -318,7 +346,7 @@ export function AccountMovementsPanel({ id }: { id: string }) {
           <button
             type="button"
             onClick={() => setCursor(data.next_cursor)}
-            className="ml-auto rounded-md border border-line px-2.5 py-1 text-ink-body hover:border-brand-500"
+            className="border-line text-ink-body hover:border-brand-500 ml-auto rounded-md border px-2.5 py-1"
           >
             Load older →
           </button>
@@ -334,14 +362,14 @@ function MovementRow({ m }: { m: AccountMovement }) {
     <TR>
       <Td>
         <span
-          className="whitespace-nowrap text-xs text-ink-muted"
+          className="text-ink-muted text-xs whitespace-nowrap"
           title={formatTimestamp(m.ledger_close_time)}
         >
           {relativeAge(m.ledger_close_time)}
         </span>
         <Link
           href={`/ledgers/${m.ledger}/`}
-          className="ml-2 font-mono text-[11px] text-ink-faint hover:text-brand-600"
+          className="text-ink-faint hover:text-brand-600 ml-2 font-mono text-[11px]"
         >
           #{m.ledger.toLocaleString('en-US')}
         </Link>
@@ -373,7 +401,7 @@ function MovementRow({ m }: { m: AccountMovement }) {
       <Td>
         <Link
           href={`/transactions/${m.tx_hash}/`}
-          className="font-mono text-xs text-brand-600 hover:underline"
+          className="text-brand-600 font-mono text-xs hover:underline"
           title={m.tx_hash}
         >
           {m.tx_hash.slice(0, 8)}…{m.tx_hash.slice(-6)}
@@ -408,15 +436,17 @@ function CounterpartyCell({ counterparty }: { counterparty?: string }) {
     // Non-G-strkey counterparty (e.g. a claimable-balance id slipping
     // through as text) — show it, but don't link somewhere that 404s.
     return (
-      <span className="font-mono text-xs text-ink-body" title={counterparty}>
-        {counterparty.length > 12 ? `${counterparty.slice(0, 6)}…${counterparty.slice(-4)}` : counterparty}
+      <span className="text-ink-body font-mono text-xs" title={counterparty}>
+        {counterparty.length > 12
+          ? `${counterparty.slice(0, 6)}…${counterparty.slice(-4)}`
+          : counterparty}
       </span>
     );
   }
   return (
     <Link
       href={`/accounts/${counterparty}/`}
-      className="font-mono text-xs text-brand-600 hover:underline"
+      className="text-brand-600 font-mono text-xs hover:underline"
       title={counterparty}
     >
       {counterparty.slice(0, 6)}…{counterparty.slice(-4)}

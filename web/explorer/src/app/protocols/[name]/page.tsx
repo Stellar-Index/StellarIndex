@@ -83,7 +83,7 @@ export default async function ProtocolDetailPage({
     <>
       <Suspense
         fallback={
-          <Container className="py-16 text-sm text-ink-muted">
+          <Container className="text-ink-muted py-16 text-sm">
             Loading {meta?.label ?? name}…
           </Container>
         }

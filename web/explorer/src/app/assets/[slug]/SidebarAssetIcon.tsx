@@ -33,14 +33,14 @@ export function SidebarAssetIcon({
         height={36}
         loading="lazy"
         onError={() => setBroken(true)}
-        className="h-9 w-9 rounded-full bg-surface-subtle object-contain"
+        className="bg-surface-subtle h-9 w-9 rounded-full object-contain"
       />
     );
   }
   return (
     <span
       aria-hidden
-      className="flex h-9 w-9 items-center justify-center rounded-full bg-surface-subtle font-mono text-sm font-semibold text-ink"
+      className="bg-surface-subtle text-ink flex h-9 w-9 items-center justify-center rounded-full font-mono text-sm font-semibold"
     >
       {code.slice(0, 1)}
     </span>

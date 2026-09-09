@@ -30,11 +30,26 @@ export default function GlobalError({
             "system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif",
         }}
       >
-        <div style={{ maxWidth: '28rem', padding: '2rem', textAlign: 'center' }}>
-          <h1 style={{ fontSize: '1.25rem', fontWeight: 600, margin: '0 0 0.5rem' }}>
+        <div
+          style={{ maxWidth: '28rem', padding: '2rem', textAlign: 'center' }}
+        >
+          <h1
+            style={{
+              fontSize: '1.25rem',
+              fontWeight: 600,
+              margin: '0 0 0.5rem',
+            }}
+          >
             Stellar Index hit an unexpected error
           </h1>
-          <p style={{ fontSize: '0.875rem', color: '#8a91a0', margin: '0 0 1.25rem', lineHeight: 1.5 }}>
+          <p
+            style={{
+              fontSize: '0.875rem',
+              color: '#8a91a0',
+              margin: '0 0 1.25rem',
+              lineHeight: 1.5,
+            }}
+          >
             The application shell failed to render. This is usually transient —
             try again, or head back to the homepage.
           </p>
@@ -50,7 +65,13 @@ export default function GlobalError({
               digest: {error.digest}
             </p>
           )}
-          <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'center' }}>
+          <div
+            style={{
+              display: 'flex',
+              gap: '0.75rem',
+              justifyContent: 'center',
+            }}
+          >
             <button
               onClick={reset}
               style={{

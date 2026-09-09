@@ -31,7 +31,11 @@ export function buildSupplyFlowRows(
   return [
     { label: 'Minted', value: scale(totals.mint_total), direction: 'add' },
     { label: 'Burned', value: scale(totals.burn_total), direction: 'remove' },
-    { label: 'Clawed back', value: scale(totals.clawback_total), direction: 'remove' },
+    {
+      label: 'Clawed back',
+      value: scale(totals.clawback_total),
+      direction: 'remove',
+    },
   ];
 }
 
@@ -50,16 +54,19 @@ export function SupplyFlowsBar({ rows }: { rows: SupplyFlowRow[] }) {
   return (
     <div className="space-y-1.5" data-testid="supply-flows-bar">
       {rows.map((r) => {
-        const pct = r.value != null && r.value > 0 ? Math.max(0.5, (r.value / max) * 100) : 0;
+        const pct =
+          r.value != null && r.value > 0
+            ? Math.max(0.5, (r.value / max) * 100)
+            : 0;
         return (
           <div key={r.label} className="flex items-center gap-2 text-xs">
-            <span className="w-24 shrink-0 text-[11px] uppercase tracking-wider text-ink-muted">
+            <span className="text-ink-muted w-24 shrink-0 text-[11px] tracking-wider uppercase">
               {r.label}
-              <span className="ml-1 text-ink-faint" aria-hidden>
+              <span className="text-ink-faint ml-1" aria-hidden>
                 {r.direction === 'add' ? '+' : '−'}
               </span>
             </span>
-            <div className="h-2.5 flex-1 overflow-hidden rounded-sm bg-surface-subtle">
+            <div className="bg-surface-subtle h-2.5 flex-1 overflow-hidden rounded-sm">
               {r.value != null && r.value > 0 && (
                 <div
                   className={`h-full ${r.direction === 'add' ? 'bg-up/70' : 'bg-down/70'}`}
@@ -67,7 +74,7 @@ export function SupplyFlowsBar({ rows }: { rows: SupplyFlowRow[] }) {
                 />
               )}
             </div>
-            <span className="w-20 shrink-0 text-right font-mono tabular-nums text-ink-body">
+            <span className="text-ink-body w-20 shrink-0 text-right font-mono tabular-nums">
               {r.value != null ? formatCompact(r.value) : '—'}
             </span>
           </div>

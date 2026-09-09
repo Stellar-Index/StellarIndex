@@ -119,7 +119,9 @@ describe('FEC guards (repo-walk)', () => {
 
   it('useLedgerStream / useLiveClock are declared only in lib/live/hooks.ts', () => {
     const offenders = sources
-      .filter((f) => /(const|function)\s+(useLedgerStream|useLiveClock)\b/.test(f.text))
+      .filter((f) =>
+        /(const|function)\s+(useLedgerStream|useLiveClock)\b/.test(f.text),
+      )
       .map((f) => f.rel)
       .filter((r) => r !== 'lib/live/hooks.ts');
     expect(offenders).toEqual([]);
@@ -137,7 +139,9 @@ describe('FEC guards (repo-walk)', () => {
     ]);
     const offenders = sources
       .filter((f) =>
-        /(const|function)\s+short(Asset|Code|Counterparty|Label)\b/.test(f.text),
+        /(const|function)\s+short(Asset|Code|Counterparty|Label)\b/.test(
+          f.text,
+        ),
       )
       .map((f) => f.rel)
       .filter((r) => !allowed.has(r));
@@ -254,7 +258,9 @@ describe('FEC guards (repo-walk)', () => {
     // (it maps WindowDays↔keys); it must contain no button row of its own
     // — that is covered by the aria-pressed walk above.
     const offenders = sources
-      .filter((f) => /(const|function)\s+(ToggleGroup|WindowPills)\b/.test(f.text))
+      .filter((f) =>
+        /(const|function)\s+(ToggleGroup|WindowPills)\b/.test(f.text),
+      )
       .map((f) => f.rel)
       .filter((r) => r !== 'app/protocols/[name]/BespokeSection.tsx');
     expect(offenders).toEqual([]);

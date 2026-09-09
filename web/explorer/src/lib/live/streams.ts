@@ -79,7 +79,11 @@ function teardown(url: string, s: SharedStream): void {
  * (call exactly once, e.g. as a useEffect cleanup). Safe to call from
  * many components with the same url: they share one connection.
  */
-export function subscribeStream(url: string, eventType: string, onData: Listener): () => void {
+export function subscribeStream(
+  url: string,
+  eventType: string,
+  onData: Listener,
+): () => void {
   // No-op outside a browser with SSE support (jsdom test environments,
   // any server-side render path): callers simply never receive frames
   // and their fallbacks carry the page.

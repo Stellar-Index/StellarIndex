@@ -77,56 +77,61 @@ describe('built static export: heading order (WCAG 1.3.1)', () => {
   // not whether a heading level was skipped. It timed out mid-verification
   // on 2026-09-04 with the export intact and every heading correct. The
   // sibling nav-shell scan iterates a fixed route list and needs none.
-  it.runIf(built)('no page skips a heading level', () => {
-    const files = htmlFiles(OUT_DIR);
-    const failures: string[] = [];
-    let withHeadings = 0;
-    let exempted = 0;
+  it.runIf(built)(
+    'no page skips a heading level',
+    () => {
+      const files = htmlFiles(OUT_DIR);
+      const failures: string[] = [];
+      let withHeadings = 0;
+      let exempted = 0;
 
-    for (const file of files) {
-      const route = relative(OUT_DIR, file);
-      const headings = extractHeadings(readFileSync(file, 'utf8'));
-      if (headings.length === 0) continue;
-      withHeadings += 1;
-      const violations = headingOrderViolations(headings);
-      if (violations.length === 0) continue;
-      if (EXEMPT.has(route)) {
-        exempted += 1;
-        continue;
+      for (const file of files) {
+        const route = relative(OUT_DIR, file);
+        const headings = extractHeadings(readFileSync(file, 'utf8'));
+        if (headings.length === 0) continue;
+        withHeadings += 1;
+        const violations = headingOrderViolations(headings);
+        if (violations.length === 0) continue;
+        if (EXEMPT.has(route)) {
+          exempted += 1;
+          continue;
+        }
+        failures.push(
+          `${route}: ${violations.map(formatViolation).join(', ')}\n` +
+            `    outline: ${formatOutline(headings)}`,
+        );
       }
-      failures.push(
-        `${route}: ${violations.map(formatViolation).join(', ')}\n` +
-          `    outline: ${formatOutline(headings)}`,
+
+      // Self-accounting: a scan that found no files is a scan that did not
+      // run. The floor is well under the CI stub build's page count (490
+      // files / 458 with headings, vs ~2,363 / 1,691 on a live-API build)
+      // so it fails on an empty/mis-pathed out/ without being brittle.
+      // `postbuild` passes --reporter=verbose precisely so this line is
+      // VISIBLE on a pass: vitest 4 hides a passing test's console output,
+      // which is how a gate ends up reporting "clean" by printing nothing.
+      console.log(
+        `[heading-order] scanned ${files.length} html files, ` +
+          `${withHeadings} with headings, ${failures.length} violating, ` +
+          `${exempted} exempted`,
       );
-    }
+      expect(
+        files.length,
+        `no .html found under ${OUT_DIR} — the scan did not run`,
+      ).toBeGreaterThan(20);
+      expect(
+        withHeadings,
+        'no built page had a heading at all',
+      ).toBeGreaterThan(20);
 
-    // Self-accounting: a scan that found no files is a scan that did not
-    // run. The floor is well under the CI stub build's page count (490
-    // files / 458 with headings, vs ~2,363 / 1,691 on a live-API build)
-    // so it fails on an empty/mis-pathed out/ without being brittle.
-    // `postbuild` passes --reporter=verbose precisely so this line is
-    // VISIBLE on a pass: vitest 4 hides a passing test's console output,
-    // which is how a gate ends up reporting "clean" by printing nothing.
-    console.log(
-      `[heading-order] scanned ${files.length} html files, ` +
-        `${withHeadings} with headings, ${failures.length} violating, ` +
-        `${exempted} exempted`,
-    );
-    expect(
-      files.length,
-      `no .html found under ${OUT_DIR} — the scan did not run`,
-    ).toBeGreaterThan(20);
-    expect(withHeadings, 'no built page had a heading at all').toBeGreaterThan(
-      20,
-    );
-
-    expect(
-      failures,
-      `${failures.length} of ${withHeadings} built pages with headings skip a ` +
-        'level (WCAG 1.3.1 heading-order, #486). Each line is route: skip. ' +
-        'A component whose title should be a page-level section takes ' +
-        'headingLevel={2} (see ui/Card, reveal/Panel, ui/Feedback).\n' +
-        failures.slice(0, 25).join('\n'),
-    ).toEqual([]);
-  }, 60_000);
+      expect(
+        failures,
+        `${failures.length} of ${withHeadings} built pages with headings skip a ` +
+          'level (WCAG 1.3.1 heading-order, #486). Each line is route: skip. ' +
+          'A component whose title should be a page-level section takes ' +
+          'headingLevel={2} (see ui/Card, reveal/Panel, ui/Feedback).\n' +
+          failures.slice(0, 25).join('\n'),
+      ).toEqual([]);
+    },
+    60_000,
+  );
 });

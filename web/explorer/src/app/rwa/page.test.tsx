@@ -12,7 +12,9 @@ describe('rwa/page metadata', () => {
   it('does not claim to cover every real-world asset', () => {
     expect(String(metadata.title)).not.toMatch(/\ball\b|\bevery\b|complete/i);
     expect(String(metadata.description)).not.toMatch(/^every /i);
-    expect(String(metadata.description)).not.toMatch(/\bevery (rwa|real-world|tokeni)/i);
+    expect(String(metadata.description)).not.toMatch(
+      /\bevery (rwa|real-world|tokeni)/i,
+    );
   });
 
   it('names the evidence the set is built on', () => {

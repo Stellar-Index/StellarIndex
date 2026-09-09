@@ -17,16 +17,18 @@ export function HomeBlogStrip() {
     <section className="space-y-3">
       <div className="flex items-baseline justify-between">
         <div className="space-y-1">
-          <h2 className="text-2xl font-semibold tracking-tight">Latest from the blog</h2>
-          <p className="text-sm text-ink-body">
+          <h2 className="text-2xl font-semibold tracking-tight">
+            Latest from the blog
+          </h2>
+          <p className="text-ink-body text-sm">
             Engineering notes + product updates. Sourced from{' '}
-            <code className="font-mono text-xs">docs/blog/*.md</code>{' '}
-            in the public repo.
+            <code className="font-mono text-xs">docs/blog/*.md</code> in the
+            public repo.
           </p>
         </div>
         <Link
           href="/blog"
-          className="inline-flex items-center gap-1 text-xs text-brand-600 hover:underline"
+          className="text-brand-600 inline-flex items-center gap-1 text-xs hover:underline"
         >
           All posts <ArrowRight className="h-3 w-3" />
         </Link>
@@ -36,20 +38,22 @@ export function HomeBlogStrip() {
           <Link
             key={p.slug}
             href={`/blog/${p.slug}`}
-            className="group flex flex-col rounded-xl border border-line bg-surface p-4 transition-colors hover:border-brand-500"
+            className="group border-line bg-surface hover:border-brand-500 flex flex-col rounded-xl border p-4 transition-colors"
           >
-            <span className="font-mono text-[10px] uppercase tracking-wider text-ink-muted">
+            <span className="text-ink-muted font-mono text-[10px] tracking-wider uppercase">
               {p.date}
             </span>
-            <h3 className="mt-1 text-base font-semibold leading-snug tracking-tight group-hover:text-brand-600">
+            <h3 className="group-hover:text-brand-600 mt-1 text-base leading-snug font-semibold tracking-tight">
               {p.title}
             </h3>
             {p.summary && (
-              <p className="mt-2 line-clamp-3 text-sm text-ink-body">
+              <p className="text-ink-body mt-2 line-clamp-3 text-sm">
                 {p.summary}
               </p>
             )}
-            <span className="mt-auto pt-3 text-[11px] text-ink-muted">{p.author}</span>
+            <span className="text-ink-muted mt-auto pt-3 text-[11px]">
+              {p.author}
+            </span>
           </Link>
         ))}
       </div>

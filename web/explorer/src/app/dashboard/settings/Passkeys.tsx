@@ -115,19 +115,19 @@ export function Passkeys() {
             Couldn&apos;t load your passkeys. Refresh to try again.
           </Callout>
         ) : passkeys && passkeys.length > 0 ? (
-          <ul className="divide-y divide-line rounded-md border border-line">
+          <ul className="divide-line border-line divide-y rounded-md border">
             {passkeys.map((p) => (
               <li
                 key={p.id}
                 className="flex items-center justify-between gap-4 px-4 py-3"
               >
                 <div className="flex min-w-0 items-center gap-3">
-                  <KeyRound className="h-4 w-4 shrink-0 text-ink-faint" />
+                  <KeyRound className="text-ink-faint h-4 w-4 shrink-0" />
                   <div className="min-w-0">
-                    <div className="truncate text-sm font-medium text-ink">
+                    <div className="text-ink truncate text-sm font-medium">
                       {p.name}
                     </div>
-                    <div className="text-xs text-ink-muted">
+                    <div className="text-ink-muted text-xs">
                       Added {fmtRelative(p.created_at)}
                       {p.last_used_at
                         ? ` · last used ${fmtRelative(p.last_used_at)}`
@@ -184,14 +184,14 @@ export function Passkeys() {
             </Button>
           </div>
         ) : (
-          <p className="text-xs text-ink-muted">
+          <p className="text-ink-muted text-xs">
             This browser doesn&apos;t support passkeys.
           </p>
         )}
 
-        <p className="text-xs text-ink-faint">
-          Email-code sign-in always remains available, so removing a
-          passkey can&apos;t lock you out.
+        <p className="text-ink-faint text-xs">
+          Email-code sign-in always remains available, so removing a passkey
+          can&apos;t lock you out.
         </p>
       </CardBody>
     </Card>

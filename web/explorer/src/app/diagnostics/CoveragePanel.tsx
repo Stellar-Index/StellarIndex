@@ -2,7 +2,11 @@
 
 import Link from 'next/link';
 
-import { useCoverage, type CoverageVerdict, type RecognitionAxis } from '@/api/hooks';
+import {
+  useCoverage,
+  type CoverageVerdict,
+  type RecognitionAxis,
+} from '@/api/hooks';
 
 /**
  * CoveragePanel — the decoder-coverage panel on /diagnostics.
@@ -37,17 +41,17 @@ export function CoveragePanel() {
 
   if (isLoading) {
     return (
-      <section className="rounded-md border border-line bg-surface p-4 text-sm text-ink-muted">
+      <section className="border-line bg-surface text-ink-muted rounded-md border p-4 text-sm">
         Loading coverage verdicts…
       </section>
     );
   }
   if (error || !data) {
     return (
-      <section className="rounded-md border border-line bg-surface p-4 text-sm text-ink-muted">
+      <section className="border-line bg-surface text-ink-muted rounded-md border p-4 text-sm">
         Coverage verdicts unavailable — the deployment may not have a
         completeness reader wired. See{' '}
-        <code className="rounded-sm bg-surface-subtle px-1 font-mono text-[13px]">
+        <code className="bg-surface-subtle rounded-sm px-1 font-mono text-[13px]">
           /v1/coverage
         </code>
         .
@@ -59,10 +63,10 @@ export function CoveragePanel() {
   const allLakeComplete = data.lake_complete_sources === data.total_sources;
 
   return (
-    <section className="rounded-lg border border-line bg-surface p-4">
+    <section className="border-line bg-surface rounded-lg border p-4">
       <header className="mb-1 flex flex-wrap items-baseline justify-between gap-2">
         <div className="flex flex-wrap items-baseline gap-3">
-          <h3 className="text-sm font-semibold uppercase tracking-wider text-ink-body">
+          <h3 className="text-ink-body text-sm font-semibold tracking-wider uppercase">
             Completeness verdicts
           </h3>
           <span
@@ -75,30 +79,33 @@ export function CoveragePanel() {
           </span>
           <span
             className={`rounded-sm px-2 py-0.5 font-mono text-xs tabular-nums ${
-              allLakeComplete ? 'bg-up-subtle text-up' : 'bg-down-subtle text-down'
+              allLakeComplete
+                ? 'bg-up-subtle text-up'
+                : 'bg-down-subtle text-down'
             }`}
             title="Archive (lake): the certified ClickHouse archive is contiguous and hash-chained from genesis to tip — independent of the served tier's retention window."
           >
             {data.lake_complete_sources}/{data.total_sources} archive (lake)
           </span>
         </div>
-        <span className="text-xs text-ink-faint">
+        <span className="text-ink-faint text-xs">
           ADR-0033/0034 · /v1/coverage ·{' '}
           <Link href="/status" className="text-brand-600 hover:underline">
             status →
           </Link>
         </span>
       </header>
-      <p className="mb-3 text-xs text-ink-faint">
-        <strong className="font-medium text-ink-muted">Served tier</strong> = verified within
-        Postgres&apos;s retention window (what the API queries).{' '}
-        <strong className="font-medium text-ink-muted">Archive (lake)</strong> = the certified
-        ClickHouse archive, proven genesis-to-tip regardless of retention.
+      <p className="text-ink-faint mb-3 text-xs">
+        <strong className="text-ink-muted font-medium">Served tier</strong> =
+        verified within Postgres&apos;s retention window (what the API queries).{' '}
+        <strong className="text-ink-muted font-medium">Archive (lake)</strong> =
+        the certified ClickHouse archive, proven genesis-to-tip regardless of
+        retention.
       </p>
       <div className="-mx-4 overflow-x-auto">
-        <table className="min-w-full divide-y divide-line text-sm">
+        <table className="divide-line min-w-full divide-y text-sm">
           <thead>
-            <tr className="text-left text-[10px] uppercase tracking-wider text-ink-muted">
+            <tr className="text-ink-muted text-left text-[10px] tracking-wider uppercase">
               <th className="px-4 py-2 font-medium">Source</th>
               <th
                 className="px-4 py-2 font-medium"
@@ -118,7 +125,7 @@ export function CoveragePanel() {
               <th className="px-4 py-2 text-right font-medium">Computed</th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-line-subtle">
+          <tbody className="divide-line-subtle divide-y">
             {data.sources.map((v) => (
               <VerdictRow key={v.source} v={v} />
             ))}
@@ -128,17 +135,18 @@ export function CoveragePanel() {
 
       <RecognitionAxisCard rec={data.recognition} />
 
-      {data.not_applicable_sources && data.not_applicable_sources.length > 0 && (
-        <p className="mt-3 text-xs text-ink-faint">
-          <span className="text-ink-body">
-            Not applicable on {data.network}:
-          </span>{' '}
-          {data.not_applicable_sources.map((na) => na.source).join(', ')}. These
-          protocols are anchored to pubnet contract identities (ADR-0035), so
-          they do not exist on this network — they are excluded from the totals
-          above rather than counted incomplete.
-        </p>
-      )}
+      {data.not_applicable_sources &&
+        data.not_applicable_sources.length > 0 && (
+          <p className="text-ink-faint mt-3 text-xs">
+            <span className="text-ink-body">
+              Not applicable on {data.network}:
+            </span>{' '}
+            {data.not_applicable_sources.map((na) => na.source).join(', ')}.
+            These protocols are anchored to pubnet contract identities
+            (ADR-0035), so they do not exist on this network — they are excluded
+            from the totals above rather than counted incomplete.
+          </p>
+        )}
     </section>
   );
 }
@@ -155,7 +163,7 @@ export function CoveragePanel() {
 function RecognitionAxisCard({ rec }: { rec: RecognitionAxis }) {
   if (!rec) {
     return (
-      <p className="mt-3 rounded-md border border-line bg-surface-subtle p-3 text-xs text-ink-faint">
+      <p className="border-line bg-surface-subtle text-ink-faint mt-3 rounded-md border p-3 text-xs">
         <span className="text-ink-body">Recognition axis:</span> no census
         published yet — the completeness audit has not produced one on this
         deployment. This is not a clean result; it is an absent one.
@@ -165,9 +173,9 @@ function RecognitionAxisCard({ rec }: { rec: RecognitionAxis }) {
   const shapes = rec.unrecognized_shapes;
   const contracts = rec.unrecognized_contracts;
   return (
-    <div className="mt-3 rounded-md border border-line bg-surface-subtle p-3">
+    <div className="border-line bg-surface-subtle mt-3 rounded-md border p-3">
       <div className="mb-1 flex flex-wrap items-baseline gap-3">
-        <h4 className="text-xs font-semibold uppercase tracking-wider text-ink-body">
+        <h4 className="text-ink-body text-xs font-semibold tracking-wider uppercase">
           Recognition axis — unclaimed contracts
         </h4>
         <span
@@ -183,17 +191,18 @@ function RecognitionAxisCard({ rec }: { rec: RecognitionAxis }) {
             : 'discovery backlog'}
         </span>
       </div>
-      <p className="text-xs text-ink-muted">
+      <p className="text-ink-muted text-xs">
         {shapes != null ? (
           <>
-            <strong className="font-mono tabular-nums text-ink-body">
+            <strong className="text-ink-body font-mono tabular-nums">
               {shapes.toLocaleString('en-US')}
             </strong>{' '}
             distinct event shape{shapes === 1 ? '' : 's'}
             {contracts != null && (
               <>
-                {' '}on{' '}
-                <strong className="font-mono tabular-nums text-ink-body">
+                {' '}
+                on{' '}
+                <strong className="text-ink-body font-mono tabular-nums">
                   {contracts.toLocaleString('en-US')}
                 </strong>{' '}
                 contract{contracts === 1 ? '' : 's'}
@@ -213,24 +222,26 @@ function RecognitionAxisCard({ rec }: { rec: RecognitionAxis }) {
         ) : (
           // Counts omitted rather than zeroed when the audit's detail
           // does not parse — never render an unverified "0".
-          <>Census counts unavailable for this snapshot; the audit&apos;s own
-          detail is below.</>
+          <>
+            Census counts unavailable for this snapshot; the audit&apos;s own
+            detail is below.
+          </>
         )}
       </p>
-      <p className="mt-1 text-xs text-ink-faint">
+      <p className="text-ink-faint mt-1 text-xs">
         These are Soroban protocols Stellar Index has not integrated —{' '}
-        <strong className="font-medium text-ink-muted">
+        <strong className="text-ink-muted font-medium">
           a discovery backlog, not missing data
         </strong>
         . No source in the table above is dropping events because of it, and
         this number can never reach zero while contracts we do not index keep
-        being deployed, which is why it is not counted in the headline. A
-        source silently dropping its <em>own</em> events is the opposite case:
-        that shows as a red <code className="font-mono">recognition</code>{' '}
-        claim on that source&apos;s row, and it does fail the headline.
+        being deployed, which is why it is not counted in the headline. A source
+        silently dropping its <em>own</em> events is the opposite case: that
+        shows as a red <code className="font-mono">recognition</code> claim on
+        that source&apos;s row, and it does fail the headline.
       </p>
       {rec.detail && (
-        <p className="mt-1 font-mono text-[11px] leading-relaxed text-ink-faint">
+        <p className="text-ink-faint mt-1 font-mono text-[11px] leading-relaxed">
           {rec.detail}
         </p>
       )}
@@ -262,7 +273,9 @@ function VerdictRow({ v }: { v: CoverageVerdict }) {
       <td className="px-4 py-2">
         <span
           className={`inline-flex items-center rounded-sm px-2 py-0.5 font-mono text-xs ${
-            v.lake_complete ? 'bg-up-subtle text-up' : 'bg-down-subtle text-down'
+            v.lake_complete
+              ? 'bg-up-subtle text-up'
+              : 'bg-down-subtle text-down'
           }`}
           title="Archive (lake): substrate + recognition, genesis-to-tip — independent of served-tier retention."
         >
@@ -282,7 +295,7 @@ function VerdictRow({ v }: { v: CoverageVerdict }) {
       <td className="px-4 py-2 text-right font-mono text-xs tabular-nums">
         {(v.coverage_pct * 100).toFixed(v.coverage_pct >= 1 ? 0 : 2)}%
       </td>
-      <td className="px-4 py-2 text-right font-mono text-xs text-ink-muted">
+      <td className="text-ink-muted px-4 py-2 text-right font-mono text-xs">
         {v.computed_at.replace('T', ' ').slice(0, 16)} UTC
       </td>
     </tr>
@@ -292,7 +305,7 @@ function VerdictRow({ v }: { v: CoverageVerdict }) {
 function Claim({ label, ok }: { label: string; ok: boolean }) {
   return (
     <span
-      className={`rounded-sm px-1.5 py-0.5 text-[10px] uppercase tracking-wider ${
+      className={`rounded-sm px-1.5 py-0.5 text-[10px] tracking-wider uppercase ${
         ok ? 'bg-surface-subtle text-ink-muted' : 'bg-down-subtle text-down'
       }`}
       title={`${label} ${ok ? 'verified' : 'FAILED'}`}

@@ -13,7 +13,9 @@ describe('assetSlug', () => {
     // than the row the user clicked (wave-D EXR-02). The canonical id is
     // pre-rendered for the same asset set, so this never links worse.
     expect(
-      assetSlug('USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN'),
+      assetSlug(
+        'USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN',
+      ),
     ).toBe('USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN');
   });
 

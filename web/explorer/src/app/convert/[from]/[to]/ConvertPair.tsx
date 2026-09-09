@@ -44,7 +44,8 @@ export function ConvertPair({
 
   const numeric = Number(amount);
   const result = useMemo(() => {
-    if (!Number.isFinite(numeric) || rate == null || inverse == null) return null;
+    if (!Number.isFinite(numeric) || rate == null || inverse == null)
+      return null;
     return direction === 'forward' ? numeric * rate : numeric * inverse;
   }, [numeric, rate, inverse, direction]);
 
@@ -52,14 +53,16 @@ export function ConvertPair({
   const toLabel = direction === 'forward' ? to : from;
 
   return (
-    <section className="rounded-xl border border-line bg-surface p-5 shadow-sm">
+    <section className="border-line bg-surface rounded-xl border p-5 shadow-sm">
       <h2 className="mb-4 text-lg font-semibold tracking-tight">
         Convert {fromLabel} → {toLabel}
       </h2>
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-[1fr_auto_1fr]">
         <label className="space-y-1">
-          <span className="text-xs uppercase tracking-wider text-ink-muted">From</span>
-          <div className="flex items-center gap-2 rounded-md border border-line bg-surface p-2">
+          <span className="text-ink-muted text-xs tracking-wider uppercase">
+            From
+          </span>
+          <div className="border-line bg-surface flex items-center gap-2 rounded-md border p-2">
             <input
               type="number"
               value={amount}
@@ -67,10 +70,10 @@ export function ConvertPair({
               min="0"
               step="any"
               inputMode="decimal"
-              className="w-full bg-transparent text-2xl font-mono tabular-nums focus:outline-hidden"
+              className="w-full bg-transparent font-mono text-2xl tabular-nums focus:outline-hidden"
               aria-label={`Amount in ${fromLabel}`}
             />
-            <span className="rounded-sm bg-surface-subtle px-1.5 py-0.5 font-mono text-xs uppercase tracking-wider text-ink-body">
+            <span className="bg-surface-subtle text-ink-body rounded-sm px-1.5 py-0.5 font-mono text-xs tracking-wider uppercase">
               {fromLabel}
             </span>
           </div>
@@ -78,8 +81,10 @@ export function ConvertPair({
 
         <button
           type="button"
-          onClick={() => setDirection((d) => (d === 'forward' ? 'reverse' : 'forward'))}
-          className="self-end rounded-md border border-line bg-surface p-2 text-ink-muted hover:border-brand-500 hover:text-brand-600"
+          onClick={() =>
+            setDirection((d) => (d === 'forward' ? 'reverse' : 'forward'))
+          }
+          className="border-line bg-surface text-ink-muted hover:border-brand-500 hover:text-brand-600 self-end rounded-md border p-2"
           aria-label="Swap direction"
           title="Swap direction"
         >
@@ -87,18 +92,20 @@ export function ConvertPair({
         </button>
 
         <label className="space-y-1">
-          <span className="text-xs uppercase tracking-wider text-ink-muted">To</span>
-          <div className="flex items-center gap-2 rounded-md border border-line bg-surface p-2">
-            <span className="w-full text-2xl font-mono tabular-nums text-ink">
+          <span className="text-ink-muted text-xs tracking-wider uppercase">
+            To
+          </span>
+          <div className="border-line bg-surface flex items-center gap-2 rounded-md border p-2">
+            <span className="text-ink w-full font-mono text-2xl tabular-nums">
               {result != null ? formatRate(result) : '—'}
             </span>
-            <span className="rounded-sm bg-surface-subtle px-1.5 py-0.5 font-mono text-xs uppercase tracking-wider text-ink-body">
+            <span className="bg-surface-subtle text-ink-body rounded-sm px-1.5 py-0.5 font-mono text-xs tracking-wider uppercase">
               {toLabel}
             </span>
           </div>
         </label>
       </div>
-      <p className="mt-3 text-xs text-ink-muted">
+      <p className="text-ink-muted mt-3 text-xs">
         {rate != null && inverse != null ? (
           <>
             1 {fromLabel} ={' '}
@@ -123,7 +130,8 @@ export function ConvertPair({
 
 function formatRate(n: number): string {
   if (!Number.isFinite(n)) return '—';
-  if (Math.abs(n) >= 1000) return n.toLocaleString('en-US', { maximumFractionDigits: 2 });
+  if (Math.abs(n) >= 1000)
+    return n.toLocaleString('en-US', { maximumFractionDigits: 2 });
   if (Math.abs(n) >= 1) return n.toFixed(4);
   if (Math.abs(n) >= 0.01) return n.toFixed(6);
   return n.toFixed(8);

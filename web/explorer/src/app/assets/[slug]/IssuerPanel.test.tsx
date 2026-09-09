@@ -85,9 +85,13 @@ describe('IssuerPanel issued-asset list', () => {
     } as unknown as never);
     renderPanel();
     await waitFor(() =>
-      expect(screen.getByText(/Issued-asset list unavailable/)).toBeInTheDocument(),
+      expect(
+        screen.getByText(/Issued-asset list unavailable/),
+      ).toBeInTheDocument(),
     );
-    expect(screen.queryByText(/No issued assets recorded/)).not.toBeInTheDocument();
+    expect(
+      screen.queryByText(/No issued assets recorded/),
+    ).not.toBeInTheDocument();
   });
 
   it('keeps the genuine empty claim when `assets` is present and empty', async () => {
@@ -96,7 +100,9 @@ describe('IssuerPanel issued-asset list', () => {
     await waitFor(() =>
       expect(screen.getByText(/No issued assets recorded/)).toBeInTheDocument(),
     );
-    expect(screen.queryByText(/Issued-asset list unavailable/)).not.toBeInTheDocument();
+    expect(
+      screen.queryByText(/Issued-asset list unavailable/),
+    ).not.toBeInTheDocument();
   });
 
   it('renders — not #0 — for an unknown first/last seen ledger', async () => {
@@ -105,7 +111,14 @@ describe('IssuerPanel issued-asset list', () => {
         g_strkey: G,
         home_domain: 'circle.com',
         org_verified: true,
-        assets: [{ asset_id: `USDC-${G}`, code: 'USDC', slug: 'usdc', observation_count: 7 }],
+        assets: [
+          {
+            asset_id: `USDC-${G}`,
+            code: 'USDC',
+            slug: 'usdc',
+            observation_count: 7,
+          },
+        ],
       },
     } as unknown as never);
     renderPanel();

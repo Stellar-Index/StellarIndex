@@ -163,9 +163,7 @@ export default function RootLayout({
                   url: SITE_URL,
                   logo: `${SITE_URL}/icon.svg`,
                   description: SITE_DESCRIPTION,
-                  sameAs: [
-                    'https://github.com/Stellar-Index/StellarIndex',
-                  ],
+                  sameAs: ['https://github.com/Stellar-Index/StellarIndex'],
                   contactPoint: [
                     {
                       '@type': 'ContactPoint',
@@ -206,7 +204,7 @@ export default function RootLayout({
             hidden until focused. */}
         <a
           href="#main"
-          className="sr-only focus:not-sr-only focus:absolute focus:left-4 focus:top-4 focus:z-100 focus:rounded-md focus:bg-surface focus:px-3 focus:py-2 focus:text-sm focus:font-medium focus:text-brand-700 focus:shadow-elevated"
+          className="focus:bg-surface focus:text-brand-700 focus:shadow-elevated sr-only focus:not-sr-only focus:absolute focus:top-4 focus:left-4 focus:z-100 focus:rounded-md focus:px-3 focus:py-2 focus:text-sm focus:font-medium"
         >
           Skip to main content
         </a>

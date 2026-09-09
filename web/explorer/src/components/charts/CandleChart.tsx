@@ -14,8 +14,15 @@ import {
   type Time,
 } from 'lightweight-charts';
 
-import { localTickMarkFormatter, localCrosshairTimeFormatter } from './localTime';
-import { readChartTheme, baseChartOptions, type ChartTheme } from './chartTheme';
+import {
+  localTickMarkFormatter,
+  localCrosshairTimeFormatter,
+} from './localTime';
+import {
+  readChartTheme,
+  baseChartOptions,
+  type ChartTheme,
+} from './chartTheme';
 
 export type CandlePoint = {
   /** Unix epoch seconds */
@@ -72,7 +79,9 @@ export function CandleChart({
   const priceLineRef = useRef<IPriceLine | null>(null);
   const themeRef = useRef<ChartTheme | null>(null);
 
-  const hasVolume = data.some((p) => p.volume != null && Number.isFinite(p.volume));
+  const hasVolume = data.some(
+    (p) => p.volume != null && Number.isFinite(p.volume),
+  );
 
   useEffect(() => {
     const container = containerRef.current;
@@ -115,10 +124,16 @@ export function CandleChart({
       // Volume in its own pane (index 1), below the price pane.
       const volume = chart.addSeries(
         HistogramSeries,
-        { priceFormat: { type: 'volume' }, priceLineVisible: false, lastValueVisible: false },
+        {
+          priceFormat: { type: 'volume' },
+          priceLineVisible: false,
+          lastValueVisible: false,
+        },
         1,
       );
-      volume.priceScale().applyOptions({ scaleMargins: { top: 0.15, bottom: 0 } });
+      volume
+        .priceScale()
+        .applyOptions({ scaleMargins: { top: 0.15, bottom: 0 } });
       volumeRef.current = volume;
       // Split ~75% price / ~25% volume.
       const panes = chart.panes();
@@ -257,7 +272,10 @@ function toSeries(points: CandlePoint[]): CandlestickData<Time>[] {
 
 // Volume bars, tinted to the bar's direction (up when close ≥ open) at low
 // opacity so they read as context, not foreground.
-function toVolume(points: CandlePoint[], theme: ChartTheme): HistogramData<Time>[] {
+function toVolume(
+  points: CandlePoint[],
+  theme: ChartTheme,
+): HistogramData<Time>[] {
   return points
     .filter((p) => p.volume != null && Number.isFinite(p.volume))
     .map((p) => ({

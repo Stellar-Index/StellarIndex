@@ -103,81 +103,81 @@ export function DivergenceFeed() {
           // WCAG 1.4.10 Reflow: 8 columns of unbreakable mono cells scroll
           // inside the panel, not sideways across the whole page.
           <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-line text-ink-muted border-b text-left text-[11px] tracking-wider uppercase">
-                <th className="py-1.5 pr-4 font-normal">Pair</th>
-                <th className="py-1.5 pr-4 font-normal">Reference</th>
-                <th className="py-1.5 pr-4 text-right font-normal">
-                  Our price
-                </th>
-                <th className="py-1.5 pr-4 text-right font-normal">
-                  Reference
-                </th>
-                <th className="py-1.5 pr-4 text-right font-normal">Δ%</th>
-                <th className="py-1.5 pr-4 font-normal">Observed</th>
-                <th className="py-1.5 pr-4 font-normal">State</th>
-                <th className="py-1.5 font-normal" aria-hidden />
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((d) => {
-                const firing = d.status === 'firing';
-                const isSel =
-                  sel != null &&
-                  d.asset_id === sel.asset &&
-                  d.quote_id === sel.quote &&
-                  d.reference === sel.reference;
-                return (
-                  <tr
-                    key={`${d.asset_id}:${d.quote_id}:${d.reference}`}
-                    onClick={() =>
-                      setSelected({
-                        asset: d.asset_id ?? '',
-                        quote: d.quote_id ?? '',
-                        reference: d.reference ?? '',
-                      })
-                    }
-                    className={`border-line/60 hover:bg-surface-muted cursor-pointer border-b last:border-0 ${
-                      isSel ? 'bg-surface-muted' : ''
-                    }`}
-                  >
-                    <td className="py-1.5 pr-4 font-mono">
-                      <AssetText canonical={d.asset_id} />
-                      <span className="text-ink-faint">/</span>
-                      <AssetText canonical={d.quote_id} />
-                    </td>
-                    <td className="py-1.5 pr-4">
-                      <code className="text-[11px]">{d.reference}</code>
-                    </td>
-                    <td className="py-1.5 pr-4 text-right font-mono tabular-nums">
-                      {d.our_price}
-                    </td>
-                    <td className="py-1.5 pr-4 text-right font-mono tabular-nums">
-                      {d.ref_price}
-                    </td>
-                    <td
-                      className={`py-1.5 pr-4 text-right font-mono tabular-nums ${
-                        firing ? 'text-down-strong' : 'text-ink-body'
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-line text-ink-muted border-b text-left text-[11px] tracking-wider uppercase">
+                  <th className="py-1.5 pr-4 font-normal">Pair</th>
+                  <th className="py-1.5 pr-4 font-normal">Reference</th>
+                  <th className="py-1.5 pr-4 text-right font-normal">
+                    Our price
+                  </th>
+                  <th className="py-1.5 pr-4 text-right font-normal">
+                    Reference
+                  </th>
+                  <th className="py-1.5 pr-4 text-right font-normal">Δ%</th>
+                  <th className="py-1.5 pr-4 font-normal">Observed</th>
+                  <th className="py-1.5 pr-4 font-normal">State</th>
+                  <th className="py-1.5 font-normal" aria-hidden />
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((d) => {
+                  const firing = d.status === 'firing';
+                  const isSel =
+                    sel != null &&
+                    d.asset_id === sel.asset &&
+                    d.quote_id === sel.quote &&
+                    d.reference === sel.reference;
+                  return (
+                    <tr
+                      key={`${d.asset_id}:${d.quote_id}:${d.reference}`}
+                      onClick={() =>
+                        setSelected({
+                          asset: d.asset_id ?? '',
+                          quote: d.quote_id ?? '',
+                          reference: d.reference ?? '',
+                        })
+                      }
+                      className={`border-line/60 hover:bg-surface-muted cursor-pointer border-b last:border-0 ${
+                        isSel ? 'bg-surface-muted' : ''
                       }`}
                     >
-                      {fmtDelta(d.delta_pct ?? '')}
-                    </td>
-                    <td className="text-ink-muted py-1.5 pr-4 font-mono text-[11px]">
-                      {fmtTs(d.observed_at ?? '')}
-                    </td>
-                    <td className="py-1.5 pr-4">
-                      {firing ? (
-                        <span className="bg-down-subtle text-down-strong rounded-sm px-1.5 py-0.5 text-[10px] font-medium uppercase">
-                          firing
-                        </span>
-                      ) : (
-                        <span className="bg-up-subtle text-up-strong rounded-sm px-1.5 py-0.5 text-[10px] font-medium uppercase">
-                          clear
-                        </span>
-                      )}
-                    </td>
-                    {/* The keyboard/AT path to the chart above. The row's
+                      <td className="py-1.5 pr-4 font-mono">
+                        <AssetText canonical={d.asset_id} />
+                        <span className="text-ink-faint">/</span>
+                        <AssetText canonical={d.quote_id} />
+                      </td>
+                      <td className="py-1.5 pr-4">
+                        <code className="text-[11px]">{d.reference}</code>
+                      </td>
+                      <td className="py-1.5 pr-4 text-right font-mono tabular-nums">
+                        {d.our_price}
+                      </td>
+                      <td className="py-1.5 pr-4 text-right font-mono tabular-nums">
+                        {d.ref_price}
+                      </td>
+                      <td
+                        className={`py-1.5 pr-4 text-right font-mono tabular-nums ${
+                          firing ? 'text-down-strong' : 'text-ink-body'
+                        }`}
+                      >
+                        {fmtDelta(d.delta_pct ?? '')}
+                      </td>
+                      <td className="text-ink-muted py-1.5 pr-4 font-mono text-[11px]">
+                        {fmtTs(d.observed_at ?? '')}
+                      </td>
+                      <td className="py-1.5 pr-4">
+                        {firing ? (
+                          <span className="bg-down-subtle text-down-strong rounded-sm px-1.5 py-0.5 text-[10px] font-medium uppercase">
+                            firing
+                          </span>
+                        ) : (
+                          <span className="bg-up-subtle text-up-strong rounded-sm px-1.5 py-0.5 text-[10px] font-medium uppercase">
+                            clear
+                          </span>
+                        )}
+                      </td>
+                      {/* The keyboard/AT path to the chart above. The row's
                         onClick is a mouse convenience only; this native
                         <button> is what puts series selection in the tab
                         order and gives Enter/Space activation for free
@@ -185,32 +185,32 @@ export function DivergenceFeed() {
                         toggle state: the board is single-select, so
                         re-activating the plotted row leaves it plotted,
                         and a two-state toggle would misdescribe it. */}
-                    <td className="py-1.5 text-right">
-                      <button
-                        type="button"
-                        aria-current={isSel ? 'true' : 'false'}
-                        aria-label={`Plot ${shortAssetText(d.asset_id)}/${shortAssetText(d.quote_id)} vs ${d.reference} history`}
-                        onClick={() =>
-                          setSelected({
-                            asset: d.asset_id ?? '',
-                            quote: d.quote_id ?? '',
-                            reference: d.reference ?? '',
-                          })
-                        }
-                        className={`focus-visible:ring-brand-500/60 rounded-sm px-1.5 py-0.5 text-[11px] transition-colors focus-visible:ring-2 focus-visible:outline-hidden ${
-                          isSel
-                            ? 'text-brand-600 font-medium'
-                            : 'text-ink-faint hover:text-brand-600'
-                        }`}
-                      >
-                        {isSel ? 'Plotted' : 'Plot'}
-                      </button>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
+                      <td className="py-1.5 text-right">
+                        <button
+                          type="button"
+                          aria-current={isSel ? 'true' : 'false'}
+                          aria-label={`Plot ${shortAssetText(d.asset_id)}/${shortAssetText(d.quote_id)} vs ${d.reference} history`}
+                          onClick={() =>
+                            setSelected({
+                              asset: d.asset_id ?? '',
+                              quote: d.quote_id ?? '',
+                              reference: d.reference ?? '',
+                            })
+                          }
+                          className={`focus-visible:ring-brand-500/60 rounded-sm px-1.5 py-0.5 text-[11px] transition-colors focus-visible:ring-2 focus-visible:outline-hidden ${
+                            isSel
+                              ? 'text-brand-600 font-medium'
+                              : 'text-ink-faint hover:text-brand-600'
+                          }`}
+                        >
+                          {isSel ? 'Plotted' : 'Plot'}
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
           </div>
         )}
       </Panel>

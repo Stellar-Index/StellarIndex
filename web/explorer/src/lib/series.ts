@@ -46,7 +46,9 @@ export function dropPartialTrailingDay<T extends { date?: string | null }>(
 ): T[] {
   if (points.length === 0) return points;
   const last = points[points.length - 1];
-  return isPartialTodayDate(last.date ?? null, now) ? points.slice(0, -1) : points;
+  return isPartialTodayDate(last.date ?? null, now)
+    ? points.slice(0, -1)
+    : points;
 }
 
 /**

@@ -69,7 +69,11 @@ function getAssetIndex(): Promise<AssetIndex> {
         });
         if (vres.ok) {
           const venv = (await vres.json()) as {
-            data: { slug?: string; ticker?: string; verified_issuer?: string }[];
+            data: {
+              slug?: string;
+              ticker?: string;
+              verified_issuer?: string;
+            }[];
           };
           for (const row of venv.data ?? []) {
             const vslug = (row.slug || '').toLowerCase();
@@ -78,7 +82,11 @@ function getAssetIndex(): Promise<AssetIndex> {
             if (byKey.has(vslug)) continue;
             if (vslug === 'xlm') {
               byKey.set(vslug, 'native');
-            } else if (row.ticker && row.verified_issuer && /^G[A-Z2-7]{55}$/.test(row.verified_issuer)) {
+            } else if (
+              row.ticker &&
+              row.verified_issuer &&
+              /^G[A-Z2-7]{55}$/.test(row.verified_issuer)
+            ) {
               byKey.set(vslug, `${row.ticker}-${row.verified_issuer}`);
             }
           }

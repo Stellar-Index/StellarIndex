@@ -27,8 +27,8 @@ export function PriceSparklines({
   const points = active === '24h' ? points24h : points7d;
 
   return (
-    <div className="border-t border-line pt-3">
-      <div className="mb-1 flex items-center gap-2 text-[10px] uppercase tracking-wider">
+    <div className="border-line border-t pt-3">
+      <div className="mb-1 flex items-center gap-2 text-[10px] tracking-wider uppercase">
         <button
           type="button"
           onClick={() => has24 && setPref('24h')}
@@ -59,7 +59,13 @@ export function PriceSparklines({
   );
 }
 
-function Sparkline({ points, ariaLabel }: { points: Point[]; ariaLabel: string }) {
+function Sparkline({
+  points,
+  ariaLabel,
+}: {
+  points: Point[];
+  ariaLabel: string;
+}) {
   const values = points.map((pt) => {
     const n = pt.p ? Number(pt.p) : null;
     return n != null && Number.isFinite(n) ? n : null;
@@ -97,12 +103,8 @@ function Sparkline({ points, ariaLabel }: { points: Point[]; ariaLabel: string }
   const last = finite[finite.length - 1];
   const first = finite[0];
   const positive = last >= first;
-  const tone = positive
-    ? 'stroke-emerald-500'
-    : 'stroke-rose-500';
-  const fill = positive
-    ? 'fill-emerald-500/15'
-    : 'fill-rose-500/15';
+  const tone = positive ? 'stroke-emerald-500' : 'stroke-rose-500';
+  const fill = positive ? 'fill-emerald-500/15' : 'fill-rose-500/15';
   // Area path: emit one closed sub-region per contiguous run.
   const areaSegs: string[] = [];
   for (const run of runs) {
@@ -128,7 +130,12 @@ function Sparkline({ points, ariaLabel }: { points: Point[]; ariaLabel: string }
       aria-label={ariaLabel}
     >
       <path d={areaSegs.join(' ')} stroke="none" className={fill} />
-      <path d={segments.join(' ')} fill="none" strokeWidth="1.5" className={tone} />
+      <path
+        d={segments.join(' ')}
+        fill="none"
+        strokeWidth="1.5"
+        className={tone}
+      />
     </svg>
   );
 }

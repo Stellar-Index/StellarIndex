@@ -50,7 +50,8 @@ export const PROTOCOLS: ProtocolRegistryEntry[] = [
     name: 'sushiswap_v3',
     category: 'amm',
     label: 'SushiSwap V3',
-    description: 'Concentrated-liquidity Soroban pools priced by tick range, not reserves.',
+    description:
+      'Concentrated-liquidity Soroban pools priced by tick range, not reserves.',
   },
   {
     name: 'comet',

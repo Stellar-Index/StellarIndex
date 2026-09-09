@@ -17,16 +17,24 @@ const markets: Market[] = Array.from({ length: 100 }, (_, i) => ({
 })) as Market[];
 
 vi.mock('@/api/hooks', async () => {
-  const actual = await vi.importActual<typeof import('@/api/hooks')>('@/api/hooks');
+  const actual =
+    await vi.importActual<typeof import('@/api/hooks')>('@/api/hooks');
   return {
     ...actual,
-    useMarkets: () => ({ data: { markets }, isLoading: false, isError: false, error: null }),
+    useMarkets: () => ({
+      data: { markets },
+      isLoading: false,
+      isError: false,
+      error: null,
+    }),
   };
 });
 
 describe('MarketsTable', () => {
   it('tells the visitor the search only covers the top-N pairs shown, not every active pair', () => {
-    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
     render(
       <QueryClientProvider client={client}>
         <MarketsTable />
@@ -34,6 +42,9 @@ describe('MarketsTable', () => {
     );
     const input = screen.getByPlaceholderText(/Filter these 100 pairs/);
     expect(input).toBeInTheDocument();
-    expect(input).toHaveAttribute('aria-label', expect.stringMatching(/does not search beyond/));
+    expect(input).toHaveAttribute(
+      'aria-label',
+      expect.stringMatching(/does not search beyond/),
+    );
   });
 });

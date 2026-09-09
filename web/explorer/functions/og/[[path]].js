@@ -60,18 +60,26 @@ export async function liveSubline(type, rawId) {
       if (!ASSET_LEG_RE.test(base) || !ASSET_LEG_RE.test(quote)) return null;
       const r = await fetch(
         `https://api.stellarindex.io/v1/price?asset=${encodeURIComponent(base)}&quote=${encodeURIComponent(quote)}`,
-        { signal: AbortSignal.timeout(2500), headers: { 'user-agent': 'stellarindex-og/1' } },
+        {
+          signal: AbortSignal.timeout(2500),
+          headers: { 'user-agent': 'stellarindex-og/1' },
+        },
       );
       if (r.ok) {
         const p = (await r.json())?.data?.price;
         if (p != null) {
           const n = Number(p);
-          const fmt = n >= 1 ? n.toLocaleString('en-US', { maximumFractionDigits: 2 }) : n.toPrecision(4);
+          const fmt =
+            n >= 1
+              ? n.toLocaleString('en-US', { maximumFractionDigits: 2 })
+              : n.toPrecision(4);
           return `1 ${code(base)} = ${fmt} ${code(quote)}`;
         }
       }
     }
-  } catch { /* fall through to label-only card */ }
+  } catch {
+    /* fall through to label-only card */
+  }
   return null;
 }
 
@@ -82,11 +90,16 @@ export async function onRequest(context) {
   // (dashboard-only, no redeploy) to take this endpoint offline if it's
   // ever driving abusive load.
   if (env?.OG_DISABLED === '1') {
-    return new Response('OG image generation is temporarily disabled.', { status: 503 });
+    return new Response('OG image generation is temporarily disabled.', {
+      status: 503,
+    });
   }
 
   const url = new URL(request.url);
-  const parts = url.pathname.replace(/^\/og\/?/, '').split('/').filter(Boolean);
+  const parts = url.pathname
+    .replace(/^\/og\/?/, '')
+    .split('/')
+    .filter(Boolean);
   const type = (parts[0] || 'home').replace(/[^a-z0-9-]/gi, '');
 
   // SEC-15: 404 unknown types before doing any work — 'home' is the only
@@ -103,17 +116,32 @@ export async function onRequest(context) {
   // CS-009: decode the path segment AT MOST ONCE (the previous 2× loop
   // defeated the upstream ogImageFor encodeURIComponent, resurfacing raw
   // markup). Combined with esc() below this closes the SSRF/injection sink.
-  try { rawId = decodeURIComponent(rawId); } catch { /* leave as-is */ }
-  const label = prettyLabel(type, rawId) || 'Stellar pricing & protocol explorer';
-  const kicker = TYPE_LABEL.has(type) ? `Stellar Index · ${TYPE_LABEL.get(type)}` : 'Stellar Index';
+  try {
+    rawId = decodeURIComponent(rawId);
+  } catch {
+    /* leave as-is */
+  }
+  const label =
+    prettyLabel(type, rawId) || 'Stellar pricing & protocol explorer';
+  const kicker = TYPE_LABEL.has(type)
+    ? `Stellar Index · ${TYPE_LABEL.get(type)}`
+    : 'Stellar Index';
   const sub = await liveSubline(type, rawId);
 
   // CS-009: HTML-escape every interpolated value. Unescaped attacker input
   // reaching satori markup lets an injected `<img src=…>` trigger an
   // unauthenticated blind SSRF (satori fetches the src with no allow-list).
   const esc = (s) =>
-    String(s == null ? '' : s).replace(/[&<>"']/g, (c) =>
-      ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c],
+    String(s == null ? '' : s).replace(
+      /[&<>"']/g,
+      (c) =>
+        ({
+          '&': '&amp;',
+          '<': '&lt;',
+          '>': '&gt;',
+          '"': '&quot;',
+          "'": '&#39;',
+        })[c],
     );
 
   const html = `
@@ -127,7 +155,10 @@ export async function onRequest(context) {
     </div>`;
 
   return new ImageResponse(html, {
-    width: 1200, height: 630,
-    headers: { 'cache-control': 'public, s-maxage=60, stale-while-revalidate=300' },
+    width: 1200,
+    height: 630,
+    headers: {
+      'cache-control': 'public, s-maxage=60, stale-while-revalidate=300',
+    },
   });
 }

@@ -77,9 +77,13 @@ export function SourceStatsPanel({
       headingLevel={2}
       title="24h activity"
       hint={`Live from /v1/sources?include=stats,sparkline,sparkline7d (source=${source})`}
-      source={asExample('/v1/sources', { include: 'stats,sparkline,sparkline7d' })}
+      source={asExample('/v1/sources', {
+        include: 'stats,sparkline,sparkline7d',
+      })}
     >
-      <div className={`grid grid-cols-2 gap-3 ${showTvl ? 'sm:grid-cols-4' : 'sm:grid-cols-3'}`}>
+      <div
+        className={`grid grid-cols-2 gap-3 ${showTvl ? 'sm:grid-cols-4' : 'sm:grid-cols-3'}`}
+      >
         <Stat
           label="24h volume"
           value={volume > 0 ? `$${formatCompact(volume)}` : '—'}
@@ -101,8 +105,8 @@ export function SourceStatsPanel({
         )}
       </div>
       {data?.volume_history_24h && data.volume_history_24h.length > 0 && (
-        <div className="mt-4 border-t border-line pt-3">
-          <div className="flex items-baseline justify-between text-[10px] uppercase tracking-wider text-ink-muted">
+        <div className="border-line mt-4 border-t pt-3">
+          <div className="text-ink-muted flex items-baseline justify-between text-[10px] tracking-wider uppercase">
             <span>Trades / hour</span>
             <span className="text-ink-faint">USD volume / hour (bars)</span>
           </div>
@@ -119,14 +123,21 @@ export function SourceStatsPanel({
   );
 }
 
-function Stat({ label, value, title }: { label: string; value: string; title?: string }) {
+function Stat({
+  label,
+  value,
+  title,
+}: {
+  label: string;
+  value: string;
+  title?: string;
+}) {
   return (
     <div title={title}>
-      <div className="text-[10px] uppercase tracking-wider text-ink-muted">
+      <div className="text-ink-muted text-[10px] tracking-wider uppercase">
         {label}
       </div>
       <div className="mt-1 text-2xl font-semibold tabular-nums">{value}</div>
     </div>
   );
 }
-

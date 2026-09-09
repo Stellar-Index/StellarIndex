@@ -3,7 +3,8 @@ import { render, screen, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 vi.mock('@/api/client', async () => {
-  const actual = await vi.importActual<typeof import('@/api/client')>('@/api/client');
+  const actual =
+    await vi.importActual<typeof import('@/api/client')>('@/api/client');
   return { ...actual, apiGet: vi.fn() };
 });
 
@@ -17,7 +18,9 @@ import { PoolsTable } from './PoolsTable';
 // as unavailable; a present-and-empty page still reads as "no pools".
 describe('PoolsTable', () => {
   function renderTable() {
-    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
     return render(
       <QueryClientProvider client={client}>
         <PoolsTable source="soroswap" sourceName="soroswap" />
@@ -29,9 +32,13 @@ describe('PoolsTable', () => {
     vi.mocked(apiGet).mockRejectedValue(new Error('HTTP 503'));
     renderTable();
     await waitFor(() =>
-      expect(screen.getByText(/Pool list unavailable right now/)).toBeInTheDocument(),
+      expect(
+        screen.getByText(/Pool list unavailable right now/),
+      ).toBeInTheDocument(),
     );
-    expect(screen.queryByText(/No pools found in the last 14 days/)).not.toBeInTheDocument();
+    expect(
+      screen.queryByText(/No pools found in the last 14 days/),
+    ).not.toBeInTheDocument();
     // The row counter must not assert "0 on this page" either.
     expect(screen.getByText(/— on this page/)).toBeInTheDocument();
     expect(screen.queryByText(/0 on this page/)).not.toBeInTheDocument();
@@ -41,7 +48,9 @@ describe('PoolsTable', () => {
     vi.mocked(apiGet).mockResolvedValue({ data: [] });
     renderTable();
     await waitFor(() =>
-      expect(screen.getByText(/No pools found in the last 14 days/)).toBeInTheDocument(),
+      expect(
+        screen.getByText(/No pools found in the last 14 days/),
+      ).toBeInTheDocument(),
     );
     expect(screen.queryByText(/Pool list unavailable/)).not.toBeInTheDocument();
     expect(screen.getByText(/0 on this page/)).toBeInTheDocument();
@@ -52,7 +61,8 @@ describe('PoolsTable', () => {
       data: [
         {
           base: 'native',
-          quote: 'USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN',
+          quote:
+            'USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN',
           last_trade_at: '2026-08-12T00:00:00Z',
           trade_count_24h: 12,
           volume_24h_usd: '4200',
@@ -61,7 +71,9 @@ describe('PoolsTable', () => {
       ],
     });
     renderTable();
-    await waitFor(() => expect(screen.getByText(/1 on this page/)).toBeInTheDocument());
+    await waitFor(() =>
+      expect(screen.getByText(/1 on this page/)).toBeInTheDocument(),
+    );
     expect(screen.queryByText(/Pool list unavailable/)).not.toBeInTheDocument();
     expect(screen.queryByText(/No pools found/)).not.toBeInTheDocument();
   });

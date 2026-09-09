@@ -7,11 +7,19 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { Panel } from '@/components/reveal';
 import { Callout, TxStatusBadge } from '@/components/ui';
-import { OperationMixPanel, ThroughputPanel } from '@/components/NetworkInsight';
+import {
+  OperationMixPanel,
+  ThroughputPanel,
+} from '@/components/NetworkInsight';
 import { apiGet, asExample } from '@/api/client';
 import { cn } from '@/lib/cn';
 import { formatCompact } from '@/lib/format';
-import { isFrameStale, LEDGER_LIVE_STALE_MS, useLedgerStream, useLiveClock } from '@/lib/live/hooks';
+import {
+  isFrameStale,
+  LEDGER_LIVE_STALE_MS,
+  useLedgerStream,
+  useLiveClock,
+} from '@/lib/live/hooks';
 import {
   type Envelope,
   type TxOperation,
@@ -45,12 +53,18 @@ function summarize(op: OpView): string {
   // via the shared keyed renderer (exact BigInt divide), never String().
   const pickAmount = (k: string) =>
     f[k] != null ? renderOpFieldValue(k, f[k]) : '';
-  const amount = pickAmount('amount') || pickAmount('starting_balance') || pickAmount('limit');
+  const amount =
+    pickAmount('amount') ||
+    pickAmount('starting_balance') ||
+    pickAmount('limit');
   const asset = pick('asset') || pick('selling') || pick('send_asset');
   const dest = pick('destination') || pick('to') || pick('trustor');
   const parts: string[] = [];
   if (amount) parts.push(asset ? `${amount} ${asset}` : amount);
-  if (dest) parts.push(`→ ${dest.length > 12 ? `${dest.slice(0, 4)}…${dest.slice(-4)}` : dest}`);
+  if (dest)
+    parts.push(
+      `→ ${dest.length > 12 ? `${dest.slice(0, 4)}…${dest.slice(-4)}` : dest}`,
+    );
   return parts.join(' ');
 }
 
@@ -63,7 +77,10 @@ export function OperationsView() {
     queryFn: async () => {
       const args: Record<string, string | number> = { limit: PAGE_SIZE };
       if (cursor) args.cursor = cursor;
-      const env = await apiGet<Envelope<OperationsResp>>('/v1/operations', args);
+      const env = await apiGet<Envelope<OperationsResp>>(
+        '/v1/operations',
+        args,
+      );
       return env.data;
     },
     staleTime: 20_000,
@@ -97,7 +114,9 @@ export function OperationsView() {
     void queryClient.invalidateQueries({ queryKey: ['/v1/operations', ''] });
   }, [cursor, streamLatest, newestShown, queryClient]);
   const following =
-    !cursor && frame != null && !isFrameStale(clock, frame.receivedAt, LEDGER_LIVE_STALE_MS);
+    !cursor &&
+    frame != null &&
+    !isFrameStale(clock, frame.receivedAt, LEDGER_LIVE_STALE_MS);
   const [prevNewest, setPrevNewest] = useState<number | null>(null);
   const [flashAbove, setFlashAbove] = useState<number | null>(null);
   if (newestShown != null && newestShown !== prevNewest) {
@@ -128,50 +147,72 @@ export function OperationsView() {
 
       <Panel
         headingLevel={2}
-        title={ops.length > 0 ? `Recent operations (${formatCompact(ops.length)})` : 'Recent operations'}
+        title={
+          ops.length > 0
+            ? `Recent operations (${formatCompact(ops.length)})`
+            : 'Recent operations'
+        }
         hint={following ? 'live' : undefined}
         source={asExample('/v1/operations', { limit: PAGE_SIZE })}
         bodyClassName="-mx-4"
       >
         {q.isError && (
-          <p className="px-4 text-sm text-down-strong">
+          <p className="text-down-strong px-4 text-sm">
             Failed to load operations:{' '}
             {q.error instanceof Error ? q.error.message : 'unknown error'}
           </p>
         )}
         {(q.isLoading || q.data == null) && !q.isError && (
-          <p className="px-4 text-sm text-ink-muted">Loading…</p>
+          <p className="text-ink-muted px-4 text-sm">Loading…</p>
         )}
         {q.data && ops.length === 0 && (
-          <p className="px-4 text-sm text-ink-muted">No operations in this page.</p>
+          <p className="text-ink-muted px-4 text-sm">
+            No operations in this page.
+          </p>
         )}
         {ops.length > 0 && (
           <div className="overflow-x-auto">
-            <table className="min-w-full divide-y divide-line text-sm">
+            <table className="divide-line min-w-full divide-y text-sm">
               <thead>
-                <tr className="text-left text-[11px] uppercase tracking-wider text-ink-muted">
-                  <th scope="col" className="px-4 py-2">Type</th>
-                  <th scope="col" className="px-4 py-2">Status</th>
-                  <th scope="col" className="px-4 py-2">Detail</th>
-                  <th scope="col" className="px-4 py-2">Source</th>
-                  <th scope="col" className="px-4 py-2 text-right">Ledger</th>
-                  <th scope="col" className="px-4 py-2">Tx</th>
-                  <th scope="col" className="px-4 py-2">When</th>
+                <tr className="text-ink-muted text-left text-[11px] tracking-wider uppercase">
+                  <th scope="col" className="px-4 py-2">
+                    Type
+                  </th>
+                  <th scope="col" className="px-4 py-2">
+                    Status
+                  </th>
+                  <th scope="col" className="px-4 py-2">
+                    Detail
+                  </th>
+                  <th scope="col" className="px-4 py-2">
+                    Source
+                  </th>
+                  <th scope="col" className="px-4 py-2 text-right">
+                    Ledger
+                  </th>
+                  <th scope="col" className="px-4 py-2">
+                    Tx
+                  </th>
+                  <th scope="col" className="px-4 py-2">
+                    When
+                  </th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-line-subtle">
+              <tbody className="divide-line-subtle divide-y">
                 {ops.map((op) => (
                   <tr
                     key={`${op.tx_hash}:${op.op_index}`}
                     className={cn(
                       'hover:bg-surface-muted',
-                      flashAbove != null && (op.ledger ?? 0) > flashAbove && 'live-tick',
+                      flashAbove != null &&
+                        (op.ledger ?? 0) > flashAbove &&
+                        'live-tick',
                     )}
                   >
                     <td className="px-4 py-3">
                       <Link
                         href={`/operation?tx=${op.tx_hash}&i=${op.op_index}`}
-                        className="rounded-sm bg-surface-muted px-1.5 py-0.5 text-[11px] text-ink-body hover:text-brand-600"
+                        className="bg-surface-muted text-ink-body hover:text-brand-600 rounded-sm px-1.5 py-0.5 text-[11px]"
                         title="Operation detail"
                       >
                         <code>{op.type}</code>
@@ -185,17 +226,20 @@ export function OperationsView() {
                         code={op.result_code}
                       />
                     </td>
-                    <td className="px-4 py-3 font-mono text-[11px] text-ink-muted">
-                      {summarize(op) || <span className="text-ink-faint">—</span>}
+                    <td className="text-ink-muted px-4 py-3 font-mono text-[11px]">
+                      {summarize(op) || (
+                        <span className="text-ink-faint">—</span>
+                      )}
                     </td>
                     <td className="px-4 py-3">
                       {op.source_account ? (
                         <Link
                           href={`/accounts/${encodeURIComponent(op.source_account)}/`}
-                          className="font-mono text-xs text-ink-body hover:text-brand-600"
+                          className="text-ink-body hover:text-brand-600 font-mono text-xs"
                           title={op.source_account}
                         >
-                          {op.source_account.slice(0, 6)}…{op.source_account.slice(-4)}
+                          {op.source_account.slice(0, 6)}…
+                          {op.source_account.slice(-4)}
                         </Link>
                       ) : (
                         <span className="text-ink-faint">—</span>
@@ -204,7 +248,7 @@ export function OperationsView() {
                     <td className="px-4 py-3 text-right">
                       <Link
                         href={`/ledgers/${op.ledger}/`}
-                        className="font-mono tabular-nums text-xs text-ink-body hover:text-brand-600"
+                        className="text-ink-body hover:text-brand-600 font-mono text-xs tabular-nums"
                       >
                         {(op.ledger ?? 0).toLocaleString('en-US')}
                       </Link>
@@ -212,13 +256,13 @@ export function OperationsView() {
                     <td className="px-4 py-3">
                       <Link
                         href={`/transactions/${op.tx_hash}/`}
-                        className="font-mono text-xs text-brand-600 hover:underline"
+                        className="text-brand-600 font-mono text-xs hover:underline"
                         title={op.tx_hash}
                       >
                         {(op.tx_hash ?? '').slice(0, 8)}…
                       </Link>
                     </td>
-                    <td className="px-4 py-3 font-mono text-[11px] text-ink-muted">
+                    <td className="text-ink-muted px-4 py-3 font-mono text-[11px]">
                       {formatTimestamp(op.close_time)}
                     </td>
                   </tr>
@@ -233,7 +277,7 @@ export function OperationsView() {
         <div className="flex justify-center">
           <Link
             href={`/operations?cursor=${encodeURIComponent(q.data.next_cursor)}`}
-            className="rounded-md border border-line px-4 py-2 text-sm text-ink-body hover:border-brand-500 hover:text-brand-600"
+            className="border-line text-ink-body hover:border-brand-500 hover:text-brand-600 rounded-md border px-4 py-2 text-sm"
           >
             Older operations →
           </Link>
@@ -241,7 +285,10 @@ export function OperationsView() {
       )}
       {cursor && (
         <div className="flex justify-center">
-          <Link href="/operations" className="text-xs text-brand-600 hover:underline">
+          <Link
+            href="/operations"
+            className="text-brand-600 text-xs hover:underline"
+          >
             ← Back to latest
           </Link>
         </div>

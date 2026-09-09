@@ -60,7 +60,7 @@ export function TxView({ hash: hashProp }: { hash?: string } = {}) {
           <p>
             This page needs a <code className="font-mono">?hash=</code> query
             parameter — a 64-character transaction hash. Use the search box (
-            <kbd className="rounded-sm border border-line-strong px-1 text-[10px]">
+            <kbd className="border-line-strong rounded-sm border px-1 text-[10px]">
               ⌘K
             </kbd>
             ) to look one up.
@@ -79,7 +79,7 @@ export function TxView({ hash: hashProp }: { hash?: string } = {}) {
           bodyClassName="text-sm text-ink-body"
         >
           <p>
-            <span className="break-all font-mono">{hash}</span> isn&apos;t a
+            <span className="font-mono break-all">{hash}</span> isn&apos;t a
             valid transaction hash. Stellar tx hashes are 64 hexadecimal
             characters.
           </p>
@@ -143,7 +143,7 @@ export function TxView({ hash: hashProp }: { hash?: string } = {}) {
           <Field label="Ledger">
             <Link
               href={`/ledgers/${tx.ledger}/`}
-              className="font-mono text-xs text-brand-600 hover:underline"
+              className="text-brand-600 font-mono text-xs hover:underline"
             >
               #{(tx.ledger ?? 0).toLocaleString('en-US')}
             </Link>
@@ -183,10 +183,11 @@ export function TxView({ hash: hashProp }: { hash?: string } = {}) {
             <span className="inline-flex items-center gap-2">
               <Link
                 href={`/accounts/${encodeURIComponent(tx.source_account ?? '')}/`}
-                className="font-mono text-xs text-brand-600 hover:underline"
+                className="text-brand-600 font-mono text-xs hover:underline"
                 title={tx.source_account}
               >
-                {(tx.source_account ?? '').slice(0, 12)}…{(tx.source_account ?? '').slice(-8)}
+                {(tx.source_account ?? '').slice(0, 12)}…
+                {(tx.source_account ?? '').slice(-8)}
               </Link>
               <CopyValue value={tx.source_account ?? ''} />
             </span>
@@ -279,7 +280,7 @@ function InvocationTree({
   return (
     <ul
       className={
-        depth === 0 ? 'space-y-1' : 'mt-1 space-y-1 border-l border-line pl-3'
+        depth === 0 ? 'space-y-1' : 'border-line mt-1 space-y-1 border-l pl-3'
       }
     >
       {nodes.map((n, i) => (
@@ -296,7 +297,7 @@ function InvocationTree({
                   {n.function_name}
                 </span>
                 {n.args && n.args.length > 0 && (
-                  <span className="break-all text-ink-faint">
+                  <span className="text-ink-faint break-all">
                     ({n.args.join(', ')})
                   </span>
                 )}
@@ -323,14 +324,14 @@ function OperationCard({ hash, op }: { hash: string; op: TxOperation }) {
     ? (fields.authorizations as AuthInvocation[])
     : null;
   return (
-    <div className="rounded-lg border border-line p-3">
+    <div className="border-line rounded-lg border p-3">
       <div className="mb-2 flex flex-wrap items-center gap-2">
-        <span className="rounded-sm bg-surface-subtle px-1.5 py-0.5 text-[10px] uppercase tracking-wider text-ink-body">
+        <span className="bg-surface-subtle text-ink-body rounded-sm px-1.5 py-0.5 text-[10px] tracking-wider uppercase">
           #{op.op_index}
         </span>
         <Link
           href={`/operation?tx=${hash}&i=${op.op_index}`}
-          className="text-brand-700 rounded-sm bg-brand-50 px-2 py-0.5 text-[11px] font-medium hover:bg-brand-100"
+          className="text-brand-700 bg-brand-50 hover:bg-brand-100 rounded-sm px-2 py-0.5 text-[11px] font-medium"
           title="Operation detail"
         >
           {op.type}
@@ -348,7 +349,7 @@ function OperationCard({ hash, op }: { hash: string; op: TxOperation }) {
         )}
         {op.source_account && (
           <span
-            className="font-mono text-[11px] text-ink-muted"
+            className="text-ink-muted font-mono text-[11px]"
             title={op.source_account}
           >
             src {op.source_account.slice(0, 6)}…{op.source_account.slice(-4)}
@@ -359,22 +360,22 @@ function OperationCard({ hash, op }: { hash: string; op: TxOperation }) {
         <dl className="grid grid-cols-1 gap-x-6 gap-y-1.5 sm:grid-cols-2">
           {fieldKeys.map((k) => (
             <div key={k} className="flex items-baseline gap-2">
-              <dt className="shrink-0 text-[11px] uppercase tracking-wider text-ink-muted">
+              <dt className="text-ink-muted shrink-0 text-[11px] tracking-wider uppercase">
                 {k}
               </dt>
-              <dd className="break-all font-mono text-xs text-ink-body">
+              <dd className="text-ink-body font-mono text-xs break-all">
                 {renderOpFieldValue(k, fields[k])}
               </dd>
             </div>
           ))}
         </dl>
       ) : (
-        <p className="text-xs text-ink-faint">No decoded fields.</p>
+        <p className="text-ink-faint text-xs">No decoded fields.</p>
       )}
       {authTree && authTree.length > 0 && (
         <div className="mt-3">
           <div
-            className="mb-1 text-[11px] uppercase tracking-wider text-ink-muted"
+            className="text-ink-muted mb-1 text-[11px] tracking-wider uppercase"
             title="The nested contract calls this operation authorized (from the op's SorobanAuthorizationEntries). Not the full execution trace."
           >
             Authorized invocations
@@ -383,11 +384,11 @@ function OperationCard({ hash, op }: { hash: string; op: TxOperation }) {
         </div>
       )}
       {op.raw_xdr && (
-        <details className="mt-2 rounded-sm border border-line">
-          <summary className="cursor-pointer px-2 py-1 text-[11px] font-medium text-ink-muted hover:text-brand-600">
+        <details className="border-line mt-2 rounded-sm border">
+          <summary className="text-ink-muted hover:text-brand-600 cursor-pointer px-2 py-1 text-[11px] font-medium">
             Raw XDR
           </summary>
-          <pre className="overflow-x-auto whitespace-pre-wrap break-all border-t border-line px-2 py-2 font-mono text-[10px] leading-relaxed text-ink-body">
+          <pre className="border-line text-ink-body overflow-x-auto border-t px-2 py-2 font-mono text-[10px] leading-relaxed break-all whitespace-pre-wrap">
             {op.raw_xdr}
           </pre>
         </details>
@@ -416,42 +417,43 @@ function EventsPanel({ hash, events }: { hash: string; events: TxEvent[] }) {
       bodyClassName="-mx-4"
     >
       <div className="overflow-x-auto">
-        <table className="min-w-full divide-y divide-line text-sm">
+        <table className="divide-line min-w-full divide-y text-sm">
           <thead>
-            <tr className="text-left text-[11px] uppercase tracking-wider text-ink-muted">
+            <tr className="text-ink-muted text-left text-[11px] tracking-wider uppercase">
               <Th align="right">Op</Th>
               <Th>Contract</Th>
               <Th>Event type</Th>
               <Th>Topic 0</Th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-line-subtle">
+          <tbody className="divide-line-subtle divide-y">
             {events.map((ev, i) => (
               <tr
                 key={`${ev.op_index}-${ev.event_index ?? i}`}
                 className="hover:bg-surface-muted"
               >
                 <Td align="right">
-                  <span className="font-mono tabular-nums text-ink-muted">
+                  <span className="text-ink-muted font-mono tabular-nums">
                     {ev.op_index}
                   </span>
                 </Td>
                 <Td>
                   <Link
                     href={`/contracts/${ev.contract_id}/`}
-                    className="font-mono text-xs text-brand-600 hover:underline"
+                    className="text-brand-600 font-mono text-xs hover:underline"
                     title={ev.contract_id}
                   >
-                    {(ev.contract_id ?? '').slice(0, 8)}…{(ev.contract_id ?? '').slice(-6)}
+                    {(ev.contract_id ?? '').slice(0, 8)}…
+                    {(ev.contract_id ?? '').slice(-6)}
                   </Link>
                 </Td>
                 <Td>
-                  <span className="font-mono text-xs text-ink-body">
+                  <span className="text-ink-body font-mono text-xs">
                     {ev.event_type || '—'}
                   </span>
                 </Td>
                 <Td>
-                  <span className="font-mono text-xs text-ink-muted">
+                  <span className="text-ink-muted font-mono text-xs">
                     {ev.topic_0 || '—'}
                   </span>
                 </Td>
@@ -486,10 +488,10 @@ function Field({
 }) {
   return (
     <div>
-      <dt className="text-[11px] uppercase tracking-wider text-ink-muted">
+      <dt className="text-ink-muted text-[11px] tracking-wider uppercase">
         {label}
       </dt>
-      <dd className={mono ? 'mt-0.5 break-all font-mono text-xs' : 'mt-0.5'}>
+      <dd className={mono ? 'mt-0.5 font-mono text-xs break-all' : 'mt-0.5'}>
         {children ?? value ?? '—'}
       </dd>
     </div>
@@ -505,7 +507,7 @@ function FieldWide({
 }) {
   return (
     <div className="col-span-2 sm:col-span-3 lg:col-span-4">
-      <dt className="text-[11px] uppercase tracking-wider text-ink-muted">
+      <dt className="text-ink-muted text-[11px] tracking-wider uppercase">
         {label}
       </dt>
       <dd className="mt-0.5">{children}</dd>

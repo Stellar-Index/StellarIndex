@@ -10,7 +10,9 @@ import { SearchModal, search } from './SearchModal';
 // only way to pin the fix here is the padding utility class itself: p-1
 // (4px/side) around a 16px (h-4 w-4) icon reaches exactly 24x24.
 function renderOpen() {
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
   render(
     <QueryClientProvider client={client}>
       <SearchModal />

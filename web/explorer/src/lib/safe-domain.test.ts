@@ -17,11 +17,15 @@ describe('isSafeHomeDomain', () => {
 // including private/internal addresses (client-side SSRF) or plain http.
 describe('isSafePublicImageUrl', () => {
   it('accepts a normal https URL', () => {
-    expect(isSafePublicImageUrl('https://issuer.example.com/icon.png')).toBe(true);
+    expect(isSafePublicImageUrl('https://issuer.example.com/icon.png')).toBe(
+      true,
+    );
   });
 
   it('rejects http (https-only)', () => {
-    expect(isSafePublicImageUrl('http://issuer.example.com/icon.png')).toBe(false);
+    expect(isSafePublicImageUrl('http://issuer.example.com/icon.png')).toBe(
+      false,
+    );
   });
 
   it('rejects loopback / localhost', () => {
@@ -37,7 +41,9 @@ describe('isSafePublicImageUrl', () => {
   });
 
   it('rejects link-local, including the cloud metadata address', () => {
-    expect(isSafePublicImageUrl('https://169.254.169.254/latest/meta-data/')).toBe(false);
+    expect(
+      isSafePublicImageUrl('https://169.254.169.254/latest/meta-data/'),
+    ).toBe(false);
   });
 
   it('rejects non-URL garbage and empty/missing values', () => {

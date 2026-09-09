@@ -32,10 +32,16 @@ describe('EmbedCurrencyPage — live price refresh (W8.10)', () => {
         const url = String(input);
         if (url.includes('/v1/assets/EUR')) {
           return jsonResponse({
-            data: { ticker: 'EUR', name: 'Euro', class: 'fiat', price_usd: '1.10' },
+            data: {
+              ticker: 'EUR',
+              name: 'Euro',
+              class: 'fiat',
+              price_usd: '1.10',
+            },
           });
         }
-        if (url.includes('/v1/chart')) return jsonResponse({ data: { points: [] } });
+        if (url.includes('/v1/chart'))
+          return jsonResponse({ data: { points: [] } });
         if (url.includes('/v1/price')) {
           return jsonResponse({
             data: { price: '1.25', observed_at: '2026-08-16T00:00:00Z' },
@@ -58,10 +64,16 @@ describe('EmbedCurrencyPage — live price refresh (W8.10)', () => {
         const url = String(input);
         if (url.includes('/v1/assets/EUR')) {
           return jsonResponse({
-            data: { ticker: 'EUR', name: 'Euro', class: 'fiat', price_usd: '1.10' },
+            data: {
+              ticker: 'EUR',
+              name: 'Euro',
+              class: 'fiat',
+              price_usd: '1.10',
+            },
           });
         }
-        if (url.includes('/v1/chart')) return jsonResponse({ data: { points: [] } });
+        if (url.includes('/v1/chart'))
+          return jsonResponse({ data: { points: [] } });
         if (url.includes('/v1/price')) throw new Error('offline'); // poll fails
         throw new Error(`unexpected fetch: ${url}`);
       }),

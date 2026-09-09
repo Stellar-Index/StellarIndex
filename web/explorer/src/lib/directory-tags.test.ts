@@ -7,7 +7,8 @@ import {
   stellarExpertDirectoryUrl,
 } from './directory-tags';
 
-const SCAM_AUD_ISSUER = 'GAIF52QZUPYCADXF7I7RNPMED7DT2B5JGPR7DEHCC5TPDPUJTMLGGAUD';
+const SCAM_AUD_ISSUER =
+  'GAIF52QZUPYCADXF7I7RNPMED7DT2B5JGPR7DEHCC5TPDPUJTMLGGAUD';
 
 describe('scamFlagTags', () => {
   it('returns the scam-warning subset of the issuer directory tags', () => {
@@ -28,7 +29,14 @@ describe('scamFlagTags', () => {
   });
 
   it('covers every listed flag term', () => {
-    for (const t of ['malicious', 'unsafe', 'fraud', 'scam', 'hack', 'phishing']) {
+    for (const t of [
+      'malicious',
+      'unsafe',
+      'fraud',
+      'scam',
+      'hack',
+      'phishing',
+    ]) {
       expect(hasDirectoryScamFlag([t])).toBe(true);
     }
   });

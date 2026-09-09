@@ -56,7 +56,12 @@ export function AccountActivitySummaryPanel({ id }: { id: string }) {
 
   if (isError) {
     return (
-      <Panel title="Activity" hint={panelHint} source={source} bodyClassName="text-sm text-ink-body">
+      <Panel
+        title="Activity"
+        hint={panelHint}
+        source={source}
+        bodyClassName="text-sm text-ink-body"
+      >
         The activity breakdown is warming or failed — reload to retry
         {error instanceof Error ? `: ${error.message}` : ''}.
       </Panel>
@@ -65,7 +70,12 @@ export function AccountActivitySummaryPanel({ id }: { id: string }) {
 
   if (isLoading || !data) {
     return (
-      <Panel title="Activity" hint={panelHint} source={source} bodyClassName="text-sm text-ink-muted">
+      <Panel
+        title="Activity"
+        hint={panelHint}
+        source={source}
+        bodyClassName="text-sm text-ink-muted"
+      >
         Loading…
       </Panel>
     );
@@ -89,9 +99,14 @@ export function AccountActivitySummaryPanel({ id }: { id: string }) {
   }
 
   return (
-    <Panel title="Activity" hint={panelHint} source={source} bodyClassName="space-y-4">
+    <Panel
+      title="Activity"
+      hint={panelHint}
+      source={source}
+      bodyClassName="space-y-4"
+    >
       {data.coverage_note && (
-        <p className="rounded-md border border-line bg-surface-muted px-3 py-2 text-xs text-ink-muted">
+        <p className="border-line bg-surface-muted text-ink-muted rounded-md border px-3 py-2 text-xs">
           {data.coverage_note}
         </p>
       )}
@@ -107,7 +122,9 @@ export function AccountActivitySummaryPanel({ id }: { id: string }) {
         />
         <ActivityStat
           label="Attributed trades"
-          value={data.trades_total != null ? numFmt.format(data.trades_total) : '—'}
+          value={
+            data.trades_total != null ? numFmt.format(data.trades_total) : '—'
+          }
         />
         <ActivityStat
           label="DeFi actions"
@@ -117,12 +134,15 @@ export function AccountActivitySummaryPanel({ id }: { id: string }) {
               : '—'
           }
         />
-        <ActivityStat label="Bridge transfers" value={bridge ? numFmt.format(bridgeTotal) : '—'} />
+        <ActivityStat
+          label="Bridge transfers"
+          value={bridge ? numFmt.format(bridgeTotal) : '—'}
+        />
       </dl>
 
       {ops.length > 0 && (
         <div>
-          <div className="mb-2 text-[11px] uppercase tracking-wider text-ink-muted">
+          <div className="text-ink-muted mb-2 text-[11px] tracking-wider uppercase">
             Operations by type — all time
           </div>
           {/* The account's operational fingerprint: is this a payment
@@ -146,17 +166,25 @@ export function AccountActivitySummaryPanel({ id }: { id: string }) {
 
       {byProtocol.size > 0 && (
         <div>
-          <div className="mb-1 text-[11px] uppercase tracking-wider text-ink-muted">
+          <div className="text-ink-muted mb-1 text-[11px] tracking-wider uppercase">
             DeFi actions by protocol
           </div>
           <ul className="space-y-1 text-xs">
             {Array.from(byProtocol.entries()).map(([protocol, actions]) => (
-              <li key={protocol} className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5">
-                <Badge tone="brand">{PROTOCOL_LABEL[protocol] ?? protocol}</Badge>
+              <li
+                key={protocol}
+                className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5"
+              >
+                <Badge tone="brand">
+                  {PROTOCOL_LABEL[protocol] ?? protocol}
+                </Badge>
                 {actions.map((a) => (
-                  <span key={`${protocol}-${a.action}`} className="whitespace-nowrap text-ink-body">
+                  <span
+                    key={`${protocol}-${a.action}`}
+                    className="text-ink-body whitespace-nowrap"
+                  >
                     {a.action}{' '}
-                    <span className="font-mono tabular-nums text-ink-muted">
+                    <span className="text-ink-muted font-mono tabular-nums">
                       {numFmt.format(a.count)}
                     </span>
                   </span>
@@ -169,7 +197,7 @@ export function AccountActivitySummaryPanel({ id }: { id: string }) {
 
       {bridge && bridgeTotal > 0 && (
         <div>
-          <div className="mb-2 text-[11px] uppercase tracking-wider text-ink-muted">
+          <div className="text-ink-muted mb-2 text-[11px] tracking-wider uppercase">
             <Link href="/bridges" className="hover:text-brand-600">
               Bridge transfers
             </Link>{' '}
@@ -201,7 +229,7 @@ export function AccountActivitySummaryPanel({ id }: { id: string }) {
               },
             ]}
           />
-          <p className="mt-1 text-[11px] text-ink-faint">{bridge.note}</p>
+          <p className="text-ink-faint mt-1 text-[11px]">{bridge.note}</p>
         </div>
       )}
     </Panel>
@@ -211,7 +239,9 @@ export function AccountActivitySummaryPanel({ id }: { id: string }) {
 function ActivityStat({ label, value }: { label: string; value: string }) {
   return (
     <div>
-      <dt className="text-[11px] uppercase tracking-wider text-ink-muted">{label}</dt>
+      <dt className="text-ink-muted text-[11px] tracking-wider uppercase">
+        {label}
+      </dt>
       <dd className="mt-0.5 font-mono text-sm tabular-nums">{value}</dd>
     </div>
   );

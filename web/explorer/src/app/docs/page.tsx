@@ -20,7 +20,7 @@ const BASE = CURRENT_NETWORK.apiBaseUrl;
 
 function Code({ children }: { children: string }) {
   return (
-    <pre className="overflow-x-auto rounded-lg border border-line bg-surface-subtle p-4 text-[13px] leading-relaxed text-ink">
+    <pre className="border-line bg-surface-subtle text-ink overflow-x-auto rounded-lg border p-4 text-[13px] leading-relaxed">
       <code className="font-mono">{children}</code>
     </pre>
   );
@@ -36,13 +36,13 @@ function Section({
   children: React.ReactNode;
 }) {
   return (
-    <section id={id} className="space-y-4 scroll-mt-24">
-      <h2 className="text-xl font-semibold tracking-tight text-ink">
+    <section id={id} className="scroll-mt-24 space-y-4">
+      <h2 className="text-ink text-xl font-semibold tracking-tight">
         <a href={`#${id}`} className="hover:text-brand-600">
           {title}
         </a>
       </h2>
-      <div className="space-y-4 text-[15px] leading-relaxed text-ink-body">
+      <div className="text-ink-body space-y-4 text-[15px] leading-relaxed">
         {children}
       </div>
     </section>
@@ -57,16 +57,31 @@ const ENDPOINTS: { group: string; rows: [string, string][] }[] = [
       ['GET /v1/price/tip', 'Rolling-window (live) price for a pair.'],
       ['GET /v1/price/batch', 'Many pairs in one request.'],
       ['GET /v1/vwap, /v1/twap', 'Volume- / time-weighted average price.'],
-      ['GET /v1/ohlc, /v1/chart, /v1/history', 'OHLC candles, chart series, full history.'],
+      [
+        'GET /v1/ohlc, /v1/chart, /v1/history',
+        'OHLC candles, chart series, full history.',
+      ],
     ],
   },
   {
     group: 'Assets & markets',
     rows: [
-      ['GET /v1/assets, /v1/assets/verified', 'Asset catalogue + the verified set.'],
-      ['GET /v1/assets/{asset_id}', 'Per-asset detail (price, supply, holders).'],
-      ['GET /v1/markets, /v1/markets/sources', 'Aggregate markets + per-source breakdown.'],
-      ['GET /v1/issuers, /v1/issuers/{g}', 'Issuer directory + per-issuer detail.'],
+      [
+        'GET /v1/assets, /v1/assets/verified',
+        'Asset catalogue + the verified set.',
+      ],
+      [
+        'GET /v1/assets/{asset_id}',
+        'Per-asset detail (price, supply, holders).',
+      ],
+      [
+        'GET /v1/markets, /v1/markets/sources',
+        'Aggregate markets + per-source breakdown.',
+      ],
+      [
+        'GET /v1/issuers, /v1/issuers/{g}',
+        'Issuer directory + per-issuer detail.',
+      ],
     ],
   },
   {
@@ -75,14 +90,23 @@ const ENDPOINTS: { group: string; rows: [string, string][] }[] = [
       ['GET /v1/protocols, /v1/protocols/{name}', 'Per-protocol analytics.'],
       ['GET /v1/lending/pools, /v1/pools', 'Lending pools + reserves.'],
       ['GET /v1/network/stats, /v1/network/throughput', 'Network-wide stats.'],
-      ['GET /v1/mev, /v1/anomalies, /v1/divergence', 'Integrity + monitoring feeds.'],
+      [
+        'GET /v1/mev, /v1/anomalies, /v1/divergence',
+        'Integrity + monitoring feeds.',
+      ],
     ],
   },
   {
     group: 'Streaming (SSE)',
     rows: [
-      ['GET /v1/price/stream, /v1/price/tip/stream', 'Server-Sent Events price feeds.'],
-      ['GET /v1/observations/stream, /v1/oracle/streams', 'Raw observation + oracle streams.'],
+      [
+        'GET /v1/price/stream, /v1/price/tip/stream',
+        'Server-Sent Events price feeds.',
+      ],
+      [
+        'GET /v1/observations/stream, /v1/oracle/streams',
+        'Raw observation + oracle streams.',
+      ],
       ['GET /v1/ledger/stream', 'Live ledger tip stream.'],
     ],
   },
@@ -92,12 +116,17 @@ export default function DocsPage() {
   return (
     <div className="mx-auto max-w-4xl space-y-10 px-6 py-10">
       <header className="space-y-3">
-        <h1 className="text-3xl font-semibold tracking-tight">Developer docs</h1>
-        <p className="text-base text-ink-body">
-          The Stellar Index API serves verified, per-protocol Stellar pricing and
-          on-chain data over REST + SSE. This page is the quickstart; the full
-          machine-readable contract is the{' '}
-          <a className="text-brand-600 hover:underline" href="/openapi/stellar-index.v1.yaml">
+        <h1 className="text-3xl font-semibold tracking-tight">
+          Developer docs
+        </h1>
+        <p className="text-ink-body text-base">
+          The Stellar Index API serves verified, per-protocol Stellar pricing
+          and on-chain data over REST + SSE. This page is the quickstart; the
+          full machine-readable contract is the{' '}
+          <a
+            className="text-brand-600 hover:underline"
+            href="/openapi/stellar-index.v1.yaml"
+          >
             OpenAPI spec
           </a>
           .
@@ -117,13 +146,16 @@ export default function DocsPage() {
 
       <Section id="auth" title="Authentication">
         <p>
-          Public endpoints work without a key (subject to rate limits). An API key
-          gives you a per-key budget and per-key usage history, and is required
-          for account/usage endpoints. Keys are{' '}
+          Public endpoints work without a key (subject to rate limits). An API
+          key gives you a per-key budget and per-key usage history, and is
+          required for account/usage endpoints. Keys are{' '}
           <code className="font-mono text-sm">sip_*</code> tokens (legacy{' '}
-          <code className="font-mono text-sm">rek_*</code> still accepted), minted
-          in the{' '}
-          <Link className="text-brand-600 hover:underline" href="/dashboard/keys">
+          <code className="font-mono text-sm">rek_*</code> still accepted),
+          minted in the{' '}
+          <Link
+            className="text-brand-600 hover:underline"
+            href="/dashboard/keys"
+          >
             dashboard
           </Link>
           , and passed as a bearer token:
@@ -139,12 +171,12 @@ export default function DocsPage() {
 
       <Section id="rate-limits" title="Rate limits">
         <p>
-          Anonymous reads are limited per source IP; a key&apos;s budget is
-          per key. On the hosted deployment the anonymous IP limit (6,000
-          req/min) deliberately exceeds a single free key&apos;s (1,000
-          req/min) — a key buys attribution and a budget nothing else on
-          your IP can spend, not extra throughput. Higher per-key partner
-          limits are set on request; see{' '}
+          Anonymous reads are limited per source IP; a key&apos;s budget is per
+          key. On the hosted deployment the anonymous IP limit (6,000 req/min)
+          deliberately exceeds a single free key&apos;s (1,000 req/min) — a key
+          buys attribution and a budget nothing else on your IP can spend, not
+          extra throughput. Higher per-key partner limits are set on request;
+          see{' '}
           <Link className="text-brand-600 hover:underline" href="/pricing">
             pricing
           </Link>
@@ -153,8 +185,8 @@ export default function DocsPage() {
         <p>
           Every response carries{' '}
           <code className="font-mono text-sm">X-RateLimit-Limit</code> and{' '}
-          <code className="font-mono text-sm">X-RateLimit-Remaining</code>. When the
-          quota is exhausted the API returns{' '}
+          <code className="font-mono text-sm">X-RateLimit-Remaining</code>. When
+          the quota is exhausted the API returns{' '}
           <code className="font-mono text-sm">429</code> with a{' '}
           <code className="font-mono text-sm">Retry-After</code> header (seconds
           until you can retry). Back off and retry — do not hammer.
@@ -165,14 +197,19 @@ export default function DocsPage() {
         <div className="space-y-6">
           {ENDPOINTS.map((g) => (
             <div key={g.group} className="space-y-2">
-              <h3 className="text-sm font-semibold uppercase tracking-wider text-brand-600">
+              <h3 className="text-brand-600 text-sm font-semibold tracking-wider uppercase">
                 {g.group}
               </h3>
-              <dl className="divide-y divide-line rounded-lg border border-line">
+              <dl className="divide-line border-line divide-y rounded-lg border">
                 {g.rows.map(([ep, desc]) => (
-                  <div key={ep} className="flex flex-col gap-1 px-4 py-2.5 sm:flex-row sm:items-baseline sm:gap-4">
-                    <dt className="font-mono text-[13px] text-ink sm:w-72 sm:shrink-0">{ep}</dt>
-                    <dd className="text-sm text-ink-body">{desc}</dd>
+                  <div
+                    key={ep}
+                    className="flex flex-col gap-1 px-4 py-2.5 sm:flex-row sm:items-baseline sm:gap-4"
+                  >
+                    <dt className="text-ink font-mono text-[13px] sm:w-72 sm:shrink-0">
+                      {ep}
+                    </dt>
+                    <dd className="text-ink-body text-sm">{desc}</dd>
                   </div>
                 ))}
               </dl>
@@ -183,17 +220,19 @@ export default function DocsPage() {
 
       <Section id="streaming" title="Streaming (Server-Sent Events)">
         <p>
-          The <code className="font-mono text-sm">*/stream</code> endpoints return{' '}
-          <code className="font-mono text-sm">text/event-stream</code>. Connect with
-          an SSE client and read price/observation/ledger events as they close:
+          The <code className="font-mono text-sm">*/stream</code> endpoints
+          return <code className="font-mono text-sm">text/event-stream</code>.
+          Connect with an SSE client and read price/observation/ledger events as
+          they close:
         </p>
         <Code>{`curl -N ${BASE}/v1/price/stream?asset=native&quote=fiat:USD`}</Code>
       </Section>
 
       <Section id="errors" title="Errors">
         <p>
-          Errors are RFC 7807 <code className="font-mono text-sm">application/problem+json</code>:
-          a stable <code className="font-mono text-sm">type</code> URI,{' '}
+          Errors are RFC 7807{' '}
+          <code className="font-mono text-sm">application/problem+json</code>: a
+          stable <code className="font-mono text-sm">type</code> URI,{' '}
           <code className="font-mono text-sm">title</code>,{' '}
           <code className="font-mono text-sm">status</code>, and a human{' '}
           <code className="font-mono text-sm">detail</code>. Branch on{' '}
@@ -210,21 +249,24 @@ export default function DocsPage() {
       <Section id="conventions" title="Conventions">
         <ul className="list-disc space-y-2 pl-5">
           <li>
-            <strong>Amounts are strings.</strong> Token amounts, reserves, supplies
-            and prices can exceed 2<sup>53</sup>, so they serialize as JSON strings
-            (parse with a big-decimal type) — never as JSON numbers.
+            <strong>Amounts are strings.</strong> Token amounts, reserves,
+            supplies and prices can exceed 2<sup>53</sup>, so they serialize as
+            JSON strings (parse with a big-decimal type) — never as JSON
+            numbers.
           </li>
           <li>
-            <strong>Asset IDs.</strong> <code className="font-mono text-sm">native</code>{' '}
-            (XLM), <code className="font-mono text-sm">CODE-GISSUER…</code> (classic),{' '}
+            <strong>Asset IDs.</strong>{' '}
+            <code className="font-mono text-sm">native</code> (XLM),{' '}
+            <code className="font-mono text-sm">CODE-GISSUER…</code> (classic),{' '}
             <code className="font-mono text-sm">C…</code> (Soroban),{' '}
             <code className="font-mono text-sm">crypto:BTC</code> /{' '}
             <code className="font-mono text-sm">fiat:USD</code> (reference).
           </li>
           <li>
-            <strong>Closed-bucket pricing.</strong> <code className="font-mono text-sm">/v1/price</code>{' '}
-            serves the latest <em>closed</em> 1-minute VWAP bucket (deterministic
-            across regions); <code className="font-mono text-sm">/v1/price/tip</code>{' '}
+            <strong>Closed-bucket pricing.</strong>{' '}
+            <code className="font-mono text-sm">/v1/price</code> serves the
+            latest <em>closed</em> 1-minute VWAP bucket (deterministic across
+            regions); <code className="font-mono text-sm">/v1/price/tip</code>{' '}
             is the rolling live window.
           </li>
         </ul>
@@ -233,23 +275,40 @@ export default function DocsPage() {
       <Section id="more" title="More">
         <ul className="list-disc space-y-2 pl-5">
           <li>
-            <a className="text-brand-600 hover:underline" href="https://docs.stellarindex.io">
+            <a
+              className="text-brand-600 hover:underline"
+              href="https://docs.stellarindex.io"
+            >
               Full API reference
             </a>{' '}
             — every endpoint, parameter, and schema
           </li>
           <li>
-            <Link className="text-brand-600 hover:underline" href="/sdk">SDK & client libraries</Link>
+            <Link className="text-brand-600 hover:underline" href="/sdk">
+              SDK & client libraries
+            </Link>
           </li>
           <li>
-            <Link className="text-brand-600 hover:underline" href="/methodology">Pricing methodology</Link>{' '}
+            <Link
+              className="text-brand-600 hover:underline"
+              href="/methodology"
+            >
+              Pricing methodology
+            </Link>{' '}
             — how every number is computed
           </li>
           <li>
-            <Link className="text-brand-600 hover:underline" href="/changelog">API changelog</Link>
+            <Link className="text-brand-600 hover:underline" href="/changelog">
+              API changelog
+            </Link>
           </li>
           <li>
-            <a className="text-brand-600 hover:underline" href="/openapi/stellar-index.v1.yaml">OpenAPI spec</a>
+            <a
+              className="text-brand-600 hover:underline"
+              href="/openapi/stellar-index.v1.yaml"
+            >
+              OpenAPI spec
+            </a>
           </li>
         </ul>
       </Section>

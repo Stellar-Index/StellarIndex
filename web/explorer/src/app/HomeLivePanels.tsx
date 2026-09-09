@@ -29,25 +29,30 @@ export function NetworkLivePanel() {
     (cursors.data ? maxLiveLedger(cursors.data) : null);
 
   return (
-    <Panel headingLevel={2} title="Network" hint="Stellar pulse" source={asExample('/v1/network/stats')}>
+    <Panel
+      headingLevel={2}
+      title="Network"
+      hint="Stellar pulse"
+      source={asExample('/v1/network/stats')}
+    >
       <div className="space-y-3">
         <div>
           <div className="text-2xl font-bold tabular-nums">
             {assetsCount !== null ? formatCompact(assetsCount) : '—'}
           </div>
-          <div className="text-xs text-ink-muted">classic assets indexed</div>
+          <div className="text-ink-muted text-xs">classic assets indexed</div>
         </div>
 
         <div>
           <div className="font-mono text-sm tabular-nums">
             {tipLedger !== null ? `#${tipLedger.toLocaleString('en-US')}` : '—'}
           </div>
-          <div className="text-[11px] text-ink-muted">current ingest tip</div>
+          <div className="text-ink-muted text-[11px]">current ingest tip</div>
         </div>
 
         <Link
           href="/ledgers"
-          className="inline-flex items-center gap-1 text-xs text-brand-600 hover:underline"
+          className="text-brand-600 inline-flex items-center gap-1 text-xs hover:underline"
         >
           Open ledgers <ArrowRight className="h-3 w-3" />
         </Link>
@@ -82,7 +87,10 @@ export function SystemHealthLivePanel() {
 
   const liveRows = data.filter((c) => c.source !== 'backfill');
   const fastest = liveRows.length
-    ? liveRows.reduce((m, c) => (c.lag_seconds < m ? c.lag_seconds : m), Infinity)
+    ? liveRows.reduce(
+        (m, c) => (c.lag_seconds < m ? c.lag_seconds : m),
+        Infinity,
+      )
     : Infinity;
 
   const indexerOk = fastest <= 60;
@@ -107,12 +115,14 @@ export function SystemHealthLivePanel() {
           status="ok"
           subtext="dual-archive verifier — Tier A daily"
         />
-        <div className="pt-1 text-[11px] text-ink-muted">
-          {liveRows.length} live cursor{liveRows.length === 1 ? '' : 's'}, {data.length - liveRows.length} backfill task{data.length - liveRows.length === 1 ? '' : 's'}
+        <div className="text-ink-muted pt-1 text-[11px]">
+          {liveRows.length} live cursor{liveRows.length === 1 ? '' : 's'},{' '}
+          {data.length - liveRows.length} backfill task
+          {data.length - liveRows.length === 1 ? '' : 's'}
         </div>
         <Link
           href="/diagnostics"
-          className="inline-flex items-center gap-1 pt-1 text-[11px] text-brand-600 hover:underline"
+          className="text-brand-600 inline-flex items-center gap-1 pt-1 text-[11px] hover:underline"
         >
           Open diagnostics <ArrowRight className="h-3 w-3" />
         </Link>
@@ -147,14 +157,14 @@ function Health({
           aria-label={status}
         />
       </div>
-      {subtext && (
-        <div className="text-[10px] text-ink-muted">{subtext}</div>
-      )}
+      {subtext && <div className="text-ink-muted text-[10px]">{subtext}</div>}
     </div>
   );
 }
 
-function maxLiveLedger(cursors: { source: string; last_ledger: number }[]): number | null {
+function maxLiveLedger(
+  cursors: { source: string; last_ledger: number }[],
+): number | null {
   let best: number | null = null;
   for (const c of cursors) {
     if (c.source === 'backfill') continue;

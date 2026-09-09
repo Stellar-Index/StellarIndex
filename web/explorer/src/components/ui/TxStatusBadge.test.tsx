@@ -13,7 +13,13 @@ describe('TxStatusBadge', () => {
   });
 
   it('renders the human reason slug in red on failure, code kept in the title', () => {
-    render(<TxStatusBadge successful={false} result="tx_insufficient_fee" code={-6} />);
+    render(
+      <TxStatusBadge
+        successful={false}
+        result="tx_insufficient_fee"
+        code={-6}
+      />,
+    );
     // The reason slug is the visible label — a failed tx reads as its reason,
     // never as "success" and never as a bare number.
     const badge = screen.getByText('tx_insufficient_fee');

@@ -23,7 +23,7 @@ export function HealthSummary() {
 
   if (isLoading || !data) {
     return (
-      <section className="rounded-md border border-line bg-surface p-4 text-sm text-ink-muted">
+      <section className="border-line bg-surface text-ink-muted rounded-md border p-4 text-sm">
         Loading health summary…
       </section>
     );
@@ -77,11 +77,14 @@ function computeSummary(cursors: Cursor[]): Summary {
     .filter((n) => Number.isFinite(n) && n >= 0)
     .sort((a, b) => a - b);
   const median = lags.length
-    ? lags[Math.floor(lags.length / 2)] ?? null
+    ? (lags[Math.floor(lags.length / 2)] ?? null)
     : null;
   const worst = lags.length ? (lags[lags.length - 1] ?? null) : null;
   const tip = live.reduce(
-    (max, c) => (Number.isFinite(c.last_ledger) && c.last_ledger > max ? c.last_ledger : max),
+    (max, c) =>
+      Number.isFinite(c.last_ledger) && c.last_ledger > max
+        ? c.last_ledger
+        : max,
     -1,
   );
   const uniqueLive = new Set(live.map((c) => c.source)).size;
@@ -133,8 +136,8 @@ function Cell({
           ? 'text-down'
           : '';
   return (
-    <div className="rounded-md border border-line bg-surface p-3">
-      <div className="text-[10px] uppercase tracking-wider text-ink-muted">
+    <div className="border-line bg-surface rounded-md border p-3">
+      <div className="text-ink-muted text-[10px] tracking-wider uppercase">
         {label}
       </div>
       <div
@@ -143,7 +146,7 @@ function Cell({
       >
         {value}
       </div>
-      {sub && <div className="mt-0.5 text-[11px] text-ink-muted">{sub}</div>}
+      {sub && <div className="text-ink-muted mt-0.5 text-[11px]">{sub}</div>}
     </div>
   );
 }

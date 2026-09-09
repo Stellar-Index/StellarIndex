@@ -188,7 +188,7 @@ function KeysBody({ me }: { me: MeResponse }) {
         ) : null}
 
         {keys && keys.length > 0 && (
-          <p className="text-xs text-ink-faint">
+          <p className="text-ink-faint text-xs">
             {fmtInt(active.length)} active{' '}
             {active.length === 1 ? 'key' : 'keys'}
             {keys.length > active.length &&
@@ -220,20 +220,20 @@ function NewKeyReveal({
         description="We store only a hash. If you lose the plaintext, revoke this key and mint a new one."
       />
       <CardBody className="space-y-3">
-        <div className="flex items-center gap-2 rounded-lg border border-line bg-surface px-3 py-2.5">
-          <code className="min-w-0 flex-1 break-all font-mono text-[13px] text-ink">
+        <div className="border-line bg-surface flex items-center gap-2 rounded-lg border px-3 py-2.5">
+          <code className="text-ink min-w-0 flex-1 font-mono text-[13px] break-all">
             {created.plaintext}
           </code>
           <CopyButton value={created.plaintext} className="h-7 w-7" />
         </div>
-        <p className="text-xs text-ink-muted">
+        <p className="text-ink-muted text-xs">
           Stored as{' '}
-          <code className="rounded-sm bg-surface-subtle px-1 py-0.5 font-mono">
+          <code className="bg-surface-subtle rounded-sm px-1 py-0.5 font-mono">
             {created.key.key_prefix}…
           </code>
           {' · '}
           Send it as{' '}
-          <code className="rounded-sm bg-surface-subtle px-1 py-0.5 font-mono">
+          <code className="bg-surface-subtle rounded-sm px-1 py-0.5 font-mono">
             Authorization: Bearer &lt;key&gt;
           </code>{' '}
           on every request.
@@ -424,16 +424,16 @@ function KeysTable({
             return (
               <TR key={k.id} className={revoked ? 'opacity-60' : undefined}>
                 <Td>
-                  <div className="font-medium text-ink">{k.name}</div>
+                  <div className="text-ink font-medium">{k.name}</div>
                   {k.description && (
-                    <div className="mt-0.5 text-xs text-ink-muted">
+                    <div className="text-ink-muted mt-0.5 text-xs">
                       {k.description}
                     </div>
                   )}
                 </Td>
                 <Td>
                   <span className="inline-flex items-center gap-1.5">
-                    <code className="font-mono text-[13px] text-ink-body">
+                    <code className="text-ink-body font-mono text-[13px]">
                       {k.key_prefix}…
                     </code>
                     <CopyButton value={k.key_prefix} />

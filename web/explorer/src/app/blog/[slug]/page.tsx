@@ -15,7 +15,11 @@ export function generateStaticParams() {
   return loadBlogPosts().map((p) => ({ slug: p.slug }));
 }
 
-export async function generateMetadata({ params }: { params: Params }): Promise<Metadata> {
+export async function generateMetadata({
+  params,
+}: {
+  params: Params;
+}): Promise<Metadata> {
   const { slug } = await params;
   const post = loadBlogPost(slug);
   if (!post) return { title: 'Post not found — Blog' };
@@ -33,7 +37,12 @@ export async function generateMetadata({ params }: { params: Params }): Promise<
       publishedTime: post.date,
       images: SITE_OG_IMAGES,
     },
-    twitter: { card: 'summary_large_image', title, description: post.summary, images: SITE_TWITTER_IMAGES },
+    twitter: {
+      card: 'summary_large_image',
+      title,
+      description: post.summary,
+      images: SITE_TWITTER_IMAGES,
+    },
   };
 }
 
@@ -46,19 +55,19 @@ export default async function BlogPostPage({ params }: { params: Params }) {
     <div className="mx-auto max-w-3xl space-y-6 px-6 py-12">
       <Link
         href="/blog"
-        className="inline-flex items-center gap-1.5 text-sm text-ink-body hover:text-brand-600"
+        className="text-ink-body hover:text-brand-600 inline-flex items-center gap-1.5 text-sm"
       >
         <ArrowLeft className="h-3.5 w-3.5" />
         All posts
       </Link>
 
-      <header className="space-y-2 border-b border-line pb-4">
+      <header className="border-line space-y-2 border-b pb-4">
         <h1 className="text-3xl font-semibold tracking-tight">{post.title}</h1>
-        <p className="text-sm text-ink-muted">
+        <p className="text-ink-muted text-sm">
           {post.date} · {post.author}
         </p>
         {post.summary && (
-          <p className="text-base text-ink-body">{post.summary}</p>
+          <p className="text-ink-body text-base">{post.summary}</p>
         )}
       </header>
 
@@ -66,12 +75,12 @@ export default async function BlogPostPage({ params }: { params: Params }) {
         <Markdown source={post.body} />
       </article>
 
-      <footer className="border-t border-line pt-4 text-xs">
+      <footer className="border-line border-t pt-4 text-xs">
         <a
           href={`https://github.com/Stellar-Index/StellarIndex/blob/main/${post.source_path}`}
           target="_blank"
           rel="noreferrer noopener"
-          className="inline-flex items-center gap-1 text-ink-muted hover:text-brand-600"
+          className="text-ink-muted hover:text-brand-600 inline-flex items-center gap-1"
         >
           <GithubIcon className="h-3.5 w-3.5" />
           Source: {post.source_path}

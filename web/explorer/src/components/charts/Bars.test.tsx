@@ -10,11 +10,18 @@ describe('HBarList', () => {
         ariaLabel="ops by type"
         items={[
           { label: 'payment', value: 120, display: '120' },
-          { label: 'manage_offer', value: 40, display: '40', annotation: '(classic)' },
+          {
+            label: 'manage_offer',
+            value: 40,
+            display: '40',
+            annotation: '(classic)',
+          },
         ]}
       />,
     );
-    expect(screen.getByRole('img', { name: 'ops by type' })).toBeInTheDocument();
+    expect(
+      screen.getByRole('img', { name: 'ops by type' }),
+    ).toBeInTheDocument();
     expect(screen.getByText('payment')).toBeInTheDocument();
     expect(screen.getByText('120')).toBeInTheDocument();
     expect(screen.getByText('(classic)')).toBeInTheDocument();
@@ -22,7 +29,13 @@ describe('HBarList', () => {
 
   it('renders nothing when every value is zero or non-finite — absence, not zero-claims', () => {
     const { container } = render(
-      <HBarList ariaLabel="empty" items={[{ label: 'a', value: 0 }, { label: 'b', value: NaN }]} />,
+      <HBarList
+        ariaLabel="empty"
+        items={[
+          { label: 'a', value: 0 },
+          { label: 'b', value: NaN },
+        ]}
+      />,
     );
     expect(container.firstChild).toBeNull();
   });
@@ -35,7 +48,9 @@ describe('PairedBars', () => {
         ariaLabel="supplied vs borrowed"
         aLabel="Supplied"
         bLabel="Borrowed"
-        rows={[{ label: 'USDC', a: 100, b: 60, aDisplay: '$100', bDisplay: '$60' }]}
+        rows={[
+          { label: 'USDC', a: 100, b: 60, aDisplay: '$100', bDisplay: '$60' },
+        ]}
       />,
     );
     expect(screen.getByText('Supplied')).toBeInTheDocument();
@@ -58,7 +73,9 @@ describe('DivergingColumns', () => {
         ]}
       />,
     );
-    expect(screen.getByRole('img', { name: 'movement flow' })).toBeInTheDocument();
+    expect(
+      screen.getByRole('img', { name: 'movement flow' }),
+    ).toBeInTheDocument();
     expect(screen.getByText('Received')).toBeInTheDocument();
     expect(screen.getByText('Sent')).toBeInTheDocument();
     expect(screen.getByText('Jul 1')).toBeInTheDocument();

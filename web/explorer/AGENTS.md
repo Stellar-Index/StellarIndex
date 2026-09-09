@@ -37,7 +37,7 @@ TanStack Query. Customer dashboard at `/dashboard/*`. ~80 routes (82
    freely; don't rewire data plumbing.
 5. **Decompose-first for monoliths.** Some routes still inline their sections in
    one large `page.tsx`/`*View.tsx` — extract them to co-located `*.tsx` files
-   *before* reordering. `app/assets/[slug]/AssetFAQ.tsx` is the worked pattern
+   _before_ reordering. `app/assets/[slug]/AssetFAQ.tsx` is the worked pattern
    (component + data-builder + a render test). Watch for shared callers (a
    helper may also feed a JSON-LD schema, etc.) — **export, don't just move**;
    `pnpm typecheck` catches that coupling instantly.

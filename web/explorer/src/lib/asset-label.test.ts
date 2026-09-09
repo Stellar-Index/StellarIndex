@@ -1,7 +1,11 @@
 import { describe, it, expect } from 'vitest';
 
 import { assetSlug } from '@/components/AssetLink';
-import { isRawOracleAsset, rawOracleSymbol, shortAssetText } from './asset-label';
+import {
+  isRawOracleAsset,
+  rawOracleSymbol,
+  shortAssetText,
+} from './asset-label';
 
 // Oracle capture-totality: a `raw:<symbol>` id is an oracle-published
 // symbol recorded verbatim because it maps to no canonical asset. It has no
@@ -19,7 +23,9 @@ describe('raw: oracle asset ids', () => {
 
   it('shortAssetText renders the on-wire symbol verbatim', () => {
     expect(shortAssetText('raw:NOTACOIN')).toBe('NOTACOIN');
-    expect(shortAssetText('raw:SolvBTC.BBN_FUNDAMENTAL/USD')).toBe('SolvBTC.BBN_FUNDAMENTAL/USD');
+    expect(shortAssetText('raw:SolvBTC.BBN_FUNDAMENTAL/USD')).toBe(
+      'SolvBTC.BBN_FUNDAMENTAL/USD',
+    );
   });
 
   it('isRawOracleAsset / rawOracleSymbol', () => {

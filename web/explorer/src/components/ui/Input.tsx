@@ -1,4 +1,11 @@
-import { Children, cloneElement, isValidElement, type ComponentProps, type ReactElement, type ReactNode } from 'react';
+import {
+  Children,
+  cloneElement,
+  isValidElement,
+  type ComponentProps,
+  type ReactElement,
+  type ReactNode,
+} from 'react';
 
 import { cn } from '@/lib/cn';
 
@@ -51,23 +58,33 @@ export function Field({
   const child = kids.length === 1 ? kids[0] : null;
   const control =
     descId && isValidElement(child)
-      ? cloneElement(child as ReactElement<{ 'aria-describedby'?: string; 'aria-invalid'?: boolean }>, {
-          'aria-describedby': descId,
-          'aria-invalid': !!error,
-        })
+      ? cloneElement(
+          child as ReactElement<{
+            'aria-describedby'?: string;
+            'aria-invalid'?: boolean;
+          }>,
+          {
+            'aria-describedby': descId,
+            'aria-invalid': !!error,
+          },
+        )
       : children;
 
   return (
     <div className={cn('space-y-1.5', className)}>
-      <label htmlFor={htmlFor} className="block text-sm font-medium text-ink">
+      <label htmlFor={htmlFor} className="text-ink block text-sm font-medium">
         {label}
-        {required && <span className="ml-0.5 text-bad-500">*</span>}
+        {required && <span className="text-bad-500 ml-0.5">*</span>}
       </label>
       {control}
       {error ? (
-        <p id={descId} className="text-xs text-bad-700">{error}</p>
+        <p id={descId} className="text-bad-700 text-xs">
+          {error}
+        </p>
       ) : hint ? (
-        <p id={descId} className="text-xs text-ink-muted">{hint}</p>
+        <p id={descId} className="text-ink-muted text-xs">
+          {hint}
+        </p>
       ) : null}
     </div>
   );

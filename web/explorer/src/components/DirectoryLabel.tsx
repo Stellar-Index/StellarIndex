@@ -32,7 +32,9 @@ export function DirectoryLabel({ info }: { info: DirectoryInfo }) {
   return (
     <div className="space-y-1.5">
       <div className="flex flex-wrap items-center gap-2">
-        <span className={warn ? 'font-medium text-bad-700' : 'font-medium text-ink'}>
+        <span
+          className={warn ? 'text-bad-700 font-medium' : 'text-ink font-medium'}
+        >
           {info.name}
         </span>
         {info.tags.map((t) => (
@@ -41,9 +43,9 @@ export function DirectoryLabel({ info }: { info: DirectoryInfo }) {
           </Badge>
         ))}
       </div>
-      <p className="text-[11px] text-ink-muted">
+      <p className="text-ink-muted text-[11px]">
         {warn && (
-          <span className="font-medium text-bad-700">
+          <span className="text-bad-700 font-medium">
             Flagged {info.tags.filter((t) => WARN_TAGS.has(t)).join(' + ')} by
             the community directory — treat with caution.{' '}
           </span>
@@ -53,7 +55,7 @@ export function DirectoryLabel({ info }: { info: DirectoryInfo }) {
           href="https://github.com/stellar-expert/public-directory"
           target="_blank"
           rel="noreferrer noopener"
-          className="underline hover:text-brand-600"
+          className="hover:text-brand-600 underline"
         >
           StellarExpert public directory
         </a>{' '}

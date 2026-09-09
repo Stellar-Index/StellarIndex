@@ -48,7 +48,8 @@ export function SourceBreakdown({
   const { data, isLoading, isError } = useQuery<MarketSourcesResp>({
     queryKey: ['/v1/markets/sources', asset ?? '', base ?? '', quote ?? ''],
     queryFn: async () =>
-      (await apiGet<{ data: MarketSourcesResp }>('/v1/markets/sources', params)).data,
+      (await apiGet<{ data: MarketSourcesResp }>('/v1/markets/sources', params))
+        .data,
     staleTime: 60_000,
     refetchInterval: 60_000,
     retry: false,
@@ -75,7 +76,11 @@ export function SourceBreakdown({
       source={asExample('/v1/markets/sources', params)}
     >
       {isLoading && <div className="h-40" />}
-      {isError && <p className="text-sm text-ink-muted">Source breakdown is unavailable right now.</p>}
+      {isError && (
+        <p className="text-ink-muted text-sm">
+          Source breakdown is unavailable right now.
+        </p>
+      )}
       {slices.length > 0 && (
         <DonutChart
           data={slices}

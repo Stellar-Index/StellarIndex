@@ -3,7 +3,8 @@ import { render, screen, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 vi.mock('@/api/client', async () => {
-  const actual = await vi.importActual<typeof import('@/api/client')>('@/api/client');
+  const actual =
+    await vi.importActual<typeof import('@/api/client')>('@/api/client');
   return { ...actual, apiGet: vi.fn() };
 });
 
@@ -12,7 +13,9 @@ vi.mock('@/api/client', async () => {
 // handed, without depending on canvas rendering under jsdom.
 vi.mock('@/components/charts/LineChart', () => ({
   LineChart: ({ data }: { data: { time: number; value: number }[] }) => (
-    <div data-testid="line-chart">{JSON.stringify(data.map((p) => p.value))}</div>
+    <div data-testid="line-chart">
+      {JSON.stringify(data.map((p) => p.value))}
+    </div>
   ),
 }));
 
@@ -35,7 +38,9 @@ describe('ThroughputPanel', () => {
         ],
       },
     });
-    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
     render(
       <QueryClientProvider client={client}>
         <ThroughputPanel defaultMetric="ops" windowDays={3} />
@@ -44,7 +49,9 @@ describe('ThroughputPanel', () => {
 
     // Total: 1000 + 2000 = 3000, NOT 3999 (which would include the
     // partial day's 999).
-    await waitFor(() => expect(screen.getByText(/3K total/)).toBeInTheDocument());
+    await waitFor(() =>
+      expect(screen.getByText(/3K total/)).toBeInTheDocument(),
+    );
     expect(screen.queryByText(/4K total/)).not.toBeInTheDocument();
 
     // Chart series: only the two complete-day points, not the partial one.
@@ -60,7 +67,9 @@ describe('ThroughputPanel', () => {
 // last 24h", which is reserved for a present-and-empty array.
 describe('OperationMixPanel', () => {
   function renderPanel() {
-    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
     return render(
       <QueryClientProvider client={client}>
         <OperationMixPanel />
@@ -72,18 +81,28 @@ describe('OperationMixPanel', () => {
     vi.mocked(apiGet).mockResolvedValue({ data: { operations: [] } });
     renderPanel();
     await waitFor(() =>
-      expect(screen.getByText(/Operation stats unavailable/)).toBeInTheDocument(),
+      expect(
+        screen.getByText(/Operation stats unavailable/),
+      ).toBeInTheDocument(),
     );
-    expect(screen.queryByText(/No operations in the last 24h/)).not.toBeInTheDocument();
+    expect(
+      screen.queryByText(/No operations in the last 24h/),
+    ).not.toBeInTheDocument();
   });
 
   it('renders the genuine empty state when op_type_stats is present and empty', async () => {
-    vi.mocked(apiGet).mockResolvedValue({ data: { operations: [], op_type_stats: [] } });
+    vi.mocked(apiGet).mockResolvedValue({
+      data: { operations: [], op_type_stats: [] },
+    });
     renderPanel();
     await waitFor(() =>
-      expect(screen.getByText(/No operations in the last 24h/)).toBeInTheDocument(),
+      expect(
+        screen.getByText(/No operations in the last 24h/),
+      ).toBeInTheDocument(),
     );
-    expect(screen.queryByText(/Operation stats unavailable/)).not.toBeInTheDocument();
+    expect(
+      screen.queryByText(/Operation stats unavailable/),
+    ).not.toBeInTheDocument();
   });
 
   it('renders the ranked bars when op_type_stats carries counts', async () => {
@@ -97,7 +116,9 @@ describe('OperationMixPanel', () => {
       },
     });
     renderPanel();
-    await waitFor(() => expect(screen.getByText('payment')).toBeInTheDocument());
+    await waitFor(() =>
+      expect(screen.getByText('payment')).toBeInTheDocument(),
+    );
     expect(screen.getByText('manage_sell_offer')).toBeInTheDocument();
   });
 });

@@ -27,7 +27,10 @@ import { useDialog } from '@/lib/useDialog';
 // async resolution below — so the map has no explicit "loading" flag.
 type TipMap = Record<string, number | null>;
 
-async function fetchTip(apiBaseUrl: string, signal: AbortSignal): Promise<number | null> {
+async function fetchTip(
+  apiBaseUrl: string,
+  signal: AbortSignal,
+): Promise<number | null> {
   try {
     const res = await fetch(`${apiBaseUrl}/v1/ledger/tip`, {
       signal,
@@ -51,8 +54,8 @@ function LiveDot({ tone }: { tone: DotTone }) {
   if (tone === 'live') {
     return (
       <span className="relative flex h-1.5 w-1.5 shrink-0" aria-hidden>
-        <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-up opacity-60" />
-        <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-up" />
+        <span className="bg-up absolute inline-flex h-full w-full animate-ping rounded-full opacity-60" />
+        <span className="bg-up relative inline-flex h-1.5 w-1.5 rounded-full" />
       </span>
     );
   }
@@ -82,7 +85,8 @@ export function NetworkSwitcher({ onNavigate }: { onNavigate?: () => void }) {
   useEffect(() => {
     if (!open) return;
     function onDoc(e: MouseEvent) {
-      if (wrapRef.current && !wrapRef.current.contains(e.target as Node)) setOpen(false);
+      if (wrapRef.current && !wrapRef.current.contains(e.target as Node))
+        setOpen(false);
     }
     document.addEventListener('mousedown', onDoc);
     return () => document.removeEventListener('mousedown', onDoc);
@@ -113,25 +117,25 @@ export function NetworkSwitcher({ onNavigate }: { onNavigate?: () => void }) {
         aria-label={`Network: ${CURRENT_NETWORK.label}${
           currentSeq != null ? `, ledger ${currentSeq}` : ''
         }. Switch explorer`}
-        className="flex flex-col items-start gap-0.5 rounded-md px-1.5 py-1 text-left hover:bg-surface-subtle"
+        className="hover:bg-surface-subtle flex flex-col items-start gap-0.5 rounded-md px-1.5 py-1 text-left"
       >
         {/* The whole odometer IS the switcher trigger: capitalized network name
             + chevron on top, this network's live ledger (single live dot +
             rolling number) beneath. Not a link — clicking anywhere on it opens
             the network dropdown. */}
-        <span className="flex items-center gap-1 text-[11px] text-ink-muted">
+        <span className="text-ink-muted flex items-center gap-1 text-[11px]">
           {CURRENT_NETWORK.label}
           <ChevronDown
-            className={`h-3 w-3 text-ink-faint transition-transform ${open ? 'rotate-180' : ''}`}
+            className={`text-ink-faint h-3 w-3 transition-transform ${open ? 'rotate-180' : ''}`}
             aria-hidden
           />
         </span>
         <span className="flex items-center gap-1.5 text-[11px]">
           <LiveDot tone={currentLive ? 'live' : 'muted'} />
           {currentSeq != null ? (
-            <RollingNumber value={currentSeq} className="font-mono text-ink" />
+            <RollingNumber value={currentSeq} className="text-ink font-mono" />
           ) : (
-            <span className="font-mono text-ink-faint">—</span>
+            <span className="text-ink-faint font-mono">—</span>
           )}
         </span>
       </button>
@@ -144,9 +148,9 @@ export function NetworkSwitcher({ onNavigate }: { onNavigate?: () => void }) {
           id="network-switcher-menu"
           ref={panelRef}
           tabIndex={-1}
-          className="absolute right-0 top-full z-50 mt-1 w-60 rounded-lg border border-line bg-surface p-1.5 shadow-elevated outline-hidden"
+          className="border-line bg-surface shadow-elevated absolute top-full right-0 z-50 mt-1 w-60 rounded-lg border p-1.5 outline-hidden"
         >
-          <p className="px-2 py-1 text-[10px] font-medium uppercase tracking-wide text-ink-faint">
+          <p className="text-ink-faint px-2 py-1 text-[10px] font-medium tracking-wide uppercase">
             Networks
           </p>
           {NETWORKS.map((n) => (
@@ -172,8 +176,13 @@ export function NetworkSwitcher({ onNavigate }: { onNavigate?: () => void }) {
 // tip: a number renders (odometer); undefined = still loading ('···');
 // null = the origin was unreachable ('—').
 function TipNumber({ tip }: { tip: number | null | undefined }) {
-  if (typeof tip === 'number') return <RollingNumber value={tip} className="font-mono text-ink-muted" />;
-  return <span className="font-mono text-ink-faint">{tip === undefined ? '···' : '—'}</span>;
+  if (typeof tip === 'number')
+    return <RollingNumber value={tip} className="text-ink-muted font-mono" />;
+  return (
+    <span className="text-ink-faint font-mono">
+      {tip === undefined ? '···' : '—'}
+    </span>
+  );
 }
 
 function NetworkRow({
@@ -193,26 +202,43 @@ function NetworkRow({
 }) {
   const rowInner = (
     <>
-      <LiveDot tone={current ? (currentLive ? 'live' : 'muted') : typeof tip === 'number' ? 'up' : 'muted'} />
-      <span className="flex-1 truncate text-ink">{network.label}</span>
+      <LiveDot
+        tone={
+          current
+            ? currentLive
+              ? 'live'
+              : 'muted'
+            : typeof tip === 'number'
+              ? 'up'
+              : 'muted'
+        }
+      />
+      <span className="text-ink flex-1 truncate">{network.label}</span>
       {current ? (
         <>
           <TipNumber tip={currentSeq} />
-          <Check className="h-3.5 w-3.5 shrink-0 text-brand-600" aria-label="Current" />
+          <Check
+            className="text-brand-600 h-3.5 w-3.5 shrink-0"
+            aria-label="Current"
+          />
         </>
       ) : network.live ? (
         <>
           <TipNumber tip={tip} />
-          <ArrowUpRight className="h-3.5 w-3.5 shrink-0 text-ink-faint" aria-hidden />
+          <ArrowUpRight
+            className="text-ink-faint h-3.5 w-3.5 shrink-0"
+            aria-hidden
+          />
         </>
       ) : (
-        <span className="text-[10px] uppercase tracking-wide text-ink-faint">Soon</span>
+        <span className="text-ink-faint text-[10px] tracking-wide uppercase">
+          Soon
+        </span>
       )}
     </>
   );
 
-  const rowClass =
-    'flex items-center gap-2 rounded-md px-2 py-1.5 text-xs';
+  const rowClass = 'flex items-center gap-2 rounded-md px-2 py-1.5 text-xs';
 
   // Current network: not a link (you're here). Not-yet-live: disabled.
   if (current || !network.live) {
@@ -228,7 +254,11 @@ function NetworkRow({
 
   // Sibling explorer lives on another origin → full-page nav, not client-side.
   return (
-    <a href={network.explorerUrl} onClick={onNavigate} className={`${rowClass} hover:bg-surface-subtle`}>
+    <a
+      href={network.explorerUrl}
+      onClick={onNavigate}
+      className={`${rowClass} hover:bg-surface-subtle`}
+    >
       {rowInner}
     </a>
   );

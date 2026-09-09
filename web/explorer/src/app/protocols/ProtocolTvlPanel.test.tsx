@@ -43,7 +43,9 @@ describe('ProtocolTvlPanel', () => {
 
   it('renders nothing when no row carries TVL (e.g. the bridges category)', () => {
     const { container } = render(
-      <ProtocolTvlPanel rows={[{ name: 'cctp' }, { name: 'rozo', tvl: null }]} />,
+      <ProtocolTvlPanel
+        rows={[{ name: 'cctp' }, { name: 'rozo', tvl: null }]}
+      />,
     );
     expect(container.firstChild).toBeNull();
   });
@@ -62,8 +64,14 @@ const TOTAL: DexTvlTotal = {
   as_of: '2026-09-03T04:30:32Z',
   basis: 'exact sum of the published aquarius and comet figures',
   excluded: [
-    { subject: 'classic liquidity pools', reason: 'CAP-38 pools are not valued yet' },
-    { subject: 'blend', reason: 'lending supplied-value would flatter the headline' },
+    {
+      subject: 'classic liquidity pools',
+      reason: 'CAP-38 pools are not valued yet',
+    },
+    {
+      subject: 'blend',
+      reason: 'lending supplied-value would flatter the headline',
+    },
   ],
 };
 
@@ -99,7 +107,12 @@ describe('ProtocolTvlPanel headline total', () => {
     render(
       <ProtocolTvlPanel
         rows={ROWS}
-        total={{ ...TOTAL, lower_bound: false, unpriced_pools: 0, pools_priced: 225 }}
+        total={{
+          ...TOTAL,
+          lower_bound: false,
+          unpriced_pools: 0,
+          pools_priced: 225,
+        }}
       />,
     );
     expect(screen.getByText(/\$40,206,675\.17/)).toBeInTheDocument();
@@ -116,7 +129,9 @@ describe('ProtocolTvlPanel headline total', () => {
     expect(screen.queryByText('Total value locked')).not.toBeInTheDocument();
     expect(screen.queryByText(/\$0\.00/)).not.toBeInTheDocument();
     expect(screen.queryByText('—')).not.toBeInTheDocument();
-    expect(screen.queryByText(/What this total excludes/)).not.toBeInTheDocument();
+    expect(
+      screen.queryByText(/What this total excludes/),
+    ).not.toBeInTheDocument();
   });
 
   it('withholds the headline when a protocol it sums is not charted', () => {
@@ -125,7 +140,10 @@ describe('ProtocolTvlPanel headline total', () => {
     // a headline of $40.2M no longer reconciles with the single visible
     // bar — so it is not shown rather than shown unreconcilable.
     render(
-      <ProtocolTvlPanel rows={[{ name: 'aquarius', tvl: AQUARIUS_TVL }]} total={TOTAL} />,
+      <ProtocolTvlPanel
+        rows={[{ name: 'aquarius', tvl: AQUARIUS_TVL }]}
+        total={TOTAL}
+      />,
     );
     expect(screen.getByText('Value locked (USD)')).toBeInTheDocument();
     expect(screen.queryByText('Total value locked')).not.toBeInTheDocument();

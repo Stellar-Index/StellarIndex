@@ -36,8 +36,19 @@ export async function generateMetadata({
     title,
     description,
     alternates: { canonical },
-    openGraph: { title, description, url: canonical, type: 'article', images: SITE_OG_IMAGES },
-    twitter: { card: 'summary_large_image', title, description, images: SITE_TWITTER_IMAGES },
+    openGraph: {
+      title,
+      description,
+      url: canonical,
+      type: 'article',
+      images: SITE_OG_IMAGES,
+    },
+    twitter: {
+      card: 'summary_large_image',
+      title,
+      description,
+      images: SITE_TWITTER_IMAGES,
+    },
   };
 }
 
@@ -54,26 +65,26 @@ export default async function ADRPage({
     <div className="mx-auto max-w-4xl space-y-6 px-6 py-8">
       <Link
         href="/research"
-        className="inline-flex items-center gap-1.5 text-sm text-ink-body hover:text-brand-600"
+        className="text-ink-body hover:text-brand-600 inline-flex items-center gap-1.5 text-sm"
       >
         <ArrowLeft className="h-3.5 w-3.5" />
         Back to research
       </Link>
 
-      <header className="space-y-3 border-b border-line pb-6">
+      <header className="border-line space-y-3 border-b pb-6">
         <div className="flex items-center gap-3">
-          <span className="text-xs font-medium uppercase tracking-wider text-ink-muted">
+          <span className="text-ink-muted text-xs font-medium tracking-wider uppercase">
             ADR-{adr.id}
           </span>
           <StatusBadge status={adr.status} />
-          <span className="text-xs text-ink-muted">{adr.date}</span>
+          <span className="text-ink-muted text-xs">{adr.date}</span>
         </div>
         <h1 className="text-2xl font-semibold tracking-tight">{adr.title}</h1>
         <a
           href={`https://github.com/Stellar-Index/StellarIndex/blob/main/${adr.source_path}`}
           target="_blank"
           rel="noreferrer noopener"
-          className="inline-flex items-center gap-1 text-xs text-ink-muted hover:text-brand-600"
+          className="text-ink-muted hover:text-brand-600 inline-flex items-center gap-1 text-xs"
         >
           View source on GitHub
           <ExternalLink className="h-3 w-3" />
@@ -81,7 +92,10 @@ export default async function ADRPage({
       </header>
 
       <article>
-        <Markdown source={stripDuplicateH1(adr.body, adr.title)} sourcePath={adr.source_path} />
+        <Markdown
+          source={stripDuplicateH1(adr.body, adr.title)}
+          sourcePath={adr.source_path}
+        />
       </article>
 
       <RelatedADRs adr={adr} />
@@ -117,8 +131,8 @@ function RelatedADRs({ adr }: { adr: ReturnType<typeof loadADR> }) {
   );
   if (related.length === 0) return null;
   return (
-    <section className="border-t border-line pt-6">
-      <h2 className="mb-3 text-sm font-semibold uppercase tracking-wider text-ink-muted">
+    <section className="border-line border-t pt-6">
+      <h2 className="text-ink-muted mb-3 text-sm font-semibold tracking-wider uppercase">
         Related
       </h2>
       <ul className="space-y-2 text-sm">

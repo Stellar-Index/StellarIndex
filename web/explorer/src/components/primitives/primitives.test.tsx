@@ -29,7 +29,9 @@ describe('domain primitives — render without throwing', () => {
 
   it('RankBadge: moved and brand-new both render', () => {
     expect(render(<RankBadge delta={3} />).container.firstChild).not.toBeNull();
-    expect(render(<RankBadge delta={0} isNew />).container.firstChild).not.toBeNull();
+    expect(
+      render(<RankBadge delta={0} isNew />).container.firstChild,
+    ).not.toBeNull();
   });
 
   it('Sparkline draws an <svg> from its values', () => {
@@ -64,16 +66,19 @@ describe('domain primitives — render without throwing', () => {
 
   it('StreakIndicator: streak and ath variants render', () => {
     expect(
-      render(<StreakIndicator kind="streak" direction="up" days={5} />).container.firstChild,
+      render(<StreakIndicator kind="streak" direction="up" days={5} />)
+        .container.firstChild,
     ).not.toBeNull();
     expect(
-      render(<StreakIndicator kind="ath" at={new Date(0).toISOString()} />).container.firstChild,
+      render(<StreakIndicator kind="ath" at={new Date(0).toISOString()} />)
+        .container.firstChild,
     ).not.toBeNull();
   });
 
   it('AccelerationArrow renders a direction×acceleration glyph', () => {
     expect(
-      render(<AccelerationArrow direction="up" acceleration="increasing" />).container.firstChild,
+      render(<AccelerationArrow direction="up" acceleration="increasing" />)
+        .container.firstChild,
     ).not.toBeNull();
   });
 });

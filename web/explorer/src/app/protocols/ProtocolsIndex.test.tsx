@@ -3,7 +3,8 @@ import { render, screen, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 vi.mock('@/api/client', async () => {
-  const actual = await vi.importActual<typeof import('@/api/client')>('@/api/client');
+  const actual =
+    await vi.importActual<typeof import('@/api/client')>('@/api/client');
   return { ...actual, apiGet: vi.fn() };
 });
 
@@ -61,7 +62,10 @@ const TVL_TOTAL = {
   as_of: '2026-09-03T04:30:32Z',
   basis: 'exact sum of the published aquarius and comet figures',
   excluded: [
-    { subject: 'classic liquidity pools', reason: 'CAP-38 pools are not valued yet' },
+    {
+      subject: 'classic liquidity pools',
+      reason: 'CAP-38 pools are not valued yet',
+    },
   ],
 };
 
@@ -69,7 +73,10 @@ function mockProtocols(tvlTotal?: unknown) {
   vi.mocked(apiGet).mockImplementation(async (path: string) => {
     if (path === '/v1/protocols') {
       return {
-        data: { protocols: PROTOCOLS, ...(tvlTotal ? { tvl_total: tvlTotal } : {}) },
+        data: {
+          protocols: PROTOCOLS,
+          ...(tvlTotal ? { tvl_total: tvlTotal } : {}),
+        },
       } as never;
     }
     return { data: [] } as never;
@@ -77,7 +84,9 @@ function mockProtocols(tvlTotal?: unknown) {
 }
 
 function renderIndex() {
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
   return render(
     <QueryClientProvider client={client}>
       <ProtocolsIndex />

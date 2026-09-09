@@ -4,7 +4,13 @@ import { useRouter } from 'next/navigation';
 import { useEffect, type ReactNode } from 'react';
 
 import { useMe, type MeResponse } from '@/api/hooks';
-import { Button, Container, EmptyState, Section, Skeleton } from '@/components/ui';
+import {
+  Button,
+  Container,
+  EmptyState,
+  Section,
+  Skeleton,
+} from '@/components/ui';
 
 // AccountGate is the client auth gate for every /dashboard/* page. It
 // reuses `useMe()` — the same cookie-authed `/v1/account/me` probe the
@@ -68,9 +74,7 @@ export function AccountGate({
           <EmptyState
             title="Couldn't verify your sign-in"
             description="The account service didn't respond in time. Check your connection and try again."
-            action={
-              <Button onClick={() => me.refetch()}>Retry</Button>
-            }
+            action={<Button onClick={() => me.refetch()}>Retry</Button>}
           />
         </Section>
       </Container>
@@ -94,7 +98,7 @@ function AccountGateSkeleton() {
           <Skeleton className="h-8 w-64" />
           <Skeleton className="h-4 w-96 max-w-full" />
         </div>
-        <div className="grid grid-cols-1 gap-px overflow-hidden rounded-card border border-line bg-line sm:grid-cols-2 lg:grid-cols-4">
+        <div className="rounded-card border-line bg-line grid grid-cols-1 gap-px overflow-hidden border sm:grid-cols-2 lg:grid-cols-4">
           {Array.from({ length: 4 }).map((_, i) => (
             <div key={i} className="bg-surface p-5">
               <Skeleton className="h-3 w-24" />
@@ -102,7 +106,7 @@ function AccountGateSkeleton() {
             </div>
           ))}
         </div>
-        <Skeleton className="h-48 w-full rounded-card" />
+        <Skeleton className="rounded-card h-48 w-full" />
       </Section>
     </Container>
   );

@@ -14,9 +14,12 @@
 // real registrable domain, not a bare label or an IP-with-port).
 // No `@`, no `/`, no `:`, no whitespace, no scheme. Anything that
 // fails is rendered as plain text by the caller instead of a link.
-const HOSTNAME_RE = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/;
+const HOSTNAME_RE =
+  /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/;
 
-export function isSafeHomeDomain(domain: string | undefined | null): domain is string {
+export function isSafeHomeDomain(
+  domain: string | undefined | null,
+): domain is string {
   if (!domain) return false;
   if (domain.length > 253) return false;
   // Reject anything with structural URL characters up front — the
@@ -76,7 +79,9 @@ function isPrivateHostname(hostname: string): boolean {
  * remote issuer-supplied image URL. Reject scheme !== https, missing
  * host, or a private/loopback/link-local/localhost host.
  */
-export function isSafePublicImageUrl(url: string | undefined | null): url is string {
+export function isSafePublicImageUrl(
+  url: string | undefined | null,
+): url is string {
   if (!url) return false;
   let parsed: URL;
   try {

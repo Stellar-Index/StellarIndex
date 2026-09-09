@@ -35,20 +35,28 @@ describe('LiquidityTabPanel', () => {
       throw new Error('ETIMEDOUT');
     });
     await renderPanel();
-    expect(screen.getByText(/Pool list unavailable for this build/)).toBeInTheDocument();
-    expect(screen.queryByText(/No DEX pools observed touching/)).not.toBeInTheDocument();
+    expect(
+      screen.getByText(/Pool list unavailable for this build/),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText(/No DEX pools observed touching/),
+    ).not.toBeInTheDocument();
   });
 
   it('says the pool list is unavailable on a 503', async () => {
     mockFetch(async () => jsonResponse({}, 503));
     await renderPanel();
-    expect(screen.getByText(/Pool list unavailable for this build/)).toBeInTheDocument();
+    expect(
+      screen.getByText(/Pool list unavailable for this build/),
+    ).toBeInTheDocument();
   });
 
   it('keeps the genuine empty claim when the API returns no pools', async () => {
     mockFetch(async () => jsonResponse({ data: [] }));
     await renderPanel();
-    expect(screen.getByText(/No DEX pools observed touching/)).toBeInTheDocument();
+    expect(
+      screen.getByText(/No DEX pools observed touching/),
+    ).toBeInTheDocument();
     expect(screen.queryByText(/Pool list unavailable/)).not.toBeInTheDocument();
   });
 
@@ -70,6 +78,8 @@ describe('LiquidityTabPanel', () => {
     await renderPanel();
     expect(screen.getByText('soroswap')).toBeInTheDocument();
     expect(screen.queryByText(/Pool list unavailable/)).not.toBeInTheDocument();
-    expect(screen.queryByText(/No DEX pools observed touching/)).not.toBeInTheDocument();
+    expect(
+      screen.queryByText(/No DEX pools observed touching/),
+    ).not.toBeInTheDocument();
   });
 });

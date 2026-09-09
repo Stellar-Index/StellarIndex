@@ -47,7 +47,9 @@ describe('throttleDelayMs', () => {
   });
 
   it('jitters the fallback so fanned-out pages do not resynchronise', () => {
-    const samples = new Set(Array.from({ length: 40 }, () => throttleDelayMs(null, 0)));
+    const samples = new Set(
+      Array.from({ length: 40 }, () => throttleDelayMs(null, 0)),
+    );
     expect(samples.size).toBeGreaterThan(1);
   });
 
@@ -55,10 +57,9 @@ describe('throttleDelayMs', () => {
     // 8 waits of capped exponential backoff — the budget the fetch loop
     // allows. Must comfortably exceed the anonymous tier's fixed window,
     // otherwise a build dies inside the very window it is waiting out.
-    const total = Array.from({ length: 8 }, (_, i) => throttleDelayMs(null, i)).reduce(
-      (a, b) => a + b,
-      0,
-    );
+    const total = Array.from({ length: 8 }, (_, i) =>
+      throttleDelayMs(null, i),
+    ).reduce((a, b) => a + b, 0);
     expect(total).toBeGreaterThan(90_000);
   });
 });

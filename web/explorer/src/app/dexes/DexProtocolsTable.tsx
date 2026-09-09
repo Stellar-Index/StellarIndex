@@ -35,7 +35,9 @@ export function DexProtocolsTable() {
   const q = useQuery<SourceRow[]>({
     queryKey: ['/v1/sources', 'stats,sparkline', 'dex'],
     queryFn: async () => {
-      const env = await apiGet<{ data: SourceRow[] }>('/v1/sources', { include: 'stats,sparkline' });
+      const env = await apiGet<{ data: SourceRow[] }>('/v1/sources', {
+        include: 'stats,sparkline',
+      });
       const arr = env.data ?? [];
       return arr
         .filter((s) => s.class === 'exchange' && s.subclass === 'dex')
@@ -77,7 +79,9 @@ export function DexProtocolsTable() {
   // here even when the server admitted it. A headline that does not
   // reconcile with the column below is a bare number again, which is
   // the one thing this surface exists not to serve.
-  const charted = new Set(rows.filter((r) => tvls[r.name] != null).map((r) => r.name));
+  const charted = new Set(
+    rows.filter((r) => tvls[r.name] != null).map((r) => r.name),
+  );
   const headline =
     tvlTotal != null &&
     tvlTotal.protocols.length > 0 &&
@@ -99,9 +103,9 @@ export function DexProtocolsTable() {
         </div>
       )}
       <div className="overflow-x-auto">
-        <table className="min-w-full divide-y divide-line text-sm">
+        <table className="divide-line min-w-full divide-y text-sm">
           <thead>
-            <tr className="text-left text-[10px] uppercase tracking-wider text-ink-muted">
+            <tr className="text-ink-muted text-left text-[10px] tracking-wider uppercase">
               <Th>Protocol</Th>
               <Th align="right">TVL</Th>
               <Th align="right">24h volume</Th>
@@ -111,24 +115,33 @@ export function DexProtocolsTable() {
               <Th align="right">VWAP weight</Th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-line-subtle">
+          <tbody className="divide-line-subtle divide-y">
             {q.isLoading && (
               <tr>
-                <td colSpan={7} className="px-4 py-6 text-center text-sm text-ink-muted">
+                <td
+                  colSpan={7}
+                  className="text-ink-muted px-4 py-6 text-center text-sm"
+                >
                   Loading protocols…
                 </td>
               </tr>
             )}
             {!q.isLoading && !registryAvailable && (
               <tr>
-                <td colSpan={7} className="px-4 py-6 text-center text-sm text-ink-muted">
+                <td
+                  colSpan={7}
+                  className="text-ink-muted px-4 py-6 text-center text-sm"
+                >
                   Protocol list unavailable right now — retry shortly.
                 </td>
               </tr>
             )}
             {!q.isLoading && registryAvailable && rows.length === 0 && (
               <tr>
-                <td colSpan={7} className="px-4 py-6 text-center text-sm text-ink-muted">
+                <td
+                  colSpan={7}
+                  className="text-ink-muted px-4 py-6 text-center text-sm"
+                >
                   No DEX protocols reporting 24h activity.
                 </td>
               </tr>
@@ -141,7 +154,7 @@ export function DexProtocolsTable() {
                   <Td>
                     <Link
                       href={`/dexes/${r.name}`}
-                      className={`inline-block rounded-sm px-1.5 py-0.5 text-[11px] font-medium uppercase tracking-wider hover:underline ${tone}`}
+                      className={`inline-block rounded-sm px-1.5 py-0.5 text-[11px] font-medium tracking-wider uppercase hover:underline ${tone}`}
                     >
                       {r.name}
                     </Link>
@@ -151,7 +164,9 @@ export function DexProtocolsTable() {
                   </Td>
                   <Td align="right">
                     {vol != null && Number.isFinite(vol) && vol > 0 ? (
-                      <span className="font-mono tabular-nums">${formatCompact(vol)}</span>
+                      <span className="font-mono tabular-nums">
+                        ${formatCompact(vol)}
+                      </span>
                     ) : (
                       <span className="text-ink-faint">—</span>
                     )}
@@ -160,7 +175,7 @@ export function DexProtocolsTable() {
                     <SourceSparkline buckets={r.volume_history_24h} />
                   </Td>
                   <Td align="right">
-                    <span className="font-mono tabular-nums text-ink-body">
+                    <span className="text-ink-body font-mono tabular-nums">
                       {r.trade_count_24h && r.trade_count_24h > 0
                         ? formatCompact(r.trade_count_24h)
                         : statsAvailable
@@ -169,7 +184,7 @@ export function DexProtocolsTable() {
                     </span>
                   </Td>
                   <Td align="right">
-                    <span className="font-mono tabular-nums text-ink-body">
+                    <span className="text-ink-body font-mono tabular-nums">
                       {r.markets_count_24h && r.markets_count_24h > 0
                         ? formatCompact(r.markets_count_24h)
                         : statsAvailable
@@ -180,7 +195,7 @@ export function DexProtocolsTable() {
                   <Td align="right">
                     <Link
                       href={`/dexes/${r.name}`}
-                      className="text-xs text-brand-600 hover:underline"
+                      className="text-brand-600 text-xs hover:underline"
                     >
                       details →
                     </Link>
@@ -205,7 +220,8 @@ export function DexProtocolsTable() {
 function TvlCell({ tvl }: { tvl?: ProtocolTvl }) {
   if (!tvl) return <span className="text-ink-faint">—</span>;
   const v = Number(tvl.tvl_usd);
-  if (!Number.isFinite(v) || v <= 0) return <span className="text-ink-faint">—</span>;
+  if (!Number.isFinite(v) || v <= 0)
+    return <span className="text-ink-faint">—</span>;
   const lowerBound = tvl.unpriced_pools > 0;
   return (
     <span className="font-mono tabular-nums" title={tvl.basis}>
@@ -214,7 +230,13 @@ function TvlCell({ tvl }: { tvl?: ProtocolTvl }) {
   );
 }
 
-function Th({ children, align }: { children: React.ReactNode; align?: 'left' | 'right' }) {
+function Th({
+  children,
+  align,
+}: {
+  children: React.ReactNode;
+  align?: 'left' | 'right';
+}) {
   return (
     <th
       scope="col"
@@ -225,8 +247,18 @@ function Th({ children, align }: { children: React.ReactNode; align?: 'left' | '
   );
 }
 
-function Td({ children, align }: { children: React.ReactNode; align?: 'left' | 'right' }) {
+function Td({
+  children,
+  align,
+}: {
+  children: React.ReactNode;
+  align?: 'left' | 'right';
+}) {
   return (
-    <td className={`px-4 py-2 ${align === 'right' ? 'text-right' : 'text-left'}`}>{children}</td>
+    <td
+      className={`px-4 py-2 ${align === 'right' ? 'text-right' : 'text-left'}`}
+    >
+      {children}
+    </td>
   );
 }

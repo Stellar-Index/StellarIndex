@@ -12,7 +12,13 @@ import { Container, PageHeader } from '@/components/ui';
 import { CURRENT_NETWORK } from '@/lib/networks';
 const CEX_INFO: Record<
   string,
-  { name: string; type: string; homepage: string; docsUrl: string; blurb: string }
+  {
+    name: string;
+    type: string;
+    homepage: string;
+    docsUrl: string;
+    blurb: string;
+  }
 > = {
   binance: {
     name: 'Binance',
@@ -69,8 +75,19 @@ export async function generateMetadata({
     title,
     description,
     alternates: { canonical },
-    openGraph: { title, description, url: canonical, type: 'website', images: SITE_OG_IMAGES },
-    twitter: { card: 'summary_large_image', title, description, images: SITE_TWITTER_IMAGES },
+    openGraph: {
+      title,
+      description,
+      url: canonical,
+      type: 'website',
+      images: SITE_OG_IMAGES,
+    },
+    twitter: {
+      card: 'summary_large_image',
+      title,
+      description,
+      images: SITE_TWITTER_IMAGES,
+    },
   };
 }
 
@@ -88,7 +105,7 @@ export default async function ExchangeDetailPage({
       {/* FEC A1-6: the visible trail + its BreadcrumbList JSON-LD render
           from the SAME Crumb[] (via PageHeader → Breadcrumbs). This page
           used to emit hand-rolled LD with no visible crumbs. */}
-      <header className="space-y-2 border-b border-line pb-4">
+      <header className="border-line space-y-2 border-b pb-4">
         <PageHeader
           breadcrumbs={[
             { label: 'Home', href: '/' },
@@ -99,14 +116,19 @@ export default async function ExchangeDetailPage({
           title={info.name}
           description={info.blurb}
         />
-        <p className="max-w-3xl rounded-md border border-warn-300 bg-warn-50 p-3 text-xs text-warn-700">
-          <span className="font-semibold">Curated subscription, not a full mirror.</span>{' '}
-          Stellar Index is the protocol explorer for the Stellar network, with an independent price feed; from each CEX we
-          subscribe to the pairs that triangulate to XLM (the largest XLM
-          markets, the BTC/ETH crypto anchors, and ~17 top-cap globals
-          for cross-venue VWAP coverage). The full venue order book is
-          out of scope — see the source code at{' '}
-          <code className="font-mono">internal/sources/external/cex/{name}/</code>.
+        <p className="border-warn-300 bg-warn-50 text-warn-700 max-w-3xl rounded-md border p-3 text-xs">
+          <span className="font-semibold">
+            Curated subscription, not a full mirror.
+          </span>{' '}
+          Stellar Index is the protocol explorer for the Stellar network, with
+          an independent price feed; from each CEX we subscribe to the pairs
+          that triangulate to XLM (the largest XLM markets, the BTC/ETH crypto
+          anchors, and ~17 top-cap globals for cross-venue VWAP coverage). The
+          full venue order book is out of scope — see the source code at{' '}
+          <code className="font-mono">
+            internal/sources/external/cex/{name}/
+          </code>
+          .
         </p>
       </header>
 
@@ -119,7 +141,7 @@ export default async function ExchangeDetailPage({
       <div className="flex flex-wrap gap-3 text-xs">
         <Link
           href={`/sources/${name}`}
-          className="inline-flex items-center gap-1 text-ink-muted hover:text-brand-600"
+          className="text-ink-muted hover:text-brand-600 inline-flex items-center gap-1"
         >
           Source registry detail →
         </Link>
@@ -127,7 +149,7 @@ export default async function ExchangeDetailPage({
           href={info.homepage}
           target="_blank"
           rel="noreferrer noopener"
-          className="inline-flex items-center gap-1 text-ink-muted hover:underline"
+          className="text-ink-muted inline-flex items-center gap-1 hover:underline"
         >
           {info.name} homepage
           <ExternalLink className="h-3 w-3" />
@@ -136,7 +158,7 @@ export default async function ExchangeDetailPage({
           href={info.docsUrl}
           target="_blank"
           rel="noreferrer noopener"
-          className="inline-flex items-center gap-1 text-ink-muted hover:underline"
+          className="text-ink-muted inline-flex items-center gap-1 hover:underline"
         >
           API docs
           <ExternalLink className="h-3 w-3" />
@@ -145,4 +167,3 @@ export default async function ExchangeDetailPage({
     </Container>
   );
 }
-

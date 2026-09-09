@@ -34,7 +34,10 @@ export function VenueChart({ venue }: { venue: string }) {
   const pairsLoading = pairsQuery.isLoading;
   const pairsError = pairsQuery.error ? pairsQuery.error.message : null;
 
-  const [selected, setSelected] = useState<{ base: string; quote: string } | null>(null);
+  const [selected, setSelected] = useState<{
+    base: string;
+    quote: string;
+  } | null>(null);
   // Default-select the venue's top pair once its list resolves, and
   // re-default if the venue prop changes. Adjust state during render
   // (tracking the venue we've defaulted against) rather than in an
@@ -42,20 +45,32 @@ export function VenueChart({ venue }: { venue: string }) {
   const [defaultedFor, setDefaultedFor] = useState<string | null>(null);
   if (!pairsLoading && defaultedFor !== venue) {
     setDefaultedFor(venue);
-    setSelected(pairs[0] ? { base: pairs[0].base, quote: pairs[0].quote } : null);
+    setSelected(
+      pairs[0] ? { base: pairs[0].base, quote: pairs[0].quote } : null,
+    );
   }
 
   if (pairsLoading) {
     return (
-      <Panel headingLevel={2} title="Live chart" hint="Loading pairs…" source={asExample('/v1/markets', { source: venue })}>
+      <Panel
+        headingLevel={2}
+        title="Live chart"
+        hint="Loading pairs…"
+        source={asExample('/v1/markets', { source: venue })}
+      >
         <div className="h-[380px]" />
       </Panel>
     );
   }
   if (pairsError) {
     return (
-      <Panel headingLevel={2} title="Live chart" hint="Pair list unavailable" source={asExample('/v1/markets', { source: venue })}>
-        <div className="flex h-[380px] items-center justify-center px-4 text-center text-sm text-ink-muted">
+      <Panel
+        headingLevel={2}
+        title="Live chart"
+        hint="Pair list unavailable"
+        source={asExample('/v1/markets', { source: venue })}
+      >
+        <div className="text-ink-muted flex h-[380px] items-center justify-center px-4 text-center text-sm">
           Couldn&apos;t load pairs for this venue ({pairsError}).
         </div>
       </Panel>
@@ -63,8 +78,13 @@ export function VenueChart({ venue }: { venue: string }) {
   }
   if (pairs.length === 0) {
     return (
-      <Panel headingLevel={2} title="Live chart" hint="No pairs reporting" source={asExample('/v1/markets', { source: venue })}>
-        <div className="flex h-[380px] items-center justify-center text-sm text-ink-muted">
+      <Panel
+        headingLevel={2}
+        title="Live chart"
+        hint="No pairs reporting"
+        source={asExample('/v1/markets', { source: venue })}
+      >
+        <div className="text-ink-muted flex h-[380px] items-center justify-center text-sm">
           No pairs reporting in the last 14 days.
         </div>
       </Panel>
@@ -91,7 +111,11 @@ export function VenueChart({ venue }: { venue: string }) {
       }
       bodyClassName="space-y-3"
     >
-      <PairPicker pairs={pairs} value={selected} onChange={(p) => setSelected(p)} />
+      <PairPicker
+        pairs={pairs}
+        value={selected}
+        onChange={(p) => setSelected(p)}
+      />
       {selected && (
         <MarketChart
           base={selected.base}
@@ -119,15 +143,17 @@ function PairPicker({
   onChange: (p: { base: string; quote: string }) => void;
 }) {
   return (
-    <label className="inline-flex items-center gap-1.5 rounded-md border border-line bg-surface px-2 py-1">
-      <span className="text-[10px] font-medium uppercase tracking-wider text-ink-muted">Pair</span>
+    <label className="border-line bg-surface inline-flex items-center gap-1.5 rounded-md border px-2 py-1">
+      <span className="text-ink-muted text-[10px] font-medium tracking-wider uppercase">
+        Pair
+      </span>
       <select
         value={value ? `${value.base}|${value.quote}` : ''}
         onChange={(e) => {
           const [base, quote] = e.target.value.split('|');
           onChange({ base, quote });
         }}
-        className="bg-transparent text-xs font-mono uppercase tracking-wider text-ink-body focus:outline-hidden"
+        className="text-ink-body bg-transparent font-mono text-xs tracking-wider uppercase focus:outline-hidden"
       >
         {pairs.map((p) => (
           <option key={`${p.base}|${p.quote}`} value={`${p.base}|${p.quote}`}>

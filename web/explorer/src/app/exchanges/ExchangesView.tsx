@@ -37,7 +37,9 @@ export function ExchangesView() {
   const q = useQuery<SourceRow[]>({
     queryKey: ['/v1/sources', 'stats,sparkline', 'cex'],
     queryFn: async () => {
-      const env = await apiGet<{ data: SourceRow[] }>('/v1/sources', { include: 'stats,sparkline' });
+      const env = await apiGet<{ data: SourceRow[] }>('/v1/sources', {
+        include: 'stats,sparkline',
+      });
       const arr = env.data ?? [];
       return arr
         .filter((s) => s.class === 'exchange' && s.subclass === 'cex')
@@ -66,7 +68,10 @@ export function ExchangesView() {
       r.trade_count_24h != null ||
       r.markets_count_24h != null,
   );
-  const totalVol = rows.reduce((s, r) => s + (r.volume_24h_usd ? Number(r.volume_24h_usd) : 0), 0);
+  const totalVol = rows.reduce(
+    (s, r) => s + (r.volume_24h_usd ? Number(r.volume_24h_usd) : 0),
+    0,
+  );
   const totalTrades = rows.reduce((s, r) => s + (r.trade_count_24h ?? 0), 0);
   const totalMarkets = rows.reduce((s, r) => s + (r.markets_count_24h ?? 0), 0);
 
@@ -92,13 +97,24 @@ export function ExchangesView() {
       {rows.length > 0 && (
         <StatGrid cols={3}>
           <StatCell>
-            <Stat label="24h volume" value={statsAvailable ? `$${formatCompact(totalVol)}` : '—'} />
+            <Stat
+              label="24h volume"
+              value={statsAvailable ? `$${formatCompact(totalVol)}` : '—'}
+            />
           </StatCell>
           <StatCell>
-            <Stat label="24h trades" value={statsAvailable ? formatCompact(totalTrades) : '—'} />
+            <Stat
+              label="24h trades"
+              value={statsAvailable ? formatCompact(totalTrades) : '—'}
+            />
           </StatCell>
           <StatCell>
-            <Stat label="Pairs covered" value={statsAvailable ? totalMarkets.toLocaleString('en-US') : '—'} />
+            <Stat
+              label="Pairs covered"
+              value={
+                statsAvailable ? totalMarkets.toLocaleString('en-US') : '—'
+              }
+            />
           </StatCell>
         </StatGrid>
       )}
@@ -136,21 +152,30 @@ export function ExchangesView() {
             <TBody>
               {q.isLoading && (
                 <tr>
-                  <td colSpan={7} className="px-4 py-6 text-center text-sm text-ink-muted">
+                  <td
+                    colSpan={7}
+                    className="text-ink-muted px-4 py-6 text-center text-sm"
+                  >
                     Loading exchanges…
                   </td>
                 </tr>
               )}
               {!q.isLoading && !registryAvailable && (
                 <tr>
-                  <td colSpan={7} className="px-4 py-6 text-center text-sm text-ink-muted">
+                  <td
+                    colSpan={7}
+                    className="text-ink-muted px-4 py-6 text-center text-sm"
+                  >
                     Exchange registry unavailable right now — retry shortly.
                   </td>
                 </tr>
               )}
               {!q.isLoading && registryAvailable && rows.length === 0 && (
                 <tr>
-                  <td colSpan={7} className="px-4 py-6 text-center text-sm text-ink-muted">
+                  <td
+                    colSpan={7}
+                    className="text-ink-muted px-4 py-6 text-center text-sm"
+                  >
                     No CEX sources reporting.
                   </td>
                 </tr>
@@ -163,19 +188,23 @@ export function ExchangesView() {
                 return (
                   <TR key={r.name}>
                     <Td>
-                      <span className="font-mono text-[11px] text-ink-faint">{i + 1}</span>
+                      <span className="text-ink-faint font-mono text-[11px]">
+                        {i + 1}
+                      </span>
                     </Td>
                     <Td>
                       <Link
                         href={`/exchanges/${r.name}`}
-                        className={`inline-block rounded-sm px-1.5 py-0.5 text-[11px] font-medium uppercase tracking-wider hover:underline ${tone}`}
+                        className={`inline-block rounded-sm px-1.5 py-0.5 text-[11px] font-medium tracking-wider uppercase hover:underline ${tone}`}
                       >
                         {label}
                       </Link>
                     </Td>
                     <Td align="right">
                       {vol > 0 ? (
-                        <span className="font-mono tabular-nums">${formatCompact(vol)}</span>
+                        <span className="font-mono tabular-nums">
+                          ${formatCompact(vol)}
+                        </span>
                       ) : (
                         <span className="text-ink-faint">—</span>
                       )}
@@ -184,7 +213,7 @@ export function ExchangesView() {
                       <SourceSparkline buckets={r.volume_history_24h} />
                     </Td>
                     <Td align="right">
-                      <span className="font-mono tabular-nums text-ink-body">
+                      <span className="text-ink-body font-mono tabular-nums">
                         {r.trade_count_24h && r.trade_count_24h > 0
                           ? formatCompact(r.trade_count_24h)
                           : statsAvailable
@@ -193,19 +222,19 @@ export function ExchangesView() {
                       </span>
                     </Td>
                     <Td align="right">
-                      <span className="font-mono tabular-nums text-ink-body">
+                      <span className="text-ink-body font-mono tabular-nums">
                         {statsAvailable ? (r.markets_count_24h ?? 0) : '—'}
                       </span>
                     </Td>
                     <Td align="right">
                       <div className="inline-flex items-center gap-2">
-                        <div className="h-1.5 w-16 overflow-hidden rounded-full bg-line">
+                        <div className="bg-line h-1.5 w-16 overflow-hidden rounded-full">
                           <div
-                            className="h-full bg-brand-500"
+                            className="bg-brand-500 h-full"
                             style={{ width: `${Math.min(100, share)}%` }}
                           />
                         </div>
-                        <span className="font-mono tabular-nums text-xs text-ink-muted">
+                        <span className="text-ink-muted font-mono text-xs tabular-nums">
                           {share.toFixed(1)}%
                         </span>
                       </div>
@@ -220,14 +249,14 @@ export function ExchangesView() {
 
       <AllCEXMarkets />
 
-      <p className="text-xs text-ink-muted">
-        Sources are pulled from the static venue registry; per-venue
-        24h activity is aggregated from <code className="font-mono text-[11px]">trades</code>{' '}
-        in TimescaleDB. We deliberately subscribe to a curated set of
-        pairs per venue (the top-liquidity XLM markets and the
-        crypto anchors that triangulate into them); see the per-venue
-        page for the full list. Reach the per-pair candlestick view
-        via any pair link below.
+      <p className="text-ink-muted text-xs">
+        Sources are pulled from the static venue registry; per-venue 24h
+        activity is aggregated from{' '}
+        <code className="font-mono text-[11px]">trades</code> in TimescaleDB. We
+        deliberately subscribe to a curated set of pairs per venue (the
+        top-liquidity XLM markets and the crypto anchors that triangulate into
+        them); see the per-venue page for the full list. Reach the per-pair
+        candlestick view via any pair link below.
       </p>
     </Container>
   );
@@ -304,14 +333,20 @@ function AllCEXMarkets() {
           <TBody>
             {queries.isLoading && (
               <tr>
-                <td colSpan={6} className="px-4 py-6 text-center text-sm text-ink-muted">
+                <td
+                  colSpan={6}
+                  className="text-ink-muted px-4 py-6 text-center text-sm"
+                >
                   Loading pairs…
                 </td>
               </tr>
             )}
             {!queries.isLoading && !marketsAvailable && (
               <tr>
-                <td colSpan={6} className="px-4 py-6 text-center text-sm text-ink-muted">
+                <td
+                  colSpan={6}
+                  className="text-ink-muted px-4 py-6 text-center text-sm"
+                >
                   Pair list unavailable right now — at least one venue query
                   didn&apos;t return. Retry shortly.
                 </td>
@@ -319,7 +354,10 @@ function AllCEXMarkets() {
             )}
             {!queries.isLoading && marketsAvailable && markets.length === 0 && (
               <tr>
-                <td colSpan={6} className="px-4 py-6 text-center text-sm text-ink-muted">
+                <td
+                  colSpan={6}
+                  className="text-ink-muted px-4 py-6 text-center text-sm"
+                >
                   No CEX pairs reporting.
                 </td>
               </tr>
@@ -331,12 +369,14 @@ function AllCEXMarkets() {
               return (
                 <TR key={`${m.source}|${m.base}|${m.quote}`}>
                   <Td>
-                    <span className="font-mono text-[11px] text-ink-faint">{i + 1}</span>
+                    <span className="text-ink-faint font-mono text-[11px]">
+                      {i + 1}
+                    </span>
                   </Td>
                   <Td>
                     <Link
                       href={`/exchanges/${m.source}`}
-                      className={`inline-block rounded-sm px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wider hover:underline ${tone}`}
+                      className={`inline-block rounded-sm px-1.5 py-0.5 text-[10px] font-medium tracking-wider uppercase hover:underline ${tone}`}
                     >
                       {LABEL[m.source ?? ''] ?? m.source}
                     </Link>
@@ -344,14 +384,15 @@ function AllCEXMarkets() {
                   <Td>
                     <Link
                       href={`/markets/${encodeURIComponent(slug)}`}
-                      className="font-mono text-xs hover:text-brand-600"
+                      className="hover:text-brand-600 font-mono text-xs"
                     >
-                      {m.base.replace('crypto:', '')} / {m.quote.replace('crypto:', '').replace('fiat:', '')}
+                      {m.base.replace('crypto:', '')} /{' '}
+                      {m.quote.replace('crypto:', '').replace('fiat:', '')}
                     </Link>
                   </Td>
                   <Td align="right">
                     {m.last_price && Number.isFinite(Number(m.last_price)) ? (
-                      <span className="font-mono tabular-nums text-ink-body">
+                      <span className="text-ink-body font-mono tabular-nums">
                         {formatPairPrice(Number(m.last_price))}
                       </span>
                     ) : (
@@ -360,14 +401,18 @@ function AllCEXMarkets() {
                   </Td>
                   <Td align="right">
                     {vol != null && Number.isFinite(vol) && vol > 0 ? (
-                      <span className="font-mono tabular-nums">${formatCompact(vol)}</span>
+                      <span className="font-mono tabular-nums">
+                        ${formatCompact(vol)}
+                      </span>
                     ) : (
                       <span className="text-ink-faint">—</span>
                     )}
                   </Td>
                   <Td align="right">
-                    <span className="font-mono tabular-nums text-ink-body">
-                      {m.trade_count_24h > 0 ? formatCompact(m.trade_count_24h) : '0'}
+                    <span className="text-ink-body font-mono tabular-nums">
+                      {m.trade_count_24h > 0
+                        ? formatCompact(m.trade_count_24h)
+                        : '0'}
                     </span>
                   </Td>
                 </TR>

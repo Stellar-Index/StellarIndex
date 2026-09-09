@@ -3,7 +3,8 @@ import { render, screen, waitFor, within } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 vi.mock('@/api/client', async () => {
-  const actual = await vi.importActual<typeof import('@/api/client')>('@/api/client');
+  const actual =
+    await vi.importActual<typeof import('@/api/client')>('@/api/client');
   return { ...actual, apiGet: vi.fn() };
 });
 
@@ -16,7 +17,9 @@ import { OraclesView } from './OraclesView';
 // the network made from a request that never answered.
 describe('OraclesView', () => {
   function renderView() {
-    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
     return render(
       <QueryClientProvider client={client}>
         <OraclesView />
@@ -28,9 +31,13 @@ describe('OraclesView', () => {
     vi.mocked(apiGet).mockRejectedValue(new Error('HTTP 503'));
     renderView();
     await waitFor(() =>
-      expect(screen.getByText(/Oracle registry unavailable right now/)).toBeInTheDocument(),
+      expect(
+        screen.getByText(/Oracle registry unavailable right now/),
+      ).toBeInTheDocument(),
     );
-    expect(screen.getByText(/Oracle observations unavailable right now/)).toBeInTheDocument();
+    expect(
+      screen.getByText(/Oracle observations unavailable right now/),
+    ).toBeInTheDocument();
     expect(screen.queryByText(/No oracles registered/)).not.toBeInTheDocument();
     expect(
       screen.queryByText(/No oracle observations in the last 7 days/),
@@ -40,8 +47,12 @@ describe('OraclesView', () => {
   it('renders the genuine empty states when the API answers with no rows', async () => {
     vi.mocked(apiGet).mockResolvedValue({ data: [] });
     renderView();
-    await waitFor(() => expect(screen.getByText(/No oracles registered/)).toBeInTheDocument());
-    expect(screen.getByText(/No oracle observations in the last 7 days/)).toBeInTheDocument();
+    await waitFor(() =>
+      expect(screen.getByText(/No oracles registered/)).toBeInTheDocument(),
+    );
+    expect(
+      screen.getByText(/No oracle observations in the last 7 days/),
+    ).toBeInTheDocument();
     expect(screen.queryByText(/unavailable right now/)).not.toBeInTheDocument();
   });
 
@@ -82,7 +93,9 @@ describe('OraclesView', () => {
       mockApi([mapped]);
       renderView();
       await waitFor(() => expect(screen.getByText('BTC')).toBeInTheDocument());
-      expect(apiGet).toHaveBeenCalledWith('/v1/oracle/streams', { include_unmapped: 'true' });
+      expect(apiGet).toHaveBeenCalledWith('/v1/oracle/streams', {
+        include_unmapped: 'true',
+      });
     });
 
     it('lists a raw: row only in the Unmapped feeds section, by on-wire symbol, unlinked', async () => {
@@ -90,13 +103,19 @@ describe('OraclesView', () => {
       renderView();
       await waitFor(() => expect(screen.getByText('BTC')).toBeInTheDocument());
 
-      const mappedPanel = screen.getByText(/^Price streams/).closest('section') as HTMLElement;
-      const unmappedPanel = screen.getByText(/^Unmapped feeds/).closest('section') as HTMLElement;
+      const mappedPanel = screen
+        .getByText(/^Price streams/)
+        .closest('section') as HTMLElement;
+      const unmappedPanel = screen
+        .getByText(/^Unmapped feeds/)
+        .closest('section') as HTMLElement;
       expect(mappedPanel).not.toBe(unmappedPanel);
 
       // Mapped table: exactly one mapped row; no raw symbol in it.
       expect(within(mappedPanel).getByText('BTC')).toBeInTheDocument();
-      expect(within(mappedPanel).queryByText(/NOTACOIN/)).not.toBeInTheDocument();
+      expect(
+        within(mappedPanel).queryByText(/NOTACOIN/),
+      ).not.toBeInTheDocument();
       expect(screen.getByText('Price streams (1 active)')).toBeInTheDocument();
 
       // Unmapped section: the raw on-wire symbol, verbatim, not linked
@@ -104,18 +123,25 @@ describe('OraclesView', () => {
       expect(screen.getByText('Unmapped feeds (1)')).toBeInTheDocument();
       const sym = within(unmappedPanel).getByText('NOTACOIN');
       expect(sym.closest('a')).toBeNull();
-      expect(sym).toHaveAttribute('title', expect.stringContaining('raw:NOTACOIN'));
-      const assetHrefs = Array.from(document.querySelectorAll('a[href^="/assets/"]')).map((a) =>
-        a.getAttribute('href'),
+      expect(sym).toHaveAttribute(
+        'title',
+        expect.stringContaining('raw:NOTACOIN'),
       );
-      expect(assetHrefs.some((h) => h?.toLowerCase().includes('raw'))).toBe(false);
+      const assetHrefs = Array.from(
+        document.querySelectorAll('a[href^="/assets/"]'),
+      ).map((a) => a.getAttribute('href'));
+      expect(assetHrefs.some((h) => h?.toLowerCase().includes('raw'))).toBe(
+        false,
+      );
     });
 
     it('renders the genuine empty state for unmapped feeds when the API answers with none', async () => {
       mockApi([mapped]);
       renderView();
       await waitFor(() => expect(screen.getByText('BTC')).toBeInTheDocument());
-      expect(screen.getByText(/No unmapped feeds in the last 7 days/)).toBeInTheDocument();
+      expect(
+        screen.getByText(/No unmapped feeds in the last 7 days/),
+      ).toBeInTheDocument();
     });
   });
 });

@@ -8,7 +8,8 @@ const subscribe = () => () => {};
 
 function readLastSegment(): string {
   if (typeof window === 'undefined') return '';
-  const seg = window.location.pathname.replace(/\/+$/, '').split('/').pop() ?? '';
+  const seg =
+    window.location.pathname.replace(/\/+$/, '').split('/').pop() ?? '';
   try {
     return decodeURIComponent(seg);
   } catch {

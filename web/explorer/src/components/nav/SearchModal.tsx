@@ -543,7 +543,7 @@ export function SearchModal() {
               )}
               <ul className="max-h-96 overflow-y-auto p-2 text-sm">
                 {q.trim() === '' && results.length > 0 && (
-                  <li className="text-ink-faint px-3 pb-1 pt-1 text-[10px] tracking-wider uppercase">
+                  <li className="text-ink-faint px-3 pt-1 pb-1 text-[10px] tracking-wider uppercase">
                     Top assets
                   </li>
                 )}
@@ -566,7 +566,9 @@ export function SearchModal() {
                         <span className="bg-surface-subtle text-ink-muted shrink-0 rounded-sm px-1.5 py-0.5 text-[10px] tracking-wider uppercase">
                           {r.type}
                         </span>
-                        <span className="min-w-0 truncate font-medium">{r.label}</span>
+                        <span className="min-w-0 truncate font-medium">
+                          {r.label}
+                        </span>
                         {r.verified && (
                           <span
                             title="Verified currency"

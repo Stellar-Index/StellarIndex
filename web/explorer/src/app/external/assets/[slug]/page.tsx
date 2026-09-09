@@ -271,7 +271,11 @@ export default async function ExternalAssetDetailPage({
         )}
       </Panel>
 
-      <Panel headingLevel={2} title="About" bodyClassName="space-y-3 text-sm text-ink-body">
+      <Panel
+        headingLevel={2}
+        title="About"
+        bodyClassName="space-y-3 text-sm text-ink-body"
+      >
         {view.description && (
           <p className="leading-relaxed">{view.description}</p>
         )}

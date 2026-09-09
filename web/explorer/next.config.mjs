@@ -85,9 +85,7 @@ const nextConfig = {
   // builds get "dev".
   env: {
     NEXT_PUBLIC_BUILD_SHA:
-      process.env.CF_PAGES_COMMIT_SHA ??
-      process.env.GITHUB_SHA ??
-      'dev',
+      process.env.CF_PAGES_COMMIT_SHA ?? process.env.GITHUB_SHA ?? 'dev',
     NEXT_PUBLIC_BUILD_TIME: new Date().toISOString(),
   },
 };

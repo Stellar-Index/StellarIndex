@@ -52,9 +52,14 @@ function displayUnits(baseUnits: string, decimals: number): string {
   const n = Number(`${whole}.${frac || '0'}`);
   if (!Number.isFinite(n)) return `${whole}`; // beyond float range: whole part only
   if (n >= 1000) {
-    return new Intl.NumberFormat('en-US', { notation: 'compact', maximumFractionDigits: 2 }).format(n);
+    return new Intl.NumberFormat('en-US', {
+      notation: 'compact',
+      maximumFractionDigits: 2,
+    }).format(n);
   }
-  return new Intl.NumberFormat('en-US', { maximumSignificantDigits: 6 }).format(n);
+  return new Intl.NumberFormat('en-US', { maximumSignificantDigits: 6 }).format(
+    n,
+  );
 }
 
 function tokenLabel(t: ReserveToken): string {
@@ -65,7 +70,9 @@ function midPriceLabel(mid: string | null): string {
   if (!mid) return '—';
   const n = Number(mid);
   if (!Number.isFinite(n) || n === 0) return mid;
-  return new Intl.NumberFormat('en-US', { maximumSignificantDigits: 6 }).format(n);
+  return new Intl.NumberFormat('en-US', { maximumSignificantDigits: 6 }).format(
+    n,
+  );
 }
 
 /**
@@ -87,7 +94,9 @@ export function PairReservesPanel() {
   const q = useQuery<PoolReservesRow[]>({
     queryKey: ['/v1/pools/reserves'],
     queryFn: async () => {
-      const env = await apiGet<{ data: PoolReservesRow[] }>('/v1/pools/reserves');
+      const env = await apiGet<{ data: PoolReservesRow[] }>(
+        '/v1/pools/reserves',
+      );
       return env.data ?? [];
     },
     staleTime: 30_000,
@@ -104,25 +113,29 @@ export function PairReservesPanel() {
       hint="Live contract-storage read from the certified lake. Depth is a constant-product model estimate from current reserves (0.3% fee on input) — not an order book. Served for Soroswap only: the one venue whose pool-storage layout is verified."
       source={asExample('/v1/pools/reserves')}
     >
-      {q.isLoading && <p className="text-sm text-ink-muted">Loading reserves…</p>}
+      {q.isLoading && (
+        <p className="text-ink-muted text-sm">Loading reserves…</p>
+      )}
       {q.isError && (
-        <p className="text-sm text-ink-muted">
+        <p className="text-ink-muted text-sm">
           Reserves unavailable right now.
         </p>
       )}
       {!q.isLoading && !q.isError && rows.length === 0 && (
-        <p className="text-sm text-ink-muted">No captured pool state.</p>
+        <p className="text-ink-muted text-sm">No captured pool state.</p>
       )}
       {rows.length > 0 && (
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
-              <tr className="border-b border-line text-left text-xs uppercase tracking-wider text-ink-muted">
+              <tr className="border-line text-ink-muted border-b text-left text-xs tracking-wider uppercase">
                 <th className="py-2 pr-3 font-medium">Pool</th>
                 <th className="py-2 pr-3 text-right font-medium">Reserve 0</th>
                 <th className="py-2 pr-3 text-right font-medium">Reserve 1</th>
                 <th className="py-2 pr-3 text-right font-medium">Mid price</th>
-                <th className="py-2 pr-3 text-right font-medium">As of ledger</th>
+                <th className="py-2 pr-3 text-right font-medium">
+                  As of ledger
+                </th>
                 <th className="py-2 font-medium" aria-hidden />
               </tr>
             </thead>
@@ -134,31 +147,35 @@ export function PairReservesPanel() {
                 return (
                   <Fragment key={row.pool}>
                     <tr
-                      className="cursor-pointer border-b border-line/60 hover:bg-surface-subtle"
+                      className="border-line/60 hover:bg-surface-subtle cursor-pointer border-b"
                       onClick={() => setExpanded(open ? null : row.pool)}
                     >
                       <td className="py-2 pr-3">
-                        <span className="font-medium">{t0} / {t1}</span>{' '}
+                        <span className="font-medium">
+                          {t0} / {t1}
+                        </span>{' '}
                         <Link
                           href={`/contracts/${row.pool}`}
                           onClick={(e) => e.stopPropagation()}
-                          className="font-mono text-xs text-ink-muted hover:text-brand-600"
+                          className="text-ink-muted hover:text-brand-600 font-mono text-xs"
                         >
                           {row.pool.slice(0, 4)}…{row.pool.slice(-4)}
                         </Link>
                       </td>
                       <td className="py-2 pr-3 text-right tabular-nums">
-                        {displayUnits(row.token0.reserve, row.token0.decimals)} {t0}
+                        {displayUnits(row.token0.reserve, row.token0.decimals)}{' '}
+                        {t0}
                       </td>
                       <td className="py-2 pr-3 text-right tabular-nums">
-                        {displayUnits(row.token1.reserve, row.token1.decimals)} {t1}
+                        {displayUnits(row.token1.reserve, row.token1.decimals)}{' '}
+                        {t1}
                       </td>
                       <td className="py-2 pr-3 text-right tabular-nums">
                         {row.mid_price_0_in_1
                           ? `${midPriceLabel(row.mid_price_0_in_1)} ${t1}/${t0}`
                           : '—'}
                       </td>
-                      <td className="py-2 pr-3 text-right tabular-nums text-ink-muted">
+                      <td className="text-ink-muted py-2 pr-3 text-right tabular-nums">
                         {row.as_of_ledger.toLocaleString('en-US')}
                       </td>
                       {/* The keyboard/AT path to the depth detail. The
@@ -175,54 +192,85 @@ export function PairReservesPanel() {
                             e.stopPropagation();
                             setExpanded(open ? null : row.pool);
                           }}
-                          className="rounded-sm px-1 py-0.5 text-ink-muted transition-colors hover:text-brand-600 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-brand-500/60"
+                          className="text-ink-muted hover:text-brand-600 focus-visible:ring-brand-500/60 rounded-sm px-1 py-0.5 transition-colors focus-visible:ring-2 focus-visible:outline-hidden"
                         >
                           {open ? 'Hide depth ▴' : 'Depth ▾'}
                         </button>
                       </td>
                     </tr>
                     {open && (
-                      <tr className="border-b border-line/60 bg-surface-subtle/50">
+                      <tr className="border-line/60 bg-surface-subtle/50 border-b">
                         <td
                           colSpan={6}
                           id={`pair-depth-${row.pool}`}
                           className="px-3 py-3"
                         >
                           {row.depth.length === 0 ? (
-                            <p className="text-xs text-ink-muted">
-                              One side of this pool is empty — no meaningful depth.
+                            <p className="text-ink-muted text-xs">
+                              One side of this pool is empty — no meaningful
+                              depth.
                             </p>
                           ) : (
                             <div className="space-y-2">
                               <table className="w-full max-w-2xl text-xs">
                                 <thead>
-                                  <tr className="text-left text-ink-muted">
-                                    <th className="py-1 pr-3 font-medium">Within slippage</th>
-                                    <th className="py-1 pr-3 text-right font-medium">Sell {t0} → get {t1}</th>
-                                    <th className="py-1 text-right font-medium">Sell {t1} → get {t0}</th>
+                                  <tr className="text-ink-muted text-left">
+                                    <th className="py-1 pr-3 font-medium">
+                                      Within slippage
+                                    </th>
+                                    <th className="py-1 pr-3 text-right font-medium">
+                                      Sell {t0} → get {t1}
+                                    </th>
+                                    <th className="py-1 text-right font-medium">
+                                      Sell {t1} → get {t0}
+                                    </th>
                                   </tr>
                                 </thead>
                                 <tbody>
                                   {row.depth.map((lvl) => (
-                                    <tr key={lvl.slippage_pct} className="border-t border-line/40">
-                                      <td className="py-1 pr-3">{lvl.slippage_pct}%</td>
+                                    <tr
+                                      key={lvl.slippage_pct}
+                                      className="border-line/40 border-t"
+                                    >
+                                      <td className="py-1 pr-3">
+                                        {lvl.slippage_pct}%
+                                      </td>
                                       <td className="py-1 pr-3 text-right tabular-nums">
-                                        {displayUnits(lvl.token0_in.max_input, row.token0.decimals)} {t0} →{' '}
-                                        {displayUnits(lvl.token0_in.output, row.token1.decimals)} {t1}
+                                        {displayUnits(
+                                          lvl.token0_in.max_input,
+                                          row.token0.decimals,
+                                        )}{' '}
+                                        {t0} →{' '}
+                                        {displayUnits(
+                                          lvl.token0_in.output,
+                                          row.token1.decimals,
+                                        )}{' '}
+                                        {t1}
                                       </td>
                                       <td className="py-1 text-right tabular-nums">
-                                        {displayUnits(lvl.token1_in.max_input, row.token1.decimals)} {t1} →{' '}
-                                        {displayUnits(lvl.token1_in.output, row.token0.decimals)} {t0}
+                                        {displayUnits(
+                                          lvl.token1_in.max_input,
+                                          row.token1.decimals,
+                                        )}{' '}
+                                        {t1} →{' '}
+                                        {displayUnits(
+                                          lvl.token1_in.output,
+                                          row.token0.decimals,
+                                        )}{' '}
+                                        {t0}
                                       </td>
                                     </tr>
                                   ))}
                                 </tbody>
                               </table>
-                              <p className="text-[11px] leading-relaxed text-ink-muted">
-                                Largest trade whose average execution price stays within the tier of the mid
-                                price, under the constant-product model ({row.fee_bps} bps fee on input),
-                                from reserves as of ledger {row.as_of_ledger.toLocaleString('en-US')}.
-                                Token symbols are self-declared by the token contracts.
+                              <p className="text-ink-muted text-[11px] leading-relaxed">
+                                Largest trade whose average execution price
+                                stays within the tier of the mid price, under
+                                the constant-product model ({row.fee_bps} bps
+                                fee on input), from reserves as of ledger{' '}
+                                {row.as_of_ledger.toLocaleString('en-US')}.
+                                Token symbols are self-declared by the token
+                                contracts.
                               </p>
                             </div>
                           )}

@@ -3,7 +3,8 @@ import { render, screen } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 vi.mock('@/api/client', async () => {
-  const actual = await vi.importActual<typeof import('@/api/client')>('@/api/client');
+  const actual =
+    await vi.importActual<typeof import('@/api/client')>('@/api/client');
   return { ...actual, apiGet: vi.fn() };
 });
 
@@ -20,7 +21,12 @@ function mockOps(operations: unknown[], coverage_note?: string) {
   vi.mocked(apiGet).mockImplementation((path: string) => {
     if (path.endsWith('/operations')) {
       return Promise.resolve({
-        data: { account: G, operations, scope: 'all', ...(coverage_note ? { coverage_note } : {}) },
+        data: {
+          account: G,
+          operations,
+          scope: 'all',
+          ...(coverage_note ? { coverage_note } : {}),
+        },
       });
     }
     // Never resolves — the sibling panels stay in "Loading…", never crash.
@@ -29,8 +35,12 @@ function mockOps(operations: unknown[], coverage_note?: string) {
 }
 
 function renderWithClient(ui: React.ReactElement) {
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  return render(<QueryClientProvider client={client}>{ui}</QueryClientProvider>);
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+  return render(
+    <QueryClientProvider client={client}>{ui}</QueryClientProvider>,
+  );
 }
 
 describe('AccountView operations history — failed-tx transparency (D-PART-FAILEDTX)', () => {
@@ -84,7 +94,9 @@ describe('AccountView operations history — failed-tx transparency (D-PART-FAIL
 
     // (c) The coverage_note honest-degrade banner renders as an alert.
     const banner = screen.getByRole('alert');
-    expect(banner).toHaveTextContent('DEGRADED: parent-transaction outcome read failed');
+    expect(banner).toHaveTextContent(
+      'DEGRADED: parent-transaction outcome read failed',
+    );
 
     // Transparency invariant: EVERY op stays listed — the failed and the
     // unknown ones are visible, just marked. None is filtered out.

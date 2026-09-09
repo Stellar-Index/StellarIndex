@@ -63,7 +63,11 @@ export function ConvertChart({ from, to }: { from: string; to: string }) {
   return (
     <Panel
       title={`${from}/${to} rate history`}
-      source={asExample('/v1/chart', { asset: `fiat:${from}`, quote: `fiat:${to}`, timeframe: tf })}
+      source={asExample('/v1/chart', {
+        asset: `fiat:${from}`,
+        quote: `fiat:${to}`,
+        timeframe: tf,
+      })}
       bodyClassName="space-y-3"
     >
       <Segmented
@@ -74,19 +78,23 @@ export function ConvertChart({ from, to }: { from: string; to: string }) {
       />
       {loading && <div className="h-[260px]" />}
       {error && !loading && (
-        <div className="flex h-[260px] items-center justify-center text-sm text-ink-muted">
+        <div className="text-ink-muted flex h-[260px] items-center justify-center text-sm">
           {error === 'HTTP 404'
             ? 'No rate history for this pair + window yet.'
             : `Chart unavailable (${error}).`}
         </div>
       )}
       {!loading && !error && data.length === 0 && (
-        <div className="flex h-[260px] items-center justify-center text-sm text-ink-muted">
+        <div className="text-ink-muted flex h-[260px] items-center justify-center text-sm">
           No rate history for this pair + window yet.
         </div>
       )}
       {!loading && !error && data.length > 0 && (
-        <LineChart data={data} height={260} ariaLabel={`${from} to ${to} exchange rate over the ${tf} window`} />
+        <LineChart
+          data={data}
+          height={260}
+          ariaLabel={`${from} to ${to} exchange rate over the ${tf} window`}
+        />
       )}
     </Panel>
   );

@@ -62,38 +62,57 @@ export function HBarList({
   max?: number;
   className?: string;
 }) {
-  const finite = items.filter((it) => Number.isFinite(it.value) && it.value >= 0);
+  const finite = items.filter(
+    (it) => Number.isFinite(it.value) && it.value >= 0,
+  );
   if (finite.length === 0) return null;
   const max = maxProp ?? Math.max(...finite.map((it) => it.value), 0);
   if (max <= 0) return null;
 
   return (
-    <ul role="img" aria-label={ariaLabel} className={cn('space-y-1.5', className)}>
+    <ul
+      role="img"
+      aria-label={ariaLabel}
+      className={cn('space-y-1.5', className)}
+    >
       {finite.map((it) => (
-        <li key={it.label} className="grid grid-cols-[minmax(7rem,14rem)_1fr] items-center gap-3 text-xs" title={it.title}>
-          <span className="truncate text-ink-body" title={it.label}>
+        <li
+          key={it.label}
+          className="grid grid-cols-[minmax(7rem,14rem)_1fr] items-center gap-3 text-xs"
+          title={it.title}
+        >
+          <span className="text-ink-body truncate" title={it.label}>
             {it.label}
           </span>
           <span className="flex min-w-0 items-center gap-2">
-            <span className="relative h-2.5 min-w-[2px] shrink-0 rounded-xs" style={{ width: `${Math.max((it.value / max) * 100, 0.75) * 0.7}%` }}>
+            <span
+              className="relative h-2.5 min-w-[2px] shrink-0 rounded-xs"
+              style={{
+                width: `${Math.max((it.value / max) * 100, 0.75) * 0.7}%`,
+              }}
+            >
               <span
                 aria-hidden
                 className="absolute inset-0 rounded-xs"
-                style={{ backgroundColor: it.color ?? 'var(--color-brand-500)' }}
+                style={{
+                  backgroundColor: it.color ?? 'var(--color-brand-500)',
+                }}
               />
               {it.hatchTail && (
                 <span
                   aria-hidden
-                  className="absolute inset-y-0 -right-2 w-2 rounded-r-xs text-ink-faint opacity-70"
+                  className="text-ink-faint absolute inset-y-0 -right-2 w-2 rounded-r-xs opacity-70"
                   style={{ backgroundImage: HATCH_BG }}
                 />
               )}
             </span>
-            <span className="whitespace-nowrap font-mono tabular-nums text-ink">
+            <span className="text-ink font-mono whitespace-nowrap tabular-nums">
               {it.display ?? formatValue(it.value)}
             </span>
             {it.annotation && (
-              <span className="truncate whitespace-nowrap text-ink-muted">{it.annotation}</span>
+              <span className="text-ink-muted truncate whitespace-nowrap">
+                {it.annotation}
+              </span>
             )}
           </span>
         </li>
@@ -137,27 +156,41 @@ export function PairedBars({
   ariaLabel: string;
   className?: string;
 }) {
-  const finite = rows.filter((r) => Number.isFinite(r.a) && Number.isFinite(r.b));
+  const finite = rows.filter(
+    (r) => Number.isFinite(r.a) && Number.isFinite(r.b),
+  );
   if (finite.length === 0) return null;
   const max = Math.max(...finite.flatMap((r) => [r.a, r.b]), 0);
   if (max <= 0) return null;
 
   return (
     <div className={cn('space-y-2', className)}>
-      <ul className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-ink-muted">
+      <ul className="text-ink-muted flex flex-wrap gap-x-4 gap-y-1 text-xs">
         <li className="flex items-center gap-1.5">
-          <span aria-hidden className="inline-block h-2 w-2 rounded-full" style={{ backgroundColor: aColor }} />
+          <span
+            aria-hidden
+            className="inline-block h-2 w-2 rounded-full"
+            style={{ backgroundColor: aColor }}
+          />
           {aLabel}
         </li>
         <li className="flex items-center gap-1.5">
-          <span aria-hidden className="inline-block h-2 w-2 rounded-full" style={{ backgroundColor: bColor }} />
+          <span
+            aria-hidden
+            className="inline-block h-2 w-2 rounded-full"
+            style={{ backgroundColor: bColor }}
+          />
           {bLabel}
         </li>
       </ul>
       <ul role="img" aria-label={ariaLabel} className="space-y-2.5">
         {finite.map((r) => (
-          <li key={r.label} className="grid grid-cols-[minmax(7rem,14rem)_1fr] items-center gap-3 text-xs" title={r.title}>
-            <span className="truncate text-ink-body" title={r.label}>
+          <li
+            key={r.label}
+            className="grid grid-cols-[minmax(7rem,14rem)_1fr] items-center gap-3 text-xs"
+            title={r.title}
+          >
+            <span className="text-ink-body truncate" title={r.label}>
               {r.label}
             </span>
             <span className="min-w-0 space-y-0.5">
@@ -176,7 +209,7 @@ export function PairedBars({
                       backgroundColor: half.c,
                     }}
                   />
-                  <span className="whitespace-nowrap font-mono text-[11px] tabular-nums text-ink-muted">
+                  <span className="text-ink-muted font-mono text-[11px] whitespace-nowrap tabular-nums">
                     {half.d ?? formatValue(half.v)}
                   </span>
                 </span>
@@ -219,7 +252,9 @@ export function DivergingColumns({
   ariaLabel: string;
   className?: string;
 }) {
-  const finite = buckets.filter((b) => Number.isFinite(b.pos) && Number.isFinite(b.neg));
+  const finite = buckets.filter(
+    (b) => Number.isFinite(b.pos) && Number.isFinite(b.neg),
+  );
   if (finite.length === 0) return null;
   const max = Math.max(...finite.flatMap((b) => [b.pos, b.neg]), 0);
   if (max <= 0) return null;
@@ -230,13 +265,19 @@ export function DivergingColumns({
 
   return (
     <div className={cn('space-y-1.5', className)}>
-      <ul className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-ink-muted">
+      <ul className="text-ink-muted flex flex-wrap gap-x-4 gap-y-1 text-xs">
         <li className="flex items-center gap-1.5">
-          <span aria-hidden className="inline-block h-2 w-2 rounded-full bg-up" />
+          <span
+            aria-hidden
+            className="bg-up inline-block h-2 w-2 rounded-full"
+          />
           {posLabel}
         </li>
         <li className="flex items-center gap-1.5">
-          <span aria-hidden className="inline-block h-2 w-2 rounded-full bg-down" />
+          <span
+            aria-hidden
+            className="bg-down inline-block h-2 w-2 rounded-full"
+          />
           {negLabel}
         </li>
       </ul>
@@ -249,7 +290,15 @@ export function DivergingColumns({
         style={{ height }}
       >
         {/* zero baseline */}
-        <line x1="0" x2="100" y1={mid} y2={mid} stroke="var(--color-line-strong)" strokeWidth="0.5" vectorEffect="non-scaling-stroke" />
+        <line
+          x1="0"
+          x2="100"
+          y1={mid}
+          y2={mid}
+          stroke="var(--color-line-strong)"
+          strokeWidth="0.5"
+          vectorEffect="non-scaling-stroke"
+        />
         {finite.map((b, i) => {
           const x = i * colW + colW * 0.18;
           const w = colW * 0.64;
@@ -258,12 +307,24 @@ export function DivergingColumns({
           return (
             <g key={b.label}>
               {b.pos > 0 && (
-                <rect x={x} y={mid - posH} width={w} height={posH} fill="var(--color-up)">
+                <rect
+                  x={x}
+                  y={mid - posH}
+                  width={w}
+                  height={posH}
+                  fill="var(--color-up)"
+                >
                   <title>{`${b.label} — ${posLabel}: ${formatValue(b.pos)}`}</title>
                 </rect>
               )}
               {b.neg > 0 && (
-                <rect x={x} y={mid} width={w} height={negH} fill="var(--color-down)">
+                <rect
+                  x={x}
+                  y={mid}
+                  width={w}
+                  height={negH}
+                  fill="var(--color-down)"
+                >
                   <title>{`${b.label} — ${negLabel}: ${formatValue(b.neg)}`}</title>
                 </rect>
               )}
@@ -271,7 +332,7 @@ export function DivergingColumns({
           );
         })}
       </svg>
-      <div className="flex justify-between font-mono text-[10px] text-ink-faint">
+      <div className="text-ink-faint flex justify-between font-mono text-[10px]">
         <span>{finite[0].label}</span>
         {finite.length > 1 && <span>{finite[finite.length - 1].label}</span>}
       </div>

@@ -27,7 +27,9 @@ export function normalizeColonForm(canonical: string): string {
  */
 export const RAW_ORACLE_PREFIX = 'raw:';
 
-export function isRawOracleAsset(canonical: string | undefined | null): boolean {
+export function isRawOracleAsset(
+  canonical: string | undefined | null,
+): boolean {
   return !!canonical && canonical.startsWith(RAW_ORACLE_PREFIX);
 }
 

@@ -132,7 +132,6 @@ function UsageBody({ me }: { me: MeResponse }) {
             <PerKeyTable keys={active} />
           )}
         </Card>
-
       </Section>
     </Container>
   );
@@ -259,7 +258,7 @@ function DailyRequests({ usage }: { usage: UsageRow[] | null }) {
         description="Per-account daily request counts recorded by the API."
         actions={
           days && days.length > 0 ? (
-            <span className="tnum font-mono text-sm text-ink-muted">
+            <span className="tnum text-ink-muted font-mono text-sm">
               {fmtInt(total)} total
             </span>
           ) : undefined
@@ -269,7 +268,7 @@ function DailyRequests({ usage }: { usage: UsageRow[] | null }) {
         {days === null ? (
           <Skeleton className="h-12 w-full" />
         ) : days.length === 0 ? (
-          <p className="text-sm text-ink-muted">
+          <p className="text-ink-muted text-sm">
             No tracked requests yet for this account in the last 30 days.
             Requests count against the per-account daily window once you start
             calling the API with one of your keys.
@@ -301,7 +300,7 @@ function UsageBars({ rows }: { rows: DayAgg[] }) {
             className="flex flex-1 flex-col items-center justify-end"
           >
             <div
-              className="w-full rounded-xs bg-brand-500/70"
+              className="bg-brand-500/70 w-full rounded-xs"
               style={{ height: `${h}px` }}
             />
           </div>
@@ -325,7 +324,7 @@ function EndpointBreakdown({ usage }: { usage: UsageRow[] | null }) {
         </CardBody>
       ) : endpoints.length === 0 ? (
         <CardBody>
-          <p className="text-sm text-ink-muted">
+          <p className="text-ink-muted text-sm">
             No per-endpoint data yet. Rows appear within a few minutes of your
             first API request — the usage pipeline rolls counters up every five
             minutes.
@@ -357,7 +356,7 @@ function EndpointTable({ rows }: { rows: EndpointAgg[] }) {
             return (
               <TR key={r.endpoint}>
                 <Td>
-                  <code className="font-mono text-xs text-ink">
+                  <code className="text-ink font-mono text-xs">
                     {r.endpoint}
                   </code>
                 </Td>
@@ -410,8 +409,8 @@ function PerKeyTable({ keys }: { keys: APIKey[] }) {
           {keys.map((k) => (
             <TR key={k.id}>
               <Td>
-                <div className="font-medium text-ink">{k.name}</div>
-                <code className="mt-0.5 block font-mono text-xs text-ink-muted">
+                <div className="text-ink font-medium">{k.name}</div>
+                <code className="text-ink-muted mt-0.5 block font-mono text-xs">
                   {k.key_prefix}…
                 </code>
               </Td>

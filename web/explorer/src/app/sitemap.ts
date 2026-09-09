@@ -217,12 +217,14 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   // Per-currency detail pages live under /external/assets/{friendly-slug}
   // (2026-08-24 fiat de-duplication: /assets/{fiat} no longer exports and
   // 301s there). One entry per ticker — friendly form (us-dollar, …).
-  const currencyPages: MetadataRoute.Sitemap = currencyTickers.map((ticker) => ({
-    url: siteURL(`/external/assets/${fiatSlugFor(ticker)}`),
-    lastModified: now,
-    changeFrequency: 'daily',
-    priority: 0.7,
-  }));
+  const currencyPages: MetadataRoute.Sitemap = currencyTickers.map(
+    (ticker) => ({
+      url: siteURL(`/external/assets/${fiatSlugFor(ticker)}`),
+      lastModified: now,
+      changeFrequency: 'daily',
+      priority: 0.7,
+    }),
+  );
 
   // Convert pages — high-intent "X to Y" queries, pre-rendered as the same
   // hub-and-spoke matrix the route builds (shared buildConvertParams over the

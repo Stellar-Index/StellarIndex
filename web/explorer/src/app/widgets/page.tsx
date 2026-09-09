@@ -50,27 +50,25 @@ export default function WidgetsPage() {
   return (
     <div className="mx-auto max-w-5xl space-y-12 px-6 py-10">
       <header className="space-y-3">
-        <p className="font-mono text-xs uppercase tracking-widest text-brand-600">
+        <p className="text-brand-600 font-mono text-xs tracking-widest uppercase">
           Embed
         </p>
         <h1 className="text-3xl font-semibold tracking-tight">Widgets</h1>
-        <p className="max-w-3xl text-base text-ink-body">
-          Drop-in iframe widgets for live Stellar Index prices. Paste
-          one snippet — no script, no API key, no build step. Each
-          widget renders the same data the explorer pulls from the
-          public API; sizes auto-adjust to fit their container.
+        <p className="text-ink-body max-w-3xl text-base">
+          Drop-in iframe widgets for live Stellar Index prices. Paste one
+          snippet — no script, no API key, no build step. Each widget renders
+          the same data the explorer pulls from the public API; sizes
+          auto-adjust to fit their container.
         </p>
       </header>
 
       <section className="space-y-4">
         <div>
-          <h2 className="text-xl font-semibold tracking-tight">
-            Asset card
-          </h2>
-          <p className="mt-1 text-sm text-ink-body">
-            Live price, 24h change, and a sparkline for one asset.
-            Source path is{' '}
-            <code className="rounded-sm bg-surface-subtle px-1 py-0.5 font-mono text-xs">
+          <h2 className="text-xl font-semibold tracking-tight">Asset card</h2>
+          <p className="text-ink-body mt-1 text-sm">
+            Live price, 24h change, and a sparkline for one asset. Source path
+            is{' '}
+            <code className="bg-surface-subtle rounded-sm px-1 py-0.5 font-mono text-xs">
               /embed/asset/&lt;slug&gt;
             </code>
             .
@@ -97,16 +95,14 @@ export default function WidgetsPage() {
 
       <section className="space-y-4">
         <div>
-          <h2 className="text-xl font-semibold tracking-tight">
-            Pair card
-          </h2>
-          <p className="mt-1 text-sm text-ink-body">
+          <h2 className="text-xl font-semibold tracking-tight">Pair card</h2>
+          <p className="text-ink-body mt-1 text-sm">
             Live VWAP for a (base, quote) pair. Source path is{' '}
-            <code className="rounded-sm bg-surface-subtle px-1 py-0.5 font-mono text-xs">
+            <code className="bg-surface-subtle rounded-sm px-1 py-0.5 font-mono text-xs">
               /embed/pair/&lt;base&gt;~&lt;quote&gt;
             </code>{' '}
-            (URL-encode the tilde when embedding from servers that
-            require strict path encoding).
+            (URL-encode the tilde when embedding from servers that require
+            strict path encoding).
           </p>
         </div>
         <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
@@ -130,11 +126,12 @@ export default function WidgetsPage() {
 
       <section className="space-y-4">
         <div>
-          <h2 className="text-xl font-semibold tracking-tight">Currency card</h2>
-          <p className="mt-1 text-sm text-ink-body">
-            Live USD-base rate + 7d change for one fiat currency.
-            Source path is{' '}
-            <code className="rounded-sm bg-surface-subtle px-1 py-0.5 font-mono text-xs">
+          <h2 className="text-xl font-semibold tracking-tight">
+            Currency card
+          </h2>
+          <p className="text-ink-body mt-1 text-sm">
+            Live USD-base rate + 7d change for one fiat currency. Source path is{' '}
+            <code className="bg-surface-subtle rounded-sm px-1 py-0.5 font-mono text-xs">
               /embed/currency/&lt;ticker&gt;
             </code>
             .
@@ -159,40 +156,38 @@ export default function WidgetsPage() {
         </div>
       </section>
 
-      <section className="rounded-xl border border-line bg-surface p-5 text-sm">
+      <section className="border-line bg-surface rounded-xl border p-5 text-sm">
         <h2 className="text-base font-semibold">Notes</h2>
-        <ul className="mt-3 space-y-2 text-ink-body">
+        <ul className="text-ink-body mt-3 space-y-2">
           <li>
-            <strong>No auth, no API key.</strong> The widgets read
-            from the public tier of the Stellar Index API. Sites with
-            extreme traffic should host their own copy or use{' '}
+            <strong>No auth, no API key.</strong> The widgets read from the
+            public tier of the Stellar Index API. Sites with extreme traffic
+            should host their own copy or use{' '}
             <Link href="/signup" className="text-brand-600 hover:underline">
               a free API key
             </Link>{' '}
             for the higher rate-limit.
           </li>
           <li>
-            <strong>Light + dark.</strong> The widgets follow the
-            embedding page&apos;s color scheme via{' '}
-            <code className="rounded-sm bg-surface-subtle px-1 py-0.5 font-mono text-xs">
+            <strong>Light + dark.</strong> The widgets follow the embedding
+            page&apos;s color scheme via{' '}
+            <code className="bg-surface-subtle rounded-sm px-1 py-0.5 font-mono text-xs">
               prefers-color-scheme
             </code>
-            . Tested against light, dark, and system-default
-            backgrounds.
+            . Tested against light, dark, and system-default backgrounds.
           </li>
           <li>
-            <strong>Sandboxed.</strong> The iframe runs in a
-            sandboxed browsing context. The widget cannot read your
-            page&apos;s cookies, localStorage, or DOM.
+            <strong>Sandboxed.</strong> The iframe runs in a sandboxed browsing
+            context. The widget cannot read your page&apos;s cookies,
+            localStorage, or DOM.
           </li>
           <li>
-            <strong>Apex domain only.</strong> Embed against the apex
-            (
-            <code className="rounded-sm bg-surface-subtle px-1 py-0.5 font-mono text-xs">
+            <strong>Apex domain only.</strong> Embed against the apex (
+            <code className="bg-surface-subtle rounded-sm px-1 py-0.5 font-mono text-xs">
               stellarindex.io
             </code>
-            ), not a preview deployment. Cloudflare-Pages preview URLs
-            are firewalled from external embedding.
+            ), not a preview deployment. Cloudflare-Pages preview URLs are
+            firewalled from external embedding.
           </li>
         </ul>
       </section>
@@ -210,11 +205,11 @@ function WidgetCard({
   snippet: string;
 }) {
   return (
-    <div className="overflow-hidden rounded-xl border border-line bg-surface shadow-sm">
-      <div className="border-b border-line bg-surface-muted px-4 py-2 text-xs uppercase tracking-wider text-ink-muted">
+    <div className="border-line bg-surface overflow-hidden rounded-xl border shadow-sm">
+      <div className="border-line bg-surface-muted text-ink-muted border-b px-4 py-2 text-xs tracking-wider uppercase">
         {label}
       </div>
-      <div className="flex h-[210px] items-center justify-center bg-surface-muted p-4">
+      <div className="bg-surface-muted flex h-[210px] items-center justify-center p-4">
         <iframe
           src={src}
           width="100%"
@@ -222,10 +217,10 @@ function WidgetCard({
           frameBorder="0"
           loading="lazy"
           title={label}
-          className="rounded-sm border border-line"
+          className="border-line rounded-sm border"
         />
       </div>
-      <div className="border-t border-line">
+      <div className="border-line border-t">
         <CopyableSnippet snippet={snippet} />
       </div>
     </div>

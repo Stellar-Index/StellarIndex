@@ -9,8 +9,16 @@ describe('buildSupplyFlowRows', () => {
       { mint_total: '10000000000', burn_total: '0', clawback_total: null },
       7,
     );
-    expect(rows[0]).toMatchObject({ label: 'Minted', value: 1000, direction: 'add' });
-    expect(rows[1]).toMatchObject({ label: 'Burned', value: 0, direction: 'remove' });
+    expect(rows[0]).toMatchObject({
+      label: 'Minted',
+      value: 1000,
+      direction: 'add',
+    });
+    expect(rows[1]).toMatchObject({
+      label: 'Burned',
+      value: 0,
+      direction: 'remove',
+    });
     // null (unserved) stays null — distinct from a served real zero.
     expect(rows[2].value).toBeNull();
   });
@@ -21,7 +29,11 @@ describe('SupplyFlowsBar', () => {
     render(
       <SupplyFlowsBar
         rows={buildSupplyFlowRows(
-          { mint_total: '10000000000', burn_total: '2500000000', clawback_total: null },
+          {
+            mint_total: '10000000000',
+            burn_total: '2500000000',
+            clawback_total: null,
+          },
           7,
         )}
       />,
@@ -37,7 +49,10 @@ describe('SupplyFlowsBar', () => {
   it('renders nothing when no flow is positive (nothing to compare)', () => {
     const { container } = render(
       <SupplyFlowsBar
-        rows={buildSupplyFlowRows({ mint_total: null, burn_total: null, clawback_total: null }, 7)}
+        rows={buildSupplyFlowRows(
+          { mint_total: null, burn_total: null, clawback_total: null },
+          7,
+        )}
       />,
     );
     expect(container.firstChild).toBeNull();

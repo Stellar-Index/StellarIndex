@@ -22,14 +22,21 @@ describe('DirectoryLabel', () => {
     // labels, never our own verification claim.
     expect(
       screen.getByRole('link', { name: /StellarExpert public directory/i }),
-    ).toHaveAttribute('href', 'https://github.com/stellar-expert/public-directory');
+    ).toHaveAttribute(
+      'href',
+      'https://github.com/stellar-expert/public-directory',
+    );
     expect(screen.getByText(/listing is not endorsement/i)).toBeInTheDocument();
   });
 
   it('warns prominently on malicious/unsafe tags', () => {
     render(
       <DirectoryLabel
-        info={{ name: 'Fake Wallet', tags: ['malicious'], source: 'stellar-expert' }}
+        info={{
+          name: 'Fake Wallet',
+          tags: ['malicious'],
+          source: 'stellar-expert',
+        }}
       />,
     );
     expect(screen.getByText(/Flagged malicious/i)).toBeInTheDocument();
@@ -39,7 +46,11 @@ describe('DirectoryLabel', () => {
   it('renders no warning line for benign tags', () => {
     render(
       <DirectoryLabel
-        info={{ name: 'Binance Hot', tags: ['exchange'], source: 'stellar-expert' }}
+        info={{
+          name: 'Binance Hot',
+          tags: ['exchange'],
+          source: 'stellar-expert',
+        }}
       />,
     );
     expect(screen.queryByText(/treat with caution/i)).not.toBeInTheDocument();

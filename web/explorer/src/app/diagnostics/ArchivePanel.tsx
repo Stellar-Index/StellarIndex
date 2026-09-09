@@ -24,21 +24,21 @@ export function ArchivePanel() {
 
   if (isLoading) {
     return (
-      <section className="rounded-md border border-line bg-surface p-4 text-sm text-ink-muted">
+      <section className="border-line bg-surface text-ink-muted rounded-md border p-4 text-sm">
         Loading archive report…
       </section>
     );
   }
   if (error || !data) {
     return (
-      <section className="rounded-md border border-line bg-surface p-4 text-sm text-ink-muted">
-        No archive-completeness report served on this deployment yet —
-        the daemon (
-        <code className="rounded-sm bg-surface-subtle px-1 font-mono text-[13px]">
+      <section className="border-line bg-surface text-ink-muted rounded-md border p-4 text-sm">
+        No archive-completeness report served on this deployment yet — the
+        daemon (
+        <code className="bg-surface-subtle rounded-sm px-1 font-mono text-[13px]">
           stellarindex-ops archive-completeness verify
         </code>
         ) runs on a daily timer and its latest report appears here via{' '}
-        <code className="rounded-sm bg-surface-subtle px-1 font-mono text-[13px]">
+        <code className="bg-surface-subtle rounded-sm px-1 font-mono text-[13px]">
           /v1/diagnostics/archive
         </code>
         .
@@ -57,10 +57,10 @@ export function ArchivePanel() {
       : 0;
 
   return (
-    <section className="rounded-lg border border-line bg-surface p-4">
+    <section className="border-line bg-surface rounded-lg border p-4">
       <header className="mb-3 flex flex-wrap items-baseline justify-between gap-2">
         <div className="flex items-baseline gap-3">
-          <h3 className="text-sm font-semibold uppercase tracking-wider text-ink-body">
+          <h3 className="text-ink-body text-sm font-semibold tracking-wider uppercase">
             Cross-anchor archive
           </h3>
           <span
@@ -79,12 +79,12 @@ export function ArchivePanel() {
                 : `${ca.missing_count} missing`}
           </span>
           {scannedAgeHours > 48 && (
-            <span className="rounded-sm bg-warn-50 px-2 py-0.5 text-[11px] uppercase tracking-wider text-warn-700">
+            <span className="bg-warn-50 text-warn-700 rounded-sm px-2 py-0.5 text-[11px] tracking-wider uppercase">
               report {scannedAgeHours.toFixed(0)}h old
             </span>
           )}
         </div>
-        <span className="text-xs text-ink-faint">
+        <span className="text-ink-faint text-xs">
           ADR-0017 · /v1/diagnostics/archive
         </span>
       </header>
@@ -109,10 +109,13 @@ export function ArchivePanel() {
       </dl>
 
       {ca && ca.missing_count > 0 && (
-        <p className="mt-3 text-xs text-ink-muted">
+        <p className="text-ink-muted mt-3 text-xs">
           Missing checkpoints{ca.truncated ? ' (list truncated)' : ''}:{' '}
           <span className="font-mono">
-            {(ca.missing ?? []).slice(0, 12).map((m) => `#${m}`).join(', ')}
+            {(ca.missing ?? [])
+              .slice(0, 12)
+              .map((m) => `#${m}`)
+              .join(', ')}
             {(ca.missing?.length ?? 0) > 12 ? ', …' : ''}
           </span>
         </p>
@@ -124,7 +127,7 @@ export function ArchivePanel() {
 function ArchiveStat({ label, value }: { label: string; value: string }) {
   return (
     <div>
-      <dt className="text-[10px] uppercase tracking-wider text-ink-muted">
+      <dt className="text-ink-muted text-[10px] tracking-wider uppercase">
         {label}
       </dt>
       <dd className="mt-1 font-mono text-sm tabular-nums">{value}</dd>

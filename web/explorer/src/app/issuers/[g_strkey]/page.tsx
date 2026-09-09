@@ -190,7 +190,11 @@ export default async function IssuerDetailPage({ params }: { params: Params }) {
             {shortKey(g_strkey)}
           </h1>
         </header>
-        <Panel headingLevel={2} title="Issuer not found" bodyClassName="text-sm text-ink-body">
+        <Panel
+          headingLevel={2}
+          title="Issuer not found"
+          bodyClassName="text-sm text-ink-body"
+        >
           <p>
             No row found for that G-strkey, or the issuer hasn&apos;t issued a
             classic asset that&apos;s appeared in any trade or ChangeTrust op
@@ -390,7 +394,10 @@ export default async function IssuerDetailPage({ params }: { params: Params }) {
                 <p className="text-ink-muted mt-2 text-xs">
                   Last known before the account was removed
                   {detail.auth_flags_as_of_ledger != null && (
-                    <> (ledger {detail.auth_flags_as_of_ledger.toLocaleString()})</>
+                    <>
+                      {' '}
+                      (ledger {detail.auth_flags_as_of_ledger.toLocaleString()})
+                    </>
                   )}
                   . This account no longer exists on the ledger, so these are
                   historical values, not its current policy.
@@ -409,7 +416,11 @@ export default async function IssuerDetailPage({ params }: { params: Params }) {
       >
         <ul className="space-y-2">
           <li>
-            <StellarExpertLink kind="account" id={g_strkey} className="hover:text-brand-600 inline-flex items-center gap-1.5 hover:underline"            >
+            <StellarExpertLink
+              kind="account"
+              id={g_strkey}
+              className="hover:text-brand-600 inline-flex items-center gap-1.5 hover:underline"
+            >
               stellar.expert
               <span className="text-ink-faint text-[10px] tracking-wider uppercase">
                 ↗

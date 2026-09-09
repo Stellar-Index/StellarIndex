@@ -28,7 +28,14 @@ const CandleChart = dynamic(
 );
 
 type OHLCBar = components['schemas']['OHLCSeriesBar'];
-type Bar = { time: number; open: number; high: number; low: number; close: number; volume: number };
+type Bar = {
+  time: number;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  volume: number;
+};
 
 // Interval → seconds, used to size the request (limit = span ÷ interval, capped
 // at the API's 1000-bar/request ceiling). /v1/ohlc serves this full grain set,
@@ -66,12 +73,48 @@ const WINDOWS: {
   grains: string[];
   def: string;
 }[] = [
-  { key: '24h', label: '24h', spanSec: 86_400, grains: ['5m', '15m', '30m', '1h'], def: '5m' },
-  { key: '7d', label: '7d', spanSec: 604_800, grains: ['15m', '30m', '1h', '4h'], def: '15m' },
-  { key: '30d', label: '30d', spanSec: 2_592_000, grains: ['1h', '4h', '1d'], def: '1h' },
-  { key: '90d', label: '90d', spanSec: 7_776_000, grains: ['4h', '1d'], def: '4h' },
-  { key: '1y', label: '1y', spanSec: 31_536_000, grains: ['1d', '1w'], def: '1d' },
-  { key: 'all', label: 'All', spanSec: 157_680_000, grains: ['1w', '1mo'], def: '1w' },
+  {
+    key: '24h',
+    label: '24h',
+    spanSec: 86_400,
+    grains: ['5m', '15m', '30m', '1h'],
+    def: '5m',
+  },
+  {
+    key: '7d',
+    label: '7d',
+    spanSec: 604_800,
+    grains: ['15m', '30m', '1h', '4h'],
+    def: '15m',
+  },
+  {
+    key: '30d',
+    label: '30d',
+    spanSec: 2_592_000,
+    grains: ['1h', '4h', '1d'],
+    def: '1h',
+  },
+  {
+    key: '90d',
+    label: '90d',
+    spanSec: 7_776_000,
+    grains: ['4h', '1d'],
+    def: '4h',
+  },
+  {
+    key: '1y',
+    label: '1y',
+    spanSec: 31_536_000,
+    grains: ['1d', '1w'],
+    def: '1d',
+  },
+  {
+    key: 'all',
+    label: 'All',
+    spanSec: 157_680_000,
+    grains: ['1w', '1mo'],
+    def: '1w',
+  },
 ];
 
 function limitFor(spanSec: number, interval: string): number {
@@ -182,7 +225,7 @@ export function MarketChart({
           value={activeGrain}
           onChange={setGrain}
         />
-        <span className="ml-auto font-mono uppercase tracking-wider text-ink-faint">
+        <span className="text-ink-faint ml-auto font-mono tracking-wider uppercase">
           {baseLabel} / {quoteLabel}
         </span>
       </div>
@@ -195,7 +238,9 @@ export function MarketChart({
         </ChartMessage>
       )}
       {!loading && !error && data.length === 0 && (
-        <ChartMessage height={height}>No price history for this pair + window yet.</ChartMessage>
+        <ChartMessage height={height}>
+          No price history for this pair + window yet.
+        </ChartMessage>
       )}
       {!loading && !error && data.length > 0 && (
         <>
@@ -206,7 +251,9 @@ export function MarketChart({
             ariaLabel={`${baseLabel}/${quoteLabel} OHLC candlestick chart with volume, ${activeGrain} candles`}
           />
           {coverageNote && (
-            <p className="font-mono text-[11px] text-ink-faint">{coverageNote}</p>
+            <p className="text-ink-faint font-mono text-[11px]">
+              {coverageNote}
+            </p>
           )}
         </>
       )}
@@ -228,9 +275,18 @@ function coverage(data: Bar[], spanSec: number): string | null {
   return null;
 }
 
-function ChartMessage({ height, children }: { height: number; children: React.ReactNode }) {
+function ChartMessage({
+  height,
+  children,
+}: {
+  height: number;
+  children: React.ReactNode;
+}) {
   return (
-    <div className="flex items-center justify-center text-sm text-ink-muted" style={{ height }}>
+    <div
+      className="text-ink-muted flex items-center justify-center text-sm"
+      style={{ height }}
+    >
       {children}
     </div>
   );

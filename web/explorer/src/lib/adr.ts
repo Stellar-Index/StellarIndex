@@ -12,15 +12,15 @@ import path from 'node:path';
 export type ADRStatus = 'Proposed' | 'Accepted' | 'Superseded' | 'Rejected';
 
 export type ADR = {
-  id: string;             // "0003"
-  slug: string;           // "0003-i128-no-truncation"
-  title: string;          // from frontmatter `title`
+  id: string; // "0003"
+  slug: string; // "0003-i128-no-truncation"
+  title: string; // from frontmatter `title`
   status: ADRStatus;
-  date: string;           // YYYY-MM-DD
+  date: string; // YYYY-MM-DD
   supersedes: string[];
   superseded_by: string | null;
-  body: string;           // markdown body, frontmatter stripped
-  source_path: string;    // "docs/adr/0003-i128-no-truncation.md" (relative to repo root, for the GitHub link)
+  body: string; // markdown body, frontmatter stripped
+  source_path: string; // "docs/adr/0003-i128-no-truncation.md" (relative to repo root, for the GitHub link)
 };
 
 const REPO_ROOT = path.resolve(process.cwd(), '..', '..');
@@ -45,7 +45,7 @@ export function loadADRs(): ADR[] {
       id,
       slug,
       title: String(parsed.fm['title'] ?? slug),
-      status: (String(parsed.fm['status'] ?? 'Proposed') as ADRStatus),
+      status: String(parsed.fm['status'] ?? 'Proposed') as ADRStatus,
       date: String(parsed.fm['date'] ?? ''),
       supersedes: Array.isArray(parsed.fm['supersedes'])
         ? (parsed.fm['supersedes'] as string[])

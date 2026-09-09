@@ -19,8 +19,8 @@ import { readFileSync, existsSync, readdirSync } from 'node:fs';
 import path from 'node:path';
 
 export type BlogPost = {
-  slug: string;       // "2026-05-07-magic-link-launch"
-  date: string;       // "2026-05-07"
+  slug: string; // "2026-05-07-magic-link-launch"
+  date: string; // "2026-05-07"
   title: string;
   author: string;
   summary: string;

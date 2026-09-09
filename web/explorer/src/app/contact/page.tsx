@@ -1,6 +1,13 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
-import { AlertTriangle, ArrowRight, ExternalLink, KeyRound, Lock, MessageSquare } from 'lucide-react';
+import {
+  AlertTriangle,
+  ArrowRight,
+  ExternalLink,
+  KeyRound,
+  Lock,
+  MessageSquare,
+} from 'lucide-react';
 import { GithubIcon } from '@/components/GithubIcon';
 
 export const metadata: Metadata = {
@@ -87,17 +94,16 @@ export default function ContactPage() {
   return (
     <div className="mx-auto w-full max-w-4xl px-6 py-12 sm:py-16">
       <header className="mb-10 space-y-3">
-        <p className="font-mono text-xs uppercase tracking-widest text-brand-600">
+        <p className="text-brand-600 font-mono text-xs tracking-widest uppercase">
           Get in touch
         </p>
         <h1 className="text-3xl font-semibold tracking-tight sm:text-4xl">
           Contact
         </h1>
-        <p className="max-w-2xl text-base text-ink-body">
+        <p className="text-ink-body max-w-2xl text-base">
           We don&apos;t run a support inbox for the public tier — issues land on
-          GitHub, sales go to email, and security goes to a separate inbox
-          with a real disclosure SLA. Pick the channel that fits your
-          message.
+          GitHub, sales go to email, and security goes to a separate inbox with
+          a real disclosure SLA. Pick the channel that fits your message.
         </p>
       </header>
 
@@ -113,7 +119,7 @@ export default function ContactPage() {
           {FAQS.map((f) => (
             <details
               key={f.q}
-              className="group rounded-xl border border-line bg-surface p-4 open:shadow-sm"
+              className="group border-line bg-surface rounded-xl border p-4 open:shadow-sm"
             >
               <summary className="flex cursor-pointer items-center justify-between text-sm font-medium">
                 {f.q}
@@ -121,26 +127,24 @@ export default function ContactPage() {
                   <ArrowRight className="h-3.5 w-3.5 -rotate-90 transition" />
                 </span>
               </summary>
-              <p className="mt-3 text-sm text-ink-body">
-                {f.a}
-              </p>
+              <p className="text-ink-body mt-3 text-sm">{f.a}</p>
             </details>
           ))}
         </div>
       </section>
 
-      <section className="mt-12 rounded-xl border border-line bg-surface p-5 text-sm text-ink-body">
+      <section className="border-line bg-surface text-ink-body mt-12 rounded-xl border p-5 text-sm">
         <p>
           Want an API key? Sign in with magic-link at{' '}
           <Link href="/signin" className="text-brand-600 hover:underline">
             /signin
-          </Link>
-          {' '}(no password) and mint one from{' '}
+          </Link>{' '}
+          (no password) and mint one from{' '}
           <Link href="/dashboard" className="text-brand-600 hover:underline">
             /account
           </Link>
-          . The same page shows your tier, 30d usage history, and per-key
-          revoke buttons for rotation.
+          . The same page shows your tier, 30d usage history, and per-key revoke
+          buttons for rotation.
         </p>
       </section>
     </div>
@@ -151,23 +155,21 @@ function ChannelCard({ channel }: { channel: Channel }) {
   const Icon = channel.icon;
   const isInternal = !channel.external;
   const inner = (
-    <div className="flex items-start gap-4 rounded-xl border border-line bg-surface p-5 transition hover:border-brand-300 hover:shadow-sm">
-      <div className="rounded-lg bg-surface-subtle p-2 text-brand-600">
+    <div className="border-line bg-surface hover:border-brand-300 flex items-start gap-4 rounded-xl border p-5 transition hover:shadow-sm">
+      <div className="bg-surface-subtle text-brand-600 rounded-lg p-2">
         <Icon className="h-4 w-4" />
       </div>
       <div className="flex-1 space-y-1.5">
         <div className="flex items-baseline gap-2">
           <h2 className="text-sm font-semibold">{channel.title}</h2>
-          <code className="font-mono text-xs text-ink-muted">
+          <code className="text-ink-muted font-mono text-xs">
             {channel.destination}
           </code>
           {channel.external && (
-            <ExternalLink className="h-3 w-3 text-ink-faint" />
+            <ExternalLink className="text-ink-faint h-3 w-3" />
           )}
         </div>
-        <p className="text-sm text-ink-body">
-          {channel.blurb}
-        </p>
+        <p className="text-ink-body text-sm">{channel.blurb}</p>
       </div>
     </div>
   );

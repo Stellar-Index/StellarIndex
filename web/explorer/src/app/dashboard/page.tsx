@@ -202,13 +202,13 @@ function GettingStarted({
       ) : (
         <>
           Keys authenticate your requests to{' '}
-          <code className="rounded-sm bg-surface-subtle px-1 py-0.5 font-mono text-[12px]">
+          <code className="bg-surface-subtle rounded-sm px-1 py-0.5 font-mono text-[12px]">
             api.stellarindex.io
           </code>
           .{' '}
           <Link
             href="/dashboard/keys"
-            className="font-medium text-brand-700 hover:underline"
+            className="text-brand-700 font-medium hover:underline"
           >
             Create one →
           </Link>
@@ -223,19 +223,19 @@ function GettingStarted({
       ) : (
         <>
           Try the API — the latest XLM/USD VWAP:
-          <pre className="mt-1.5 overflow-x-auto rounded-md border border-line bg-surface-subtle px-2.5 py-2 font-mono text-[12px] leading-relaxed text-ink">
+          <pre className="border-line bg-surface-subtle text-ink mt-1.5 overflow-x-auto rounded-md border px-2.5 py-2 font-mono text-[12px] leading-relaxed">
             {`curl -H "Authorization: Bearer sip_your_key" \\
   "https://api.stellarindex.io/v1/price?asset=native&quote=fiat:USD"`}
           </pre>
           <span className="mt-1 block">
             Replace{' '}
-            <code className="rounded-sm bg-surface-subtle px-1 py-0.5 font-mono text-[12px]">
+            <code className="bg-surface-subtle rounded-sm px-1 py-0.5 font-mono text-[12px]">
               sip_your_key
             </code>{' '}
             with a key from{' '}
             <Link
               href="/dashboard/keys"
-              className="font-medium text-brand-700 hover:underline"
+              className="text-brand-700 font-medium hover:underline"
             >
               API keys
             </Link>
@@ -254,7 +254,7 @@ function GettingStarted({
             href={DOCS_URL}
             target="_blank"
             rel="noopener noreferrer"
-            className="font-medium text-brand-700 hover:underline"
+            className="text-brand-700 font-medium hover:underline"
           >
             API reference
           </a>
@@ -284,32 +284,32 @@ function GettingStarted({
             ))}
           </div>
         ) : (
-          <ol className="divide-y divide-line">
+          <ol className="divide-line divide-y">
             {steps.map((s, i) => (
               <li
                 key={i}
                 className="flex items-start gap-3 py-3 first:pt-1 last:pb-1"
               >
                 {s.done ? (
-                  <CheckCircle2 className="mt-0.5 h-5 w-5 shrink-0 text-ok-500" />
+                  <CheckCircle2 className="text-ok-500 mt-0.5 h-5 w-5 shrink-0" />
                 ) : (
                   // line-strong is a hairline tint (1.40:1 on this card) —
                   // invisible as a GLYPH, which is what this is. ink-faint
                   // clears the 3:1 WCAG 1.4.11 floor for a graphic at
                   // 4.69:1 while staying quieter than the done state.
-                  <Circle className="mt-0.5 h-5 w-5 shrink-0 text-ink-faint" />
+                  <Circle className="text-ink-faint mt-0.5 h-5 w-5 shrink-0" />
                 )}
                 <div className="min-w-0">
                   <div
                     className={
                       s.done
-                        ? 'text-sm font-medium text-ink-muted line-through decoration-line-strong'
-                        : 'text-sm font-medium text-ink'
+                        ? 'text-ink-muted decoration-line-strong text-sm font-medium line-through'
+                        : 'text-ink text-sm font-medium'
                     }
                   >
                     {s.title}
                   </div>
-                  <div className="mt-0.5 text-sm text-ink-muted">{s.body}</div>
+                  <div className="text-ink-muted mt-0.5 text-sm">{s.body}</div>
                 </div>
               </li>
             ))}
@@ -324,17 +324,19 @@ function PlanCard({ me }: { me: MeResponse }) {
   const tier = accountTier(me);
   const ceiling = tierCeiling(tier);
   const status = me.account?.status ?? 'active';
-  const isPartner = ['partner', 'enterprise'].includes((tier ?? '').toLowerCase());
+  const isPartner = ['partner', 'enterprise'].includes(
+    (tier ?? '').toLowerCase(),
+  );
   return (
     <Card>
       <CardHeader title="Your plan" />
       <CardBody className="space-y-4">
         <div className="flex items-center justify-between">
           <div>
-            <div className="text-lg font-semibold text-ink">
+            <div className="text-ink text-lg font-semibold">
               {tierLabel(tier)}
             </div>
-            <div className="mt-0.5 text-sm text-ink-muted">
+            <div className="text-ink-muted mt-0.5 text-sm">
               {ceiling !== null
                 ? `${fmtInt(ceiling)} req/min`
                 : 'Custom limits'}
@@ -385,18 +387,18 @@ function QuickLinks() {
             <Link
               key={l.href}
               href={l.href}
-              className="group flex items-center gap-3 rounded-lg px-2 py-2 transition-colors hover:bg-surface-muted"
+              className="group hover:bg-surface-muted flex items-center gap-3 rounded-lg px-2 py-2 transition-colors"
             >
-              <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-surface-subtle text-ink-muted group-hover:text-brand-700">
+              <span className="bg-surface-subtle text-ink-muted group-hover:text-brand-700 flex h-8 w-8 items-center justify-center rounded-lg">
                 <Icon className="h-4 w-4" />
               </span>
               <span className="min-w-0 flex-1">
-                <span className="block text-sm font-medium text-ink">
+                <span className="text-ink block text-sm font-medium">
                   {l.label}
                 </span>
-                <span className="block text-xs text-ink-muted">{l.desc}</span>
+                <span className="text-ink-muted block text-xs">{l.desc}</span>
               </span>
-              <ArrowUpRight className="h-4 w-4 text-ink-faint group-hover:text-brand-600" />
+              <ArrowUpRight className="text-ink-faint group-hover:text-brand-600 h-4 w-4" />
             </Link>
           );
         })}
@@ -404,18 +406,18 @@ function QuickLinks() {
           href={DOCS_URL}
           target="_blank"
           rel="noopener noreferrer"
-          className="group flex items-center gap-3 rounded-lg px-2 py-2 transition-colors hover:bg-surface-muted"
+          className="group hover:bg-surface-muted flex items-center gap-3 rounded-lg px-2 py-2 transition-colors"
         >
-          <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-surface-subtle text-ink-muted group-hover:text-brand-700">
+          <span className="bg-surface-subtle text-ink-muted group-hover:text-brand-700 flex h-8 w-8 items-center justify-center rounded-lg">
             <BookOpen className="h-4 w-4" />
           </span>
           <span className="min-w-0 flex-1">
-            <span className="block text-sm font-medium text-ink">API docs</span>
-            <span className="block text-xs text-ink-muted">
+            <span className="text-ink block text-sm font-medium">API docs</span>
+            <span className="text-ink-muted block text-xs">
               Reference & guides
             </span>
           </span>
-          <ArrowUpRight className="h-4 w-4 text-ink-faint group-hover:text-brand-600" />
+          <ArrowUpRight className="text-ink-faint group-hover:text-brand-600 h-4 w-4" />
         </a>
       </CardBody>
     </Card>

@@ -36,7 +36,7 @@ export function DirectionPill({
     return (
       <span
         className={twMerge(
-          'inline-flex items-center gap-1 rounded-full bg-surface-subtle px-2 py-0.5 text-xs text-ink-muted',
+          'bg-surface-subtle text-ink-muted inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs',
           className,
         )}
         aria-label="no data"
@@ -47,7 +47,8 @@ export function DirectionPill({
   }
   const abs = Math.abs(deltaPct);
   const sign = deltaPct > 0 ? 'up' : deltaPct < 0 ? 'down' : 'flat';
-  const Icon = sign === 'up' ? ArrowUp : sign === 'down' ? ArrowDown : ArrowRight;
+  const Icon =
+    sign === 'up' ? ArrowUp : sign === 'down' ? ArrowDown : ArrowRight;
   const bg =
     abs < 0.5
       ? 'bg-surface-subtle text-ink-body'

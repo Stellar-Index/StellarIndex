@@ -50,7 +50,9 @@ describe('apiGet', () => {
   it('passes a bounded AbortSignal to fetch (no more unbounded requests)', async () => {
     const fetchSpy = vi
       .spyOn(globalThis, 'fetch')
-      .mockResolvedValue(new Response(JSON.stringify({ ok: true }), { status: 200 }));
+      .mockResolvedValue(
+        new Response(JSON.stringify({ ok: true }), { status: 200 }),
+      );
     await apiGet('/v1/status');
     expect(fetchSpy).toHaveBeenCalledTimes(1);
     const init = fetchSpy.mock.calls[0]?.[1] as RequestInit | undefined;

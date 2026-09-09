@@ -19,7 +19,13 @@ import { CURRENT_NETWORK } from '@/lib/networks';
 // here automatically get a /dexes/<source> page.
 const DEX_INFO: Record<
   string,
-  { name: string; type: string; status: string; contractsUrl?: string; blurb: string }
+  {
+    name: string;
+    type: string;
+    status: string;
+    contractsUrl?: string;
+    blurb: string;
+  }
 > = {
   soroswap: {
     name: 'Soroswap',
@@ -80,16 +86,23 @@ export async function generateMetadata({
     title,
     description,
     alternates: { canonical },
-    openGraph: { title, description, url: canonical, type: 'website', images: SITE_OG_IMAGES },
-    twitter: { card: 'summary_large_image', title, description, images: SITE_TWITTER_IMAGES },
+    openGraph: {
+      title,
+      description,
+      url: canonical,
+      type: 'website',
+      images: SITE_OG_IMAGES,
+    },
+    twitter: {
+      card: 'summary_large_image',
+      title,
+      description,
+      images: SITE_TWITTER_IMAGES,
+    },
   };
 }
 
-export default async function SourceDetailPage({
-  params,
-}: {
-  params: Params;
-}) {
+export default async function SourceDetailPage({ params }: { params: Params }) {
   const { source } = await params;
   const info = DEX_INFO[source];
   if (!info) notFound();
@@ -106,18 +119,14 @@ export default async function SourceDetailPage({
         ]}
       />
 
-      <header className="space-y-2 border-b border-line pb-4">
+      <header className="border-line space-y-2 border-b pb-4">
         <div className="flex flex-wrap items-baseline gap-3">
-          <h1 className="text-3xl font-semibold tracking-tight">
-            {info.name}
-          </h1>
-          <span className="rounded-sm bg-surface-subtle px-1.5 py-0.5 text-[10px] uppercase tracking-wider text-ink-body">
+          <h1 className="text-3xl font-semibold tracking-tight">{info.name}</h1>
+          <span className="bg-surface-subtle text-ink-body rounded-sm px-1.5 py-0.5 text-[10px] tracking-wider uppercase">
             {info.type}
           </span>
         </div>
-        <p className="max-w-3xl text-sm text-ink-body">
-          {info.blurb}
-        </p>
+        <p className="text-ink-body max-w-3xl text-sm">{info.blurb}</p>
       </header>
 
       <SourceStatsPanel source={source} />
@@ -137,9 +146,8 @@ export default async function SourceDetailPage({
       <PoolsTable source={source} sourceName={info.name} />
 
       {source === 'sdex' && (
-        <p className="text-xs text-ink-muted">
-          Live order-book depth for any SDEX pair is on its market page
-          (e.g.{' '}
+        <p className="text-ink-muted text-xs">
+          Live order-book depth for any SDEX pair is on its market page (e.g.{' '}
           <Link href="/markets" className="text-brand-600 hover:underline">
             pick a market
           </Link>{' '}
@@ -149,37 +157,51 @@ export default async function SourceDetailPage({
       )}
       {source === 'soroswap' && <PairReservesPanel />}
       {source === 'aquarius' && (
-        <p className="text-xs text-ink-muted">
-          Aquarius per-pool reserve snapshots (latest post-state depth per
-          pool) are on its{' '}
-          <Link href="/protocols/aquarius" className="text-brand-600 hover:underline">
+        <p className="text-ink-muted text-xs">
+          Aquarius per-pool reserve snapshots (latest post-state depth per pool)
+          are on its{' '}
+          <Link
+            href="/protocols/aquarius"
+            className="text-brand-600 hover:underline"
+          >
             protocol analytics page
           </Link>
           ; the TVL stat above is derived from the same snapshots.
         </p>
       )}
       {(source === 'phoenix' || source === 'comet') && (
-        <p className="text-xs text-ink-muted">
+        <p className="text-ink-muted text-xs">
           Per-pool reserve and depth views are currently served for{' '}
-          <Link href="/dexes/soroswap" className="text-brand-600 hover:underline">Soroswap</Link>{' '}
+          <Link
+            href="/dexes/soroswap"
+            className="text-brand-600 hover:underline"
+          >
+            Soroswap
+          </Link>{' '}
           and{' '}
-          <Link href="/protocols/aquarius" className="text-brand-600 hover:underline">Aquarius</Link>{' '}
-          only — {info.name} emits liquidity flows, not post-state reserves, and its
-          pool-storage layout hasn&apos;t been verified against the ledger lake yet.
-          We don&apos;t serve guesses, so it also carries no TVL figure.
+          <Link
+            href="/protocols/aquarius"
+            className="text-brand-600 hover:underline"
+          >
+            Aquarius
+          </Link>{' '}
+          only — {info.name} emits liquidity flows, not post-state reserves, and
+          its pool-storage layout hasn&apos;t been verified against the ledger
+          lake yet. We don&apos;t serve guesses, so it also carries no TVL
+          figure.
         </p>
       )}
 
       <div className="flex flex-wrap gap-3 text-xs">
         <Link
           href={`/protocols/${source}`}
-          className="inline-flex items-center gap-1 text-ink-muted hover:text-brand-600"
+          className="text-ink-muted hover:text-brand-600 inline-flex items-center gap-1"
         >
           Protocol analytics →
         </Link>
         <Link
           href={`/sources/${source}`}
-          className="inline-flex items-center gap-1 text-ink-muted hover:text-brand-600"
+          className="text-ink-muted hover:text-brand-600 inline-flex items-center gap-1"
         >
           Source registry detail →
         </Link>
@@ -188,7 +210,7 @@ export default async function SourceDetailPage({
             href={info.contractsUrl}
             target="_blank"
             rel="noreferrer noopener"
-            className="inline-flex items-center gap-1 text-ink-muted hover:underline"
+            className="text-ink-muted inline-flex items-center gap-1 hover:underline"
           >
             Contracts source
             <ExternalLink className="h-3 w-3" />
@@ -198,4 +220,3 @@ export default async function SourceDetailPage({
     </Container>
   );
 }
-

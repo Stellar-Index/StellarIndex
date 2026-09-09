@@ -48,17 +48,20 @@ export function SdexOrderBookSection() {
   return (
     <section className="space-y-3">
       <div className="flex flex-wrap items-baseline justify-between gap-2">
-        <h2 className="text-lg font-semibold text-ink">Live order book</h2>
+        <h2 className="text-ink text-lg font-semibold">Live order book</h2>
         <Link
           href={`/markets/${encodeURIComponent(pairSlug)}/`}
-          className="text-sm text-brand-600 hover:underline"
+          className="text-brand-600 text-sm hover:underline"
         >
           Full {pair.label} market page →
         </Link>
       </div>
       <Segmented
         ariaLabel="Headline pair"
-        options={HEADLINE_PAIRS.map((p, i) => ({ label: p.label, value: String(i) }))}
+        options={HEADLINE_PAIRS.map((p, i) => ({
+          label: p.label,
+          value: String(i),
+        }))}
         value={String(ix)}
         onChange={(v) => setIx(Number(v))}
       />

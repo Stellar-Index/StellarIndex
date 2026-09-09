@@ -3,7 +3,8 @@ import { render, screen, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 vi.mock('@/api/client', async () => {
-  const actual = await vi.importActual<typeof import('@/api/client')>('@/api/client');
+  const actual =
+    await vi.importActual<typeof import('@/api/client')>('@/api/client');
   return { ...actual, apiGet: vi.fn() };
 });
 
@@ -15,7 +16,9 @@ import { PairsTable } from './PairsTable';
 // nothing for two weeks". Absent ≠ empty.
 describe('PairsTable', () => {
   function renderTable() {
-    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
     return render(
       <QueryClientProvider client={client}>
         <PairsTable source="binance" exchangeName="Binance" />
@@ -27,9 +30,13 @@ describe('PairsTable', () => {
     vi.mocked(apiGet).mockRejectedValue(new Error('HTTP 503'));
     renderTable();
     await waitFor(() =>
-      expect(screen.getByText(/Pair list unavailable right now/)).toBeInTheDocument(),
+      expect(
+        screen.getByText(/Pair list unavailable right now/),
+      ).toBeInTheDocument(),
     );
-    expect(screen.queryByText(/No pairs found in the last 14 days/)).not.toBeInTheDocument();
+    expect(
+      screen.queryByText(/No pairs found in the last 14 days/),
+    ).not.toBeInTheDocument();
     expect(screen.getByText(/— on this page/)).toBeInTheDocument();
   });
 
@@ -37,7 +44,9 @@ describe('PairsTable', () => {
     vi.mocked(apiGet).mockResolvedValue({ data: [] });
     renderTable();
     await waitFor(() =>
-      expect(screen.getByText(/No pairs found in the last 14 days/)).toBeInTheDocument(),
+      expect(
+        screen.getByText(/No pairs found in the last 14 days/),
+      ).toBeInTheDocument(),
     );
     expect(screen.queryByText(/Pair list unavailable/)).not.toBeInTheDocument();
     expect(screen.getByText(/0 on this page/)).toBeInTheDocument();

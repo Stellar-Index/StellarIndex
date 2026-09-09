@@ -36,15 +36,17 @@ export function AccelerationArrow({
 }: AccelerationArrowProps) {
   if (direction === 'flat') {
     return (
-      <span className={twMerge('text-xs text-ink-faint', className)} aria-label="flat">
+      <span
+        className={twMerge('text-ink-faint text-xs', className)}
+        aria-label="flat"
+      >
         →
       </span>
     );
   }
 
   const glyph = pickGlyph(direction, acceleration);
-  const tone =
-    direction === 'up' ? 'text-up-strong' : 'text-down-strong';
+  const tone = direction === 'up' ? 'text-up-strong' : 'text-down-strong';
 
   return (
     <span

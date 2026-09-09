@@ -48,7 +48,10 @@ describe('ui primitives — render + semantics', () => {
 
   it('ButtonLink is an <a> carrying its href', () => {
     render(<ButtonLink href="/assets">Explore</ButtonLink>);
-    expect(screen.getByRole('link', { name: 'Explore' })).toHaveAttribute('href', '/assets');
+    expect(screen.getByRole('link', { name: 'Explore' })).toHaveAttribute(
+      'href',
+      '/assets',
+    );
   });
 
   it('Stat shows its label and value', () => {
@@ -93,13 +96,14 @@ describe('ui primitives — render + semantics', () => {
     unmount();
 
     render(<CardHeader title="Top-level section" headingLevel={2} />);
-    const h2 = screen.getByRole('heading', { level: 2, name: 'Top-level section' });
+    const h2 = screen.getByRole('heading', {
+      level: 2,
+      name: 'Top-level section',
+    });
     expect(h2.tagName).toBe('H2');
     // The rank moved, the styling did not.
     expect(h2).toHaveClass('truncate');
-    expect(
-      screen.queryByRole('heading', { level: 3 }),
-    ).not.toBeInTheDocument();
+    expect(screen.queryByRole('heading', { level: 3 })).not.toBeInTheDocument();
   });
 
   it('Mono truncates a long identifier head…tail and keeps the full value on hover', () => {
@@ -134,7 +138,9 @@ describe('ui primitives — render + semantics', () => {
       </TableWrap>,
     );
     expect(screen.getByRole('table')).toBeInTheDocument();
-    expect(screen.getByRole('columnheader', { name: 'Asset' })).toBeInTheDocument();
+    expect(
+      screen.getByRole('columnheader', { name: 'Asset' }),
+    ).toBeInTheDocument();
     expect(screen.getByRole('cell', { name: 'XLM' })).toBeInTheDocument();
   });
 
@@ -146,21 +152,36 @@ describe('ui primitives — render + semantics', () => {
         </Section>
       </Container>,
     );
-    expect(screen.getByRole('heading', { level: 1, name: 'Markets' })).toBeInTheDocument();
+    expect(
+      screen.getByRole('heading', { level: 1, name: 'Markets' }),
+    ).toBeInTheDocument();
   });
 
   it('Breadcrumbs render each crumb (linked + current)', () => {
-    render(<Breadcrumbs items={[{ label: 'Home', href: '/' }, { label: 'Markets' }]} />);
-    expect(screen.getByRole('link', { name: 'Home' })).toHaveAttribute('href', '/');
+    render(
+      <Breadcrumbs
+        items={[{ label: 'Home', href: '/' }, { label: 'Markets' }]}
+      />,
+    );
+    expect(screen.getByRole('link', { name: 'Home' })).toHaveAttribute(
+      'href',
+      '/',
+    );
     expect(screen.getByText('Markets')).toBeInTheDocument();
   });
 
   it('Breadcrumbs marks the current (last, unlinked) crumb with aria-current="page"', () => {
     // ACC-03: only the non-linked crumb is "current" — the linked ones are
     // not the current page and must not carry aria-current.
-    render(<Breadcrumbs items={[{ label: 'Home', href: '/' }, { label: 'Markets' }]} />);
+    render(
+      <Breadcrumbs
+        items={[{ label: 'Home', href: '/' }, { label: 'Markets' }]}
+      />,
+    );
     expect(screen.getByText('Markets')).toHaveAttribute('aria-current', 'page');
-    expect(screen.getByRole('link', { name: 'Home' })).not.toHaveAttribute('aria-current');
+    expect(screen.getByRole('link', { name: 'Home' })).not.toHaveAttribute(
+      'aria-current',
+    );
   });
 
   it('ACC-12: Field associates its error text with the control via aria-describedby/aria-invalid', () => {

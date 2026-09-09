@@ -27,7 +27,8 @@ const row: TradeRow = {
 };
 
 vi.mock('@/api/hooks', async () => {
-  const actual = await vi.importActual<typeof import('@/api/hooks')>('@/api/hooks');
+  const actual =
+    await vi.importActual<typeof import('@/api/hooks')>('@/api/hooks');
   return {
     ...actual,
     useHistory: () => ({ isError: false, isLoading: false, data: [row] }),
@@ -38,7 +39,10 @@ vi.mock('@/api/hooks', async () => {
 // refresh; this is a pure-render test (quote scaling), so stub the live
 // hook — its behaviour is covered by src/lib/live's own tests.
 vi.mock('@/lib/live/hooks', async () => {
-  const actual = await vi.importActual<typeof import('@/lib/live/hooks')>('@/lib/live/hooks');
+  const actual =
+    await vi.importActual<typeof import('@/lib/live/hooks')>(
+      '@/lib/live/hooks',
+    );
   return { ...actual, useObservationsFollow: () => undefined };
 });
 

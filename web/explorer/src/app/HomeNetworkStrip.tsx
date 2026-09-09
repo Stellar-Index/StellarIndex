@@ -53,7 +53,10 @@ export function HomeNetworkStrip() {
   // which don't trade on Stellar — so it isn't "Stellar volume".
   const stellarVolume = (sources.data ?? [])
     .filter((s) => s.subclass === 'dex')
-    .reduce((sum, s) => sum + (s.volume_24h_usd ? Number(s.volume_24h_usd) : 0), 0);
+    .reduce(
+      (sum, s) => sum + (s.volume_24h_usd ? Number(s.volume_24h_usd) : 0),
+      0,
+    );
   const volume = stellarVolume > 0 ? stellarVolume : null;
   const activeMarkets = stats.data?.markets_count_24h ?? null;
   const assetsIndexed = stats.data?.assets_indexed ?? null;
@@ -118,9 +121,7 @@ export function HomeNetworkStrip() {
       )}
       <Cell
         label="Assets indexed"
-        value={
-          assetsIndexed != null ? formatCompact(assetsIndexed) : '—'
-        }
+        value={assetsIndexed != null ? formatCompact(assetsIndexed) : '—'}
         sub="classic + native"
         href="/assets"
       />
@@ -135,7 +136,9 @@ export function HomeNetworkStrip() {
               ? `${onChainSources}`
               : '—'
         }
-        sub={CURRENT_NETWORK.pricing ? 'exchange feeds live' : 'on-chain sources'}
+        sub={
+          CURRENT_NETWORK.pricing ? 'exchange feeds live' : 'on-chain sources'
+        }
         href="/sources"
       />
       {pricing && xlmPrice != null ? (
@@ -162,7 +165,9 @@ export function HomeNetworkStrip() {
       ) : (
         <Cell
           label="Ledger tip"
-          value={tipLedger != null ? `#${tipLedger.toLocaleString('en-US')}` : '—'}
+          value={
+            tipLedger != null ? `#${tipLedger.toLocaleString('en-US')}` : '—'
+          }
           sub="ingest cursor"
           mono
           href="/diagnostics"
@@ -193,7 +198,11 @@ function Cell({
   const subNode = sub ? (
     <span
       className={
-        tone === 'up' ? 'text-up' : tone === 'down' ? 'text-down' : 'text-ink-muted'
+        tone === 'up'
+          ? 'text-up'
+          : tone === 'down'
+            ? 'text-down'
+            : 'text-ink-muted'
       }
     >
       {sub}
@@ -223,7 +232,7 @@ function Cell({
     return (
       <Link
         href={href}
-        className={`${baseClass} shadow-card transition-all hover:border-line-strong hover:shadow-elevated`}
+        className={`${baseClass} shadow-card hover:border-line-strong hover:shadow-elevated transition-all`}
       >
         {inner}
       </Link>

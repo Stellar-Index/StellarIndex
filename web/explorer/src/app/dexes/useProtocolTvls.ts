@@ -12,7 +12,9 @@ import type { DexTvlTotal } from '@/app/protocols/ProtocolTvlPanel';
  * `tvl_usd` is a decimal STRING (ADR-0003) and an honest lower
  * bound whenever `unpriced_pools` > 0.
  */
-export type ProtocolTvl = NonNullable<components['schemas']['ProtocolRow']['tvl']>;
+export type ProtocolTvl = NonNullable<
+  components['schemas']['ProtocolRow']['tvl']
+>;
 
 type ProtocolRow = components['schemas']['ProtocolRow'];
 

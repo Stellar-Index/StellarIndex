@@ -53,10 +53,7 @@ export function MultiWindowDelta({
           <span className="text-ink-muted">{w.label}:</span>
           <DirectionPill deltaPct={w.deltaPct} compact={compact} />
           {!wrap && i < windows.length - 1 && (
-            <span
-              className="text-ink-faint"
-              aria-hidden
-            >
+            <span className="text-ink-faint" aria-hidden>
               ·
             </span>
           )}

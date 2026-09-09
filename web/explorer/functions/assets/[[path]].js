@@ -36,5 +36,8 @@ export async function onRequest(context) {
   );
   // REL-02: propagate the shell fetch's real status — forcing 200 turns
   // a missing/broken shell into a soft-200 error page.
-  return new Response(shell.body, { status: shell.ok ? 200 : 503, headers: shell.headers });
+  return new Response(shell.body, {
+    status: shell.ok ? 200 : 503,
+    headers: shell.headers,
+  });
 }

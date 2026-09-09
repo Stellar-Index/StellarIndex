@@ -37,7 +37,9 @@ describe('DegradedBanner', () => {
 
   it('surfaces an unreachable-status banner after repeated fetch failures instead of staying silent', async () => {
     vi.useFakeTimers(); // this case drives the poll interval; the render-settle cases use real timers
-    vi.spyOn(globalThis, 'fetch').mockRejectedValue(new TypeError('Failed to fetch'));
+    vi.spyOn(globalThis, 'fetch').mockRejectedValue(
+      new TypeError('Failed to fetch'),
+    );
 
     renderWithClient(<DegradedBanner />);
 
@@ -83,7 +85,9 @@ describe('DegradedBanner', () => {
     renderWithClient(<DegradedBanner />);
 
     const banner = await screen.findByRole('status');
-    await waitFor(() => expect(banner.textContent).toMatch(/alert status unknown/i));
+    await waitFor(() =>
+      expect(banner.textContent).toMatch(/alert status unknown/i),
+    );
     expect(banner.textContent).not.toMatch(/0 active alert/i);
   });
 

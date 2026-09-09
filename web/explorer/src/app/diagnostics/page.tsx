@@ -44,20 +44,19 @@ export default function DiagnosticsPage() {
         description={
           <>
             Public system-health view: live per-source ingest cursors from{' '}
-            <code className="rounded-sm bg-surface-subtle px-1 font-mono text-[13px]">
+            <code className="bg-surface-subtle rounded-sm px-1 font-mono text-[13px]">
               /v1/diagnostics/cursors
             </code>
             , per-source completeness verdicts (decoder coverage) from{' '}
-            <code className="rounded-sm bg-surface-subtle px-1 font-mono text-[13px]">
+            <code className="bg-surface-subtle rounded-sm px-1 font-mono text-[13px]">
               /v1/coverage
             </code>
             , and archive completeness from{' '}
-            <code className="rounded-sm bg-surface-subtle px-1 font-mono text-[13px]">
+            <code className="bg-surface-subtle rounded-sm px-1 font-mono text-[13px]">
               /v1/diagnostics/archive
             </code>
-            . SLO burn rates land with the sla-probe read endpoint;
-            cross-region consistency lands with multi-region (single-region
-            today).
+            . SLO burn rates land with the sla-probe read endpoint; cross-region
+            consistency lands with multi-region (single-region today).
           </>
         }
       />

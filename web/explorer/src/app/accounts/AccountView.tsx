@@ -7,8 +7,16 @@ import { useQuery, keepPreviousData } from '@tanstack/react-query';
 
 import { Panel } from '@/components/reveal';
 import { AssetLink } from '@/components/AssetLink';
-import { DirectoryLabel, type DirectoryInfo } from '@/components/DirectoryLabel';
-import { Container, Breadcrumbs, Callout, TxStatusBadge } from '@/components/ui';
+import {
+  DirectoryLabel,
+  type DirectoryInfo,
+} from '@/components/DirectoryLabel';
+import {
+  Container,
+  Breadcrumbs,
+  Callout,
+  TxStatusBadge,
+} from '@/components/ui';
 import { AccountPositions } from './AccountPositions';
 import { AccountMovementsPanel } from './AccountMovements';
 import { AccountDefiPositionsPanel } from './AccountDefiPositions';
@@ -105,17 +113,16 @@ export function AccountView({ id: idProp }: { id?: string } = {}) {
   // generateStaticParams — so an internal link is guaranteed to
   // resolve under static export (no 404 on an un-prerendered route).
   const issuersQ = useIssuers(100);
-  const isKnownIssuer = (issuersQ.data ?? []).some((iss) => iss.g_strkey === id);
+  const isKnownIssuer = (issuersQ.data ?? []).some(
+    (iss) => iss.g_strkey === id,
+  );
 
   if (!looksValid) {
     return (
       <Shell id={id}>
-        <Panel
-          title="Invalid account ID"
-          bodyClassName="text-sm text-ink-body"
-        >
+        <Panel title="Invalid account ID" bodyClassName="text-sm text-ink-body">
           <p>
-            <span className="break-all font-mono">{id}</span> isn&apos;t a valid
+            <span className="font-mono break-all">{id}</span> isn&apos;t a valid
             Stellar account ID. Account IDs are 56 characters, starting with{' '}
             <code className="font-mono">G</code>.
           </p>
@@ -143,20 +150,22 @@ export function AccountView({ id: idProp }: { id?: string } = {}) {
         bodyClassName="space-y-3"
       >
         <div>
-          <div className="text-[11px] uppercase tracking-wider text-ink-muted">
+          <div className="text-ink-muted text-[11px] tracking-wider uppercase">
             Account ID
           </div>
           <div className="mt-0.5">
             <CopyHash value={id} head={16} tail={16} />
           </div>
         </div>
-        {stateQ.data?.directory && <DirectoryLabel info={stateQ.data.directory} />}
-        <ul className="flex flex-wrap items-center gap-x-6 gap-y-1 text-xs text-ink-body">
+        {stateQ.data?.directory && (
+          <DirectoryLabel info={stateQ.data.directory} />
+        )}
+        <ul className="text-ink-body flex flex-wrap items-center gap-x-6 gap-y-1 text-xs">
           {isKnownIssuer && (
             <li>
               <Link
                 href={`/issuers/${encodeURIComponent(id)}`}
-                className="font-medium text-brand-600 hover:underline"
+                className="text-brand-600 font-medium hover:underline"
               >
                 View as issuer — issued assets &amp; auth flags →
               </Link>
@@ -164,12 +173,12 @@ export function AccountView({ id: idProp }: { id?: string } = {}) {
           )}
         </ul>
         <CrossReference kind="account" id={id} />
-        <p className="rounded-md border border-line bg-surface-muted px-3 py-2 text-xs text-ink-muted">
+        <p className="border-line bg-surface-muted text-ink-muted rounded-md border px-3 py-2 text-xs">
           Balances + trustlines + offers below reflect the lake&apos;s captured
-          ledger-entry window; the activity tables show{' '}
-          <strong>all</strong> history — both what the account sourced and where
-          it&apos;s a participant (incoming payments, trustlines, merges).
-          Incoming coverage tracks the participant-index backfill.
+          ledger-entry window; the activity tables show <strong>all</strong>{' '}
+          history — both what the account sourced and where it&apos;s a
+          participant (incoming payments, trustlines, merges). Incoming coverage
+          tracks the participant-index backfill.
         </p>
       </Panel>
 
@@ -177,7 +186,12 @@ export function AccountView({ id: idProp }: { id?: string } = {}) {
 
       <AccountPositions id={id} />
 
-      <AccountStatePanel id={id} state={stateQ.data} isLoading={stateQ.isLoading} isError={stateQ.isError} />
+      <AccountStatePanel
+        id={id}
+        state={stateQ.data}
+        isLoading={stateQ.isLoading}
+        isError={stateQ.isError}
+      />
 
       <AccountMovementsPanel id={id} />
 
@@ -191,7 +205,11 @@ export function AccountView({ id: idProp }: { id?: string } = {}) {
         isError={txQ.isError}
         error={txQ.error}
         data={txQ.data}
-        onOlder={txQ.data?.next_cursor ? () => setTxCursor(txQ.data?.next_cursor ?? '') : undefined}
+        onOlder={
+          txQ.data?.next_cursor
+            ? () => setTxCursor(txQ.data?.next_cursor ?? '')
+            : undefined
+        }
         onNewest={txCursor ? () => setTxCursor('') : undefined}
       />
       <OperationsPanel
@@ -200,7 +218,11 @@ export function AccountView({ id: idProp }: { id?: string } = {}) {
         isError={opsQ.isError}
         error={opsQ.error}
         data={opsQ.data}
-        onOlder={opsQ.data?.next_cursor ? () => setOpsCursor(opsQ.data?.next_cursor ?? '') : undefined}
+        onOlder={
+          opsQ.data?.next_cursor
+            ? () => setOpsCursor(opsQ.data?.next_cursor ?? '')
+            : undefined
+        }
         onNewest={opsCursor ? () => setOpsCursor('') : undefined}
       />
     </Shell>
@@ -286,7 +308,7 @@ export function AccountsDirectoryHeader() {
   return (
     <header className="space-y-2">
       <h1 className="text-2xl font-semibold tracking-tight">Accounts</h1>
-      <p className="max-w-3xl text-sm text-ink-body">
+      <p className="text-ink-body max-w-3xl text-sm">
         {isNative ? (
           <>
             The largest accounts on Stellar {CURRENT_NETWORK.label}, ranked by
@@ -332,15 +354,15 @@ function AccountsDirectory() {
         source={asExample('/v1/accounts', { limit: DIRECTORY_SIZE })}
         bodyClassName="space-y-3"
       >
-        {q.isLoading && <p className="text-sm text-ink-muted">Loading…</p>}
+        {q.isLoading && <p className="text-ink-muted text-sm">Loading…</p>}
         {q.isError && (
-          <p className="text-sm text-ink-muted">
+          <p className="text-ink-muted text-sm">
             The accounts directory is unavailable right now (the current-state
             projection is still backfilling).
           </p>
         )}
         {q.data && q.data.accounts.length === 0 && (
-          <p className="text-sm text-ink-muted">
+          <p className="text-ink-muted text-sm">
             {isNative ? 'No accounts captured yet.' : 'No priced accounts yet.'}
           </p>
         )}
@@ -348,7 +370,7 @@ function AccountsDirectory() {
           <>
             <table className="w-full text-sm">
               <thead>
-                <tr className="border-b border-line text-left text-[11px] uppercase tracking-wider text-ink-muted">
+                <tr className="border-line text-ink-muted border-b text-left text-[11px] tracking-wider uppercase">
                   <th className="w-12 py-1.5 pr-4 text-right font-normal">#</th>
                   <th className="py-1.5 pr-4 font-normal">Account</th>
                   <th className="py-1.5 text-right font-normal">
@@ -360,9 +382,9 @@ function AccountsDirectory() {
                 {q.data.accounts.map((a, i) => (
                   <tr
                     key={a.account_id}
-                    className="border-b border-line/60 last:border-0 hover:bg-surface-muted"
+                    className="border-line/60 hover:bg-surface-muted border-b last:border-0"
                   >
-                    <td className="py-1.5 pr-4 text-right font-mono tabular-nums text-ink-muted">
+                    <td className="text-ink-muted py-1.5 pr-4 text-right font-mono tabular-nums">
                       {i + 1}
                     </td>
                     <td className="py-1.5 pr-4 font-mono">
@@ -375,7 +397,7 @@ function AccountsDirectory() {
                       {a.locked && (
                         <span
                           title="Provably unspendable — master weight 0, all thresholds 0, no signers. The balance is real; no key can ever move it (e.g. the SDF burn address)."
-                          className="ml-2 rounded-sm bg-surface-muted px-1.5 py-0.5 text-[9px] font-medium uppercase tracking-wider text-ink-muted"
+                          className="bg-surface-muted text-ink-muted ml-2 rounded-sm px-1.5 py-0.5 text-[9px] font-medium tracking-wider uppercase"
                         >
                           Locked
                         </span>
@@ -388,12 +410,12 @@ function AccountsDirectory() {
                 ))}
               </tbody>
             </table>
-            <p className="text-xs text-ink-muted">
+            <p className="text-ink-muted text-xs">
               {isNative ? (
                 <>
-                  Ranked by native XLM balance over the lake&apos;s current-state
-                  projection. Accounts not yet captured in the ledger-entry
-                  window are excluded.
+                  Ranked by native XLM balance over the lake&apos;s
+                  current-state projection. Accounts not yet captured in the
+                  ledger-entry window are excluded.
                 </>
               ) : (
                 <>
@@ -423,8 +445,20 @@ interface AccountStateResp {
   home_domain?: string;
   thresholds?: { master: number; low: number; med: number; high: number };
   signers?: { key: string; weight: number }[];
-  trustlines?: { asset: string; balance: string; limit: string; flags: number }[];
-  offers?: { offer_id: number; selling: string; buying: string; amount: string; price_n: number; price_d: number }[];
+  trustlines?: {
+    asset: string;
+    balance: string;
+    limit: string;
+    flags: number;
+  }[];
+  offers?: {
+    offer_id: number;
+    selling: string;
+    buying: string;
+    amount: string;
+    price_n: number;
+    price_d: number;
+  }[];
   last_modified_ledger?: number;
   directory?: DirectoryInfo;
 }
@@ -443,7 +477,11 @@ function AccountStatePanel({
   const source = asExample(`/v1/accounts/${id}`);
   if (isLoading) {
     return (
-      <Panel title="State" source={source} bodyClassName="text-sm text-ink-muted">
+      <Panel
+        title="State"
+        source={source}
+        bodyClassName="text-sm text-ink-muted"
+      >
         Loading account state…
       </Panel>
     );
@@ -452,7 +490,11 @@ function AccountStatePanel({
     // X-1: an error must never render as a confident "nothing exists"
     // claim — the state lookup can time out under load.
     return (
-      <Panel title="State" source={source} bodyClassName="text-sm text-ink-muted">
+      <Panel
+        title="State"
+        source={source}
+        bodyClassName="text-sm text-ink-muted"
+      >
         The account-state lookup failed — reload to retry. Activity below is
         unaffected.
       </Panel>
@@ -460,17 +502,25 @@ function AccountStatePanel({
   }
   if (!state || !state.exists) {
     return (
-      <Panel title="State" source={source} bodyClassName="text-sm text-ink-muted">
+      <Panel
+        title="State"
+        source={source}
+        bodyClassName="text-sm text-ink-muted"
+      >
         No live account state in the captured ledger window yet — the account
-        wasn’t touched since entry-change capture began. Sourced activity
-        still shows below.
+        wasn’t touched since entry-change capture began. Sourced activity still
+        shows below.
       </Panel>
     );
   }
   return (
     <Panel title="State" source={source} bodyClassName="space-y-5">
       <dl className="grid grid-cols-2 gap-x-6 gap-y-4 sm:grid-cols-3 lg:grid-cols-4">
-        <Stat label="Native balance" value={`${stroopsToXlm(state.balance ?? '0')} XLM`} mono />
+        <Stat
+          label="Native balance"
+          value={`${stroopsToXlm(state.balance ?? '0')} XLM`}
+          mono
+        />
         <Stat label="Sequence" value={state.seq_num ?? '—'} mono />
         <Stat label="Sub-entries" value={String(state.num_subentries ?? 0)} />
         <Stat label="Home domain" value={state.home_domain || '—'} />
@@ -481,25 +531,30 @@ function AccountStatePanel({
             value={`${state.thresholds.low}/${state.thresholds.med}/${state.thresholds.high}`}
           />
         )}
-        <Stat label="Master weight" value={String(state.thresholds?.master ?? '—')} />
+        <Stat
+          label="Master weight"
+          value={String(state.thresholds?.master ?? '—')}
+        />
       </dl>
 
       {state.signers && state.signers.length > 0 && (
         <div>
-          <div className="mb-1 text-[11px] uppercase tracking-wider text-ink-muted">Signers</div>
+          <div className="text-ink-muted mb-1 text-[11px] tracking-wider uppercase">
+            Signers
+          </div>
           <ul className="space-y-1 text-xs">
             {state.signers.map((s) => (
               <li key={s.key} className="flex items-center gap-2">
                 {/^G[A-Z2-7]{55}$/.test(s.key) ? (
                   <Link
                     href={`/accounts/${s.key}/`}
-                    className="font-mono text-brand-600 hover:underline"
+                    className="text-brand-600 font-mono hover:underline"
                     title={s.key}
                   >
                     {s.key.slice(0, 8)}…{s.key.slice(-6)}
                   </Link>
                 ) : (
-                  <span className="font-mono text-ink-body" title={s.key}>
+                  <span className="text-ink-body font-mono" title={s.key}>
                     {s.key.slice(0, 8)}…{s.key.slice(-6)}
                   </span>
                 )}
@@ -512,26 +567,30 @@ function AccountStatePanel({
 
       {state.trustlines && state.trustlines.length > 0 && (
         <div>
-          <div className="mb-1 text-[11px] uppercase tracking-wider text-ink-muted">
+          <div className="text-ink-muted mb-1 text-[11px] tracking-wider uppercase">
             Trustlines ({state.trustlines.length})
           </div>
           <div className="overflow-x-auto">
-            <table className="min-w-full divide-y divide-line text-sm">
+            <table className="divide-line min-w-full divide-y text-sm">
               <thead>
-                <tr className="text-left text-[10px] uppercase tracking-wider text-ink-muted">
+                <tr className="text-ink-muted text-left text-[10px] tracking-wider uppercase">
                   <th className="py-1.5 pr-4">Asset</th>
                   <th className="py-1.5 pr-4 text-right">Balance</th>
                   <th className="py-1.5 text-right">Limit</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-line-subtle">
+              <tbody className="divide-line-subtle divide-y">
                 {state.trustlines.map((t) => (
                   <tr key={t.asset}>
                     <td className="py-1.5 pr-4 text-xs">
                       <AssetLink canonical={t.asset} />
                     </td>
-                    <td className="py-1.5 pr-4 text-right font-mono tabular-nums">{stroopsToXlm(t.balance)}</td>
-                    <td className="py-1.5 text-right font-mono tabular-nums text-ink-muted">{stroopsToXlm(t.limit)}</td>
+                    <td className="py-1.5 pr-4 text-right font-mono tabular-nums">
+                      {stroopsToXlm(t.balance)}
+                    </td>
+                    <td className="text-ink-muted py-1.5 text-right font-mono tabular-nums">
+                      {stroopsToXlm(t.limit)}
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -542,13 +601,14 @@ function AccountStatePanel({
 
       {state.offers && state.offers.length > 0 && (
         <div>
-          <div className="mb-1 text-[11px] uppercase tracking-wider text-ink-muted">
+          <div className="text-ink-muted mb-1 text-[11px] tracking-wider uppercase">
             Open offers ({state.offers.length})
           </div>
-          <ul className="space-y-1 text-xs font-mono text-ink-body">
+          <ul className="text-ink-body space-y-1 font-mono text-xs">
             {state.offers.map((o) => (
               <li key={o.offer_id}>
-                #{o.offer_id}: {stroopsToXlm(o.amount)} {o.selling} → {o.buying} @ {o.price_n}/{o.price_d}
+                #{o.offer_id}: {stroopsToXlm(o.amount)} {o.selling} → {o.buying}{' '}
+                @ {o.price_n}/{o.price_d}
               </li>
             ))}
           </ul>
@@ -558,11 +618,27 @@ function AccountStatePanel({
   );
 }
 
-function Stat({ label, value, mono }: { label: string; value: string; mono?: boolean }) {
+function Stat({
+  label,
+  value,
+  mono,
+}: {
+  label: string;
+  value: string;
+  mono?: boolean;
+}) {
   return (
     <div>
-      <dt className="text-[11px] uppercase tracking-wider text-ink-muted">{label}</dt>
-      <dd className={mono ? 'mt-0.5 break-all font-mono text-xs' : 'mt-0.5 text-sm'}>{value}</dd>
+      <dt className="text-ink-muted text-[11px] tracking-wider uppercase">
+        {label}
+      </dt>
+      <dd
+        className={
+          mono ? 'mt-0.5 font-mono text-xs break-all' : 'mt-0.5 text-sm'
+        }
+      >
+        {value}
+      </dd>
     </div>
   );
 }
@@ -591,17 +667,29 @@ function Shell({
   );
 }
 
-function ActivityPager({ onOlder, onNewest }: { onOlder?: () => void; onNewest?: () => void }) {
+function ActivityPager({
+  onOlder,
+  onNewest,
+}: {
+  onOlder?: () => void;
+  onNewest?: () => void;
+}) {
   if (!onOlder && !onNewest) return null;
   return (
     <div className="flex items-center gap-2 px-4 pt-3 text-xs">
       {onNewest && (
-        <button onClick={onNewest} className="rounded-md border border-line px-2.5 py-1 text-ink-body hover:border-brand-500">
+        <button
+          onClick={onNewest}
+          className="border-line text-ink-body hover:border-brand-500 rounded-md border px-2.5 py-1"
+        >
           ← Newest
         </button>
       )}
       {onOlder && (
-        <button onClick={onOlder} className="ml-auto rounded-md border border-line px-2.5 py-1 text-ink-body hover:border-brand-500">
+        <button
+          onClick={onOlder}
+          className="border-line text-ink-body hover:border-brand-500 ml-auto rounded-md border px-2.5 py-1"
+        >
           Load older →
         </button>
       )}
@@ -671,9 +759,9 @@ function TransactionsPanel({
       bodyClassName="-mx-4"
     >
       <div className="overflow-x-auto">
-        <table className="min-w-full divide-y divide-line text-sm">
+        <table className="divide-line min-w-full divide-y text-sm">
           <thead>
-            <tr className="text-left text-[11px] uppercase tracking-wider text-ink-muted">
+            <tr className="text-ink-muted text-left text-[11px] tracking-wider uppercase">
               <Th>Hash</Th>
               <Th>Ledger</Th>
               <Th align="right">Ops</Th>
@@ -682,16 +770,13 @@ function TransactionsPanel({
               <Th>Memo</Th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-line-subtle">
+          <tbody className="divide-line-subtle divide-y">
             {transactions.map((t: LedgerTransaction) => (
-              <tr
-                key={t.hash}
-                className="hover:bg-surface-muted"
-              >
+              <tr key={t.hash} className="hover:bg-surface-muted">
                 <Td>
                   <Link
                     href={`/transactions/${t.hash}/`}
-                    className="font-mono text-xs text-brand-600 hover:underline"
+                    className="text-brand-600 font-mono text-xs hover:underline"
                     title={t.hash}
                   >
                     {(t.hash ?? '').slice(0, 10)}…{(t.hash ?? '').slice(-6)}
@@ -702,7 +787,7 @@ function TransactionsPanel({
                   {t.source_account && t.source_account !== id && (
                     <span
                       title={`Initiated by ${t.source_account} — this account participates`}
-                      className="ml-2 rounded-sm bg-surface-muted px-1.5 py-0.5 text-[9px] font-medium uppercase tracking-wider text-ink-muted"
+                      className="bg-surface-muted text-ink-muted ml-2 rounded-sm px-1.5 py-0.5 text-[9px] font-medium tracking-wider uppercase"
                     >
                       in
                     </span>
@@ -711,13 +796,13 @@ function TransactionsPanel({
                 <Td>
                   <Link
                     href={`/ledgers/${t.ledger}/`}
-                    className="font-mono text-xs text-brand-600 hover:underline"
+                    className="text-brand-600 font-mono text-xs hover:underline"
                   >
                     #{(t.ledger ?? 0).toLocaleString('en-US')}
                   </Link>
                 </Td>
                 <Td align="right">
-                  <span className="font-mono tabular-nums text-ink-body">
+                  <span className="text-ink-body font-mono tabular-nums">
                     {t.operation_count}
                   </span>
                 </Td>
@@ -729,14 +814,14 @@ function TransactionsPanel({
                   />
                 </Td>
                 <Td align="right">
-                  <span className="font-mono text-xs tabular-nums text-ink-muted">
+                  <span className="text-ink-muted font-mono text-xs tabular-nums">
                     {t.fee_charged != null ? stroopsToXlm(t.fee_charged) : '—'}
                   </span>
                 </Td>
                 <Td>
                   {t.memo_type && t.memo_type !== 'none' ? (
                     <span
-                      className="font-mono text-[11px] text-ink-muted"
+                      className="text-ink-muted font-mono text-[11px]"
                       title={t.memo ?? ''}
                     >
                       {t.memo_type}
@@ -783,8 +868,8 @@ function OperationsPanel({
         source={source}
         bodyClassName="text-sm text-ink-body"
       >
-        No operations for that account in the served tier, or the lookup
-        failed: {error instanceof Error ? error.message : 'unknown error'}.
+        No operations for that account in the served tier, or the lookup failed:{' '}
+        {error instanceof Error ? error.message : 'unknown error'}.
       </Panel>
     );
   }
@@ -827,7 +912,10 @@ function OperationsPanel({
         </Callout>
       )}
       {operations.map((op: TxOperation, i: number) => (
-        <OperationCard key={`${op.tx_hash ?? ''}-${op.op_index}-${i}`} op={op} />
+        <OperationCard
+          key={`${op.tx_hash ?? ''}-${op.op_index}-${i}`}
+          op={op}
+        />
       ))}
       <ActivityPager onOlder={onOlder} onNewest={onNewest} />
     </Panel>
@@ -838,12 +926,12 @@ function OperationCard({ op }: { op: TxOperation }) {
   const fields = op.fields ?? {};
   const fieldKeys = Object.keys(fields);
   return (
-    <div className="rounded-lg border border-line p-3">
+    <div className="border-line rounded-lg border p-3">
       <div className="mb-2 flex flex-wrap items-center gap-2">
-        <span className="rounded-sm bg-surface-subtle px-1.5 py-0.5 text-[10px] uppercase tracking-wider text-ink-body">
+        <span className="bg-surface-subtle text-ink-body rounded-sm px-1.5 py-0.5 text-[10px] tracking-wider uppercase">
           #{op.op_index}
         </span>
-        <span className="text-brand-700 rounded-sm bg-brand-50 px-2 py-0.5 text-[11px] font-medium">
+        <span className="text-brand-700 bg-brand-50 rounded-sm px-2 py-0.5 text-[11px] font-medium">
           {op.type}
         </span>
         {/* Failed ops stay visible + clearly marked FAILED — never hidden. */}
@@ -855,7 +943,7 @@ function OperationCard({ op }: { op: TxOperation }) {
         {op.tx_hash && (
           <Link
             href={`/transactions/${op.tx_hash}/`}
-            className="font-mono text-[11px] text-brand-600 hover:underline"
+            className="text-brand-600 font-mono text-[11px] hover:underline"
             title={op.tx_hash}
           >
             tx {op.tx_hash.slice(0, 8)}…{op.tx_hash.slice(-6)}
@@ -864,14 +952,14 @@ function OperationCard({ op }: { op: TxOperation }) {
         {op.ledger != null && (
           <Link
             href={`/ledgers/${op.ledger}/`}
-            className="font-mono text-[11px] text-ink-muted hover:text-brand-600"
+            className="text-ink-muted hover:text-brand-600 font-mono text-[11px]"
           >
             #{op.ledger.toLocaleString('en-US')}
           </Link>
         )}
         {op.close_time && (
           <span
-            className="font-mono text-[11px] text-ink-faint"
+            className="text-ink-faint font-mono text-[11px]"
             title={formatTimestamp(op.close_time)}
           >
             {relativeAge(op.close_time)}
@@ -882,24 +970,24 @@ function OperationCard({ op }: { op: TxOperation }) {
         <dl className="grid grid-cols-1 gap-x-6 gap-y-1.5 sm:grid-cols-2">
           {fieldKeys.map((k) => (
             <div key={k} className="flex items-baseline gap-2">
-              <dt className="shrink-0 text-[11px] uppercase tracking-wider text-ink-muted">
+              <dt className="text-ink-muted shrink-0 text-[11px] tracking-wider uppercase">
                 {k}
               </dt>
-              <dd className="break-all font-mono text-xs text-ink-body">
+              <dd className="text-ink-body font-mono text-xs break-all">
                 {renderOpFieldValue(k, fields[k])}
               </dd>
             </div>
           ))}
         </dl>
       ) : (
-        <p className="text-xs text-ink-faint">No decoded fields.</p>
+        <p className="text-ink-faint text-xs">No decoded fields.</p>
       )}
       {op.raw_xdr && (
-        <details className="mt-2 rounded-sm border border-line">
-          <summary className="cursor-pointer px-2 py-1 text-[11px] font-medium text-ink-muted hover:text-brand-600">
+        <details className="border-line mt-2 rounded-sm border">
+          <summary className="text-ink-muted hover:text-brand-600 cursor-pointer px-2 py-1 text-[11px] font-medium">
             Raw XDR
           </summary>
-          <pre className="overflow-x-auto whitespace-pre-wrap break-all border-t border-line px-2 py-2 font-mono text-[10px] leading-relaxed text-ink-body">
+          <pre className="border-line text-ink-body overflow-x-auto border-t px-2 py-2 font-mono text-[10px] leading-relaxed break-all whitespace-pre-wrap">
             {op.raw_xdr}
           </pre>
         </details>

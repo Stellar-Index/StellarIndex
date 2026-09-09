@@ -3,7 +3,8 @@ import { render, screen, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 vi.mock('@/api/client', async () => {
-  const actual = await vi.importActual<typeof import('@/api/client')>('@/api/client');
+  const actual =
+    await vi.importActual<typeof import('@/api/client')>('@/api/client');
   return { ...actual, apiGet: vi.fn() };
 });
 
@@ -14,8 +15,12 @@ import { AccountTradesPanel } from './AccountTrades';
 const G = 'GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN';
 
 function renderWithClient(ui: React.ReactElement) {
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  return render(<QueryClientProvider client={client}>{ui}</QueryClientProvider>);
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+  return render(
+    <QueryClientProvider client={client}>{ui}</QueryClientProvider>,
+  );
 }
 
 describe('AccountActivitySummaryPanel', () => {
@@ -49,11 +54,15 @@ describe('AccountActivitySummaryPanel', () => {
 
     // The failed segment renders the coverage note and a dash, not zero.
     expect(screen.getByText(/INCOMPLETE: trades_total/)).toBeInTheDocument();
-    expect(screen.getByText('Attributed trades').nextElementSibling?.textContent).toBe('—');
+    expect(
+      screen.getByText('Attributed trades').nextElementSibling?.textContent,
+    ).toBe('—');
 
     // DeFi + bridge segments render their real counts.
     expect(screen.getByText('supply')).toBeInTheDocument();
-    expect(screen.getByText(/rozo matches payment from_addr/)).toBeInTheDocument();
+    expect(
+      screen.getByText(/rozo matches payment from_addr/),
+    ).toBeInTheDocument();
   });
 });
 
@@ -71,7 +80,8 @@ describe('AccountTradesPanel', () => {
             base_amount: '10000000',
             quote_amount: '1234567',
             usd_volume: '0.12345600',
-            tx_hash: 'be8ac09cf011950987ae7c17badec336ccf24782a03f5573b1f982cb44c98f36',
+            tx_hash:
+              'be8ac09cf011950987ae7c17badec336ccf24782a03f5573b1f982cb44c98f36',
             ledger: 63000001,
             op_index: 0,
             role: 'taker',
@@ -85,14 +95,18 @@ describe('AccountTradesPanel', () => {
 
     // Amounts render verbatim as decimal strings (never reformatted
     // through a float).
-    await waitFor(() => expect(screen.getByText('10000000')).toBeInTheDocument());
+    await waitFor(() =>
+      expect(screen.getByText('10000000')).toBeInTheDocument(),
+    );
     expect(screen.getByText('1234567')).toBeInTheDocument();
     expect(screen.getByText('$0.12345600')).toBeInTheDocument();
     expect(screen.getByText('taker')).toBeInTheDocument();
     expect(screen.getByText('sdex')).toBeInTheDocument();
 
     // The attribution-scope honesty note is always visible.
-    expect(screen.getByText(/Soroswap swaps do not yet record/)).toBeInTheDocument();
+    expect(
+      screen.getByText(/Soroswap swaps do not yet record/),
+    ).toBeInTheDocument();
   });
 
   it('renders an honest empty state (no attributed trades ≠ never traded)', async () => {
@@ -103,7 +117,9 @@ describe('AccountTradesPanel', () => {
     renderWithClient(<AccountTradesPanel id={G} />);
 
     await waitFor(() =>
-      expect(screen.getByText(/No attributed trades observed/)).toBeInTheDocument(),
+      expect(
+        screen.getByText(/No attributed trades observed/),
+      ).toBeInTheDocument(),
     );
     expect(screen.getByText('attribution scope note')).toBeInTheDocument();
   });

@@ -12,10 +12,7 @@ import path from 'node:path';
 
 export type IncidentSeverity = 'SEV-1' | 'SEV-2' | 'SEV-3';
 export type IncidentStatus =
-  | 'investigating'
-  | 'identified'
-  | 'monitoring'
-  | 'resolved';
+  'investigating' | 'identified' | 'monitoring' | 'resolved';
 
 export type Incident = {
   slug: string;
@@ -56,8 +53,8 @@ export function loadIncidents(): Incident[] {
     out.push({
       slug,
       title: String(parsed.fm['title'] ?? slug),
-      severity: (String(parsed.fm['severity'] ?? 'SEV-3') as IncidentSeverity),
-      status: (String(parsed.fm['status'] ?? 'resolved') as IncidentStatus),
+      severity: String(parsed.fm['severity'] ?? 'SEV-3') as IncidentSeverity,
+      status: String(parsed.fm['status'] ?? 'resolved') as IncidentStatus,
       date: String(parsed.fm['date'] ?? ''),
       started_at: String(parsed.fm['started_at'] ?? ''),
       resolved_at:
@@ -117,7 +114,9 @@ function parseFrontmatter(
       const items: string[] = [];
       let j = i + 1;
       while (j < lines.length && /^\s+-\s+/.test(lines[j]!)) {
-        items.push(lines[j]!.replace(/^\s+-\s+/, '').replace(/^['"]|['"]$/g, ''));
+        items.push(
+          lines[j]!.replace(/^\s+-\s+/, '').replace(/^['"]|['"]$/g, ''),
+        );
         j++;
       }
       if (items.length > 0) {

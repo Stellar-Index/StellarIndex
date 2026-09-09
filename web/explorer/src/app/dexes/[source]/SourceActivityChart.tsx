@@ -53,7 +53,10 @@ export function SourceActivityChart({
         <div className="flex justify-end">
           <Segmented
             ariaLabel="Activity window"
-            options={(['24h', '7d'] as TF[]).map((o) => ({ label: o, value: o }))}
+            options={(['24h', '7d'] as TF[]).map((o) => ({
+              label: o,
+              value: o,
+            }))}
             value={tf}
             onChange={(v) => setTf(v as TF)}
           />

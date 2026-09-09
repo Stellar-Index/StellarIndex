@@ -9,13 +9,18 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 // rather than stubbing the hook under test.
 const listeners: Array<(data: string) => void> = [];
 vi.mock('./streams', () => ({
-  subscribeStream: (_url: string, _type: string, onData: (d: string) => void) => {
+  subscribeStream: (
+    _url: string,
+    _type: string,
+    onData: (d: string) => void,
+  ) => {
     listeners.push(onData);
     return () => {};
   },
 }));
 
-const { resetLedgerFollowThrottleForTest, useLedgerFollow } = await import('./hooks');
+const { resetLedgerFollowThrottleForTest, useLedgerFollow } =
+  await import('./hooks');
 
 // The defect (#470): `HomeTopMovers` and `HomeTopAssets` BOTH call
 // `useLedgerFollow(['/v1/assets'])`. The throttle was a per-instance
@@ -68,7 +73,8 @@ beforeEach(() => {
     defaultOptions: { queries: { retry: false } },
   });
   invalidateSpy = vi.fn();
-  client.invalidateQueries = invalidateSpy as unknown as QueryClient['invalidateQueries'];
+  client.invalidateQueries =
+    invalidateSpy as unknown as QueryClient['invalidateQueries'];
 });
 
 afterEach(() => {
@@ -89,7 +95,12 @@ describe('useLedgerFollow', () => {
   // gained its second follower without anyone noticing, and a third
   // would have made it six requests per advance.
   it('invalidates once no matter how many components follow the key', () => {
-    renderFollowers([['/v1/assets'], ['/v1/assets'], ['/v1/assets'], ['/v1/assets']]);
+    renderFollowers([
+      ['/v1/assets'],
+      ['/v1/assets'],
+      ['/v1/assets'],
+      ['/v1/assets'],
+    ]);
     pushLedger(1000);
 
     expect(invalidateSpy).toHaveBeenCalledTimes(1);
@@ -104,7 +115,9 @@ describe('useLedgerFollow', () => {
     pushLedger(1000);
 
     expect(invalidateSpy).toHaveBeenCalledTimes(3);
-    const keys = invalidateSpy.mock.calls.map((c) => JSON.stringify(c[0].queryKey));
+    const keys = invalidateSpy.mock.calls.map((c) =>
+      JSON.stringify(c[0].queryKey),
+    );
     expect(new Set(keys)).toEqual(
       new Set(['["/v1/assets"]', '["/v1/markets"]', '["/v1/pools"]']),
     );

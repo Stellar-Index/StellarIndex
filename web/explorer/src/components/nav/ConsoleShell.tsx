@@ -61,7 +61,7 @@ export function ConsoleShell({ children }: { children: ReactNode }) {
                 was a generic TrendingUp glyph on a brand-colour square — the
                 pre-2026-08-24 placeholder — so the mobile header showed a
                 different logo from every other surface. */}
-            <StellarMark className="h-5 w-5 shrink-0 text-ink" />
+            <StellarMark className="text-ink h-5 w-5 shrink-0" />
             <span className="truncate">
               Stellar
               <span className="font-light">Index</span>

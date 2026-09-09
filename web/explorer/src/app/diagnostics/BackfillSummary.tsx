@@ -27,7 +27,7 @@ export function BackfillSummary() {
 
   if (isLoading || !data) {
     return (
-      <section className="rounded-md border border-line bg-surface p-4 text-sm text-ink-muted">
+      <section className="border-line bg-surface text-ink-muted rounded-md border p-4 text-sm">
         Loading backfill summary…
       </section>
     );
@@ -35,7 +35,7 @@ export function BackfillSummary() {
 
   if (summary.totalWorkers === 0) {
     return (
-      <section className="rounded-md border border-line bg-surface p-4 text-sm text-ink-muted">
+      <section className="border-line bg-surface text-ink-muted rounded-md border p-4 text-sm">
         No backfill cursors recorded.
       </section>
     );
@@ -141,8 +141,8 @@ function Cell({
           ? 'text-down'
           : '';
   return (
-    <div className="rounded-md border border-line bg-surface p-3">
-      <div className="text-[10px] uppercase tracking-wider text-ink-muted">
+    <div className="border-line bg-surface rounded-md border p-3">
+      <div className="text-ink-muted text-[10px] tracking-wider uppercase">
         {label}
       </div>
       <div
@@ -151,7 +151,7 @@ function Cell({
       >
         {value}
       </div>
-      {sub && <div className="mt-0.5 text-[11px] text-ink-muted">{sub}</div>}
+      {sub && <div className="text-ink-muted mt-0.5 text-[11px]">{sub}</div>}
     </div>
   );
 }

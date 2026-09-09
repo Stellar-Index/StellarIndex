@@ -82,8 +82,8 @@ export function MarketsTabPanel({ assetID }: { assetID: string }) {
         source={asExample('/v1/markets', { limit: 100 })}
         bodyClassName="text-sm text-ink-muted"
       >
-        No (base, quote) pair involving this asset has traded in the
-        recency window.
+        No (base, quote) pair involving this asset has traded in the recency
+        window.
       </Panel>
     );
   }
@@ -97,9 +97,9 @@ export function MarketsTabPanel({ assetID }: { assetID: string }) {
       bodyClassName="-mx-4"
     >
       <div className="overflow-x-auto">
-        <table className="min-w-full divide-y divide-line text-sm">
+        <table className="divide-line min-w-full divide-y text-sm">
           <thead>
-            <tr className="text-left text-[11px] uppercase tracking-wider text-ink-muted">
+            <tr className="text-ink-muted text-left text-[11px] tracking-wider uppercase">
               <Th>Side</Th>
               <Th>Pair</Th>
               <Th align="right">24h volume</Th>
@@ -108,7 +108,7 @@ export function MarketsTabPanel({ assetID }: { assetID: string }) {
               <Th align="right">Last trade</Th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-line-subtle">
+          <tbody className="divide-line-subtle divide-y">
             {matched.map((m) => (
               <Row key={`${m.base}|${m.quote}`} m={m} assetID={assetID} />
             ))}
@@ -129,8 +129,15 @@ function Row({ m, assetID }: { m: Market; assetID: string }) {
   const matches = (side: string) => {
     if (side === assetID) return true;
     const up = assetID.toUpperCase();
-    if ((side === 'native' || /^\d+$/.test(side)) && (up === 'XLM' || up === 'NATIVE')) return true;
-    return side.toUpperCase().startsWith(`${up}-`) || side.toUpperCase().startsWith(`${up}:`);
+    if (
+      (side === 'native' || /^\d+$/.test(side)) &&
+      (up === 'XLM' || up === 'NATIVE')
+    )
+      return true;
+    return (
+      side.toUpperCase().startsWith(`${up}-`) ||
+      side.toUpperCase().startsWith(`${up}:`)
+    );
   };
   const isBase = matches(m.base ?? '');
   const counterparty = isBase ? m.quote : m.base;
@@ -138,7 +145,7 @@ function Row({ m, assetID }: { m: Market; assetID: string }) {
   return (
     <tr className="hover:bg-surface-muted">
       <Td>
-        <span className="rounded-sm bg-surface-subtle px-1.5 py-0.5 text-[10px] uppercase tracking-wider text-ink-body">
+        <span className="bg-surface-subtle text-ink-body rounded-sm px-1.5 py-0.5 text-[10px] tracking-wider uppercase">
           {isBase ? 'base' : 'quote'}
         </span>
       </Td>
@@ -149,12 +156,16 @@ function Row({ m, assetID }: { m: Market; assetID: string }) {
           className="hover:text-brand-600"
         >
           <span className="font-medium">vs </span>
-          <span className="font-mono text-xs">{shortAsset(counterparty ?? '')}</span>
+          <span className="font-mono text-xs">
+            {shortAsset(counterparty ?? '')}
+          </span>
         </Link>
       </Td>
       <Td align="right">
-        <span className="font-mono tabular-nums text-xs">
-          {m.volume_24h_usd ? `$${formatCompact(Number(m.volume_24h_usd))}` : '—'}
+        <span className="font-mono text-xs tabular-nums">
+          {m.volume_24h_usd
+            ? `$${formatCompact(Number(m.volume_24h_usd))}`
+            : '—'}
         </span>
       </Td>
       <Td align="right">
@@ -166,7 +177,7 @@ function Row({ m, assetID }: { m: Market; assetID: string }) {
         <SourceSparkline buckets={m.volume_history_24h} />
       </Td>
       <Td align="right">
-        <span className="font-mono tabular-nums text-xs text-ink-muted">
+        <span className="text-ink-muted font-mono text-xs tabular-nums">
           {formatRelative(m.last_trade_at)}
         </span>
       </Td>
@@ -177,7 +188,8 @@ function Row({ m, assetID }: { m: Market; assetID: string }) {
 function shortAsset(canonical: string): string {
   if (canonical === 'native') return 'XLM';
   if (canonical.startsWith('crypto:')) return canonical.replace('crypto:', '');
-  if (/^C[A-Z2-7]{55}$/.test(canonical)) return `${canonical.slice(0, 4)}…${canonical.slice(-4)} (SAC)`;
+  if (/^C[A-Z2-7]{55}$/.test(canonical))
+    return `${canonical.slice(0, 4)}…${canonical.slice(-4)} (SAC)`;
   if (canonical.startsWith('fiat:')) return canonical.replace('fiat:', '');
   if (/^\d+$/.test(canonical)) return 'XLM';
   const dashIx = canonical.indexOf('-');

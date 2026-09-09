@@ -21,7 +21,10 @@ describe('reveal/Panel heading rank', () => {
         body
       </Panel>,
     );
-    const h = screen.getByRole('heading', { level: 2, name: 'Divergence board' });
+    const h = screen.getByRole('heading', {
+      level: 2,
+      name: 'Divergence board',
+    });
     expect(h.tagName).toBe('H2');
     // No stray h3 left behind, so the outline cannot skip.
     expect(screen.queryByRole('heading', { level: 3 })).not.toBeInTheDocument();

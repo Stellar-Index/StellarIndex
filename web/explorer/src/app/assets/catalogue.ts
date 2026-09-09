@@ -20,7 +20,8 @@ import type { components } from '@/api/types';
 import { buildFetchData, failBuild } from '@/lib/buildFetch';
 
 // Wire shapes from the generated OpenAPI contract (src/api/types.ts).
-type VerifiedCurrencyListItem = components['schemas']['VerifiedCurrencyListItem'];
+type VerifiedCurrencyListItem =
+  components['schemas']['VerifiedCurrencyListItem'];
 
 // class is spec'd on GlobalAssetView since board #33; the alias is pure.
 export type GlobalAssetView = components['schemas']['GlobalAssetView'];

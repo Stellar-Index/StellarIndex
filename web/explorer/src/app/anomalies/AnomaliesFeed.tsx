@@ -23,7 +23,9 @@ const TALLY_WINDOW_DAYS = 30;
 
 function fmtTs(iso: string): string {
   const d = new Date(iso);
-  return Number.isNaN(d.getTime()) ? iso : d.toISOString().replace('T', ' ').slice(0, 19) + 'Z';
+  return Number.isNaN(d.getTime())
+    ? iso
+    : d.toISOString().replace('T', ' ').slice(0, 19) + 'Z';
 }
 
 function duration(from: string, to: string | null): string {
@@ -63,7 +65,10 @@ export function AnomaliesFeed() {
   const q = useQuery<AnomaliesResp>({
     queryKey: ['/v1/anomalies'],
     queryFn: async () => {
-      const env = await apiGet<{ data: AnomaliesResp }>('/v1/anomalies', { limit: 100, include: 'daily' });
+      const env = await apiGet<{ data: AnomaliesResp }>('/v1/anomalies', {
+        limit: 100,
+        include: 'daily',
+      });
       return env.data;
     },
     staleTime: 30_000,
@@ -92,83 +97,109 @@ export function AnomaliesFeed() {
                   : 'bg-up-subtle text-up-strong'
               }`}
             >
-              {(data.firing_count ?? 0) > 0 ? `${data.firing_count} firing now` : 'Nothing firing'}
+              {(data.firing_count ?? 0) > 0
+                ? `${data.firing_count} firing now`
+                : 'Nothing firing'}
             </span>
             {(data.reason_tally ?? []).map((t) => (
-              <span key={t.reason} className="inline-flex items-center gap-1 rounded-sm bg-surface-muted px-2 py-1 text-ink-body">
+              <span
+                key={t.reason}
+                className="bg-surface-muted text-ink-body inline-flex items-center gap-1 rounded-sm px-2 py-1"
+              >
                 <code className="font-mono">{t.reason}</code>
                 <span className="text-ink-muted">×{t.count}</span>
               </span>
             ))}
-            <span className="self-center text-ink-muted">(reasons: trailing 30d)</span>
+            <span className="text-ink-muted self-center">
+              (reasons: trailing 30d)
+            </span>
           </div>
         )}
-        {q.isLoading && <p className="text-sm text-ink-muted">Loading…</p>}
-        {q.isError && <p className="text-sm text-ink-muted">The anomalies feed is unavailable right now.</p>}
+        {q.isLoading && <p className="text-ink-muted text-sm">Loading…</p>}
+        {q.isError && (
+          <p className="text-ink-muted text-sm">
+            The anomalies feed is unavailable right now.
+          </p>
+        )}
         {data && events.length === 0 && (
-          <p className="text-sm text-ink-muted">
-            No freeze events recorded yet — every served price has cleared the anomaly checks.
+          <p className="text-ink-muted text-sm">
+            No freeze events recorded yet — every served price has cleared the
+            anomaly checks.
           </p>
         )}
         {events.length > 0 && (
           // WCAG 1.4.10 Reflow: the wide mono columns scroll inside the
           // panel instead of pushing the whole page sideways at 320px.
           <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-line text-left text-[11px] uppercase tracking-wider text-ink-muted">
-                <th className="py-1.5 pr-4 font-normal">Pair</th>
-                <th className="py-1.5 pr-4 font-normal">Reason</th>
-                <th className="py-1.5 pr-4 font-normal">Frozen at</th>
-                <th className="py-1.5 pr-4 font-normal">Duration</th>
-                <th className="py-1.5 pr-4 text-right font-normal">Deviation</th>
-                <th className="py-1.5 pr-4 text-right font-normal">Frozen value</th>
-                <th className="py-1.5 font-normal">State</th>
-              </tr>
-            </thead>
-            <tbody>
-              {events.map((e) => {
-                const dev = deviationPct(e);
-                return (
-                  <tr
-                    key={`${e.asset_id}:${e.quote_id}:${e.frozen_at}`}
-                    className="border-b border-line/60 last:border-0 hover:bg-surface-muted"
-                  >
-                    <td className="py-1.5 pr-4 font-mono">
-                      <AssetText canonical={e.asset_id} />
-                      <span className="text-ink-faint">/</span>
-                      <AssetText canonical={e.quote_id} />
-                    </td>
-                    <td className="py-1.5 pr-4">
-                      <code className="text-[11px]">{e.reason}</code>
-                    </td>
-                    <td className="py-1.5 pr-4 font-mono text-[11px] text-ink-muted">{fmtTs(e.frozen_at ?? '')}</td>
-                    <td className="py-1.5 pr-4 font-mono tabular-nums text-ink-muted">
-                      {duration(e.frozen_at ?? '', e.recovered_at ?? null)}
-                    </td>
-                    <td
-                      className="py-1.5 pr-4 text-right font-mono tabular-nums text-ink-muted"
-                      title={dev != null ? 'detail.deviation_pct at freeze time' : 'no deviation recorded for this freeze path'}
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-line text-ink-muted border-b text-left text-[11px] tracking-wider uppercase">
+                  <th className="py-1.5 pr-4 font-normal">Pair</th>
+                  <th className="py-1.5 pr-4 font-normal">Reason</th>
+                  <th className="py-1.5 pr-4 font-normal">Frozen at</th>
+                  <th className="py-1.5 pr-4 font-normal">Duration</th>
+                  <th className="py-1.5 pr-4 text-right font-normal">
+                    Deviation
+                  </th>
+                  <th className="py-1.5 pr-4 text-right font-normal">
+                    Frozen value
+                  </th>
+                  <th className="py-1.5 font-normal">State</th>
+                </tr>
+              </thead>
+              <tbody>
+                {events.map((e) => {
+                  const dev = deviationPct(e);
+                  return (
+                    <tr
+                      key={`${e.asset_id}:${e.quote_id}:${e.frozen_at}`}
+                      className="border-line/60 hover:bg-surface-muted border-b last:border-0"
                     >
-                      {dev != null ? `${dev > 0 ? '+' : ''}${dev.toFixed(2)}%` : '—'}
-                    </td>
-                    <td className="py-1.5 pr-4 text-right font-mono tabular-nums">{e.frozen_value}</td>
-                    <td className="py-1.5">
-                      {e.firing ? (
-                        <span className="rounded-sm bg-down-subtle px-1.5 py-0.5 text-[10px] font-medium uppercase text-down-strong">
-                          firing
-                        </span>
-                      ) : (
-                        <span className="rounded-sm bg-up-subtle px-1.5 py-0.5 text-[10px] font-medium uppercase text-up-strong">
-                          recovered
-                        </span>
-                      )}
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
+                      <td className="py-1.5 pr-4 font-mono">
+                        <AssetText canonical={e.asset_id} />
+                        <span className="text-ink-faint">/</span>
+                        <AssetText canonical={e.quote_id} />
+                      </td>
+                      <td className="py-1.5 pr-4">
+                        <code className="text-[11px]">{e.reason}</code>
+                      </td>
+                      <td className="text-ink-muted py-1.5 pr-4 font-mono text-[11px]">
+                        {fmtTs(e.frozen_at ?? '')}
+                      </td>
+                      <td className="text-ink-muted py-1.5 pr-4 font-mono tabular-nums">
+                        {duration(e.frozen_at ?? '', e.recovered_at ?? null)}
+                      </td>
+                      <td
+                        className="text-ink-muted py-1.5 pr-4 text-right font-mono tabular-nums"
+                        title={
+                          dev != null
+                            ? 'detail.deviation_pct at freeze time'
+                            : 'no deviation recorded for this freeze path'
+                        }
+                      >
+                        {dev != null
+                          ? `${dev > 0 ? '+' : ''}${dev.toFixed(2)}%`
+                          : '—'}
+                      </td>
+                      <td className="py-1.5 pr-4 text-right font-mono tabular-nums">
+                        {e.frozen_value}
+                      </td>
+                      <td className="py-1.5">
+                        {e.firing ? (
+                          <span className="bg-down-subtle text-down-strong rounded-sm px-1.5 py-0.5 text-[10px] font-medium uppercase">
+                            firing
+                          </span>
+                        ) : (
+                          <span className="bg-up-subtle text-up-strong rounded-sm px-1.5 py-0.5 text-[10px] font-medium uppercase">
+                            recovered
+                          </span>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
           </div>
         )}
       </Panel>
@@ -183,29 +214,49 @@ export function AnomaliesFeed() {
 // Every sub-visual renders only over data actually served — a
 // missing daily block (older API / degraded reader) renders nothing
 // rather than a grid of fabricated zeros.
-function AnomalyVisuals({ data, events }: { data?: AnomaliesResp; events: FreezeEvent[] }) {
+function AnomalyVisuals({
+  data,
+  events,
+}: {
+  data?: AnomaliesResp;
+  events: FreezeEvent[];
+}) {
   const tally = (data?.reason_tally ?? []).filter((t) => (t.count ?? 0) > 0);
-  const donut = tally.map((t) => ({ label: t.reason ?? 'unknown', value: t.count ?? 0 }));
+  const donut = tally.map((t) => ({
+    label: t.reason ?? 'unknown',
+    value: t.count ?? 0,
+  }));
 
-  const recovered = events.filter((e) => !e.firing && e.recovered_at && e.frozen_at);
+  const recovered = events.filter(
+    (e) => !e.firing && e.recovered_at && e.frozen_at,
+  );
   const counts = DURATION_BUCKETS.map(() => 0);
   for (const e of recovered) {
-    const sec = (new Date(e.recovered_at as string).getTime() - new Date(e.frozen_at as string).getTime()) / 1000;
+    const sec =
+      (new Date(e.recovered_at as string).getTime() -
+        new Date(e.frozen_at as string).getTime()) /
+      1000;
     if (!Number.isFinite(sec) || sec < 0) continue;
     counts[DURATION_BUCKETS.findIndex((b) => sec < b.maxSec)] += 1;
   }
-  const histogram = DURATION_BUCKETS.map((b, i) => ({ label: b.label, value: counts[i] })).filter(
-    (x) => x.value > 0,
-  );
+  const histogram = DURATION_BUCKETS.map((b, i) => ({
+    label: b.label,
+    value: counts[i],
+  })).filter((x) => x.value > 0);
 
   // daily is null when not requested/served, [] when served-and-empty
   // — only a real array may drive the heatmap (degraded ≠ zero).
   const daily = data?.daily;
   const heatCells = Array.isArray(daily)
-    ? daily.map((d) => ({ day: d.day ?? '', reason: d.reason ?? '', count: d.count ?? 0 }))
+    ? daily.map((d) => ({
+        day: d.day ?? '',
+        reason: d.reason ?? '',
+        count: d.count ?? 0,
+      }))
     : null;
 
-  if (donut.length === 0 && histogram.length === 0 && heatCells == null) return null;
+  if (donut.length === 0 && histogram.length === 0 && heatCells == null)
+    return null;
 
   return (
     <>
@@ -215,11 +266,16 @@ function AnomalyVisuals({ data, events }: { data?: AnomaliesResp; events: Freeze
             headingLevel={2}
             title="Freezes by reason — 30d"
             hint="Composition of the trailing-30-day freeze tally by trigger reason."
-            source={asExample('/v1/anomalies', { limit: 100, include: 'daily' })}
+            source={asExample('/v1/anomalies', {
+              limit: 100,
+              include: 'daily',
+            })}
           >
             <DonutChart
               data={donut}
-              centerLabel={donut.reduce((s, d) => s + d.value, 0).toLocaleString('en-US')}
+              centerLabel={donut
+                .reduce((s, d) => s + d.value, 0)
+                .toLocaleString('en-US')}
               centerSub="freezes 30d"
             />
           </Panel>
@@ -231,7 +287,10 @@ function AnomalyVisuals({ data, events }: { data?: AnomaliesResp; events: Freeze
             hint={`How long pairs stayed dark before recovering — the ${recovered.length} recovered freeze${
               recovered.length === 1 ? '' : 's'
             } among the ${events.length} most recent events served. Still-firing freezes are excluded (no closed duration yet).`}
-            source={asExample('/v1/anomalies', { limit: 100, include: 'daily' })}
+            source={asExample('/v1/anomalies', {
+              limit: 100,
+              include: 'daily',
+            })}
           >
             <HBarList
               items={histogram}

@@ -54,7 +54,10 @@ export function AssetClientFallback({ slug }: { slug: string }) {
           // we render the friendly recovery panel below without
           // looping.
           const reloadKey = `assetFallbackReloaded:${slug}`;
-          if (typeof window !== 'undefined' && !sessionStorage.getItem(reloadKey)) {
+          if (
+            typeof window !== 'undefined' &&
+            !sessionStorage.getItem(reloadKey)
+          ) {
             sessionStorage.setItem(reloadKey, '1');
             // Brief delay so the reload feels intentional (not a flash).
             setTimeout(() => window.location.reload(), 600);
@@ -97,33 +100,36 @@ export function AssetClientFallback({ slug }: { slug: string }) {
       >
         <p>
           We&apos;ve got live data for <code className="font-mono">{slug}</code>{' '}
-          but this snapshot was rendered before the latest deploy settled.
-          Try:
+          but this snapshot was rendered before the latest deploy settled. Try:
         </p>
         <ul className="list-disc pl-5">
           <li>
             <button
               type="button"
               onClick={() => {
-                try { sessionStorage.removeItem(`assetFallbackReloaded:${slug}`); } catch {/* noop */}
+                try {
+                  sessionStorage.removeItem(`assetFallbackReloaded:${slug}`);
+                } catch {
+                  /* noop */
+                }
                 window.location.reload();
               }}
               className="text-brand-600 hover:underline"
             >
               Reload the page
-            </button>
-            {' '}— a freshly-rebuilt static copy usually lands within a minute.
+            </button>{' '}
+            — a freshly-rebuilt static copy usually lands within a minute.
           </li>
           <li>
             <Link className="text-brand-600 hover:underline" href="/assets">
               Browse the asset list
-            </Link>
-            {' '}— the listing fetches client-side and works even mid-deploy.
+            </Link>{' '}
+            — the listing fetches client-side and works even mid-deploy.
           </li>
           <li>
             Or query the API directly:{' '}
             <a
-              className="font-mono text-brand-600 hover:underline"
+              className="text-brand-600 font-mono hover:underline"
               href={`${API_BASE_URL}/v1/assets/${encodeURIComponent(slug)}`}
               target="_blank"
               rel="noreferrer"
@@ -140,7 +146,7 @@ export function AssetClientFallback({ slug }: { slug: string }) {
     return (
       <Panel
         headingLevel={2}
-        title="Couldn&apos;t reach the API"
+        title="Couldn't reach the API"
         bodyClassName="text-sm text-ink-body"
       >
         <p>{errMsg ?? 'Unknown error'}</p>
@@ -156,7 +162,7 @@ export function AssetClientFallback({ slug }: { slug: string }) {
     >
       <p>
         The slug{' '}
-        <code className="rounded-sm bg-surface-subtle px-1 font-mono text-xs">
+        <code className="bg-surface-subtle rounded-sm px-1 font-mono text-xs">
           {slug}
         </code>{' '}
         doesn&apos;t match any asset the indexer has observed yet. Asset slugs

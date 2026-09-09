@@ -38,9 +38,13 @@ export function OraclesView() {
   const sources = useQuery<SourceRow[]>({
     queryKey: ['/v1/sources', 'stats', 'oracle'],
     queryFn: async () => {
-      const env = await apiGet<{ data: SourceRow[] }>('/v1/sources', { include: 'stats' });
+      const env = await apiGet<{ data: SourceRow[] }>('/v1/sources', {
+        include: 'stats',
+      });
       const arr = env.data ?? [];
-      return arr.filter((s) => s.class === 'oracle').sort((a, b) => a.name.localeCompare(b.name));
+      return arr
+        .filter((s) => s.class === 'oracle')
+        .sort((a, b) => a.name.localeCompare(b.name));
     },
     refetchInterval: 60_000,
   });
@@ -48,7 +52,10 @@ export function OraclesView() {
   const streams = useQuery<OracleStream[]>({
     queryKey: ['/v1/oracle/streams', STREAMS_PARAMS],
     queryFn: async () => {
-      const env = await apiGet<{ data: OracleStream[] }>('/v1/oracle/streams', STREAMS_PARAMS);
+      const env = await apiGet<{ data: OracleStream[] }>(
+        '/v1/oracle/streams',
+        STREAMS_PARAMS,
+      );
       return env.data ?? [];
     },
     refetchInterval: 60_000,
@@ -97,11 +104,11 @@ export function OraclesView() {
     <Container className="space-y-6 py-8">
       <header className="space-y-2">
         <h1 className="text-3xl font-semibold tracking-tight">Oracles</h1>
-        <p className="max-w-3xl text-sm text-ink-body">
-          Every on-chain Stellar oracle we ingest and cross-reference.
-          Oracles are reported alongside our independent VWAP but never
-          included in it — mixing them would import their methodology
-          and double-count whichever upstream markets they read.
+        <p className="text-ink-body max-w-3xl text-sm">
+          Every on-chain Stellar oracle we ingest and cross-reference. Oracles
+          are reported alongside our independent VWAP but never included in it —
+          mixing them would import their methodology and double-count whichever
+          upstream markets they read.
         </p>
       </header>
 
@@ -113,37 +120,48 @@ export function OraclesView() {
         bodyClassName="-mx-4"
       >
         <div className="overflow-x-auto">
-          <table className="min-w-full divide-y divide-line text-sm">
+          <table className="divide-line min-w-full divide-y text-sm">
             <thead>
-              <tr className="text-left text-[10px] uppercase tracking-wider text-ink-muted">
+              <tr className="text-ink-muted text-left text-[10px] tracking-wider uppercase">
                 <Th>Oracle</Th>
                 <Th align="right">Active streams</Th>
                 <Th align="right">Last update</Th>
                 <Th align="right">In VWAP?</Th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-line-subtle">
+            <tbody className="divide-line-subtle divide-y">
               {sources.isLoading && (
                 <tr>
-                  <td colSpan={4} className="px-4 py-6 text-center text-sm text-ink-muted">
+                  <td
+                    colSpan={4}
+                    className="text-ink-muted px-4 py-6 text-center text-sm"
+                  >
                     Loading oracles…
                   </td>
                 </tr>
               )}
               {!sources.isLoading && !registryAvailable && (
                 <tr>
-                  <td colSpan={4} className="px-4 py-6 text-center text-sm text-ink-muted">
+                  <td
+                    colSpan={4}
+                    className="text-ink-muted px-4 py-6 text-center text-sm"
+                  >
                     Oracle registry unavailable right now — retry shortly.
                   </td>
                 </tr>
               )}
-              {!sources.isLoading && registryAvailable && oracles.length === 0 && (
-                <tr>
-                  <td colSpan={4} className="px-4 py-6 text-center text-sm text-ink-muted">
-                    No oracles registered.
-                  </td>
-                </tr>
-              )}
+              {!sources.isLoading &&
+                registryAvailable &&
+                oracles.length === 0 && (
+                  <tr>
+                    <td
+                      colSpan={4}
+                      className="text-ink-muted px-4 py-6 text-center text-sm"
+                    >
+                      No oracles registered.
+                    </td>
+                  </tr>
+                )}
               {oracles.map((o) => {
                 const perSrc = perSourceCounts[o.name];
                 const tone = sourceToneClass(o.name);
@@ -152,24 +170,24 @@ export function OraclesView() {
                     <Td>
                       <Link
                         href={`/sources/${o.name}`}
-                        className={`inline-block rounded-sm px-1.5 py-0.5 text-[11px] font-medium uppercase tracking-wider hover:underline ${tone}`}
+                        className={`inline-block rounded-sm px-1.5 py-0.5 text-[11px] font-medium tracking-wider uppercase hover:underline ${tone}`}
                       >
                         {o.name}
                       </Link>
                     </Td>
                     <Td align="right">
-                      <span className="font-mono tabular-nums text-ink-body">
+                      <span className="text-ink-body font-mono tabular-nums">
                         {perSrc ? perSrc.streams : '—'}
                       </span>
                     </Td>
                     <Td align="right">
-                      <span className="font-mono text-xs text-ink-muted">
+                      <span className="text-ink-muted font-mono text-xs">
                         {perSrc ? formatRelative(perSrc.latestTs) : '—'}
                       </span>
                     </Td>
                     <Td align="right">
                       <span
-                        className={`inline-block rounded px-1.5 py-0.5 text-[10px] uppercase tracking-wider ${
+                        className={`inline-block rounded px-1.5 py-0.5 text-[10px] tracking-wider uppercase ${
                           o.class === 'oracle'
                             ? 'bg-line text-ink-body'
                             : 'bg-up-subtle text-up-strong'
@@ -195,9 +213,9 @@ export function OraclesView() {
         bodyClassName="-mx-4"
       >
         <div className="overflow-x-auto">
-          <table className="min-w-full divide-y divide-line text-sm">
+          <table className="divide-line min-w-full divide-y text-sm">
             <thead>
-              <tr className="text-left text-[10px] uppercase tracking-wider text-ink-muted">
+              <tr className="text-ink-muted text-left text-[10px] tracking-wider uppercase">
                 <Th>Oracle</Th>
                 <Th>Asset</Th>
                 <Th>Quote</Th>
@@ -205,36 +223,50 @@ export function OraclesView() {
                 <Th align="right">Updated</Th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-line-subtle">
+            <tbody className="divide-line-subtle divide-y">
               {streams.isLoading && (
                 <tr>
-                  <td colSpan={5} className="px-4 py-6 text-center text-sm text-ink-muted">
+                  <td
+                    colSpan={5}
+                    className="text-ink-muted px-4 py-6 text-center text-sm"
+                  >
                     Loading streams…
                   </td>
                 </tr>
               )}
               {!streams.isLoading && !streamsAvailable && (
                 <tr>
-                  <td colSpan={5} className="px-4 py-6 text-center text-sm text-ink-muted">
+                  <td
+                    colSpan={5}
+                    className="text-ink-muted px-4 py-6 text-center text-sm"
+                  >
                     Oracle observations unavailable right now — retry shortly.
                   </td>
                 </tr>
               )}
-              {!streams.isLoading && streamsAvailable && streamRows.length === 0 && (
-                <tr>
-                  <td colSpan={5} className="px-4 py-6 text-center text-sm text-ink-muted">
-                    No oracle observations in the last 7 days.
-                  </td>
-                </tr>
-              )}
+              {!streams.isLoading &&
+                streamsAvailable &&
+                streamRows.length === 0 && (
+                  <tr>
+                    <td
+                      colSpan={5}
+                      className="text-ink-muted px-4 py-6 text-center text-sm"
+                    >
+                      No oracle observations in the last 7 days.
+                    </td>
+                  </tr>
+                )}
               {streamRows.map((s, i) => {
                 const tone = sourceToneClass(s.source);
                 return (
-                  <tr key={`${s.source}|${s.asset}|${s.quote}|${i}`} className="hover:bg-surface-muted">
+                  <tr
+                    key={`${s.source}|${s.asset}|${s.quote}|${i}`}
+                    className="hover:bg-surface-muted"
+                  >
                     <Td>
                       <Link
                         href={`/sources/${s.source}`}
-                        className={`inline-block rounded-sm px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wider hover:underline ${tone}`}
+                        className={`inline-block rounded-sm px-1.5 py-0.5 text-[10px] font-medium tracking-wider uppercase hover:underline ${tone}`}
                       >
                         {s.source}
                       </Link>
@@ -246,12 +278,12 @@ export function OraclesView() {
                       <AssetLink canonical={s.quote} />
                     </Td>
                     <Td align="right">
-                      <span className="font-mono tabular-nums text-ink-body">
+                      <span className="text-ink-body font-mono tabular-nums">
                         {formatOraclePrice(s.price)}
                       </span>
                     </Td>
                     <Td align="right">
-                      <span className="font-mono text-xs text-ink-muted">
+                      <span className="text-ink-muted font-mono text-xs">
                         {formatRelative(s.ts)}
                       </span>
                     </Td>
@@ -271,7 +303,7 @@ export function OraclesView() {
           source={asExample('/v1/oracle/streams', STREAMS_PARAMS)}
           bodyClassName="-mx-4"
         >
-          <p className="px-4 pb-3 text-xs text-ink-muted">
+          <p className="text-ink-muted px-4 pb-3 text-xs">
             An oracle sometimes publishes a symbol we cannot map to a canonical
             asset. Capture totality means the observation is still recorded —
             under its raw on-wire symbol — but it is never compared, aggregated,
@@ -279,9 +311,9 @@ export function OraclesView() {
             out of the price-stream table above.
           </p>
           <div className="overflow-x-auto">
-            <table className="min-w-full divide-y divide-line text-sm">
+            <table className="divide-line min-w-full divide-y text-sm">
               <thead>
-                <tr className="text-left text-[10px] uppercase tracking-wider text-ink-muted">
+                <tr className="text-ink-muted text-left text-[10px] tracking-wider uppercase">
                   <Th>Oracle</Th>
                   <Th>Raw symbol</Th>
                   <Th>Quote (assumed)</Th>
@@ -289,10 +321,13 @@ export function OraclesView() {
                   <Th align="right">Updated</Th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-line-subtle">
+              <tbody className="divide-line-subtle divide-y">
                 {unmappedRows.length === 0 && (
                   <tr>
-                    <td colSpan={5} className="px-4 py-6 text-center text-sm text-ink-muted">
+                    <td
+                      colSpan={5}
+                      className="text-ink-muted px-4 py-6 text-center text-sm"
+                    >
                       No unmapped feeds in the last 7 days — every published
                       symbol maps to a canonical asset.
                     </td>
@@ -308,17 +343,19 @@ export function OraclesView() {
                       <Td>
                         <Link
                           href={`/sources/${s.source}`}
-                          className={`inline-block rounded-sm px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wider hover:underline ${tone}`}
+                          className={`inline-block rounded-sm px-1.5 py-0.5 text-[10px] font-medium tracking-wider uppercase hover:underline ${tone}`}
                         >
                           {s.source}
                         </Link>
                       </Td>
                       <Td>
                         <span
-                          className="font-mono text-xs text-ink-body"
+                          className="text-ink-body font-mono text-xs"
                           title={`${s.asset} — unmapped oracle symbol`}
                         >
-                          {isRawOracleAsset(s.asset) ? rawOracleSymbol(s.asset) : s.asset}
+                          {isRawOracleAsset(s.asset)
+                            ? rawOracleSymbol(s.asset)
+                            : s.asset}
                         </span>
                       </Td>
                       <Td>
@@ -333,19 +370,19 @@ export function OraclesView() {
                             rendering the default as though it were a fact is the
                             one place that contradiction reaches a reader. */}
                         <span
-                          className="font-mono text-xs text-ink-muted"
+                          className="text-ink-muted font-mono text-xs"
                           title={`${s.quote} is the decoder's DEFAULT for an unmapped symbol, not an observed denomination — this row's true quote is unknown`}
                         >
                           {s.quote}
                         </span>
                       </Td>
                       <Td align="right">
-                        <span className="font-mono tabular-nums text-ink-body">
+                        <span className="text-ink-body font-mono tabular-nums">
                           {formatOraclePrice(s.price)}
                         </span>
                       </Td>
                       <Td align="right">
-                        <span className="font-mono text-xs text-ink-muted">
+                        <span className="text-ink-muted font-mono text-xs">
                           {formatRelative(s.ts)}
                         </span>
                       </Td>
@@ -369,19 +406,25 @@ export function OraclesView() {
           We expose three SEP-40 endpoints —{' '}
           <code className="font-mono text-xs">/v1/oracle/lastprice</code>,{' '}
           <code className="font-mono text-xs">/v1/oracle/prices</code>,{' '}
-          <code className="font-mono text-xs">/v1/oracle/x_last_price</code>{' '}
-          — that match the SEP-40 contract trait on-chain consumers
-          already integrate against. Routing your existing on-chain{' '}
-          <code className="font-mono text-xs">lastprice()</code> calls
-          through Stellar Index swaps in independent VWAP-backed prices
-          without touching the calling contract.
+          <code className="font-mono text-xs">/v1/oracle/x_last_price</code> —
+          that match the SEP-40 contract trait on-chain consumers already
+          integrate against. Routing your existing on-chain{' '}
+          <code className="font-mono text-xs">lastprice()</code> calls through
+          Stellar Index swaps in independent VWAP-backed prices without touching
+          the calling contract.
         </p>
       </Panel>
     </Container>
   );
 }
 
-function Th({ children, align }: { children: React.ReactNode; align?: 'left' | 'right' }) {
+function Th({
+  children,
+  align,
+}: {
+  children: React.ReactNode;
+  align?: 'left' | 'right';
+}) {
   return (
     <th
       scope="col"
@@ -392,8 +435,18 @@ function Th({ children, align }: { children: React.ReactNode; align?: 'left' | '
   );
 }
 
-function Td({ children, align }: { children: React.ReactNode; align?: 'left' | 'right' }) {
+function Td({
+  children,
+  align,
+}: {
+  children: React.ReactNode;
+  align?: 'left' | 'right';
+}) {
   return (
-    <td className={`px-4 py-2 ${align === 'right' ? 'text-right' : 'text-left'}`}>{children}</td>
+    <td
+      className={`px-4 py-2 ${align === 'right' ? 'text-right' : 'text-left'}`}
+    >
+      {children}
+    </td>
   );
 }

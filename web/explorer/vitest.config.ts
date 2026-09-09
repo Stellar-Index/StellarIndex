@@ -13,7 +13,10 @@ export default defineConfig({
     alias: [
       { find: /^@\/(.*)$/, replacement: `${abs('./src')}/$1` },
       { find: /^next\/link$/, replacement: abs('./test/stubs/next-link.tsx') },
-      { find: /^next\/navigation$/, replacement: abs('./test/stubs/next-navigation.ts') },
+      {
+        find: /^next\/navigation$/,
+        replacement: abs('./test/stubs/next-navigation.ts'),
+      },
     ],
   },
   esbuild: {

@@ -7,7 +7,10 @@ import { Panel } from '@/components/reveal';
 //
 // Exported because page.tsx also feeds it into the FAQPage JSON-LD schema —
 // the visible panel and the structured data share ONE source of truth.
-export function assetFaqFor(symbol: string, hasIssuer: boolean): { q: string; a: string }[] {
+export function assetFaqFor(
+  symbol: string,
+  hasIssuer: boolean,
+): { q: string; a: string }[] {
   const issuerNote = hasIssuer
     ? `As a classic credit asset, ${symbol} has a designated issuer account holding the canonical issuance authority — see the Issuer panel above for SEP-1 metadata, auth flags, and the home domain that pinned the issuer's identity.`
     : `As a Soroban-native or smart-contract token, ${symbol} doesn't have a classic Stellar issuer account. Its issuance is governed by the contract's own logic; on-chain mint/burn events drive its supply.`;
@@ -35,7 +38,13 @@ export function assetFaqFor(symbol: string, hasIssuer: boolean): { q: string; a:
   ];
 }
 
-export function AssetFAQ({ symbol, hasIssuer }: { symbol: string; hasIssuer: boolean }) {
+export function AssetFAQ({
+  symbol,
+  hasIssuer,
+}: {
+  symbol: string;
+  hasIssuer: boolean;
+}) {
   const items = assetFaqFor(symbol, hasIssuer);
   return (
     <Panel
@@ -53,12 +62,17 @@ export function AssetFAQ({ symbol, hasIssuer }: { symbol: string; hasIssuer: boo
 
 function AssetFAQItem({ q, a }: { q: string; a: string }) {
   return (
-    <details className="group rounded-lg border border-line">
-      <summary className="flex cursor-pointer items-center justify-between px-3 py-2 font-medium text-ink hover:bg-surface-muted">
+    <details className="group border-line rounded-lg border">
+      <summary className="text-ink hover:bg-surface-muted flex cursor-pointer items-center justify-between px-3 py-2 font-medium">
         <span>{q}</span>
-        <span aria-hidden className="text-xs text-ink-faint group-open:rotate-45 transition-transform">+</span>
+        <span
+          aria-hidden
+          className="text-ink-faint text-xs transition-transform group-open:rotate-45"
+        >
+          +
+        </span>
       </summary>
-      <p className="border-t border-line px-3 py-2 text-sm leading-relaxed text-ink-body">
+      <p className="border-line text-ink-body border-t px-3 py-2 text-sm leading-relaxed">
         {a}
       </p>
     </details>

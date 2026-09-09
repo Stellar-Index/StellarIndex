@@ -53,7 +53,10 @@ export function useTableSort<T, K extends string>(
   initialKey: K | null = null,
   initialDir: SortDir = 'desc',
 ): UseTableSort<T, K> {
-  const [sort, setSort] = useState<SortState<K>>({ key: initialKey, dir: initialDir });
+  const [sort, setSort] = useState<SortState<K>>({
+    key: initialKey,
+    dir: initialDir,
+  });
 
   const colByKey = useMemo(() => {
     const m = new Map<K, SortColumn<T, K>>();
@@ -133,7 +136,11 @@ export function SortableTh<K extends string>({
   className?: string;
 }) {
   const alignCls =
-    align === 'right' ? 'text-right' : align === 'center' ? 'text-center' : 'text-left';
+    align === 'right'
+      ? 'text-right'
+      : align === 'center'
+        ? 'text-center'
+        : 'text-left';
   const base = `whitespace-nowrap px-4 py-2.5 font-medium ${alignCls} ${className}`;
 
   if (!sortKey || !onSort || !sort || !ariaSort) {
@@ -146,7 +153,11 @@ export function SortableTh<K extends string>({
 
   const active = sort.key === sortKey;
   const justify =
-    align === 'right' ? 'justify-end' : align === 'center' ? 'justify-center' : 'justify-start';
+    align === 'right'
+      ? 'justify-end'
+      : align === 'center'
+        ? 'justify-center'
+        : 'justify-start';
 
   return (
     <th className={base} scope="col" aria-sort={ariaSort(sortKey)}>

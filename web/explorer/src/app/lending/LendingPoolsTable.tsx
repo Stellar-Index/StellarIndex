@@ -108,7 +108,10 @@ function parseUsd(s: string | undefined): number | null {
 
 // sumPresent — sum a field over the reserves where it is actually served;
 // null when NO reserve carries it (an all-absent basis is not a zero).
-function sumPresent(reserves: PoolReserve[], pick: (r: PoolReserve) => number | null): {
+function sumPresent(
+  reserves: PoolReserve[],
+  pick: (r: PoolReserve) => number | null,
+): {
   sum: number | null;
   count: number;
 } {
@@ -182,43 +185,67 @@ function PoolRealStats({ pool }: { pool: string }) {
       : null;
   // BACKLOG #30: supplied-weighted average APRs from the same reserves
   // the row already fetched — no extra request.
-  const wSupplyAPR = weightedAvg(reserves, (r) => parseUsd(r.supplied_usd), (r) => r.supply_apr);
-  const wBorrowAPR = weightedAvg(reserves, (r) => parseUsd(r.borrowed_usd), (r) => r.borrow_apr);
+  const wSupplyAPR = weightedAvg(
+    reserves,
+    (r) => parseUsd(r.supplied_usd),
+    (r) => r.supply_apr,
+  );
+  const wBorrowAPR = weightedAvg(
+    reserves,
+    (r) => parseUsd(r.borrowed_usd),
+    (r) => r.borrow_apr,
+  );
   const basisNote = (count: number) =>
     reserves.length > 0 && count < reserves.length
       ? `Priced reserves only (${count} of ${reserves.length})`
       : 'Priced reserves only';
   const fmtUsd = (n: number) =>
-    n >= 1e9 ? `$${(n / 1e9).toFixed(2)}B` : n >= 1e6 ? `$${(n / 1e6).toFixed(2)}M` : `$${Math.round(n).toLocaleString('en-US')}`;
+    n >= 1e9
+      ? `$${(n / 1e9).toFixed(2)}B`
+      : n >= 1e6
+        ? `$${(n / 1e6).toFixed(2)}M`
+        : `$${Math.round(n).toLocaleString('en-US')}`;
   return (
     <>
       <Td align="right">
-        <span className="font-mono tabular-nums text-ink-body">
+        <span className="text-ink-body font-mono tabular-nums">
           {q.isLoading ? '…' : tvl != null ? fmtUsd(tvl) : '—'}
         </span>
       </Td>
       <Td align="right">
         <span
-          className="font-mono tabular-nums text-ink-body"
-          title={util != null ? basisNote(Math.min(supplied.count, borrowed.count)) : undefined}
+          className="text-ink-body font-mono tabular-nums"
+          title={
+            util != null
+              ? basisNote(Math.min(supplied.count, borrowed.count))
+              : undefined
+          }
         >
           {q.isLoading ? '…' : util != null ? `${util.toFixed(1)}%` : '—'}
         </span>
       </Td>
       <Td align="right">
         <span
-          className="font-mono tabular-nums text-up-strong"
+          className="text-up-strong font-mono tabular-nums"
           title={wSupplyAPR != null ? basisNote(supplied.count) : undefined}
         >
-          {q.isLoading ? '…' : wSupplyAPR != null ? `${(wSupplyAPR * 100).toFixed(2)}%` : '—'}
+          {q.isLoading
+            ? '…'
+            : wSupplyAPR != null
+              ? `${(wSupplyAPR * 100).toFixed(2)}%`
+              : '—'}
         </span>
       </Td>
       <Td align="right">
         <span
-          className="font-mono tabular-nums text-ink-body"
+          className="text-ink-body font-mono tabular-nums"
           title={wBorrowAPR != null ? basisNote(borrowed.count) : undefined}
         >
-          {q.isLoading ? '…' : wBorrowAPR != null ? `${(wBorrowAPR * 100).toFixed(2)}%` : '—'}
+          {q.isLoading
+            ? '…'
+            : wBorrowAPR != null
+              ? `${(wBorrowAPR * 100).toFixed(2)}%`
+              : '—'}
         </span>
       </Td>
     </>
@@ -229,7 +256,10 @@ export function LendingPoolsTable() {
   const q = useQuery<LendingPool[]>({
     queryKey: ['/v1/lending/pools'],
     queryFn: async () => {
-      const env = await apiGet<{ data: LendingPool[] }>('/v1/lending/pools', {});
+      const env = await apiGet<{ data: LendingPool[] }>(
+        '/v1/lending/pools',
+        {},
+      );
       return env.data ?? [];
     },
   });
@@ -273,141 +303,157 @@ export function LendingPoolsTable() {
         </Panel>
       )}
 
-    <Panel
-      title={`Pools${rows.length > 0 ? ` (${rows.length})` : ''}`}
-      hint="One row per Blend pool. TVL + utilization read live from pool storage (per-reserve USD); auctions and users from the indexed event stream."
-      source={asExample('/v1/lending/pools', {})}
-      bodyClassName="-mx-4"
-    >
-      <div className="overflow-x-auto">
-        <table className="min-w-full divide-y divide-line text-sm">
-          <thead>
-            <tr className="text-left text-[10px] uppercase tracking-wider text-ink-muted">
-              <Th>Protocol</Th>
-              <Th>Pool</Th>
-              <Th>Deployed</Th>
-              <Th align="right">24h auctions</Th>
-              <Th align="right">All-time auctions</Th>
-              <Th align="right">TVL</Th>
-              <Th align="right">Utilization</Th>
-              <Th align="right">Supply APR</Th>
-              <Th align="right">Borrow APR</Th>
-              <Th align="right">Users (30d)</Th>
-              <Th align="right">Last activity</Th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-line-subtle">
-            {q.isLoading && (
-              <tr>
-                <td colSpan={11} className="px-4 py-6 text-center text-sm text-ink-muted">
-                  Loading pools…
-                </td>
+      <Panel
+        title={`Pools${rows.length > 0 ? ` (${rows.length})` : ''}`}
+        hint="One row per Blend pool. TVL + utilization read live from pool storage (per-reserve USD); auctions and users from the indexed event stream."
+        source={asExample('/v1/lending/pools', {})}
+        bodyClassName="-mx-4"
+      >
+        <div className="overflow-x-auto">
+          <table className="divide-line min-w-full divide-y text-sm">
+            <thead>
+              <tr className="text-ink-muted text-left text-[10px] tracking-wider uppercase">
+                <Th>Protocol</Th>
+                <Th>Pool</Th>
+                <Th>Deployed</Th>
+                <Th align="right">24h auctions</Th>
+                <Th align="right">All-time auctions</Th>
+                <Th align="right">TVL</Th>
+                <Th align="right">Utilization</Th>
+                <Th align="right">Supply APR</Th>
+                <Th align="right">Borrow APR</Th>
+                <Th align="right">Users (30d)</Th>
+                <Th align="right">Last activity</Th>
               </tr>
-            )}
-            {/* A failed fetch is an availability problem, not an empty
+            </thead>
+            <tbody className="divide-line-subtle divide-y">
+              {q.isLoading && (
+                <tr>
+                  <td
+                    colSpan={11}
+                    className="text-ink-muted px-4 py-6 text-center text-sm"
+                  >
+                    Loading pools…
+                  </td>
+                </tr>
+              )}
+              {/* A failed fetch is an availability problem, not an empty
                 chain state — the two must never share one message. */}
-            {!q.isLoading && q.isError && (
-              <tr>
-                <td colSpan={11} className="px-4 py-6 text-center text-sm text-ink-muted">
-                  The pools list is unavailable right now — retry shortly.
-                </td>
-              </tr>
-            )}
-            {!q.isLoading && !q.isError && rows.length === 0 && (
-              <tr>
-                <td colSpan={11} className="px-4 py-6 text-center text-sm text-ink-muted">
-                  No Blend pools have emitted auction events yet.
-                </td>
-              </tr>
-            )}
-            {rows.map((p) => {
-              const poolId = p.pool ?? '';
-              const meta = BLEND_POOL_META[poolId];
-              return (
-                <tr key={poolId} className="hover:bg-surface-muted">
-                  <Td>
-                    <span className="inline-block rounded-sm bg-up-subtle px-1.5 py-0.5 text-[11px] font-medium uppercase tracking-wider text-up-strong">
-                      {p.protocol}
-                    </span>
-                  </Td>
-                  <Td>
-                    <div className="space-y-0.5">
-                      {/* The full pool id was hover-only (`title=`), so
+              {!q.isLoading && q.isError && (
+                <tr>
+                  <td
+                    colSpan={11}
+                    className="text-ink-muted px-4 py-6 text-center text-sm"
+                  >
+                    The pools list is unavailable right now — retry shortly.
+                  </td>
+                </tr>
+              )}
+              {!q.isLoading && !q.isError && rows.length === 0 && (
+                <tr>
+                  <td
+                    colSpan={11}
+                    className="text-ink-muted px-4 py-6 text-center text-sm"
+                  >
+                    No Blend pools have emitted auction events yet.
+                  </td>
+                </tr>
+              )}
+              {rows.map((p) => {
+                const poolId = p.pool ?? '';
+                const meta = BLEND_POOL_META[poolId];
+                return (
+                  <tr key={poolId} className="hover:bg-surface-muted">
+                    <Td>
+                      <span className="bg-up-subtle text-up-strong inline-block rounded-sm px-1.5 py-0.5 text-[11px] font-medium tracking-wider uppercase">
+                        {p.protocol}
+                      </span>
+                    </Td>
+                    <Td>
+                      <div className="space-y-0.5">
+                        {/* The full pool id was hover-only (`title=`), so
                           touch + keyboard users could not recover it. The
                           copy button is the reachable path; it sits BESIDE
                           the link, never inside it (no nested
                           interactives). */}
-                      <div className="flex items-center gap-1">
-                        <Link
-                          href={`/lending/${poolId}`}
-                          className="block font-mono text-[11px] hover:text-brand-600"
-                          title={poolId}
-                        >
-                          {poolId.slice(0, 6)}…{poolId.slice(-6)}
-                        </Link>
-                        <CopyButton value={poolId} />
-                      </div>
-                      {/* Curated label where we have one; else a generic
+                        <div className="flex items-center gap-1">
+                          <Link
+                            href={`/lending/${poolId}`}
+                            className="hover:text-brand-600 block font-mono text-[11px]"
+                            title={poolId}
+                          >
+                            {poolId.slice(0, 6)}…{poolId.slice(-6)}
+                          </Link>
+                          <CopyButton value={poolId} />
+                        </div>
+                        {/* Curated label where we have one; else a generic
                           "Blend pool" tag so newer/unmapped pools are still
                           identified rather than shown as a bare hash (audit
                           2026-06-19). We don't invent pool names. */}
-                      <div className="text-[9px] uppercase tracking-wide text-ink-muted">
-                        {meta?.label ?? 'Blend pool'}
-                      </div>
-                    </div>
-                  </Td>
-                  <Td>
-                    {meta?.deployedAt ? (
-                      <div className="space-y-0.5">
-                        <div className="font-mono text-[11px] text-ink-body">
-                          {meta.deployedAt}
+                        <div className="text-ink-muted text-[9px] tracking-wide uppercase">
+                          {meta?.label ?? 'Blend pool'}
                         </div>
-                        {meta.initiator && (
-                          <div
-                            className="font-mono text-[9px] text-ink-muted"
-                            title={meta.initiator}
-                          >
-                            by {meta.initiator.slice(0, 4)}…{meta.initiator.slice(-4)}
-                          </div>
-                        )}
                       </div>
-                    ) : (
-                      <span className="text-ink-faint">—</span>
-                    )}
-                  </Td>
-                  <Td align="right">
-                    <span className="font-mono tabular-nums text-ink-body">
-                      {(p.auctions_24h ?? 0).toLocaleString('en-US')}
-                    </span>
-                  </Td>
-                  <Td align="right">
-                    <span className="font-mono tabular-nums text-ink-body">
-                      {(p.auctions_total ?? 0).toLocaleString('en-US')}
-                    </span>
-                  </Td>
-                  <PoolRealStats pool={p.pool ?? ''} />
-                  <Td align="right">
-                    <span className="font-mono tabular-nums text-ink-body">
-                      {(p.unique_users_30d ?? 0).toLocaleString('en-US')}
-                    </span>
-                  </Td>
-                  <Td align="right">
-                    <span className="font-mono text-xs text-ink-muted">
-                      {formatRelative(p.last_seen)}
-                    </span>
-                  </Td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
-    </Panel>
+                    </Td>
+                    <Td>
+                      {meta?.deployedAt ? (
+                        <div className="space-y-0.5">
+                          <div className="text-ink-body font-mono text-[11px]">
+                            {meta.deployedAt}
+                          </div>
+                          {meta.initiator && (
+                            <div
+                              className="text-ink-muted font-mono text-[9px]"
+                              title={meta.initiator}
+                            >
+                              by {meta.initiator.slice(0, 4)}…
+                              {meta.initiator.slice(-4)}
+                            </div>
+                          )}
+                        </div>
+                      ) : (
+                        <span className="text-ink-faint">—</span>
+                      )}
+                    </Td>
+                    <Td align="right">
+                      <span className="text-ink-body font-mono tabular-nums">
+                        {(p.auctions_24h ?? 0).toLocaleString('en-US')}
+                      </span>
+                    </Td>
+                    <Td align="right">
+                      <span className="text-ink-body font-mono tabular-nums">
+                        {(p.auctions_total ?? 0).toLocaleString('en-US')}
+                      </span>
+                    </Td>
+                    <PoolRealStats pool={p.pool ?? ''} />
+                    <Td align="right">
+                      <span className="text-ink-body font-mono tabular-nums">
+                        {(p.unique_users_30d ?? 0).toLocaleString('en-US')}
+                      </span>
+                    </Td>
+                    <Td align="right">
+                      <span className="text-ink-muted font-mono text-xs">
+                        {formatRelative(p.last_seen)}
+                      </span>
+                    </Td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      </Panel>
     </>
   );
 }
 
-function Th({ children, align }: { children: React.ReactNode; align?: 'left' | 'right' }) {
+function Th({
+  children,
+  align,
+}: {
+  children: React.ReactNode;
+  align?: 'left' | 'right';
+}) {
   return (
     <th
       scope="col"
@@ -418,8 +464,18 @@ function Th({ children, align }: { children: React.ReactNode; align?: 'left' | '
   );
 }
 
-function Td({ children, align }: { children: React.ReactNode; align?: 'left' | 'right' }) {
+function Td({
+  children,
+  align,
+}: {
+  children: React.ReactNode;
+  align?: 'left' | 'right';
+}) {
   return (
-    <td className={`px-4 py-2 ${align === 'right' ? 'text-right' : 'text-left'}`}>{children}</td>
+    <td
+      className={`px-4 py-2 ${align === 'right' ? 'text-right' : 'text-left'}`}
+    >
+      {children}
+    </td>
   );
 }

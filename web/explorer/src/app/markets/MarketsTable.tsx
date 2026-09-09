@@ -77,20 +77,29 @@ export function MarketsTable() {
   // Stellar-network asset (native, classic CODE-G…/CODE:G…, or a
   // C-address); crypto:/fiat:-prefixed forms are off-chain reference
   // feeds. Default view: Stellar.
-  const [venue, setVenue] = useState<'stellar' | 'reference' | 'all'>('stellar');
+  const [venue, setVenue] = useState<'stellar' | 'reference' | 'all'>(
+    'stellar',
+  );
 
   const sorted = useMemo(() => {
     let rows = data?.markets ?? [];
     const isStellarAsset = (a: string) =>
-      a === 'native' || /^C[A-Z2-7]{55}$/.test(a) || /[:-]G[A-Z2-7]{55}$/.test(a) || /^\d+$/.test(a);
+      a === 'native' ||
+      /^C[A-Z2-7]{55}$/.test(a) ||
+      /[:-]G[A-Z2-7]{55}$/.test(a) ||
+      /^\d+$/.test(a);
     const isStellarPair = (m: { base?: string; quote?: string }) =>
       isStellarAsset(m.base ?? '') || isStellarAsset(m.quote ?? '');
     if (!assetParam && venue !== 'all') {
-      rows = rows.filter((m) => (venue === 'stellar' ? isStellarPair(m) : !isStellarPair(m)));
+      rows = rows.filter((m) =>
+        venue === 'stellar' ? isStellarPair(m) : !isStellarPair(m),
+      );
     }
     const q = filter.trim().toLowerCase();
     if (!q) return rows;
-    return rows.filter((m) => `${m.base ?? ''} ${m.quote ?? ''}`.toLowerCase().includes(q));
+    return rows.filter((m) =>
+      `${m.base ?? ''} ${m.quote ?? ''}`.toLowerCase().includes(q),
+    );
   }, [data, filter, venue, assetParam]);
 
   function setOrder(next: 'volume_24h_usd_desc' | 'pair') {
@@ -104,7 +113,11 @@ export function MarketsTable() {
     return (
       <Panel
         title="Markets"
-        source={asExample('/v1/markets', { limit: 100, order_by: orderBy, include: 'sparkline' })}
+        source={asExample('/v1/markets', {
+          limit: 100,
+          order_by: orderBy,
+          include: 'sparkline',
+        })}
         bodyClassName="text-sm text-down-strong"
       >
         Failed to load markets:{' '}
@@ -116,7 +129,11 @@ export function MarketsTable() {
     return (
       <Panel
         title="Markets"
-        source={asExample('/v1/markets', { limit: 100, order_by: orderBy, include: 'sparkline' })}
+        source={asExample('/v1/markets', {
+          limit: 100,
+          order_by: orderBy,
+          include: 'sparkline',
+        })}
         bodyClassName="text-sm text-ink-muted"
       >
         Loading…
@@ -127,13 +144,17 @@ export function MarketsTable() {
     return (
       <Panel
         title="Markets"
-        source={asExample('/v1/markets', { limit: 100, order_by: orderBy, include: 'sparkline' })}
+        source={asExample('/v1/markets', {
+          limit: 100,
+          order_by: orderBy,
+          include: 'sparkline',
+        })}
         bodyClassName="text-sm text-ink-muted"
       >
         {assetParam ? (
           <>
-            No active markets for <code className="font-mono">{assetParam}</code>{' '}
-            in the last 14 days.{' '}
+            No active markets for{' '}
+            <code className="font-mono">{assetParam}</code> in the last 14 days.{' '}
             <Link href="/markets" className="text-brand-600 hover:underline">
               View all markets →
             </Link>
@@ -149,7 +170,11 @@ export function MarketsTable() {
     <Panel
       title={`${sorted.length} ${venue === 'stellar' ? 'Stellar markets' : venue === 'reference' ? 'reference feeds' : 'markets'} (top ${data.markets.length} by volume)`}
       hint="Pairs that traded in the last 14 days, ordered by 24h USD volume. Reference feeds are off-chain CEX pairs used for pricing context."
-      source={asExample('/v1/markets', { limit: 100, order_by: orderBy, include: 'sparkline' })}
+      source={asExample('/v1/markets', {
+        limit: 100,
+        order_by: orderBy,
+        include: 'sparkline',
+      })}
       bodyClassName="-mx-4"
     >
       {!assetParam && (
@@ -167,7 +192,7 @@ export function MarketsTable() {
               className={`rounded-md px-2.5 py-1 text-xs ${
                 venue === key
                   ? 'bg-brand-fill text-white'
-                  : 'border border-line text-ink-body hover:border-brand-500'
+                  : 'border-line text-ink-body hover:border-brand-500 border'
               }`}
             >
               {label}
@@ -176,18 +201,21 @@ export function MarketsTable() {
         </div>
       )}
       {assetParam && (
-        <div className="mx-4 mb-3 flex flex-wrap items-center gap-2 rounded-card border border-brand-200 bg-brand-50 px-3 py-2 text-xs">
+        <div className="rounded-card border-brand-200 bg-brand-50 mx-4 mb-3 flex flex-wrap items-center gap-2 border px-3 py-2 text-xs">
           <span className="text-ink-body">
             Showing markets for{' '}
-            <code className="font-mono text-brand-700">{assetParam}</code> — pairs
-            where it&apos;s the base or quote.
+            <code className="text-brand-700 font-mono">{assetParam}</code> —
+            pairs where it&apos;s the base or quote.
           </span>
-          <Link href="/markets" className="ml-auto text-brand-600 hover:underline">
+          <Link
+            href="/markets"
+            className="text-brand-600 ml-auto hover:underline"
+          >
             Clear filter →
           </Link>
         </div>
       )}
-      <div className="px-4 pb-3 pt-1">
+      <div className="px-4 pt-1 pb-3">
         <div className="flex flex-wrap items-center gap-3 text-xs">
           <Input
             type="search"
@@ -201,13 +229,13 @@ export function MarketsTable() {
             onChange={(e) => setFilter(e.target.value)}
             className="w-72 font-mono text-[11px]"
           />
-          <span className="font-mono text-[11px] text-ink-muted">
+          <span className="text-ink-muted font-mono text-[11px]">
             {sorted.length} of {data.markets.length} rows
             {filter && (
               <button
                 type="button"
                 onClick={() => setFilter('')}
-                className="ml-2 text-brand-600 hover:underline"
+                className="text-brand-600 ml-2 hover:underline"
               >
                 clear
               </button>
@@ -259,57 +287,57 @@ export function MarketsTable() {
             {sorted.map((m, i) => {
               const slug = `${m.base}~${m.quote}`;
               return (
-              <TR key={`${m.base}|${m.quote}`}>
-                <Td>
-                  <Link
-                    href={`/markets/${encodeURIComponent(slug)}`}
-                    className="text-ink-faint hover:text-brand-600"
-                  >
-                    {i + 1}
-                  </Link>
-                </Td>
-                <Td>
-                  <Link
-                    href={`/markets/${encodeURIComponent(slug)}`}
-                    className="hover:text-brand-600"
-                  >
-                    <AssetLabel canonical={m.base} />
-                  </Link>
-                </Td>
-                <Td>
-                  <Link
-                    href={`/markets/${encodeURIComponent(slug)}`}
-                    className="hover:text-brand-600"
-                  >
-                    <AssetLabel canonical={m.quote} />
-                  </Link>
-                </Td>
-                <Td align="right">
-                  <LastPriceCell raw={m.last_price} />
-                </Td>
-                <Td align="right">
-                  {m.volume_24h_usd ? (
-                    <span className="font-mono tabular-nums">
-                      ${formatCompact(Number(m.volume_24h_usd))}
+                <TR key={`${m.base}|${m.quote}`}>
+                  <Td>
+                    <Link
+                      href={`/markets/${encodeURIComponent(slug)}`}
+                      className="text-ink-faint hover:text-brand-600"
+                    >
+                      {i + 1}
+                    </Link>
+                  </Td>
+                  <Td>
+                    <Link
+                      href={`/markets/${encodeURIComponent(slug)}`}
+                      className="hover:text-brand-600"
+                    >
+                      <AssetLabel canonical={m.base} />
+                    </Link>
+                  </Td>
+                  <Td>
+                    <Link
+                      href={`/markets/${encodeURIComponent(slug)}`}
+                      className="hover:text-brand-600"
+                    >
+                      <AssetLabel canonical={m.quote} />
+                    </Link>
+                  </Td>
+                  <Td align="right">
+                    <LastPriceCell raw={m.last_price} />
+                  </Td>
+                  <Td align="right">
+                    {m.volume_24h_usd ? (
+                      <span className="font-mono tabular-nums">
+                        ${formatCompact(Number(m.volume_24h_usd))}
+                      </span>
+                    ) : (
+                      <span className="text-ink-faint">—</span>
+                    )}
+                  </Td>
+                  <Td align="right">
+                    <span className="text-ink-body font-mono tabular-nums">
+                      {formatCompact(m.trade_count_24h)}
                     </span>
-                  ) : (
-                    <span className="text-ink-faint">—</span>
-                  )}
-                </Td>
-                <Td align="right">
-                  <span className="font-mono tabular-nums text-ink-body">
-                    {formatCompact(m.trade_count_24h)}
-                  </span>
-                </Td>
-                <Td>
-                  <SourceSparkline buckets={m.volume_history_24h} />
-                </Td>
-                <Td align="right">
-                  <span className="font-mono tabular-nums text-xs text-ink-muted">
-                    {formatRelative(m.last_trade_at)}
-                  </span>
-                </Td>
-              </TR>
+                  </Td>
+                  <Td>
+                    <SourceSparkline buckets={m.volume_history_24h} />
+                  </Td>
+                  <Td align="right">
+                    <span className="text-ink-muted font-mono text-xs tabular-nums">
+                      {formatRelative(m.last_trade_at)}
+                    </span>
+                  </Td>
+                </TR>
               );
             })}
           </TBody>
@@ -339,7 +367,7 @@ function SortHeader({
       type="button"
       onClick={onClick}
       title={hint}
-      className={`inline-flex items-center gap-1 hover:text-brand-600 ${
+      className={`hover:text-brand-600 inline-flex items-center gap-1 ${
         active ? 'text-brand-600' : ''
       }`}
     >

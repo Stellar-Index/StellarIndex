@@ -12,7 +12,8 @@ import { SourceStatsPanel } from './SourceStatsPanel';
 // instead of "1K"). Mock the volume at exactly that boundary and assert
 // the shared formatter's actual output.
 vi.mock('@/api/client', async () => {
-  const actual = await vi.importActual<typeof import('@/api/client')>('@/api/client');
+  const actual =
+    await vi.importActual<typeof import('@/api/client')>('@/api/client');
   return { ...actual, apiGet: vi.fn() };
 });
 
@@ -25,9 +26,13 @@ describe('SourceStatsPanel', () => {
     // vi.mock-factory-eval time — so the implementation has to be
     // (re)configured here, inside the test body.
     vi.mocked(apiGet).mockResolvedValue({
-      data: [{ name: 'soroswap', trade_count_24h: 5, volume_24h_usd: '999999' }],
+      data: [
+        { name: 'soroswap', trade_count_24h: 5, volume_24h_usd: '999999' },
+      ],
     });
-    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
     render(
       <QueryClientProvider client={client}>
         <SourceStatsPanel source="soroswap" />

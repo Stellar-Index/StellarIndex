@@ -11,7 +11,8 @@ import type { Coin } from '@/api/hooks';
 // badge an unflagged asset. DISPLAY-ONLY: the badge is orthogonal to the
 // price/verified columns.
 
-const SCAM_AUD_ISSUER = 'GAIF52QZUPYCADXF7I7RNPMED7DT2B5JGPR7DEHCC5TPDPUJTMLGGAUD';
+const SCAM_AUD_ISSUER =
+  'GAIF52QZUPYCADXF7I7RNPMED7DT2B5JGPR7DEHCC5TPDPUJTMLGGAUD';
 
 function coin(partial: Partial<Coin>): Coin {
   return {

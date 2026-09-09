@@ -90,9 +90,9 @@ export function PairPathView() {
             { label: title },
           ]}
         />
-        <h1 className="text-h1 font-semibold text-ink">{title}</h1>
+        <h1 className="text-h1 text-ink font-semibold">{title}</h1>
         {valid && (
-          <p className="text-sm text-ink-muted">
+          <p className="text-ink-muted text-sm">
             Live pair detail, loaded from the API. This pair is outside the
             pre-rendered set — the data below is current.
           </p>
@@ -116,7 +116,7 @@ export function PairPathView() {
         >
           {isLoading && <Skeleton className="h-20 w-full" />}
           {isError && (
-            <p className="text-sm text-ink-muted">
+            <p className="text-ink-muted text-sm">
               Price is unavailable for this pair right now.
             </p>
           )}
@@ -128,8 +128,8 @@ export function PairPathView() {
           )}
           {!isLoading && !isError && data?.price && (
             <div className="space-y-1">
-              <div className="font-mono text-h2 text-ink">{data.price}</div>
-              <p className="text-sm text-ink-muted">
+              <div className="text-h2 text-ink font-mono">{data.price}</div>
+              <p className="text-ink-muted text-sm">
                 {quoteLabel} per {baseLabel}
                 {data.observed_at ? ` · observed ${data.observed_at}` : ''}
               </p>
@@ -139,7 +139,7 @@ export function PairPathView() {
       )}
 
       {valid && (
-        <p className="text-sm text-ink-muted">
+        <p className="text-ink-muted text-sm">
           Looking for the full breakdown?{' '}
           <Link href="/markets" className="text-brand-600 hover:underline">
             Browse all markets

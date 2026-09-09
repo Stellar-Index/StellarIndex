@@ -26,7 +26,12 @@ export type TxStatusBadgeProps = {
  * real interaction; an absent outcome is the MUTED "unknown" degraded state,
  * NOT success. Built on the Badge primitive (up / down / neutral tones).
  */
-export function TxStatusBadge({ successful, result, code, className }: TxStatusBadgeProps) {
+export function TxStatusBadge({
+  successful,
+  result,
+  code,
+  className,
+}: TxStatusBadgeProps) {
   // undefined ≠ false: the parent outcome was never read (a degraded response
   // disclosed by the view's coverage_note). Muted "unknown", never success.
   if (successful == null) {

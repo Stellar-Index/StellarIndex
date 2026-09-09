@@ -1,13 +1,19 @@
 'use client';
 
-import { ColorType, type DeepPartial, type ChartOptions } from 'lightweight-charts';
+import {
+  ColorType,
+  type DeepPartial,
+  type ChartOptions,
+} from 'lightweight-charts';
 
 // Resolve a design token (CSS custom property off :root) to its value, so the
 // canvas charts theme from the SAME dark tokens as the rest of the app instead
 // of hardcoding colours. Falls back to the dark value if read before mount.
 function token(name: string, fallback: string): string {
   if (typeof window === 'undefined') return fallback;
-  const v = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  const v = getComputedStyle(document.documentElement)
+    .getPropertyValue(name)
+    .trim();
   return v || fallback;
 }
 

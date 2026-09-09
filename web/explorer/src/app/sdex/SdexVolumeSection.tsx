@@ -91,10 +91,10 @@ export function SdexVolumeSection() {
         <dl className="grid grid-cols-1 gap-3 text-sm sm:grid-cols-3">
           {kpis.map((k) => (
             <div key={k.label}>
-              <dt className="text-[11px] uppercase tracking-wider text-ink-muted">
+              <dt className="text-ink-muted text-[11px] tracking-wider uppercase">
                 {k.label}
               </dt>
-              <dd className="mt-0.5 font-mono text-lg tabular-nums text-ink">
+              <dd className="text-ink mt-0.5 font-mono text-lg tabular-nums">
                 {formatKpi(k)}
               </dd>
             </div>
@@ -108,16 +108,16 @@ export function SdexVolumeSection() {
           {/* "Unavailable" is reserved for a series the server did NOT serve —
               a served short series is insufficient history, not unavailability. */}
           {!q.isLoading && points.length === 0 && (
-            <p className="text-sm text-ink-muted">
+            <p className="text-ink-muted text-sm">
               {series
                 ? 'No complete daily volume buckets to chart yet.'
                 : 'The SDEX volume series is unavailable right now.'}
             </p>
           )}
           {!q.isLoading && points.length === 1 && (
-            <p className="text-sm text-ink-muted">
+            <p className="text-ink-muted text-sm">
               One complete day of volume so far —{' '}
-              <span className="font-mono tabular-nums text-ink">
+              <span className="text-ink font-mono tabular-nums">
                 {points[0].date}: ${formatCompact(points[0].value)}
               </span>
               . The chart appears once a second complete day lands.

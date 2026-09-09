@@ -7,13 +7,26 @@ import { useQuery, keepPreviousData } from '@tanstack/react-query';
 
 import { Panel } from '@/components/reveal';
 import { AssetLink } from '@/components/AssetLink';
-import { Badge, Table, TableWrap, TBody, Td, Th, THead, TR } from '@/components/ui';
+import {
+  Badge,
+  Table,
+  TableWrap,
+  TBody,
+  Td,
+  Th,
+  THead,
+  TR,
+} from '@/components/ui';
 import { DonutChart, type DonutSlice } from '@/components/charts/DonutChart';
 import type { LinePoint } from '@/components/charts/LineChart';
 import { apiGet, asExample } from '@/api/client';
 import { formatCompact } from '@/lib/format';
 import type { components } from '@/api/types';
-import { type Envelope, formatTimestamp, relativeAge } from '../explorer-shared';
+import {
+  type Envelope,
+  formatTimestamp,
+  relativeAge,
+} from '../explorer-shared';
 
 const LineChart = dynamic(
   () => import('@/components/charts/LineChart').then((m) => m.LineChart),
@@ -39,7 +52,9 @@ export function buildTradeViz(trades: AccountTrade[]): {
   pricedCount: number;
 } {
   const priced = trades
-    .filter((t) => t.usd_volume != null && Number.isFinite(Number(t.usd_volume)))
+    .filter(
+      (t) => t.usd_volume != null && Number.isFinite(Number(t.usd_volume)),
+    )
     .map((t) => ({
       sec: Math.floor(Date.parse(t.ts) / 1000),
       usd: Number(t.usd_volume),
@@ -56,15 +71,19 @@ export function buildTradeViz(trades: AccountTrade[]): {
   }
 
   let running = 0;
-  const cumulative: LinePoint[] = Array.from(bySec.entries()).map(([sec, usd]) => {
-    running += usd;
-    return { time: sec, value: running };
-  });
+  const cumulative: LinePoint[] = Array.from(bySec.entries()).map(
+    ([sec, usd]) => {
+      running += usd;
+      return { time: sec, value: running };
+    },
+  );
 
-  const venues: DonutSlice[] = Array.from(bySource.entries()).map(([label, value]) => ({
-    label,
-    value,
-  }));
+  const venues: DonutSlice[] = Array.from(bySource.entries()).map(
+    ([label, value]) => ({
+      label,
+      value,
+    }),
+  );
 
   return { cumulative, venues, pricedCount: priced.length };
 }
@@ -96,11 +115,17 @@ export function AccountTradesPanel({ id }: { id: string }) {
   });
 
   const source = asExample(`/v1/accounts/${id}/trades`, { limit: PAGE_SIZE });
-  const panelHint = 'historic trades where this address is the recorded taker or maker';
+  const panelHint =
+    'historic trades where this address is the recorded taker or maker';
 
   if (isError) {
     return (
-      <Panel title="Trades" hint={panelHint} source={source} bodyClassName="text-sm text-ink-body">
+      <Panel
+        title="Trades"
+        hint={panelHint}
+        source={source}
+        bodyClassName="text-sm text-ink-body"
+      >
         The trades lookup failed or timed out — reload to retry
         {error instanceof Error ? `: ${error.message}` : ''}.
       </Panel>
@@ -109,7 +134,12 @@ export function AccountTradesPanel({ id }: { id: string }) {
 
   if (isLoading || !data) {
     return (
-      <Panel title="Trades" hint={panelHint} source={source} bodyClassName="text-sm text-ink-muted">
+      <Panel
+        title="Trades"
+        hint={panelHint}
+        source={source}
+        bodyClassName="text-sm text-ink-muted"
+      >
         Loading…
       </Panel>
     );
@@ -131,7 +161,7 @@ export function AccountTradesPanel({ id }: { id: string }) {
       {viz.pricedCount >= 2 && (
         <div className="grid gap-4 lg:grid-cols-2">
           <div className="space-y-1">
-            <div className="text-[11px] uppercase tracking-wider text-ink-muted">
+            <div className="text-ink-muted text-[11px] tracking-wider uppercase">
               Cumulative USD volume — {viz.pricedCount} priced of the{' '}
               {trades.length} loaded trades
             </div>
@@ -148,7 +178,7 @@ export function AccountTradesPanel({ id }: { id: string }) {
           </div>
           {viz.venues.length >= 2 && (
             <div className="space-y-1">
-              <div className="text-[11px] uppercase tracking-wider text-ink-muted">
+              <div className="text-ink-muted text-[11px] tracking-wider uppercase">
                 Volume by venue — same loaded trades
               </div>
               <DonutChart
@@ -163,7 +193,9 @@ export function AccountTradesPanel({ id }: { id: string }) {
       )}
 
       {trades.length === 0 ? (
-        <p className="text-sm text-ink-muted">No attributed trades observed for this account yet.</p>
+        <p className="text-ink-muted text-sm">
+          No attributed trades observed for this account yet.
+        </p>
       ) : (
         <TableWrap>
           <Table>
@@ -192,7 +224,7 @@ export function AccountTradesPanel({ id }: { id: string }) {
         {cursor && (
           <button
             onClick={() => setCursor('')}
-            className="rounded-md border border-line px-2.5 py-1 text-ink-body hover:border-brand-500"
+            className="border-line text-ink-body hover:border-brand-500 rounded-md border px-2.5 py-1"
           >
             ← Newest
           </button>
@@ -200,7 +232,7 @@ export function AccountTradesPanel({ id }: { id: string }) {
         {data.next_cursor && (
           <button
             onClick={() => setCursor(data.next_cursor ?? '')}
-            className="ml-auto rounded-md border border-line px-2.5 py-1 text-ink-body hover:border-brand-500"
+            className="border-line text-ink-body hover:border-brand-500 ml-auto rounded-md border px-2.5 py-1"
           >
             Load older →
           </button>
@@ -208,7 +240,7 @@ export function AccountTradesPanel({ id }: { id: string }) {
       </div>
 
       {/* Attribution-scope honesty note — always present on the API. */}
-      {data.note && <p className="text-[11px] text-ink-faint">{data.note}</p>}
+      {data.note && <p className="text-ink-faint text-[11px]">{data.note}</p>}
     </Panel>
   );
 }
@@ -220,16 +252,20 @@ function TradeRow({ t }: { t: AccountTrade }) {
         {/* The exact instant used to be hover-only (`title=`), i.e.
             mouse-only. <time dateTime> makes it machine-readable and the
             sr-only copy reachable by touch + screen reader. */}
-        <time dateTime={t.ts ?? undefined} className="whitespace-nowrap font-mono text-xs text-ink-muted" title={formatTimestamp(t.ts)}>
+        <time
+          dateTime={t.ts ?? undefined}
+          className="text-ink-muted font-mono text-xs whitespace-nowrap"
+          title={formatTimestamp(t.ts)}
+        >
           {relativeAge(t.ts)}
           <span className="sr-only"> ({formatTimestamp(t.ts)})</span>
         </time>
       </Td>
       <Td>
-        <span className="text-xs text-ink-body">{t.source}</span>
+        <span className="text-ink-body text-xs">{t.source}</span>
         {t.routed_via && (
           <span
-            className="ml-1 rounded-sm bg-surface-muted px-1 py-0.5 text-[9px] uppercase tracking-wider text-ink-muted"
+            className="bg-surface-muted text-ink-muted ml-1 rounded-sm px-1 py-0.5 text-[9px] tracking-wider uppercase"
             title={`Routed via ${t.routed_via}`}
           >
             routed
@@ -237,8 +273,9 @@ function TradeRow({ t }: { t: AccountTrade }) {
         )}
       </Td>
       <Td>
-        <span className="whitespace-nowrap text-xs">
-          <AssetLink canonical={t.base_asset} /> / <AssetLink canonical={t.quote_asset} />
+        <span className="text-xs whitespace-nowrap">
+          <AssetLink canonical={t.base_asset} /> /{' '}
+          <AssetLink canonical={t.quote_asset} />
         </span>
       </Td>
       <Td align="right" className="font-mono text-xs tabular-nums">
@@ -247,7 +284,10 @@ function TradeRow({ t }: { t: AccountTrade }) {
       <Td align="right" className="font-mono text-xs tabular-nums">
         {t.quote_amount}
       </Td>
-      <Td align="right" className="font-mono text-xs tabular-nums text-ink-muted">
+      <Td
+        align="right"
+        className="text-ink-muted font-mono text-xs tabular-nums"
+      >
         {t.usd_volume ? `$${t.usd_volume}` : '—'}
       </Td>
       <Td>
@@ -256,7 +296,7 @@ function TradeRow({ t }: { t: AccountTrade }) {
       <Td>
         <Link
           href={`/transactions/${t.tx_hash}/`}
-          className="font-mono text-xs text-brand-600 hover:underline"
+          className="text-brand-600 font-mono text-xs hover:underline"
           title={t.tx_hash}
         >
           {t.tx_hash.slice(0, 8)}…{t.tx_hash.slice(-6)}

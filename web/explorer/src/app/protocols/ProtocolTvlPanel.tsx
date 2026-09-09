@@ -1,7 +1,11 @@
 'use client';
 
 import { HATCH_BG, HBarList } from '@/components/charts/Bars';
-import { formatCompact, formatDecimalAmount, formatRelative } from '@/lib/format';
+import {
+  formatCompact,
+  formatDecimalAmount,
+  formatRelative,
+} from '@/lib/format';
 import { protocolMeta } from './registry';
 
 // Mirrors internal/api/v1/dex_tvl_cache.go ProtocolTVLView — served on
@@ -82,9 +86,9 @@ export function ProtocolTvlPanel({
       : null;
 
   return (
-    <div className="rounded-card border border-line bg-surface p-5">
-      <h2 className="text-h3 font-semibold text-ink">Value locked (USD)</h2>
-      <p className="mb-3 mt-1 text-xs text-ink-muted">
+    <div className="rounded-card border-line bg-surface border p-5">
+      <h2 className="text-h3 text-ink font-semibold">Value locked (USD)</h2>
+      <p className="text-ink-muted mt-1 mb-3 text-xs">
         Current pool reserves valued through the served USD price tiers, per
         protocol. Source: <code className="font-mono">/v1/protocols</code>{' '}
         <code className="font-mono">tvl</code>.
@@ -107,10 +111,10 @@ export function ProtocolTvlPanel({
         }))}
       />
       {anyUnpriced && (
-        <p className="mt-3 text-[11px] leading-relaxed text-ink-muted">
+        <p className="text-ink-muted mt-3 text-[11px] leading-relaxed">
           Hatched bars are <strong>lower bounds</strong>: pools whose assets
-          have no served USD price contribute $0, so the true figure is at
-          least what&apos;s shown. Hover a bar for that protocol&apos;s exact
+          have no served USD price contribute $0, so the true figure is at least
+          what&apos;s shown. Hover a bar for that protocol&apos;s exact
           valuation basis.
         </p>
       )}
@@ -154,12 +158,12 @@ export function DexTvlHeadline({ total }: { total: DexTvlTotal }) {
   if (figure == null) return null;
 
   return (
-    <div className="mb-4 rounded-card border border-line bg-surface-subtle p-4">
-      <div className="text-[11px] font-medium uppercase tracking-wider text-ink-muted">
+    <div className="rounded-card border-line bg-surface-subtle mb-4 border p-4">
+      <div className="text-ink-muted text-[11px] font-medium tracking-wider uppercase">
         Total value locked
       </div>
       <div className="mt-1 flex flex-wrap items-baseline gap-x-2 gap-y-1">
-        <span className="font-mono text-3xl font-semibold tracking-tight tnum text-ink">
+        <span className="tnum text-ink font-mono text-3xl font-semibold tracking-tight">
           {total.lower_bound && (
             <span className="text-ink-muted" aria-hidden>
               ≥{' '}
@@ -170,11 +174,11 @@ export function DexTvlHeadline({ total }: { total: DexTvlTotal }) {
         {total.lower_bound && (
           <span
             aria-hidden
-            className="inline-block h-3 w-6 self-center rounded-xs text-ink-faint opacity-70"
+            className="text-ink-faint inline-block h-3 w-6 self-center rounded-xs opacity-70"
             style={{ backgroundImage: HATCH_BG }}
           />
         )}
-        <span className="text-xs text-ink-muted tnum">
+        <span className="text-ink-muted tnum text-xs">
           {total.as_of_ledger != null && total.as_of_ledger > 0 && (
             <>ledger {total.as_of_ledger.toLocaleString('en-US')} · </>
           )}
@@ -183,26 +187,27 @@ export function DexTvlHeadline({ total }: { total: DexTvlTotal }) {
           </time>
         </span>
       </div>
-      <p className="mt-2 text-xs leading-relaxed text-ink-muted">
+      <p className="text-ink-muted mt-2 text-xs leading-relaxed">
         {total.lower_bound && (
           <>
-            <strong>At least</strong> this — {total.pools_priced.toLocaleString('en-US')}{' '}
-            of {total.pools_total.toLocaleString('en-US')} pools priced;
+            <strong>At least</strong> this —{' '}
+            {total.pools_priced.toLocaleString('en-US')} of{' '}
+            {total.pools_total.toLocaleString('en-US')} pools priced;
             unpriceable reserves contribute $0.{' '}
           </>
         )}
         {total.basis}
       </p>
       {total.excluded.length > 0 && (
-        <details className="group mt-2 rounded-lg border border-line">
-          <summary className="cursor-pointer select-none px-3 py-1.5 text-xs font-medium text-ink-body marker:text-ink-faint hover:text-brand-600">
+        <details className="group border-line mt-2 rounded-lg border">
+          <summary className="text-ink-body marker:text-ink-faint hover:text-brand-600 cursor-pointer px-3 py-1.5 text-xs font-medium select-none">
             What this total excludes{' '}
             <span className="text-ink-faint">({total.excluded.length})</span>
           </summary>
-          <dl className="space-y-1.5 border-t border-line px-3 py-2 text-[11px] leading-relaxed">
+          <dl className="border-line space-y-1.5 border-t px-3 py-2 text-[11px] leading-relaxed">
             {total.excluded.map((e) => (
               <div key={e.subject}>
-                <dt className="font-mono text-ink-body">{e.subject}</dt>
+                <dt className="text-ink-body font-mono">{e.subject}</dt>
                 <dd className="text-ink-muted">{e.reason}</dd>
               </div>
             ))}

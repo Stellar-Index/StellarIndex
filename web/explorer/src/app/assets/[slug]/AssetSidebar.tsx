@@ -80,7 +80,8 @@ export function AssetSidebar({
    *                     current FX rate (price_basis=declared_peg); not
    *                     a market observation
    */
-  priceProvenance?: 'vwap1m' | 'triangulated' | 'listing' | 'declared_peg' | null;
+  priceProvenance?:
+    'vwap1m' | 'triangulated' | 'listing' | 'declared_peg' | null;
   priceStale?: boolean;
   name?: string | null;
   homeDomain?: string | null;
@@ -98,7 +99,8 @@ export function AssetSidebar({
   );
   const total = supplyNum(detail?.total_supply, decimals);
   const max = supplyNum(detail?.max_supply, decimals);
-  const volMktCap = vol != null && marketCap != null && marketCap > 0 ? vol / marketCap : null;
+  const volMktCap =
+    vol != null && marketCap != null && marketCap > 0 ? vol / marketCap : null;
   const change = num(coin.change_24h_pct);
   // Native (and a few sparse rows) can arrive without a `code` — fall
   // back to the slug so the avatar glyph + labels never crash on slice.
@@ -116,14 +118,14 @@ export function AssetSidebar({
   return (
     <div className="space-y-4">
       {/* Identity + live price */}
-      <div className="rounded-card border border-line bg-surface p-4">
+      <div className="rounded-card border-line bg-surface border p-4">
         <div className="flex items-center gap-2.5">
           <SidebarAssetIcon image={coin.image} code={code} />
           <div className="min-w-0">
             <div className="flex items-baseline gap-1.5">
-              <span className="text-lg font-semibold text-ink">{code}</span>
+              <span className="text-ink text-lg font-semibold">{code}</span>
               {name && name !== code && (
-                <span className="truncate text-xs text-ink-muted">{name}</span>
+                <span className="text-ink-muted truncate text-xs">{name}</span>
               )}
             </div>
           </div>
@@ -144,11 +146,17 @@ export function AssetSidebar({
             change != null ? (
               <span
                 className={`font-mono text-sm tabular-nums ${
-                  change > 0 ? 'text-up' : change < 0 ? 'text-down' : 'text-ink-muted'
+                  change > 0
+                    ? 'text-up'
+                    : change < 0
+                      ? 'text-down'
+                      : 'text-ink-muted'
                 }`}
               >
-                {change > 0 ? '▲' : change < 0 ? '▼' : ''} {change > 0 ? '+' : ''}
-                {change.toFixed(2)}% <span className="text-ink-faint">(24h)</span>
+                {change > 0 ? '▲' : change < 0 ? '▼' : ''}{' '}
+                {change > 0 ? '+' : ''}
+                {change.toFixed(2)}%{' '}
+                <span className="text-ink-faint">(24h)</span>
               </span>
             ) : undefined
           }
@@ -160,35 +168,46 @@ export function AssetSidebar({
       </div>
 
       {/* Market + supply stats */}
-      <div className="rounded-card border border-line bg-surface">
+      <div className="rounded-card border-line bg-surface border">
         <StatRow label="Market cap" value={usd(marketCap)} />
         <StatRow label="Volume (24h)" value={usd(vol)} />
-        <StatRow label="Vol / Mkt Cap" value={volMktCap != null ? `${(volMktCap * 100).toFixed(2)}%` : '—'} />
+        <StatRow
+          label="Vol / Mkt Cap"
+          value={volMktCap != null ? `${(volMktCap * 100).toFixed(2)}%` : '—'}
+        />
         <StatRow label="FDV" value={usd(fdv)} />
         <StatRow label="Total supply" value={supply(total, code)} />
-        <StatRow label="Max supply" value={max != null ? supply(max, code) : '—'} />
+        <StatRow
+          label="Max supply"
+          value={max != null ? supply(max, code) : '—'}
+        />
         <div className="px-4 py-3">
           <div className="flex items-baseline justify-between">
-            <span className="text-[11px] uppercase tracking-wider text-ink-muted">
+            <span className="text-ink-muted text-[11px] tracking-wider uppercase">
               Circulating supply
             </span>
-            <span className="font-mono text-xs tabular-nums text-ink-body">
-              {circPct != null ? `${circPct.toFixed(circPct >= 99.95 ? 0 : 1)}%` : '—'}
+            <span className="text-ink-body font-mono text-xs tabular-nums">
+              {circPct != null
+                ? `${circPct.toFixed(circPct >= 99.95 ? 0 : 1)}%`
+                : '—'}
             </span>
           </div>
           {circPct != null && (
-            <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-surface-muted">
-              <div className="h-full rounded-full bg-brand-500" style={{ width: `${circPct}%` }} />
+            <div className="bg-surface-muted mt-1.5 h-1.5 overflow-hidden rounded-full">
+              <div
+                className="bg-brand-500 h-full rounded-full"
+                style={{ width: `${circPct}%` }}
+              />
             </div>
           )}
-          <div className="mt-1.5 font-mono text-sm tabular-nums text-ink">
+          <div className="text-ink mt-1.5 font-mono text-sm tabular-nums">
             {supply(circulating, code)}
           </div>
         </div>
       </div>
 
       {/* Links / issuer / activity */}
-      <div className="rounded-card border border-line bg-surface">
+      <div className="rounded-card border-line bg-surface border">
         {/* CS-102: home_domain is attacker-controlled on-chain data; only
             render it as a clickable link when it passes isSafeHomeDomain
             (the guard the issuer pages already use). Otherwise show plain
@@ -202,12 +221,14 @@ export function AssetSidebar({
                   href={`https://${homeDomain}`}
                   target="_blank"
                   rel="noreferrer noopener nofollow"
-                  className="font-mono text-xs text-brand-600 hover:underline"
+                  className="text-brand-600 font-mono text-xs hover:underline"
                 >
                   {homeDomain}
                 </a>
               ) : (
-                <span className="font-mono text-xs text-ink-muted">{homeDomain}</span>
+                <span className="text-ink-muted font-mono text-xs">
+                  {homeDomain}
+                </span>
               )
             }
           />
@@ -218,7 +239,7 @@ export function AssetSidebar({
             value={
               <Link
                 href={`/issuers/${coin.issuer}`}
-                className="font-mono text-xs text-brand-600 hover:underline"
+                className="text-brand-600 font-mono text-xs hover:underline"
                 title={coin.issuer}
               >
                 {coin.issuer.slice(0, 4)}…{coin.issuer.slice(-4)}
@@ -228,12 +249,23 @@ export function AssetSidebar({
         )}
         <StatRow
           label="Trades (24h)"
-          value={coin.trade_count_24h != null ? formatCompact(coin.trade_count_24h) : '—'}
+          value={
+            coin.trade_count_24h != null
+              ? formatCompact(coin.trade_count_24h)
+              : '—'
+          }
         />
-        <StatRow label="Observations" value={formatCompact(coin.observation_count)} />
+        <StatRow
+          label="Observations"
+          value={formatCompact(coin.observation_count)}
+        />
         <StatRow
           label="Markets (24h)"
-          value={coin.markets_count != null ? coin.markets_count.toLocaleString('en-US') : '—'}
+          value={
+            coin.markets_count != null
+              ? coin.markets_count.toLocaleString('en-US')
+              : '—'
+          }
         />
       </div>
 
@@ -247,7 +279,10 @@ export function AssetSidebar({
             image={coin.image}
             priceUSD={priceUSD}
           />
-          <PerformanceRange points={coin.price_history_24h ?? []} current={priceUSD} />
+          <PerformanceRange
+            points={coin.price_history_24h ?? []}
+            current={priceUSD}
+          />
         </>
       )}
     </div>
@@ -256,9 +291,11 @@ export function AssetSidebar({
 
 function StatRow({ label, value }: { label: string; value: React.ReactNode }) {
   return (
-    <div className="flex items-center justify-between border-b border-line px-4 py-2.5 last:border-0">
-      <span className="text-[11px] uppercase tracking-wider text-ink-muted">{label}</span>
-      <span className="font-mono text-sm tabular-nums text-ink">{value}</span>
+    <div className="border-line flex items-center justify-between border-b px-4 py-2.5 last:border-0">
+      <span className="text-ink-muted text-[11px] tracking-wider uppercase">
+        {label}
+      </span>
+      <span className="text-ink font-mono text-sm tabular-nums">{value}</span>
     </div>
   );
 }
@@ -277,27 +314,32 @@ function PerformanceRange({
   const low = Math.min(...vals);
   const high = Math.max(...vals);
   const cur = current ?? vals[vals.length - 1];
-  const pct = high > low ? Math.max(0, Math.min(100, ((cur - low) / (high - low)) * 100)) : 50;
+  const pct =
+    high > low
+      ? Math.max(0, Math.min(100, ((cur - low) / (high - low)) * 100))
+      : 50;
   return (
-    <div className="rounded-card border border-line bg-surface p-4">
+    <div className="rounded-card border-line bg-surface border p-4">
       <div className="flex items-baseline justify-between">
-        <span className="text-[11px] uppercase tracking-wider text-ink-muted">
+        <span className="text-ink-muted text-[11px] tracking-wider uppercase">
           Price performance
         </span>
-        <span className="text-[10px] uppercase tracking-wider text-ink-faint">24h</span>
+        <span className="text-ink-faint text-[10px] tracking-wider uppercase">
+          24h
+        </span>
       </div>
-      <div className="mt-2 flex items-center justify-between text-[11px] text-ink-muted">
+      <div className="text-ink-muted mt-2 flex items-center justify-between text-[11px]">
         <span>Low</span>
         <span>High</span>
       </div>
-      <div className="relative mt-1 h-1.5 rounded-full bg-linear-to-r from-down via-warn-500 to-up">
+      <div className="from-down via-warn-500 to-up relative mt-1 h-1.5 rounded-full bg-linear-to-r">
         <div
-          className="absolute top-1/2 h-3 w-1 -translate-y-1/2 rounded-full bg-ink shadow-sm"
+          className="bg-ink absolute top-1/2 h-3 w-1 -translate-y-1/2 rounded-full shadow-sm"
           style={{ left: `calc(${pct}% - 2px)` }}
           aria-hidden
         />
       </div>
-      <div className="mt-1.5 flex items-baseline justify-between font-mono text-xs tabular-nums text-ink-body">
+      <div className="text-ink-body mt-1.5 flex items-baseline justify-between font-mono text-xs tabular-nums">
         <span>${formatPriceSmall(low)}</span>
         <span>${formatPriceSmall(high)}</span>
       </div>

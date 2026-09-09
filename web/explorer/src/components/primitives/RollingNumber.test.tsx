@@ -55,7 +55,8 @@ describe('RollingNumber', () => {
     // "59,123,456" -> "59,123,457": everything up to the last char is
     // the same node; the final column is a fresh rollover window whose
     // strip carries old THEN new — the wheel.
-    for (let i = 0; i < before.length - 1; i++) expect(after[i]).toBe(before[i]);
+    for (let i = 0; i < before.length - 1; i++)
+      expect(after[i]).toBe(before[i]);
     expect(after[after.length - 1]).not.toBe(before[before.length - 1]);
     expect(windows(container)).toEqual([after[after.length - 1]]);
     expect(stripPair(after[after.length - 1])).toEqual(['6', '7']);
@@ -72,7 +73,12 @@ describe('RollingNumber', () => {
     // stays.
     for (let i = 0; i <= 4; i++) expect(after[i]).toBe(before[i]);
     expect(after[6]).toBe(before[6]); // comma
-    expect(windows(container)).toEqual([after[5], after[7], after[8], after[9]]);
+    expect(windows(container)).toEqual([
+      after[5],
+      after[7],
+      after[8],
+      after[9],
+    ]);
     expect(stripPair(after[5])).toEqual(['3', '4']);
     for (const i of [7, 8, 9]) expect(stripPair(after[i])).toEqual(['9', '0']);
     expect(cells(container).map(shown).join('')).toBe('59,124,000');

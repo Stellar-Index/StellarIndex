@@ -8,7 +8,13 @@ import { breadcrumbJsonLd, serializeJsonLd } from '@/lib/seo';
  *  responsive horizontal padding. */
 export function Container({ className, ...props }: ComponentProps<'div'>) {
   return (
-    <div className={cn('mx-auto w-full max-w-page px-4 sm:px-6 lg:px-8', className)} {...props} />
+    <div
+      className={cn(
+        'max-w-page mx-auto w-full px-4 sm:px-6 lg:px-8',
+        className,
+      )}
+      {...props}
+    />
   );
 }
 
@@ -39,22 +45,31 @@ export function PageHeader({
   className?: string;
 }) {
   return (
-    <div className={cn('flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between', className)}>
+    <div
+      className={cn(
+        'flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between',
+        className,
+      )}
+    >
       <div className="min-w-0">
-        {breadcrumbs && breadcrumbs.length > 0 && <Breadcrumbs items={breadcrumbs} />}
+        {breadcrumbs && breadcrumbs.length > 0 && (
+          <Breadcrumbs items={breadcrumbs} />
+        )}
         {eyebrow && (
-          <div className="mb-1.5 text-xs font-medium uppercase tracking-wider text-brand-600">
+          <div className="text-brand-600 mb-1.5 text-xs font-medium tracking-wider uppercase">
             {eyebrow}
           </div>
         )}
-        <h1 className="text-h1 font-semibold text-ink">{title}</h1>
+        <h1 className="text-h1 text-ink font-semibold">{title}</h1>
         {description && (
-          <p className="mt-2 max-w-prose text-[15px] leading-relaxed text-ink-muted">
+          <p className="text-ink-muted mt-2 max-w-prose text-[15px] leading-relaxed">
             {description}
           </p>
         )}
       </div>
-      {actions && <div className="flex shrink-0 items-center gap-2">{actions}</div>}
+      {actions && (
+        <div className="flex shrink-0 items-center gap-2">{actions}</div>
+      )}
     </div>
   );
 }
@@ -69,7 +84,7 @@ export function Breadcrumbs({ items }: { items: Crumb[] }) {
   return (
     <nav
       aria-label="Breadcrumb"
-      className="mb-3 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-ink-muted"
+      className="text-ink-muted mb-3 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs"
     >
       <script
         type="application/ld+json"
@@ -90,7 +105,7 @@ export function Breadcrumbs({ items }: { items: Crumb[] }) {
           {c.href ? (
             <Link
               href={c.href}
-              className="transition-colors hover:text-brand-600"
+              className="hover:text-brand-600 transition-colors"
             >
               {c.label}
             </Link>
@@ -98,7 +113,7 @@ export function Breadcrumbs({ items }: { items: Crumb[] }) {
             // Current page — the leaf of the trail: brighter + medium so the
             // hierarchy reads muted-parent › bold-current at a glance.
             <span
-              className="max-w-[60vw] truncate font-medium text-ink-body sm:max-w-none"
+              className="text-ink-body max-w-[60vw] truncate font-medium sm:max-w-none"
               aria-current="page"
             >
               {c.label}
@@ -125,10 +140,14 @@ export function SectionHeader({
   return (
     <div className={cn('mb-4 flex items-end justify-between gap-4', className)}>
       <div className="min-w-0">
-        <h2 className="text-h3 font-semibold text-ink">{title}</h2>
-        {description && <p className="mt-1 text-sm text-ink-muted">{description}</p>}
+        <h2 className="text-h3 text-ink font-semibold">{title}</h2>
+        {description && (
+          <p className="text-ink-muted mt-1 text-sm">{description}</p>
+        )}
       </div>
-      {actions && <div className="flex shrink-0 items-center gap-2">{actions}</div>}
+      {actions && (
+        <div className="flex shrink-0 items-center gap-2">{actions}</div>
+      )}
     </div>
   );
 }

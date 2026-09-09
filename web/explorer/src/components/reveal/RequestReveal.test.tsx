@@ -10,7 +10,11 @@ import { RequestReveal } from './RequestReveal';
 // p-1 (4px/side) around a 16px (h-4 w-4) icon reaches exactly 24x24.
 describe('RequestReveal', () => {
   it('gives the Close button >=24x24 CSS px of hit area (icon + padding)', () => {
-    render(<RequestReveal example={{ method: 'GET', url: 'https://api.stellarindex.io/v1/price' }} />);
+    render(
+      <RequestReveal
+        example={{ method: 'GET', url: 'https://api.stellarindex.io/v1/price' }}
+      />,
+    );
     fireEvent.click(screen.getByRole('button', { name: 'Show API request' }));
     const closeBtn = screen.getByRole('button', { name: 'Close' });
     expect(closeBtn.className).toMatch(/(^|\s)p-(1(\.5)?|2)(\s|$)/);

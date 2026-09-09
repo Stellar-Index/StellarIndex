@@ -24,10 +24,10 @@ export function Card({
   return (
     <div
       className={cn(
-        'rounded-card border border-line bg-surface',
+        'rounded-card border-line bg-surface border',
         flat ? 'shadow-none' : 'shadow-card',
         interactive &&
-          'transition-shadow duration-150 hover:border-line-strong hover:shadow-elevated',
+          'hover:border-line-strong hover:shadow-elevated transition-shadow duration-150',
         className,
       )}
       {...props}
@@ -66,26 +66,26 @@ export function CardHeader({
   return (
     <div
       className={cn(
-        'flex items-start justify-between gap-4 border-b border-line px-5 py-4',
+        'border-line flex items-start justify-between gap-4 border-b px-5 py-4',
         className,
       )}
     >
       <div className="min-w-0">
         {eyebrow && (
-          <div className="mb-1 text-[11px] font-medium uppercase tracking-wider text-ink-faint">
+          <div className="text-ink-faint mb-1 text-[11px] font-medium tracking-wider uppercase">
             {eyebrow}
           </div>
         )}
         {title && (
-          <H className="truncate text-[15px] font-semibold text-ink">
-            {title}
-          </H>
+          <H className="text-ink truncate text-[15px] font-semibold">{title}</H>
         )}
         {description && (
-          <p className="mt-0.5 text-sm text-ink-muted">{description}</p>
+          <p className="text-ink-muted mt-0.5 text-sm">{description}</p>
         )}
       </div>
-      {actions && <div className="flex shrink-0 items-center gap-2">{actions}</div>}
+      {actions && (
+        <div className="flex shrink-0 items-center gap-2">{actions}</div>
+      )}
     </div>
   );
 }
@@ -98,7 +98,7 @@ export function CardFooter({ className, ...props }: ComponentProps<'div'>) {
   return (
     <div
       className={cn(
-        'flex items-center justify-between gap-3 border-t border-line px-5 py-3 text-sm text-ink-muted',
+        'border-line text-ink-muted flex items-center justify-between gap-3 border-t px-5 py-3 text-sm',
         className,
       )}
       {...props}

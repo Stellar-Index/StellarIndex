@@ -20,7 +20,14 @@ export default function robots(): MetadataRoute.Robots {
       {
         userAgent: '*',
         allow: '/',
-        disallow: ['/dev/', '/embed/', '/auth/', '/dashboard', '/signin', '/signup'],
+        disallow: [
+          '/dev/',
+          '/embed/',
+          '/auth/',
+          '/dashboard',
+          '/signin',
+          '/signup',
+        ],
       },
     ],
     // Per-network origin. These were hardcoded to stellarindex.io, so the

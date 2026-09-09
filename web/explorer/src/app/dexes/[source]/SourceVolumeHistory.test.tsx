@@ -5,14 +5,17 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { SourceVolumeHistory, isUsdVolumeSeries } from './SourceVolumeHistory';
 
 vi.mock('@/api/client', async () => {
-  const actual = await vi.importActual<typeof import('@/api/client')>('@/api/client');
+  const actual =
+    await vi.importActual<typeof import('@/api/client')>('@/api/client');
   return { ...actual, apiGet: vi.fn() };
 });
 
 import { apiGet } from '@/api/client';
 
 function renderIt(source = 'soroswap') {
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
   return render(
     <QueryClientProvider client={client}>
       <SourceVolumeHistory source={source} />
@@ -67,7 +70,9 @@ describe('SourceVolumeHistory', () => {
   });
 
   it('renders nothing when the protocol carries no volume series', async () => {
-    vi.mocked(apiGet).mockResolvedValue({ data: { bespoke: { category: 'dex', series: [] } } });
+    vi.mocked(apiGet).mockResolvedValue({
+      data: { bespoke: { category: 'dex', series: [] } },
+    });
     const { container } = renderIt();
     // Give the query a tick to settle, then assert absence — no chart,
     // no zero-filled placeholder.

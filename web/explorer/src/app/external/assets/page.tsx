@@ -30,10 +30,10 @@ export default function ExternalAssetsPage() {
         title="External assets"
         description="Non-Stellar assets tracked for pricing: fiat currencies and reference-price coins (BTC, ETH, …). These are split off /assets — the Stellar-only asset directory — and priced from off-chain venues and reference feeds."
       />
-      <p className="text-sm text-ink-muted">
+      <p className="text-ink-muted text-sm">
         <Link
           href="/assets"
-          className="font-medium text-brand-600 hover:text-brand-700"
+          className="text-brand-600 hover:text-brand-700 font-medium"
         >
           ← Stellar assets
         </Link>

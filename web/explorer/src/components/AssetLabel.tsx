@@ -44,20 +44,26 @@ export function AssetLabel({
   const { data: sacMap } = useSACWrappers();
   const { data: issuerMap } = useIssuerLookup();
 
-  if (!canonical) return <span className="text-xs text-ink-faint">—</span>;
-  if (canonical === 'native')
-    return <span className="font-medium">XLM</span>;
+  if (!canonical) return <span className="text-ink-faint text-xs">—</span>;
+  if (canonical === 'native') return <span className="font-medium">XLM</span>;
   if (canonical.startsWith('fiat:')) {
-    return <span className="font-medium">{canonical.replace('fiat:', '')}</span>;
+    return (
+      <span className="font-medium">{canonical.replace('fiat:', '')}</span>
+    );
   }
   if (canonical.startsWith('crypto:')) {
-    return <span className="font-medium">{canonical.replace('crypto:', '')}</span>;
+    return (
+      <span className="font-medium">{canonical.replace('crypto:', '')}</span>
+    );
   }
   // Unmapped oracle symbol — render the on-wire symbol verbatim. The
   // `raw:` prefix stays in the tooltip so the namespace is discoverable.
   if (isRawOracleAsset(canonical)) {
     return (
-      <span className="font-mono text-xs" title={`${canonical} — unmapped oracle symbol`}>
+      <span
+        className="font-mono text-xs"
+        title={`${canonical} — unmapped oracle symbol`}
+      >
         {rawOracleSymbol(canonical)}
       </span>
     );
@@ -69,7 +75,10 @@ export function AssetLabel({
   // "rwa:XAU" inline in a dense cell is noise (wave-D SI-OC-02).
   if (canonical.startsWith('rwa:')) {
     return (
-      <span className="font-mono text-xs" title={`${canonical} — tokenised real-world asset`}>
+      <span
+        className="font-mono text-xs"
+        title={`${canonical} — tokenised real-world asset`}
+      >
         {canonical.slice(4)}
       </span>
     );
@@ -89,11 +98,13 @@ export function AssetLabel({
     // validator rejects mapping it). Hardcode the well-known C-strkey
     // here so Soroban DEX rows that emit XLM as base/quote render
     // "XLM" instead of a truncated SAC fingerprint.
-    if (canonical === 'CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA') {
+    if (
+      canonical === 'CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA'
+    ) {
       return (
         <div>
           <div className="font-medium">XLM</div>
-          <div className="text-[10px] uppercase tracking-wide text-ink-muted">
+          <div className="text-ink-muted text-[10px] tracking-wide uppercase">
             SAC
           </div>
         </div>
@@ -104,7 +115,7 @@ export function AssetLabel({
       return (
         <div>
           <div className="font-medium">XLM</div>
-          <div className="text-[10px] uppercase tracking-wide text-ink-muted">
+          <div className="text-ink-muted text-[10px] tracking-wide uppercase">
             SAC
           </div>
         </div>
@@ -121,7 +132,7 @@ export function AssetLabel({
       return (
         <div>
           <div className="font-medium">{code}</div>
-          <div className="text-[10px] uppercase tracking-wide text-ink-muted">
+          <div className="text-ink-muted text-[10px] tracking-wide uppercase">
             SAC
           </div>
         </div>
@@ -175,10 +186,7 @@ export function AssetLabel({
     return (
       <div>
         <div className="font-medium">{code}</div>
-        <div
-          className="text-[10px] text-ink-muted"
-          title={issuer}
-        >
+        <div className="text-ink-muted text-[10px]" title={issuer}>
           by {known.org_name}
         </div>
       </div>
@@ -187,10 +195,7 @@ export function AssetLabel({
   return (
     <div>
       <div className="font-medium">{code}</div>
-      <div
-        className="font-mono text-[10px] text-ink-muted"
-        title={issuer}
-      >
+      <div className="text-ink-muted font-mono text-[10px]" title={issuer}>
         {issuer.length > 12 ? truncateMiddle(issuer, 6, 4) : issuer}
       </div>
     </div>

@@ -1942,11 +1942,10 @@ function BackfillCoverageTable({
   if (!rows || rows.length === 0) {
     return (
       <div className="border-warn-300 bg-warn-50 text-warn-700 rounded-lg border p-3 text-xs">
-        Coverage snapshot pending. This table shows two figures on
-        different cadences: the gap-detector snapshot refreshes every 30
-        min, and the ADR-0033 completeness verdict is a daily job (05:30
-        UTC), so a verified row is normally hours old and that is
-        expected — not a stalled pipeline.
+        Coverage snapshot pending. This table shows two figures on different
+        cadences: the gap-detector snapshot refreshes every 30 min, and the
+        ADR-0033 completeness verdict is a daily job (05:30 UTC), so a verified
+        row is normally hours old and that is expected — not a stalled pipeline.
       </div>
     );
   }

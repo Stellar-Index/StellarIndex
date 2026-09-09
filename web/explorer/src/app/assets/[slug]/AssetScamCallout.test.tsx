@@ -11,9 +11,7 @@ describe('AssetScamCallout', () => {
   it('warns when the issuer carries a scam-class directory tag', () => {
     render(<AssetScamCallout directoryTags={['unsafe']} />);
     expect(screen.getByRole('alert')).toBeTruthy();
-    expect(
-      screen.getByText(/Flagged by community directory/i),
-    ).toBeTruthy();
+    expect(screen.getByText(/Flagged by community directory/i)).toBeTruthy();
     expect(screen.getByText(/Do not trust this asset/i)).toBeTruthy();
   });
 

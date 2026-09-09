@@ -50,7 +50,10 @@ const UNLINKED_BY_DESIGN: ReadonlyMap<string, string> = new Map([
   // but through `src=` on an <iframe>, never an <a href>; they render
   // chrome-free by design (ConsoleShell and Footer both bail on /embed/*).
   ['/embed/asset/[slug]', 'iframe widget endpoint, embedded from /widgets'],
-  ['/embed/currency/[ticker]', 'iframe widget endpoint, embedded from /widgets'],
+  [
+    '/embed/currency/[ticker]',
+    'iframe widget endpoint, embedded from /widgets',
+  ],
   ['/embed/pair/[pair]', 'iframe widget endpoint, embedded from /widgets'],
   // Legacy query-param entity pages (ADR-0038 Phase D). They exist to
   // catch inbound /contract?id=C… style URLs and redirect to the canonical
@@ -98,7 +101,9 @@ describe('route reachability', () => {
     const stale = [...UNLINKED_BY_DESIGN.keys()]
       .filter((route) => !ROUTES.has(route))
       .sort();
-    expect(stale, `exempt routes that no longer exist: ${stale.join(', ')}`)
-      .toEqual([]);
+    expect(
+      stale,
+      `exempt routes that no longer exist: ${stale.join(', ')}`,
+    ).toEqual([]);
   });
 });

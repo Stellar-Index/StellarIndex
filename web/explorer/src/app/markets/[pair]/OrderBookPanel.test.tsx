@@ -2,10 +2,15 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
-import { OrderBookPanel, isClassicAssetId, trimTrailingZeros } from './OrderBookPanel';
+import {
+  OrderBookPanel,
+  isClassicAssetId,
+  trimTrailingZeros,
+} from './OrderBookPanel';
 
 vi.mock('@/api/client', async () => {
-  const actual = await vi.importActual<typeof import('@/api/client')>('@/api/client');
+  const actual =
+    await vi.importActual<typeof import('@/api/client')>('@/api/client');
   return { ...actual, apiGet: vi.fn() };
 });
 
@@ -14,7 +19,9 @@ import { apiGet } from '@/api/client';
 const USDC = 'USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN';
 
 function renderPanel(base: string, quote: string) {
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
   return render(
     <QueryClientProvider client={client}>
       <OrderBookPanel base={base} quote={quote} />
@@ -40,17 +47,23 @@ describe('OrderBookPanel', () => {
         snapshot_at: '2026-07-29T12:34:56Z',
         asks: [
           {
-            price: '0.5000000', price_r: { n: 1, d: 2 },
-            base_amount: '10.0000000', quote_amount: '5.0000000',
-            cum_base_amount: '10.0000000', cum_quote_amount: '5.0000000',
+            price: '0.5000000',
+            price_r: { n: 1, d: 2 },
+            base_amount: '10.0000000',
+            quote_amount: '5.0000000',
+            cum_base_amount: '10.0000000',
+            cum_quote_amount: '5.0000000',
             offers: 2,
           },
         ],
         bids: [
           {
-            price: '0.4900000', price_r: { n: 49, d: 100 },
-            base_amount: '12.0000000', quote_amount: '5.8800000',
-            cum_base_amount: '12.0000000', cum_quote_amount: '5.8800000',
+            price: '0.4900000',
+            price_r: { n: 49, d: 100 },
+            base_amount: '12.0000000',
+            quote_amount: '5.8800000',
+            cum_base_amount: '12.0000000',
+            cum_quote_amount: '5.8800000',
             offers: 1,
           },
         ],
@@ -90,7 +103,9 @@ describe('OrderBookPanel', () => {
     expect(apiGet).not.toHaveBeenCalled();
 
     vi.mocked(apiGet).mockRejectedValue(
-      new Error('503 Service Unavailable on /v1/sdex/orderbook — Order book snapshot is loading'),
+      new Error(
+        '503 Service Unavailable on /v1/sdex/orderbook — Order book snapshot is loading',
+      ),
     );
     renderPanel('native', USDC);
     await waitFor(() =>
@@ -103,7 +118,11 @@ describe('helpers', () => {
   it('isClassicAssetId accepts native + CODE-G..., rejects Soroban/fiat', () => {
     expect(isClassicAssetId('native')).toBe(true);
     expect(isClassicAssetId(USDC)).toBe(true);
-    expect(isClassicAssetId('CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA')).toBe(false);
+    expect(
+      isClassicAssetId(
+        'CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA',
+      ),
+    ).toBe(false);
     expect(isClassicAssetId('fiat:USD')).toBe(false);
     expect(isClassicAssetId('')).toBe(false);
   });

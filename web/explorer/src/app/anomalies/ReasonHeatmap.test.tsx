@@ -19,17 +19,25 @@ describe('ReasonHeatmap', () => {
     expect(screen.getByText('divergence')).toBeInTheDocument();
     expect(screen.getByText('outlier_storm')).toBeInTheDocument();
     // Exact values live in native titles.
-    expect(screen.getByTitle(`${today} · divergence: 3 freezes`)).toBeInTheDocument();
-    expect(screen.getByTitle(`${today} · outlier_storm: 1 freeze`)).toBeInTheDocument();
+    expect(
+      screen.getByTitle(`${today} · divergence: 3 freezes`),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByTitle(`${today} · outlier_storm: 1 freeze`),
+    ).toBeInTheDocument();
     // The grid itself is an image with an honest description.
     expect(
-      screen.getByRole('img', { name: /Freeze events per day and reason over the last 7 days/ }),
+      screen.getByRole('img', {
+        name: /Freeze events per day and reason over the last 7 days/,
+      }),
     ).toBeInTheDocument();
   });
 
   it('renders the empty-window message instead of a grid of fabricated zeros', () => {
     render(<ReasonHeatmap windowDays={30} cells={[]} />);
-    expect(screen.getByText('No freezes in the last 30 days.')).toBeInTheDocument();
+    expect(
+      screen.getByText('No freezes in the last 30 days.'),
+    ).toBeInTheDocument();
     expect(screen.queryByRole('img')).toBeNull();
   });
 
@@ -53,7 +61,10 @@ describe('ReasonHeatmap', () => {
 
   it('caps the axis at the window length ending on the newest served day', () => {
     // A single garbage far-past date must not explode the grid.
-    const days = servedDaysUTC([{ day: '1970-01-01' }, { day: '2026-07-30' }], 3);
+    const days = servedDaysUTC(
+      [{ day: '1970-01-01' }, { day: '2026-07-30' }],
+      3,
+    );
     expect(days).toEqual(['2026-07-28', '2026-07-29', '2026-07-30']);
   });
 

@@ -21,7 +21,9 @@ afterEach(() => {
   deletePasskey.mockReset();
 });
 
-function passkey(overrides: Partial<PasskeyCredential> = {}): PasskeyCredential {
+function passkey(
+  overrides: Partial<PasskeyCredential> = {},
+): PasskeyCredential {
   return {
     id: 'a1b2c3d4-0000-4000-8000-000000000001',
     name: 'MacBook Touch ID',
@@ -80,7 +82,9 @@ describe('Passkeys settings section', () => {
 
     renderPasskeys();
     fireEvent.click(
-      await screen.findByRole('button', { name: /Remove passkey MacBook Touch ID/ }),
+      await screen.findByRole('button', {
+        name: /Remove passkey MacBook Touch ID/,
+      }),
     );
 
     await waitFor(() =>
@@ -89,7 +93,9 @@ describe('Passkeys settings section', () => {
       ),
     );
     // The list is re-fetched after a successful delete.
-    await waitFor(() => expect(listPasskeys.mock.calls.length).toBeGreaterThan(1));
+    await waitFor(() =>
+      expect(listPasskeys.mock.calls.length).toBeGreaterThan(1),
+    );
   });
 
   it('tells an unsupported browser that passkeys are unavailable (jsdom has no WebAuthn)', async () => {

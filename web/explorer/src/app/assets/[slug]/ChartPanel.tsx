@@ -119,7 +119,9 @@ function FiatUsdChartPanel({ assetID }: { assetID: string }) {
         />
       ) : (
         <div className="text-ink-muted flex h-[340px] items-center justify-center text-sm">
-          {isLoading ? 'Loading…' : 'No recent USD price series for this currency.'}
+          {isLoading
+            ? 'Loading…'
+            : 'No recent USD price series for this currency.'}
         </div>
       )}
     </Panel>
@@ -134,11 +136,13 @@ function UsdcReferencePanel() {
   return (
     <Panel headingLevel={2} title="Price chart" hint="USD reference">
       <div className="flex flex-col items-center justify-center gap-3 py-14 text-center">
-        <div className="text-ink font-mono text-4xl tracking-tight">≈ $1.00</div>
+        <div className="text-ink font-mono text-4xl tracking-tight">
+          ≈ $1.00
+        </div>
         <p className="text-ink-muted max-w-md text-sm">
-          USDC is the dollar reference every other asset is charted against,
-          so it has no USDC-denominated chart of its own. To watch for a
-          depeg, see the{' '}
+          USDC is the dollar reference every other asset is charted against, so
+          it has no USDC-denominated chart of its own. To watch for a depeg, see
+          the{' '}
           <a href="/divergences" className="text-brand-600 hover:underline">
             divergence board
           </a>

@@ -42,9 +42,7 @@ function seedIncidentHistory(): IncidentHistoryEntry[] {
       .replace(/^<!--[\s\S]*?-->\s*/m, '')
       .trim()
       .slice(0, 400);
-    const date = inc.started_at
-      ? inc.started_at.slice(0, 10)
-      : inc.date || '';
+    const date = inc.started_at ? inc.started_at.slice(0, 10) : inc.date || '';
     const resolved = inc.resolved_at
       ? `${inc.resolved_at.slice(0, 10)} ${inc.resolved_at.slice(11, 16)} UTC`
       : inc.status;

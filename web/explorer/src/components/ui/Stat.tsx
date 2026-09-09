@@ -19,22 +19,29 @@ type StatProps = {
  * tabular-figure value, with an optional sub line. Used across the home strip,
  * dashboard, protocol pages, and diagnostics.
  */
-export function Stat({ label, value, sub, icon, size = 'md', className }: StatProps) {
+export function Stat({
+  label,
+  value,
+  sub,
+  icon,
+  size = 'md',
+  className,
+}: StatProps) {
   return (
     <div className={cn('min-w-0', className)}>
-      <div className="flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-wider text-ink-muted">
+      <div className="text-ink-muted flex items-center gap-1.5 text-[11px] font-medium tracking-wider uppercase">
         {icon && <span className="text-ink-faint">{icon}</span>}
         <span className="truncate">{label}</span>
       </div>
       <div
         className={cn(
-          'mt-1 font-semibold tracking-tight tnum text-ink',
+          'tnum text-ink mt-1 font-semibold tracking-tight',
           size === 'lg' ? 'text-3xl' : 'text-2xl',
         )}
       >
         {value}
       </div>
-      {sub && <div className="mt-0.5 text-sm text-ink-muted tnum">{sub}</div>}
+      {sub && <div className="text-ink-muted tnum mt-0.5 text-sm">{sub}</div>}
     </div>
   );
 }
@@ -56,13 +63,25 @@ export function StatGrid({
     5: 'sm:grid-cols-3 lg:grid-cols-5',
   }[cols];
   return (
-    <div className={cn('grid grid-cols-1 gap-px overflow-hidden rounded-card border border-line bg-line', colClass, className)}>
+    <div
+      className={cn(
+        'rounded-card border-line bg-line grid grid-cols-1 gap-px overflow-hidden border',
+        colClass,
+        className,
+      )}
+    >
       {children}
     </div>
   );
 }
 
 /** A single cell inside a StatGrid (white background, padded). */
-export function StatCell({ children, className }: { children: ReactNode; className?: string }) {
+export function StatCell({
+  children,
+  className,
+}: {
+  children: ReactNode;
+  className?: string;
+}) {
   return <div className={cn('bg-surface p-5', className)}>{children}</div>;
 }

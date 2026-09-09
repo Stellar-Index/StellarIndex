@@ -41,7 +41,11 @@ export function IngestThroughputChart() {
   const q = useQuery<ThroughputResp>({
     queryKey: ['/v1/network/throughput', 30, 'diagnostics'],
     queryFn: async () =>
-      (await apiGet<Envelope<ThroughputResp>>('/v1/network/throughput', { window_days: 30 })).data,
+      (
+        await apiGet<Envelope<ThroughputResp>>('/v1/network/throughput', {
+          window_days: 30,
+        })
+      ).data,
     staleTime: 60_000,
     refetchInterval: 60_000,
   });
@@ -68,18 +72,29 @@ export function IngestThroughputChart() {
           onChange={(v) => setMetric(v as Metric)}
         />
         {points.length > 0 && (
-          <span className="ml-auto font-mono text-[11px] tabular-nums text-ink-muted">
+          <span className="text-ink-muted ml-auto font-mono text-[11px] tabular-nums">
             {formatCompact(total)} total
           </span>
         )}
       </div>
       {q.isLoading && <div className="h-[260px]" />}
-      {q.isError && <p className="text-sm text-ink-muted">Throughput is unavailable right now.</p>}
+      {q.isError && (
+        <p className="text-ink-muted text-sm">
+          Throughput is unavailable right now.
+        </p>
+      )}
       {q.data && points.length === 0 && (
-        <p className="text-sm text-ink-muted">No throughput in this window yet.</p>
+        <p className="text-ink-muted text-sm">
+          No throughput in this window yet.
+        </p>
       )}
       {points.length > 0 && (
-        <LineChart data={points} height={260} positive ariaLabel={`Daily ${metric} ingested over the last 30 days`} />
+        <LineChart
+          data={points}
+          height={260}
+          positive
+          ariaLabel={`Daily ${metric} ingested over the last 30 days`}
+        />
       )}
     </Panel>
   );

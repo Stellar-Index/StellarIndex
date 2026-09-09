@@ -63,7 +63,8 @@ const REQUIREMENT_PROSE = [
 
 const REFUSAL_PROSE: Record<string, string> = {
   not_a_classic_asset: 'Not identified by a (code, issuer) pair',
-  no_issuer_bound_sep1_entry: 'No SEP-1 entry the issuer published about itself',
+  no_issuer_bound_sep1_entry:
+    'No SEP-1 entry the issuer published about itself',
   issuer_scam_flagged: 'Issuer flagged by the independent directory',
   issuer_not_independently_recognised: 'Issuer recognised by nobody but itself',
   no_real_world_instrument_basis: 'Declares no real-world instrument',
@@ -103,12 +104,20 @@ export function RWAView() {
   if (isError || !data) {
     return (
       <Callout tone="bad" title="Failed to load real-world assets">
-        {error instanceof Error ? error.message : 'The request did not complete.'}
+        {error instanceof Error
+          ? error.message
+          : 'The request did not complete.'}
       </Callout>
     );
   }
 
-  const { summary, assets, by_class: byClass, by_issuer: byIssuer, refused } = data;
+  const {
+    summary,
+    assets,
+    by_class: byClass,
+    by_issuer: byIssuer,
+    refused,
+  } = data;
   const total = usd(summary.market_cap_usd);
 
   return (
@@ -137,13 +146,20 @@ export function RWAView() {
 
       {byClass.length > 0 && (
         <div className="grid gap-6 lg:grid-cols-2">
-          <Panel title="By instrument class" headingLevel={2} bodyClassName="-mx-4">
+          <Panel
+            title="By instrument class"
+            headingLevel={2}
+            bodyClassName="-mx-4"
+          >
             <div className="overflow-x-auto">
               <GroupTable
                 rows={byClass.map((c) => ({
                   key: c.class,
                   label: CLASS_LABEL[c.class] ?? c.class,
-                  sub: c.class === 'unclassified' ? 'declared by an oracle feed, not by the issuer' : undefined,
+                  sub:
+                    c.class === 'unclassified'
+                      ? 'declared by an oracle feed, not by the issuer'
+                      : undefined,
                   assets: c.assets,
                   unvalued: c.assets_unvalued,
                   usd: usd(c.market_cap_usd),
@@ -157,7 +173,8 @@ export function RWAView() {
               <GroupTable
                 rows={byIssuer.map((i) => ({
                   key: i.issuer,
-                  label: i.name || i.home_domain || truncateMiddle(i.issuer, 6, 6),
+                  label:
+                    i.name || i.home_domain || truncateMiddle(i.issuer, 6, 6),
                   sub: i.name && i.home_domain ? i.home_domain : undefined,
                   assets: i.assets,
                   unvalued: i.assets_unvalued,
@@ -226,10 +243,18 @@ function HeadlineStats({
           />
         </StatCell>
         <StatCell>
-          <Stat label="Assets" value={summary.assets.toLocaleString('en-US')} sub="meeting all four requirements" />
+          <Stat
+            label="Assets"
+            value={summary.assets.toLocaleString('en-US')}
+            sub="meeting all four requirements"
+          />
         </StatCell>
         <StatCell>
-          <Stat label="Issuers" value={summary.issuers.toLocaleString('en-US')} sub="independently recognised" />
+          <Stat
+            label="Issuers"
+            value={summary.issuers.toLocaleString('en-US')}
+            sub="independently recognised"
+          />
         </StatCell>
         <StatCell>
           <Stat
@@ -245,7 +270,7 @@ function HeadlineStats({
           />
         </StatCell>
       </StatGrid>
-      <p className="text-xs leading-relaxed text-ink-muted">
+      <p className="text-ink-muted text-xs leading-relaxed">
         {summary.lower_bound && (
           <>
             <strong>At least this.</strong> {summary.assets_unvalued} asset
@@ -285,45 +310,70 @@ function AssetTable({ assets }: { assets: RWAAsset[] }) {
 function AssetRow({ asset }: { asset: RWAAsset }) {
   const cap = usd(asset.valuation.market_cap_usd);
   const price = usd(asset.valuation.price_usd);
-  const volume = asset.volume_24h_usd == null ? null : formatCompact(Number(asset.volume_24h_usd));
+  const volume =
+    asset.volume_24h_usd == null
+      ? null
+      : formatCompact(Number(asset.volume_24h_usd));
   const flagged = hasDirectoryScamFlag(asset.issuer_directory_tags);
   const reason = VALUATION_REASON[asset.valuation.status];
 
   return (
     <TR>
       <Td>
-        <Link href={`/assets/${asset.slug || asset.asset_id}`} className="font-medium hover:text-brand-600">
+        <Link
+          href={`/assets/${asset.slug || asset.asset_id}`}
+          className="hover:text-brand-600 font-medium"
+        >
           {asset.code}
         </Link>
-        {asset.name && <div className="text-xs text-ink-muted">{asset.name}</div>}
+        {asset.name && (
+          <div className="text-ink-muted text-xs">{asset.name}</div>
+        )}
       </Td>
       <Td>
         <div className="flex items-center gap-1.5">
-          <span>{asset.issuer_directory_name || asset.home_domain || truncateMiddle(asset.issuer, 6, 6)}</span>
+          <span>
+            {asset.issuer_directory_name ||
+              asset.home_domain ||
+              truncateMiddle(asset.issuer, 6, 6)}
+          </span>
           {flagged && <Badge tone="bad">Flagged</Badge>}
         </div>
         {/* The G-address is the identity; the label above is a
             third-party convenience. Showing both keeps a reader from
             confusing the two. */}
-        <div className="font-mono text-[11px] text-ink-faint">{truncateMiddle(asset.issuer, 6, 6)}</div>
+        <div className="text-ink-faint font-mono text-[11px]">
+          {truncateMiddle(asset.issuer, 6, 6)}
+        </div>
       </Td>
       <Td>
-        <div>{asset.anchor_asset || CLASS_LABEL[asset.anchor_class ?? ''] || '—'}</div>
-        <div className="text-xs text-ink-muted">
+        <div>
+          {asset.anchor_asset || CLASS_LABEL[asset.anchor_class ?? ''] || '—'}
+        </div>
+        <div className="text-ink-muted text-xs">
           {asset.basis === 'sep1_anchor_declaration'
             ? `declared by the issuer${asset.anchor_class ? ` as ${asset.anchor_class}` : ''}`
             : 'priced by an independent oracle feed'}
         </div>
       </Td>
-      <Td align="right">
-        {cap ?? <Withheld reason={reason} />}
-      </Td>
+      <Td align="right">{cap ?? <Withheld reason={reason} />}</Td>
       <Td align="right">{price ?? <Withheld reason={reason} />}</Td>
       <Td align="right">
-        {volume == null ? <span className="text-ink-faint" title="No USD-denominated trades in the window">—</span> : `$${volume}`}
+        {volume == null ? (
+          <span
+            className="text-ink-faint"
+            title="No USD-denominated trades in the window"
+          >
+            —
+          </span>
+        ) : (
+          `$${volume}`
+        )}
       </Td>
       <Td align="right">
-        {asset.first_seen_ledger ? asset.first_seen_ledger.toLocaleString('en-US') : (
+        {asset.first_seen_ledger ? (
+          asset.first_seen_ledger.toLocaleString('en-US')
+        ) : (
           <span className="text-ink-faint">—</span>
         )}
       </Td>
@@ -338,7 +388,10 @@ function AssetRow({ asset }: { asset: RWAAsset }) {
  */
 function Withheld({ reason }: { reason?: string }) {
   return (
-    <span className="text-xs font-medium text-ink-muted" title={reason ?? 'Not available'}>
+    <span
+      className="text-ink-muted text-xs font-medium"
+      title={reason ?? 'Not available'}
+    >
       Unavailable
     </span>
   );
@@ -348,7 +401,14 @@ function GroupTable({
   rows,
   firstHeading,
 }: {
-  rows: { key: string; label: string; sub?: string; assets: number; unvalued: number; usd: string | null }[];
+  rows: {
+    key: string;
+    label: string;
+    sub?: string;
+    assets: number;
+    unvalued: number;
+    usd: string | null;
+  }[];
   firstHeading: string;
 }) {
   return (
@@ -365,12 +425,14 @@ function GroupTable({
           <TR key={r.key}>
             <Td>
               <div>{r.label}</div>
-              {r.sub && <div className="text-xs text-ink-muted">{r.sub}</div>}
+              {r.sub && <div className="text-ink-muted text-xs">{r.sub}</div>}
             </Td>
             <Td align="right">
               {r.assets.toLocaleString('en-US')}
               {r.unvalued > 0 && (
-                <div className="text-[11px] text-ink-muted">{r.unvalued} unvalued</div>
+                <div className="text-ink-muted text-[11px]">
+                  {r.unvalued} unvalued
+                </div>
               )}
             </Td>
             <Td align="right">
@@ -409,40 +471,48 @@ function DefinitionPanel({
   const refusedTotal = refused.reduce((n, r) => n + r.assets, 0);
   return (
     <Panel title="What qualifies, and what does not" headingLevel={2}>
-      <ol className="ml-4 list-decimal space-y-1.5 text-sm leading-relaxed text-ink-body">
+      <ol className="text-ink-body ml-4 list-decimal space-y-1.5 text-sm leading-relaxed">
         {REQUIREMENT_PROSE.map((r) => (
           <li key={r}>{r}</li>
         ))}
       </ol>
-      <p className="mt-3 text-xs leading-relaxed text-ink-muted">
-        An asset failing any requirement is absent from this page — not
-        ranked lower, not hidden behind a filter. It keeps its own asset
-        page, with whatever warnings apply there. Recognised classes:{' '}
-        <span className="font-mono">{definition.anchor_classes.join(', ')}</span>.
-        Fiat-anchored tokens are stablecoins and are counted elsewhere.
+      <p className="text-ink-muted mt-3 text-xs leading-relaxed">
+        An asset failing any requirement is absent from this page — not ranked
+        lower, not hidden behind a filter. It keeps its own asset page, with
+        whatever warnings apply there. Recognised classes:{' '}
+        <span className="font-mono">
+          {definition.anchor_classes.join(', ')}
+        </span>
+        . Fiat-anchored tokens are stablecoins and are counted elsewhere.
       </p>
       {refusedTotal > 0 && (
-        <details className="group mt-3 rounded-lg border border-line">
-          <summary className="cursor-pointer select-none px-3 py-1.5 text-xs font-medium text-ink-body marker:text-ink-faint hover:text-brand-600">
+        <details className="group border-line mt-3 rounded-lg border">
+          <summary className="text-ink-body marker:text-ink-faint hover:text-brand-600 cursor-pointer px-3 py-1.5 text-xs font-medium select-none">
             Candidates refused{' '}
-            <span className="text-ink-faint">({refusedTotal.toLocaleString('en-US')})</span>
+            <span className="text-ink-faint">
+              ({refusedTotal.toLocaleString('en-US')})
+            </span>
           </summary>
-          <dl className="space-y-1.5 border-t border-line px-3 py-2 text-[11px] leading-relaxed">
+          <dl className="border-line space-y-1.5 border-t px-3 py-2 text-[11px] leading-relaxed">
             {refused.map((r) => (
               <div key={r.reason} className="flex justify-between gap-4">
-                <dt className="text-ink-body">{REFUSAL_PROSE[r.reason] ?? r.reason}</dt>
-                <dd className="tnum text-ink-muted">{r.assets.toLocaleString('en-US')}</dd>
+                <dt className="text-ink-body">
+                  {REFUSAL_PROSE[r.reason] ?? r.reason}
+                </dt>
+                <dd className="tnum text-ink-muted">
+                  {r.assets.toLocaleString('en-US')}
+                </dd>
               </div>
             ))}
           </dl>
         </details>
       )}
-      <p className="mt-3 text-[11px] leading-relaxed text-ink-muted">
+      <p className="text-ink-muted mt-3 text-[11px] leading-relaxed">
         Live data from <span className="font-mono">{ENDPOINT}</span>. Valuations
         come from the same price, supply and trust gates the asset pages use, so
         nothing here publishes a figure those pages withhold. The full
         definition, with the evidence behind each requirement, is in the{' '}
-        <Link href="/methodology" className="underline hover:text-brand-600">
+        <Link href="/methodology" className="hover:text-brand-600 underline">
           methodology
         </Link>
         .

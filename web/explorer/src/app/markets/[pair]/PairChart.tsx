@@ -19,6 +19,11 @@ export function PairChart({
   quoteLabel: string;
 }) {
   return (
-    <MarketChart base={base} quote={quote} baseLabel={baseLabel} quoteLabel={quoteLabel} />
+    <MarketChart
+      base={base}
+      quote={quote}
+      baseLabel={baseLabel}
+      quoteLabel={quoteLabel}
+    />
   );
 }

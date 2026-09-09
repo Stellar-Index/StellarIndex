@@ -24,7 +24,9 @@ function makeContext(pathname, env = {}) {
 describe('og function — kill-switch', () => {
   it('returns 503 and does no work when OG_DISABLED=1', async () => {
     const fetchSpy = vi.spyOn(globalThis, 'fetch');
-    const res = await onRequest(makeContext('/og/markets/native~usdc', { OG_DISABLED: '1' }));
+    const res = await onRequest(
+      makeContext('/og/markets/native~usdc', { OG_DISABLED: '1' }),
+    );
     expect(res.status).toBe(503);
     expect(fetchSpy).not.toHaveBeenCalled();
     fetchSpy.mockRestore();
@@ -81,9 +83,11 @@ describe('liveSubline — asset-shape guard (SEC-15)', () => {
   });
 
   it('still calls fetch for a real canonical CODE-ISSUER pair', async () => {
-    const fetchSpy = vi
-      .spyOn(globalThis, 'fetch')
-      .mockResolvedValue(new Response(JSON.stringify({ data: { price: '0.12345' } }), { status: 200 }));
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(JSON.stringify({ data: { price: '0.12345' } }), {
+        status: 200,
+      }),
+    );
     const result = await liveSubline(
       'markets',
       'native~USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN',

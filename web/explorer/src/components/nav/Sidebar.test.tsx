@@ -13,7 +13,8 @@ beforeEach(() => {
 });
 
 vi.mock('@/api/hooks', async () => {
-  const actual = await vi.importActual<typeof import('@/api/hooks')>('@/api/hooks');
+  const actual =
+    await vi.importActual<typeof import('@/api/hooks')>('@/api/hooks');
   return {
     ...actual,
     useMe: () => ({
@@ -30,7 +31,9 @@ import { SidebarNav } from './Sidebar';
 // (Escape) never returned focus to the trigger button, unlike the shared
 // useDialog hook already used elsewhere (RequestReveal).
 function renderNav() {
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
   render(
     <QueryClientProvider client={client}>
       <SidebarNav />
@@ -51,7 +54,9 @@ describe('Sidebar IA (nav revision 2026-08-24)', () => {
     }
     // Wordmark — split spans ("Stellar" + lighter "Index") whose
     // accessible name still reads StellarIndex.
-    expect(screen.getByRole('link', { name: /Stellar\s*Index/ })).toHaveAttribute('href', '/');
+    expect(
+      screen.getByRole('link', { name: /Stellar\s*Index/ }),
+    ).toHaveAttribute('href', '/');
     // Stellar section entries, in spec order
     for (const [label, href] of [
       ['Network', '/network'],
@@ -63,10 +68,16 @@ describe('Sidebar IA (nav revision 2026-08-24)', () => {
       ['Oracles', '/oracles'],
       ['Insights', '/insights'],
     ] as const) {
-      expect(screen.getByRole('link', { name: label })).toHaveAttribute('href', href);
+      expect(screen.getByRole('link', { name: label })).toHaveAttribute(
+        'href',
+        href,
+      );
     }
     // External: Markets → the CEX board; Assets → external assets.
-    expect(screen.getByRole('link', { name: 'Markets' })).toHaveAttribute('href', '/exchanges');
+    expect(screen.getByRole('link', { name: 'Markets' })).toHaveAttribute(
+      'href',
+      '/exchanges',
+    );
     // Two "Assets" links exist (Stellar + External) — assert both hrefs.
     const assetLinks = screen.getAllByRole('link', { name: 'Assets' });
     expect(assetLinks.map((a) => a.getAttribute('href')).sort()).toEqual([
@@ -78,13 +89,26 @@ describe('Sidebar IA (nav revision 2026-08-24)', () => {
       'href',
       'https://docs.stellarindex.io',
     );
-    expect(screen.getByRole('link', { name: 'SDK' })).toHaveAttribute('href', '/sdk');
+    expect(screen.getByRole('link', { name: 'SDK' })).toHaveAttribute(
+      'href',
+      '/sdk',
+    );
     // The Status row's accessible name now includes the live tone dot's
     // sr-only state suffix (A5-03 pill revival) — match on the prefix.
-    expect(screen.getByRole('link', { name: /^Status/ })).toHaveAttribute('href', '/status');
+    expect(screen.getByRole('link', { name: /^Status/ })).toHaveAttribute(
+      'href',
+      '/status',
+    );
     // Retired rail entries must NOT come back silently.
-    for (const gone of ['AMM Pools', 'External Markets', 'Verification', 'Home']) {
-      expect(screen.queryByRole('link', { name: gone })).not.toBeInTheDocument();
+    for (const gone of [
+      'AMM Pools',
+      'External Markets',
+      'Verification',
+      'Home',
+    ]) {
+      expect(
+        screen.queryByRole('link', { name: gone }),
+      ).not.toBeInTheDocument();
     }
   });
 });
@@ -101,7 +125,9 @@ describe('Sidebar Status pill', () => {
     } as Response);
     renderNav();
     // The dot's sr-only state suffix lands in the link's accessible name.
-    expect(await screen.findByText('(degraded performance)')).toBeInTheDocument();
+    expect(
+      await screen.findByText('(degraded performance)'),
+    ).toBeInTheDocument();
   });
 
   it('makes NO claim when the status feed cannot be reached (WB-04 honesty)', async () => {
@@ -109,14 +135,18 @@ describe('Sidebar Status pill', () => {
     // muted unknown dot, never a stale/assumed green.
     renderNav();
     expect(await screen.findByText('(status unknown)')).toBeInTheDocument();
-    expect(screen.queryByText('(all systems operational)')).not.toBeInTheDocument();
+    expect(
+      screen.queryByText('(all systems operational)'),
+    ).not.toBeInTheDocument();
   });
 });
 
 describe('Sidebar AccountMenu', () => {
   it('restores focus to the trigger button after closing with Escape, even when focus had moved into the panel', () => {
     renderNav();
-    const trigger = screen.getByRole('button', { name: /signed-in@example.com/ });
+    const trigger = screen.getByRole('button', {
+      name: /signed-in@example.com/,
+    });
     trigger.focus();
     fireEvent.click(trigger);
 

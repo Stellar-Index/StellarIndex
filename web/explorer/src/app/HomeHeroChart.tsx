@@ -25,17 +25,22 @@ export function HomeHeroChart() {
   const flash = usePriceFlash(tipStr);
 
   return (
-    <section className="rounded-card border border-line bg-surface p-5 shadow-card">
+    <section className="rounded-card border-line bg-surface shadow-card border p-5">
       <div className="mb-3 flex flex-wrap items-baseline justify-between gap-3">
         <div className="flex flex-wrap items-baseline gap-2.5">
-          <Link href="/assets/XLM" className="text-h3 font-semibold text-ink hover:text-brand-600">
+          <Link
+            href="/assets/XLM"
+            className="text-h3 text-ink hover:text-brand-600 font-semibold"
+          >
             XLM
           </Link>
-          <span className="text-sm text-ink-muted">Stellar Lumens · live USD price</span>
+          <span className="text-ink-muted text-sm">
+            Stellar Lumens · live USD price
+          </span>
           {livePrice != null && (
             <span
               className={cn(
-                'font-mono text-lg tabular-nums text-ink',
+                'text-ink font-mono text-lg tabular-nums',
                 flash === 'up' && 'flash-up',
                 flash === 'down' && 'flash-down',
               )}
@@ -46,7 +51,11 @@ export function HomeHeroChart() {
           {change != null && (
             <span
               className={`font-mono text-sm tabular-nums ${
-                change > 0 ? 'text-up' : change < 0 ? 'text-down' : 'text-ink-muted'
+                change > 0
+                  ? 'text-up'
+                  : change < 0
+                    ? 'text-down'
+                    : 'text-ink-muted'
               }`}
             >
               {change > 0 ? '▲' : change < 0 ? '▼' : ''} {change > 0 ? '+' : ''}
@@ -54,11 +63,20 @@ export function HomeHeroChart() {
             </span>
           )}
         </div>
-        <Link href="/assets/XLM" className="text-xs text-brand-600 hover:underline">
+        <Link
+          href="/assets/XLM"
+          className="text-brand-600 text-xs hover:underline"
+        >
           Full XLM detail →
         </Link>
       </div>
-      <MarketChart base="native" quote="fiat:USD" baseLabel="XLM" quoteLabel="USD" height={300} />
+      <MarketChart
+        base="native"
+        quote="fiat:USD"
+        baseLabel="XLM"
+        quoteLabel="USD"
+        height={300}
+      />
     </section>
   );
 }

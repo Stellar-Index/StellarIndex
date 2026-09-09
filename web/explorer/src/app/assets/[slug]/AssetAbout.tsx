@@ -51,7 +51,7 @@ function ExpandableText({ title, body }: { title: string; body: string }) {
         <button
           type="button"
           onClick={() => setExpanded((v) => !v)}
-          className="text-xs text-brand-600 hover:underline"
+          className="text-brand-600 text-xs hover:underline"
         >
           {expanded ? 'Show less' : 'Read more →'}
         </button>

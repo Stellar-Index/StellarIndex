@@ -2,7 +2,10 @@ import { describe, it, expect, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
 
 vi.mock('@/lib/buildFetch', async () => {
-  const actual = await vi.importActual<typeof import('@/lib/buildFetch')>('@/lib/buildFetch');
+  const actual =
+    await vi.importActual<typeof import('@/lib/buildFetch')>(
+      '@/lib/buildFetch',
+    );
   return { ...actual, buildFetchData: vi.fn(), failBuild: vi.fn() };
 });
 
@@ -33,7 +36,9 @@ describe('LendingPoolPage auction stats', () => {
     vi.mocked(buildFetchData).mockResolvedValue(null);
     await renderPool(POOL_1);
 
-    expect(screen.getByText(/Auction statistics are unavailable for this build/)).toBeInTheDocument();
+    expect(
+      screen.getByText(/Auction statistics are unavailable for this build/),
+    ).toBeInTheDocument();
     // All three tiles read as unknown; none of them asserts a count.
     const tiles = ['Auctions (24h)', 'Auctions (total)', 'Unique users (30d)'];
     for (const label of tiles) {

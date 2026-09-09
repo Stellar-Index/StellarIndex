@@ -50,7 +50,9 @@ describe('isPartialTodayDate / todayUTC', () => {
 
 describe('seriesPointTime', () => {
   it('parses daily and hourly stamps as UTC unix seconds', () => {
-    expect(seriesPointTime('2026-07-30')).toBe(Date.parse('2026-07-30T00:00:00Z') / 1000);
+    expect(seriesPointTime('2026-07-30')).toBe(
+      Date.parse('2026-07-30T00:00:00Z') / 1000,
+    );
     expect(seriesPointTime('2026-07-30T13:00')).toBe(
       Date.parse('2026-07-30T13:00:00Z') / 1000,
     );

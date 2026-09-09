@@ -52,7 +52,8 @@ export function AccountsAnalytics() {
   const q = useQuery<AccountsStatsResp>({
     queryKey: ['/v1/accounts/stats'],
     queryFn: async () => {
-      const env = await apiGet<Envelope<AccountsStatsResp>>('/v1/accounts/stats');
+      const env =
+        await apiGet<Envelope<AccountsStatsResp>>('/v1/accounts/stats');
       return env.data;
     },
     retry: false,
@@ -62,14 +63,22 @@ export function AccountsAnalytics() {
   const s = q.data;
   if (q.isLoading) {
     return (
-      <Panel title="Network accounts" source={asExample('/v1/accounts/stats')} bodyClassName="text-sm text-ink-muted">
+      <Panel
+        title="Network accounts"
+        source={asExample('/v1/accounts/stats')}
+        bodyClassName="text-sm text-ink-muted"
+      >
         Loading account analytics…
       </Panel>
     );
   }
   if (q.isError || !s) {
     return (
-      <Panel title="Network accounts" source={asExample('/v1/accounts/stats')} bodyClassName="text-sm text-ink-muted">
+      <Panel
+        title="Network accounts"
+        source={asExample('/v1/accounts/stats')}
+        bodyClassName="text-sm text-ink-muted"
+      >
         Account analytics are warming (the rollup runs every 30 minutes) — the
         wealth directory below is unaffected.
       </Panel>
@@ -91,27 +100,41 @@ export function AccountsAnalytics() {
 
   // Native is held by every funded account by definition — charting it
   // alongside issued assets collapses the rest to slivers.
-  const heldAssets = (s.top_held_assets ?? []).filter((a) => a.asset !== 'native');
+  const heldAssets = (s.top_held_assets ?? []).filter(
+    (a) => a.asset !== 'native',
+  );
 
   return (
     <>
-      <Panel title="Network accounts" source={asExample('/v1/accounts/stats')} bodyClassName="space-y-5">
+      <Panel
+        title="Network accounts"
+        source={asExample('/v1/accounts/stats')}
+        bodyClassName="space-y-5"
+      >
         <dl className="grid grid-cols-2 gap-x-6 gap-y-4 sm:grid-cols-3 lg:grid-cols-6">
-          <Stat label="Funded accounts" value={formatCompact(s.totals.accounts)} />
+          <Stat
+            label="Funded accounts"
+            value={formatCompact(s.totals.accounts)}
+          />
           <Stat label="Trustlines" value={formatCompact(s.totals.trustlines)} />
           <Stat
             label="XLM held by accounts"
             value={`${formatCompact(Number(stroopsToXlm(s.totals.xlm_held_stroops).replace(/,/g, '')))} XLM`}
           />
-          <Stat label="Median balance" value={`${stroopsToXlm(s.balances.median_stroops)} XLM`} />
-          <Stat label="p99 balance" value={`${stroopsToXlm(s.balances.p99_stroops)} XLM`} />
+          <Stat
+            label="Median balance"
+            value={`${stroopsToXlm(s.balances.median_stroops)} XLM`}
+          />
+          <Stat
+            label="p99 balance"
+            value={`${stroopsToXlm(s.balances.p99_stroops)} XLM`}
+          />
           <Stat
             label="Top-100 hold"
             value={`${s.concentration.top100_share_pct.toFixed(2)}%`}
-           
           />
         </dl>
-        <p className="text-[11px] text-ink-muted">
+        <p className="text-ink-muted text-[11px]">
           Snapshot recomputed every 30 minutes from the captured ledger state
           (last cycle {s.computed_at}). Balance statistics cover funded
           accounts&apos; native XLM.
@@ -119,26 +142,44 @@ export function AccountsAnalytics() {
       </Panel>
 
       <div className="grid gap-6 lg:grid-cols-2">
-        <Panel title="Wealth distribution" source={asExample('/v1/accounts/stats')} bodyClassName="space-y-2">
-          <p className="text-xs text-ink-muted">
+        <Panel
+          title="Wealth distribution"
+          source={asExample('/v1/accounts/stats')}
+          bodyClassName="space-y-2"
+        >
+          <p className="text-ink-muted text-xs">
             Accounts by native balance, log-scale bands. Most accounts are
             small; the annotation shows each band&apos;s total XLM.
           </p>
-          <HBarList items={wealthItems} ariaLabel="Accounts by XLM balance band" />
+          <HBarList
+            items={wealthItems}
+            ariaLabel="Accounts by XLM balance band"
+          />
         </Panel>
-        <Panel title="Trustlines per account" source={asExample('/v1/accounts/stats')} bodyClassName="space-y-2">
-          <p className="text-xs text-ink-muted">
+        <Panel
+          title="Trustlines per account"
+          source={asExample('/v1/accounts/stats')}
+          bodyClassName="space-y-2"
+        >
+          <p className="text-ink-muted text-xs">
             How many assets accounts opt into holding —{' '}
-            {formatCompact(s.totals.trustline_holding_accounts)} accounts hold at
-            least one trustline.
+            {formatCompact(s.totals.trustline_holding_accounts)} accounts hold
+            at least one trustline.
           </p>
-          <HBarList items={trustlineItems} ariaLabel="Accounts by trustline count band" />
+          <HBarList
+            items={trustlineItems}
+            ariaLabel="Accounts by trustline count band"
+          />
         </Panel>
       </div>
 
       {heldAssets.length > 0 && (
-        <Panel title="Most held assets" source={asExample('/v1/accounts/stats')} bodyClassName="space-y-2">
-          <p className="text-xs text-ink-muted">
+        <Panel
+          title="Most held assets"
+          source={asExample('/v1/accounts/stats')}
+          bodyClassName="space-y-2"
+        >
+          <p className="text-ink-muted text-xs">
             Assets by number of positive-balance holders — click through for
             each asset&apos;s holder board.
           </p>

@@ -80,7 +80,9 @@ export function SupplyTabPanel({ assetID }: { assetID: string }) {
   const max = parseSmallest(a.max_supply, decimals);
 
   const noSupply =
-    a.circulating_supply == null && a.total_supply == null && a.max_supply == null;
+    a.circulating_supply == null &&
+    a.total_supply == null &&
+    a.max_supply == null;
 
   return (
     <Panel
@@ -89,9 +91,11 @@ export function SupplyTabPanel({ assetID }: { assetID: string }) {
       source={asExample('/v1/assets/{asset_id}', { asset_id: assetID })}
       bodyClassName="space-y-4"
     >
-      {onchain.data && <OnChainSupply data={onchain.data} decimals={decimals} />}
+      {onchain.data && (
+        <OnChainSupply data={onchain.data} decimals={decimals} />
+      )}
       {noSupply ? (
-        <p className="text-sm text-ink-muted">
+        <p className="text-ink-muted text-sm">
           {onchain.data
             ? 'No ADR-0011 circulating/max breakdown for this asset yet — the live on-chain total above is sourced directly from mint/burn flows.'
             : 'No supply snapshot available for this asset. The supply observer may not have backfilled it yet.'}
@@ -133,9 +137,8 @@ export function SupplyTabPanel({ assetID }: { assetID: string }) {
 
           <MarketCapChart assetID={assetID} />
 
-
           {a.supply_basis && (
-            <p className="text-xs text-ink-muted">
+            <p className="text-ink-muted text-xs">
               <span className="font-mono">supply_basis</span>: {a.supply_basis}
               {' — '}
               policy under ADR-0011 that produced these numbers.
@@ -143,21 +146,18 @@ export function SupplyTabPanel({ assetID }: { assetID: string }) {
           )}
 
           {(a.fixed_number || a.max_number || a.is_unlimited != null) && (
-            <div className="rounded-lg border border-line bg-surface-muted p-3 text-xs">
-              <h3 className="mb-1 font-semibold uppercase tracking-wider text-ink-muted">
+            <div className="border-line bg-surface-muted rounded-lg border p-3 text-xs">
+              <h3 className="text-ink-muted mb-1 font-semibold tracking-wider uppercase">
                 SEP-1 issuance declarations
               </h3>
               <p className="text-ink-body">
-                What the issuer pledged in their <span className="font-mono">stellar.toml</span>
-                — distinct from the live-ledger numbers above.
+                What the issuer pledged in their{' '}
+                <span className="font-mono">stellar.toml</span>— distinct from
+                the live-ledger numbers above.
               </p>
               <ul className="mt-2 space-y-1 font-mono">
-                {a.fixed_number && (
-                  <li>fixed_number = {a.fixed_number}</li>
-                )}
-                {a.max_number && (
-                  <li>max_number = {a.max_number}</li>
-                )}
+                {a.fixed_number && <li>fixed_number = {a.fixed_number}</li>}
+                {a.max_number && <li>max_number = {a.max_number}</li>}
                 {a.is_unlimited != null && (
                   <li>is_unlimited = {a.is_unlimited ? 'true' : 'false'}</li>
                 )}
@@ -180,7 +180,9 @@ function MarketCapChart({ assetID }: { assetID: string }) {
     queryKey: ['/v1/chart', 'market_cap', assetID],
     retry: false,
     queryFn: async () => {
-      const env = await apiGet<Envelope<{ points: { t: string; p: string }[] }>>('/v1/chart', {
+      const env = await apiGet<
+        Envelope<{ points: { t: string; p: string }[] }>
+      >('/v1/chart', {
         asset: assetID,
         quote: 'fiat:USD',
         price_type: 'market_cap',
@@ -198,8 +200,8 @@ function MarketCapChart({ assetID }: { assetID: string }) {
   }));
 
   return (
-    <div className="rounded-lg border border-line bg-surface p-4">
-      <h3 className="mb-2 font-semibold uppercase tracking-wider text-xs text-ink-muted">
+    <div className="border-line bg-surface rounded-lg border p-4">
+      <h3 className="text-ink-muted mb-2 text-xs font-semibold tracking-wider uppercase">
         Market-cap timeline
       </h3>
       {q.isLoading && <div className="h-[260px]" />}
@@ -207,13 +209,13 @@ function MarketCapChart({ assetID }: { assetID: string }) {
           and assert "no market-cap history for this asset". Absent is
           not empty. */}
       {!q.isLoading && q.isError && (
-        <p className="text-sm text-ink-muted">
+        <p className="text-ink-muted text-sm">
           Market-cap history unavailable right now — the series query
           didn&apos;t return. Retry shortly.
         </p>
       )}
       {!q.isLoading && !q.isError && points.length < 2 && (
-        <p className="text-sm text-ink-muted">
+        <p className="text-ink-muted text-sm">
           No market-cap history for this asset — it needs both an on-chain
           circulating supply and a USD price track over time.
         </p>
@@ -234,27 +236,43 @@ function MarketCapChart({ assetID }: { assetID: string }) {
 // number available for every token (vs the ADR-0011 F2 fields below,
 // which only exist for tracked assets). For native XLM the source is the
 // ledger header's total_coins (no mint/burn breakdown).
-function OnChainSupply({ data, decimals }: { data: AssetSupply; decimals: number }) {
+function OnChainSupply({
+  data,
+  decimals,
+}: {
+  data: AssetSupply;
+  decimals: number;
+}) {
   const native = data.source === 'ledger_total_coins';
   const total = parseSmallest(data.total_supply, decimals);
   const mint = parseSmallest(data.mint_total, decimals);
   const burn = parseSmallest(data.burn_total, decimals);
   const clawback = parseSmallest(data.clawback_total, decimals);
   return (
-    <div className="rounded-lg border border-up/30 bg-up-subtle/50 p-3">
-      <h3 className="mb-2 text-xs font-semibold uppercase tracking-wider text-up">
+    <div className="border-up/30 bg-up-subtle/50 rounded-lg border p-3">
+      <h3 className="text-up mb-2 text-xs font-semibold tracking-wider uppercase">
         On-chain supply (live)
       </h3>
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <Metric
           label="Total"
           value={total != null ? formatCompact(total) : '—'}
-          sublabel={native ? 'ledger total_coins' : `${data.flow_count.toLocaleString('en-US')} flows`}
+          sublabel={
+            native
+              ? 'ledger total_coins'
+              : `${data.flow_count.toLocaleString('en-US')} flows`
+          }
         />
         {!native && (
           <>
-            <Metric label="Minted" value={mint != null ? formatCompact(mint) : '—'} />
-            <Metric label="Burned" value={burn != null ? formatCompact(burn) : '—'} />
+            <Metric
+              label="Minted"
+              value={mint != null ? formatCompact(mint) : '—'}
+            />
+            <Metric
+              label="Burned"
+              value={burn != null ? formatCompact(burn) : '—'}
+            />
             <Metric
               label="Clawed back"
               value={clawback != null ? formatCompact(clawback) : '—'}
@@ -267,7 +285,7 @@ function OnChainSupply({ data, decimals }: { data: AssetSupply; decimals: number
           <SupplyFlowsBar rows={buildSupplyFlowRows(data, decimals)} />
         </div>
       )}
-      <p className="mt-2 text-[11px] text-up/80">
+      <p className="text-up/80 mt-2 text-[11px]">
         {native
           ? 'Native XLM total from the ledger header — current to the latest ledger.'
           : 'Σ mint − burn − clawback from the supply_flows lake (ADR-0034), current to the latest ledger — no refresh lag.'}
@@ -286,13 +304,15 @@ function Metric({
   sublabel?: string;
 }) {
   return (
-    <div className="rounded-lg border border-line bg-surface p-3">
-      <div className="text-xs uppercase tracking-wider text-ink-muted">{label}</div>
-      <div className="mt-1 font-mono text-xl font-semibold text-ink">
+    <div className="border-line bg-surface rounded-lg border p-3">
+      <div className="text-ink-muted text-xs tracking-wider uppercase">
+        {label}
+      </div>
+      <div className="text-ink mt-1 font-mono text-xl font-semibold">
         {value}
       </div>
       {sublabel && (
-        <div className="mt-1 truncate font-mono text-[11px] text-ink-muted">
+        <div className="text-ink-muted mt-1 truncate font-mono text-[11px]">
           {sublabel}
         </div>
       )}
@@ -305,7 +325,10 @@ function Metric({
 // a number for display. Returns null when the string is missing
 // or not finite. Display-only — never used for further arithmetic
 // (AGENTS.md invariant #1: precision lives in the string).
-function parseSmallest(s: string | null | undefined, decimals: number): number | null {
+function parseSmallest(
+  s: string | null | undefined,
+  decimals: number,
+): number | null {
   if (s == null) return null;
   const n = Number(s);
   if (!Number.isFinite(n)) return null;

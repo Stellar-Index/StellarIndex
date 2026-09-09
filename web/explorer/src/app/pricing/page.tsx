@@ -1,13 +1,7 @@
 import type { Metadata } from 'next';
 import { Check, Minus } from 'lucide-react';
 
-import {
-  Badge,
-  ButtonLink,
-  Card,
-  CardBody,
-  Container,
-} from '@/components/ui';
+import { Badge, ButtonLink, Card, CardBody, Container } from '@/components/ui';
 
 export const metadata: Metadata = {
   title: 'Pricing — free access, quotas, SLAs',
@@ -43,7 +37,11 @@ const TIERS: Tier[] = [
       'Same VWAP / freshness as every tier',
       '6,000 requests / minute per source IP',
     ],
-    notFeatures: ['Per-key attribution', 'Usage history (30d)', 'Dedicated SLA'],
+    notFeatures: [
+      'Per-key attribution',
+      'Usage history (30d)',
+      'Dedicated SLA',
+    ],
   },
   {
     name: 'Free account',
@@ -70,20 +68,19 @@ export default function PricingPage() {
   return (
     <Container className="space-y-12 py-10 sm:py-14">
       <header className="mx-auto max-w-2xl space-y-4 text-center">
-        <p className="text-xs font-medium uppercase tracking-wider text-brand-600">
+        <p className="text-brand-600 text-xs font-medium tracking-wider uppercase">
           Plans
         </p>
-        <h1 className="text-h1 font-semibold text-ink md:text-display-sm">
+        <h1 className="text-h1 text-ink md:text-display-sm font-semibold">
           Pricing
         </h1>
-        <p className="text-lg leading-relaxed text-ink-muted">
-          Stellar Index is free — there are no paid plans. Anonymous
-          reads work without an account; a free account (one curl:
-          POST /v1/register) adds per-key usage analytics and a budget
-          that is yours alone rather than shared with everything else
-          on your IP. It is not a throughput upgrade — on the hosted
-          deployment an anonymous IP&apos;s limit deliberately exceeds a
-          single free key&apos;s. Higher partner limits are set by our
+        <p className="text-ink-muted text-lg leading-relaxed">
+          Stellar Index is free — there are no paid plans. Anonymous reads work
+          without an account; a free account (one curl: POST /v1/register) adds
+          per-key usage analytics and a budget that is yours alone rather than
+          shared with everything else on your IP. It is not a throughput upgrade
+          — on the hosted deployment an anonymous IP&apos;s limit deliberately
+          exceeds a single free key&apos;s. Higher partner limits are set by our
           staff on request.
         </p>
       </header>
@@ -98,15 +95,14 @@ export default function PricingPage() {
         <div className="flex flex-col gap-5 sm:flex-row sm:items-start sm:justify-between">
           <div className="space-y-2.5">
             <Badge tone="brand">Partner limits</Badge>
-            <h2 className="text-h3 font-semibold text-ink">
+            <h2 className="text-h3 text-ink font-semibold">
               Need a bigger per-key budget?
             </h2>
-            <p className="max-w-2xl text-sm text-ink-muted">
-              A free key is stamped at 1,000 req/min. Wallets,
-              exchanges, and redistributors that need more get a
-              staff-set partner limit — there is nothing to buy. Email
-              us with your use-case and scale and we&apos;ll raise your
-              key&apos;s limit.
+            <p className="text-ink-muted max-w-2xl text-sm">
+              A free key is stamped at 1,000 req/min. Wallets, exchanges, and
+              redistributors that need more get a staff-set partner limit —
+              there is nothing to buy. Email us with your use-case and scale and
+              we&apos;ll raise your key&apos;s limit.
             </p>
           </div>
           <ButtonLink
@@ -120,29 +116,23 @@ export default function PricingPage() {
       </Card>
 
       <Card className="p-6 sm:p-8">
-        <h2 className="text-h3 font-semibold text-ink">Honest notes</h2>
-        <ul className="mt-4 space-y-2.5 text-sm text-ink-body">
+        <h2 className="text-h3 text-ink font-semibold">Honest notes</h2>
+        <ul className="text-ink-body mt-4 space-y-2.5 text-sm">
           <li>
-            <strong className="text-ink-body">
-              Free is not a trial.
-            </strong>{' '}
-            Anonymous reads are a permanent commitment — open,
-            public-tier access is core to what Stellar Index is.
+            <strong className="text-ink-body">Free is not a trial.</strong>{' '}
+            Anonymous reads are a permanent commitment — open, public-tier
+            access is core to what Stellar Index is.
           </li>
           <li>
-            <strong className="text-ink-body">
-              Same data, every tier.
-            </strong>{' '}
-            We do not gate endpoints, freshness, or precision behind
-            any tier. The difference is attribution, usage reporting,
-            support model, and SLA — never the data itself.
+            <strong className="text-ink-body">Same data, every tier.</strong> We
+            do not gate endpoints, freshness, or precision behind any tier. The
+            difference is attribution, usage reporting, support model, and SLA —
+            never the data itself.
           </li>
           <li>
-            <strong className="text-ink-body">
-              No card, ever.
-            </strong>{' '}
-            Magic-link account, mint a key, ship. There is no billing
-            integration and no payment flow anywhere on the platform.
+            <strong className="text-ink-body">No card, ever.</strong> Magic-link
+            account, mint a key, ship. There is no billing integration and no
+            payment flow anywhere on the platform.
           </li>
           <li>
             <strong className="text-ink-body">
@@ -166,34 +156,34 @@ export default function PricingPage() {
 function TierCard({ tier }: { tier: Tier }) {
   const ctaVariant = tier.highlight ? 'primary' : 'secondary';
   return (
-    <Card className={tier.highlight ? 'ring-1 ring-brand-500/40' : undefined}>
+    <Card className={tier.highlight ? 'ring-brand-500/40 ring-1' : undefined}>
       <CardBody className="flex h-full flex-col">
         <div className="mb-3 flex items-center justify-between gap-2">
-          <h2 className="text-h3 font-semibold text-ink">{tier.name}</h2>
+          <h2 className="text-h3 text-ink font-semibold">{tier.name}</h2>
           {tier.highlight && <Badge tone="brand">Self-service</Badge>}
         </div>
         <div>
-          <div className="font-mono text-3xl font-semibold tnum text-ink">
+          <div className="tnum text-ink font-mono text-3xl font-semibold">
             {tier.price}
           </div>
           {tier.priceSubtitle && (
-            <div className="text-xs text-ink-muted">{tier.priceSubtitle}</div>
+            <div className="text-ink-muted text-xs">{tier.priceSubtitle}</div>
           )}
         </div>
-        <div className="mt-3 rounded-md bg-surface-muted px-3 py-2 font-mono text-xs text-ink-body">
+        <div className="bg-surface-muted text-ink-body mt-3 rounded-md px-3 py-2 font-mono text-xs">
           {tier.rateLimit}
         </div>
-        <p className="mt-3 text-sm text-ink-muted">{tier.description}</p>
+        <p className="text-ink-muted mt-3 text-sm">{tier.description}</p>
 
         <ul className="mt-4 space-y-1.5 text-sm">
           {tier.features.map((f) => (
-            <li key={f} className="flex items-start gap-2 text-ink-body">
-              <Check className="mt-0.5 h-4 w-4 shrink-0 text-up" />
+            <li key={f} className="text-ink-body flex items-start gap-2">
+              <Check className="text-up mt-0.5 h-4 w-4 shrink-0" />
               <span>{f}</span>
             </li>
           ))}
           {tier.notFeatures?.map((f) => (
-            <li key={f} className="flex items-start gap-2 text-ink-faint">
+            <li key={f} className="text-ink-faint flex items-start gap-2">
               <Minus className="mt-0.5 h-4 w-4 shrink-0" />
               <span>{f}</span>
             </li>

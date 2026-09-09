@@ -42,7 +42,7 @@ export function CrossReference({
           href={expert}
           target="_blank"
           rel="noreferrer noopener"
-          className="underline hover:text-brand-600"
+          className="hover:text-brand-600 underline"
         >
           stellar.expert
         </a>
@@ -53,7 +53,7 @@ export function CrossReference({
           href={chain}
           target="_blank"
           rel="noreferrer noopener"
-          className="underline hover:text-brand-600"
+          className="hover:text-brand-600 underline"
         >
           stellarchain.io
         </a>

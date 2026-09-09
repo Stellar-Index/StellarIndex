@@ -62,7 +62,7 @@ export function IssuerPanel({ gStrkey }: { gStrkey: string }) {
         // ever diverge.
         <div
           role="alert"
-          className="flex items-center gap-2 rounded-md border border-bad-300 bg-bad-50 px-3 py-2 text-xs text-bad-700"
+          className="border-bad-300 bg-bad-50 text-bad-700 flex items-center gap-2 rounded-md border px-3 py-2 text-xs"
         >
           <span aria-hidden>⚠</span>
           <span>
@@ -79,7 +79,11 @@ export function IssuerPanel({ gStrkey }: { gStrkey: string }) {
         // when SEP-1 verified (bidirectional). Unverified it is self-declared
         // metadata a scam issuer can spoof, so it must not headline the panel
         // as the issuer's identity — fall back to the real on-chain home_domain.
-        hint={(data.org_verified ? data.org_name : undefined) ?? data.home_domain ?? '—'}
+        hint={
+          (data.org_verified ? data.org_name : undefined) ??
+          data.home_domain ??
+          '—'
+        }
         source={asExample(`/v1/issuers/${gStrkey}`)}
       >
         <dl className="grid grid-cols-1 gap-3 text-sm sm:grid-cols-2">
@@ -105,10 +109,22 @@ export function IssuerPanel({ gStrkey }: { gStrkey: string }) {
           )}
         </dl>
         <div className="mt-4 flex flex-wrap gap-1">
-          <FlagPill on={data.auth_required ?? undefined} label="auth_required" />
-          <FlagPill on={data.auth_revocable ?? undefined} label="auth_revocable" />
-          <FlagPill on={data.auth_immutable ?? undefined} label="auth_immutable" />
-          <FlagPill on={data.auth_clawback ?? undefined} label="auth_clawback" />
+          <FlagPill
+            on={data.auth_required ?? undefined}
+            label="auth_required"
+          />
+          <FlagPill
+            on={data.auth_revocable ?? undefined}
+            label="auth_revocable"
+          />
+          <FlagPill
+            on={data.auth_immutable ?? undefined}
+            label="auth_immutable"
+          />
+          <FlagPill
+            on={data.auth_clawback ?? undefined}
+            label="auth_clawback"
+          />
         </div>
         {data.auth_flags_source === 'last_known_before_removal' && (
           // #374: recovered from the account's state at its REMOVAL ledger.
@@ -169,9 +185,9 @@ function IssuedAssetsTable({ issuer }: { issuer: Issuer }) {
       bodyClassName="-mx-4"
     >
       <div className="overflow-x-auto">
-        <table className="min-w-full divide-y divide-line text-sm">
+        <table className="divide-line min-w-full divide-y text-sm">
           <thead>
-            <tr className="text-left text-[11px] uppercase tracking-wider text-ink-muted">
+            <tr className="text-ink-muted text-left text-[11px] tracking-wider uppercase">
               <Th>Code</Th>
               <Th>Slug</Th>
               <Th align="right">Observations</Th>
@@ -179,22 +195,19 @@ function IssuedAssetsTable({ issuer }: { issuer: Issuer }) {
               <Th align="right">Last seen</Th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-line-subtle">
+          <tbody className="divide-line-subtle divide-y">
             {assets.map((a) => (
-              <tr
-                key={a.asset_id}
-                className="hover:bg-surface-muted"
-              >
+              <tr key={a.asset_id} className="hover:bg-surface-muted">
                 <Td>
                   <Link
                     href={`/assets/${a.slug}`}
-                    className="font-medium hover:text-brand-600"
+                    className="hover:text-brand-600 font-medium"
                   >
                     {a.code}
                   </Link>
                 </Td>
                 <Td>
-                  <span className="font-mono text-xs text-ink-muted">
+                  <span className="text-ink-muted font-mono text-xs">
                     {a.slug}
                   </span>
                 </Td>
@@ -206,14 +219,14 @@ function IssuedAssetsTable({ issuer }: { issuer: Issuer }) {
                 {/* Ledger 0 does not exist (genesis is 1) — an absent
                     first/last_seen_ledger is unknown, not "#0". */}
                 <Td align="right">
-                  <span className="font-mono tabular-nums text-xs text-ink-muted">
+                  <span className="text-ink-muted font-mono text-xs tabular-nums">
                     {a.first_seen_ledger != null
                       ? `#${a.first_seen_ledger.toLocaleString('en-US')}`
                       : '—'}
                   </span>
                 </Td>
                 <Td align="right">
-                  <span className="font-mono tabular-nums text-xs text-ink-muted">
+                  <span className="text-ink-muted font-mono text-xs tabular-nums">
                     {a.last_seen_ledger != null
                       ? `#${a.last_seen_ledger.toLocaleString('en-US')}`
                       : '—'}
@@ -231,17 +244,15 @@ function IssuedAssetsTable({ issuer }: { issuer: Issuer }) {
 function FlagPill({ on, label }: { on?: boolean; label: string }) {
   if (on === undefined) {
     return (
-      <span className="inline-block rounded-sm bg-surface-subtle px-1.5 py-0.5 text-[10px] uppercase tracking-wider text-ink-muted">
+      <span className="bg-surface-subtle text-ink-muted inline-block rounded-sm px-1.5 py-0.5 text-[10px] tracking-wider uppercase">
         {label}: unknown
       </span>
     );
   }
-  const cls = on
-    ? 'bg-warn-50 text-warn-700'
-    : 'bg-up-soft text-up-strong';
+  const cls = on ? 'bg-warn-50 text-warn-700' : 'bg-up-soft text-up-strong';
   return (
     <span
-      className={`inline-block rounded-sm px-1.5 py-0.5 text-[10px] uppercase tracking-wider ${cls}`}
+      className={`inline-block rounded-sm px-1.5 py-0.5 text-[10px] tracking-wider uppercase ${cls}`}
     >
       {label}: {on ? 'on' : 'off'}
     </span>
@@ -259,10 +270,10 @@ function Stat({
 }) {
   return (
     <div>
-      <dt className="text-[11px] uppercase tracking-wider text-ink-muted">
+      <dt className="text-ink-muted text-[11px] tracking-wider uppercase">
         {label}
       </dt>
-      <dd className={mono ? 'break-all font-mono text-xs' : 'tabular-nums'}>
+      <dd className={mono ? 'font-mono text-xs break-all' : 'tabular-nums'}>
         {value}
       </dd>
     </div>

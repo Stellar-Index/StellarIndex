@@ -26,7 +26,7 @@ const REASONS: { name: string; trigger: string; meaning: string }[] = [
     name: 'divergence',
     trigger: 'Persistent gap vs an external reference',
     meaning:
-      "Our VWAP and an authority reference (CoinGecko, Chainlink HTTP, or a Reflector feed) have been diverging beyond threshold for too long. Almost always means a decoder bug or a stuck source.",
+      'Our VWAP and an authority reference (CoinGecko, Chainlink HTTP, or a Reflector feed) have been diverging beyond threshold for too long. Almost always means a decoder bug or a stuck source.',
   },
   {
     name: 'outlier_storm',
@@ -69,14 +69,13 @@ export default function AnomaliesPage() {
     <Container className="space-y-6 py-8">
       <header className="space-y-2">
         <h1 className="text-3xl font-semibold tracking-tight">Anomalies</h1>
-        <p className="max-w-3xl text-sm text-ink-body">
-          Every clear→firing freeze transition, with reason +
-          recovery + the frozen value still served via{' '}
-          <code className="font-mono text-xs">/v1/price</code>. Powered
-          by the freeze-event durable mirror —{' '}
-          <code className="font-mono text-xs">freeze_events</code>{' '}
-          hypertable (migration 0018), populated alongside the load-
-          bearing Redis marker.
+        <p className="text-ink-body max-w-3xl text-sm">
+          Every clear→firing freeze transition, with reason + recovery + the
+          frozen value still served via{' '}
+          <code className="font-mono text-xs">/v1/price</code>. Powered by the
+          freeze-event durable mirror —{' '}
+          <code className="font-mono text-xs">freeze_events</code> hypertable
+          (migration 0018), populated alongside the load- bearing Redis marker.
         </p>
       </header>
 
@@ -87,7 +86,7 @@ export default function AnomaliesPage() {
         title="What freezes a pair"
         bodyClassName="space-y-3"
       >
-        <p className="text-sm text-ink-body">
+        <p className="text-ink-body text-sm">
           Per{' '}
           <Link
             href="/research/adr/0019"
@@ -95,28 +94,26 @@ export default function AnomaliesPage() {
           >
             ADR-0019
           </Link>
-          , a freeze fires when one of these conditions holds. While
-          frozen, the API still serves the last good value — but with{' '}
-          <code className="font-mono text-xs">flags.frozen=true</code>
-          {' '}so consumers know not to act on it.
+          , a freeze fires when one of these conditions holds. While frozen, the
+          API still serves the last good value — but with{' '}
+          <code className="font-mono text-xs">flags.frozen=true</code> so
+          consumers know not to act on it.
         </p>
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           {REASONS.map((r) => (
             <div
               key={r.name}
-              className="rounded-lg border border-line bg-surface-muted p-3 text-xs"
+              className="border-line bg-surface-muted rounded-lg border p-3 text-xs"
             >
               <div className="flex items-baseline justify-between">
-                <code className="font-mono text-[11px] text-down-strong">
+                <code className="text-down-strong font-mono text-[11px]">
                   {r.name}
                 </code>
               </div>
-              <div className="mt-1.5 text-[11px] uppercase tracking-wider text-ink-muted">
+              <div className="text-ink-muted mt-1.5 text-[11px] tracking-wider uppercase">
                 {r.trigger}
               </div>
-              <p className="mt-1.5 text-ink-body">
-                {r.meaning}
-              </p>
+              <p className="text-ink-body mt-1.5">{r.meaning}</p>
             </div>
           ))}
         </div>
@@ -131,10 +128,10 @@ export default function AnomaliesPage() {
           The timeline above is served live from{' '}
           <code className="font-mono text-xs">/v1/anomalies</code> over the
           durable <code className="font-mono text-xs">freeze_events</code>{' '}
-          mirror: the firing-now count, the per-reason breakdown (trailing
-          30 days), and every clear→firing transition with its duration and
-          the value served while frozen. A per-incident calendar heatmap of
-          daily counts is the next addition. Methodology rationale lives in{' '}
+          mirror: the firing-now count, the per-reason breakdown (trailing 30
+          days), and every clear→firing transition with its duration and the
+          value served while frozen. A per-incident calendar heatmap of daily
+          counts is the next addition. Methodology rationale lives in{' '}
           <Link
             href="/research/adr/0019"
             className="underline decoration-dotted"

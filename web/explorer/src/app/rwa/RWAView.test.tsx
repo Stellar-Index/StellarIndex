@@ -11,7 +11,8 @@ type View = Schemas['RWAAssetsView'];
 
 const apiGetData = vi.hoisted(() => vi.fn());
 vi.mock('@/api/client', async () => {
-  const actual = await vi.importActual<typeof import('@/api/client')>('@/api/client');
+  const actual =
+    await vi.importActual<typeof import('@/api/client')>('@/api/client');
   return { ...actual, apiGetData };
 });
 
@@ -30,7 +31,11 @@ function asset(over: Partial<Schemas['RWAAsset']> = {}): Schemas['RWAAsset'] {
     basis: 'sep1_anchor_declaration',
     anchor_class: 'bond',
     anchor_asset: 'US Treasury Notes',
-    valuation: { status: 'published', price_usd: '1.0412', market_cap_usd: '1284500.00' },
+    valuation: {
+      status: 'published',
+      price_usd: '1.0412',
+      market_cap_usd: '1284500.00',
+    },
     circulating_supply: '12336218000000',
     volume_24h_usd: '8214.55',
     first_seen_ledger: 55008233,
@@ -44,9 +49,24 @@ function view(over: Partial<View> = {}): View {
     definition: {
       requirements: ['a', 'b', 'c', 'd'],
       anchor_classes: ['bond', 'commodity', 'realestate', 'stock'],
-      recognition_tags: ['anchor', 'custodian', 'defi', 'exchange', 'issuer', 'sdf'],
-      scam_flag_tags: ['malicious', 'unsafe', 'fraud', 'scam', 'hack', 'phishing'],
-      documentation_url: 'https://stellarindex.io/docs/methodology/rwa-definition',
+      recognition_tags: [
+        'anchor',
+        'custodian',
+        'defi',
+        'exchange',
+        'issuer',
+        'sdf',
+      ],
+      scam_flag_tags: [
+        'malicious',
+        'unsafe',
+        'fraud',
+        'scam',
+        'hack',
+        'phishing',
+      ],
+      documentation_url:
+        'https://stellarindex.io/docs/methodology/rwa-definition',
     },
     summary: {
       assets: 1,
@@ -56,10 +76,18 @@ function view(over: Partial<View> = {}): View {
       assets_unvalued: 0,
       lower_bound: false,
       earliest_first_seen_ledger: 55008233,
-      basis: 'Sum of the published market caps of the assets meeting the four-requirement definition.',
+      basis:
+        'Sum of the published market caps of the assets meeting the four-requirement definition.',
     },
     assets: [asset()],
-    by_class: [{ class: 'bond', assets: 1, market_cap_usd: '1284500.00', assets_unvalued: 0 }],
+    by_class: [
+      {
+        class: 'bond',
+        assets: 1,
+        market_cap_usd: '1284500.00',
+        assets_unvalued: 0,
+      },
+    ],
     by_issuer: [
       {
         issuer: ISSUER,
@@ -76,7 +104,9 @@ function view(over: Partial<View> = {}): View {
 }
 
 function renderView() {
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
   return render(
     <QueryClientProvider client={client}>
       <RWAView />
@@ -100,7 +130,9 @@ describe('RWAView', () => {
     expect(screen.getAllByText('Etherfuse').length).toBeGreaterThan(0);
     // The figure appears in the headline, the row, and both breakdowns —
     // every level is the exact sum of the level below.
-    expect(screen.getAllByText('$1,284,500.00').length).toBeGreaterThanOrEqual(3);
+    expect(screen.getAllByText('$1,284,500.00').length).toBeGreaterThanOrEqual(
+      3,
+    );
   });
 
   it('renders a withheld valuation as unavailable, never as a number', async () => {
@@ -120,14 +152,18 @@ describe('RWAView', () => {
           lower_bound: true,
         },
         by_class: [{ class: 'bond', assets: 1, assets_unvalued: 1 }],
-        by_issuer: [{ issuer: ISSUER, name: 'Etherfuse', assets: 1, assets_unvalued: 1 }],
+        by_issuer: [
+          { issuer: ISSUER, name: 'Etherfuse', assets: 1, assets_unvalued: 1 },
+        ],
       }),
     );
     renderView();
 
     // The money cells say the word, not a figure and not a bare dash: a
     // dash beside real figures reads as zero.
-    expect((await screen.findAllByText('Unavailable')).length).toBeGreaterThanOrEqual(2);
+    expect(
+      (await screen.findAllByText('Unavailable')).length,
+    ).toBeGreaterThanOrEqual(2);
     expect(screen.queryByText('$1,284,500.00')).not.toBeInTheDocument();
     expect(screen.queryByText('$0.00')).not.toBeInTheDocument();
     // The flag itself is surfaced, not silently swallowed.
@@ -161,7 +197,14 @@ describe('RWAView', () => {
   it('marks a partly-valued total as a lower bound', async () => {
     apiGetData.mockResolvedValue(
       view({
-        assets: [asset(), asset({ asset_id: `TESOURO-${ISSUER}`, code: 'TESOURO', valuation: { status: 'unpriced' } })],
+        assets: [
+          asset(),
+          asset({
+            asset_id: `TESOURO-${ISSUER}`,
+            code: 'TESOURO',
+            valuation: { status: 'unpriced' },
+          }),
+        ],
         summary: {
           ...view().summary,
           assets: 2,
@@ -173,9 +216,13 @@ describe('RWAView', () => {
     );
     renderView();
 
-    expect((await screen.findAllByText('$1,284,500.00')).length).toBeGreaterThan(0);
+    expect(
+      (await screen.findAllByText('$1,284,500.00')).length,
+    ).toBeGreaterThan(0);
     expect(screen.getByText(/At least this\./)).toBeInTheDocument();
-    expect(screen.getByText(/publish no\s+valuation and contribute nothing/)).toBeInTheDocument();
+    expect(
+      screen.getByText(/publish no\s+valuation and contribute nothing/),
+    ).toBeInTheDocument();
   });
 
   it('states the definition and how many candidates each requirement refused', async () => {
@@ -191,8 +238,12 @@ describe('RWAView', () => {
 
     expect(await screen.findByText(/Candidates refused/)).toBeInTheDocument();
     expect(screen.getByText('(4,150)')).toBeInTheDocument();
-    expect(screen.getByText('Issuer flagged by the independent directory')).toBeInTheDocument();
-    expect(screen.getByText('Issuer recognised by nobody but itself')).toBeInTheDocument();
+    expect(
+      screen.getByText('Issuer flagged by the independent directory'),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText('Issuer recognised by nobody but itself'),
+    ).toBeInTheDocument();
   });
 
   it('renders the empty set as a statement about evidence, not as a zero total', async () => {
@@ -213,7 +264,9 @@ describe('RWAView', () => {
     );
     renderView();
 
-    expect(await screen.findByText('No asset currently meets the definition')).toBeInTheDocument();
+    expect(
+      await screen.findByText('No asset currently meets the definition'),
+    ).toBeInTheDocument();
     expect(screen.getByText('Not published')).toBeInTheDocument();
     expect(screen.queryByText('$0.00')).not.toBeInTheDocument();
   });
@@ -222,8 +275,12 @@ describe('RWAView', () => {
     apiGetData.mockRejectedValue(new Error('502 Bad Gateway'));
     renderView();
 
-    expect(await screen.findByText('Failed to load real-world assets')).toBeInTheDocument();
+    expect(
+      await screen.findByText('Failed to load real-world assets'),
+    ).toBeInTheDocument();
     // An outage must not be presented as "no RWAs exist".
-    expect(screen.queryByText(/No asset currently meets the definition/)).not.toBeInTheDocument();
+    expect(
+      screen.queryByText(/No asset currently meets the definition/),
+    ).not.toBeInTheDocument();
   });
 });

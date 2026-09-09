@@ -28,7 +28,7 @@ export function LastPriceCell({ raw }: { raw?: string | null }) {
   return (
     <span
       className={cn(
-        'font-mono tabular-nums text-ink-body',
+        'text-ink-body font-mono tabular-nums',
         flash === 'up' && 'flash-up',
         flash === 'down' && 'flash-down',
       )}

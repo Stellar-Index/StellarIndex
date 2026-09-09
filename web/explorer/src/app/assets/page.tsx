@@ -35,11 +35,11 @@ export default async function AssetsPage() {
         title="Assets"
         description="Every classic + Soroban asset observed on Stellar. Live price via VWAP across on-chain DEXes, classic SDEX, and major off-chain venues. Click through for live charts, recent trades, supply detail, and issuer profile."
       />
-      <p className="text-sm text-ink-muted">
+      <p className="text-ink-muted text-sm">
         Looking for fiat &amp; reference prices?{' '}
         <Link
           href="/external/assets"
-          className="font-medium text-brand-600 hover:text-brand-700"
+          className="text-brand-600 hover:text-brand-700 font-medium"
         >
           External assets →
         </Link>

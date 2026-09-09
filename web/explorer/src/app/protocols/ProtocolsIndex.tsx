@@ -70,14 +70,23 @@ export function ProtocolsIndex({
   // team answers) — their cards read "CONTRACTS 0" as if broken. The
   // per-source stats the /dexes page already uses carry the observed
   // active-pool count; fall back to that with an honest label.
-  const { data: sourceStats } = useQuery<{ name?: string; markets_count_24h?: number }[]>({
+  const { data: sourceStats } = useQuery<
+    { name?: string; markets_count_24h?: number }[]
+  >({
     queryKey: ['/v1/sources', 'stats', 'protocol-cards'],
     staleTime: 60_000,
     retry: false,
     queryFn: async () =>
-      (await apiGet<{ data: { name?: string; markets_count_24h?: number }[] }>('/v1/sources', { include: 'stats' })).data ?? [],
+      (
+        await apiGet<{ data: { name?: string; markets_count_24h?: number }[] }>(
+          '/v1/sources',
+          { include: 'stats' },
+        )
+      ).data ?? [],
   });
-  const poolsBySource = new Map((sourceStats ?? []).map((s) => [s.name ?? '', s.markets_count_24h ?? 0]));
+  const poolsBySource = new Map(
+    (sourceStats ?? []).map((s) => [s.name ?? '', s.markets_count_24h ?? 0]),
+  );
   const [filter, setFilter] = useState<string>(lockedCategory ?? '');
 
   // The envelope carries the headline `tvl_total` ALONGSIDE `protocols[]`;
@@ -163,7 +172,8 @@ export function ProtocolsIndex({
 
   const categoryMix = useMemo(() => {
     const m = new Map<string, number>();
-    for (const c of cards) if (c.category) m.set(c.category, (m.get(c.category) ?? 0) + 1);
+    for (const c of cards)
+      if (c.category) m.set(c.category, (m.get(c.category) ?? 0) + 1);
     return Array.from(m, ([label, value]) => ({ label, value }));
   }, [cards]);
 
@@ -198,8 +208,8 @@ export function ProtocolsIndex({
       )}
 
       {!lockedCategory && categoryMix.length > 1 && (
-        <div className="rounded-card border border-line bg-surface p-5">
-          <h2 className="mb-3 text-h3 font-semibold text-ink">By category</h2>
+        <div className="rounded-card border-line bg-surface border p-5">
+          <h2 className="text-h3 text-ink mb-3 font-semibold">By category</h2>
           <DonutChart
             data={categoryMix}
             centerLabel={String(cards.length)}
@@ -216,7 +226,11 @@ export function ProtocolsIndex({
       {!lockedCategory && categories.length > 0 && (
         <div className="flex flex-wrap items-center gap-2 text-xs">
           <span className="text-ink-muted">Category:</span>
-          <FilterChip active={filter === ''} onClick={() => setFilter('')} label="All" />
+          <FilterChip
+            active={filter === ''}
+            onClick={() => setFilter('')}
+            label="All"
+          />
           {categories.map((cat) => (
             <FilterChip
               key={cat}
@@ -233,47 +247,61 @@ export function ProtocolsIndex({
         data-source={asExample('/v1/protocols').url}
       >
         {visible.map((c) => (
-          <ProtocolCardView key={c.name} card={c} poolsBySource={poolsBySource} />
+          <ProtocolCardView
+            key={c.name}
+            card={c}
+            poolsBySource={poolsBySource}
+          />
         ))}
       </div>
     </Container>
   );
 }
 
-function ProtocolCardView({ card, poolsBySource }: { card: ProtocolCard; poolsBySource: Map<string, number> }) {
+function ProtocolCardView({
+  card,
+  poolsBySource,
+}: {
+  card: ProtocolCard;
+  poolsBySource: Map<string, number>;
+}) {
   const label = protocolMeta(card.name)?.label ?? card.name;
   return (
     <Link
       // sdex's canonical surface is /sdex (nav revision 2026-08-24).
-      href={card.name === 'sdex' ? '/sdex' : `/protocols/${encodeURIComponent(card.name)}`}
-      className="group flex flex-col rounded-card border border-line bg-surface p-5 shadow-card transition-shadow duration-150 hover:border-line-strong hover:shadow-elevated focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-brand-600/60 focus-visible:ring-offset-2 focus-visible:ring-offset-surface-canvas"
+      href={
+        card.name === 'sdex'
+          ? '/sdex'
+          : `/protocols/${encodeURIComponent(card.name)}`
+      }
+      className="group rounded-card border-line bg-surface shadow-card hover:border-line-strong hover:shadow-elevated focus-visible:ring-brand-600/60 focus-visible:ring-offset-surface-canvas flex flex-col border p-5 transition-shadow duration-150 focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:outline-hidden"
     >
       <div className="flex items-start justify-between gap-2">
-        <h2 className="text-h3 font-semibold text-ink group-hover:text-brand-600">
+        <h2 className="text-h3 text-ink group-hover:text-brand-600 font-semibold">
           {label}
         </h2>
         {card.category && (
           <span
-            className={`shrink-0 rounded-sm px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-wider ${categoryTone(card.category)}`}
+            className={`shrink-0 rounded-sm px-1.5 py-0.5 font-mono text-[9px] tracking-wider uppercase ${categoryTone(card.category)}`}
           >
             {card.category}
           </span>
         )}
       </div>
-      <p className="mt-2 line-clamp-2 grow text-sm text-ink-muted">
+      <p className="text-ink-muted mt-2 line-clamp-2 grow text-sm">
         {card.description}
       </p>
       <div className="mt-4 flex items-end justify-between">
         <dl className="flex gap-6 text-xs">
           <div>
-            <dt className="text-[10px] font-medium uppercase tracking-wider text-ink-faint">
+            <dt className="text-ink-faint text-[10px] font-medium tracking-wider uppercase">
               {card.contract_count > 0
                 ? 'Contracts'
                 : (poolsBySource.get(card.name) ?? 0) > 0
                   ? 'Active pools · 24h'
                   : 'Contracts'}
             </dt>
-            <dd className="mt-0.5 font-mono tnum text-ink-body">
+            <dd className="tnum text-ink-body mt-0.5 font-mono">
               {card.contract_count > 0
                 ? formatCompact(card.contract_count)
                 : (poolsBySource.get(card.name) ?? 0) > 0
@@ -284,10 +312,10 @@ function ProtocolCardView({ card, poolsBySource }: { card: ProtocolCard; poolsBy
             </dd>
           </div>
           <div>
-            <dt className="text-[10px] font-medium uppercase tracking-wider text-ink-faint">
+            <dt className="text-ink-faint text-[10px] font-medium tracking-wider uppercase">
               Events · 24h
             </dt>
-            <dd className="mt-0.5 font-mono tnum text-ink-body">
+            <dd className="tnum text-ink-body mt-0.5 font-mono">
               {card.events_24h != null ? formatCompact(card.events_24h) : '—'}
             </dd>
           </div>
@@ -298,11 +326,7 @@ function ProtocolCardView({ card, poolsBySource }: { card: ProtocolCard; poolsBy
   );
 }
 
-function CardBadge({
-  completeness,
-}: {
-  completeness?: { complete: boolean };
-}) {
+function CardBadge({ completeness }: { completeness?: { complete: boolean } }) {
   if (!completeness) {
     return <Badge>unknown</Badge>;
   }
@@ -330,7 +354,7 @@ function FilterChip({
     <button
       type="button"
       onClick={onClick}
-      className={`rounded-full px-2 py-0.5 font-mono text-[10px] uppercase tracking-wider focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-brand-500 ${
+      className={`focus-visible:ring-brand-500 rounded-full px-2 py-0.5 font-mono text-[10px] tracking-wider uppercase focus-visible:ring-2 focus-visible:outline-hidden ${
         active
           ? 'bg-brand-fill text-white'
           : 'bg-surface-subtle text-ink-body hover:bg-line'

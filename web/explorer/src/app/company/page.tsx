@@ -14,46 +14,43 @@ export default function CompanyPage() {
   return (
     <div className="mx-auto max-w-3xl space-y-12 px-6 py-12">
       <header className="space-y-3">
-        <p className="font-mono text-xs uppercase tracking-widest text-brand-600">
+        <p className="text-brand-600 font-mono text-xs tracking-widest uppercase">
           Company
         </p>
         <h1 className="text-4xl font-semibold tracking-tight">
           Data infrastructure for Stellar.
         </h1>
-        <p className="text-base text-ink-body">
-          Stellar Index is a public, vendor-neutral data surface for
-          the Stellar network — complete, verified, per-protocol on-chain
-          data, complete history and supply, and aggregated prices for
-          every Stellar asset, all served by the Stellar Index API.
+        <p className="text-ink-body text-base">
+          Stellar Index is a public, vendor-neutral data surface for the Stellar
+          network — complete, verified, per-protocol on-chain data, complete
+          history and supply, and aggregated prices for every Stellar asset, all
+          served by the Stellar Index API.
         </p>
       </header>
 
       <section className="space-y-3">
         <h2 className="text-2xl font-semibold tracking-tight">What we do</h2>
-        <p className="text-sm text-ink-body">
+        <p className="text-ink-body text-sm">
           We ingest every trade on the Stellar network — on-chain DEXes
-          (Soroswap, Phoenix, Aquarius, SDEX, Comet), classic SDEX
-          orderbooks, lending protocol auctions (Blend), and major
-          centralised exchanges (Binance, Coinbase, Kraken, Bitstamp) —
-          and serve a single VWAP through a public REST + SSE API.
-          Oracles (Reflector, Redstone, Band) get cross-checked but
-          never priced into the canonical VWAP. Everything is
-          documented down to the source code, the methodology, and
-          the architecture decisions.
+          (Soroswap, Phoenix, Aquarius, SDEX, Comet), classic SDEX orderbooks,
+          lending protocol auctions (Blend), and major centralised exchanges
+          (Binance, Coinbase, Kraken, Bitstamp) — and serve a single VWAP
+          through a public REST + SSE API. Oracles (Reflector, Redstone, Band)
+          get cross-checked but never priced into the canonical VWAP. Everything
+          is documented down to the source code, the methodology, and the
+          architecture decisions.
         </p>
       </section>
 
       <section className="space-y-3">
         <h2 className="text-2xl font-semibold tracking-tight">How we ship</h2>
-        <ul className="space-y-2 text-sm text-ink-body">
+        <ul className="text-ink-body space-y-2 text-sm">
           <li className="flex gap-2">
             <span className="text-ink-faint">•</span>
             <span>
-              <strong className="text-ink-body">
-                Apache-2.0.
-              </strong>{' '}
-              The whole codebase — backend, explorer, status site,
-              widgets, infrastructure-as-code — is on{' '}
+              <strong className="text-ink-body">Apache-2.0.</strong> The whole
+              codebase — backend, explorer, status site, widgets,
+              infrastructure-as-code — is on{' '}
               <a
                 href="https://github.com/Stellar-Index/StellarIndex"
                 target="_blank"
@@ -63,8 +60,8 @@ export default function CompanyPage() {
                 GitHub
               </a>{' '}
               under the most permissive license that still preserves
-              attribution. Run your own copy if you want; we&apos;d
-              prefer you didn&apos;t need to.
+              attribution. Run your own copy if you want; we&apos;d prefer you
+              didn&apos;t need to.
             </span>
           </li>
           <li className="flex gap-2">
@@ -74,29 +71,28 @@ export default function CompanyPage() {
                 One region today; three by design.
               </strong>{' '}
               Stellar Index runs from a{' '}
-              <strong className="text-ink-body">single region</strong>{' '}
-              (R1, Hetzner FSN1 in Falkenstein), with off-site encrypted
-              Postgres backups and a tested restore drill. Three-region
-              active/active for the pricing tier is ratified in{' '}
+              <strong className="text-ink-body">single region</strong> (R1,
+              Hetzner FSN1 in Falkenstein), with off-site encrypted Postgres
+              backups and a tested restore drill. Three-region active/active for
+              the pricing tier is ratified in{' '}
               <Link
                 href="/research/adr/0050"
                 className="text-brand-600 hover:underline"
               >
                 ADR-0050
               </Link>{' '}
-              and scheduled after v1.0 — the failover roles are written
-              but deployed nowhere, and we do not claim multi-region
-              availability today. The property that makes it work when
-              it lands is already in the serving contract: closed-bucket
-              determinism (
+              and scheduled after v1.0 — the failover roles are written but
+              deployed nowhere, and we do not claim multi-region availability
+              today. The property that makes it work when it lands is already in
+              the serving contract: closed-bucket determinism (
               <Link
                 href="/research/adr/0015"
                 className="text-brand-600 hover:underline"
               >
                 ADR-0015
               </Link>
-              ) means any region answering the same query returns the
-              same rate. The three-validator target is{' '}
+              ) means any region answering the same query returns the same rate.
+              The three-validator target is{' '}
               <Link
                 href="/research/adr/0004"
                 className="text-brand-600 hover:underline"
@@ -109,13 +105,11 @@ export default function CompanyPage() {
           <li className="flex gap-2">
             <span className="text-ink-faint">•</span>
             <span>
-              <strong className="text-ink-body">
-                Public-first.
-              </strong>{' '}
-              Anonymous reads work without an account. The free tier
-              covers prototyping, low-traffic embeds, and read-only
-              integrations. Higher rate limits and dedicated SLAs are
-              staff-set partner arrangements — never gated data.
+              <strong className="text-ink-body">Public-first.</strong> Anonymous
+              reads work without an account. The free tier covers prototyping,
+              low-traffic embeds, and read-only integrations. Higher rate limits
+              and dedicated SLAs are staff-set partner arrangements — never
+              gated data.
             </span>
           </li>
           <li className="flex gap-2">
@@ -124,21 +118,22 @@ export default function CompanyPage() {
               <strong className="text-ink-body">
                 Honest about what we don&apos;t have.
               </strong>{' '}
-              Forex is currently a daily-grain shim while we wire a
-              proper feed. Soroban DEX TVL is served only where real
-              post-state reserves exist — Soroswap and Aquarius from
-              pool reserves, Phoenix and Comet from the pools&apos;
-              on-chain storage entries (their events carry flow deltas,
-              which we never dress up as a TVL) — and is an explicit
-              lower bound whenever a pool leg can&apos;t be priced.
-              Native SDEX liquidity pools aren&apos;t valued yet. CEX
-              order-book depth isn&apos;t ingested (the native SDEX book
-              is). The{' '}
-              <Link href="/methodology" className="text-brand-600 hover:underline">
+              Forex is currently a daily-grain shim while we wire a proper feed.
+              Soroban DEX TVL is served only where real post-state reserves
+              exist — Soroswap and Aquarius from pool reserves, Phoenix and
+              Comet from the pools&apos; on-chain storage entries (their events
+              carry flow deltas, which we never dress up as a TVL) — and is an
+              explicit lower bound whenever a pool leg can&apos;t be priced.
+              Native SDEX liquidity pools aren&apos;t valued yet. CEX order-book
+              depth isn&apos;t ingested (the native SDEX book is). The{' '}
+              <Link
+                href="/methodology"
+                className="text-brand-600 hover:underline"
+              >
                 /methodology
               </Link>{' '}
-              page documents how each number is computed and which
-              sources feed it.
+              page documents how each number is computed and which sources feed
+              it.
             </span>
           </li>
         </ul>
@@ -146,19 +141,20 @@ export default function CompanyPage() {
 
       <section className="space-y-3">
         <h2 className="text-2xl font-semibold tracking-tight">Funding</h2>
-        <p className="text-sm text-ink-body">
-          Development was supported by a grant from the Stellar Community
-          Fund. The platform is free — there are no paid tiers; the
-          public tier and the open-source codebase are perpetual
-          commitments.
+        <p className="text-ink-body text-sm">
+          Development was supported by a grant from the Stellar Community Fund.
+          The platform is free — there are no paid tiers; the public tier and
+          the open-source codebase are perpetual commitments.
         </p>
       </section>
 
       <section className="space-y-3">
-        <h2 className="text-2xl font-semibold tracking-tight">What&apos;s next</h2>
-        <p className="text-sm text-ink-body">
-          We&apos;re still pre-v1 and shipping continuously rather than
-          against a fixed date. The roadmap that gets us to v1 lives in{' '}
+        <h2 className="text-2xl font-semibold tracking-tight">
+          What&apos;s next
+        </h2>
+        <p className="text-ink-body text-sm">
+          We&apos;re still pre-v1 and shipping continuously rather than against
+          a fixed date. The roadmap that gets us to v1 lives in{' '}
           <a
             href="https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/v1-launch-plan.md"
             target="_blank"
@@ -171,21 +167,20 @@ export default function CompanyPage() {
           <Link href="/changelog" className="text-brand-600 hover:underline">
             /changelog
           </Link>
-          . Post-v1 priorities — CEX order-book depth ingest,
-          reserve-derived TVL for the remaining DEXes, and deeper
-          per-protocol coverage across every major Stellar protocol —
-          are public in the same plan. Stellar Index is
-          deliberately a Stellar-only explorer: depth on one network
+          . Post-v1 priorities — CEX order-book depth ingest, reserve-derived
+          TVL for the remaining DEXes, and deeper per-protocol coverage across
+          every major Stellar protocol — are public in the same plan. Stellar
+          Index is deliberately a Stellar-only explorer: depth on one network
           over breadth across many.
         </p>
       </section>
 
-      <section className="rounded-xl border border-line bg-surface p-6 shadow-sm">
+      <section className="border-line bg-surface rounded-xl border p-6 shadow-sm">
         <h2 className="text-lg font-semibold">Get in touch</h2>
         <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-3">
           <Link
             href="/contact"
-            className="inline-flex items-center justify-center gap-2 rounded-md border border-line px-3 py-2 text-sm hover:border-brand-500 hover:text-brand-600"
+            className="border-line hover:border-brand-500 hover:text-brand-600 inline-flex items-center justify-center gap-2 rounded-md border px-3 py-2 text-sm"
           >
             <Mail className="h-4 w-4" />
             Contact
@@ -194,14 +189,14 @@ export default function CompanyPage() {
             href="https://github.com/Stellar-Index/StellarIndex"
             target="_blank"
             rel="noreferrer noopener"
-            className="inline-flex items-center justify-center gap-2 rounded-md border border-line px-3 py-2 text-sm hover:border-brand-500 hover:text-brand-600"
+            className="border-line hover:border-brand-500 hover:text-brand-600 inline-flex items-center justify-center gap-2 rounded-md border px-3 py-2 text-sm"
           >
             <GithubIcon className="h-4 w-4" />
             GitHub
           </a>
           <Link
             href="/careers"
-            className="inline-flex items-center justify-center gap-2 rounded-md border border-line px-3 py-2 text-sm hover:border-brand-500 hover:text-brand-600"
+            className="border-line hover:border-brand-500 hover:text-brand-600 inline-flex items-center justify-center gap-2 rounded-md border px-3 py-2 text-sm"
           >
             Careers
           </Link>

@@ -10,14 +10,20 @@ import { SidebarAssetIcon } from './SidebarAssetIcon';
 describe('SidebarAssetIcon', () => {
   it('renders the real <img> for a normal public https icon URL', () => {
     const { container } = render(
-      <SidebarAssetIcon image="https://issuer.example.com/icon.png" code="USDC" />,
+      <SidebarAssetIcon
+        image="https://issuer.example.com/icon.png"
+        code="USDC"
+      />,
     );
     expect(container.querySelector('img')).not.toBeNull();
   });
 
   it('falls back to the letter glyph (no <img>) for a private/internal icon URL', () => {
     const { container } = render(
-      <SidebarAssetIcon image="https://169.254.169.254/latest/meta-data/" code="EVIL" />,
+      <SidebarAssetIcon
+        image="https://169.254.169.254/latest/meta-data/"
+        code="EVIL"
+      />,
     );
     expect(container.querySelector('img')).toBeNull();
     expect(container.textContent).toBe('E');

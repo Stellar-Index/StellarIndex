@@ -18,7 +18,10 @@ const statsFixture = {
       p90_stroops: '3200000000',
       p99_stroops: '91000000000',
     },
-    concentration: { top100_xlm_stroops: '512345678901234567', top100_share_pct: 48.82 },
+    concentration: {
+      top100_xlm_stroops: '512345678901234567',
+      top100_share_pct: 48.82,
+    },
     wealth_histogram: [
       { bucket: -1, accounts: 4_100_000, xlm_stroops: '9876543210' },
       { bucket: 3, accounts: 120_000, xlm_stroops: '55500000000000000' },
@@ -29,7 +32,10 @@ const statsFixture = {
       { bucket: '2-5', accounts: 1_200_000 },
     ],
     top_held_assets: [
-      { asset: 'USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN', holders: 619_460 },
+      {
+        asset: 'USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN',
+        holders: 619_460,
+      },
     ],
     computed_at: '2026-08-08T19:30:00Z',
   },
@@ -66,8 +72,12 @@ describe('AccountsAnalytics', () => {
     // Trustline bands include the derived zero band.
     expect(screen.getByText('no trustlines')).toBeInTheDocument();
     // Charts carry accessible labels (semantics, not styling).
-    expect(screen.getByLabelText('Accounts by XLM balance band')).toBeInTheDocument();
-    expect(screen.getByLabelText('Accounts by trustline count band')).toBeInTheDocument();
+    expect(
+      screen.getByLabelText('Accounts by XLM balance band'),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByLabelText('Accounts by trustline count band'),
+    ).toBeInTheDocument();
     // Most-held board present with the holder count.
     expect(screen.getByText('Most held assets')).toBeInTheDocument();
     expect(screen.getByText('619.46K')).toBeInTheDocument();

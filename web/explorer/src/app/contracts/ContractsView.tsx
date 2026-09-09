@@ -70,7 +70,7 @@ export function ContractsView() {
             { label: 'Registry', value: 'registry' },
           ]}
         />
-        <span className="text-xs text-ink-muted">
+        <span className="text-ink-muted text-xs">
           {view === 'active'
             ? 'Ranked by 30-day event volume'
             : 'Contracts attributed to a protocol (ADR-0035)'}
@@ -83,10 +83,10 @@ export function ContractsView() {
         <RegistryPanel />
       )}
 
-      <p className="text-xs text-ink-muted">
-        Looking for a specific contract? Paste its <code className="font-mono">C…</code>{' '}
-        address into search, or open it directly at{' '}
-        <code className="font-mono">/contracts/&lt;C…&gt;</code>.
+      <p className="text-ink-muted text-xs">
+        Looking for a specific contract? Paste its{' '}
+        <code className="font-mono">C…</code> address into search, or open it
+        directly at <code className="font-mono">/contracts/&lt;C…&gt;</code>.
       </p>
     </Container>
   );
@@ -120,66 +120,98 @@ function MostActivePanel({ sacMap }: { sacMap: SACMap }) {
     sort: cSort,
     toggle: cToggle,
     ariaSort: cAriaSort,
-  } = useTableSort<(typeof rows)[number], string>(rows, contractSortColumns, null);
+  } = useTableSort<(typeof rows)[number], string>(
+    rows,
+    contractSortColumns,
+    null,
+  );
 
   return (
     <Panel
       headingLevel={2}
-      title={rows.length > 0 ? `Most active (${formatCompact(rows.length)})` : 'Most active'}
+      title={
+        rows.length > 0
+          ? `Most active (${formatCompact(rows.length)})`
+          : 'Most active'
+      }
       source={asExample('/v1/contracts', { days: 30, limit: 100 })}
       bodyClassName="-mx-4"
     >
-      <p className="px-4 pb-3 text-xs text-ink-muted">
+      <p className="text-ink-muted px-4 pb-3 text-xs">
         Ranked by raw event volume, so the leaders are SACs and high-traffic
         system contracts — attribution lives in the{' '}
-        <span className="font-medium text-ink-body">Registry</span> view, not
+        <span className="text-ink-body font-medium">Registry</span> view, not
         here, so most rows below carry no protocol tag by design.
       </p>
       {isError ? (
-        <p className="px-4 text-sm text-down-strong">
+        <p className="text-down-strong px-4 text-sm">
           Failed to load contracts:{' '}
           {error instanceof Error ? error.message : 'unknown error'}
         </p>
       ) : isLoading ? (
-        <p className="px-4 text-sm text-ink-muted">Loading…</p>
+        <p className="text-ink-muted px-4 text-sm">Loading…</p>
       ) : rows.length === 0 ? (
-        <p className="px-4 text-sm text-ink-muted">
+        <p className="text-ink-muted px-4 text-sm">
           No contract activity in the window.
         </p>
       ) : (
         <div className="overflow-x-auto">
-          <table className="min-w-full divide-y divide-line text-sm">
+          <table className="divide-line min-w-full divide-y text-sm">
             <thead>
-              <tr className="text-left text-[11px] uppercase tracking-wider text-ink-muted">
-                <th scope="col" className="px-4 py-2">Contract</th>
-                <SortableTh label="Protocol" sortKey="protocol" sort={cSort} onSort={cToggle} ariaSort={cAriaSort} />
-                <SortableTh label="Events (30d)" sortKey="events" sort={cSort} onSort={cToggle} ariaSort={cAriaSort} align="right" />
-                <SortableTh label="Last seen" sortKey="last_seen" sort={cSort} onSort={cToggle} ariaSort={cAriaSort} />
+              <tr className="text-ink-muted text-left text-[11px] tracking-wider uppercase">
+                <th scope="col" className="px-4 py-2">
+                  Contract
+                </th>
+                <SortableTh
+                  label="Protocol"
+                  sortKey="protocol"
+                  sort={cSort}
+                  onSort={cToggle}
+                  ariaSort={cAriaSort}
+                />
+                <SortableTh
+                  label="Events (30d)"
+                  sortKey="events"
+                  sort={cSort}
+                  onSort={cToggle}
+                  ariaSort={cAriaSort}
+                  align="right"
+                />
+                <SortableTh
+                  label="Last seen"
+                  sortKey="last_seen"
+                  sort={cSort}
+                  onSort={cToggle}
+                  ariaSort={cAriaSort}
+                />
               </tr>
             </thead>
-            <tbody className="divide-y divide-line-subtle">
+            <tbody className="divide-line-subtle divide-y">
               {sortedContracts.map((c) => (
                 <tr key={c.contract_id} className="hover:bg-surface-muted">
                   <td className="px-4 py-3">
                     <Link
                       href={`/contracts/${encodeURIComponent(c.contract_id ?? '')}/`}
-                      className="font-mono text-xs text-brand-600 hover:underline"
+                      className="text-brand-600 font-mono text-xs hover:underline"
                       title={c.contract_id}
                     >
-                      {(c.contract_id ?? '').slice(0, 8)}…{(c.contract_id ?? '').slice(-6)}
+                      {(c.contract_id ?? '').slice(0, 8)}…
+                      {(c.contract_id ?? '').slice(-6)}
                     </Link>
                     {/* CON-2: 2 of the top 3 rows are SACs resolvable
                         from the operator wrapper map already cached
                         sitewide — name them instead of bare hashes. */}
                     {(() => {
                       const wrapped =
-                        c.contract_id === 'CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA'
+                        c.contract_id ===
+                        'CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA'
                           ? 'native'
                           : sacMap?.[c.contract_id ?? ''];
                       if (!wrapped) return null;
-                      const code = wrapped === 'native' ? 'XLM' : wrapped.split(/[:-]/)[0];
+                      const code =
+                        wrapped === 'native' ? 'XLM' : wrapped.split(/[:-]/)[0];
                       return (
-                        <span className="ml-2 rounded-sm bg-surface-muted px-1.5 py-0.5 text-[9px] font-medium uppercase tracking-wider text-ink-muted">
+                        <span className="bg-surface-muted text-ink-muted ml-2 rounded-sm px-1.5 py-0.5 text-[9px] font-medium tracking-wider uppercase">
                           {code} SAC
                         </span>
                       );
@@ -189,7 +221,7 @@ function MostActivePanel({ sacMap }: { sacMap: SACMap }) {
                     {c.protocol ? (
                       <Link
                         href={`/protocols/${encodeURIComponent(c.protocol)}`}
-                        className="inline-flex items-center rounded-sm px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wider bg-brand-50 text-brand-700 hover:bg-brand-100"
+                        className="bg-brand-50 text-brand-700 hover:bg-brand-100 inline-flex items-center rounded-sm px-1.5 py-0.5 font-mono text-[10px] tracking-wider uppercase"
                       >
                         {c.protocol}
                       </Link>
@@ -197,10 +229,10 @@ function MostActivePanel({ sacMap }: { sacMap: SACMap }) {
                       <span className="text-ink-faint">—</span>
                     )}
                   </td>
-                  <td className="px-4 py-3 text-right font-mono tabular-nums text-ink-body">
+                  <td className="text-ink-body px-4 py-3 text-right font-mono tabular-nums">
                     {formatCompact(c.events ?? 0)}
                   </td>
-                  <td className="px-4 py-3 text-xs text-ink-muted">
+                  <td className="text-ink-muted px-4 py-3 text-xs">
                     {formatTimestamp(c.last_seen)}
                   </td>
                 </tr>
@@ -243,46 +275,60 @@ function RegistryPanel() {
   return (
     <Panel
       headingLevel={2}
-      title={rows.length > 0 ? `Attributed protocols (${formatCompact(rows.length)})` : 'Registry'}
+      title={
+        rows.length > 0
+          ? `Attributed protocols (${formatCompact(rows.length)})`
+          : 'Registry'
+      }
       source={asExample('/v1/protocols')}
       bodyClassName="-mx-4"
     >
-      <p className="px-4 pb-3 text-xs text-ink-muted">
+      <p className="text-ink-muted px-4 pb-3 text-xs">
         Each protocol below owns a set of contracts anchored to a verified
-        factory (ADR-0035) — the identity hinge that lets us attribute an
-        event to a protocol rather than a look-alike. Click a factory to open
-        its hub, or the count to see the full contract roster.
+        factory (ADR-0035) — the identity hinge that lets us attribute an event
+        to a protocol rather than a look-alike. Click a factory to open its hub,
+        or the count to see the full contract roster.
       </p>
       {isError ? (
-        <p className="px-4 text-sm text-down-strong">
+        <p className="text-down-strong px-4 text-sm">
           Failed to load the registry:{' '}
           {error instanceof Error ? error.message : 'unknown error'}
         </p>
       ) : isLoading ? (
-        <p className="px-4 text-sm text-ink-muted">Loading…</p>
+        <p className="text-ink-muted px-4 text-sm">Loading…</p>
       ) : rows.length === 0 ? (
-        <p className="px-4 text-sm text-ink-muted">
+        <p className="text-ink-muted px-4 text-sm">
           No protocol contracts are registered yet.
         </p>
       ) : (
         <div className="overflow-x-auto">
-          <table className="min-w-full divide-y divide-line text-sm">
+          <table className="divide-line min-w-full divide-y text-sm">
             <thead>
-              <tr className="text-left text-[11px] uppercase tracking-wider text-ink-muted">
-                <th scope="col" className="px-4 py-2">Protocol</th>
-                <th scope="col" className="px-4 py-2">Category</th>
-                <th scope="col" className="px-4 py-2">Factory contracts</th>
-                <th scope="col" className="px-4 py-2 text-right">Registered</th>
-                <th scope="col" className="px-4 py-2 text-right">Events (24h)</th>
+              <tr className="text-ink-muted text-left text-[11px] tracking-wider uppercase">
+                <th scope="col" className="px-4 py-2">
+                  Protocol
+                </th>
+                <th scope="col" className="px-4 py-2">
+                  Category
+                </th>
+                <th scope="col" className="px-4 py-2">
+                  Factory contracts
+                </th>
+                <th scope="col" className="px-4 py-2 text-right">
+                  Registered
+                </th>
+                <th scope="col" className="px-4 py-2 text-right">
+                  Events (24h)
+                </th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-line-subtle">
+            <tbody className="divide-line-subtle divide-y">
               {rows.map((p) => (
                 <tr key={p.name} className="hover:bg-surface-muted">
                   <td className="px-4 py-3">
                     <Link
                       href={`/protocols/${encodeURIComponent(p.name)}`}
-                      className="font-medium text-brand-600 hover:underline"
+                      className="text-brand-600 font-medium hover:underline"
                     >
                       {protocolMeta(p.name)?.label ?? p.name}
                     </Link>
@@ -290,7 +336,7 @@ function RegistryPanel() {
                   <td className="px-4 py-3">
                     {p.category ? (
                       <span
-                        className={`inline-flex items-center rounded-sm px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-wider ${categoryTone(p.category)}`}
+                        className={`inline-flex items-center rounded-sm px-1.5 py-0.5 font-mono text-[9px] tracking-wider uppercase ${categoryTone(p.category)}`}
                       >
                         {p.category}
                       </span>
@@ -305,7 +351,7 @@ function RegistryPanel() {
                           <Link
                             key={f}
                             href={`/contracts/${encodeURIComponent(f)}/`}
-                            className="font-mono text-[11px] text-brand-600 hover:underline"
+                            className="text-brand-600 font-mono text-[11px] hover:underline"
                             title={f}
                           >
                             {f.slice(0, 6)}…{f.slice(-4)}
@@ -320,15 +366,17 @@ function RegistryPanel() {
                     {p.contract_count > 0 ? (
                       <Link
                         href={`/protocols/${encodeURIComponent(p.name)}`}
-                        className="font-mono tabular-nums text-brand-600 hover:underline"
+                        className="text-brand-600 font-mono tabular-nums hover:underline"
                       >
                         {formatCompact(p.contract_count)}
                       </Link>
                     ) : (
-                      <span className="font-mono tabular-nums text-ink-faint">—</span>
+                      <span className="text-ink-faint font-mono tabular-nums">
+                        —
+                      </span>
                     )}
                   </td>
-                  <td className="px-4 py-3 text-right font-mono tabular-nums text-ink-body">
+                  <td className="text-ink-body px-4 py-3 text-right font-mono tabular-nums">
                     {formatCompact(p.events_24h ?? 0)}
                   </td>
                 </tr>

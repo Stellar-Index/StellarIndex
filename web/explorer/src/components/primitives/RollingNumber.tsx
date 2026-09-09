@@ -65,7 +65,7 @@ export function RollingNumber({
     // leading-[1.3]: pin an explicit line-height so every `1lh` in the odometer
     // (window/digit heights + the roll transform) resolves to the same value
     // and the changing column stays flush — see the note above.
-    <span className={cn('inline-flex tabular-nums leading-[1.3]', className)}>
+    <span className={cn('inline-flex leading-[1.3] tabular-nums', className)}>
       <span className="sr-only">{formatted}</span>
       {chars.map((ch, i) => {
         const col = chars.length - i; // column index from the right
@@ -78,7 +78,11 @@ export function RollingNumber({
           // baseline-aligned inline-block sits a descender higher than the
           // bottom-aligned window, and the changing digit reads a couple px low.
           return (
-            <span key={`${col}:${ch}`} aria-hidden className="digit-cell digit-window">
+            <span
+              key={`${col}:${ch}`}
+              aria-hidden
+              className="digit-cell digit-window"
+            >
               <span className="digit-flat">{ch}</span>
             </span>
           );
@@ -87,7 +91,11 @@ export function RollingNumber({
         // `.digit-strip` rests translated up one line (new digit showing) and
         // the `digit-rollover` animation slides it there from the old digit.
         return (
-          <span key={`${col}:${ch}`} aria-hidden className="digit-cell digit-window">
+          <span
+            key={`${col}:${ch}`}
+            aria-hidden
+            className="digit-cell digit-window"
+          >
             <span className="digit-strip">
               <span>{prevCh}</span>
               <span>{ch}</span>

@@ -119,7 +119,7 @@ fmt.Printf("O=%s H=%s L=%s C=%s vol=%s\\n",
   {
     title: 'Error handling — *APIError wraps problem+json',
     blurb:
-      "HTTP errors from the server come through as `*client.APIError` carrying the problem-document fields (type / title / status / detail). Network / parse errors come through wrapped via fmt.Errorf — distinguish with errors.As.",
+      'HTTP errors from the server come through as `*client.APIError` carrying the problem-document fields (type / title / status / detail). Network / parse errors come through wrapped via fmt.Errorf — distinguish with errors.As.',
     code: `_, err := c.Price(ctx, client.PriceQuery{Asset: "garbage"})
 if err != nil {
     var apiErr *client.APIError
@@ -143,44 +143,43 @@ export default function SDKPage() {
   return (
     <div className="mx-auto w-full max-w-4xl px-6 py-12 sm:py-16">
       <header className="mb-10 space-y-3">
-        <p className="font-mono text-xs uppercase tracking-widest text-brand-600">
+        <p className="text-brand-600 font-mono text-xs tracking-widest uppercase">
           Go SDK
         </p>
         <h1 className="text-3xl font-semibold tracking-tight sm:text-4xl">
           Idiomatic Go client for the Stellar Index API
         </h1>
-        <p className="max-w-2xl text-base text-ink-body">
-          Typed, SemVer-stable, no surprises. Anonymous mode for the
-          public tier; bearer-token mode for API keys and SEP-10
-          JWTs. The SDK covers the pricing/read surface — prices,
-          history, OHLC, markets, the asset catalogue, and account
-          self-service — with ~36 typed methods; SSE streams and the
-          explorer read surface are reachable over plain HTTP.
+        <p className="text-ink-body max-w-2xl text-base">
+          Typed, SemVer-stable, no surprises. Anonymous mode for the public
+          tier; bearer-token mode for API keys and SEP-10 JWTs. The SDK covers
+          the pricing/read surface — prices, history, OHLC, markets, the asset
+          catalogue, and account self-service — with ~36 typed methods; SSE
+          streams and the explorer read surface are reachable over plain HTTP.
         </p>
       </header>
 
       <section className="mb-10 space-y-4">
         <h2 className="text-xl font-semibold tracking-tight">Install</h2>
-        <p className="text-sm text-ink-body">
+        <p className="text-ink-body text-sm">
           Single dependency. The module path follows the canonical{' '}
-          <code className="rounded-sm bg-surface-subtle px-1.5 py-0.5 font-mono text-xs">
+          <code className="bg-surface-subtle rounded-sm px-1.5 py-0.5 font-mono text-xs">
             github.com/Stellar-Index/StellarIndex
           </code>{' '}
           repo path.
         </p>
-        <div className="overflow-hidden rounded-xl border border-line">
+        <div className="border-line overflow-hidden rounded-xl border">
           <CopyableSnippet snippet={INSTALL} />
         </div>
       </section>
 
       <section className="mb-12 space-y-4">
         <h2 className="text-xl font-semibold tracking-tight">Quick start</h2>
-        <p className="text-sm text-ink-body">
+        <p className="text-ink-body text-sm">
           One-asset current-price lookup. Anonymous works at the public
-          rate-limit; pass <code className="font-mono text-xs">APIKey</code>{' '}
-          to bump to your tier&apos;s budget.
+          rate-limit; pass <code className="font-mono text-xs">APIKey</code> to
+          bump to your tier&apos;s budget.
         </p>
-        <div className="overflow-hidden rounded-xl border border-line">
+        <div className="border-line overflow-hidden rounded-xl border">
           <CopyableSnippet snippet={QUICKSTART} />
         </div>
       </section>
@@ -193,11 +192,9 @@ export default function SDKPage() {
           <div key={p.title} className="space-y-3">
             <div>
               <h3 className="text-base font-semibold">{p.title}</h3>
-              <p className="mt-1 text-sm text-ink-body">
-                {p.blurb}
-              </p>
+              <p className="text-ink-body mt-1 text-sm">{p.blurb}</p>
             </div>
-            <div className="overflow-hidden rounded-xl border border-line">
+            <div className="border-line overflow-hidden rounded-xl border">
               <CopyableSnippet snippet={p.code} />
             </div>
           </div>
@@ -205,10 +202,8 @@ export default function SDKPage() {
       </section>
 
       <section className="mb-12 space-y-3">
-        <h2 className="text-xl font-semibold tracking-tight">
-          Authentication
-        </h2>
-        <p className="text-sm text-ink-body">
+        <h2 className="text-xl font-semibold tracking-tight">Authentication</h2>
+        <p className="text-ink-body text-sm">
           Three modes mirror the server&apos;s auth middleware:
         </p>
         <dl className="grid grid-cols-1 gap-3 sm:grid-cols-3">
@@ -221,11 +216,11 @@ export default function SDKPage() {
             def={
               <>
                 Set{' '}
-                <code className="rounded-sm bg-surface-subtle px-1 py-0.5 font-mono text-[11px]">
+                <code className="bg-surface-subtle rounded-sm px-1 py-0.5 font-mono text-[11px]">
                   Options.APIKey
                 </code>
                 . Sent as{' '}
-                <code className="rounded-sm bg-surface-subtle px-1 py-0.5 font-mono text-[11px]">
+                <code className="bg-surface-subtle rounded-sm px-1 py-0.5 font-mono text-[11px]">
                   Authorization: Bearer
                 </code>{' '}
                 on every request. Sign in at{' '}
@@ -233,7 +228,10 @@ export default function SDKPage() {
                   /signin
                 </Link>{' '}
                 (magic-link, no password) and mint a key from{' '}
-                <Link href="/dashboard" className="text-brand-600 hover:underline">
+                <Link
+                  href="/dashboard"
+                  className="text-brand-600 hover:underline"
+                >
                   /account
                 </Link>
                 .
@@ -247,9 +245,9 @@ export default function SDKPage() {
         </dl>
       </section>
 
-      <section className="rounded-xl border border-line bg-surface p-5 text-sm">
+      <section className="border-line bg-surface rounded-xl border p-5 text-sm">
         <h2 className="text-base font-semibold">Reference</h2>
-        <ul className="mt-3 space-y-2 text-ink-body">
+        <ul className="text-ink-body mt-3 space-y-2">
           {/* site-audit S5: the pkg.go.dev link 404'd. The module IS
               published (v0.20.x is on proxy.golang.org and `go get` works),
               but pkg.go.dev does not render this large monorepo — repeated
@@ -261,7 +259,7 @@ export default function SDKPage() {
               href="https://github.com/Stellar-Index/StellarIndex/tree/main/pkg/client"
               target="_blank"
               rel="noreferrer noopener"
-              className="inline-flex items-center gap-1 text-brand-600 hover:underline"
+              className="text-brand-600 inline-flex items-center gap-1 hover:underline"
             >
               API reference &amp; source (GitHub)
               <ExternalLink className="h-3 w-3" />
@@ -272,21 +270,19 @@ export default function SDKPage() {
               href="https://docs.stellarindex.io"
               target="_blank"
               rel="noreferrer noopener"
-              className="inline-flex items-center gap-1 text-brand-600 hover:underline"
+              className="text-brand-600 inline-flex items-center gap-1 hover:underline"
             >
               REST API reference (Scalar)
               <ExternalLink className="h-3 w-3" />
             </a>
           </li>
           <li>
-            Other languages? The REST API is plain JSON — generate a
-            client for your favourite language from the OpenAPI spec
-            at{' '}
-            <code className="rounded-sm bg-surface-subtle px-1 py-0.5 font-mono text-[11px]">
+            Other languages? The REST API is plain JSON — generate a client for
+            your favourite language from the OpenAPI spec at{' '}
+            <code className="bg-surface-subtle rounded-sm px-1 py-0.5 font-mono text-[11px]">
               openapi/stellar-index.v1.yaml
             </code>
-            . First-party clients beyond Go land as the demand
-            surfaces.
+            . First-party clients beyond Go land as the demand surfaces.
           </li>
         </ul>
       </section>
@@ -294,21 +290,13 @@ export default function SDKPage() {
   );
 }
 
-function Mode({
-  term,
-  def,
-}: {
-  term: string;
-  def: React.ReactNode;
-}) {
+function Mode({ term, def }: { term: string; def: React.ReactNode }) {
   return (
-    <div className="rounded-xl border border-line bg-surface p-3">
-      <dt className="text-xs font-semibold uppercase tracking-wider text-brand-600">
+    <div className="border-line bg-surface rounded-xl border p-3">
+      <dt className="text-brand-600 text-xs font-semibold tracking-wider uppercase">
         {term}
       </dt>
-      <dd className="mt-1 text-xs text-ink-body">
-        {def}
-      </dd>
+      <dd className="text-ink-body mt-1 text-xs">{def}</dd>
     </div>
   );
 }

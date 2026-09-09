@@ -70,6 +70,10 @@ export function LivePrice({
 
 function fmt(n: number, format?: 'usd' | 'plain'): string {
   const s =
-    n >= 1 ? n.toFixed(n >= 100 ? 2 : 4) : n >= 0.001 ? n.toFixed(6) : formatSubunitPrice(n);
+    n >= 1
+      ? n.toFixed(n >= 100 ? 2 : 4)
+      : n >= 0.001
+        ? n.toFixed(6)
+        : formatSubunitPrice(n);
   return format === 'plain' ? s : `$${s}`;
 }

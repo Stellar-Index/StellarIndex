@@ -357,7 +357,8 @@ export function useChangeSummary(
 ) {
   return useQuery<ChangeSummary>({
     queryKey: ['/v1/changes', entityType, entityID],
-    queryFn: () => apiGet<ChangeSummary>(`/v1/changes/${entityType}/${entityID}`),
+    queryFn: () =>
+      apiGet<ChangeSummary>(`/v1/changes/${entityType}/${entityID}`),
     enabled: !!entityID,
     staleTime: 60_000,
   });
@@ -369,11 +370,7 @@ export type Source = Omit<Schemas['Source'], 'class'> & {
   // for blend / soroswap-router+defindex / cctp+rozo (see
   // internal/sources/external ClassLending / ClassRouter / ClassBridge).
   // Widened here until the spec enum catches up.
-  class:
-    | Schemas['Source']['class']
-    | 'lending'
-    | 'router'
-    | 'bridge';
+  class: Schemas['Source']['class'] | 'lending' | 'router' | 'bridge';
 };
 
 type SourcesEnvelope = { data: Source[] };
@@ -412,19 +409,12 @@ export function useSources(
       ? 'stats'
       : undefined;
   return useQuery<Source[]>({
-    queryKey: [
-      '/v1/sources',
-      classFilter ?? 'all',
-      include ?? 'no-stats',
-    ],
+    queryKey: ['/v1/sources', classFilter ?? 'all', include ?? 'no-stats'],
     queryFn: async () => {
-      const env = await apiGet<SourcesEnvelope | Source[]>(
-        '/v1/sources',
-        {
-          ...(classFilter ? { class: classFilter } : {}),
-          ...(include ? { include } : {}),
-        },
-      );
+      const env = await apiGet<SourcesEnvelope | Source[]>('/v1/sources', {
+        ...(classFilter ? { class: classFilter } : {}),
+        ...(include ? { include } : {}),
+      });
       return Array.isArray(env) ? env : env.data;
     },
     staleTime: 5 * 60_000,
@@ -447,10 +437,13 @@ export function useNativeUsdPrice() {
     enabled: PRICING_ENABLED, // no aggregator on test nets → /v1/price 404s
     staleTime: 30_000,
     queryFn: async () => {
-      const env = await apiGet<{ data: { price?: string | null } }>('/v1/price', {
-        asset: 'native',
-        quote: 'fiat:USD',
-      });
+      const env = await apiGet<{ data: { price?: string | null } }>(
+        '/v1/price',
+        {
+          asset: 'native',
+          quote: 'fiat:USD',
+        },
+      );
       const p = env.data?.price ? Number(env.data.price) : null;
       return p != null && Number.isFinite(p) && p > 0 ? p : null;
     },
@@ -463,7 +456,12 @@ export function useNativeUsdPrice() {
     queryFn: async () => {
       const env = await apiGet<{ data: { points?: { p?: string | null }[] } }>(
         '/v1/chart',
-        { asset: 'native', quote: 'fiat:USD', timeframe: '24h', granularity: '1h' },
+        {
+          asset: 'native',
+          quote: 'fiat:USD',
+          timeframe: '24h',
+          granularity: '1h',
+        },
       );
       const pts = (env.data?.points ?? [])
         .map((x) => (x.p != null ? Number(x.p) : NaN))
@@ -664,9 +662,16 @@ export function useFiatUsdSeries(
  * volume_24h_usd, change_24h_pct, observation_count, and the 24h sparkline.
  * `code` is null on that path, so backfill 'XLM'.
  */
-export function useNativeCoin(options?: { sparkline?: boolean; enabled?: boolean }) {
+export function useNativeCoin(options?: {
+  sparkline?: boolean;
+  enabled?: boolean;
+}) {
   return useQuery<Coin | null>({
-    queryKey: ['/v1/assets/native', 'coin', options?.sparkline ? 'sparkline' : ''],
+    queryKey: [
+      '/v1/assets/native',
+      'coin',
+      options?.sparkline ? 'sparkline' : '',
+    ],
     enabled: options?.enabled ?? true,
     retry: false,
     staleTime: 30_000,
@@ -740,7 +745,9 @@ export function useCoins(
     // `placeholderData: (prev) => prev` is the recommended idiom.
     placeholderData: (prev) => prev,
     enabled: options?.enabled ?? true,
-    ...(options?.staleTime !== undefined ? { staleTime: options.staleTime } : {}),
+    ...(options?.staleTime !== undefined
+      ? { staleTime: options.staleTime }
+      : {}),
   });
 }
 
@@ -834,7 +841,13 @@ export function useMarkets(
   const include = options?.sparkline ? 'sparkline' : undefined;
   const asset = options?.asset;
   return useQuery<{ markets: Market[]; nextCursor?: string }>({
-    queryKey: ['/v1/markets', limit, orderBy ?? 'pair', include ?? '', asset ?? ''],
+    queryKey: [
+      '/v1/markets',
+      limit,
+      orderBy ?? 'pair',
+      include ?? '',
+      asset ?? '',
+    ],
     queryFn: async () => {
       const env = await apiGet<MarketsEnvelope | Market[]>('/v1/markets', {
         limit,
@@ -892,7 +905,9 @@ export function useCursors() {
   return useQuery<Cursor[]>({
     queryKey: ['/v1/diagnostics/cursors'],
     queryFn: async () => {
-      const env = await apiGet<CursorsEnvelope | Cursor[]>('/v1/diagnostics/cursors');
+      const env = await apiGet<CursorsEnvelope | Cursor[]>(
+        '/v1/diagnostics/cursors',
+      );
       return Array.isArray(env) ? env : env.data;
     },
     refetchInterval: 15_000,
@@ -930,7 +945,9 @@ export function useCoverage() {
   });
 }
 
-export type ArchiveReport = NonNullable<GetJSON<'/diagnostics/archive'>['data']>;
+export type ArchiveReport = NonNullable<
+  GetJSON<'/diagnostics/archive'>['data']
+>;
 
 /**
  * useArchiveReport — fetches the latest ADR-0017 archive-completeness
@@ -944,7 +961,9 @@ export function useArchiveReport() {
   return useQuery<ArchiveReport>({
     queryKey: ['/v1/diagnostics/archive'],
     queryFn: async () => {
-      const env = await apiGet<{ data: ArchiveReport }>('/v1/diagnostics/archive');
+      const env = await apiGet<{ data: ArchiveReport }>(
+        '/v1/diagnostics/archive',
+      );
       return env.data;
     },
     staleTime: 5 * 60_000,
@@ -976,7 +995,9 @@ export function useBackupsDiagnostics() {
   });
 }
 
-export type SourceHealth = NonNullable<GetJSON<'/sources/{name}/health'>['data']>;
+export type SourceHealth = NonNullable<
+  GetJSON<'/sources/{name}/health'>['data']
+>;
 
 /**
  * useSourceHealth — fetches one venue's live health row from
@@ -1011,7 +1032,11 @@ type TradeHistoryEnvelope = {
  * History tab requests 100 by default. Pagination cursor is left
  * on the envelope but not consumed yet.
  */
-export function useHistory(base: string | undefined, quote: string, limit = 100) {
+export function useHistory(
+  base: string | undefined,
+  quote: string,
+  limit = 100,
+) {
   return useQuery<TradeRow[]>({
     queryKey: ['/v1/history', base, quote, limit],
     enabled: !!base,

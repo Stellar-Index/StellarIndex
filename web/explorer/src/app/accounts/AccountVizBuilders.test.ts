@@ -27,7 +27,11 @@ function trade(over: Partial<AccountTrade>): AccountTrade {
 describe('buildTradeViz', () => {
   it('accumulates USD over priced trades only and folds venues', () => {
     const { cumulative, venues, pricedCount } = buildTradeViz([
-      trade({ ts: '2026-07-29T12:00:02Z', usd_volume: '3.00', source: 'soroswap' }),
+      trade({
+        ts: '2026-07-29T12:00:02Z',
+        usd_volume: '3.00',
+        source: 'soroswap',
+      }),
       trade({ ts: '2026-07-29T12:00:01Z', usd_volume: '2.00' }),
       // Unpriced — unknown, never $0; must not appear in either chart.
       trade({ ts: '2026-07-29T12:00:03Z', usd_volume: undefined }),
@@ -73,10 +77,22 @@ function movement(over: Partial<AccountMovement>): AccountMovement {
 describe('buildMovementFlow', () => {
   it('buckets in/out counts per UTC day, oldest first, ignoring self legs', () => {
     const flow = buildMovementFlow([
-      movement({ ledger_close_time: '2026-07-30T01:00:00Z', direction: 'sent' }),
-      movement({ ledger_close_time: '2026-07-29T10:00:00Z', direction: 'received' }),
-      movement({ ledger_close_time: '2026-07-29T11:00:00Z', direction: 'received' }),
-      movement({ ledger_close_time: '2026-07-29T12:00:00Z', direction: 'self' }),
+      movement({
+        ledger_close_time: '2026-07-30T01:00:00Z',
+        direction: 'sent',
+      }),
+      movement({
+        ledger_close_time: '2026-07-29T10:00:00Z',
+        direction: 'received',
+      }),
+      movement({
+        ledger_close_time: '2026-07-29T11:00:00Z',
+        direction: 'received',
+      }),
+      movement({
+        ledger_close_time: '2026-07-29T12:00:00Z',
+        direction: 'self',
+      }),
     ]);
     expect(flow).toEqual([
       { label: 'Jul 29', pos: 2, neg: 0 },

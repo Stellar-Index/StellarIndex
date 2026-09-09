@@ -6,7 +6,11 @@ import { Panel } from '@/components/reveal';
 import { apiGet, asExample } from '@/api/client';
 import { dropPartialTrailingDay } from '@/lib/series';
 import { TimeSeriesChart } from '@/app/protocols/[name]/TimeSeriesChart';
-import { toChartNumber, type Bespoke, type BespokeSeries } from '@/app/protocols/[name]/BespokeSection';
+import {
+  toChartNumber,
+  type Bespoke,
+  type BespokeSeries,
+} from '@/app/protocols/[name]/BespokeSection';
 
 /**
  * isUsdVolumeSeries — matches the DEX bespoke block's standalone USD-volume
@@ -73,11 +77,7 @@ export function SourceVolumeHistory({ source }: { source: string }) {
       hint="Daily summed USD volume (priced trades) from the protocol analytics aggregate"
       source={asExample(`/v1/protocols/${source}`)}
     >
-      <TimeSeriesChart
-        points={points}
-        label="daily USD volume"
-        unit="USD"
-      />
+      <TimeSeriesChart points={points} label="daily USD volume" unit="USD" />
     </Panel>
   );
 }

@@ -29,21 +29,36 @@ const coin: SidebarCoin = {
 describe('AssetSidebar price provenance caption', () => {
   it('labels a live closed-bucket price as 1-min VWAP', () => {
     const { container } = renderWithQuery(
-      <AssetSidebar coin={coin} detail={null} priceUSD={0.9998} priceProvenance="vwap1m" />,
+      <AssetSidebar
+        coin={coin}
+        detail={null}
+        priceUSD={0.9998}
+        priceProvenance="vwap1m"
+      />,
     );
     expect(container.textContent).toContain('1-min VWAP · USD');
   });
 
   it('labels a triangulated price as such', () => {
     const { container } = renderWithQuery(
-      <AssetSidebar coin={coin} detail={null} priceUSD={0.9998} priceProvenance="triangulated" />,
+      <AssetSidebar
+        coin={coin}
+        detail={null}
+        priceUSD={0.9998}
+        priceProvenance="triangulated"
+      />,
     );
     expect(container.textContent).toContain('triangulated via XLM');
   });
 
   it('labels the build-time listing fallback as not-live', () => {
     const { container } = renderWithQuery(
-      <AssetSidebar coin={coin} detail={null} priceUSD={0.9998} priceProvenance="listing" />,
+      <AssetSidebar
+        coin={coin}
+        detail={null}
+        priceUSD={0.9998}
+        priceProvenance="listing"
+      />,
     );
     expect(container.textContent).toContain('listing snapshot');
     expect(container.textContent).toContain('not a live aggregated price');
@@ -51,14 +66,25 @@ describe('AssetSidebar price provenance caption', () => {
 
   it('marks a stale price', () => {
     const { container } = renderWithQuery(
-      <AssetSidebar coin={coin} detail={null} priceUSD={0.9998} priceProvenance="vwap1m" priceStale />,
+      <AssetSidebar
+        coin={coin}
+        detail={null}
+        priceUSD={0.9998}
+        priceProvenance="vwap1m"
+        priceStale
+      />,
     );
     expect(container.textContent).toContain('stale');
   });
 
   it('renders no caption when there is no price', () => {
     const { container } = renderWithQuery(
-      <AssetSidebar coin={coin} detail={null} priceUSD={null} priceProvenance={null} />,
+      <AssetSidebar
+        coin={coin}
+        detail={null}
+        priceUSD={null}
+        priceProvenance={null}
+      />,
     );
     expect(container.textContent).not.toContain('VWAP');
     expect(container.textContent).not.toContain('listing snapshot');

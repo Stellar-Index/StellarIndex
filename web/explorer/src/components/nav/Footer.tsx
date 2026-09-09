@@ -20,8 +20,8 @@ export function Footer() {
   const pathname = usePathname();
   if (pathname?.startsWith('/embed/')) return null;
   return (
-    <footer className="mt-16 border-t border-line bg-surface py-8">
-      <div className="mx-auto max-w-7xl px-6 text-xs text-ink-muted">
+    <footer className="border-line bg-surface mt-16 border-t py-8">
+      <div className="text-ink-muted mx-auto max-w-7xl px-6 text-xs">
         <div className="grid grid-cols-2 gap-8 sm:grid-cols-4">
           <FooterColumn
             title="Browse"
@@ -72,7 +72,11 @@ export function Footer() {
               { label: 'Create account', href: '/signup' },
               { label: 'Your account', href: '/dashboard' },
               { label: 'Developer docs', href: '/docs' },
-              { label: 'API reference', href: 'https://docs.stellarindex.io', external: true },
+              {
+                label: 'API reference',
+                href: 'https://docs.stellarindex.io',
+                external: true,
+              },
               { label: 'Go SDK', href: '/sdk' },
               { label: 'Widgets', href: '/widgets' },
               { label: 'Methodology', href: '/methodology' },
@@ -82,13 +86,13 @@ export function Footer() {
             ]}
           />
         </div>
-        <div className="mt-8 flex flex-wrap items-center justify-between gap-3 border-t border-line pt-4">
+        <div className="border-line mt-8 flex flex-wrap items-center justify-between gap-3 border-t pt-4">
           <div className="flex flex-wrap items-center gap-4">
             <span>
               API:{' '}
               <a
                 href={CURRENT_NETWORK.apiBaseUrl}
-                className="font-mono hover:text-ink-body"
+                className="hover:text-ink-body font-mono"
               >
                 api.stellarindex.io
               </a>
@@ -145,7 +149,7 @@ function BuildBadge() {
       target="_blank"
       rel="noopener noreferrer"
       title={`Built ${time} from commit ${sha}`}
-      className="font-mono text-[10px] tracking-tight text-ink-faint hover:text-ink-body"
+      className="text-ink-faint hover:text-ink-body font-mono text-[10px] tracking-tight"
     >
       build {short}
       {date && <span className="hidden md:inline"> · {date}</span>}
@@ -171,7 +175,7 @@ function FooterColumn({
           an h1 → h4 jump — the WCAG 1.3.1 defect lib/heading-order.ts
           guards. h2 is also the honest level for a top-level section of
           the footer landmark. Size is styling, not structure. */}
-      <h2 className="text-[11px] font-medium uppercase tracking-wider text-ink-faint">
+      <h2 className="text-ink-faint text-[11px] font-medium tracking-wider uppercase">
         {title}
       </h2>
       <ul className="space-y-1">
@@ -189,10 +193,7 @@ function FooterColumn({
             </li>
           ) : (
             <li key={l.href}>
-              <Link
-                href={l.href}
-                className="hover:text-ink-body"
-              >
+              <Link href={l.href} className="hover:text-ink-body">
                 {l.label}
               </Link>
             </li>

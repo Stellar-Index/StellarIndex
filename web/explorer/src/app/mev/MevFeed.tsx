@@ -64,7 +64,11 @@ interface MevEvent {
   profit_usd: string | null;
 }
 
-const usdFmt = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 });
+const usdFmt = new Intl.NumberFormat('en-US', {
+  style: 'currency',
+  currency: 'USD',
+  maximumFractionDigits: 0,
+});
 
 const KIND_LABELS: Record<string, string> = {
   arbitrage: 'arbitrage',
@@ -112,42 +116,52 @@ export function MevFeed() {
       source={asExample('/v1/mev', { limit: 50 })}
       bodyClassName="space-y-3"
     >
-      {q.isLoading && <p className="text-sm text-ink-muted">Loading…</p>}
+      {q.isLoading && <p className="text-ink-muted text-sm">Loading…</p>}
       {q.isError && (
-        <p className="text-sm text-ink-muted">
+        <p className="text-ink-muted text-sm">
           The MEV feed is unavailable right now.
         </p>
       )}
       {!q.isLoading && !q.isError && rows.length === 0 && (
-        <p className="text-sm text-ink-muted">
-          No MEV events detected in the recent window yet. The detectors
-          scan the trade / auction / oracle streams every few minutes.
+        <p className="text-ink-muted text-sm">
+          No MEV events detected in the recent window yet. The detectors scan
+          the trade / auction / oracle streams every few minutes.
         </p>
       )}
       {rows.length > 0 && (
-        <ul className="divide-y divide-line-subtle">
+        <ul className="divide-line-subtle divide-y">
           {rows.map((e) => {
             const assets = eventAssets(e);
-            const isCycle = e.kind === 'arbitrage' && (e.detail.assets?.length ?? 0) > 0;
+            const isCycle =
+              e.kind === 'arbitrage' && (e.detail.assets?.length ?? 0) > 0;
             const sources = e.detail.sources ?? [];
             const actor = e.accounts[0] ?? '';
             const tx = e.tx_hashes[0] ?? '';
             return (
               <li key={e.event_id} className="py-3 text-sm">
                 <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-                  <span className="inline-block rounded-sm bg-down-subtle px-1.5 py-0.5 text-[11px] font-medium uppercase tracking-wider text-down-strong">
+                  <span className="bg-down-subtle text-down-strong inline-block rounded-sm px-1.5 py-0.5 text-[11px] font-medium tracking-wider uppercase">
                     {KIND_LABELS[e.kind] ?? e.kind}
                   </span>
                   {e.kind === 'wash_trade' && e.detail.variant && (
-                    <span className="text-[11px] text-ink-muted">
-                      {e.detail.variant === 'self_trade' ? 'self-cross' : 'round trip'}
+                    <span className="text-ink-muted text-[11px]">
+                      {e.detail.variant === 'self_trade'
+                        ? 'self-cross'
+                        : 'round trip'}
                     </span>
                   )}
                   {assets.length > 0 && (
-                    <span className="inline-flex flex-wrap items-center gap-1 font-mono text-xs text-ink-body">
+                    <span className="text-ink-body inline-flex flex-wrap items-center gap-1 font-mono text-xs">
                       {assets.map((a, i) => (
-                        <span key={`${a}-${i}`} className="inline-flex items-center gap-1">
-                          {i > 0 && <span className="text-ink-faint">{isCycle ? '→' : '/'}</span>}
+                        <span
+                          key={`${a}-${i}`}
+                          className="inline-flex items-center gap-1"
+                        >
+                          {i > 0 && (
+                            <span className="text-ink-faint">
+                              {isCycle ? '→' : '/'}
+                            </span>
+                          )}
                           <AssetText canonical={a} />
                         </span>
                       ))}
@@ -160,17 +174,24 @@ export function MevFeed() {
                     </span>
                   )}
                   {e.kind === 'liquidation_cascade' && e.detail.fill && (
-                    <span className="font-mono text-xs text-ink-body" title={e.detail.fill.pool}>
-                      pool {e.detail.fill.pool.slice(0, 6)}…{e.detail.fill.pool.slice(-4)}
+                    <span
+                      className="text-ink-body font-mono text-xs"
+                      title={e.detail.fill.pool}
+                    >
+                      pool {e.detail.fill.pool.slice(0, 6)}…
+                      {e.detail.fill.pool.slice(-4)}
                     </span>
                   )}
                   {sources.length > 0 && (
-                    <span className="text-[11px] text-ink-muted">
+                    <span className="text-ink-muted text-[11px]">
                       via{' '}
                       {sources.map((s, i) => (
                         <span key={s}>
                           {i > 0 && ', '}
-                          <Link href={`/sources/${encodeURIComponent(s)}`} className="hover:text-brand-600 hover:underline">
+                          <Link
+                            href={`/sources/${encodeURIComponent(s)}`}
+                            className="hover:text-brand-600 hover:underline"
+                          >
                             {s}
                           </Link>
                         </span>
@@ -178,19 +199,19 @@ export function MevFeed() {
                     </span>
                   )}
                   {e.detail.notional_usd && (
-                    <span className="font-mono text-xs text-ink-body">
+                    <span className="text-ink-body font-mono text-xs">
                       {usdFmt.format(Number(e.detail.notional_usd))}
                     </span>
                   )}
-                  <span className="ml-auto font-mono text-[11px] text-ink-muted">
+                  <span className="text-ink-muted ml-auto font-mono text-[11px]">
                     ledger {e.detected_at_ledger.toLocaleString('en-US')}
                   </span>
                 </div>
-                <div className="mt-1 flex flex-wrap gap-x-4 text-[11px] text-ink-muted">
+                <div className="text-ink-muted mt-1 flex flex-wrap gap-x-4 text-[11px]">
                   {actor && (
                     <Link
                       href={`/accounts/${encodeURIComponent(actor)}/`}
-                      className="font-mono hover:text-brand-600 hover:underline"
+                      className="hover:text-brand-600 font-mono hover:underline"
                       title={actor}
                     >
                       account {actor.slice(0, 6)}…{actor.slice(-4)}
@@ -199,12 +220,14 @@ export function MevFeed() {
                   {tx && (
                     <Link
                       href={`/transactions/${encodeURIComponent(tx)}/`}
-                      className="font-mono hover:text-brand-600 hover:underline"
+                      className="hover:text-brand-600 font-mono hover:underline"
                     >
                       tx {tx.slice(0, 8)}…
                     </Link>
                   )}
-                  {e.tx_hashes.length > 1 && <span>{e.tx_hashes.length} txs</span>}
+                  {e.tx_hashes.length > 1 && (
+                    <span>{e.tx_hashes.length} txs</span>
+                  )}
                   <span>{evidenceCount(e)}</span>
                 </div>
               </li>

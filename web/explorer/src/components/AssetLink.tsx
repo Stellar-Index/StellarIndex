@@ -6,7 +6,11 @@ import { useSACWrappers } from '@/api/hooks';
 import { cn } from '@/lib/cn';
 import { AssetLabel } from './AssetLabel';
 
-import { isRawOracleAsset, normalizeColonForm, shortAssetText } from '@/lib/asset-label';
+import {
+  isRawOracleAsset,
+  normalizeColonForm,
+  shortAssetText,
+} from '@/lib/asset-label';
 
 // Re-export for existing client-side importers; server code imports
 // from '@/lib/asset-label' directly (see that module's header).

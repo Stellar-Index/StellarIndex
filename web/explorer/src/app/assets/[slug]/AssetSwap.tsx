@@ -54,19 +54,128 @@ export interface SwapToken {
 // currencies without a fresh rate are filtered out client-side, so the picker
 // shows the ~108 the feed actively prices.
 const FIAT_TICKERS = [
-  'AED', 'ALL', 'ARS', 'AUD', 'AWG', 'BAM', 'BBD', 'BDT', 'BGN', 'BHD',
-  'BIF', 'BND', 'BOB', 'BRL', 'BSD', 'BWP', 'BZD', 'CAD', 'CDF', 'CHF',
-  'CLP', 'CNH', 'CNY', 'COP', 'CRC', 'CUP', 'CVE', 'CZK', 'DJF', 'DKK',
-  'DOP', 'DZD', 'EGP', 'ETB', 'EUR', 'FJD', 'GBP', 'GHS', 'GMD', 'GNF',
-  'GTQ', 'GYD', 'HKD', 'HNL', 'HRK', 'HTG', 'HUF', 'IDR', 'ILS', 'INR',
-  'IQD', 'ISK', 'JMD', 'JPY', 'KES', 'KHR', 'KMF', 'KRW', 'KWD', 'KYD',
-  'KZT', 'LAK', 'LBP', 'LKR', 'LRD', 'LSL', 'LYD', 'MAD', 'MDL', 'MGA',
-  'MKD', 'MOP', 'MUR', 'MVR', 'MWK', 'MXN', 'MYR', 'MZN', 'NAD', 'NGN',
-  'NIO', 'NOK', 'NPR', 'NZD', 'OMR', 'PAB', 'PEN', 'PGK', 'PHP', 'PKR',
-  'PLN', 'PYG', 'QAR', 'RON', 'RSD', 'RUB', 'RWF', 'SAR', 'SCR', 'SDG',
-  'SEK', 'SGD', 'SOS', 'SVC', 'SZL', 'THB', 'TJS', 'TMT', 'TND', 'TRY',
-  'TTD', 'TWD', 'TZS', 'UAH', 'UGX', 'UYU', 'UZS', 'VND', 'XPF', 'YER',
-  'ZAR', 'ZMW',
+  'AED',
+  'ALL',
+  'ARS',
+  'AUD',
+  'AWG',
+  'BAM',
+  'BBD',
+  'BDT',
+  'BGN',
+  'BHD',
+  'BIF',
+  'BND',
+  'BOB',
+  'BRL',
+  'BSD',
+  'BWP',
+  'BZD',
+  'CAD',
+  'CDF',
+  'CHF',
+  'CLP',
+  'CNH',
+  'CNY',
+  'COP',
+  'CRC',
+  'CUP',
+  'CVE',
+  'CZK',
+  'DJF',
+  'DKK',
+  'DOP',
+  'DZD',
+  'EGP',
+  'ETB',
+  'EUR',
+  'FJD',
+  'GBP',
+  'GHS',
+  'GMD',
+  'GNF',
+  'GTQ',
+  'GYD',
+  'HKD',
+  'HNL',
+  'HRK',
+  'HTG',
+  'HUF',
+  'IDR',
+  'ILS',
+  'INR',
+  'IQD',
+  'ISK',
+  'JMD',
+  'JPY',
+  'KES',
+  'KHR',
+  'KMF',
+  'KRW',
+  'KWD',
+  'KYD',
+  'KZT',
+  'LAK',
+  'LBP',
+  'LKR',
+  'LRD',
+  'LSL',
+  'LYD',
+  'MAD',
+  'MDL',
+  'MGA',
+  'MKD',
+  'MOP',
+  'MUR',
+  'MVR',
+  'MWK',
+  'MXN',
+  'MYR',
+  'MZN',
+  'NAD',
+  'NGN',
+  'NIO',
+  'NOK',
+  'NPR',
+  'NZD',
+  'OMR',
+  'PAB',
+  'PEN',
+  'PGK',
+  'PHP',
+  'PKR',
+  'PLN',
+  'PYG',
+  'QAR',
+  'RON',
+  'RSD',
+  'RUB',
+  'RWF',
+  'SAR',
+  'SCR',
+  'SDG',
+  'SEK',
+  'SGD',
+  'SOS',
+  'SVC',
+  'SZL',
+  'THB',
+  'TJS',
+  'TMT',
+  'TND',
+  'TRY',
+  'TTD',
+  'TWD',
+  'TZS',
+  'UAH',
+  'UGX',
+  'UYU',
+  'UZS',
+  'VND',
+  'XPF',
+  'YER',
+  'ZAR',
+  'ZMW',
 ];
 
 // Currency display names come from the browser's Intl.DisplayNames so the full
@@ -147,8 +256,10 @@ export function AssetSwap({
         : (numeric * (pTo as number)) / (pFrom as number)
       : null;
 
-  const fromValue = edited === 'from' ? amount : counter != null ? fmtAmount(counter) : '';
-  const toValue = edited === 'to' ? amount : counter != null ? fmtAmount(counter) : '';
+  const fromValue =
+    edited === 'from' ? amount : counter != null ? fmtAmount(counter) : '';
+  const toValue =
+    edited === 'to' ? amount : counter != null ? fmtAmount(counter) : '';
 
   function swap() {
     setFromToken(toToken);
@@ -213,7 +324,7 @@ export function AssetSwap({
           type="button"
           aria-label="Swap the two assets"
           onClick={swap}
-          className="group absolute left-1/2 top-1/2 z-10 -translate-x-1/2 -translate-y-1/2 rounded-full border-4 border-surface bg-surface-canvas p-2 text-ink-muted shadow-card transition-all hover:bg-brand-50 hover:text-brand-600 focus:outline-hidden focus-visible:ring-2 focus-visible:ring-brand-500"
+          className="group border-surface bg-surface-canvas text-ink-muted shadow-card hover:bg-brand-50 hover:text-brand-600 focus-visible:ring-brand-500 absolute top-1/2 left-1/2 z-10 -translate-x-1/2 -translate-y-1/2 rounded-full border-4 p-2 transition-all focus:outline-hidden focus-visible:ring-2"
         >
           <ArrowDownUp className="h-4 w-4 transition-transform duration-200 group-hover:rotate-180 group-active:scale-90" />
         </button>
@@ -260,12 +371,12 @@ function SwapRow({
   return (
     <div
       className={cn(
-        'rounded-lg border bg-surface-canvas px-3.5 py-4 transition-colors',
+        'bg-surface-canvas rounded-lg border px-3.5 py-4 transition-colors',
         // The active field is signalled by a lighter border, not a focus ring
         // on the input itself. That border delta alone is 1.22:1 — invisible —
         // so focus ALSO raises a ring on the wrapper (brand-500 on canvas =
         // 5.33:1), which is what WCAG 2.4.7 / 2.4.11 actually require.
-        'focus-within:ring-2 focus-within:ring-brand-500/60',
+        'focus-within:ring-brand-500/60 focus-within:ring-2',
         active ? 'border-line-strong' : 'border-line',
       )}
     >
@@ -278,16 +389,16 @@ function SwapRow({
           onFocus={onFocus}
           placeholder="0"
           aria-label={`Amount in ${token.symbol}`}
-          className="w-full min-w-0 bg-transparent font-mono text-2xl tabular-nums text-ink placeholder:text-ink-faint focus:outline-none"
+          className="text-ink placeholder:text-ink-faint w-full min-w-0 bg-transparent font-mono text-2xl tabular-nums focus:outline-none"
         />
         <button
           type="button"
           onClick={onPick}
-          className="inline-flex shrink-0 items-center gap-1.5 rounded-full border border-line bg-surface py-1 pl-1 pr-2 text-sm font-medium text-ink shadow-card transition-colors hover:border-brand-500 hover:text-brand-600"
+          className="border-line bg-surface text-ink shadow-card hover:border-brand-500 hover:text-brand-600 inline-flex shrink-0 items-center gap-1.5 rounded-full border py-1 pr-2 pl-1 text-sm font-medium transition-colors"
         >
           <TokenIcon token={token} />
           <span className="max-w-[6rem] truncate">{token.symbol}</span>
-          <ChevronDown className="h-4 w-4 text-ink-muted" />
+          <ChevronDown className="text-ink-muted h-4 w-4" />
         </button>
       </div>
     </div>
@@ -312,7 +423,7 @@ function TokenIcon({ token, size = 22 }: { token: SwapToken; size?: number }) {
         alt=""
         style={dim}
         onError={() => setBroken(true)}
-        className="rounded-full bg-surface-subtle object-cover"
+        className="bg-surface-subtle rounded-full object-cover"
       />
     );
   }
@@ -410,20 +521,22 @@ function TokenPicker({
 
   const cryptoTokens = useMemo<SwapToken[]>(() => {
     const rows = coins.data?.coins ?? [];
-    return rows
-      .map((c): SwapToken => {
-        const price = c.price_usd != null ? Number(c.price_usd) : null;
-        return {
-          key: c.asset_id ?? c.slug,
-          symbol: c.code ?? c.slug,
-          name: c.issuer ? undefined : undefined,
-          image: c.image,
-          usdPrice: price != null && price > 0 ? price : null,
-          kind: 'crypto',
-        };
-      })
-      // Only offer legs we can actually price.
-      .filter((t) => t.usdPrice != null);
+    return (
+      rows
+        .map((c): SwapToken => {
+          const price = c.price_usd != null ? Number(c.price_usd) : null;
+          return {
+            key: c.asset_id ?? c.slug,
+            symbol: c.code ?? c.slug,
+            name: c.issuer ? undefined : undefined,
+            image: c.image,
+            usdPrice: price != null && price > 0 ? price : null,
+            kind: 'crypto',
+          };
+        })
+        // Only offer legs we can actually price.
+        .filter((t) => t.usdPrice != null)
+    );
   }, [coins.data]);
 
   const q = debounced.toLowerCase();
@@ -483,54 +596,57 @@ function TokenPicker({
     // the results list overflows below the whole widget.
     <div
       className={cn(
-        'absolute left-0 right-0 z-20 flex flex-col rounded-lg border border-line-strong bg-surface shadow-elevated',
+        'border-line-strong bg-surface shadow-elevated absolute right-0 left-0 z-20 flex flex-col rounded-lg border',
         side === 'from' ? 'top-0' : 'top-[72px]',
       )}
     >
       {/* The search field is exactly a SwapRow's height (66px) so, on open, it
           fills the input box it replaced — same footprint, no jump. */}
-      <div className="flex h-[66px] shrink-0 items-center gap-2 border-b border-line px-3.5">
-        <Search className="h-4 w-4 shrink-0 text-ink-faint" />
+      <div className="border-line flex h-[66px] shrink-0 items-center gap-2 border-b px-3.5">
+        <Search className="text-ink-faint h-4 w-4 shrink-0" />
         <input
           ref={inputRef}
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           placeholder="Search assets & currencies…"
-          className="w-full min-w-0 bg-transparent text-sm text-ink placeholder:text-ink-faint focus:outline-hidden"
+          className="text-ink placeholder:text-ink-faint w-full min-w-0 bg-transparent text-sm focus:outline-hidden"
         />
         <button
           type="button"
           aria-label="Close"
           onClick={onClose}
-          className="shrink-0 rounded-sm p-0.5 text-ink-muted hover:text-ink"
+          className="text-ink-muted hover:text-ink shrink-0 rounded-sm p-0.5"
         >
           <X className="h-4 w-4" />
         </button>
       </div>
       <div ref={listRef} className="max-h-72 overflow-y-auto py-1">
         {coins.isLoading && list.length === 0 && (
-          <p className="px-3 py-4 text-sm text-ink-muted">Searching…</p>
+          <p className="text-ink-muted px-3 py-4 text-sm">Searching…</p>
         )}
         {!coins.isLoading && list.length === 0 && (
-          <p className="px-3 py-4 text-sm text-ink-muted">No matching assets.</p>
+          <p className="text-ink-muted px-3 py-4 text-sm">
+            No matching assets.
+          </p>
         )}
         {list.map((t) => (
           <button
             key={t.key}
             type="button"
             onClick={() => onPick(t)}
-            className="flex w-full items-center gap-2.5 px-3 py-2 text-left transition-colors hover:bg-surface-muted"
+            className="hover:bg-surface-muted flex w-full items-center gap-2.5 px-3 py-2 text-left transition-colors"
           >
             <TokenIcon token={t} size={26} />
             <span className="min-w-0 flex-1">
-              <span className="block truncate text-sm font-medium text-ink">
+              <span className="text-ink block truncate text-sm font-medium">
                 {t.symbol}
               </span>
-              <span className="block truncate text-[11px] text-ink-faint">
-                {t.name ?? (t.kind === 'fiat' ? 'Fiat currency' : 'Stellar asset')}
+              <span className="text-ink-faint block truncate text-[11px]">
+                {t.name ??
+                  (t.kind === 'fiat' ? 'Fiat currency' : 'Stellar asset')}
               </span>
             </span>
-            <span className="shrink-0 font-mono text-xs tabular-nums text-ink-muted">
+            <span className="text-ink-muted shrink-0 font-mono text-xs tabular-nums">
               {t.usdPrice != null ? fmtUsd(t.usdPrice) : '—'}
             </span>
           </button>
@@ -563,7 +679,10 @@ function useFiatTokens(): SwapToken[] {
           const ids = chunk.map((t) => `fiat:${t}`).join(',');
           return apiGet<{
             data: Array<{ asset_id: string; price: string | null }>;
-          }>(`/v1/price/batch?asset_ids=${encodeURIComponent(ids)}&quote=fiat:USD`, {});
+          }>(
+            `/v1/price/batch?asset_ids=${encodeURIComponent(ids)}&quote=fiat:USD`,
+            {},
+          );
         }),
       );
       const out: SwapToken[] = [];
@@ -602,7 +721,8 @@ function useDebounced<T>(value: T, ms: number): T {
 function fmtAmount(n: number): string {
   if (!Number.isFinite(n)) return '';
   if (n === 0) return '0';
-  if (n >= 1_000_000) return n.toLocaleString('en-US', { maximumFractionDigits: 2 });
+  if (n >= 1_000_000)
+    return n.toLocaleString('en-US', { maximumFractionDigits: 2 });
   if (n >= 1) return n.toLocaleString('en-US', { maximumFractionDigits: 6 });
   if (n >= 0.0001) return trimZeros(n.toFixed(6));
   return formatSubunitPrice(n);

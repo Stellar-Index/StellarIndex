@@ -20,15 +20,26 @@ import { type Time, TickMarkType } from 'lightweight-charts';
 
 const HHMM: Intl.DateTimeFormatOptions = { hour: '2-digit', minute: '2-digit' };
 
-export function localTickMarkFormatter(time: Time, tickMarkType: TickMarkType): string {
+export function localTickMarkFormatter(
+  time: Time,
+  tickMarkType: TickMarkType,
+): string {
   const d = new Date((time as number) * 1000);
   switch (tickMarkType) {
     case TickMarkType.Year:
       return String(d.getUTCFullYear());
     case TickMarkType.Month:
-      return d.toLocaleDateString(undefined, { month: 'short', year: '2-digit', timeZone: 'UTC' });
+      return d.toLocaleDateString(undefined, {
+        month: 'short',
+        year: '2-digit',
+        timeZone: 'UTC',
+      });
     case TickMarkType.DayOfMonth:
-      return d.toLocaleDateString(undefined, { day: 'numeric', month: 'short', timeZone: 'UTC' });
+      return d.toLocaleDateString(undefined, {
+        day: 'numeric',
+        month: 'short',
+        timeZone: 'UTC',
+      });
     default: // Time / TimeWithSeconds — the viewer's local clock
       return d.toLocaleTimeString(undefined, HHMM);
   }
@@ -38,5 +49,9 @@ export function localTickMarkFormatter(time: Time, tickMarkType: TickMarkType): 
 // wall-clock — date + time — so the readout matches the viewer's clock.
 export function localCrosshairTimeFormatter(time: Time): string {
   const d = new Date((time as number) * 1000);
-  return d.toLocaleString(undefined, { month: 'short', day: 'numeric', ...HHMM });
+  return d.toLocaleString(undefined, {
+    month: 'short',
+    day: 'numeric',
+    ...HHMM,
+  });
 }

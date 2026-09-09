@@ -2,7 +2,8 @@ import { describe, it, expect, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
 
 vi.mock('@/api/hooks', async () => {
-  const actual = await vi.importActual<typeof import('@/api/hooks')>('@/api/hooks');
+  const actual =
+    await vi.importActual<typeof import('@/api/hooks')>('@/api/hooks');
   return { ...actual, useMe: vi.fn() };
 });
 
@@ -27,7 +28,9 @@ describe('AccountGate', () => {
 
     render(<AccountGate>{() => <div>dashboard content</div>}</AccountGate>);
 
-    expect(screen.getByText(/Couldn.t verify your sign-in/)).toBeInTheDocument();
+    expect(
+      screen.getByText(/Couldn.t verify your sign-in/),
+    ).toBeInTheDocument();
     expect(screen.queryByText('dashboard content')).not.toBeInTheDocument();
   });
 

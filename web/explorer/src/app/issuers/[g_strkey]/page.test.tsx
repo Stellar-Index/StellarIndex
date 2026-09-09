@@ -2,7 +2,10 @@ import { describe, it, expect, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
 
 vi.mock('@/lib/buildFetch', async () => {
-  const actual = await vi.importActual<typeof import('@/lib/buildFetch')>('@/lib/buildFetch');
+  const actual =
+    await vi.importActual<typeof import('@/lib/buildFetch')>(
+      '@/lib/buildFetch',
+    );
   return { ...actual, buildFetchData: vi.fn(), failBuild: vi.fn() };
 });
 
@@ -32,23 +35,37 @@ describe('IssuerDetailPage issued-asset tiles', () => {
     mockIssuer({ g_strkey: G, home_domain: 'circle.com' });
     await renderPage();
 
-    expect(screen.getByText('Assets').nextElementSibling?.textContent).toBe('—');
-    expect(screen.getByText('Total observations').nextElementSibling?.textContent).toBe('—');
+    expect(screen.getByText('Assets').nextElementSibling?.textContent).toBe(
+      '—',
+    );
+    expect(
+      screen.getByText('Total observations').nextElementSibling?.textContent,
+    ).toBe('—');
     // Panel heading carries no fabricated count, and the body abstains.
     expect(screen.getByText('Issued assets')).toBeInTheDocument();
-    expect(screen.getByText(/Issued-asset list unavailable/)).toBeInTheDocument();
-    expect(screen.queryByText(/No issued assets observed/)).not.toBeInTheDocument();
+    expect(
+      screen.getByText(/Issued-asset list unavailable/),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText(/No issued assets observed/),
+    ).not.toBeInTheDocument();
   });
 
   it('renders real counts (including a genuine 0) when `assets` is served', async () => {
     mockIssuer({ g_strkey: G, home_domain: 'circle.com', assets: [] });
     await renderPage();
 
-    expect(screen.getByText('Assets').nextElementSibling?.textContent).toBe('0');
-    expect(screen.getByText('Total observations').nextElementSibling?.textContent).toBe('0');
+    expect(screen.getByText('Assets').nextElementSibling?.textContent).toBe(
+      '0',
+    );
+    expect(
+      screen.getByText('Total observations').nextElementSibling?.textContent,
+    ).toBe('0');
     expect(screen.getByText('Issued assets (0)')).toBeInTheDocument();
     expect(screen.getByText(/No issued assets observed/)).toBeInTheDocument();
-    expect(screen.queryByText(/Issued-asset list unavailable/)).not.toBeInTheDocument();
+    expect(
+      screen.queryByText(/Issued-asset list unavailable/),
+    ).not.toBeInTheDocument();
   });
 
   it('sums observations across the served assets', async () => {
@@ -76,8 +93,12 @@ describe('IssuerDetailPage issued-asset tiles', () => {
     });
     await renderPage();
 
-    expect(screen.getByText('Assets').nextElementSibling?.textContent).toBe('2');
-    expect(screen.getByText('Total observations').nextElementSibling?.textContent).toBe('42');
+    expect(screen.getByText('Assets').nextElementSibling?.textContent).toBe(
+      '2',
+    );
+    expect(
+      screen.getByText('Total observations').nextElementSibling?.textContent,
+    ).toBe('42');
     expect(screen.getByText('Issued assets (2)')).toBeInTheDocument();
   });
 });

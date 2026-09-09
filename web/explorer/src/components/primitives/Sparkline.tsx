@@ -46,8 +46,7 @@ export function Sparkline({
     .join(' ');
 
   const netDelta = values[values.length - 1]! - values[0]!;
-  const resolvedTone =
-    tone === 'auto' ? (netDelta >= 0 ? 'up' : 'down') : tone;
+  const resolvedTone = tone === 'auto' ? (netDelta >= 0 ? 'up' : 'down') : tone;
   const stroke =
     resolvedTone === 'up'
       ? 'var(--color-up)'

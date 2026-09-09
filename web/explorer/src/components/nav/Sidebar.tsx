@@ -87,7 +87,12 @@ const NAV: NavGroup[] = [
   {
     title: 'Developers',
     items: [
-      { href: 'https://docs.stellarindex.io', label: 'API Docs', icon: BookOpen, external: true },
+      {
+        href: 'https://docs.stellarindex.io',
+        label: 'API Docs',
+        icon: BookOpen,
+        external: true,
+      },
       { href: '/sdk', label: 'SDK', icon: Code2 },
       { href: '/status', label: 'Status', icon: Activity, statusDot: true },
     ],
@@ -122,7 +127,12 @@ const ACCOUNT_GROUP: NavGroup = {
     // LC-020: link the ACTUAL served routes (/dashboard/*). These used to
     // point at /account/* and relied on a Cloudflare 301 — so the active
     // state never matched the served URL and the links 404'd under `next dev`.
-    { href: '/dashboard', label: 'Dashboard', icon: LayoutDashboard, exact: true },
+    {
+      href: '/dashboard',
+      label: 'Dashboard',
+      icon: LayoutDashboard,
+      exact: true,
+    },
     { href: '/dashboard/keys', label: 'API keys', icon: KeyRound },
     { href: '/dashboard/price-alerts', label: 'Price alerts', icon: BellRing },
     { href: '/dashboard/usage', label: 'Usage', icon: Gauge },
@@ -145,7 +155,8 @@ function isActive(pathname: string | null, href: string): boolean {
 function Row({ item, onNavigate }: { item: NavItem; onNavigate?: () => void }) {
   const pathname = usePathname();
   const active =
-    !item.external && (item.exact ? pathname === item.href : isActive(pathname, item.href));
+    !item.external &&
+    (item.exact ? pathname === item.href : isActive(pathname, item.href));
   const Icon = item.icon;
   const cls = cn(
     'group flex items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-sm font-medium transition-colors',
@@ -155,10 +166,19 @@ function Row({ item, onNavigate }: { item: NavItem; onNavigate?: () => void }) {
   );
   const inner = (
     <>
-      <Icon className={cn('h-4 w-4 shrink-0', active ? 'text-brand-600' : 'text-ink-faint group-hover:text-ink-muted')} />
+      <Icon
+        className={cn(
+          'h-4 w-4 shrink-0',
+          active
+            ? 'text-brand-600'
+            : 'text-ink-faint group-hover:text-ink-muted',
+        )}
+      />
       <span className="truncate">{item.label}</span>
       {item.statusDot && <StatusDot />}
-      {item.external && <ExternalLink className="ml-auto h-3 w-3 text-ink-faint" />}
+      {item.external && (
+        <ExternalLink className="text-ink-faint ml-auto h-3 w-3" />
+      )}
     </>
   );
   if (item.external) {
@@ -169,7 +189,12 @@ function Row({ item, onNavigate }: { item: NavItem; onNavigate?: () => void }) {
     );
   }
   return (
-    <Link href={item.href} className={cls} onClick={onNavigate} aria-current={active ? 'page' : undefined}>
+    <Link
+      href={item.href}
+      className={cls}
+      onClick={onNavigate}
+      aria-current={active ? 'page' : undefined}
+    >
       {inner}
     </Link>
   );
@@ -224,7 +249,7 @@ export function SidebarNav({ onNavigate }: { onNavigate?: () => void }) {
     : ACCOUNT_GROUP;
   const groups = navForNetwork(signedIn ? [...NAV, accountGroup] : NAV);
   return (
-    <div className="flex h-full flex-col bg-surface-muted">
+    <div className="bg-surface-muted flex h-full flex-col">
       {/* Logo row — the Stellar mark + wordmark on the left, and the odometer
           (a single hoverable control: network name + chevron over THIS network's
           live ledger; click anywhere on it to open the network switcher) floated
@@ -233,9 +258,9 @@ export function SidebarNav({ onNavigate }: { onNavigate?: () => void }) {
         <Link
           href="/"
           onClick={onNavigate}
-          className="flex min-w-0 items-center gap-2 font-sans text-base font-semibold tracking-tight text-ink"
+          className="text-ink flex min-w-0 items-center gap-2 font-sans text-base font-semibold tracking-tight"
         >
-          <StellarMark className="h-5 w-5 shrink-0 text-ink" />
+          <StellarMark className="text-ink h-5 w-5 shrink-0" />
           {/* Wordmark weight contrast (2026-08-24): "Stellar" carries the
               brand weight, "Index" sits lighter — same ink, thinner cut. */}
           <span className="truncate">
@@ -258,7 +283,7 @@ export function SidebarNav({ onNavigate }: { onNavigate?: () => void }) {
         {groups.map((group, gi) => (
           <div key={group.title ?? `g${gi}`} className="space-y-0.5">
             {group.title && (
-              <div className="px-2.5 pb-1 text-[11px] font-semibold uppercase tracking-wider text-ink-faint">
+              <div className="text-ink-faint px-2.5 pb-1 text-[11px] font-semibold tracking-wider uppercase">
                 {group.title}
               </div>
             )}
@@ -270,7 +295,7 @@ export function SidebarNav({ onNavigate }: { onNavigate?: () => void }) {
       </nav>
 
       {/* Account — bottom-left */}
-      <div className="shrink-0 border-t border-line p-3">
+      <div className="border-line shrink-0 border-t p-3">
         <AccountCard onNavigate={onNavigate} />
       </div>
     </div>
@@ -280,7 +305,7 @@ export function SidebarNav({ onNavigate }: { onNavigate?: () => void }) {
 /** The persistent desktop left rail (hidden on mobile; drawer handles small screens). */
 export function Sidebar() {
   return (
-    <aside className="sticky top-0 hidden h-screen w-64 shrink-0 border-r border-line lg:block">
+    <aside className="border-line sticky top-0 hidden h-screen w-64 shrink-0 border-r lg:block">
       <SidebarNav />
     </aside>
   );
@@ -306,14 +331,14 @@ function AccountCard({ onNavigate }: { onNavigate?: () => void }) {
           <Link
             href="/signin"
             onClick={onNavigate}
-            className="rounded-lg border border-line bg-surface px-3 py-1.5 text-center text-sm font-medium text-ink-body shadow-xs hover:bg-surface-subtle"
+            className="border-line bg-surface text-ink-body hover:bg-surface-subtle rounded-lg border px-3 py-1.5 text-center text-sm font-medium shadow-xs"
           >
             Sign in
           </Link>
           <Link
             href="/signup"
             onClick={onNavigate}
-            className="rounded-lg bg-brand-fill px-3 py-1.5 text-center text-sm font-medium text-white hover:bg-brand-fill-hover"
+            className="bg-brand-fill hover:bg-brand-fill-hover rounded-lg px-3 py-1.5 text-center text-sm font-medium text-white"
           >
             Sign up
           </Link>
@@ -329,7 +354,8 @@ function AccountMenu({ email }: { email?: string }) {
   useEffect(() => {
     if (!open) return;
     function onDoc(e: MouseEvent) {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+      if (ref.current && !ref.current.contains(e.target as Node))
+        setOpen(false);
     }
     document.addEventListener('mousedown', onDoc);
     return () => document.removeEventListener('mousedown', onDoc);
@@ -346,7 +372,10 @@ function AccountMenu({ email }: { email?: string }) {
 
   async function signOut() {
     try {
-      await fetch(`${API_BASE_URL}/v1/auth/logout`, { method: 'POST', credentials: 'include' });
+      await fetch(`${API_BASE_URL}/v1/auth/logout`, {
+        method: 'POST',
+        credentials: 'include',
+      });
     } catch {
       /* best-effort */
     }
@@ -362,14 +391,18 @@ function AccountMenu({ email }: { email?: string }) {
         onClick={() => setOpen((o) => !o)}
         aria-expanded={open}
         aria-controls="sidebar-account-menu"
-        className="flex w-full items-center gap-2.5 rounded-lg border border-line bg-surface px-2.5 py-2 text-left shadow-xs hover:bg-surface-subtle"
+        className="border-line bg-surface hover:bg-surface-subtle flex w-full items-center gap-2.5 rounded-lg border px-2.5 py-2 text-left shadow-xs"
       >
-        <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-brand-fill text-xs font-semibold text-white">
+        <span className="bg-brand-fill flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-xs font-semibold text-white">
           {initials}
         </span>
         <span className="min-w-0 flex-1">
-          <span className="block truncate text-sm font-medium text-ink">{email ?? 'Account'}</span>
-          <span className="block truncate text-[11px] text-ink-muted">Signed in</span>
+          <span className="text-ink block truncate text-sm font-medium">
+            {email ?? 'Account'}
+          </span>
+          <span className="text-ink-muted block truncate text-[11px]">
+            Signed in
+          </span>
         </span>
       </button>
       {open && (
@@ -383,22 +416,22 @@ function AccountMenu({ email }: { email?: string }) {
           id="sidebar-account-menu"
           ref={panelRef}
           tabIndex={-1}
-          className="absolute bottom-full left-0 z-50 mb-1 w-full rounded-lg border border-line bg-surface p-2 shadow-elevated outline-hidden"
+          className="border-line bg-surface shadow-elevated absolute bottom-full left-0 z-50 mb-1 w-full rounded-lg border p-2 outline-hidden"
         >
           <Link
             href="/dashboard"
             onClick={() => setOpen(false)}
-            className="flex items-center gap-2 rounded-md px-3 py-2 text-sm hover:bg-surface-subtle"
+            className="hover:bg-surface-subtle flex items-center gap-2 rounded-md px-3 py-2 text-sm"
           >
-            <User className="h-3.5 w-3.5 text-ink-faint" />
+            <User className="text-ink-faint h-3.5 w-3.5" />
             Your account
           </Link>
           <button
             type="button"
             onClick={signOut}
-            className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm text-ink-body hover:bg-surface-subtle"
+            className="text-ink-body hover:bg-surface-subtle flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm"
           >
-            <LogOut className="h-3.5 w-3.5 text-ink-faint" />
+            <LogOut className="text-ink-faint h-3.5 w-3.5" />
             Sign out
           </button>
         </div>

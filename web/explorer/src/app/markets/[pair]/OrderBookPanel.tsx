@@ -159,41 +159,43 @@ function DepthTable({
       {/* WCAG 1.4.10 Reflow: the mono price/amount columns scroll in
           place instead of pushing the page sideways at 320px. */}
       <div className="overflow-x-auto">
-      <table className="min-w-full text-xs">
-        <thead>
-          <tr className="text-ink-muted text-[10px] tracking-wider uppercase">
-            <th className="py-1 text-left font-medium">Price</th>
-            <th className="py-1 text-right font-medium">Amount</th>
-            <th className="py-1 text-right font-medium">Total</th>
-          </tr>
-        </thead>
-        <tbody>
-          {levels.map((l) => {
-            const pct =
-              maxCum > 0
-                ? Math.min(100, (Number(l.cum_base_amount) / maxCum) * 100)
-                : 0;
-            return (
-              <tr key={`${l.price_r.n}/${l.price_r.d}`} className="relative">
-                <td className="relative py-0.5 pr-2 font-mono tabular-nums">
-                  <span
-                    aria-hidden
-                    className={`absolute inset-y-0 left-0 ${barClass}`}
-                    style={{ width: `${pct}%` }}
-                  />
-                  <span className="relative">{trimTrailingZeros(l.price)}</span>
-                </td>
-                <td className="relative py-0.5 text-right font-mono tabular-nums">
-                  {trimTrailingZeros(l.base_amount)}
-                </td>
-                <td className="text-ink-muted relative py-0.5 text-right font-mono tabular-nums">
-                  {trimTrailingZeros(l.cum_base_amount)}
-                </td>
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
+        <table className="min-w-full text-xs">
+          <thead>
+            <tr className="text-ink-muted text-[10px] tracking-wider uppercase">
+              <th className="py-1 text-left font-medium">Price</th>
+              <th className="py-1 text-right font-medium">Amount</th>
+              <th className="py-1 text-right font-medium">Total</th>
+            </tr>
+          </thead>
+          <tbody>
+            {levels.map((l) => {
+              const pct =
+                maxCum > 0
+                  ? Math.min(100, (Number(l.cum_base_amount) / maxCum) * 100)
+                  : 0;
+              return (
+                <tr key={`${l.price_r.n}/${l.price_r.d}`} className="relative">
+                  <td className="relative py-0.5 pr-2 font-mono tabular-nums">
+                    <span
+                      aria-hidden
+                      className={`absolute inset-y-0 left-0 ${barClass}`}
+                      style={{ width: `${pct}%` }}
+                    />
+                    <span className="relative">
+                      {trimTrailingZeros(l.price)}
+                    </span>
+                  </td>
+                  <td className="relative py-0.5 text-right font-mono tabular-nums">
+                    {trimTrailingZeros(l.base_amount)}
+                  </td>
+                  <td className="text-ink-muted relative py-0.5 text-right font-mono tabular-nums">
+                    {trimTrailingZeros(l.cum_base_amount)}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
       </div>
     </div>
   );

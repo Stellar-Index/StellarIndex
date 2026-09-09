@@ -46,10 +46,15 @@ export function IssuerPathView() {
     retry: false,
     staleTime: 300_000,
     queryFn: async () =>
-      (await apiGet<Envelope<IssuerDetail>>(`/v1/issuers/${encodeURIComponent(g)}`)).data,
+      (
+        await apiGet<Envelope<IssuerDetail>>(
+          `/v1/issuers/${encodeURIComponent(g)}`,
+        )
+      ).data,
   });
 
-  const title = data?.org_name || (valid ? `${g.slice(0, 8)}…${g.slice(-4)}` : 'Issuer');
+  const title =
+    data?.org_name || (valid ? `${g.slice(0, 8)}…${g.slice(-4)}` : 'Issuer');
 
   return (
     <Container className="space-y-6 py-8">
@@ -61,11 +66,17 @@ export function IssuerPathView() {
             { label: valid ? `${g.slice(0, 8)}…${g.slice(-4)}` : 'Issuer' },
           ]}
         />
-        <h1 className="text-2xl font-semibold tracking-tight text-ink">{title}</h1>
+        <h1 className="text-ink text-2xl font-semibold tracking-tight">
+          {title}
+        </h1>
       </header>
 
       {!valid && (
-        <Panel headingLevel={2} title="Invalid issuer" bodyClassName="text-sm text-ink-body">
+        <Panel
+          headingLevel={2}
+          title="Invalid issuer"
+          bodyClassName="text-sm text-ink-body"
+        >
           The path segment isn&apos;t a valid Stellar account (G…) key.{' '}
           <Link href="/issuers" className="text-brand-600 hover:underline">
             Browse issuers →
@@ -91,16 +102,18 @@ export function IssuerPathView() {
             <>
               <div className="flex flex-wrap items-center gap-2 text-xs">
                 {data.org_verified && (
-                  <span className="rounded-sm bg-up-subtle px-1.5 py-0.5 font-medium uppercase tracking-wider text-up-strong">
+                  <span className="bg-up-subtle text-up-strong rounded-sm px-1.5 py-0.5 font-medium tracking-wider uppercase">
                     ✓ Verified
                   </span>
                 )}
                 {data.scam_reason && (
                   <span
                     title={data.scam_reason}
-                    className="rounded-sm bg-down-subtle px-1.5 py-0.5 font-medium uppercase tracking-wider text-down"
+                    className="bg-down-subtle text-down rounded-sm px-1.5 py-0.5 font-medium tracking-wider uppercase"
                   >
-                    {/^deprecated/i.test(data.scam_reason) ? 'DEPRECATED' : 'FLAGGED'}
+                    {/^deprecated/i.test(data.scam_reason)
+                      ? 'DEPRECATED'
+                      : 'FLAGGED'}
                   </span>
                 )}
                 {data.home_domain && (
@@ -108,21 +121,21 @@ export function IssuerPathView() {
                 )}
               </div>
               <div>
-                <div className="text-[11px] uppercase tracking-wider text-ink-muted">
+                <div className="text-ink-muted text-[11px] tracking-wider uppercase">
                   Account
                 </div>
                 <div className="mt-0.5 flex flex-wrap items-center gap-3">
                   <CopyHash value={data.g_strkey} head={12} tail={12} />
                   <Link
                     href={`/accounts/${data.g_strkey}`}
-                    className="text-xs text-brand-600 hover:underline"
+                    className="text-brand-600 text-xs hover:underline"
                   >
                     Account view →
                   </Link>
                 </div>
               </div>
               <div>
-                <div className="text-[11px] uppercase tracking-wider text-ink-muted">
+                <div className="text-ink-muted text-[11px] tracking-wider uppercase">
                   Issued assets
                 </div>
                 {/* `assets` is soft-failed to nil server-side on an
@@ -130,11 +143,11 @@ export function IssuerPathView() {
                     (internal/api/v1/issuers.go) — absent is unknown,
                     not "this issuer has issued nothing". */}
                 {!data.assets ? (
-                  <p className="mt-1 text-sm text-ink-muted">
+                  <p className="text-ink-muted mt-1 text-sm">
                     Issued-asset list unavailable — retry shortly.
                   </p>
                 ) : data.assets.length === 0 ? (
-                  <p className="mt-1 text-sm text-ink-muted">
+                  <p className="text-ink-muted mt-1 text-sm">
                     No observed classic assets.
                   </p>
                 ) : (
@@ -143,13 +156,14 @@ export function IssuerPathView() {
                       <li key={a.asset_id ?? a.code}>
                         <Link
                           href={`/assets/${encodeURIComponent(a.asset_id ?? a.code ?? '')}`}
-                          className="font-medium text-brand-600 hover:underline"
+                          className="text-brand-600 font-medium hover:underline"
                         >
                           {a.code ?? a.asset_id}
                         </Link>
                         {typeof a.observation_count === 'number' && (
-                          <span className="ml-2 font-mono text-xs tabular-nums text-ink-muted">
-                            {a.observation_count.toLocaleString('en-US')} observations
+                          <span className="text-ink-muted ml-2 font-mono text-xs tabular-nums">
+                            {a.observation_count.toLocaleString('en-US')}{' '}
+                            observations
                           </span>
                         )}
                       </li>

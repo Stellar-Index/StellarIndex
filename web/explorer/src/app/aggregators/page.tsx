@@ -46,8 +46,14 @@ const ENTRIES: Entry[] = [
     contractRefs: [
       // Sourced from soroswap/core public/mainnet.contracts.json,
       // last verified 2026-05-08.
-      { label: 'Router', cstrkey: 'CAG5LRYQ5JVEUI5TEID72EYOVX44TTUJT5BQR2J6J77FH65PCCFAJDDH' },
-      { label: 'Pair factory', cstrkey: 'CA4HEQTL2WPEUYKYKCDOHCDNIV4QHNJ7EL4J4NQ6VADP7SYHVRYZ7AW2' },
+      {
+        label: 'Router',
+        cstrkey: 'CAG5LRYQ5JVEUI5TEID72EYOVX44TTUJT5BQR2J6J77FH65PCCFAJDDH',
+      },
+      {
+        label: 'Pair factory',
+        cstrkey: 'CA4HEQTL2WPEUYKYKCDOHCDNIV4QHNJ7EL4J4NQ6VADP7SYHVRYZ7AW2',
+      },
     ],
     homepage: 'https://soroswap.finance',
   },
@@ -65,10 +71,22 @@ const ENTRIES: Entry[] = [
     contractRefs: [
       // Sourced from paltalabs/defindex public/mainnet.contracts.json,
       // last verified 2026-05-08.
-      { label: 'Factory', cstrkey: 'CDKFHFJIET3A73A2YN4KV7NSV32S6YGQMUFH3DNJXLBWL4SKEGVRNFKI' },
-      { label: 'USDC autocompound', cstrkey: 'CDB2WMKQQNVZMEBY7Q7GZ5C7E7IAFSNMZ7GGVD6WKTCEWK7XOIAVZSAP' },
-      { label: 'EURC autocompound', cstrkey: 'CC5CE6MWISDXT3MLNQ7R3FVILFVFEIH3COWGH45GJKL6BD2ZHF7F7JVI' },
-      { label: 'XLM autocompound', cstrkey: 'CDPWNUW7UMCSVO36VAJSQHQECISPJLCVPDASKHRC5SEROAAZDUQ5DG2Z' },
+      {
+        label: 'Factory',
+        cstrkey: 'CDKFHFJIET3A73A2YN4KV7NSV32S6YGQMUFH3DNJXLBWL4SKEGVRNFKI',
+      },
+      {
+        label: 'USDC autocompound',
+        cstrkey: 'CDB2WMKQQNVZMEBY7Q7GZ5C7E7IAFSNMZ7GGVD6WKTCEWK7XOIAVZSAP',
+      },
+      {
+        label: 'EURC autocompound',
+        cstrkey: 'CC5CE6MWISDXT3MLNQ7R3FVILFVFEIH3COWGH45GJKL6BD2ZHF7F7JVI',
+      },
+      {
+        label: 'XLM autocompound',
+        cstrkey: 'CDPWNUW7UMCSVO36VAJSQHQECISPJLCVPDASKHRC5SEROAAZDUQ5DG2Z',
+      },
     ],
     homepage: 'https://defindex.io',
   },
@@ -79,9 +97,8 @@ export default function AggregatorsPage() {
     <Container className="space-y-6 py-8">
       <header className="space-y-2">
         <h1 className="text-3xl font-semibold tracking-tight">Aggregators</h1>
-        <p className="max-w-3xl text-sm text-ink-body">
-          Routers and yield wrappers — protocols that route into the
-          underlying{' '}
+        <p className="text-ink-body max-w-3xl text-sm">
+          Routers and yield wrappers — protocols that route into the underlying{' '}
           <Link href="/dexes" className="underline decoration-dotted">
             DEXes
           </Link>{' '}
@@ -100,16 +117,16 @@ export default function AggregatorsPage() {
         bodyClassName="text-sm text-ink-body space-y-2"
       >
         <p>
-          A trade routed through the Soroswap router still emits a
-          SoroswapPair swap event on the underlying pair contract — that
-          event is the one we VWAP. Counting the router-level call
-          separately would double the same price-discovery moment.
+          A trade routed through the Soroswap router still emits a SoroswapPair
+          swap event on the underlying pair contract — that event is the one we
+          VWAP. Counting the router-level call separately would double the same
+          price-discovery moment.
         </p>
         <p>
-          The same logic applies to DeFindex: a vault deposit moves
-          shares but doesn&apos;t set a price. The underlying Blend
-          loan&apos;s collateral revaluation is what we care about, and
-          we get that directly from Blend.
+          The same logic applies to DeFindex: a vault deposit moves shares but
+          doesn&apos;t set a price. The underlying Blend loan&apos;s collateral
+          revaluation is what we care about, and we get that directly from
+          Blend.
         </p>
       </Panel>
 
@@ -128,11 +145,11 @@ export default function AggregatorsPage() {
 
 function Card({ entry }: { entry: Entry }) {
   return (
-    <div className="rounded-card border border-line bg-surface p-5 shadow-card">
+    <div className="rounded-card border-line bg-surface shadow-card border p-5">
       <div className="flex items-baseline justify-between gap-2">
         <h2 className="text-lg font-semibold tracking-tight">{entry.name}</h2>
         <span
-          className={`shrink-0 rounded px-1.5 py-0.5 text-[10px] uppercase tracking-wider ${
+          className={`shrink-0 rounded px-1.5 py-0.5 text-[10px] tracking-wider uppercase ${
             entry.type === 'router'
               ? 'bg-brand-100 text-brand-700'
               : 'bg-surface-subtle text-ink-body'
@@ -141,10 +158,8 @@ function Card({ entry }: { entry: Entry }) {
           {entry.type === 'router' ? 'Router' : 'Yield vault'}
         </span>
       </div>
-      <p className="mt-3 text-sm text-ink-body">
-        {entry.blurb}
-      </p>
-      <ul className="mt-3 space-y-1.5 text-xs text-ink-body">
+      <p className="text-ink-body mt-3 text-sm">{entry.blurb}</p>
+      <ul className="text-ink-body mt-3 space-y-1.5 text-xs">
         {entry.notes.map((n, i) => (
           <li key={i} className="flex gap-2">
             <span className="text-ink-faint">•</span>
@@ -153,19 +168,20 @@ function Card({ entry }: { entry: Entry }) {
         ))}
       </ul>
       {entry.contractRefs && entry.contractRefs.length > 0 && (
-        <div className="mt-4 border-t border-line pt-3">
-          <div className="text-[10px] font-medium uppercase tracking-wider text-ink-muted">
+        <div className="border-line mt-4 border-t pt-3">
+          <div className="text-ink-muted text-[10px] font-medium tracking-wider uppercase">
             Mainnet contracts
           </div>
           <ul className="mt-1.5 space-y-1 text-xs">
             {entry.contractRefs.map((c) => (
-              <li key={c.cstrkey} className="flex items-baseline justify-between gap-3">
-                <span className="text-ink-body">
-                  {c.label}
-                </span>
+              <li
+                key={c.cstrkey}
+                className="flex items-baseline justify-between gap-3"
+              >
+                <span className="text-ink-body">{c.label}</span>
                 <Link
                   href={`/contracts/${encodeURIComponent(c.cstrkey)}/`}
-                  className="font-mono text-[11px] text-brand-600 hover:underline"
+                  className="text-brand-600 font-mono text-[11px] hover:underline"
                   title={`${c.cstrkey} — contract events + code`}
                 >
                   {c.cstrkey.slice(0, 6)}…{c.cstrkey.slice(-4)}
@@ -179,7 +195,7 @@ function Card({ entry }: { entry: Entry }) {
         {entry.protocolSlug && (
           <Link
             href={`/protocols/${entry.protocolSlug}`}
-            className="inline-flex items-center gap-1 font-medium text-brand-600 hover:underline"
+            className="text-brand-600 inline-flex items-center gap-1 font-medium hover:underline"
           >
             Protocol analytics →
           </Link>
@@ -187,7 +203,7 @@ function Card({ entry }: { entry: Entry }) {
         {entry.homepage && (
           <a
             href={entry.homepage}
-            className="inline-flex items-center gap-1 text-brand-600 hover:underline"
+            className="text-brand-600 inline-flex items-center gap-1 hover:underline"
             target="_blank"
             rel="noreferrer"
           >
@@ -198,7 +214,7 @@ function Card({ entry }: { entry: Entry }) {
         {entry.contractsRepo && (
           <a
             href={entry.contractsRepo}
-            className="inline-flex items-center gap-1 text-ink-muted hover:underline"
+            className="text-ink-muted inline-flex items-center gap-1 hover:underline"
             target="_blank"
             rel="noreferrer"
           >

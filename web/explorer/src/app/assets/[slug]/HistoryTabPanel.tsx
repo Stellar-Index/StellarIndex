@@ -124,10 +124,10 @@ export function HistoryTabPanel({
               <td className="text-ink-body py-2 pr-3 font-mono text-xs">
                 {r.tx_hash ? (
                   <Link
-                          href={`/transactions/${r.tx_hash}/`}
-                          className="hover:text-brand-600 hover:underline"
-                          title={`View transaction ${r.tx_hash}`}
-                        >
+                    href={`/transactions/${r.tx_hash}/`}
+                    className="hover:text-brand-600 hover:underline"
+                    title={`View transaction ${r.tx_hash}`}
+                  >
                     {formatRelative(r.ts)}
                   </Link>
                 ) : (

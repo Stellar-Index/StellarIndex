@@ -63,7 +63,7 @@ export function DonutChart({
 
   if (slices.length === 0 || total <= 0) {
     return (
-      <div className={cn('text-sm text-ink-muted', className)}>
+      <div className={cn('text-ink-muted text-sm', className)}>
         No composition data to chart.
       </div>
     );
@@ -95,7 +95,9 @@ export function DonutChart({
   });
 
   return (
-    <div className={cn('flex flex-wrap items-center gap-x-6 gap-y-3', className)}>
+    <div
+      className={cn('flex flex-wrap items-center gap-x-6 gap-y-3', className)}
+    >
       <svg
         width={size}
         height={size}
@@ -166,9 +168,13 @@ export function DonutChart({
                 className="h-2.5 w-2.5 shrink-0 rounded-xs"
                 style={{ backgroundColor: s.color }}
               />
-              <span className="min-w-0 flex-1 truncate text-ink-body">{s.label}</span>
-              <span className="font-mono tabular-nums text-ink">{formatValue(s.value)}</span>
-              <span className="w-12 text-right font-mono tabular-nums text-ink-muted">
+              <span className="text-ink-body min-w-0 flex-1 truncate">
+                {s.label}
+              </span>
+              <span className="text-ink font-mono tabular-nums">
+                {formatValue(s.value)}
+              </span>
+              <span className="text-ink-muted w-12 text-right font-mono tabular-nums">
                 {s.pct.toFixed(1)}%
               </span>
             </span>
@@ -176,11 +182,14 @@ export function DonutChart({
           return (
             <li key={s.label}>
               {s.href ? (
-                <Link href={s.href} className="block rounded-sm px-1 -mx-1 transition-colors hover:bg-surface-muted hover:text-brand-600">
+                <Link
+                  href={s.href}
+                  className="hover:bg-surface-muted hover:text-brand-600 -mx-1 block rounded-sm px-1 transition-colors"
+                >
                   {row}
                 </Link>
               ) : (
-                <span className="block px-1 -mx-1">{row}</span>
+                <span className="-mx-1 block px-1">{row}</span>
               )}
             </li>
           );

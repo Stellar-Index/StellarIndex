@@ -58,7 +58,9 @@ describe('SignInForm passkey entry', () => {
       await screen.findByRole('button', { name: /Sign in with a passkey/ }),
     );
 
-    await waitFor(() => expect(finishPasskeyLogin).toHaveBeenCalledWith(assertion));
+    await waitFor(() =>
+      expect(finishPasskeyLogin).toHaveBeenCalledWith(assertion),
+    );
     expect(beginPasskeyLogin).toHaveBeenCalledTimes(1);
     expect(getPasskeyAssertion).toHaveBeenCalledWith(options);
     await waitFor(() => expect(assign).toHaveBeenCalledWith('/dashboard'));

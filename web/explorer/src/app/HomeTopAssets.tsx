@@ -349,7 +349,13 @@ function ChangePct({ raw }: { raw: string | null | undefined }) {
 // the moment the listing carries them. Plain <img loading="lazy">
 // (not next/image) — remote SEP-1 hosts can't be enumerated into a
 // next/image domain allowlist under static export.
-function AssetIcon({ image, code }: { image?: string | null; code?: string | null }) {
+function AssetIcon({
+  image,
+  code,
+}: {
+  image?: string | null;
+  code?: string | null;
+}) {
   const [broken, setBroken] = useState(false);
   // SEC-10: host-validated, https-only — scheme-only validation let a
   // hostile issuer's SEP-1 image URL point every viewer's browser at an
@@ -385,7 +391,10 @@ function AssetIcon({ image, code }: { image?: string | null; code?: string | nul
 // cell — a row with an icon, a price and no identity at all. Fall back
 // to a truncated contract id, which is what the asset detail page and
 // the /assets listing already show for these.
-function assetLabel(coin: { code?: string | null; asset_id?: string | null }): string {
+function assetLabel(coin: {
+  code?: string | null;
+  asset_id?: string | null;
+}): string {
   if (coin.code) return coin.code;
   const id = coin.asset_id ?? '';
   return id.length > 12 ? `${id.slice(0, 4)}…${id.slice(-4)}` : id || '—';

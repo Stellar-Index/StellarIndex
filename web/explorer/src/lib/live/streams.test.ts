@@ -67,8 +67,16 @@ describe('subscribeStream', () => {
 
   it('shares one connection across subscribers to the same URL', () => {
     const got: string[] = [];
-    const un1 = subscribeStream('http://x/v1/ledger/stream', 'ledger_update', (d) => got.push(`a:${d}`));
-    const un2 = subscribeStream('http://x/v1/ledger/stream', 'ledger_update', (d) => got.push(`b:${d}`));
+    const un1 = subscribeStream(
+      'http://x/v1/ledger/stream',
+      'ledger_update',
+      (d) => got.push(`a:${d}`),
+    );
+    const un2 = subscribeStream(
+      'http://x/v1/ledger/stream',
+      'ledger_update',
+      (d) => got.push(`b:${d}`),
+    );
 
     expect(FakeEventSource.instances).toHaveLength(1);
     FakeEventSource.instances[0].emit('ledger_update', '{"n":1}');
@@ -81,15 +89,27 @@ describe('subscribeStream', () => {
   });
 
   it('distinct URLs get distinct connections', () => {
-    const un1 = subscribeStream('http://x/v1/ledger/stream', 'ledger_update', () => {});
-    const un2 = subscribeStream('http://x/v1/price/tip/stream?asset=native', 'tip_update', () => {});
+    const un1 = subscribeStream(
+      'http://x/v1/ledger/stream',
+      'ledger_update',
+      () => {},
+    );
+    const un2 = subscribeStream(
+      'http://x/v1/price/tip/stream?asset=native',
+      'tip_update',
+      () => {},
+    );
     expect(FakeEventSource.instances).toHaveLength(2);
     un1();
     un2();
   });
 
   it('closes the connection after the last unsubscribe + linger', () => {
-    const un = subscribeStream('http://x/v1/ledger/stream', 'ledger_update', () => {});
+    const un = subscribeStream(
+      'http://x/v1/ledger/stream',
+      'ledger_update',
+      () => {},
+    );
     un();
     expect(FakeEventSource.instances[0].closed).toBe(false);
     vi.advanceTimersByTime(6_000);
@@ -98,9 +118,17 @@ describe('subscribeStream', () => {
   });
 
   it('re-subscribing within the linger window reuses the connection', () => {
-    const un = subscribeStream('http://x/v1/ledger/stream', 'ledger_update', () => {});
+    const un = subscribeStream(
+      'http://x/v1/ledger/stream',
+      'ledger_update',
+      () => {},
+    );
     un();
-    const un2 = subscribeStream('http://x/v1/ledger/stream', 'ledger_update', () => {});
+    const un2 = subscribeStream(
+      'http://x/v1/ledger/stream',
+      'ledger_update',
+      () => {},
+    );
     vi.advanceTimersByTime(10_000);
     expect(FakeEventSource.instances).toHaveLength(1);
     expect(FakeEventSource.instances[0].closed).toBe(false);
@@ -109,7 +137,11 @@ describe('subscribeStream', () => {
 
   it('schedules a slow reopen after a hard failure', () => {
     const got: string[] = [];
-    const un = subscribeStream('http://x/v1/ledger/stream', 'ledger_update', (d) => got.push(d));
+    const un = subscribeStream(
+      'http://x/v1/ledger/stream',
+      'ledger_update',
+      (d) => got.push(d),
+    );
     FakeEventSource.instances[0].hardFail();
     expect(FakeEventSource.instances).toHaveLength(1);
 
@@ -121,7 +153,11 @@ describe('subscribeStream', () => {
   });
 
   it('does not reopen after a hard failure once every subscriber left', () => {
-    const un = subscribeStream('http://x/v1/ledger/stream', 'ledger_update', () => {});
+    const un = subscribeStream(
+      'http://x/v1/ledger/stream',
+      'ledger_update',
+      () => {},
+    );
     FakeEventSource.instances[0].hardFail();
     un();
     vi.advanceTimersByTime(STREAM_REOPEN_MS * 2);
@@ -129,8 +165,16 @@ describe('subscribeStream', () => {
   });
 
   it('unsubscribe is idempotent', () => {
-    const un = subscribeStream('http://x/v1/ledger/stream', 'ledger_update', () => {});
-    const un2 = subscribeStream('http://x/v1/ledger/stream', 'ledger_update', () => {});
+    const un = subscribeStream(
+      'http://x/v1/ledger/stream',
+      'ledger_update',
+      () => {},
+    );
+    const un2 = subscribeStream(
+      'http://x/v1/ledger/stream',
+      'ledger_update',
+      () => {},
+    );
     un();
     un();
     // The double-call above must not have stolen un2's reference.

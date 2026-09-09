@@ -68,12 +68,14 @@ function AdminBody({ me }: { me: MeResponse }) {
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <Card flat>
             <CardBody className="space-y-3">
-              <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-surface-subtle text-ink-muted">
+              <span className="bg-surface-subtle text-ink-muted flex h-9 w-9 items-center justify-center rounded-lg">
                 <Sliders className="h-[18px] w-[18px]" />
               </span>
               <div>
-                <div className="text-sm font-semibold text-ink">Tier overrides</div>
-                <p className="mt-1 text-sm text-ink-muted">
+                <div className="text-ink text-sm font-semibold">
+                  Tier overrides
+                </div>
+                <p className="text-ink-muted mt-1 text-sm">
                   Manually adjust an account tier or rate-limit ceiling.
                 </p>
               </div>
@@ -82,13 +84,16 @@ function AdminBody({ me }: { me: MeResponse }) {
           </Card>
           <Card flat>
             <CardBody className="space-y-3">
-              <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-surface-subtle text-ink-muted">
+              <span className="bg-surface-subtle text-ink-muted flex h-9 w-9 items-center justify-center rounded-lg">
                 <AlertTriangle className="h-[18px] w-[18px]" />
               </span>
               <div>
-                <div className="text-sm font-semibold text-ink">Incident tools</div>
-                <p className="mt-1 text-sm text-ink-muted">
-                  Bulk key revocation and account suspension for incident response.
+                <div className="text-ink text-sm font-semibold">
+                  Incident tools
+                </div>
+                <p className="text-ink-muted mt-1 text-sm">
+                  Bulk key revocation and account suspension for incident
+                  response.
                 </p>
               </div>
               <Badge tone="neutral">Coming in Phase 1.5</Badge>
@@ -135,8 +140,8 @@ function CustomerLookup() {
     <Card>
       <CardBody className="space-y-4">
         <div className="flex items-center gap-2">
-          <Search className="h-[18px] w-[18px] text-ink-muted" />
-          <div className="text-sm font-semibold text-ink">Customer look-up</div>
+          <Search className="text-ink-muted h-[18px] w-[18px]" />
+          <div className="text-ink text-sm font-semibold">Customer look-up</div>
         </div>
         <form onSubmit={onSubmit} className="flex gap-2">
           <Input
@@ -169,23 +174,33 @@ function LookupResult({ result }: { result: AdminLookupResult }) {
     <div className="space-y-4">
       <div className="flex flex-wrap items-center gap-x-6 gap-y-2 text-sm">
         <div>
-          <div className="text-[11px] uppercase tracking-wider text-ink-muted">Account</div>
-          <div className="mt-0.5 font-medium text-ink">{a.name || a.slug}</div>
+          <div className="text-ink-muted text-[11px] tracking-wider uppercase">
+            Account
+          </div>
+          <div className="text-ink mt-0.5 font-medium">{a.name || a.slug}</div>
         </div>
         <div>
-          <div className="text-[11px] uppercase tracking-wider text-ink-muted">Slug</div>
-          <div className="mt-0.5 font-mono text-ink-body">{a.slug}</div>
+          <div className="text-ink-muted text-[11px] tracking-wider uppercase">
+            Slug
+          </div>
+          <div className="text-ink-body mt-0.5 font-mono">{a.slug}</div>
         </div>
         <div>
-          <div className="text-[11px] uppercase tracking-wider text-ink-muted">Tier</div>
+          <div className="text-ink-muted text-[11px] tracking-wider uppercase">
+            Tier
+          </div>
           <div className="mt-0.5">
             <Badge tone="brand">{a.tier}</Badge>
           </div>
         </div>
         <div>
-          <div className="text-[11px] uppercase tracking-wider text-ink-muted">Status</div>
+          <div className="text-ink-muted text-[11px] tracking-wider uppercase">
+            Status
+          </div>
           <div className="mt-0.5">
-            <Badge tone={a.status === 'active' ? 'ok' : 'bad'}>{a.status}</Badge>
+            <Badge tone={a.status === 'active' ? 'ok' : 'bad'}>
+              {a.status}
+            </Badge>
           </div>
         </div>
       </div>
@@ -218,7 +233,7 @@ function LookupResult({ result }: { result: AdminLookupResult }) {
                 </Td>
                 <Td>{u.role}</Td>
                 <Td>{u.email_verified ? 'yes' : 'no'}</Td>
-                <Td className="font-mono text-xs text-ink-muted">
+                <Td className="text-ink-muted font-mono text-xs">
                   {u.last_login_at ? u.last_login_at.slice(0, 10) : '—'}
                 </Td>
               </TR>

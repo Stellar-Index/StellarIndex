@@ -85,7 +85,10 @@ describe('trust-surface guards', () => {
     // payload's directory fields OR by being one of the two known page
     // entry points — kept explicit rather than heuristic, because a
     // wrong subject set is worse than none.
-    const views = ['app/assets/[slug]/page.tsx', 'app/assets/[slug]/AssetPathView.tsx'];
+    const views = [
+      'app/assets/[slug]/page.tsx',
+      'app/assets/[slug]/AssetPathView.tsx',
+    ];
     const files = new Map(sourceFiles());
     const offenders = views.filter((v) => {
       const body = files.get(v);

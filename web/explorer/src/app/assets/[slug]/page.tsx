@@ -844,7 +844,13 @@ export default async function AssetDetailPage({ params }: { params: Params }) {
     name: `${coin.code} price & market data — Stellar Index`,
     description: `Aggregated price (VWAP), market cap, supply, and trading data for ${coin.code}${coin.issuer ? ` (issuer ${coin.issuer})` : ''} on Stellar, computed by Stellar Index.`,
     url: `${CURRENT_NETWORK.explorerUrl}/assets/${coin.slug}`,
-    keywords: [assetSymbol(coin), `${assetSymbol(coin)} price`, 'Stellar', 'asset', 'VWAP'],
+    keywords: [
+      assetSymbol(coin),
+      `${assetSymbol(coin)} price`,
+      'Stellar',
+      'asset',
+      'VWAP',
+    ],
     variableMeasured: [
       'price (USD)',
       'market cap',
@@ -879,7 +885,10 @@ export default async function AssetDetailPage({ params }: { params: Params }) {
       />
       <header className="space-y-3">
         <Breadcrumbs
-          items={[{ label: 'Assets', href: '/assets' }, { label: assetSymbol(coin) }]}
+          items={[
+            { label: 'Assets', href: '/assets' },
+            { label: assetSymbol(coin) },
+          ]}
         />
         <div className="flex flex-wrap items-baseline gap-4">
           <h1 className="text-h1 text-ink font-semibold">{coin.code}</h1>
@@ -1043,7 +1052,10 @@ export default async function AssetDetailPage({ params }: { params: Params }) {
                 />
               }
               liquidity={
-                <LiquidityTabPanel assetID={coin.asset_id} code={assetSymbol(coin)} />
+                <LiquidityTabPanel
+                  assetID={coin.asset_id}
+                  code={assetSymbol(coin)}
+                />
               }
               oracles={
                 <AssetOraclesPanel
@@ -1360,7 +1372,11 @@ function OverviewBody({
         </Panel>
       )}
       {coin.issuer && (
-        <Panel headingLevel={2} title="Issuer" source={asExample(`/v1/issuers/${coin.issuer}`)}>
+        <Panel
+          headingLevel={2}
+          title="Issuer"
+          source={asExample(`/v1/issuers/${coin.issuer}`)}
+        >
           <dl className="grid grid-cols-1 gap-2 text-sm sm:grid-cols-2">
             <div>
               <dt className="text-ink-muted text-[11px] tracking-wider uppercase">

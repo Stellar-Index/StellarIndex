@@ -3,12 +3,14 @@ import { render, screen, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 vi.mock('@/api/client', async () => {
-  const actual = await vi.importActual<typeof import('@/api/client')>('@/api/client');
+  const actual =
+    await vi.importActual<typeof import('@/api/client')>('@/api/client');
   return { ...actual, apiGet: vi.fn() };
 });
 
 vi.mock('@/api/hooks', async () => {
-  const actual = await vi.importActual<typeof import('@/api/hooks')>('@/api/hooks');
+  const actual =
+    await vi.importActual<typeof import('@/api/hooks')>('@/api/hooks');
   return {
     ...actual,
     useAsset: () => ({
@@ -21,7 +23,11 @@ vi.mock('@/api/hooks', async () => {
       isLoading: false,
       isError: false,
     }),
-    useAssetSupply: () => ({ data: undefined, isLoading: false, isError: false }),
+    useAssetSupply: () => ({
+      data: undefined,
+      isLoading: false,
+      isError: false,
+    }),
   };
 });
 
@@ -34,7 +40,9 @@ import { SupplyTabPanel } from './SupplyTabPanel';
 // a query that never answered.
 describe('SupplyTabPanel market-cap chart', () => {
   function renderPanel() {
-    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
     return render(
       <QueryClientProvider client={client}>
         <SupplyTabPanel assetID="USDC-GA5ZSEJ" />
@@ -46,17 +54,25 @@ describe('SupplyTabPanel market-cap chart', () => {
     vi.mocked(apiGet).mockRejectedValue(new Error('HTTP 503'));
     renderPanel();
     await waitFor(() =>
-      expect(screen.getByText(/Market-cap history unavailable right now/)).toBeInTheDocument(),
+      expect(
+        screen.getByText(/Market-cap history unavailable right now/),
+      ).toBeInTheDocument(),
     );
-    expect(screen.queryByText(/No market-cap history for this asset/)).not.toBeInTheDocument();
+    expect(
+      screen.queryByText(/No market-cap history for this asset/),
+    ).not.toBeInTheDocument();
   });
 
   it('keeps the genuine empty claim when the series is served but too short', async () => {
     vi.mocked(apiGet).mockResolvedValue({ data: { points: [] } });
     renderPanel();
     await waitFor(() =>
-      expect(screen.getByText(/No market-cap history for this asset/)).toBeInTheDocument(),
+      expect(
+        screen.getByText(/No market-cap history for this asset/),
+      ).toBeInTheDocument(),
     );
-    expect(screen.queryByText(/Market-cap history unavailable/)).not.toBeInTheDocument();
+    expect(
+      screen.queryByText(/Market-cap history unavailable/),
+    ).not.toBeInTheDocument();
   });
 });

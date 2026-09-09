@@ -15,13 +15,19 @@ export const metadata: Metadata = {
   alternates: { canonical: '/mev' },
 };
 
-const PATTERNS: { name: string; kind: string; description: string; caveat: string }[] = [
+const PATTERNS: {
+  name: string;
+  kind: string;
+  description: string;
+  caveat: string;
+}[] = [
   {
     name: 'Atomic arbitrage',
     kind: 'arbitrage',
     description:
       'One taker trades a closed asset cycle (≥2 legs returning to the starting asset) inside a single transaction, across pools/venues. The structure itself is the evidence.',
-    caveat: 'Profit is not estimated — leg direction is ambiguous in the served rows.',
+    caveat:
+      'Profit is not estimated — leg direction is ambiguous in the served rows.',
   },
   {
     name: 'Sandwich',
@@ -78,14 +84,14 @@ export default function MevPage() {
     <Container className="space-y-6 py-8">
       <header className="space-y-2">
         <h1 className="text-3xl font-semibold tracking-tight">MEV</h1>
-        <p className="max-w-3xl text-sm text-ink-body">
+        <p className="text-ink-body max-w-3xl text-sm">
           On-chain MEV detector. Five patterns are detected live: atomic
           arbitrage and wash trading from the canonical trade stream,
           liquidation cascades from Blend auctions correlated with oracle
           updates, and sandwich / oracle-update sandwich using intra-ledger
-          transaction ordering (tx_index) resolved from the raw ledger
-          lake. Every event records evidence plus a note stating exactly
-          what is — and is not — claimed.
+          transaction ordering (tx_index) resolved from the raw ledger lake.
+          Every event records evidence plus a note stating exactly what is — and
+          is not — claimed.
         </p>
       </header>
 
@@ -100,16 +106,16 @@ export default function MevPage() {
           {PATTERNS.map((p) => (
             <div
               key={p.name}
-              className="rounded-lg border border-line bg-surface-muted p-3 text-xs"
+              className="border-line bg-surface-muted rounded-lg border p-3 text-xs"
             >
               <div className="flex items-center justify-between gap-2">
                 <h3 className="text-sm font-semibold">{p.name}</h3>
-                <span className="inline-block rounded-sm bg-up-subtle px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wider text-up-strong">
+                <span className="bg-up-subtle text-up-strong inline-block rounded-sm px-1.5 py-0.5 text-[10px] font-medium tracking-wider uppercase">
                   live
                 </span>
               </div>
-              <p className="mt-1 text-ink-body">{p.description}</p>
-              <p className="mt-2 italic text-ink-muted">{p.caveat}</p>
+              <p className="text-ink-body mt-1">{p.description}</p>
+              <p className="text-ink-muted mt-2 italic">{p.caveat}</p>
             </div>
           ))}
         </div>
@@ -121,19 +127,17 @@ export default function MevPage() {
         bodyClassName="text-sm text-ink-body space-y-2"
       >
         <p>
-          MEV trades show up as ordinary swaps on the wire. Without
-          detection, a sandwich pair would inflate observation count
-          on the same pair the victim contributed to, and an oracle-
-          update sandwich would skew the oracle reading the
-          liquidation price was set against.
+          MEV trades show up as ordinary swaps on the wire. Without detection, a
+          sandwich pair would inflate observation count on the same pair the
+          victim contributed to, and an oracle- update sandwich would skew the
+          oracle reading the liquidation price was set against.
         </p>
         <p>
           Detected events get a per-trade flag in{' '}
-          <code className="font-mono text-xs">mev_events</code>{' '}
-          (migration 0021). The aggregator can then optionally exclude
-          flagged trades from VWAP — the policy lever lives at the
-          aggregator, not the decoder, so we keep the raw observation
-          and let downstream methodology decide.
+          <code className="font-mono text-xs">mev_events</code> (migration
+          0021). The aggregator can then optionally exclude flagged trades from
+          VWAP — the policy lever lives at the aggregator, not the decoder, so
+          we keep the raw observation and let downstream methodology decide.
         </p>
       </Panel>
 
@@ -143,19 +147,19 @@ export default function MevPage() {
         bodyClassName="text-sm text-ink-body space-y-2"
       >
         <p>
-          Detection is deliberately conservative about what it claims.
-          The served trade rows carry no direction (buy vs sell), so no
-          detector asserts front-run/back-run intent or estimates
-          attacker profit — <code className="font-mono text-xs">profit_usd</code>{' '}
-          is always null and each event&apos;s{' '}
-          <code className="font-mono text-xs">detail.note</code> says what
-          the evidence actually shows. Sandwich kinds depend on the
-          lake&apos;s transaction-order index and degrade to not-detected
-          (never guessed) when a transaction isn&apos;t indexed yet. An{' '}
+          Detection is deliberately conservative about what it claims. The
+          served trade rows carry no direction (buy vs sell), so no detector
+          asserts front-run/back-run intent or estimates attacker profit —{' '}
+          <code className="font-mono text-xs">profit_usd</code> is always null
+          and each event&apos;s{' '}
+          <code className="font-mono text-xs">detail.note</code> says what the
+          evidence actually shows. Sandwich kinds depend on the lake&apos;s
+          transaction-order index and degrade to not-detected (never guessed)
+          when a transaction isn&apos;t indexed yet. An{' '}
           <code className="font-mono text-xs">oracle_deviation</code> kind
-          remains reserved. Sub-invocation call-tree attribution (who
-          invoked whom inside a transaction) awaits diagnostic-event
-          capture in the lake. For the underlying methodology see the{' '}
+          remains reserved. Sub-invocation call-tree attribution (who invoked
+          whom inside a transaction) awaits diagnostic-event capture in the
+          lake. For the underlying methodology see the{' '}
           <Link href="/research" className="underline decoration-dotted">
             research index
           </Link>

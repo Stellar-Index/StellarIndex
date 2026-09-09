@@ -27,8 +27,10 @@ export default function SourcesPage() {
   return (
     <Container className="space-y-6 py-8">
       <header className="space-y-2">
-        <h1 className="text-3xl font-semibold tracking-tight">Stellar sources</h1>
-        <p className="max-w-3xl text-sm text-ink-body">
+        <h1 className="text-3xl font-semibold tracking-tight">
+          Stellar sources
+        </h1>
+        <p className="text-ink-body max-w-3xl text-sm">
           Every Stellar on-chain venue we index, grouped by class. Only DEX
           venues contribute to VWAP by default — on-chain oracles, lending,
           routers and bridges are reported alongside but excluded so we

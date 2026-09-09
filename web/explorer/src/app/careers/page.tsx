@@ -25,7 +25,7 @@ const VALUES = [
   },
   {
     title: 'Public tier is permanent.',
-    body: "We never gate data behind paid tiers — the platform is free. The anonymous read budget and the open-source codebase exist in perpetuity.",
+    body: 'We never gate data behind paid tiers — the platform is free. The anonymous read budget and the open-source codebase exist in perpetuity.',
   },
 ];
 
@@ -33,22 +33,26 @@ const CONTRIBUTING_PATHS = [
   {
     label: 'Decoder for a new on-chain DEX',
     href: 'https://github.com/Stellar-Index/StellarIndex/blob/main/docs/contributing/task-recipes.md#add-a-new-on-chain-soroban-dex',
-    description: 'Six-file convention: README + events + decode + consumer + dispatcher_adapter (the production seam) + tests. Templates exist for Soroswap / Phoenix / Aquarius / Comet.',
+    description:
+      'Six-file convention: README + events + decode + consumer + dispatcher_adapter (the production seam) + tests. Templates exist for Soroswap / Phoenix / Aquarius / Comet.',
   },
   {
     label: 'CEX connector',
     href: 'https://github.com/Stellar-Index/StellarIndex/blob/main/docs/contributing/task-recipes.md#add-a-new-cex-connector',
-    description: 'WebSocket / REST poller against vendor APIs. Its own layout (events + parse + streamer/poller + backfill + pairs); reference implementations for Binance / Coinbase / Kraken / Bitstamp.',
+    description:
+      'WebSocket / REST poller against vendor APIs. Its own layout (events + parse + streamer/poller + backfill + pairs); reference implementations for Binance / Coinbase / Kraken / Bitstamp.',
   },
   {
     label: 'Supply observer',
     href: 'https://github.com/Stellar-Index/StellarIndex/blob/main/docs/contributing/task-recipes.md#add-a-new-supply-observer',
-    description: 'Per-domain observer (Algorithm 1 XLM / Algorithm 2 classic / Algorithm 3 SEP-41). Plug into the dispatcher hook matching what the source emits.',
+    description:
+      'Per-domain observer (Algorithm 1 XLM / Algorithm 2 classic / Algorithm 3 SEP-41). Plug into the dispatcher hook matching what the source emits.',
   },
   {
     label: 'Documentation + ADRs',
     href: 'https://github.com/Stellar-Index/StellarIndex/tree/main/docs',
-    description: 'Architecture narratives, runbooks, integration audits. Every PR description in this repo follows the same shape — pick one and write the next.',
+    description:
+      'Architecture narratives, runbooks, integration audits. Every PR description in this repo follows the same shape — pick one and write the next.',
   },
 ];
 
@@ -56,35 +60,32 @@ export default function CareersPage() {
   return (
     <div className="mx-auto max-w-3xl space-y-12 px-6 py-12">
       <header className="space-y-3">
-        <p className="font-mono text-xs uppercase tracking-widest text-brand-600">
+        <p className="text-brand-600 font-mono text-xs tracking-widest uppercase">
           Careers
         </p>
         <h1 className="text-4xl font-semibold tracking-tight">
           Work on real data infrastructure.
         </h1>
-        <p className="text-base text-ink-body">
-          We&apos;re a small team shipping the v1 platform. The
-          codebase is Apache-2.0, the architecture is public, and
-          every PR ships against the same verify-gate the operator
-          runs before deploy.
+        <p className="text-ink-body text-base">
+          We&apos;re a small team shipping the v1 platform. The codebase is
+          Apache-2.0, the architecture is public, and every PR ships against the
+          same verify-gate the operator runs before deploy.
         </p>
       </header>
 
-      <section className="rounded-xl border border-line bg-surface p-6 shadow-sm">
+      <section className="border-line bg-surface rounded-xl border p-6 shadow-sm">
         <h2 className="text-lg font-semibold">Open roles</h2>
-        <p className="mt-3 text-sm text-ink-body">
-          No open roles listed today. We&apos;re focused on shipping
-          v1 and the post-launch backlog with the existing team. When
-          we open a role it&apos;ll appear here with a job description
-          and an application path.
+        <p className="text-ink-body mt-3 text-sm">
+          No open roles listed today. We&apos;re focused on shipping v1 and the
+          post-launch backlog with the existing team. When we open a role
+          it&apos;ll appear here with a job description and an application path.
         </p>
-        <p className="mt-3 text-sm text-ink-body">
+        <p className="text-ink-body mt-3 text-sm">
           Want to be considered when we do open one? Drop a note via{' '}
           <Link href="/contact" className="text-brand-600 hover:underline">
             /contact
           </Link>{' '}
-          with a link to public work — we hire from open-source
-          contributions.
+          with a link to public work — we hire from open-source contributions.
         </p>
       </section>
 
@@ -94,14 +95,10 @@ export default function CareersPage() {
           {VALUES.map((v) => (
             <div
               key={v.title}
-              className="rounded-xl border border-line bg-surface p-5"
+              className="border-line bg-surface rounded-xl border p-5"
             >
-              <h3 className="text-sm font-semibold text-ink">
-                {v.title}
-              </h3>
-              <p className="mt-2 text-sm text-ink-body">
-                {v.body}
-              </p>
+              <h3 className="text-ink text-sm font-semibold">{v.title}</h3>
+              <p className="text-ink-body mt-2 text-sm">{v.body}</p>
             </div>
           ))}
         </div>
@@ -112,11 +109,10 @@ export default function CareersPage() {
           <h2 className="text-2xl font-semibold tracking-tight">
             Contribute via PRs
           </h2>
-          <p className="text-sm text-ink-body">
-            The fastest path to working on this codebase is to land a
-            PR. Apache-2.0 means you don&apos;t need our permission to
-            fork, build, or run your own copy. Four common starting
-            points:
+          <p className="text-ink-body text-sm">
+            The fastest path to working on this codebase is to land a PR.
+            Apache-2.0 means you don&apos;t need our permission to fork, build,
+            or run your own copy. Four common starting points:
           </p>
         </div>
         <div className="space-y-3">
@@ -126,28 +122,24 @@ export default function CareersPage() {
               href={p.href}
               target="_blank"
               rel="noreferrer noopener"
-              className="block rounded-lg border border-line bg-surface p-4 transition-colors hover:border-brand-500"
+              className="border-line bg-surface hover:border-brand-500 block rounded-lg border p-4 transition-colors"
             >
               <div className="flex items-start justify-between gap-2">
-                <h3 className="text-sm font-semibold text-ink">
-                  {p.label}
-                </h3>
-                <ArrowRight className="h-4 w-4 shrink-0 text-ink-faint" />
+                <h3 className="text-ink text-sm font-semibold">{p.label}</h3>
+                <ArrowRight className="text-ink-faint h-4 w-4 shrink-0" />
               </div>
-              <p className="mt-1 text-sm text-ink-body">
-                {p.description}
-              </p>
+              <p className="text-ink-body mt-1 text-sm">{p.description}</p>
             </a>
           ))}
         </div>
       </section>
 
-      <section className="rounded-xl border border-line bg-surface p-6 shadow-sm">
+      <section className="border-line bg-surface rounded-xl border p-6 shadow-sm">
         <h2 className="text-lg font-semibold">Get in touch</h2>
         <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
           <Link
             href="/contact"
-            className="inline-flex items-center justify-center gap-2 rounded-md border border-line px-3 py-2 text-sm hover:border-brand-500 hover:text-brand-600"
+            className="border-line hover:border-brand-500 hover:text-brand-600 inline-flex items-center justify-center gap-2 rounded-md border px-3 py-2 text-sm"
           >
             <Mail className="h-4 w-4" />
             Contact
@@ -156,7 +148,7 @@ export default function CareersPage() {
             href="https://github.com/Stellar-Index/StellarIndex"
             target="_blank"
             rel="noreferrer noopener"
-            className="inline-flex items-center justify-center gap-2 rounded-md border border-line px-3 py-2 text-sm hover:border-brand-500 hover:text-brand-600"
+            className="border-line hover:border-brand-500 hover:text-brand-600 inline-flex items-center justify-center gap-2 rounded-md border px-3 py-2 text-sm"
           >
             <GithubIcon className="h-4 w-4" />
             GitHub

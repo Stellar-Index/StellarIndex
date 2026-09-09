@@ -31,14 +31,18 @@ describe('ExternalAssetDetailPage', () => {
     mockFetch(async () => jsonResponse({}, 404));
     await renderPage('nope');
     expect(screen.getByText('External asset not found')).toBeInTheDocument();
-    expect(screen.queryByText('Asset detail unavailable')).not.toBeInTheDocument();
+    expect(
+      screen.queryByText('Asset detail unavailable'),
+    ).not.toBeInTheDocument();
   });
 
   it('renders "unavailable", not a denial, on a 503', async () => {
     mockFetch(async () => jsonResponse({}, 503));
     await renderPage('btc');
     expect(screen.getByText('Asset detail unavailable')).toBeInTheDocument();
-    expect(screen.queryByText('External asset not found')).not.toBeInTheDocument();
+    expect(
+      screen.queryByText('External asset not found'),
+    ).not.toBeInTheDocument();
   });
 
   it('renders "unavailable", not a denial, on a transport error', async () => {
@@ -47,17 +51,28 @@ describe('ExternalAssetDetailPage', () => {
     });
     await renderPage('btc');
     expect(screen.getByText('Asset detail unavailable')).toBeInTheDocument();
-    expect(screen.queryByText('External asset not found')).not.toBeInTheDocument();
+    expect(
+      screen.queryByText('External asset not found'),
+    ).not.toBeInTheDocument();
   });
 
   it('renders the asset when the API answers', async () => {
     mockFetch(async () =>
       jsonResponse({
-        data: { slug: 'btc', ticker: 'BTC', name: 'Bitcoin', price_usd: '65000' },
+        data: {
+          slug: 'btc',
+          ticker: 'BTC',
+          name: 'Bitcoin',
+          price_usd: '65000',
+        },
       }),
     );
     await renderPage('btc');
-    expect(screen.queryByText('External asset not found')).not.toBeInTheDocument();
-    expect(screen.queryByText('Asset detail unavailable')).not.toBeInTheDocument();
+    expect(
+      screen.queryByText('External asset not found'),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByText('Asset detail unavailable'),
+    ).not.toBeInTheDocument();
   });
 });

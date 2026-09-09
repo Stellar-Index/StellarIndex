@@ -300,39 +300,39 @@ export default async function SourceDetailPage({ params }: { params: Params }) {
           // WCAG 1.4.10 Reflow: wide mono columns scroll inside the panel
           // instead of pushing the whole page sideways at 320px.
           <div className="overflow-x-auto">
-          <table className="divide-line min-w-full divide-y text-sm">
-            <thead>
-              <tr className="text-ink-muted text-left text-[10px] tracking-wider uppercase">
-                <th className="px-4 py-2 font-medium">Sub-source</th>
-                <th className="px-4 py-2 text-right font-medium">
-                  Last ledger
-                </th>
-                <th className="px-4 py-2 text-right font-medium">Updated</th>
-                <th className="px-4 py-2 text-right font-medium">Lag</th>
-              </tr>
-            </thead>
-            <tbody className="divide-line-subtle divide-y">
-              {cursors.map((c, i) => (
-                <tr
-                  key={`${c.sub_source ?? ''}|${i}`}
-                  className="hover:bg-surface-muted"
-                >
-                  <td className="px-4 py-2 font-mono text-xs">
-                    {c.sub_source || '—'}
-                  </td>
-                  <td className="px-4 py-2 text-right font-mono tabular-nums">
-                    #{c.last_ledger.toLocaleString('en-US')}
-                  </td>
-                  <td className="text-ink-muted px-4 py-2 text-right font-mono text-xs">
-                    {c.last_updated.replace('T', ' ').slice(0, 19)} UTC
-                  </td>
-                  <td className="px-4 py-2 text-right">
-                    <LagBadge seconds={c.lag_seconds} />
-                  </td>
+            <table className="divide-line min-w-full divide-y text-sm">
+              <thead>
+                <tr className="text-ink-muted text-left text-[10px] tracking-wider uppercase">
+                  <th className="px-4 py-2 font-medium">Sub-source</th>
+                  <th className="px-4 py-2 text-right font-medium">
+                    Last ledger
+                  </th>
+                  <th className="px-4 py-2 text-right font-medium">Updated</th>
+                  <th className="px-4 py-2 text-right font-medium">Lag</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody className="divide-line-subtle divide-y">
+                {cursors.map((c, i) => (
+                  <tr
+                    key={`${c.sub_source ?? ''}|${i}`}
+                    className="hover:bg-surface-muted"
+                  >
+                    <td className="px-4 py-2 font-mono text-xs">
+                      {c.sub_source || '—'}
+                    </td>
+                    <td className="px-4 py-2 text-right font-mono tabular-nums">
+                      #{c.last_ledger.toLocaleString('en-US')}
+                    </td>
+                    <td className="text-ink-muted px-4 py-2 text-right font-mono text-xs">
+                      {c.last_updated.replace('T', ' ').slice(0, 19)} UTC
+                    </td>
+                    <td className="px-4 py-2 text-right">
+                      <LagBadge seconds={c.lag_seconds} />
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
         )}
       </Panel>
@@ -359,66 +359,72 @@ export default async function SourceDetailPage({ params }: { params: Params }) {
           // WCAG 1.4.10 Reflow: wide mono columns scroll inside the panel
           // instead of pushing the whole page sideways at 320px.
           <div className="overflow-x-auto">
-          <table className="divide-line min-w-full divide-y text-sm">
-            <thead>
-              <tr className="text-ink-muted text-left text-[10px] tracking-wider uppercase">
-                <th className="px-4 py-2 font-medium">Base</th>
-                <th className="px-4 py-2 font-medium">Quote</th>
-                <th className="px-4 py-2 text-right font-medium">Last price</th>
-                <th className="px-4 py-2 text-right font-medium">24h volume</th>
-                <th className="px-4 py-2 text-right font-medium">24h trades</th>
-              </tr>
-            </thead>
-            <tbody className="divide-line-subtle divide-y">
-              {topMarkets.map((m) => {
-                const slug = encodeURIComponent(`${m.base}~${m.quote}`);
-                return (
-                  <tr
-                    key={`${m.base}|${m.quote}`}
-                    className="hover:bg-surface-muted"
-                  >
-                    <td className="px-4 py-2">
-                      <Link
-                        href={`/markets/${slug}`}
-                        className="hover:text-brand-600 font-mono text-xs"
-                      >
-                        {shortAssetText(m.base)}
-                      </Link>
-                    </td>
-                    <td className="px-4 py-2">
-                      <Link
-                        href={`/markets/${slug}`}
-                        className="hover:text-brand-600 font-mono text-xs"
-                      >
-                        {shortAssetText(m.quote)}
-                      </Link>
-                    </td>
-                    <td className="px-4 py-2 text-right">
-                      {m.last_price ? (
-                        <span className="text-ink-body font-mono tabular-nums">
-                          {formatLastPrice(m.last_price)}
-                        </span>
-                      ) : (
-                        <span className="text-ink-faint">—</span>
-                      )}
-                    </td>
-                    <td className="px-4 py-2 text-right">
-                      {m.volume_24h_usd ? (
-                        <span className="font-mono tabular-nums">
-                          ${formatCompact(Number(m.volume_24h_usd))}
-                        </span>
-                      ) : (
-                        <span className="text-ink-faint">—</span>
-                      )}
-                    </td>
-                    <td className="text-ink-muted px-4 py-2 text-right font-mono tabular-nums">
-                      {formatCompact(m.trade_count_24h)}
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
+            <table className="divide-line min-w-full divide-y text-sm">
+              <thead>
+                <tr className="text-ink-muted text-left text-[10px] tracking-wider uppercase">
+                  <th className="px-4 py-2 font-medium">Base</th>
+                  <th className="px-4 py-2 font-medium">Quote</th>
+                  <th className="px-4 py-2 text-right font-medium">
+                    Last price
+                  </th>
+                  <th className="px-4 py-2 text-right font-medium">
+                    24h volume
+                  </th>
+                  <th className="px-4 py-2 text-right font-medium">
+                    24h trades
+                  </th>
+                </tr>
+              </thead>
+              <tbody className="divide-line-subtle divide-y">
+                {topMarkets.map((m) => {
+                  const slug = encodeURIComponent(`${m.base}~${m.quote}`);
+                  return (
+                    <tr
+                      key={`${m.base}|${m.quote}`}
+                      className="hover:bg-surface-muted"
+                    >
+                      <td className="px-4 py-2">
+                        <Link
+                          href={`/markets/${slug}`}
+                          className="hover:text-brand-600 font-mono text-xs"
+                        >
+                          {shortAssetText(m.base)}
+                        </Link>
+                      </td>
+                      <td className="px-4 py-2">
+                        <Link
+                          href={`/markets/${slug}`}
+                          className="hover:text-brand-600 font-mono text-xs"
+                        >
+                          {shortAssetText(m.quote)}
+                        </Link>
+                      </td>
+                      <td className="px-4 py-2 text-right">
+                        {m.last_price ? (
+                          <span className="text-ink-body font-mono tabular-nums">
+                            {formatLastPrice(m.last_price)}
+                          </span>
+                        ) : (
+                          <span className="text-ink-faint">—</span>
+                        )}
+                      </td>
+                      <td className="px-4 py-2 text-right">
+                        {m.volume_24h_usd ? (
+                          <span className="font-mono tabular-nums">
+                            ${formatCompact(Number(m.volume_24h_usd))}
+                          </span>
+                        ) : (
+                          <span className="text-ink-faint">—</span>
+                        )}
+                      </td>
+                      <td className="text-ink-muted px-4 py-2 text-right font-mono tabular-nums">
+                        {formatCompact(m.trade_count_24h)}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
           </div>
         )}
       </Panel>

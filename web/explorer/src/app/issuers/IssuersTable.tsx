@@ -27,11 +27,11 @@ export function IssuersTable() {
     const q = filter.trim().toLowerCase();
     if (!q) return data ?? [];
     return (data ?? []).filter((row) => {
-      const hay = `${row.org_name ?? ''} ${row.home_domain ?? ''} ${row.g_strkey}`.toLowerCase();
+      const hay =
+        `${row.org_name ?? ''} ${row.home_domain ?? ''} ${row.g_strkey}`.toLowerCase();
       return hay.includes(q);
     });
   }, [data, filter]);
-
 
   // Sortable columns (site-audit S36). Default keeps the API's
   // observation-count ranking until a header is clicked.
@@ -41,10 +41,16 @@ export function IssuersTable() {
     { key: 'assets', value: (r) => r.asset_count },
     { key: 'observations', value: (r) => r.total_observation_count },
   ];
-  const { sorted: sortedIssuers, sort, toggle, ariaSort } = useTableSort<
-    (typeof filtered)[number],
-    string
-  >(filtered, issuerSortColumns, null);
+  const {
+    sorted: sortedIssuers,
+    sort,
+    toggle,
+    ariaSort,
+  } = useTableSort<(typeof filtered)[number], string>(
+    filtered,
+    issuerSortColumns,
+    null,
+  );
   if (isError) {
     return (
       <Panel
@@ -91,7 +97,7 @@ export function IssuersTable() {
       source={asExample('/v1/issuers', { limit: 100 })}
       bodyClassName="-mx-4"
     >
-      <div className="px-4 pb-3 pt-1">
+      <div className="px-4 pt-1 pb-3">
         <div className="flex flex-wrap items-center gap-3 text-xs">
           <input
             type="search"
@@ -99,15 +105,15 @@ export function IssuersTable() {
             placeholder="Filter by name, domain, or G-strkey…"
             value={filter}
             onChange={(e) => setFilter(e.target.value)}
-            className="w-72 rounded-md border border-line bg-surface px-2.5 py-1 text-xs placeholder:text-ink-faint focus:border-brand-500 focus:outline-hidden focus:ring-1 focus:ring-brand-500"
+            className="border-line bg-surface placeholder:text-ink-faint focus:border-brand-500 focus:ring-brand-500 w-72 rounded-md border px-2.5 py-1 text-xs focus:ring-1 focus:outline-hidden"
           />
-          <span className="font-mono text-[11px] text-ink-muted">
+          <span className="text-ink-muted font-mono text-[11px]">
             {filtered.length} of {data.length} rows
             {filter && (
               <button
                 type="button"
                 onClick={() => setFilter('')}
-                className="ml-2 text-brand-600 hover:underline"
+                className="text-brand-600 ml-2 hover:underline"
               >
                 clear
               </button>
@@ -116,30 +122,56 @@ export function IssuersTable() {
         </div>
       </div>
       <div className="overflow-x-auto">
-        <table className="min-w-full divide-y divide-line text-sm">
+        <table className="divide-line min-w-full divide-y text-sm">
           <thead>
-            <tr className="text-left text-[11px] uppercase tracking-wider text-ink-muted">
+            <tr className="text-ink-muted text-left text-[11px] tracking-wider uppercase">
               <Th>#</Th>
-              <SortableTh label="Organisation" sortKey="org" sort={sort} onSort={toggle} ariaSort={ariaSort} />
+              <SortableTh
+                label="Organisation"
+                sortKey="org"
+                sort={sort}
+                onSort={toggle}
+                ariaSort={ariaSort}
+              />
               <Th>G-strkey</Th>
-              <SortableTh label="Home domain" sortKey="domain" sort={sort} onSort={toggle} ariaSort={ariaSort} />
-              <SortableTh label="Assets" sortKey="assets" sort={sort} onSort={toggle} ariaSort={ariaSort} align="right" />
-              <SortableTh label="Total observations" sortKey="observations" sort={sort} onSort={toggle} ariaSort={ariaSort} align="right" />
+              <SortableTh
+                label="Home domain"
+                sortKey="domain"
+                sort={sort}
+                onSort={toggle}
+                ariaSort={ariaSort}
+              />
+              <SortableTh
+                label="Assets"
+                sortKey="assets"
+                sort={sort}
+                onSort={toggle}
+                ariaSort={ariaSort}
+                align="right"
+              />
+              <SortableTh
+                label="Total observations"
+                sortKey="observations"
+                sort={sort}
+                onSort={toggle}
+                ariaSort={ariaSort}
+                align="right"
+              />
             </tr>
           </thead>
-          <tbody className="divide-y divide-line-subtle">
+          <tbody className="divide-line-subtle divide-y">
             {filtered.length === 0 && filter && (
               <tr>
-                <td colSpan={6} className="px-4 py-8 text-center text-sm text-ink-muted">
+                <td
+                  colSpan={6}
+                  className="text-ink-muted px-4 py-8 text-center text-sm"
+                >
                   No issuers match &quot;{filter}&quot;.
                 </td>
               </tr>
             )}
             {sortedIssuers.map((row, i) => (
-              <tr
-                key={row.g_strkey}
-                className="hover:bg-surface-muted"
-              >
+              <tr key={row.g_strkey} className="hover:bg-surface-muted">
                 <Td>
                   <span className="text-ink-faint">{i + 1}</span>
                 </Td>
@@ -148,17 +180,17 @@ export function IssuersTable() {
                     {row.org_name ? (
                       <Link
                         href={`/issuers/${row.g_strkey}`}
-                        className="font-medium hover:text-brand-600"
+                        className="hover:text-brand-600 font-medium"
                       >
                         {row.org_name}
                       </Link>
                     ) : (
-                      <span className="text-xs text-ink-faint">—</span>
+                      <span className="text-ink-faint text-xs">—</span>
                     )}
                     {row.org_verified && row.org_name && (
                       <span
                         title="SEP-1 verified — the organisation's stellar.toml lists this issuer back (bidirectional)"
-                        className="rounded-sm bg-up-subtle px-1.5 py-0.5 text-[9px] font-medium uppercase tracking-wider text-up-strong"
+                        className="bg-up-subtle text-up-strong rounded-sm px-1.5 py-0.5 text-[9px] font-medium tracking-wider uppercase"
                       >
                         ✓ Verified
                       </span>
@@ -166,7 +198,7 @@ export function IssuersTable() {
                     {row.scam_reason && (
                       <span
                         title={row.scam_reason}
-                        className="rounded-sm bg-down-subtle px-1.5 py-0.5 text-[9px] font-medium uppercase tracking-wider text-down"
+                        className="bg-down-subtle text-down rounded-sm px-1.5 py-0.5 text-[9px] font-medium tracking-wider uppercase"
                       >
                         {/* S-010: the flag categories differ materially —
                             a deprecated legacy issuer of a real org is not
@@ -183,7 +215,7 @@ export function IssuersTable() {
                 <Td>
                   <Link
                     href={`/issuers/${row.g_strkey}`}
-                    className="font-mono text-xs hover:text-brand-600"
+                    className="hover:text-brand-600 font-mono text-xs"
                     title={row.g_strkey}
                   >
                     {row.g_strkey.slice(0, 8)}…{row.g_strkey.slice(-4)}
@@ -195,7 +227,7 @@ export function IssuersTable() {
                       href={`https://${row.home_domain}`}
                       target="_blank"
                       rel="noreferrer noopener nofollow"
-                      className="text-xs hover:text-brand-600 hover:underline"
+                      className="hover:text-brand-600 text-xs hover:underline"
                     >
                       {row.home_domain}
                     </a>
@@ -203,11 +235,14 @@ export function IssuersTable() {
                     // Attacker-controlled on-chain value that doesn't
                     // parse as a strict hostname — render as plain
                     // text, never a clickable link (phishing guard).
-                    <span className="text-xs text-ink-muted" title="Unverified issuer-supplied domain">
+                    <span
+                      className="text-ink-muted text-xs"
+                      title="Unverified issuer-supplied domain"
+                    >
                       {row.home_domain}
                     </span>
                   ) : (
-                    <span className="text-xs text-ink-faint">—</span>
+                    <span className="text-ink-faint text-xs">—</span>
                   )}
                 </Td>
                 <Td align="right">

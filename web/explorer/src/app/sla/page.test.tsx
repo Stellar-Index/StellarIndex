@@ -17,12 +17,17 @@ function renderPage() {
 }
 
 function publishedAvailabilityPct(): number {
-  const row = screen.getByText('Availability', { selector: 'td' }).closest('tr');
+  const row = screen
+    .getByText('Availability', { selector: 'td' })
+    .closest('tr');
   expect(row).not.toBeNull();
   const cells = within(row as HTMLTableRowElement).getAllByRole('cell');
   const objective = cells[1].textContent ?? '';
   const m = /^≥ (\d+\.\d+) %$/.exec(objective.trim());
-  expect(m, `availability objective cell reads ${JSON.stringify(objective)}`).not.toBeNull();
+  expect(
+    m,
+    `availability objective cell reads ${JSON.stringify(objective)}`,
+  ).not.toBeNull();
   return Number((m as RegExpExecArray)[1]);
 }
 
@@ -53,6 +58,8 @@ describe('/sla availability figure', () => {
     const minutes = Math.floor(allowanceSeconds / 60);
     const seconds = allowanceSeconds % 60;
     const section = document.getElementById('error-budget') as HTMLElement;
-    expect(section.textContent).toContain(`${minutes} minutes ${seconds} seconds`);
+    expect(section.textContent).toContain(
+      `${minutes} minutes ${seconds} seconds`,
+    );
   });
 });

@@ -25,7 +25,7 @@ export default function LedgersPage() {
     <Container className="space-y-6 py-8">
       <header className="space-y-2">
         <h1 className="text-3xl font-semibold tracking-tight">Ledgers</h1>
-        <p className="max-w-3xl text-sm text-ink-body">
+        <p className="text-ink-body max-w-3xl text-sm">
           The most recent ledger closes on the Stellar network. Each row links
           to the full ledger view — header, transactions, and the operations +
           events those transactions emitted.

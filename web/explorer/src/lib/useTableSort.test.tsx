@@ -23,7 +23,10 @@ describe('SortableTh', () => {
         </thead>
       </table>,
     );
-    expect(screen.getByRole('columnheader', { name: /Price/ })).toHaveAttribute('scope', 'col');
+    expect(screen.getByRole('columnheader', { name: /Price/ })).toHaveAttribute(
+      'scope',
+      'col',
+    );
   });
 
   it('sets scope="col" on the non-interactive (unsortable) header', () => {
@@ -36,6 +39,9 @@ describe('SortableTh', () => {
         </thead>
       </table>,
     );
-    expect(screen.getByRole('columnheader', { name: '#' })).toHaveAttribute('scope', 'col');
+    expect(screen.getByRole('columnheader', { name: '#' })).toHaveAttribute(
+      'scope',
+      'col',
+    );
   });
 });

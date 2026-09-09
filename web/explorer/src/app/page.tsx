@@ -31,16 +31,16 @@ export default function HomePage() {
   return (
     <Container className="space-y-12 py-10 sm:py-14">
       <header className="max-w-3xl space-y-5">
-        <p className="inline-flex items-center gap-2 rounded-full border border-line bg-surface px-3 py-1 text-xs font-medium text-ink-muted">
-          <span className="h-1.5 w-1.5 rounded-full bg-up" />
+        <p className="border-line bg-surface text-ink-muted inline-flex items-center gap-2 rounded-full border px-3 py-1 text-xs font-medium">
+          <span className="bg-up h-1.5 w-1.5 rounded-full" />
           Independent · open · public-tier free
         </p>
-        <h1 className="text-display-sm font-semibold text-ink md:text-display">
+        <h1 className="text-display-sm text-ink md:text-display font-semibold">
           {pricing
             ? 'The protocol explorer for the Stellar network.'
             : `The Stellar ${CURRENT_NETWORK.label} Explorer`}
         </h1>
-        <p className="max-w-2xl text-lg leading-relaxed text-ink-muted">
+        <p className="text-ink-muted max-w-2xl text-lg leading-relaxed">
           {pricing ? (
             <>
               Every contract, every event, and every trade across Stellar
@@ -51,10 +51,10 @@ export default function HomePage() {
             </>
           ) : (
             <>
-              Every ledger, transaction, account, asset, and Soroban contract
-              on Stellar {CURRENT_NETWORK.label} — complete, verified,
-              per-protocol on-chain data through a public REST API. Every panel
-              below shows the exact API call that produced it.
+              Every ledger, transaction, account, asset, and Soroban contract on
+              Stellar {CURRENT_NETWORK.label} — complete, verified, per-protocol
+              on-chain data through a public REST API. Every panel below shows
+              the exact API call that produced it.
             </>
           )}
         </p>
@@ -66,12 +66,16 @@ export default function HomePage() {
           <ButtonLink href="/pricing" variant="secondary" size="lg">
             Pricing
           </ButtonLink>
-          <ButtonLink href="https://docs.stellarindex.io" variant="secondary" size="lg">
+          <ButtonLink
+            href="https://docs.stellarindex.io"
+            variant="secondary"
+            size="lg"
+          >
             API docs
           </ButtonLink>
           <Link
             href="/methodology"
-            className="px-2 text-sm font-medium text-ink-muted transition-colors hover:text-brand-600"
+            className="text-ink-muted hover:text-brand-600 px-2 text-sm font-medium transition-colors"
           >
             How it works →
           </Link>
@@ -87,22 +91,22 @@ export default function HomePage() {
         <SystemHealthLivePanel />
         <Link
           href="/diagnostics"
-          className="group flex h-full flex-col justify-between rounded-card border border-line bg-surface p-5 shadow-card transition-all hover:border-line-strong hover:shadow-elevated"
+          className="group rounded-card border-line bg-surface shadow-card hover:border-line-strong hover:shadow-elevated flex h-full flex-col justify-between border p-5 transition-all"
         >
           <div>
-            <p className="flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-wider text-ink-muted">
-              <Activity className="h-3.5 w-3.5 text-ink-faint" />
+            <p className="text-ink-muted flex items-center gap-1.5 text-[11px] font-medium tracking-wider uppercase">
+              <Activity className="text-ink-faint h-3.5 w-3.5" />
               Diagnostics
             </p>
-            <p className="mt-2 text-h3 font-semibold text-ink">
+            <p className="text-h3 text-ink mt-2 font-semibold">
               Watch the indexer tick.
             </p>
-            <p className="mt-1 text-sm text-ink-muted">
-              Per-source ingest cursors, refreshed every 15 seconds — see
-              every backfill chunk advance in real time.
+            <p className="text-ink-muted mt-1 text-sm">
+              Per-source ingest cursors, refreshed every 15 seconds — see every
+              backfill chunk advance in real time.
             </p>
           </div>
-          <p className="mt-4 inline-flex items-center gap-1 text-sm font-medium text-brand-600">
+          <p className="text-brand-600 mt-4 inline-flex items-center gap-1 text-sm font-medium">
             Open diagnostics{' '}
             <ArrowRight className="h-3.5 w-3.5 transition-transform group-hover:translate-x-0.5" />
           </p>
@@ -125,24 +129,24 @@ export default function HomePage() {
 
       {/* LC-060: the flagship API product, presented as a product —
           plans, keys, and where to start. */}
-      <section className="rounded-card border border-line bg-surface p-6 shadow-card sm:p-8">
+      <section className="rounded-card border-line bg-surface shadow-card border p-6 sm:p-8">
         <div className="grid grid-cols-1 gap-8 lg:grid-cols-2 lg:items-center">
           <div className="space-y-4">
-            <p className="text-xs font-medium uppercase tracking-wider text-brand-600">
+            <p className="text-brand-600 text-xs font-medium tracking-wider uppercase">
               Stellar Index API
             </p>
-            <h2 className="text-h2 font-semibold text-ink">
+            <h2 className="text-h2 text-ink font-semibold">
               One verified price for every Stellar pair.
             </h2>
-            <p className="text-[15px] leading-relaxed text-ink-muted">
+            <p className="text-ink-muted text-[15px] leading-relaxed">
               The API behind this explorer — the same data, machine-readable.
               VWAP, TWAP, and OHLC computed from every CEX, DEX, and oracle we
               index, served over REST + SSE with deterministic closed-bucket
               semantics, alongside the ledger, contract, asset, supply and
               history endpoints. Anonymous reads are free forever at 6,000
-              requests a minute per IP; an API key is a per-key budget of
-              1,000 a minute — yours alone rather than shared with every
-              client on your IP — with staff-set partner limits above that.
+              requests a minute per IP; an API key is a per-key budget of 1,000
+              a minute — yours alone rather than shared with every client on
+              your IP — with staff-set partner limits above that.
             </p>
             <div className="flex flex-wrap items-center gap-3 pt-1">
               <ButtonLink href="/signup">
@@ -154,16 +158,19 @@ export default function HomePage() {
               </ButtonLink>
               <Link
                 href="/docs"
-                className="px-2 text-sm font-medium text-ink-muted transition-colors hover:text-brand-600"
+                className="text-ink-muted hover:text-brand-600 px-2 text-sm font-medium transition-colors"
               >
                 Quickstart →
               </Link>
             </div>
           </div>
-          <dl className="divide-y divide-line rounded-lg border border-line">
+          <dl className="divide-line border-line divide-y rounded-lg border">
             {[
               ['GET /v1/price', 'Latest closed-bucket VWAP for any pair.'],
-              ['GET /v1/price/tip', 'Rolling live price, sub-minute freshness.'],
+              [
+                'GET /v1/price/tip',
+                'Rolling live price, sub-minute freshness.',
+              ],
               [
                 'GET /v1/ohlc',
                 'Candles — daily bars from 2018; coverage not yet continuous.',
@@ -174,10 +181,10 @@ export default function HomePage() {
                 key={ep}
                 className="flex flex-col gap-1 px-4 py-2.5 sm:flex-row sm:items-baseline sm:gap-4"
               >
-                <dt className="font-mono text-[13px] text-ink sm:w-44 sm:shrink-0">
+                <dt className="text-ink font-mono text-[13px] sm:w-44 sm:shrink-0">
                   {ep}
                 </dt>
-                <dd className="text-sm text-ink-muted">{desc}</dd>
+                <dd className="text-ink-muted text-sm">{desc}</dd>
               </div>
             ))}
           </dl>
@@ -186,11 +193,14 @@ export default function HomePage() {
 
       <section className="space-y-4">
         <div className="space-y-1">
-          <h2 className="text-h2 font-semibold text-ink">Try the API</h2>
-          <p className="text-[15px] text-ink-muted">
+          <h2 className="text-h2 text-ink font-semibold">Try the API</h2>
+          <p className="text-ink-muted text-[15px]">
             The free public tier needs no key — pick an example and paste it
             straight into a terminal. An{' '}
-            <Link href="/pricing" className="font-medium text-brand-600 hover:underline">
+            <Link
+              href="/pricing"
+              className="text-brand-600 font-medium hover:underline"
+            >
               API key
             </Link>{' '}
             lifts the rate limit when you outgrow it.

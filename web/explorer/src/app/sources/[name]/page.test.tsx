@@ -3,7 +3,10 @@ import { render, screen } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 vi.mock('@/lib/buildFetch', async () => {
-  const actual = await vi.importActual<typeof import('@/lib/buildFetch')>('@/lib/buildFetch');
+  const actual =
+    await vi.importActual<typeof import('@/lib/buildFetch')>(
+      '@/lib/buildFetch',
+    );
   return { ...actual, buildFetchData: vi.fn(), failBuild: vi.fn() };
 });
 
@@ -13,7 +16,9 @@ vi.mock('./SourceHealthPanel', () => ({ SourceHealthPanel: () => <div /> }));
 vi.mock('../../dexes/[source]/SourceVolumeHistory', () => ({
   SourceVolumeHistory: () => <div />,
 }));
-vi.mock('../../dexes/[source]/SourceTopChart', () => ({ SourceTopChart: () => <div /> }));
+vi.mock('../../dexes/[source]/SourceTopChart', () => ({
+  SourceTopChart: () => <div />,
+}));
 
 import { buildFetchData } from '@/lib/buildFetch';
 import SourceDetailPage from './page';
@@ -29,8 +34,12 @@ function mockFetches(markets: unknown) {
 }
 
 async function renderPage() {
-  const tree = await SourceDetailPage({ params: Promise.resolve({ name: 'soroswap' }) });
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const tree = await SourceDetailPage({
+    params: Promise.resolve({ name: 'soroswap' }),
+  });
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
   render(<QueryClientProvider client={client}>{tree}</QueryClientProvider>);
 }
 
@@ -42,16 +51,24 @@ describe('SourceDetailPage top markets', () => {
   it('says the market list is unavailable when the read returns null', async () => {
     mockFetches(null);
     await renderPage();
-    expect(screen.getByText(/Market list unavailable for this build/)).toBeInTheDocument();
-    expect(screen.queryByText(/No markets observed for this source/)).not.toBeInTheDocument();
+    expect(
+      screen.getByText(/Market list unavailable for this build/),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText(/No markets observed for this source/),
+    ).not.toBeInTheDocument();
     expect(screen.getByText(/— pairs/)).toBeInTheDocument();
   });
 
   it('keeps the genuine empty claim when the API returns no markets', async () => {
     mockFetches([]);
     await renderPage();
-    expect(screen.getByText(/No markets observed for this source/)).toBeInTheDocument();
-    expect(screen.queryByText(/Market list unavailable/)).not.toBeInTheDocument();
+    expect(
+      screen.getByText(/No markets observed for this source/),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText(/Market list unavailable/),
+    ).not.toBeInTheDocument();
     expect(screen.getByText(/0 pairs/)).toBeInTheDocument();
   });
 });

@@ -3,13 +3,7 @@ import type { ComponentProps, ReactNode } from 'react';
 import { cn } from '@/lib/cn';
 
 export type BadgeTone =
-  | 'neutral'
-  | 'brand'
-  | 'up'
-  | 'down'
-  | 'warn'
-  | 'bad'
-  | 'ok';
+  'neutral' | 'brand' | 'up' | 'down' | 'warn' | 'bad' | 'ok';
 
 const tones: Record<BadgeTone, string> = {
   neutral: 'bg-surface-subtle text-ink-body ring-line',
@@ -33,7 +27,13 @@ type BadgeProps = ComponentProps<'span'> & {
  * (brand, up/down deltas, warn/bad/ok severities). `dot` prepends a status
  * dot in the tone colour.
  */
-export function Badge({ tone = 'neutral', dot, className, children, ...props }: BadgeProps) {
+export function Badge({
+  tone = 'neutral',
+  dot,
+  className,
+  children,
+  ...props
+}: BadgeProps) {
   return (
     <span
       className={cn(
@@ -43,7 +43,9 @@ export function Badge({ tone = 'neutral', dot, className, children, ...props }: 
       )}
       {...props}
     >
-      {dot && <span className="h-1.5 w-1.5 rounded-full bg-current opacity-80" />}
+      {dot && (
+        <span className="h-1.5 w-1.5 rounded-full bg-current opacity-80" />
+      )}
       {children}
     </span>
   );

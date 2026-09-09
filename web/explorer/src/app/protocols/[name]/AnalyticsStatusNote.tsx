@@ -22,13 +22,17 @@ export type AnalyticsStatus = {
  *    server rebuilds in the background — shown with its real age.
  *  - `ok` / absent: renders nothing.
  */
-export function AnalyticsStatusNote({ analytics }: { analytics?: AnalyticsStatus }) {
+export function AnalyticsStatusNote({
+  analytics,
+}: {
+  analytics?: AnalyticsStatus;
+}) {
   if (!analytics || analytics.status === 'ok' || !analytics.status) return null;
   if (analytics.status === 'unavailable') {
     return (
       <p
         role="status"
-        className="rounded-md border border-line bg-surface-subtle px-3 py-2 text-xs text-ink-muted"
+        className="border-line bg-surface-subtle text-ink-muted rounded-md border px-3 py-2 text-xs"
       >
         Some protocol analytics are temporarily unavailable — missing sections
         and zero-looking figures here mean the analytics build degraded, not
@@ -39,11 +43,13 @@ export function AnalyticsStatusNote({ analytics }: { analytics?: AnalyticsStatus
   return (
     <p
       role="status"
-      className="rounded-md border border-line bg-surface-subtle px-3 py-2 text-xs text-ink-muted"
+      className="border-line bg-surface-subtle text-ink-muted rounded-md border px-3 py-2 text-xs"
     >
       Analytics snapshot
-      {analytics.as_of ? ` from ${relativeAge(analytics.as_of)}` : ' is stale'} — a
-      background refresh is running.
+      {analytics.as_of
+        ? ` from ${relativeAge(analytics.as_of)}`
+        : ' is stale'}{' '}
+      — a background refresh is running.
     </p>
   );
 }
@@ -56,7 +62,7 @@ export function AnalyticsStatusNote({ analytics }: { analytics?: AnalyticsStatus
  */
 export function BespokeUnavailable() {
   return (
-    <p className="rounded-md border border-line px-3 py-6 text-center text-sm text-ink-muted">
+    <p className="border-line text-ink-muted rounded-md border px-3 py-6 text-center text-sm">
       This protocol&rsquo;s analytics suite is temporarily unavailable — the
       server-side build degraded. It refreshes automatically; reload in a
       minute.

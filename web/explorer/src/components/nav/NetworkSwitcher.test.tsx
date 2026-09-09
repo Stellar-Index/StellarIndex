@@ -7,7 +7,9 @@ import { NetworkSwitcher } from './NetworkSwitcher';
 
 // Default build env → CURRENT_NETWORK is mainnet, so the siblings are
 // testnet (live) + futurenet (Phase 2, not live).
-const useLedgerStream = vi.hoisted(() => vi.fn<() => StreamFrame<LiveLedger> | null>());
+const useLedgerStream = vi.hoisted(() =>
+  vi.fn<() => StreamFrame<LiveLedger> | null>(),
+);
 vi.mock('@/lib/live/hooks', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/lib/live/hooks')>()),
   useLedgerStream,
@@ -21,7 +23,11 @@ afterEach(() => {
 
 function freshFrame(seq: number): StreamFrame<LiveLedger> {
   return {
-    data: { latest_ledger: seq, ingested_at: '2026-08-26T00:00:00Z', lag_seconds: 1 },
+    data: {
+      latest_ledger: seq,
+      ingested_at: '2026-08-26T00:00:00Z',
+      lag_seconds: 1,
+    },
     receivedAt: Date.now(),
   };
 }
@@ -34,10 +40,9 @@ describe('NetworkSwitcher', () => {
     // ledger badge below).
     expect(screen.getByText('Mainnet')).toBeInTheDocument();
     expect(screen.queryByText('Testnet')).not.toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /network: mainnet/i })).toHaveAttribute(
-      'aria-expanded',
-      'false',
-    );
+    expect(
+      screen.getByRole('button', { name: /network: mainnet/i }),
+    ).toHaveAttribute('aria-expanded', 'false');
   });
 
   it('opens to list every network; siblings link out, futurenet is disabled', async () => {
@@ -66,7 +71,9 @@ describe('NetworkSwitcher', () => {
     );
 
     // The sibling tip probes resolve into their rows.
-    await waitFor(() => expect(screen.getAllByText('987,654').length).toBeGreaterThan(0));
+    await waitFor(() =>
+      expect(screen.getAllByText('987,654').length).toBeGreaterThan(0),
+    );
     expect(fetch).toHaveBeenCalledWith(
       'https://api.testnet.stellarindex.io/v1/ledger/tip',
       expect.objectContaining({ headers: { Accept: 'application/json' } }),
@@ -75,7 +82,10 @@ describe('NetworkSwitcher', () => {
 
   it('degrades a sibling to a dash when its origin is unreachable', async () => {
     useLedgerStream.mockReturnValue(freshFrame(4_350_000));
-    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('CORS/offline')));
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockRejectedValue(new Error('CORS/offline')),
+    );
 
     render(<NetworkSwitcher />);
     fireEvent.click(screen.getByRole('button', { name: /network: mainnet/i }));
@@ -83,6 +93,8 @@ describe('NetworkSwitcher', () => {
     // Still a working hop link even though the live number is unavailable.
     expect(screen.getByRole('link', { name: /testnet/i })).toBeInTheDocument();
     // Both live siblings (testnet + futurenet) degrade to a dash.
-    await waitFor(() => expect(screen.getAllByText('—').length).toBeGreaterThanOrEqual(1));
+    await waitFor(() =>
+      expect(screen.getAllByText('—').length).toBeGreaterThanOrEqual(1),
+    );
   });
 });

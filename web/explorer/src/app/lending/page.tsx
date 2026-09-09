@@ -18,7 +18,7 @@ export default function LendingPage() {
     <Container className="space-y-6 py-8">
       <header className="space-y-2">
         <h1 className="text-3xl font-semibold tracking-tight">Lending</h1>
-        <p className="max-w-3xl text-sm text-ink-body">
+        <p className="text-ink-body max-w-3xl text-sm">
           Collateralised lending protocols on Stellar. Yield comes from
           borrowers paying interest, not from external strategies — see{' '}
           <Link href="/aggregators" className="underline decoration-dotted">
@@ -28,35 +28,35 @@ export default function LendingPage() {
         </p>
       </header>
 
-      <div className="rounded-xl border border-line bg-surface p-5 shadow-sm">
+      <div className="border-line bg-surface rounded-xl border p-5 shadow-sm">
         <div className="flex items-baseline justify-between gap-2">
           <h2 className="text-2xl font-semibold tracking-tight">Blend</h2>
-          <span className="rounded-sm bg-up-soft px-1.5 py-0.5 text-[10px] uppercase tracking-wider text-up-strong">
+          <span className="bg-up-soft text-up-strong rounded-sm px-1.5 py-0.5 text-[10px] tracking-wider uppercase">
             Live
           </span>
         </div>
-        <p className="mt-1 text-xs uppercase tracking-wider text-ink-muted">
-          Isolated-pool lending · Reflector-priced collateral · Comet
-          backstop
+        <p className="text-ink-muted mt-1 text-xs tracking-wider uppercase">
+          Isolated-pool lending · Reflector-priced collateral · Comet backstop
         </p>
-        <p className="mt-3 text-sm text-ink-body">
+        <p className="text-ink-body mt-3 text-sm">
           Blend is the primary lending protocol on Stellar. Each pool is
-          isolated (Aave-V3 style), with collateral and borrow assets
-          chosen per-pool by the operator. Liquidations execute against
-          a Comet-style auction backstop.
+          isolated (Aave-V3 style), with collateral and borrow assets chosen
+          per-pool by the operator. Liquidations execute against a Comet-style
+          auction backstop.
         </p>
-        <ul className="mt-3 space-y-2 text-sm text-ink-body">
+        <ul className="text-ink-body mt-3 space-y-2 text-sm">
           <li className="flex gap-2">
             <span className="text-ink-faint">•</span>
             <span>
-              <strong className="text-ink-body">
-                Reflector-priced.
-              </strong>{' '}
-              Each pool reads the SEP-40 Reflector oracle for collateral
-              valuation. A divergence between Reflector and our VWAP
-              materially changes the liquidation threshold — we surface
-              it on the canonical coin pages via{' '}
-              <code className="font-mono text-xs">flags.divergence_warning</code>.
+              <strong className="text-ink-body">Reflector-priced.</strong> Each
+              pool reads the SEP-40 Reflector oracle for collateral valuation. A
+              divergence between Reflector and our VWAP materially changes the
+              liquidation threshold — we surface it on the canonical coin pages
+              via{' '}
+              <code className="font-mono text-xs">
+                flags.divergence_warning
+              </code>
+              .
             </span>
           </li>
           <li className="flex gap-2">
@@ -69,7 +69,7 @@ export default function LendingPage() {
               positions. We index the same Comet code path (see{' '}
               <Link
                 href="/dexes"
-                className="underline decoration-dotted hover:text-brand-600"
+                className="hover:text-brand-600 underline decoration-dotted"
               >
                 /dexes
               </Link>
@@ -79,12 +79,9 @@ export default function LendingPage() {
           <li className="flex gap-2">
             <span className="text-ink-faint">•</span>
             <span>
-              <strong className="text-ink-body">
-                MEV-relevant.
-              </strong>{' '}
-              Liquidations can sandwich, especially when the oracle
-              update and the liquidate call land in the same ledger. The
-              future{' '}
+              <strong className="text-ink-body">MEV-relevant.</strong>{' '}
+              Liquidations can sandwich, especially when the oracle update and
+              the liquidate call land in the same ledger. The future{' '}
               <Link href="/mev" className="underline decoration-dotted">
                 /mev
               </Link>{' '}
@@ -95,7 +92,7 @@ export default function LendingPage() {
         <div className="mt-4 flex flex-wrap gap-3 text-xs">
           <a
             href="https://github.com/blend-capital/blend-contracts"
-            className="inline-flex items-center gap-1 text-ink-muted hover:underline"
+            className="text-ink-muted inline-flex items-center gap-1 hover:underline"
             target="_blank"
             rel="noreferrer"
           >
@@ -107,16 +104,12 @@ export default function LendingPage() {
 
       <LendingPoolsTable />
 
-      <Panel
-        title="Notes"
-        bodyClassName="text-sm text-ink-body space-y-2"
-      >
+      <Panel title="Notes" bodyClassName="text-sm text-ink-body space-y-2">
         <p>
-          Per-pool TVL, utilisation, and the supplied-weighted
-          supply/borrow APY columns all read live from pool storage
-          (per-reserve USD). The table lists pools observed in the
-          auction stream, so a pool that has never had a liquidation
-          won&apos;t appear until it does.
+          Per-pool TVL, utilisation, and the supplied-weighted supply/borrow APY
+          columns all read live from pool storage (per-reserve USD). The table
+          lists pools observed in the auction stream, so a pool that has never
+          had a liquidation won&apos;t appear until it does.
         </p>
         <p>
           For more context: head to{' '}

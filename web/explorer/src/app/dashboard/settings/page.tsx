@@ -55,11 +55,11 @@ function SettingsBody({ me }: { me: MeResponse }) {
         <PlanCard me={me} />
         <DangerZone />
 
-        <p className="text-xs text-ink-faint">
+        <p className="text-ink-faint text-xs">
           Need to change the email on file, rename the account, or configure
           webhooks? Contact{' '}
           <a
-            className="font-medium text-brand-700 hover:underline"
+            className="text-brand-700 font-medium hover:underline"
             href="mailto:support@stellarindex.io"
           >
             support@stellarindex.io
@@ -93,16 +93,16 @@ function ProfileCard({ me }: { me: MeResponse }) {
     <Card>
       <CardHeader title="Profile" description="Read-only account identity." />
       <CardBody className="p-0">
-        <dl className="divide-y divide-line">
+        <dl className="divide-line divide-y">
           {rows.map((r) => (
             <div
               key={r.label}
               className="flex items-center justify-between gap-4 px-5 py-3.5"
             >
-              <dt className="text-sm text-ink-muted">{r.label}</dt>
+              <dt className="text-ink-muted text-sm">{r.label}</dt>
               <dd
                 className={cn(
-                  'min-w-0 truncate text-right text-sm text-ink',
+                  'text-ink min-w-0 truncate text-right text-sm',
                   r.mono && 'font-mono text-[13px]',
                 )}
               >
@@ -120,7 +120,9 @@ function PlanCard({ me }: { me: MeResponse }) {
   const tier = me.account?.tier ?? me.tier;
   const ceiling = tierCeiling(tier);
   const status = me.account?.status ?? 'active';
-  const isPartner = ['partner', 'enterprise'].includes((tier ?? '').toLowerCase());
+  const isPartner = ['partner', 'enterprise'].includes(
+    (tier ?? '').toLowerCase(),
+  );
   return (
     <Card>
       <CardHeader
@@ -134,10 +136,10 @@ function PlanCard({ me }: { me: MeResponse }) {
       />
       <CardBody className="flex flex-col gap-5 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <div className="text-2xl font-semibold tracking-tight text-ink">
+          <div className="text-ink text-2xl font-semibold tracking-tight">
             {tierLabel(tier)}
           </div>
-          <div className="tnum mt-1 text-sm text-ink-muted">
+          <div className="tnum text-ink-muted mt-1 text-sm">
             {ceiling !== null
               ? `${fmtInt(ceiling)} requests / minute`
               : 'Custom rate limits'}
@@ -188,7 +190,7 @@ function DangerZone() {
           to close your account and revoke all keys.
         </Callout>
         <div className="flex items-center justify-between gap-4">
-          <div className="text-sm text-ink-muted">
+          <div className="text-ink-muted text-sm">
             Sign out of your account on this device.
           </div>
           <Button
