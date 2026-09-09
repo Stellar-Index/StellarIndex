@@ -15,6 +15,20 @@ against.
 
 ## [Unreleased]
 
+### Added
+
+- **ci:** `lint-yaml-duplicate-keys` refuses a YAML mapping that declares
+  the same key twice, across the ansible, Prometheus, alertmanager and
+  workflow trees. YAML keeps the LAST occurrence, so a duplicate reads in
+  review as an added block while silently deleting its sibling — a second
+  `pre_tasks:` in the archival-node playbook removed its
+  `Confirm Ubuntu 22.04 or 24.04 LTS` guard, and the playbook went on
+  running, through several applies, with the guard present in the file
+  and absent from every run. No parser complains, because duplicate keys
+  are legal; the only way to see it is to look before the loader
+  collapses them.
+
+
 ### Fixed
 
 - **ansible:** a `--check` run of the `archival-node` role aborted the

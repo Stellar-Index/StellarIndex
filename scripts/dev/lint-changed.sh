@@ -396,6 +396,12 @@ fi
 if [ "${#ansible_files[@]}" -gt 0 ]; then
     add_step "lint-ansible-tasks" "whole tree; ${#ansible_files[@]} ansible/alertmanager file(s) changed" "$ci_dir/lint-ansible-tasks.sh"
     add_step "lint-jinja-templates" "" "$ci_dir/lint-jinja-templates.sh"
+    # Duplicate mapping keys. Cheap (<1 s whole-tree) and it catches a class
+    # no other gate here can see: YAML keeps the LAST occurrence of a key, so
+    # a second `pre_tasks:` reads in review as an added block while silently
+    # deleting the first. That happened on 2026-09-08 and removed a
+    # playbook's OS guard for days, through several applies.
+    add_step "lint-yaml-duplicate-keys" "" python3 "$ci_dir/lint-yaml-duplicate-keys.py"
 fi
 
 # 8. Lake reads.
