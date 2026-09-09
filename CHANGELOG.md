@@ -15,6 +15,8 @@ against.
 
 ## [Unreleased]
 
+## [v0.67.0] — 2026-09-09
+
 ### Added
 
 - **api/rwa:** `/v1/rwa/assets` rows now carry `reference` — an
