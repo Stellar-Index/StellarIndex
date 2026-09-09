@@ -364,6 +364,46 @@ against.
   two different elements; written as one string they read as a background
   and a foreground applied together, which is both misleading and the kind
   of thing a contrast scan has to be told to ignore.
+### Fixed
+
+- **web:** `/bridges` and `/external/assets` are now in `sitemap.xml`.
+  Both are linked from the nav, indexable and canonical-tagged, and both
+  were simply never added — the same omission already recorded in that
+  file for the seven chain-explorer hubs, repeated by the two newest
+  pages of those families. `/external/assets` was the sharper case: its
+  per-currency children were being submitted while the hub that indexes
+  them was not.
+
+- **web:** the four query-param entity shells — `/contract?id=`,
+  `/ledger?seq=`, `/tx?hash=` and `/operation?tx=&i=` — are now
+  `robots: { index: false, follow: true }`, matching every canonical
+  counterpart (`/contracts/[id]`, `/ledgers/[seq]`,
+  `/transactions/[hash]`, `/accounts/[g]`), which already carried it.
+  Each renders entirely from its query string and tags itself
+  `canonical: '/<route>'`, so the one URL a crawler can construct — and
+  the one every parameterised hit is consolidated onto — is the bare
+  path, which renders an empty shell. The first three exist specifically
+  to catch inbound legacy links, so they are the likeliest of all these
+  pages to be crawled. `follow: true` keeps the outbound links flowing;
+  only the empty shell is withheld.
+
+### Added
+
+- **web:** `src/lib/route-graph.ts` — the link-graph walk, extracted from
+  `route-reachability.test.ts` so `crawl-surface.test.ts` shares one
+  implementation rather than growing a second notion of "reachable".
+  Test-only, like `lib/nav-shell`. `crawl-surface.test.ts` gains four
+  assertions on top of it: the sitemap submits nothing a reader cannot
+  navigate to (an orphaned island now fails the suite instead of waiting
+  to be noticed), every entry names a real `page.tsx`, every page the nav
+  offers is submitted, and the query-param shells stay out of the index.
+
+- **docs:** `docs/operations/api-explorer-coverage.md` — every path in the
+  OpenAPI contract against whether the explorer consumes it and whether a
+  reader can reach it, at three levels (not consumed / consumed but
+  unreachable / reachable), plus a discoverability audit and the
+  spec-versus-running-API differences. 126 paths: 101 reachable, 0
+  consumed-but-unreachable, 21 not consumed, 4 operational.
 
 ## [v0.65.0] — 2026-09-08
 

@@ -80,6 +80,11 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     '/liquidity-pools',
     '/aggregators',
     '/oracles',
+    // Same category-hub family as the entries above (a CategoryHub over
+    // /v1/protocols), and indexable and canonical-tagged like them, but it
+    // was the one member never added here. routeAvailable drops it on the
+    // test nets, where there are no bridge deployments to list.
+    '/bridges',
     '/research',
     '/methodology',
     '/docs',
@@ -94,6 +99,11 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     '/divergences',
     '/mev',
     '/exchanges',
+    // The external-asset hub. Its per-currency children are enumerated
+    // below (currencyPages) and the rail links it beside /exchanges, but
+    // the hub itself was never listed — so the one page that indexes the
+    // whole external set was the only part of it a crawler never saw.
+    '/external/assets',
     '/pricing',
     '/blog',
     '/company',
