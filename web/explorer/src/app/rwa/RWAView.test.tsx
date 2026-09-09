@@ -375,6 +375,52 @@ describe('RWAView', () => {
     expect(screen.queryByText('-3.06%')).not.toBeInTheDocument();
   });
 
+  it('never renders a real gap as 0.00%', async () => {
+    // Treasury premiums are fractions of a percent by nature. At the
+    // site's usual two decimals a real −0.004% discount rounds to
+    // "0.00%" — which reads as "trades at par", the same wrong reading a
+    // blank cell gives, arrived at from the other direction. The cell
+    // widens instead.
+    apiGetData.mockResolvedValue(
+      view({
+        assets: [asset({ premium: { status: 'published', pct: '-0.0040' } })],
+      }),
+    );
+    renderView();
+
+    expect(await screen.findByText('-0.004%')).toBeInTheDocument();
+    expect(screen.queryByText('0.00%')).not.toBeInTheDocument();
+    expect(screen.queryByText('-0.00%')).not.toBeInTheDocument();
+  });
+
+  it('widens as far as the served precision to keep a gap visible', async () => {
+    apiGetData.mockResolvedValue(
+      view({
+        assets: [asset({ premium: { status: 'published', pct: '-0.0004' } })],
+      }),
+    );
+    renderView();
+
+    expect(await screen.findByText('-0.0004%')).toBeInTheDocument();
+    expect(screen.queryByText('0.00%')).not.toBeInTheDocument();
+    expect(screen.queryByText('-0.000%')).not.toBeInTheDocument();
+  });
+
+  it('keeps the exact served gap available where the display rounds', async () => {
+    // The live CETES gap is −0.0166%, which displays at two decimals.
+    // The served figure is the one the API published, and it stays
+    // reachable rather than being silently replaced by its rounding.
+    apiGetData.mockResolvedValue(
+      view({
+        assets: [asset({ premium: { status: 'published', pct: '-0.0166' } })],
+      }),
+    );
+    renderView();
+
+    expect(await screen.findByText('-0.02%')).toBeInTheDocument();
+    expect(screen.getByTitle(/-0\.0166%/)).toBeInTheDocument();
+  });
+
   it('labels a stale instrument valuation rather than hiding it', async () => {
     apiGetData.mockResolvedValue(
       view({

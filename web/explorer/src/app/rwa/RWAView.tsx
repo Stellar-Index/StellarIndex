@@ -492,18 +492,41 @@ function PremiumCell({ premium }: { premium: RWAAsset['premium'] }) {
   return (
     <span
       className={`tnum font-medium ${tone}`}
-      title={
+      title={`${
         pct === 0
           ? 'The market price equals the independent valuation.'
           : pct > 0
             ? 'The token trades ABOVE the independent valuation of the instrument.'
             : 'The token trades BELOW the independent valuation of the instrument.'
-      }
+      } Served figure: ${premium.pct}%.`}
     >
       {pct > 0 ? '+' : ''}
-      {pct.toFixed(2)}%
+      {formatPremiumPct(pct)}%
     </span>
   );
+}
+
+/**
+ * A premium at enough precision that a non-zero gap never displays as
+ * zero.
+ *
+ * Two decimals is the site's percentage convention, but the gaps this
+ * column measures are fractions of a percent by nature — a tokenized
+ * treasury near its instrument's value trades within basis points of it.
+ * At two decimals a real −0.004% discount renders "0.00%", which reads
+ * as "trades at par": the same wrong reading a blank cell would give,
+ * arrived at from the other direction. The served figure carries four
+ * decimals, so widening to those is enough for any non-zero value.
+ *
+ * An exact zero keeps two decimals. It IS par, and saying so plainly is
+ * the honest rendering of that case.
+ */
+function formatPremiumPct(pct: number): string {
+  const abs = Math.abs(pct);
+  if (abs === 0) return '0.00';
+  if (abs >= 0.01) return pct.toFixed(2);
+  if (abs >= 0.001) return pct.toFixed(3);
+  return pct.toFixed(4);
 }
 
 function GroupTable({
