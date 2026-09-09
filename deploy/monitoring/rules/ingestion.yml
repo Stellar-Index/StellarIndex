@@ -976,8 +976,48 @@ groups:
         # Same operand-order and (ops_job, instance, pid) join discipline as
         # the sibling above — see its comment for why none of the three is
         # optional.
+        #
+        # TWO progress counters, and the alert needs BOTH flat.
+        #
+        # `progress_total` counts completed units (ledgers, rows). For some
+        # jobs that unit is structurally zero for whole phases of a
+        # perfectly healthy run: `usd-volume-restamp -chunks` must
+        # decompress a Timescale chunk before it can restamp one row in it,
+        # and on r1 (2026-09-09) that decompress ran 49+ minutes on a
+        # 17.3 GB chunk and about 1.5 hours on the 159.7 GB outlier at
+        # [2026-06-06, 2026-07-06). This alert ticketed on EVERY healthy
+        # chunked run, and an alert that fires on every healthy run is one
+        # the operator learns to ignore — the same blindness it exists to
+        # prevent, reached by a different route.
+        #
+        # The answer is NOT a phase mute or a wider window: that phase is
+        # the longest and most dangerous part of the run, and "alive and
+        # hung" is real there (decompress_chunk waits on a lock the
+        # ledgerstream replay can hold; a stalled read never returns). The
+        # job now reports the work it IS doing — `progress_bytes_total`,
+        # the chunk's on-disk size climbing as its heap and indexes are
+        # extended (measured on TimescaleDB 2.26.4 / PG 15.17: every sample
+        # moved through a decompress). A WEDGED decompress extends no
+        # files, so both counters go flat and this still fires.
+        #
+        # `or changes(progress_total[30m]) * 0` defaults the bytes term to
+        # ZERO for a job that does not publish that series. Without it the
+        # `+` would be a one-to-one vector match that DROPS every label set
+        # missing the right-hand side, and this alert would go silent for
+        # any job whose emitter predates the series — a monitoring hole
+        # disguised as a monitoring upgrade. The emitter publishes the
+        # series unconditionally (at 0), so the fallback only covers a job
+        # still running an older binary across the rollout.
         expr: |
-          changes(stellarindex_ops_job_progress_total[30m]) == 0
+          (
+            changes(stellarindex_ops_job_progress_total[30m])
+            +
+            (
+              changes(stellarindex_ops_job_progress_bytes_total[30m])
+              or
+              changes(stellarindex_ops_job_progress_total[30m]) * 0
+            )
+          ) == 0
           and on (ops_job, instance, pid)
           stellarindex_ops_job_running == 1
         for: 15m
@@ -989,10 +1029,12 @@ groups:
           runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ops-job-stalled.md
           summary: "ops job {{ $labels.ops_job }} is alive but has completed no work for 30+ minutes"
           description: |
-            The process is heartbeating (so it has not died) but its
-            completed-units counter has not moved in 30 minutes. The job
-            is HUNG, not dead: a blocked S3 GET with no deadline, a
-            ClickHouse/Postgres write waiting on a lock, or a stuck
+            The process is heartbeating (so it has not died) but neither
+            of its progress counters has moved in 30 minutes: no unit
+            completed AND no storage observed to move. The job is HUNG,
+            not dead: a blocked S3 GET with no deadline, a
+            ClickHouse/Postgres write waiting on a lock, a
+            decompress_chunk that cannot take its lock, or a stuck
             captive-core.
 
             Distinguish from a genuinely slow window by checking the

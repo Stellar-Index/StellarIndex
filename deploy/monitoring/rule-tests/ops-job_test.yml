@@ -129,10 +129,12 @@ tests:
               runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ops-job-stalled.md
               summary: "ops job ch-backfill is alive but has completed no work for 30+ minutes"
               description: |
-                The process is heartbeating (so it has not died) but its
-                completed-units counter has not moved in 30 minutes. The job
-                is HUNG, not dead: a blocked S3 GET with no deadline, a
-                ClickHouse/Postgres write waiting on a lock, or a stuck
+                The process is heartbeating (so it has not died) but neither
+                of its progress counters has moved in 30 minutes: no unit
+                completed AND no storage observed to move. The job is HUNG,
+                not dead: a blocked S3 GET with no deadline, a
+                ClickHouse/Postgres write waiting on a lock, a
+                decompress_chunk that cannot take its lock, or a stuck
                 captive-core.
 
                 Distinguish from a genuinely slow window by checking the
@@ -384,4 +386,102 @@ tests:
     alert_rule_test:
       - eval_time: 40m
         alertname: stellarindex_ratelimit_fail_open
+        exp_alerts: []
+
+  # ── C6-020 / 2026-09-09: a chunk decompress is WORK, not a hang ──
+  # The regression that made this family noise. `usd-volume-restamp
+  # -chunks` must decompress a Timescale chunk before it can restamp one
+  # row in it: on r1 that ran 49+ minutes on a 17.3 GB chunk and about
+  # 1.5 hours on the 159.7 GB outlier. progress_total counts ROWS, so it
+  # is flat for the whole phase and this alert ticketed on EVERY healthy
+  # chunked run.
+  #
+  # Here the row counter is flat from t=0 (nothing is restamped yet) while
+  # the byte counter climbs — the chunk's on-disk size being extended by
+  # decompress_chunk. Nothing may fire: the job is working.
+  #
+  # Against the pre-fix expr (`changes(progress_total[30m]) == 0 and
+  # running == 1`) this case FIRES at t=45m, which is exactly the false
+  # ticket that was observed on r1.
+  - interval: 1m
+    name: a chunked restamp decompressing a chunk is not reported as hung
+    input_series:
+      - series: 'stellarindex_ops_job_heartbeat_unix{job="node_exporter",instance="r1:9100",ops_job="usd-volume-restamp"}'
+        values: '0+60x180'
+      - series: 'stellarindex_ops_job_running{job="node_exporter",instance="r1:9100",ops_job="usd-volume-restamp"}'
+        values: '1+0x180'
+      # Not one row restamped for the whole 3 hours — the decompress has
+      # to finish first.
+      - series: 'stellarindex_ops_job_progress_total{job="node_exporter",instance="r1:9100",ops_job="usd-volume-restamp"}'
+        values: '0+0x180'
+      # The chunk's on-disk size climbing: ~1 GiB per minute of decompress.
+      - series: 'stellarindex_ops_job_progress_bytes_total{job="node_exporter",instance="r1:9100",ops_job="usd-volume-restamp"}'
+        values: '0+1073741824x180'
+
+    alert_rule_test:
+      - eval_time: 45m
+        alertname: stellarindex_ops_job_no_progress
+        exp_alerts: []
+      - eval_time: 90m
+        alertname: stellarindex_ops_job_no_progress
+        exp_alerts: []
+      - eval_time: 3h
+        alertname: stellarindex_ops_job_no_progress
+        exp_alerts: []
+      - eval_time: 3h
+        alertname: stellarindex_ops_job_heartbeat_stale
+        exp_alerts: []
+
+  # ── C6-020 / 2026-09-09: a WEDGED decompress must still ticket ────
+  # The other half, and the reason the fix is a second counter rather
+  # than a mute for the phase. decompress_chunk waits on a lock the
+  # ledgerstream replay can hold, and a stalled read never returns. A
+  # wedged decompress extends no files, so the chunk's size stops moving
+  # too: BOTH counters flat, and the alert must still fire.
+  #
+  # Bytes climb until t=10m and freeze there. By t=60m nothing has moved
+  # for 50 min — past the 30m window and the 15m `for`.
+  - interval: 1m
+    name: a chunked restamp wedged inside a decompress still tickets
+    input_series:
+      - series: 'stellarindex_ops_job_heartbeat_unix{job="node_exporter",instance="r1:9100",ops_job="usd-volume-restamp"}'
+        values: '0+60x120'
+      - series: 'stellarindex_ops_job_running{job="node_exporter",instance="r1:9100",ops_job="usd-volume-restamp"}'
+        values: '1+0x120'
+      - series: 'stellarindex_ops_job_progress_total{job="node_exporter",instance="r1:9100",ops_job="usd-volume-restamp"}'
+        values: '0+0x120'
+      - series: 'stellarindex_ops_job_progress_bytes_total{job="node_exporter",instance="r1:9100",ops_job="usd-volume-restamp"}'
+        values: '0+1073741824x10 10737418240+0x110'
+
+    alert_rule_test:
+      - eval_time: 60m
+        alertname: stellarindex_ops_job_no_progress
+        exp_alerts:
+          - exp_labels:
+              job: node_exporter
+              instance: r1:9100
+              ops_job: usd-volume-restamp
+              severity: ticket
+              team: stellarindex
+              component: ingestion
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ops-job-stalled.md
+              summary: "ops job usd-volume-restamp is alive but has completed no work for 30+ minutes"
+              description: |
+                The process is heartbeating (so it has not died) but neither
+                of its progress counters has moved in 30 minutes: no unit
+                completed AND no storage observed to move. The job is HUNG,
+                not dead: a blocked S3 GET with no deadline, a
+                ClickHouse/Postgres write waiting on a lock, a
+                decompress_chunk that cannot take its lock, or a stuck
+                captive-core.
+
+                Distinguish from a genuinely slow window by checking the
+                cursor: `stellarindex_ops_job_progress_cursor{ops_job="…"}`
+                frozen at the same ledger across scrapes is a hang. Take a
+                goroutine dump / strace before killing it — a hang here has
+                recurred (galexie wedge, 2026-07-05) and the stack is the
+                only evidence of which read blocked.
+      - eval_time: 60m
+        alertname: stellarindex_ops_job_heartbeat_stale
         exp_alerts: []

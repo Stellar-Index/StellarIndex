@@ -9,10 +9,14 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
+	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
+	"github.com/Stellar-Index/StellarIndex/internal/ops/opsutil"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
@@ -84,7 +88,57 @@ type fakeChunkStore struct {
 	// compressed again.
 	recompressUnderneath string
 
+	// ─── the chunk's live on-disk size, as the byte-progress poll reads it ──
+	//
+	// bmu guards this group ALONE: the poll runs on its own goroutine for
+	// as long as the walk is inside a chunk, so it races everything else
+	// the fake records. Nothing here touches `log` for the same reason.
+	bmu sync.Mutex
+	// byteScript is what successive TradesChunkBytes calls answer; the
+	// last entry repeats once it is exhausted, which is what makes the
+	// observed movement a FIXED total however many extra times the poll
+	// fires. Empty = the chunk's listed uncompressed size, unchanging, so
+	// every test that does not care reports no byte movement at all.
+	byteScript []int64
+	byteReads  int
+	// byteScriptDrained closes when the whole script has been served.
+	// RestampTradesChunk waits on it before running the work, which is
+	// how a test holds a chunk in its "decompress" — completing no rows —
+	// for exactly as long as it takes the poll to observe the movement.
+	byteScriptDrained chan struct{}
+	// onWork runs immediately before the work callback, i.e. at the
+	// instant the decompress has finished and not one row has been
+	// written.
+	onWork func()
+
 	log []string
+}
+
+// TradesChunkBytes is the chunk's live on-disk total, as the walk's
+// byte-progress poll reads it. Deliberately silent in `log`: it is called
+// from the poll goroutine.
+func (f *fakeChunkStore) TradesChunkBytes(_ context.Context, c timescale.TradeChunk) (int64, error) {
+	f.bmu.Lock()
+	defer f.bmu.Unlock()
+	if len(f.byteScript) == 0 {
+		return c.UncompressedBytes, nil
+	}
+	i := f.byteReads
+	if i >= len(f.byteScript) {
+		i = len(f.byteScript) - 1
+	}
+	f.byteReads++
+	if f.byteReads == len(f.byteScript) && f.byteScriptDrained != nil {
+		close(f.byteScriptDrained)
+	}
+	return f.byteScript[i], nil
+}
+
+// reads is how many times the byte poll has read the chunk's size.
+func (f *fakeChunkStore) reads() int {
+	f.bmu.Lock()
+	defer f.bmu.Unlock()
+	return f.byteReads
 }
 
 func newFakeChunkStore(chunks []timescale.TradeChunk, dirty ...time.Time) *fakeChunkStore {
@@ -191,6 +245,23 @@ func (f *fakeChunkStore) RestampTradesChunk(ctx context.Context, c timescale.Tra
 	}
 	before(timescale.ChunkRestampDecompress)
 	f.log = append(f.log, "decompress "+c.Name)
+	// A scripted chunk holds its "decompress" open until the byte poll
+	// has observed the whole script — the real decompress runs for up to
+	// about 1.5 hours before the work can write its first row. BOUNDED,
+	// so a walk that never polls (the pre-fix behaviour) fails its
+	// assertions instead of hanging the suite until the go test timeout.
+	if f.byteScriptDrained != nil {
+		timeout := time.NewTimer(3 * time.Second)
+		select {
+		case <-f.byteScriptDrained:
+		case <-timeout.C:
+		case <-ctx.Done():
+		}
+		timeout.Stop()
+	}
+	if f.onWork != nil {
+		f.onWork()
+	}
 	werr := work(ctx)
 	before(timescale.ChunkRestampCompress)
 	f.log = append(f.log, "compress "+c.Name)
@@ -1208,5 +1279,78 @@ func TestXLMBaseRestampSummary_AcceptanceLineForTheRunbookWindow(t *testing.T) {
 	const want = "acceptance: stellarindex-ops verify-usd-volume -config /etc/stellarindex.toml -day 2026-07-21 -days 202\n"
 	if !strings.Contains(got, want) {
 		t.Errorf("summary lacks %q:\n%s", want, got)
+	}
+}
+
+// ─── the decompress must not read as a hung job ──────────────────────────
+
+// TestChunkRestamp_ReportsChunkByteProgressThroughADecompressThatWritesNoRow
+// is the 2026-09-09 regression: `stellarindex_ops_job_no_progress` fired
+// on EVERY healthy chunked restamp.
+//
+// The walk cannot restamp a row in a compressed chunk until the chunk is
+// decompressed, and that decompress ran 49+ minutes on a 17.3 GB chunk on
+// r1 (about 1.5 hours on the 159.7 GB outlier). The heartbeat's only
+// progress signal counted restamped ROWS, which is structurally zero for
+// all of it, so the alert's `changes(progress_total[30m]) == 0 and
+// running == 1` matched a job that was working perfectly — and an alert
+// that tickets every healthy run is one the operator stops reading.
+//
+// The fix is not to mute the phase (a wedge there is real and dangerous)
+// but to report the work that IS happening: the chunk's on-disk size
+// climbs continuously while a decompress runs. This pins that the walk
+// publishes that movement as byte progress, and pins the AMOUNT — the
+// total distance the chunk's size travelled — because a signal that
+// merely exists would still go flat on a run whose figure the walk never
+// actually read.
+func TestChunkRestamp_ReportsChunkByteProgressThroughADecompressThatWritesNoRow(t *testing.T) {
+	const gib = int64(1) << 30
+	// What an observer session sees while decompress_chunk runs: the
+	// chunk's own heap and indexes being extended. The last entry repeats
+	// once the script is exhausted, so the total movement is exactly
+	// 160-10 = 150 GiB however many extra times the poll fires.
+	script := []int64{10 * gib, 40 * gib, 90 * gib, 160 * gib}
+	const wantMoved = uint64(150) << 30
+
+	day := func(d int) time.Time { return time.Date(2026, 6, d, 0, 0, 0, 0, time.UTC) }
+	chunks := []timescale.TradeChunk{chunkFixture("_hyper_1_9_chunk", day(6), day(13), 160*gib, 10*gib)}
+	from, to := day(6), day(12)
+
+	store := newFakeChunkStore(chunks, day(7).Add(3*time.Hour))
+	store.byteScript = script
+	store.byteScriptDrained = make(chan struct{})
+
+	// A REAL heartbeat, so what is asserted is the series an operator's
+	// Prometheus would scrape and not an intermediate the walk owns.
+	path := filepath.Join(t.TempDir(), "ops_job_usd_volume_restamp.prom")
+	hb := opsutil.NewJobHeartbeat("usd-volume-restamp", path, nil)
+	hb.Start()
+
+	// At the instant the decompress finishes: the poll has read the whole
+	// script, and not one row has been applied. That pairing IS the
+	// defect — work being done with the row counter pinned at zero.
+	var readsAtWork, appliesAtWork int
+	store.onWork = func() { readsAtWork, appliesAtWork = store.reads(), store.applies }
+
+	opts, copts, out := chunkTestOptions(true)
+	opts.Heartbeat = hb
+	copts.ChunkBytesPoll = time.Millisecond
+
+	if err := runXLMBaseChunkRestamp(context.Background(), store, "/etc/stellarindex.toml", from, to, opts, copts); err != nil {
+		t.Fatalf("%v\n%s", err, out.String())
+	}
+	hb.Stop(true)
+
+	if appliesAtWork != 0 || readsAtWork < len(script) {
+		t.Errorf("at the end of the decompress: %d row-apply(s) and %d size read(s), want 0 applies and >= %d reads",
+			appliesAtWork, readsAtWork, len(script))
+	}
+	body, err := os.ReadFile(path) //nolint:gosec // t.TempDir path
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := fmt.Sprintf("stellarindex_ops_job_progress_bytes_total{ops_job=%q} %d\n", "usd-volume-restamp", wantMoved)
+	if !strings.Contains(string(body), want) {
+		t.Errorf("heartbeat does not publish the observed chunk movement (want %q):\n%s", want, body)
 	}
 }

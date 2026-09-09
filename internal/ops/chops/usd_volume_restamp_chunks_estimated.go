@@ -89,6 +89,8 @@ func (t *estimatedChunkTier) tick(watermark time.Time) {
 	t.run.hb.Progress(t.run.progress, uint64(watermark.Unix())) //nolint:gosec // post-1970 timestamp
 }
 
+func (t *estimatedChunkTier) tickBytes(moved uint64) { t.run.hb.ProgressBytes(moved) }
+
 func (t *estimatedChunkTier) finish(cfgPath string, from, to time.Time) string {
 	t.run.printReport(from, to)
 	return t.run.summary(cfgPath, from, to)

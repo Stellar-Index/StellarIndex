@@ -25,7 +25,7 @@ recompress, movement backfills, `ch-full-backfill.sh` windows); they run
 for days; and a wedged one looked exactly like a working one unless
 somebody was tailing the journal.
 
-`JobHeartbeat` publishes three things *separately* so the two genuinely
+`JobHeartbeat` publishes liveness and progress *separately* so the two genuinely
 different failures stay separable:
 
 | Series | Meaning |
@@ -34,6 +34,7 @@ different failures stay separable:
 | `stellarindex_ops_job_heartbeat_unix{ops_job}` | Rewritten every 60 s by a background ticker, **independent of whether work is happening**. |
 | `stellarindex_ops_job_progress_total{ops_job}` | Units (ledgers) completed this run. |
 | `stellarindex_ops_job_progress_cursor{ops_job}` | Highest ledger reached (a running max — the parallel walkers cover disjoint chunks). |
+| `stellarindex_ops_job_progress_bytes_total{ops_job}` | Bytes of storage the job has **observed move** during a phase that completes no units. 0 for a job with no such phase. |
 | `stellarindex_ops_job_last_exit_ok{ops_job}` | Only present after a run ends: 1 clean, 0 errored. |
 
 Hence:
@@ -41,8 +42,34 @@ Hence:
 - **`heartbeat_stale`** = `running==1` but the ticker stopped → the
   process died without cleanup: OOM-kill, SIGKILL, host reboot, the SSH
   session that owned it closed.
-- **`no_progress`** = `running==1`, ticker fine, counter flat for 30 min →
-  the process is up and **hung**.
+- **`no_progress`** = `running==1`, ticker fine, **both** counters flat for
+  30 min → the process is up and **hung**.
+
+`no_progress` needs both because for some jobs the completed-unit count is
+structurally zero for whole phases of a healthy run. `usd-volume-restamp
+-chunks` has to decompress a Timescale chunk before it can restamp one row
+in it, and on r1 (2026-09-09) that decompress ran 49+ minutes on a 17.3 GB
+chunk and about 1.5 hours on the 159.7 GB outlier at [2026-06-06,
+2026-07-06) — so the alert ticketed on every healthy chunked run until the
+job started reporting the chunk's on-disk size as it climbed. That phase is
+**not** muted: a decompress that is wedged (`decompress_chunk` waiting on a
+lock the ledgerstream replay holds, a read that never returns) extends no
+files, so the byte counter goes flat too and the alert still fires.
+
+Measured on the deployed pair (TimescaleDB 2.26.4 / PG 15.17), one chunk,
+one observer session polling `chunks_detailed_size`: through
+`decompress_chunk` every sample moved (98.9 MB → 522 MB); through
+`compress_chunk` the figure is flat for the whole statement and steps once
+at commit, because TimescaleDB builds the compressed chunk as a new
+relation inside the compressing transaction and the polling session's
+catalog snapshot cannot see it. The re-compress stays inside the alert's
+existing window on cost rather than on signal: it measured 23.0 s against
+the same chunk's 44.1 s decompress (0.52x). A `no_progress` ticket raised
+while the job log's last line is `re-compressing` is therefore the one case
+to check by hand before treating it as a hang — confirm with
+`SELECT state, wait_event_type, wait_event FROM pg_stat_activity WHERE
+query LIKE '%compress_chunk%'`; `Lock` there is a real wedge, anything else
+is work in progress.
 
 Both exprs are guarded by `running == 1`. That guard is what stops a
 *cleanly finished* job — whose heartbeat and counter are frozen forever by
@@ -73,7 +100,9 @@ definition — from alerting eternally. Do not remove it.
    `journalctl -u <unit> --since -6h | tail -100` and
    `dmesg -T | grep -i 'killed process'` for the OOM killer. Note the
    last `progress_cursor` value — that is roughly how far it got.
-4. **`no_progress` + process present** → it is hung. Before killing it,
+4. **`no_progress` + process present** → it is hung (both counters flat —
+   check `progress_bytes_total` too before concluding, and see the
+   re-compress note above). Before killing it,
    capture the stack: `kill -QUIT <pid>` writes a goroutine dump to the
    journal. A hang here has recurred (the 2026-07-05 galexie/captive-core
    wedge) and the dump is the only evidence of which read blocked.

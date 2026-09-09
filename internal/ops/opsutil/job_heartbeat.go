@@ -77,6 +77,8 @@ const jobHeartbeatLabel = "ops_job"
 //     background ticker, INDEPENDENT of whether work is happening
 //   - stellarindex_ops_job_progress_total units completed so far
 //   - stellarindex_ops_job_progress_cursor highest ledger reached
+//   - stellarindex_ops_job_progress_bytes_total bytes of storage OBSERVED
+//     to move during a phase that completes no units — see [JobHeartbeat.ProgressBytes]
 //
 // all labelled `ops_job=` — see [jobHeartbeatLabel] for why NOT `job=`.
 //
@@ -120,6 +122,7 @@ type JobHeartbeat struct {
 	started  time.Time
 	total    uint64
 	cursor   uint64
+	bytes    uint64
 	running  bool
 	finished bool
 	exitOK   bool
@@ -352,6 +355,49 @@ func (h *JobHeartbeat) Progress(total, cursor uint64) {
 	h.mu.Unlock()
 }
 
+// ProgressBytes records that `moved` bytes of storage have been OBSERVED
+// to move so far in this run, cumulatively. It is the SECOND progress
+// dimension, and it exists because [JobHeartbeat.Progress]'s unit —
+// completed rows/ledgers — is structurally zero for the whole of some
+// phases of a job that is perfectly healthy.
+//
+// The case that forced it (r1, 2026-09-09): `usd-volume-restamp -chunks`
+// must decompress a Timescale chunk before it can restamp a single row
+// in it, and `trades` has an outlier chunk at 159.7 GB uncompressed whose
+// decompress runs about 1.5 hours. Progress counts restamped rows, so it
+// was flat for that entire window and `stellarindex_ops_job_no_progress`
+// (30 min flat + 15 min `for`) ticketed on EVERY healthy run — measured
+// 49+ minutes flat on a 17.3 GB chunk. An alert that fires on every
+// healthy run is an alert the operator learns to ignore, which is the
+// same blindness the alert exists to prevent, reached by a different
+// route.
+//
+// The fix is NOT to mute the alert for that phase: the phase is the
+// longest and most dangerous part of the run, and `running==1 ∧ fresh
+// heartbeat ∧ flat progress` is a state that genuinely happens there
+// (decompress_chunk needs a lock the ledgerstream replay can hold; a
+// stalled read never returns). The fix is to report the work that IS
+// happening. During a decompress the chunk's own heap and indexes are
+// extended on disk, and `pg_relation_size` stats those files rather than
+// reading them through the writer's snapshot — so an observer session
+// sees the figure climb continuously (measured on TimescaleDB 2.26.4 /
+// PG 15.17, the deployed pair: every single sample moved, 98.9 MB →
+// 522 MB across one decompress). A decompress that is WEDGED extends no
+// files, so both counters stay flat and the alert still fires.
+//
+// The caller owns the accumulator (as it does for Progress's `total`) and
+// passes the running sum, so a job with several phases reports ONE
+// monotone series. Cheap enough to call per poll: a mutex and one
+// integer.
+func (h *JobHeartbeat) ProgressBytes(moved uint64) {
+	if !h.Enabled() {
+		return
+	}
+	h.mu.Lock()
+	h.bytes = moved
+	h.mu.Unlock()
+}
+
 // Stop halts the ticker and writes the terminal state: running=0 plus
 // last_finish_unix / last_exit_ok, so a completed job stops matching the
 // stall alerts and an operator can still see when it ended and whether it
@@ -398,7 +444,7 @@ func (h *JobHeartbeat) Stop(exitOK bool) {
 // filesystem.
 func (h *JobHeartbeat) render() string {
 	h.mu.Lock()
-	job, started, total, cursor := h.job, h.started, h.total, h.cursor
+	job, started, total, cursor, moved := h.job, h.started, h.total, h.cursor, h.bytes
 	running, finished, exitOK := h.running, h.finished, h.exitOK
 	h.mu.Unlock()
 
@@ -442,6 +488,17 @@ func (h *JobHeartbeat) render() string {
 	writeGauge("stellarindex_ops_job_progress_cursor",
 		"Highest ledger sequence a stellarindex-ops job has reached in the current run.",
 		fmt.Sprintf("%d", cursor))
+	// Emitted UNCONDITIONALLY, at 0 for a job that never reports byte
+	// movement. The alert joins the two counters, and a series that is
+	// absent for some jobs and present for others would make the join
+	// silently drop the jobs that lack it — the alert's coverage would
+	// then depend on which subcommand happened to be running. Zero is a
+	// meaningful value here: "this job has observed no storage move",
+	// which for a job with no such phase is simply true for its whole
+	// life.
+	writeGauge("stellarindex_ops_job_progress_bytes_total",
+		"Bytes of storage a stellarindex-ops job has OBSERVED move in the current run during a phase that completes no units of work (a Timescale chunk decompress). Flat TOGETHER with progress_total while running = hung.",
+		fmt.Sprintf("%d", moved))
 	// last_finish/last_exit are only meaningful once a run has ended.
 	// Emitting them mid-run (as 0, or as the PREVIOUS run's values) would
 	// be worse than absent: a 0 finish timestamp reads as 1970 to every

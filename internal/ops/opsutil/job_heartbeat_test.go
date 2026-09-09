@@ -406,3 +406,69 @@ func findDeadPID(t *testing.T) int {
 	t.Skip("no dead pid found in the probe range on this machine")
 	return 0
 }
+
+// TestJobHeartbeatPublishesObservedByteProgressSeparately is the
+// 2026-09-09 regression: `stellarindex_ops_job_no_progress` ticketed on
+// every healthy `usd-volume-restamp -chunks` run.
+//
+// That job must decompress a Timescale chunk before it can restamp a row
+// in it, and on r1 the decompress ran 49+ minutes on a 17.3 GB chunk
+// (about 1.5 hours on the 159.7 GB outlier). progress_total counts
+// restamped ROWS, so it was structurally flat for all of it and the
+// alert's `changes(progress_total[30m]) == 0 and running == 1` matched a
+// job that was working perfectly.
+//
+// The remedy is a SECOND progress dimension, not a mute: the storage the
+// job is moving. This pins the three properties the alert rests on —
+//
+//  1. the byte counter is its own series, so a job that reports bytes and
+//     no rows is still visibly progressing;
+//  2. it does NOT disturb progress_total, which stays the row/ledger
+//     count an operator reads;
+//  3. it is emitted UNCONDITIONALLY, at 0, by a job that never reports
+//     byte movement. Absence would make the alert's join silently drop
+//     every job without the phase, so the alert's coverage would depend
+//     on which subcommand happened to be running.
+func TestJobHeartbeatPublishesObservedByteProgressSeparately(t *testing.T) {
+	fixed := time.Unix(1_700_000_000, 0)
+
+	// A job in the middle of a chunk decompress: the chunk's on-disk size
+	// has climbed 150 GiB and not one row is restamped yet.
+	moving := filepath.Join(t.TempDir(), "ops_job_usd_volume_restamp.prom")
+	hb := opsutil.NewJobHeartbeat("usd-volume-restamp", moving, func() time.Time { return fixed })
+	hb.Start()
+	hb.ProgressBytes(uint64(150) << 30)
+	hb.Stop(true)
+
+	raw, err := os.ReadFile(moving) //nolint:gosec // test-controlled temp path
+	if err != nil {
+		t.Fatalf("heartbeat textfile not written: %v", err)
+	}
+	body := string(raw)
+	if got := gaugeValue(t, body, "stellarindex_ops_job_progress_bytes_total"); got != "161061273600" {
+		t.Errorf("progress_bytes_total = %s, want 161061273600 (150 GiB)", got)
+	}
+	if got := gaugeValue(t, body, "stellarindex_ops_job_progress_total"); got != "0" {
+		t.Errorf("progress_total = %s, want 0 — byte progress must not be mixed into the row/ledger count", got)
+	}
+
+	// A job that never reports byte movement still publishes the series,
+	// at 0. Absence and zero are DIFFERENT states to the alert's join.
+	quiet := filepath.Join(t.TempDir(), "ops_job_ch_backfill.prom")
+	other := opsutil.NewJobHeartbeat("ch-backfill", quiet, func() time.Time { return fixed })
+	other.Start()
+	other.Progress(1234, 63_050_000)
+	other.Stop(true)
+
+	raw, err = os.ReadFile(quiet) //nolint:gosec // test-controlled temp path
+	if err != nil {
+		t.Fatalf("heartbeat textfile not written: %v", err)
+	}
+	body = string(raw)
+	if got := gaugeValue(t, body, "stellarindex_ops_job_progress_bytes_total"); got != "0" {
+		t.Errorf("progress_bytes_total for a job with no byte phase = %s, want 0", got)
+	}
+	if got := gaugeValue(t, body, "stellarindex_ops_job_progress_total"); got != "1234" {
+		t.Errorf("progress_total = %s, want 1234", got)
+	}
+}
