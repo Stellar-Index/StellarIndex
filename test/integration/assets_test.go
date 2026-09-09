@@ -41,9 +41,25 @@ func TestAssetsReader(t *testing.T) {
 	if next != "" {
 		t.Errorf("next cursor should be empty, got %q", next)
 	}
-	has, _ := store.HasAsset(ctx, c.NativeAsset())
-	if has {
-		t.Error("HasAsset should be false on empty db")
+	// NATIVE IS THE ONE EXCEPTION, and it is deliberate. XLM exists on
+	// every Stellar network from the genesis ledger, so HasAsset answers
+	// it from first principles rather than from trade evidence and is
+	// true even here. The assertion this replaces predated that rule.
+	//
+	// It is not a hollow yes. The asset detail an index serves for native
+	// is supply, decimals, markets_count and sep1_status — read from
+	// ledger entries, not trades. Measured 2026-09-09: futurenet has ONE
+	// XLM trade in its whole history and still serves a full native
+	// payload, while a trade-windowed existence check would have 404'd
+	// the native asset of a network we ask developers to build against.
+	if has, _ := store.HasAsset(ctx, c.NativeAsset()); !has {
+		t.Error("HasAsset(native) = false; XLM exists on every Stellar network, traded or not")
+	}
+	// Every other asset must still be absent on an empty index — that is
+	// the property the original assertion was protecting, and it stands.
+	usdcProbe, _ := c.NewClassicAsset("USDC", "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN")
+	if has, _ := store.HasAsset(ctx, usdcProbe); has {
+		t.Error("HasAsset(USDC) = true on an empty db; only native is answered without evidence")
 	}
 
 	// Seed 3 assets via trades: XLM, USDC, PHOENIX.
