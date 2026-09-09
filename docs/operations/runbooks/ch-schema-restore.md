@@ -217,9 +217,8 @@ differently-ordered table.
 that (it lives in the role's `files/` dir because that is where this
 repo keeps textfile-collector emitters, and where
 `scripts/ci/lint-metric-refs.sh` looks for a metric's producer). It runs daily
-(`ch-schema-drift.timer`, 04:10 UTC — 30 minutes after the snapshot, so
-it always reads that day's complete capture) and compares, per table
-declared in `deploy/clickhouse/tier1_schema.sql`:
+(`ch-schema-drift.timer`, 04:10 UTC) and compares, per table declared in
+`deploy/clickhouse/tier1_schema.sql`:
 
 | Compared | Why |
 | --- | --- |
@@ -228,6 +227,58 @@ declared in `deploy/clickhouse/tier1_schema.sql`:
 | `PARTITION BY` | Re-shapes every part. |
 | `ORDER BY` | The one that silently corrupts a rebuild rather than failing it. |
 | column names, in order | An added / dropped / reordered column. |
+
+### What it compares *against* — live, by default
+
+The check runs its own `SHOW CREATE` sweep off ClickHouse. That is the
+default (`ch_schema_drift_use_live: true`) and it is what "repo intent vs
+live" in the unit's `Description` means.
+
+Until 2026-09-09 the default read the newest **daily snapshot** instead,
+while every description of the check — the unit, the timer, the metric
+`HELP`, this runbook — said *live*. Measured that morning on r1 and on
+the test nets, in both directions:
+
+- **False drift.** r1's capture was written 05:41; that day's deploy
+  shipped a newer `tier1_schema.sql` at 17:17. Eight tables the new
+  intent declares were missing from a file written before they existed,
+  so the check reported them "ABSENT from the live schema" — all eight
+  were live, `account_creator_edges` alone holding 20.9M rows. It would
+  have cleared itself at the next morning's capture. Red for a reason
+  that is not real and then green on its own is the worst shape a
+  control has: it teaches the operator to wait it out.
+- **Hidden drift**, the worse half. A comparison that never reads the
+  server does not measure live-vs-intent at all — and when ClickHouse is
+  *down* it does not fail either: it reports `0 divergent` off a capture
+  that ages silently, which is exactly the "we could not check" ==
+  "we checked and it's fine" equivalence this ADR exists to break.
+
+The cost argument for reading the snapshot ("one sweep a day serves both
+the backup and the check") does not survive measurement: the sweep is
+~45 `SHOW CREATE`s over loopback, the same work the snapshot job already
+does daily, and the comparison itself is sub-second. The check also runs
+*on* the node it queries.
+
+The snapshot mode is kept as an explicit choice — a retained capture is
+the only way to ask "did the repo match live on 2026-08-01?", and 90 days
+of them are on the box for that. What it may no longer do is answer with
+a capture it cannot answer from:
+
+| Mode | Selected by | Reads |
+| --- | --- | --- |
+| live *(default)* | nothing, or `LIVE=1` | a fresh `SHOW CREATE` sweep via `$CH_HTTP` |
+| capture | `LIVE_SCHEMA=<file>` | the file the operator named |
+| snapshot | `LIVE=0` | the newest `schema.sql` under `$SNAPSHOT_DIR` |
+
+In snapshot mode, if the intent file is **newer than the capture** the
+check **refuses** (exit `2`) and names both sides rather than reporting
+drift. A capture written before the intent was installed cannot tell a
+table that is genuinely missing live from one that was declared after
+the capture was taken. It is a refusal, not a mute: with a capture at
+least as new as the intent, that mode still reports every real
+divergence, and every message names the file it read
+(`ABSENT from the snapshot …/schema.sql (captured 20260908T054100Z)`)
+rather than claiming "the live schema".
 
 Column **types** are reported as `INFO`, never as drift: ClickHouse
 re-renders types, DEFAULTs, CODECs and TTLs in its own canonical form,
@@ -254,11 +305,11 @@ break. The systemd unit sets no `SuccessExitStatus`.
 Run it by hand:
 
 ```sh
-# against the newest snapshot on the box
+# against live — the default; needs no snapshot and no environment
 ch-schema-drift.sh
 
-# against a live SHOW CREATE sweep, no snapshot needed
-LIVE=1 ch-schema-drift.sh
+# against the newest retained capture on the box (up to a day old)
+LIVE=0 ch-schema-drift.sh
 
 # from a checkout, against a snapshot you copied down
 INTENT=deploy/clickhouse/tier1_schema.sql \
@@ -274,7 +325,9 @@ it). Editing the repo to match live without understanding which is which
 codifies the incident.
 
 Metrics: `stellarindex_ch_schema_drift_divergent` (alert on `> 0`),
-`_tables`, `_uncodified`, `_last_run_unix` (staleness). The alert rules
+`_tables`, `_uncodified`, `_last_run_unix` (staleness), and `_live`
+(`1` = the verdict came from a fresh sweep, `0` = from a captured file —
+a clean verdict is only as current as what it read). The alert rules
 themselves are not yet in `deploy/monitoring/rules/storage.yml` — the
 producer ships first; wiring the rule is a follow-up in that file.
 
@@ -292,6 +345,21 @@ at a time and asserts each is caught).
 
 ## Changelog
 
+- 2026-09-09 — **the drift check compares against live by default.** It
+  had compared against the newest daily snapshot while calling itself
+  "repo intent vs live", which cost both directions: 8 live r1 tables
+  reported ABSENT because a deploy shipped a newer intent than the
+  morning's capture, and no live-vs-intent measurement at all (including
+  a confident `0 divergent` whenever ClickHouse was down). `LIVE` now
+  defaults to a fresh `SHOW CREATE` sweep; `LIVE=0` selects the snapshot
+  explicitly and **refuses** (exit `2`) when the intent is newer than the
+  capture; every DRIFT/UNCODIFIED line names the source it actually read;
+  and the unit's and timer's `Description` render from the same variable
+  as `Environment=LIVE=`, so they cannot again advertise a mode the unit
+  does not set. New gauge `stellarindex_ch_schema_drift_live`. Coverage:
+  9 new/changed assertions in
+  `configs/ansible/roles/archival-node/files/ch-schema-drift-test.sh`,
+  each proven red against the pre-fix script.
 - 2026-09-04 — `_offsite_stale` is per host and ungated. The absent
   arm was one fleet-wide boolean gated on `offsite_configured == 1`:
   a host that had never configured a target (r1) could not fire, and any

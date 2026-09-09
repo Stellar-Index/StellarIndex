@@ -18,9 +18,11 @@
 #   intent  deploy/clickhouse/tier1_schema.sql — the founding DDL, the
 #           only machine-readable statement of what this repo believes
 #           the lake's structure is.
-#   live    the schema.sql that ch-schema-snapshot.sh captures from
-#           `SHOW CREATE TABLE` every day (or, with LIVE=1, a fresh
-#           SHOW CREATE straight off the server).
+#   live    a fresh `SHOW CREATE` sweep straight off the server. That
+#           is the DEFAULT since 2026-09-09. Before it, the default read
+#           the newest ch-schema-snapshot capture — up to a day old, and
+#           not the question the unit's Description asks. Both halves of
+#           what that cost are written out at "which live side" below.
 #
 # WHAT IT COMPARES, and why not more. Both sides go through the SAME
 # parser and the SAME normalizer, so ClickHouse's re-rendering of its own
@@ -58,8 +60,9 @@
 # in the meantime.
 #
 # Usage:
-#   ch-schema-drift.sh                       # daily timer shape: newest snapshot
-#   LIVE=1 ch-schema-drift.sh                # query ClickHouse directly
+#   ch-schema-drift.sh                       # DEFAULT: fresh SHOW CREATE sweep
+#   LIVE=1 ch-schema-drift.sh                # the same thing, said out loud
+#   LIVE=0 ch-schema-drift.sh                # the newest daily snapshot instead
 #   LIVE_SCHEMA=/path/schema.sql ch-schema-drift.sh   # an explicit capture
 #
 # The intent side resolves from $INTENT, else the copy the archival-node
@@ -70,9 +73,12 @@
 # Exit code:
 #   0  no drift
 #   1  DRIFT — live differs from tier1_schema.sql on a compared attribute
-#   2  cannot compare (no snapshot found / ClickHouse unreachable). NOT 0:
-#      "we could not check" must never read as "we checked and it's fine",
-#      which is the failure mode ADR-0043 exists to prevent.
+#   2  cannot compare. ClickHouse unreachable; no intent to compare
+#      against; no snapshot found under LIVE=0; or, under LIVE=0, a
+#      capture older than the intent file, which cannot substantiate
+#      "declared but absent live" for anything the intent added since.
+#      NOT 0: "we could not check" must never read as "we checked and
+#      it's fine", which is the failure ADR-0043 exists to prevent.
 set -uo pipefail
 
 # Lives in the role's files/ dir because that is where this repo keeps
@@ -92,7 +98,10 @@ INSTALLED_INTENT="${INSTALLED_INTENT:-/usr/local/share/stellarindex/tier1_schema
 INTENT="${INTENT:-}"
 SNAPSHOT_DIR="${SNAPSHOT_DIR:-/var/lib/stellarindex/ch-schema-snapshot}"
 LIVE_SCHEMA="${LIVE_SCHEMA:-}"
-LIVE="${LIVE:-0}"
+# Unset and "0" mean different things now that live is the default, so
+# this cannot collapse to ${LIVE:-1}: an operator who typed LIVE=0 asked
+# for the snapshot, and an operator who typed nothing gets live.
+live_explicit="${LIVE-}"
 CH_HTTP="${CH_HTTP:-http://127.0.0.1:8123/}"
 CH_DATABASE="${CH_DATABASE:-stellar}"
 TEXTFILE_DIR="${TEXTFILE_DIR:-/var/lib/node_exporter/textfile_collector}"
@@ -338,13 +347,72 @@ if [[ ! -r "$INTENT" ]]; then
   exit 2
 fi
 
+# WHICH LIVE SIDE, and why the default is a fresh sweep (2026-09-09).
+#
+# Until this change the default compared the intent against the newest
+# DAILY SNAPSHOT while the unit called itself "repo intent vs live".
+# Both halves of that gap were measured, on r1 and on the test nets:
+#
+#   FALSE DRIFT. A deploy ships a new tier1_schema.sql at any hour of the
+#   day; the capture it was compared against had been taken at 05:41. Every
+#   table the new intent declares is missing from a file written before it
+#   existed — so the check reported 8 tables "ABSENT from the live schema"
+#   that were all live, one of them holding 20.9M rows, and it would have
+#   cleared itself at the next morning's capture. Red for a reason that is
+#   not real and then green on its own is the worst shape a control has:
+#   it teaches the operator to wait it out.
+#
+#   HIDDEN DRIFT, the worse half. A comparison that never reads the server
+#   does not measure live-vs-intent at all. And when ClickHouse is DOWN the
+#   snapshot mode does not fail — it reports "0 divergent" off a capture
+#   that ages silently, which is exactly the "we could not check" ==
+#   "we checked and it is fine" equivalence ADR-0043 and this script's
+#   exit-2 contract exist to break.
+#
+# The stated reason for reading the snapshot ("one SHOW CREATE sweep per
+# day serves both the backup and the check") does not survive measurement:
+# the sweep is ~45 SHOW CREATEs over loopback HTTP — the same work
+# ch-schema-snapshot.sh already does daily — and this whole comparison is
+# sub-second. The check also runs ON the node it queries (CH_HTTP defaults
+# to loopback; the unit is After=clickhouse-server.service), so
+# "ClickHouse is not reachable from here" is not a normal state for it.
+#
+# The snapshot mode is KEPT, as an explicit choice rather than the default:
+# a retained capture is the only way to ask "did the repo match live on
+# 2026-08-01?", and 90 days of them are on the box for exactly that.
+#
+# Precedence, most specific first:
+#   1. LIVE=1 set explicitly       — a fresh sweep, said out loud.
+#   2. LIVE_SCHEMA=<file>          — a capture the operator named.
+#   3. LIVE=0 set explicitly       — the newest daily snapshot.
+#   4. nothing set                 — a fresh sweep. THE DEFAULT.
+if [[ "$live_explicit" == "1" ]]; then
+  live_mode="live"
+elif [[ -n "$LIVE_SCHEMA" ]]; then
+  live_mode="file"
+elif [[ "$live_explicit" == "0" ]]; then
+  live_mode="snapshot"
+else
+  live_mode="live"
+fi
+
 live_file=""
 live_origin=""
-if [[ "$LIVE" == "1" ]]; then
+# Exported as stellarindex_ch_schema_drift_live: a 0-divergent verdict
+# measured against a capture is only as current as the capture, and
+# nothing else in the metric set says which one was read.
+live_is_fresh=0
+
+case "$live_mode" in
+live)
   tables="$(ch "SELECT name FROM system.tables
                WHERE database = '$CH_DATABASE' AND NOT is_temporary
                ORDER BY name FORMAT TabSeparated")" || {
-    note "ClickHouse unreachable at $CH_HTTP — cannot compare"
+    note "ClickHouse unreachable at $CH_HTTP — cannot compare against live."
+    note "Fix ClickHouse first; this check is downstream of it. To compare"
+    note "against the newest retained capture instead — accepting that it is"
+    note "up to a day old and cannot see anything applied since — run:"
+    note "    LIVE=0 ch-schema-drift.sh"
     exit 2
   }
   live_file="$work/live-schema.sql"
@@ -358,19 +426,53 @@ if [[ "$LIVE" == "1" ]]; then
     printf ';\n\n' >> "$live_file"
   done <<<"$tables"
   live_origin="live SHOW CREATE via $CH_HTTP"
-elif [[ -n "$LIVE_SCHEMA" ]]; then
+  live_is_fresh=1
+  ;;
+file)
   live_file="$LIVE_SCHEMA"
-  live_origin="$LIVE_SCHEMA"
-else
+  live_origin="the capture $LIVE_SCHEMA"
+  ;;
+snapshot)
   # Newest snapshot day directory that actually holds a schema.sql.
   newest="$(find "$SNAPSHOT_DIR" -mindepth 2 -maxdepth 2 -name schema.sql 2>/dev/null | sort | tail -1)"
   if [[ -z "$newest" ]]; then
-    note "no snapshot schema.sql under $SNAPSHOT_DIR — run ch-schema-snapshot.sh first (or LIVE=1)"
+    note "no snapshot schema.sql under $SNAPSHOT_DIR — run ch-schema-snapshot.sh"
+    note "first, or drop LIVE=0 to compare against live."
     exit 2
   fi
+  # The capture's OWN stamp, which ch-schema-snapshot.sh writes into the
+  # schema.sql header. Preferred over the file's mtime in the message
+  # because copying a snapshot rewrites the mtime and not the header.
+  # Matched on the stamp shape rather than the surrounding prose so the
+  # em dash on that header line never has to survive a locale.
+  captured="$(sed -n 's/^-- ClickHouse schema snapshot .*\([0-9]\{8\}T[0-9]\{6\}Z\).*$/\1/p' "$newest")"
+  captured="${captured%%$'\n'*}"
   live_file="$newest"
-  live_origin="snapshot $newest"
-fi
+  live_origin="the snapshot $newest${captured:+ (captured $captured)}"
+
+  # THE FALSE-DRIFT GUARD. A capture taken BEFORE the intent file was
+  # installed cannot answer "is this declared table live?" — anything the
+  # intent declares after the capture was written is absent from it by
+  # construction. Reporting that as drift is what put 8 live tables on
+  # r1's ABSENT list on 2026-09-09. Refuse instead: exit 2 is this
+  # script's "could not check", and could-not-check is precisely the
+  # state. It is not a mute — when the capture is at least as new as the
+  # intent this mode still reports real drift, unchanged.
+  if [[ "$INTENT" -nt "$live_file" ]]; then
+    note "REFUSING to compare: the repo intent is NEWER than the capture."
+    note "    intent   $INTENT"
+    note "    capture  $live_origin"
+    note "A capture written before the intent was installed cannot tell a"
+    note "table that is genuinely missing live from one that was declared"
+    note "after the capture was taken — every newly-declared table would"
+    note "read as ABSENT from a live schema this run never looked at."
+    note "Compare against live instead (ch-schema-drift.sh, or LIVE=1), or"
+    note "take a fresh capture first (ch-schema-snapshot.sh)."
+    note "See docs/operations/runbooks/ch-schema-restore.md."
+    exit 2
+  fi
+  ;;
+esac
 
 if [[ ! -r "$live_file" ]]; then
   note "live schema $live_file is not readable — cannot compare"
@@ -403,7 +505,7 @@ while IFS= read -r t; do
   [[ -z "$t" ]] && continue
   compared=$((compared + 1))
   if ! grep -qx "$t" <<<"$livetabs"; then
-    note "DRIFT $t: declared in $(basename "$INTENT") but ABSENT from the live schema"
+    note "DRIFT $t: declared in $(basename "$INTENT") but ABSENT from $live_origin"
     drift=$((drift + 1)); divergent_tables=$((divergent_tables + 1))
     continue
   fi
@@ -462,7 +564,7 @@ while IFS= read -r t; do
   [[ -z "$t" ]] && continue
   if ! grep -qx "$t" <<<"$declared"; then
     uncodified=$((uncodified + 1))
-    note "UNCODIFIED $t: exists live, absent from $(basename "$INTENT")"
+    note "UNCODIFIED $t: exists in $live_origin, absent from $(basename "$INTENT")"
   fi
 done <<<"$livetabs"
 
@@ -486,6 +588,9 @@ if [[ "$TEXTFILE_DIR" != "/dev/null" ]]; then
     echo "# HELP stellarindex_ch_schema_drift_uncodified Tables present live but absent from tier1_schema.sql (informational; expected > 0 while the founding DDL is not the whole schema)."
     echo "# TYPE stellarindex_ch_schema_drift_uncodified gauge"
     echo "stellarindex_ch_schema_drift_uncodified $uncodified"
+    echo "# HELP stellarindex_ch_schema_drift_live 1 = the comparison read a fresh SHOW CREATE sweep off ClickHouse; 0 = it read a captured file (a daily snapshot, or an operator-named capture). A 0-divergent verdict is only as current as what it read."
+    echo "# TYPE stellarindex_ch_schema_drift_live gauge"
+    echo "stellarindex_ch_schema_drift_live $live_is_fresh"
   } > "$tmp"
   chmod 644 "$tmp"
   mv "$tmp" "$out"
