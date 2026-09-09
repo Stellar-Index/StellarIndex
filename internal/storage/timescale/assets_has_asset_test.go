@@ -92,11 +92,11 @@ func subqueryBody(s string) string {
 // fix exists for: every `trades` read on the native path must carry the
 // `ts >=` bound that lets the planner prune to the window's chunks. RED
 // against the pre-fix query, whose single read has no bound at all.
-func TestHasAsset_NativeIssuesNoUnboundedTradesScan(t *testing.T) {
-	stmt, has := hasAssetStmt(t, canonical.NativeAsset(), true)
+func TestHasAsset_ProbeIssuesNoUnboundedTradesScan(t *testing.T) {
+	stmt, has := hasAssetStmt(t, probeAsset(t), true)
 
 	if bad := unwindowedTradesReads(stmt.sql); len(bad) > 0 {
-		t.Errorf(`HasAsset(native) issues %d unbounded read(s) of the trades hypertable.
+		t.Errorf(`HasAsset(probe asset) issues %d unbounded read(s) of the trades hypertable.
 
 An existence read with no `+"`ts >=`"+` bound cannot be chunk-pruned, so the
 planner appends every chunk in the hypertable — thousands of them on r1,
@@ -111,7 +111,7 @@ full SQL:
 %s`, len(bad), strings.Join(bad, "\n"), indent(stmt.sql))
 	}
 	if !has {
-		t.Error("HasAsset(native) = false, want true (the scripted row says the asset exists)")
+		t.Error("HasAsset(probe asset) = false, want true (the scripted row says the asset exists)")
 	}
 }
 
@@ -121,9 +121,9 @@ full SQL:
 // 404 an asset the /v1/assets listing shows. A bound computed Go-side
 // (rather than `now() - INTERVAL`) is what makes it a constant the
 // planner can prune chunks with at plan time.
-func TestHasAsset_NativeWindowIsTheListingWindow(t *testing.T) {
+func TestHasAsset_ProbeWindowIsTheListingWindow(t *testing.T) {
 	before := time.Now().UTC()
-	stmt, _ := hasAssetStmt(t, canonical.NativeAsset(), true)
+	stmt, _ := hasAssetStmt(t, probeAsset(t), true)
 	after := time.Now().UTC()
 
 	since, ok := stmt.arg(t, 2).(time.Time)
@@ -179,7 +179,7 @@ func TestHasAsset_NonClassicProbesEveryAliasForm(t *testing.T) {
 		t.Fatalf("XLM alias family has %d forms, want 3 (native, crypto:XLM, SAC): %v", len(want), want)
 	}
 
-	for _, spelling := range []canonical.Asset{canonical.NativeAsset(), cryptoXLM, xlmSAC} {
+	for _, spelling := range []canonical.Asset{cryptoXLM, xlmSAC} {
 		t.Run(spelling.String(), func(t *testing.T) {
 			stmt, _ := hasAssetStmt(t, spelling, true)
 
@@ -320,4 +320,49 @@ SQL:
 	if !has {
 		t.Error("HasAsset(USDC-GA5Z…) = false, want true")
 	}
+}
+
+// TestHasAsset_NativeNeedsNoTradeEvidence pins that XLM resolves on a
+// network with no XLM trades at all.
+//
+// The non-classic probe bounds existence on MarketsRecencyWindow, which
+// is right for assets that are DISCOVERED by trading. XLM is not: it
+// exists from the genesis ledger of every Stellar network. Measured on
+// 2026-09-09, futurenet had zero XLM trades in that window while testnet
+// had 2,030 — so a native asset routed through the probe answers 404 on
+// the quiet network and 200 on the busy one, from the same code. A test
+// that seeds a trade cannot see this; this one asserts the store issues
+// NO statement at all.
+func TestHasAsset_NativeNeedsNoTradeEvidence(t *testing.T) {
+	t.Parallel()
+
+	store, script := newScriptedStore(t)
+	ok, err := store.HasAsset(context.Background(), canonical.Asset{Type: canonical.AssetNative})
+	if err != nil {
+		t.Fatalf("HasAsset(native): %v", err)
+	}
+	if !ok {
+		t.Error("native reported ABSENT — XLM exists on every Stellar network from genesis, " +
+			"traded or not; a quiet network must not 404 its own native asset")
+	}
+	if n := len(script.statements()); n != 0 {
+		t.Errorf("native issued %d statement(s), want 0 — it needs no evidence: %v",
+			n, script.statements())
+	}
+}
+
+// probeAsset returns a non-native, non-classic asset — one that IS
+// discovered by trade activity and therefore genuinely goes through the
+// bounded probe. Native cannot serve here any more: it short-circuits in
+// HasAsset without issuing a statement, because XLM exists on every
+// Stellar network from genesis and needs no evidence. The probe's
+// no-unbounded-scan property still has to hold for everything that does
+// need evidence, which is what these tests pin.
+func probeAsset(t *testing.T) canonical.Asset {
+	t.Helper()
+	a, err := canonical.NewSorobanAsset(canonical.XLMSacContractID)
+	if err != nil {
+		t.Fatalf("NewSorobanAsset(XLM SAC): %v", err)
+	}
+	return a
 }

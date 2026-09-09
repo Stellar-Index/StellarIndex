@@ -116,6 +116,19 @@ func (s *Store) DistinctAssets(ctx context.Context, cursor string, limit int) ([
 //     do not have — so the window bound, not a registry, is what keeps
 //     the read off the cold end of the hypertable.
 func (s *Store) HasAsset(ctx context.Context, a canonical.Asset) (bool, error) {
+	// XLM is not discovered by trading. It is the network's native asset:
+	// it exists on every Stellar network from the genesis ledger, whether
+	// or not anyone has traded it, so no evidence needs to be sought and
+	// none can be absent. Answering it from trade activity is a category
+	// error that bites on a QUIET network — measured 2026-09-09,
+	// futurenet had ZERO XLM trades in the 14-day window this file's
+	// non-classic probe bounds on, so routing native through that probe
+	// would 404 the native asset of a network we ask developers to build
+	// against. testnet had 2,030 in the same window and would have looked
+	// fine, which is exactly how this ships unnoticed.
+	if a.Type == canonical.AssetNative {
+		return true, nil
+	}
 	if a.Type == canonical.AssetClassic {
 		return s.hasClassicAsset(ctx, a)
 	}
