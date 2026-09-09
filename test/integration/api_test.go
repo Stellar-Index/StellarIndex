@@ -665,8 +665,8 @@ func (r apiMarketsAdapter) DistinctPairsExt(ctx context.Context, cursor string, 
 		out[i] = v1.Market{
 			Base:          m.Pair.Base.String(),
 			Quote:         m.Pair.Quote.String(),
-			LastTradeAt:   m.LastTradeAt,
-			BucketCloseAt: m.BucketCloseAt,
+			LastTradeAt:   v1.WireTime(m.LastTradeAt),
+			BucketCloseAt: v1.WireTime(m.BucketCloseAt),
 			TradeCount24h: m.TradeCount24h,
 			Volume24hUSD:  m.Volume24hUSD,
 		}
@@ -686,8 +686,8 @@ func (r apiMarketsAdapter) PairMarket(ctx context.Context, base, quote c.Asset) 
 	return v1.Market{
 		Base:          m.Pair.Base.String(),
 		Quote:         m.Pair.Quote.String(),
-		LastTradeAt:   m.LastTradeAt,
-		BucketCloseAt: m.BucketCloseAt,
+		LastTradeAt:   v1.WireTime(m.LastTradeAt),
+		BucketCloseAt: v1.WireTime(m.BucketCloseAt),
 		TradeCount24h: m.TradeCount24h,
 		Volume24hUSD:  m.Volume24hUSD,
 	}, true, nil
@@ -703,8 +703,8 @@ func (r apiMarketsAdapter) SourceMarkets(ctx context.Context, source, cursor str
 		out[i] = v1.Market{
 			Base:          m.Pair.Base.String(),
 			Quote:         m.Pair.Quote.String(),
-			LastTradeAt:   m.LastTradeAt,
-			BucketCloseAt: m.BucketCloseAt,
+			LastTradeAt:   v1.WireTime(m.LastTradeAt),
+			BucketCloseAt: v1.WireTime(m.BucketCloseAt),
 			TradeCount24h: m.TradeCount24h,
 			Volume24hUSD:  m.Volume24hUSD,
 		}
@@ -722,8 +722,8 @@ func (r apiMarketsAdapter) AssetMarkets(ctx context.Context, asset, cursor strin
 		out[i] = v1.Market{
 			Base:          m.Pair.Base.String(),
 			Quote:         m.Pair.Quote.String(),
-			LastTradeAt:   m.LastTradeAt,
-			BucketCloseAt: m.BucketCloseAt,
+			LastTradeAt:   v1.WireTime(m.LastTradeAt),
+			BucketCloseAt: v1.WireTime(m.BucketCloseAt),
 			TradeCount24h: m.TradeCount24h,
 			Volume24hUSD:  m.Volume24hUSD,
 		}
@@ -746,7 +746,7 @@ func (r apiMarketsAdapter) AllPools(ctx context.Context, filter timescale.PoolsF
 			Source:        p.Source,
 			Base:          p.Pair.Base.String(),
 			Quote:         p.Pair.Quote.String(),
-			LastTradeAt:   p.LastTradeAt,
+			LastTradeAt:   v1.WireTime(p.LastTradeAt),
 			TradeCount24h: p.TradeCount24h,
 			Volume24hUSD:  p.Volume24hUSD,
 		}

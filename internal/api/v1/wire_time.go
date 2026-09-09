@@ -97,6 +97,18 @@ func (t WireTime) Time() time.Time { return time.Time(t) }
 // wants, since encoding/json never omits a struct-typed field.
 func (t WireTime) IsZero() bool { return time.Time(t).IsZero() }
 
+// Before and After compare two wire timestamps. They exist because
+// WireTime is a DEFINED type over time.Time — it deliberately does not
+// inherit time.Time's method set, so that a raw time.Time cannot be
+// assigned onto a wire field by accident, which is the whole point of
+// the type. Ordering, though, is something callers legitimately need and
+// gains nothing from being awkward: without these, every comparison
+// becomes a pair of .Time() conversions that read as noise.
+func (t WireTime) Before(u WireTime) bool { return time.Time(t).Before(time.Time(u)) }
+
+// After is Before's mirror; see its comment.
+func (t WireTime) After(u WireTime) bool { return time.Time(t).After(time.Time(u)) }
+
 // String renders the same text MarshalJSON does, without the quotes.
 func (t WireTime) String() string { return time.Time(t).UTC().Format(wireTimeLayout) }
 
