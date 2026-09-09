@@ -30,6 +30,8 @@ import (
 //   - phoenix_liquidity + phoenix_stake_events (ledger_close_time) —
 //     added into 'phoenix' on top of its trades leg.
 //   - comet_liquidity (ledger_close_time) — added into 'comet'.
+//   - upshift_vault_events (ledger_close_time) — 'upshift' (the vaults
+//     write no trades, so this leg is the source's whole census).
 //   - soroswap_skim_events (ledger_close_time) — added into 'soroswap'.
 //   - defindex_flows + defindex_fees (ledger_close_time) — summed as
 //     'defindex'.
@@ -74,6 +76,9 @@ const countRecentEventsQuery = `
 	 WHERE ledger_close_time >= now() - interval '24 hours'
 	UNION ALL
 	SELECT 'comet', count(*) FROM comet_liquidity
+	 WHERE ledger_close_time >= now() - interval '24 hours'
+	UNION ALL
+	SELECT 'upshift', count(*) FROM upshift_vault_events
 	 WHERE ledger_close_time >= now() - interval '24 hours'
 	UNION ALL
 	SELECT 'soroswap', count(*) FROM soroswap_skim_events

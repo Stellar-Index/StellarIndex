@@ -8,6 +8,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/sources/sorocredit"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/soroswap"
 	sushiswap_v3 "github.com/Stellar-Index/StellarIndex/internal/sources/sushiswap_v3"
+	"github.com/Stellar-Index/StellarIndex/internal/sources/upshift"
 )
 
 // ProtocolMeta is the hand-curated static identity of one indexed
@@ -151,6 +152,20 @@ var protocolRegistry = withVerificationPages([]ProtocolMeta{
 			sorocredit.SourceName + ".supported_asset_added",
 			sorocredit.SourceName + ".collateral_hash_updated",
 		},
+	},
+	{
+		Name:     "upshift",
+		Category: "yield",
+		Description: "Upshift — institutional tokenized vaults (earnUSDC, earnXLM) curated by Gami Labs " +
+			"and Stake Capital Group. Each vault takes one underlying asset and mints proportional " +
+			"shares, so the vault contract is also the share token.",
+		GenesisLedger: upshift.GenesisLedger,
+		// No Factories: neither vault has a creation event anywhere in
+		// the lake (each one's first event is its own `admin_set`), so
+		// the ADR-0035 trust root is the curated set the decoder seeds
+		// rather than a factory. The roster comes from protocol_contracts
+		// at request time.
+		EventKinds: []string{upshift.EventKind},
 	},
 	{
 		Name:          "defindex",

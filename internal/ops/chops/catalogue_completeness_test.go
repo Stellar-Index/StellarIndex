@@ -17,6 +17,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/sources/phoenix"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/soroswap"
 	sushiswap_v3 "github.com/Stellar-Index/StellarIndex/internal/sources/sushiswap_v3"
+	"github.com/Stellar-Index/StellarIndex/internal/sources/upshift"
 )
 
 // ─── Catalogue-completeness invariant (the "next omission" guard) ─────
@@ -172,6 +173,14 @@ var projRoutes = []projRoute{
 	// collect, init, upgraded, migrated) are gated and recognized but emit no
 	// consumer.Event at all, so they have no persist arm and need no route.
 	{typeName: "sushiswap_v3.TradeEvent", table: "trades", kind: "sushiswap_v3.trade", disp: reconciledByKind},
+
+	// ── upshift ──
+	// One consumer.Event carrying all four decoded kinds (the
+	// sep41_transfers shape), one table, no fan-out: each decoded event
+	// is exactly one row. The eight recognised custody / governance /
+	// allowance events emit no consumer.Event at all, so they have no
+	// persist arm and need no route.
+	{typeName: "upshift.Event", table: "upshift_vault_events", kind: "upshift.vault_event", disp: reconciledByKind},
 
 	// ── blend (five kinds across four tables) ──
 	{typeName: "blend.NewAuctionEvent", table: "blend_auctions", disp: reconciledByKind},
@@ -464,6 +473,10 @@ func TestCatalogue_DeclaredKindsMatchDecoderOutput(t *testing.T) {
 		{defindex.DFeesEvent{}, "defindex.vault.dfees", "defindex_fees"},
 		// sushiswap_v3: the source's only emitted kind.
 		{sushiswap_v3.TradeEvent{}, "sushiswap_v3.trade", "trades"},
+		// upshift: one kind covers deposit / withdraw / share transfer /
+		// deployed-assets change — the row's event_kind column
+		// discriminates them, the wire EventKind does not.
+		{upshift.Event{}, "upshift.vault_event", "upshift_vault_events"},
 	}
 
 	for _, e := range emitters {

@@ -53,7 +53,7 @@ internal/pipeline/sink.go  ← fans each decoded item to its destination:
     │   internal/projector/  ← the ONE writer for Soroban-derived per-source
     │     │   tables (trades, blend_* incl. blend_backstop + blend_emitter,
     │     │   phoenix_*, comet_*, aquarius_*, sushiswap_v3 (trades),
-    │     │   defindex_* (Event/VaultEvent/
+    │     │   upshift_vault_events, defindex_* (Event/VaultEvent/
     │     │   DFeesEvent), sorocredit_*, soroswap_skim, cctp_events,
     │     │   rozo_events, sep41_* (supply + transfers),
     │     │   reflector/redstone oracle_updates) — the authoritative list is

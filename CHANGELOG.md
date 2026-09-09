@@ -17,6 +17,51 @@ against.
 
 ### Added
 
+- **sources:** `upshift` — the Upshift tokenized vaults on Stellar
+  (`earnUSDC`, `earnXLM`) are indexed as a protocol rather than appearing
+  only as an oracle price with no activity underneath it. Both vault
+  contracts were established from the lake, not from an announcement: the
+  five event symbols only this protocol emits appear on exactly two
+  contracts, those two were deployed minutes apart onto the same admin and
+  operator, and each one's underlying is proven by the SAC
+  `transfer` sharing a transaction with its first `deposit` for exactly
+  the amount that deposit reports as `assets`. `earnXLM`'s contract was
+  unidentified when the work started; it is `CC6TRAPQ…`, 68 deposits and
+  38 withdrawals deep. The address that circulated as this vault's and
+  carries zero events stays unindexed, with a test pinning its absence.
+
+  `deposit`, `withdraw`, the vault's own SEP-41 share `transfer` and
+  `deployed_assets_changed` decode into a new `upshift_vault_events`
+  hypertable (migration 0157). The other eight symbols — the custody
+  mirror of a movement `deployed_assets_changed` already reports, plus
+  governance and allowance — are recognised and gated but project zero
+  rows, so the ADR-0033 re-derive counts their ledgers instead of going
+  blind on them.
+
+  Gated on contract identity per ADR-0035, using the ADR-0040 curated-set
+  mechanism: neither vault has a creation event anywhere in the lake, so
+  there is no factory to anchor on. The gate is load-bearing rather than
+  ceremonial — a bounded 20,000-ledger census found four distinct
+  contracts emitting `deposit`, and `transfer` is the most common event on
+  the network. Registered at every site the completeness verdict reads:
+  projector registry, sink, gated registry, reconciliation catalogue,
+  gap-detector target, `sourcenet`, the source metadata registry,
+  `/v1/protocols` and the explorer mirror.
+
+  TVL is deliberately NOT derived. Total assets are not recoverable from
+  the event stream — yield accrues without emitting anything, and the only
+  on-event total is the DEPLOYED leg, with the idle balance unobservable
+  on-chain. Serving that leg as TVL would zero-fill the missing one. Share
+  supply IS exact (minted minus burned, since neither vault mints or burns
+  outside deposit/withdraw) and is derived. `assets` and `shares` are
+  stored raw and never divided by one another: they sit on different
+  scales, an ERC-4626 decimals offset of 6.
+
+  The earnUSDC identity is now a single constant that
+  `internal/sources/redstone` imports for its `earnUSDC_FUNDAMENTAL` feed
+  base, so a published price and the activity underneath it cannot drift
+  onto two different asset ids.
+
 - **ci:** `lint-git-fixture-isolation` requires a script that creates a
   git repository to clear `GIT_DIR` and its siblings first. `git init`
   honours an INHERITED `GIT_DIR` ahead of its own `-C`, a git hook exports

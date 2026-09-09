@@ -30,6 +30,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/sources/soroswap"
 	soroswap_router "github.com/Stellar-Index/StellarIndex/internal/sources/soroswap_router"
 	sushiswap_v3 "github.com/Stellar-Index/StellarIndex/internal/sources/sushiswap_v3"
+	"github.com/Stellar-Index/StellarIndex/internal/sources/upshift"
 )
 
 // reconTarget is one protocol table a source writes, plus the
@@ -339,6 +340,35 @@ func buildReconciliationCatalogue(cfg config.Config) ([]reconSource, *soroswap.D
 			newGatedDec: func() gatedDecoder { return sushiswap_v3.NewDecoder() },
 			targets: []reconTarget{
 				{"trades", "source = 'sushiswap_v3'", []string{"sushiswap_v3.trade"}},
+			},
+		},
+		{
+			// upshift — ADR-0035/0040 contract-gated (curated two-vault
+			// set; no factory namespace exists, so there is nothing to
+			// fan out from and no newGatedDec).
+			//
+			// contractIDs is not an optimisation here, it is what makes
+			// the re-derive finish AND what keeps the recognition axis
+			// honest. The source's own symbols are `deposit`, `withdraw`
+			// and `transfer` — `transfer` alone is ~88% of all pubnet
+			// contract events under the archive's uniform V4 meta — so an
+			// unscoped read over [62.6M, tip] streams the CAP-67 firehose,
+			// and every unrecognised stranger's `deposit` would cap THIS
+			// source's recognition instead of the system-wide bucket.
+			//
+			// Strict per-ledger, no netting and no fan-out: each decoded
+			// event produces exactly one row keyed on its own
+			// (ledger, tx, op, event_index), so the served row keys 1:1
+			// with the re-derive. The eight recognised-but-unserved kinds
+			// (custody / governance / allowance) decode to zero rows, which
+			// is what lets their ledgers count as expected-zero rather than
+			// blind.
+			name:        "upshift",
+			genesis:     upshift.GenesisLedger,
+			dec:         upshift.NewDecoder(),
+			contractIDs: upshift.MainnetGatedSet(),
+			targets: []reconTarget{
+				{"upshift_vault_events", "", []string{upshift.EventKind}},
 			},
 		},
 		{

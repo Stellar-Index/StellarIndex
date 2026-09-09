@@ -94,6 +94,7 @@ var sorobanDecoderNames = map[string]struct{}{
 	"soroswap":        {},
 	"soroswap-router": {},
 	"sushiswap_v3":    {},
+	"upshift":         {},
 }
 
 // planHasSorobanDecoder reports whether any decoder in the plan's

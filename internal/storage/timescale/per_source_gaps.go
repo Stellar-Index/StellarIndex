@@ -453,6 +453,16 @@ var DefaultGapDetectorTargets = []GapDetectorTarget{
 	// swap); every later gap is under 9,400. 100k leaves 3x headroom over
 	// the observed envelope.
 	{Source: "sushiswap_v3", Table: "trades", LedgerColumn: "ledger", WhereFilter: "source = 'sushiswap_v3'", Genesis: 61_487_379, MinGapSizeOverride: 100000},
+	// upshift: the vaults write their own hypertable, not `trades` — they
+	// publish no price. Institutional deposit flow is genuinely sparse:
+	// measured over every row-producing event in both vaults' history, the
+	// widest quiet window is 334,407 ledgers (~19 days, earnXLM) and
+	// earnUSDC's is 56,858. 600k (~35 days) leaves ~1.8x headroom over the
+	// observed envelope — the same ratio comet's 200k override carries.
+	// Genesis is the protocol's first event (an `admin_set`, which produces
+	// no row); the first ROW lands 15,341 ledgers later, far inside the
+	// threshold, so the two never disagree in practice.
+	{Source: "upshift", Table: "upshift_vault_events", LedgerColumn: "ledger", Genesis: 62_623_313, MinGapSizeOverride: 600000},
 	// Oracle sources (reflector, band, redstone) write into the
 	// unified `oracle_updates` hypertable, sliced by `source`.
 	// Same pattern as the Soroban-DEX trades targets — per-source

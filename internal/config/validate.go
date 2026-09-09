@@ -50,6 +50,7 @@ var KnownSources = map[string]struct{}{
 	"rozo":            {},
 	"sorocredit":      {},
 	"sushiswap_v3":    {},
+	"upshift":         {},
 }
 
 // Validate checks the loaded Config against the same constraints

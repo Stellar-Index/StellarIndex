@@ -45,6 +45,19 @@ var Registry = map[string]Metadata{
 	// expected to confirm rather than change anything.
 	"sushiswap_v3": {Class: ClassExchange, Subclass: SubclassDEX, AmountDecimals: 7, DefaultWeight: 100, IncludeInVWAP: true, Paid: false, BackfillAvailable: true, BackfillSafe: false},
 
+	// Upshift tokenized vaults (earnUSDC, earnXLM) — ClassRouter for the
+	// same reason DeFindex is: an aggregator vault takes a deposit and
+	// allocates it across other protocols, so its events are derivative
+	// actions on top of other sources rather than new price observations.
+	// Excluded from VWAP; the vault publishes no price at all (RedStone
+	// publishes one FOR the earnUSDC share, which reaches us through the
+	// oracle path, not this one). AmountDecimals is deliberately left
+	// unset: a vault event carries `assets` and `shares` on DIFFERENT
+	// scales, so a single per-source decimals value would be wrong for one
+	// of them. BackfillSafe stays FALSE until a WASM audit page exists —
+	// the default for on-chain Soroban sources.
+	"upshift": {Class: ClassRouter, DefaultWeight: 0, IncludeInVWAP: false, Paid: false, BackfillAvailable: true, BackfillSafe: false},
+
 	// ─── On-chain oracles ────────────────────────────────────────
 	// Excluded from VWAP by default — they publish already-aggregated
 	// derived prices with their own governance and methodology. Reported

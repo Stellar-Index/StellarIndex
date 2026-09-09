@@ -22,6 +22,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/sources/sorocredit"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/soroswap"
 	sushiswap_v3 "github.com/Stellar-Index/StellarIndex/internal/sources/sushiswap_v3"
+	"github.com/Stellar-Index/StellarIndex/internal/sources/upshift"
 )
 
 // BuildRegistry constructs the projector's source list from the
@@ -156,6 +157,21 @@ func buildSource(name string, oracle config.OracleConfig, watchedSEP41 []string,
 			Name:        sushiswap_v3.SourceName,
 			Decoder:     sushiDec,
 			ContractIDs: sushiDec.GatedContractSet(),
+		}, true, nil
+	case upshift.SourceName:
+		// ADR-0035/0040: contract-gated (curated set — the vaults have no
+		// factory namespace). The contract-id prefilter is the decoder's
+		// OWN gate set rather than firehoseExcludeSyms, for the same
+		// reason as sushiswap_v3 but more sharply: this source's symbols
+		// are `deposit`, `withdraw` and `transfer`, and `transfer` is on
+		// the exclude list — a topic filter would have to drop one of
+		// this source's own event kinds to be worth anything. Scoping to
+		// two contracts is both cheaper and lossless.
+		upshiftDec := upshift.NewDecoder(gated[upshift.SourceName]...)
+		return Source{
+			Name:        upshift.SourceName,
+			Decoder:     upshiftDec,
+			ContractIDs: upshiftDec.GatedContractSet(),
 		}, true, nil
 	case comet.SourceName:
 		// ADR-0035/0040: contract-gated (curated set — comet has no
