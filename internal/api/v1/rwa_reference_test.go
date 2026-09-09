@@ -16,6 +16,7 @@ package v1_test
 
 import (
 	"context"
+	"errors"
 	"math/big"
 	"net/http"
 	"strings"
@@ -32,11 +33,15 @@ import (
 type rwaOracleStub struct {
 	*stubOracleReader
 	streams []canonical.OracleUpdate
+	err     error
 	calls   int
 }
 
 func (r *rwaOracleStub) LatestOracleStreams(context.Context) ([]canonical.OracleUpdate, error) {
 	r.calls++
+	if r.err != nil {
+		return nil, r.err
+	}
 	return r.streams, nil
 }
 
@@ -130,8 +135,17 @@ func TestRWAAssets_ServesTheDiscountToTheInstrumentValuation(t *testing.T) {
 	if !strings.Contains(v.Summary.Basis, "issuer declares") {
 		t.Errorf("the basis does not state what the comparison rests on: %q", v.Summary.Basis)
 	}
-	if len(v.Definition.ComparableInstrumentCodes) == 0 {
-		t.Error("the comparable-instrument vocabulary is not served with the rows")
+	// The curated bindings travel with the rows so a consumer can audit
+	// every pair this surface is willing to compare.
+	var bound bool
+	for _, b := range v.Definition.BoundInstruments {
+		if b.Code == "USTRY" && b.Issuer == rwaGoodIssuer && b.Feed == "rwa:USTRY" {
+			bound = true
+		}
+	}
+	if !bound {
+		t.Errorf("the binding behind the served figure is not in definition.bound_instruments: %+v",
+			v.Definition.BoundInstruments)
 	}
 }
 
@@ -300,13 +314,149 @@ func TestRWAAssets_NoOracleReaderStillServesTheSet(t *testing.T) {
 	if a.Reference != nil {
 		t.Errorf("reference served with no oracle wired: %+v", a.Reference)
 	}
-	if a.Premium.Status == "" {
-		t.Error("premium carries no status — an absent comparison must still say so")
+	if a.Premium.Status != v1.RWAPremiumReferenceUnavailable {
+		t.Errorf("premium status = %q, want %q — a deployment that cannot read the oracles "+
+			"has not learned that no oracle publishes this instrument",
+			a.Premium.Status, v1.RWAPremiumReferenceUnavailable)
 	}
 	if a.Premium.Pct != nil {
 		t.Errorf("premium pct = %q with no oracle wired", *a.Premium.Pct)
 	}
 	if a.Valuation.Status != "published" {
 		t.Errorf("valuation status = %q — the set does not depend on the oracle", a.Valuation.Status)
+	}
+}
+
+// TestRWAAssets_FailedOracleReadIsNotServedAsAnAbsence is D2 through the
+// real handler. A reader wired but erroring is the ordinary production
+// failure — a refused connection, a timed-out scan — and it must not
+// publish "no oracle publishes a valuation for this instrument" on every
+// row. From process start until the first successful read there is
+// nothing to carry forward, so this is exactly the window in which the
+// wrong status would be served.
+func TestRWAAssets_FailedOracleReadIsNotServedAsAnAbsence(t *testing.T) {
+	failing := &rwaOracleStub{
+		stubOracleReader: &stubOracleReader{},
+		err:              errors.New("dial tcp 127.0.0.1:5432: connection refused"),
+	}
+	srv := rwaServerWithOracle(t,
+		[]timescale.Sep1BoundCurrency{rwaBound("USTRY", rwaGoodIssuer, "etherfuse.com", "bond")},
+		map[string]timescale.DirectoryEntry{rwaGoodIssuer: recognisedIssuer(rwaGoodIssuer, "Etherfuse")},
+		map[string][]timescale.AssetRow{
+			rwaGoodIssuer: {rwaRow("USTRY", rwaGoodIssuer, sptr("1.0412"), 346312)},
+		},
+		failing,
+	)
+	v := getRWA(t, srv)
+	if len(v.Assets) != 1 {
+		t.Fatalf("assets = %v — the set is served whatever the oracles do", rwaAssetIDs(v))
+	}
+	a := v.Assets[0]
+	if a.Premium.Status != v1.RWAPremiumReferenceUnavailable {
+		t.Errorf("premium status = %q, want %q", a.Premium.Status, v1.RWAPremiumReferenceUnavailable)
+	}
+	if a.Premium.Status == v1.RWAPremiumNoReference {
+		t.Error("a failed read was published as a finding about what the oracles carry")
+	}
+	if a.Reference != nil || a.Premium.Pct != nil {
+		t.Errorf("a figure was served from a failed read: ref=%+v pct=%v", a.Reference, a.Premium.Pct)
+	}
+	if v.Summary.AssetsWithReference != 0 || v.Summary.AssetsCompared != 0 {
+		t.Errorf("summary reference/compared = %d/%d on a failed read",
+			v.Summary.AssetsWithReference, v.Summary.AssetsCompared)
+	}
+}
+
+// ─── D3: the reference must be bound to (code, issuer), never a code ──
+
+// rwaOtherRecognisedIssuer is a SECOND directory-recognised issuer that
+// also publishes a domain-bound SEP-1 entry for a code an oracle prices.
+// Nothing about it is exotic: asset codes are not unique on Stellar, and
+// the network holds many accounts issuing tokens called USTRY, BENJI or
+// XAU. It exists here because a code-keyed join cannot tell it apart
+// from the issuer whose instrument the feed actually tracks.
+const rwaOtherRecognisedIssuer = "GAXSPCTVGFIVYGHT7JLJZV57HCN5KUYDJ6DMPLNWUKL7A5A3HKCNW7JW"
+
+// TestRWAAssets_ReferenceIsBoundToTheIssuerNotTheCode is the identity
+// rule this whole surface is built on, applied to the figure the last
+// change added.
+//
+// Two recognised issuers each publish a domain-bound SEP-1 entry for
+// USTRY. One is the issuer whose instrument the oracle feed tracks; the
+// other is an unrelated token that happens to share the ticker. A join
+// on the code alone answers BOTH with the same treasury valuation, and
+// the unrelated token — trading at $0.20 — is published at an 81%
+// discount to a security it has nothing to do with.
+//
+// That is the attacker-authored-pricing class in a new coordinate:
+// identity is (code, issuer), never the code alone.
+func TestRWAAssets_ReferenceIsBoundToTheIssuerNotTheCode(t *testing.T) {
+	srv := rwaServerWithOracle(t,
+		[]timescale.Sep1BoundCurrency{
+			rwaBound("USTRY", rwaGoodIssuer, "etherfuse.com", "bond"),
+			rwaBound("USTRY", rwaOtherRecognisedIssuer, "example.test", "bond"),
+		},
+		map[string]timescale.DirectoryEntry{
+			rwaGoodIssuer:            recognisedIssuer(rwaGoodIssuer, "Etherfuse"),
+			rwaOtherRecognisedIssuer: recognisedIssuer(rwaOtherRecognisedIssuer, "Someone Else"),
+		},
+		map[string][]timescale.AssetRow{
+			rwaGoodIssuer:            {rwaRow("USTRY", rwaGoodIssuer, sptr("1.02033610"), 346312)},
+			rwaOtherRecognisedIssuer: {rwaRow("USTRY", rwaOtherRecognisedIssuer, sptr("0.20000000"), 91)},
+		},
+		rwaOracle(t, rwaOracleRow(t, "redstone", "rwa:USTRY", "fiat:USD", "107403800", 8)),
+	)
+	v := getRWA(t, srv)
+	if len(v.Assets) != 2 {
+		t.Fatalf("assets = %v, want both issuers' tokens", rwaAssetIDs(v))
+	}
+	var other *v1.RWAAsset
+	for i := range v.Assets {
+		if v.Assets[i].Issuer == rwaOtherRecognisedIssuer {
+			other = &v.Assets[i]
+		}
+	}
+	if other == nil {
+		t.Fatalf("the second issuer's token is missing: %v", rwaAssetIDs(v))
+	}
+	if other.Reference != nil {
+		t.Errorf("an unrelated issuer's token was given the instrument's valuation on a code match: %+v",
+			other.Reference)
+	}
+	if other.Premium.Pct != nil {
+		t.Errorf("premium pct = %q — a false claim about a security this token has nothing to do with",
+			*other.Premium.Pct)
+	}
+	if other.Premium.Status != v1.RWAPremiumNotBound {
+		t.Errorf("premium status = %q, want %q", other.Premium.Status, v1.RWAPremiumNotBound)
+	}
+}
+
+// TestRWAAssets_ReferenceBindingIsNotCaseFolded — the code-keyed join
+// folded case, so XAUM matched the XAUm feed. A binding names the exact
+// (code, issuer) the chain carries; a case variant under an unbound
+// issuer is a different token.
+func TestRWAAssets_ReferenceBindingIsNotCaseFolded(t *testing.T) {
+	srv := rwaServerWithOracle(t,
+		[]timescale.Sep1BoundCurrency{
+			rwaBound("CETES", rwaOtherRecognisedIssuer, "example.test", "bond"),
+		},
+		map[string]timescale.DirectoryEntry{
+			rwaOtherRecognisedIssuer: recognisedIssuer(rwaOtherRecognisedIssuer, "Someone Else"),
+		},
+		map[string][]timescale.AssetRow{
+			rwaOtherRecognisedIssuer: {rwaRow("CETES", rwaOtherRecognisedIssuer, sptr("0.20000000"), 91)},
+		},
+		rwaOracle(t, rwaOracleRow(t, "redstone", "rwa:CETES", "fiat:USD", "6988900", 8)),
+	)
+	v := getRWA(t, srv)
+	if len(v.Assets) != 1 {
+		t.Fatalf("assets = %v", rwaAssetIDs(v))
+	}
+	if v.Assets[0].Reference != nil {
+		t.Errorf("an unbound issuer received a bound instrument's valuation: %+v", v.Assets[0].Reference)
+	}
+	if v.Assets[0].Premium.Status != v1.RWAPremiumNotBound {
+		t.Errorf("premium status = %q, want %q", v.Assets[0].Premium.Status, v1.RWAPremiumNotBound)
 	}
 }

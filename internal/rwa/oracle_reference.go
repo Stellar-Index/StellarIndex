@@ -5,125 +5,201 @@ import (
 	"strings"
 )
 
-// Oracle reference scope — which ADR-0028 feeds may be compared against
-// the price of a Stellar token, and which may not.
+// Oracle reference bindings — which oracle feed, if any, prices the
+// instrument behind a specific Stellar asset.
 //
 // The RWA surface admits an asset on identity and attestation
-// ([Qualify]); this file answers a narrower and later question: given an
-// admitted (code, issuer), is the oracle feed of that code measuring the
-// SAME QUANTITY the Stellar market prices?
+// ([Qualify]); this file answers a later and much narrower question:
+// given an admitted (code, issuer), is there an oracle feed measuring
+// the SAME QUANTITY the Stellar market prices for that exact token?
 //
-// # Why the question is not "does a feed exist"
+// # Why this is keyed on (code, issuer) and never on the code
 //
-// A feed prices an instrument in the instrument's own unit. Two of the
-// ADR-0028 codes name a quantity that is not one token:
+// Asset codes are not unique on Stellar. Any account may issue a token
+// called USTRY, BENJI or XAU, and the network holds many that do — the
+// same fact that forces [Qualify] to identify assets by pair rather than
+// by code. A reference keyed on the code alone answers every one of
+// those tokens with the real instrument's net asset value: an unrelated
+// token trading at $0.20 is published at an 81% discount to a security
+// it has nothing to do with. That is a false financial claim about a
+// real instrument, and it is the attacker-authored-pricing class of the
+// 2026-08 valuation incident in a new coordinate.
 //
-//   - `XAU` is the Reflector FX oracle's SPOT GOLD slot — one troy
-//     ounce, in USD. The ADR records it as "a DISTINCT asset (spot vs
-//     the Matrixdock token)". A Stellar token coded XAU is a token of
-//     unstated size; nothing in the index says one of them is an ounce.
-//     Publishing "$4,400" beside it would assert exactly that.
-//   - `SPXU` is an exchange-traded fund's own share price. A share is
-//     not a token either.
+// The binding is therefore explicit, on the exact pair, and checked in
+// code. Prose asserting that the issuer's declaration establishes the
+// correspondence is not a gate; nothing reads prose.
 //
-// Every other allow-listed code names a TOKENIZED instrument whose feed
-// prices one token of it — which is the only case where the oracle
-// figure and a market price are the same quantity and their ratio is a
-// premium rather than a unit conversion.
+// # A curated set, fail-closed and visible
 //
-// # Fail closed
+// This is the curated-set mechanism ADR-0040 sanctions for gates whose
+// membership cannot be derived on chain: an enumerated allow-list,
+// review-gated by living in code, where an unlisted candidate is refused
+// and its refusal is REPORTED rather than silently absorbed. An
+// unbound pair gets silence and a stated reason — never a number.
 //
-// [TokenizedInstrumentCode] is an ALLOW-list, not the complement of the
-// two exceptions. A code added to ADR-0028 without being classified here
-// gets no reference and no premium — silence, not a wrong number — and
-// TestTokenizedInstrumentCodes_ClassifyEveryKnownCode turns RED until
-// someone classifies it. The opposite arrangement (deny-list) would give
-// the next spot-commodity slot a token comparison by default, which is
-// the D8 failure mode (a NAV published in the wrong denominator) in a
-// different coordinate.
+// The served set is published as `definition.bound_instruments` so a
+// consumer can audit every pair this surface is willing to compare,
+// rather than inferring the rule from whichever rows carry a figure
+// today.
 //
-// # What this does NOT establish
+// # What binds an entry
 //
-// That one unit of the admitted Stellar token is one unit of the named
-// instrument. The evidence for that is the issuer's own domain-bound
-// SEP-1 declaration (R2) plus the independent recognition of the issuing
-// account (R3) — the same evidence that admitted the asset — and the
-// surface says so beside the figure rather than presenting the
-// comparison as a verified equivalence.
+// Each entry below records the evidence for it. An entry needs all
+// three:
+//
+//  1. The issuer publishes a SEP-1 [[CURRENCIES]] entry for this exact
+//     (code, issuer) from the domain its account names on chain, naming
+//     the real-world instrument. This is requirement R2 of the
+//     definition, already checked at membership time.
+//  2. The curated account directory attributes that G-address to the
+//     entity the feed's own ADR-0028 attribution names. Requirement R3,
+//     likewise already checked — but here the two attributions must also
+//     AGREE with each other.
+//  3. Something ties the FEED to that issuer specifically, not merely to
+//     an instrument of that name. Price agreement between the token's
+//     Stellar market price and the feed is the strongest form and is
+//     noted where it exists; a documented product-line correspondence is
+//     the weaker form and is marked as such.
+//
+// Entries carrying only the weaker form are the ones to challenge first
+// in review. Nothing here is inferred at runtime: adding a pair is a
+// code change, exactly as changing the audited wasm-hash set is.
 
-// tokenizedInstrumentCodes are the ADR-0028 codes whose oracle feed
-// prices ONE TOKEN of a tokenized instrument, so the feed value and a
-// token's market price are the same quantity.
-//
-// Each entry is the tokenized product named in the ADR-0028 allow-list
-// comment beside the code, and in the RedStone feed registry comment
-// beside its feed_id.
-var tokenizedInstrumentCodes = map[string]struct{}{
-	"BENJI":   {}, // tokenized money-market fund share
-	"iBENJI":  {}, // its index variant, likewise a token
-	"GILTS":   {}, // tokenized UK gilts
-	"CETES":   {}, // tokenized Mexican treasury
-	"KTB":     {}, // tokenized Korean treasury bonds
-	"TESOURO": {}, // tokenized Brazilian treasury
-	"USTRY":   {}, // tokenized US treasury
-	"USDY":    {}, // tokenized treasury-backed note
-	"USST":    {}, // tokenized treasury-backed token
-	"XAUm":    {}, // tokenized gold, one token per troy ounce by construction
-	"deJAAA":  {}, // tokenized CLO ETF
-	"deJTRSY": {}, // tokenized treasury fund
+// instrumentBinding is one curated (code, issuer) → feed pair.
+type instrumentBinding struct {
+	// Code and Issuer are the exact on-chain identity. Matched exactly:
+	// a case variant is a different token unless someone says otherwise,
+	// and saying otherwise is what this table is for.
+	Code   string
+	Issuer string
+	// Feed is the ADR-0028 instrument code, spelled as
+	// [canonical.KnownRWACodes] spells it.
+	Feed string
 }
+
+// etherfuseIssuer issues the Stablebond line whose five instruments the
+// oracle registry prices under their sovereign-instrument names.
+//
+// Evidence: the account's own stellar.toml at the domain it names on
+// chain declares `Etherfuse CETES`, `Etherfuse USTRY` and
+// `Etherfuse TESOURO` under this exact G-address, each `is_asset_anchored`
+// with `anchor_asset_type = "bond"`; the curated directory attributes the
+// account to `Etherfuse`; and the oracle's CETES / TESOURO / GILTS /
+// USTRY / KTB set is that issuer's product line rather than a generic
+// list of sovereign debt.
+//
+// The tie to the FEED is price-proved on CETES, the one pair where both
+// figures exist: the token's Stellar market price and the oracle's CETES
+// value have agreed to within a tenth of a percent on every reading
+// (0.0698283638 against 0.06988900, 2026-09-09). No unrelated issuer's
+// CETES would track that feed to nine basis points.
+const etherfuseIssuer = "GCRYUGD5NVARGXT56XEZI5CIFCQETYHAPQQTHO2O3IQZTHDH4LATMYWC"
+
+// ondoIssuer issues the tokenized treasury-backed note the registry
+// prices as USDY.
+//
+// Evidence: ADR-0028 attributes the feed to `Ondo US Dollar Yield`; the
+// curated directory attributes this G-address to `Ondo`; the account
+// names `ondo.finance` on chain and serves its SEP-1 from there. Both
+// attributions are by entity and they agree.
+//
+// Weaker than the Etherfuse binding: the token has no Stellar market
+// price, so there is no price agreement corroborating it. It rests on
+// the two attributions matching.
+const ondoIssuer = "GAJMPX5NBOG6TQFPQGRABJEEB2YE7RFRLUKJDZAZGAD5GFX4J7TADAZ6"
+
+// instrumentBindings is the curated set.
+//
+// Deliberately smaller than "every code an oracle prices". Etherfuse's
+// GILTS and KTB are in the oracle's set but are not issued on Stellar
+// under this account today; they are absent rather than pre-bound,
+// because a binding that fires the first time some account issues a
+// matching code is the code-keyed join again with extra steps.
+var instrumentBindings = []instrumentBinding{
+	{Code: "CETES", Issuer: etherfuseIssuer, Feed: "CETES"},
+	{Code: "USTRY", Issuer: etherfuseIssuer, Feed: "USTRY"},
+	{Code: "TESOURO", Issuer: etherfuseIssuer, Feed: "TESOURO"},
+	{Code: "USDY", Issuer: ondoIssuer, Feed: "USDY"},
+}
+
+// bindingIndex is instrumentBindings keyed for lookup. Built once; the
+// table is a compile-time constant in every meaningful sense.
+var bindingIndex = func() map[instrumentKey]string {
+	m := make(map[instrumentKey]string, len(instrumentBindings))
+	for _, b := range instrumentBindings {
+		m[instrumentKey{code: b.Code, issuer: b.Issuer}] = b.Feed
+	}
+	return m
+}()
+
+type instrumentKey struct{ code, issuer string }
 
 // offChainReferenceCodes are the ADR-0028 codes whose feed prices an
 // OFF-CHAIN quantity in its own unit — a troy ounce of spot metal, one
-// share of an exchange-traded fund. Held explicitly, rather than as
-// "whatever is not tokenized", so the completeness test can prove every
-// allow-listed code was classified deliberately.
+// share of an exchange-traded fund — rather than one token of anything.
+//
+// No binding may target one of these; a token's price and a per-ounce
+// spot price are different quantities, and their ratio is a unit
+// conversion rather than a premium.
+// TestNoBindingTargetsAnOffChainReference enforces it.
+//
+// They are named rather than merely absent so a row for a token of that
+// code can state the informative refusal — "the oracle prices an ounce,
+// not your token" — instead of the generic "nothing binds this pair".
 var offChainReferenceCodes = map[string]struct{}{
 	"XAU":  {}, // spot gold, one troy ounce (Reflector FX slot)
 	"SPXU": {}, // one share of an inverse S&P 500 ETF
 }
 
-// TokenizedInstrumentCode reports whether the ADR-0028 oracle code
-// prices one token of a tokenized instrument, and may therefore be
-// compared against a Stellar token's market price.
+// InstrumentFeed returns the ADR-0028 feed code bound to this exact
+// (code, issuer), and whether any binding exists.
 //
-// Case-insensitive, for the same reason [isOracleRWACode] is: the
-// allow-list spells codes as instrument tickers (XAUm, deJAAA) while an
-// on-chain asset code carries whatever case its issuer chose.
-func TokenizedInstrumentCode(code string) bool {
-	return inCodeSet(tokenizedInstrumentCodes, code)
+// EXACT on both halves. The code is not case-folded: `XAUM` is not
+// `XAUm`, and treating them as one token is precisely the collision this
+// function exists to refuse. Surrounding whitespace is trimmed because
+// it is never part of an identity.
+func InstrumentFeed(code, issuer string) (string, bool) {
+	feed, ok := bindingIndex[instrumentKey{
+		code:   strings.TrimSpace(code),
+		issuer: strings.TrimSpace(issuer),
+	}]
+	return feed, ok
 }
 
-// OffChainReferenceCode reports whether the code's feed prices an
-// off-chain quantity rather than a token. Served as the stated reason a
-// row carries no reference price, so the refusal reads as a measurement
-// statement rather than as missing data.
+// OffChainReferenceCode reports whether an oracle feed of this code
+// prices an off-chain quantity rather than a token. Used only to choose
+// which refusal to report; it grants nothing.
 func OffChainReferenceCode(code string) bool {
-	return inCodeSet(offChainReferenceCodes, code)
+	_, ok := offChainReferenceCodes[strings.TrimSpace(code)]
+	return ok
 }
 
-// TokenizedInstrumentCodes lists the comparable codes in a stable order,
-// for the same reason [AnchorClasses] is served: a consumer reads the
-// rule from the response instead of inferring it from the rows present
-// on the day.
-func TokenizedInstrumentCodes() []string {
-	out := make([]string, 0, len(tokenizedInstrumentCodes))
-	for c := range tokenizedInstrumentCodes {
-		out = append(out, c)
-	}
-	sort.Strings(out)
-	return out
+// InstrumentBinding is one served binding — the pair this surface will
+// compare, and the feed it will compare it against.
+type InstrumentBinding struct {
+	Code   string `json:"code"`
+	Issuer string `json:"issuer"`
+	Feed   string `json:"feed"`
 }
 
-func inCodeSet(set map[string]struct{}, code string) bool {
-	code = strings.TrimSpace(code)
-	if _, ok := set[code]; ok {
-		return true
+// InstrumentBindings lists the curated set in a stable order, for the
+// same reason [AnchorClasses] is served: the rule travels with the rows.
+// The feed is rendered in its canonical `rwa:` form, the id a consumer
+// can take straight to the oracle endpoints.
+func InstrumentBindings() []InstrumentBinding {
+	out := make([]InstrumentBinding, 0, len(instrumentBindings))
+	for _, b := range instrumentBindings {
+		out = append(out, InstrumentBinding{
+			Code:   b.Code,
+			Issuer: b.Issuer,
+			Feed:   "rwa:" + b.Feed,
+		})
 	}
-	for known := range set {
-		if strings.EqualFold(known, code) {
-			return true
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Code != out[j].Code {
+			return out[i].Code < out[j].Code
 		}
-	}
-	return false
+		return out[i].Issuer < out[j].Issuer
+	})
+	return out
 }

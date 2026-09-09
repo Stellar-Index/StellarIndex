@@ -105,16 +105,42 @@ type RWADefinition struct {
 	RecognitionTags []string `json:"recognition_tags"`
 	// ScamFlagTags is the vocabulary that excludes an issuer outright.
 	ScamFlagTags []string `json:"scam_flag_tags"`
-	// ComparableInstrumentCodes is the closed set of ADR-0028 oracle
-	// codes whose feed prices ONE TOKEN, and against which a market
-	// price may therefore be compared. A code outside it — spot metal
-	// per troy ounce, one share of a fund — is priced in its own unit,
-	// and its ratio to a token price would be a unit conversion rather
-	// than a premium. Served so a consumer reads the rule instead of
-	// inferring it from which rows carry a reference today.
-	ComparableInstrumentCodes []string `json:"comparable_instrument_codes"`
+	// BoundInstruments is the CURATED set of (code, issuer) pairs this
+	// surface will compare against an oracle feed, and the feed each is
+	// bound to.
+	//
+	// It is keyed on the pair, never on the code: asset codes are not
+	// unique on Stellar, and a reference joined on the code alone hands
+	// every token wearing an instrument's ticker that instrument's net
+	// asset value. Served in full so a consumer can audit every binding
+	// rather than inferring the rule from which rows carry a figure
+	// today. A pair absent from it gets no reference, whatever it is
+	// called.
+	BoundInstruments []RWABoundInstrument `json:"bound_instruments"`
 	// DocumentationURL points at the prose statement of the rule.
 	DocumentationURL string `json:"documentation_url"`
+}
+
+// RWABoundInstrument is one curated binding: the exact Stellar
+// (code, issuer) and the oracle feed whose instrument it is.
+type RWABoundInstrument struct {
+	Code   string `json:"code"`
+	Issuer string `json:"issuer"`
+	// Feed is the canonical `rwa:<CODE>` id, so a consumer can take it
+	// straight to /v1/oracle/latest and see the same figure at source.
+	Feed string `json:"feed"`
+}
+
+// rwaBoundInstruments projects the curated set onto the wire type. The
+// set itself lives in internal/rwa, where the evidence for each entry is
+// recorded beside it.
+func rwaBoundInstruments() []RWABoundInstrument {
+	src := rwa.InstrumentBindings()
+	out := make([]RWABoundInstrument, 0, len(src))
+	for _, b := range src {
+		out = append(out, RWABoundInstrument{Code: b.Code, Issuer: b.Issuer, Feed: b.Feed})
+	}
+	return out
 }
 
 // RWASummary aggregates the served set.
@@ -509,11 +535,11 @@ func rwaDefinition() RWADefinition {
 			"issuer independently recognised in the curated account directory and not scam-flagged",
 			"real-world instrument by SEP-1 anchor_asset_type or by an ADR-0028 oracle feed",
 		},
-		AnchorClasses:             rwa.AnchorClasses(),
-		RecognitionTags:           rwa.RecognitionTags(),
-		ScamFlagTags:              append([]string(nil), timescale.DirectoryScamFlagTags...),
-		ComparableInstrumentCodes: rwa.TokenizedInstrumentCodes(),
-		DocumentationURL:          "https://stellarindex.io/docs/methodology/rwa-definition",
+		AnchorClasses:    rwa.AnchorClasses(),
+		RecognitionTags:  rwa.RecognitionTags(),
+		ScamFlagTags:     append([]string(nil), timescale.DirectoryScamFlagTags...),
+		BoundInstruments: rwaBoundInstruments(),
+		DocumentationURL: "https://stellarindex.io/docs/methodology/rwa-definition",
 	}
 }
 

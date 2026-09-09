@@ -15,6 +15,66 @@ against.
 
 ## [Unreleased]
 
+### Added
+
+- **api/rwa:** `/v1/rwa/assets` rows now carry `reference` — an
+  independent oracle's valuation of the real-world instrument the token
+  declares it anchors to — and `premium`, the token's market price
+  measured against it. For a tokenized treasury the gap between the two is
+  the number a holder actually needs, and it is the one figure on the
+  surface that neither the chain nor an oracle produces alone: it needs
+  the oracle stream and the gated market price held together.
+
+  **The reference is bound to `(code, issuer)`, never to a code.** Asset
+  codes are not unique on Stellar — any account may issue a token called
+  USTRY — so a code-keyed join answers every one of them with the real
+  instrument's net asset value, publishing an unrelated $0.20 token at an
+  81% discount to a security it has nothing to do with. The join therefore
+  runs through an explicit curated table of `(code, issuer) → feed`
+  bindings, matched exactly on both halves, served in full as
+  `definition.bound_instruments` so every binding can be audited. It fails
+  closed: an unbound pair gets `reference_not_bound` and no figure. This
+  is the ADR-0040 curated-set mechanism, and each entry records the
+  evidence behind it — the issuer's domain-bound SEP-1 entry, a directory
+  attribution that agrees with the feed's own ADR-0028 attribution, and
+  something tying the feed to that issuer rather than to an instrument of
+  that name.
+
+  Four further rules gate the figure, each removing a way of publishing a
+  number that means something other than what it says. **The reference
+  must be dollars** — a bare `_FUNDAMENTAL` feed publishes net asset value
+  in the token's *reserve* asset, so the denominator is read off the
+  stored row and must be `fiat:USD`, never converted here (the D8 shape,
+  where registering two such feeds as USD served "a BTC-backed token is
+  worth $1.00" for a token its own USD sibling priced at $78,313). **The
+  feed must price one token** — no binding may target `rwa:XAU` (spot gold
+  per troy ounce) or `rwa:SPXU` (one fund share), and a test enforces it.
+  **The publisher must be an oracle**, not an aggregator writing into the
+  same table for divergence comparison. **The market price must be
+  observed**, not a declared peg or a transitive derivation.
+
+  A scam-flagged issuer gets no valuation of any kind, including a third
+  party's: handing an impersonator the real instrument's net asset value
+  would publish a larger claim than the one the flag suppressed. An
+  unavailable comparison is absent, never `0` — zero would read as "trades
+  at par", which is a finding, and an unmade comparison is not that
+  finding. `premium.status` keeps absence, outage and expiry apart:
+  `no_reference_feed` means a bound pair whose feed no oracle is
+  publishing, `reference_unavailable` means the read did not answer and
+  nothing is known either way, `reference_expired` means the bound feed's
+  last observation is older than the seven-day window. A reference older
+  than 72h is labelled `stale` rather than withheld; the seven-day bound
+  is enforced on the observation, so a snapshot carried across a sustained
+  outage cannot age past it. `summary.assets_with_reference` and
+  `summary.assets_compared` state the coverage so the blank cells are not
+  read as zeros.
+
+  The `/rwa` page gains the two columns, the reference's publisher and
+  vintage, the bound pairs stated as pairs, and a premium rendered at
+  enough precision that a real basis-point gap never displays as `0.00%`.
+  Snapshot cached for 30s behind a single flight — one stream read serves
+  the whole set. Methodology: `docs/methodology/rwa-definition.md`.
+
 ## [v0.66.1] — 2026-09-09
 
 ### Fixed
@@ -26,52 +86,6 @@ against.
   disk, leaving the creator edge tables empty and the account-graph endpoint
   serving its warming response. A regression test now refuses any rollup
   statement that pairs the two settings.
-### Added
-
-- **api/rwa:** `/v1/rwa/assets` rows now carry `reference` — an
-  independent oracle's valuation of the real-world instrument the token
-  declares it anchors to — and `premium`, the token's market price
-  measured against it. For a tokenized treasury the gap between the two is
-  the number a holder actually needs, and it is the one figure on the
-  surface that neither the chain nor an oracle produces alone: it needs
-  the oracle stream and the gated market price held together.
-
-  Four rules decide whether the gap may be published, each removing a way
-  of serving a number that means something other than what it says. **The
-  reference must be dollars** — a bare `_FUNDAMENTAL` feed publishes net
-  asset value in the token's *reserve* asset, so the denominator is read
-  off the stored row and must be `fiat:USD`; it is never converted here
-  (the D8 shape, where registering two such feeds as USD served "a
-  BTC-backed token is worth $1.00" for a token its own USD sibling priced
-  at $78,313). **The feed must price one token** — `rwa:XAU` is spot gold
-  per troy ounce and `rwa:SPXU` is one share of an exchange-traded fund,
-  and a ratio to a token price would be a unit conversion published as a
-  premium; the comparable set is an allow-list served as
-  `definition.comparable_instrument_codes`, and a code added to ADR-0028
-  without being classified gets no reference rather than an unvouched
-  comparison. **The publisher must be an oracle**, not an aggregator
-  writing into the same table for divergence comparison. **The market
-  price must be observed**, not a declared peg or a transitive
-  derivation. A row failing any rule carries no figure and says which rule
-  refused it.
-
-  A scam-flagged issuer gets no valuation of any kind, including a third
-  party's: handing an impersonator the real instrument's net asset value
-  would publish a larger claim than the one the flag suppressed. An
-  unavailable comparison is absent, never `0` — zero would read as "trades
-  at par", which is a finding, and an unmade comparison is not that
-  finding. A reference older than 72h is labelled `stale` rather than
-  withheld; one silent for seven days leaves the row with no reference at
-  all. `summary.assets_with_reference` and `summary.assets_compared` state
-  the coverage so the blank cells are not read as zeros.
-
-  The `/rwa` page gains the two columns, the reference's publisher and
-  vintage, and the rule in prose beside the numbers. Snapshot cached for
-  30s behind a single flight — one stream read serves the whole set, and a
-  failed read leaves the previous snapshot in place rather than telling
-  every row that no oracle publishes its instrument. Methodology:
-  `docs/methodology/rwa-definition.md`.
-
 ## [v0.66.0] — 2026-09-09
 
 ### Added

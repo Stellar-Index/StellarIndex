@@ -3,7 +3,6 @@ package v1
 import (
 	"context"
 	"math/big"
-	"strings"
 	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
@@ -21,8 +20,17 @@ import (
 // oracle stream and the gated market price, which this index holds
 // together.
 //
-// Four rules decide whether the gap may be published. Each removes a way
+// Five rules decide whether the gap may be published. Each removes a way
 // of publishing a number that means something other than what it says.
+//
+// R-0 — THE REFERENCE MUST BE BOUND TO THIS (CODE, ISSUER). Asset codes
+// are not unique on Stellar; any account may issue a token called USTRY.
+// A reference joined on the code alone answers every one of them with the
+// real instrument's net asset value, and an unrelated token trading at
+// $0.20 is published at an 81% discount to a security it has nothing to
+// do with. [rwa.InstrumentFeed] is a curated, exact, fail-closed binding
+// on the pair (the ADR-0040 curated-set mechanism); an unbound pair gets
+// silence and a stated reason.
 //
 // R-A — THE REFERENCE MUST BE DOLLARS. A feed's value is denominated in
 // whatever the registry says it is denominated in, and a bare
@@ -36,8 +44,8 @@ import (
 //
 // R-B — THE REFERENCE MUST PRICE A TOKEN. `rwa:XAU` is spot gold per
 // troy ounce and `rwa:SPXU` is one share of an exchange-traded fund;
-// neither is one token of anything. [rwa.TokenizedInstrumentCode] is the
-// allow-list, and it fails closed.
+// neither is one token of anything. No binding may target one, and a
+// token of such a code is refused with that as the stated reason.
 //
 // R-C — THE PUBLISHER MUST BE AN ORACLE. Only sources the registry
 // classes [external.ClassOracle] qualify. Aggregators and the
@@ -72,11 +80,20 @@ const rwaReferenceTTL = 30 * time.Second
 //
 // It LABELS, it does not withhold. A NAV struck last Friday is the
 // current NAV on Monday morning, and suppressing it would hide the only
-// independent valuation the surface has. The outer bound is enforced
-// elsewhere and is absolute: LatestOracleStreams returns nothing older
-// than 7 days, so a feed that went dark leaves the row with no reference
-// at all rather than an ancient one.
+// independent valuation the surface has. The absolute outer bound is
+// [rwaReferenceMaxAge].
 const rwaReferenceStaleAfter = 72 * time.Hour
+
+// rwaReferenceMaxAge is the age past which an observation is not served
+// at all.
+//
+// Seven days is not a threshold chosen here: it is the window
+// LatestOracleStreams defines an ACTIVE stream by, so a live read can
+// never return anything older. The check exists because a snapshot is
+// carried forward across a failed read, and a sustained outage would
+// otherwise let the carried rows age past the bound this file and
+// docs/methodology/rwa-definition.md both claim is absolute.
+const rwaReferenceMaxAge = 7 * 24 * time.Hour
 
 // ─── wire shape ─────────────────────────────────────────────────────
 
@@ -132,9 +149,26 @@ const (
 	// including a third party's: an impersonator handed a real
 	// instrument's NAV is exactly the claim the flag exists to deny.
 	RWAPremiumIssuerFlagged = "withheld_issuer_flagged"
-	// RWAPremiumNoReference — no oracle publishes a feed for this
-	// instrument code.
+	// RWAPremiumNotBound — no curated binding ties this exact
+	// (code, issuer) to an oracle feed. The commonest cause by far is
+	// that the pair is a code collision: a token wearing an instrument's
+	// ticker that the oracle has never priced. It also covers a genuine
+	// issuer nobody has bound yet, which is why the refusal is reported
+	// rather than absorbed.
+	RWAPremiumNotBound = "reference_not_bound"
+	// RWAPremiumNoReference — the pair IS bound, but the oracle stream
+	// carries no row for its feed. Means exactly that and nothing else.
 	RWAPremiumNoReference = "no_reference_feed"
+	// RWAPremiumReferenceUnavailable — the oracle read did not answer, so
+	// nothing is known either way. Distinct from every refusal above: a
+	// read that failed is not entitled to report an absence as a finding,
+	// and on the wire it must not look like one.
+	RWAPremiumReferenceUnavailable = "reference_unavailable"
+	// RWAPremiumReferenceExpired — the bound feed's most recent
+	// observation is older than the 7-day window an active stream is
+	// defined by. Reached only when a snapshot is carried forward across
+	// a sustained read failure; a live read cannot return such a row.
+	RWAPremiumReferenceExpired = "reference_expired"
 	// RWAPremiumNotInstrumentScoped — a feed of this code exists but
 	// prices an off-chain quantity in its own unit (a troy ounce of spot
 	// metal, one fund share) rather than one token. Its ratio to a token
@@ -171,18 +205,21 @@ type rwaReference struct {
 }
 
 // rwaReferences is one oracle-stream snapshot reduced to what this
-// surface may publish, keyed by upper-cased instrument code.
+// surface may publish, keyed by the ADR-0028 FEED code — exactly as the
+// allow-list spells it, never folded. The join from a Stellar asset to a
+// feed happens through [rwa.InstrumentFeed]; this map is only the
+// feed-side half of it.
 type rwaReferences struct {
-	// byCode holds the references that passed R-A, R-B and R-C.
-	byCode map[string]rwaReference
-	// nonUSD records the codes whose only oracle rows are denominated in
+	// byFeed holds the references that passed R-A and R-C.
+	byFeed map[string]rwaReference
+	// nonUSD records the feeds whose only oracle rows are denominated in
 	// something other than dollars, so a row can state THAT as the
 	// reason rather than the weaker "no feed". Keyed the same way; the
 	// value is the quote's canonical id.
 	nonUSD map[string]string
 	// available is false when no oracle reader is wired or the read
 	// failed. Distinguished from "the oracles publish nothing for these
-	// instruments", which is a finding.
+	// instruments", which is a finding a failed read may not make.
 	available bool
 }
 
@@ -198,17 +235,15 @@ type rwaReferences struct {
 // reference instead of a figure from a source that has gone quiet.
 func rwaReferenceSnapshotFrom(updates []canonical.OracleUpdate) rwaReferences {
 	out := rwaReferences{
-		byCode:    map[string]rwaReference{},
+		byFeed:    map[string]rwaReference{},
 		nonUSD:    map[string]string{},
 		available: true,
 	}
 	for _, u := range updates {
-		// R-B, and the namespace gate: only ADR-0028 instrument feeds,
-		// and only those that price one token.
+		// Namespace gate: only ADR-0028 instrument feeds. Whether any
+		// Stellar asset may be answered with one is R-0's question, asked
+		// per row against the curated binding — not here.
 		if u.Asset.Type != canonical.AssetRWA {
-			continue
-		}
-		if !rwa.TokenizedInstrumentCode(u.Asset.Code) {
 			continue
 		}
 		// R-C — an oracle, not an aggregator writing into the same table
@@ -216,7 +251,10 @@ func rwaReferenceSnapshotFrom(updates []canonical.OracleUpdate) rwaReferences {
 		if external.Lookup(u.Source).Class != external.ClassOracle {
 			continue
 		}
-		key := strings.ToUpper(strings.TrimSpace(u.Asset.Code))
+		// The key is the stored feed code verbatim. canonical.ParseAsset
+		// only admits the ADR-0028 spelling, so it is already exact; no
+		// folding is applied here or at lookup.
+		key := u.Asset.Code
 		// R-A — dollars, read off the stored row.
 		if !isUSDQuote(u.Quote) {
 			// Keep only the first, so the reason is stable when a code
@@ -236,19 +274,19 @@ func rwaReferenceSnapshotFrom(updates []canonical.OracleUpdate) rwaReferences {
 		// Several oracles may price the same instrument. Take the most
 		// recent, and break an exact tie on source name so the served
 		// figure does not depend on the order the scan returned rows.
-		if prev, ok := out.byCode[key]; ok {
+		if prev, ok := out.byFeed[key]; ok {
 			if prev.asOf.After(ref.asOf) ||
 				(prev.asOf.Equal(ref.asOf) && prev.source <= ref.source) {
 				continue
 			}
 		}
-		out.byCode[key] = ref
+		out.byFeed[key] = ref
 	}
-	// A code whose USD leg was admitted is not missing a reference, so
+	// A feed whose USD leg was admitted is not missing a reference, so
 	// drop any non-USD note for it: the reason must describe the row
 	// that would be served, not one that was passed over.
-	for code := range out.byCode {
-		delete(out.nonUSD, code)
+	for feed := range out.byFeed {
+		delete(out.nonUSD, feed)
 	}
 	return out
 }
@@ -353,22 +391,49 @@ func rwaApplyReference(a *RWAAsset, snap rwaReferences, now time.Time) {
 		a.Premium = RWAPremium{Status: RWAPremiumIssuerFlagged}
 		return
 	}
+	// A read that did not answer knows nothing either way. Reporting it
+	// as an absence would publish a finding the read did not earn, and on
+	// the wire it would be indistinguishable from a genuine one.
 	if !snap.available {
+		a.Premium = RWAPremium{Status: RWAPremiumReferenceUnavailable}
+		return
+	}
+
+	// R-0 — the binding, on the exact (code, issuer). This is the join,
+	// and it is the whole reason a token that merely shares a ticker with
+	// a real instrument cannot be handed that instrument's valuation.
+	feed, bound := rwa.InstrumentFeed(a.Code, a.Issuer)
+	if !bound {
+		// Both refusals withhold. They differ in what they tell a reader,
+		// and the more specific one is worth reporting: a token coded XAU
+		// is not unbound by oversight — the oracle of that name prices a
+		// troy ounce of metal, which is not a quantity any token has.
+		if rwa.OffChainReferenceCode(a.Code) {
+			a.Premium = RWAPremium{Status: RWAPremiumNotInstrumentScoped}
+			return
+		}
+		a.Premium = RWAPremium{Status: RWAPremiumNotBound}
+		return
+	}
+
+	ref, ok := snap.byFeed[feed]
+	if !ok {
+		if snap.nonUSD[feed] != "" {
+			a.Premium = RWAPremium{Status: RWAPremiumReferenceNotUSD}
+			return
+		}
 		a.Premium = RWAPremium{Status: RWAPremiumNoReference}
 		return
 	}
 
-	key := strings.ToUpper(strings.TrimSpace(a.Code))
-	ref, ok := snap.byCode[key]
-	if !ok {
-		switch {
-		case rwa.OffChainReferenceCode(a.Code):
-			a.Premium = RWAPremium{Status: RWAPremiumNotInstrumentScoped}
-		case snap.nonUSD[key] != "":
-			a.Premium = RWAPremium{Status: RWAPremiumReferenceNotUSD}
-		default:
-			a.Premium = RWAPremium{Status: RWAPremiumNoReference}
-		}
+	// A live read cannot return an observation older than the 7-day
+	// window, but a snapshot carried forward across a sustained read
+	// failure can age past it. Enforce the bound on the OBSERVATION
+	// rather than on the snapshot, so the documented claim — a feed
+	// silent for seven days leaves the row with no reference — holds
+	// however the row reached us.
+	if now.Sub(ref.asOf) > rwaReferenceMaxAge {
+		a.Premium = RWAPremium{Status: RWAPremiumReferenceExpired}
 		return
 	}
 

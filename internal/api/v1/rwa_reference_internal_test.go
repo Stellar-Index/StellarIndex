@@ -37,8 +37,26 @@ func refUpdate(t *testing.T, source, assetID, quoteID, raw string, decimals uint
 	}
 }
 
+// boundIssuer is the G-address internal/rwa binds the CETES / USTRY /
+// TESOURO instruments to. Spelled out here rather than imported because
+// the binding table is unexported by design: these tests exercise the
+// API's use of the binding, not the table's contents (internal/rwa has
+// its own tests for those).
+const boundIssuer = "GCRYUGD5NVARGXT56XEZI5CIFCQETYHAPQQTHO2O3IQZTHDH4LATMYWC"
+
+// unboundIssuer is a different account. Nothing binds it to any feed,
+// which is the ordinary case for all but a handful of Stellar accounts.
+const unboundIssuer = "GAXSPCTVGFIVYGHT7JLJZV57HCN5KUYDJ6DMPLNWUKL7A5A3HKCNW7JW"
+
+// admittedRow builds a row that has already passed membership, under the
+// issuer the instrument is bound to. Tests that care about the binding
+// itself use [admittedRowFor].
 func admittedRow(code, price string) RWAAsset {
-	a := RWAAsset{Code: code, Valuation: RWAValuation{Status: RWAValuationUnpriced}}
+	return admittedRowFor(code, boundIssuer, price)
+}
+
+func admittedRowFor(code, issuer, price string) RWAAsset {
+	a := RWAAsset{Code: code, Issuer: issuer, Valuation: RWAValuation{Status: RWAValuationUnpriced}}
 	if price != "" {
 		p := price
 		a.Valuation = RWAValuation{Status: RWAValuationPublished, PriceUSD: &p, MarketCapUSD: &p}
@@ -278,43 +296,128 @@ func TestRWAReference_PicksTheMostRecentDeterministically(t *testing.T) {
 
 	for _, order := range [][]canonical.OracleUpdate{{older, newer}, {newer, older}} {
 		snap := rwaReferenceSnapshotFrom(order)
-		got := snap.byCode["USTRY"]
+		got := snap.byFeed["USTRY"]
 		if got.source != "band" || got.wire != "1.07403800" {
 			t.Errorf("picked %s/%s, want the most recent (band/1.07403800)", got.source, got.wire)
 		}
 	}
 }
 
-// TestRWAReference_UnavailableSnapshotStatesNoReference. A read that did
-// not answer must not report "no oracle publishes your instrument" —
-// that is a finding, and a failed read is not entitled to make it. What
-// it must never do is publish a figure.
+// TestRWAReference_UnavailableSnapshotStatesItsOwnStatus. A read that
+// did not answer knows nothing either way, and must not report "no
+// oracle publishes a valuation for this instrument" — that is a finding
+// about the world, and a failed read has not earned it. The status is
+// the assertion that matters: without a distinct one, an outage is
+// indistinguishable on the wire from a genuine absence.
 func TestRWAReference_UnavailableSnapshotPublishesNothing(t *testing.T) {
 	a := admittedRow("USTRY", "1.0400")
 	rwaApplyReference(&a, rwaReferences{}, time.Now())
 	if a.Reference != nil {
 		t.Fatalf("reference served from an unavailable snapshot: %+v", a.Reference)
 	}
+	if a.Premium.Status != RWAPremiumReferenceUnavailable {
+		t.Errorf("premium status = %q, want %q — a failed read must not be reported as an absence",
+			a.Premium.Status, RWAPremiumReferenceUnavailable)
+	}
+	if a.Premium.Status == RWAPremiumNoReference {
+		t.Error("an outage is being reported as 'no oracle publishes this instrument'")
+	}
 	if a.Premium.Pct != nil {
 		t.Errorf("premium pct = %q on an unavailable snapshot", *a.Premium.Pct)
 	}
+
+	// And the genuine absence keeps its own, different status: a bound
+	// pair whose feed the oracles simply are not publishing.
+	b := admittedRow("USTRY", "1.0400")
+	rwaApplyReference(&b, rwaReferenceSnapshotFrom(nil), time.Now())
+	if b.Premium.Status != RWAPremiumNoReference {
+		t.Errorf("an empty but SUCCESSFUL read gave status %q, want %q — the two must be distinguishable",
+			b.Premium.Status, RWAPremiumNoReference)
+	}
 }
 
-// TestRWAReference_MatchesTheCodeCaseInsensitively mirrors the
-// membership join: an on-chain asset code carries whatever case its
-// issuer chose, while the ADR-0028 list spells instrument tickers.
-func TestRWAReference_MatchesTheCodeCaseInsensitively(t *testing.T) {
+// TestRWAReference_CarriedForwardRowsStillExpire is the age bound on the
+// carry-forward. A snapshot is reused across a failed read, so under a
+// sustained outage its rows age past the seven-day window an active
+// stream is defined by — the bound this file and the methodology both
+// state is absolute. Enforced on the observation, not the snapshot, so
+// it holds however the row reached the request.
+func TestRWAReference_CarriedForwardRowsStillExpire(t *testing.T) {
 	now := time.Now()
 	snap := rwaReferenceSnapshotFrom([]canonical.OracleUpdate{
-		refUpdate(t, "redstone", "rwa:deJTRSY", "fiat:USD", "103618463", 8, now),
+		refUpdate(t, "redstone", "rwa:USTRY", "fiat:USD", "107403800", 8, now.Add(-8*24*time.Hour)),
 	})
-	a := admittedRow("DEJTRSY", "1.03618463")
+	a := admittedRow("USTRY", "1.0400")
 	rwaApplyReference(&a, snap, now)
-	if a.Reference == nil {
-		t.Fatal("a case variant of the instrument ticker must still find its feed")
+
+	if a.Reference != nil {
+		t.Fatalf("an eight-day-old observation was served: %+v", a.Reference)
 	}
-	if a.Premium.Status != RWAPremiumPublished {
-		t.Errorf("premium status = %q, want published", a.Premium.Status)
+	if a.Premium.Status != RWAPremiumReferenceExpired {
+		t.Errorf("premium status = %q, want %q", a.Premium.Status, RWAPremiumReferenceExpired)
+	}
+	if a.Premium.Pct != nil {
+		t.Errorf("premium pct = %q against an expired observation", *a.Premium.Pct)
+	}
+
+	// Six days is inside the window: stale, labelled, still served.
+	fresh := rwaReferenceSnapshotFrom([]canonical.OracleUpdate{
+		refUpdate(t, "redstone", "rwa:USTRY", "fiat:USD", "107403800", 8, now.Add(-6*24*time.Hour)),
+	})
+	b := admittedRow("USTRY", "1.0400")
+	rwaApplyReference(&b, fresh, now)
+	if b.Reference == nil || !b.Reference.Stale {
+		t.Errorf("a six-day-old observation must be served and labelled stale: %+v", b.Reference)
+	}
+}
+
+// TestRWAReference_RefusesAnUnboundIssuer is R-0, the identity rule.
+//
+// Asset codes are not unique on Stellar. A join on the code alone hands
+// every account issuing a token called USTRY the real instrument's net
+// asset value — here, a token trading at $0.20 published at an 81%
+// discount to a security it has nothing to do with.
+func TestRWAReference_RefusesAnUnboundIssuer(t *testing.T) {
+	now := time.Now()
+	snap := rwaReferenceSnapshotFrom([]canonical.OracleUpdate{
+		refUpdate(t, "redstone", "rwa:USTRY", "fiat:USD", "107403800", 8, now),
+	})
+	a := admittedRowFor("USTRY", unboundIssuer, "0.20000000")
+	rwaApplyReference(&a, snap, now)
+
+	if a.Reference != nil {
+		t.Fatalf("an unbound issuer's token was given the instrument's valuation: %+v", a.Reference)
+	}
+	if a.Premium.Status != RWAPremiumNotBound {
+		t.Errorf("premium status = %q, want %q", a.Premium.Status, RWAPremiumNotBound)
+	}
+	if a.Premium.Pct != nil {
+		t.Errorf("premium pct = %q — a false claim about a real security", *a.Premium.Pct)
+	}
+
+	// The bound issuer's token, same code, same snapshot, is answered.
+	b := admittedRowFor("USTRY", boundIssuer, "1.07403800")
+	rwaApplyReference(&b, snap, now)
+	if b.Premium.Status != RWAPremiumPublished {
+		t.Errorf("the bound pair must still be compared; status = %q", b.Premium.Status)
+	}
+}
+
+// TestRWAReference_DoesNotFoldCase. The join upper-cased both sides, so
+// a token coded XAUM matched the XAUm feed. A case variant is a
+// different token unless a binding says otherwise.
+func TestRWAReference_DoesNotFoldCase(t *testing.T) {
+	now := time.Now()
+	snap := rwaReferenceSnapshotFrom([]canonical.OracleUpdate{
+		refUpdate(t, "redstone", "rwa:USTRY", "fiat:USD", "107403800", 8, now),
+	})
+	a := admittedRowFor("ustry", boundIssuer, "0.20000000")
+	rwaApplyReference(&a, snap, now)
+	if a.Reference != nil {
+		t.Fatalf("a case variant was answered with the bound instrument's valuation: %+v", a.Reference)
+	}
+	if a.Premium.Status != RWAPremiumNotBound {
+		t.Errorf("premium status = %q, want %q", a.Premium.Status, RWAPremiumNotBound)
 	}
 }
 

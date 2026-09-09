@@ -62,8 +62,14 @@ const VALUATION_REASON: Record<string, string> = {
 const PREMIUM_REASON: Record<string, string> = {
   withheld_issuer_flagged:
     'Withheld — the issuer carries a scam-class directory flag. No valuation is published for it, including an independent one: handing an impersonator the real instrument’s value would be a larger claim than the one the flag suppressed.',
+  reference_not_bound:
+    'This exact (code, issuer) is not one of the pairs bound to an oracle feed. A code alone is not an identity — anyone can issue a token under an instrument’s ticker — so no valuation of that instrument is attached to it.',
   no_reference_feed:
-    'No independent oracle publishes a valuation for this instrument.',
+    'This token is bound to an oracle feed, but no oracle is currently publishing that instrument.',
+  reference_unavailable:
+    'The oracle reading could not be fetched, so nothing is known either way. This is an outage, not a statement that no valuation exists.',
+  reference_expired:
+    'The bound feed’s most recent reading is older than a week, so it is no longer treated as current.',
   reference_not_instrument_scoped:
     'An oracle prices an instrument of this name, but it prices an off-chain quantity in its own unit — a troy ounce of spot metal, one fund share — not one token. Their ratio would be a unit conversion, not a premium.',
   reference_not_usd_denominated:
@@ -617,25 +623,41 @@ function DefinitionPanel({
         </span>
         . Fiat-anchored tokens are stablecoins and are counted elsewhere.
       </p>
-      <p className="text-ink-muted mt-3 text-xs leading-relaxed">
-        <strong className="text-ink-body">
-          What the instrument comparison rests on.
-        </strong>{' '}
-        The right-hand columns put an independent oracle&rsquo;s valuation of
-        the real-world instrument beside what the Stellar market pays for the
-        token. That the two are the same quantity comes from the issuer&rsquo;s
-        own domain-bound declaration and the independent recognition of its
-        account — the same evidence that admitted the asset — and is not a
-        separate measurement. A comparison is published only for the instruments
-        whose oracle feed prices one token: a feed that prices a troy ounce of
-        spot metal or one share of a fund is measuring something else, and its
-        ratio to a token price would be a unit conversion wearing a
-        premium&rsquo;s clothes. Comparable instruments:{' '}
-        <span className="font-mono">
-          {definition.comparable_instrument_codes.join(', ')}
-        </span>
-        .
-      </p>
+      <div className="text-ink-muted mt-3 text-xs leading-relaxed">
+        <p>
+          <strong className="text-ink-body">
+            Which tokens are compared against an instrument.
+          </strong>{' '}
+          Only the exact <span className="font-mono">(code, issuer)</span> pairs
+          listed below. A code is not an identity: anyone can issue a token
+          called USTRY, and answering one of those with the real
+          instrument&rsquo;s value would publish a discount to a security it has
+          nothing to do with. The list is short by construction, and a pair
+          missing from it shows the reason rather than a number.
+        </p>
+        <p className="mt-2">
+          What the comparison rests on is that one token is one unit of the
+          named instrument. The evidence is the issuer&rsquo;s own domain-bound
+          declaration and the independent recognition of its account — the same
+          evidence that admitted the asset — and is not a separate measurement.
+        </p>
+        {definition.bound_instruments.length > 0 && (
+          <ul className="mt-2 space-y-0.5">
+            {definition.bound_instruments.map((b) => (
+              <li
+                key={`${b.code}-${b.issuer}`}
+                className="font-mono text-[11px]"
+              >
+                {b.code}
+                <span className="text-ink-faint">
+                  -{truncateMiddle(b.issuer, 6, 6)}
+                </span>{' '}
+                <span aria-hidden>&rarr;</span> {b.feed}
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
       {refusedTotal > 0 && (
         <details className="group border-line mt-3 rounded-lg border">
           <summary className="text-ink-body marker:text-ink-faint hover:text-brand-600 cursor-pointer px-3 py-1.5 text-xs font-medium select-none">

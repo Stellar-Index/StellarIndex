@@ -73,7 +73,10 @@ function view(over: Partial<View> = {}): View {
         'hack',
         'phishing',
       ],
-      comparable_instrument_codes: ['CETES', 'TESOURO', 'USTRY'],
+      bound_instruments: [
+        { code: 'USTRY', issuer: ISSUER, feed: 'rwa:USTRY' },
+        { code: 'CETES', issuer: ISSUER, feed: 'rwa:CETES' },
+      ],
       documentation_url:
         'https://stellarindex.io/docs/methodology/rwa-definition',
     },
@@ -419,6 +422,76 @@ describe('RWAView', () => {
 
     expect(await screen.findByText('-0.02%')).toBeInTheDocument();
     expect(screen.getByTitle(/-0\.0166%/)).toBeInTheDocument();
+  });
+
+  it('names the bound pairs, not a list of codes', async () => {
+    apiGetData.mockResolvedValue(view());
+    renderView();
+
+    // The page states the rule as pairs, because a code is not an
+    // identity and a list of codes would suggest it is.
+    expect(
+      await screen.findByText(
+        'Which tokens are compared against an instrument.',
+      ),
+    ).toBeInTheDocument();
+    // Each binding is shown with its issuer, not as a bare ticker.
+    expect(screen.getByText(/rwa:USTRY/)).toBeInTheDocument();
+    expect(screen.getByText(/rwa:CETES/)).toBeInTheDocument();
+    expect(
+      screen.getAllByText((_, el) =>
+        (el?.textContent ?? '').includes(
+          'anyone can issue a token called USTRY',
+        ),
+      ).length,
+    ).toBeGreaterThan(0);
+  });
+
+  it('says an unbound token is unbound, not that no oracle exists', async () => {
+    apiGetData.mockResolvedValue(
+      view({
+        assets: [
+          asset({
+            reference: undefined,
+            premium: { status: 'reference_not_bound' },
+          }),
+        ],
+      }),
+    );
+    renderView();
+
+    await screen.findByText('USTRY');
+    expect(screen.queryByText('-3.06%')).not.toBeInTheDocument();
+    expect(
+      screen.getAllByTitle(/not one of the pairs bound to an oracle feed/)
+        .length,
+    ).toBeGreaterThanOrEqual(2);
+    // The reason must not read as a statement about what the oracles carry.
+    expect(
+      screen.queryByTitle(/no oracle is currently publishing/),
+    ).not.toBeInTheDocument();
+  });
+
+  it('says an oracle outage is an outage, not an absence', async () => {
+    apiGetData.mockResolvedValue(
+      view({
+        assets: [
+          asset({
+            reference: undefined,
+            premium: { status: 'reference_unavailable' },
+          }),
+        ],
+      }),
+    );
+    renderView();
+
+    await screen.findByText('USTRY');
+    expect(
+      screen.getAllByTitle(
+        /This is an outage, not a statement that no valuation exists/,
+      ).length,
+    ).toBeGreaterThanOrEqual(2);
+    expect(screen.queryByText('-3.06%')).not.toBeInTheDocument();
   });
 
   it('labels a stale instrument valuation rather than hiding it', async () => {
