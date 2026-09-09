@@ -118,6 +118,73 @@ func TestAssetsReader(t *testing.T) {
 	if has {
 		t.Errorf("HasAsset(%s) = true, want false (bogus classic asset)", bogusClassic.String())
 	}
+
+	// The non-classic arm (timescale.Store.hasNonClassicAsset) is a
+	// window-bounded, alias-complete probe since 2026-09-09. Two halves
+	// of its contract only a real Timescale can settle, and the
+	// package's scripted-driver tests deliberately cannot:
+	//
+	//   (a) the `= ANY($1)` alias array has to BIND — pgx encodes the
+	//       []string as text[] itself, so a shape Postgres rejects
+	//       (42883 and friends) shows up only against a live server;
+	//   (b) the `ts >= $2` floor has to actually EXCLUDE, which is the
+	//       narrowed semantic the fix chose and the thing most likely to
+	//       drift back without a test standing on it.
+
+	// (a) native, crypto:XLM and the XLM SAC are one asset under three
+	// canonical ids. Only the `native` leg was seeded above; each of the
+	// other two spellings must still find it.
+	for _, form := range []c.Asset{mustCryptoTest("XLM"), mustSorobanTest(c.XLMSacContractID)} {
+		has, err := store.HasAsset(ctx, form)
+		if err != nil {
+			t.Fatalf("HasAsset(%s): %v", form.String(), err)
+		}
+		if !has {
+			t.Errorf("HasAsset(%s) = false, want true — the seeded trades carry XLM as `native`, "+
+				"and all three forms are the same asset (XLM dual-form rule)", form.String())
+		}
+	}
+
+	// (b) an asset whose only trade predates the recency window reads as
+	// absent. This is the deliberate narrowing: HasAsset answers for the
+	// population /v1/assets lists (timescale.MarketsRecencyWindow), not
+	// for all of history, because "all of history" needed the unbounded
+	// hypertable scan that took /v1/assets/native past its 15s budget.
+	stale := sorobanFromSeed(t, 9)
+	staleTrade := c.Trade{
+		Source:      "test",
+		Ledger:      51_000_000,
+		TxHash:      hexTx(9),
+		OpIndex:     0,
+		Timestamp:   time.Now().UTC().Add(-timescale.MarketsRecencyWindow - 48*time.Hour),
+		Pair:        mustPair(stale, usdc),
+		BaseAmount:  c.NewAmount(big.NewInt(1_000)),
+		QuoteAmount: c.NewAmount(big.NewInt(12)),
+	}
+	if err := store.InsertTrade(ctx, staleTrade); err != nil {
+		t.Fatalf("InsertTrade (pre-window): %v", err)
+	}
+	if has, err := store.HasAsset(ctx, stale); err != nil {
+		t.Fatalf("HasAsset(%s): %v", stale.String(), err)
+	} else if has {
+		t.Errorf("HasAsset(%s) = true, want false — its only trade is older than "+
+			"MarketsRecencyWindow (%s), which is outside the window this probe answers for",
+			stale.String(), timescale.MarketsRecencyWindow)
+	}
+	// …and the same contract becomes present the moment it trades inside
+	// the window, so (b) is a window boundary and not a dead branch.
+	freshTrade := staleTrade
+	freshTrade.Ledger = 52_900_000
+	freshTrade.TxHash = hexTx(10)
+	freshTrade.Timestamp = time.Now().UTC().Truncate(time.Second)
+	if err := store.InsertTrade(ctx, freshTrade); err != nil {
+		t.Fatalf("InsertTrade (in-window): %v", err)
+	}
+	if has, err := store.HasAsset(ctx, stale); err != nil {
+		t.Fatalf("HasAsset(%s) after in-window trade: %v", stale.String(), err)
+	} else if !has {
+		t.Errorf("HasAsset(%s) = false after an in-window trade, want true", stale.String())
+	}
 }
 
 func TestAssetsReaderPagination(t *testing.T) {
@@ -205,6 +272,14 @@ func mustPair(base, quote c.Asset) c.Pair {
 
 func mustSorobanTest(id string) c.Asset {
 	a, err := c.NewSorobanAsset(id)
+	if err != nil {
+		panic(err)
+	}
+	return a
+}
+
+func mustCryptoTest(code string) c.Asset {
+	a, err := c.NewCryptoAsset(code)
 	if err != nil {
 		panic(err)
 	}
