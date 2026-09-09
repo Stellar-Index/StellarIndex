@@ -123,6 +123,7 @@ var PubnetOnlySources = []string{
 	"aquarius", "band", "blend", "blend_backstop", "blend_emitter", "cctp", "comet",
 	"defindex", "phoenix", "redstone", "reflector-cex", "reflector-dex", "reflector-fx",
 	"rozo", "sorocredit", "soroswap", "soroswap-router", "sushiswap_v3",
+	"upshift",
 }
 
 // NotApplicableOn lists, source-sorted with reasons, every canonical

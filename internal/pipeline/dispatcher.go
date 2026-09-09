@@ -55,6 +55,7 @@ import (
 	soroswap_router "github.com/Stellar-Index/StellarIndex/internal/sources/soroswap_router"
 	sushiswap_v3 "github.com/Stellar-Index/StellarIndex/internal/sources/sushiswap_v3"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/trustlines"
+	"github.com/Stellar-Index/StellarIndex/internal/sources/upshift"
 )
 
 // BuildDispatcher constructs a dispatcher with decoders registered
@@ -115,6 +116,8 @@ func BuildDispatcher(names []string, oracle config.OracleConfig, gated map[strin
 			decoders = append(decoders, comet.NewDecoder(gated[comet.SourceName]...))
 		case sushiswap_v3.SourceName:
 			decoders = append(decoders, sushiswap_v3.NewDecoder(gated[sushiswap_v3.SourceName]...))
+		case upshift.SourceName:
+			decoders = append(decoders, upshift.NewDecoder(gated[upshift.SourceName]...))
 		case reflector.SourceDEX:
 			if oracle.Reflector.DEXContract == "" {
 				return nil, fmt.Errorf(

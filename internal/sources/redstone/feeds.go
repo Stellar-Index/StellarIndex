@@ -4,6 +4,7 @@ import (
 	"math/big"
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/sources/upshift"
 )
 
 // feedEntry is one row of the RedStone feed registry: the canonical
@@ -92,7 +93,13 @@ var (
 //
 // Held as a named constant because it is an IDENTITY, not a tunable:
 // changing it re-points a published price at a different instrument.
-const earnUSDCVaultContract = "CCL3WITWFFXIHV2I52ECV5DPIEOFSTU3PBPR53ILPLF2IP5KHECXRUTY"
+//
+// It is now an ALIAS of internal/sources/upshift's own constant rather
+// than a second copy of the string (#503). The vault's on-chain activity
+// is decoded there and its price is published here; two independently
+// maintained literals for one instrument is precisely how a price and
+// the activity underneath it drift onto different asset ids.
+const earnUSDCVaultContract = upshift.MainnetVaultEarnUSDC
 
 var feedRegistry = map[string]feedEntry{
 	// Crypto / stablecoin feeds.

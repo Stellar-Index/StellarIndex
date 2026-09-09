@@ -15,6 +15,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/sources/comet"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/defindex"
 	sushiswap_v3 "github.com/Stellar-Index/StellarIndex/internal/sources/sushiswap_v3"
+	"github.com/Stellar-Index/StellarIndex/internal/sources/upshift"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
@@ -124,6 +125,25 @@ var gatedSources = map[string]GatedMeta{
 		Genesis:     sushiswap_v3.FactoryGenesisLedger,
 		NewDecoder: func(opts ...contractid.Option) dispatcher.Decoder {
 			return sushiswap_v3.NewDecoder(opts...)
+		},
+	},
+	upshift.SourceName: {
+		// Curated-set gate (ADR-0040 §1 mechanism 3), the comet shape:
+		// the Upshift vaults have NO factory namespace — neither vault
+		// has a creation event anywhere in the lake, each one's first
+		// event being its own `admin_set` — so there is nothing to
+		// anchor a fan-out on. The decoder's in-code seed
+		// (MainnetGatedSet: earnUSDC + earnXLM, both verified against
+		// the lake) is the trust root; this entry adds the
+		// protocol_contracts warm, the operator seam for admitting a
+		// third vault without a redeploy. The upkeep loop is the
+		// bespoke-symbol sweep documented in the package doc: the two
+		// vaults are the only contracts emitting
+		// `deployed_assets_changed` and its four siblings.
+		Genesis:    upshift.GenesisLedger,
+		CuratedSet: upshift.MainnetGatedSet(),
+		NewDecoder: func(opts ...contractid.Option) dispatcher.Decoder {
+			return upshift.NewDecoder(opts...)
 		},
 	},
 	defindex.SourceName: {

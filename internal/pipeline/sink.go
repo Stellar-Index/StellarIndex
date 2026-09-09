@@ -37,6 +37,7 @@ import (
 	soroswap_router "github.com/Stellar-Index/StellarIndex/internal/sources/soroswap_router"
 	sushiswap_v3 "github.com/Stellar-Index/StellarIndex/internal/sources/sushiswap_v3"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/trustlines"
+	"github.com/Stellar-Index/StellarIndex/internal/sources/upshift"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
@@ -581,6 +582,7 @@ func IsProjectedEvent(ev consumer.Event) bool {
 		cctp.Event, rozo.Event,
 		sorocredit.Event,
 		defindex.Event, defindex.VaultEvent, defindex.DFeesEvent,
+		upshift.Event,
 		sep41_supply.Event, sep41_transfers.Event:
 		return true
 	default:
@@ -946,6 +948,8 @@ func handleEvent(ctx context.Context, logger *slog.Logger, store *timescale.Stor
 		return persistTrade(ctx, logger, store, e.Trade)
 	case comet.LiquidityEvent:
 		return persistCometLiquidity(ctx, logger, store, e)
+	case upshift.Event:
+		return persistUpshiftVaultEvent(ctx, logger, store, e)
 	case sdex.TradeEvent:
 		return persistTrade(ctx, logger, store, e.Trade)
 	case reflector.UpdateEvent:
@@ -1430,6 +1434,41 @@ func persistCometLiquidity(ctx context.Context, logger *slog.Logger, store *time
 		"source", comet.SourceName, "kind", e.Kind,
 		"contract_id", e.ContractID, "ledger", e.Ledger,
 		"token", e.Token, "amount", e.Amount.String())
+	return nil
+}
+
+// persistUpshiftVaultEvent lands one decoded Upshift vault event into
+// upshift_vault_events (migration 0157) — a deposit, a withdrawal, a
+// movement of the vault's own share token, or a change in the capital
+// the vault has deployed into strategies. Upshift publishes no price,
+// so these rows never reach the trades hypertable or VWAP.
+func persistUpshiftVaultEvent(ctx context.Context, logger *slog.Logger, store *timescale.Store, e upshift.Event) error {
+	if err := store.InsertUpshiftVaultEvent(ctx, timescale.UpshiftVaultEvent{
+		ContractID:      e.ContractID,
+		Ledger:          e.Ledger,
+		LedgerCloseTime: e.ObservedAt,
+		TxHash:          e.TxHash,
+		OpIndex:         e.OpIndex,
+		EventIndex:      e.EventIndex,
+		Kind:            timescale.UpshiftVaultEventKind(e.Kind),
+		Caller:          e.Caller,
+		Receiver:        e.Receiver,
+		Owner:           e.Owner,
+		Assets:          e.Assets,
+		Shares:          e.Shares,
+		OldAmount:       e.OldAmount,
+		NewAmount:       e.NewAmount,
+	}); err != nil {
+		obs.SourceInsertErrorsTotal.WithLabelValues(upshift.SourceName, "upshift_vault_events").Inc()
+		logger.Error("insert Upshift vault event failed",
+			"contract_id", e.ContractID, "kind", e.Kind,
+			"ledger", e.Ledger, "tx_hash", e.TxHash, "err", err)
+		return err
+	}
+	bumpEntryCount(ctx, logger, store, upshift.SourceName)
+	logger.Debug("Upshift vault event ingested",
+		"source", upshift.SourceName, "kind", e.Kind,
+		"contract_id", e.ContractID, "ledger", e.Ledger)
 	return nil
 }
 

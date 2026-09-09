@@ -73,6 +73,12 @@ export const PROTOCOLS: ProtocolRegistryEntry[] = [
       'On-chain consumer USDC credit / CDP with scheduled settlements.',
   },
   {
+    name: 'upshift',
+    category: 'yield',
+    label: 'Upshift',
+    description: 'Institutional tokenized vaults (earnUSDC, earnXLM) minting shares against one underlying.',
+  },
+  {
     name: 'defindex',
     category: 'yield',
     label: 'DeFindex',
