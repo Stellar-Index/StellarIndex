@@ -649,10 +649,24 @@ const defaultChunkBytesPoll = 30 * time.Second
 // chunk's own relation does not change until the commit-time truncate.
 // The poll runs across the whole bracket anyway — it costs one catalog
 // read per 30 s, it is uniform, and it picks the movement back up the
-// moment the commit lands. What keeps the re-compress inside the alert's
-// existing window is its measured cost RELATIVE to the decompress
-// (23.0 s against 44.1 s, 0.52x on the same chunk), which puts even the
-// 159.7 GB outlier's re-compress under the decompress that now reports.
+// moment the commit lands.
+//
+// So the re-compress is NOT covered, and on the one outlier chunk it can
+// outlast the alert. Both counters are flat through it — progress_total
+// is ticked only after RestampTradesChunk returns, i.e. after the
+// deferred re-compress — and the alert fires at 45 min (a 30 min flat
+// window plus a 15 min `for`). Measured at 0.52x the decompress
+// (23.0 s against 44.1 s on the same chunk), the 159.7 GB outlier's
+// ~90 min decompress implies a ~47 min re-compress, which is over that
+// threshold. An earlier version of this comment claimed the 0.52x ratio
+// kept it inside the window; that is arithmetically wrong and is
+// corrected here rather than left as a claim nobody rechecks.
+//
+// This is accepted because it fails in the SAFE direction: an extra
+// ticket on one chunk, not a silence, and strictly better than the
+// pre-fix state that ticketed through the whole decompress of EVERY
+// chunk. The runbook tells the operator to confirm a `re-compressing`
+// ticket with pg_stat_activity before treating it as a hang.
 // TimescaleDB 2.26.4 publishes no compression-progress view to do better
 // with (timescaledb_information has none), and every cluster-wide
 // alternative — pg_database_size, WAL LSN, free space on the volume —

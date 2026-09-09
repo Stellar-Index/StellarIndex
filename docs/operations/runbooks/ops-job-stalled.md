@@ -62,11 +62,16 @@ one observer session polling `chunks_detailed_size`: through
 `compress_chunk` the figure is flat for the whole statement and steps once
 at commit, because TimescaleDB builds the compressed chunk as a new
 relation inside the compressing transaction and the polling session's
-catalog snapshot cannot see it. The re-compress stays inside the alert's
-existing window on cost rather than on signal: it measured 23.0 s against
-the same chunk's 44.1 s decompress (0.52x). A `no_progress` ticket raised
-while the job log's last line is `re-compressing` is therefore the one case
-to check by hand before treating it as a hang — confirm with
+catalog snapshot cannot see it. The re-compress is therefore NOT covered by a moving
+signal, and on the one outlier chunk it can outlast the alert: it measured
+0.52x the decompress (23.0 s against 44.1 s on the same chunk), so the
+159.7 GB chunk's ~90 min decompress implies a ~47 min re-compress against
+a 45 min fire threshold (a 30 min flat window plus a 15 min `for`). Both
+counters are flat through that phase. This is accepted because it fails
+safe — an extra ticket on one chunk, not a silence. A `no_progress` ticket
+raised while the job log's last line is `re-compressing` is therefore
+expected on that chunk, and is the one case to check by hand before
+treating it as a hang — confirm with
 `SELECT state, wait_event_type, wait_event FROM pg_stat_activity WHERE
 query LIKE '%compress_chunk%'`; `Lock` there is a real wedge, anything else
 is work in progress.
