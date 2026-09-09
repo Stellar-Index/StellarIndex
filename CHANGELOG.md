@@ -15,6 +15,29 @@ against.
 
 ## [Unreleased]
 
+### Fixed
+
+- **ops:** the ClickHouse schema-drift check compares against **live**, not
+  against a day-old snapshot. `ch-schema-drift.service` is described as
+  "repo intent vs live" and its metric `HELP` says repo-vs-live, but the
+  default mode read the newest `ch-schema-snapshot` capture. Measured on
+  r1 and both test nets on 2026-09-09, that cost both directions: a deploy
+  shipping a newer `tier1_schema.sql` than the morning's capture made 8
+  live tables (`account_creator_edges` alone holds 20.9M rows) report as
+  "ABSENT from the live schema", clearing itself at the next capture; and
+  because the comparison never read the server, live-vs-intent divergence
+  was not measured at all — including a confident `0 divergent` whenever
+  ClickHouse was down, the exact "could not check" == "checked, and fine"
+  equivalence the exit-2 contract exists to break. `LIVE` now defaults to
+  a fresh `SHOW CREATE` sweep. `LIVE=0` still selects the retained
+  snapshot, and in that mode the check now **refuses** (exit 2, naming
+  both sides) when the intent file is newer than the capture, rather than
+  reporting drift it cannot substantiate. Every `DRIFT`/`UNCODIFIED` line
+  names the source it actually read, and the unit's and timer's
+  `Description` render from the same variable as `Environment=LIVE=`, so
+  they can no longer advertise a mode the unit does not set. New gauge
+  `stellarindex_ch_schema_drift_live`.
+
 ## [v0.66.1] — 2026-09-09
 
 ### Fixed

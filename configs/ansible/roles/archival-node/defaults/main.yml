@@ -361,21 +361,32 @@ ch_schema_snapshot_offsite_ack: false
 
 # ───── ClickHouse schema DRIFT check (C6-008 / C6-003) ────────────────
 # The other half of the snapshot: compares deploy/clickhouse/tier1_schema.sql
-# (repo intent) against the live SHOW CREATE the snapshot captured, on
-# engine (incl. args) / PARTITION BY / ORDER BY / column names. Enabled
-# by default — it is sub-second text comparison, and a drift guard that
-# ships disabled detects nothing. Deliberately NOT gated on
-# ch_schema_snapshot_enabled: with ch_schema_drift_use_live it can read
-# ClickHouse directly and needs no snapshot at all.
+# (repo intent) against the LIVE schema, on engine (incl. args) /
+# PARTITION BY / ORDER BY / column names. Enabled by default — it is one
+# loopback SHOW CREATE sweep plus sub-second text comparison, and a drift
+# guard that ships disabled detects nothing. Deliberately NOT gated on
+# ch_schema_snapshot_enabled: it reads ClickHouse directly and needs no
+# snapshot at all.
 ch_schema_drift_enabled: true
 # Where the shipped copy of the repo's founding DDL lands on the host.
 # The comparison needs the repo's intent ON the box; r1 has no checkout.
 ch_schema_drift_intent: "/usr/local/share/stellarindex/tier1_schema.sql"
-# false = compare against the newest ch-schema-snapshot capture (default:
-# one SHOW CREATE sweep per day serves both the backup and the check).
-# true = the check runs its OWN SHOW CREATE sweep. Use only if the
-# snapshot is disabled or you want the check independent of it.
-ch_schema_drift_use_live: false
+# true (DEFAULT since 2026-09-09) = the check runs its OWN SHOW CREATE
+#   sweep. This is the only reading that answers the question the unit's
+#   Description asks, and the only one that fails when ClickHouse is down
+#   instead of reporting "0 divergent" off an ageing file.
+# false = compare against the newest ch-schema-snapshot capture instead.
+#   Saves one loopback sweep a day and costs the control its meaning: the
+#   capture is up to a day old, blind to anything applied since, and on
+#   2026-09-09 it put 8 live r1 tables (one of them 20.9M rows) on the
+#   ABSENT list purely because that day's deploy shipped a newer intent
+#   than the morning's capture. The script REFUSES that comparison now
+#   (exit 2) rather than reporting it, so this mode is honest — but it
+#   still measures a day-old schema. Set it only where a fresh sweep is
+#   genuinely unavailable, or to interrogate a retained capture by hand.
+# The unit's Description renders from THIS variable, so it can never
+# again claim "vs live" while comparing a snapshot.
+ch_schema_drift_use_live: true
 
 # ───── ClickHouse serving-query isolation (ADR-0048 D4) ───────────────
 # A dedicated ClickHouse settings profile + user for the API's
