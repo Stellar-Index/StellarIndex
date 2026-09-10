@@ -15,6 +15,8 @@ against.
 
 ## [Unreleased]
 
+## [v0.72.0] — 2026-09-10
+
 ### Added
 
 - **api,web:** `GET /v1/rwa/assets` admits contract-issued real-world
