@@ -27,7 +27,16 @@
 #      bad data" and "not running" stay different signals;
 #   5. the output is valid Prometheus text (a malformed textfile makes
 #      node_exporter drop the WHOLE file, i.e. all families at once),
-#      it is world-readable, and no temp file survives.
+#      it is world-readable, and no temp file survives;
+#   6. the PG lock-convoy gauges (2026-09-10) carry their values
+#      intact, EMIT an explicit zero on a quiet database, and emit
+#      nothing at all when their query failed. They live in this probe
+#      rather than in postgres_exporter because the exporter was
+#      itself queued in the convoy they exist to report — three of its
+#      scrapes blocked 917 s while a decompress_chunk's pending
+#      AccessExclusiveLock held the queue. A gauge that vanished at
+#      zero would leave the alert unable to distinguish "no convoy"
+#      from "no producer", which is the same blindness again.
 #
 # The SHIPPED bytes are executed, not a hand-copied twin: the script is
 # an inline `content:` block in the role, so it is extracted from the
@@ -99,6 +108,7 @@ for a in "$@"; do
 done
 kind=other
 case "$sql" in
+  *pg_blocking_pids*)                    kind=lock_convoy ;;
   *policy_refresh_continuous_aggregate*) kind=cagg ;;
   *policy_compression*)                  kind=compression ;;
   *job_stats\ js*)                       kind=jobs ;;
@@ -110,6 +120,9 @@ for e in ${EMPTY_QUERIES:-}; do
   [[ "$kind" == "$e" ]] && exit 0
 done
 case "$kind" in
+  # The 2026-09-10 shape: five backends convoyed behind a decompress
+  # that is ITSELF blocked, worst wait 1,164 s, seven blocked in all.
+  lock_convoy) printf "${LOCK_CONVOY_ROW:-5|1164|7}\n" ;;
   cagg)        printf 'prices_1m|1788598634|60\noracle_prices_1m|1788598600|30\n' ;;
   compression) printf 'trades|3\nfx_quotes|0\n' ;;
   jobs)        printf 'policy_compression|trades|1001|0\npolicy_retention|-|1002|2\n' ;;
@@ -122,10 +135,11 @@ export PATH="$TMP/bin:$PATH"
 export TEXTFILE_DIR="$TMP/textfile"
 PROM="$TEXTFILE_DIR/timescale_jobs.prom"
 
-# run <fail-queries> <empty-queries> — one probe run; sets $RC.
+# run <fail-queries> <empty-queries> [convoy-row] — one probe run;
+# sets $RC.
 run() {
   rm -f "$PROM"
-  FAIL_QUERIES="$1" EMPTY_QUERIES="$2" bash "$PROBE"
+  FAIL_QUERIES="$1" EMPTY_QUERIES="$2" LOCK_CONVOY_ROW="${3:-}" bash "$PROBE"
   RC=$?
 }
 
@@ -136,33 +150,89 @@ metric() {
 
 has_family() { grep -qE "^$1\{" "$PROM"; }
 
+# ─── assertion helpers ──────────────────────────────────────────────
+#
+# `if/then/else`, not `A && ok "…" || bad "…"`. The third arm of that
+# idiom runs whenever the second one fails (shellcheck SC2015), and
+# CI's changed-script shellcheck gate is clean-or-nothing — so a file
+# carrying that pattern cannot be edited without turning the gate red
+# for whoever touches it next. Same shape as data-freshness-test.sh.
+
+# eq <want> <got> <label> — assert an exact value.
+eq() {
+  if [[ "$2" == "$1" ]]; then ok "$3"; else bad "$3 (got '${2:-<absent>}', want '$1')"; fi
+}
+
+# matches <regex> <got> <label> — assert a pattern. The regex is
+# deliberately unquoted inside [[ =~ ]]; quoting it would match it as a
+# literal.
+matches() {
+  if [[ "$2" =~ $1 ]]; then ok "$3"; else bad "$3 (got '${2:-<absent>}')"; fi
+}
+
+# holds <label> <cmd...> — assert the command succeeds.
+holds() { local label="$1"; shift; if "$@"; then ok "$label"; else bad "$label"; fi; }
+
+# refutes <label> <cmd...> — assert the command FAILS.
+refutes() { local label="$1"; shift; if "$@"; then bad "$label"; else ok "$label"; fi; }
+
 # ─── 1. clean run ───────────────────────────────────────────────────
 run "" ""
-[[ "$RC" -eq 0 ]] && ok "clean run exits 0" || bad "clean run exits 0 (got $RC)"
+eq 0 "$RC" "clean run exits 0"
 for f in stellarindex_cagg_last_refresh_unix \
          stellarindex_timescale_chunks_overdue_compression \
          stellarindex_timescale_job_failures_total; do
-  has_family "$f" && ok "clean run emits $f" || bad "clean run emits $f"
+  holds "clean run emits $f" has_family "$f"
 done
 for qname in cagg_refresh compression job_stats; do
-  got=$(metric "stellarindex_timescale_probe_query_ok{query=\"$qname\"}")
-  [[ "$got" == "1" ]] && ok "clean run: query_ok $qname = 1" \
-                      || bad "clean run: query_ok $qname = 1 (got '${got:-<absent>}')"
-  got=$(metric "stellarindex_timescale_probe_rows{query=\"$qname\"}")
-  [[ "$got" == "2" ]] && ok "clean run: rows $qname = 2" \
-                      || bad "clean run: rows $qname = 2 (got '${got:-<absent>}')"
+  eq 1 "$(metric "stellarindex_timescale_probe_query_ok{query=\"$qname\"}")" "clean run: query_ok $qname = 1"
+  eq 2 "$(metric "stellarindex_timescale_probe_rows{query=\"$qname\"}")" "clean run: rows $qname = 2"
 done
-stamp=$(metric stellarindex_timescale_probe_last_run_unix)
-[[ "$stamp" =~ ^1[0-9]{9}$ ]] && ok "clean run stamps last_run_unix" \
-                              || bad "clean run stamps last_run_unix (got '${stamp:-<absent>}')"
+matches '^1[0-9]{9}$' "$(metric stellarindex_timescale_probe_last_run_unix)" "clean run stamps last_run_unix"
 
 # 0644, atomic: node_exporter runs unprivileged and SILENTLY skips a
 # file it cannot read, and a surviving temp file would be scraped as a
 # duplicate of every series in it.
+#
+# shellcheck disable=SC2012  # $PROM is a fixed literal name this script created in $TMPDIR; the find-instead-of-ls advice is about filenames we control here
 mode=$(ls -l "$PROM" | cut -c1-10)
-[[ "$mode" == "-rw-r--r--" ]] && ok "textfile is 0644" || bad "textfile is 0644 (got $mode)"
+eq "-rw-r--r--" "$mode" "textfile is 0644"
 leftovers=$(find "$TEXTFILE_DIR" -type f ! -name 'timescale_jobs.prom' | wc -l | tr -d ' ')
-[[ "$leftovers" == "0" ]] && ok "no temp file survives" || bad "no temp file survives ($leftovers left)"
+eq 0 "$leftovers" "no temp file survives"
+
+# ─── 1b. the lock-convoy gauges (2026-09-10) ────────────────────────
+#
+# The alerting layer went cascade-blind during the incident because
+# postgres_exporter was itself queued in the convoy. These gauges are
+# the independent carrier, so what they have to prove here is that the
+# numbers survive the trip intact and that a value of zero is EMITTED
+# rather than omitted — an absent series is how an alert quietly stops
+# being able to fire.
+#
+# The convoy gauges carry no labels (they are facts about the whole
+# cluster, not about one hypertable), which `metric` already handles:
+# it matches the whole first field.
+run "" ""
+eq 5 "$(metric stellarindex_pg_lock_convoy_backends)" "convoy backends carried through"
+eq 1164 "$(metric stellarindex_pg_lock_convoy_wait_seconds_max)" "worst convoyed wait carried through"
+eq 7 "$(metric stellarindex_pg_lock_blocked_backends)" "total blocked backends carried through"
+eq 1 "$(metric "stellarindex_timescale_probe_query_ok{query=\"lock_convoy\"}")" "clean run: query_ok lock_convoy = 1"
+
+# A quiet database is the common case and it must still EMIT. An alert
+# built on a series that disappears when the value is zero cannot
+# distinguish "no convoy" from "no producer".
+run "" "" "0|0|0"
+eq 0 "$(metric stellarindex_pg_lock_convoy_wait_seconds_max)" "a quiet database emits an explicit 0, not an absent series"
+
+# A failing convoy query must not cost the other three families, and
+# must report itself — the probe-degraded alert is what carries that.
+run "lock_convoy" ""
+eq 0 "$(metric "stellarindex_timescale_probe_query_ok{query=\"lock_convoy\"}")" "a failing convoy query reports query_ok 0"
+holds "a failing convoy query does not cost the cagg family" \
+  has_family stellarindex_cagg_last_refresh_unix
+eq "" "$(metric stellarindex_pg_lock_convoy_backends)" \
+  "a failing convoy query emits no convoy value (absent, never a fabricated 0)"
+run "" ""
 
 # ─── 2. ONE failing query ───────────────────────────────────────────
 #
@@ -171,44 +241,27 @@ leftovers=$(find "$TEXTFILE_DIR" -type f ! -name 'timescale_jobs.prom' | wc -l |
 # fresh sample timestamp forever. So the other two families must still
 # land — and the failure must still be visible.
 run "compression" ""
-[[ "$RC" -eq 0 ]] && ok "one failing query still writes the file" \
-                  || bad "one failing query still writes the file (rc $RC)"
-has_family stellarindex_cagg_last_refresh_unix \
-  && ok "failing compression query does not cost the cagg family" \
-  || bad "failing compression query does not cost the cagg family"
-has_family stellarindex_timescale_job_failures_total \
-  && ok "failing compression query does not cost the job-failure family" \
-  || bad "failing compression query does not cost the job-failure family"
-got=$(metric 'stellarindex_timescale_probe_query_ok{query="compression"}')
-[[ "$got" == "0" ]] && ok "failing query reports query_ok 0" \
-                    || bad "failing query reports query_ok 0 (got '${got:-<absent>}')"
-got=$(metric 'stellarindex_timescale_probe_query_ok{query="cagg_refresh"}')
-[[ "$got" == "1" ]] && ok "the queries that worked still report 1" \
-                    || bad "the queries that worked still report 1 (got '${got:-<absent>}')"
-got=$(metric 'stellarindex_timescale_probe_rows{query="compression"}')
-[[ "$got" == "0" ]] && ok "failing query reports rows 0" \
-                    || bad "failing query reports rows 0 (got '${got:-<absent>}')"
+eq 0 "$RC" "one failing query still writes the file"
+holds "failing compression query does not cost the cagg family" \
+  has_family stellarindex_cagg_last_refresh_unix
+holds "failing compression query does not cost the job-failure family" \
+  has_family stellarindex_timescale_job_failures_total
+eq 0 "$(metric 'stellarindex_timescale_probe_query_ok{query="compression"}')" "failing query reports query_ok 0"
+eq 1 "$(metric 'stellarindex_timescale_probe_query_ok{query="cagg_refresh"}')" "the queries that worked still report 1"
+eq 0 "$(metric 'stellarindex_timescale_probe_rows{query="compression"}')" "failing query reports rows 0"
 
 # ─── 3. a query that succeeds and returns nothing ───────────────────
 run "" "compression"
-got=$(metric 'stellarindex_timescale_probe_query_ok{query="compression"}')
-[[ "$got" == "1" ]] && ok "empty result keeps query_ok 1" \
-                    || bad "empty result keeps query_ok 1 (got '${got:-<absent>}')"
-got=$(metric 'stellarindex_timescale_probe_rows{query="compression"}')
-[[ "$got" == "0" ]] && ok "empty result reports rows 0" \
-                    || bad "empty result reports rows 0 (got '${got:-<absent>}')"
-has_family stellarindex_timescale_chunks_overdue_compression \
-  && bad "an empty result emits no compression series" \
-  || ok "an empty result emits no compression series"
+eq 1 "$(metric 'stellarindex_timescale_probe_query_ok{query="compression"}')" "empty result keeps query_ok 1"
+eq 0 "$(metric 'stellarindex_timescale_probe_rows{query="compression"}')" "empty result reports rows 0"
+refutes "an empty result emits no compression series" \
+  has_family stellarindex_timescale_chunks_overdue_compression
 
 # ─── 4. every query failing still stamps the run ────────────────────
-run "cagg compression jobs" ""
-stamp=$(metric stellarindex_timescale_probe_last_run_unix)
-[[ "$stamp" =~ ^1[0-9]{9}$ ]] && ok "a fully-failing run still stamps last_run_unix" \
-                              || bad "a fully-failing run still stamps last_run_unix (got '${stamp:-<absent>}')"
+run "cagg compression jobs lock_convoy" ""
+matches '^1[0-9]{9}$' "$(metric stellarindex_timescale_probe_last_run_unix)" "a fully-failing run still stamps last_run_unix"
 zeros=$(grep -c '^stellarindex_timescale_probe_query_ok{.*} 0$' "$PROM")
-[[ "$zeros" == "3" ]] && ok "a fully-failing run reports all three queries as 0" \
-                      || bad "a fully-failing run reports all three queries as 0 (got $zeros)"
+eq 4 "$zeros" "a fully-failing run reports all four queries as 0"
 
 # ─── 5. the file parses as Prometheus text ──────────────────────────
 #

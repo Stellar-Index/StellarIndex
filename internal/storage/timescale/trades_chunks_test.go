@@ -102,9 +102,11 @@ func TestRestampTradesChunk_BracketsEachChunk(t *testing.T) {
 	bracket := func() []scriptedResult {
 		return []scriptedResult{
 			sizeResult(280_000_000), // before
+			{},                      // SET LOCAL lock_timeout
 			{},                      // decompress_chunk
 			sizeResult(4_200_000_000),
 			{rowsAffected: 7}, // the work's own statement
+			{},                // SET LOCAL lock_timeout
 			{},                // compress_chunk
 			sizeResult(275_000_000),
 		}
@@ -132,37 +134,47 @@ func TestRestampTradesChunk_BracketsEachChunk(t *testing.T) {
 			t.Errorf("chunk %s sizes = %d / %d / %d", c, res.BytesBefore, res.BytesDecompressed, res.BytesAfter)
 		}
 	}
-	// decompress is statement 1 of each bracket, compress statement 4.
-	if want := []string{"1@1", "2@4", "1@7", "2@10"}; strings.Join(announced, ",") != strings.Join(want, ",") {
+	// decompress is statement 2 of each bracket (its own `SET LOCAL
+	// lock_timeout` is statement 1), compress statement 6.
+	if want := []string{"1@1", "2@5", "1@9", "2@13"}; strings.Join(announced, ",") != strings.Join(want, ",") {
 		t.Errorf("hook calls (step@statements-issued) = %v, want %v", announced, want)
 	}
 
 	got := conn.statements()
-	if len(got) != 12 {
-		t.Fatalf("issued %d statements, want 12 (two 6-statement brackets):\n%s", len(got), strings.Join(got, "\n"))
+	if len(got) != 16 {
+		t.Fatalf("issued %d statements, want 16 (two 8-statement brackets):\n%s", len(got), strings.Join(got, "\n"))
 	}
-	for i, base := range []int{0, 6} {
+	for i, base := range []int{0, 8} {
 		chunk := chunks[i]
 		if !strings.Contains(got[base], "chunks_detailed_size('trades')") {
 			t.Errorf("bracket %d stmt 0 = %q, want the size lookup", i, got[base])
 		}
-		dec := conn.stmts[base+1]
+		dec := conn.stmts[base+2]
 		if !strings.Contains(dec.sql, "decompress_chunk(") || !strings.Contains(dec.sql, "if_compressed => true") {
-			t.Errorf("bracket %d stmt 1 = %q, want decompress_chunk(..., if_compressed => true)", i, dec.sql)
+			t.Errorf("bracket %d stmt 2 = %q, want decompress_chunk(..., if_compressed => true)", i, dec.sql)
 		}
 		if dec.arg(t, 1) != chunk.Schema || dec.arg(t, 2) != chunk.Name {
 			t.Errorf("bracket %d decompress args = %v, want (%s, %s)", i, dec.args, chunk.Schema, chunk.Name)
 		}
-		if !strings.Contains(got[base+3], "UPDATE trades") {
-			t.Errorf("bracket %d stmt 3 = %q, want the work, i.e. INSIDE the decompressed window", i, got[base+3])
+		if !strings.Contains(got[base+4], "UPDATE trades") {
+			t.Errorf("bracket %d stmt 4 = %q, want the work, i.e. INSIDE the decompressed window", i, got[base+4])
 		}
-		comp := conn.stmts[base+4]
+		comp := conn.stmts[base+6]
 		if !strings.Contains(comp.sql, "compress_chunk(") || strings.Contains(comp.sql, "decompress_chunk(") ||
 			!strings.Contains(comp.sql, "if_not_compressed => true") {
-			t.Errorf("bracket %d stmt 4 = %q, want compress_chunk(..., if_not_compressed => true)", i, comp.sql)
+			t.Errorf("bracket %d stmt 6 = %q, want compress_chunk(..., if_not_compressed => true)", i, comp.sql)
 		}
 		if comp.arg(t, 1) != chunk.Schema || comp.arg(t, 2) != chunk.Name {
 			t.Errorf("bracket %d compress args = %v, want (%s, %s)", i, comp.args, chunk.Schema, chunk.Name)
+		}
+		// Each of the two exclusive-lock statements opens its transaction
+		// by bounding how long it may leave a lock request PENDING (the
+		// 2026-09-10 convoy). The bound is transaction-LOCAL so it cannot
+		// ride the pooled connection into the next statement.
+		for _, at := range []int{base + 1, base + 5} {
+			if got[at] != "SET LOCAL lock_timeout = '5000ms'" {
+				t.Errorf("bracket %d stmt %d = %q, want the transaction-local lock bound", i, at-base, got[at])
+			}
 		}
 	}
 	// The regclass is built server-side from the two identifiers, never
@@ -185,8 +197,10 @@ func TestRestampTradesChunk_RecompressesWhenWorkFails(t *testing.T) {
 	boom := errors.New("update: deadlock detected")
 	store, conn := newScriptedStore(t,
 		sizeResult(280_000_000),
-		scriptedResult{},
+		scriptedResult{}, // SET LOCAL lock_timeout
+		scriptedResult{}, // decompress_chunk
 		sizeResult(4_200_000_000),
+		scriptedResult{}, // SET LOCAL lock_timeout
 		scriptedResult{}, // compress_chunk; no size lookup follows a failure
 	)
 	ctx, cancel := context.WithCancel(context.Background())
@@ -207,11 +221,17 @@ func TestRestampTradesChunk_RecompressesWhenWorkFails(t *testing.T) {
 		t.Fatal("the work did not observe the cancelled context")
 	}
 	got := conn.statements()
-	if len(got) != 4 {
-		t.Fatalf("issued %d statements, want 4:\n%s", len(got), strings.Join(got, "\n"))
+	if len(got) != 6 {
+		t.Fatalf("issued %d statements, want 6:\n%s", len(got), strings.Join(got, "\n"))
 	}
-	if !strings.Contains(got[3], "compress_chunk(") || strings.Contains(got[3], "decompress_chunk(") {
-		t.Errorf("statement after the failed work = %q, want compress_chunk", got[3])
+	if !strings.Contains(got[5], "compress_chunk(") || strings.Contains(got[5], "decompress_chunk(") {
+		t.Errorf("statement after the failed work = %q, want compress_chunk", got[5])
+	}
+	// The re-compress is bounded the same way the decompress is, on the
+	// cancellation-proof context: a SIGTERM'd run must not park a pending
+	// exclusive request on its way out.
+	if got[4] != "SET LOCAL lock_timeout = '5000ms'" {
+		t.Errorf("statement before the re-compress = %q, want the transaction-local lock bound", got[4])
 	}
 }
 
@@ -223,8 +243,10 @@ func TestRestampTradesChunk_ReportsAChunkLeftDecompressed(t *testing.T) {
 	boom := errors.New("update: connection reset")
 	store, _ := newScriptedStore(t,
 		sizeResult(1),
-		scriptedResult{},
+		scriptedResult{}, // SET LOCAL lock_timeout
+		scriptedResult{}, // decompress_chunk
 		sizeResult(2),
+		scriptedResult{}, // SET LOCAL lock_timeout
 		scriptedResult{err: errors.New("compress_chunk: out of disk")},
 	)
 	c := TradeChunk{Schema: "_timescaledb_internal", Name: "_hyper_1_77_chunk", Compressed: true}
@@ -245,19 +267,20 @@ func TestRestampTradesChunk_DecompressFailureRunsNothing(t *testing.T) {
 	t.Parallel()
 	store, conn := newScriptedStore(t,
 		sizeResult(1),
-		scriptedResult{err: errors.New("decompress_chunk: lock timeout")},
+		scriptedResult{}, // SET LOCAL lock_timeout
+		scriptedResult{err: errors.New("decompress_chunk: relation does not exist")},
 	)
 	c := TradeChunk{Schema: "_timescaledb_internal", Name: "_hyper_1_10_chunk", Compressed: true}
 	ran := false
 	_, err := store.RestampTradesChunk(context.Background(), c, func(context.Context) error { ran = true; return nil }, nil)
-	if err == nil || !strings.Contains(err.Error(), "lock timeout") {
+	if err == nil || !strings.Contains(err.Error(), "does not exist") {
 		t.Fatalf("err = %v", err)
 	}
 	if ran {
 		t.Error("the work ran inside a chunk that never decompressed")
 	}
-	if n := len(conn.statements()); n != 2 {
-		t.Errorf("issued %d statements, want 2 (size + the failed decompress)", n)
+	if n := len(conn.statements()); n != 3 {
+		t.Errorf("issued %d statements, want 3 (size + the lock bound + the failed decompress)", n)
 	}
 }
 
@@ -269,10 +292,12 @@ func TestRestampTradesChunk_RangePredicateIsPerChunk(t *testing.T) {
 	const usdc = "USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
 	store, conn := newScriptedStore(t,
 		sizeResult(1),
-		scriptedResult{},
+		scriptedResult{}, // SET LOCAL lock_timeout
+		scriptedResult{}, // decompress_chunk
 		sizeResult(2),
 		scriptedResult{cols: []string{"source"}}, // the scan: no candidates
-		scriptedResult{},
+		scriptedResult{},                         // SET LOCAL lock_timeout
+		scriptedResult{},                         // compress_chunk
 		sizeResult(3),
 	)
 	if err := InstallUSDVolumeResolution(store, []string{usdc}, nil); err != nil {
@@ -294,7 +319,7 @@ func TestRestampTradesChunk_RangePredicateIsPerChunk(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	scan := conn.stmts[3]
+	scan := conn.stmts[4]
 	if !strings.Contains(scan.sql, "FROM trades") || !strings.Contains(scan.sql, "ts >= $1 AND ts < $2") {
 		t.Fatalf("statement inside the bracket = %q, want the restamp scan", scan.sql)
 	}
@@ -427,8 +452,10 @@ func TestRestampTradesChunk_RecompressesWhenWorkPanics(t *testing.T) {
 	t.Parallel()
 	store, conn := newScriptedStore(t,
 		sizeResult(280_000_000),
+		scriptedResult{}, // SET LOCAL lock_timeout
 		scriptedResult{}, // decompress_chunk
 		sizeResult(4_200_000_000),
+		scriptedResult{}, // SET LOCAL lock_timeout
 		scriptedResult{}, // compress_chunk — issued by the deferred half
 		sizeResult(275_000_000),
 	)
@@ -444,8 +471,8 @@ func TestRestampTradesChunk_RecompressesWhenWorkPanics(t *testing.T) {
 		t.Fatal("the panic was swallowed; it must propagate after the re-compress")
 	}
 	got := conn.statements()
-	if len(got) != 5 || !strings.Contains(got[3], "compress_chunk(") || strings.Contains(got[3], "decompress_chunk(") {
-		t.Fatalf("statements after a panicking work:\n%s\nwant the re-compress as statement 4 of 5", strings.Join(got, "\n"))
+	if len(got) != 7 || !strings.Contains(got[5], "compress_chunk(") || strings.Contains(got[5], "decompress_chunk(") {
+		t.Fatalf("statements after a panicking work:\n%s\nwant the re-compress as statement 6 of 7", strings.Join(got, "\n"))
 	}
 }
 

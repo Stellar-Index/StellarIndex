@@ -26,7 +26,7 @@ enforced 2026-04-23 onward).
 
   | Severity | Rules | AlertManager route | Delivery |
   | --- | --- | --- | --- |
-  | `page` | 54 | `receiver: chat-page` | Discord **#stellarindex-pages**, `repeat_interval` 12 h. There is **no** PagerDuty leg — `pagerduty_configs` is unset, so nothing wakes anyone up. |
+  | `page` | 55 | `receiver: chat-page` | Discord **#stellarindex-pages**, `repeat_interval` 12 h. There is **no** PagerDuty leg — `pagerduty_configs` is unset, so nothing wakes anyone up. |
   | `ticket` | 157 | `receiver: chat-default` | Discord **#stellarindex-alerts**, `repeat_interval` 24 h. |
   | `informational` | 11 | `receiver: chat-informational` | Discord **#stellarindex-informational**, a dedicated low-traffic channel kept separate from `alerts` so a routine notice cannot bury a ticket. `send_resolved: false`. If `DISCORD_WEBHOOK_URL_INFORMATIONAL` is unset the renderer strips the block and the receiver degrades to the old `silent` stub — delivered to nobody, which is a no-op rather than a config error. |
 
@@ -150,6 +150,7 @@ signal lands.
 | `stellarindex_timescale_job_failures_climbing` | `increase(stellarindex_timescale_job_failures_total[6h])` per job | > 10 failures in 6h, 30m | ticket | [timescale-job-failures-climbing](runbooks/timescale-job-failures-climbing.md) |
 | `stellarindex_timescale_compression_lag` | `stellarindex_timescale_chunks_overdue_compression` | > 0 for > 24 h | informational | [compression-lag](runbooks/compression-lag.md) |
 | `stellarindex_timescale_probe_degraded` | `stellarindex_timescale_probe_query_ok` / `_probe_rows` / `_probe_last_run_unix` | a query errored, a query returned no rows, the file stopped being rewritten (> 10 min), or it was never written — for > 15 min | ticket | [timescale-probe-degraded](runbooks/timescale-probe-degraded.md) |
+| `stellarindex_pg_lock_convoy` | `stellarindex_pg_lock_convoy_wait_seconds_max` (timescale-jobs-probe.sh via node_exporter — NOT postgres_exporter, which was itself in the 2026-09-10 convoy) — backends queued behind a lock request that is itself queued | > 120 s for 2 min | page | [pg-lock-convoy](runbooks/pg-lock-convoy.md) |
 | `stellarindex_timescale_backup_failed` | `min by (stanza)(pgbackrest_backup_since_last_completion_seconds{stanza!~"all-stanzas.*"})` | > 25 h for 5 min | ticket | [backup-failed](runbooks/backup-failed.md) |
 | `stellarindex_timescale_backup_none_24h` | same | > 24 h for 5 min | page | [backup-failed](runbooks/backup-failed.md) |
 | `stellarindex_pgbackrest_backup_metrics_absent` | `up{job="pgbackrest_exporter"} == 1 unless on (instance) pgbackrest_backup_since_last_completion_seconds{stanza!~"all-stanzas.*"}` | exporter up but no real-stanza backup series for 15 min — the two alerts above are structurally blind | page | [backup-failed](runbooks/backup-failed.md) |

@@ -15,6 +15,66 @@ against.
 
 ## [Unreleased]
 
+### Fixed
+
+- **storage/restamp:** the `usd-volume-restamp -chunks` walk no longer
+  parks an unbounded `AccessExclusiveLock` request, which is what turned
+  one slow reader into a database-wide convoy on r1 2026-09-10
+  (00:12–00:31 UTC). A deploy restarted the aggregator; its cold-start
+  VWAP alias-map aggregation spilled to disk (`IO/BufFileRead`) and held
+  `AccessShareLock` on `trades` for 18+ minutes. The restamp's
+  `decompress_chunk` queued behind it — and PostgreSQL puts every LATER
+  request for an object behind a PENDING exclusive one, however trivial:
+  `decompress_chunk` blocked 1,984 s, two of the restamp's own `UPDATE`s
+  1,164 s, **three postgres_exporter scrapes 917 s** and the
+  `chunks_detailed_size` watcher 904 s. The exporter being in the convoy
+  made the alerting layer cascade-blind (scrape HTTP 000 after 30 s);
+  `stellarindex_aggregator_silent` paged, the restamp stalled 33 minutes,
+  `/v1/status` went `degraded`, and both systemd units read `active`
+  throughout. It cleared in under 20 s once the aggregator's `SELECT` was
+  cancelled by hand. Seven aggregator restarts in the preceding 14 hours
+  did not jam: the trigger is the collision, not the restart.
+  `decompress_chunk` and `compress_chunk` now each run in their own
+  transaction under `SET LOCAL lock_timeout = '5s'` and RETRY, pausing 15 s
+  between attempts — during which no exclusive request of ours is pending
+  and the queue behind the last one drains. The bound is on ACQUISITION,
+  not duration: a 1.5-hour decompress that HOLDS its lock is untouched,
+  which a `statement_timeout` would have killed. Crash-safety is not
+  weakened — a lock timeout rolls the transaction back atomically (verified
+  on TimescaleDB 2.26.4 / PG 15: a refused decompress leaves the chunk
+  `is_compressed = true`, a refused compress leaves it decompressed with
+  every row readable) and the re-compress carries a 90-minute budget
+  against the decompress's 35, because giving up on the re-compress is the
+  outcome that leaves a 160 GB chunk open. DB-backed proof in
+  `test/integration/trades_chunk_lock_convoy_test.go`: a trivial
+  `SELECT count(*) FROM trades` issued while the decompress contends now
+  answers in ~5 s where it previously died at its own 9 s `lock_timeout`.
+
+### Added
+
+- **monitoring:** `stellarindex_pg_lock_convoy` (P1, `severity: page`) —
+  the detection half of the above, for a convoy whose head is something
+  the restamp does not control (a by-hand `ALTER`, a migration, the
+  compression policy's own proc). It deliberately does NOT run through
+  postgres_exporter, which was itself queued in the 2026-09-10 convoy: the
+  producer is `timescale-jobs-probe.sh` on its own short-lived `psql`
+  connection, published through node_exporter's textfile collector, and
+  its query reads only `pg_stat_activity` + `pg_blocking_pids()` — no lock
+  on `trades` (measured answering in 7.5 ms with a real convoy in place,
+  while `chunks_detailed_size` was stuck). New gauges
+  `stellarindex_pg_lock_convoy_backends`,
+  `stellarindex_pg_lock_convoy_wait_seconds_max` and
+  `stellarindex_pg_lock_blocked_backends`. The predicate is backends whose
+  blocker is ITSELF blocked, not "backends are waiting": decompressing the
+  159.7 GB `trades` chunk legitimately holds `AccessExclusiveLock` for
+  ~1.5 h with a queue behind it, and an alert that fires on every healthy
+  restamp is one the operator learns to mute. Runbook
+  [pg-lock-convoy](docs/operations/runbooks/pg-lock-convoy.md); promtool
+  cases in `deploy/monitoring/rule-tests/pg-lock-convoy_test.yml` cover the
+  incident firing, the healthy 1.5 h decompress staying silent, and a
+  self-clearing blip staying silent.
+
+
 ## [v0.69.0] — 2026-09-10
 
 ### Fixed
