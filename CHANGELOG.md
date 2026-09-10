@@ -15,6 +15,26 @@ against.
 
 ## [Unreleased]
 
+### Fixed
+
+- **ci:** the SIGPIPE gate now covers shell embedded in GitHub workflow
+  YAML, not only `*.sh` files. It enumerated its subject with
+  `find … -name '*.sh'`, so every pipeline in `.github/workflows/` had
+  always been outside its scope — which is how a trap the deploy workflow
+  documented in a comment came to be reintroduced on the line directly
+  beneath that comment, and failed the v0.69.0 deploy on a step that only
+  *lists* the staged migrations. Extraction is a real YAML parse emitting
+  a line-aligned shadow, so a reported line number resolves in the source;
+  `shell:` and `defaults.run.shell` are honoured, and a block is in scope
+  only where pipefail is actually in effect.
+
+  Six further unguarded pipes were found and fixed. Two mattered beyond
+  tidiness: `deploy.yml` validated the dispatch `VERSION` input through
+  `echo "$VERSION" | grep -Eq`, where an early close inverts the test and
+  lets an unvalidated version past the SemVer gate, and `ci-health.yml`
+  compared issue bodies that run to 65,536 characters.
+
+
 ## [v0.69.0] — 2026-09-10
 
 ### Fixed
