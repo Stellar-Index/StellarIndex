@@ -15,6 +15,8 @@ against.
 
 ## [Unreleased]
 
+## [v0.70.0] — 2026-09-10
+
 ### Fixed
 
 - **ci:** the scheduled-control sweep now distinguishes a control that has
