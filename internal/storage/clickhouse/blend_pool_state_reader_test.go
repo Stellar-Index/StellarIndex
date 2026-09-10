@@ -1,6 +1,7 @@
 package clickhouse
 
 import (
+	"context"
 	"errors"
 	"reflect"
 	"strings"
@@ -8,6 +9,8 @@ import (
 
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 	"github.com/stellar/go-stellar-sdk/xdr"
+
+	"github.com/Stellar-Index/StellarIndex/internal/sources/blend"
 )
 
 // The Blend reserve reader matches lake rows by their `key_xdr` VERBATIM, so a
@@ -23,6 +26,11 @@ import (
 // So a regression in the derivation fails this test with a value that is
 // provably not what the chain stores, rather than with a self-consistent
 // nonsense both sides agree on.
+//
+// Those two figures are also the #504 measurement: ONE reserve's key matches
+// 74,834 rows in the window the reader used to fold over, and exactly one row
+// in the projection it reads now. The instance key resolving in
+// ledger_entries_current is what proves contract_data is projected there.
 const (
 	blendTestPool     = "CAJJZSGMMM3PD7N33TAPHGBUGTB43OC73HVIK2L2G6BNGGGYOSSYBXBD"
 	blendTestAssetSAC = "CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75" // USDC SAC
@@ -42,6 +50,51 @@ const (
 	blendTestInstanceKeyPersistent = "AAAABgAAAAESnMjMYzbx/bvcwPOYNDTDzbhf2eqFaXo3gtMY2HSlgAAAABQAAAAB" // gitleaks:allow
 	blendTestInstanceKeyTemporary  = "AAAABgAAAAESnMjMYzbx/bvcwPOYNDTDzbhf2eqFaXo3gtMY2HSlgAAAABQAAAAA" // gitleaks:allow
 )
+
+// resDataEntryFixture builds a minimal, genuinely-decodable Blend ResData
+// contract_data LedgerEntry (the ScMap blend.DecodeReserveData expects), so a
+// test can distinguish "row decoded" from "row skipped" rather than asserting
+// over two indistinguishable failures.
+func resDataEntryFixture(t *testing.T) string {
+	t.Helper()
+	i128 := func(v uint64) xdr.ScVal {
+		return xdr.ScVal{Type: xdr.ScValTypeScvI128, I128: &xdr.Int128Parts{Hi: 0, Lo: xdr.Uint64(v)}}
+	}
+	sym := func(s string) xdr.ScVal {
+		ss := xdr.ScSymbol(s)
+		return xdr.ScVal{Type: xdr.ScValTypeScvSymbol, Sym: &ss}
+	}
+	u64 := func(v uint64) xdr.ScVal {
+		u := xdr.Uint64(v)
+		return xdr.ScVal{Type: xdr.ScValTypeScvU64, U64: &u}
+	}
+	mp := &xdr.ScMap{
+		{Key: sym("b_rate"), Val: i128(1_000_000_000_000)},
+		{Key: sym("b_supply"), Val: i128(0)},
+		{Key: sym("backstop_credit"), Val: i128(0)},
+		{Key: sym("d_rate"), Val: i128(1_000_000_000_000)},
+		{Key: sym("d_supply"), Val: i128(0)},
+		{Key: sym("ir_mod"), Val: i128(10_000_000)},
+		{Key: sym("last_time"), Val: u64(0)},
+	}
+	pid := mustContractID(t, blendTestPool)
+	keyVec := &xdr.ScVec{sym("ResData")}
+	b64, err := xdr.MarshalBase64(xdr.LedgerEntry{
+		Data: xdr.LedgerEntryData{
+			Type: xdr.LedgerEntryTypeContractData,
+			ContractData: &xdr.ContractDataEntry{
+				Contract:   xdr.ScAddress{Type: xdr.ScAddressTypeScAddressTypeContract, ContractId: &pid},
+				Key:        xdr.ScVal{Type: xdr.ScValTypeScvVec, Vec: &keyVec},
+				Durability: xdr.ContractDataDurabilityPersistent,
+				Val:        xdr.ScVal{Type: xdr.ScValTypeScvMap, Map: &mp},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("marshal ResData entry fixture: %v", err)
+	}
+	return b64
+}
 
 func mustContractID(t *testing.T, c string) xdr.ContractId {
 	t.Helper()
@@ -167,7 +220,9 @@ func TestBlendPoolReserves_RejectsANonContractPool(t *testing.T) {
 
 // TestBlendPoolReserves_QueryShape pins the version-resolution and pruning
 // decisions documented on the reader — all of which are silent-wrong-answer
-// territory rather than errors.
+// territory rather than errors — plus the #504 requirement that the read is a
+// PK-prefix probe on the current-state projection, not a windowed scan of
+// stellar.ledger_entry_changes.
 func TestBlendPoolReserves_QueryShape(t *testing.T) {
 	conn := &stubConn{respond: func(string) (driver.Rows, error) { return &stubRows{}, nil }}
 	r := &ExplorerReader{conn: conn}
@@ -179,43 +234,54 @@ func TestBlendPoolReserves_QueryShape(t *testing.T) {
 	}
 	q := conn.queries[0]
 
-	// The COMPOSITE version key. A Blend ResData entry is commonly rewritten
-	// several times inside ONE ledger, so argMax on ledger_seq alone ties and
-	// serves an arbitrary MID-ledger reserve state (audit C2-4c).
-	if !strings.Contains(q, "argMax(entry_xdr, (ledger_seq, intra_ledger_seq))") {
-		t.Errorf("reserve lookup does not resolve versions on the composite (ledger_seq, intra_ledger_seq):\n%s", q)
+	// #504: the reserve state comes from the current-state projection, whose
+	// sort key IS (entry_type, key_xdr) — so the probe reads ~one row per
+	// requested key. Folding the latest entry per key out of the CHANGES
+	// table instead costs a window scan whose size tracks pool ACTIVITY, and
+	// that cost is a floor under every pool regardless of reserve count.
+	if !strings.Contains(q, "stellar.ledger_entries_current FINAL") {
+		t.Errorf("reserve lookup does not read the current-state projection:\n%s", q)
 	}
-	// The removed-key drop must be a HAVING on the WINNING row, not a
-	// pre-aggregation filter: filtering `entry_xdr != ''` first EXCLUDES a
-	// same-ledger removal from the argMax and thus RESURRECTS a key deleted
-	// later in that ledger.
-	if !strings.Contains(q, "HAVING argMax(change_type, (ledger_seq, intra_ledger_seq)) != 'removed'") {
-		t.Errorf("removed-key drop is not a HAVING on the winning row (a deleted reserve would resurrect):\n%s", q)
+	if strings.Contains(q, "stellar.ledger_entry_changes") {
+		t.Errorf("reserve lookup scans the raw changes table again (#504 regression):\n%s", q)
 	}
-	if strings.Contains(q, "WHERE") && strings.Contains(q, "entry_xdr != ''") {
-		t.Errorf("reserve lookup reintroduced the pre-aggregation entry_xdr filter:\n%s", q)
+	for _, banned := range []string{"GROUP BY", "argMax(", "ledger_seq >"} {
+		if strings.Contains(q, banned) {
+			t.Errorf("reserve lookup reintroduced the windowed fold (%q) — FINAL over the projection already resolves versions:\n%s", banned, q)
+		}
+	}
+	// Version resolution is now the projection's, and it is the SAME composite
+	// the old argMax spelled out: ledger_entries_current is
+	// ReplacingMergeTree(version) with version = (ledger_seq << 32) |
+	// intra_ledger_seq, so FINAL keeps the LAST change in a ledger (audit
+	// C2-4c). Nothing to assert in the text; what MUST be asserted is that the
+	// removed-key filter cannot run before that collapse — moving
+	// `entry_xdr != ''` into PREWHERE would drop the winning removal and
+	// RESURRECT a key deleted later in the same ledger, which is exactly the
+	// bug the old HAVING existed to avoid.
+	if !strings.Contains(q, "optimize_move_to_prewhere_if_final = 0") {
+		t.Errorf("reserve lookup does not pin optimize_move_to_prewhere_if_final=0; a removed reserve could resurrect:\n%s", q)
 	}
 	for _, s := range []string{
 		"entry_type = 'contract_data'",
 		"key_xdr IN (?)",
-		"GROUP BY key_xdr",
+		"entry_xdr != ''",
+		"max_threads = 4",
+		"max_memory_usage = 8000000000",
 	} {
 		if !strings.Contains(q, s) {
 			t.Errorf("reserve lookup missing %q:\n%s", s, q)
 		}
 	}
 
-	// Two bound args, in clause order: the window width, then the key list.
+	// One bound arg: the key list. The window width is gone with the scan.
 	args := conn.args[0]
-	if len(args) != 2 {
-		t.Fatalf("bound %d args, want 2 (window width, key list)", len(args))
+	if len(args) != 1 {
+		t.Fatalf("bound %d args, want 1 (the key list)", len(args))
 	}
-	if _, ok := args[0].(uint32); !ok {
-		t.Errorf("arg 0 is %T, want the uint32 window width", args[0])
-	}
-	keys, ok := args[1].([]string)
+	keys, ok := args[0].([]string)
 	if !ok {
-		t.Fatalf("arg 1 is %T, want []string of key_xdr", args[1])
+		t.Fatalf("arg 0 is %T, want []string of key_xdr", args[0])
 	}
 	if len(keys) != 3 {
 		t.Errorf("bound %d keys, want 3 (two instance durabilities + one ResData)", len(keys))
@@ -231,7 +297,7 @@ func TestScanBlendReserveParts_IgnoresUnrequestedKeys(t *testing.T) {
 	rows := &stubRows{data: [][]any{
 		{"some-other-key", "AAAA"},
 	}}
-	byAsset, bstop, err := scanBlendReserveParts(rows, refByKey)
+	byAsset, bstop, matched, err := scanBlendReserveParts(rows, refByKey)
 	if err != nil {
 		t.Fatalf("scanBlendReserveParts: %v", err)
 	}
@@ -240,6 +306,41 @@ func TestScanBlendReserveParts_IgnoresUnrequestedKeys(t *testing.T) {
 	}
 	if bstop != 0 {
 		t.Errorf("bstop = %d, want 0", bstop)
+	}
+	// `matched` scopes the TTL-liveness filter. A key we did not ask about
+	// must not enter it: classifying it could only ever DROP reserves on the
+	// strength of a row the reader never attributed to anything.
+	if len(matched) != 0 {
+		t.Errorf("matched = %v, want empty — an unrequested key must not be handed to the TTL filter", matched)
+	}
+}
+
+// TestScanBlendReserveParts_MatchedTracksOnlyReportedEntries — `matched` is
+// the TTL filter's input set, so it must list exactly the keys whose state
+// this read is about to REPORT: the decoded ResData rows plus the instance
+// row. A key that produced no usable row is not in it (nothing to drop), and
+// an undecodable ResData row is not either (already absent).
+func TestScanBlendReserveParts_MatchedTracksOnlyReportedEntries(t *testing.T) {
+	const otherAsset = "CB7777777777777777777777777777777777777777777777777777777"
+	refByKey := map[string]keyRef{
+		blendTestResDataKey:            {asset: blendTestAssetSAC, kind: "ResData"},
+		"resdata-undecodable":          {asset: otherAsset, kind: "ResData"},
+		blendTestInstanceKeyPersistent: {kind: "Instance"},
+	}
+	rows := &stubRows{data: [][]any{
+		{blendTestResDataKey, resDataEntryFixture(t)},
+		{"resdata-undecodable", "!!!not-base64!!!"},
+	}}
+	byAsset, _, matched, err := scanBlendReserveParts(rows, refByKey)
+	if err != nil {
+		t.Fatalf("scanBlendReserveParts: %v", err)
+	}
+	if len(byAsset) != 1 {
+		t.Fatalf("byAsset = %v, want only the decodable reserve", byAsset)
+	}
+	want := []string{blendTestResDataKey}
+	if !reflect.DeepEqual(matched, want) {
+		t.Errorf("matched = %v, want %v — only entries actually reported may be TTL-classified", matched, want)
 	}
 }
 
@@ -251,7 +352,7 @@ func TestScanBlendReserveParts_IgnoresUnrequestedKeys(t *testing.T) {
 func TestScanBlendReserveParts_UndecodableEntryIsSkippedNotFatal(t *testing.T) {
 	refByKey := map[string]keyRef{blendTestResDataKey: {asset: blendTestAssetSAC, kind: "ResData"}}
 	rows := &stubRows{data: [][]any{{blendTestResDataKey, "!!!not-base64!!!"}}}
-	byAsset, _, err := scanBlendReserveParts(rows, refByKey)
+	byAsset, _, _, err := scanBlendReserveParts(rows, refByKey)
 	if err != nil {
 		t.Fatalf("one undecodable entry aborted the pool read: %v", err)
 	}
@@ -267,8 +368,93 @@ func TestScanBlendReserveParts_UndecodableEntryIsSkippedNotFatal(t *testing.T) {
 func TestScanBlendReserveParts_TruncatedStreamIsAnError(t *testing.T) {
 	truncated := errors.New("stream truncated")
 	rows := &stubRows{streamErr: truncated}
-	if _, _, err := scanBlendReserveParts(rows, nil); !errors.Is(err, truncated) {
+	if _, _, _, err := scanBlendReserveParts(rows, nil); !errors.Is(err, truncated) {
 		t.Fatalf("err = %v, want it to wrap %v", err, truncated)
+	}
+}
+
+// blendDropFixture is the (dataByAsset, refByKey, matched) triple
+// dropArchivedBlendReserves operates on: a two-reserve pool whose instance
+// entry also came back.
+func blendDropFixture() (map[string]*blend.ReserveData, map[string]keyRef, []string) {
+	const (
+		keyA = "resdata-key-a"
+		keyB = "resdata-key-b"
+		inst = "instance-key"
+	)
+	data := map[string]*blend.ReserveData{"assetA": {}, "assetB": {}}
+	refs := map[string]keyRef{
+		keyA: {asset: "assetA", kind: "ResData"},
+		keyB: {asset: "assetB", kind: "ResData"},
+		inst: {kind: "Instance"},
+	}
+	return data, refs, []string{inst, keyA, keyB}
+}
+
+// fixedTTLCache is a verdict cache wired to a canned answer, so the drop
+// RULES can be tested without a ClickHouse server.
+func fixedTTLCache(verdicts map[string]TTLLiveness) *ttlLivenessCache {
+	c := newTTLLivenessCache(func(_ context.Context, keys []string) (map[string]TTLLiveness, error) {
+		out := make(map[string]TTLLiveness, len(keys))
+		for _, k := range keys {
+			out[k] = verdicts[k] // absent → TTLUnknown (the zero value)
+		}
+		return out, nil
+	})
+	return c
+}
+
+// TestDropArchivedBlendReserves_DropsOnlyPositivelyArchived — the fail-open
+// contract. A reserve is removed ONLY on a positively-resolved lapsed TTL;
+// TTLUnknown (no TTL row, unreadable wire shape) KEEPS it, because
+// under-reporting live liquidity is the same class of error as the phantom
+// liquidity this filter exists to remove.
+func TestDropArchivedBlendReserves_DropsOnlyPositivelyArchived(t *testing.T) {
+	data, refs, matched := blendDropFixture()
+	cache := fixedTTLCache(map[string]TTLLiveness{
+		"resdata-key-a": TTLArchived,
+		"resdata-key-b": TTLUnknown, // unresolved — must be KEPT
+		"instance-key":  TTLLive,
+	})
+	if err := dropArchivedBlendReserves(t.Context(), cache, data, refs, matched); err != nil {
+		t.Fatalf("dropArchivedBlendReserves: %v", err)
+	}
+	if _, present := data["assetA"]; present {
+		t.Error("assetA survived a positively-ARCHIVED verdict — its last-known reserves would be priced as current liquidity")
+	}
+	if _, present := data["assetB"]; !present {
+		t.Error("assetB was dropped on a TTLUnknown verdict — the filter must fail OPEN; only a parsed, lapsed liveUntilLedgerSeq justifies exclusion")
+	}
+}
+
+// TestDropArchivedBlendReserves_ArchivedInstanceSinksThePool — the pool
+// contract itself is no longer live ledger state, so no reserve under it can
+// be current liquidity, whatever the individual ResData TTLs say.
+func TestDropArchivedBlendReserves_ArchivedInstanceSinksThePool(t *testing.T) {
+	data, refs, matched := blendDropFixture()
+	cache := fixedTTLCache(map[string]TTLLiveness{
+		"instance-key":  TTLArchived,
+		"resdata-key-a": TTLLive, // individually live, but the POOL is dead
+		"resdata-key-b": TTLLive,
+	})
+	if err := dropArchivedBlendReserves(t.Context(), cache, data, refs, matched); err != nil {
+		t.Fatalf("dropArchivedBlendReserves: %v", err)
+	}
+	if len(data) != 0 {
+		t.Errorf("reserves %v survived an ARCHIVED pool instance — a dead pool's reserves are not current liquidity", data)
+	}
+}
+
+// TestDropArchivedBlendReserves_NilCacheKeepsEverything — a reader built
+// without a verdict cache (every test-constructed ExplorerReader) must not
+// silently blank every pool. Nil degrades to TTLUnknown, i.e. keep.
+func TestDropArchivedBlendReserves_NilCacheKeepsEverything(t *testing.T) {
+	data, refs, matched := blendDropFixture()
+	if err := dropArchivedBlendReserves(t.Context(), nil, data, refs, matched); err != nil {
+		t.Fatalf("dropArchivedBlendReserves(nil cache): %v", err)
+	}
+	if len(data) != 2 {
+		t.Errorf("data = %v, want both reserves kept — a reader with no verdict cache must fail OPEN, not drop everything", data)
 	}
 }
 

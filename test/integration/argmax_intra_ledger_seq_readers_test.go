@@ -94,14 +94,21 @@ func TestQueryAccountBalance_SameLedgerLastChangeWins(t *testing.T) {
 //     non-empty-entry_xdr WHERE filter excluded the removal from the argMax, so
 //     an earlier same-ledger update resurrected the key; the fix lets the
 //     removal participate and drops it via HAVING on the winning change_type.
+//
+// Since #504 the reader gets both properties from ledger_entries_current rather
+// than folding them itself — FINAL over ReplacingMergeTree(version), where
+// version = (ledger_seq << 32) | intra_ledger_seq, and a non-empty `entry_xdr` on the
+// row FINAL kept. The assertions are unchanged BECAUSE the semantics are: this
+// test is what proves the new path did not quietly relax either one.
 func TestBlendPoolReserves_SameLedgerLastChangeWins(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 	addr := clickhouseAddr(t)
 
-	// A very high ledger so these rows are the global max(ledger_seq): the reader
-	// bounds its scan to the recent window `max - 250000`, and only this test
-	// exercises that window.
+	// A very high ledger, kept as the suite's global max(ledger_seq): the
+	// frozen pre-#504 oracle in blend_reserves_current_state_test.go derives
+	// its `max - 250000` window from it, and that test asserts its own fixture
+	// lands inside the window rather than assuming it.
 	const ledger = uint32(4_000_000_000)
 	closeTime := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
 

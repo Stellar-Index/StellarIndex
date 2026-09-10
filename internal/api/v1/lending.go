@@ -163,10 +163,12 @@ func (s *Server) handleLendingPoolReserves(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	// The reserve lookup is a ledger-windowed scan over the lake's
-	// contract_data (key_xdr has no skip-index yet); ~6-7s on r1, so this
-	// takes the longest budget that still fires ahead of the blanket
-	// request deadline. See BlendPoolReserves.
+	// The longest budget that still fires ahead of the blanket request
+	// deadline. Since #504 the reserve lookup is a PK-prefix probe on the
+	// lake's current-state projection rather than a 250k-ledger scan (see
+	// BlendPoolReserves), and the per-reserve pricing below fans out
+	// bounded rather than serially, so this ceiling is a backstop for a
+	// degraded lake — not the routine cost of the route.
 	ctx, cancel := context.WithTimeout(r.Context(), maxHandlerBudget)
 	defer cancel()
 
@@ -208,13 +210,32 @@ func (s *Server) handleLendingPoolReserves(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
+	// Price the reserves with a BOUNDED fan-out, not a serial walk (#504).
+	// buildReserveView is DB-bound: each call resolves a USD price, and a
+	// single resolution can cost several round-trips (the alias walk, then
+	// the stablecoin-peg proxy's per-peg probes) — the reserve token is a
+	// SAC whose price lives under the classic asset it wraps, so the miss
+	// paths are the common ones here. Serially that made the route's cost
+	// scale with the reserve count on top of the lake read, which is why
+	// the largest pool crossed the ceiling FIRST while a small one already
+	// sat at 78% of it. Fanned out, the pricing stage costs one lookup's
+	// latency instead of len(states) of them, for every pool size.
+	//
+	// Each goroutine writes only its own index-keyed slot (the sanctioned
+	// shape — see forEachBounded); the TVL is summed afterwards in reserve
+	// order so the total does not depend on completion order.
+	views := make([]ReserveView, len(states))
+	suppliedUSD := make([]*big.Rat, len(states))
+	forEachBounded(s.logger, len(states), readFanoutConcurrency, func(i int) {
+		views[i], suppliedUSD[i] = s.buildReserveView(ctx, states[i]) // distinct indices — no mutex needed
+	})
+
 	out := LendingPoolReservesView{Pool: pool, Reserves: make([]ReserveView, 0, len(states))}
 	tvl := new(big.Rat)
 	anyPriced := false
-	for _, st := range states {
-		rv, suppliedUSD := s.buildReserveView(ctx, st)
-		if suppliedUSD != nil {
-			tvl.Add(tvl, suppliedUSD)
+	for i, rv := range views {
+		if suppliedUSD[i] != nil {
+			tvl.Add(tvl, suppliedUSD[i])
 			anyPriced = true
 		}
 		out.Reserves = append(out.Reserves, rv)
@@ -233,9 +254,11 @@ func (s *Server) handleLendingPoolReserves(w http.ResponseWriter, r *http.Reques
 }
 
 // writeLendingReservesTimeout is the 503 the reserves handler owes a
-// caller when its 15s ceiling fires, mirroring the `lending-timeout`
-// response [Server.handleLendingPools] already returns in this file
-// (C-F2). A deadline on a ledger-windowed contract_data scan is a
+// caller when its [maxHandlerBudget] ceiling fires (12s — the 15s global
+// request deadline less 3s, so this fires FIRST and the caller gets a
+// typed problem rather than a bare cut-off), mirroring the
+// `lending-timeout` response [Server.handleLendingPools] already returns
+// in this file (C-F2). A deadline on a lake contract_data read is a
 // RETRYABLE capacity condition, not an internal fault: the 500 these
 // sites used to emit told clients "don't retry, it's broken", burned an
 // availability point in the sla-probe's 5xx accounting, and wasn't even

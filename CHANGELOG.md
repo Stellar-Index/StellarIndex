@@ -89,6 +89,85 @@ against.
 
 ### Fixed
 
+- **lending:** `GET /v1/lending/pools/{pool}/reserves` no longer scans the
+  raw ledger-entry-change history to answer. It returned `503
+  lending-timeout` at 12.1s on the largest Blend pool, and 9.31s — 78% of
+  the same 12s budget — on a small one, so the route was slow for
+  everything and the largest pool merely crossed the line first (#504).
+  This mattered beyond the route: `/v1/protocols` publishes an
+  `excluded[]` entry that explains Blend's absence from the DEX TVL
+  headline by pointing readers AT this path, so the explanation for a
+  missing number was itself a 503.
+
+  Two independent per-row costs, both removed.
+
+  The reserve lookup folded the latest entry per storage key out of
+  `stellar.ledger_entry_changes` over a 250,000-ledger (~14-day) window.
+  A Blend `ResData` entry is REWRITTEN on nearly every pool interaction,
+  so a single reserve's key matches tens of thousands of rows scattered
+  through that window's granules (74,834 for the busiest mainnet pool's
+  USDC reserve) and the `key_xdr` bloom skip-index prunes almost nothing.
+  The read's cost tracked pool WRITE ACTIVITY rather than the number of
+  reserves asked for — a multi-second floor under every pool. It now
+  probes `stellar.ledger_entries_current`, whose sort key IS
+  `(entry_type, key_xdr)`: ~one row per requested key, and the same shape
+  the three sibling pool-state readers (Soroswap / Phoenix / Comet) have
+  always used — this reader was the outlier. Measured on a real
+  ClickHouse against a fixture of 3,000 in-window writes to one reserve:
+  3,010 rows read before, 9 after.
+
+  Version resolution and the removed-key drop are preserved exactly, not
+  approximated: the projection is `ReplacingMergeTree(version)` with
+  `version = (ledger_seq << 32) | intra_ledger_seq`, so `FINAL` keeps the
+  LAST intra-ledger change — the composite audit-2026-07-16 C2-4c
+  requires — and a `removed` change carries an empty `entry_xdr`, so
+  filtering it on the row `FINAL` kept drops a reserve whose final change
+  was a removal. `optimize_move_to_prewhere_if_final` is pinned off so
+  that filter can never run BEFORE the collapse and resurrect a deleted
+  key.
+
+  Separately, the handler priced reserves SERIALLY, and each
+  `buildReserveView` is one or more USD-price round-trips (the alias
+  walk, then the stablecoin-peg proxy's per-peg probes — the reserve
+  token is a SAC, so the miss paths are the common ones). That added a
+  term linear in the reserve count on top of the lake read. It now fans
+  out through `forEachBounded` at the standard cap, so the pricing stage
+  costs one lookup's latency instead of one per reserve.
+
+  Reserve **absence** now has one stated meaning instead of two accidental
+  ones, and the change cuts both ways.
+
+  The old 250,000-ledger window was doing double duty. Besides bounding
+  the scan it was an unintended STALENESS bound: an archived (TTL-lapsed)
+  Soroban entry has had no writes since it lapsed, so a narrow window
+  dropped it as a side effect of being narrow. It also dropped reserves
+  that were merely QUIET, which was wrong — a reserve nobody has touched
+  in a month is not a dead one, and it used to be reported absent.
+  `ledger_entries_current` keeps a key's last-known value either way, so
+  neither behaviour survives the switch on its own.
+
+  So the read is now paired with an explicit archived-entry drop, the same
+  one the sibling readers carry (`dropArchivedPairs` /
+  `ClassifyTTLLiveness`). Net effect: a quiet-but-live reserve is now
+  **reported** where it used to be missing, and a TTL-archived reserve is
+  still absent — but because its TTL was positively resolved as lapsed,
+  not because a scan bound happened to hide it. An archived pool instance
+  drops every reserve under it. Without that pairing the route would have
+  handed a dead pool's final reserves to the handler, which prices them at
+  today's USD rate into `tvl_usd` and publishes the result with
+  `flags.stale = false` — a fabricated TVL where the pre-fix code returned
+  an empty reserve list. The filter is fail-open in the sibling sense:
+  only a positively-parsed lapsed `liveUntilLedgerSeq` drops anything, so
+  a missing or unreadable TTL keeps the reserve.
+
+  One caveat worth knowing rather than fixing here: `intra_ledger_seq` is
+  0 on rows ingested before the C2-4c fix, so two same-ledger changes to
+  one key from that era tie under `FINAL` exactly as they tied under the
+  old `argMax` — the survivor is arbitrary. That is not a regression, but
+  the population this query newly admits (quiet reserves whose last write
+  is old) is drawn disproportionately from that era. The fix is a
+  re-derive of `ledger_entry_changes.intra_ledger_seq`.
+
 - **obs:** the TimescaleDB probe now treats its psql reply as the
   external input it is. Every value passes a numeric guard before it is
   written; a row with a non-numeric field is dropped rather than

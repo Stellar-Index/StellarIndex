@@ -7,10 +7,12 @@ import (
 	"math/big"
 	"net/http"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	v1 "github.com/Stellar-Index/StellarIndex/internal/api/v1"
+	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/blend"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
@@ -293,5 +295,160 @@ func TestLendingPoolReserves_Watermark(t *testing.T) {
 	// The disclosure add must not perturb the exact i128 reserve figures.
 	if len(env.Data.Reserves) != 1 || env.Data.Reserves[0].Supplied != "1000000" || env.Data.Reserves[0].Borrowed != "400000" {
 		t.Errorf("reserves = %+v, want one reserve supplied=1000000 borrowed=400000", env.Data.Reserves)
+	}
+}
+
+// barrierPriceStall caps how long one parked LatestPrice waits when the
+// barrier is never reached. It bounds the RED run (a serial handler pays it
+// once per reserve, then fails the peak assertion) without letting the test
+// hang; the GREEN run never waits at all, because the fan-out saturates the
+// barrier and releases it.
+const barrierPriceStall = 200 * time.Millisecond
+
+// barrierPriceReader is a v1.PriceReader that parks every LatestPrice call
+// until `want` of them are in flight AT ONCE, recording the peak it observed.
+//
+// This is the instrument #504 needed and did not have. The route's cost is a
+// per-reserve DB fan-out, so the only thing separating the shipped handler
+// from the fixed one is whether those reads OVERLAP — and a stub that answers
+// instantly makes a serial walk and a parallel one look identical. Parking
+// each call turns concurrency into an observable: peak 1 is a serial loop,
+// peak len(reserves) is the bounded fan-out.
+type barrierPriceReader struct {
+	want int
+
+	mu       sync.Mutex
+	inFlight int
+	peak     int
+	calls    int
+
+	release   chan struct{}
+	closeOnce sync.Once
+}
+
+func newBarrierPriceReader(want int) *barrierPriceReader {
+	return &barrierPriceReader{want: want, release: make(chan struct{})}
+}
+
+func (r *barrierPriceReader) LatestPrice(_ context.Context, _, _ canonical.Asset) (v1.PriceSnapshot, []string, bool, error) {
+	r.mu.Lock()
+	r.calls++
+	r.inFlight++
+	if r.inFlight > r.peak {
+		r.peak = r.inFlight
+	}
+	saturated := r.inFlight >= r.want
+	r.mu.Unlock()
+
+	if saturated {
+		r.closeOnce.Do(func() { close(r.release) })
+	}
+	select {
+	case <-r.release:
+	case <-time.After(barrierPriceStall):
+	}
+
+	r.mu.Lock()
+	r.inFlight--
+	r.mu.Unlock()
+	// A miss is the honest answer for a reserve token with no price feed, and
+	// it is also the path that costs the most round-trips in production.
+	return v1.PriceSnapshot{}, nil, false, v1.ErrPriceNotFound
+}
+
+func (r *barrierPriceReader) RecentClosedSnapshots(_ context.Context, _, _ canonical.Asset, _ int) ([]v1.PriceSnapshot, error) {
+	return []v1.PriceSnapshot{}, nil
+}
+
+func (r *barrierPriceReader) observed() (peak, calls int) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.peak, r.calls
+}
+
+// TestLendingPoolReserves_PricingFansOutBounded is the #504 regression guard
+// on the handler half of the fix.
+//
+// /v1/lending/pools/{pool}/reserves timed out at 12.1s on the largest Blend
+// pool while a SMALL pool answered in 9.31s — 78% of the same ceiling. That
+// spread is the signature of a per-row cost: the handler priced each reserve
+// in turn, and every buildReserveView is one or more USD-price round-trips.
+// The route's latency therefore carried a term linear in the reserve count,
+// and the largest pool merely crossed the line first.
+//
+// The guard asserts the PROPERTY, not a duration: every reserve's pricing read
+// must be in flight at the same time (up to the fan-out cap), which is exactly
+// what a serial `for range states` cannot do. A stopwatch assertion would be a
+// function of the box; and the existing exclusion guard
+// (dex_tvl_exclusion_claims_internal_test.go) only ever proved the path was
+// REGISTERED, which is why this shipped.
+//
+// Proven RED against the pre-fix handler: peak concurrency 1 over 6 calls,
+// the run taking 6 × barrierPriceStall.
+func TestLendingPoolReserves_PricingFansOutBounded(t *testing.T) {
+	pool := mkCStrkey(t, 7)
+
+	const reserveCount = 6
+	assets := make([]string, reserveCount)
+	states := make([]clickhouse.BlendReserveState, reserveCount)
+	for i := range assets {
+		assets[i] = mkCStrkey(t, byte(20+i))
+		states[i] = clickhouse.BlendReserveState{
+			Pool:     pool,
+			Asset:    assets[i],
+			Decimals: 7,
+			Metrics: blend.ReserveMetrics{
+				SuppliedUnderlying: big.NewInt(int64(1_000_000 * (i + 1))),
+				BorrowedUnderlying: big.NewInt(int64(400_000 * (i + 1))),
+				UtilizationPct:     40,
+			},
+		}
+	}
+
+	prices := newBarrierPriceReader(reserveCount)
+	srv := v1.New(v1.Options{
+		Explorer: &stubExplorerReader{reserves: states},
+		Lending:  &stubLendingReader{assets: assets},
+		Prices:   prices,
+	})
+	base := httpTestServer(t, srv).URL
+
+	resp := mustGet(t, base+"/v1/lending/pools/"+pool+"/reserves")
+	if resp.StatusCode != http.StatusOK {
+		body, _ := readAll(resp)
+		t.Fatalf("status = %d, want 200 (body=%s)", resp.StatusCode, body)
+	}
+
+	var env struct {
+		Data v1.LendingPoolReservesView `json:"data"`
+	}
+	mustDecode(t, resp, &env)
+
+	peak, calls := prices.observed()
+	if calls == 0 {
+		t.Fatal("the handler never consulted the price reader — the fixture no longer exercises the per-reserve pricing path, so the concurrency assertion below would be vacuous")
+	}
+	if peak < reserveCount {
+		t.Errorf("peak concurrent price reads = %d over %d calls, want %d — the per-reserve pricing is SERIAL, so the route's latency grows with the reserve count (#504)",
+			peak, calls, reserveCount)
+	}
+
+	// The fan-out must not disturb the answer: every reserve present, in the
+	// reader's order, carrying its own exact figures.
+	if len(env.Data.Reserves) != reserveCount {
+		t.Fatalf("len(reserves) = %d, want %d", len(env.Data.Reserves), reserveCount)
+	}
+	for i, rv := range env.Data.Reserves {
+		if rv.Asset != assets[i] {
+			t.Errorf("reserve %d asset = %q, want %q — the fan-out reordered the response", i, rv.Asset, assets[i])
+		}
+		if want := states[i].Metrics.SuppliedUnderlying.String(); rv.Supplied != want {
+			t.Errorf("reserve %d supplied = %q, want %q — a fan-out slot landed on the wrong index", i, rv.Supplied, want)
+		}
+	}
+	// Nothing priced (every lookup missed), so TVL is withheld rather than
+	// reported as zero.
+	if env.Data.TVLUSD != nil {
+		t.Errorf("tvl_usd = %q, want null when no reserve priced", *env.Data.TVLUSD)
 	}
 }

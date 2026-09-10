@@ -36,6 +36,17 @@ import (
 // route, and the route must be one this server actually registers. An
 // exclusion making no location claim (defindex's double-counting
 // argument) is unconstrained.
+//
+// KNOWN LIMIT (#504): registered is not the same as ANSWERS. This guard
+// parses route registrations out of server.go; it cannot tell a working
+// route from one that 503s. The blend exclusion cited
+// /v1/lending/pools/{pool}/reserves while that route timed out on the
+// largest Blend pool, and this test was green throughout — a reader
+// following the pointer got the 503 the exclusion was supposed to
+// explain away. What that route ACTUALLY answers is now covered where it
+// can be measured rather than parsed: test/integration's
+// blend_reserves_current_state_test.go executes the reserve read against
+// a real ClickHouse and bounds what it costs.
 
 // exclusionLocationClaim matches the verbs that promise a reader they
 // can go and read the number somewhere.
