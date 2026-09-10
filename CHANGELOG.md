@@ -15,6 +15,8 @@ against.
 
 ## [Unreleased]
 
+## [v0.71.0] — 2026-09-10
+
 ### Added
 
 - **ops:** the node health probe checks `prometheus-node-exporter`, the
