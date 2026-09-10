@@ -170,5 +170,185 @@ else
 fi
 if [[ $RC -eq 42 ]]; then ok "both fail → rc non-zero"; else bad "rc $RC"; fi
 
+# ─── 6. the carry-forward is validated, not just tested for emptiness ──
+#
+# THE DEFECT (2026-09-10 class, pre-existing). last_success_unix is read
+# back out of the wrapper's OWN previous pgbackrest_backup.prom and was
+# guarded only by `[ -z … ]`. Emptiness is the one corruption that test
+# catches: a NON-empty bad value — a truncated write, a partially
+# overwritten line, a command tag — was re-published verbatim on every
+# subsequent FAILED run, i.e. until the next successful backup. That is
+# self-perpetuating, and node_exporter rejects an unparseable file WHOLE,
+# so one bad byte takes last_rc and duration_seconds down with it and
+# keeps them down for as long as the backups keep failing — precisely
+# when the metrics matter.
+echo "pgbackrest-backup-test: a corrupt carried-forward timestamp is dropped, not re-published"
+# NaN is in the list because it PARSES as exposition — node_exporter
+# would accept it — and is still not a unix timestamp: the guard is
+# "this is a timestamp", not merely "this will not break the file".
+for bad_value in SET "" NaN 1e9x "ERROR:"; do
+  rm -f "$PROM"
+  {
+    printf '# HELP stellarindex_pgbackrest_backup_last_success_unix x\n'
+    printf '# TYPE stellarindex_pgbackrest_backup_last_success_unix gauge\n'
+    printf 'stellarindex_pgbackrest_backup_last_success_unix{repo="1"} %s\n' "$bad_value"
+    printf 'stellarindex_pgbackrest_backup_last_success_unix{repo="2"} 1757000000\n'
+  } > "$PROM"
+  run "$TWO_REPO" 3 PGBR_FAIL_REPOS=1
+  carried="$(metric stellarindex_pgbackrest_backup_last_success_unix 1)"
+  if [[ -z "$carried" ]]; then
+    ok "corrupt carry '$bad_value' is dropped (series absent, not re-published)"
+  else
+    bad "corrupt carry '$bad_value' was re-published as '$carried' — node_exporter rejects the whole file over it"
+  fi
+  if [[ "$(metric stellarindex_pgbackrest_backup_last_rc 1)" == 42 \
+        && "$(metric stellarindex_pgbackrest_backup_last_rc 2)" == 0 ]]; then
+    ok "corrupt carry '$bad_value': the other families in the same file still publish"
+  else
+    bad "corrupt carry '$bad_value' took the rest of the file with it: $(cat "$PROM")"
+  fi
+  if python3 scripts/ci/lint_textfile_exposition.py --check-file "$PROM" >/dev/null 2>&1; then
+    ok "corrupt carry '$bad_value': the published file parses as exposition"
+  else
+    bad "corrupt carry '$bad_value': published file does NOT parse:
+$(python3 scripts/ci/lint_textfile_exposition.py --check-file "$PROM" 2>&1)"
+  fi
+done
+
+# A GOOD carry is still carried — the guard must not have turned the
+# ageing-series behaviour off, which is the whole point of the field.
+rm -f "$PROM"
+printf 'stellarindex_pgbackrest_backup_last_success_unix{repo="1"} 1757000000\n' > "$PROM"
+run "$TWO_REPO" 3 PGBR_FAIL_REPOS=1
+if [[ "$(metric stellarindex_pgbackrest_backup_last_success_unix 1)" == "1757000000" ]]; then
+  ok "a well-formed carry is still carried forward (the series ages, it does not vanish)"
+else
+  bad "a well-formed carry was dropped: $(cat "$PROM")"
+fi
+
+# ─── 7. every published file parses, and carries the tally ──────────
+echo "pgbackrest-backup-test: published output parses, tally present"
+rm -f "$PROM"
+run "$TWO_REPO" 3
+if python3 scripts/ci/lint_textfile_exposition.py --check-file "$PROM" >/dev/null 2>&1; then
+  ok "a healthy run publishes valid exposition"
+else
+  bad "healthy output does not parse: $(python3 scripts/ci/lint_textfile_exposition.py --check-file "$PROM" 2>&1)"
+fi
+if [[ "$(awk '$1 == "stellarindex_pgbackrest_backup_unparseable_lines" { print $2 }' "$PROM")" == "0" ]]; then
+  ok "the withheld-line tally is published on a healthy run (0, a series that exists)"
+else
+  bad "stellarindex_pgbackrest_backup_unparseable_lines is absent on a healthy run: $(cat "$PROM")"
+fi
+if grep -q '^# HELP stellarindex_pgbackrest_backup_unparseable_lines ' "$PROM" \
+   && grep -q '^# TYPE stellarindex_pgbackrest_backup_unparseable_lines gauge$' "$PROM"; then
+  ok "the tally family declares its own HELP + TYPE"
+else
+  bad "the tally is published without a HELP/TYPE of its own"
+fi
+
+# ─── 8. the publication guard itself, on the shipped bytes ──────────
+#
+# Extracted from $SRC rather than re-typed, so this can never drift into
+# testing a hand-copied twin. Everything the wrapper renders reaches the
+# textfile; the guard is what stands between a bad value and every other
+# family in the file.
+echo "pgbackrest-backup-test: publication guard"
+PUBLISH="$TMP/publish.sh"
+{
+  echo 'set -uo pipefail'
+  awk '/^publish_metrics\(\) \{$/ { p = 1 } p { print } p && /^\}$/ { exit }' "$WRAP"
+  # shellcheck disable=SC2016  # emitted into the harness verbatim
+  echo 'publish_metrics "$1" "$2"'
+} > "$PUBLISH"
+if grep -q 'awk -v keep=' "$PUBLISH" && grep -q 'chmod 644' "$PUBLISH"; then
+  ok "extracted region carries the validator and the atomic publish"
+else
+  bad "no publish_metrics() in the wrapper — nothing validates the rendered bytes before the mv"
+fi
+
+PREV="$TMP/previous.prom"
+printf 'stellarindex_pgbackrest_backup_last_rc{repo="1"} 0\n' > "$PREV"
+publish() { # publish <rendered-body> [PATH-override] → $RC, $ERR, $PUB
+  PUB="$TMP/published.$RANDOM.prom"
+  cp "$PREV" "$PUB"
+  local rendered="$TMP/render.$RANDOM.prom"
+  cp "$1" "$rendered"
+  ERR="$(PATH="${2:-$PATH}" bash "$PUBLISH" "$rendered" "$PUB" 2>&1 >/dev/null)"
+  RC=$?
+}
+
+BODY_OK="$TMP/body-ok.prom"
+cat > "$BODY_OK" <<'PROM'
+# HELP stellarindex_pgbackrest_backup_last_rc x
+# TYPE stellarindex_pgbackrest_backup_last_rc gauge
+stellarindex_pgbackrest_backup_last_success_unix{repo="1"} 1757000000
+stellarindex_pgbackrest_backup_last_rc{repo="1"} 0
+stellarindex_pgbackrest_backup_duration_seconds{repo="2"} 41
+PROM
+publish "$BODY_OK"
+EXPECT_OK="$TMP/expect-ok.prom"
+cp "$BODY_OK" "$EXPECT_OK"
+printf 'stellarindex_pgbackrest_backup_unparseable_lines 0\n' >> "$EXPECT_OK"
+if [[ $RC -eq 0 ]] && cmp -s "$EXPECT_OK" "$PUB"; then
+  ok "ordinary output is published byte-identically, plus a 0 tally (cmp)"
+else
+  bad "rc=$RC; the guard altered ordinary output: $(diff "$EXPECT_OK" "$PUB" 2>&1)"
+fi
+
+# The shapes this producer can actually render: a carried-forward command
+# tag (the self-perpetuating case above, if the numeric guard ever
+# regresses), an empty value field, and a bare word on a line of its own.
+BODY_BAD="$TMP/body-bad.prom"
+{
+  printf '# TYPE stellarindex_pgbackrest_backup_last_rc gauge\n'
+  printf 'stellarindex_pgbackrest_backup_last_success_unix{repo="1"} SET\n'
+  printf 'stellarindex_pgbackrest_backup_last_rc{repo="1"} 0\n'
+  printf 'stellarindex_pgbackrest_backup_duration_seconds{repo="1"} \n'
+  printf 'SET\n'
+  printf 'stellarindex_pgbackrest_backup_last_rc{repo="2"} 0\n'
+} > "$BODY_BAD"
+publish "$BODY_BAD"
+EXPECT_BAD="$TMP/expect-bad.prom"
+{
+  printf '# TYPE stellarindex_pgbackrest_backup_last_rc gauge\n'
+  printf 'stellarindex_pgbackrest_backup_last_rc{repo="1"} 0\n'
+  printf 'stellarindex_pgbackrest_backup_last_rc{repo="2"} 0\n'
+  printf 'stellarindex_pgbackrest_backup_unparseable_lines 3\n'
+} > "$EXPECT_BAD"
+if cmp -s "$EXPECT_BAD" "$PUB"; then
+  ok "the 3 unparseable lines are withheld, the 2 good samples and the header survive, tally = 3"
+else
+  bad "published file is not the withheld-lines-removed render: $(diff "$EXPECT_BAD" "$PUB" 2>&1)"
+fi
+if [[ "$ERR" == *'withholding unparseable exposition line: SET'* && "$ERR" == *'3 unparseable line(s) withheld'* ]]; then
+  ok "each withheld line is named on stderr and the count is summarised"
+else
+  bad "the withholding was not announced: $ERR"
+fi
+
+# A validator that cannot answer has validated nothing: publishing the
+# bytes unexamined is the defect itself, so it refuses and the previous
+# file stays. The backup's own exit code is untouched either way — this
+# emit is best-effort by contract.
+mkdir -p "$TMP/noawk"
+printf '#!/usr/bin/env bash\nexit 1\n' > "$TMP/noawk/awk"
+chmod +x "$TMP/noawk/awk"
+publish "$BODY_OK" "$TMP/noawk:$PATH"
+if [[ $RC -ne 0 ]] && cmp -s "$PREV" "$PUB" && [[ "$ERR" == *"refusing to publish unvalidated bytes"* ]]; then
+  ok "a validator that cannot run refuses; the previous file is left in place and the refusal is loud"
+else
+  bad "rc=$RC err='$ERR' published='$(cat "$PUB")'"
+fi
+mkdir -p "$TMP/badawk"
+printf '#!/usr/bin/env bash\necho SET\nexit 0\n' > "$TMP/badawk/awk"
+chmod +x "$TMP/badawk/awk"
+publish "$BODY_OK" "$TMP/badawk:$PATH"
+if [[ $RC -ne 0 ]] && cmp -s "$PREV" "$PUB" && [[ "$ERR" == *"non-numeric tally"* ]]; then
+  ok "a non-numeric tally refuses (never written as a metric value of its own)"
+else
+  bad "rc=$RC err='$ERR' published='$(cat "$PUB")'"
+fi
+
 printf 'pgbackrest-backup-test: %d passed, %d failed\n' "$pass" "$fail"
 [[ $fail -eq 0 ]]

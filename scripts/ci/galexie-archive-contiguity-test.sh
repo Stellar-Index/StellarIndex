@@ -129,7 +129,7 @@ stamped() { # stamped <label>
 
 # ─── 1. a healthy listing ───────────────────────────────────────────
 run full
-[[ "$RC" -eq 0 ]] && ok "a healthy scan exits 0" || bad "a healthy scan exits 0 (got $RC)"
+if [[ "$RC" -eq 0 ]]; then ok "a healthy scan exits 0"; else bad "a healthy scan exits 0 (got $RC)"; fi
 expect galexie_archive_partition_count 6 "a healthy scan counts every partition"
 expect galexie_archive_first_ledger 0 "a healthy scan reports the genesis start"
 expect galexie_archive_last_ledger 50303999 "a healthy scan reports the newest end"
@@ -138,10 +138,10 @@ expect galexie_archive_scan_ok 1 "a healthy scan reports scan_ok 1"
 expect galexie_archive_scan_listing_lines 6 "a healthy scan reports the rows it read"
 stamped "a healthy scan stamps last_run_unix"
 
-mode=$(ls -l "$PROM" | cut -c1-10)
-[[ "$mode" == "-rw-r--r--" ]] && ok "textfile is 0644" || bad "textfile is 0644 (got $mode)"
+mode=$(stat -c %a "$PROM" 2>/dev/null || stat -f %Lp "$PROM")
+if [[ "$mode" == "644" ]]; then ok "textfile is 0644"; else bad "textfile is 0644 (got $mode)"; fi
 leftovers=$(find "$TEXTFILE_DIR" -type f ! -name 'galexie_archive_contiguity.prom' | wc -l | tr -d ' ')
-[[ "$leftovers" == "0" ]] && ok "no temp file survives" || bad "no temp file survives ($leftovers left)"
+if [[ "$leftovers" == "0" ]]; then ok "no temp file survives"; else bad "no temp file survives ($leftovers left)"; fi
 
 # ─── 2. the guard still works ───────────────────────────────────────
 run gap
@@ -161,8 +161,11 @@ expect galexie_archive_unexpected_gaps 1 "strict mode counts the trim hole as un
 # partway, the prefix it emitted is contiguous, and the walk certifies a
 # clean DR mirror from a read that never finished.
 run truncated
-[[ "$RC" -eq 0 ]] && ok "a truncated read still writes the file" \
-                  || bad "a truncated read still writes the file (rc $RC)"
+if [[ "$RC" -eq 0 ]]; then
+    ok "a truncated read still writes the file"
+else
+    bad "a truncated read still writes the file (rc $RC)"
+fi
 absent galexie_archive_unexpected_gaps "a truncated read publishes NO gap verdict"
 absent galexie_archive_partition_count "a truncated read publishes NO partition count"
 absent galexie_archive_last_ledger "a truncated read publishes NO coverage upper bound"
@@ -225,6 +228,117 @@ if command -v promtool >/dev/null 2>&1; then
 else
   echo "  note promtool not installed — skipping the text-format assertions" >&2
 fi
+
+# ─── 6. the partition walk answers SHORT ────────────────────────────
+#
+# THE DEFECT (2026-09-10 class, pre-existing). The walk's result was
+# consumed by a bare
+#   read -r count first last unexpected <<< "$result"
+# with nothing between it and the heredoc that writes those four
+# variables as metric values. `read` does not fail loudly on a short
+# line: it assigns what it has and leaves the rest EMPTY, so awk dying
+# mid-run (OOM), awk being absent, or a future edit to that END print
+# renders `galexie_archive_last_ledger` with NO VALUE FIELD.
+# node_exporter rejects the whole file over one such line, which takes
+# the scan's own health gauges — galexie_archive_scan_ok,
+# _scan_listing_lines, _scan_last_run_unix, the three series that exist
+# to say the verdict is untrustworthy — down with the verdict itself.
+# The blindness this producer was hardened against in 2026-09-05,
+# arriving through a different door.
+#
+# The stub fails ONLY the walk (it is the one awk invocation carrying
+# `-v ts=`), so the publication guard's own awk still runs. A stub that
+# broke both would prove nothing about the guard.
+echo "galexie-archive-contiguity-test: the partition walk answers short"
+REAL_AWK="$(command -v awk)"
+mkdir -p "$TMP/shortawk"
+cat > "$TMP/shortawk/awk" <<SH
+#!/usr/bin/env bash
+for a in "\$@"; do
+  case "\$a" in ts=*) exit 3 ;; esac
+done
+exec "$REAL_AWK" "\$@"
+SH
+chmod +x "$TMP/shortawk/awk"
+
+rm -f "$PROM"
+ERR="$(MODE=full PATH="$TMP/shortawk:$PATH" bash "$SCAN" 2>&1 >/dev/null)"
+RC=$?
+if python3 scripts/ci/lint_textfile_exposition.py --check-file "$PROM" >/dev/null 2>&1; then
+  ok "a short walk still publishes VALID exposition (node_exporter keeps the file)"
+else
+  bad "a short walk published a file node_exporter would reject whole:
+$(python3 scripts/ci/lint_textfile_exposition.py --check-file "$PROM" 2>&1)"
+fi
+absent galexie_archive_partition_count "a short walk publishes NO partition count"
+absent galexie_archive_first_ledger    "a short walk publishes NO first ledger"
+absent galexie_archive_last_ledger     "a short walk publishes NO coverage upper bound"
+absent galexie_archive_unexpected_gaps "a short walk publishes NO gap verdict"
+expect galexie_archive_unparseable_lines 4 "the four withheld lines are counted in the tally"
+expect galexie_archive_scan_ok 1 "the read itself succeeded, and still says so"
+expect galexie_archive_scan_listing_lines 6 "the rows read are still reported"
+stamped "a short walk still stamps last_run_unix"
+if [[ "$RC" -eq 1 ]]; then
+  ok "a withheld line exits non-zero (the unit goes 'failed' under stellarindex_systemd_unit_failed)"
+else
+  bad "a withheld line was silent to systemd (rc $RC)"
+fi
+if [[ "$ERR" == *"not four non-negative integers"* && "$ERR" == *"withholding unparseable exposition line: galexie_archive_last_ledger"* ]]; then
+  ok "the cause and each withheld line are named in the journal"
+else
+  bad "the short walk was not announced: $ERR"
+fi
+leftovers=$(find "$TEXTFILE_DIR" -type f ! -name 'galexie_archive_contiguity.prom' | wc -l | tr -d ' ')
+if [[ "$leftovers" == "0" ]]; then
+  ok "no temp file survives a short walk"
+else
+  bad "no temp file survives a short walk ($leftovers left)"
+fi
+
+# ─── 7. the validator itself cannot run ─────────────────────────────
+#
+# Nothing can be claimed about bytes that were never parsed, and
+# publishing them unexamined IS the defect — so this refuses, and the
+# previous file staying put is the cost. It is not silent: the
+# `time() - galexie_archive_scan_last_run_unix > 10800` arm of
+# stellarindex_galexie_archive_scan_degraded reads exactly a file that
+# has stopped being republished, and the non-zero exit fails the unit.
+echo "galexie-archive-contiguity-test: a validator that cannot run"
+mkdir -p "$TMP/noawk"
+printf '#!/usr/bin/env bash\nexit 1\n' > "$TMP/noawk/awk"
+chmod +x "$TMP/noawk/awk"
+PREVIOUS='galexie_archive_unexpected_gaps 0
+galexie_archive_scan_ok 1
+galexie_archive_scan_last_run_unix 1757000000'
+printf '%s\n' "$PREVIOUS" > "$PROM"
+ERR="$(MODE=full PATH="$TMP/noawk:$PATH" bash "$SCAN" 2>&1 >/dev/null)"
+RC=$?
+if [[ "$RC" -eq 1 ]] && [[ "$(cat "$PROM")" == "$PREVIOUS" ]] \
+   && [[ "$ERR" == *"refusing to publish unvalidated bytes"* ]]; then
+  ok "a validator that cannot run refuses, leaves the previous file byte-for-byte, and says so"
+else
+  bad "rc=$RC err='$ERR' published='$(cat "$PROM")'"
+fi
+leftovers=$(find "$TEXTFILE_DIR" -type f ! -name 'galexie_archive_contiguity.prom' | wc -l | tr -d ' ')
+if [[ "$leftovers" == "0" ]]; then
+  ok "a refusal leaves no temp file behind"
+else
+  bad "a refusal left $leftovers temp file(s)"
+fi
+
+# ─── 8. every mode publishes exposition the repo's own parser accepts ─
+# promtool is optional on a developer box; this parser is not, so the
+# grammar assertion runs everywhere.
+echo "galexie-archive-contiguity-test: every mode parses"
+for m in full gap overlap truncated dead empty unparseable; do
+  run "$m"
+  if python3 scripts/ci/lint_textfile_exposition.py --check-file "$PROM" >/dev/null 2>&1; then
+    ok "mode=$m publishes valid exposition"
+  else
+    bad "mode=$m published a file node_exporter would reject whole:
+$(python3 scripts/ci/lint_textfile_exposition.py --check-file "$PROM" 2>&1)"
+  fi
+done
 
 printf 'galexie-archive-contiguity-test: %d passed, %d failed\n' "$pass" "$fail"
 [[ "$fail" -eq 0 ]]

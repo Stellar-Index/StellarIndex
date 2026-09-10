@@ -367,5 +367,157 @@ else
   bad "the port refusal ran past the pre-flight: $(ls "$c/root" 2>/dev/null)"
 fi
 
+# ─── 9. emit_metric: no rendered line may lack a value ──────────────
+#
+# THE DEFECT (2026-09-10 class, pre-existing). The throughput series was
+# written as
+#   echo "…_ledgers_per_second${lbl} $(echo "scale=2; …" | bc)"
+# and `bc` is a separate Debian package that nothing this drill installs
+# depends on. Absent (or erroring), the command substitution is EMPTY
+# and the line is a metric NAME WITH NO VALUE. node_exporter does not
+# skip such a line — it rejects the WHOLE file — so restore_drill.prom
+# would vanish entirely on precisely the runs that measured a re-derive,
+# taking stellarindex_restore_drill_failures and _last_success_unix (the
+# drill's only evidence that the backups restore) with it. That is the
+# r1 2026-09-10 shape, which nothing alerted on for ~20 minutes.
+#
+# emit_metric is driven directly, extracted from the SHIPPED bytes: the
+# CH stage it guards runs only after a full successful restore against a
+# live Postgres, so no end-to-end fixture can reach it. Same idiom as
+# data-freshness-test.sh, which extracts its probe region for the same
+# reason.
+echo "restore-drill-run-test: emit_metric renders no valueless line"
+EMIT="$work/emit_metric.sh"
+{
+  echo 'set -uo pipefail'
+  # shellcheck disable=SC2016  # emitted into the harness verbatim
+  echo 'note() { echo "restore-drill: $*" >&2; }'
+  awk '/^emit_metric\(\) \{$/ { p = 1 } p { print } p && /^\}$/ { exit }' "$DRILL"
+  echo 'emit_metric'
+} > "$EMIT"
+if grep -q 'ledgers_per_second' "$EMIT" && grep -q 'restore_drill.prom' "$EMIT"; then
+  ok "extracted emit_metric() carries the throughput series and the textfile name"
+else
+  bad "emit_metric() extraction produced nothing usable — the marker drifted"
+fi
+
+emitbin="$work/emitbin"; mkdir -p "$emitbin"
+# `bc` absent: the shell's own "command not found" is rc 127 with an
+# empty stdout, which is exactly what this models.
+printf '#!/usr/bin/env bash\necho "bc: command not found" >&2\nexit 127\n' > "$emitbin/bc"
+chmod +x "$emitbin/bc"
+
+emit() { # emit <case> [PATH-prefix] → $PROM_OUT, $RC, $ERR
+  local d="$work/emit-$1"; shift
+  rm -rf "$d"; mkdir -p "$d"
+  PROM_OUT="$d/restore_drill.prom"
+  [[ -z "${SEED_PREVIOUS:-}" ]] || printf '%s\n' "$SEED_PREVIOUS" > "$PROM_OUT"
+  ERR="$(PATH="${1:+$1:}$PATH" TEXTFILE_DIR="$d" DRILL_REPO=1 fail_count=0 \
+         ch_secs=5 ch_rc=0 DRILL_CH_WINDOW=100000 bash "$EMIT" 2>&1 >/dev/null)"
+  RC=$?
+}
+prom_field() { awk -v want="$1" '$1 == want { print $2 }' "$PROM_OUT"; }
+
+# (a) bc present — the measured number is published, and the file parses.
+emit healthy
+if [[ -n "$(prom_field 'stellarindex_restore_drill_ch_rederive_ledgers_per_second{repo="1"}')" ]]; then
+  ok "with bc present the throughput series is published"
+else
+  bad "throughput series missing on the happy path: $(cat "$PROM_OUT")"
+fi
+if python3 scripts/ci/lint_textfile_exposition.py --check-file "$PROM_OUT" >/dev/null 2>&1; then
+  ok "the happy-path textfile parses as exposition"
+else
+  bad "happy path does not parse: $(python3 scripts/ci/lint_textfile_exposition.py --check-file "$PROM_OUT" 2>&1)"
+fi
+
+# (b) bc absent — the ONE series that cannot be computed is omitted and
+#     every other family in the file survives.
+emit nobc "$emitbin"
+if python3 scripts/ci/lint_textfile_exposition.py --check-file "$PROM_OUT" >/dev/null 2>&1; then
+  ok "with bc absent the textfile still parses (node_exporter keeps it)"
+else
+  bad "bc absent produced a file node_exporter would reject whole:
+$(python3 scripts/ci/lint_textfile_exposition.py --check-file "$PROM_OUT" 2>&1)"
+fi
+if [[ -z "$(prom_field 'stellarindex_restore_drill_ch_rederive_ledgers_per_second{repo="1"}')" ]]; then
+  ok "bc absent: the throughput series is omitted, not written without a value"
+else
+  bad "bc absent still wrote a throughput sample: $(cat "$PROM_OUT")"
+fi
+if [[ "$(prom_field 'stellarindex_restore_drill_failures{repo="1"}')" == "0" \
+      && "$(prom_field 'stellarindex_restore_drill_ch_rederive_seconds{repo="1"}')" == "5" ]]; then
+  ok "bc absent: failures and ch_rederive_seconds still publish (the file is not lost)"
+else
+  bad "bc absent took other families with it: $(cat "$PROM_OUT")"
+fi
+if [[ "$ERR" == *"omitting stellarindex_restore_drill_ch_rederive_ledgers_per_second"* ]]; then
+  ok "bc absent is named in the journal"
+else
+  bad "bc absent was silent: $ERR"
+fi
+if [[ "$RC" -eq 0 ]]; then
+  ok "a metric-writer fault does not change the drill's exit code (which counts BACKUP failures)"
+else
+  bad "emit_metric returned $RC — that would be read as a failed check of the backup"
+fi
+
+# (c) bc answers with something that is not a number.
+printf '#!/usr/bin/env bash\necho "syntax error"\nexit 0\n' > "$emitbin/bc"
+emit badbc "$emitbin"
+if python3 scripts/ci/lint_textfile_exposition.py --check-file "$PROM_OUT" >/dev/null 2>&1 \
+   && [[ -z "$(prom_field 'stellarindex_restore_drill_ch_rederive_ledgers_per_second{repo="1"}')" ]]; then
+  ok "a non-numeric bc answer is dropped, not published"
+else
+  bad "a non-numeric bc answer reached the textfile: $(cat "$PROM_OUT")"
+fi
+
+# (d) the publication guard itself: a value composed elsewhere in the
+#     render goes non-numeric. `date` is stubbed because last_success_unix
+#     is the one other series built from an external command's stdout.
+mkdir -p "$work/baddate"
+printf '#!/usr/bin/env bash\necho SET\n' > "$work/baddate/date"
+chmod +x "$work/baddate/date"
+emit baddate "$work/baddate"
+if python3 scripts/ci/lint_textfile_exposition.py --check-file "$PROM_OUT" >/dev/null 2>&1; then
+  ok "the publication guard keeps the file parseable when a value goes non-numeric"
+else
+  bad "an unparseable value reached the published file:
+$(python3 scripts/ci/lint_textfile_exposition.py --check-file "$PROM_OUT" 2>&1)"
+fi
+if [[ -z "$(prom_field 'stellarindex_restore_drill_last_success_unix{repo="1"}')" \
+      && "$(prom_field 'stellarindex_restore_drill_unparseable_lines{repo="1"}')" == "1" \
+      && "$(prom_field 'stellarindex_restore_drill_failures{repo="1"}')" == "0" ]]; then
+  ok "the one bad line is withheld and counted; the rest of the file publishes"
+else
+  bad "withholding did not behave: $(cat "$PROM_OUT")"
+fi
+if [[ "$ERR" == *"withholding unparseable exposition line"* && "$ERR" == *"1 unparseable line(s) withheld"* ]]; then
+  ok "the withheld line is named in the journal and the count summarised"
+else
+  bad "the withholding was not announced: $ERR"
+fi
+
+# (e) a validator that cannot run publishes nothing and leaves the
+#     previous verdict exactly as it was.
+mkdir -p "$work/noawk"
+printf '#!/usr/bin/env bash\nexit 1\n' > "$work/noawk/awk"
+chmod +x "$work/noawk/awk"
+SEED_PREVIOUS='stellarindex_restore_drill_failures{repo="1"} 0'
+emit noawk "$work/noawk"
+if [[ "$(cat "$PROM_OUT")" == "$SEED_PREVIOUS" ]] && [[ "$ERR" == *"refusing to publish unvalidated bytes"* ]] \
+   && [[ "$RC" -eq 0 ]]; then
+  ok "a validator that cannot run refuses, keeps the previous file, and says so"
+else
+  bad "rc=$RC err='$ERR' published='$(cat "$PROM_OUT")'"
+fi
+unset SEED_PREVIOUS
+leftovers=$(find "$work/emit-noawk" -type f ! -name 'restore_drill.prom' | wc -l | tr -d ' ')
+if [[ "$leftovers" == "0" ]]; then
+  ok "a refusal leaves no temp file behind"
+else
+  bad "a refusal left $leftovers temp file(s)"
+fi
+
 echo "restore-drill-run-test: $pass passed, $fail failed"
 [[ "$fail" -eq 0 ]] || exit 1

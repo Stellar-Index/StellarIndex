@@ -44,7 +44,7 @@ set -uo pipefail
 TEXTFILE_DIR="${TEXTFILE_DIR:-/var/lib/node_exporter/textfile_collector}"
 OUT="$TEXTFILE_DIR/galexie_archive_contiguity.prom"
 TMP="$OUT.tmp.$$"
-trap 'rm -f "$TMP"' EXIT
+trap 'rm -f "$TMP" "$TMP.checked"' EXIT
 
 BUCKET="${BUCKET:-local/galexie-archive}"
 # Ledger range NOT expected in the archive (the ADR capacity trim):
@@ -121,6 +121,29 @@ if [ "$read_rc" -eq 0 ]; then
       }
       END { print n, first, prev, bad }')
     read -r count first last unexpected <<< "$result"
+    # awk's four fields ARE the partition block's values, and `read`
+    # cannot fail loudly here: a SHORT answer — awk killed mid-run, awk
+    # missing, the walk erroring out, or a future edit to that END print
+    # — leaves the tail variables EMPTY and silently renders
+    # `galexie_archive_last_ledger` with no value field. node_exporter
+    # does not skip an unparseable line; it rejects the WHOLE file, so
+    # that one empty field would take the scan's own health gauges down
+    # together with the verdict they exist to qualify — the r1
+    # 2026-09-10 shape, where one bad value cost 127 unrelated series
+    # ~20 minutes of darkness.
+    #
+    # The publication guard below withholds any such line instead of
+    # publishing it, so this check does not repair anything: it names
+    # the CAUSE in the journal, because otherwise the operator sees
+    # four withheld lines and no reason for them.
+    for field in "$count" "$first" "$last" "$unexpected"; do
+      case "$field" in
+        '' | *[!0-9]*)
+          echo "galexie-archive-contiguity: the partition walk answered '$result' — not four non-negative integers, so no partition verdict is publishable this run (the health gauges below still are)" >&2
+          break
+          ;;
+      esac
+    done
   fi
 fi
 
@@ -169,5 +192,86 @@ galexie_archive_scan_listing_lines $listing_lines
 # HELP galexie_archive_scan_last_run_unix Unix time this scan last wrote its textfile, whether or not the bucket listing succeeded.
 # TYPE galexie_archive_scan_last_run_unix gauge
 galexie_archive_scan_last_run_unix $(date +%s)
+# HELP galexie_archive_unparseable_lines Exposition lines this run rendered that are not valid Prometheus samples and were therefore WITHHELD from the published textfile. 0 every healthy run; above 0 means a value this scan composed is not a number and that one series is absent this tick.
+# TYPE galexie_archive_unparseable_lines gauge
 EOF
+
+# ── Validate the rendered bytes before publishing ────────────────────
+#
+# Everything above reaches $TMP unexamined, and four of the seven values
+# come out of an awk walk through a bucket listing this scan does not
+# control. node_exporter rejects an unparseable textfile WHOLE, so one
+# empty or non-numeric field would take the DR verdict AND the scan's
+# own health gauges off the host together — and the health gauges are
+# the only thing that can say the verdict is missing.
+#
+# WITHHOLD the offending lines rather than refusing to publish the file:
+# a withheld verdict leaves galexie_archive_unexpected_gaps ABSENT,
+# which stellarindex_galexie_archive_contiguity_silent already reads,
+# whereas an unpublished file is re-served by node_exporter verbatim on
+# every scrape and freezes the verdict on whatever it last said — a
+# stale zero-gaps DR certificate that nothing can distinguish from a
+# fresh one.
+#
+# Same grammar as data-freshness.sh and the timescale-jobs probe.
+# Braces are written [{] / [}]: in an ERE a bare brace opens an interval
+# expression and the escape is undefined by POSIX, so the bracket form
+# means the same thing under mawk (the Debian default), gawk and BWK awk
+# alike. No apostrophe appears in the awk program — it is a
+# single-quoted shell word and one would end it.
+CHECKED="$TMP.checked"
+if ! DROPPED=$(awk -v keep="$CHECKED" '
+  /^[ \t]*$/ || /^#/ { print > keep; next }
+  {
+    rest = $0
+    sub(/^[a-zA-Z_:][a-zA-Z0-9_:]*([{][^}]*[}])?[ \t]+/, "", rest)
+    if (rest != $0 && rest ~ /^[+-]?([0-9]+\.?[0-9]*([eE][+-]?[0-9]+)?|\.[0-9]+([eE][+-]?[0-9]+)?|Inf|NaN)([ \t]+[0-9]+)?[ \t]*$/) {
+      print > keep
+      next
+    }
+    printf "galexie-archive-contiguity: withholding unparseable exposition line: %s\n", $0 > "/dev/stderr"
+    bad = bad + 1
+  }
+  END { print bad + 0 }
+' "$TMP"); then
+  rm -f "$CHECKED"
+  echo "galexie-archive-contiguity: the exposition validator did not run — refusing to publish unvalidated bytes, since node_exporter drops an unparseable file whole and says so only in node_textfile_scrape_error. Previous galexie_archive_contiguity.prom left in place; its age is what the scan_last_run_unix arm of stellarindex_galexie_archive_scan_degraded reads." >&2
+  exit 1
+fi
+# The tally is about to become a metric value of its own. A validator
+# that answered with something other than a count has validated
+# nothing, so this refuses rather than coercing it to 0.
+case "${DROPPED:-}" in
+  '' | *[!0-9]*)
+    rm -f "$CHECKED"
+    echo "galexie-archive-contiguity: exposition validator returned a non-numeric tally ('${DROPPED:-}') — refusing to publish. Previous galexie_archive_contiguity.prom left in place." >&2
+    exit 1
+    ;;
+esac
+# Guarded: an unchecked `mv` that failed would leave $TMP holding the
+# UNVALIDATED render, and the publish below would then ship exactly the
+# bytes this block exists to withhold.
+if ! mv "$CHECKED" "$TMP"; then
+  rm -f "$CHECKED"
+  echo "galexie-archive-contiguity: could not swap in the validated render — refusing to publish. Previous galexie_archive_contiguity.prom left in place." >&2
+  exit 1
+fi
+printf 'galexie_archive_unparseable_lines %s\n' "$DROPPED" >> "$TMP"
+
+# node_exporter runs unprivileged and SILENTLY skips a textfile it
+# cannot read, so set the mode explicitly rather than inheriting umask.
+chmod 644 "$TMP"
 mv "$TMP" "$OUT"
+trap - EXIT
+
+# Published — now be loud. A withheld line means this scan rendered
+# something that is not a metric, which is a defect here or in what mc
+# answered. The good samples are already on disk, so a non-zero exit
+# costs nothing but a failed oneshot — which the catch-all
+# stellarindex_systemd_unit_failed ticket already watches
+# (galexie-archive-contiguity.service is deliberately not in
+# scripts/ci/unit-failed-dedicated.baseline).
+if [ "$DROPPED" -gt 0 ]; then
+  echo "galexie-archive-contiguity: published galexie_archive_contiguity.prom with $DROPPED unparseable line(s) withheld — galexie_archive_unparseable_lines carries the count" >&2
+  exit 1
+fi

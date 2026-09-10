@@ -89,12 +89,104 @@ for repo in "${REPOS[@]}"; do
     # Carry the previous success forward so the series ages instead of
     # disappearing (an absent series is what alert `absent()` guards
     # miss; an old timestamp is what a staleness rule sees).
+    #
+    # THE ONE INPUT AN EMPTINESS TEST CANNOT VET. This value comes from
+    # this producer's OWN previous output, so whatever it holds is
+    # re-published on every subsequent failed run until the next
+    # success. A corrupt-but-non-empty carry — a truncated write, a
+    # partially overwritten line, a psql-style command tag from some
+    # future edit — therefore self-perpetuates, and node_exporter does
+    # not skip an unparseable line: it rejects the WHOLE file (r1
+    # 2026-09-10, where one bad value took 127 unrelated series off the
+    # host for ~20 minutes). One bad byte here would take every
+    # pgbackrest gauge down and KEEP them down.
+    #
+    # A unix timestamp is digits. Anything else is dropped and named,
+    # which leaves the series ABSENT for this run — the same state the
+    # `-z` branch below already produces when there is nothing to carry,
+    # and the state stellarindex_timescale_backup_none_24h reads.
     LAST_SUCCESS=$(grep -E "^stellarindex_pgbackrest_backup_last_success_unix\{repo=\"$repo\"\} " "$METRIC_OUT" 2>/dev/null | awk 'END { print $2 }')
+    case "${LAST_SUCCESS:-}" in
+      '') ;;
+      *[!0-9]*)
+        echo "pgbackrest-backup: WARN previous last_success for repo$repo is not a unix timestamp ('$LAST_SUCCESS') — dropping it rather than re-publishing a value node_exporter would reject the whole file over" >&2
+        LAST_SUCCESS=""
+        ;;
+    esac
   fi
   [ -z "${LAST_SUCCESS:-}" ] || METRIC_LINES+=("stellarindex_pgbackrest_backup_last_success_unix{repo=\"$repo\"} $LAST_SUCCESS")
   METRIC_LINES+=("stellarindex_pgbackrest_backup_last_rc{repo=\"$repo\"} $rc")
   METRIC_LINES+=("stellarindex_pgbackrest_backup_duration_seconds{repo=\"$repo\"} $DURATION")
 done
+
+# ── Validate the rendered bytes, then publish ─────────────────────────
+#
+# publish_metrics <rendered-tmp> <destination>: parse every line with the
+# grammar node_exporter applies, withhold the ones that are not samples,
+# publish the rest atomically, and say how many were withheld — both on
+# stderr and as a gauge of its own.
+#
+# WITHHOLD RATHER THAN REFUSE. A file that is not published is not
+# absent: node_exporter re-serves the previous pgbackrest_backup.prom on
+# every scrape with a fresh timestamp, so last_rc and last_success_unix
+# would FREEZE at their last values — a failing nightly backup reading
+# `last_rc 0` forever, which is the exact false-clean this metric exists
+# to prevent. Withholding leaves the offending series ABSENT instead,
+# which is what stellarindex_timescale_backup_none_24h already reads.
+#
+# It never fails the backup. This whole emit is best-effort by contract
+# (the unit's exit status is pgbackrest's rc, not the metric writer's),
+# so the withheld count is carried by the gauge and the journal rather
+# than by an exit code.
+#
+# Same awk grammar as data-freshness.sh and the timescale-jobs probe.
+# Braces are written [{] / [}]: in an ERE a bare brace opens an interval
+# expression and the escape is undefined by POSIX, so the bracket form is
+# the one that means the same thing under mawk (the Debian default),
+# gawk and BWK awk alike. No apostrophe appears anywhere in the awk
+# program — it is a single-quoted shell word and one would end it.
+publish_metrics() {
+  metric_src="$1"
+  metric_dst="$2"
+  metric_checked="$metric_src.checked"
+  if ! METRIC_DROPPED=$(awk -v keep="$metric_checked" '
+    /^[ \t]*$/ || /^#/ { print > keep; next }
+    {
+      rest = $0
+      sub(/^[a-zA-Z_:][a-zA-Z0-9_:]*([{][^}]*[}])?[ \t]+/, "", rest)
+      if (rest != $0 && rest ~ /^[+-]?([0-9]+\.?[0-9]*([eE][+-]?[0-9]+)?|\.[0-9]+([eE][+-]?[0-9]+)?|Inf|NaN)([ \t]+[0-9]+)?[ \t]*$/) {
+        print > keep
+        next
+      }
+      printf "pgbackrest-backup: withholding unparseable exposition line: %s\n", $0 > "/dev/stderr"
+      bad = bad + 1
+    }
+    END { print bad + 0 }
+  ' "$metric_src"); then
+    rm -f "$metric_checked"
+    echo "pgbackrest-backup: WARN the exposition validator did not run — refusing to publish unvalidated bytes to $metric_dst, since node_exporter drops an unparseable file whole and says so only in node_textfile_scrape_error" >&2
+    return 1
+  fi
+  # The tally is about to become a metric value, so it gets the same
+  # digits-only treatment as the carried-forward timestamp above. A
+  # validator that answered with something other than a count has
+  # validated nothing, so this refuses rather than coercing to 0.
+  case "${METRIC_DROPPED:-}" in
+    '' | *[!0-9]*)
+      rm -f "$metric_checked"
+      echo "pgbackrest-backup: WARN exposition validator returned a non-numeric tally ('${METRIC_DROPPED:-}') — refusing to publish $metric_dst" >&2
+      return 1
+      ;;
+  esac
+  mv "$metric_checked" "$metric_src" || return 1
+  printf 'stellarindex_pgbackrest_backup_unparseable_lines %s\n' "$METRIC_DROPPED" >> "$metric_src" || return 1
+  if [ "$METRIC_DROPPED" -gt 0 ]; then
+    echo "pgbackrest-backup: WARN published $metric_dst with $METRIC_DROPPED unparseable line(s) withheld — stellarindex_pgbackrest_backup_unparseable_lines carries the count" >&2
+  fi
+  # mktemp creates 0600; node_exporter runs unprivileged and SILENTLY
+  # skips a textfile it cannot read.
+  chmod 644 "$metric_src" && mv "$metric_src" "$metric_dst"
+}
 
 # Atomic textfile write (tmp + mv), 0644 so the unprivileged
 # node_exporter can read it (it silently skips unreadable files).
@@ -109,8 +201,14 @@ if mkdir -p "$TEXTFILE_DIR" 2>/dev/null && METRIC_TMP=$(mktemp "$METRIC_OUT.tmp.
     echo "# HELP stellarindex_pgbackrest_backup_duration_seconds Wall-clock seconds of the most recent scheduled pgBackRest backup, per repo."
     echo "# TYPE stellarindex_pgbackrest_backup_duration_seconds gauge"
     printf '%s\n' "${METRIC_LINES[@]}" | grep '^stellarindex_pgbackrest_backup_duration_seconds'
-  } > "$METRIC_TMP" && chmod 644 "$METRIC_TMP" && mv "$METRIC_TMP" "$METRIC_OUT" \
+    # Publication safety, not a backup signal. Emitted on EVERY run so
+    # the healthy value (0) is a series that exists rather than an
+    # absence.
+    echo "# HELP stellarindex_pgbackrest_backup_unparseable_lines Exposition lines this run rendered that are not valid Prometheus samples and were therefore WITHHELD from the published textfile. 0 every healthy run; above 0 means a value this wrapper composed — or carried forward from its own previous output — is not a number, and that one series is absent this tick."
+    echo "# TYPE stellarindex_pgbackrest_backup_unparseable_lines gauge"
+  } > "$METRIC_TMP" && publish_metrics "$METRIC_TMP" "$METRIC_OUT" \
     || echo "pgbackrest-backup: WARN could not write $METRIC_OUT — per-repo metrics not emitted" >&2
+  rm -f "$METRIC_TMP" "$METRIC_TMP.checked"
 else
   echo "pgbackrest-backup: WARN $TEXTFILE_DIR not writable — per-repo metrics not emitted" >&2
 fi

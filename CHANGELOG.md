@@ -120,6 +120,65 @@ against.
   written by a helper, so they were the ones the header blocks missed.
   Found by the new gate; they now carry headers like every other family.
 
+- **obs:** the three remaining textfile producers that could publish a
+  non-numeric value now validate what they rendered before they publish
+  it, and say so when they withhold a line. All three are pre-existing
+  exposures the new gate censused but cannot judge statically, because
+  each turns on what something outside the repo answers at runtime.
+
+  `pgbackrest-backup.sh.j2` was the worst of them. It carries
+  `stellarindex_pgbackrest_backup_last_success_unix` forward by grepping
+  its OWN previous `.prom`, guarded only by an emptiness test — the one
+  corruption that test cannot see is a value that is bad but not empty.
+  Such a carry was re-published on every subsequent FAILED run, i.e.
+  until the next successful backup, so a single bad byte would take
+  `last_rc` and `duration_seconds` down with it and keep them down for
+  exactly as long as the backups kept failing. The carry is now required
+  to be a unix timestamp, and is dropped — series absent, cause named in
+  the journal — when it is not.
+
+  `restore-drill.sh` composed its re-derive throughput as
+  `$(echo "scale=2; …" | bc)`. `bc` is a separate Debian package that
+  nothing this drill installs depends on; absent, the substitution is
+  the empty string and the line is a metric NAME WITH NO VALUE, so
+  `restore_drill.prom` — the only evidence that the backups restore —
+  would have been dropped whole on precisely the runs that measured a
+  re-derive. The value is now computed first, checked, and the series
+  omitted when it is not a number (an absent throughput gauge already
+  means "not measured" here).
+
+  `galexie-archive-contiguity.sh` read four fields of `awk` output
+  straight into four metric values with an unguarded `read`, which
+  assigns what it has and leaves the rest empty. A short answer rendered
+  `galexie_archive_last_ledger` with no value field — which would have
+  taken the scan's own health gauges down together with the DR verdict
+  they exist to qualify, the blindness that producer was hardened
+  against on 2026-09-05 arriving through a different door.
+
+  Each producer now parses its rendered bytes against the exposition
+  grammar before the atomic `mv`, withholds only the lines that do not
+  parse, names each of them on stderr and publishes the count as its own
+  `…_unparseable_lines` gauge. That is the shape `data-freshness.sh`
+  already uses, and for its reason: an unpublished file is not an absent
+  one. node_exporter re-serves the previous file on every scrape with a
+  fresh timestamp, so refusing outright freezes every gauge on its last
+  value — a failing backup reading `last_rc 0` forever — whereas a
+  withheld line leaves its series ABSENT, which the alerting over these
+  files already reads. Where the validator itself cannot run, nothing
+  can be claimed about the bytes and publishing them unexamined is the
+  defect, so the producers refuse and say so. None of it can change the
+  drill's or the backup's exit code: a metric-writer fault is not a fact
+  about the backup.
+
+- **ci:** the three producers' self-tests now emit the malformed shapes a
+  real runtime produces — a command tag carried forward out of a
+  previous `.prom`, an empty command substitution with `bc` stubbed
+  absent, and a short `awk` answer — and assert on the published bytes
+  with the gate's own `--check-file` parser. Every new assertion fails
+  against the pre-fix producer (15, 7 and 5 checks respectively). A stub
+  that only ever supplies well-formed input cannot see a
+  malformed-input bug, which is how this class reached production.
+
 ## [v0.70.0] — 2026-09-10
 
 ### Fixed

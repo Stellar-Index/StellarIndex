@@ -305,41 +305,168 @@ record_evidence() {
 # 2026-09-03 repo2 hand-run — and the on-box rule reads it as repo1's.
 emit_metric() {
   [[ "$TEXTFILE_DIR" != "/dev/null" ]] || return 0
-  if mkdir -p "$TEXTFILE_DIR" 2>/dev/null; then
-    local metric_out="$TEXTFILE_DIR/restore_drill.prom"
-    [[ "$DRILL_REPO" == "1" ]] || metric_out="$TEXTFILE_DIR/restore_drill_repo${DRILL_REPO}.prom"
-    local metric_tmp="$metric_out.tmp.$$"
-    local lbl="{repo=\"${DRILL_REPO}\"}"
-    {
-      echo "# HELP stellarindex_restore_drill_last_success_unix Unix time of the most recent fully-successful pgBackRest restore-drill (ADR-0043 §3 / CS-110)."
-      echo "# TYPE stellarindex_restore_drill_last_success_unix gauge"
-      if [[ "$fail_count" -eq 0 ]]; then
-        echo "stellarindex_restore_drill_last_success_unix${lbl} $(date +%s)"
-      fi
-      echo "# HELP stellarindex_restore_drill_failures Number of failed verification checks in the most recent restore-drill run."
-      echo "# TYPE stellarindex_restore_drill_failures gauge"
-      echo "stellarindex_restore_drill_failures${lbl} $fail_count"
-      # ClickHouse re-derive throughput (#343 / ADR-0043 §2.2): the lake RTO
-      # is only honest as a MEASURED number. Emitted only when the CH stage
-      # ran and succeeded; absent otherwise, so a missing series means "not
-      # measured", never a stale figure.
-      if [[ -n "${ch_secs:-}" && -n "${DRILL_CH_WINDOW:-}" && "${ch_rc:-1}" -eq 0 ]]; then
-        echo "# HELP stellarindex_restore_drill_ch_rederive_seconds Wall seconds the drill took to fetch+decode its ClickHouse re-derive window (dry-run, single-threaded)."
-        echo "# TYPE stellarindex_restore_drill_ch_rederive_seconds gauge"
-        echo "stellarindex_restore_drill_ch_rederive_seconds${lbl} $ch_secs"
-        echo "# HELP stellarindex_restore_drill_ch_rederive_window_ledgers Size of the re-derive window the drill measured."
-        echo "# TYPE stellarindex_restore_drill_ch_rederive_window_ledgers gauge"
-        echo "stellarindex_restore_drill_ch_rederive_window_ledgers${lbl} $DRILL_CH_WINDOW"
-        echo "# HELP stellarindex_restore_drill_ch_rederive_ledgers_per_second Measured re-derive throughput (window / seconds); full-lake RTO ≈ live tip / this / parallelism."
-        echo "# TYPE stellarindex_restore_drill_ch_rederive_ledgers_per_second gauge"
-        echo "stellarindex_restore_drill_ch_rederive_ledgers_per_second${lbl} $(echo "scale=2; $DRILL_CH_WINDOW / ($ch_secs + 0.0001)" | bc)"
-      fi
-    } > "$metric_tmp"
-    chmod 644 "$metric_tmp"
-    mv "$metric_tmp" "$metric_out"
-  else
+  if ! mkdir -p "$TEXTFILE_DIR" 2>/dev/null; then
     note "WARN: could not write $TEXTFILE_DIR — restore-drill metric for repo${DRILL_REPO} not emitted (its staleness alert will fire on the absent series)"
+    return 0
   fi
+  local metric_out="$TEXTFILE_DIR/restore_drill.prom"
+  [[ "$DRILL_REPO" == "1" ]] || metric_out="$TEXTFILE_DIR/restore_drill_repo${DRILL_REPO}.prom"
+  local metric_tmp="$metric_out.tmp.$$"
+  local metric_checked="$metric_tmp.checked"
+  local lbl="{repo=\"${DRILL_REPO}\"}"
+
+  # Throughput is the ONLY value in this file that is not a shell
+  # integer, and it is computed by a program that may not be installed:
+  # `bc` is its own Debian package, is not pulled in by postgresql,
+  # pgbackrest or anything else this drill needs, and is absent from a
+  # minimal image. When it is missing the command substitution yields
+  # the EMPTY STRING and the line becomes a metric NAME WITH NO VALUE —
+  # which does not cost one series, it costs the file: node_exporter
+  # rejects an unparseable textfile whole, so restore_drill.prom would
+  # take stellarindex_restore_drill_failures and _last_success_unix with
+  # it and the drill's entire signal would go dark on the run that
+  # measured a re-derive (r1 2026-09-10 is the same shape, and it was
+  # silent for ~20 minutes).
+  #
+  # So: compute it, prove it is a number, and OMIT the series when it is
+  # not. An absent throughput gauge already means "not measured" here —
+  # that is exactly what the enclosing `if` does when the CH stage did
+  # not run — so omitting costs nothing that publishing a broken file
+  # would not cost a hundredfold.
+  local lps=""
+  if [[ -n "${ch_secs:-}" && -n "${DRILL_CH_WINDOW:-}" && "${ch_rc:-1}" -eq 0 ]]; then
+    lps="$(echo "scale=2; $DRILL_CH_WINDOW / ($ch_secs + 0.0001)" | bc)" || lps=""
+    # bc renders a sub-1 result as `.50`, which is a valid Prometheus
+    # float, so a leading dot is allowed; two dots, a digit-free string
+    # and bc's backslash line-continuation are not.
+    case "$lps" in
+      '' | '.' | *[!0-9.]* | *.*.*)
+        note "WARN: ledgers-per-second came back '$lps' (bc missing or in error) — omitting stellarindex_restore_drill_ch_rederive_ledgers_per_second rather than writing a metric name with no value, which would make node_exporter drop $metric_out whole"
+        lps=""
+        ;;
+    esac
+  fi
+
+  {
+    echo "# HELP stellarindex_restore_drill_last_success_unix Unix time of the most recent fully-successful pgBackRest restore-drill (ADR-0043 §3 / CS-110)."
+    echo "# TYPE stellarindex_restore_drill_last_success_unix gauge"
+    if [[ "$fail_count" -eq 0 ]]; then
+      echo "stellarindex_restore_drill_last_success_unix${lbl} $(date +%s)"
+    fi
+    echo "# HELP stellarindex_restore_drill_failures Number of failed verification checks in the most recent restore-drill run."
+    echo "# TYPE stellarindex_restore_drill_failures gauge"
+    echo "stellarindex_restore_drill_failures${lbl} $fail_count"
+    # ClickHouse re-derive throughput (#343 / ADR-0043 §2.2): the lake RTO
+    # is only honest as a MEASURED number. Emitted only when the CH stage
+    # ran and succeeded; absent otherwise, so a missing series means "not
+    # measured", never a stale figure.
+    if [[ -n "${ch_secs:-}" && -n "${DRILL_CH_WINDOW:-}" && "${ch_rc:-1}" -eq 0 ]]; then
+      echo "# HELP stellarindex_restore_drill_ch_rederive_seconds Wall seconds the drill took to fetch+decode its ClickHouse re-derive window (dry-run, single-threaded)."
+      echo "# TYPE stellarindex_restore_drill_ch_rederive_seconds gauge"
+      echo "stellarindex_restore_drill_ch_rederive_seconds${lbl} $ch_secs"
+      echo "# HELP stellarindex_restore_drill_ch_rederive_window_ledgers Size of the re-derive window the drill measured."
+      echo "# TYPE stellarindex_restore_drill_ch_rederive_window_ledgers gauge"
+      echo "stellarindex_restore_drill_ch_rederive_window_ledgers${lbl} $DRILL_CH_WINDOW"
+      echo "# HELP stellarindex_restore_drill_ch_rederive_ledgers_per_second Measured re-derive throughput (window / seconds); full-lake RTO ≈ live tip / this / parallelism."
+      echo "# TYPE stellarindex_restore_drill_ch_rederive_ledgers_per_second gauge"
+      if [[ -n "$lps" ]]; then
+        echo "stellarindex_restore_drill_ch_rederive_ledgers_per_second${lbl} $lps"
+      fi
+    fi
+    # Publication safety, not a drill signal. Emitted on EVERY run so the
+    # healthy value (0) is a series that exists rather than an absence.
+    echo "# HELP stellarindex_restore_drill_unparseable_lines Exposition lines this run rendered that are not valid Prometheus samples and were therefore WITHHELD from the published textfile. 0 every healthy run; above 0 means a value this drill composed is not a number and that one series is absent this tick."
+    echo "# TYPE stellarindex_restore_drill_unparseable_lines gauge"
+  } > "$metric_tmp"
+
+  # ── Validate the rendered bytes before publishing ─────────────────
+  #
+  # The guard above stops the ONE value that is known to be able to go
+  # non-numeric; this stops the class. Everything in this file shares
+  # one .prom, so a single bad line costs every series in it, and the
+  # series in it are the only evidence that the backups are restorable.
+  #
+  # WITHHOLD rather than refuse: an unpublished file is not an absent
+  # one. node_exporter re-serves the previous restore_drill.prom on
+  # every scrape with a fresh timestamp, so failures and last_success
+  # would FREEZE — last month's clean drill reading as this month's,
+  # which is exactly the false-clean the abort paths above were added to
+  # remove. A withheld line leaves its series absent, and both staleness
+  # alerts already read absence.
+  #
+  # This never changes the drill's exit code: `exit "$fail_count"` is
+  # the count of FAILED CHECKS OF THE BACKUP, and a metric-writer fault
+  # is not a fact about the backup (the same reasoning that made the
+  # lock a refusal rather than a counted failure). The tally gauge and
+  # the journal carry it instead.
+  #
+  # Braces are written [{] / [}]: in an ERE a bare brace opens an
+  # interval expression and the escape is undefined by POSIX, so the
+  # bracket form is the one that means the same thing under mawk (the
+  # Debian default), gawk and BWK awk alike. No apostrophe appears in
+  # the awk program — it is a single-quoted shell word and one would
+  # end it.
+  local dropped=""
+  if ! dropped="$(awk -v keep="$metric_checked" '
+    /^[ \t]*$/ || /^#/ { print > keep; next }
+    {
+      rest = $0
+      sub(/^[a-zA-Z_:][a-zA-Z0-9_:]*([{][^}]*[}])?[ \t]+/, "", rest)
+      if (rest != $0 && rest ~ /^[+-]?([0-9]+\.?[0-9]*([eE][+-]?[0-9]+)?|\.[0-9]+([eE][+-]?[0-9]+)?|Inf|NaN)([ \t]+[0-9]+)?[ \t]*$/) {
+        print > keep
+        next
+      }
+      printf "restore-drill: withholding unparseable exposition line: %s\n", $0 > "/dev/stderr"
+      bad = bad + 1
+    }
+    END { print bad + 0 }
+  ' "$metric_tmp")"; then
+    rm -f "$metric_tmp" "$metric_checked"
+    note "WARN: the exposition validator did not run — refusing to publish unvalidated bytes to $metric_out, since node_exporter drops an unparseable file whole and says so only in node_textfile_scrape_error. The previous file stays and ages; its staleness alert is what notices."
+    return 0
+  fi
+  # The tally becomes a metric value of its own, so it gets the same
+  # treatment. A validator that answered with something other than a
+  # count has validated nothing — refuse rather than coerce it to 0.
+  case "$dropped" in
+    '' | *[!0-9]*)
+      rm -f "$metric_tmp" "$metric_checked"
+      note "WARN: exposition validator returned a non-numeric tally ('$dropped') — refusing to publish $metric_out"
+      return 0
+      ;;
+  esac
+  # Guarded, and it returns rather than letting `set -e` fire: an
+  # unchecked `mv` that failed would leave $metric_tmp holding the
+  # UNVALIDATED render for the publish below, and an uncaught failure
+  # here would exit the drill with this function's status — which the
+  # caller reads as a count of failed checks OF THE BACKUP.
+  if ! mv "$metric_checked" "$metric_tmp"; then
+    rm -f "$metric_tmp" "$metric_checked"
+    note "WARN: could not swap in the validated render — refusing to publish $metric_out"
+    return 0
+  fi
+  # printf on its own line, not folded into an `if !`: the exposition
+  # gate reads lines that BEGIN with echo/printf, and a sample hidden
+  # behind a condition keyword is a sample it stops checking.
+  local tally_ok=1
+  printf 'stellarindex_restore_drill_unparseable_lines%s %s\n' "$lbl" "$dropped" >> "$metric_tmp" || tally_ok=0
+  if [[ "$tally_ok" != 1 ]]; then
+    rm -f "$metric_tmp"
+    note "WARN: could not append the withheld-line tally — refusing to publish $metric_out"
+    return 0
+  fi
+  if [[ "$dropped" -gt 0 ]]; then
+    note "WARN: published $metric_out with $dropped unparseable line(s) withheld — stellarindex_restore_drill_unparseable_lines carries the count"
+  fi
+  # mktemp-free tmp path, so set the mode explicitly: node_exporter runs
+  # unprivileged and SILENTLY skips a textfile it cannot read. Chained so
+  # a failure is a note rather than a `set -e` exit carrying this
+  # function's status out as the drill's failure count.
+  if ! { chmod 644 "$metric_tmp" && mv "$metric_tmp" "$metric_out"; }; then
+    rm -f "$metric_tmp"
+    note "WARN: could not publish $metric_out — restore-drill metric for repo${DRILL_REPO} not emitted (its staleness alert will fire on the frozen series)"
+  fi
+  return 0
 }
 
 # abort_drill <stage>: a stage the rest of the drill cannot proceed
