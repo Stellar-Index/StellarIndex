@@ -282,7 +282,6 @@ git branch -D \
   fix/pgbackrest-repo2-retention-vars \
   fix/pgbackrest-template-jinja-comment \
   fix/pill-contrast-adaptive-tokens \
-  fix/priceless-structural-unpriceable \
   fix/r1-p28-ops-lessons \
   fix/replay-plan-tripwire \
   fix/restore-drill-floor-and-evidence \
@@ -300,15 +299,28 @@ git branch -D \
   remediation/batch2-2026-08-30 \
   ui-fixes-batch-2026-08-25 \
   waveD/alerting-fireability \
-  waveD/alerting-truth \
-  waveD/completeness-oracle \
-  waveD/explorer-trust \
-  waveD/pagination \
-  waveD/stream-dos
+  waveD/alerting-truth
 ```
 
-Harvest the three residues in §6.2 **before** running this — three of those
-branches are the only place that work exists.
+**CORRECTED 2026-09-10 — this list previously destroyed work if run.**
+It named FIVE branches that are the only place their work exists, while
+the warning here said "three". Someone harvesting three and then running
+the list would have lost the other two. All five are now REMOVED from
+the list above and must not be re-added without re-running the test:
+
+    waveD/pagination   waveD/stream-dos   waveD/explorer-trust
+    waveD/completeness-oracle   fix/priceless-structural-unpriceable
+
+Re-verified 2026-09-10 by blob presence — for each branch, whether every
+file it changes exists in `main`'s history AT THE SAME PATH, which
+survives squash, rebase and supersession where patch-id does not. All
+five report every changed file absent from `main` (10/10, 13/13, 11/11,
+11/11 and 3/3). The test was validated against branches this document
+calls landed, which report 0 absent — a test that cannot tell the two
+apart is worthless, and this one can.
+
+Their content is described in §6.2. Land it or consciously drop it;
+do not delete it as a side effect of tidying.
 
 ### 5.3 Remote
 
