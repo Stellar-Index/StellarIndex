@@ -71,6 +71,12 @@ trap 'rm -f "$TMP"' EXIT
   echo '# TYPE stellarindex_supply_asset_max_age_seconds gauge'
   echo '# HELP stellarindex_completeness_watermark_lag_ledgers Ledgers between the live ingest tip and a source latest ADR-0033 verdict watermark. A verdict can read complete=true while it was only ever verified up to an old ledger (CS-090).'
   echo '# TYPE stellarindex_completeness_watermark_lag_ledgers gauge'
+  # Publication safety, not a data signal. Emitted on EVERY run so the
+  # healthy value (0) is a series that exists rather than an absence: see
+  # the validator just above the atomic swap for why a line that is not a
+  # metric is withheld instead of being allowed to take the file down.
+  echo '# HELP stellarindex_data_freshness_unparseable_lines Exposition lines this run rendered that are not valid Prometheus samples and were therefore WITHHELD from the published textfile. 0 every healthy run; above 0 means a query answered with something that is not a number (a NULL, an error string, a command tag) and that one series is absent this tick.'
+  echo '# TYPE stellarindex_data_freshness_unparseable_lines gauge'
 } > "$TMP"
 
 # (domain, source, age_seconds, threshold_seconds) per domain. Thresholds are a
@@ -313,8 +319,119 @@ if [ -n "$SF_AGE" ]; then
     "$([ "$SF_AGE" -gt 3600 ] && echo 1 || echo 0)" >> "$TMP"
 fi
 
+# ── Validate the rendered bytes before publishing ─────────────────────
+#
+# Everything above this line reached $TMP UNEXAMINED. Seven psql
+# invocations write their stdout straight into it and compose their
+# exposition text inside SQL, so nothing in this shell script even looks
+# like a metric line — which is why this producer was the one left
+# unhardened when the class was gated (c8ceb7c55), and why it carries
+# the largest exposure of the 21: 162 samples on r1 (measured
+# 2026-09-10), every byte of every value chosen by Postgres.
+#
+# node_exporter does not skip an unparseable line, it rejects the WHOLE
+# file. One NULL rendering as an empty value field, one error string,
+# one stray command tag would take all 162 off the host together — the
+# per-domain freshness gauges, the ADR-0033 completeness verdicts, the
+# recognition axis — and take this watchdog's own meta-alert with them,
+# because the series it reads is in this same file. That is exactly the
+# shape that cost 127 unrelated stellarindex_timescale_* series ~20
+# minutes of darkness.
+#
+# Same grammar, and the same place in the sequence, as
+# timescale-jobs-probe.sh (roles/archival-node/tasks/10-observability.yml):
+# parse the rendered bytes, then swap. What differs is the VERDICT on a
+# bad line, and the difference is deliberate.
+#
+#   The probe REFUSES to publish and exits 1. Its stated reason is that
+#   a file not published AGES, and `time() - stellarindex_timescale_
+#   probe_last_run_unix` is precisely the arm of
+#   stellarindex_timescale_probe_degraded that notices.
+#
+#   That premise is false here. This producer emits no last-run gauge,
+#   and its only meta-alert is
+#   `absent_over_time(stellarindex_data_freshness_stale[45m])`
+#   (deploy/monitoring/rules/data-freshness.yml). A file left unpublished
+#   is re-served verbatim by node_exporter on every scrape with a fresh
+#   timestamp: NOTHING goes absent, so that alert cannot fire, and every
+#   gauge FREEZES at its last value — genuinely stale sources keep
+#   reading stellarindex_data_freshness_stale 0. That is not a
+#   hypothetical; it is Wave L / #319, the incident the ClickHouse probe
+#   above is shaped the way it is (an `if`, not a bare assignment) to
+#   avoid. Refusing here would re-admit through the front door the
+#   failure that fix removed through the back.
+#
+# So: publish, and withhold only the offending lines. 161 true samples
+# beat 162 frozen ones, and a withheld line leaves its series ABSENT —
+# where every alert predicate over this file is `== 1` and was already
+# quiet on an absence — rather than leaving it asserting a falsehood.
+#
+# The withholding is NOT silent, which is the whole objection to dropping
+# lines. Each one is named on stderr (journal), the count is published as
+# a gauge of its own, and a non-zero count exits non-zero AFTER the swap,
+# which leaves data-freshness.service in `failed` and therefore under
+# stellarindex_systemd_unit_failed (infra.yml, severity ticket) — the
+# unit is deliberately not in scripts/ci/unit-failed-dedicated.baseline,
+# so that signal costs no new rule. Loud, and never at the cost of the
+# other families in this file.
+CHECKED="$(mktemp "${TMP}.XXXXXX")"
+# Run as an `if` condition so a validator that cannot run is HANDLED
+# rather than killing the script under `set -e` — same reasoning as the
+# ClickHouse probe above. awk's stdout is the withheld-line tally.
+if ! DROPPED="$(awk -v keep="$CHECKED" '
+  # Comment lines (the HELP/TYPE headers) and blanks are exposition
+  # too, and carry no value field: pass them through untouched.
+  /^[ \t]*$/ || /^#/ { print > keep; next }
+  {
+    # Braces as [{] / [}], not backslash-escaped: in an ERE the brace
+    # opens an interval expression and the escape is undefined by POSIX,
+    # so the bracket form is the one that means the same thing under mawk
+    # (the Debian default), gawk and BWK awk alike. NB no apostrophes
+    # anywhere in this program: it is a single-quoted shell word and one
+    # would end it. `print` with no argument writes $0 byte for byte —
+    # no field splitting, no OFS rebuild — so a kept line is unmodified.
+    rest = $0
+    sub(/^[a-zA-Z_:][a-zA-Z0-9_:]*([{][^}]*[}])?[ \t]+/, "", rest)
+    if (rest != $0 && rest ~ /^[+-]?([0-9]+\.?[0-9]*([eE][+-]?[0-9]+)?|\.[0-9]+([eE][+-]?[0-9]+)?|Inf|NaN)([ \t]+[0-9]+)?[ \t]*$/) {
+      print > keep
+      next
+    }
+    printf "data-freshness: withholding unparseable exposition line: %s\n", $0 > "/dev/stderr"
+    bad = bad + 1
+  }
+  END { print bad + 0 }
+' "$TMP")"; then
+  rm -f "$CHECKED"
+  echo "data-freshness: the exposition validator did not run — refusing to publish unvalidated bytes, since node_exporter drops an unparseable file whole and says so only in node_textfile_scrape_error. Previous data_freshness.prom left in place." >&2
+  exit 1
+fi
+# The tally is about to become a metric value, so it gets the same
+# digits-only treatment as the ClickHouse body above. A validator that
+# answered with something other than a count has validated nothing, so
+# this is a refusal rather than a coercion to 0.
+case "$DROPPED" in
+  '' | *[!0-9]*)
+    rm -f "$CHECKED"
+    echo "data-freshness: exposition validator returned a non-numeric tally ('$DROPPED') — refusing to publish. Previous data_freshness.prom left in place." >&2
+    exit 1
+    ;;
+esac
+mv "$CHECKED" "$TMP"
+printf 'stellarindex_data_freshness_unparseable_lines %s\n' "$DROPPED" >> "$TMP"
+
 # node_exporter runs unprivileged — mktemp defaults to 0600, so make the
 # rendered file world-readable before the atomic swap or the collector skips it.
 chmod 0644 "$TMP"
 mv "$TMP" "$OUT"
 trap - EXIT
+
+# Published — now be loud. A withheld line means this producer rendered
+# something that is not a metric, which is a defect in the SQL above or in
+# what Postgres answered, and the operator has to see it. The 161 good
+# samples are already on disk by this point, so exiting non-zero costs
+# nothing but a failed oneshot — which the catch-all
+# stellarindex_systemd_unit_failed ticket already watches.
+if [ "$DROPPED" -gt 0 ]; then
+  echo "data-freshness: published data_freshness.prom with $DROPPED unparseable line(s) withheld — stellarindex_data_freshness_unparseable_lines carries the count" >&2
+  exit 1
+fi
