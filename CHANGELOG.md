@@ -37,6 +37,21 @@ against.
   (`changed=0` across 296 tasks on r1); this is the part that would have
   stayed red afterwards regardless.
 
+  **A second, subtler cause sat behind it**, found only because the
+  first fix did not turn the control green. The stamp used `%h`, which
+  honours `core.abbrev` — defaulting to "auto", where git derives the
+  length from the repository's OBJECT COUNT. The same commit rendered
+  nine characters in a developer clone and eight on the runner:
+
+      -- Intent-Schema-Commit: 01fa1106d (2026-09-09)   (r1)
+      -- Intent-Schema-Commit: 01fa1106 (2026-09-09)    (CI)
+
+  The verdict compared those and reported drift on a byte that names the
+  same commit. `--abbrev=12` pins the width, and the value is then
+  identical everywhere. Worth generalising: `%h` is not a stable
+  identifier across clones, and any file that embeds one and is later
+  compared byte-for-byte needs an explicit width.
+
   **The silent fallback is the actual defect.** The shell degraded to
   `unknown` for the release and accepted the wrong sha without comment,
   so nothing in eight weeks of output pointed at the checkout. It now

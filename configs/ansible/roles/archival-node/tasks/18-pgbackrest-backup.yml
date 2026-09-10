@@ -387,7 +387,18 @@
         exit 1
       fi
       rel="$(git describe --tags --abbrev=0 2>/dev/null)"
-      sha="$(git log -1 --format='%h (%cs)' -- deploy/clickhouse/tier1_schema.sql 2>/dev/null)"
+      # --abbrev=12 is REQUIRED, not cosmetic. `%h` honours core.abbrev,
+      # which defaults to "auto": git picks the length from the
+      # repository's OBJECT COUNT, so the same commit renders 9
+      # characters in a developer clone and 8 on a CI runner whose clone
+      # packs differently. The stamp then differs by one character
+      # between the file CI ships and the file an operator ships, the
+      # drift verdict compares them, and reports drift on a byte that
+      # names the same commit. Observed exactly that on 2026-09-10:
+      #   -- Intent-Schema-Commit: 01fa1106d (2026-09-09)   (r1)
+      #   -- Intent-Schema-Commit: 01fa1106 (2026-09-09)    (CI)
+      # Pin the width and the value is identical everywhere.
+      sha="$(git log -1 --abbrev=12 --format='%h (%cs)' -- deploy/clickhouse/tier1_schema.sql 2>/dev/null)"
       if [ -z "$rel" ] || [ -z "$sha" ]; then
         echo "provenance: no tag reachable, or no history for tier1_schema.sql — refusing to stamp an intent file that would not match an operator's." >&2
         exit 1
