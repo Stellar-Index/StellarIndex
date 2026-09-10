@@ -137,12 +137,23 @@ func (s *Store) HasAsset(ctx context.Context, a canonical.Asset) (bool, error) {
 
 // hasClassicAsset is the F-0157-perf fast path: PK lookup on
 // classic_assets. The registry was specifically designed (migration
-// 0023) as "the catalogue of every classic asset ever observed,"
-// populated by the trade-insert hook via
-// `Store.registerClassicAssetSeen`. So the asset's presence in
-// classic_assets is a strict subset of its presence in trades —
-// which means an asset_id NOT in classic_assets has no trades
-// either, and we can short-circuit without touching the hypertable.
+// 0023) as "the catalogue of every classic asset ever observed."
+//
+// It used to be populated ONLY by the trade-insert hook, so presence
+// here was a strict subset of presence in `trades` and an absent
+// asset_id provably had no trades. That is no longer the relationship,
+// and the change is the point: since migration 0158 the registry also
+// carries assets registered from TRUSTLINE HOLDINGS
+// ([Store.RegisterClassicAssetsHeld]), which is 61% of the classic-asset
+// population — an asset that is held but never traded had no row here at
+// all, so [Store.HasAsset] answered false for an asset that demonstrably
+// exists and GET /v1/assets/{id} returned 404 for it.
+//
+// The short-circuit itself is UNCHANGED and still sound: this function
+// answers "does this asset exist", not "has it traded". A hit still
+// avoids the hypertable; a miss still means we have never observed the
+// asset from any source. What a hit no longer implies is a trade — read
+// last_trade_at for that.
 func (s *Store) hasClassicAsset(ctx context.Context, a canonical.Asset) (bool, error) {
 	const q = `SELECT EXISTS (SELECT 1 FROM classic_assets WHERE asset_id = $1)`
 	var exists bool

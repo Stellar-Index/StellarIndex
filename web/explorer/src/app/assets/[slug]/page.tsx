@@ -1189,9 +1189,19 @@ function OverviewBody({
           </dl>
         </Panel>
 
+        {/* `observation_count` counts TRADE observations and nothing
+            else — the registry's holdings source (migration 0158) never
+            increments it. The label says so, because a registry row now
+            exists for assets that have never traded at all and "Total"
+            beside "Trades 24h" would read as an all-source total. The
+            two "seen" ledgers below ARE all-source, and their labels are
+            already literal. */}
         <Panel headingLevel={2} title="Observations" panelId="obs-card">
           <dl className="grid grid-cols-2 gap-2 text-sm">
-            <Stat label="Total" value={formatCompact(coin.observation_count)} />
+            <Stat
+              label="Trade observations"
+              value={formatCompact(coin.observation_count)}
+            />
             <Stat
               label="Trades 24h"
               value={

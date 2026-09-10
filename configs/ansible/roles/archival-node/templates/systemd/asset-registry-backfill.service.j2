@@ -1,0 +1,111 @@
+# systemd unit: classic-asset registry reconcile from trustline holdings.
+#
+# Rendered by Ansible. Registers every classic asset the ClickHouse lake
+# holds a TRUSTLINE for into Postgres `classic_assets` (and therefore
+# `issuers`), whether or not it has ever traded.
+#
+# WHY THIS EXISTS.
+#
+# `classic_assets` had exactly one population path: a trade. The registry
+# writer is called from InsertTrade / BatchInsertTrades and nowhere else,
+# and `issuers` is written only from inside it. The whole attestation
+# chain therefore hung off a trade:
+#
+#   trade -> classic_assets -> issuers -> SEP-1 fetch -> RWA candidacy
+#
+# An asset that is HELD but never traded on the SDEX was invisible at
+# every step. Measured 2026-09-10: 512,496 classic assets have a
+# trustline, 199,793 had a registry row — 61% absent, Franklin
+# Templeton's BENJI among them (12,498 trustlines, more than all
+# eighteen impersonating BENJIs combined, zero rows in either table,
+# because a money-market fund is bought and held rather than traded).
+#
+# FIRST RUN IS THE BACKFILL. It walks ~512k assets and takes hours; the
+# steady state is minutes, because every asset after the first pass is an
+# ON CONFLICT no-change. systemd's one-instance rule makes timer fires
+# no-ops while the first run is still going.
+#
+# The job is idempotent and MONOTONE (LEAST/GREATEST, and it never
+# touches observation_count, which stays a TRADE counter), so a missed
+# night costs freshness and nothing else, and a killed run resumes from
+# the RESUME line it printed — or, if nobody reads it, converges anyway
+# from the start at the cost of re-walking.
+#
+# LANDING IT IN TRANCHES. The listing spine (/v1/assets) scans this table
+# and grows with it, so the first production run should be bounded with
+# LIMIT and the catalogue-browse load scenario re-run between tranches
+# before the cap is lifted. Set LIMIT in /etc/default/asset-registry-backfill.
+
+[Unit]
+Description=Stellar Index — classic-asset registry reconcile from trustline holdings
+Documentation=https://github.com/Stellar-Index/StellarIndex/blob/main/internal/ops/ingest/asset_registry_backfill.go
+After=network-online.target postgresql.service clickhouse-server.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+EnvironmentFile=-/etc/default/asset-registry-backfill
+EnvironmentFile=-/etc/default/stellarindex
+
+# Defaults. Operators override via /etc/default/asset-registry-backfill.
+#
+# LIMIT=0 walks to the end. Set it to a tranche size for the first
+# production runs (see the header) and clear it once the spine growth has
+# been measured.
+Environment=CONFIG_PATH=/etc/stellarindex.toml
+Environment=CH_ADDR=127.0.0.1:9300
+Environment=PAGE=25000
+Environment=BATCH=2000
+Environment=LIMIT=0
+Environment=RUN_TIMEOUT=6h
+Environment=EXTRA_FLAGS=
+
+# Under run-heavy-job.sh: the wrapper holds a per-name flock (so a manual
+# run and this timer cannot overlap), caps memory at 20G with swap denied,
+# de-prioritises CPU/IO against galexie's captive core, and stops the job
+# if the data volume runs low. The job installs no long cleanup, so the
+# wrapper's default 5-minute stop timeout is the right one.
+#
+# -write is REQUIRED: opsutil.RegisterWriteGate defaults every ops job to
+# dry-run, so without it the timer would run, report what it would have
+# done, and persist nothing — the silent no-op shape.
+ExecStart=/usr/local/sbin/run-heavy-job.sh asset-registry-backfill \
+  /usr/local/bin/stellarindex-ops asset-registry-backfill \
+  -config ${CONFIG_PATH} \
+  -ch-addr ${CH_ADDR} \
+  -page ${PAGE} \
+  -batch ${BATCH} \
+  -limit ${LIMIT} \
+  -timeout ${RUN_TIMEOUT} \
+  -write \
+  ${EXTRA_FLAGS}
+
+# NOT de-privileged, unlike the sibling oneshots: run-heavy-job.sh only
+# creates its systemd-run scope (the memory cap and the disk watchdog) for
+# a root caller, and warns and degrades to a bare exec otherwise. The
+# wrapper's guards are the reason this job is wrapped at all.
+User=root
+Group=root
+
+ProtectSystem=full
+PrivateTmp=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+
+# The binary's own -timeout caps the run and it stops CLEANLY there,
+# printing its RESUME line. Give systemd headroom above it so the
+# graceful stop is what ends the run, not a SIGKILL.
+TimeoutStartSec=7h
+
+# Memory: the wrapper's scope carries MemoryMax=20G. This is the
+# in-process working set, which is one page of lake rows (PAGE assets,
+# ~120 bytes each) plus one BATCH of bind parameters — tens of megabytes.
+# 2G is far above a healthy run and far below the blast radius of the
+# 2026-07-05 wedge, where an unbounded job swapped stellar-core into
+# `invalid local state` and froze the lake for 11 hours.
+MemoryMax=2G
+MemorySwapMax=0
+
+[Install]
+WantedBy=multi-user.target

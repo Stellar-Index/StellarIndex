@@ -58,6 +58,26 @@ An asset is in the set when **all four** requirements hold. They are
 implemented in `internal/rwa` and evaluated in this order; the endpoint
 reports the first one a candidate failed.
 
+> **A candidate has to be in `issuers` before any of this is evaluated.**
+> The membership build's only input is `BoundSep1Currencies`, which reads
+> `issuers WHERE sep1_payload IS NOT NULL`, and until 2026-09-10 an
+> `issuers` row could only be created by the classic-asset registry
+> writer, which only ever ran on a TRADE. So an issuer whose assets are
+> HELD but never traded on the SDEX was not refused by R1–R4 — it was
+> never a candidate, and does not appear in the `refused` counts either.
+> Measured 2026-09-10: 512,496 classic assets have a trustline against
+> 199,793 registry rows, 61% absent, Franklin Templeton's BENJI among
+> them. The registry now has a holdings source
+> (`stellarindex-ops asset-registry-backfill`, migration 0158), so the
+> candidate pool is the held population rather than the traded one — but
+> the chain still runs `registry → issuer-enrich (home_domain) →
+> sep1-refresh (payload) → candidacy`, and a newly-registered issuer
+> enters the set only after those two jobs have reached it. A figure from
+> this endpoint that looks low against a public dashboard is worth
+> checking against that chain before it is read as a definition
+> disagreement: the $3.88M-against-$4.03B gap was diagnosed as one, and
+> was not.
+
 ### R1 — Identity
 
 A classic Stellar asset with a code **and** an issuer G-address. The

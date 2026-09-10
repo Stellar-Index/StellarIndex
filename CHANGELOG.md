@@ -187,6 +187,126 @@ against.
   into disagreeing about what counts as issuer-bound.
 
 - **ci:** the ansible drift check reads a FULL checkout, and refuses to
+- **storage,api,ops:** the classic-asset registry is populated from
+  HOLDINGS, not only from trades — 61% of the classic assets on the
+  network had no registry row, and every surface downstream of it was
+  starved without ever saying so.
+
+  `classic_assets` had exactly one population path:
+  `registerClassicAssetSeen`, whose only two call sites are inside
+  `InsertTrade` and `BatchInsertTrades`. `issuers` in turn is written
+  only from inside that function. So the whole attestation chain hung
+  off a trade — `trade → classic_assets → issuers → SEP-1 fetch → RWA
+  candidacy` — and an asset that is HELD but never traded on the SDEX
+  was invisible at every step of it. Measured on the production lake
+  2026-09-10: **512,496** distinct classic assets have a trustline
+  against **199,793** rows in `classic_assets`, so **312,703 (61%)**
+  were absent, and with them their issuers.
+
+  The presenting case was Franklin Templeton's BENJI. Its genuine issuer
+  `GBHNGLLIE3KWGKCHIKMHJ5HVZHYIK7WTBE4QF5PLAKL4CJGSEU7HZIW5` carries
+  12,498 trustlines — more than all eighteen impersonating BENJIs
+  combined — and had **0 rows in `classic_assets` and 0 in `issuers`**,
+  because a money-market fund is bought and held rather than day-traded
+  and so never produced the trade that would have registered it. That is
+  also why `/v1/rwa/assets` reported $3.88M against a public dashboard's
+  $4.03B. The earlier diagnosis — that the gap was a definition problem,
+  Soroban contracts being out of scope — was **wrong**: BENJI is a
+  classic asset, correctly indexed in the ClickHouse lake all along, and
+  simply never projected into the served registry.
+
+  **The writer stays singular.** `classic_assets` and `issuers` keep the
+  one writer they have always had
+  (`internal/storage/timescale/asset_registry.go`), which now has two
+  observation sources behind it: the trade hook, unchanged, and
+  `Store.RegisterClassicAssetsHeld`. The new ops job owns no SQL against
+  either table — it reads the lake and hands observations to the writer.
+  That is deliberate under ADR-0031/0032: the failure mode those ADRs
+  were written about is a second writer with its own INSERT, its own
+  conflict clause and its own idea of what a column means.
+
+  **Column meanings are split, not overloaded** (migration 0158).
+  `observation_count` still counts TRADES and only trades — a
+  holdings-derived row is inserted with 0 and the holdings path never
+  increments it — so the explorer's observations column, the default
+  listing rank and the scam-triage sweep that reads the top of that rank
+  all keep meaning trading activity. Every value that
+  `first_seen_*`/`last_seen_*` held before this change was a trade
+  observation by construction, so the migration copies them verbatim
+  into new `first_trade_*`/`last_trade_*` columns before a second source
+  can touch them; "last traded" therefore stays exactly answerable, and
+  is NULL for an asset that has never traded. `first_seen_*`/`last_seen_*`
+  become the union over both sources — which is what migration 0023's own
+  docblock always said they were, and only the implementation was
+  trade-only. Widening them can move `first_seen_ledger` earlier and
+  never later, so its standing as an upper bound on an asset's genesis
+  ledger tightens rather than breaks; it was never the genesis itself,
+  and the new `first_holding_ledger` is documented as the same kind of
+  bound (an entry's `ledger_seq` is its last modification).
+
+  **`stellarindex-ops asset-registry-backfill`** is the population job.
+  It reads distinct trustline assets from `stellar.ledger_entries_current`
+  keyset-paginated on the asset string, parses each one with
+  `canonical.ParseAsset` — never a string split, because identity is
+  (code, issuer) and eighteen assets on this network wear the code BENJI
+  — and registers the classic ones. The scan runs WITHOUT `FINAL`: the
+  `GROUP BY asset` folds the duplicate versions `FINAL` would collapse,
+  so dropping it removes the read-time merge for an answer that differs
+  only in the direction of more evidence; `max()` is merge-invariant and
+  `min()` is not, but the writer takes `LEAST`, so successive scans move
+  `first_seen` earlier and converge. It deliberately does not set
+  `optimize_aggregation_in_order`, which beside an external-group-by
+  threshold cancels the spill valve and turns a spilling query into an
+  OOM. Deleted trustlines are NOT filtered out: the question is whether
+  the asset exists, and a closed trustline is still proof that it did.
+  `-write` gated (dry-run by default), `-limit` bounds a tranche,
+  `-timeout` bounds the run, a node_exporter heartbeat publishes
+  liveness and per-page progress so the existing
+  `stellarindex_ops_job_no_progress` / `_heartbeat_stale` alerts cover
+  it, `last_exit_ok` is flipped only by a walk that reached the end of
+  the lake, and every early exit — signal, budget, `-limit`, error —
+  prints the full `RESUME:` command carrying `-resume-from <asset_id>`.
+  Resuming is an OPTIMISATION, not a correctness requirement: both
+  writes are idempotent and monotone, so a run restarted from scratch
+  converges to the same rows. A pre-flight compares free space on the
+  Postgres data volume against the estimated write and refuses rather
+  than starting a multi-hour run onto a full volume; `-min-free-bytes`
+  overrides the measurement for a run off the database host and says
+  loudly that nothing was measured. Wired as a daily
+  `asset-registry-backfill.timer` at 03:19 UTC under
+  `run-heavy-job.sh`, deliberately ahead of `sep1-refresh` at 05:12 so a
+  newly-registered issuer reaches `/v1/rwa/assets` in one night rather
+  than two.
+
+  **Knock-on effects, each stated rather than left to be discovered.**
+  `Store.hasClassicAsset` is no longer a strict subset of `trades`, and
+  that is the point — `GET /v1/assets/{id}` returned 404 for an asset
+  that demonstrably exists, and will now serve it; the short-circuit
+  itself is unchanged and still sound, because the function answers
+  "does this asset exist", not "has it traded". `/v1/network/stats`
+  `assets_indexed` steps up toward ~512,496 on the first run: not an
+  anomaly and not double counting, but the figure finally meaning what
+  its own comment already claimed. `ListIssuerAssets` had NO `LIMIT`, on
+  the recorded assumption that an issuer has "typically <20" assets —
+  true only while an issuer had to get each code traded to appear at
+  all — so it now carries a 500-row cap, matching the RWA surface's own
+  per-issuer bound; the rows dropped are the never-traded tail of
+  `ORDER BY observation_count DESC`. The explorer's asset-detail
+  observations panel relabels its total to `Trade observations`, because
+  a bare "Total" beside "Trades 24h" would now read as an all-source
+  count.
+
+  **What still needs an operator.** The migration ships the columns; it
+  does NOT insert the missing rows — the backfill does, and it has not
+  been run. The listing spine (`/v1/assets`) scans `classic_assets` in a
+  UNION CTE and sorts on a computed rank tier, which no index on this
+  table can serve, so its cost tracks the row count: land the first
+  production run in `-limit` tranches and re-run
+  `test/load/scenarios/07-catalogue-browse.js` between them before
+  lifting the cap. The SEP-1 fetch queue (29,741 unfetched against
+  14,635 fetched at the time of writing) grows with the new issuers;
+  `issuer-enrich` must run before `sep1-refresh` can offer them, and
+  neither is on this change's critical path.
   stamp an intent file it cannot derive — it has been reporting drift
   that does not exist since 2026-07-15.
 

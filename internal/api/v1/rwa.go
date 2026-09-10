@@ -61,6 +61,20 @@ const rwaAssetsPerIssuer = 500
 // reads its attestations through. *timescale.Store satisfies it.
 // Optional: a deployment without it serves an empty set with a stated
 // reason rather than an error, exactly as the logo overlay degrades.
+//
+// WHERE THE CANDIDATE POOL COMES FROM, because it is not obvious from
+// here and it silently bounded this surface for the whole of its life:
+// the implementation reads `issuers WHERE sep1_payload IS NOT NULL`, and
+// `issuers` rows are created ONLY by the classic-asset registry writer.
+// Until migration 0158 that writer ran only on a TRADE, so an issuer
+// whose assets are held but never traded on the SDEX never became a
+// candidate at all — not refused by a requirement, absent from the
+// `refused` counts, invisible. 61% of the classic-asset population was
+// in that state (512,496 assets with a trustline against 199,793
+// registered, measured 2026-09-10), Franklin Templeton's BENJI included.
+// The registry now also registers from trustline holdings, so the pool
+// is the held population — once `asset-registry-backfill`,
+// `issuer-enrich` and `sep1-refresh` have each reached a given issuer.
 type Sep1BoundCurrencyReader interface {
 	BoundSep1Currencies(
 		ctx context.Context, keep timescale.Sep1CurrencyFilter,

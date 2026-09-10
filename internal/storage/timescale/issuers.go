@@ -451,9 +451,31 @@ func (s *Store) MarkIssuerSep1Attempted(ctx context.Context, gStrkey string) err
 	return nil
 }
 
-// ListIssuerAssets returns every classic asset issued by the given
-// G-strkey, ordered by observation count desc (a cheap activity
-// proxy).
+// issuerAssetsHardCap bounds one issuer's asset list.
+//
+// The query used to have no LIMIT at all, on the documented assumption
+// that an issuer has "typically <20" assets. That assumption held only
+// while the registry was fed by trades: an issuer had to get each of its
+// codes traded to appear at all. Since migration 0158 the registry also
+// carries every classic asset with a TRUSTLINE — 512,496 of them against
+// 199,793 traded ones — and minting many codes and airdropping trustlines
+// for them is an established spam pattern on this network. An unbounded,
+// uncached query on a public per-issuer endpoint is not something to leave
+// standing once that population is in the table.
+//
+// 500 matches the cap the RWA surface already applies per issuer and the
+// clamp the assets listing applies to a page. The rows dropped are the
+// tail of `ORDER BY observation_count DESC`, i.e. the never-traded end.
+//
+// SURFACING the truncation on the wire is deliberately NOT done here: the
+// response has no field for it and adding one is a wire-shape change. The
+// cap is a denial-of-service bound, not a pagination scheme.
+const issuerAssetsHardCap = 500
+
+// ListIssuerAssets returns the classic assets issued by the given
+// G-strkey, ordered by observation count desc (a cheap TRADING-activity
+// proxy — a held-but-never-traded asset carries 0 and sorts to the tail),
+// capped at [issuerAssetsHardCap].
 func (s *Store) ListIssuerAssets(ctx context.Context, gStrkey string) ([]IssuerAsset, error) {
 	const q = `
 		SELECT
@@ -466,8 +488,9 @@ func (s *Store) ListIssuerAssets(ctx context.Context, gStrkey string) ([]IssuerA
 		  FROM classic_assets
 		 WHERE issuer_g_strkey = $1
 		 ORDER BY observation_count DESC, asset_id ASC
+		 LIMIT $2
 	`
-	rows, err := s.db.QueryContext(ctx, q, gStrkey)
+	rows, err := s.db.QueryContext(ctx, q, gStrkey, issuerAssetsHardCap)
 	if err != nil {
 		return nil, fmt.Errorf("timescale: ListIssuerAssets %s: %w", gStrkey, err)
 	}

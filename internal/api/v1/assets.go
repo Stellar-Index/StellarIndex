@@ -339,9 +339,27 @@ type AssetDetail struct {
 	Slug string `json:"slug,omitempty"`
 
 	// FirstSeenLedger / LastSeenLedger / ObservationCount are the
-	// trades-hypertable activity metadata. Mirrored from AssetRow so
+	// asset-catalogue activity metadata. Mirrored from AssetRow so
 	// the explorer's asset-detail page can drop its parallel
 	// /v1/coins/{slug} fetch.
+	//
+	// WHAT EACH ONE MEANS, since migration 0158 gave the registry a
+	// second observation source and the three no longer answer the same
+	// question:
+	//
+	//   ObservationCount counts TRADES, and only trades. An asset the
+	//   registry knows about solely because somebody holds it carries 0.
+	//   This is the field the explorer labels "Observations" and the
+	//   field the default listing rank sorts on, and both keep meaning
+	//   trading activity.
+	//
+	//   FirstSeenLedger / LastSeenLedger are the earliest / latest
+	//   ledger at which the asset was observed from ANY source — a trade
+	//   or a trustline holding. FirstSeenLedger has always been an upper
+	//   bound on the asset genesis ledger rather than the genesis
+	//   itself; widening the sources can only move it earlier, so the
+	//   bound tightens, it does not break. Neither field means "last
+	//   traded".
 	//
 	// Absent means "no asset-catalogue row" for all three. The ledger
 	// fields additionally stay absent when the registry holds 0 (not

@@ -55,6 +55,7 @@ Then, per unit class:
 | `issuer-flags` | issuer flag set | asset payloads | stale verification badges |
 | `sep1-refresh` | SEP-1 metadata | asset detail | stale home domains |
 | `cap67-movements` | classic movement rows | supply Algorithm 2 | supply divergence |
+| `asset-registry-backfill` | `classic_assets` + `issuers` (holdings source) | `/v1/assets`, asset search, the SEP-1 fetch queue, `/v1/rwa/assets` | a classic asset that is held but never traded stays absent from every one of them — that is the pre-2026-09-10 steady state, not a new failure. Check `SELECT count(*) FILTER (WHERE last_holding_at IS NOT NULL) FROM classic_assets` moved; a run that stopped early is not a failure, it printed a `RESUME:` line to resume from |
 
 ## Mitigation
 

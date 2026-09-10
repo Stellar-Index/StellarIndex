@@ -28,6 +28,16 @@ type NetworkStats struct {
 	// monotonically as issuers appear, so read it, don't quote it).
 	// Doesn't filter by recent activity; this is "what we know
 	// about", not "what's currently trading".
+	//
+	// EXPECT A STEP CHANGE the first time `stellarindex-ops
+	// asset-registry-backfill` runs: up to ~512,496, the number of
+	// classic assets the lake holds a trustline for (measured
+	// 2026-09-10). That is not an anomaly and not double counting — it
+	// is this figure finally meaning what its own comment already
+	// claimed. Until then the registry only ever learned about an asset
+	// from a TRADE, so 61% of the population was missing and the number
+	// was "assets that have traded at least once" wearing the label
+	// "what we know about".
 	AssetsIndexed int64
 	// LatestLedger: max(ingestion_cursors.last_ledger) across
 	// non-backfill sources. Mirrors what the diagnostics page

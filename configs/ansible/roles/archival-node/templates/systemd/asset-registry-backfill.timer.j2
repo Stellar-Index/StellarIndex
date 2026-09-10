@@ -1,0 +1,35 @@
+# systemd timer: daily classic-asset registry reconcile.
+#
+# Rendered by Ansible. Companion to asset-registry-backfill.service.
+#
+# Time slot: 03:19 UTC + up to 10 min jitter. Deliberately OUTSIDE the
+# dense 04:42–05:47 daily band (supply-snapshot, stellar-stack-version-
+# probe, sep1-refresh, compute-completeness, issuer-flags): this job holds
+# a ClickHouse aggregation over the whole trustline range AND a Postgres
+# write stream, and it shares the host with galexie's captive core,
+# Postgres and ClickHouse. Overlapping two memory-capped jobs is how a box
+# that is fine all day falls over at 05:00.
+#
+# It also lands BEFORE sep1-refresh at 05:12, which is the point of the
+# ordering: a newly-registered issuer gets its home_domain from
+# issuer-enrich and its stellar.toml from sep1-refresh, and only then can
+# it enter /v1/rwa/assets. Running the registry after the refresh would
+# add a full day to that chain for every new issuer.
+#
+# Persistent=true so a reboot does not skip a day. The first run is the
+# multi-hour 512k-asset backfill and systemd's one-instance rule makes
+# later fires no-ops while it runs, so a skipped day early on is a day the
+# backfill does not start.
+
+[Unit]
+Description=Daily classic-asset registry reconcile from trustline holdings
+Documentation=https://github.com/Stellar-Index/StellarIndex/blob/main/internal/ops/ingest/asset_registry_backfill.go
+
+[Timer]
+OnCalendar=*-*-* 03:19:00 UTC
+RandomizedDelaySec=600
+Persistent=true
+Unit=asset-registry-backfill.service
+
+[Install]
+WantedBy=timers.target

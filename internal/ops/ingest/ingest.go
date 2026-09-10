@@ -8,7 +8,8 @@
 // `find-data-gaps`, `census-backfill`, `tag-routed-via`,
 // `seed-soroswap-pairs`, `seed-protocol-contracts`,
 // `seed-entry-counts`, `projector-replay`, `scan-soroban-events`,
-// `state-snapshot`, `issuer-enrich`, `sep1-refresh`. Extracted from
+// `state-snapshot`, `issuer-enrich`, `sep1-refresh`,
+// `asset-registry-backfill`. Extracted from
 // cmd/stellarindex-ops (maintainability audit 2026-07-01, D1 finding
 // M1-5); main.go's dispatch table calls Run below.
 package ingest
@@ -67,6 +68,8 @@ func Run(args []string) error { //nolint:gocyclo // flat command-dispatch switch
 		return sep1RefreshCmd(args[1:])
 	case "issuer-flags":
 		return issuerFlagsCmd(args[1:])
+	case "asset-registry-backfill":
+		return assetRegistryBackfill(args[1:])
 	case "directory-sync":
 		return directorySync(args[1:])
 	default:

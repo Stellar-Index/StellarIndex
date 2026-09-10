@@ -90,8 +90,14 @@ func (c *CachedIssuersReader) GetIssuer(ctx context.Context, gStrkey string) (ti
 }
 
 // ListIssuerAssets — pass-through. Indexed scan via
-// `classic_assets_issuer_idx`; bounded by per-issuer asset count
-// (typically <20 rows).
+// `classic_assets_issuer_idx`, bounded by timescale.issuerAssetsHardCap
+// (500 rows).
+//
+// It used to be bounded by nothing but the per-issuer asset count, which
+// this comment called "typically <20". That was true of a registry fed
+// only by trades. Migration 0158 admits every classic asset with a
+// trustline, and minting many codes and airdropping trustlines is a spam
+// pattern, so the store now applies an explicit cap.
 func (c *CachedIssuersReader) ListIssuerAssets(ctx context.Context, gStrkey string) ([]timescale.IssuerAsset, error) {
 	return c.upstream.ListIssuerAssets(ctx, gStrkey)
 }

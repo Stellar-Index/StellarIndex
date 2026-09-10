@@ -148,6 +148,7 @@ var subcommands = map[string]func(args []string) error{
 	"sep1-refresh":            ingest.Run,
 	"issuer-flags":            ingest.Run,
 	"directory-sync":          ingest.Run,
+	"asset-registry-backfill": ingest.Run,
 
 	"verify-archive":            archive.Run,
 	"archive-completeness":      archive.Run,
@@ -1378,6 +1379,26 @@ Subcommands:
                           ordered by PK, so bounded runs resume rather than
                           re-walk. Issuers outside the captured window are
                           reported as absent, not an error. Run daily.
+  asset-registry-backfill -config PATH [-ch-addr ADDR] [-page N] [-batch N]
+                          [-limit N] [-resume-from ASSET_ID] [-timeout DUR]
+                          [-min-free-bytes N] [-heartbeat PATH] [-write]
+                          Register every classic asset the lake holds a
+                          TRUSTLINE for, whether or not it has ever traded.
+                          classic_assets had one population path — a trade —
+                          and issuers is written only from inside that same
+                          writer, so an asset that is held but never traded
+                          had no registry row, no issuer row, no SEP-1 fetch
+                          and no RWA candidacy. Measured 2026-09-10: 512,496
+                          classic assets with a trustline against 199,793
+                          registered, 61% absent (Franklin Templeton's BENJI
+                          among them). Reads the lake, writes through the
+                          existing registry writer; never touches
+                          observation_count, which stays a TRADE counter.
+                          Keyset-paginated on asset_id: any early stop prints
+                          a RESUME line. Idempotent and monotone, so resuming
+                          is an optimisation, not a correctness requirement.
+                          Long — run under run-heavy-job.sh, and use -limit to
+                          land it in tranches while the listing spine grows.
   seed-soroswap-pairs -config PATH [-rpc URL] [-timeout DUR]
                           Bootstrap the soroswap_pairs registry table
                           via stellar-rpc simulateTransaction. Walks the
