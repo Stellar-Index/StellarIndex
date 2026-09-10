@@ -119,6 +119,14 @@ const FUNNEL_STAGE_PROSE: Record<string, string> = {
   candidate_assets_evaluated: 'Put to the four requirements',
   assets_admitted: 'Admitted',
   assets_served: 'Served above',
+  curated_directory_entries: 'Addresses in the independent directory',
+  directory_contract_addresses: 'Of those, token contracts',
+  directory_recognised_contracts: 'Named as issuing or custodying value',
+  contract_candidates_evaluated: 'Put to the four requirements',
+  contract_assets_admitted: 'Admitted',
+  contract_assets_served: 'Served above',
+  directory_recognised_issuing_accounts:
+    'Recognised issuers we hold no token for',
 };
 
 const FUNNEL_DROP_PROSE: Record<string, string> = {
@@ -132,7 +140,33 @@ const FUNNEL_DROP_PROSE: Record<string, string> = {
   over_issuer_cap: 'Beyond the per-rebuild issuer cap',
   admitted_but_never_observed_on_chain: 'Never observed on chain',
   issuer_asset_page_truncated: 'Issuers whose asset list was not read in full',
+  directory_entry_names_an_account:
+    'Names an entity, not a token contract we can value',
+  contract_scam_flagged: 'Contract flagged by the independent directory',
+  contract_named_without_issuing_tag:
+    'Named, but as infrastructure rather than an issuer',
+  no_real_world_instrument_basis_for_contract:
+    'Declares no real-world instrument',
+  duplicate_directory_entry_for_contract: 'Same contract named twice',
+  over_contract_scan_cap: 'Beyond the per-rebuild contract cap',
   ...REFUSAL_PROSE,
+};
+
+/**
+ * The two arms, and why there are two. An asset qualifies under one or
+ * the other and never both, and the populations they narrow do not
+ * overlap — so the counts reconcile within an arm and nowhere across
+ * the boundary between them.
+ */
+const ARM_PROSE: Record<string, { title: string; lede: string }> = {
+  classic: {
+    title: 'Assets with an issuer account',
+    lede: 'Every issuer that could publish a SEP-1 file, narrowed to the assets served.',
+  },
+  contract: {
+    title: 'Tokens issued by a contract',
+    lede: 'A separate population. A contract token has no issuer account for a SEP-1 file to describe, so the independent directory naming the exact contract takes that requirement’s place — and it is a harder thing to forge, not an easier one.',
+  },
 };
 
 /** Who can move a number, in the page's voice. */
@@ -146,6 +180,8 @@ const UNIT_PROSE: Record<string, string> = {
   issuer_accounts: 'issuers',
   sep1_currency_declarations: 'declarations',
   assets: 'assets',
+  directory_addresses: 'addresses',
+  contracts: 'contracts',
 };
 
 function useRWAAssets() {
@@ -267,6 +303,7 @@ export function RWAView() {
 
       <DefinitionPanel definition={data.definition} refused={refused} />
       <CoveragePanel funnel={data.funnel} />
+      <UnreachedPanel entities={data.unreached_entities} />
     </div>
   );
 }
@@ -282,53 +319,110 @@ export function RWAView() {
  */
 function CoveragePanel({ funnel }: { funnel?: Schemas['RWAFunnel'] }) {
   if (!funnel || funnel.stages.length === 0) return null;
-  const first = funnel.stages[0];
-  const last = funnel.stages[funnel.stages.length - 1];
+  // Grouped by arm, in served order. The two arms narrow different
+  // populations from different roots, so running them together as one
+  // list would invite subtracting the last stage of one from the first
+  // stage of the next — a comparison that relates nothing.
+  const arms: { arm: string; stages: Schemas['RWAFunnelStage'][] }[] = [];
+  for (const s of funnel.stages) {
+    const tail = arms[arms.length - 1];
+    if (tail && tail.arm === s.arm) tail.stages.push(s);
+    else arms.push({ arm: s.arm, stages: [s] });
+  }
   return (
     <Panel title="Where the population went" headingLevel={2}>
       <p className="text-ink-muted text-xs leading-relaxed">
-        {last.count.toLocaleString('en-US')} asset
-        {last.count === 1 ? '' : 's'} out of{' '}
-        {first.count.toLocaleString('en-US')} issuers that could publish a SEP-1
-        file. Each row is a stage; the indented lines are what it turned away,
-        and who can change that.
+        Each row is a stage; the indented lines are what it turned away, and who
+        can change that.
         {!funnel.balanced &&
           ' Part of this accounting could not be measured, so the stages below do not reconcile.'}
       </p>
-      <ol className="border-line mt-3 space-y-2 border-t pt-3 text-xs leading-relaxed">
-        {funnel.stages.map((s) => (
-          <li key={s.stage}>
-            <div className="flex justify-between gap-4">
-              <span className="text-ink-body">
-                {FUNNEL_STAGE_PROSE[s.stage] ?? s.stage}
-              </span>
-              <span className="tnum text-ink-body font-medium">
-                {s.count.toLocaleString('en-US')}{' '}
-                <span className="text-ink-faint font-normal">
-                  {UNIT_PROSE[s.unit] ?? s.unit}
-                </span>
-              </span>
-            </div>
-            {(s.dropped ?? []).length > 0 && (
-              <dl className="mt-1 ml-4 space-y-0.5 text-[11px]">
-                {(s.dropped ?? []).map((d) => (
-                  <div key={d.reason} className="flex justify-between gap-4">
-                    <dt className="text-ink-muted">
-                      {FUNNEL_DROP_PROSE[d.reason] ?? d.reason}{' '}
-                      <span className="text-ink-faint">
-                        &mdash; {FUNNEL_ACTOR_PROSE[d.actor] ?? d.actor}
-                      </span>
-                    </dt>
-                    <dd className="tnum text-ink-faint">
-                      &minus;{d.count.toLocaleString('en-US')}
-                    </dd>
-                  </div>
-                ))}
-              </dl>
-            )}
+      {arms.map(({ arm, stages }) => (
+        <section key={arm} className="mt-4">
+          <h3 className="text-ink-body text-xs font-medium">
+            {ARM_PROSE[arm]?.title ?? arm}
+          </h3>
+          <p className="text-ink-faint mt-0.5 text-[11px] leading-relaxed">
+            {ARM_PROSE[arm]?.lede ?? ''}
+          </p>
+          <ol className="border-line mt-2 space-y-2 border-t pt-3 text-xs leading-relaxed">
+            {stages.map((s) => (
+              <li key={`${arm}-${s.stage}`}>
+                <div className="flex justify-between gap-4">
+                  <span className="text-ink-body">
+                    {FUNNEL_STAGE_PROSE[s.stage] ?? s.stage}
+                  </span>
+                  <span className="tnum text-ink-body font-medium">
+                    {s.count.toLocaleString('en-US')}{' '}
+                    <span className="text-ink-faint font-normal">
+                      {UNIT_PROSE[s.unit] ?? s.unit}
+                    </span>
+                  </span>
+                </div>
+                {(s.dropped ?? []).length > 0 && (
+                  <dl className="mt-1 ml-4 space-y-0.5 text-[11px]">
+                    {(s.dropped ?? []).map((d) => (
+                      <div
+                        key={d.reason}
+                        className="flex justify-between gap-4"
+                      >
+                        <dt className="text-ink-muted">
+                          {FUNNEL_DROP_PROSE[d.reason] ?? d.reason}{' '}
+                          <span className="text-ink-faint">
+                            &mdash; {FUNNEL_ACTOR_PROSE[d.actor] ?? d.actor}
+                          </span>
+                        </dt>
+                        <dd className="tnum text-ink-faint">
+                          &minus;{d.count.toLocaleString('en-US')}
+                        </dd>
+                      </div>
+                    ))}
+                  </dl>
+                )}
+              </li>
+            ))}
+          </ol>
+        </section>
+      ))}
+    </Panel>
+  );
+}
+
+/**
+ * Entities the independent directory recognises, that carry no warning
+ * flag, and for which this index holds no Stellar token at all.
+ *
+ * They are not refused by anything. There is nothing to refuse — no
+ * token of theirs was ever collected, so none was ever evaluated. The
+ * panel exists so a reader can tell a real issuer this site cannot see
+ * from one that does not exist, which a table of the assets we DO hold
+ * can never say.
+ */
+function UnreachedPanel({
+  entities,
+}: {
+  entities?: Schemas['RWAUnreachedEntity'][];
+}) {
+  if (!entities || entities.length === 0) return null;
+  return (
+    <Panel title="Recognised issuers we hold no token for" headingLevel={2}>
+      <p className="text-ink-muted text-xs leading-relaxed">
+        An independent directory names each of these as an issuing or custodying
+        entity, and none carries a warning flag. This index holds no Stellar
+        asset for any of them — so they are absent from the set above, not
+        refused by it. Where such an entity issues through a contract, the
+        directory naming that contract is what would bring it in.
+      </p>
+      <ul className="border-line mt-3 space-y-1.5 border-t pt-3 text-xs">
+        {entities.map((e) => (
+          <li key={e.address} className="flex justify-between gap-4">
+            <span className="text-ink-body">{e.name || e.address}</span>
+            <span className="text-ink-faint">
+              {e.domain || truncateMiddle(e.address, 10, 6)}
+            </span>
           </li>
         ))}
-      </ol>
+      </ul>
     </Panel>
   );
 }

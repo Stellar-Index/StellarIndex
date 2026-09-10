@@ -268,6 +268,7 @@ describe('RWAView', () => {
           basis: 'Every issuer account that could carry a SEP-1 attestation.',
           stages: [
             {
+              arm: 'classic',
               stage: 'issuers_with_home_domain',
               unit: 'issuer_accounts',
               count: 44376,
@@ -280,11 +281,17 @@ describe('RWAView', () => {
               ],
             },
             {
+              arm: 'classic',
               stage: 'issuers_with_sep1_attestation',
               unit: 'issuer_accounts',
               count: 14635,
             },
-            { stage: 'assets_served', unit: 'assets', count: 1 },
+            {
+              arm: 'classic',
+              stage: 'assets_served',
+              unit: 'assets',
+              count: 1,
+            },
           ],
         },
       }),
@@ -312,7 +319,13 @@ describe('RWAView', () => {
           balanced: false,
           basis: 'Not measured.',
           stages: [
-            { stage: 'assets_served', unit: 'assets', count: 1, dropped: [] },
+            {
+              arm: 'classic',
+              stage: 'assets_served',
+              unit: 'assets',
+              count: 1,
+              dropped: [],
+            },
           ],
         },
       }),
@@ -580,5 +593,110 @@ describe('RWAView', () => {
     expect(screen.getByText('stale')).toBeInTheDocument();
     // Labelled, not withheld: it is still the last value published.
     expect(screen.getByText('-3.06%')).toBeInTheDocument();
+  });
+});
+
+/**
+ * The contract arm.
+ *
+ * The funnel now carries two arms that narrow different populations
+ * from different roots. Rendering them as one list would invite a
+ * reader to subtract the last stage of one from the first stage of the
+ * next, which relates nothing — so the page has to separate them, and
+ * has to say what the second one is.
+ */
+describe('RWAView — contract arm', () => {
+  beforeEach(() => {
+    apiGetData.mockReset();
+  });
+
+  const CONTRACT = 'CAAQEAYEAUDAOCAJBIFQYDIOB4IBCEQTCQKRMFYYDENBWHA5DYPSBFLM';
+  const FT = 'GBHNGLLIE3KWGKCHIKMHJ5HVZHYIK7WTBE4QF5PLAKL4CJGSEU7HZIW5';
+
+  function contractView(): View {
+    return view({
+      assets: [
+        asset({
+          asset_id: CONTRACT,
+          code: '',
+          issuer: '',
+          contract_id: CONTRACT,
+          symbol: 'USTRY',
+          slug: CONTRACT,
+          name: 'Example Treasury Fund',
+          basis: 'contract_oracle_rwa_feed',
+        }),
+      ],
+      funnel: {
+        balanced: true,
+        basis: 'measured',
+        stages: [
+          {
+            arm: 'contract',
+            stage: 'curated_directory_entries',
+            unit: 'directory_addresses',
+            count: 18439,
+            dropped: [
+              {
+                reason: 'directory_entry_names_an_account',
+                count: 18000,
+                actor: 'definition',
+              },
+            ],
+          },
+          {
+            arm: 'contract',
+            stage: 'directory_recognised_contracts',
+            unit: 'contracts',
+            count: 1,
+          },
+          {
+            arm: 'contract',
+            stage: 'contract_assets_served',
+            unit: 'assets',
+            count: 1,
+          },
+        ],
+      },
+      unreached_entities: [
+        {
+          address: FT,
+          name: 'Franklin Templeton',
+          domain: 'franklintempleton.com',
+          tags: ['issuer'],
+        },
+      ],
+    } as Partial<View>);
+  }
+
+  it('separates the contract arm and names its stages in prose', async () => {
+    apiGetData.mockResolvedValue(contractView());
+    renderView();
+
+    expect(
+      await screen.findByText('Tokens issued by a contract'),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText('Addresses in the independent directory'),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/Names an entity, not a token contract/),
+    ).toBeInTheDocument();
+    // The wire vocabulary must not reach the page: a reader should
+    // never have to know the field names to read the accounting.
+    expect(screen.queryByText('curated_directory_entries')).toBeNull();
+    expect(screen.queryByText('directory_entry_names_an_account')).toBeNull();
+    expect(screen.queryByText('directory_addresses')).toBeNull();
+  });
+
+  it('reports a recognised issuer it holds no token for, by name', async () => {
+    apiGetData.mockResolvedValue(contractView());
+    renderView();
+
+    expect(
+      await screen.findByText('Recognised issuers we hold no token for'),
+    ).toBeInTheDocument();
+    expect(screen.getByText('Franklin Templeton')).toBeInTheDocument();
+    expect(screen.getByText('franklintempleton.com')).toBeInTheDocument();
   });
 });

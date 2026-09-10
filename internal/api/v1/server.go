@@ -167,6 +167,9 @@ type Server struct {
 	supply              SupplyLooker
 	tokenSupply         TokenSupplyReader
 	tokenDecimals       TokenDecimalsReader
+	tokenSymbol         TokenSymbolReader
+	rwaContracts        RWADirectoryContractReader
+	contractCatalogue   ContractCatalogueReader
 	lakeWatermarkReader LakeWatermarkReader
 	// Cached lake watermark (ADR-0041 D4) — see lakeWatermark() in
 	// lake_watermark.go. Refreshed at most every lakeWatermarkTTL.
@@ -767,6 +770,32 @@ type Options struct {
 	// wiring is *clickhouse.ExplorerReader. Nil → Soroban details keep the
 	// 7 default.
 	TokenDecimals TokenDecimalsReader
+
+	// TokenSymbol, when non-nil, resolves a token contract's on-chain SEP-41
+	// symbol from the same captured contract-instance METADATA TokenDecimals
+	// reads. Consulted ONLY by the RWA contract arm, and only after the
+	// curated directory has named that exact contract: the value is
+	// contract-authored, so it may answer WHICH instrument an address holds
+	// and never WHETHER an address is vouched for. Production wiring is
+	// *clickhouse.ExplorerReader. Nil → the contract arm admits only what
+	// its in-repo curated set binds.
+	TokenSymbol TokenSymbolReader
+
+	// RWAContracts, when non-nil, backs the contract arm of GET
+	// /v1/rwa/assets: the curated-directory scan that supplies its candidate
+	// population, and the recognised-but-tokenless entity census the
+	// response reports as coverage. Production wiring is *timescale.Store.
+	// Nil → the surface serves the classic arm alone and the funnel states
+	// that the contract population was NOT MEASURED, rather than reporting
+	// it as an empty one.
+	RWAContracts RWADirectoryContractReader
+
+	// ContractCatalogue, when non-nil, reads catalogue rows for an explicit
+	// contract set — the volume-gate-free read the RWA contract arm needs,
+	// since a tokenized fund can carry a nine-figure supply and never appear
+	// in a 24h volume rollup. Production wiring is *timescale.Store. Nil →
+	// admitted contracts are reported as unobserved rather than served.
+	ContractCatalogue ContractCatalogueReader
 
 	// LakeWatermark, when non-nil, stamps lake-backed responses
 	// (/v1/assets/{id}/supply, /v1/accounts/{g}, /v1/assets/{id}/holders)
@@ -1403,6 +1432,9 @@ func New(opts Options) *Server { //nolint:funlen // pure field-mapping construct
 		supply:                 opts.Supply,
 		tokenSupply:            opts.TokenSupply,
 		tokenDecimals:          opts.TokenDecimals,
+		tokenSymbol:            opts.TokenSymbol,
+		rwaContracts:           opts.RWAContracts,
+		contractCatalogue:      opts.ContractCatalogue,
 		lakeWatermarkReader:    opts.LakeWatermark,
 		volume:                 opts.Volume,
 		change24h:              opts.Change24h,

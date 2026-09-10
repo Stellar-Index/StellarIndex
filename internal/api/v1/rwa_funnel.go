@@ -49,6 +49,28 @@ const rwaFunnelBasis = "Every issuer account that could carry a SEP-1 attestatio
 	"the same unit. `actor` names who can move a number: an operator, the token's own issuer, or nobody — the " +
 	"definition refusing it."
 
+// rwaFunnelContractsBasis describes the second arm. It is appended
+// rather than folded into the sentence above because the two arms walk
+// different populations: a reader who took one narrowing for the whole
+// would conclude that an entity absent from the first was refused, when
+// it was never in that population to begin with.
+const rwaFunnelContractsBasis = "The `contract` arm walks a SEPARATE population: every entry in the curated " +
+	"third-party directory, narrowed to the contract addresses it names with an issuing tag, then to the tokens " +
+	"the definition admits. It exists because the issuers table the classic arm walks is populated only when a " +
+	"CLASSIC asset is registered, so an entity whose Stellar presence is contract-issued is absent from that " +
+	"population entirely rather than refused by any requirement. Stage counts reconcile WITHIN an arm; the two " +
+	"arms meet only at the assets served. `directory_recognised_issuing_accounts` is a terminal census, not part " +
+	"of the narrowing: it counts recognised issuing entities this index holds no token for, and names a bounded " +
+	"sample of them in `unreached_entities`."
+
+// rwaFunnelContractsUnmeasured is served instead when no directory
+// contract reader is wired. The distinction it draws is the one this
+// whole structure exists for: nothing was looked at, which is not the
+// same finding as nothing was there.
+const rwaFunnelContractsUnmeasured = "The `contract` arm was NOT MEASURED: no curated-directory contract reader " +
+	"is wired, so that population was never walked. Its absence from the stages below is a configuration " +
+	"statement, not a network with no contract-issued real-world assets in it."
+
 // rwaFunnelUnavailableBasis is the funnel served when membership could
 // not be established at all. It states the absence rather than
 // publishing a narrowing of zeros, which would read as a measured
@@ -68,7 +90,44 @@ func rwaFunnelUnavailable() RWAFunnel {
 // The refusal tally is read back out of the membership rather than
 // restated, so the funnel can never disagree with `refused[]` about how
 // many candidates a requirement turned away.
-func rwaFunnelOf(m rwaMembership, join rwaCatalogueJoin, served int) RWAFunnel {
+func rwaFunnelOf(m rwaMembership, join rwaCatalogueJoin, served, contractsServed int) RWAFunnel {
+	stages := rwaClassicStages(m, join, served)
+	classicOK := m.census.Check() == ""
+	// The contract arm is appended only when its population was actually
+	// measured. A deployment with no directory contract reader wired has
+	// not looked, and a run of contract stages reading zero would assert
+	// that the curated directory names no real-world contracts — a
+	// finding, from a scan that never ran. The funnel basis says which
+	// of the two happened.
+	contractOK := true
+	if m.contractCensus.available {
+		stages = append(stages, rwaContractStages(m, contractsServed)...)
+		contractOK = m.contractCensus.dir.Check() == ""
+	}
+	return RWAFunnel{
+		Stages: stages,
+		// Three checks now: each arm's own census (the storage layer's
+		// statement about its own numbers) and the stage arithmetic
+		// derived from them. The census checks keep holding if the stage
+		// list is ever restructured — which is exactly when a derived
+		// check quietly stops covering something.
+		Balanced: classicOK && contractOK && rwaFunnelImbalance(stages) == "",
+		Basis:    rwaFunnelBasisFor(m.contractCensus.available),
+	}
+}
+
+// rwaFunnelBasisFor states what was measured, including whether the
+// contract arm was walked at all.
+func rwaFunnelBasisFor(contractsMeasured bool) string {
+	if !contractsMeasured {
+		return rwaFunnelBasis + " " + rwaFunnelContractsUnmeasured
+	}
+	return rwaFunnelBasis + " " + rwaFunnelContractsBasis
+}
+
+// rwaClassicStages is the SEP-1 attestation walk: every issuer account
+// that could carry an attestation, down to the classic rows served.
+func rwaClassicStages(m rwaMembership, join rwaCatalogueJoin, served int) []RWAFunnelStage {
 	c := m.census
 
 	// Every issuer with an on-chain home_domain, less those with no
@@ -140,17 +199,111 @@ func rwaFunnelOf(m rwaMembership, join rwaCatalogueJoin, served int) RWAFunnel {
 		},
 		{Stage: rwaStageServed, Unit: rwaUnitAssets, Count: served},
 	}
-
-	return RWAFunnel{
-		Stages: stages,
-		// Both checks, though the stage arithmetic is derived from these
-		// same counts and the two agree today. The census check is the
-		// storage layer's own statement about its own numbers and keeps
-		// holding if the stage list is ever restructured — which is
-		// exactly when a derived check quietly stops covering something.
-		Balanced: c.Check() == "" && rwaFunnelImbalance(stages) == "",
-		Basis:    rwaFunnelBasis,
+	for i := range stages {
+		stages[i].Arm = rwaArmClassic
 	}
+	return stages
+}
+
+// rwaContractStages is the curated-directory walk: every entry in the
+// third-party directory, down to the contract rows served.
+//
+// It starts from a DIFFERENT root than the classic arm and shares no
+// stage with it. That is the whole point: the entities this arm reaches
+// are absent from the issuers table the classic arm walks, so no
+// narrowing of that table could ever have found them.
+func rwaContractStages(m rwaMembership, served int) []RWAFunnelStage {
+	cc := m.contractCensus
+	c := cc.dir
+
+	stages := []RWAFunnelStage{
+		{
+			// The whole curated set, split by strkey form. An account
+			// address names an ENTITY, which may issue many tokens or
+			// none; a contract address names ONE token. The arm
+			// identifies tokens, so the account rows leave here — under
+			// `definition`, because it is the scope of the rule and not
+			// a gap anybody can close by fetching something.
+			//
+			// The entities behind those account rows that matter are not
+			// lost with them: the recognised, unflagged, tokenless ones
+			// are counted at directory_recognised_issuing_accounts below
+			// and NAMED in unreached_entities.
+			Stage: rwaStageDirectoryEntries, Unit: rwaUnitDirectoryAddresses, Count: c.Entries,
+			Dropped: rwaDrops(RWAFunnelDrop{
+				Reason: rwaDropDirectoryNamesAnAccount, Count: c.Accounts, Actor: rwaActorDefinition,
+			}),
+		},
+		{
+			Stage: rwaStageDirectoryContracts, Unit: rwaUnitContracts, Count: c.Contracts,
+			Dropped: rwaDrops(
+				RWAFunnelDrop{Reason: rwa.RejectContractScam, Count: c.ContractsScamFlagged, Actor: rwaActorDefinition},
+				RWAFunnelDrop{Reason: rwa.RejectContractNoTag, Count: c.ContractsWithoutIssuingTag, Actor: rwaActorOperator},
+			),
+		},
+		{
+			// C2 and C3 are satisfied at this line. Everything below is
+			// C4 and the catalogue join.
+			Stage: rwaStageRecognisedContracts, Unit: rwaUnitContracts, Count: c.ContractsRecognised,
+			Dropped: rwaDrops(RWAFunnelDrop{
+				Reason: rwaDropOverContractScanCap, Count: cc.overCap, Actor: rwaActorOperator,
+			}),
+		},
+		{
+			// Unit changes from contracts to assets and the arithmetic
+			// still reconciles, because here the mapping really is
+			// one-to-one: a contract IS the asset it issues. That is not
+			// true on the classic arm, where one issuer publishes many
+			// declarations, which is why that arm has an exception and
+			// this one does not.
+			Stage: rwaStageContractCandidates, Unit: rwaUnitAssets, Count: cc.evaluated,
+			Dropped: rwaContractCandidateDrops(m),
+		},
+		{
+			Stage: rwaStageContractsAdmitted, Unit: rwaUnitAssets, Count: len(m.contracts),
+			Dropped: rwaDrops(RWAFunnelDrop{
+				Reason: rwaDropNotInCatalogue, Count: m.contractsNotObserved, Actor: rwaActorIssuer,
+			}),
+		},
+		{Stage: rwaStageContractsServed, Unit: rwaUnitAssets, Count: served},
+		{
+			// A TERMINAL stage, not part of the narrowing above it. It
+			// counts account rows — the ones the first stage dropped —
+			// filtered to the recognised, unflagged entities this index
+			// holds no classic asset for.
+			//
+			// It carries no drops and nothing follows it, so it takes no
+			// part in the stage arithmetic. That is deliberate: folding a
+			// coverage census into a narrowing would make the funnel
+			// close by adding a number that measures something else.
+			Stage: rwaStageRecognisedIssuingAcct, Unit: rwaUnitDirectoryAddresses,
+			Count: c.AccountsIssuingWithoutAsset,
+		},
+	}
+	for i := range stages {
+		stages[i].Arm = rwaArmContract
+	}
+	return stages
+}
+
+// rwaContractCandidateDrops is what happened to the contracts that
+// reached the full ordered evaluation: the C4 refusal, then the
+// structural drop that is not a refusal at all.
+//
+// C1 to C3 are decided by the scan itself and appear as stages above, so
+// their refusal constants are unreachable here by construction — the
+// same relationship the classic arm has with not_a_classic_asset and
+// no_issuer_bound_sep1_entry.
+func rwaContractCandidateDrops(m rwaMembership) []RWAFunnelDrop {
+	out := make([]RWAFunnelDrop, 0, 2)
+	if n := m.refusals[rwa.RejectNoContractBasis]; n > 0 {
+		out = append(out, RWAFunnelDrop{
+			Reason: rwa.RejectNoContractBasis, Count: n, Actor: rwaActorDefinition,
+		})
+	}
+	return append(out, rwaDrops(RWAFunnelDrop{
+		Reason: rwaDropDuplicateContractEntry, Count: m.contractCensus.duplicates, Actor: rwaActorOperator,
+	})...)
 }
 
 // rwaCandidateDrops is what happened to the candidates that reached the
@@ -223,25 +376,61 @@ func rwaDrops(drops ...RWAFunnelDrop) []RWAFunnelDrop {
 // exists to prevent.
 func rwaFunnelImbalance(stages []RWAFunnelStage) string {
 	for i := 0; i+1 < len(stages); i++ {
-		cur, next := stages[i], stages[i+1]
-		if cur.Unit == rwaUnitIssuers && next.Unit != rwaUnitIssuers {
-			if len(cur.Dropped) > 0 {
-				return fmt.Sprintf("%s is the last stage counted in issuer accounts and also drops — "+
-					"a drop across that change of unit cannot be reconciled", cur.Stage)
-			}
-			continue
-		}
-		sum := 0
-		for _, d := range cur.Dropped {
-			if d.Reason == rwaDropIssuerPageTruncate {
-				continue
-			}
-			sum += d.Count
-		}
-		if cur.Count-sum != next.Count {
-			return fmt.Sprintf("%s: %d less %d dropped is %d, not the %d at %s",
-				cur.Stage, cur.Count, sum, cur.Count-sum, next.Count, next.Stage)
+		if bad := rwaStagePairImbalance(stages[i], stages[i+1]); bad != "" {
+			return bad
 		}
 	}
 	return ""
+}
+
+// rwaStagePairImbalance checks one adjacent pair, returning the reason
+// it does not reconcile or "" when it does.
+func rwaStagePairImbalance(cur, next RWAFunnelStage) string {
+	if why, unbridgeable := rwaUnbridgeablePair(cur, next); unbridgeable {
+		if len(cur.Dropped) > 0 {
+			return fmt.Sprintf("%s %s and also drops — a drop across it cannot be reconciled", cur.Stage, why)
+		}
+		return ""
+	}
+	sum := 0
+	for _, d := range cur.Dropped {
+		if d.Reason == rwaDropIssuerPageTruncate {
+			continue
+		}
+		sum += d.Count
+	}
+	if cur.Count-sum != next.Count {
+		return fmt.Sprintf("%s: %d less %d dropped is %d, not the %d at %s",
+			cur.Stage, cur.Count, sum, cur.Count-sum, next.Count, next.Stage)
+	}
+	return ""
+}
+
+// rwaUnbridgeablePair reports whether no subtraction relates two
+// adjacent stages, and why. Such a pair is required to carry no drops
+// instead of reconciling — a drop across one would have to be accounted
+// for in a population it was never part of.
+//
+// There are exactly three, all stated:
+//
+//   - an ARM BOUNDARY. The arms narrow different populations from
+//     different roots and meet only at the served set.
+//   - the ONE transition from issuer accounts to the declarations those
+//     issuers publish, where one issuer publishes many. Every other
+//     change of unit is a relabelling of a population that maps one to
+//     one — a bound declaration IS the candidate asset it names, a
+//     contract IS the asset it issues — and still has to reconcile.
+//   - the TERMINAL CENSUS stage, which counts a population an earlier
+//     stage already dropped. Folding it into the narrowing would make
+//     the funnel close by adding a number that measures something else.
+func rwaUnbridgeablePair(cur, next RWAFunnelStage) (string, bool) {
+	switch {
+	case cur.Arm != next.Arm:
+		return "is the last stage of the " + cur.Arm + " arm", true
+	case next.Stage == rwaStageRecognisedIssuingAcct:
+		return "precedes a terminal census stage that takes no part in the narrowing", true
+	case cur.Unit == rwaUnitIssuers && next.Unit != rwaUnitIssuers:
+		return "is the last stage counted in issuer accounts", true
+	}
+	return "", false
 }

@@ -43,10 +43,33 @@ var listingOnlyPipelineCalls = map[string]string{
 }
 
 func TestRWAListingPipelineMatchesTheAssetsListing(t *testing.T) {
+	assertRWAPipelineMatchesListing(t, "rwa.go", "rwaListingRows")
+}
+
+// TestRWAContractPipelineMatchesTheAssetsListing holds the CONTRACT arm
+// to the same contract as the classic one.
+//
+// The contract arm reads its own rows — the listing spine cannot express
+// the volume-gate-free read it needs — so it is a second hand-copied
+// call sequence, with the same failure mode: a gate added to
+// handleAssetListFromAssets would leave contract rows serving the
+// ungated figure, and nothing behavioural would notice.
+//
+// Three of the pipeline's steps are no-ops on a contract row (no code,
+// no G-issuer). They are still required to be CALLED. A no-op costs
+// nothing, and the alternative — letting each arm skip the steps its
+// author judged irrelevant — is how the two arms start disagreeing about
+// which gates apply to a valuation.
+func TestRWAContractPipelineMatchesTheAssetsListing(t *testing.T) {
+	assertRWAPipelineMatchesListing(t, "rwa_contracts.go", "rwaContractListingRows")
+}
+
+func assertRWAPipelineMatchesListing(t *testing.T, file, fn string) {
+	t.Helper()
 	listing := serverCallsIn(t, "assets.go", "handleAssetListFromAssets")
-	rwa := serverCallsIn(t, "rwa.go", "rwaListingRows")
+	rwa := serverCallsIn(t, file, fn)
 	if len(listing) == 0 || len(rwa) == 0 {
-		t.Fatalf("parsed no calls (listing=%v rwa=%v) — the guard is not reading what it thinks", listing, rwa)
+		t.Fatalf("parsed no calls (listing=%v %s=%v) — the guard is not reading what it thinks", listing, fn, rwa)
 	}
 
 	want := make([]string, 0, len(listing))
@@ -69,10 +92,10 @@ func TestRWAListingPipelineMatchesTheAssetsListing(t *testing.T) {
 		i += j + 1
 	}
 	if len(missing) > 0 {
-		t.Errorf("rwaListingRows omits %v from the /v1/assets pipeline (or runs it out of order).\n"+
+		t.Errorf("%s omits %v from the /v1/assets pipeline (or runs it out of order).\n"+
 			"required: %v\nrwa:      %v\n"+
 			"Add the call, or record the divergence in listingOnlyPipelineCalls with its reason.",
-			missing, want, rwa)
+			fn, missing, want, rwa)
 	}
 
 	for call, reason := range listingOnlyPipelineCalls {

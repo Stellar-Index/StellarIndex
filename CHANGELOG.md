@@ -17,6 +17,95 @@ against.
 
 ### Added
 
+- **api,web:** `GET /v1/rwa/assets` admits contract-issued real-world
+  assets. New membership arm keyed on the contract address, new
+  `contract_id` / `symbol` on a row, and a second `funnel` arm
+  accounting for the population it narrows (#352).
+
+  The surface reported $3,879,296.97 across six assets. The public
+  Stellar RWA dashboard reports $4.03B across sixteen issuers. Every one
+  of those sixteen is already in the curated account directory and
+  passes requirement R3 today — and thirteen of them were invisible,
+  because R1 admitted classic `(code, issuer)` assets only and their
+  Stellar presence is contract-issued. Measured on r1 2026-09-10:
+  Franklin Templeton's two addresses, Spiko, Mercado Bitcoin, Cometum
+  and fourteen of WisdomTree's eighteen all return zero rows in
+  `classic_assets`.
+
+  The exclusion ran deeper than the requirement. `issuers` is written
+  from exactly one call site — `registerIssuerSeen`, on classic-asset
+  registration — so an entity issuing only contract tokens never gets a
+  row, never gets a SEP-1 fetch, and never becomes a candidate.
+  `sep1-refresh -issuer` returns `sql: no rows in result set` for both
+  Franklin Templeton and Spiko. They were not refused by R1; they were
+  never collected. Widening that table is not the fix: its key is a
+  G-account, a contract address is not one, and a SEP-1 fetch for a bare
+  contract has nothing to bind to. So the contract arm draws its
+  population from `account_directory` instead — the only table tying a
+  real-world entity to a Stellar address without passing through classic
+  issuance, and one whose CHECK has always accepted both strkey forms.
+
+  Requirement R2 is structurally impossible for a contract, so C2
+  requires the curated third-party directory to name THE EXACT CONTRACT
+  ADDRESS. Not the entity, not a domain, not an account that might have
+  deployed it. That is not a relaxation. R2 costs one domain
+  registration to satisfy: nineteen distinct issuers publish a token
+  called BENJI in this lake and every one is an impersonator, each
+  serving a valid, correctly-bound `stellar.toml` from
+  `franklintempleton.co.com`, `benji.qlumen.co`, `stellar.dtcc.network`.
+  Not one is `franklintempleton.com`. R2 admitted all of them; R3 kept
+  them out. Defeating C2 instead means landing a reviewed change in a
+  third party's published directory — and, unlike account recognition,
+  it grants exactly one address rather than every token that account
+  will ever issue.
+
+  C3 uses a NARROWER tag vocabulary than the account arm: `issuer`,
+  `anchor`, `custodian`, and not `defi`, `exchange` or `sdf`. On an
+  account those describe an entity; on a contract address they describe
+  the AMM pools and routers the upstream set carries under them, and
+  admitting those would put liquidity-pool shares on a page asserting
+  real-world backing. C4 keeps R4's job by an in-repo curated binding or
+  by an ADR-0028 oracle feed on the token's on-chain symbol — read only
+  AFTER an independent party named the address, so it answers which
+  instrument and never whether.
+
+  The curated contract set ships EMPTY. Populating it needs addresses
+  from a primary source; an address inferred from a dashboard is a
+  fabricated identity for a financial instrument. It refuses everything,
+  which is correct for a set with no verified members, and it is served
+  in full as `definition.bound_contract_instruments` so the rule is
+  auditable rather than inferred.
+
+  New `unreached_entities[]` names the recognised, unflagged issuing
+  entities this index holds no token for at all — the thirteen. They are
+  not refused by any requirement; there is nothing to refuse. Before
+  this, a reader could not tell such an entity from one that does not
+  exist.
+
+  Three defects fell out of building it. Both existing reads of a
+  Soroban asset gate on a 24h volume rollup (60 of ~117k contracts on
+  r1), so a held-not-traded fund was absent from the catalogue entirely
+  — a membership decision would have been followed by a join that
+  dropped it silently. `assetDetailFromAssetRow` hardcodes 7 decimals,
+  and market cap divides supply by 10^decimals, so a 6-decimal token
+  would have published a tenth of its capitalisation. And
+  `fillIssuerDirectoryTags` keys on the issuer G-address and skips every
+  row without one, so a contract asset has never been subject to the
+  directory scam gate on any surface — indefensible on a page that
+  admits a contract on the strength of a directory entry.
+
+  The dollar figure does not reach $4.03B, and widening the definition
+  further is not what would close it: we publish supply times an
+  OBSERVED MARKET PRICE, while the dashboard publishes supply times net
+  asset value. Most of these tokens are held rather than traded and have
+  no price this platform will publish, so they are served `unpriced` and
+  contribute nothing. The per-issuer account of that difference, and the
+  four levers that would close it, are in
+  `docs/methodology/rwa-coverage-reconciliation.md`. Admitting
+  self-declared contract tokens would have reported a number far closer
+  to the target and would have published nineteen BENJI impersonators as
+  real-world assets holding hundreds of millions of dollars.
+
 - **api,web:** `GET /v1/rwa/assets` accounts for the population it
   narrowed from. New `funnel` object: every stage from the issuer
   accounts that could carry a SEP-1 attestation down to the rows served,

@@ -6373,11 +6373,66 @@ export interface components {
              */
             refused: components["schemas"]["RWARefusal"][];
             funnel: components["schemas"]["RWAFunnel"];
+            /**
+             * @description Entities the curated third-party directory recognises as
+             *     issuing or custodying value, carrying no scam-class tag, for
+             *     which this index holds NO Stellar token at all.
+             *
+             *     They are not refused by any requirement — there is nothing to
+             *     refuse, because no token of theirs was ever collected. The
+             *     `issuers` table the classic arm walks is written only when a
+             *     CLASSIC asset is registered, so an entity whose Stellar
+             *     presence is contract-issued never enters that population.
+             *     Measured on 2026-09-10, Franklin Templeton and Spiko are both
+             *     in this position: recognised, correct domains, and absent.
+             *
+             *     Serving them admits nothing. It exists so a reader can tell a
+             *     recognised entity this surface cannot see from one that does
+             *     not exist. The exact count is the funnel's
+             *     `directory_recognised_issuing_accounts` stage; this list is a
+             *     bounded sample of it, ordered by address.
+             */
+            unreached_entities: components["schemas"]["RWAUnreachedEntity"][];
         };
-        /** @description The membership rule, machine-readable, as applied to this response. */
+        /** @description One recognised issuing entity this index holds no token for. */
+        RWAUnreachedEntity: {
+            /** @description The G-account the curated directory names. Served so an operator can act on it directly. */
+            address: string;
+            /** @description The curated third party's own display label for the entity. */
+            name?: string;
+            /** @description The domain the curated directory attributes to the entity. */
+            domain?: string;
+            /** @description The curated tags on the entry. */
+            tags?: string[];
+        };
+        /**
+         * @description The membership rule, machine-readable, as applied to this
+         *     response. Two arms are served because an asset qualifies under
+         *     one or the other and never both: `requirements` for a classic
+         *     `(code, issuer)` asset, `contract_requirements` for a
+         *     contract-issued token.
+         */
         RWADefinition: {
-            /** @description The four conjunctive requirements, in evaluation order. */
+            /** @description The four conjunctive requirements of the CLASSIC arm, in evaluation order. */
             requirements: string[];
+            /**
+             * @description The four conjunctive requirements of the CONTRACT arm, in
+             *     evaluation order.
+             *
+             *     A separate list rather than a widening of the classic one,
+             *     because the second requirement differs in kind. A contract
+             *     has no `(code, issuer)` pair for a SEP-1 `[[CURRENCIES]]`
+             *     entry to bind to, so an independent party naming the exact
+             *     contract address takes the place of the issuer naming its own
+             *     asset. That substitution is not a relaxation: satisfying the
+             *     SEP-1 requirement costs one domain registration — measured,
+             *     19 distinct issuers publish a token called `BENJI` and every
+             *     one is an impersonator — while satisfying the contract one
+             *     means landing a reviewed change in a third party's published
+             *     directory, and it grants exactly one address rather than
+             *     every token an account will ever issue.
+             */
+            contract_requirements: string[];
             /**
              * @description The CLOSED SEP-1 `anchor_asset_type` vocabulary that admits
              *     an asset on the declaration basis. `fiat` is excluded (a
@@ -6386,8 +6441,18 @@ export interface components {
              *     them is how a closed set stops being closed.
              */
             anchor_classes: string[];
-            /** @description Curated-directory tags that count as an independent party recognising the account as an issuing entity. */
+            /** @description Curated-directory tags that count as an independent party recognising the ACCOUNT as an issuing entity. */
             recognition_tags: string[];
+            /**
+             * @description The same vocabulary for a CONTRACT address, and deliberately
+             *     narrower. The upstream directory tags AMM pools and protocol
+             *     routers `defi` and `exchange`; on an account those describe
+             *     an entity that might issue a real-world instrument, on a
+             *     contract address they describe infrastructure that issues
+             *     nothing. Served so the narrowing is auditable rather than
+             *     implied.
+             */
+            contract_recognition_tags: string[];
             /** @description Curated-directory tags that exclude an issuer outright. Same vocabulary the price-withholding gate reads. */
             scam_flag_tags: string[];
             /**
@@ -6411,8 +6476,32 @@ export interface components {
              *     which rows carry a figure today.
              */
             bound_instruments: components["schemas"]["RWABoundInstrument"][];
+            /**
+             * @description The CURATED set of contract addresses this surface will admit
+             *     on the curated basis, and the real-world instrument each is
+             *     bound to.
+             *
+             *     EMPTY is a meaningful answer, not a missing one: it says no
+             *     contract has yet cleared the evidence bar for a curated
+             *     binding, so the only contracts admissible today are those
+             *     whose on-chain symbol an independent oracle already prices.
+             *     Adding an entry is a code change, review-gated the same way
+             *     the audited wasm-hash set is, and requires the address from a
+             *     primary source — an address inferred from a dashboard is a
+             *     fabricated identity for a financial instrument.
+             */
+            bound_contract_instruments: components["schemas"]["RWABoundContractInstrument"][];
             /** @description The definition in prose, with the evidence behind each requirement. */
             documentation_url: string;
+        };
+        /** @description One curated contract-to-instrument binding. */
+        RWABoundContractInstrument: {
+            /** @description The exact C-strkey. Matched exactly — a strkey is CRC-checked and there is no near miss worth accepting. */
+            contract_id: string;
+            /** @description The real-world instrument, named specifically enough to be falsifiable. */
+            instrument: string;
+            /** @description The instrument's class, from the same closed `anchor_classes` vocabulary the SEP-1 arm normalises to. */
+            class: string;
         };
         /**
          * @description Aggregate over the served set. `market_cap_usd` is the EXACT sum
@@ -6470,11 +6559,36 @@ export interface components {
          *     its valuation or the reason there is none.
          */
         RWAAsset: {
-            /** @description Canonical CODE-ISSUER identity — the same id /assets/{id} answers for. */
+            /**
+             * @description Canonical identity — the same id `/assets/{id}` answers for.
+             *     `CODE-ISSUER` on a classic row, the bare C-strkey on a
+             *     contract-issued one.
+             */
             asset_id: string;
+            /** @description Asset code. EMPTY on a contract-issued row, which has none. */
             code: string;
-            /** @description Issuer G-address. Identity is (code, issuer); the code alone never identifies an asset here. */
+            /**
+             * @description Issuer G-address. Identity is (code, issuer); the code alone
+             *     never identifies an asset here. EMPTY on a contract-issued
+             *     row, which has no issuer account — `contract_id` carries its
+             *     whole identity instead. Exactly one of (code, issuer) and
+             *     contract_id is populated on every row.
+             */
             issuer: string;
+            /**
+             * @description The C-strkey of a contract-issued member, and the whole of
+             *     its identity. Absent on a classic row.
+             */
+            contract_id?: string;
+            /**
+             * @description The token symbol the CONTRACT declares in its own on-chain
+             *     metadata. Contract-authored display text, served under its
+             *     own name so it is not mistaken for identity: two contracts
+             *     may declare the same symbol and they are two different
+             *     assets. Absent on a classic row, and on a contract whose
+             *     instance metadata is unreadable.
+             */
+            symbol?: string;
             /** @description URL-safe slug where one exists. */
             slug?: string;
             /** @description [[CURRENCIES]] name from the issuer-bound SEP-1 entry. Issuer-authored display text. */
@@ -6486,18 +6600,31 @@ export interface components {
             /** @description Curated third-party tags on the issuer G-address. */
             issuer_directory_tags?: string[];
             /**
-             * @description Which requirement-4 arm admitted this asset.
+             * @description Which final requirement admitted this asset. The first two
+             *     belong to the classic arm, the last two to the contract arm.
+             *
              *     `sep1_anchor_declaration` — the issuer-bound SEP-1 entry
              *     declares a real-world `anchor_asset_type`.
              *     `oracle_rwa_feed` — an independent oracle publishes a
              *     net-asset-value feed for an instrument of this code
              *     (ADR-0028); keyed on the code, so admissible only because
              *     requirement 3 already bound the issuer.
+             *     `curated_contract_instrument` — an in-repo curated entry
+             *     binds this exact contract address to a named instrument.
+             *     `contract_oracle_rwa_feed` — an oracle publishes a feed for
+             *     an instrument of the contract's on-chain symbol. The symbol
+             *     is contract-authored, so this is admissible for the same
+             *     reason its classic twin is: an independent party has already
+             *     named the exact address. It answers WHICH instrument, never
+             *     WHETHER the address is vouched for.
              * @enum {string}
              */
-            basis: "sep1_anchor_declaration" | "oracle_rwa_feed";
+            basis: "sep1_anchor_declaration" | "oracle_rwa_feed" | "curated_contract_instrument" | "contract_oracle_rwa_feed";
             /**
-             * @description Declared class. Present only under `sep1_anchor_declaration` — an oracle feed names an instrument, not its class, and none is invented.
+             * @description Declared class. Present under `sep1_anchor_declaration` and
+             *     `curated_contract_instrument`. Absent under either oracle
+             *     basis — a feed names an instrument, not its class, and none
+             *     is invented.
              * @enum {string}
              */
             anchor_class?: "stock" | "bond" | "commodity" | "realestate";
@@ -6757,10 +6884,17 @@ export interface components {
          *     requirement 4 pre-filtered out before requirement 3 was
          *     evaluated for them — the one bucket here that is not strictly in
          *     R1→R4 order, which is why `funnel` keeps it as its own stage.
+         *
+         *     Both arms report into one tally. The reason vocabularies are
+         *     disjoint, so a reader can still tell which rule turned a
+         *     candidate away, and one tally keeps this a statement about the
+         *     whole surface rather than about whichever arm was read. On the
+         *     contract side, C1 to C3 are likewise decided by the directory
+         *     scan and reported in `funnel`.
          */
         RWARefusal: {
             /** @enum {string} */
-            reason: "not_a_classic_asset" | "no_issuer_bound_sep1_entry" | "issuer_scam_flagged" | "issuer_not_independently_recognised" | "no_real_world_instrument_basis";
+            reason: "not_a_classic_asset" | "no_issuer_bound_sep1_entry" | "issuer_scam_flagged" | "issuer_not_independently_recognised" | "no_real_world_instrument_basis" | "not_a_contract_address" | "contract_not_named_in_directory" | "contract_scam_flagged" | "contract_named_without_issuing_tag" | "no_real_world_instrument_basis_for_contract";
             assets: number;
         };
         /**
@@ -6799,7 +6933,28 @@ export interface components {
         /** @description One population on the way to the served set. */
         RWAFunnelStage: {
             /**
+             * @description Which membership arm this stage belongs to: `classic` for the
+             *     SEP-1 attestation walk, `contract` for the curated directory
+             *     walk.
+             *
+             *     The two arms narrow DIFFERENT populations from different
+             *     roots and meet only at the served set, so the stage
+             *     arithmetic reconciles WITHIN an arm and never across the
+             *     boundary between them. The `contract` arm exists because the
+             *     `issuers` table the classic arm walks is written only when a
+             *     CLASSIC asset is registered — an entity whose Stellar
+             *     presence is contract-issued is absent from that population
+             *     entirely rather than refused by any requirement.
+             *
+             *     The arm is absent from `stages` when it was not measured;
+             *     `basis` says so rather than serving a narrowing of zeros.
+             * @enum {string}
+             */
+            arm: "classic" | "contract";
+            /**
              * @description The population.
+             *
+             *     CLASSIC arm:
              *
              *     `issuers_with_home_domain` — every issuer account carrying an
              *     on-chain `home_domain`, i.e. every account a SEP-1
@@ -6816,20 +6971,47 @@ export interface components {
              *     `candidate_assets_evaluated` — the bound declarations put to
              *     the full R1→R4 evaluation.
              *     `assets_admitted` — those the definition admitted.
-             *     `assets_served` — the rows in `assets`.
+             *     `assets_served` — the classic rows in `assets`.
+             *
+             *     CONTRACT arm:
+             *
+             *     `curated_directory_entries` — every row in the curated
+             *     third-party directory, accounts and contracts together.
+             *     `directory_contract_addresses` — those whose address is a
+             *     contract. An account address names an ENTITY that may issue
+             *     many tokens or none; a contract address names one token.
+             *     `directory_recognised_contracts` — contracts named with an
+             *     issuing-class tag and no scam-class tag. Requirements C2 and
+             *     C3 are satisfied at this line.
+             *     `contract_candidates_evaluated` — those put to the full
+             *     C1→C4 evaluation.
+             *     `contract_assets_admitted` — those the definition admitted.
+             *     `contract_assets_served` — the contract rows in `assets`.
+             *     `directory_recognised_issuing_accounts` — a TERMINAL census,
+             *     not part of the narrowing: recognised, unflagged issuing
+             *     entities this index holds no token for. It counts rows the
+             *     first stage already dropped, so it takes no part in the
+             *     arithmetic; folding it in would make the funnel close by
+             *     adding a number that measures something else.
+             *     `unreached_entities` names a bounded sample of them.
              * @enum {string}
              */
-            stage: "issuers_with_home_domain" | "issuers_with_sep1_attestation" | "issuers_declaring_currencies" | "sep1_currency_entries" | "issuer_bound_entries" | "candidate_assets_evaluated" | "assets_admitted" | "assets_served";
+            stage: "issuers_with_home_domain" | "issuers_with_sep1_attestation" | "issuers_declaring_currencies" | "sep1_currency_entries" | "issuer_bound_entries" | "candidate_assets_evaluated" | "assets_admitted" | "assets_served" | "curated_directory_entries" | "directory_contract_addresses" | "directory_recognised_contracts" | "contract_candidates_evaluated" | "contract_assets_admitted" | "contract_assets_served" | "directory_recognised_issuing_accounts";
             /**
              * @description What is counted at this stage. The unit CHANGES down the
              *     funnel, and comparing two counts of different units is the
-             *     easiest way to misread it. The single transition where no
-             *     subtraction relates the two counts —
-             *     `issuers_declaring_currencies` to `sep1_currency_entries` —
-             *     carries no drops for exactly that reason.
+             *     easiest way to misread it.
+             *
+             *     One transition carries no drops because no subtraction
+             *     relates its two counts: `issuers_declaring_currencies` to
+             *     `sep1_currency_entries`, where one issuer publishes many
+             *     declarations. Every other change of unit is a relabelling of
+             *     a population that maps one to one — a bound declaration IS
+             *     the candidate asset it names, and a contract IS the asset it
+             *     issues — and still reconciles.
              * @enum {string}
              */
-            unit: "issuer_accounts" | "sep1_currency_declarations" | "assets";
+            unit: "issuer_accounts" | "sep1_currency_declarations" | "assets" | "directory_addresses" | "contracts";
             /** @description Size of the population at this stage. */
             count: number;
             /**
@@ -6868,11 +7050,34 @@ export interface components {
              *     asset list filled one read, so a member in the unread tail
              *     could not be found. It counts issuers, not assets, so it is
              *     deliberately NOT a term in the asset arithmetic.
+             *     CONTRACT arm:
+             *
+             *     `directory_entry_names_an_account` — the curated row names an
+             *     entity, not a token. It is the scope of the rule rather than
+             *     a gap: an account address cannot be valued, because we hold
+             *     no link from an account to the contracts it deployed. The
+             *     recognised entities behind these rows are not lost with them
+             *     — see `directory_recognised_issuing_accounts`.
+             *     `contract_scam_flagged` — requirement C3, on the same
+             *     vocabulary the price-withholding gate reads.
+             *     `contract_named_without_issuing_tag` — the directory names
+             *     the contract but under a tag that vouches for
+             *     infrastructure rather than issuance. The largest contract
+             *     bucket by construction, and the one to watch if the
+             *     vocabulary proves too narrow.
+             *     `no_real_world_instrument_basis_for_contract` — requirement
+             *     C4: neither a curated binding nor an oracle-priced symbol.
+             *     `duplicate_directory_entry_for_contract` — the same contract
+             *     named twice. The address is the upstream primary key, so
+             *     this should be zero; it is counted rather than assumed.
+             *     `over_contract_scan_cap` — the rebuild's contract cap bound
+             *     the set.
+             *
              *     The remaining values are the requirement refusals, matching
              *     `refused[]`.
              * @enum {string}
              */
-            reason: "sep1_attestation_never_fetched" | "sep1_payload_unreadable" | "sep1_declares_no_currencies" | "entry_declares_no_asset_code" | "entry_declares_no_issuer" | "entry_declares_another_issuer" | "not_a_classic_asset" | "no_issuer_bound_sep1_entry" | "issuer_scam_flagged" | "issuer_not_independently_recognised" | "no_real_world_instrument_basis" | "duplicate_declaration_of_the_same_asset" | "over_issuer_cap" | "admitted_but_never_observed_on_chain" | "issuer_asset_page_truncated";
+            reason: "sep1_attestation_never_fetched" | "sep1_payload_unreadable" | "sep1_declares_no_currencies" | "entry_declares_no_asset_code" | "entry_declares_no_issuer" | "entry_declares_another_issuer" | "not_a_classic_asset" | "no_issuer_bound_sep1_entry" | "issuer_scam_flagged" | "issuer_not_independently_recognised" | "no_real_world_instrument_basis" | "duplicate_declaration_of_the_same_asset" | "over_issuer_cap" | "admitted_but_never_observed_on_chain" | "directory_entry_names_an_account" | "contract_scam_flagged" | "contract_named_without_issuing_tag" | "no_real_world_instrument_basis_for_contract" | "duplicate_directory_entry_for_contract" | "over_contract_scan_cap" | "issuer_asset_page_truncated";
             count: number;
             /**
              * @description Who can move this number. `operator` — a fetch nobody has

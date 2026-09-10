@@ -1060,6 +1060,11 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 	// reader through narrower seams, same nil-degrade posture.
 	var lakeWatermarkReader v1.LakeWatermarkReader
 	var tokenDecimalsReader v1.TokenDecimalsReader
+	// tokenSymbolReader resolves a token contract's on-chain SEP-41 symbol
+	// from the same captured contract-instance METADATA. Read ONLY by the
+	// RWA contract arm, and only after the curated directory has named that
+	// exact contract. Same concrete lake reader, same nil-degrade posture.
+	var tokenSymbolReader v1.TokenSymbolReader
 	// soroswapTVLReserves / phoenixTVLReserves / cometTVLReserves are
 	// the SAME concrete lake reader through the narrow current-state
 	// seams the DEX TVL snapshot consumes. Same nil-degrade posture
@@ -1088,6 +1093,7 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 			protocolActivityReader = er
 			lakeWatermarkReader = er
 			tokenDecimalsReader = er
+			tokenSymbolReader = er
 			soroswapTVLReserves = er
 			phoenixTVLReserves = er
 			cometTVLReserves = er
@@ -1337,14 +1343,21 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 		// Soroban-native contract assets, which cannot appear in
 		// classic_assets. Gated on BOTH legs by the same substanceGate
 		// above, so it widens coverage without lowering the bar.
-		TransitivePricer:   store,
-		Scam:               scamGate,
-		Confidence:         redisConfidenceLooker{rdb: rdb},
-		Triangulated:       redisTriangulatedLooker{rdb: rdb},
-		Freeze:             freezeLooker,
-		Supply:             storeSupplyLooker{s: store},
-		TokenSupply:        tokenSupplyReader,
-		TokenDecimals:      tokenDecimalsReader,
+		TransitivePricer: store,
+		Scam:             scamGate,
+		Confidence:       redisConfidenceLooker{rdb: rdb},
+		Triangulated:     redisTriangulatedLooker{rdb: rdb},
+		Freeze:           freezeLooker,
+		Supply:           storeSupplyLooker{s: store},
+		TokenSupply:      tokenSupplyReader,
+		TokenDecimals:    tokenDecimalsReader,
+		TokenSymbol:      tokenSymbolReader,
+		// The contract arm of /v1/rwa/assets. Both seams are the SAME
+		// Postgres store the classic arm already reads its curated
+		// directory through — the contract arm draws a different
+		// population from it, not a different trust source.
+		RWAContracts:       store,
+		ContractCatalogue:  store,
 		LakeWatermark:      lakeWatermarkReader,
 		Explorer:           explorerReader,
 		Volume:             storeVolumeReader{s: store},

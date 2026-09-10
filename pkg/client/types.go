@@ -1363,6 +1363,22 @@ type RWAAssetsView struct {
 	// Funnel accounts for the entire population the served set was
 	// narrowed from.
 	Funnel RWAFunnel `json:"funnel"`
+	// UnreachedEntities names curated-directory entities recognised as
+	// issuing or custodying value for which this index holds NO Stellar
+	// token at all. They are not refused by any requirement — no token
+	// of theirs was ever collected, so none was ever evaluated. Served
+	// so a consumer can tell a recognised entity the index cannot see
+	// from one that does not exist.
+	UnreachedEntities []RWAUnreachedEntity `json:"unreached_entities"`
+}
+
+// RWAUnreachedEntity is one recognised issuing entity the index holds
+// no token for. The labels are the curated third party's own.
+type RWAUnreachedEntity struct {
+	Address string   `json:"address"`
+	Name    string   `json:"name,omitempty"`
+	Domain  string   `json:"domain,omitempty"`
+	Tags    []string `json:"tags,omitempty"`
 }
 
 // RWAFunnel is the complete narrowing behind the served set, from every
@@ -1384,7 +1400,13 @@ type RWAFunnel struct {
 // changes down the funnel (issuer accounts, then the SEP-1
 // declarations they publish, then assets), so two counts are
 // comparable only when their Units match.
+//
+// Arm is "classic" (the SEP-1 attestation walk) or "contract" (the
+// curated directory walk). The two arms narrow different populations
+// from different roots and meet only at the served set, so the
+// arithmetic reconciles WITHIN an arm and never across the boundary.
 type RWAFunnelStage struct {
+	Arm     string          `json:"arm"`
 	Stage   string          `json:"stage"`
 	Unit    string          `json:"unit"`
 	Count   int             `json:"count"`
@@ -1401,12 +1423,22 @@ type RWAFunnelDrop struct {
 }
 
 // RWADefinition is the membership rule as applied to the response.
+//
+// Two arms, because an asset qualifies under one or the other and never
+// both: Requirements for a classic (code, issuer) asset,
+// ContractRequirements for a contract-issued token.
 type RWADefinition struct {
-	Requirements     []string `json:"requirements"`
-	AnchorClasses    []string `json:"anchor_classes"`
-	RecognitionTags  []string `json:"recognition_tags"`
-	ScamFlagTags     []string `json:"scam_flag_tags"`
-	DocumentationURL string   `json:"documentation_url"`
+	Requirements         []string `json:"requirements"`
+	ContractRequirements []string `json:"contract_requirements"`
+	AnchorClasses        []string `json:"anchor_classes"`
+	RecognitionTags      []string `json:"recognition_tags"`
+	// ContractRecognitionTags is the same vocabulary for a CONTRACT
+	// address, and is narrower: the upstream directory tags AMM pools
+	// and routers `defi` and `exchange`, which on a contract address
+	// describe infrastructure that issues nothing.
+	ContractRecognitionTags []string `json:"contract_recognition_tags"`
+	ScamFlagTags            []string `json:"scam_flag_tags"`
+	DocumentationURL        string   `json:"documentation_url"`
 }
 
 // RWASummary aggregates the served set. MarketCapUSD is nil when no
@@ -1437,9 +1469,19 @@ type RWAValuation struct {
 // RWAAsset is one member of the set, with the evidence that admitted
 // it. Identity is (Code, Issuer); Code alone identifies nothing.
 type RWAAsset struct {
-	AssetID             string       `json:"asset_id"`
-	Code                string       `json:"code"`
-	Issuer              string       `json:"issuer"`
+	AssetID string `json:"asset_id"`
+	// Code and Issuer are the classic identity. BOTH are empty on a
+	// contract-issued row, which carries ContractID instead: exactly one
+	// of (Code, Issuer) and ContractID is populated on every row.
+	Code   string `json:"code"`
+	Issuer string `json:"issuer"`
+	// ContractID is the C-strkey of a contract-issued member, and the
+	// whole of its identity.
+	ContractID string `json:"contract_id,omitempty"`
+	// Symbol is the token symbol the CONTRACT declares on chain.
+	// Contract-authored display text, never identity — two contracts may
+	// declare the same symbol and they are different assets.
+	Symbol              string       `json:"symbol,omitempty"`
 	Slug                string       `json:"slug,omitempty"`
 	Name                string       `json:"name,omitempty"`
 	HomeDomain          string       `json:"home_domain,omitempty"`

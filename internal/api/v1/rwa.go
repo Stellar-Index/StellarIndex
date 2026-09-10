@@ -103,6 +103,38 @@ type RWAAssetsView struct {
 	// Funnel accounts for the ENTIRE population this set was narrowed
 	// from, stage by stage, with a named reason on every drop.
 	Funnel RWAFunnel `json:"funnel"`
+	// UnreachedEntities names curated-directory entities that a third
+	// party recognises as issuing or custodying value, that carry no
+	// scam-class tag, and for which this index holds NO Stellar token at
+	// all — no classic asset ever observed, and no directory entry
+	// naming a contract of theirs.
+	//
+	// They are not refused by any requirement. There is nothing to
+	// refuse: no token of theirs was ever collected, so none was ever
+	// evaluated. Measured on r1 2026-09-10, Franklin Templeton and Spiko
+	// are both in this position — recognised, correct domains, and
+	// absent from the issuers table entirely, because that table is
+	// populated only when a CLASSIC asset is registered.
+	//
+	// Serving them is a coverage statement and admits nothing. It exists
+	// so a reader can tell a recognised entity this surface cannot see
+	// from one that does not exist — the same distinction the funnel
+	// draws for candidates, one level further out. The count is exact
+	// (funnel stage `directory_recognised_issuing_accounts`); this list
+	// is a bounded sample of it.
+	UnreachedEntities []RWAUnreachedEntity `json:"unreached_entities"`
+}
+
+// RWAUnreachedEntity is one recognised issuing entity this index holds
+// no token for. The name, domain and tags are the curated third party's
+// own labels, already served on every asset row as issuer_directory_*.
+type RWAUnreachedEntity struct {
+	// Address is the G-account the directory names. It is served so an
+	// operator can act on it without a database session.
+	Address string   `json:"address"`
+	Name    string   `json:"name,omitempty"`
+	Domain  string   `json:"domain,omitempty"`
+	Tags    []string `json:"tags,omitempty"`
 }
 
 // RWAFunnel is the complete narrowing from every issuer that could
@@ -131,6 +163,18 @@ type RWAFunnel struct {
 
 // RWAFunnelStage is one population on the way to the served set.
 type RWAFunnelStage struct {
+	// Arm names which membership arm this stage belongs to: `classic`
+	// for the SEP-1 attestation walk, `contract` for the curated
+	// directory walk.
+	//
+	// The two arms narrow DIFFERENT populations from different roots and
+	// meet only at the served set, so the stage arithmetic reconciles
+	// WITHIN an arm and never across the boundary between them. Without
+	// this field a reader would try to subtract the last classic stage
+	// from the first contract one and find no relation, which is exactly
+	// the misreading the per-stage `unit` was added to prevent one level
+	// down.
+	Arm string `json:"arm"`
 	// Stage names the population.
 	Stage string `json:"stage"`
 	// Unit names what is being counted at this stage: the unit changes
@@ -192,16 +236,61 @@ const (
 	rwaDropIssuerPageTruncate   = "issuer_asset_page_truncated"
 )
 
+// Funnel arms.
+const (
+	rwaArmClassic  = "classic"
+	rwaArmContract = "contract"
+)
+
+// Contract-arm funnel stages, drops and units. Same rule as above: a
+// wire vocabulary, spelled once.
+const (
+	rwaUnitDirectoryAddresses = "directory_addresses"
+	rwaUnitContracts          = "contracts"
+
+	rwaStageDirectoryEntries      = "curated_directory_entries"
+	rwaStageDirectoryContracts    = "directory_contract_addresses"
+	rwaStageRecognisedContracts   = "directory_recognised_contracts"
+	rwaStageContractCandidates    = "contract_candidates_evaluated"
+	rwaStageContractsAdmitted     = "contract_assets_admitted"
+	rwaStageContractsServed       = "contract_assets_served"
+	rwaStageRecognisedIssuingAcct = "directory_recognised_issuing_accounts"
+
+	rwaDropDirectoryNamesAnAccount = "directory_entry_names_an_account"
+	rwaDropOverContractScanCap     = "over_contract_scan_cap"
+	rwaDropDuplicateContractEntry  = "duplicate_directory_entry_for_contract"
+)
+
 // RWADefinition is the machine-readable membership rule.
 type RWADefinition struct {
-	// Requirements names the four conjunctive requirements in order.
+	// Requirements names the four conjunctive requirements of the
+	// CLASSIC arm, in order.
 	Requirements []string `json:"requirements"`
+	// ContractRequirements names the four conjunctive requirements of
+	// the CONTRACT arm, in order.
+	//
+	// A separate list, not a widening of the one above, because the
+	// second requirement differs in kind rather than in strictness: a
+	// contract has no (code, issuer) pair for a SEP-1 [[CURRENCIES]]
+	// entry to bind to, so an independent party naming the exact
+	// contract address takes the place of the issuer naming its own
+	// asset. Both lists are served so a consumer can see which rule
+	// admitted which row rather than inferring it from the fields
+	// present.
+	ContractRequirements []string `json:"contract_requirements"`
 	// AnchorClasses is the closed SEP-1 anchor_asset_type vocabulary
 	// that admits an asset on the declaration basis.
 	AnchorClasses []string `json:"anchor_classes"`
 	// RecognitionTags is the curated-directory vocabulary that counts
 	// as independent recognition of the issuer account.
 	RecognitionTags []string `json:"recognition_tags"`
+	// ContractRecognitionTags is the same vocabulary for a CONTRACT
+	// address, and is deliberately narrower. The upstream directory tags
+	// AMM pools and protocol routers `defi` and `exchange`; on an
+	// account those describe an entity, on a contract address they
+	// describe a piece of infrastructure that issues nothing. Served so
+	// the narrowing is auditable rather than implied.
+	ContractRecognitionTags []string `json:"contract_recognition_tags"`
 	// ScamFlagTags is the vocabulary that excludes an issuer outright.
 	ScamFlagTags []string `json:"scam_flag_tags"`
 	// BoundInstruments is the CURATED set of (code, issuer) pairs this
@@ -216,8 +305,42 @@ type RWADefinition struct {
 	// today. A pair absent from it gets no reference, whatever it is
 	// called.
 	BoundInstruments []RWABoundInstrument `json:"bound_instruments"`
+	// BoundContractInstruments is the CURATED set of contract addresses
+	// this surface will admit on the curated basis, and the real-world
+	// instrument each is bound to.
+	//
+	// Served in full, and EMPTY is a meaningful answer rather than a
+	// missing one: it says no contract has yet cleared the evidence bar
+	// for a curated binding, so the only contracts that can be admitted
+	// are those whose on-chain symbol an independent oracle already
+	// prices. A consumer reads the rule from this list rather than
+	// inferring it from whichever rows appear today.
+	BoundContractInstruments []RWABoundContractInstrument `json:"bound_contract_instruments"`
 	// DocumentationURL points at the prose statement of the rule.
 	DocumentationURL string `json:"documentation_url"`
+}
+
+// RWABoundContractInstrument is one curated binding: an exact contract
+// address, the real-world instrument it holds, and that instrument's
+// closed-vocabulary class.
+type RWABoundContractInstrument struct {
+	ContractID string `json:"contract_id"`
+	Instrument string `json:"instrument"`
+	Class      string `json:"class"`
+}
+
+// rwaBoundContractInstruments projects the curated contract set onto the
+// wire type. The set itself lives in internal/rwa, where the evidence
+// bar for an entry is recorded beside it.
+func rwaBoundContractInstruments() []RWABoundContractInstrument {
+	src := rwa.ContractInstrumentBindings()
+	out := make([]RWABoundContractInstrument, 0, len(src))
+	for _, b := range src {
+		out = append(out, RWABoundContractInstrument{
+			ContractID: b.ContractID, Instrument: b.Instrument, Class: b.Class,
+		})
+	}
+	return out
 }
 
 // RWABoundInstrument is one curated binding: the exact Stellar
@@ -321,9 +444,25 @@ type RWAValuation struct {
 // RWAAsset is one member of the set.
 type RWAAsset struct {
 	AssetID string `json:"asset_id"`
-	Code    string `json:"code"`
-	Issuer  string `json:"issuer"`
-	Slug    string `json:"slug,omitempty"`
+	// Code and Issuer are the classic (code, issuer) identity. BOTH are
+	// empty on a contract-issued row, which carries ContractID instead —
+	// a contract token has no code and no issuer account, and filling
+	// either from contract metadata would put a self-declared string in
+	// the field this surface identifies assets by.
+	Code   string `json:"code"`
+	Issuer string `json:"issuer"`
+	// ContractID is the C-strkey of a contract-issued member, and the
+	// whole of its identity. Empty on a classic row. Exactly one of
+	// (Code, Issuer) and ContractID is populated on every row.
+	ContractID string `json:"contract_id,omitempty"`
+	// Symbol is the token symbol the CONTRACT declares in its on-chain
+	// metadata. Contract-authored display text, served under its own
+	// name so a reader can see it is metadata rather than identity: two
+	// contracts may declare the same symbol and they are two different
+	// assets. Empty on a classic row and on a contract with no readable
+	// metadata.
+	Symbol string `json:"symbol,omitempty"`
+	Slug   string `json:"slug,omitempty"`
 	// Name is the [[CURRENCIES]] name from the issuer-bound SEP-1
 	// entry. Issuer-authored display text.
 	Name string `json:"name,omitempty"`
@@ -433,6 +572,25 @@ type rwaMembership struct {
 	// available is false when no attestation reader is wired, which is
 	// a configuration statement rather than an empty population.
 	available bool
+
+	// contracts is the CONTRACT arm's admitted set — tokens with no
+	// (code, issuer) pair, drawn from a different population by a
+	// different rule (rwa_contracts.go). It is carried on the same
+	// membership value because both arms share one rebuild, one cache
+	// entry and one TTL: two caches would let the two halves of a single
+	// response come from different moments.
+	contracts []rwaContractMember
+	// contractCensus accounts for the curated-directory population that
+	// arm narrowed, including the stages upstream of rwa.QualifyContract.
+	contractCensus rwaContractCensus
+	// contractsNotObserved counts admitted contracts with no catalogue
+	// row. Recorded on the membership rather than returned beside the
+	// rows because the funnel is built from this value, and a count that
+	// travelled separately could be dropped on a path that forgot it.
+	contractsNotObserved int
+	// unreached names the recognised issuing entities this index holds
+	// no token for. It admits nothing; see RWAUnreachedEntity.
+	unreached []rwaUnreachedEntity
 }
 
 // rwaCandidateFilter keeps only the bound SEP-1 entries that could
@@ -443,13 +601,39 @@ func rwaCandidateFilter(c timescale.Sep1BoundCurrency) bool {
 	return rwa.CouldQualify(c.Code, c.AnchorAssetType)
 }
 
-// buildRWAMembership applies the definition to every issuer-bound
+// buildRWAMembership runs BOTH arms and returns the combined set.
+//
+// The arms are independent by construction: one walks SEP-1
+// attestations keyed by (code, issuer), the other walks curated
+// directory entries keyed by contract address, and neither can admit
+// what the other admits. Either may be unavailable on its own without
+// emptying the response — the funnel says which was measured — because
+// a deployment missing one reader has not learned that the other's
+// population is empty.
+//
+// Refusals from both arms land in one tally. The reason vocabularies are
+// disjoint, so a reader can still tell which rule turned a candidate
+// away, and a single tally keeps `refused[]` a statement about the whole
+// surface rather than about whichever arm a consumer happened to read.
+func (s *Server) buildRWAMembership(ctx context.Context) rwaMembership {
+	out := s.buildRWAClassicMembership(ctx)
+	contracts, unreached, census, refusals := s.buildRWAContractMembership(ctx)
+	out.contracts = contracts
+	out.unreached = unreached
+	out.contractCensus = census
+	for reason, n := range refusals {
+		out.refusals[reason] += n
+	}
+	return out
+}
+
+// buildRWAClassicMembership applies the definition to every issuer-bound
 // SEP-1 attestation and returns the admitted set.
 //
 // Order of work: attestations first (one indexed scan), then ONE batch
 // directory lookup over the candidate issuers (no N+1), then the
 // per-candidate verdict. Nothing here reads a price.
-func (s *Server) buildRWAMembership(ctx context.Context) rwaMembership {
+func (s *Server) buildRWAClassicMembership(ctx context.Context) rwaMembership {
 	out := rwaMembership{refusals: map[string]int{}}
 	reader, ok := s.sep1Cache.(Sep1BoundCurrencyReader)
 	if !ok {
@@ -510,6 +694,24 @@ func (s *Server) buildRWAMembership(ctx context.Context) rwaMembership {
 		}
 	}
 
+	s.admitClassicCandidates(&out, bound, entries)
+	return out
+}
+
+// admitClassicCandidates runs the ordered R1→R4 evaluation over the
+// bound declarations and accumulates the admitted set, the refusal
+// tally and the two structural drops onto the membership.
+//
+// Split from [Server.buildRWAClassicMembership] so the scan, the
+// directory read and the verdict loop are each readable on their own —
+// and so the verdict loop, which is the part a reviewer of the
+// definition actually needs to read, is not buried under two pages of
+// read-error handling.
+func (s *Server) admitClassicCandidates(
+	out *rwaMembership,
+	bound []timescale.Sep1BoundCurrency,
+	entries map[string]timescale.DirectoryEntry,
+) {
 	issuers := map[string]struct{}{}
 	admitted := make(map[string]struct{}, len(bound))
 	for _, c := range bound {
@@ -555,7 +757,6 @@ func (s *Server) buildRWAMembership(ctx context.Context) rwaMembership {
 			dirTags:     e.Tags,
 		})
 	}
-	return out
 }
 
 // cachedRWAMembership returns the membership set, rebuilt at most once
@@ -592,7 +793,11 @@ func (s *Server) cachedRWAMembership(ctx context.Context) rwaMembership {
 	built := s.buildRWAMembership(ctx)
 
 	s.rwaMu.Lock()
-	if built.available {
+	// EITHER arm answering makes the rebuild worth caching. Requiring
+	// both would mean a deployment with only one reader wired rebuilt on
+	// every request and never cached, and a transient failure of one arm
+	// would discard a good rebuild of the other.
+	if built.available || built.contractCensus.available {
 		s.rwaCache = &built
 		s.rwaAt = time.Now()
 	} else if s.rwaCache != nil {
@@ -613,11 +818,12 @@ func (s *Server) cachedRWAMembership(ctx context.Context) rwaMembership {
 // applied by the caller over a whole document it already holds.
 func (s *Server) handleRWAAssets(w http.ResponseWriter, r *http.Request) {
 	view := RWAAssetsView{
-		Definition: rwaDefinition(),
-		Assets:     []RWAAsset{},
-		ByClass:    []RWAGroupTotal{},
-		ByIssuer:   []RWAIssuerTotal{},
-		Refused:    []RWARefusal{},
+		Definition:        rwaDefinition(),
+		Assets:            []RWAAsset{},
+		ByClass:           []RWAGroupTotal{},
+		ByIssuer:          []RWAIssuerTotal{},
+		Refused:           []RWARefusal{},
+		UnreachedEntities: []RWAUnreachedEntity{},
 	}
 	if s.assetsReader == nil {
 		view.Summary.Basis = rwaBasisUnavailable
@@ -628,7 +834,11 @@ func (s *Server) handleRWAAssets(w http.ResponseWriter, r *http.Request) {
 
 	m := s.cachedRWAMembership(r.Context())
 	view.Refused = rwaRefusalRows(m.refusals)
-	if !m.available && len(m.members) == 0 {
+	view.UnreachedEntities = rwaUnreachedRows(m.unreached)
+	// Unavailable means NEITHER arm answered. One arm failing while the
+	// other reports a set is a partial measurement, not an absent one,
+	// and the funnel is what says which of the two happened.
+	if !m.available && !m.contractCensus.available && len(m.members) == 0 && len(m.contracts) == 0 {
 		view.Summary.Basis = rwaBasisUnavailable
 		view.Funnel = rwaFunnelUnavailable()
 		writeEnvelope(w, Envelope{Data: view, Flags: Flags{}})
@@ -647,9 +857,33 @@ func (s *Server) handleRWAAssets(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var unobserved int
-	view.Assets, unobserved = s.rwaAssetRows(m, rows)
+	classicAssets, unobserved := s.rwaAssetRows(m, rows)
 	join.notObserved = unobserved
+
+	// The contract arm, valued through its own read of the same
+	// pipeline. A failure here degrades to zero contract rows rather
+	// than failing the response: the classic arm is a complete answer to
+	// its own question, and emptying it because a second population
+	// could not be read would publish less than we know.
+	contractRows, contractsUnobserved, contractErr := s.rwaContractListingRows(r.Context(), m.contracts)
+	if contractErr != nil {
+		if clientAborted(r, contractErr) {
+			return
+		}
+		s.logger.Error("rwa contract listing read failed", "err", contractErr)
+		contractRows = map[string]AssetDetail{}
+		contractsUnobserved = len(m.contracts)
+	}
+	m.contractsNotObserved = contractsUnobserved
+	contractAssets := rwaContractAssetRows(m.contracts, contractRows)
+
+	view.Assets = append(classicAssets, contractAssets...)
+
+	// Ordering runs ONCE over the combined set, so a contract row and a
+	// classic row are ranked by the same rule and an unvalued row of
+	// either kind sorts after every valued one.
+	rwaSortAssets(view.Assets)
+
 	// The reference is attached AFTER the valuation, never before: it
 	// reads the gated row (including the scam-flag suppression) and must
 	// not be able to put a figure on a row the gates emptied.
@@ -661,7 +895,7 @@ func (s *Server) handleRWAAssets(w http.ResponseWriter, r *http.Request) {
 	view.Summary = rwaSummarise(view.Assets, m.truncated)
 	view.ByClass = rwaByClass(view.Assets)
 	view.ByIssuer = rwaByIssuer(view.Assets)
-	view.Funnel = rwaFunnelOf(m, join, len(view.Assets))
+	view.Funnel = rwaFunnelOf(m, join, len(classicAssets), len(contractAssets))
 	writeEnvelope(w, Envelope{Data: view, Flags: Flags{}})
 }
 
@@ -678,11 +912,19 @@ func rwaDefinition() RWADefinition {
 			"issuer independently recognised in the curated account directory and not scam-flagged",
 			"real-world instrument by SEP-1 anchor_asset_type or by an ADR-0028 oracle feed",
 		},
-		AnchorClasses:    rwa.AnchorClasses(),
-		RecognitionTags:  rwa.RecognitionTags(),
-		ScamFlagTags:     append([]string(nil), timescale.DirectoryScamFlagTags...),
-		BoundInstruments: rwaBoundInstruments(),
-		DocumentationURL: "https://stellarindex.io/docs/methodology/rwa-definition",
+		ContractRequirements: []string{
+			"contract-issued token identified by its contract address",
+			"that exact contract address named in the curated account directory",
+			"named with an issuing-class tag and no scam-class tag",
+			"real-world instrument by an in-repo curated binding or by an ADR-0028 oracle feed on the on-chain symbol",
+		},
+		AnchorClasses:            rwa.AnchorClasses(),
+		RecognitionTags:          rwa.RecognitionTags(),
+		ContractRecognitionTags:  rwa.ContractRecognitionTags(),
+		ScamFlagTags:             append([]string(nil), timescale.DirectoryScamFlagTags...),
+		BoundInstruments:         rwaBoundInstruments(),
+		BoundContractInstruments: rwaBoundContractInstruments(),
+		DocumentationURL:         "https://stellarindex.io/docs/methodology/rwa-definition",
 	}
 }
 
@@ -829,6 +1071,22 @@ func (s *Server) rwaAssetRows(m rwaMembership, rows map[string]AssetDetail) ([]R
 		}
 		out = append(out, a)
 	}
+	return out, notObserved
+}
+
+// rwaSortAssets applies the served ordering: published market cap
+// descending, then observation count, then asset id.
+//
+// It runs ONCE over the combined set rather than per arm. Sorting each
+// arm and concatenating would rank every classic row above every
+// contract row whatever their valuations, which is a claim about
+// relative size that the concatenation order happened to make and
+// nobody measured.
+//
+// Rows with no published valuation sort after every valued row — an
+// unvalued asset is never ranked above a valued one on a number it does
+// not have.
+func rwaSortAssets(out []RWAAsset) {
 	sort.SliceStable(out, func(i, j int) bool {
 		li, lj := ratFromOptionalString(out[i].Valuation.MarketCapUSD), ratFromOptionalString(out[j].Valuation.MarketCapUSD)
 		switch {
@@ -844,7 +1102,6 @@ func (s *Server) rwaAssetRows(m rwaMembership, rows map[string]AssetDetail) ([]R
 		}
 		return out[i].AssetID < out[j].AssetID
 	})
-	return out, notObserved
 }
 
 // rwaValuationOf reads the valuation OFF the already-gated listing row.

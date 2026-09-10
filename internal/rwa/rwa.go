@@ -19,10 +19,19 @@
 // reason a candidate was refused.
 //
 // R1 — IDENTITY. A classic Stellar asset with a code and an issuer
-// G-address. The native asset is not an RWA. Soroban-only contracts
-// are out of scope: SEP-1 [[CURRENCIES]] binds a declaration to a
-// (code, issuer) pair, and a bare C-address has no such binding, so
-// admitting one would mean admitting an unbound claim.
+// G-address. The native asset is not an RWA.
+//
+// A contract-issued token qualifies through the SEPARATE arm in
+// contract.go, on its contract address, under requirements C1 to C4.
+// It is a separate arm and not a widening of this one because R2 is
+// structurally impossible for a C-address — SEP-1 [[CURRENCIES]] binds
+// a declaration to a (code, issuer) pair and a bare contract has no
+// such binding — so the contract arm has to say what carries R2's
+// weight instead. That argument, and what an attacker would have to
+// control to defeat it, is in contract.go rather than restated here.
+// The two arms never overlap: this one runs over SEP-1 attestations
+// keyed by (code, issuer), that one over curated directory entries
+// keyed by contract address.
 //
 // R2 — ISSUER-BOUND SELF-DECLARATION. The issuer account carries a
 // SEP-1 stellar.toml, fetched over HTTPS from the home_domain that

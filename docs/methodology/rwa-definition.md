@@ -60,12 +60,14 @@ reports the first one a candidate failed.
 
 ### R1 — Identity
 
-A classic Stellar asset with a code **and** an issuer G-address.
+A classic Stellar asset with a code **and** an issuer G-address. The
+native asset is not an RWA.
 
-The native asset is not an RWA. Soroban-only contracts are out of scope:
-SEP-1 `[[CURRENCIES]]` binds a declaration to a `(code, issuer)` pair,
-and a bare contract address has no such binding, so admitting one would
-mean admitting an unbound claim.
+A contract-issued token qualifies through the **separate arm** below,
+under requirements C1–C4, on its contract address. The two arms never
+overlap: this one runs over SEP-1 attestations keyed by
+`(code, issuer)`, that one over curated directory entries keyed by
+contract address.
 
 ### R2 — Issuer-bound self-declaration
 
@@ -155,6 +157,167 @@ load-bearing on its own. A row admitted this way carries **no**
 `anchor_class`: an oracle feed names an instrument, not its class, and
 inventing one would publish a classification nothing declared.
 
+## The contract arm
+
+Everything above describes an asset with an issuer account. The entities
+that actually hold real-world assets on Stellar mostly do not have one.
+
+Measured 2026-09-10, of the sixteen entities the public Stellar RWA
+dashboard attributes $4.03B to, the ones we could check issue **nothing**
+in `classic_assets`: Franklin Templeton (both G-addresses), Spiko,
+Mercado Bitcoin, Cometum and fourteen of WisdomTree's eighteen addresses
+all return zero rows. Their Stellar presence is contract-issued.
+
+The exclusion ran deeper than R1. The `issuers` table is written from
+exactly one call site — `registerIssuerSeen`, on classic-asset
+registration — so an entity issuing only contract tokens never gets a
+row, never gets a SEP-1 fetch, and never becomes a candidate. It was not
+refused by R1 so much as never collected. Widening that table is not the
+fix either: its key is a G-account, a contract address is not one, and a
+SEP-1 fetch for a bare contract has nothing to bind to.
+
+So the contract arm draws its population from `account_directory`, the
+only table we hold that ties a real-world entity to a Stellar address
+without passing through classic issuance. Its `CHECK` has always
+accepted both strkey forms.
+
+### C1 — Identity
+
+A contract address, CRC-checked. It is the whole identity — never a
+symbol, never a name. Two contracts declaring `BENJI` are two different
+assets, exactly as two issuers of a classic `BENJI` are.
+
+### C2 — Independent naming of that exact address
+
+The curated third-party directory holds an entry for **that exact
+contract address**. Not the entity. Not a domain. Not a G-account that
+might have deployed it. The address whose supply this surface is about
+to multiply by a price.
+
+This is what replaces R2, and it is **not** a relaxation — because of
+what R2 was actually worth.
+
+R2 proves a claim came from a domain the issuer controls, and the cost
+of satisfying it is one domain registration. Measured, **19 distinct
+issuers publish a token called `BENJI` in this lake and every one is an
+impersonator**: `franklintempleton.co.com`,
+`franklintempleton.hqlumens.com`, `benji.qlumen.co`,
+`stellar.dtcc.network`, `treasury.dtcc.company`. Each serves a valid,
+correctly-bound `stellar.toml`. Not one is `franklintempleton.com`. R2
+admitted all of them. R3 is what kept them out, and R3 is what carries
+this arm.
+
+**What an attacker would have to control.** To get a fake contract
+admitted, an attacker needs a curated directory entry naming their own
+C-address with an issuing-class tag and no scam tag — that is, landing a
+reviewed change in a third party's published set under the name of the
+entity being impersonated.
+
+The classic equivalent for R2 is registering a lookalike domain and
+serving a file: no review, no third party, roughly the price of a
+domain, done 19 times over for one ticker. And R3 on the classic arm
+vouches for an **account** — one recognition covers every token that
+account will ever issue, including ones issued afterwards. The contract
+arm has no such carry-over: recognition is per address, and a contract
+address is one token.
+
+The contract arm is therefore **strictly harder to defeat** than the
+classic one. What it gives up is the issuer's own voice, and the
+issuer's own voice is the part an impersonator supplies for ten dollars.
+
+### C3 — Recognition, not flagged
+
+The entry carries at least one tag from a vocabulary deliberately
+narrower than the account one: `issuer`, `anchor`, `custodian` — and
+**not** `defi`, `exchange` or `sdf`.
+
+On an account those three describe an entity that might issue a
+real-world instrument. On a contract address they describe
+infrastructure that issues nothing: the curated set carries the Aquarius
+AMM pool contracts under exactly those tags, and admitting them would
+put liquidity-pool shares on a page asserting real-world backing.
+
+The scam vocabulary is the same single list every other consumer reads,
+and a scam tag beats every recognition tag on the same address.
+
+### C4 — Real-world instrument
+
+A directory entry says who an address belongs to. It does not say the
+token is a real-world asset — the curated set names stablecoin
+contracts, pool shares and protocol infrastructure under the same tags,
+and admitting every recognised contract would publish USDC as a
+tokenized real-world asset. So C4 keeps R4's job, by one of two bases:
+
+**`curated_contract_instrument`** — an in-repo curated entry binds this
+exact contract address to a named instrument and its class. The
+[ADR-0040](../adr/0040-completing-contract-gating.md) curated-set
+mechanism, the same one the oracle bindings use.
+
+It ships **empty**, and that is a refusal rather than an oversight:
+populating it needs contract addresses from a primary source, and an
+address inferred from a dashboard is a fabricated identity for a
+financial instrument. An empty curated set refuses everything, which is
+correct for a set with no verified members.
+
+**`contract_oracle_rwa_feed`** — the token's on-chain SEP-41 `symbol` is
+an ADR-0028 allow-listed RWA code. The symbol is contract-authored,
+exactly as a classic asset code is issuer-authored, and this arm is
+admissible for exactly the same reason its classic twin is: the
+independent recognition of the address has **already** happened. It
+answers *which* instrument an address someone vouched for holds, never
+*whether* the address is vouched for. A row admitted this way carries no
+`anchor_class`, for the same reason the classic oracle arm does not.
+
+### What was considered and rejected
+
+- **Contract-instance provenance** — admitting a contract because a
+  recognised G-account deployed it. The right shape, and we hold no
+  deployer edge to read: the `contractid` registry is factory-anchored
+  per ADR-0035 and covers protocol children, not token issuance.
+- **SEP-41 metadata as the admission** — admitting a contract whose
+  `name()` says treasury. That is the token talking about itself at no
+  cost at all, cheaper than a domain, and it would admit every
+  impersonator in the lake.
+- **The issuer's SEP-1 naming the contract** — the current SEP-1 draft
+  carries a `contract` field on `[[CURRENCIES]]`. This is the strongest
+  available strengthener and is worth having: the curator supplies the
+  domain, so an attacker cannot choose who has to corroborate them, and
+  defeating the pair means a directory merge **and** control of the real
+  entity's domain. Not built yet for a measured reason — our parser does
+  not read the field, and 14 of the 16 entities have no fetched payload
+  at all. See the
+  [coverage reconciliation](rwa-coverage-reconciliation.md).
+
+### Valuing a contract asset
+
+Both existing reads of a Soroban asset — the `/v1/assets` listing spine
+and `GET /v1/assets/{id}` — gate the discovered-contract arm on a 24h
+volume rollup, which admits 60 of ~117k contracts. That gate is right
+for a listing and wrong here: a tokenized fund is held, not traded, and
+can carry a nine-figure supply while never appearing in a volume
+rollup. The RWA surface reads its **membership-bounded** set without it.
+
+Supply is the certified lake's `Σmint − Σburn − Σclawback` — the same
+figure `/v1/assets/{id}/supply` serves, from the same reader. An
+incomplete reading (a negative net, meaning the flows are incompletely
+seeded rather than that supply is negative) is treated as unavailable
+and never clamped to zero, which would read as a fully-burned token.
+
+Decimals come from the token's own on-chain metadata, not the hardcoded
+7 a catalogue row carries. On this surface that is not a display detail:
+market cap divides supply by 10^decimals, so a 6-decimal token valued at
+7 publishes a tenth of its real capitalisation.
+
+Everything else is the `/v1/assets` pipeline unchanged, including the
+substance gate — which explicitly covers Soroban assets — and the
+dust-liquidity guard. One gate is newly applied rather than reused: a
+contract asset has never been subject to the directory scam suppression
+on any surface, because the existing fill keys on the issuer G-address
+and skips every row without one. On a page that admits a contract on the
+strength of a directory entry, declining to re-read that entry when it
+turns hostile would be indefensible, so the contract arm re-reads it at
+valuation time.
+
 ## What an asset that fails gets
 
 Nothing on this surface. It is absent — not hidden behind a filter, not
@@ -192,7 +355,40 @@ reason on every drop:
 | `issuer_bound_entries` | declarations | Those naming the account that served the file (R2). |
 | `candidate_assets_evaluated` | assets | The bound declarations put to the full R1→R4 evaluation. |
 | `assets_admitted` | assets | Those the definition admitted. |
-| `assets_served` | assets | The rows in `assets[]`. |
+| `assets_served` | assets | The classic rows in `assets[]`. |
+
+Every stage carries an `arm`. The table above is the `classic` arm; the
+`contract` arm narrows a different population from a different root and
+they meet only at the served set, so the arithmetic reconciles **within**
+an arm and never across the boundary:
+
+| Stage | Unit | What it counts |
+| --- | --- | --- |
+| `curated_directory_entries` | directory addresses | Every row in the curated third-party directory. |
+| `directory_contract_addresses` | contracts | Those whose address is a contract. An account address names an entity; a contract address names one token. |
+| `directory_recognised_contracts` | contracts | Named with an issuing-class tag and no scam tag — C2 and C3 satisfied. |
+| `contract_candidates_evaluated` | assets | Those put to the full C1→C4 evaluation. |
+| `contract_assets_admitted` | assets | Those the definition admitted. |
+| `contract_assets_served` | assets | The contract rows in `assets[]`. |
+| `directory_recognised_issuing_accounts` | directory addresses | **Terminal census, not part of the narrowing.** |
+
+That last stage is the one that matters most. It counts recognised,
+unflagged issuing entities this index holds **no token for** — and
+`unreached_entities[]` names a bounded sample of them. They are not
+refused by any requirement; there is nothing to refuse, because no token
+of theirs was ever collected. Measured 2026-09-10, Franklin Templeton
+and Spiko are both in this position: in the directory, tagged `issuer`,
+correct domains, and absent from the `issuers` table entirely.
+
+It takes no part in the stage arithmetic, deliberately: it counts rows
+the first stage already dropped, and folding a coverage census into a
+narrowing would make the funnel close by adding a number that measures
+something else.
+
+When no curated-directory contract reader is wired, the contract arm is
+**absent** from `stages[]` and `basis` says it was not measured — rather
+than a run of zeros, which would read as a network with no
+contract-issued real-world assets in it.
 
 Each stage's drops account exactly for the difference to the next stage
 of the same unit, and `funnel.balanced` states whether that
