@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -340,9 +341,15 @@ type Sep1Image struct {
 // cached SEP-1 payload is entitled to declare.
 //
 // The provenance rule is the whole point: a currency entry counts only
-// when its declared Issuer equals gStrkey — the account whose
+// when its declared Issuer names gStrkey — the account whose
 // stellar.toml actually carried it. Split out of [Store.AllSep1Images]
 // so the rule is testable without a database.
+//
+// The rule itself is [sep1EntryBindsTo], shared with the bound-currency
+// scan rather than restated here: two copies of a provenance check are
+// two chances to drift, and a drift between them would mean an entry
+// good enough to overlay a logo but not good enough to attest an asset,
+// or the reverse.
 func sep1ImagesFromPayload(gStrkey, payload string) []Sep1Image {
 	var parsed IssuerSep1Cached
 	if err := json.Unmarshal([]byte(payload), &parsed); err != nil {
@@ -351,13 +358,14 @@ func sep1ImagesFromPayload(gStrkey, payload string) []Sep1Image {
 	}
 	out := make([]Sep1Image, 0, len(parsed.Currencies))
 	for _, c := range parsed.Currencies {
-		if c.Image == "" || c.Code == "" || c.Issuer == "" {
+		code := strings.TrimSpace(c.Code)
+		if c.Image == "" || code == "" {
 			continue
 		}
-		if c.Issuer != gStrkey {
+		if !sep1EntryBindsTo(c.Issuer, gStrkey) {
 			continue
 		}
-		out = append(out, Sep1Image{Code: c.Code, Issuer: c.Issuer, Image: c.Image})
+		out = append(out, Sep1Image{Code: code, Issuer: gStrkey, Image: c.Image})
 	}
 	return out
 }

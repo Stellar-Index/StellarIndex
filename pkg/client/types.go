@@ -1356,7 +1356,48 @@ type RWAAssetsView struct {
 	Assets     []RWAAsset       `json:"assets"`
 	ByClass    []RWAGroupTotal  `json:"by_class"`
 	ByIssuer   []RWAIssuerTotal `json:"by_issuer"`
-	Refused    []RWARefusal     `json:"refused"`
+	// Refused is the ordered requirement tally over the candidates
+	// that reached the full evaluation — not the whole population. Read
+	// Funnel for that.
+	Refused []RWARefusal `json:"refused"`
+	// Funnel accounts for the entire population the served set was
+	// narrowed from.
+	Funnel RWAFunnel `json:"funnel"`
+}
+
+// RWAFunnel is the complete narrowing behind the served set, from every
+// issuer account that could carry a SEP-1 attestation down to the rows
+// in Assets.
+//
+// A small served set and a pipeline discarding candidates in silence
+// look identical from outside; this is how a consumer tells them apart
+// without a database. Each stage's Dropped counts account exactly for
+// the difference to the next stage of the same Unit, and Balanced says
+// whether that reconciliation held.
+type RWAFunnel struct {
+	Stages   []RWAFunnelStage `json:"stages"`
+	Balanced bool             `json:"balanced"`
+	Basis    string           `json:"basis"`
+}
+
+// RWAFunnelStage is one population on the way to the served set. Unit
+// changes down the funnel (issuer accounts, then the SEP-1
+// declarations they publish, then assets), so two counts are
+// comparable only when their Units match.
+type RWAFunnelStage struct {
+	Stage   string          `json:"stage"`
+	Unit    string          `json:"unit"`
+	Count   int             `json:"count"`
+	Dropped []RWAFunnelDrop `json:"dropped,omitempty"`
+}
+
+// RWAFunnelDrop is one counted reason a population shrank. Actor names
+// who can move the number: "operator", "issuer", or "definition" for a
+// drop that is the membership rule working as intended.
+type RWAFunnelDrop struct {
+	Reason string `json:"reason"`
+	Count  int    `json:"count"`
+	Actor  string `json:"actor"`
 }
 
 // RWADefinition is the membership rule as applied to the response.

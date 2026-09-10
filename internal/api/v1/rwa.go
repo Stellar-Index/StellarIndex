@@ -62,7 +62,9 @@ const rwaAssetsPerIssuer = 500
 // Optional: a deployment without it serves an empty set with a stated
 // reason rather than an error, exactly as the logo overlay degrades.
 type Sep1BoundCurrencyReader interface {
-	BoundSep1Currencies(ctx context.Context, keep timescale.Sep1CurrencyFilter) ([]timescale.Sep1BoundCurrency, int, error)
+	BoundSep1Currencies(
+		ctx context.Context, keep timescale.Sep1CurrencyFilter,
+	) ([]timescale.Sep1BoundCurrency, timescale.Sep1BoundCensus, error)
 }
 
 // ─── wire shape ─────────────────────────────────────────────────────
@@ -90,8 +92,105 @@ type RWAAssetsView struct {
 	// Refused counts the candidates each requirement turned away, so
 	// the served set is never mistaken for the whole population of
 	// assets that CLAIM to be real-world assets.
+	//
+	// It is the ORDERED requirement tally over the candidates that
+	// reached the full R1→R4 evaluation. It is NOT the whole
+	// population: the stages upstream of that evaluation — an issuer
+	// with no attestation, a payload that would not decode, an entry
+	// naming somebody else's account — are accounted for in Funnel,
+	// which is the complete narrowing.
 	Refused []RWARefusal `json:"refused"`
+	// Funnel accounts for the ENTIRE population this set was narrowed
+	// from, stage by stage, with a named reason on every drop.
+	Funnel RWAFunnel `json:"funnel"`
 }
+
+// RWAFunnel is the complete narrowing from every issuer that could
+// carry a SEP-1 attestation down to the assets served.
+//
+// It exists because the set is small and the population is not, and a
+// reader of six rows has no way to tell a network with six real-world
+// assets from a pipeline discarding the other fourteen thousand
+// candidates without saying so. Every stage names what it counts and
+// every drop names why, so the question "where did the rest go?" is
+// answered by this response rather than by a database session.
+type RWAFunnel struct {
+	// Stages is the narrowing in pipeline order, coarse to fine. Each
+	// stage's Dropped reasons account exactly for the difference
+	// between its own count and the next stage's.
+	Stages []RWAFunnelStage `json:"stages"`
+	// Balanced is true when the arithmetic above closes: every stage's
+	// count minus its drops equals the next stage's count. False means
+	// a stage could not be measured and the figures must not be
+	// reconciled — stated rather than hidden, because an accounting
+	// that silently fails to add up is worse than none.
+	Balanced bool `json:"balanced"`
+	// Basis is a one-line statement of what the funnel measured.
+	Basis string `json:"basis"`
+}
+
+// RWAFunnelStage is one population on the way to the served set.
+type RWAFunnelStage struct {
+	// Stage names the population.
+	Stage string `json:"stage"`
+	// Unit names what is being counted at this stage: the unit changes
+	// down the funnel (issuer accounts, then SEP-1 declarations, then
+	// assets), and comparing two counts of different units is the
+	// easiest way to misread a funnel.
+	Unit string `json:"unit"`
+	// Count is the size of the population at this stage.
+	Count int `json:"count"`
+	// Dropped names why the population shrank before the next stage.
+	// The counts sum exactly to this stage's Count minus the next
+	// stage's Count.
+	Dropped []RWAFunnelDrop `json:"dropped,omitempty"`
+}
+
+// RWAFunnelDrop is one counted reason a population shrank.
+type RWAFunnelDrop struct {
+	Reason string `json:"reason"`
+	Count  int    `json:"count"`
+	// Actor names who can change this number: `operator` for a drop an
+	// operator could act on (an attestation never fetched, an issuer
+	// missing from the curated directory), `issuer` for one only the
+	// token's issuer can (a toml that declares nothing, or declares
+	// somebody else), `definition` for a drop that is the membership
+	// rule working as intended. Served so a reader can tell a coverage
+	// gap from a refusal without knowing the codebase.
+	Actor string `json:"actor"`
+}
+
+// Funnel drop actors.
+const (
+	rwaActorOperator   = "operator"
+	rwaActorIssuer     = "issuer"
+	rwaActorDefinition = "definition"
+)
+
+// Funnel stage and drop names. They are a wire vocabulary, so they are
+// spelled once here and never inline.
+const (
+	rwaStageIssuersWithHomeDomain = "issuers_with_home_domain"
+	rwaStageIssuersWithSep1       = "issuers_with_sep1_attestation"
+	rwaStageIssuersDeclaring      = "issuers_declaring_currencies"
+	rwaStageSep1Entries           = "sep1_currency_entries"
+	rwaStageBoundEntries          = "issuer_bound_entries"
+	rwaStageCandidates            = "candidate_assets_evaluated"
+	rwaStageAdmitted              = "assets_admitted"
+	rwaStageServed                = "assets_served"
+
+	rwaDropNoAttestation        = "sep1_attestation_never_fetched"
+	rwaDropPayloadUnreadable    = "sep1_payload_unreadable"
+	rwaDropDeclaresNothing      = "sep1_declares_no_currencies"
+	rwaDropMissingCode          = "entry_declares_no_asset_code"
+	rwaDropMissingIssuer        = "entry_declares_no_issuer"
+	rwaDropAnotherIssuer        = "entry_declares_another_issuer"
+	rwaDropNoInstrumentBasis    = "no_real_world_instrument_basis"
+	rwaDropDuplicateDeclaration = "duplicate_declaration_of_the_same_asset"
+	rwaDropOverIssuerCap        = "over_issuer_cap"
+	rwaDropNotInCatalogue       = "admitted_but_never_observed_on_chain"
+	rwaDropIssuerPageTruncate   = "issuer_asset_page_truncated"
+)
 
 // RWADefinition is the machine-readable membership rule.
 type RWADefinition struct {
@@ -309,11 +408,26 @@ type rwaMember struct {
 	dirTags     []string
 }
 
-// rwaMembership is one rebuild: the admitted set plus the refusal
-// tally over every candidate considered.
+// rwaMembership is one rebuild: the admitted set, the refusal tally
+// over every candidate evaluated, and the census of the population both
+// were drawn from.
 type rwaMembership struct {
 	members  []rwaMember
 	refusals map[string]int
+	// census accounts for every issuer row and every SEP-1 declaration
+	// the attestation scan walked, including the stages upstream of
+	// rwa.Qualify that no refusal reason can describe.
+	census timescale.Sep1BoundCensus
+	// overIssuerCap counts members rwaMaxIssuers turned away. They met
+	// the definition; the cap is a rebuild guard, so they are counted
+	// apart from the refusals rather than mixed into them.
+	overIssuerCap int
+	// duplicateDeclarations counts candidates naming a (code, issuer)
+	// already admitted. A toml may declare the same asset twice — the
+	// spec does not forbid it — and each declaration used to become its
+	// own member, so the asset was served twice and its market cap
+	// entered every total twice.
+	duplicateDeclarations int
 	// truncated records that rwaMaxIssuers bound the set.
 	truncated bool
 	// available is false when no attestation reader is wired, which is
@@ -343,19 +457,31 @@ func (s *Server) buildRWAMembership(ctx context.Context) rwaMembership {
 	}
 	out.available = true
 
-	bound, dropped, err := reader.BoundSep1Currencies(ctx, rwaCandidateFilter)
+	bound, census, err := reader.BoundSep1Currencies(ctx, rwaCandidateFilter)
 	if err != nil {
 		s.logger.Warn("rwa membership: bound sep1 scan failed", "err", err)
 		out.available = false
 		return out
+	}
+	out.census = census
+	if why := census.Check(); why != "" {
+		// The funnel will publish itself as unbalanced, which is the
+		// honest wire answer; the log is what names the stage a reader
+		// of the response cannot.
+		s.logger.Warn("rwa membership: attestation census does not balance", "why", why)
 	}
 	// The pre-filter drops the bound entries that name no real-world
 	// instrument at all — the NFT, crypto and undeclared majority. They
 	// are refusals under requirement 4 and are counted as such; a
 	// refusal tally that reported only what the scan happened to
 	// materialise would understate the population it narrowed from.
-	if dropped > 0 {
-		out.refusals[rwa.RejectNoInstrumentClaim] += dropped
+	//
+	// This bucket is the ONE place the refusal tally reports a
+	// requirement out of R1→R4 order: these entries were dropped before
+	// requirement 3 was evaluated for them, so some also fail it. The
+	// funnel keeps them as their own stage for exactly that reason.
+	if census.EntriesFiltered > 0 {
+		out.refusals[rwa.RejectNoInstrumentClaim] += census.EntriesFiltered
 	}
 
 	addrs := make([]string, 0, len(bound))
@@ -385,6 +511,7 @@ func (s *Server) buildRWAMembership(ctx context.Context) rwaMembership {
 	}
 
 	issuers := map[string]struct{}{}
+	admitted := make(map[string]struct{}, len(bound))
 	for _, c := range bound {
 		e := entries[c.Issuer]
 		v := rwa.Qualify(rwa.Candidate{
@@ -398,13 +525,24 @@ func (s *Server) buildRWAMembership(ctx context.Context) rwaMembership {
 			out.refusals[v.Reject]++
 			continue
 		}
+		// Identity is (code, issuer), so a second declaration of the
+		// same pair is the same asset. Admitting it again would serve
+		// the row twice and add its market cap to every total twice —
+		// membership is a SET, and nothing downstream deduplicates.
+		key := rwaKey(c.Code, c.Issuer)
+		if _, dup := admitted[key]; dup {
+			out.duplicateDeclarations++
+			continue
+		}
 		if _, known := issuers[c.Issuer]; !known {
 			if len(issuers) >= rwaMaxIssuers {
 				out.truncated = true
+				out.overIssuerCap++
 				continue
 			}
 			issuers[c.Issuer] = struct{}{}
 		}
+		admitted[key] = struct{}{}
 		out.members = append(out.members, rwaMember{
 			code:        c.Code,
 			issuer:      c.Issuer,
@@ -483,6 +621,7 @@ func (s *Server) handleRWAAssets(w http.ResponseWriter, r *http.Request) {
 	}
 	if s.assetsReader == nil {
 		view.Summary.Basis = rwaBasisUnavailable
+		view.Funnel = rwaFunnelUnavailable()
 		writeEnvelope(w, Envelope{Data: view, Flags: Flags{}})
 		return
 	}
@@ -491,11 +630,12 @@ func (s *Server) handleRWAAssets(w http.ResponseWriter, r *http.Request) {
 	view.Refused = rwaRefusalRows(m.refusals)
 	if !m.available && len(m.members) == 0 {
 		view.Summary.Basis = rwaBasisUnavailable
+		view.Funnel = rwaFunnelUnavailable()
 		writeEnvelope(w, Envelope{Data: view, Flags: Flags{}})
 		return
 	}
 
-	rows, readErr := s.rwaListingRows(r.Context(), m)
+	rows, join, readErr := s.rwaListingRows(r.Context(), m)
 	if readErr != nil {
 		if clientAborted(r, readErr) {
 			return
@@ -507,7 +647,9 @@ func (s *Server) handleRWAAssets(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	view.Assets = s.rwaAssetRows(m, rows)
+	var unobserved int
+	view.Assets, unobserved = s.rwaAssetRows(m, rows)
+	join.notObserved = unobserved
 	// The reference is attached AFTER the valuation, never before: it
 	// reads the gated row (including the scam-flag suppression) and must
 	// not be able to put a figure on a row the gates emptied.
@@ -519,6 +661,7 @@ func (s *Server) handleRWAAssets(w http.ResponseWriter, r *http.Request) {
 	view.Summary = rwaSummarise(view.Assets, m.truncated)
 	view.ByClass = rwaByClass(view.Assets)
 	view.ByIssuer = rwaByIssuer(view.Assets)
+	view.Funnel = rwaFunnelOf(m, join, len(view.Assets))
 	writeEnvelope(w, Envelope{Data: view, Flags: Flags{}})
 }
 
@@ -543,12 +686,29 @@ func rwaDefinition() RWADefinition {
 	}
 }
 
+// rwaCatalogueJoin counts what the join from the admitted set to the
+// asset catalogue removed. Both of its fields used to be silent drops
+// at the very end of the funnel, where an asset that met every
+// requirement could still vanish without appearing in any tally.
+type rwaCatalogueJoin struct {
+	// pagesTruncated counts member issuers whose classic-asset listing
+	// page filled to rwaAssetsPerIssuer, so their long tail went unread
+	// and a member in it cannot be found.
+	pagesTruncated int
+	// notObserved counts admitted members with no catalogue row: the
+	// asset was attested but has never been seen on chain.
+	notObserved int
+}
+
 // rwaListingRows reads the member issuers through the SAME listing
 // query /v1/assets uses, one indexed page per issuer, and returns the
-// projected rows keyed by asset_id. Running the real listing path is
-// what guarantees this surface cannot publish a valuation /v1/assets
-// would have refused.
-func (s *Server) rwaListingRows(ctx context.Context, m rwaMembership) (map[string]AssetDetail, error) {
+// projected rows keyed by asset_id, plus what the read could not cover.
+// Running the real listing path is what guarantees this surface cannot
+// publish a valuation /v1/assets would have refused.
+func (s *Server) rwaListingRows(
+	ctx context.Context, m rwaMembership,
+) (map[string]AssetDetail, rwaCatalogueJoin, error) {
+	var join rwaCatalogueJoin
 	issuers := make([]string, 0, rwaMaxIssuers)
 	seen := map[string]struct{}{}
 	for _, mem := range m.members {
@@ -573,7 +733,14 @@ func (s *Server) rwaListingRows(ctx context.Context, m rwaMembership) (map[strin
 			Type:   "classic",
 		})
 		if err != nil {
-			return nil, err
+			return nil, join, err
+		}
+		// A full page means the issuer has more classic assets than one
+		// read covers, so a member in the unread tail would disappear
+		// from the set with nothing to show for it. The cap has always
+		// been documented as reported; until now it was not.
+		if len(rows) >= rwaAssetsPerIssuer {
+			join.pagesTruncated++
 		}
 		keep := make([]timescale.AssetRow, 0, 8)
 		for _, row := range rows {
@@ -610,7 +777,7 @@ func (s *Server) rwaListingRows(ctx context.Context, m rwaMembership) (map[strin
 			out[rwaKey(d.Code, issuer)] = d
 		}
 	}
-	return out, nil
+	return out, join, nil
 }
 
 // rwaKey is the membership join key: the code case-folded (the SEP-1
@@ -621,14 +788,18 @@ func rwaKey(code, issuer string) string {
 }
 
 // rwaAssetRows joins the membership evidence to the valued listing rows
-// and orders the result. A member with no listing row is dropped: the
-// asset was attested but has never been observed on chain, and this
-// surface reports what the index holds.
-func (s *Server) rwaAssetRows(m rwaMembership, rows map[string]AssetDetail) []RWAAsset {
+// and orders the result, returning how many members the join could not
+// place. A member with no listing row is dropped: the asset was
+// attested but has never been observed on chain, and this surface
+// reports what the index holds — but it now reports the drop too,
+// because "admitted then never served" is otherwise invisible.
+func (s *Server) rwaAssetRows(m rwaMembership, rows map[string]AssetDetail) ([]RWAAsset, int) {
 	out := make([]RWAAsset, 0, len(m.members))
+	notObserved := 0
 	for _, mem := range m.members {
 		d, ok := rows[rwaKey(mem.code, mem.issuer)]
 		if !ok {
+			notObserved++
 			continue
 		}
 		a := RWAAsset{
@@ -673,7 +844,7 @@ func (s *Server) rwaAssetRows(m rwaMembership, rows map[string]AssetDetail) []RW
 		}
 		return out[i].AssetID < out[j].AssetID
 	})
-	return out
+	return out, notObserved
 }
 
 // rwaValuationOf reads the valuation OFF the already-gated listing row.

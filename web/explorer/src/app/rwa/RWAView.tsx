@@ -104,6 +104,50 @@ const REFUSAL_PROSE: Record<string, string> = {
   no_real_world_instrument_basis: 'Declares no real-world instrument',
 };
 
+/**
+ * The funnel vocabulary in prose. A set this small invites "is that
+ * all?", and the refusal tally alone cannot answer it: it counts only
+ * the candidates that reached the definition, while most of the
+ * population never gets that far. These are the stages that remove it.
+ */
+const FUNNEL_STAGE_PROSE: Record<string, string> = {
+  issuers_with_home_domain: 'Issuers publishing a domain',
+  issuers_with_sep1_attestation: 'Whose stellar.toml has been fetched',
+  issuers_declaring_currencies: 'Declaring at least one asset',
+  sep1_currency_entries: 'Asset declarations published',
+  issuer_bound_entries: 'Declarations about the issuer’s own assets',
+  candidate_assets_evaluated: 'Put to the four requirements',
+  assets_admitted: 'Admitted',
+  assets_served: 'Served above',
+};
+
+const FUNNEL_DROP_PROSE: Record<string, string> = {
+  sep1_attestation_never_fetched: 'stellar.toml not fetched yet',
+  sep1_payload_unreadable: 'Fetched file would not parse',
+  sep1_declares_no_currencies: 'Declares no assets',
+  entry_declares_no_asset_code: 'Names no asset code',
+  entry_declares_no_issuer: 'Names no issuer',
+  entry_declares_another_issuer: 'Declares somebody else’s asset',
+  duplicate_declaration_of_the_same_asset: 'Same asset declared twice',
+  over_issuer_cap: 'Beyond the per-rebuild issuer cap',
+  admitted_but_never_observed_on_chain: 'Never observed on chain',
+  issuer_asset_page_truncated: 'Issuers whose asset list was not read in full',
+  ...REFUSAL_PROSE,
+};
+
+/** Who can move a number, in the page's voice. */
+const FUNNEL_ACTOR_PROSE: Record<string, string> = {
+  operator: 'ours to fix',
+  issuer: 'the issuer’s to fix',
+  definition: 'the rule working',
+};
+
+const UNIT_PROSE: Record<string, string> = {
+  issuer_accounts: 'issuers',
+  sep1_currency_declarations: 'declarations',
+  assets: 'assets',
+};
+
 function useRWAAssets() {
   return useQuery<RWAAssetsView>({
     queryKey: [ENDPOINT],
@@ -222,7 +266,70 @@ export function RWAView() {
       )}
 
       <DefinitionPanel definition={data.definition} refused={refused} />
+      <CoveragePanel funnel={data.funnel} />
     </div>
+  );
+}
+
+/**
+ * Where the population went. The set above is small; this is the only
+ * place on the page that says how small a share of what it was drawn
+ * from that is, and which stage removed the rest.
+ *
+ * Every drop names who can move it, because "nobody has fetched that
+ * issuer's file yet" and "the rule refused an impersonator" are
+ * opposite findings that a bare count renders identically.
+ */
+function CoveragePanel({ funnel }: { funnel?: Schemas['RWAFunnel'] }) {
+  if (!funnel || funnel.stages.length === 0) return null;
+  const first = funnel.stages[0];
+  const last = funnel.stages[funnel.stages.length - 1];
+  return (
+    <Panel title="Where the population went" headingLevel={2}>
+      <p className="text-ink-muted text-xs leading-relaxed">
+        {last.count.toLocaleString('en-US')} asset
+        {last.count === 1 ? '' : 's'} out of{' '}
+        {first.count.toLocaleString('en-US')} issuers that could publish a SEP-1
+        file. Each row is a stage; the indented lines are what it turned away,
+        and who can change that.
+        {!funnel.balanced &&
+          ' Part of this accounting could not be measured, so the stages below do not reconcile.'}
+      </p>
+      <ol className="border-line mt-3 space-y-2 border-t pt-3 text-xs leading-relaxed">
+        {funnel.stages.map((s) => (
+          <li key={s.stage}>
+            <div className="flex justify-between gap-4">
+              <span className="text-ink-body">
+                {FUNNEL_STAGE_PROSE[s.stage] ?? s.stage}
+              </span>
+              <span className="tnum text-ink-body font-medium">
+                {s.count.toLocaleString('en-US')}{' '}
+                <span className="text-ink-faint font-normal">
+                  {UNIT_PROSE[s.unit] ?? s.unit}
+                </span>
+              </span>
+            </div>
+            {(s.dropped ?? []).length > 0 && (
+              <dl className="mt-1 ml-4 space-y-0.5 text-[11px]">
+                {(s.dropped ?? []).map((d) => (
+                  <div key={d.reason} className="flex justify-between gap-4">
+                    <dt className="text-ink-muted">
+                      {FUNNEL_DROP_PROSE[d.reason] ?? d.reason}{' '}
+                      <span className="text-ink-faint">
+                        &mdash; {FUNNEL_ACTOR_PROSE[d.actor] ?? d.actor}
+                      </span>
+                    </dt>
+                    <dd className="tnum text-ink-faint">
+                      &minus;{d.count.toLocaleString('en-US')}
+                    </dd>
+                  </div>
+                ))}
+              </dl>
+            )}
+          </li>
+        ))}
+      </ol>
+    </Panel>
   );
 }
 

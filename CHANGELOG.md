@@ -15,7 +15,85 @@ against.
 
 ## [Unreleased]
 
+### Added
+
+- **api,web:** `GET /v1/rwa/assets` accounts for the population it
+  narrowed from. New `funnel` object: every stage from the issuer
+  accounts that could carry a SEP-1 attestation down to the rows served,
+  with a counted reason on every drop and an `actor` naming who can move
+  it (#352).
+
+  The surface served 6 assets and a refusal tally of 3 — measured on r1
+  2026-09-10 — over a table holding 59,303 issuer accounts, 44,376 with
+  a `home_domain` and 14,635 with a fetched SEP-1 payload. Nothing on
+  the response could tell a network that holds six real-world assets
+  from a pipeline discarding fourteen thousand candidates in silence,
+  and the only way to find out was a database session.
+
+  `refused[]` could not close that gap by construction: it reports the
+  requirements that were EVALUATED, and the stages removing most of the
+  population run before any candidate reaches the definition. Two of its
+  five reasons — `not_a_classic_asset` and `no_issuer_bound_sep1_entry`
+  — were structurally unreachable, because the attestation scan had
+  already decided both and reported neither.
+
+  Read top to bottom, each stage's drops account exactly for the
+  difference to the next stage of the same unit; `funnel.balanced`
+  states whether that reconciliation held. When membership cannot be
+  established the funnel is EMPTY and unbalanced rather than a column of
+  zeros — the same rule that keeps `market_cap_usd` absent rather than
+  `"0.00"`.
+
+  The `actor` field is the part that makes it actionable.
+  `entry_declares_another_issuer` is requirement 2 refusing an
+  impersonator and is expected to be the largest bucket on the surface;
+  `sep1_attestation_never_fetched` is a refresh cron that has not
+  reached an account yet. As bare counts those are indistinguishable;
+  one needs no action and the other is the largest coverage lever an
+  operator holds. The `/rwa` page grows a "Where the population went"
+  panel reading the same object.
+
+  The three spec artifacts and the SDK payload type are regenerated with
+  it; `funnel` is additive, so no existing field changes shape.
+
 ### Fixed
+
+- **api:** the RWA membership build no longer admits a `(code, issuer)`
+  twice. SEP-1 does not forbid a `stellar.toml` declaring the same asset
+  in two `[[CURRENCIES]]` entries, and identity on this surface is the
+  PAIR — so both became members, both joined the same catalogue row, and
+  the asset's market cap entered `summary`, `by_class` and `by_issuer`
+  twice each. Membership is a set; nothing downstream deduplicated it.
+  The second declaration is now counted in the funnel rather than
+  served.
+
+- **api:** three silent drops in the RWA pipeline are counted. A cached
+  SEP-1 payload that would not decode returned a bare zero, so an entire
+  population could disappear through one `continue` without a counter
+  moving — the exact shape a swallowed parse error leaves. An admitted
+  asset with no catalogue row vanished between "admitted" and "served",
+  making those two silently different numbers. And the per-issuer
+  listing cap was documented as "reported the same way the issuer cap
+  is" while nothing reported it, so a member in an issuer's unread tail
+  left no trace. Each now lands in a named funnel bucket. The
+  page-truncation count is issuers, not assets, and is deliberately kept
+  out of the asset arithmetic: closing a funnel by mixing units would be
+  worse than reporting that it does not close.
+
+- **api:** the SEP-1 issuer-binding rule compares ACCOUNTS rather than
+  the bytes a toml happened to carry. It was a byte-exact string
+  comparison, so a declaration with surrounding whitespace, or one
+  spelling the issuer's own strkey in lower case, bound to nothing. A
+  strkey is base32: two spellings differing only in case decode to the
+  same 32 bytes, so folding them cannot admit a DIFFERENT account —
+  which is what makes this a canonicalisation and not a relaxation of
+  requirement 2. A value that is not shaped like a G-account strkey
+  still binds to nothing, and the entry is carried under the canonical
+  database spelling, never the toml's. A whitespace-only asset code is
+  now refused as naming no asset instead of binding and then failing
+  every downstream join in silence. The rule is shared with the SEP-1
+  logo overlay rather than restated beside it, so the two cannot drift
+  into disagreeing about what counts as issuer-bound.
 
 - **ci:** the ansible drift check reads a FULL checkout, and refuses to
   stamp an intent file it cannot derive — it has been reporting drift

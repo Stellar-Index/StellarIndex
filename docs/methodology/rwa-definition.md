@@ -1,6 +1,6 @@
 ---
 title: What counts as a tokenized real-world asset
-last_verified: 2026-09-05
+last_verified: 2026-09-10
 status: current
 ---
 
@@ -72,7 +72,18 @@ mean admitting an unbound claim.
 The issuer account serves a SEP-1 `stellar.toml`, fetched over HTTPS
 from the `home_domain` that account set **on chain**, containing a
 `[[CURRENCIES]]` entry whose `code` matches the asset and whose declared
-`issuer` is equal to the account that served the file.
+`issuer` names the account that served the file.
+
+The comparison is on the **account**, not on the bytes the toml carried:
+surrounding whitespace and the case an issuer typed its own key in do
+not change which account it is, and a strkey is base32, so two spellings
+differing only in case decode to the same 32 bytes. That is a
+canonicalisation and not a relaxation — a value that is not shaped like
+a G-account strkey binds to nothing, and the entry is always carried
+under the canonical spelling rather than the toml's. A declaration with
+no `issuer` field at all is refused: the file was fetched from a domain
+the account *chose*, and many accounts can choose the same domain, so an
+unbound entry would let any of them inherit the claim.
 
 This is the same provenance rule the SEP-1 logo overlay enforces, added
 after a token was able to take over another issuer's served logo by
@@ -156,6 +167,59 @@ The refusals are counted and published: `refused[]` on the response
 reports how many candidates each requirement turned away, so the served
 set is never mistaken for the whole population of assets that *claim* to
 be real-world assets.
+
+## Coverage: where the rest of the population went
+
+`refused[]` alone cannot answer "is that all?". It reports the
+requirements that were **evaluated**, and the stages that remove most of
+the population run before any candidate reaches the definition. Measured
+on production 2026-09-10, the endpoint served 6 assets and a refusal
+tally of 3 — over a table holding 59,303 issuer accounts, 44,376 with a
+`home_domain` and 14,635 with a fetched SEP-1 payload. Nothing in the
+response distinguished a network that holds six real-world assets from a
+pipeline discarding fourteen thousand candidates in silence.
+
+`funnel[]` is the complete accounting. It runs from every issuer account
+that could carry an attestation down to the rows served, with a counted
+reason on every drop:
+
+| Stage | Unit | What it counts |
+| --- | --- | --- |
+| `issuers_with_home_domain` | issuer accounts | Every account a SEP-1 attestation could exist for. |
+| `issuers_with_sep1_attestation` | issuer accounts | Those whose `stellar.toml` has been fetched and parsed at least once. |
+| `issuers_declaring_currencies` | issuer accounts | Those whose payload carries at least one `[[CURRENCIES]]` entry. |
+| `sep1_currency_entries` | declarations | Every `[[CURRENCIES]]` entry across those payloads. |
+| `issuer_bound_entries` | declarations | Those naming the account that served the file (R2). |
+| `candidate_assets_evaluated` | assets | The bound declarations put to the full R1→R4 evaluation. |
+| `assets_admitted` | assets | Those the definition admitted. |
+| `assets_served` | assets | The rows in `assets[]`. |
+
+Each stage's drops account exactly for the difference to the next stage
+of the same unit, and `funnel.balanced` states whether that
+reconciliation held. When membership cannot be established the funnel is
+**empty and unbalanced** rather than a column of zeros, for the same
+reason `market_cap_usd` is absent rather than `"0.00"`.
+
+Every drop carries an `actor` naming who can move it — `operator`,
+`issuer`, or `definition` for a drop that is the rule working as
+intended. That distinction is the point. Two numbers that look identical
+as bare counts are opposite findings:
+
+- `entry_declares_another_issuer` is R2 refusing an impersonator. It is
+  expected to be the largest bucket on the whole surface and it needs no
+  action: a `stellar.toml` describes only the account that served it.
+- `sep1_attestation_never_fetched` is an issuer that publishes a domain
+  whose file nobody has fetched yet. It is not a property of the network
+  at all — it is a refresh cron that has not reached that account — and
+  it is the largest coverage lever an operator holds.
+
+The second class is where this surface's coverage actually comes from.
+Widening it means moving one of those numbers — fetching the
+attestations, or extending the curated directory so an issuer that
+publishes a correctly-bound real-world declaration can be recognised.
+It never means loosening R1–R4 until a bucket empties: a longer
+dashboard bought that way is a directory of impersonators with dollar
+figures attached, which is strictly worse than under-reporting.
 
 ## Valuation
 

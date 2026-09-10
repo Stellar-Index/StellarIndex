@@ -2743,6 +2743,17 @@ export interface paths {
          *     served set is never mistaken for the population that CLAIMS to
          *     be real-world assets.
          *
+         *     COVERAGE ACCOUNTING. `funnel` is the complete narrowing, from
+         *     every issuer account carrying an on-chain `home_domain` down to
+         *     the rows served, with a counted reason on every drop and an
+         *     `actor` saying who can move it. It exists because a small served
+         *     set and a silent pipeline look identical from outside: read the
+         *     funnel to tell "the network holds this many real-world assets"
+         *     apart from "most candidates never reached the definition". The
+         *     two views are complementary — `refused[]` reports the
+         *     requirements that were evaluated, `funnel` reports every stage
+         *     including the ones upstream of any evaluation.
+         *
          *     VALUATION. Every figure comes from the same catalogue read,
          *     substance gate, supply-derived market cap, dust-liquidity guard
          *     and scam-issuer suppression that `/assets` runs — this surface
@@ -6350,11 +6361,18 @@ export interface components {
             by_issuer: components["schemas"]["RWAIssuerTotal"][];
             /**
              * @description How many candidate assets each requirement turned away, over
-             *     every issuer-bound SEP-1 attestation that could have
-             *     qualified. The largest bucket is normally
+             *     the issuer-bound SEP-1 attestations that reached the ordered
+             *     R1→R4 evaluation. The largest bucket is normally
              *     `issuer_not_independently_recognised`.
+             *
+             *     This is NOT the whole population. The stages upstream of the
+             *     evaluation — an issuer with no attestation at all, a payload
+             *     that would not decode, a declaration naming somebody else's
+             *     account — turn away far more, and are accounted for in
+             *     `funnel`.
              */
             refused: components["schemas"]["RWARefusal"][];
+            funnel: components["schemas"]["RWAFunnel"];
         };
         /** @description The membership rule, machine-readable, as applied to this response. */
         RWADefinition: {
@@ -6729,11 +6747,143 @@ export interface components {
             market_cap_usd?: string;
             assets_unvalued: number;
         };
-        /** @description How many candidate assets one requirement turned away. */
+        /**
+         * @description How many candidate assets one requirement turned away.
+         *
+         *     `not_a_classic_asset` and `no_issuer_bound_sep1_entry` are
+         *     decided during the attestation scan, before a candidate reaches
+         *     the ordered evaluation, so they are reported in `funnel` rather
+         *     than here. `no_real_world_instrument_basis` includes the entries
+         *     requirement 4 pre-filtered out before requirement 3 was
+         *     evaluated for them — the one bucket here that is not strictly in
+         *     R1→R4 order, which is why `funnel` keeps it as its own stage.
+         */
         RWARefusal: {
             /** @enum {string} */
             reason: "not_a_classic_asset" | "no_issuer_bound_sep1_entry" | "issuer_scam_flagged" | "issuer_not_independently_recognised" | "no_real_world_instrument_basis";
             assets: number;
+        };
+        /**
+         * @description The COMPLETE narrowing, from every issuer account that could
+         *     carry a SEP-1 attestation down to the assets served.
+         *
+         *     It exists because the served set is small by construction and the
+         *     population it is drawn from is not. A reader of six rows cannot
+         *     otherwise tell a network holding six real-world assets from a
+         *     pipeline discarding fourteen thousand candidates in silence, and
+         *     `refused[]` cannot close that gap on its own: it reports
+         *     requirements that were EVALUATED, while the stages that remove
+         *     most of the population run before any candidate reaches the
+         *     definition.
+         *
+         *     Read it top to bottom. Each stage's `dropped` counts account
+         *     exactly for the difference to the next stage of the same unit,
+         *     and `balanced` states whether that reconciliation holds.
+         */
+        RWAFunnel: {
+            /** @description The narrowing in pipeline order, coarse to fine. */
+            stages: components["schemas"]["RWAFunnelStage"][];
+            /**
+             * @description True when the arithmetic closes. False means a stage could
+             *     not be measured and the figures must not be reconciled —
+             *     stated rather than hidden, because an accounting that
+             *     silently fails to add up is worse than none. It is false, and
+             *     `stages` empty, whenever membership could not be established
+             *     at all: a funnel of zeros would read as a measured network
+             *     with nothing in it.
+             */
+            balanced: boolean;
+            /** @description One-line statement of what the funnel measured, including the change of unit down the stages. */
+            basis: string;
+        };
+        /** @description One population on the way to the served set. */
+        RWAFunnelStage: {
+            /**
+             * @description The population.
+             *
+             *     `issuers_with_home_domain` — every issuer account carrying an
+             *     on-chain `home_domain`, i.e. every account a SEP-1
+             *     attestation could exist for.
+             *     `issuers_with_sep1_attestation` — those whose `stellar.toml`
+             *     has been fetched and parsed at least once.
+             *     `issuers_declaring_currencies` — those whose payload carries
+             *     at least one `[[CURRENCIES]]` entry. Last stage counted in
+             *     issuer accounts.
+             *     `sep1_currency_entries` — every `[[CURRENCIES]]` declaration
+             *     across those payloads.
+             *     `issuer_bound_entries` — the declarations that name the
+             *     account which served the file (requirement 2).
+             *     `candidate_assets_evaluated` — the bound declarations put to
+             *     the full R1→R4 evaluation.
+             *     `assets_admitted` — those the definition admitted.
+             *     `assets_served` — the rows in `assets`.
+             * @enum {string}
+             */
+            stage: "issuers_with_home_domain" | "issuers_with_sep1_attestation" | "issuers_declaring_currencies" | "sep1_currency_entries" | "issuer_bound_entries" | "candidate_assets_evaluated" | "assets_admitted" | "assets_served";
+            /**
+             * @description What is counted at this stage. The unit CHANGES down the
+             *     funnel, and comparing two counts of different units is the
+             *     easiest way to misread it. The single transition where no
+             *     subtraction relates the two counts —
+             *     `issuers_declaring_currencies` to `sep1_currency_entries` —
+             *     carries no drops for exactly that reason.
+             * @enum {string}
+             */
+            unit: "issuer_accounts" | "sep1_currency_declarations" | "assets";
+            /** @description Size of the population at this stage. */
+            count: number;
+            /**
+             * @description Why the population shrank before the next stage. Absent when
+             *     nothing was dropped.
+             */
+            dropped?: components["schemas"]["RWAFunnelDrop"][];
+        };
+        /** @description One counted reason a population shrank. */
+        RWAFunnelDrop: {
+            /**
+             * @description `sep1_attestation_never_fetched` — the issuer publishes a
+             *     `home_domain` but no `stellar.toml` has been fetched from it.
+             *     Usually the largest coverage gap on this surface, and the one
+             *     an operator can close.
+             *     `sep1_payload_unreadable` — the cached payload would not
+             *     decode.
+             *     `sep1_declares_no_currencies` — it decoded and declares no
+             *     `[[CURRENCIES]]`.
+             *     `entry_declares_no_asset_code` / `entry_declares_no_issuer` —
+             *     the declaration names no `(code, issuer)` pair, so nothing
+             *     can be bound to it (the linked-toml and `code_template` forms
+             *     land here).
+             *     `entry_declares_another_issuer` — requirement 2: a
+             *     `stellar.toml` describes only the account that served it.
+             *     Expected to be the largest bucket by far.
+             *     `no_real_world_instrument_basis` — requirement 4's pre-filter,
+             *     applied to the bound entries before the directory is read.
+             *     `duplicate_declaration_of_the_same_asset` — a second
+             *     declaration of a `(code, issuer)` already admitted. Identity
+             *     is the pair, so it is the same asset.
+             *     `over_issuer_cap` — the rebuild's issuer cap bound the set.
+             *     `admitted_but_never_observed_on_chain` — the asset met every
+             *     requirement but the index holds no row for it.
+             *     `issuer_asset_page_truncated` — counts ISSUERS whose classic
+             *     asset list filled one read, so a member in the unread tail
+             *     could not be found. It counts issuers, not assets, so it is
+             *     deliberately NOT a term in the asset arithmetic.
+             *     The remaining values are the requirement refusals, matching
+             *     `refused[]`.
+             * @enum {string}
+             */
+            reason: "sep1_attestation_never_fetched" | "sep1_payload_unreadable" | "sep1_declares_no_currencies" | "entry_declares_no_asset_code" | "entry_declares_no_issuer" | "entry_declares_another_issuer" | "not_a_classic_asset" | "no_issuer_bound_sep1_entry" | "issuer_scam_flagged" | "issuer_not_independently_recognised" | "no_real_world_instrument_basis" | "duplicate_declaration_of_the_same_asset" | "over_issuer_cap" | "admitted_but_never_observed_on_chain" | "issuer_asset_page_truncated";
+            count: number;
+            /**
+             * @description Who can move this number. `operator` — a fetch nobody has
+             *     run, a directory nobody has extended, a cap somebody set.
+             *     `issuer` — only the token's own issuer can change it.
+             *     `definition` — the membership rule refusing a candidate,
+             *     working as intended. Served so a reader can tell a coverage
+             *     gap from a refusal without reading the codebase.
+             * @enum {string}
+             */
+            actor: "operator" | "issuer" | "definition";
         };
         SDEXOrderBook: {
             /** @description Base asset (what asks sell). */
@@ -15216,6 +15366,10 @@ export interface operations {
                      *         ],
                      *         "refused": [
                      *           {
+                     *             "reason": "no_real_world_instrument_basis",
+                     *             "assets": 19740
+                     *           },
+                     *           {
                      *             "reason": "issuer_not_independently_recognised",
                      *             "assets": 3861
                      *           },
@@ -15223,7 +15377,113 @@ export interface operations {
                      *             "reason": "issuer_scam_flagged",
                      *             "assets": 289
                      *           }
-                     *         ]
+                     *         ],
+                     *         "funnel": {
+                     *           "balanced": true,
+                     *           "basis": "Every issuer account that could carry a SEP-1 attestation, narrowed to the assets served. Units change down the funnel; `actor` names who can move a number.",
+                     *           "stages": [
+                     *             {
+                     *               "stage": "issuers_with_home_domain",
+                     *               "unit": "issuer_accounts",
+                     *               "count": 44376,
+                     *               "dropped": [
+                     *                 {
+                     *                   "reason": "sep1_attestation_never_fetched",
+                     *                   "count": 29741,
+                     *                   "actor": "operator"
+                     *                 }
+                     *               ]
+                     *             },
+                     *             {
+                     *               "stage": "issuers_with_sep1_attestation",
+                     *               "unit": "issuer_accounts",
+                     *               "count": 14635,
+                     *               "dropped": [
+                     *                 {
+                     *                   "reason": "sep1_declares_no_currencies",
+                     *                   "count": 2109,
+                     *                   "actor": "issuer"
+                     *                 },
+                     *                 {
+                     *                   "reason": "sep1_payload_unreadable",
+                     *                   "count": 41,
+                     *                   "actor": "issuer"
+                     *                 }
+                     *               ]
+                     *             },
+                     *             {
+                     *               "stage": "issuers_declaring_currencies",
+                     *               "unit": "issuer_accounts",
+                     *               "count": 12485
+                     *             },
+                     *             {
+                     *               "stage": "sep1_currency_entries",
+                     *               "unit": "sep1_currency_declarations",
+                     *               "count": 1182000,
+                     *               "dropped": [
+                     *                 {
+                     *                   "reason": "entry_declares_another_issuer",
+                     *                   "count": 1145346,
+                     *                   "actor": "definition"
+                     *                 },
+                     *                 {
+                     *                   "reason": "entry_declares_no_issuer",
+                     *                   "count": 9612,
+                     *                   "actor": "issuer"
+                     *                 },
+                     *                 {
+                     *                   "reason": "entry_declares_no_asset_code",
+                     *                   "count": 3140,
+                     *                   "actor": "issuer"
+                     *                 }
+                     *               ]
+                     *             },
+                     *             {
+                     *               "stage": "issuer_bound_entries",
+                     *               "unit": "sep1_currency_declarations",
+                     *               "count": 23902,
+                     *               "dropped": [
+                     *                 {
+                     *                   "reason": "no_real_world_instrument_basis",
+                     *                   "count": 19740,
+                     *                   "actor": "definition"
+                     *                 }
+                     *               ]
+                     *             },
+                     *             {
+                     *               "stage": "candidate_assets_evaluated",
+                     *               "unit": "assets",
+                     *               "count": 4162,
+                     *               "dropped": [
+                     *                 {
+                     *                   "reason": "issuer_not_independently_recognised",
+                     *                   "count": 3861,
+                     *                   "actor": "definition"
+                     *                 },
+                     *                 {
+                     *                   "reason": "issuer_scam_flagged",
+                     *                   "count": 289,
+                     *                   "actor": "definition"
+                     *                 },
+                     *                 {
+                     *                   "reason": "duplicate_declaration_of_the_same_asset",
+                     *                   "count": 10,
+                     *                   "actor": "issuer"
+                     *                 }
+                     *               ]
+                     *             },
+                     *             {
+                     *               "stage": "assets_admitted",
+                     *               "unit": "assets",
+                     *               "count": 2
+                     *             },
+                     *             {
+                     *               "stage": "assets_served",
+                     *               "unit": "assets",
+                     *               "count": 2
+                     *             }
+                     *           ]
+                     *         }
                      *       },
                      *       "as_of": "2026-09-05T10:20:00Z",
                      *       "flags": {

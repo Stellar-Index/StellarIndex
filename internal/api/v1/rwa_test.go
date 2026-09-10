@@ -42,10 +42,18 @@ const (
 
 // stubSep1BoundReader serves canned issuer-bound SEP-1 entries. It also
 // satisfies v1.Sep1CachedReader so it can be wired as Options.Sep1Cache.
+//
+// It censuses what it serves the way the real scan does, so a test that
+// asserts on the funnel is asserting against an accounting that closes
+// rather than against numbers a stub invented. `upstream` lets a test
+// state the population BEFORE the bound entries — the issuer rows and
+// declarations a real deployment holds — which is the part of the
+// funnel no fixture of bound entries can express on its own.
 type stubSep1BoundReader struct {
-	bound []timescale.Sep1BoundCurrency
-	err   error
-	calls int
+	bound    []timescale.Sep1BoundCurrency
+	upstream timescale.Sep1BoundCensus
+	err      error
+	calls    int
 }
 
 func (s *stubSep1BoundReader) GetIssuerSep1Cached(context.Context, string) (*timescale.IssuerSep1Cached, error) {
@@ -54,21 +62,36 @@ func (s *stubSep1BoundReader) GetIssuerSep1Cached(context.Context, string) (*tim
 
 func (s *stubSep1BoundReader) BoundSep1Currencies(
 	_ context.Context, keep timescale.Sep1CurrencyFilter,
-) ([]timescale.Sep1BoundCurrency, int, error) {
+) ([]timescale.Sep1BoundCurrency, timescale.Sep1BoundCensus, error) {
 	s.calls++
 	if s.err != nil {
-		return nil, 0, s.err
+		return nil, timescale.Sep1BoundCensus{}, s.err
 	}
+	census := s.upstream
 	out := make([]timescale.Sep1BoundCurrency, 0, len(s.bound))
-	dropped := 0
+	issuers := map[string]struct{}{}
 	for _, c := range s.bound {
+		issuers[c.Issuer] = struct{}{}
+		census.Entries++
+		census.EntriesBound++
 		if keep == nil || keep(c) {
+			census.EntriesKept++
 			out = append(out, c)
 			continue
 		}
-		dropped++
+		census.EntriesFiltered++
 	}
-	return out, dropped, nil
+	if census.IssuersDeclaring == 0 {
+		census.IssuersDeclaring = len(issuers)
+	}
+	if census.IssuersWithPayload == 0 {
+		census.IssuersWithPayload = census.IssuersDeclaring +
+			census.IssuersPayloadUnreadable + census.IssuersDeclaringNothing
+	}
+	if census.IssuersWithHomeDomain == 0 {
+		census.IssuersWithHomeDomain = census.IssuersWithPayload
+	}
+	return out, census, nil
 }
 
 // rwaListStub answers ListAssetsExt from a per-issuer row map, the way

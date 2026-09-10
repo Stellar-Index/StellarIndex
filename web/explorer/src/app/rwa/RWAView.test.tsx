@@ -260,6 +260,69 @@ describe('RWAView', () => {
     ).toBeInTheDocument();
   });
 
+  it('accounts for the population the set was narrowed from, and says who can move each drop', async () => {
+    apiGetData.mockResolvedValue(
+      view({
+        funnel: {
+          balanced: true,
+          basis: 'Every issuer account that could carry a SEP-1 attestation.',
+          stages: [
+            {
+              stage: 'issuers_with_home_domain',
+              unit: 'issuer_accounts',
+              count: 44376,
+              dropped: [
+                {
+                  reason: 'sep1_attestation_never_fetched',
+                  count: 29741,
+                  actor: 'operator',
+                },
+              ],
+            },
+            {
+              stage: 'issuers_with_sep1_attestation',
+              unit: 'issuer_accounts',
+              count: 14635,
+            },
+            { stage: 'assets_served', unit: 'assets', count: 1 },
+          ],
+        },
+      }),
+    );
+    renderView();
+
+    // The population, which the page used to state nowhere at all.
+    expect(await screen.findByText(/Where the population went/)).toBeVisible();
+    expect(screen.getByText('44,376')).toBeInTheDocument();
+    expect(screen.getByText('14,635')).toBeInTheDocument();
+    // The largest coverage gap, named with its owner: a fetch nobody
+    // has run reads nothing like a refusal, and a bare count renders
+    // the two identically.
+    expect(
+      screen.getByText(/stellar\.toml not fetched yet/),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/ours to fix/)).toBeInTheDocument();
+    expect(screen.getByText('−29,741')).toBeInTheDocument();
+  });
+
+  it('says so when the coverage accounting could not be measured', async () => {
+    apiGetData.mockResolvedValue(
+      view({
+        funnel: {
+          balanced: false,
+          basis: 'Not measured.',
+          stages: [
+            { stage: 'assets_served', unit: 'assets', count: 1, dropped: [] },
+          ],
+        },
+      }),
+    );
+    renderView();
+    expect(
+      await screen.findByText(/could not be measured/),
+    ).toBeInTheDocument();
+  });
+
   it('renders the empty set as a statement about evidence, not as a zero total', async () => {
     apiGetData.mockResolvedValue(
       view({
