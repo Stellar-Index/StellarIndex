@@ -15,6 +15,30 @@ against.
 
 ## [Unreleased]
 
+### Fixed
+
+- **obs:** the memory-mapping probe's restart-storm limit is scaled to
+  its own cadence, so the unit stops reading `failed` while working
+  correctly.
+
+  It was shipped with `StartLimitIntervalSec=1h` / `StartLimitBurst=3`,
+  copied from the sibling oneshots — which run HOURLY, where three
+  starts an hour is generous headroom. This timer fires every five
+  minutes, so the normal rate is twelve starts an hour and the limit was
+  guaranteed to trip on the third run of every hour.
+
+  The failure mode is the confusing part and is why it is worth writing
+  down: the probe's own runs SUCCEEDED, the textfile was written, the
+  metric kept being scraped — and systemd still reported the unit
+  `failed` with `Start request repeated too quickly`. A rate limit on
+  start ATTEMPTS says nothing about whether the work succeeded, so
+  `systemctl --failed` and the probe's actual health disagreed.
+
+  Also dropped `RuntimeMaxSec`, which systemd ignores for `Type=oneshot`
+  and announces on every start — twelve log lines an hour saying it is
+  doing nothing. `TimeoutStartSec` is what bounds a oneshot.
+
+
 ## [v0.71.0] — 2026-09-10
 
 ### Added

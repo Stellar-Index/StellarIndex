@@ -38,10 +38,18 @@ Documentation=https://github.com/Stellar-Index/StellarIndex/blob/main/docs/opera
 # exists to report.
 After=clickhouse-server.service
 
-# Restart-storm limit — matches the sibling oneshots (systemd >=230
-# ignores StartLimit* under [Service]).
+# Restart-storm limit, SCALED TO THIS UNIT'S CADENCE. The sibling
+# oneshots use 1h/3, but they run hourly — three starts an hour is
+# generous headroom there. This timer fires every five minutes, so the
+# NORMAL rate is twelve starts an hour, and 1h/3 guaranteed a
+# start-limit-hit on the third run of every hour: the probe's own runs
+# succeeded, the .prom was written, and the unit still read `failed`
+# with `Start request repeated too quickly` (observed on r1
+# 2026-09-10). Budget the scheduled twelve plus operator runs, and
+# still catch a genuine storm.
+# systemd >=230 ignores StartLimit* under [Service], hence [Unit].
 StartLimitIntervalSec=1h
-StartLimitBurst=3
+StartLimitBurst=20
 
 [Service]
 Type=oneshot
@@ -64,7 +72,10 @@ IOSchedulingPriority=7
 # under the 5-minute timer interval so a wedged run fails and is retried
 # on the next tick rather than overlapping it.
 TimeoutStartSec=2min
-RuntimeMaxSec=2min
+# No RuntimeMaxSec: systemd ignores it for Type=oneshot and says so on
+# every single start ("RuntimeMaxSec= has no effect in combination with
+# Type=oneshot"), which is twelve log lines an hour saying nothing.
+# TimeoutStartSec above is what actually bounds a oneshot.
 
 NoNewPrivileges=true
 PrivateTmp=true
