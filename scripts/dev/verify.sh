@@ -265,6 +265,12 @@ echo "=== Imports self-test ===" && ./scripts/ci/lint-imports-test.sh
 echo "=== Protocol registry sync ===" && ./scripts/ci/lint-protocol-registry-sync.sh
 echo "=== Lexicon ==="       && ./scripts/ci/lint-lexicon.sh
 echo "=== i128/NUMERIC ===" && ./scripts/ci/lint-i128.sh
+# gofumpt's doc-comment reformatter rewrites a doubled apostrophe to U+201D,
+# so a comment quoting `entry_xdr != ''` stops saying what the filter is. The
+# corruption is fmt-STABLE, which is why a clean `gofumpt -l` cannot stand in
+# for this scan.
+echo "=== Go typographic quotes ===" && python3 ./scripts/ci/lint-go-typographic-quotes.py
+echo "=== Go typographic quotes self-test ===" && ./scripts/ci/lint-go-typographic-quotes-test.sh
 echo "=== Migrations money ===" && ./scripts/ci/lint-migrations.sh
 echo "=== Migration backward-compat self-test ===" && ./scripts/ci/lint-migration-compat-test.sh
 echo "=== Migration immutability ===" && ./scripts/ci/lint-migration-immutability.sh

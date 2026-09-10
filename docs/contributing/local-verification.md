@@ -117,7 +117,7 @@ cheapest first.
 | changed file | runs |
 |---|---|
 | `*.sh` | `bash -n`; `lint-shell-sigpipe` scoped to the pipefail subset; `shellcheck -x`; a `*-test.sh` is also run, last |
-| `*.go` | `gofumpt -l`, `goimports -l` on the files; `lint-lexicon`, `lint-i128`, `lint-imports` (whole tree); `lint-http-timeouts` scoped to the touched package dirs; `go vet` and `go build` on those packages |
+| `*.go` | `gofumpt -l`, `goimports -l` on the files; `lint-lexicon`, `lint-i128`, `lint-imports`, `lint-go-typographic-quotes` (whole tree); `lint-http-timeouts` scoped to the touched package dirs; `go vet` and `go build` on those packages |
 | `.github/workflows/*.yml` | `lint-actions-pinning` scoped; `actionlint`; `zizmor --offline` |
 | `migrations/*.sql` | `lint-migrations`, `lint-migration-immutability`, `lint-migration-commands`, `lint-migration-compat` |
 | `*.go`/`*.sql` naming a duplicate-bearing table | `lint-lake-dedup` |

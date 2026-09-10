@@ -862,6 +862,20 @@ jobs:
         # trips it, and a mere name-prefix lookalike does not. A ban you
         # evade by importing one directory deeper is worse than none.
         run: ./scripts/ci/lint-imports-test.sh
+      - name: lint-go-typographic-quotes
+        # `make fmt` runs gofumpt, whose doc-comment reformatter applies Go's
+        # legacy TeX quoting rule: a doubled apostrophe in a DOC comment
+        # becomes U+201D. Six comments quoting SQL empty-string predicates
+        # (`entry_xdr != ''`, `WHERE s.signer <> ''`) had already been
+        # rewritten in place, so each documented an invariant it no longer
+        # stated. The rewrite is fmt-STABLE — `gofumpt -l` lists nothing
+        # afterwards — so only a scan for the character itself sees it.
+        run: python3 ./scripts/ci/lint-go-typographic-quotes.py
+      - name: lint-go-typographic-quotes self-test
+        # Proves the gate goes RED on the corrupted shape, not merely green
+        # on a clean tree, and that gofumpt reports that same file as
+        # already formatted.
+        run: ./scripts/ci/lint-go-typographic-quotes-test.sh
       - name: lint-protocol-registry-sync
         # The frontend protocol registry (web/explorer/.../protocols/registry.ts)
         # mirrors the Go source-of-truth (internal/api/v1/protocols_registry.go)

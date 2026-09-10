@@ -76,6 +76,53 @@ against.
   is already correct, taking ownership of that dpkg conffile would start
   a prompt-on-upgrade fight for no gain, and a second config matching the
   same glob makes logrotate refuse both with "duplicate log entry".
+- **ci:** `lint-go-typographic-quotes` — a tracked Go file may not contain
+  U+2018, U+2019, U+201C or U+201D.
+
+  `make fmt` runs gofumpt, and gofumpt runs `go/doc/comment` over every
+  **doc** comment. That printer still applies Go's legacy TeX-style
+  quoting rule, so a doubled apostrophe becomes `”` and a doubled
+  backtick becomes `“`. A doc comment quoting a SQL empty-string
+  predicate is therefore rewritten in place:
+
+  ```
+  - // Doc says the filter is `entry_xdr != ''` applied to the row FINAL kept.
+  + // Doc says the filter is `entry_xdr != ”` applied to the row FINAL kept.
+    const Q = `SELECT 1 WHERE entry_xdr != '' AND a = ''`   <- unchanged
+  ```
+
+  The literal is untouched, so nothing breaks, no test fails, and the
+  only thing that changes is the sentence documenting the invariant.
+  `entry_xdr != ''` is how the ClickHouse readers exclude tombstoned
+  rows, so this lands squarely on the comments that explain load-bearing
+  filters. Six were already corrupted in the tree; they are repaired
+  under **Fixed** below.
+
+  Two properties are why this is a scan and not a formatter run. The
+  corruption is **fmt-stable** — `”` is a fixed point, so `gofumpt -l`
+  over a mangled file lists nothing and "the tree was clean after
+  `make fmt`" is not evidence of anything. And the obvious scan lies: the
+  first sweep for these characters used a basic regular expression with
+  `\|` alternation and reported the tree clean, because POSIX BRE has no
+  alternation and a grep without the GNU extension matches a literal `|`
+  and exits 1 — indistinguishable from no hits. `grep -P` is not the
+  escape either; `/usr/bin/grep` on macOS is BSD grep and rejects it.
+  Developers here work on macOS while CI runs Linux, so the gate decodes
+  the file in Python (as `lint-yaml-duplicate-keys` and
+  `lint_textfile_exposition` already do) and has no grep dialect to get
+  wrong.
+
+  The failure text teaches the non-obvious part: restoring `''` is **not**
+  the fix, because the next `make fmt` mangles it again. Either reword the
+  prose, or move the code into an indented code block inside the doc
+  comment — gofmt does not requote a code block, so `''` survives verbatim
+  there (verified against gofumpt v0.8.0, and it is what the six repairs
+  use). Scope is tracked `*.go` minus vendored trees and files carrying
+  Go's `// Code generated ... DO NOT EDIT.` marker; `testdata/` stays in
+  scope. A genuine typographic quote is a per-line fact, so the escape
+  hatch is an inline `lint-quotes:ok: <reason>` waiver — counted in the
+  summary line — rather than a baseline file. The gate refuses to pass on
+  an empty scope and prints how many files it read.
 
 - **ci:** `lint-textfile-exposition` — every line a node_exporter
   textfile-collector producer writes must parse as Prometheus exposition
@@ -197,6 +244,23 @@ against.
   the population this query newly admits (quiet reserves whose last write
   is old) is drawn disproportionately from that era. The fix is a
   re-derive of `ledger_entry_changes.intra_ledger_seq`.
+- **docs:** six Go doc comments corrupted by gofumpt's doc-comment
+  quoting rule now say again what they said before the formatter reached
+  them. Each had a SQL empty-string predicate rewritten to `”`:
+  `wasm_lake_reader.go` (the no-FINAL argument — `FINAL ... AND
+  entry_xdr != ''` applies the filter after dedup, so a removed row wins
+  the dedup and turns held code into a 404), `signer.go`
+  (`WHERE s.signer <> ''`, the guard that leaves an unresolved source
+  NULL rather than blank), `apikey_store.go`
+  (`NULLIF($1::text, '')::uuid`), `account_trades_test.go`
+  (`COALESCE(usd_volume::text, '')`, the expression whose implicit
+  `coalesce` output name caused the 42703 outage the test pins),
+  `account_graph.go` (the empty-cursor keyset comparison) and
+  `asset_volume_character_rollup.go` (the empty issuer for
+  native/soroban/fiat/crypto ids). Comments only — no behaviour change.
+  The three whose exact SQL is load-bearing are now indented code blocks,
+  which the formatter leaves alone; the other three are reworded so the
+  doubled apostrophe never occurs.
 
 - **obs:** the TimescaleDB probe now treats its psql reply as the
   external input it is. Every value passes a numeric guard before it is

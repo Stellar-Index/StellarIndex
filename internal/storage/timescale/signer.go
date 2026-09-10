@@ -33,9 +33,12 @@ var AMMSignerSources = []string{"comet", "soroswap", "aquarius", "phoenix", "sus
 // here survives the projector's ~5s re-derive UPSERT — exactly the
 // routed_via first-wins contract.
 //
-// Empty-string signers in the batch are ignored (WHERE s.signer <> ”), so
-// a tx whose source could not be resolved leaves the row NULL for a later
-// pass rather than pinning it to a blank.
+// Empty-string signers in the batch are ignored — the join carries
+//
+//	WHERE s.signer <> ''
+//
+// so a tx whose source could not be resolved leaves the row NULL for a
+// later pass rather than pinning it to a blank.
 // [from, to) is the trades TIME-PARTITION (ts) bound covering the tags —
 // REQUIRED: `trades` is a ts-partitioned Timescale hypertable, so without it
 // this UPDATE scans EVERY chunk (incl. compressed historical ones) and trips

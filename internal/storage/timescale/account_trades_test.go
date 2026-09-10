@@ -80,9 +80,13 @@ func TestClampAccountTradesLimit(t *testing.T) {
 // The outer SELECT projects from the UNION subquery by NAME, so every
 // name it lists must be an output column of both arms. That held for
 // plain columns and for `x::text` (a cast preserves the name), but NOT
-// for `COALESCE(usd_volume::text, ”)` — PostgreSQL names that output
-// column `coalesce`, so `usd_volume` resolved against nothing and the
-// statement failed at PLAN time with 42703. The endpoint had therefore
+// for the empty-string coalesce
+//
+//	COALESCE(usd_volume::text, '')
+//
+// — PostgreSQL names that output column `coalesce`, so `usd_volume`
+// resolved against nothing and the statement failed at PLAN time with
+// 42703. The endpoint had therefore
 // never served a row, and TestAccountTradesQuery_Shape could not see it
 // because it asserts substrings of the query STRING rather than the
 // relationship between the two column lists (cold audit 2026-08-04).

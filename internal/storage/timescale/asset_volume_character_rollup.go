@@ -46,9 +46,9 @@ import (
 //   - the (maker,taker) pair is UNORDERED (LEAST/GREATEST) so a round-trip
 //     folds to the one concentrated pair it economically is.
 //   - issuer is derived per canonical asset_id: the G-strkey suffix of a
-//     classic 'CODE-GISSUER' id, ” for native/soroban/fiat/crypto — the
-//     same value canonical.ParseAsset(assetID).Issuer gives the per-asset
-//     query, so the issuer-side predicate matches.
+//     classic 'CODE-GISSUER' id, the empty string for native/soroban/
+//     fiat/crypto — the same value canonical.ParseAsset(assetID).Issuer
+//     gives the per-asset query, so the issuer-side predicate matches.
 //   - market_styled tests the RAW counterpart (native / fiat:% / USDC-%),
 //     never the folded form — identical to the per-asset predicate.
 //   - total_vol_num is the EXACT NUMERIC sum (ADR-0003) for the stored

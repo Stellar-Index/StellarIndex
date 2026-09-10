@@ -445,9 +445,11 @@ func encodePermissions(p platform.KeyPermissions) ([]byte, error) {
 }
 
 // uuidOrEmpty returns the UUID's text form for non-zero values,
-// empty string for the zero UUID. Lets us write
-// `NULLIF($1::text, ”)::uuid` in SQL to bind NULL when the
-// caller meant "absent".
+// empty string for the zero UUID. Lets the statement write
+//
+//	NULLIF($1::text, '')::uuid
+//
+// to bind NULL when the caller meant "absent".
 func uuidOrEmpty(id uuid.UUID) string {
 	if id == uuid.Nil {
 		return ""

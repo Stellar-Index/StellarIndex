@@ -27,9 +27,13 @@
 #                            (0.5 s/file). A *-test.sh is also RUN, last.
 #   *.go                     gofumpt -l, goimports -l (0.1 s/file); then
 #                            lint-lexicon, lint-i128, lint-imports (whole
-#                            tree, ~1 s each — they take no file list) and
-#                            lint-http-timeouts scoped to the package dirs;
-#                            then go vet + go build on the touched packages.
+#                            tree, ~1 s each — they take no file list),
+#                            lint-go-typographic-quotes (whole tree, 0.55 s)
+#                            and lint-http-timeouts scoped to the package
+#                            dirs; then go vet + go build on the touched
+#                            packages. The quote scan runs HERE and not only
+#                            in verify.sh because its subject is what `make
+#                            fmt` just did to the files being committed.
 #   .github/workflows/*.yml  lint-shell-sigpipe over the workflows DIRECTORY
 #                            (0.44 s; the directory and not the changed file
 #                            — a lone workflow with no pipefail run: block is
@@ -419,6 +423,13 @@ if [ "${#go_files[@]}" -gt 0 ]; then
     add_step "lint-lexicon" "whole tree (takes no file list)" "$ci_dir/lint-lexicon.sh"
     add_step "lint-i128" "whole tree (takes no file list)" "$ci_dir/lint-i128.sh"
     add_step "lint-imports" "whole tree (takes no file list)" "$ci_dir/lint-imports.sh"
+    # The typographic-quote scan, whole tree even though it ACCEPTS a file
+    # list: scoped to the changed files it would exit 2 ("refusing to pass
+    # vacuously") on a diff that only touches generated or vendored Go —
+    # the same false-red shape the lint-actions-pinning note above records.
+    # Whole-tree costs 0.55 s over 2,058 files, measured 2026-09-10.
+    add_step "lint-go-typographic-quotes" "whole tree (0.55 s; scoping it could go vacuous on a generated-only diff)" \
+        python3 "$ci_dir/lint-go-typographic-quotes.py"
     # http-timeouts exempts _test.go and refuses a vacuous root, so scope it
     # to the package dirs that hold at least one non-test Go file.
     timeout_dirs=()

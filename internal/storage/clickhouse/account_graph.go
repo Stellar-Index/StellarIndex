@@ -223,9 +223,9 @@ const accountGraphCoverageQuery = `
 // The two outbound page reads. Both are keyset-paged on the
 // counterparty's account id, which is the second column of the table's
 // ORDER BY, so a page is a primary-key range read bounded by LIMIT
-// however many edges the account has. An empty cursor compares as `>
-// ”`, which every strkey satisfies, so the first page needs no separate
-// statement.
+// however many edges the account has. An empty cursor compares as
+// greater-than the empty string, which every strkey satisfies, so the
+// first page needs no separate statement.
 const (
 	accountGraphCreatedPageQuery = `
 	SELECT created, creations, funded_stroops, first_ledger, last_ledger, first_at, last_at

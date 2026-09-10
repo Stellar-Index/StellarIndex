@@ -494,10 +494,14 @@ func codeKeyXDR(hash xdr.Hash) (string, error) {
 // any row yields identical bytes.
 //
 // NO FINAL — deliberately. entry_type/key_xdr is the whole PK so FINAL buys
-// no selectivity, and `FINAL ... AND entry_xdr != ”` applies the filter
-// AFTER dedup: a 'removed' row would win the dedup and then be filtered
-// out, turning code we still hold into a 404. Probed on r1 against a key
-// carrying both a live and a removal row: FINAL -> 0 rows, no-FINAL -> 1.
+// no selectivity, and the pairing
+//
+//	FINAL ... AND entry_xdr != ''
+//
+// applies the filter AFTER dedup: a 'removed' row would win the dedup and
+// then be filtered out, turning code still held into a 404. Probed on r1
+// against a key carrying both a live and a removal row: FINAL -> 0 rows,
+// no-FINAL -> 1.
 //
 // LIMIT 4, not 1: current-state holds up to 3 rows per key pre-merge. The
 // small cap keeps the caller's cc.Hash guard able to skip an undecodable
