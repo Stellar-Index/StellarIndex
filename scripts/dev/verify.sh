@@ -285,6 +285,8 @@ echo "=== Main-CI-health decision-core self-test ===" && ./scripts/ci/check-main
 echo "=== SLA-evidence decision-core + k6-weekly wiring self-test ===" && ./scripts/ci/check-sla-evidence-test.sh
 echo "=== SLA proof renderer self-test ===" && ./scripts/ci/render-sla-proof-test.sh
 echo "=== deploy/systemd authority ===" && bash ./scripts/ci/lint-deploy-systemd-authority.sh
+echo "=== Textfile-collector exposition ===" && ./scripts/ci/lint-textfile-exposition.sh
+echo "=== Textfile-collector exposition self-test ===" && ./scripts/ci/lint-textfile-exposition-test.sh
 echo "=== Ansible task lint (pipefail/bash, secret-on-argv) ===" && ./scripts/ci/lint-ansible-tasks.sh
 echo "=== Ansible task lint self-test ===" && ./scripts/ci/lint-ansible-tasks-test.sh
 echo "=== Ansible-drift decision-core self-test ===" && ./scripts/ci/check-ansible-drift-test.sh

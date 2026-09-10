@@ -23,6 +23,26 @@ chain (five different lints care about this change).
   obs and write atomically (temp+rename) to
   `/var/lib/node_exporter/textfile_collector/` — copy
   `data-freshness.sh` or `verify-served-values`.
+- **A new textfile producer must be added to
+  `scripts/ci/textfile-producers.manifest`** (path, the `.prom` it
+  writes, and the self-test that drives its shipped bytes, or `-`).
+  `scripts/ci/lint-textfile-exposition.sh` reconciles that list against
+  the tree and sweeps every producer in it.
+- **Every value a producer writes must be a number by construction.**
+  node_exporter parses each `.prom` whole: one unparseable line and it
+  rejects the entire file, so a single bad value costs every unrelated
+  family that shares it (r1 2026-09-10 — 127 `stellarindex_timescale_*`
+  series went dark because one field held the word `SET`). A value
+  captured from an external command is *not* a number until it has been
+  checked; `${x:-0}` does not check it. Guard it (`is_num` in the
+  TimescaleDB probe, the digits-only `case` in `data-freshness.sh`,
+  `[[ "$live" =~ ^[0-9]+$ ]]` in `galexie-archive-tip-lag.sh`), omit the
+  sample when it fails, and say so through a health gauge.
+- **Never put two statements in one command string handed to a
+  tuples-only SQL client.** `psql -At` prints a command tag for every
+  statement returning no rows and does not suppress it, so
+  `SET x; SELECT y` puts the word `SET` on the stream you are parsing.
+  Session settings go in `PGOPTIONS`. The gate above fails CI on this.
 
 ## 2. The alert (if warranted)
 

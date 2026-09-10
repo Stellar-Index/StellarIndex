@@ -1,6 +1,6 @@
 ---
 title: Runbook — timescale-probe-degraded
-last_verified: 2026-09-05
+last_verified: 2026-09-10
 status: current
 severity: P2
 ---
@@ -47,7 +47,9 @@ it. Each arm maps to one of those shapes.
 ## Symptoms
 
 - `stellarindex_timescale_probe_query_ok{query=…} == 0` — that query
-  errored. The alert names it in the summary.
+  errored, **or its reply did not have the shape the probe's read loop
+  expects** (see root cause 7). The alert names the query in the summary;
+  the journal distinguishes the two.
 - `stellarindex_timescale_probe_rows{query=…} == 0` — that query
   succeeded and returned nothing.
 - `time() - stellarindex_timescale_probe_last_run_unix > 600` — the file
@@ -111,6 +113,32 @@ runuser -u postgres -- psql -d stellarindex -c \
    while everything else looks healthy.
 6. **A full disk.** `mv` fails, the previous file stays in place, and
    the stamp ages. `stellarindex_timescale_disk_full` fires alongside.
+7. **A reply the read loop could not parse** — added 2026-09-10. psql
+   narrates: it prints a command tag (`SET`, `BEGIN`) for any statement
+   that returns no rows, `-At` does **not** suppress it, and a NULL
+   column renders as an empty field. Any of those lands in a field the
+   loop reads as a number. Rows with a non-numeric field are now dropped
+   and the query reports `query_ok 0`, so this arm covers it; `rows` will
+   be lower than the row count the query really returned. Run the query
+   by hand (below) and compare its raw output with what the probe wrote.
+   The original instance of this is worth knowing: the convoy query was
+   written as `SET statement_timeout = '10s'; SELECT …`, psql printed
+   `SET` on its own line, and the probe wrote
+   `stellarindex_pg_lock_convoy_backends SET`. node_exporter rejects the
+   **whole file** on one unparseable line, so all four families went —
+   including these health gauges — and nothing alerted, because the
+   alerting that would have noticed was in the file that stopped parsing.
+   Session settings belong in `PGOPTIONS`, and
+   `scripts/ci/lint-textfile-exposition.sh` now fails CI on a
+   multi-statement command string.
+8. **The probe refused to publish.** The unit exits **non-zero**, the
+   journal carries `refusing to publish an unparseable textfile`, the
+   previous file stays in place and the stamp ages. The probe parses its
+   own rendered bytes before the atomic `mv`, because a malformed file
+   published is silent (node_exporter drops it and only
+   `node_textfile_scrape_error` moves) while a file not published ages
+   into this alert. Treat the journal line as the diagnosis: it prints
+   the offending line.
 
 ## Mitigation
 
@@ -149,8 +177,14 @@ runuser -u postgres -- psql -d stellarindex -c \
   queries succeed and return nothing until the caggs and compression
   policies exist. `for: 15m` does not cover a long bring-up; this is
   expected noise during a build and clears with the first migration.
+- **Not a false positive: a dropped row.** A row with a non-numeric
+  field is omitted rather than published, and its query drops to
+  `query_ok 0`. The value was never recoverable — a command tag or a
+  NULL is evidence the reply did not have the expected shape, not a
+  number to be repaired — and publishing it would have cost every family
+  in the file, not just that one.
 - **Not a false positive: a partial file.** One failing query still
-  writes the other two families on purpose — dying instead would leave
+  writes the other three families on purpose — dying instead would leave
   the previous file on disk to be re-scraped forever. A partial file
   with an honest `query_ok 0` is the designed outcome, not a bug.
 
@@ -171,4 +205,8 @@ runuser -u postgres -- psql -d stellarindex -c \
 
 ## Changelog
 
+- 2026-09-10 — added root causes 7 and 8 after the command-tag incident:
+  a reply the read loop cannot parse now reports `query_ok 0` instead of
+  writing a word where a number belongs, and the probe validates its own
+  rendered file before publishing it.
 - 2026-09-05 — initial version, with the alert.

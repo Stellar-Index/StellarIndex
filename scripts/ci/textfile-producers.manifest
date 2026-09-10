@@ -1,0 +1,62 @@
+# textfile-producers.manifest — every process in this repo that writes into
+# node_exporter's textfile-collector directory.
+#
+# WHY A MANIFEST AND NOT JUST A GREP.  node_exporter parses each .prom file
+# whole: one unparseable line and it rejects THE ENTIRE FILE, so every family
+# sharing that file dies together. On r1 2026-09-10 a psql command tag landed
+# as `stellarindex_pg_lock_convoy_backends SET` in timescale_jobs.prom, and
+# the collateral was 127 pre-existing stellarindex_timescale_* series — the
+# TimescaleDB job and CAGG health monitoring — dark for ~20 minutes, with
+# nothing alerting, because the alerting that would have noticed was in the
+# file that stopped parsing. Producers therefore have to be enumerated, not
+# sampled: scripts/ci/lint_textfile_exposition.py sweeps this list, and a new
+# producer is a registration event rather than a silent addition.
+#
+# Format, whitespace-separated:
+#   <producer path>   <output>   <self-test>
+#
+#   <output>     comma-separated .prom basenames, each of which must appear
+#                LITERALLY in the producer (so a rename cannot rot this
+#                column), or `operator-supplied` for a path that arrives as
+#                a flag/environment value and has no basename in the source.
+#   <self-test>  a test that drives the producer's SHIPPED bytes, or `-`.
+#                `-` is a visible admission, not an omission: it is the list
+#                of producers whose runtime behaviour nothing exercises.
+#                The path must exist, so a renamed test cannot orphan a
+#                producer quietly.
+
+# ── shell producers ────────────────────────────────────────────────────────
+configs/ansible/roles/archival-node/files/ch-schema-drift.sh              ch_schema_drift.prom               configs/ansible/roles/archival-node/files/ch-schema-drift-test.sh
+configs/ansible/roles/archival-node/files/data-freshness.sh               data_freshness.prom                scripts/ci/data-freshness-test.sh
+configs/ansible/roles/archival-node/files/galexie-archive-contiguity.sh   galexie_archive_contiguity.prom    scripts/ci/galexie-archive-contiguity-test.sh
+configs/ansible/roles/archival-node/files/galexie-archive-tip-lag.sh      galexie_archive_tip_lag.prom       -
+configs/ansible/roles/archival-node/files/ledger-meta-decode-probe.sh     ledger_meta_decode.prom            -
+configs/ansible/roles/archival-node/templates/pgbackrest-backup.sh.j2     pgbackrest_backup.prom             scripts/ci/pgbackrest-backup-test.sh
+configs/healthchecks/smoke.sh                                             api_smoke.prom                     scripts/ci/smoke-textfile-test.sh
+scripts/ops/ch-schema-snapshot.sh                                         ch_schema_snapshot.prom            scripts/ops/ch-schema-snapshot-test.sh
+scripts/ops/config-assertions.sh                                          config_assertions.prom             -
+scripts/ops/restore-drill.sh                                              restore_drill.prom                 scripts/ops/restore-drill-run-test.sh
+scripts/ops/zfs-snapshot.sh                                               zfs_snapshot.prom,zfs_snapshot_error.prom  scripts/ci/zfs-snapshot-test.sh
+
+# ── inline `content:` probes shipped by ansible tasks ──────────────────────
+# 10-observability.yml ships FOUR probes in one file; the two with self-tests
+# are the two that have had an incident. timescale-jobs-probe-test.sh is the
+# one that drives the convoy/CAGG probe whose 2026-09-10 defect this gate
+# exists for.
+configs/ansible/roles/archival-node/tasks/10-observability.yml            galexie_catchup.prom,timescale_jobs.prom,stellar_stack_version.prom,stellarindex_binary_version.prom  scripts/ci/timescale-jobs-probe-test.sh
+configs/ansible/roles/haproxy/tasks/07-monitoring.yml                     keepalived.prom                    -
+configs/ansible/roles/patroni/tasks/11-monitoring.yml                     patroni.prom                       -
+configs/ansible/roles/redis-sentinel/tasks/07-monitoring.yml              redis_sentinel.prom                -
+
+# ── Go producers ──────────────────────────────────────────────────────────
+# These render every value through a typed formatter (%d/%.3f over an int64 or
+# a float64), so the 2026-09-10 shape — an arbitrary captured STRING reaching
+# a value field — is unrepresentable in them by construction. They are swept
+# for structure all the same: a label quoted with %s instead of %q, or a
+# second `# TYPE` for one family, rejects the file exactly as hard.
+cmd/stellarindex-sla-probe/textfile.go                                    operator-supplied                  cmd/stellarindex-sla-probe/textfile_test.go
+internal/archivecompleteness/metrics.go                                   archive_completeness.prom          internal/archivecompleteness/metrics_test.go
+internal/ops/archive/verify_archive_textfile.go                           operator-supplied                  internal/ops/archive/verify_archive_textfile_test.go
+internal/ops/chops/verify_served_values.go                                served_values.prom                 internal/ops/chops/verify_served_values_test.go
+internal/ops/opsutil/job_heartbeat.go                                     operator-supplied                  internal/ops/opsutil/job_heartbeat_test.go
+internal/supply/textfile.go                                               operator-supplied                  internal/supply/textfile_test.go

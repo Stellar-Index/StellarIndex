@@ -73,6 +73,13 @@ is_pubnet() { [[ "$(stellar_network)" != "testnet" && "$(stellar_network)" != "f
 {
   echo "# HELP stellarindex_config_assertion_ok 1 when a load-bearing guard config is live with expected content."
   echo "# TYPE stellarindex_config_assertion_ok gauge"
+  # _skipped is written by skip() below and had no header of its own, so it
+  # arrived untyped. Declared here, beside _ok, and unconditionally: a host
+  # that skips nothing renders the header with no samples under it, which is
+  # a well-formed (and correct) "this family exists, it is empty" — the same
+  # reason every other family here is declared before its first sample.
+  echo "# HELP stellarindex_config_assertion_skipped 1 when an assertion was deliberately not run because the layer it guards is absent on this host shape."
+  echo "# TYPE stellarindex_config_assertion_skipped gauge"
 } > "$TMP"
 
 # ── 2026-06-11 root-fill loop guards ─────────────────────────────────
@@ -98,6 +105,7 @@ if have_zfs; then
   # on every service run while passing by hand. Checking the module is
   # merely LOADED would not substitute: a deleted module stays resident
   # until reboot, which is exactly the 2026-07-03 trap.
+  # shellcheck disable=SC2016  # $(uname -r) must expand in the INNER sh, not here
   assert_cmd zfs_module_on_disk sh -c 'ls /lib/modules/$(uname -r)/updates/dkms/zfs.ko* >/dev/null'
   assert_cmd zfs_packages_held sh -c 'apt-mark showhold | grep -q zfs-dkms'
 else
@@ -138,6 +146,7 @@ assert_cmd supply_reserve_accounts_nonempty sh -c \
 # "[[: not found" (exit 127) — so this assertion reported FAIL on every
 # run regardless of the creds' actual validity. Same bashism-under-dash
 # class as the deploy backup-freshness gate (7609dce4).
+# shellcheck disable=SC2016  # the body is a script for the INNER bash; expanding it here would resolve every variable in the caller
 assert_cmd galexie_writer_creds_valid bash -c '
   export HOME=/root
   [[ -r /etc/default/galexie ]] || exit 1
