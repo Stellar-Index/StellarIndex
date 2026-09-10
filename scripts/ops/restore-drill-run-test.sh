@@ -407,6 +407,29 @@ emitbin="$work/emitbin"; mkdir -p "$emitbin"
 printf '#!/usr/bin/env bash\necho "bc: command not found" >&2\nexit 127\n' > "$emitbin/bc"
 chmod +x "$emitbin/bc"
 
+# `bc` PRESENT. The happy path must supply its own bc rather than borrow
+# the host's: the pinned Linux verify lane does not ship bc, so relying on
+# the host passed on macOS and failed in the container — the test was
+# asserting a property of the machine, not of the script.
+#
+# This is a real calculator, not a canned answer. The drill emits
+#   scale=2; <window> / (<secs> + 0.0001)
+# so a hard-coded reply would keep passing if emit_metric stopped doing
+# the arithmetic at all, which is most of what this case exists to catch.
+okbin="$work/okbin"; mkdir -p "$okbin"
+cat > "$okbin/bc" <<'BC'
+#!/usr/bin/env bash
+python3 -c 'import sys, re
+e = sys.stdin.read()
+m = re.match(r"\s*scale=(\d+)\s*;\s*(.+)", e, re.S)
+scale = int(m.group(1)) if m else 2
+body = (m.group(2) if m else e).strip()
+if not re.fullmatch(r"[0-9+\-*/(). \t\r\n]+", body):
+    sys.exit(1)
+print(format(eval(body), "." + str(scale) + "f"))'
+BC
+chmod +x "$okbin/bc"
+
 emit() { # emit <case> [PATH-prefix] → $PROM_OUT, $RC, $ERR
   local d="$work/emit-$1"; shift
   rm -rf "$d"; mkdir -p "$d"
@@ -419,7 +442,7 @@ emit() { # emit <case> [PATH-prefix] → $PROM_OUT, $RC, $ERR
 prom_field() { awk -v want="$1" '$1 == want { print $2 }' "$PROM_OUT"; }
 
 # (a) bc present — the measured number is published, and the file parses.
-emit healthy
+emit healthy "$okbin"
 if [[ -n "$(prom_field 'stellarindex_restore_drill_ch_rederive_ledgers_per_second{repo="1"}')" ]]; then
   ok "with bc present the throughput series is published"
 else
