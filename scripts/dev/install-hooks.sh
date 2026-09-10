@@ -102,6 +102,42 @@ cat > "$hook" <<EOF
 #   skip once:  git commit --no-verify
 #   remove:     make hooks-remove
 top="\$(git rev-parse --show-toplevel 2>/dev/null)" || exit 0
+
+# ── identity guard ───────────────────────────────────────────────────
+# A REPOSITORY-LOCAL user.email is the signature of a test fixture that
+# escaped. Fixtures set a throwaway identity with \`git -C "\$tmp" config
+# user.email …\`, and git honours an inherited GIT_DIR over \`-C\`, so when
+# a fixture runs from inside a hook that write lands on the REAL
+# repository and every later commit is authored by the fixture.
+#
+# That happened here: .git/config acquired user.name=t / user.email=t@t
+# on 2026-09-09 and 151 commits were authored by it before anyone
+# noticed, 96 of them pushed to a public repository, where they became
+# two anonymous entries in the contributor list.
+#
+# The global identity is the source of truth. A local override is either
+# that accident or a deliberate per-repo identity — so this refuses and
+# makes the caller say which, rather than guessing. It names no person:
+# the check is that local and global AGREE, not what either one is.
+local_email="\$(git config --local --get user.email 2>/dev/null || true)"
+if [ -n "\$local_email" ]; then
+    global_email="\$(git config --global --get user.email 2>/dev/null || true)"
+    if [ "\$local_email" != "\$global_email" ]; then
+        echo "pre-commit: REFUSING — this repository has a LOCAL user.email that disagrees with your global one." >&2
+        echo "  local:  \$local_email" >&2
+        echo "  global: \${global_email:-<unset>}" >&2
+        echo "" >&2
+        echo "A local override is usually a test fixture that escaped: a fixture sets a" >&2
+        echo "throwaway identity, and git honours an inherited GIT_DIR over its own -C, so" >&2
+        echo "the write lands here instead of on the fixture. Commits then carry it silently." >&2
+        echo "" >&2
+        echo "  drop it (the usual fix):  git config --local --unset user.email" >&2
+        echo "                            git config --local --unset user.name" >&2
+        echo "  keep it deliberately:     git config --local stellarindex.identityAck true" >&2
+        [ "\$(git config --local --get stellarindex.identityAck 2>/dev/null)" = "true" ] || exit 1
+    fi
+fi
+
 # A repository without the dispatcher (a shared core.hooksPath) has nothing
 # for this hook to run.
 [ -x "\$top/scripts/dev/lint-changed.sh" ] || exit 0
