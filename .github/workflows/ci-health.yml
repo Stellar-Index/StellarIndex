@@ -227,7 +227,12 @@ jobs:
           if [ -n "$existing" ] && [ "$existing" != "null" ]; then
             prev="$(gh issue view "$existing" --json body --jq '.body' || true)"
             gh issue edit "$existing" --body "$body"
-            if ! printf '%s' "$prev" | grep -qF "$fingerprint"; then
+            # A here-string, not a pipe: `grep -qF` stops at the first
+            # match and a GitHub issue body runs to 65,536 characters, so
+            # past the 64 KiB pipe buffer the SIGPIPE would fail the
+            # pipeline under pipefail and INVERT this test — the comment
+            # would then fire on every run (scripts/ci/lint-shell-sigpipe.sh).
+            if ! grep -qF "$fingerprint" <<<"$prev"; then
               gh issue comment "$existing" --body "The set of non-reporting scheduled controls changed: \`${DEAD}\`."
               echo "Dead-control set changed on issue #$existing."
             fi

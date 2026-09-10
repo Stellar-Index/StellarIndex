@@ -24,11 +24,31 @@
 #   - a root with no pipefail scripts FAILS rather than passing vacuously;
 #   - a gate script under scripts/ci is caught (the root that was missing).
 #
+# And, since 2026-09-10, the same for shell embedded in GitHub workflow YAML,
+# which was the OTHER place the class could hide: a `run:` block is not a .sh
+# file, so the v0.69.0 deploy died on `ls dist/migrations/ | sort | head -n 10`
+# while this gate scanned 173 scripts and reported OK. Pinned here:
+#
+#   - the pre-fix deploy.yml line, verbatim, is CAUGHT — and at a line number
+#     that RESOLVES to it in the YAML (the reason the extractor parses the
+#     document instead of regexing it);
+#   - a literal `|`, a folded `>` and a single-line `run:` are all subjects;
+#   - `shell: python` is not linted as bash;
+#   - a run block without pipefail is out of scope, and `shell: bash` (which
+#     GitHub runs with `-eo pipefail`) puts one IN scope with no `set` line;
+#   - the `# sigpipe-ok:` marker works inside a run block;
+#   - a workflows directory with no YAML, a workflow set with no pipefail run
+#     block, an unparseable workflow and a file with no `jobs:` all FAIL
+#     rather than reporting OK over an empty subject set;
+#   - the default roots include the workflows directory.
+#
 # A fixture has to CONTAIN the shape the gate hunts for, which makes this
 # file its own offender now that scripts/ci is a default root. Those bodies
 # are therefore written on ONE line — $'…\n…' — so the `# sigpipe-ok:` marker
 # can sit on the source line OUTSIDE the quoted body: it silences the gate
 # for this file without disarming the fixture the gate is tested against.
+# The workflow fixtures are whole YAML documents written the same way, for
+# the same reason: a marker inside the YAML would disarm the fixture.
 #
 # Run: bash scripts/ci/lint-shell-sigpipe-test.sh
 set -uo pipefail
@@ -57,6 +77,57 @@ check() { # check <desc> <want-exit> <dir>
 mk() { # mk <dir> <file> <body>
   mkdir -p "$TMP/$1"
   printf '%s\n' "$3" > "$TMP/$1/$2"
+}
+
+# check_report <desc> <root> <file> <line> <want-on-that-line>
+#
+# Exit codes alone cannot tell a report that RESOLVES from one that names a
+# plausible-looking number: the whole reason the workflow half parses the
+# document instead of regexing it is that a reader has to be able to open the
+# YAML at the line the gate names. So this asserts both halves — the gate
+# reported `<file>:<line>`, and line <line> of that file really is the
+# offending shell.
+check_report() {
+  local desc="$1" root="$2" file="$3" line="$4" want="$5" out src
+  out="$(bash "$LINT" "$root" 2>&1)"
+  if ! grep -qF -- "${file}:${line} " <<<"$out"; then
+    echo "  FAIL $desc (nothing reported at ${file}:${line})"
+    printf '       %s\n' "$out"
+    fail=$((fail + 1))
+    return
+  fi
+  src="$(sed -n "${line}p" "$file")"
+  if ! grep -qF -- "$want" <<<"$src"; then
+    echo "  FAIL $desc (line ${line} of the fixture is not the offending shell: '${src}')"
+    fail=$((fail + 1))
+    return
+  fi
+  echo "  ok   $desc"
+  pass=$((pass + 1))
+}
+
+# check_msg <desc> <root> <want-exit> <want-substring>
+#
+# For the refuse-to-be-vacuous cases: exit 1 is what a gate does for ANY
+# reason, so each of them is pinned to the reason it must report.
+check_msg() {
+  local desc="$1" root="$2" want="$3" want_msg="$4" out got
+  out="$(bash "$LINT" "$root" 2>&1)"
+  got=$?
+  if [ "$got" -ne "$want" ]; then
+    echo "  FAIL $desc (exit $got, want $want)"
+    printf '       %s\n' "$out"
+    fail=$((fail + 1))
+    return
+  fi
+  if ! grep -qF -- "$want_msg" <<<"$out"; then
+    echo "  FAIL $desc (exit $got as expected, but not for the stated reason)"
+    printf '       %s\n' "$out"
+    fail=$((fail + 1))
+    return
+  fi
+  echo "  ok   $desc"
+  pass=$((pass + 1))
 }
 
 echo "lint-shell-sigpipe-test: detection"
@@ -96,11 +167,15 @@ check "pipe into grep -l is caught (it stops at the first match too)" 1 "$TMP/gr
 mk grepqok ok.sh $'set -euo pipefail\nmc ls bucket/ | grep -q thing   # sigpipe-ok: the listing is four short lines'   # sigpipe-ok: fixture text, scanned by the gate and never executed
 check "the same grep -q line with a marker passes" 0 "$TMP/grepqok"
 
+# Fixture text: the expressions are the FIXTURE's, and must reach the file
+# unexpanded — CI shellchecks every script a diff touches, so say so.
+# shellcheck disable=SC2016
 mk grepqfixed ok.sh 'set -euo pipefail
 listing="$(mc ls bucket/)"
 grep -q thing <<<"$listing"'
 check "the here-string rewrite of grep -q passes" 0 "$TMP/grepqfixed"
 
+# shellcheck disable=SC2016  # fixture text, must not expand here
 mk grepcount ok.sh 'set -euo pipefail
 n=$(mc ls bucket/ | grep -c thing)'
 check "a grep that reads to EOF (-c) passes" 0 "$TMP/grepcount"
@@ -116,6 +191,7 @@ check "grep -q after || is not a pipe" 0 "$TMP/orlist"
 # A second, un-piped grep later on the SAME line does not belong to the
 # earlier pipe — deploy-baseline-test.sh:176 is exactly this shape, and
 # reading it as one pipeline would fail a line that is already correct.
+# shellcheck disable=SC2016  # fixture text, must not expand here
 mk laterand ok.sh 'set -euo pipefail
 if [ "$(printf %s "$out" | grep -c v1)" -eq 2 ] && ! grep -q v2 <<<"$out"; then :; fi'
 check "an && grep -q later on the line is not the pipe's consumer" 0 "$TMP/laterand"
@@ -132,6 +208,7 @@ mk okblock ok.sh 'set -euo pipefail
 pgrep -f thing | head -1'
 check "marker anywhere in the comment block above passes" 0 "$TMP/okblock"
 
+# shellcheck disable=SC2016  # fixture text: the backticks are markdown, not a substitution
 mk quoted doc.sh 'set -euo pipefail
 # Never write `mc ls bucket/ | sort | head -n 4` here — see #475.
 mc ls bucket/ | sort > /tmp/all.txt'
@@ -162,20 +239,126 @@ check "a gate script under a scripts/ci root is caught" 1 "$TMP/scripts/ci"
 mk okci gate.sh $'set -euo pipefail\nbig=$(git rev-parse HEAD)\nx=$(printf \'%s\\n\' "$big" | head -1)   # sigpipe-ok: rev-parse emits one 40-byte line'   # sigpipe-ok: fixture text, scanned by the gate and never executed
 check "the same gate line with a marker passes" 0 "$TMP/okci"
 
+echo "lint-shell-sigpipe-test: GitHub workflow run: blocks"
+
+# The OTHER place the class could hide. Each fixture is a whole workflow
+# document; the ones that must PASS carry a second, in-scope step, so a pass
+# can never come from an empty subject set.
+WF_PY=""
+for cand in python3 /opt/homebrew/bin/python3; do
+  if command -v "$cand" >/dev/null 2>&1 && "$cand" -c 'import yaml' >/dev/null 2>&1; then
+    WF_PY="$cand"
+    break
+  fi
+done
+
+if [ -z "$WF_PY" ] && [ "${CI:-}" = "true" ]; then
+  echo "  FAIL no python3 with PyYAML — the workflow half of the gate cannot be tested (required in CI)"
+  fail=$((fail + 1))
+elif [ -z "$WF_PY" ]; then
+  echo "  SKIP no python3 with PyYAML locally; CI enforces these cases"
+else
+  # The line that killed the v0.69.0 deploy, verbatim, in the shape it had
+  # before 81254dfac. `ls | sort | head -n 10` was itself the FIX for an
+  # earlier `ls | head`, and only moved the SIGPIPE from ls to sort.
+  WF_DEPLOY=$'name: deploy\non: workflow_dispatch\njobs:\n  deploy:\n    runs-on: ubuntu-latest\n    steps:\n      - name: Stage migrations from the tag tree\n        run: |\n          set -euo pipefail\n          mkdir -p dist/migrations\n          echo "---"\n          ls dist/migrations/ | sort | head -n 10'   # sigpipe-ok: fixture text, scanned by the gate and never executed
+  mk wfdeploy/.github/workflows deploy.yml "$WF_DEPLOY"
+  check_report "the pre-fix deploy.yml line is caught, at a line that resolves" \
+    "$TMP/wfdeploy" "$TMP/wfdeploy/.github/workflows/deploy.yml" 12 \
+    'ls dist/migrations/ | sort | head -n 10'   # sigpipe-ok: fixture text, scanned by the gate and never executed
+
+  # A folded block joins its source lines, so no single line holds the whole
+  # pipeline; the report lands on the `run:` line, which is what a reader can
+  # act on. Pinned so the style is never silently dropped from the subject set.
+  WF_FOLDED=$'name: t\non: push\njobs:\n  a:\n    runs-on: ubuntu-latest\n    steps:\n      - name: folded\n        run: >\n          set -euo pipefail;\n          mc ls bucket/ |\n          head -n 4'
+  mk wffolded/.github/workflows folded.yml "$WF_FOLDED"
+  check_report "a folded > run block is caught, reported at the run: line" \
+    "$TMP/wffolded" "$TMP/wffolded/.github/workflows/folded.yml" 8 'run: >'
+
+  WF_ONELINE=$'name: t\non: push\njobs:\n  a:\n    runs-on: ubuntu-latest\n    steps:\n      - name: one liner\n        shell: bash\n        run: mc ls bucket/ | head -n 4'   # sigpipe-ok: fixture text, scanned by the gate and never executed
+  mk wfoneline/.github/workflows oneline.yml "$WF_ONELINE"
+  check_report "a single-line run: under shell: bash is caught (GitHub adds -eo pipefail)" \
+    "$TMP/wfoneline" "$TMP/wfoneline/.github/workflows/oneline.yml" 9 \
+    'run: mc ls bucket/ | head -n 4'   # sigpipe-ok: fixture text, scanned by the gate and never executed
+
+  WF_DEFAULTS=$'name: t\non: push\ndefaults:\n  run:\n    shell: bash\njobs:\n  a:\n    runs-on: ubuntu-latest\n    steps:\n      - name: inherits pipefail from the default shell\n        run: |\n          mc ls bucket/ | head -n 4'   # sigpipe-ok: fixture text, scanned by the gate and never executed
+  mk wfdefaults/.github/workflows defaults.yml "$WF_DEFAULTS"
+  check_report "defaults.run.shell: bash puts a block with no set line in scope" \
+    "$TMP/wfdefaults" "$TMP/wfdefaults/.github/workflows/defaults.yml" 12 \
+    'mc ls bucket/ | head -n 4'   # sigpipe-ok: fixture text, scanned by the gate and never executed
+
+  # `shell: python` is not bash. The body below WOULD match the matcher, so
+  # this fails the moment the shell rule stops being honoured.
+  WF_PYTHON=$'name: t\non: push\njobs:\n  a:\n    runs-on: ubuntu-latest\n    steps:\n      - name: python step\n        shell: python\n        run: |\n          print("mc ls bucket/ | head -n 4")\n      - name: bash sentinel\n        run: |\n          set -euo pipefail\n          echo ok'   # sigpipe-ok: fixture text, scanned by the gate and never executed
+  mk wfpython/.github/workflows python.yml "$WF_PYTHON"
+  check "shell: python is not linted as bash (and the file is still scanned)" 0 "$TMP/wfpython"
+
+  # No pipefail, so an early close cannot fail the step — the same rule the
+  # .sh half applies, and the reason `-e` alone does not put a block in scope.
+  WF_NOPF=$'name: t\non: push\njobs:\n  a:\n    runs-on: ubuntu-latest\n    steps:\n      - name: no pipefail\n        run: |\n          mc ls bucket/ | head -n 4\n      - name: sentinel\n        run: |\n          set -euo pipefail\n          echo ok'   # sigpipe-ok: fixture text, scanned by the gate and never executed
+  mk wfnopf/.github/workflows nopf.yml "$WF_NOPF"
+  check "a run block without pipefail is out of scope" 0 "$TMP/wfnopf"
+
+  WF_MARKED=$'name: t\non: push\njobs:\n  a:\n    runs-on: ubuntu-latest\n    steps:\n      - name: marked\n        run: |\n          set -euo pipefail\n          # sigpipe-ok: the listing is four short lines\n          mc ls bucket/ | head -n 4'   # sigpipe-ok: fixture text, scanned by the gate and never executed
+  mk wfmarked/.github/workflows marked.yml "$WF_MARKED"
+  check "a # sigpipe-ok: marker inside the run block passes" 0 "$TMP/wfmarked"
+
+  echo "lint-shell-sigpipe-test: the workflow half refuses to be vacuous"
+
+  mkdir -p "$TMP/wfempty/.github/workflows"
+  check_msg "a workflows directory with no YAML FAILS rather than passing" \
+    "$TMP/wfempty" 1 "holds no workflow YAML"
+
+  # A default run names the workflows directory as a root, so this is also the
+  # case that stops the workflow half going silently absent if that directory
+  # is ever moved out from under the gate.
+  check_msg "a named workflows root that does not exist FAILS" \
+    "$TMP/wfgone/.github/workflows" 1 "holds no workflow YAML"
+
+  WF_VACUOUS=$'name: t\non: push\njobs:\n  a:\n    runs-on: ubuntu-latest\n    steps:\n      - name: plain\n        run: echo hi'
+  mk wfvacuous/.github/workflows plain.yml "$WF_VACUOUS"
+  check_msg "workflows with no pipefail run block FAIL rather than passing" \
+    "$TMP/wfvacuous" 1 "not one run: block runs under pipefail"
+
+  WF_BROKEN=$'name: t\non: push\njobs: [unclosed'
+  mk wfbroken/.github/workflows broken.yml "$WF_BROKEN"
+  check_msg "an unparseable workflow FAILS loudly instead of being skipped" \
+    "$TMP/wfbroken" 1 "does not parse as YAML"
+
+  WF_NOJOBS=$'name: t\non: push'
+  mk wfnojobs/.github/workflows nojobs.yml "$WF_NOJOBS"
+  check_msg "a file the extractor cannot read as a workflow FAILS" \
+    "$TMP/wfnojobs" 1 "did not recognise it as a workflow"
+fi
+
 echo "lint-shell-sigpipe-test: the real tree"
-check "the repo's own scripts are clean" 0 "configs/ansible/roles/archival-node/files scripts/ops scripts/dev scripts/ci"
+check "the repo's own scripts and workflows are clean" 0 "configs/ansible/roles/archival-node/files scripts/ops scripts/dev scripts/ci .github/workflows"
 
 # The DEFAULT roots are what CI runs; an explicit-root case cannot see them
-# narrow again. Pin that a no-argument run covers exactly the four roots.
+# narrow again. Pin that a no-argument run covers exactly the five roots —
+# every prior case passed roots explicitly, so none of them could have noticed
+# the workflows directory dropping back out of the default list.
 default_out="$(bash "$LINT" 2>&1)"
-explicit_out="$(bash "$LINT" "configs/ansible/roles/archival-node/files scripts/ops scripts/dev scripts/ci" 2>&1)"
+explicit_out="$(bash "$LINT" "configs/ansible/roles/archival-node/files scripts/ops scripts/dev scripts/ci .github/workflows" 2>&1)"
 if [ "$default_out" = "$explicit_out" ]; then
-  echo "  ok   the default roots are the four documented roots (scripts/ci included)"
+  echo "  ok   the default roots are the five documented roots (workflows included)"
   pass=$((pass + 1))
 else
-  echo "  FAIL the default roots drifted from the four documented roots"
+  echo "  FAIL the default roots drifted from the five documented roots"
   echo "       default:  $default_out"
   echo "       explicit: $explicit_out"
+  fail=$((fail + 1))
+fi
+
+# Equality alone would still hold if BOTH runs silently stopped looking at
+# workflows, which is the state this whole extension exists to leave. So the
+# no-argument run has to say, in its own summary, how many workflow files and
+# pipefail run blocks it covered.
+if grep -qE 'pipefail run: block\(s\) in [1-9][0-9]* workflow file\(s\)' <<<"$default_out"; then
+  echo "  ok   a default run accounts for the workflow files and run blocks it scanned"
+  pass=$((pass + 1))
+else
+  echo "  FAIL a default run does not report any workflow coverage: $default_out"
   fail=$((fail + 1))
 fi
 

@@ -168,7 +168,10 @@ jobs:
               echo "::error::$b does not respond to -version flag or 'version' subcommand"
               exit 1
             fi
-            if ! echo "$out" | grep -q "$EXPECT"; then
+            # here-string, not a pipe: `grep -q` stops at the first match, so
+            # a chatty -version banner past the pipe buffer would SIGPIPE the
+            # echo and INVERT this check (scripts/ci/lint-shell-sigpipe.sh).
+            if ! grep -q "$EXPECT" <<<"$out"; then
               echo "::error::$b -version output does not contain expected '$EXPECT' (got: '$out')"
               exit 1
             fi
@@ -238,7 +241,8 @@ jobs:
               echo "::error::Image stellarindex/${b}:pr-test does not respond to -version flag or 'version' subcommand"
               exit 1
             fi
-            if ! echo "$out" | grep -q "$EXPECT"; then
+            # here-string, not a pipe: see the binary smoke test above.
+            if ! grep -q "$EXPECT" <<<"$out"; then
               echo "::error::Image stellarindex/${b}:pr-test version output does not contain expected '$EXPECT' (got: '$out')"
               exit 1
             fi

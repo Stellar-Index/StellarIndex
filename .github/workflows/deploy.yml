@@ -221,7 +221,12 @@ jobs:
           HEALTH_GRACE: ${{ inputs.health_grace_seconds }}
         run: |
           set -euo pipefail
-          if ! echo "$VERSION" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9.-]+)?(\+[A-Za-z0-9.-]+)?$'; then
+          # A here-string, not `echo … |`: `grep -Eq` stops at the first
+          # match, and VERSION is dispatch input of unbounded length. Past
+          # the 64 KiB pipe buffer, pipefail turns that SIGPIPE into a
+          # failed pipeline and `if !` INVERTS it — an unvalidated version
+          # would pass this gate (scripts/ci/lint-shell-sigpipe.sh).
+          if ! grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9.-]+)?(\+[A-Za-z0-9.-]+)?$' <<<"$VERSION"; then
             echo "::error::Version '$VERSION' must match SemVer vX.Y.Z[-prerelease][+build]"
             exit 1
           fi
