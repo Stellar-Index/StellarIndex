@@ -1162,6 +1162,43 @@
         printf 'stellarindex_timescale_probe_rows{query="%s"} %s\n' "$1" "$3" >> "$HEALTH"
       }
 
+      # is_num <field> — true iff the field is a Prometheus float.
+      #
+      # WHY EVERY VALUE GOES THROUGH THIS (r1 2026-09-10). psql narrates.
+      # `-At` drops the column header and the row separator; it does NOT
+      # drop a command tag, and the probe ran its convoy query as
+      # `SET statement_timeout = '10s'; SELECT …`, so psql wrote the bare
+      # word `SET` on its own line ahead of the row. `IFS='|' read` took
+      # it as the first field and `${convoyed:-0}` cannot tell a number
+      # from a word, so the file got
+      #
+      #     stellarindex_pg_lock_convoy_backends SET
+      #
+      # node_exporter does not skip an unparseable line — it rejects the
+      # WHOLE file. The three convoy gauges went, and so did 127
+      # pre-existing stellarindex_timescale_* series that share
+      # timescale_jobs.prom and had nothing to do with the convoy work.
+      # For twenty minutes the CAGG and job-failure alerts could not fire,
+      # and nothing said so, because the metric that would have said so
+      # was in the same file.
+      #
+      # The command tag is fixed at the source (PGOPTIONS, b96982c22) and
+      # gated in CI (scripts/ci/lint-textfile-exposition.sh). This is the
+      # second half: the reply is an EXTERNAL input, and a command tag is
+      # only one of the shapes it can arrive in — a NULL column renders as
+      # an empty field, a short row leaves later fields unset, a NOTICE
+      # that reaches stdout is a whole line. None of those is a value to
+      # be repaired: each is evidence the reply did not have the shape the
+      # read loop assumes. So a row with a non-numeric field is DROPPED
+      # rather than published, and the query it came from reports
+      # query_ok 0 — the signal stellarindex_timescale_probe_degraded
+      # already alerts on, and the runbook already tells the operator to
+      # go and look at. Loud, and never at the cost of the other families
+      # in this file.
+      is_num() {
+        [[ "${1:-}" =~ ^[+-]?([0-9]+\.?[0-9]*|\.[0-9]+)$ ]]
+      }
+
       # ── THE LOCK CONVOY, AND WHY IT IS THE FIRST QUERY HERE ──────
       #
       # r1 2026-09-10 00:12–00:31 UTC. A deploy restarted the
@@ -1231,13 +1268,19 @@
         echo "# TYPE stellarindex_pg_lock_blocked_backends gauge"
       } > "$TMP"
       rows=0
+      bad=0
       while IFS='|' read -r convoyed worst blocked; do
         [ -n "${convoyed:-}" ] || continue
-        echo "stellarindex_pg_lock_convoy_backends ${convoyed:-0}"
-        echo "stellarindex_pg_lock_convoy_wait_seconds_max ${worst:-0}"
-        echo "stellarindex_pg_lock_blocked_backends ${blocked:-0}"
-        rows=$((rows + 1))
+        if is_num "$convoyed" && is_num "${worst:-0}" && is_num "${blocked:-0}"; then
+          echo "stellarindex_pg_lock_convoy_backends $convoyed"
+          echo "stellarindex_pg_lock_convoy_wait_seconds_max ${worst:-0}"
+          echo "stellarindex_pg_lock_blocked_backends ${blocked:-0}"
+          rows=$((rows + 1))
+        else
+          bad=$((bad + 1))
+        fi
       done <<< "$Q_OUT" >> "$TMP"
+      [ "$bad" -eq 0 ] || Q_OK=0
       health lock_convoy "$Q_OK" "$rows"
 
       {
@@ -1258,12 +1301,22 @@
          JOIN timescaledb_information.job_stats js USING (job_id)
          WHERE j.proc_name = 'policy_refresh_continuous_aggregate'"
       rows=0
+      bad=0
       while IFS='|' read -r cagg last iv; do
         [ -n "${cagg:-}" ] || continue
-        echo "stellarindex_cagg_last_refresh_unix{cagg=\"$cagg\"} $last"
-        echo "stellarindex_cagg_refresh_interval_seconds{cagg=\"$cagg\"} $iv"
-        rows=$((rows + 1))
+        # `last` is COALESCEd in SQL; `iv` is not, and a NULL renders as
+        # an EMPTY field under -At — which would emit a metric name with
+        # no value at all and cost the whole file just as surely as the
+        # command tag did.
+        if is_num "${last:-}" && is_num "${iv:-}"; then
+          echo "stellarindex_cagg_last_refresh_unix{cagg=\"$cagg\"} $last"
+          echo "stellarindex_cagg_refresh_interval_seconds{cagg=\"$cagg\"} $iv"
+          rows=$((rows + 1))
+        else
+          bad=$((bad + 1))
+        fi
       done <<< "$Q_OUT" >> "$TMP"
+      [ "$bad" -eq 0 ] || Q_OK=0
       health cagg_refresh "$Q_OK" "$rows"
 
       # Overdue = past the hypertable's OWN compress_after, plus one
@@ -1318,11 +1371,17 @@
          WHERE j.proc_name = 'policy_compression'
          GROUP BY 1"
       rows=0
+      bad=0
       while IFS='|' read -r ht overdue; do
         [ -n "${ht:-}" ] || continue
-        echo "stellarindex_timescale_chunks_overdue_compression{hypertable=\"$ht\"} ${overdue:-0}"
-        rows=$((rows + 1))
+        if is_num "${overdue:-0}"; then
+          echo "stellarindex_timescale_chunks_overdue_compression{hypertable=\"$ht\"} ${overdue:-0}"
+          rows=$((rows + 1))
+        else
+          bad=$((bad + 1))
+        fi
       done <<< "$Q_OUT" >> "$TMP"
+      [ "$bad" -eq 0 ] || Q_OK=0
       health compression "$Q_OK" "$rows"
 
       {
@@ -1334,11 +1393,20 @@
          FROM timescaledb_information.job_stats js
          JOIN timescaledb_information.jobs j USING (job_id)"
       rows=0
+      bad=0
       while IFS='|' read -r proc ht jid fails; do
         [ -n "${jid:-}" ] || continue
-        echo "stellarindex_timescale_job_failures_total{job_id=\"$jid\",proc=\"$proc\",hypertable=\"$ht\"} ${fails:-0}"
-        rows=$((rows + 1))
+        # job_id is a LABEL here, but it is still read from the reply, so
+        # a command tag would land in it and shift every later field —
+        # numeric is the shape this query promises for it either way.
+        if is_num "$jid" && is_num "${fails:-0}"; then
+          echo "stellarindex_timescale_job_failures_total{job_id=\"$jid\",proc=\"$proc\",hypertable=\"$ht\"} ${fails:-0}"
+          rows=$((rows + 1))
+        else
+          bad=$((bad + 1))
+        fi
       done <<< "$Q_OUT" >> "$TMP"
+      [ "$bad" -eq 0 ] || Q_OK=0
       health job_stats "$Q_OK" "$rows"
 
       # ── The probe's own health ────────────────────────────────────
@@ -1377,6 +1445,44 @@
         echo "# TYPE stellarindex_timescale_probe_last_run_unix gauge"
         echo "stellarindex_timescale_probe_last_run_unix $(date +%s)"
       } >> "$TMP"
+
+      # ── Validate before publishing ────────────────────────────────
+      #
+      # Nothing above can still write a non-numeric value, but the price
+      # of being wrong about that is the ENTIRE file — every family in it,
+      # including the health gauges that exist to report this probe's own
+      # failures. So the rendered bytes are parsed before they are moved
+      # into place, with the same grammar node_exporter applies.
+      #
+      # Refuse rather than publish. A malformed file published is silent
+      # (node_exporter drops it and only node_textfile_scrape_error moves,
+      # which is a metric nobody was watching on 2026-09-10); a file NOT
+      # published ages, and `time() - stellarindex_timescale_probe_last_
+      # run_unix` is precisely the arm of stellarindex_timescale_probe_
+      # degraded that notices. Exiting non-zero also fails the oneshot
+      # unit, which is a second, independent way for this to be seen.
+      if ! awk '
+        /^[ \t]*$/ { next }
+        /^#/ { next }
+        {
+          # Braces as [{] / [}], not backslash-escaped: in an ERE `{`
+          # opens an interval expression and the escape is undefined by
+          # POSIX, so the bracket form is the one that means the same
+          # thing under mawk (the Ubuntu default), gawk and BWK awk alike.
+          # NB no apostrophes anywhere in this program: it is a
+          # single-quoted shell word, and one would end it.
+          rest = $0
+          sub(/^[a-zA-Z_:][a-zA-Z0-9_:]*([{][^}]*[}])?[ \t]+/, "", rest)
+          if (rest == $0 || rest !~ /^[+-]?([0-9]+\.?[0-9]*([eE][+-]?[0-9]+)?|\.[0-9]+([eE][+-]?[0-9]+)?|Inf|NaN)([ \t]+[0-9]+)?[ \t]*$/) {
+            printf "timescale-jobs-probe: unparseable exposition line: %s\n", $0 > "/dev/stderr"
+            bad = 1
+          }
+        }
+        END { exit bad ? 1 : 0 }
+      ' "$TMP"; then
+        echo "timescale-jobs-probe: refusing to publish an unparseable textfile — node_exporter would reject every family in it. Previous $DIR/timescale_jobs.prom left in place; its age is what the probe-degraded alert reads." >&2
+        exit 1
+      fi
 
       # mktemp creates 0600; node_exporter runs unprivileged and
       # SILENTLY skips unreadable textfiles.

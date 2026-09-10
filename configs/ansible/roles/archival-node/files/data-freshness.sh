@@ -60,10 +60,23 @@ trap 'rm -f "$TMP"' EXIT
   echo '# TYPE stellarindex_recognition_ok gauge'
   echo '# HELP stellarindex_twap_history_missing 1 when a TWAP continuous aggregate is missing the history prices_1m holds — a migration recreated/emptied it (WITH NO DATA) and the manual refresh_continuous_aggregate follow-up never ran.'
   echo '# TYPE stellarindex_twap_history_missing gauge'
+  # The three families below are composed inside the SQL blocks further
+  # down rather than by a printf here, which is how they came to be the
+  # only ones in this file with no header of their own. An undeclared
+  # family is scraped untyped and its meaning lives nowhere the operator
+  # reading a scrape can see it. Declared here with the rest.
+  echo '# HELP stellarindex_supply_assets_stale Watched assets whose newest asset_supply_history row is older than 30h. An aggregate max(time) cannot see a PARTIAL freeze: on 2026-07-28 a handful of live assets kept it green while 37 of 48 had stopped (CS-102).'
+  echo '# TYPE stellarindex_supply_assets_stale gauge'
+  echo '# HELP stellarindex_supply_asset_max_age_seconds Worst per-asset supply age in seconds across the watched set, 0 when none is known.'
+  echo '# TYPE stellarindex_supply_asset_max_age_seconds gauge'
+  echo '# HELP stellarindex_completeness_watermark_lag_ledgers Ledgers between the live ingest tip and a source latest ADR-0033 verdict watermark. A verdict can read complete=true while it was only ever verified up to an old ledger (CS-090).'
+  echo '# TYPE stellarindex_completeness_watermark_lag_ledgers gauge'
 } > "$TMP"
 
 # (domain, source, age_seconds, threshold_seconds) per domain. Thresholds are a
 # generous multiple of each domain's natural cadence so only a real stall fires.
+#
+# shellcheck disable=SC2129  # the appends below are separate on purpose: each is a distinct query with its own reasoning between them, and a single `{ … } >> $TMP` would bury that
 "$PSQL" "$STELLARINDEX_POSTGRES_DSN" -tA -F$'\t' >> "$TMP" <<'SQL'
 WITH f AS (
   -- Crypto oracles (reflector/redstone/band/chainlink/coingecko) update every

@@ -119,11 +119,49 @@ done
 for e in ${EMPTY_QUERIES:-}; do
   [[ "$kind" == "$e" ]] && exit 0
 done
+
+# ── FIDELITY: psql narrates every statement, not only the last ──────
+#
+# THIS IS THE POINT OF THE STUB. The previous cut answered whatever SQL
+# it was handed with well-formed rows and nothing else — a psql that
+# cannot exist. `-At` suppresses the column header and the row
+# separator; it does NOT suppress the per-statement command tag. Handed
+#
+#     SET statement_timeout = '10s'; SELECT count(*), …
+#
+# the real client writes
+#
+#     SET
+#     5|1164|7
+#
+# and the probe's `IFS='|' read -r convoyed worst blocked` takes `SET`
+# as its first field. That is r1 2026-09-10, and this file passed 34/34
+# with it live: a test that supplies its own well-formed input cannot
+# see a malformed-input bug. So the narration is now DERIVED from the
+# SQL — every statement before the last one puts a line on stdout ahead
+# of the rows, exactly as psql does. Re-introduce a multi-statement
+# command string and this stub reproduces the incident.
+rest="$sql"
+while [[ "$rest" == *';'* ]]; do
+  stmt="${rest%%;*}"
+  rest="${rest#*;}"
+  # A trailing `;` terminates the final statement rather than
+  # introducing another one.
+  [[ -z "$(printf '%s' "$rest" | tr -d '[:space:]')" ]] && break
+  word=$(printf '%s' "$stmt" | tr '\n\t' '  ' | sed -E 's/^ +//; s/ .*$//' | tr '[:lower:]' '[:upper:]')
+  case "$word" in
+    '')                            ;;
+    SELECT|WITH|VALUES|TABLE|SHOW) echo 0 ;;      # a non-final query prints its ROWS
+    *)                             echo "$word" ;; # everything else prints its command tag
+  esac
+done
+
 case "$kind" in
   # The 2026-09-10 shape: five backends convoyed behind a decompress
   # that is ITSELF blocked, worst wait 1,164 s, seven blocked in all.
   lock_convoy) printf "${LOCK_CONVOY_ROW:-5|1164|7}\n" ;;
-  cagg)        printf 'prices_1m|1788598634|60\noracle_prices_1m|1788598600|30\n' ;;
+  cagg)        printf "${CAGG_ROWS:-prices_1m|1788598634|60
+oracle_prices_1m|1788598600|30}\n" ;;
   compression) printf 'trades|3\nfx_quotes|0\n' ;;
   jobs)        printf 'policy_compression|trades|1001|0\npolicy_retention|-|1002|2\n' ;;
   *)           echo "runuser stub: unmatched sql" >&2; exit 9 ;;
@@ -135,11 +173,12 @@ export PATH="$TMP/bin:$PATH"
 export TEXTFILE_DIR="$TMP/textfile"
 PROM="$TEXTFILE_DIR/timescale_jobs.prom"
 
-# run <fail-queries> <empty-queries> [convoy-row] — one probe run;
-# sets $RC.
+# run <fail-queries> <empty-queries> [convoy-row] [cagg-rows] — one probe
+# run; sets $RC and leaves the probe's stderr in $ERR.
 run() {
   rm -f "$PROM"
-  FAIL_QUERIES="$1" EMPTY_QUERIES="$2" LOCK_CONVOY_ROW="${3:-}" bash "$PROBE"
+  ERR="$(FAIL_QUERIES="$1" EMPTY_QUERIES="$2" LOCK_CONVOY_ROW="${3:-}" CAGG_ROWS="${4:-}" \
+    bash "$PROBE" 2>&1 >/dev/null)"
   RC=$?
 }
 
@@ -278,8 +317,114 @@ if command -v promtool >/dev/null 2>&1; then
     fi
   done
 else
-  echo "  note promtool not installed — skipping the text-format assertions" >&2
+  echo "  note promtool not installed — skipping the promtool text-format assertions" >&2
 fi
+
+# parses <label> — assert $PROM parses, using the repo's own exposition
+# parser rather than promtool (not installed on every runner) and rather
+# than a copy of the probe's awk (which would only prove the copy agrees
+# with itself).
+parses() {
+  if python3 scripts/ci/lint_textfile_exposition.py --check-file "$PROM" >/dev/null 2>&1; then
+    ok "$1"
+  else
+    bad "$1
+$(python3 scripts/ci/lint_textfile_exposition.py --check-file "$PROM" 2>&1 | sed 's/^/        /')"
+  fi
+}
+
+# ─── 6. the reply is an EXTERNAL input (2026-09-10) ──────────────────
+#
+# psql narrates: a command tag ahead of the rows, a NULL rendered as an
+# empty field, a short row leaving later fields unset. `${x:-0}` cannot
+# tell a number from a word, so on 2026-09-10 the word `SET` was written
+# as a metric value and node_exporter rejected the WHOLE file — the three
+# convoy gauges and, as collateral, 127 pre-existing
+# stellarindex_timescale_* series that merely share timescale_jobs.prom.
+#
+# These drive the SHIPPED probe with the shapes a real client produces.
+# The destructive branch (a row dropped) is exercised WITH its trigger,
+# and the untriggered rows in the same reply are asserted to survive
+# with their exact values — a guard tested only on input it never fires
+# on certifies the one shape that was never at risk.
+
+# 6a. The stub's fidelity is itself under test. If it stops narrating,
+#     every assertion here silently becomes an assertion about a psql
+#     that cannot exist — which is exactly how 2026-09-10 shipped green.
+tag_reply="$(runuser -u postgres -- psql -d stellarindex -At -F'|' \
+  -c "SET statement_timeout = '10s'; SELECT count(*) FROM pg_stat_activity a WHERE pg_blocking_pids(a.pid) <> '{}'")"
+# Sliced with parameter expansion, not `| head -1`: head exits after the
+# first line and under pipefail that SIGPIPEs the writer
+# (scripts/ci/lint-shell-sigpipe.sh).
+tag_first="${tag_reply%%$'\n'*}"
+tag_second="${tag_reply#*$'\n'}"
+tag_second="${tag_second%%$'\n'*}"
+eq "SET" "$tag_first" \
+  "the psql stub prints a command tag for a leading SET, as -At does not suppress it"
+eq "5|1164|7" "$tag_second" \
+  "…and still returns the row after it"
+
+# 6b. A command tag reaching the convoy read loop. The tag row is
+#     dropped, the REAL row survives byte-for-byte, and the query says
+#     it is not healthy.
+run "" "" "SET
+5|1164|7"
+eq 0 "$RC" "a command-tag reply still completes the run"
+parses "a command-tag reply still produces a parseable file"
+eq 5 "$(metric stellarindex_pg_lock_convoy_backends)" \
+  "the real convoy row survives a command tag ahead of it, with its exact value"
+eq 1164 "$(metric stellarindex_pg_lock_convoy_wait_seconds_max)" \
+  "…and so does the worst wait"
+refutes "the command tag never reaches the file as a value" grep -q 'SET' "$PROM"
+eq 0 "$(metric 'stellarindex_timescale_probe_query_ok{query="lock_convoy"}')" \
+  "a reply the loop could not parse reports query_ok 0 (the degraded alert already reads this)"
+eq 1 "$(metric "stellarindex_timescale_probe_rows{query=\"lock_convoy\"}")" \
+  "…and rows counts what was actually emitted, not what was read"
+holds "a command tag in ONE query does not cost the cagg family" \
+  has_family stellarindex_cagg_last_refresh_unix
+eq 1 "$(metric 'stellarindex_timescale_probe_query_ok{query="cagg_refresh"}')" \
+  "…and the queries that were fine still report 1"
+
+# 6c. A NULL column. `-At` renders NULL as an EMPTY field, and
+#     schedule_interval is the one value in this probe with no COALESCE
+#     around it — an empty value field is a metric name with nothing
+#     after it, which costs the file exactly as hard as `SET` did.
+run "" "" "" "prices_1m|1788598634|60
+oracle_prices_1m|1788598600|"
+parses "a NULL interval still produces a parseable file"
+eq 1788598634 "$(metric 'stellarindex_cagg_last_refresh_unix{cagg="prices_1m"}')" \
+  "the healthy cagg row is untouched by its neighbour's NULL"
+eq "" "$(metric 'stellarindex_cagg_refresh_interval_seconds{cagg="oracle_prices_1m"}')" \
+  "the NULL row emits nothing rather than a metric name with no value"
+eq 0 "$(metric 'stellarindex_timescale_probe_query_ok{query="cagg_refresh"}')" \
+  "a NULL in a value column reports query_ok 0"
+
+# 6d. Ordinary input is untouched. The guard is lossy, so the case that
+#     matters beside the one above is that nothing else moves: a clean
+#     run emits the same rows, values and count it always did.
+run "" ""
+parses "a clean run parses"
+eq 5 "$(metric stellarindex_pg_lock_convoy_backends)" "clean run: convoy value unchanged by the guard"
+eq 2 "$(metric "stellarindex_timescale_probe_rows{query=\"cagg_refresh\"}")" "clean run: both cagg rows still emitted"
+eq 1 "$(metric 'stellarindex_timescale_probe_query_ok{query="cagg_refresh"}')" "clean run: cagg still reports healthy"
+eq 60 "$(metric 'stellarindex_cagg_refresh_interval_seconds{cagg="prices_1m"}')" "clean run: interval carried through intact"
+
+# 6e. The last line of defence. Values cannot now be non-numeric, but the
+#     cost of being wrong about that is every family in the file, so the
+#     probe parses its own rendered bytes before the atomic `mv`. A label
+#     carrying a brace is the shape that gets past a value guard and is
+#     still fatal to the file; the probe must REFUSE to publish it and
+#     leave the previous file alone, because a published malformed file
+#     is silent while a frozen one ages into the degraded alert.
+printf 'stellarindex_sentinel 1\n' > "$PROM"
+sentinel_before="$(cat "$PROM")"
+ERR="$(FAIL_QUERIES='' EMPTY_QUERIES='' LOCK_CONVOY_ROW='' CAGG_ROWS='pri}ces|1|2' \
+  bash "$PROBE" 2>&1 >/dev/null)"; RC=$?
+if [[ "$RC" -ne 0 ]]; then ok "an unparseable render exits non-zero (the oneshot unit fails)"; else bad "an unparseable render exits non-zero (rc=$RC)"; fi
+eq "$sentinel_before" "$(cat "$PROM")" "…and the previously-published file is left untouched"
+matches 'refusing to publish' "$ERR" "…and says why, on stderr"
+leftovers=$(find "$TEXTFILE_DIR" -type f ! -name 'timescale_jobs.prom' | wc -l | tr -d ' ')
+eq 0 "$leftovers" "…and leaves no half-written temp file behind"
 
 printf 'timescale-jobs-probe-test: %d passed, %d failed\n' "$pass" "$fail"
 [[ "$fail" -eq 0 ]]

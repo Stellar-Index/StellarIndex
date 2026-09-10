@@ -15,6 +15,81 @@ against.
 
 ## [Unreleased]
 
+### Added
+
+- **ci:** `lint-textfile-exposition` — every line a node_exporter
+  textfile-collector producer writes must parse as Prometheus exposition
+  format, checked statically for all 21 producers in the tree.
+
+  node_exporter parses each `.prom` **whole**: one unparseable line and it
+  rejects the entire file. That makes a single bad value a blast radius,
+  not a bug. On r1 2026-09-10 the TimescaleDB probe ran
+  `SET statement_timeout = '10s'; SELECT …` through `psql -At`; psql
+  prints the SET's command tag on stdout, `-At` does not suppress it, the
+  probe's field parser wrote `stellarindex_pg_lock_convoy_backends SET`,
+  and `timescale_jobs.prom` was dropped in its entirety — the three new
+  convoy gauges plus 127 pre-existing `stellarindex_timescale_*` series
+  that had nothing to do with the convoy work. TimescaleDB job and CAGG
+  health monitoring was dark for ~20 minutes and nothing alerted, because
+  the alerting that would have noticed was in the file that stopped
+  parsing. Fixed at the source in b96982c22 (`PGOPTIONS`); this is the
+  gate for the class.
+
+  Nothing caught it: the probe's own self-test passed 34/34 with the
+  defect present, because it stubbed psql and therefore only ever parsed
+  replies that never contain a command tag — a shape the real client
+  always produces for a `SET`. A test that supplies its own well-formed
+  input cannot see a malformed-input bug.
+
+  The gate reconciles a discovered census against
+  `scripts/ci/textfile-producers.manifest` (so a new producer is a
+  registration event, and the sweep cannot pass on zero files), renders
+  every emitted metric line with a canary for each shell/Go/Jinja
+  expansion and parses it, checks `# TYPE` validity and per-family
+  declaration, and rejects a multi-statement command string handed to a
+  tuples-only SQL client. It also covers the shape a template scan
+  otherwise misses entirely: `data-freshness.sh` redirects psql's stdout
+  into its textfile, so its exposition lines are concatenated inside SQL
+  and nothing in the shell resembles a metric.
+
+  What it deliberately does not claim is in its docstring — it cannot
+  know a captured field's runtime value, and a duplicate `# TYPE` split
+  across two mutually exclusive emit paths is not flagged (two producers
+  legitimately do that, and a lint that cries wolf gets disabled).
+
+### Fixed
+
+- **obs:** the TimescaleDB probe now treats its psql reply as the
+  external input it is. Every value passes a numeric guard before it is
+  written; a row with a non-numeric field is dropped rather than
+  published and its query reports `stellarindex_timescale_probe_query_ok
+  0`, which `stellarindex_timescale_probe_degraded` already alerts on.
+  This covers the command tag that caused the incident and the two
+  sibling shapes beside it — a NULL column renders as an EMPTY field
+  under `-At` (`schedule_interval` had no `COALESCE`, and an empty value
+  field is as fatal as a word), and a short row leaves later fields
+  unset. As a last line of defence the probe parses its own rendered
+  bytes before the atomic `mv` and refuses to publish a file that does
+  not parse: a malformed file published is silent, whereas one not
+  published ages into the degraded alert and fails its oneshot unit.
+
+- **ci:** `timescale-jobs-probe-test.sh`'s psql stub is now faithful to
+  psql. It derives its narration from the SQL it is handed — every
+  statement before the last one puts a line on stdout ahead of the rows,
+  exactly as the real client does — so re-introducing a multi-statement
+  command string reproduces the incident in CI, with no Postgres. The
+  same suite that passed 34/34 with the defect live now fails 19 checks
+  against the pre-b96982c22 probe.
+
+- **obs:** three families in `data-freshness.sh`
+  (`stellarindex_supply_assets_stale`,
+  `stellarindex_supply_asset_max_age_seconds`,
+  `stellarindex_completeness_watermark_lag_ledgers`) and
+  `stellarindex_config_assertion_skipped` in `config-assertions.sh` were
+  emitted with no `# HELP`/`# TYPE` of their own — composed inside SQL or
+  written by a helper, so they were the ones the header blocks missed.
+  Found by the new gate; they now carry headers like every other family.
+
 ## [v0.70.0] — 2026-09-10
 
 ### Fixed

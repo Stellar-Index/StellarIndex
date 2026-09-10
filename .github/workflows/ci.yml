@@ -1195,6 +1195,29 @@ jobs:
         # a live footgun — it starts, and nothing reconciles it.
         run: ./scripts/ci/lint-deploy-systemd-authority.sh
 
+      - name: lint-textfile-exposition
+        # r1 2026-09-10: the TimescaleDB probe ran
+        # `SET statement_timeout = '10s'; SELECT …` through `psql -At`.
+        # psql prints the SET's command tag on stdout, `-At` does not
+        # suppress it, and the probe's field parser wrote
+        # `stellarindex_pg_lock_convoy_backends SET`. node_exporter does
+        # not skip an unparseable line — it rejects the WHOLE file, so 127
+        # pre-existing stellarindex_timescale_* series went off the host
+        # as collateral and nothing alerted, because the alerting that
+        # would have noticed was in the file that stopped parsing.
+        #
+        # Sweeps every textfile-collector producer in the tree (census
+        # reconciled against scripts/ci/textfile-producers.manifest) for
+        # the shapes that cost a whole file: a multi-statement command
+        # string handed to a tuples-only SQL client, a line that does not
+        # parse as exposition, a family typed twice. Fully static — no
+        # Postgres, no host.
+        run: ./scripts/ci/lint-textfile-exposition.sh
+      - name: lint-textfile-exposition self-test
+        # The load-bearing fixture reproduces the pre-b96982c22 probe and
+        # asserts the gate is RED on it. Runs pre-restore, like the other
+        # gate self-tests here: it validates the gate AS THIS PR SHIPS IT.
+        run: ./scripts/ci/lint-textfile-exposition-test.sh
       - name: lint-ansible-tasks
         # 2026-08-28 audit (deploy-ansible-shell-1 / -secrets-9): a shell
         # task setting pipefail without `executable: /bin/bash` fails under
