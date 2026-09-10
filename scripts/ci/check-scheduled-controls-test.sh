@@ -27,6 +27,19 @@
 # the two directions are pinned against each other with fixtures that
 # differ only in the age of the newest scheduled run.
 #
+# And the third state on top of those two (2026-09-10, #502): a control
+# that REPORTS BY FAILING. ansible-drift.yml's failing step is named
+# "Drift verdict (fails on drift, and NAMES the tasks)" — its red runs
+# are the report, so FAIL's "this control is broken or ignored" is the
+# same wrong-remedy mislabel one level down. A workflow declares the
+# fact with a marker comment in its own file, and the cases below pin
+# what that declaration cannot do far harder than what it can: it never
+# changes the exit code or the flagged set, it never reaches DEAD, it
+# does not apply to a run that never executed a step, and it is void
+# unless the step it names exists in that workflow. The last of those is
+# also swept over the REAL .github/workflows tree here, offline, so a
+# marker cannot rot into a permanent excuse.
+#
 # Offline: SCHEDULED_CONTROLS_FIXTURE feeds the run history and
 # WORKFLOW_DIR the cron source, so no gh, no token, no network.
 # NOW_EPOCH pins "now" so the day arithmetic is deterministic.
@@ -74,6 +87,54 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - run: echo cron: not-a-trigger
+YAML
+}
+
+# reporting_workflow <basename> <cron> <verdict step name>
+# A workflow that DECLARES failing is how it reports, carrying both the
+# marker and the step the marker names. The declaration is a comment in
+# the workflow file rather than a list in the gate, so the fixture that
+# exercises it is a workflow file — which is the point: a reader of this
+# file sees exactly what a declaring workflow has to write.
+reporting_workflow() {
+  cat > "$TMP/wf/$1" <<YAML
+name: ${1%.yml}
+
+# scheduled-control: reports-by-failing "$3"
+
+on:
+  schedule:
+    - cron: '$2'
+  workflow_dispatch: {}
+
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: $3
+        run: exit 1
+YAML
+}
+
+# misdeclared_workflow <basename> <cron> <step name the marker claims>
+# The marker is there and the step it names is not — a rename, or a
+# marker that was never true.
+misdeclared_workflow() {
+  cat > "$TMP/wf/$1" <<YAML
+name: ${1%.yml}
+
+# scheduled-control: reports-by-failing "$3"
+
+on:
+  schedule:
+    - cron: '$2'
+
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Some other step
+        run: exit 1
 YAML
 }
 
@@ -203,11 +264,144 @@ run_check
 expect 'one stopped + one red → the stopped one is DEAD' 1 'DEAD  stopped.yml'
 expect '…and the firing one is FAIL' 1 'FAIL  red.yml'
 expect '…and both were assessed' 1 'assessed 2 of 2 scheduled workflow(s)'
-expect '…and the summary counts the classes separately' 1 '1 dead, 1 failing, 0 unreadable'
+expect '…and the summary counts the classes separately' 1 '1 dead, 1 failing, 0 alarming, 0 unreadable'
 expect '…and the dead list holds only the stopped one' 1 'scheduled-controls-dead: stopped.yml'
 expect '…and the failing list holds only the red one' 1 'scheduled-controls-failing: red.yml'
 expect '…and stderr names the re-arm remedy' 1 'STOPPED BEING SCHEDULED'
 expect '…and stderr names the read-the-verdict remedy' 1 'STILL BEING SCHEDULED'
+
+# ── The third state: a control that REPORTS BY FAILING ──────────────
+# FAIL says "this control is broken or it is being ignored". For a
+# workflow whose failing step IS its report — ansible-drift.yml's is
+# named "Drift verdict (fails on drift, and NAMES the tasks)" — that is
+# a mislabel of the same shape as #502 one level down: it sends the
+# reader to the plumbing when the finding is what needs reading. The
+# workflow declares the fact in its own file; this section pins what the
+# declaration does, and much more importantly what it CANNOT do.
+STEP='Drift verdict (fails on drift, and NAMES the tasks)'
+
+reset_case
+reporting_workflow drift.yml '17 6 * * 1' "$STEP"
+history drift.yml active 53 \
+  failure:0 failure:7 failure:14 failure:21 failure:28
+run_check
+expect 'declared reports-by-failing, firing and red → ALARM' 1 'ALARM drift.yml'
+expect '…and the detail quotes the step the marker names' 1 "in its step \"$STEP\""
+expect '…and the remedy is to read the finding, not repair the control' 1 'Read the finding it named'
+expect '…and it is listed machine-readably under alarming' 1 'scheduled-controls-alarming: drift.yml'
+expect_absent '…and not under failing' 'scheduled-controls-failing: drift.yml'
+expect_absent '…and not under dead' 'scheduled-controls-dead: drift.yml'
+# The whole safeguard in one assertion: declaring buys no quiet. Same
+# exit code, same flagged set, same tracking issue — only the sentence
+# changes. There is no state a marker can move a control INTO that is
+# any quieter, so a workflow that is supposed to be green gains nothing
+# by marking itself.
+expect '…and it still fails the gate, exactly as an undeclared red would' 1 'scheduled-controls: 1 scheduled control(s) are REPORTING A FINDING'
+expect '…and is counted as its own class' 1 '0 dead, 0 failing, 1 alarming'
+
+# The undeclared twin. Identical cron, identical history, no marker —
+# the ONLY difference is the comment line in the workflow file, which is
+# what makes the declaration load-bearing rather than decorative.
+reset_case
+workflow drift.yml '17 6 * * 1'
+history drift.yml active 53 \
+  failure:0 failure:7 failure:14 failure:21 failure:28
+run_check
+expect 'same history with no marker → FAIL, not ALARM' 1 'FAIL  drift.yml'
+expect_absent '…and nothing is filed under alarming' 'scheduled-controls-alarming: drift.yml'
+
+# THE TOOTH THAT MATTERS. "Failing is how I report" is only true of a
+# run that got far enough to report. A startup_failure never executed a
+# step, so its red is the plumbing and not a finding — and if the marker
+# laundered it, a workflow could mark itself and then break in a way
+# this gate describes as working as intended. It stays FAIL.
+reset_case
+reporting_workflow drift.yml '17 6 * * 1' "$STEP"
+history drift.yml active 53 \
+  startup_failure:0 startup_failure:7 startup_failure:14 startup_failure:21
+run_check
+expect 'declared, but the newest run never executed a step → FAIL, not ALARM' 1 'FAIL  drift.yml'
+expect '…and says why the declaration does not apply' 1 'a run that never executed a step rendered no report'
+expect '…and names the conclusion that voided it' 1 'newest scheduled run concluded startup_failure'
+expect_absent '…and the marker did not launder it into the quieter class' 'scheduled-controls-alarming: drift.yml'
+
+# Same for a run killed mid-flight: the verdict step may never have been
+# reached, so a timed_out run is not evidence the control spoke.
+reset_case
+reporting_workflow drift.yml '17 6 * * 1' "$STEP"
+history drift.yml active 53 timed_out:0 timed_out:7 timed_out:14 timed_out:21
+run_check
+expect 'declared, but the newest run timed out → FAIL, not ALARM' 1 'FAIL  drift.yml'
+expect_absent '…and is not filed as a finding' 'scheduled-controls-alarming: drift.yml'
+
+# A marker CANNOT REACH DEAD. This is the failure the whole gate exists
+# for, and the one state no file gets to opt out of: same declaration,
+# same never-green history, only the age of the newest run differs.
+reset_case
+reporting_workflow drift.yml '17 6 * * 1' "$STEP"
+history drift.yml active 53 \
+  failure:25 failure:32 failure:39 failure:46
+run_check
+expect 'declared, but no scheduled run for 25d → DEAD, not ALARM' 1 'DEAD  drift.yml'
+expect '…and the remedy is still to re-arm the schedule' 1 'Re-arm the schedule'
+expect_absent '…and the marker bought it nothing' 'scheduled-controls-alarming: drift.yml'
+
+# …and disabling beats the declaration too: a declared control that
+# failed today but can no longer fire is stopped, not reporting.
+reset_case
+reporting_workflow drift.yml '17 6 * * 1' "$STEP"
+history drift.yml disabled_inactivity 53 failure:0 failure:7
+run_check
+expect 'declared but disabled → DEAD, not ALARM' 1 'DEAD  drift.yml'
+expect '…and names the disablement' 1 'the workflow is disabled_inactivity'
+
+# A marker whose step is gone is VOID — matched in full, not as a
+# substring, so the step that justifies the claim cannot be renamed out
+# from under it. The control falls back to the STRICTER class, and the
+# report says the declaration was ignored rather than quietly dropping
+# it: a mechanism that stops working without a word is this gate's own
+# failure mode.
+reset_case
+misdeclared_workflow drift.yml '17 6 * * 1' "$STEP"
+history drift.yml active 53 failure:0 failure:7 failure:14 failure:21
+run_check
+expect 'marker names a step the workflow does not have → FAIL, not ALARM' 1 'FAIL  drift.yml'
+expect '…and the report says the declaration is void' 1 'the declaration is VOID'
+expect '…and names the step it could not find' 1 "marker names a step \"$STEP\""
+expect_absent '…and it is not filed as a finding' 'scheduled-controls-alarming: drift.yml'
+
+# Declaring does not flag a healthy control: a report-by-failing control
+# is green whenever it has nothing to report, and that is its GOAL
+# state. Nothing here makes a marked workflow noisier than an unmarked
+# one either.
+reset_case
+reporting_workflow drift.yml '17 6 * * 1' "$STEP"
+history drift.yml active 53 success:0 success:7 success:14
+run_check
+expect 'declared and green → live, gate passes' 0 'live  drift.yml'
+expect '…and the alarming line is emitted empty, not omitted' 0 'scheduled-controls-alarming: '
+
+# The real tree, not a fixture of one. The marker in
+# .github/workflows/ansible-drift.yml has to be parsed by THIS script
+# and has to name a step that file really has — assert it end to end, so
+# renaming the verdict step or mistyping the marker fails here on the
+# PR that does it rather than silently reverting the workflow to FAIL
+# months later. Every other real scheduled workflow has no fixture and
+# lands UNKNOWN, which is why this asserts exit 1 on the ALARM row and
+# not on the sweep's overall verdict.
+reset_case
+run_check_real() {
+  OUT="$(WORKFLOW_DIR=".github/workflows" SCHEDULED_CONTROLS_FIXTURE="$TMP/fx" \
+    NOW_EPOCH="$NOW_E" SELF_WORKFLOW_FILE=ci-health.yml \
+    bash "$CHECK" 2>&1)"
+  RC=$?
+}
+history ansible-drift.yml active 53 \
+  failure:0 failure:7 failure:14 failure:21 failure:28
+run_check_real
+expect 'the REAL ansible-drift.yml declares itself, and the sweep reads it' 1 'ALARM ansible-drift.yml'
+expect '…naming the real verdict step' 1 "in its step \"$STEP\""
+expect_absent '…so it is no longer mislabelled as an ordinary red control' 'scheduled-controls-failing: ansible-drift.yml'
 
 # The firing signal is judged on the SAME N as the passing signal — one
 # policy derived from the cadence, not a second one bolted alongside. A
@@ -504,11 +698,11 @@ done <<EOF
 $classes
 EOF
 asserts=$((asserts + 1))
-if [ "$class_n" -ge 2 ] && [ -z "$class_missing" ]; then
+if [ "$class_n" -ge 3 ] && [ -z "$class_missing" ]; then
   echo "ok: all ${class_n} scheduled-controls-<class> lines the sweep emits are parsed by ci-health.yml"
   pass=$((pass + 1))
 else
-  echo "FAIL: ci-health.yml does not parse scheduled-controls class(es):${class_missing:- none found}; the sweep emits ${class_n} (want >= 2 — dead and failing)" >&2
+  echo "FAIL: ci-health.yml does not parse scheduled-controls class(es):${class_missing:- none found}; the sweep emits ${class_n} (want >= 3 — dead, failing and alarming)" >&2
   fail=$((fail + 1))
 fi
 
@@ -522,6 +716,7 @@ fi
 # reader cannot act on.
 asserts=$((asserts + 1))
 if grep -q 'ISSUE_TITLE_DEAD:' "$CIH" && grep -q 'ISSUE_TITLE_FAILING:' "$CIH" &&
+   grep -q 'ISSUE_TITLE_ALARMING:' "$CIH" &&
    grep -q 'ISSUE_TITLE_UNREADABLE:' "$CIH" &&
    ! grep -qE '^      ISSUE_TITLE:' "$CIH"; then
   echo "ok: the dead-control issue is titled per class, not one title for all"
@@ -532,17 +727,64 @@ else
 fi
 
 asserts=$((asserts + 1))
-if grep -q 'STOPPED BEING SCHEDULED' "$CIH" && grep -q 'STILL BEING SCHEDULED' "$CIH"; then
-  echo "ok: the failure annotation distinguishes a stopped control from a failing one"
+if grep -q 'STOPPED BEING SCHEDULED' "$CIH" && grep -q 'STILL BEING SCHEDULED' "$CIH" &&
+   grep -q 'REPORTING A FINDING' "$CIH"; then
+  echo "ok: the failure annotation tells a stopped control, a broken one and one reporting a finding apart"
   pass=$((pass + 1))
 else
-  echo "FAIL: ci-health.yml emits one annotation for both classes — it would tell an operator to re-arm a control that never stopped" >&2
+  echo "FAIL: ci-health.yml emits one annotation for several classes — it would tell an operator to re-arm a control that never stopped, or to repair one that is working (#502)" >&2
+  fail=$((fail + 1))
+fi
+
+# ── Every reports-by-failing marker in the real tree is honest ──────
+# The declaration lives in the workflow file, so its two failure modes
+# are a typo and a rename. Both are cheap to catch here — no API, no
+# token, on every PR — and expensive to catch live, where the marker
+# just silently stops applying and the control quietly reverts to being
+# reported as an ordinary broken one. The step is matched IN FULL, the
+# same way the gate matches it, so this cannot pass on a prefix.
+marker_files="$(grep -lE '^[[:space:]]*#[[:space:]]*scheduled-control:[[:space:]]*reports-by-failing' \
+  .github/workflows/*.yml 2>/dev/null || true)"
+marker_n=0
+marker_bad=""
+while IFS= read -r mf; do
+  [ -z "$mf" ] && continue
+  marker_n=$((marker_n + 1))
+  claimed="$(sed -n 's/^[[:space:]]*#[[:space:]]*scheduled-control:[[:space:]]*reports-by-failing[[:space:]]*"\(.*\)"[[:space:]]*$/\1/p' "$mf")"
+  claimed="${claimed%%$'\n'*}"
+  if [ -z "$claimed" ]; then
+    marker_bad="${marker_bad} ${mf}(unparseable — the step name must be double-quoted)"
+    continue
+  fi
+  if ! awk -v want="$claimed" '
+        { line = $0
+          sub(/^[[:space:]]+/, "", line); sub(/^-[[:space:]]*/, "", line)
+          if (line ~ /^#/) next
+          if (line !~ /^name[[:space:]]*:/) next
+          sub(/^name[[:space:]]*:[[:space:]]*/, "", line)
+          sub(/[[:space:]]+$/, "", line)
+          gsub(/^["'"'"']|["'"'"']$/, "", line)
+          if (line == want) found = 1 }
+        END { exit(found ? 0 : 1) }' "$mf"; then
+    marker_bad="${marker_bad} ${mf}(no step named \"${claimed}\")"
+  fi
+done <<EOF
+$marker_files
+EOF
+asserts=$((asserts + 1))
+if [ -z "$marker_bad" ]; then
+  echo "ok: ${marker_n} reports-by-failing marker(s) in .github/workflows each name a step that exists"
+  pass=$((pass + 1))
+else
+  echo "FAIL: reports-by-failing marker(s) do not name a real step:${marker_bad}" >&2
+  echo "    The marker must read: # scheduled-control: reports-by-failing \"<exact name: of the verdict step>\"" >&2
+  echo "    A marker that names no real step is void — the control silently reverts to being reported as an ordinary broken one." >&2
   fail=$((fail + 1))
 fi
 
 echo
 echo "check-scheduled-controls-test: ${pass} passed, ${fail} failed, ${asserts} assertions requested"
-if [ "$asserts" -lt 67 ]; then
+if [ "$asserts" -lt 98 ]; then
   echo "check-scheduled-controls-test: FAIL — only ${asserts} assertions ran; cases have been lost" >&2
   exit 1
 fi

@@ -56,6 +56,73 @@
 # behind "oh, that one always fails", because it is now a different
 # word on a different line.
 #
+# A THIRD STATE, DECLARED AND NOT INFERRED (2026-09-10). FAIL as written
+# above reads "somebody is checking and the answer is being ignored",
+# and for almost every control that is the right sentence. For one shape
+# it is a mislabel of its own. ansible-drift.yml REPORTS BY FAILING: its
+# verdict step is named "Drift verdict (fails on drift, and NAMES the
+# tasks)", and a red run there is not a broken control, it is the
+# control speaking. Filing that under FAIL sends the reader to the
+# workflow's plumbing when what they should open is the drift report —
+# the same wrong-remedy mistake #502 made one level up. So the split is
+# only half done until the third state is named:
+#
+#   ALARM — the schedule is firing, every run within N days was red, AND
+#     the workflow declares that failing is how it reports. SOMEBODY IS
+#     CHECKING AND THE ANSWER IS "YES, THERE IS A PROBLEM". Remedy: read
+#     the finding. Nothing about the control needs fixing; it clears
+#     when the thing it found is fixed.
+#
+# HOW A CONTROL DECLARES IT. One marker comment in the workflow file:
+#
+#     # scheduled-control: reports-by-failing "<name of the verdict step>"
+#
+# Not a list in this script, and not inferred. Inference — "does it have
+# a step whose name contains 'verdict'?" — is a guess, and a guess that
+# grows a workflow into a quieter class it never asked for is the worst
+# possible direction for it to be wrong in. A list here is worse than it
+# first looks: the person who writes a report-by-failing workflow is not
+# the person who maintains this gate, so the declaration would live in a
+# file that workflow's reviewer never opens; and a list keyed by file
+# name rots silently the day the workflow is renamed. The marker sits in
+# the file it describes, so adding one is a diff on that workflow, read
+# by whoever reviews that workflow.
+#
+# WHY THE MARKER CANNOT HIDE A REAL FAILURE. The standing objection to
+# any declaration is a workflow that is supposed to be green marking
+# itself and going quiet. Four things stop it, and the first is the one
+# that actually matters:
+#
+#   1. IT SILENCES NOTHING. ALARM exits 1, is counted, is named on its
+#      own machine-readable line, holds the dead-control issue open and
+#      fails ci-health.yml — everything FAIL does. The SET of controls
+#      this gate flags is byte-for-byte what it would be with no marker
+#      anywhere in the tree; only the sentence changes. There is no
+#      quieter state to move to, so there is nothing to hide behind, and
+#      a marker added in bad faith buys its author nothing at all.
+#   2. IT CANNOT REACH DEAD. The marker only ever moves a verdict
+#      between FAIL and ALARM. A control that has stopped being
+#      scheduled is DEAD whatever it declares — that is the failure this
+#      whole gate exists for, and no file gets to opt out of it.
+#   3. THE CLAIM IS CHECKED AGAINST THE RUN. "Failing is how I report"
+#      is only true of a run that got far enough to report anything. A
+#      startup_failure never executed a step; a timed_out run was killed
+#      mid-flight and its verdict step may never have been reached.
+#      Neither rendered a report, so when the newest scheduled run
+#      concluded either way the marker does not apply and the control
+#      stays FAIL — at that point the plumbing IS the problem, which is
+#      exactly the failure a marker must not be able to launder. This is
+#      the inverse of the caveat below: green is only evidence if the
+#      control rendered a verdict, and so is red.
+#   4. THE MARKER IS CHECKED AGAINST THE FILE. It must name a step that
+#      exists in that workflow, matched in full and not as a substring.
+#      A marker naming a step that is not there is void here — the
+#      control falls back to the stricter FAIL — and is a hard failure
+#      of check-scheduled-controls-test.sh, which sweeps the real
+#      workflow tree on every PR with no API and no token. A marker
+#      therefore cannot outlive the step whose existence is the whole
+#      basis of its claim.
+#
 # WHY SCHEDULED RUNS ONLY. Manual dispatch masks a dead schedule. Of
 # ansible-drift.yml's 38 runs on 2026-09-07, 31 were workflow_dispatch
 # and several were green; the newest run in its history was a green
@@ -102,7 +169,10 @@
 # found a flagged control is itself scheduled-and-red, so it would
 # otherwise report ITSELF as FAIL on the next run and the alarm would
 # sustain itself. There is no opt-out list and adding one would defeat
-# the purpose.
+# the purpose. The reports-by-failing marker above is not one: it moves
+# a control between two flagged classes and cannot move it out of any,
+# which is why it can be granted to a workflow by its own author without
+# anybody having to trust that author's judgement about being green.
 #
 # Environment:
 #   GH_REPO          owner/repo (gh reads this automatically in Actions)
@@ -116,15 +186,17 @@
 #                    offline tests, no gh, no token.
 #   NOW_EPOCH        override "now" for deterministic tests.
 #
-# Exit: 0 = every control live, 1 = at least one DEAD or FAIL (or a
-#           workflow that could not be read), 2 = the gate could not
+# Exit: 0 = every control live, 1 = at least one DEAD, FAIL or ALARM (or
+#           a workflow that could not be read), 2 = the gate could not
 #           run (no scheduled workflow found, or no workflow could be
 #           read at all). Never a silent pass.
 #
 # Machine-readable, one line each, always emitted, empty when none:
 #   scheduled-controls-dead:     <csv>  stopped being scheduled
 #   scheduled-controls-failing:  <csv>  scheduled, and red past N
-# .github/workflows/ci-health.yml reads BOTH, and the self-test asserts
+#   scheduled-controls-alarming: <csv>  scheduled, red past N, and red
+#                                       is how this control reports
+# .github/workflows/ci-health.yml reads ALL THREE, and the self-test asserts
 # that parity: a class the caller does not read is a class that
 # silently stops being tracked, which is this gate's own failure mode.
 #
@@ -160,6 +232,7 @@ SELF_WORKFLOW_FILE="${SELF_WORKFLOW_FILE:-ci-health.yml}"
 # thing, and this report is the only place that distinction is read.
 REMEDY_DEAD='nobody is checking what this guards. Re-arm the schedule — a disabled workflow, a lapsed credential, a billing cap — then judge what it reports.'
 REMEDY_FAIL='this control IS reporting and its report is red. Act on what it found; re-arming nothing will help, because nothing is un-armed.'
+REMEDY_ALARM='this control reports BY FAILING and it is failing, on schedule, as designed. Read the finding it named — do not re-arm it and do not re-run it. It goes green when the thing it found is fixed.'
 FIXTURE="${SCHEDULED_CONTROLS_FIXTURE:-}"
 NOW_EPOCH="${NOW_EPOCH:-$(date -u +%s)}"
 
@@ -248,6 +321,42 @@ cron_interval_hours() {
   '
 }
 
+# ── The reports-by-failing declaration ──────────────────────────────
+# Read out of the workflow file itself, for the reasons in the header.
+# Two halves, because a declaration that is not checkable is a comment:
+# the marker names a step, and the step must be there.
+
+# <workflow file> → the step name the marker claims, empty when unmarked.
+# The value is captured whole and sliced afterwards rather than piped
+# into an early-exit consumer (scripts/ci/lint-shell-sigpipe.sh).
+reporting_step_of() {
+  local hits
+  hits="$(sed -n 's/^[[:space:]]*#[[:space:]]*scheduled-control:[[:space:]]*reports-by-failing[[:space:]]*"\(.*\)"[[:space:]]*$/\1/p' "$1" 2>/dev/null || true)"
+  printf '%s' "${hits%%$'\n'*}"
+}
+
+# <workflow file> <step name> → 0 when a real step carries exactly that
+# name. Exact, not substring: a marker that matched a prefix could be
+# satisfied by an unrelated step, and the point of naming the step is
+# that deleting it invalidates the claim. Comment lines are skipped so
+# the marker cannot satisfy itself.
+declares_step() {
+  awk -v want="$2" '
+    {
+      line = $0
+      sub(/^[[:space:]]+/, "", line)
+      sub(/^-[[:space:]]*/, "", line)
+      if (line ~ /^#/) next
+      if (line !~ /^name[[:space:]]*:/) next
+      sub(/^name[[:space:]]*:[[:space:]]*/, "", line)
+      sub(/[[:space:]]+$/, "", line)
+      gsub(/^["'"'"']|["'"'"']$/, "", line)
+      if (line == want) found = 1
+    }
+    END { exit(found ? 0 : 1) }
+  ' "$1"
+}
+
 threshold_days() {  # <interval hours> → N days
   local ih="$1" n
   n=$(( (GRACE_RUNS * ih + 23) / 24 ))
@@ -318,10 +427,12 @@ requested=0
 assessed=0
 dead=0
 failing=0
+alarming=0
 unknown=0
 excluded=0
 dead_list=""
 failing_list=""
+alarming_list=""
 report=""
 
 shopt -s nullglob
@@ -361,17 +472,44 @@ EOF
   created="$(printf '%s' "$meta" | cut -f2)"
   assessed=$((assessed + 1))
 
+  # The declaration, resolved once per workflow and validated against
+  # the file that carries it. A marker whose step is gone is VOID, not
+  # trusted: the control falls back to the stricter class. That fallback
+  # is silent-by-design here — check-scheduled-controls-test.sh sweeps
+  # the real workflow tree on every PR and fails loudly on it, which is
+  # where a broken marker is cheap to catch — but the report still says
+  # so on the row, because a mechanism that stops working without a word
+  # is this gate's own failure mode.
+  declared_step="$(reporting_step_of "$wf")"
+  declared=0
+  decl_note=""
+  if [ -n "$declared_step" ]; then
+    if declares_step "$wf" "$declared_step"; then
+      declared=1
+    else
+      decl_note="its reports-by-failing marker names a step \"${declared_step}\" that this workflow does not have — the declaration is VOID and this control is judged as an ordinary one"
+      echo "scheduled-controls: ${base} carries a reports-by-failing marker naming a step it does not have (\"${declared_step}\") — declaration ignored." >&2
+    fi
+  fi
+
   runs="$(workflow_runs "$base" || true)"
   total=0
   green=0
   last_green=""
   last_run=""
+  last_conclusion=""
   while IFS=$'\t' read -r conclusion created_at; do
     [ -z "$conclusion" ] && continue
     total=$((total + 1))
     # Newest-first, which is how the runs API orders and how the
     # fixtures are written: the first row of a kind is its most recent.
-    [ -z "$last_run" ] && last_run="$created_at"
+    # The newest run's CONCLUSION is kept as well as its date, because a
+    # reports-by-failing marker only applies to a run that executed a
+    # step (tooth 3 in the header).
+    if [ -z "$last_run" ]; then
+      last_run="$created_at"
+      last_conclusion="$conclusion"
+    fi
     if [ "$conclusion" = "success" ]; then
       green=$((green + 1))
       [ -z "$last_green" ] && last_green="$created_at"
@@ -420,17 +558,33 @@ EOF
     fi
     remedy="$REMEDY_DEAD"
   elif [ "$green_age" -ge "$n_days" ]; then
-    verdict="FAIL"
     if [ "$green" -eq 0 ]; then
       detail="the schedule is firing (last run ${run_age}d ago) and has never produced a green scheduled run in ${green_age}d"
     else
       detail="the schedule is firing (last run ${run_age}d ago) but has produced no green scheduled run in ${green_age}d"
     fi
-    remedy="$REMEDY_FAIL"
+    # Q3 — IS RED THIS CONTROL'S WAY OF REPORTING? Only if it says so,
+    # and only for a run that got far enough to say anything. In this
+    # branch the newest decisive run is necessarily red: run_age is
+    # under N and green_age is not, so a green newest run is arithmetic
+    # nonsense. So the conclusion tested here is the newest RED one.
+    if [ "$declared" -eq 1 ] && [ "$last_conclusion" = "failure" ]; then
+      verdict="ALARM"
+      detail="${detail} — and this workflow declares that failing is how it reports, in its step \"${declared_step}\", so those reds are findings and not a broken control"
+      remedy="$REMEDY_ALARM"
+    else
+      verdict="FAIL"
+      remedy="$REMEDY_FAIL"
+      if [ "$declared" -eq 1 ]; then
+        detail="${detail}. It declares that failing is how it reports, but its newest scheduled run concluded ${last_conclusion} — a run that never executed a step rendered no report, so the declaration does not apply and the plumbing is what is broken"
+      fi
+    fi
   fi
 
   # A disabled schedule is the purest stopped control: it cannot fire
-  # at all, however recently it last did.
+  # at all, however recently it last did — and no declaration reaches
+  # this, which is tooth 2 in the header: a marker moves a verdict
+  # between FAIL and ALARM and can never move one out of DEAD.
   if [ "$state" != "active" ]; then
     verdict="DEAD"
     detail="the workflow is ${state} — its schedule cannot fire"
@@ -449,7 +603,17 @@ EOF
       failing=$((failing + 1))
       failing_list="${failing_list}${failing_list:+,}${base}"
       ;;
+    ALARM)
+      alarming=$((alarming + 1))
+      alarming_list="${alarming_list}${alarming_list:+,}${base}"
+      ;;
   esac
+  # A void marker is reported on every row that carries one, flagged or
+  # not: on a live control it is the only chance to see it before the
+  # day it would have mattered.
+  if [ -n "$decl_note" ]; then
+    report="${report}        └─ ${decl_note}"$'\n'
+  fi
   if [ "$verdict" != "live" ]; then
     report="${report}        └─ ${detail}"$'\n'
     report="${report}           remedy: ${remedy}"$'\n'
@@ -459,10 +623,11 @@ shopt -u nullglob
 
 # ── Verdict ─────────────────────────────────────────────────────────
 printf '%s' "$report"
-echo "scheduled-controls: assessed ${assessed} of ${requested} scheduled workflow(s) in ${WORKFLOW_DIR}; ${dead} dead, ${failing} failing, ${unknown} unreadable, ${excluded} excluded (self)."
+echo "scheduled-controls: assessed ${assessed} of ${requested} scheduled workflow(s) in ${WORKFLOW_DIR}; ${dead} dead, ${failing} failing, ${alarming} alarming, ${unknown} unreadable, ${excluded} excluded (self)."
 echo "scheduled-controls: thresholds GRACE_RUNS=${GRACE_RUNS} FLOOR_DAYS=${FLOOR_DAYS} CAP_DAYS=${CAP_DAYS}."
 echo "scheduled-controls-dead: ${dead_list}"
 echo "scheduled-controls-failing: ${failing_list}"
+echo "scheduled-controls-alarming: ${alarming_list}"
 
 # Anti-vacuity: a parser that stops matching, or a directory that has
 # moved, must fail — not report a clean sweep over nothing.
@@ -475,15 +640,20 @@ if [ "$assessed" -eq 0 ] && [ "$requested" -gt "$excluded" ]; then
   exit 2
 fi
 
-# Two classes, two sentences, two remedies — and one exit code, because
-# both mean a control's output is not reaching anybody. See BOTH EXIT 1
-# in the header for why a faithfully-failing control still fails here.
-if [ "$dead" -gt 0 ] || [ "$failing" -gt 0 ]; then
+# Three classes, three sentences, three remedies — and one exit code,
+# because all three mean a control's output is not reaching anybody. See
+# BOTH EXIT 1 in the header for why a faithfully-failing control still
+# fails here, and WHY THE MARKER CANNOT HIDE A REAL FAILURE for why the
+# declared class is no quieter than the undeclared one.
+if [ "$dead" -gt 0 ] || [ "$failing" -gt 0 ] || [ "$alarming" -gt 0 ]; then
   if [ "$dead" -gt 0 ]; then
     echo "scheduled-controls: ${dead} scheduled control(s) have STOPPED BEING SCHEDULED — no scheduled run at all within their threshold, so nothing is checking what they guard. Re-arm the schedule: ${dead_list}" >&2
   fi
   if [ "$failing" -gt 0 ]; then
     echo "scheduled-controls: ${failing} scheduled control(s) are STILL BEING SCHEDULED and have been red past their threshold — they are reporting and the report is not being acted on. Read the verdict, do not re-arm anything: ${failing_list}" >&2
+  fi
+  if [ "$alarming" -gt 0 ]; then
+    echo "scheduled-controls: ${alarming} scheduled control(s) are REPORTING A FINDING — they declare that failing is how they report, they are firing on schedule, and they have been red past their threshold. Open what they found; the control itself is not broken and re-running it will not clear this: ${alarming_list}" >&2
   fi
   exit 1
 fi

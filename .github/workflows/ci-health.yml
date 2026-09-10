@@ -46,6 +46,16 @@ name: ci-health
 #    a genuinely stopped control cannot hide behind "oh, that one
 #    always fails".
 #
+#    AND A THIRD, DECLARED BY THE WORKFLOW (2026-09-10, #502). FAIL
+#    reads "this control is broken or ignored", which mislabels a
+#    workflow whose failing step IS its report. ansible-drift.yml now
+#    declares that in one marker line in its own header, naming the
+#    step, and the sweep files it under ALARM: read the finding, do not
+#    repair the plumbing. The declaration buys NO quiet — an ALARM is
+#    counted, listed, titled, annotated and still fails this job
+#    exactly as a FAIL does — so no workflow can mark itself to escape
+#    the sweep, and no marker can move a control out of DEAD.
+#
 # Self-contained: both use ${{ github.token }} via the gh CLI, no new
 # secrets. The main-CI decision core is scripts/ci/check-main-ci-health.sh
 # (unit-testable offline via CI_HEALTH_FIXTURE).
@@ -176,6 +186,10 @@ jobs:
       # existing issue is retitled when the classes change.
       ISSUE_TITLE_DEAD: "Scheduled controls: a control has stopped reporting"
       ISSUE_TITLE_FAILING: "Scheduled controls: a control is red on every scheduled run"
+      # A control that declares failing IS its report (see the marker in
+      # ansible-drift.yml). Titling that "is red on every scheduled run"
+      # describes the plumbing; what the reader needs is the finding.
+      ISSUE_TITLE_ALARMING: "Scheduled controls: a control has been reporting a finding on every scheduled run"
       # The sweep also fails when it could not READ a control (exit 1 on
       # unknown, exit 2 on a sweep over nothing). That names no control
       # at all, and headlining it with either of the above would be a
@@ -214,19 +228,22 @@ jobs:
           # the SIGPIPE shape lint-shell-sigpipe.sh rejects everywhere
           # else in the repo.
           #
-          # BOTH classes are read. Reading only `dead` is how this job
-          # would silently stop tracking the class the sweep learned to
-          # name on 2026-09-10 — a control that is still being scheduled
-          # and is red — and an untracked class is an invisible one.
+          # ALL THREE classes are read. Reading only `dead` is how this
+          # job would silently stop tracking the classes the sweep
+          # learned to name on 2026-09-10 — a control that is still
+          # being scheduled and is red, and one whose red IS its report
+          # — and an untracked class is an invisible one.
           # scripts/ci/check-scheduled-controls-test.sh asserts that
           # every scheduled-controls-<class>: key the script emits is
           # consumed here.
           dead="$(printf '%s\n' "$report" | sed -n 's/^scheduled-controls-dead: //p')"
           failing="$(printf '%s\n' "$report" | sed -n 's/^scheduled-controls-failing: //p')"
+          alarming="$(printf '%s\n' "$report" | sed -n 's/^scheduled-controls-alarming: //p')"
           {
             echo "verdict_rc=${rc}"
             echo "dead=${dead}"
             echo "failing=${failing}"
+            echo "alarming=${alarming}"
             echo "report<<REPORT_EOF"
             echo "$report"
             echo "REPORT_EOF"
@@ -242,6 +259,7 @@ jobs:
           REPORT: ${{ steps.assess.outputs.report }}
           DEAD: ${{ steps.assess.outputs.dead }}
           FAILING: ${{ steps.assess.outputs.failing }}
+          ALARMING: ${{ steps.assess.outputs.alarming }}
         run: |
           set -euo pipefail
           # Ensure the label exists (idempotent).
@@ -249,12 +267,16 @@ jobs:
             --description "a scheduled workflow has stopped being scheduled, or is red on every scheduled run" 2>/dev/null || true
 
           # A stopped control is the headline when there is one, because
-          # it is the state where nothing is checking at all; then the
-          # red-every-week class; then the sweep that could not read.
+          # it is the state where nothing is checking at all; then a
+          # control that is red and is not supposed to be; then one whose
+          # red is its report; then the sweep that could not read. Most
+          # urgent first, because only one of them can be the title.
           if [ -n "$DEAD" ]; then
             title="$ISSUE_TITLE_DEAD"
           elif [ -n "$FAILING" ]; then
             title="$ISSUE_TITLE_FAILING"
+          elif [ -n "$ALARMING" ]; then
+            title="$ISSUE_TITLE_ALARMING"
           else
             title="$ISSUE_TITLE_UNREADABLE"
           fi
@@ -267,7 +289,7 @@ jobs:
           # because an unreconciled control stays flagged for weeks and a
           # daily comment would bury the one comment that matters — the
           # day a SECOND control goes. That change of set gets a comment.
-          fingerprint="<!-- dead-controls: ${DEAD} | failing-controls: ${FAILING} -->"
+          fingerprint="<!-- dead-controls: ${DEAD} | failing-controls: ${FAILING} | alarming-controls: ${ALARMING} -->"
           # Tilde fences, not backtick ones: a literal backtick inside
           # the format string reads to SC2016 as an unexpanded command
           # substitution, and markdown treats the two fences the same.
@@ -289,7 +311,7 @@ jobs:
             # pipeline under pipefail and INVERT this test — the comment
             # would then fire on every run (scripts/ci/lint-shell-sigpipe.sh).
             if ! grep -qF "$fingerprint" <<<"$prev"; then
-              gh issue comment "$existing" --body "The flagged scheduled controls changed. Stopped being scheduled (nobody is checking): \`${DEAD:-none}\`. Scheduled and red past threshold (nobody is acting): \`${FAILING:-none}\`."
+              gh issue comment "$existing" --body "The flagged scheduled controls changed. Stopped being scheduled (nobody is checking): \`${DEAD:-none}\`. Scheduled and red past threshold (nobody is acting): \`${FAILING:-none}\`. Reporting a finding by failing, as declared (read the finding): \`${ALARMING:-none}\`."
               echo "Flagged-control set changed on issue #$existing."
             fi
             echo "Updated dead-control issue #$existing."
@@ -323,10 +345,12 @@ jobs:
         env:
           DEAD: ${{ steps.assess.outputs.dead }}
           FAILING: ${{ steps.assess.outputs.failing }}
+          ALARMING: ${{ steps.assess.outputs.alarming }}
         run: |
-          # One annotation per class, because the two need opposite
-          # actions: re-arm a schedule that stopped, or read a verdict
-          # that is being ignored. Emitting one for the other is how
+          # One annotation per class, because the three need different
+          # actions: re-arm a schedule that stopped, repair a control
+          # that is red and should not be, or read the finding of one
+          # whose red is its report. Emitting one for another is how
           # #502 came to tell an operator to restart a control that had
           # never stopped.
           if [ -n "${DEAD}" ]; then
@@ -335,7 +359,10 @@ jobs:
           if [ -n "${FAILING}" ]; then
             echo "::error::a scheduled control is STILL BEING SCHEDULED and red past its threshold (${FAILING}) — it is reporting and the report is not being acted on. Read its verdict; re-arming nothing will help."
           fi
-          if [ -z "${DEAD}" ] && [ -z "${FAILING}" ]; then
+          if [ -n "${ALARMING}" ]; then
+            echo "::error::a scheduled control is REPORTING A FINDING (${ALARMING}) — it declares that failing is how it reports, it fired on schedule, and it has been red past its threshold. Open what it found; the control is not broken and re-running it will not clear this."
+          fi
+          if [ -z "${DEAD}" ] && [ -z "${FAILING}" ] && [ -z "${ALARMING}" ]; then
             echo "::error::the scheduled-control sweep failed without naming a control — it could not read one or more workflows from the API, or found no scheduled workflow at all. See the log above."
           fi
           exit 1

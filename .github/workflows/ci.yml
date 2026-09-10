@@ -1125,6 +1125,17 @@ jobs:
         # exclusion, workflows enumerated from the tree rather than a
         # list, and an empty or unreadable sweep failing rather than
         # reporting a clean result. No network, no token.
+        #
+        # #502 added the three classes it sorts those into — stopped,
+        # broken, and reporting-a-finding — and the marker a workflow
+        # writes in its own file to claim the last one. The cases pin
+        # what that marker CANNOT do far harder than what it can: it
+        # never changes the exit code or the flagged set, never reaches
+        # DEAD, does not apply to a run that never executed a step, and
+        # is void unless it names a step that workflow really has. That
+        # last one is swept over the REAL .github/workflows tree here,
+        # which is why renaming a declared verdict step reddens this
+        # step on the PR that does it.
         run: ./scripts/ci/check-scheduled-controls-test.sh
       - name: check-sla-evidence self-test
         # #316: k6-weekly.yml's scheduled path exited 0 with a `::notice::`

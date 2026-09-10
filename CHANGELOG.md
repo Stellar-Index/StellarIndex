@@ -38,6 +38,62 @@ against.
   and announces on every start — twelve log lines an hour saying it is
   doing nothing. `TimeoutStartSec` is what bounds a oneshot.
 
+### Changed
+
+- **ci:** the scheduled-control sweep tells a control that is red
+  *because it is broken* from one that is red *because that is how it
+  reports* — a third class, declared by the workflow itself.
+
+  The sweep already split "no passing scheduled run past N days" into
+  DEAD (the schedule stopped; nobody is checking) and FAIL (the schedule
+  is firing and every run is red; somebody is checking and the answer is
+  ignored). FAIL is still the wrong sentence for one shape.
+  `ansible-drift.yml` REPORTS BY FAILING: its verdict step is named
+  "Drift verdict (fails on drift, and NAMES the tasks)", so a red
+  scheduled run there is the control working, and "this control is
+  broken or ignored" sends the reader to the workflow's plumbing when
+  what needs opening is the drift report. That is the same wrong-remedy
+  mistake #502 named one level up, so the split was only half done.
+
+  A workflow declares the fact in its own file, in one line:
+
+      # scheduled-control: reports-by-failing "<name of the verdict step>"
+
+  and the sweep files it under ALARM — read the finding, do not repair
+  the control — with its own `scheduled-controls-alarming:` line, its
+  own issue title and its own annotation in `ci-health.yml`.
+
+  Why a marker in the workflow and not a list in the gate: the person
+  who writes a report-by-failing workflow is not the person who
+  maintains the gate, so a list would put the declaration in a file that
+  workflow's reviewer never opens, and a list keyed by file name rots
+  silently the day the workflow is renamed. Inference — "does it have a
+  step whose name contains *verdict*?" — is a guess, and a guess that
+  grows a workflow into a quieter class it never asked for is the worst
+  direction to be wrong in.
+
+  Why the marker cannot hide a real failure, which is the objection that
+  shaped the design. It silences nothing: ALARM exits 1, is counted, is
+  listed, holds the tracking issue open and fails `ci-health.yml`
+  exactly as FAIL does, so the SET of controls the gate flags is
+  byte-for-byte what it would be with no marker anywhere in the tree —
+  only the sentence changes, and a marker added in bad faith buys its
+  author nothing. It cannot reach DEAD: a control that stopped being
+  scheduled is DEAD whatever it declares. The claim is checked against
+  the run — "failing is how I report" is only true of a run that got far
+  enough to report, so when the newest scheduled run concluded
+  `startup_failure` or `timed_out` the marker does not apply and the
+  control stays FAIL, because at that point the plumbing IS the problem.
+  And the marker is checked against the file: it must name a step that
+  workflow really has, matched in full and not as a prefix, or it is
+  void and the control falls back to the stricter class.
+
+  That last check runs offline on every PR — the self-test sweeps the
+  real `.github/workflows` tree with no API and no token — so a marker
+  cannot outlive the step whose existence is the whole basis of its
+  claim, and renaming the verdict step fails on the change that does it
+  rather than silently reverting the control to being reported as
+  broken months later.
 
 ## [v0.71.0] — 2026-09-10
 

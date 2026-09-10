@@ -89,6 +89,28 @@ name: ansible-drift
 # would have sent the next investigation down the wrong path (GitHub
 # Actions scheduling config) instead of the real one.
 #
+# THIS WORKFLOW REPORTS BY FAILING, AND SAYS SO IN ONE MACHINE-READABLE
+# LINE (#502). Everything above is the human version of a fact the
+# scheduled-control sweep in ci-health.yml has to know: a red scheduled
+# run here is this control WORKING — it found drift and named the tasks
+# — not a control that has broken or stopped. Without the declaration
+# the sweep can only see "no passing scheduled run past N days", which
+# it reported as "a control has stopped reporting" about a workflow that
+# had fired every Monday for eight weeks. The marker below moves this
+# workflow from that sweep's FAIL class to its ALARM class: still
+# flagged, still counted, still failing ci-health.yml — the sweep grants
+# no relief for declaring, and cannot (see WHY THE MARKER CANNOT HIDE A
+# REAL FAILURE in scripts/ci/check-scheduled-controls.sh) — but named as
+# a finding to read rather than as plumbing to repair.
+#
+# The quoted step name is load-bearing and checked two ways: the sweep
+# ignores the marker unless a step of exactly that name exists in this
+# file, and scripts/ci/check-scheduled-controls-test.sh fails on every
+# PR if it does not. Rename the verdict step and this line must be
+# renamed with it.
+#
+# scheduled-control: reports-by-failing "Drift verdict (fails on drift, and NAMES the tasks)"
+#
 # A GREEN RUN MEANS "codified = live", ON EVERY PATH. Apply runs used to
 # skip the verdict step, so `apply=true` concluded `success` without
 # checking anything (run 33418645334, 2026-08-31) — and any liveness
