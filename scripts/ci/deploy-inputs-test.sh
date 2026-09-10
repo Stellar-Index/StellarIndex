@@ -68,6 +68,39 @@ for v in "" "abc" "-1" "1.5" "15;" "99999" '$(id)'; do
   fi
 done
 
+# A multi-line `version` whose FIRST line is valid SemVer. `grep -Eq` matches
+# per LINE and stops at the first match, so BOTH spellings the step has worn
+# — `echo "$VERSION" | grep -Eq` and the here-string that replaced it — judge
+# only line 1 and let the rest ride along. bash's `[[ =~ ]]` anchors ^ and $
+# at the whole VALUE, not at a line, so it rejects every shape below.
+#
+# Two later steps are written against this gate's guarantee. "Run deploy
+# playbook" splices the value into `ansible-playbook -e "version=${VERSION}"`
+# — deploy-ansible-input-8's k=v form, split on WHITESPACE, a newline
+# included — and "Verify release signature, then checksums" builds the cosign
+# `--certificate-identity-regexp` from it escaped for `.` and `+` only. Each
+# step's comment names this regex as the reason its input is safe.
+#
+# Reached today: "Resolve the region's binary set" echoes the value into
+# `::warning::`/`::error::` strings, and the `if: always()` Summary step
+# writes it into $GITHUB_STEP_SUMMARY inside a backtick span — so a tail
+# forges annotations and the rendered deploy record. The ansible and cosign
+# steps sit after "Download release binaries" and a git ref cannot hold a
+# newline, so a multi-line value 404s there first. That is the ORDER of the
+# steps saving them, not a second check: keep this gate true.
+for v in \
+    $'v1.2.3\nbackup_freshness_skip=true' \
+    $'v1.2.3\n|.*' \
+    $'\nv1.2.3' \
+    $'v1.2.3\n'
+do
+  if run_validate "$v" stellarindex-api 15; then
+    bad "multi-line version $(printf '%q' "$v") ACCEPTED — only its first line is judged, so the tail rides on unvalidated into every step that trusts this gate"
+  else
+    ok "multi-line version $(printf '%q' "$v") rejected"
+  fi
+done
+
 # The inputs that were already validated must stay validated.
 if run_validate 'v1.0.0; id' stellarindex-api 15; then bad "non-SemVer version accepted"; else ok "non-SemVer version still rejected"; fi
 if run_validate v1.0.0 '../../etc/passwd' 15; then bad "illegal binary name accepted"; else ok "illegal binary name still rejected"; fi

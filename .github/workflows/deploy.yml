@@ -221,12 +221,41 @@ jobs:
           HEALTH_GRACE: ${{ inputs.health_grace_seconds }}
         run: |
           set -euo pipefail
-          # A here-string, not `echo … |`: `grep -Eq` stops at the first
-          # match, and VERSION is dispatch input of unbounded length. Past
-          # the 64 KiB pipe buffer, pipefail turns that SIGPIPE into a
-          # failed pipeline and `if !` INVERTS it — an unvalidated version
-          # would pass this gate (scripts/ci/lint-shell-sigpipe.sh).
-          if ! grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9.-]+)?(\+[A-Za-z0-9.-]+)?$' <<<"$VERSION"; then
+          # bash's own `=~`, not grep in ANY spelling. grep matches per
+          # LINE, so `v1.2.3` + newline + anything passes: line 1 matches
+          # and the tail is never judged. That held for the original
+          # `echo "$VERSION" | grep -Eq` and for the here-string that
+          # replaced it — the here-string fixed a different bug (`grep -Eq`
+          # stops at the first match, and past the 64 KiB pipe buffer
+          # pipefail turns that SIGPIPE into a failed pipeline, which `if !`
+          # INVERTS into a pass — scripts/ci/lint-shell-sigpipe.sh), not
+          # this one. `[[ =~ ]]` anchors ^ and $ at the whole VALUE and
+          # involves no pipe at all, so it closes both at once. Do not
+          # restore a grep here.
+          #
+          # It matters because two later steps are WRITTEN against this
+          # gate's guarantee. "Run deploy playbook" splices VERSION into
+          # `ansible-playbook -e "version=${VERSION}"`, and ansible splits
+          # that k=v form on WHITESPACE — a newline included — so a tail
+          # would become extra ansible vars on a live deploy; its comment
+          # cites this regex as the reason that cannot happen. "Verify
+          # release signature, then checksums" builds the cosign
+          # `--certificate-identity-regexp` from VERSION escaped for `.`
+          # and `+` ONLY, on the stated ground that this gate leaves
+          # nothing else in the value; a `|` in a tail widens the signer
+          # pin. Both sit after "Download release binaries", and a git ref
+          # cannot contain a newline, so a multi-line value 404s there
+          # first and neither is reachable today — but that is the ORDER of
+          # the steps, not a second check, and those two comments are true
+          # only while this one holds.
+          #
+          # The pattern goes through a variable and is UNQUOTED on the
+          # right of `=~`: quote it and bash matches it as a literal
+          # string, so `v1.2.3` itself would be rejected. Same form as
+          # scripts/ci/check-fleet-release-drift.sh; scripts/dev/cut-release.sh
+          # writes the identical regex inline, which is equivalent.
+          SEMVER_RE='^v[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9.-]+)?(\+[A-Za-z0-9.-]+)?$'
+          if ! [[ "$VERSION" =~ $SEMVER_RE ]]; then
             echo "::error::Version '$VERSION' must match SemVer vX.Y.Z[-prerelease][+build]"
             exit 1
           fi
