@@ -63,7 +63,19 @@ SERVICES=(
   redis-server
   galexie
   minio
-  node_exporter
+  # prometheus-node-exporter, NOT node_exporter. The #33 cutover moved
+  # metrics to the packaged unit and DELIBERATELY leaves the hand-rolled
+  # /etc/systemd/system/node_exporter.service and its binary in place as
+  # a documented rollback path (10-observability.yml stops and disables
+  # it, nothing removes it). That collides with the `systemctl cat` guard
+  # below, whose rule is "a unit file exists, so this host is meant to run
+  # it" — true for an absent unit, false for one kept on purpose in a
+  # stopped state. So on r1 this check faulted on EVERY run, pinging
+  # healthchecks.io /fail every 5 minutes while metrics were served fine
+  # by the packaged unit on :9100. The test nets never showed it, because
+  # they were built after the cutover and have no leftover file to find.
+  # Name the unit that actually serves the metrics.
+  prometheus-node-exporter
   stellarindex-indexer
   stellarindex-aggregator
   stellarindex-api

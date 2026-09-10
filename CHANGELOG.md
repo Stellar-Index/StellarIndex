@@ -17,6 +17,36 @@ against.
 
 ### Added
 
+- **ops:** the node health probe checks `prometheus-node-exporter`, the
+  unit that actually serves the metrics, instead of the retired
+  `node_exporter`.
+
+  On r1 this check faulted on EVERY run and pinged healthchecks.io
+  `/fail` every five minutes — a continuous alert-email stream — while
+  node_exporter metrics were being served correctly on `:9100` the whole
+  time.
+
+  The collision is between two reasonable decisions. The #33 cutover
+  moved metrics to the packaged unit and deliberately leaves the
+  hand-rolled `/etc/systemd/system/node_exporter.service` and its binary
+  in place as a documented zero-downtime rollback path — the playbook
+  stops and disables it, and nothing removes it. The probe's guard, in
+  turn, only faults on `inactive` when `systemctl cat` finds a unit file,
+  precisely so a host that does not run a service is not a false
+  positive. That rule reads "a unit file exists, so this host is meant to
+  run it": correct for an absent unit, wrong for one kept on purpose in a
+  stopped state.
+
+  The test nets never showed it, and the reason is the proof: they were
+  built after the cutover, have no leftover unit file, and so skip the
+  check and report zero failures. r1 is the only host carrying the file.
+
+  Worth noting for the next diagnosis: the unit exits 0 either way, so
+  `systemctl --failed` and per-unit failure counts read clean while the
+  probe pings `/fail` on every run. And the onset cannot be read from the
+  journal here — journald had hit its 500 MB cap and vacuumed, so the
+  oldest surviving entry only *looks* like the start of the problem.
+
 - **ops:** `pg-logrotate.timer` — run the existing Postgres logrotate
   policy hourly instead of daily, so its size cap can actually bound
   intra-day growth.
