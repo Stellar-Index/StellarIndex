@@ -31,6 +31,7 @@ configs/ansible/roles/archival-node/files/data-freshness.sh               data_f
 configs/ansible/roles/archival-node/files/galexie-archive-contiguity.sh   galexie_archive_contiguity.prom    scripts/ci/galexie-archive-contiguity-test.sh
 configs/ansible/roles/archival-node/files/galexie-archive-tip-lag.sh      galexie_archive_tip_lag.prom       -
 configs/ansible/roles/archival-node/files/ledger-meta-decode-probe.sh     ledger_meta_decode.prom            -
+configs/ansible/roles/archival-node/files/memory-mappings.sh              memory_mappings.prom               scripts/ci/memory-mappings-test.sh
 configs/ansible/roles/archival-node/templates/pgbackrest-backup.sh.j2     pgbackrest_backup.prom             scripts/ci/pgbackrest-backup-test.sh
 configs/healthchecks/smoke.sh                                             api_smoke.prom                     scripts/ci/smoke-textfile-test.sh
 scripts/ops/ch-schema-snapshot.sh                                         ch_schema_snapshot.prom            scripts/ops/ch-schema-snapshot-test.sh

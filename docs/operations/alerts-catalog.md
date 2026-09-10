@@ -26,8 +26,8 @@ enforced 2026-04-23 onward).
 
   | Severity | Rules | AlertManager route | Delivery |
   | --- | --- | --- | --- |
-  | `page` | 55 | `receiver: chat-page` | Discord **#stellarindex-pages**, `repeat_interval` 12 h. There is **no** PagerDuty leg — `pagerduty_configs` is unset, so nothing wakes anyone up. |
-  | `ticket` | 157 | `receiver: chat-default` | Discord **#stellarindex-alerts**, `repeat_interval` 24 h. |
+  | `page` | 57 | `receiver: chat-page` | Discord **#stellarindex-pages**, `repeat_interval` 12 h. There is **no** PagerDuty leg — `pagerduty_configs` is unset, so nothing wakes anyone up. |
+  | `ticket` | 159 | `receiver: chat-default` | Discord **#stellarindex-alerts**, `repeat_interval` 24 h. |
   | `informational` | 11 | `receiver: chat-informational` | Discord **#stellarindex-informational**, a dedicated low-traffic channel kept separate from `alerts` so a routine notice cannot bury a ticket. `send_resolved: false`. If `DISCORD_WEBHOOK_URL_INFORMATIONAL` is unset the renderer strips the block and the receiver degrades to the old `silent` stub — delivered to nobody, which is a no-op rather than a config error. |
 
   **`informational` is not "a low-priority ticket".** There is no
@@ -573,6 +573,10 @@ auto-unfreeze at all. Rules in
 | `stellarindex_nvme_wear_high` | `nvme_percentage_used_ratio` | > 0.80 for > 1 h | ticket | [nvme-smart](runbooks/nvme-smart.md) |
 | `stellarindex_nvme_spare_low` | `nvme_available_spare_ratio` | < 0.20 for > 30 min | page | [nvme-smart](runbooks/nvme-smart.md) |
 | `stellarindex_nvme_media_errors` | `increase(nvme_media_errors_total[24h])` | > 0 for > 5 min | ticket | [nvme-smart](runbooks/nvme-smart.md) |
+| `stellarindex_process_mappings_high` | `stellarindex_process_memory_mappings_ratio` | > 0.25 of `vm.max_map_count` for > 15 min (~5x the measured 4.5 % steady state) | ticket | [memory-mappings](runbooks/memory-mappings.md) |
+| `stellarindex_process_mappings_critical` | `stellarindex_process_memory_mappings_ratio` | > 0.50 of `vm.max_map_count` for > 2 min | page | [memory-mappings](runbooks/memory-mappings.md) |
+| `stellarindex_process_mappings_exhaustion_projected` | `predict_linear(stellarindex_process_memory_mappings[30m], 3600)` vs `..._limit`, floored at `..._ratio > 0.10` | projected to reach the limit within 1 h, for > 5 min | page | [memory-mappings](runbooks/memory-mappings.md) |
+| `stellarindex_process_mappings_probe_degraded` | `stellarindex_process_memory_mappings_updated_unix` age, `..._unreadable`, `..._procs` | stamp > 30 min old, absent for 45 min, unreadable == 1, or procs == 0, for > 10 min | ticket | [memory-mappings](runbooks/memory-mappings.md) |
 
 ## Observability / meta alerts
 

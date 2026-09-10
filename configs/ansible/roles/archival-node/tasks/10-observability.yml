@@ -1051,6 +1051,61 @@
     - not (ansible_check_mode and ledger_meta_decode_probe_timer is changed)
   tags: [observability, protocol-guard]
 
+# ── Per-process memory-mapping headroom probe ─────────────────────
+#
+# On 2026-09-10 13:53 CEST ClickHouse exhausted the kernel's
+# per-process mapping limit on r1 — 1,048,578 mappings against a
+# vm.max_map_count of 1,048,576 — went into a std::bad_alloc storm and
+# crashed; systemd restarted it and holders-rollup.service failed as
+# collateral. The limit is already raised far above the 65530 default
+# and codified (/etc/sysctl.d/10-map-count.conf), but NOTHING watched
+# headroom against it: no metric, no rule, no reference to
+# max_map_count anywhere in the tree. A server crash was the first and
+# only signal.
+#
+# node_exporter has no per-process mapping series (its procfs
+# collector is system-wide), so this is a textfile producer.
+# Alerts: deploy/monitoring/rules/memory-mappings.yml.
+- name: Install memory-mapping headroom probe
+  ansible.builtin.copy:
+    src: memory-mappings.sh
+    dest: /usr/local/bin/memory-mappings
+    owner: root
+    group: root
+    mode: "0755"
+  tags: [observability, memory-mappings]
+
+# Templated units rather than an inline `content:` block: the inline
+# probes in this file carry no hardening at all, and this one runs as
+# root by requirement (/proc/<pid>/maps of another uid). The .j2 pair
+# is the majority idiom in this role and the one with the sandbox
+# directives — see the unit's own header for why root, and why
+# ProtectProc= is deliberately unset.
+- name: Install memory-mapping probe systemd service + timer
+  ansible.builtin.template:
+    src: "systemd/{{ item }}.j2"
+    dest: "/etc/systemd/system/{{ item }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - memory-mappings.service
+    - memory-mappings.timer
+  notify: Reload systemd
+  register: memory_mappings_units
+  tags: [observability, memory-mappings]
+
+- name: Enable + start memory-mappings.timer
+  ansible.builtin.systemd:
+    name: memory-mappings.timer
+    enabled: true
+    state: started
+    daemon_reload: true
+  when:
+    # Role-installed unit — CHECK-MODE UNIT GUARD, tasks/main.yml.
+    - not (ansible_check_mode and memory_mappings_units is changed)
+  tags: [observability, memory-mappings]
+
 # ── TimescaleDB job/CAGG health probe ─────────────────────────────
 #
 # Producer for three metrics that deploy/monitoring/rules/storage.yml

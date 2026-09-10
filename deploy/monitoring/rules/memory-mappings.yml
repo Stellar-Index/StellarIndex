@@ -1,0 +1,199 @@
+---
+# Per-process virtual-memory-mapping headroom (vm.max_map_count).
+# Producer: configs/ansible/roles/archival-node/files/memory-mappings.sh
+# (installed by the archival-node role, tag memory-mappings) writing
+# /var/lib/node_exporter/textfile_collector/memory_mappings.prom every
+# 5 minutes. Runbook: docs/operations/runbooks/memory-mappings.md.
+#
+# WHY THESE EXIST. On 2026-09-10 13:53 CEST ClickHouse on r1 hit the
+# kernel's per-process mapping limit and said so itself:
+#
+#   Allocator: Cannot malloc 63.33 MiB: , errno: 12 ...
+#   Current number of mappings (/proc/self/maps): 1048578.
+#   Limit on number of mappings (/proc/sys/vm/max_map_count): 1048576.
+#
+# It then went into a std::bad_alloc storm and crashed; systemd restarted
+# it, and holders-rollup.service failed as collateral — its first failure
+# against 24 successful cycles in 48h. The limit was already raised far
+# above the 65530 default and codified in /etc/sysctl.d/10-map-count.conf,
+# but nothing watched headroom against it. A SERVER CRASH WAS THE FIRST
+# AND ONLY SIGNAL.
+#
+# WHERE THE THRESHOLDS COME FROM. Two measured numbers, and nothing else:
+#
+#   steady state   ~47,000-50,000 mappings  =  4.5-4.8 % of 2^20
+#   the crash       1,048,578 mappings      =  100 %
+#
+# so the excursion was roughly 20x, and its DRIVER IS NOT ESTABLISHED.
+# That last fact is what shapes the rules. With no known ramp rate, no
+# single static threshold can promise lead time, so there are two kinds:
+#
+#   LEVEL — 25 % ticket, 50 % page. 25 % is 262,144 mappings: 5.2x the top
+#     of the measured steady-state band, so ordinary variation cannot
+#     reach it, and it still leaves 786,432 mappings (75 % of the limit)
+#     of headroom to work in. 50 % is 524,288, ~10.5x steady state, with
+#     half the limit still free. Both are derived from the measurement
+#     rather than rounded to a comfortable-looking number: a 90 % line
+#     would have given this incident no usable warning at all, and an
+#     80 %-of-a-2^20-limit line is still 800k mappings into a fault
+#     nobody understands.
+#
+#   TREND — "on the last half hour's slope this process exhausts the
+#     limit within the hour". This is the arm that scales with the ramp:
+#     a slow leak trips the 25 % ticket first, a fast one trips this
+#     first. It is guarded by ratio > 0.10 (2.1x steady state) so that
+#     jitter around 47,000 mappings can never extrapolate into a page.
+#
+# Ratios, not raw counts, so a future change to vm.max_map_count moves
+# every threshold with it — the limit is published as its own series for
+# exactly that reason.
+#
+# The `process` label means a second watched executable (add it to
+# MEMORY_MAPPINGS_WATCH) is covered by these rules the moment it appears,
+# with no rule edit and no metric rename.
+
+groups:
+  - name: stellarindex.memory_mappings
+    interval: 30s
+    rules:
+
+      - alert: stellarindex_process_mappings_high
+        expr: stellarindex_process_memory_mappings_ratio > 0.25
+        # 15m = three producer runs, so one slow or skipped run cannot
+        # mature this on its own.
+        for: 15m
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: infra
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/memory-mappings.md
+          summary: "{{ $labels.process }} holds {{ $value | humanizePercentage }} of vm.max_map_count — 5x its normal mapping count"
+          description: |
+            {{ $labels.process }} has been over 25 % of the per-process
+            mapping limit (262,144 of 1,048,576) for 15 min. Measured
+            steady state is ~4.5 %, so this is already ~5x normal and
+            nothing in ordinary operation reaches it.
+
+            There is still 75 % of the limit free: this is the window in
+            which to find out WHY, before the page threshold. Capture
+            evidence first — a restart clears the mappings and the
+            explanation with them:
+
+              pid=$(for x in /proc/[0-9]*; do e=$(readlink -f $x/exe); \
+                case "$e" in */clickhouse) echo "$(wc -l < $x/maps) ${x##*/}";; esac; \
+                done | sort -rn | head -1 | cut -d' ' -f2)
+              awk '{print $6}' /proc/$pid/maps | sort | uniq -c | sort -rn | head -20
+
+            File-backed growth points at data-part/file mmaps, anonymous
+            growth at an allocator or arena issue. Runbook has the full
+            triage and the mitigations, in order.
+
+      - alert: stellarindex_process_mappings_critical
+        expr: stellarindex_process_memory_mappings_ratio > 0.50
+        # 2m, deliberately less than one producer interval: at half the
+        # limit a single reading is enough, and the 2026-09-10 excursion
+        # is the reason not to wait for a second one.
+        for: 2m
+        labels:
+          severity: page
+          team: stellarindex
+          component: infra
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/memory-mappings.md
+          summary: "{{ $labels.process }} holds {{ $value | humanizePercentage }} of vm.max_map_count (SEV-1 risk)"
+          description: |
+            {{ $labels.process }} is over half the per-process mapping
+            limit (524,288 of 1,048,576) — ~10x its measured steady state.
+            When this limit is reached the process cannot mmap at all:
+            ClickHouse answers with `Cannot malloc … errno 12`, storms
+            std::bad_alloc and dies, and the jobs that depend on it fail
+            behind it (holders-rollup.service, 2026-09-10).
+
+            Buy headroom NOW, then diagnose:
+
+              sysctl -w vm.max_map_count=2097152          # takes effect immediately
+              # and persist it, or the next boot silently reverts:
+              sed -i s/1048576/2097152/ /etc/sysctl.d/10-map-count.conf
+
+            Raising the limit costs a little kernel memory per mapping and
+            is the standard remedy; it is a stopgap, not the fix, because
+            the driver of the 20x excursion is not established. Capture
+            /proc/<pid>/maps and its `uniq -c` summary BEFORE any restart —
+            a restart resolves the alert and destroys the evidence.
+
+      - alert: stellarindex_process_mappings_exhaustion_projected
+        # The slope arm. Most spike rejection is done by `for: 5m` — a
+        # ramp steep enough to project past the limit is past 10 % of it
+        # within four minutes, so the guard rarely decides the outcome on
+        # a monotone series. It is kept as a floor for the shapes a
+        # least-squares fit handles badly (a restart step, a scrape gap
+        # leaving a two-point window): it bounds this page to a process
+        # already at twice its measured normal. The floor must stay BELOW
+        # the 0.25 ticket line or the arm becomes unreachable — pinned in
+        # memory-mappings_test.yml.
+        expr: |
+          predict_linear(stellarindex_process_memory_mappings[30m], 3600)
+            > on (instance) group_left ()
+          stellarindex_process_memory_mappings_limit
+          and stellarindex_process_memory_mappings_ratio > 0.10
+        for: 5m
+        labels:
+          severity: page
+          team: stellarindex
+          component: infra
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/memory-mappings.md
+          summary: "{{ $labels.process }} is on course to exhaust vm.max_map_count within the hour ({{ $value | humanize }} projected)"
+          description: |
+            On the last 30 minutes of slope, {{ $labels.process }} reaches
+            the per-process mapping limit within an hour, and it is
+            already past 10 % of it (~2x measured steady state).
+
+            This is the arm that carries warning when the ramp is fast:
+            the 2026-09-10 excursion was ~20x and nothing recorded how
+            long it took, so a level threshold alone cannot promise lead
+            time. Treat it as the critical alert with the clock still
+            running — raise vm.max_map_count for headroom, capture
+            /proc/<pid>/maps first, then work the runbook.
+
+      # The probe's own health. Everything above is a threshold on a
+      # value, and a value that has STOPPED BEING WRITTEN keeps being
+      # scraped: node_exporter re-serves a stale textfile verbatim on
+      # every scrape with a fresh timestamp, so a stopped timer freezes
+      # these gauges at their last (healthy) reading instead of making
+      # them absent. Nothing above could ever notice. This is the arm
+      # that can — plus the two states the probe reports about itself.
+      - alert: stellarindex_process_mappings_probe_degraded
+        expr: |
+          (time() - stellarindex_process_memory_mappings_updated_unix) > 1800
+          or
+          absent_over_time(stellarindex_process_memory_mappings_updated_unix[45m])
+          or
+          stellarindex_process_memory_mappings_unreadable == 1
+          or
+          stellarindex_process_memory_mappings_procs == 0
+        for: 10m
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: infra
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/memory-mappings.md
+          summary: "mapping-headroom probe is not reporting usable data"
+          description: |
+            One of four things: memory_mappings.prom has not been
+            rewritten in 30 min (six missed runs), it has never appeared
+            at all, the probe matched the process but could not read its
+            map or vm.max_map_count, or it matched NOTHING (procs 0 — a
+            stopped process, or a binary that moved or was renamed).
+
+            The last case is the one that matters most: a probe watching
+            nothing looks exactly like a healthy one, because the
+            mapping gauges are withheld rather than published as 0.
+            While this is firing, the mapping-headroom alerts above are
+            not watching anything.
+
+              systemctl status memory-mappings.timer memory-mappings.service
+              journalctl -u memory-mappings.service --since -1h
+              stellarindex_process_memory_mappings_procs   # 0 = matched nothing

@@ -123,6 +123,52 @@ against.
   hatch is an inline `lint-quotes:ok: <reason>` waiver — counted in the
   summary line — rather than a baseline file. The gate refuses to pass on
   an empty scope and prints how many files it read.
+- **obs:** per-process virtual-memory-mapping headroom — a metric family,
+  four alerts and a runbook for the kernel limit that crashed ClickHouse
+  on r1 with no warning of any kind.
+
+  On 2026-09-10 13:53 CEST ClickHouse exhausted `vm.max_map_count` and
+  said so itself: *"Current number of mappings (/proc/self/maps):
+  1048578. Limit on number of mappings (/proc/sys/vm/max_map_count):
+  1048576."* It went into a `std::bad_alloc` storm and crashed, systemd
+  restarted it, and `holders-rollup.service` failed as collateral — its
+  first failure ever, against 24 successful cycles in the preceding 48 h.
+  The limit was already raised far above the kernel's 65530 default and
+  already codified (`/etc/sysctl.d/10-map-count.conf`, 2^20). What did
+  not exist was any signal: no metric, no rule, no reference to
+  `max_map_count` anywhere in the tree. A server crash was the first and
+  only signal, and node_exporter has no per-process mapping series to
+  turn on — its procfs collector is system-wide.
+
+  `memory-mappings.sh` (archival-node role, `memory-mappings.timer`,
+  every 5 min) publishes the count, the limit and the ratio, labelled by
+  `process` so a second executable is covered by the same rules without a
+  rename. It identifies the process by resolving `/proc/<pid>/exe`, never
+  by command line — `pgrep -f clickhouse` matches the probe's own argv —
+  and reports the HIGHEST-mapping match, because the limit is enforced
+  per process. That last choice is the difference between a metric and a
+  decoration: r1 runs two processes off the clickhouse binary, a watchdog
+  parent at ~97 mappings and the server at ~47,000, and the watchdog
+  sorts first in a `/proc` walk. A first-match selector would sit at
+  0.01 % of the limit and stay green through the next crash. A process
+  that matches nothing publishes `procs 0` with the mapping gauges
+  WITHHELD rather than a reassuring 0.
+
+  Thresholds come from the two measured numbers and nothing else: ~4.5 %
+  of the limit at steady state, 100 % at the crash. The ticket is 25 %
+  (5x steady state, 786k mappings still free) and the page 50 %, with a
+  third arm that pages when the last half hour's slope reaches the limit
+  within the hour — because the driver of the ~20x excursion is NOT
+  established, so no static line can promise lead time on its own. A
+  fourth alert watches the probe: a stopped timer FREEZES a textfile at
+  its last healthy value rather than making it absent, so a last-run
+  stamp is the only thing that can see it.
+
+  Alert coverage is fired-state, and every claim about it was mutated and
+  observed red: raising the ticket to 95 % silences the 5x case,
+  shortening the projection horizon or tightening its floor silences the
+  fast-ramp case, and deleting either self-health arm silences the two
+  states in which every other alert here is inert while looking healthy.
 
 - **ci:** `lint-textfile-exposition` — every line a node_exporter
   textfile-collector producer writes must parse as Prometheus exposition

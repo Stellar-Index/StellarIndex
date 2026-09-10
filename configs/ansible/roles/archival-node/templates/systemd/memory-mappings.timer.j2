@@ -1,0 +1,41 @@
+# systemd timer: recompute per-process mapping headroom every 5 minutes.
+#
+# Rendered by Ansible.
+#
+# CADENCE. Five minutes is set by the alert windows, not by taste, and
+# the relationship is not the obvious one: node_exporter re-serves this
+# textfile on EVERY scrape, so a rule's `for:` measures how long a
+# reading persists, not how many runs produced it.
+#
+#   ticket, `for: 15m`  — three runs. One slow or skipped run cannot
+#                         mature it on its own.
+#   page,   `for: 2m`   — deliberately less than one run: a single
+#                         reading at half the limit notifies without
+#                         waiting for a second.
+#   trend,  `[30m]`     — six points, enough for the least-squares fit
+#                         behind predict_linear to mean something.
+#
+# Faster buys little: the 2026-09-10 driver is unknown, so there is no
+# measured ramp rate to tune against, and the probe reads a ~3.5 MB
+# /proc map each run (~75 MB in the incident state) — a cost worth
+# paying twelve times an hour, not sixty.
+#
+# The staleness arm of stellarindex_process_mappings_probe_degraded is
+# derived from this number: 1800s = six missed runs.
+#
+# :01 past the 5-minute boundary, off the :00/:30 marks and off
+# galexie-archive-tip-lag.timer's :03 — same fleet-collision rationale as
+# cron-create's avoid-collision rule.
+
+[Unit]
+Description=Recompute per-process memory-mapping headroom every 5 minutes
+Documentation=https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/memory-mappings.md
+
+[Timer]
+OnCalendar=*-*-* *:01,06,11,16,21,26,31,36,41,46,51,56:00 UTC
+RandomizedDelaySec=30
+Persistent=true
+Unit=memory-mappings.service
+
+[Install]
+WantedBy=timers.target

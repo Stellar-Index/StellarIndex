@@ -3471,7 +3471,83 @@ run must never treat "unknown free" as "zero free"). Removed by the
 next successful run, so the series is absent when healthy. Alerted on
 by `stellarindex_zfs_snapshot_pool_free_unreadable`.
 
+## Per-process memory-mapping headroom (textfile collector, ansible-managed)
+
+Emitted by `configs/ansible/roles/archival-node/files/memory-mappings.sh`
+(installed by the archival-node role, tag `memory-mappings`) into
+`/var/lib/node_exporter/textfile_collector/memory_mappings.prom` every 5
+minutes via `memory-mappings.timer`. NOT Go-declared, so not covered by
+§3 of `scripts/ci/lint-docs.sh` (same textfile-only convention as the
+`stellar_stack_*` / `zfs_snapshot_*` families). Alerted on by
+`deploy/monitoring/rules/memory-mappings.yml`; runbook
+`docs/operations/runbooks/memory-mappings.md`.
+
+Exists because ClickHouse exhausted `vm.max_map_count` on r1 on
+2026-09-10 (1,048,578 mappings against a 1,048,576 ceiling), crashed, and
+took `holders-rollup.service` with it — with no metric, no rule and no
+reference to `max_map_count` anywhere in the tree. `node_exporter` has no
+per-process mapping series of its own; its procfs collector is
+system-wide.
+
+### `stellarindex_process_memory_mappings`
+
+Gauge, label `process`. Virtual-memory mappings (VMAs, one per
+`/proc/<pid>/maps` line) held by the watched process. Reported for the
+HIGHEST-mapping process matching the executable basename, because
+`vm.max_map_count` is enforced per process — r1 runs two processes off
+the clickhouse binary (a watchdog parent at ~97 mappings and the server
+at ~47,000) and reporting the wrong one leaves the series permanently
+green. Withheld, never published as 0, when nothing matched.
+
+### `stellarindex_process_memory_mappings_limit`
+
+Gauge, no label. `/proc/sys/vm/max_map_count` — the per-process ceiling.
+Kernel-wide, hence unlabelled. 1,048,576 on r1
+(`/etc/sysctl.d/10-map-count.conf`), against a 65530 kernel default.
+
+### `stellarindex_process_memory_mappings_ratio`
+
+Gauge, label `process`. Mappings as a fraction of the limit (0–1). ~0.045
+is r1 ClickHouse steady state; 1.0 is the 2026-09-10 crash. The alerts
+compare against this rather than against a raw count so that a change to
+`vm.max_map_count` moves every threshold with it.
+
+### `stellarindex_process_memory_mappings_procs`
+
+Gauge, label `process`. How many processes matched the watched executable.
+`0` means the probe is watching NOTHING — a stopped process, or a binary
+that moved or was renamed. Published because the mapping gauges are
+withheld in that state, which is otherwise indistinguishable from health.
+
+### `stellarindex_process_memory_mappings_unreadable`
+
+Gauge, label `process`. `1` when a process matched but its headroom could
+not be computed (`/proc/<pid>/maps` unreadable — the unit must run as
+root — or `vm.max_map_count` unreadable). Fail-closed: the affected
+gauges are withheld rather than published as 0.
+
+### `stellarindex_process_memory_mappings_updated_unix`
+
+Gauge, no label. Unix time of the last successful run. node_exporter
+re-serves a stale textfile verbatim on every scrape, so a stopped timer
+FREEZES the gauges above at their last healthy value instead of making
+them absent; this is the only series that can see that.
+
 ## Changelog
+
+- 2026-09-10 — added the per-process mapping-headroom family
+  (`stellarindex_process_memory_mappings*`), emitted by
+  `configs/ansible/roles/archival-node/files/memory-mappings.sh`. NOT
+  Go-declared, so not covered by this file's round-trip lint (§3 of
+  `scripts/ci/lint-docs.sh` only enforces `internal/obs/metrics.go` →
+  doc) — the same textfile-only convention as the `zfs_snapshot_*` and
+  `galexie_archive_tip_lag_*` families. Count, limit and ratio are three
+  series rather than one because the limit is a kernel setting that can
+  change under the metric, and `_procs` / `_unreadable` /
+  `_updated_unix` are separate again because "the probe saw nothing",
+  "the probe could not read", and "the probe stopped running" are
+  states in which every threshold on the count is silent while looking
+  healthy.
 
 - 2026-09-05 — added self-health families to two textfile probes whose
   consumers are `page` severity, both of which previously reported every

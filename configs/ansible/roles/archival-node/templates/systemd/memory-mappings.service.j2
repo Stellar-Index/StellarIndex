@@ -1,0 +1,78 @@
+# systemd service: per-process virtual-memory-mapping headroom probe.
+#
+# Rendered by Ansible. Runs /usr/local/bin/memory-mappings, which walks
+# /proc, resolves each pid's exe link, and writes
+# /var/lib/node_exporter/textfile_collector/memory_mappings.prom with the
+# watched process's mapping count, the kernel's vm.max_map_count, and the
+# ratio between them.
+#
+# WHY IT EXISTS. On 2026-09-10 ClickHouse hit the per-process mapping
+# limit on r1 (1,048,578 mappings against a 1,048,576 ceiling), went into
+# a std::bad_alloc storm and crashed; holders-rollup.service failed as
+# collateral. Nothing watched mapping headroom, so a server crash was the
+# first and only signal. Steady state is ~4.5 % of the limit, i.e. the
+# excursion was roughly 20x — with a driver that is not established.
+#
+# RUNS AS ROOT, and that is the requirement rather than a convenience.
+# /proc/<pid>/{exe,maps} are readable only by the owning uid, root, or a
+# process holding CAP_SYS_PTRACE — standard DAC, unaffected by any
+# sandboxing directive. ClickHouse runs as `clickhouse`, so a
+# de-privileged probe would match the process and then fail every map
+# read: the gauges would be withheld and
+# stellarindex_process_mappings_probe_degraded would fire forever. No
+# unit in this role grants CAP_SYS_PTRACE, so there is no
+# capability-grant precedent to copy; root is what the siblings that read
+# privileged state already do (galexie-archive-tip-lag, ch-schema-drift).
+#
+# ProtectProc= is deliberately NOT set. Its default (`all` PIDs visible)
+# is what lets this walk /proc at all; `invisible`/`ptraceable` would hide
+# the very pids being counted. The rest of the sandbox is the sibling
+# set: read-only system, private /tmp, no new privileges, with the
+# textfile collector directory as the one writable path.
+
+[Unit]
+Description=Stellar Index — per-process memory-mapping headroom probe (vm.max_map_count)
+Documentation=https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/memory-mappings.md
+# Ordering only, no Wants=: the probe must still run when ClickHouse is
+# down, because `procs 0` — "watching nothing" — is one of the states it
+# exists to report.
+After=clickhouse-server.service
+
+# Restart-storm limit — matches the sibling oneshots (systemd >=230
+# ignores StartLimit* under [Service]).
+StartLimitIntervalSec=1h
+StartLimitBurst=3
+
+[Service]
+Type=oneshot
+Environment=MEMORY_MAPPINGS_WATCH={{ memory_mappings_watch | default('clickhouse') }}
+ExecStart=/usr/local/bin/memory-mappings
+# Non-zero = the probe rendered bytes that do not parse as exposition and
+# refused to publish them, leaving the previous file in place to age into
+# the degraded alert. A failed oneshot is already covered by
+# stellarindex_systemd_unit_failed, so that costs no new rule.
+User=root
+
+# One directory walk plus one maps read. Reading the map of a process in
+# the incident state is ~1M lines / ~75 MB, so keep it off the ingest
+# path's toes.
+Nice=15
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
+
+# Sub-second at steady state, seconds in the worst case. Bounded well
+# under the 5-minute timer interval so a wedged run fails and is retried
+# on the next tick rather than overlapping it.
+TimeoutStartSec=2min
+RuntimeMaxSec=2min
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+ReadWritePaths=/var/lib/node_exporter/textfile_collector
+
+[Install]
+WantedBy=multi-user.target

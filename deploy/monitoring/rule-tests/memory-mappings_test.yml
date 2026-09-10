@@ -1,0 +1,384 @@
+---
+# promtool unit tests for deploy/monitoring/rules/memory-mappings.yml
+# (per-process vm.max_map_count headroom, after the 2026-09-10 r1
+# ClickHouse mapping-limit crash).
+#
+#   promtool test rules deploy/monitoring/rule-tests/memory-mappings_test.yml
+#
+# The fixtures use r1's MEASURED numbers, not invented ones: 47,000
+# mappings against a 1,048,576 limit is the steady state observed right
+# after the restart, and 1,048,578 is what the crash reported.
+#
+# PROVEN-RED — each mutation was applied and the named case observed to
+# report 0 alerts:
+#
+#   (a) raise the ticket to `> 0.95`  →  "30 percent of the limit" goes
+#       silent. That is the whole point: an alert that waits for 95 % of
+#       a limit fires with no headroom left to act in.
+#   (b) shorten the projection horizon, `predict_linear(…[30m], 3600)` →
+#       `600`  →  the fast-ramp case goes silent. The horizon IS the
+#       warning: an hour of lead time, not ten minutes.
+#   (c) tighten the trend guard `_ratio > 0.10` → `> 0.30`  →  the
+#       fast-ramp case goes silent. The guard has to stay BELOW the 0.25
+#       ticket line or the trend arm is unreachable — every series that
+#       could satisfy it would already be ticketing on level alone.
+#   (d) delete the `procs == 0` arm  →  "watching nothing" goes silent.
+#   (e) delete the `time() - …_updated_unix > 1800` arm  →  "frozen
+#       textfile" goes silent.
+#
+# (d) and (e) are the two states in which every other alert in the file
+# is inert while looking perfectly healthy.
+
+rule_files:
+  - ../rules/memory-mappings.yml
+
+evaluation_interval: 1m
+
+tests:
+  # ── r1's measured steady state: ~4.5 % of the limit, silent ────────
+  - interval: 1m
+    name: 47000 of 1048576 mappings fires nothing
+    input_series:
+      - series: 'stellarindex_process_memory_mappings{process="clickhouse"}'
+        values: '47000x40'
+      - series: 'stellarindex_process_memory_mappings_ratio{process="clickhouse"}'
+        values: '0.044823x40'
+      - series: 'stellarindex_process_memory_mappings_limit'
+        values: '1048576x40'
+      - series: 'stellarindex_process_memory_mappings_procs{process="clickhouse"}'
+        values: '2x40'
+      - series: 'stellarindex_process_memory_mappings_unreadable{process="clickhouse"}'
+        values: '0x40'
+      # Tracks wall clock: the probe is running.
+      - series: 'stellarindex_process_memory_mappings_updated_unix'
+        values: '0+60x40'
+    alert_rule_test:
+      - eval_time: 35m
+        alertname: stellarindex_process_mappings_high
+        exp_alerts: []
+      - eval_time: 35m
+        alertname: stellarindex_process_mappings_critical
+        exp_alerts: []
+      - eval_time: 35m
+        alertname: stellarindex_process_mappings_exhaustion_projected
+        exp_alerts: []
+      - eval_time: 35m
+        alertname: stellarindex_process_mappings_probe_degraded
+        exp_alerts: []
+
+  # ── 30 % of the limit: ~6.7x steady state, ticket only ────────────
+  - interval: 1m
+    name: 30 percent of the limit fires the ticket, not the page
+    input_series:
+      - series: 'stellarindex_process_memory_mappings{process="clickhouse"}'
+        values: '314572x40'
+      - series: 'stellarindex_process_memory_mappings_ratio{process="clickhouse"}'
+        values: '0.30x40'
+      - series: 'stellarindex_process_memory_mappings_limit'
+        values: '1048576x40'
+      - series: 'stellarindex_process_memory_mappings_updated_unix'
+        values: '0+60x40'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: stellarindex_process_mappings_high
+        exp_alerts:
+          - exp_labels:
+              severity: ticket
+              team: stellarindex
+              component: infra
+              process: clickhouse
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/memory-mappings.md
+              summary: "clickhouse holds 30% of vm.max_map_count — 5x its normal mapping count"
+              description: |
+                clickhouse has been over 25 % of the per-process
+                mapping limit (262,144 of 1,048,576) for 15 min. Measured
+                steady state is ~4.5 %, so this is already ~5x normal and
+                nothing in ordinary operation reaches it.
+
+                There is still 75 % of the limit free: this is the window in
+                which to find out WHY, before the page threshold. Capture
+                evidence first — a restart clears the mappings and the
+                explanation with them:
+
+                  pid=$(for x in /proc/[0-9]*; do e=$(readlink -f $x/exe); \
+                    case "$e" in */clickhouse) echo "$(wc -l < $x/maps) ${x##*/}";; esac; \
+                    done | sort -rn | head -1 | cut -d' ' -f2)
+                  awk '{print $6}' /proc/$pid/maps | sort | uniq -c | sort -rn | head -20
+
+                File-backed growth points at data-part/file mmaps, anonymous
+                growth at an allocator or arena issue. Runbook has the full
+                triage and the mitigations, in order.
+      # A FLAT series at 30 %: the trend arm must stay silent. Level and
+      # slope are different questions and this proves they are asked
+      # separately.
+      - eval_time: 20m
+        alertname: stellarindex_process_mappings_exhaustion_projected
+        exp_alerts: []
+      - eval_time: 20m
+        alertname: stellarindex_process_mappings_critical
+        exp_alerts: []
+
+  # ── 60 % of the limit: the page ───────────────────────────────────
+  - interval: 1m
+    name: 60 percent of the limit fires the page
+    input_series:
+      - series: 'stellarindex_process_memory_mappings{process="clickhouse"}'
+        values: '629146x40'
+      - series: 'stellarindex_process_memory_mappings_ratio{process="clickhouse"}'
+        values: '0.60x40'
+      - series: 'stellarindex_process_memory_mappings_limit'
+        values: '1048576x40'
+      - series: 'stellarindex_process_memory_mappings_updated_unix'
+        values: '0+60x40'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: stellarindex_process_mappings_critical
+        exp_alerts:
+          - exp_labels:
+              severity: page
+              team: stellarindex
+              component: infra
+              process: clickhouse
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/memory-mappings.md
+              summary: "clickhouse holds 60% of vm.max_map_count (SEV-1 risk)"
+              description: |
+                clickhouse is over half the per-process mapping
+                limit (524,288 of 1,048,576) — ~10x its measured steady state.
+                When this limit is reached the process cannot mmap at all:
+                ClickHouse answers with `Cannot malloc … errno 12`, storms
+                std::bad_alloc and dies, and the jobs that depend on it fail
+                behind it (holders-rollup.service, 2026-09-10).
+
+                Buy headroom NOW, then diagnose:
+
+                  sysctl -w vm.max_map_count=2097152          # takes effect immediately
+                  # and persist it, or the next boot silently reverts:
+                  sed -i s/1048576/2097152/ /etc/sysctl.d/10-map-count.conf
+
+                Raising the limit costs a little kernel memory per mapping and
+                is the standard remedy; it is a stopgap, not the fix, because
+                the driver of the 20x excursion is not established. Capture
+                /proc/<pid>/maps and its `uniq -c` summary BEFORE any restart —
+                a restart resolves the alert and destroys the evidence.
+
+  # ── a fast ramp: the trend arm pages while the LEVEL arms are still
+  #    silent. 110,000 mappings climbing 15,000/min — at 9 min that is
+  #    245,000 (23 % of the limit, under the 25 % ticket line) on a slope
+  #    that reaches 1,048,576 inside the hour. This is the case a static
+  #    threshold cannot cover, and the reason the arm exists: the
+  #    2026-09-10 excursion was ~20x with no recorded ramp rate.
+  - interval: 1m
+    name: a fast ramp pages on trend before it reaches the ticket level
+    input_series:
+      - series: 'stellarindex_process_memory_mappings{process="clickhouse"}'
+        values: '110000+15000x30'
+      - series: 'stellarindex_process_memory_mappings_ratio{process="clickhouse"}'
+        values: '0.104904+0.014305x30'
+      - series: 'stellarindex_process_memory_mappings_limit'
+        values: '1048576x30'
+      - series: 'stellarindex_process_memory_mappings_updated_unix'
+        values: '0+60x30'
+    alert_rule_test:
+      - eval_time: 9m
+        alertname: stellarindex_process_mappings_exhaustion_projected
+        exp_alerts:
+          - exp_labels:
+              severity: page
+              team: stellarindex
+              component: infra
+              process: clickhouse
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/memory-mappings.md
+              summary: "clickhouse is on course to exhaust vm.max_map_count within the hour (1.145M projected)"
+              description: |
+                On the last 30 minutes of slope, clickhouse reaches
+                the per-process mapping limit within an hour, and it is
+                already past 10 % of it (~2x measured steady state).
+
+                This is the arm that carries warning when the ramp is fast:
+                the 2026-09-10 excursion was ~20x and nothing recorded how
+                long it took, so a level threshold alone cannot promise lead
+                time. Treat it as the critical alert with the clock still
+                running — raise vm.max_map_count for headroom, capture
+                /proc/<pid>/maps first, then work the runbook.
+      - eval_time: 9m
+        alertname: stellarindex_process_mappings_high
+        exp_alerts: []
+      - eval_time: 9m
+        alertname: stellarindex_process_mappings_critical
+        exp_alerts: []
+
+  # ── the probe is watching NOTHING (procs 0) ───────────────────────
+  #
+  # The mapping gauges are WITHHELD in this state rather than published
+  # as 0, so every threshold above is silent — correctly, and uselessly.
+  # Without this arm a renamed or relocated binary would look exactly
+  # like a healthy process forever.
+  - interval: 1m
+    name: a probe matching no process fires the degraded ticket
+    input_series:
+      - series: 'stellarindex_process_memory_mappings_procs{process="clickhouse"}'
+        values: '0x30'
+      - series: 'stellarindex_process_memory_mappings_updated_unix'
+        values: '0+60x30'
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: stellarindex_process_mappings_probe_degraded
+        exp_alerts:
+          - exp_labels:
+              severity: ticket
+              team: stellarindex
+              component: infra
+              process: clickhouse
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/memory-mappings.md
+              summary: "mapping-headroom probe is not reporting usable data"
+              description: |
+                One of four things: memory_mappings.prom has not been
+                rewritten in 30 min (six missed runs), it has never appeared
+                at all, the probe matched the process but could not read its
+                map or vm.max_map_count, or it matched NOTHING (procs 0 — a
+                stopped process, or a binary that moved or was renamed).
+
+                The last case is the one that matters most: a probe watching
+                nothing looks exactly like a healthy one, because the
+                mapping gauges are withheld rather than published as 0.
+                While this is firing, the mapping-headroom alerts above are
+                not watching anything.
+
+                  systemctl status memory-mappings.timer memory-mappings.service
+                  journalctl -u memory-mappings.service --since -1h
+                  stellarindex_process_memory_mappings_procs   # 0 = matched nothing
+
+  # ── the textfile FROZE (timer stopped) ────────────────────────────
+  #
+  # node_exporter re-serves a stale .prom verbatim on every scrape, so
+  # the gauges stay present and healthy-looking forever. Nothing goes
+  # absent, so absent_over_time cannot see it either — only the age of
+  # the last-run stamp can. Here every mapping gauge reads a perfectly
+  # normal 4.5 % while the probe has not run for 40 minutes.
+  - interval: 1m
+    name: a frozen textfile fires the degraded ticket while the gauges look healthy
+    input_series:
+      - series: 'stellarindex_process_memory_mappings{process="clickhouse"}'
+        values: '47000x60'
+      - series: 'stellarindex_process_memory_mappings_ratio{process="clickhouse"}'
+        values: '0.044823x60'
+      - series: 'stellarindex_process_memory_mappings_procs{process="clickhouse"}'
+        values: '2x60'
+      - series: 'stellarindex_process_memory_mappings_unreadable{process="clickhouse"}'
+        values: '0x60'
+      # Stamped once at t=0 and never again.
+      - series: 'stellarindex_process_memory_mappings_updated_unix'
+        values: '0x60'
+    alert_rule_test:
+      - eval_time: 45m
+        alertname: stellarindex_process_mappings_probe_degraded
+        exp_alerts:
+          - exp_labels:
+              severity: ticket
+              team: stellarindex
+              component: infra
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/memory-mappings.md
+              summary: "mapping-headroom probe is not reporting usable data"
+              description: |
+                One of four things: memory_mappings.prom has not been
+                rewritten in 30 min (six missed runs), it has never appeared
+                at all, the probe matched the process but could not read its
+                map or vm.max_map_count, or it matched NOTHING (procs 0 — a
+                stopped process, or a binary that moved or was renamed).
+
+                The last case is the one that matters most: a probe watching
+                nothing looks exactly like a healthy one, because the
+                mapping gauges are withheld rather than published as 0.
+                While this is firing, the mapping-headroom alerts above are
+                not watching anything.
+
+                  systemctl status memory-mappings.timer memory-mappings.service
+                  journalctl -u memory-mappings.service --since -1h
+                  stellarindex_process_memory_mappings_procs   # 0 = matched nothing
+      # …and the threshold alerts are all silent, which is the point.
+      - eval_time: 45m
+        alertname: stellarindex_process_mappings_high
+        exp_alerts: []
+      - eval_time: 45m
+        alertname: stellarindex_process_mappings_critical
+        exp_alerts: []
+
+  # ── the probe never reported at all ───────────────────────────────
+  #
+  # Ansible never applied, the timer never enabled, the collector
+  # directory lost. Nothing is present to compare, so only the
+  # absent_over_time branch can fire — the OBS-2 pattern.
+  - interval: 1m
+    name: a probe that never reported fires via absent_over_time
+    input_series: []
+    alert_rule_test:
+      - eval_time: 60m
+        alertname: stellarindex_process_mappings_probe_degraded
+        exp_alerts:
+          - exp_labels:
+              severity: ticket
+              team: stellarindex
+              component: infra
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/memory-mappings.md
+              summary: "mapping-headroom probe is not reporting usable data"
+              description: |
+                One of four things: memory_mappings.prom has not been
+                rewritten in 30 min (six missed runs), it has never appeared
+                at all, the probe matched the process but could not read its
+                map or vm.max_map_count, or it matched NOTHING (procs 0 — a
+                stopped process, or a binary that moved or was renamed).
+
+                The last case is the one that matters most: a probe watching
+                nothing looks exactly like a healthy one, because the
+                mapping gauges are withheld rather than published as 0.
+                While this is firing, the mapping-headroom alerts above are
+                not watching anything.
+
+                  systemctl status memory-mappings.timer memory-mappings.service
+                  journalctl -u memory-mappings.service --since -1h
+                  stellarindex_process_memory_mappings_procs   # 0 = matched nothing
+
+  # ── matched, but the map could not be read ────────────────────────
+  - interval: 1m
+    name: an unreadable map fires the degraded ticket
+    input_series:
+      - series: 'stellarindex_process_memory_mappings_unreadable{process="clickhouse"}'
+        values: '1x30'
+      - series: 'stellarindex_process_memory_mappings_procs{process="clickhouse"}'
+        values: '1x30'
+      - series: 'stellarindex_process_memory_mappings_updated_unix'
+        values: '0+60x30'
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: stellarindex_process_mappings_probe_degraded
+        exp_alerts:
+          - exp_labels:
+              severity: ticket
+              team: stellarindex
+              component: infra
+              process: clickhouse
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/memory-mappings.md
+              summary: "mapping-headroom probe is not reporting usable data"
+              description: |
+                One of four things: memory_mappings.prom has not been
+                rewritten in 30 min (six missed runs), it has never appeared
+                at all, the probe matched the process but could not read its
+                map or vm.max_map_count, or it matched NOTHING (procs 0 — a
+                stopped process, or a binary that moved or was renamed).
+
+                The last case is the one that matters most: a probe watching
+                nothing looks exactly like a healthy one, because the
+                mapping gauges are withheld rather than published as 0.
+                While this is firing, the mapping-headroom alerts above are
+                not watching anything.
+
+                  systemctl status memory-mappings.timer memory-mappings.service
+                  journalctl -u memory-mappings.service --since -1h
+                  stellarindex_process_memory_mappings_procs   # 0 = matched nothing
