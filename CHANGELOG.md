@@ -227,9 +227,6 @@ against.
   cries-wolf control gets read once, disbelieved, and is then worth
   nothing when it is right.
 
-
-### Fixed
-
 - **obs:** the memory-mapping probe's restart-storm limit is scaled to
   its own cadence, so the unit stops reading `failed` while working
   correctly.
