@@ -1,0 +1,92 @@
+# Every pushed commit must carry an allowed author and committer.
+#
+# WHY THIS EXISTS. A test fixture wrote a throwaway identity into the real
+# repository's .git/config on 2026-09-09 — git honours an inherited GIT_DIR
+# over its own `-C`, so a fixture launched from inside a hook writes to the
+# repository it came from. 151 commits were authored by it before anyone
+# looked, 96 of them pushed to a public repository, where they became
+# anonymous entries in the contributor list.
+#
+# The repository has a pre-commit guard for this, and it is not enough on
+# its own: hooks are client-side, opt-in here (`make hooks`), skipped by
+# `git commit --no-verify`, absent on a fresh clone, and never run on
+# GitHub. This job is the half that cannot be skipped.
+#
+# It deliberately carries NO paths-ignore. ci.yml ignores `**.md`,
+# `docs/**` and CHANGELOG.md on push, so a docs-only push skips it
+# entirely — and a docs-only push carries an author exactly like any
+# other.
+name: commit-identity
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  identity:
+    name: allowed author and committer
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+          # Full history: the range below can reach commits an incremental
+          # fetch would not have.
+          fetch-depth: 0
+
+      - name: Check every commit in this push or pull request
+        env:
+          EVENT: ${{ github.event_name }}
+          BEFORE: ${{ github.event.before }}
+          SHA: ${{ github.sha }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+
+          allow=.github/allowed-commit-identities
+          [ -f "$allow" ] || { echo "::error::$allow is missing — refusing to pass without a policy to check against"; exit 1; }
+          grep -vE '^[[:space:]]*#|^[[:space:]]*$' "$allow" | sed 's/[[:space:]]*$//' > /tmp/allow.txt
+          [ -s /tmp/allow.txt ] || { echo "::error::$allow lists no identities — refusing to pass vacuously"; exit 1; }
+
+          if [ "$EVENT" = pull_request ]; then
+            range="${BASE_SHA}..${HEAD_SHA}"
+          elif [ -n "${BEFORE:-}" ] && [ "$BEFORE" != "0000000000000000000000000000000000000000" ] && git cat-file -e "${BEFORE}^{commit}" 2>/dev/null; then
+            range="${BEFORE}..${SHA}"
+          else
+            # A new branch, or a force-push whose predecessor is gone. Fall
+            # back to what this ref adds over every OTHER ref, so a new
+            # branch is judged on its own commits rather than the whole
+            # history it inherited.
+            range="$SHA --not --exclude=refs/heads/$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo _) --all"
+          fi
+
+          # shellcheck disable=SC2086
+          git log $range --format='%H%x09%ae%x09%ce' > /tmp/commits.tsv 2>/dev/null || : > /tmp/commits.tsv
+          n=$(wc -l < /tmp/commits.tsv | tr -d ' ')
+          echo "commit-identity: checking $n commit(s) over: $range"
+          if [ "$n" = "0" ]; then
+            echo "commit-identity: no new commits in range — nothing to check."
+            exit 0
+          fi
+
+          bad=0
+          while IFS=$'\t' read -r sha ae ce; do
+            for who in "author:$ae" "committer:$ce"; do
+              email="${who#*:}"
+              if ! grep -qxF "$email" /tmp/allow.txt; then
+                echo "::error::${sha} has a disallowed ${who%%:*} identity: ${email}"
+                bad=$((bad + 1))
+              fi
+            done
+          done < /tmp/commits.tsv
+
+          if [ "$bad" -gt 0 ]; then
+            echo "::error::commit-identity: $bad disallowed identit(ies) across $n commit(s). Allowed identities are listed in $allow; matching is on the email. If your commits carry the wrong one, check for a repository-LOCAL override that shadows your global identity — git config --local --get user.email — which is how this last happened."
+            exit 1
+          fi
+          echo "commit-identity: OK — $n commit(s), every author and committer allowed."
