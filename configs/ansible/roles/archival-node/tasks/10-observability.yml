@@ -1213,8 +1213,7 @@
       #
       # Its own statement_timeout, belt and braces: this query must
       # never be the thing that hangs the probe past TimeoutStartSec.
-      q "SET statement_timeout = '10s';
-         SELECT count(*),
+      q "SELECT count(*),
                 COALESCE(max(EXTRACT(epoch FROM clock_timestamp() - a.query_start))::bigint, 0),
                 (SELECT count(*) FROM pg_stat_activity w WHERE w.wait_event_type = 'Lock')
            FROM pg_stat_activity a
