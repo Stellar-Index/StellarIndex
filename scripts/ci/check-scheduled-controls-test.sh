@@ -15,6 +15,18 @@
 # only SCHEDULED runs count, and the threshold is derived from the
 # workflow's own cron cadence rather than one flat number.
 #
+# And the defect found on top of that (2026-09-10, #502): "no passing
+# scheduled run past N" is two states, not one. A control that has
+# STOPPED BEING SCHEDULED needs its schedule re-armed, because nobody is
+# checking. A control that is still being scheduled and is RED needs
+# somebody to read what it found, because it is checking and the answer
+# is being ignored (#496). The sweep called both DEAD, so it told an
+# operator to restart ansible-drift.yml — which had never stopped. Both
+# still exit 1; what the split fixes is which remedy each is filed
+# under. Every case below that flags a control asserts its CLASS, and
+# the two directions are pinned against each other with fixtures that
+# differ only in the age of the newest scheduled run.
+#
 # Offline: SCHEDULED_CONTROLS_FIXTURE feeds the run history and
 # WORKFLOW_DIR the cron source, so no gh, no token, no network.
 # NOW_EPOCH pins "now" so the day arithmetic is deterministic.
@@ -113,19 +125,105 @@ expect_absent() {
   pass=$((pass + 1))
 }
 
-# ── The two cases the brief names ───────────────────────────────────
+# ── The two states, told apart ──────────────────────────────────────
+# A control that STOPPED BEING SCHEDULED and a control that is SCHEDULED
+# AND RED both produce "no passing scheduled run past N", and they need
+# opposite remedies: re-arm the cron, or go read what the control found.
+# Until 2026-09-10 the sweep called both DEAD. Everything below pins the
+# distinction in both directions.
 
-# ansible-drift's real shape on 2026-09-07: weekly cron, registered 53
-# days ago, every one of its scheduled runs failed, no green ever.
+# ansible-drift's real shape: weekly cron, registered 53 days ago, every
+# scheduled run failed and the newest of them was TODAY. This is the case
+# that named the defect (#502): the sweep reported "a control has stopped
+# reporting" about a control whose failing step is named "Drift verdict
+# (fails on drift, and NAMES the tasks)" and which had fired every Monday
+# for eight weeks, naming two drifted tasks each time. It had not stopped
+# reporting — it was reporting, and being read as broken.
+#
+# The assertion that used to stand here wanted DEAD. That expectation WAS
+# the defect, so it is inverted deliberately, not relaxed: the exit code
+# is still 1 (see BOTH EXIT 1 in the script header), the control is still
+# named, still counted and still blocks a clean sweep. What changed is
+# only which remedy it is filed under.
 reset_case
 workflow ansible-drift.yml '17 6 * * 1'
 history ansible-drift.yml active 53 \
   failure:0 failure:7 failure:14 failure:21 failure:28
 run_check
-expect '0 green of 5 scheduled (weekly, 53d) → DEAD' 1 'DEAD  ansible-drift.yml'
+expect 'scheduled weekly and red 5/5 → FAIL, and still exit 1' 1 'FAIL  ansible-drift.yml'
 expect '…and names the ratio' 1 'green 0/5 scheduled'
 expect '…and names never-green with the registration date' 1 'never — all 5 scheduled runs since'
-expect '…and lists it machine-readably' 1 'scheduled-controls-dead: ansible-drift.yml'
+expect '…and states that the schedule IS still firing' 1 'the schedule is firing (last run 0d ago)'
+expect '…and its remedy is to act on the finding' 1 'Act on what it found'
+expect '…and lists it machine-readably under failing' 1 'scheduled-controls-failing: ansible-drift.yml'
+expect_absent '…and NOT as a control that stopped being scheduled' 'scheduled-controls-dead: ansible-drift.yml'
+expect_absent '…and never tells anyone to re-arm a schedule that is firing' 'Re-arm the schedule'
+
+# The twin, and the pair that makes the new signal load-bearing: the SAME
+# workflow, the SAME never-green history, the SAME number of failures —
+# only the age of the newest scheduled run differs. Three weekly fires
+# have been missed, so the cron itself has stopped, and every word of the
+# verdict inverts.
+reset_case
+workflow ansible-drift.yml '17 6 * * 1'
+history ansible-drift.yml active 53 \
+  failure:25 failure:32 failure:39 failure:46 failure:53
+run_check
+expect 'same red history, no scheduled run for 25d → DEAD' 1 'DEAD  ansible-drift.yml'
+expect '…and names the silence, not the redness' 1 'no scheduled run of any conclusion in 25d'
+expect '…and its remedy is to re-arm the schedule' 1 'Re-arm the schedule'
+expect '…and lists it machine-readably under dead' 1 'scheduled-controls-dead: ansible-drift.yml'
+expect_absent '…and NOT as a control that is merely failing' 'scheduled-controls-failing: ansible-drift.yml'
+
+# The failure this gate exists for, and the one the split must not
+# soften: a control that was PASSING and then simply stopped being
+# scheduled. Nothing in its history is red — the cron just died, which is
+# what a disabled workflow, a lapsed credential or a billing cap looks
+# like from here. A reader of green/total alone (3/3!) sees a healthy
+# control.
+reset_case
+workflow weekly.yml '0 6 * * 1'
+history weekly.yml active 90 success:30 success:37 success:44
+run_check
+expect 'all green, but no scheduled run for 30d → DEAD' 1 'DEAD  weekly.yml'
+expect '…and names the silence' 1 'no scheduled run of any conclusion in 30d'
+expect '…and says nobody is checking' 1 'nobody is checking what this guards'
+expect '…and refuses to exit 0 on it' 1 'scheduled-controls-dead: weekly.yml'
+
+# Both classes in one sweep. Each is counted, listed and remedied on its
+# own line: a report that folds them together is how the quieter one
+# stops being tracked, and a stuck control hiding behind "oh, that one
+# always fails" is exactly what this split exists to prevent.
+reset_case
+workflow stopped.yml '0 6 * * 1'
+workflow red.yml '0 6 * * 1'
+history stopped.yml active 90 success:40
+history red.yml active 90 failure:0 failure:7 failure:14 failure:21
+run_check
+expect 'one stopped + one red → the stopped one is DEAD' 1 'DEAD  stopped.yml'
+expect '…and the firing one is FAIL' 1 'FAIL  red.yml'
+expect '…and both were assessed' 1 'assessed 2 of 2 scheduled workflow(s)'
+expect '…and the summary counts the classes separately' 1 '1 dead, 1 failing, 0 unreadable'
+expect '…and the dead list holds only the stopped one' 1 'scheduled-controls-dead: stopped.yml'
+expect '…and the failing list holds only the red one' 1 'scheduled-controls-failing: red.yml'
+expect '…and stderr names the re-arm remedy' 1 'STOPPED BEING SCHEDULED'
+expect '…and stderr names the read-the-verdict remedy' 1 'STILL BEING SCHEDULED'
+
+# The firing signal is judged on the SAME N as the passing signal — one
+# policy derived from the cadence, not a second one bolted alongside. A
+# weekly control (N=21d) that last fired 20 days ago is still being
+# scheduled; at 22 days it is not. Red throughout, so only the class moves.
+reset_case
+workflow weekly.yml '0 6 * * 1'
+history weekly.yml active 90 failure:20 failure:27
+run_check
+expect 'weekly, last fired 20d ago → still scheduled, so FAIL' 1 'FAIL  weekly.yml'
+
+reset_case
+workflow weekly.yml '0 6 * * 1'
+history weekly.yml active 90 failure:22 failure:29
+run_check
+expect 'weekly, last fired 22d ago → DEAD, on the same N=21d' 1 'DEAD  weekly.yml'
 
 # deploy-protection's real shape: 7 green of 7, newest 0 days old.
 reset_case
@@ -135,6 +233,10 @@ history deploy-protection.yml active 44 \
 run_check
 expect '7/7 green → live, gate passes' 0 'live  deploy-protection.yml'
 expect '…and names the last green date' 0 'green 7/7 scheduled'
+# Every row carries the firing evidence, not only the flagged ones: it is
+# the number that says the cron is alive, and a reader cannot check a
+# verdict whose inputs are printed only when the verdict is bad.
+expect '…and names the last SCHEDULED run too' 0 'last scheduled run 2026-09-07 (0d ago)'
 expect_absent '…and flags nothing' 'scheduled-controls-dead: deploy-protection.yml'
 
 # ── N is derived from the cadence, not flat ─────────────────────────
@@ -153,7 +255,10 @@ reset_case
 workflow daily.yml '25 7 * * *'
 history daily.yml active 60 failure:1 failure:3 failure:5 success:8
 run_check
-expect 'daily, last green 8d ago → DEAD (N=7d)' 1 'DEAD  daily.yml'
+# Flipped with the split: this control fired yesterday, so it is FAIL,
+# not DEAD. What the pair pins is unchanged — the same 8-day-old pass is
+# clean weekly and past threshold daily — and both still exit 1.
+expect 'daily, last green 8d ago → flagged (N=7d)' 1 'FAIL  daily.yml'
 expect '…and shows the daily threshold' 1 'N=7d'
 
 # The weekly boundary itself: 20 days is inside three fires of grace,
@@ -168,7 +273,7 @@ reset_case
 workflow weekly.yml '0 6 * * 1'
 history weekly.yml active 60 failure:1 failure:8 failure:15 success:22
 run_check
-expect 'weekly, last green 22d ago → DEAD (over N=21d)' 1 'DEAD  weekly.yml'
+expect 'weekly, last green 22d ago → flagged (over N=21d)' 1 'FAIL  weekly.yml'
 
 # A 2-hourly control gets the 7-day floor, not 3 fires (6 hours) — a
 # runner blip must not page.
@@ -189,7 +294,7 @@ reset_case
 workflow monthly.yml '0 3 1 * *'
 history monthly.yml active 200 failure:2 success:40
 run_check
-expect 'monthly, last green 40d ago → DEAD (cap N=35d)' 1 'DEAD  monthly.yml'
+expect 'monthly, last green 40d ago → flagged (cap N=35d)' 1 'FAIL  monthly.yml'
 
 # ── Shapes that must not be read as green ───────────────────────────
 
@@ -209,6 +314,18 @@ workflow weekly.yml '0 6 * * 1'
 history weekly.yml disabled_inactivity 60 success:0
 run_check
 expect 'disabled schedule → DEAD even with a green run today' 1 'the workflow is disabled_inactivity'
+
+# …and disabling beats the firing signal, not just the green one: a
+# workflow that was firing and failing right up to the moment it was
+# disabled is DEAD, because it cannot fire again. Reading "it ran today"
+# as "it is still scheduled" would file this under the wrong remedy.
+reset_case
+workflow weekly.yml '0 6 * * 1'
+history weekly.yml disabled_manually 60 failure:0 failure:7
+run_check
+expect 'disabled with a failing run today → DEAD, not FAIL' 1 'DEAD  weekly.yml'
+expect '…and names the disablement as the reason' 1 'the workflow is disabled_manually'
+expect_absent '…and does not file it as merely failing' 'scheduled-controls-failing: weekly.yml'
 
 # A cron that has never fired at all.
 reset_case
@@ -366,9 +483,66 @@ else
   fail=$((fail + 1))
 fi
 
+# ── Class parity: every class the sweep names, the caller reads ─────
+# The sweep prints one `scheduled-controls-<class>:` line per class and
+# ci-health.yml turns each into a step output, an issue fingerprint and
+# an annotation. A class the caller never parses is a class that stops
+# being tracked the day it is added — the gate's own failure mode turned
+# on itself, and the reason the dead/failing split had to land in the
+# workflow and the script together.
+classes="$(grep -oE 'scheduled-controls-[a-z]+: \$\{' "$CHECK" |
+  sed -E 's/^scheduled-controls-([a-z]+).*/\1/' | sort -u)"
+class_n=0
+class_missing=""
+while IFS= read -r cls; do
+  [ -z "$cls" ] && continue
+  class_n=$((class_n + 1))
+  if ! grep -qF "s/^scheduled-controls-${cls}: //p" "$CIH"; then
+    class_missing="${class_missing} ${cls}"
+  fi
+done <<EOF
+$classes
+EOF
+asserts=$((asserts + 1))
+if [ "$class_n" -ge 2 ] && [ -z "$class_missing" ]; then
+  echo "ok: all ${class_n} scheduled-controls-<class> lines the sweep emits are parsed by ci-health.yml"
+  pass=$((pass + 1))
+else
+  echo "FAIL: ci-health.yml does not parse scheduled-controls class(es):${class_missing:- none found}; the sweep emits ${class_n} (want >= 2 — dead and failing)" >&2
+  fail=$((fail + 1))
+fi
+
+# ── …and names the right remedy for each ────────────────────────────
+# The issue title is the only part of the report most readers ever see.
+# One title for both classes is how #502 came to headline "a control has
+# stopped reporting" over a control that was reporting every week.
+# Three titles, because the sweep fails in three ways: a control that
+# stopped, a control that is red, and a sweep that could not read a
+# control at all. Any of them headlined as another names a remedy the
+# reader cannot act on.
+asserts=$((asserts + 1))
+if grep -q 'ISSUE_TITLE_DEAD:' "$CIH" && grep -q 'ISSUE_TITLE_FAILING:' "$CIH" &&
+   grep -q 'ISSUE_TITLE_UNREADABLE:' "$CIH" &&
+   ! grep -qE '^      ISSUE_TITLE:' "$CIH"; then
+  echo "ok: the dead-control issue is titled per class, not one title for all"
+  pass=$((pass + 1))
+else
+  echo "FAIL: ci-health.yml headlines the classes with one issue title — an issue titled 'has stopped reporting' about a control that is reporting names the wrong remedy (#502)" >&2
+  fail=$((fail + 1))
+fi
+
+asserts=$((asserts + 1))
+if grep -q 'STOPPED BEING SCHEDULED' "$CIH" && grep -q 'STILL BEING SCHEDULED' "$CIH"; then
+  echo "ok: the failure annotation distinguishes a stopped control from a failing one"
+  pass=$((pass + 1))
+else
+  echo "FAIL: ci-health.yml emits one annotation for both classes — it would tell an operator to re-arm a control that never stopped" >&2
+  fail=$((fail + 1))
+fi
+
 echo
 echo "check-scheduled-controls-test: ${pass} passed, ${fail} failed, ${asserts} assertions requested"
-if [ "$asserts" -lt 31 ]; then
+if [ "$asserts" -lt 67 ]; then
   echo "check-scheduled-controls-test: FAIL — only ${asserts} assertions ran; cases have been lost" >&2
   exit 1
 fi

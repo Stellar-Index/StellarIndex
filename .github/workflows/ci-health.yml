@@ -30,6 +30,22 @@ name: ci-health
 #    scripts/ci/check-scheduled-controls-test.sh for the thresholds and
 #    the one exclusion).
 #
+#    TWO CLASSES, TWO REMEDIES (2026-09-10, #502). "No passing
+#    scheduled run past N" is two states. DEAD — no scheduled run at
+#    all within N, or the workflow is disabled: the schedule stopped
+#    and NOBODY IS CHECKING, so re-arm it. FAIL — the schedule is
+#    still firing on time and every run within N was red: somebody IS
+#    checking and the answer is being ignored, so go read it (#496).
+#    The sweep called both DEAD, so this job opened an issue headlined
+#    "a control has stopped reporting" about ansible-drift.yml, which
+#    had fired every Monday for eight weeks and named two drifted
+#    tasks each time. Both classes still fail this job — a control
+#    nobody acts on is not delivering signal either, and going green
+#    would be the "expected to fail" exclusion list the detector
+#    refuses — but each is parsed, titled and annotated separately, so
+#    a genuinely stopped control cannot hide behind "oh, that one
+#    always fails".
+#
 # Self-contained: both use ${{ github.token }} via the gh CLI, no new
 # secrets. The main-CI decision core is scripts/ci/check-main-ci-health.sh
 # (unit-testable offline via CI_HEALTH_FIXTURE).
@@ -143,7 +159,7 @@ jobs:
           exit 1
 
   check-scheduled-controls:
-    name: dead scheduled-control tripwire
+    name: scheduled-control tripwire
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -152,7 +168,19 @@ jobs:
       issues: write
     env:
       ISSUE_LABEL: dead-control
-      ISSUE_TITLE: "Scheduled controls: a control has stopped reporting"
+      # Two classes, two titles, because the title IS the remedy for
+      # anyone reading the issue list. A control that stopped being
+      # scheduled needs re-arming; a control that is scheduled and red
+      # needs somebody to read what it found (#496). The sweep can
+      # report either or both, so the title is chosen per run and the
+      # existing issue is retitled when the classes change.
+      ISSUE_TITLE_DEAD: "Scheduled controls: a control has stopped reporting"
+      ISSUE_TITLE_FAILING: "Scheduled controls: a control is red on every scheduled run"
+      # The sweep also fails when it could not READ a control (exit 1 on
+      # unknown, exit 2 on a sweep over nothing). That names no control
+      # at all, and headlining it with either of the above would be a
+      # third wrong remedy.
+      ISSUE_TITLE_UNREADABLE: "Scheduled controls: the sweep could not assess every control"
       # The one cron that owns the issue-management + fail-the-run
       # surfaces, referenced by the three `if:` gates below rather than
       # written out three times. scripts/ci/check-scheduled-controls-test.sh
@@ -182,19 +210,29 @@ jobs:
           set -e
           echo "$report"
           # No early-exit consumer on the pipe: the script prints exactly
-          # one scheduled-controls-dead: line, and a trailing head -1
-          # under pipefail is the SIGPIPE shape lint-shell-sigpipe.sh
-          # rejects everywhere else in the repo.
+          # one line per class, and a trailing head -1 under pipefail is
+          # the SIGPIPE shape lint-shell-sigpipe.sh rejects everywhere
+          # else in the repo.
+          #
+          # BOTH classes are read. Reading only `dead` is how this job
+          # would silently stop tracking the class the sweep learned to
+          # name on 2026-09-10 — a control that is still being scheduled
+          # and is red — and an untracked class is an invisible one.
+          # scripts/ci/check-scheduled-controls-test.sh asserts that
+          # every scheduled-controls-<class>: key the script emits is
+          # consumed here.
           dead="$(printf '%s\n' "$report" | sed -n 's/^scheduled-controls-dead: //p')"
+          failing="$(printf '%s\n' "$report" | sed -n 's/^scheduled-controls-failing: //p')"
           {
             echo "verdict_rc=${rc}"
             echo "dead=${dead}"
+            echo "failing=${failing}"
             echo "report<<REPORT_EOF"
             echo "$report"
             echo "REPORT_EOF"
           } >> "$GITHUB_OUTPUT"
 
-      - name: Open or update the tracking issue (a control has stopped reporting)
+      - name: Open or update the tracking issue (a control is not delivering signal)
         if: >-
           steps.assess.outputs.verdict_rc != '0' &&
           (github.event_name != 'schedule' || github.event.schedule == env.DEAD_CONTROL_CRON)
@@ -203,46 +241,64 @@ jobs:
           GH_REPO: ${{ github.repository }}
           REPORT: ${{ steps.assess.outputs.report }}
           DEAD: ${{ steps.assess.outputs.dead }}
+          FAILING: ${{ steps.assess.outputs.failing }}
         run: |
           set -euo pipefail
           # Ensure the label exists (idempotent).
           gh label create "$ISSUE_LABEL" --color B60205 \
-            --description "a scheduled workflow has produced no passing scheduled run past its threshold" 2>/dev/null || true
+            --description "a scheduled workflow has stopped being scheduled, or is red on every scheduled run" 2>/dev/null || true
+
+          # A stopped control is the headline when there is one, because
+          # it is the state where nothing is checking at all; then the
+          # red-every-week class; then the sweep that could not read.
+          if [ -n "$DEAD" ]; then
+            title="$ISSUE_TITLE_DEAD"
+          elif [ -n "$FAILING" ]; then
+            title="$ISSUE_TITLE_FAILING"
+          else
+            title="$ISSUE_TITLE_UNREADABLE"
+          fi
 
           # The body carries the current sweep; the fingerprint is the
-          # set of dead controls. The body is REWRITTEN every day rather
-          # than commented, because an unreconciled control stays dead
-          # for weeks and a daily comment would bury the one comment
-          # that matters — the day a SECOND control dies. That change of
-          # set is what gets a comment (and therefore a notification).
-          fingerprint="<!-- dead-controls: ${DEAD} -->"
+          # set of flagged controls, PER CLASS — a control moving from
+          # one class to the other is a change of state worth a
+          # notification, and a fingerprint over the union would hide it.
+          # The body is REWRITTEN every day rather than commented,
+          # because an unreconciled control stays flagged for weeks and a
+          # daily comment would bury the one comment that matters — the
+          # day a SECOND control goes. That change of set gets a comment.
+          fingerprint="<!-- dead-controls: ${DEAD} | failing-controls: ${FAILING} -->"
           # Tilde fences, not backtick ones: a literal backtick inside
           # the format string reads to SC2016 as an unexpanded command
           # substitution, and markdown treats the two fences the same.
-          body="$(printf '%s\n\n~~~\n%s\n~~~\n\n---\n_Auto-managed by the ci-health workflow (run %s). Closes automatically once every scheduled control has passed within its threshold._\n' \
+          body="$(printf '%s\n\n~~~\n%s\n~~~\n\n---\n_Auto-managed by the ci-health workflow (run %s). Closes automatically once every scheduled control is being scheduled again and passing within its threshold._\n' \
             "$fingerprint" "$REPORT" "${GITHUB_RUN_ID:-?}")"
 
           existing="$(gh issue list --label "$ISSUE_LABEL" --state open \
             --json number --jq '.[0].number' || true)"
           if [ -n "$existing" ] && [ "$existing" != "null" ]; then
             prev="$(gh issue view "$existing" --json body --jq '.body' || true)"
-            gh issue edit "$existing" --body "$body"
+            # Retitled as well as rewritten: an issue headlined "has
+            # stopped reporting" about a control that is reporting and
+            # failing names the wrong remedy in the one place most
+            # readers ever see (#502).
+            gh issue edit "$existing" --title "$title" --body "$body"
             # A here-string, not a pipe: `grep -qF` stops at the first
             # match and a GitHub issue body runs to 65,536 characters, so
             # past the 64 KiB pipe buffer the SIGPIPE would fail the
             # pipeline under pipefail and INVERT this test — the comment
             # would then fire on every run (scripts/ci/lint-shell-sigpipe.sh).
             if ! grep -qF "$fingerprint" <<<"$prev"; then
-              gh issue comment "$existing" --body "The set of non-reporting scheduled controls changed: \`${DEAD}\`."
-              echo "Dead-control set changed on issue #$existing."
+              gh issue comment "$existing" --body "The flagged scheduled controls changed. Stopped being scheduled (nobody is checking): \`${DEAD:-none}\`. Scheduled and red past threshold (nobody is acting): \`${FAILING:-none}\`."
+              echo "Flagged-control set changed on issue #$existing."
             fi
             echo "Updated dead-control issue #$existing."
           else
-            gh issue create --title "$ISSUE_TITLE" --label "$ISSUE_LABEL" --body "$body"
+            gh issue create --title "$title" --label "$ISSUE_LABEL" --body "$body"
             echo "Opened new dead-control issue."
           fi
 
-      - name: Close the tracking issue (every control is reporting)
+      - name: Close the tracking issue (every control is reporting and passing)
         if: >-
           steps.assess.outputs.verdict_rc == '0' &&
           (github.event_name != 'schedule' || github.event.schedule == env.DEAD_CONTROL_CRON)
@@ -253,18 +309,33 @@ jobs:
           set -euo pipefail
           for n in $(gh issue list --label "$ISSUE_LABEL" --state open \
               --json number --jq '.[].number' || true); do
-            gh issue close "$n" --comment "Every scheduled control has passed within its threshold — ci-health closing automatically."
+            gh issue close "$n" --comment "Every scheduled control is being scheduled and passing within its threshold — ci-health closing automatically."
             echo "Closed dead-control issue #$n."
           done
 
-      - name: Fail the run if a scheduled control has stopped reporting
+      - name: Fail the run if a scheduled control is not delivering signal
         if: >-
           steps.assess.outputs.verdict_rc != '0' &&
           (github.event_name != 'schedule' || github.event.schedule == env.DEAD_CONTROL_CRON)
-        # DEAD rides in `env:` rather than being interpolated into the
-        # shell — the same rule ansible-drift.yml's steps follow (F-1298).
+        # DEAD/FAILING ride in `env:` rather than being interpolated into
+        # the shell — the same rule ansible-drift.yml's steps follow
+        # (F-1298).
         env:
           DEAD: ${{ steps.assess.outputs.dead }}
+          FAILING: ${{ steps.assess.outputs.failing }}
         run: |
-          echo "::error::a scheduled control has produced no passing scheduled run past its threshold (${DEAD}) — see the dead-control tracking issue."
+          # One annotation per class, because the two need opposite
+          # actions: re-arm a schedule that stopped, or read a verdict
+          # that is being ignored. Emitting one for the other is how
+          # #502 came to tell an operator to restart a control that had
+          # never stopped.
+          if [ -n "${DEAD}" ]; then
+            echo "::error::a scheduled control has STOPPED BEING SCHEDULED (${DEAD}) — nothing is checking what it guards. Re-arm its schedule; see the dead-control tracking issue."
+          fi
+          if [ -n "${FAILING}" ]; then
+            echo "::error::a scheduled control is STILL BEING SCHEDULED and red past its threshold (${FAILING}) — it is reporting and the report is not being acted on. Read its verdict; re-arming nothing will help."
+          fi
+          if [ -z "${DEAD}" ] && [ -z "${FAILING}" ]; then
+            echo "::error::the scheduled-control sweep failed without naming a control — it could not read one or more workflows from the API, or found no scheduled workflow at all. See the log above."
+          fi
           exit 1
