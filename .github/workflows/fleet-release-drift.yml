@@ -159,6 +159,9 @@ jobs:
           label_args=()
           gh label create "$ISSUE_LABEL" --color B60205 \
             --description "a test net serves an older release than r1, or its version could not be read" 2>/dev/null || true
+          # sigpipe-ok: `--limit 200` bounds this to 200 label names — at
+          # most a few KB, which gh writes into the 64 KiB pipe buffer and
+          # is gone before `grep -qx` can close it on the first match.
           if gh label list --limit 200 --json name --jq '.[].name' | grep -qx -- "$ISSUE_LABEL"; then
             label_args=(--label "$ISSUE_LABEL")
           fi

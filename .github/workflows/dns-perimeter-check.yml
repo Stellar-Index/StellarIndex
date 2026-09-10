@@ -71,7 +71,9 @@ jobs:
             sudo apt-get update -qq
             sudo apt-get install -y -qq bind9-dnsutils
           }
-          dig -v 2>&1 | head -1
+          # `sed -n 1p`, not `head -1`: it reads to EOF, so it never closes
+          # the pipe under dig (scripts/ci/lint-shell-sigpipe.sh).
+          dig -v 2>&1 | sed -n 1p
 
       - name: Check the perimeter
         id: check
