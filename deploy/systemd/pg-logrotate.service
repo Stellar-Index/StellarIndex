@@ -1,0 +1,31 @@
+[Unit]
+Description=Stellar Index hourly Postgres log rotation (intra-day size cap)
+
+[Service]
+Type=oneshot
+# The whole point of this unit is the CADENCE, not the policy: the policy
+# already lives in /etc/logrotate.d/postgresql-common. Ubuntu's
+# logrotate.timer is daily, and a `maxsize` cap is only evaluated when
+# logrotate RUNS — so under a heavy maintenance campaign the live server
+# log grows unbounded for up to 24 h no matter what the cap says. Running
+# the same config hourly is what makes the cap mean anything.
+#
+# The DEFAULT state file is used deliberately. logrotate records the last
+# rotation per file there, so this hourly run and the stock daily run
+# agree about what has already been rotated; a private state file would
+# make the two double-rotate and burn the retention window twice as fast.
+ExecStart=/usr/sbin/logrotate /etc/logrotate.d/postgresql-common
+
+User=root
+NoNewPrivileges=true
+# `full`, not `strict`: logrotate must write /var/log/postgresql and the
+# shared state file under /var/lib/logrotate.
+ProtectSystem=full
+ProtectKernelTunables=true
+ProtectControlGroups=true
+
+# A normal run is milliseconds; a rotation of a multi-GB file under
+# copytruncate is seconds. Bound it so a wedged run cannot hold the
+# logrotate state lock against the stock daily timer.
+TimeoutStartSec=10min
+RuntimeMaxSec=10min

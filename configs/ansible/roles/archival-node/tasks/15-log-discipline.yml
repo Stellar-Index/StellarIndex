@@ -552,3 +552,65 @@
       # (2026-08-05 root-disk-warning incident).
       if $programname startswith "stellarindex-" then stop
   notify: Reload rsyslog
+
+# ─── Postgres server log: an intra-day size cap (2026-09-10) ─────────
+# The third root-disk-warning incident in this file's history, and the
+# first one this role did not already cover. Everything above bounds
+# journald (500M), the syslog family, ClickHouse's system.*_log tables
+# (14-day TTL) and /var/log/stellarindex — but NOTHING bounded
+# /var/log/postgresql, which is on the root filesystem.
+#
+# WHAT HAPPENED. `log_min_duration_statement = 1000` logs every
+# statement slower than a second, which is the right setting in steady
+# state and the wrong one during heavy maintenance — because heavy
+# maintenance is precisely what makes ordinary statements slow. A
+# usd_volume restamp campaign drove the live server log to 2.86 GB with
+# a 1.88 GB uncompressed predecessor beside it (delaycompress), 4.74 GB
+# of a 49 GB root filesystem, and tripped the 81% warning. Steady-state
+# growth is ~17 MiB/day; under the campaign it was ~2.8 GB/day, roughly
+# 170x.
+#
+# WHY THE EXISTING CAP DID NOT SAVE IT — the same trap this file already
+# documents for syslog, one section down. /etc/logrotate.d/postgresql-
+# common ALREADY says `maxsize 500M`, and the file still reached 2.86 GB,
+# because `maxsize` is only evaluated when logrotate RUNS and Ubuntu's
+# logrotate.timer is `OnCalendar=daily`. A daily cap cannot bound a file
+# that gains 2.8 GB in a day. The cap was never wrong; it was never
+# consulted.
+#
+# SO THE FIX IS CADENCE, NOT POLICY, and this deliberately ships NO
+# logrotate config. The distro policy (rotate 10, copytruncate, maxsize
+# 500M, compress+delaycompress) is already correct. Overriding
+# /etc/logrotate.d/postgresql-common would take ownership of a dpkg
+# conffile and start a prompt-on-upgrade fight for no gain, and shipping
+# a SECOND config matching the same glob makes logrotate refuse both
+# with "duplicate log entry". Run the existing config more often instead.
+#
+# copytruncate is what makes this safe against a running server: it
+# copies then truncates in place, so postgres keeps writing to the same
+# inode and needs no reopen, no HUP and no restart. Verified live on
+# 2026-09-10 — inode unchanged across two forced rotations, and the
+# server was still appending 25 s later.
+- name: Install hourly Postgres log rotation units
+  ansible.builtin.copy:
+    src: "{{ playbook_dir }}/../../../deploy/systemd/{{ item }}"
+    dest: "/etc/systemd/system/{{ item }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - pg-logrotate.service
+    - pg-logrotate.timer
+  register: pg_logrotate_units
+  tags: [log-discipline, pg-logrotate]
+
+- name: Enable the Postgres log rotation timer
+  ansible.builtin.systemd:
+    name: pg-logrotate.timer
+    enabled: true
+    state: started
+    daemon_reload: true
+  when:
+    # Role-installed unit — CHECK-MODE UNIT GUARD, tasks/main.yml.
+    - not (ansible_check_mode and pg_logrotate_units is changed)
+  tags: [log-discipline, pg-logrotate]

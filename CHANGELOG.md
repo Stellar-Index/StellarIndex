@@ -17,6 +17,36 @@ against.
 
 ### Added
 
+- **ops:** `pg-logrotate.timer` — run the existing Postgres logrotate
+  policy hourly instead of daily, so its size cap can actually bound
+  intra-day growth.
+
+  Third root-disk-warning incident of this class, and the first the
+  archival-node role did not already cover: it bounds journald, the
+  syslog family, ClickHouse's `system.*_log` tables and
+  `/var/log/stellarindex`, but nothing bounded `/var/log/postgresql`,
+  which sits on the 49 GB root filesystem. A usd_volume restamp campaign
+  drove the live server log to 2.86 GB with a 1.88 GB uncompressed
+  predecessor beside it (`delaycompress`) — 4.74 GB, and the 81% warning.
+
+  `log_min_duration_statement = 1000` is the cause and is not being
+  changed: it is the right setting in steady state and the wrong one
+  during heavy maintenance, because heavy maintenance is exactly what
+  makes ordinary statements slow. Steady-state growth is ~17 MiB/day;
+  under the campaign it was ~2.8 GB/day, about 170x.
+
+  The existing cap did not save it, and the reason generalises:
+  `/etc/logrotate.d/postgresql-common` **already** says `maxsize 500M`.
+  `maxsize` is only evaluated when logrotate RUNS, and Ubuntu's
+  `logrotate.timer` is `OnCalendar=daily`, so a daily cap cannot bound a
+  file that gains 2.8 GB in a day. The cap was never wrong; it was never
+  consulted. The same trap is documented one section above for syslog.
+
+  So this ships **no logrotate config** — only cadence. The distro policy
+  is already correct, taking ownership of that dpkg conffile would start
+  a prompt-on-upgrade fight for no gain, and a second config matching the
+  same glob makes logrotate refuse both with "duplicate log entry".
+
 - **ci:** `lint-textfile-exposition` — every line a node_exporter
   textfile-collector producer writes must parse as Prometheus exposition
   format, checked statically for all 21 producers in the tree.
