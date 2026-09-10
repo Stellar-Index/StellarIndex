@@ -552,6 +552,97 @@ groups:
             file's mtime, then run /usr/local/sbin/timescale-jobs-probe.sh by
             hand.
 
+      # ── the lock convoy (r1, 2026-09-10 00:12–00:31 UTC) ────────────
+      #
+      # A deploy restarted stellarindex-aggregator; its cold-start VWAP
+      # alias-map aggregation spilled to disk (IO/BufFileRead) and held
+      # AccessShareLock on `trades` for 18+ minutes. A
+      # usd-volume-restamp -chunks run's decompress_chunk wanted
+      # AccessExclusiveLock on a chunk of that hypertable, could not have
+      # it, and QUEUED — and PostgreSQL puts every LATER request for an
+      # object behind a PENDING exclusive one, however trivial and
+      # however compatible with the lock actually held:
+      #
+      #   decompress_chunk (restamp)      blocked 1,984 s
+      #   UPDATE trades  x2 (restamp)     blocked 1,164 s
+      #   postgres_exporter scrapes x3    blocked   917 s
+      #   chunks_detailed_size (watcher)  blocked   904 s
+      #
+      # Nothing paged on the convoy itself. What did fire —
+      # stellarindex_postgres_exporter_down and
+      # stellarindex_aggregator_silent — described the wreckage, and both
+      # systemd units read `active` throughout. The restamp stalled 33
+      # minutes and /v1/status went `degraded` before it was cleared by
+      # hand with pg_cancel_backend() on the aggregator's SELECT.
+      #
+      # WHERE THIS CHECK RUNS IS THE POINT. postgres_exporter was IN the
+      # convoy (scrape HTTP 000 after 30 s; Prometheus logged `context
+      # deadline exceeded`), so an alert carried by it would have been
+      # blind for exactly the window it was needed. The producer is
+      # timescale-jobs-probe.sh — its own short-lived psql connection,
+      # published through node_exporter's textfile collector — and its
+      # query reads only pg_stat_activity + pg_blocking_pids(), which
+      # take no lock on `trades`. Measured answering in 7.5 ms with a
+      # real convoy in place, while chunks_detailed_size was stuck.
+      #
+      # WHY THE DEPTH-2 PREDICATE, NOT "SOMEONE IS WAITING". Decompressing
+      # the 159.7 GB `trades` chunk legitimately holds
+      # AccessExclusiveLock for ~1.5 h, and everything reading that chunk
+      # legitimately waits behind it — so alerting on blocked backends
+      # would fire on every healthy restamp, and an alert that fires on
+      # every healthy run is one the operator stops reading. The convoy
+      # has a signature a healthy hold does not:
+      # _convoy_backends counts only backends whose blocker is ITSELF
+      # blocked (the exporter waited on the decompress, which was waiting
+      # on the aggregator). Under a healthy decompress the waiters'
+      # blocker is RUNNING and the count is zero.
+      #
+      # 120 s + for 2m: never normal (a pending request behind another
+      # pending request resolves in milliseconds under any healthy
+      # workload), ~13x below the incident's worst waits, and it clears
+      # the 30 s postgres_exporter scrape timeout by enough that a
+      # transient self-clearing stall does not page. It would have fired
+      # around 00:16, some 15 minutes before the manual recovery.
+      #
+      # No absent/staleness arm here on purpose: this gauge is produced
+      # by the same probe as stellarindex_timescale_probe_query_ok /
+      # _probe_rows / _probe_last_run_unix, so a dead producer is already
+      # stellarindex_timescale_probe_degraded's alert, and duplicating it
+      # would give one failure two pages.
+      #
+      # PREVENTION, separately: the restamp no longer issues an unbounded
+      # exclusive-lock request — it asks under `SET LOCAL lock_timeout`
+      # and retries — so this alert is for a convoy whose head is
+      # something else (a by-hand ALTER, a migration, the compression
+      # policy's own proc). See internal/storage/timescale/trades_chunks.go.
+      - alert: stellarindex_pg_lock_convoy
+        expr: stellarindex_pg_lock_convoy_wait_seconds_max > 120
+        for: 2m
+        labels:
+          severity: page
+          team: stellarindex
+          component: storage
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/pg-lock-convoy.md
+          summary: "Postgres lock convoy: a backend has waited {{ $value | humanizeDuration }} behind a blocker that is itself blocked"
+          description: |
+            {{ $value | humanizeDuration }} is the longest wait among the
+            backends queued behind a lock request that is ITSELF queued —
+            the 2026-09-10 shape. Postgres puts every later request for an
+            object behind a pending exclusive one, so this grows to include
+            work that has nothing to do with the original contention:
+            postgres_exporter's scrapes, the API's reads, the size watcher.
+
+            Treat the alerting layer as untrustworthy while this is firing.
+            postgres_exporter is very likely in the convoy, which makes
+            every pg_* alert unable to fire; this gauge comes from
+            timescale-jobs-probe.sh via node_exporter and is not.
+
+            Find the HEAD of the chain (the one blocked backend nothing is
+            blocking) and decide about that one process — cancelling
+            anything further down only frees its own slot. The runbook has
+            the query.
+
       # F-1329: repointed off the never-emitted
       # `stellarindex_pgbackrest_last_success_unix` /
       # `stellarindex_pgbackrest_expected_interval_seconds` pair (note the
