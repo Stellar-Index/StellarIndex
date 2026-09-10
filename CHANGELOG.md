@@ -17,6 +17,31 @@ against.
 
 ### Fixed
 
+- **ci:** the scheduled-control sweep now distinguishes a control that has
+  STOPPED BEING SCHEDULED from one that is still firing on time and failing,
+  and names the matching remedy for each. Both states produce "no passing
+  scheduled run past N", the sweep called both `DEAD`, and so #502 was opened
+  headlined "a control has stopped reporting" about `ansible-drift.yml` — a
+  control whose failing step is named "Drift verdict (fails on drift, and
+  NAMES the tasks)", which had fired every Monday for eight weeks and named
+  two drifted tasks each time (#496). Telling an operator to re-arm a schedule
+  that never stopped is the wrong remedy, and a genuinely stopped control was
+  free to hide behind "oh, that one always fails".
+
+  The distinguishing signal is the age of the newest scheduled run of any
+  decisive conclusion, judged on the same cadence-derived `N` as the passing
+  signal, so there is one policy and one set of knobs. Green runs are a subset
+  of decisive runs, so `DEAD` plus `FAIL` is exactly the set previously called
+  `DEAD`: the split re-labels and does not narrow, and every stall case in the
+  self-test — a cron that never fired, a disabled workflow, a control that was
+  green and simply stopped — still lands `DEAD`. Both classes still exit 1: a
+  chronically-red control is not delivering signal either (once red is its
+  steady state the next red is invisible), and exiting 0 would close the
+  tracking issue and reach the "expected to fail" exclusion list the detector
+  refuses by another route. `ci-health.yml` parses, titles and annotates the
+  two separately, and the self-test asserts that every class the sweep emits is
+  one the workflow reads.
+
 - **ci:** the SIGPIPE gate now covers shell embedded in GitHub workflow
   YAML, not only `*.sh` files. It enumerated its subject with
   `find … -name '*.sh'`, so every pipeline in `.github/workflows/` had
