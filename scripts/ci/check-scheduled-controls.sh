@@ -91,6 +91,18 @@
 # a job that concluded success.
 set -euo pipefail
 
+# GH_REPO is set for us inside GitHub Actions; outside it the API path
+# becomes `repos//actions/workflows/...`, every read 404s, and the gate
+# reports "10 scheduled workflow(s) found but none could be read from the
+# API. The gate did not run." — which reads exactly like a dead control
+# and is really an unrunnable checker. Derive it from the checkout when
+# absent so the gate can be run by hand to verify a control, and leave
+# the Actions path byte-identical.
+if [ -z "${GH_REPO:-}" ]; then
+    GH_REPO="$(gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null || true)"
+    export GH_REPO
+fi
+
 cd "$(dirname "$0")/../.."
 
 WORKFLOW_DIR="${WORKFLOW_DIR:-.github/workflows}"
