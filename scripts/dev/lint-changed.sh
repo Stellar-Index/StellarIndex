@@ -34,7 +34,8 @@
 #                            (0.44 s; the directory and not the changed file
 #                            — a lone workflow with no pipefail run: block is
 #                            a vacuity FAIL, and api-docs.yml is one);
-#                            lint-actions-pinning scoped (0.1 s), actionlint
+#                            lint-actions-pinning over that same DIRECTORY,
+#                            actionlint
 #                            (0.04 s), zizmor --offline (0.15 s).
 #   migrations/*.sql         lint-migrations, lint-migration-immutability,
 #                            lint-migration-commands, lint-migration-compat
@@ -356,7 +357,18 @@ fi
 
 # 3. Workflows: the pinning policy, actionlint, zizmor — all scoped.
 if [ "${#wf_files[@]}" -gt 0 ]; then
-    add_step "lint-actions-pinning" "scoped" "$ci_dir/lint-actions-pinning.sh" "${wf_files[@]}"
+    # The workflows DIRECTORY, not the changed files — the same reasoning as
+    # lint-shell-sigpipe above, and the same live false red. Handed a single
+    # workflow with no `uses:` lines the gate exits 1 with "the gate would be
+    # vacuous", which is right for a whole-tree run and wrong for an innocent
+    # pre-commit edit. Reproduced on main 2026-09-10:
+    #   $ scripts/dev/lint-changed.sh -- .github/workflows/orphan-branches.yml
+    #   lint-actions-pinning: FAIL — no `uses:` lines across 1 workflow file(s)
+    # orphan-branches.yml has zero `uses:`, so committing a change to it was
+    # blocked by a gate that had found nothing wrong. A directory root cannot
+    # go vacuous here, and if it ever did the red would be the invariant CI
+    # asserts anyway.
+    add_step "lint-actions-pinning" "workflows dir" "$ci_dir/lint-actions-pinning.sh" ${wf_roots[@]+"${wf_roots[@]}"}
     if command -v actionlint >/dev/null 2>&1; then
         add_step "actionlint" "embedded shellcheck off: 15 pre-existing findings in .github/workflows" \
             actionlint -shellcheck= "${wf_files[@]}"

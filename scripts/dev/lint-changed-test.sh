@@ -118,7 +118,11 @@ expect_has ".go -> go vet on the package, once" "plan  go vet: go vet ./pkg   (1
 expect_has ".go -> go build on the package" "plan  go build: go build ./pkg" "$out"
 expect_has ".go -> lint-http-timeouts scoped to the package dir" "lint-http-timeouts.sh ./pkg" "$out"
 expect_has ".go -> lint-lexicon (whole tree)" "plan  lint-lexicon:" "$out"
-expect_has "workflow -> lint-actions-pinning scoped" "lint-actions-pinning.sh .github/workflows/w.yml" "$out"
+expect_has "workflow -> lint-actions-pinning over the workflows DIRECTORY" "lint-actions-pinning.sh" "$out"
+# A lone workflow with no `uses:` lines must NOT red the pre-commit path: the
+# gate refuses a vacuous subject, which is correct whole-tree and a false red
+# here. orphan-branches.yml is exactly such a file today.
+expect_not "workflow -> lint-actions-pinning is NOT scoped to the changed file" "lint-actions-pinning.sh .github/workflows/w.yml" "$out"
 # The sigpipe gate gets the workflows DIRECTORY appended after the changed
 # pipefail scripts, not the changed workflow file. The trailing "   (" is
 # the start of the step note, so it proves the argument ENDED at the
