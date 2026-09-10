@@ -38,5 +38,5 @@
 # docs/operations/testnet-futurenet-deployment.md and the runbooks already
 # name; the deploy workflow itself reads them from repository secrets.
 r1	136.243.90.96	root	-	stellarindex-indexer,stellarindex-aggregator,stellarindex-api,stellarindex-sla-probe,stellarindex-ops,stellarindex-migrate	-	2026-09-07T14:14:57Z
-testnet	192.168.122.10	root	root@95.217.126.13	stellarindex-indexer,stellarindex-aggregator,stellarindex-api,stellarindex-sla-probe,stellarindex-ops,stellarindex-migrate	-	2026-09-07T14:15:01Z
+testnet	192.168.122.10	root	root@95.217.126.13	stellarindex-indexer,stellarindex-api,stellarindex-sla-probe,stellarindex-ops,stellarindex-migrate	stellarindex-aggregator:unit-off-disabled-inactive	2026-09-10T19:11:47Z
 futurenet	192.168.122.20	root	root@95.217.126.13	stellarindex-indexer,stellarindex-api,stellarindex-sla-probe,stellarindex-ops,stellarindex-migrate	stellarindex-aggregator:unit-not-found	2026-09-07T14:15:21Z
