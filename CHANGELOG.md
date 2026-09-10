@@ -812,6 +812,14 @@ against.
   the polling session — stays flat but costs 0.52x the decompress on the same
   chunk. Jobs that publish no byte movement keep exactly their previous alert
   behaviour.
+
+  That 0.52x is a ratio, not a coverage claim, and the difference matters:
+  the RE-COMPRESS phase is still uncovered. On the 159.7 GB outlier chunk,
+  0.52 x roughly 90 minutes is about 47 minutes against a 45-minute
+  threshold, so that one chunk still tickets while re-compressing. It fails
+  SAFE — one extra ticket on one chunk, not a silence — and closing it needs
+  a different signal than `chunks_detailed_size`, which cannot see a
+  relation being built inside another transaction.
 ### Fixed
 
 - **ops:** the ClickHouse schema-drift check compares against **live**, not
