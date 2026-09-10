@@ -620,12 +620,20 @@ jobs:
             rm -rf tag-tree tag.tar.gz
           fi
           echo "---"
-          # `| head` + pipefail interacts badly: head closes early,
-          # ls hits SIGPIPE, pipefail fails the step even though
-          # everything staged correctly. F-1300 (rc.51 deploy fail).
-          # Print the count + the first 10 names via sort+head.
-          echo "staged $(ls dist/migrations/ | wc -l) migration files"
-          ls dist/migrations/ | sort | head -n 10
+          # NEVER pipe into `head` here. Under pipefail the early close
+          # SIGPIPEs whatever is upstream and fails the step even though
+          # everything staged correctly — F-1300 (rc.51), and again on
+          # 2026-09-10 when the "fixed" form `ls | sort | head -n 10`
+          # simply moved the SIGPIPE from ls to sort:
+          #     sort: write failed: 'standard output': Broken pipe
+          #     ##[error]Process completed with exit code 2
+          # It is a race, so it passes until it does not: v0.67.0 and
+          # v0.68.0 deployed fine and v0.69.0 did not, on identical code.
+          # Materialise the list first; `head` on a FILE closes nothing.
+          ls dist/migrations/ | sort > dist/.migration-list
+          echo "staged $(wc -l < dist/.migration-list) migration files"
+          head -n 10 dist/.migration-list
+          rm -f dist/.migration-list
 
       - name: Migration rollback-safety gate
         # CID-14 (audit-2026-07-23). The playbook applies `migrate up`
