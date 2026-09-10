@@ -21,14 +21,20 @@
 # and one .md file is recorded in docs/contributing/local-verification.md):
 #
 #   *.sh                     bash -n (0.02 s/file); lint-shell-sigpipe over
-#                            the pipefail subset (0.05 s); shellcheck -x
+#                            the pipefail subset (0.05 s — ONE invocation,
+#                            which also carries the workflows root below);
+#                            lint-git-fixture-isolation scoped; shellcheck -x
 #                            (0.5 s/file). A *-test.sh is also RUN, last.
 #   *.go                     gofumpt -l, goimports -l (0.1 s/file); then
 #                            lint-lexicon, lint-i128, lint-imports (whole
 #                            tree, ~1 s each — they take no file list) and
 #                            lint-http-timeouts scoped to the package dirs;
 #                            then go vet + go build on the touched packages.
-#   .github/workflows/*.yml  lint-actions-pinning scoped (0.1 s), actionlint
+#   .github/workflows/*.yml  lint-shell-sigpipe over the workflows DIRECTORY
+#                            (0.44 s; the directory and not the changed file
+#                            — a lone workflow with no pipefail run: block is
+#                            a vacuity FAIL, and api-docs.yml is one);
+#                            lint-actions-pinning scoped (0.1 s), actionlint
 #                            (0.04 s), zizmor --offline (0.15 s).
 #   migrations/*.sql         lint-migrations, lint-migration-immutability,
 #                            lint-migration-commands, lint-migration-compat
@@ -272,17 +278,50 @@ go_bin=""
 
 # 1. Shell: syntax, then the sigpipe class, then shellcheck.
 for f in ${sh_files[@]+"${sh_files[@]}"}; do add_step "bash -n" "" bash -n "$f"; done
-if [ "${#sh_files[@]}" -gt 0 ]; then
-    pipefail_files=()
-    for f in "${sh_files[@]}"; do
-        if grep -qE '^set .*(pipefail|-e)' "$f"; then pipefail_files+=("$f"); fi
+# lint-shell-sigpipe takes ROOTS, and a root is a file OR a directory, so one
+# invocation covers both halves of the gate: the changed pipefail scripts go
+# in as files, and a changed workflow puts its WORKFLOWS DIRECTORY in.
+#
+# The directory and not the changed workflow files, deliberately. Handed a
+# single workflow that has no pipefail `run:` block the gate exits 1 with
+# "the workflow half of the gate would be vacuous" — the right answer for a
+# whole-tree run, and a false red on an innocent pre-commit edit to
+# api-docs.yml, which is exactly such a file today. A directory root cannot
+# go vacuous here (22 workflows, 84 pipefail blocks), costs 0.44 s measured
+# 2026-09-10, and if it ever did the red would be the same invariant CI
+# asserts.
+#
+# Until this row the pre-commit path was blind to the workflow half: a commit
+# touching six workflow files ran the gate as "0 pipefail run: block(s) in 0
+# workflow file(s)" — no dispatch row sent .yml here — for exactly the class
+# that failed the v0.69.0 deploy.
+sigpipe_roots=()
+for f in ${sh_files[@]+"${sh_files[@]}"}; do
+    if grep -qE '^set .*(pipefail|-e)' "$f"; then sigpipe_roots+=("$f"); fi
+done
+sigpipe_sh="${#sigpipe_roots[@]}"
+wf_roots=()
+for f in ${wf_files[@]+"${wf_files[@]}"}; do
+    d="${f%/*}"
+    seen=0
+    for r in ${wf_roots[@]+"${wf_roots[@]}"}; do
+        if [ "$r" = "$d" ]; then seen=1; fi
     done
-    if [ "${#pipefail_files[@]}" -gt 0 ]; then
-        add_step "lint-shell-sigpipe" "scoped to ${#pipefail_files[@]} pipefail script(s)" \
-            "$ci_dir/lint-shell-sigpipe.sh" "${pipefail_files[@]}"
-    else
-        defer "lint-shell-sigpipe" "none of the changed scripts sets pipefail or -e (nothing for it to catch)"
+    if [ "$seen" -eq 0 ]; then wf_roots+=("$d"); fi
+done
+sigpipe_roots+=(${wf_roots[@]+"${wf_roots[@]}"})
+if [ "${#sigpipe_roots[@]}" -gt 0 ]; then
+    sigpipe_note="scoped to ${sigpipe_sh} pipefail script(s)"
+    if [ "${#wf_roots[@]}" -gt 0 ]; then
+        sigpipe_note="${sigpipe_note} + ${#wf_files[@]} changed workflow file(s) as the workflows directory (a lone workflow with no pipefail run: block is a vacuity FAIL)"
     fi
+    add_step "lint-shell-sigpipe" "$sigpipe_note" \
+        "$ci_dir/lint-shell-sigpipe.sh" "${sigpipe_roots[@]}"
+elif [ "${#sh_files[@]}" -gt 0 ]; then
+    defer "lint-shell-sigpipe" "none of the changed scripts sets pipefail or -e (nothing for it to catch)"
+fi
+
+if [ "${#sh_files[@]}" -gt 0 ]; then
     # A script that builds a git fixture must clear GIT_DIR first: `git
     # init` honours an inherited one over its own `-C`, a hook exports it,
     # and THIS dispatcher is what the pre-commit hook runs. Scoped to the

@@ -119,6 +119,13 @@ expect_has ".go -> go build on the package" "plan  go build: go build ./pkg" "$o
 expect_has ".go -> lint-http-timeouts scoped to the package dir" "lint-http-timeouts.sh ./pkg" "$out"
 expect_has ".go -> lint-lexicon (whole tree)" "plan  lint-lexicon:" "$out"
 expect_has "workflow -> lint-actions-pinning scoped" "lint-actions-pinning.sh .github/workflows/w.yml" "$out"
+# The sigpipe gate gets the workflows DIRECTORY appended after the changed
+# pipefail scripts, not the changed workflow file. The trailing "   (" is
+# the start of the step note, so it proves the argument ENDED at the
+# directory. Before this row nothing sent .yml to the gate at all: a commit
+# touching six workflow files ran it as "0 pipefail run: block(s) in 0
+# workflow file(s)", blind to the class that failed the v0.69.0 deploy.
+expect_has "workflow -> lint-shell-sigpipe over the workflows DIRECTORY, after the scripts" "lint-shell-sigpipe.sh scripts/dev/verify.sh tools/run.sh .github/workflows   (" "$out"
 if command -v actionlint >/dev/null 2>&1; then
     expect_has "workflow -> actionlint with embedded shellcheck off" "actionlint -shellcheck= .github/workflows/w.yml" "$out"
 fi
@@ -190,6 +197,14 @@ expect_not "sh-only: no gofumpt" "gofumpt" "$out"
 expect_not "sh-only: no go vet" "go vet" "$out"
 expect_not "sh-only: no lint-lexicon" "lint-lexicon" "$out"
 expect_not "sh-only: no actionlint" "actionlint" "$out"
+
+R="$TMP/wfonly"; new_repo "$R"
+put "$R" .github/workflows/a.yml $'name: a\non: push\npermissions:\n  contents: read\njobs:\n  j:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1\n      - run: |\n          set -euo pipefail\n          echo ok'
+git -C "$R" add -A
+out="$(cd "$R" && "$DISPATCH" --staged --plan 2>&1)"
+expect_has "workflow-only: lint-shell-sigpipe is still selected with no .sh in the diff" "lint-shell-sigpipe.sh .github/workflows   (" "$out"
+expect_not "workflow-only: no gofumpt" "gofumpt" "$out"
+expect_not "workflow-only: no migration gates" "lint-migrations" "$out"
 
 R="$TMP/mdonly"; new_repo "$R"
 put "$R" docs/a.md '# a'
@@ -277,6 +292,49 @@ out="$(cd "$R" && "$DISPATCH" --staged 2>&1)"; rc=$?
 expect_exit "a script without pipefail passes (the sigpipe gate's vacuity guard is not tripped)" 0 "$rc"
 expect_has "the sigpipe gate is skipped with the reason" "skip  lint-shell-sigpipe: none of the changed scripts sets pipefail or -e" "$out"
 expect_has "bash -n ran on it" "lint-changed: ok   bash -n" "$out"
+
+echo "lint-changed-test: a pipefail run: block piping into head"
+
+# The workflow half of the same gate, and the reason the dispatch row exists.
+# `sort | head -n 10` in a step that merely LISTED the staged migrations
+# killed the v0.69.0 deploy; the gate has covered `run:` blocks since
+# 2026-09-10, but no dispatch row sent .yml to it, so the pre-commit path
+# never saw one. Written on ONE source line so the `# sigpipe-ok:` marker can
+# sit outside the quoted body, as for the .sh fixtures above.
+#
+# The path:line assertion is the discriminating one. lint-actions-pinning
+# reds here too, and only as an artefact of the fixture: unlike
+# lint-shell-sigpipe it `cd`s to the checkout IT lives in before resolving
+# its roots, so the fixture's workflow path does not exist for it. That is
+# why the workflow selection above is only PLANNED, and why the clean-run
+# half of this property is exercised against the real tree just below.
+R="$TMP/wfred"; new_repo "$R"
+put "$R" .github/workflows/bad.yml $'name: bad\non: push\npermissions:\n  contents: read\njobs:\n  j:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1\n      - run: |\n          set -euo pipefail\n          printf \'%s\\n\' a b c | head -n 1'   # sigpipe-ok: fixture text, scanned by the gate and never executed
+git -C "$R" add -A
+out="$(cd "$R" && "$DISPATCH" --staged 2>&1)"; rc=$?
+expect_exit "a workflow-only diff with a pipefail run: block piping into head FAILS" 1 "$rc"
+expect_has "the failure names lint-shell-sigpipe" "lint-changed: FAIL lint-shell-sigpipe" "$out"
+expect_has "the report resolves in the WORKFLOW file, at the offending source line" ".github/workflows/bad.yml:12 pipes into an EARLY-EXIT consumer" "$out"
+
+# The other half: the workflows DIRECTORY is the root and not the changed
+# file. Handed a lone workflow with no pipefail `run:` block the gate exits 1
+# — "the workflow half of the gate would be vacuous" — which is the right
+# answer for a whole-tree run and a false red on an innocent pre-commit edit.
+# Against THIS repository, because a fixture cannot get a clean workflow run
+# out of the dispatcher (see lint-actions-pinning above), and the subject is
+# DERIVED rather than named: if every workflow ever sets pipefail there is no
+# live case, and that says so out loud instead of passing on nothing.
+quiet_wf=""
+for w in .github/workflows/*.yml; do
+    if ! bash scripts/ci/lint-shell-sigpipe.sh "$w" >/dev/null 2>&1; then quiet_wf="$w"; break; fi
+done
+if [ -n "$quiet_wf" ]; then
+    out="$("$DISPATCH" -- "$quiet_wf" 2>&1)"; rc=$?
+    expect_exit "editing ${quiet_wf} (no pipefail run: block, so a vacuity FAIL scoped to itself) does not red the run" 0 "$rc"
+    expect_has "because the gate got the DIRECTORY and saw the other workflows' pipefail blocks" "lint-changed: ok   lint-shell-sigpipe" "$out"
+else
+    echo "  note every workflow in this tree sets pipefail, so the vacuity case has nothing live to pin today"
+fi
 
 R="$TMP/syntax"; new_repo "$R"
 put "$R" tools/broken.sh $'#!/usr/bin/env bash\nset -euo pipefail\nif true; then echo x'
