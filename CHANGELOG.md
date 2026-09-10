@@ -15,6 +15,8 @@ against.
 
 ## [Unreleased]
 
+## [v0.73.0] — 2026-09-11
+
 ### Added
 
 - **api,web:** `GET /v1/rwa/assets` publishes a second, separately-labelled
