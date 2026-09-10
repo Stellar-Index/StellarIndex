@@ -17,6 +17,37 @@ against.
 
 ### Fixed
 
+- **ci:** the ansible drift check reads a FULL checkout, and refuses to
+  stamp an intent file it cannot derive — it has been reporting drift
+  that does not exist since 2026-07-15.
+
+  The role ships `tier1_schema.sql` as the drift check's intent side,
+  stamped with `git describe --tags --abbrev=0` and the last commit to
+  touch that file. `actions/checkout` defaults to a SHALLOW clone, where
+  the first returns empty (no tags fetched) and the second returns the
+  TIP commit rather than the file's own, because the history is one
+  commit deep. So CI rendered a different intent file from the one an
+  operator renders, and the verdict compared one stamp against another
+  and called it drift. Measured: a full clone here yields
+  `v0.71.0` / `01fa1106d (2026-09-09)`; a `--depth 1` clone of the same
+  repo yields an empty release and `586218a (2026-09-10)`.
+
+  Every scheduled run of that control since 2026-07-15 failed — eight in
+  a row. Some of that was real drift, which has now been applied
+  (`changed=0` across 296 tasks on r1); this is the part that would have
+  stayed red afterwards regardless.
+
+  **The silent fallback is the actual defect.** The shell degraded to
+  `unknown` for the release and accepted the wrong sha without comment,
+  so nothing in eight weeks of output pointed at the checkout. It now
+  detects a shallow repository, and an underivable stamp, and REFUSES —
+  a stamp that cannot be derived must stop the run, not guess. A
+  cries-wolf control gets read once, disbelieved, and is then worth
+  nothing when it is right.
+
+
+### Fixed
+
 - **obs:** the memory-mapping probe's restart-storm limit is scaled to
   its own cadence, so the unit stops reading `failed` while working
   correctly.

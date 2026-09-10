@@ -105,7 +105,7 @@ allowed_origins="$(grep -E '^\s*allowed_origins\s*=' "$CONFIG" 2>/dev/null | hea
 if [ -z "$allowed_origins" ] || grep -q '"\*"' <<<"$allowed_origins"; then
   fail "allowed_origins is wide open" '["*"] — narrow to your showcase + API hostnames'
 else
-  pass "allowed_origins narrowed" "$(echo "$allowed_origins" | sed 's/^[[:space:]]*//')"
+  pass "allowed_origins narrowed" "${allowed_origins#"${allowed_origins%%[![:space:]]*}"}"
 fi
 echo
 
@@ -129,8 +129,18 @@ echo "  Alertmanager"
 if [ ! -f "$AM_ENV" ]; then
   fail "AM env file missing" "$AM_ENV"
 else
+  # The optional quote is load-bearing. Env files here write these
+  # values single-quoted, and `^NAME=https://` cannot match
+  # `NAME='https://...'` — so on r1 this reported all three as "unset —
+  # alerts won't fan out" while alertmanager was running with six
+  # receivers and eight webhook URLs loaded from that very file
+  # (2026-09-10). A launch gate that cries wolf about paging is worse
+  # than no gate: it is read once, disbelieved, and then it is worth
+  # nothing when a URL really is missing.
+  # Still warns on an empty value or a non-URL — the quote is tolerated,
+  # the https:// requirement is not relaxed.
   for v in HEALTHCHECKS_DEADMANSSWITCH_URL DISCORD_WEBHOOK_URL_PAGES DISCORD_WEBHOOK_URL_ALERTS; do
-    if grep -q "^$v=https://" "$AM_ENV" 2>/dev/null; then
+    if grep -qE "^$v=('|\")?https://" "$AM_ENV" 2>/dev/null; then
       pass "$v" "set"
     else
       warn "$v" "unset — alerts won't fan out"

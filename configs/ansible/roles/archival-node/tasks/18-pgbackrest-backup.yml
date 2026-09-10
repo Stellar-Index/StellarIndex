@@ -372,10 +372,28 @@
     chdir: "{{ playbook_dir }}/../../.."
     cmd: |
       set -u
+      # REFUSE rather than degrade. Both values below are unavailable in
+      # a SHALLOW checkout — `git describe --tags` finds no tags, and
+      # `git log -1 -- <path>` returns the tip commit instead of the
+      # file's own because the history is one commit deep. Falling back
+      # to "unknown" and to a plausible-but-wrong sha is what let a
+      # shallow CI checkout ship a DIFFERENT intent file from the one an
+      # operator ships, so the drift check compared one stamp against
+      # another and reported drift that did not exist, weekly, for eight
+      # weeks, with nothing in the output pointing at the checkout.
+      # A stamp that cannot be derived must stop the run, not guess.
+      if [ "$(git rev-parse --is-shallow-repository 2>/dev/null)" = "true" ]; then
+        echo "provenance: shallow repository — cannot derive the intent stamp. Check out with fetch-depth: 0 and fetch-tags: true." >&2
+        exit 1
+      fi
       rel="$(git describe --tags --abbrev=0 2>/dev/null)"
       sha="$(git log -1 --format='%h (%cs)' -- deploy/clickhouse/tier1_schema.sql 2>/dev/null)"
-      printf '%s\n' "${rel:-unknown}"
-      printf '%s\n' "${sha:-unknown}"
+      if [ -z "$rel" ] || [ -z "$sha" ]; then
+        echo "provenance: no tag reachable, or no history for tier1_schema.sql — refusing to stamp an intent file that would not match an operator's." >&2
+        exit 1
+      fi
+      printf '%s\n' "$rel"
+      printf '%s\n' "$sha"
   delegate_to: localhost
   become: false
   run_once: true

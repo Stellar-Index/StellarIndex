@@ -147,6 +147,19 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           persist-credentials: false
+          # FULL history and tags, both load-bearing for this job.
+          # The role stamps the shipped Tier-1 intent file with
+          # `git describe --tags --abbrev=0` and the last commit to touch
+          # tier1_schema.sql. Under the default shallow checkout the
+          # first returns EMPTY (no tags fetched) and the second returns
+          # the TIP commit rather than the file's own — so the intent
+          # file this job renders differs from the one an operator
+          # renders from a full clone, and the drift verdict compares
+          # a stamp against a different stamp and reports drift that
+          # does not exist. Every scheduled run since 2026-07-15 failed;
+          # this is why.
+          fetch-depth: 0
+          fetch-tags: true
 
       - name: Install ansible
         # DEP-01 (audit-2026-07-23): EXACT pins. This job holds the root
