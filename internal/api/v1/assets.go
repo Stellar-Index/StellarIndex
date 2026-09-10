@@ -1065,14 +1065,7 @@ func (s *Server) handleAssetListFromAssets(
 func (s *Server) fillMarketCapsFromSupply(ctx context.Context, rows []AssetDetail, sourceCounts map[string]int) {
 	// Precise supply — the three-domain pipeline (supply_1d, ~9 assets).
 	// Authoritative (includes claimable + LP-locked holdings); preferred.
-	var precise map[string]string
-	if sr, ok := s.assetsReader.(interface {
-		LatestCirculatingSupply(context.Context) (map[string]string, error)
-	}); ok {
-		if m, err := sr.LatestCirculatingSupply(ctx); err == nil {
-			precise = m
-		}
-	}
+	precise := s.latestPreciseSupply(ctx)
 	// Broad-coverage fallback — trustline-balance sums for EVERY classic
 	// asset, derived from the ClickHouse lake and cached (audit 2026-06-19
 	// item 4: market_cap was null for all but the ~9 precise-supply assets).
@@ -1085,6 +1078,29 @@ func (s *Server) fillMarketCapsFromSupply(ctx context.Context, rows []AssetDetai
 	for i := range rows {
 		s.fillRowMarketCap(&rows[i], precise, broad, sourceCounts)
 	}
+}
+
+// latestPreciseSupply reads the three-domain supply pipeline (supply_1d,
+// ~9 assets) — authoritative because it includes claimable balances and
+// LP-locked holdings. Type-asserted so a reader without the method (test
+// stubs) yields nil rather than failing the caller, and a read error is
+// likewise nil: a supply overlay is best-effort everywhere it is used.
+//
+// Extracted from [Server.fillMarketCapsFromSupply] so the RWA read path
+// can consult the same reader with the same preference order, rather
+// than growing a second, drifting notion of which supply is better.
+func (s *Server) latestPreciseSupply(ctx context.Context) map[string]string {
+	sr, ok := s.assetsReader.(interface {
+		LatestCirculatingSupply(context.Context) (map[string]string, error)
+	})
+	if !ok {
+		return nil
+	}
+	m, err := sr.LatestCirculatingSupply(ctx)
+	if err != nil {
+		return nil
+	}
+	return m
 }
 
 // fillRowMarketCap fills one listing row's market cap from circulating supply,

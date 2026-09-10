@@ -2738,6 +2738,30 @@ export interface paths {
          *        ADR-0028). The oracle arm is keyed on the CODE, so it is
          *        admissible only after requirement 3 has bound the issuer.
          *
+         *     TWO VALUATIONS, NEVER FOLDED. A tokenized real-world asset is
+         *     bought and held rather than traded, so most members have no
+         *     market price and contribute nothing to `market_cap_usd` — while
+         *     an oracle prices the underlying instrument daily. Each row
+         *     therefore also carries `reference_valuation`: the same
+         *     circulating supply valued at the oracle's published value for
+         *     the instrument, totalled in
+         *     `summary.reference_valuation.value_usd`.
+         *
+         *     The two are different KINDS of number and the wire keeps them
+         *     apart. `market_cap_usd` is an OBSERVATION — somebody paid it,
+         *     and three gates each declined to withhold it.
+         *     `reference_valuation` is a CLAIM: what an oracle says one unit
+         *     of the backing is worth, times the float, resting on the
+         *     issuer's own declaration that one token is one unit of that
+         *     instrument. Nobody was observed paying it, and no gate here can
+         *     corroborate it. It is never summed into `market_cap_usd` and it
+         *     moves no row into or out of that total. Because the two totals
+         *     are taken over different rows, their difference is not a
+         *     premium: `summary.both_bases` gives both figures over the
+         *     members carrying both, `premium.pct` gives the same gap per
+         *     asset, and the funnel's `valuation` arm names the reason every
+         *     uncovered row carries no figure.
+         *
          *     An asset failing any requirement is ABSENT, not downranked.
          *     `refused[]` counts what each requirement turned away so the
          *     served set is never mistaken for the population that CLAIMS to
@@ -6549,10 +6573,95 @@ export interface components {
              *     the premiums would take the gaps for zeros.
              */
             assets_compared: number;
+            reference_valuation: components["schemas"]["RWAReferenceSummary"];
+            both_bases: components["schemas"]["RWABothBases"];
             /** @description One-line statement of what the total measured and how it was valued. */
             basis: string;
             /** @description True when a rebuild cap bound the set, so it is known to be incomplete. Absent when false. */
             truncated?: boolean;
+        };
+        /**
+         * @description The SECOND, separately-labelled total: the set valued at
+         *     REFERENCE prices instead of at observed market prices.
+         *
+         *     `RWASummary.market_cap_usd` is circulating supply times a price
+         *     somebody was observed paying, admitted only after the
+         *     thin-market substance gate, the dust-liquidity guard and the
+         *     scam-issuer suppression each declined to withhold it. THIS total
+         *     is circulating supply times what an oracle says the underlying
+         *     instrument is worth. Nobody was observed paying it, no gate on
+         *     this platform can corroborate it, and an asset that has never
+         *     traded carries it at full size.
+         *
+         *     It exists because a tokenized real-world asset is bought and
+         *     held rather than traded: most members of this set have no market
+         *     price at all, so the market-cap total is silent about them while
+         *     an oracle prices their instrument daily.
+         *
+         *     It is NEVER a component of `market_cap_usd` and is never added to
+         *     it. The two are sums over DIFFERENT rows, so their difference is
+         *     not a premium — use `both_bases` for a comparison taken over the
+         *     same assets, and the funnel's `valuation` arm for the reason
+         *     every uncovered row carries no figure.
+         */
+        RWAReferenceSummary: {
+            /**
+             * @description Exact sum of the published per-asset
+             *     `reference_valuation.value_usd` strings (decimal string —
+             *     ADR-0003). ABSENT, never `"0.00"`, when no member is
+             *     reference-valued: a zero there asserts that the backing
+             *     behind every tokenized instrument in the set is worth
+             *     nothing.
+             * @example 6177187.68
+             */
+            value_usd?: string;
+            /** @description Members that contributed to this total. */
+            assets_valued: number;
+            /**
+             * @description Members with no bound and current oracle feed, or no
+             *     circulating-supply reading. Counted independently of
+             *     `assets_unvalued` on the market basis — the two bases admit
+             *     different rows, which is why both totals exist. The funnel's
+             *     `valuation` arm breaks this number down by reason.
+             */
+            assets_unvalued: number;
+            /** @description True whenever any member carries no reference valuation, i.e. whenever this total is less than the reference-priced value of the set. */
+            lower_bound: boolean;
+            /**
+             * @description The distinct oracles whose published values make up the
+             *     total, sorted. A dollar figure that cannot be traced to a
+             *     publisher is worse than an absent one here; each contributing
+             *     row carries the full provenance — feed, denominator and
+             *     vintage — in its own `reference` block.
+             * @example [
+             *       "redstone"
+             *     ]
+             */
+            sources?: string[];
+            /** @description Prose statement of what was measured and, as importantly, what it is not. */
+            basis: string;
+        };
+        /**
+         * @description Totals over the members carrying a market cap AND a reference
+         *     valuation — the only subset on which the two bases can honestly
+         *     be compared.
+         *
+         *     It exists to stop one misreading. `market_cap_usd` and
+         *     `reference_valuation.value_usd` are sums over different rows: an
+         *     asset that never trades has the second and not the first, so
+         *     subtracting one from the other measures nothing. These two
+         *     figures are taken over the same rows, so their difference IS the
+         *     aggregate gap between what the market pays for that overlap and
+         *     what the reference says it is worth. Per asset, the same gap in
+         *     percentage terms is `premium.pct`.
+         */
+        RWABothBases: {
+            /** @description Members carrying both figures. */
+            assets: number;
+            /** @description Market-basis total over those rows only. Absent when `assets` is 0. */
+            market_cap_usd?: string;
+            /** @description Reference-basis total over the same rows. Absent when `assets` is 0. */
+            reference_value_usd?: string;
         };
         /**
          * @description One member of the set, with the evidence that admitted it and
@@ -6631,6 +6740,7 @@ export interface components {
             /** @description The off-chain instrument the issuer declared this token anchors to, verbatim. */
             anchor_asset?: string;
             valuation: components["schemas"]["RWAValuation"];
+            reference_valuation: components["schemas"]["RWAReferenceValuation"];
             reference?: components["schemas"]["RWAReference"];
             premium: components["schemas"]["RWAPremium"];
             /**
@@ -6638,6 +6748,17 @@ export interface components {
              *     the valuation is withheld — a supply is not a price claim.
              */
             circulating_supply?: string;
+            /**
+             * @description On-chain smallest-unit scale: 7 for every classic Stellar
+             *     asset, and whatever a SEP-41 contract declares for a
+             *     contract-issued one. Served so both valuations on the row can
+             *     be re-derived by hand — `circulating_supply / 10^decimals` is
+             *     the whole-token float that `valuation.price_usd` and
+             *     `reference.price_usd` each multiply — rather than leaving a
+             *     reader to assume a scale that is only sometimes 7.
+             * @example 7
+             */
+            decimals: number;
             /** @description Trailing-24h USD trade volume, as /assets serves it. */
             volume_24h_usd?: string;
             /**
@@ -6690,6 +6811,69 @@ export interface components {
             price_basis?: "declared_peg" | "transitive";
             /** @description Circulating supply times the served USD price (decimal string). Present only when status is published. */
             market_cap_usd?: string;
+        };
+        /**
+         * @description The row's circulating supply valued at the REFERENCE price — an
+         *     oracle's published value for the real-world instrument — rather
+         *     than at anything the market was observed paying.
+         *
+         *     The deliberate opposite of `valuation.market_cap_usd`, and never
+         *     folded into it:
+         *
+         *     - `valuation.market_cap_usd` is adversarially verified. A price
+         *       reaches it only after the thin-market substance gate, the
+         *       dust-liquidity guard and the scam-issuer suppression each
+         *       decline to withhold it, and behind that price is a trade
+         *       somebody settled. It is an OBSERVATION.
+         *     - this figure is a CLAIM. The oracle states what the backing is
+         *       worth, and the issuer's own domain-bound SEP-1 declaration
+         *       states that one token is one unit of that backing; multiplying
+         *       the second by the first values the float. Nobody paid it, no
+         *       liquidity gate can measure it, and a token that has never
+         *       traded carries it at full size — which is the point of it,
+         *       since a real-world asset is bought and held, and equally the
+         *       reason it may not be reported as a market capitalisation.
+         *
+         *     Always present, always with a status. Only `published` carries
+         *     money, and a published figure always has a `reference` block
+         *     beside it naming the feed, the denominator and the vintage
+         *     behind it.
+         *
+         *     Where a rule refuses the REFERENCE itself, this status and
+         *     `premium.status` carry the SAME string — they are assigned
+         *     together from one constant, so the two can never become two
+         *     accounts of one event. They differ only where the reasons
+         *     genuinely do: a row with a reference and no market price has no
+         *     premium and a full reference valuation, and a row with a
+         *     reference and no supply reading has the premium and no
+         *     valuation.
+         */
+        RWAReferenceValuation: {
+            /**
+             * @description `published` — a reference price and a circulating-supply
+             *     reading were both available.
+             *     `supply_unavailable` — a reference exists but no
+             *     circulating-supply reading does, so there is no float to
+             *     value. A non-numeric or negative reading is treated the same
+             *     way: it is not a supply. The premium is unaffected by it, so
+             *     this value is the valuation's own.
+             *     Every other value is a refusal of the REFERENCE and is
+             *     documented under `RWAPremium.status`, which carries the same
+             *     string on the same row.
+             * @enum {string}
+             */
+            status: "published" | "withheld_issuer_flagged" | "reference_unavailable" | "reference_contract_not_bound" | "reference_not_instrument_scoped" | "reference_not_bound" | "reference_not_usd_denominated" | "no_reference_feed" | "reference_expired" | "reference_not_positive" | "supply_unavailable";
+            /**
+             * @description `circulating_supply / 10^decimals x reference.price_usd`, as
+             *     a 2-dp decimal string (ADR-0003). Exact rational arithmetic
+             *     throughout — both inputs arrive exact and the single
+             *     rounding happens at the end, which is what lets
+             *     `summary.reference_valuation.value_usd` be the exact sum of
+             *     these strings. Present if and only if `status` is
+             *     `published`.
+             * @example 1325134.33
+             */
+            value_usd?: string;
         };
         /**
          * @description One curated binding: the exact Stellar `(code, issuer)` and the
@@ -6819,6 +7003,22 @@ export interface components {
              *     `(code, issuer)` to a feed. Usually a code collision: a token
              *     wearing an instrument's ticker that no oracle has priced. See
              *     `definition.bound_instruments`.
+             *     `reference_contract_not_bound` — the member is
+             *     CONTRACT-issued, and nothing binds a contract address to an
+             *     oracle feed. Reported apart from `reference_not_bound`,
+             *     which names a `(code, issuer)` pair a contract row does not
+             *     have. The obvious join is available and is REFUSED: a
+             *     contract admitted on `contract_oracle_rwa_feed` got in
+             *     because its on-chain SEP-41 symbol is an ADR-0028 code, but
+             *     a symbol is metadata the contract itself authors, so pricing
+             *     a token by it is the code-keyed join this surface exists to
+             *     refuse, with a weaker key. Recognition of the address
+             *     establishes who deployed it; it does not establish that one
+             *     of its tokens is one unit of the instrument an oracle prices
+             *     under that name. The curated contract set
+             *     (`definition.bound_contract_instruments`) records instrument
+             *     and class rather than a feed, and ships empty for want of
+             *     primary sources.
              *     `no_reference_feed` — the pair IS bound, but the oracle stream
              *     carries no row for its feed.
              *     `reference_unavailable` — the oracle read did not answer, so
@@ -6844,7 +7044,7 @@ export interface components {
              *     non-positive value; nothing is divided by it.
              * @enum {string}
              */
-            status: "published" | "withheld_issuer_flagged" | "reference_not_bound" | "no_reference_feed" | "reference_unavailable" | "reference_expired" | "reference_not_instrument_scoped" | "reference_not_usd_denominated" | "no_market_price" | "market_price_not_observed" | "reference_not_positive";
+            status: "published" | "withheld_issuer_flagged" | "reference_not_bound" | "reference_contract_not_bound" | "no_reference_feed" | "reference_unavailable" | "reference_expired" | "reference_not_instrument_scoped" | "reference_not_usd_denominated" | "no_market_price" | "market_price_not_observed" | "reference_not_positive";
             /**
              * @description (market − reference) ÷ reference × 100 as a decimal string:
              *     POSITIVE when the token trades above the instrument's
@@ -6854,7 +7054,12 @@ export interface components {
              */
             pct?: string;
         };
-        /** @description One row of the per-declared-class breakdown. */
+        /**
+         * @description One row of the per-declared-class breakdown, on BOTH valuation
+         *     bases. Both are broken down because the two admit different
+         *     rows: a breakdown carrying only one would leave a reader unable
+         *     to see which class the difference between the totals came from.
+         */
         RWAGroupTotal: {
             /** @description A declared `anchor_class`, or `unclassified` for the assets admitted on the oracle basis. */
             class: string;
@@ -6862,8 +7067,16 @@ export interface components {
             /** @description Exact sum of the published market caps in this group. Absent when the group publishes none. */
             market_cap_usd?: string;
             assets_unvalued: number;
+            /**
+             * @description Exact sum of the published reference valuations in this
+             *     group — the reference basis, not a market capitalisation.
+             *     Absent when the group publishes none.
+             */
+            reference_value_usd?: string;
+            /** @description Members of this group with no reference valuation. */
+            assets_reference_unvalued: number;
         };
-        /** @description One row of the per-issuer breakdown, keyed on the G-address rather than on a company name. */
+        /** @description One row of the per-issuer breakdown, keyed on the G-address rather than on a company name, on both valuation bases. */
         RWAIssuerTotal: {
             issuer: string;
             /** @description Independent third-party directory label for the account. */
@@ -6873,6 +7086,14 @@ export interface components {
             /** @description Exact sum of the published market caps for this issuer. Absent when it publishes none. */
             market_cap_usd?: string;
             assets_unvalued: number;
+            /**
+             * @description Exact sum of the published reference valuations for this
+             *     issuer — the reference basis, not a market capitalisation.
+             *     Absent when it publishes none.
+             */
+            reference_value_usd?: string;
+            /** @description This issuer's members with no reference valuation. */
+            assets_reference_unvalued: number;
         };
         /**
          * @description How many candidate assets one requirement turned away.
@@ -6913,6 +7134,16 @@ export interface components {
          *     Read it top to bottom. Each stage's `dropped` counts account
          *     exactly for the difference to the next stage of the same unit,
          *     and `balanced` states whether that reconciliation holds.
+         *
+         *     A third arm, `valuation`, continues PAST the served set rather
+         *     than narrowing toward it: it accounts for which served rows carry
+         *     a REFERENCE-priced valuation and counts every row that carries
+         *     none under the reason that refused it. Its drop reasons are the
+         *     strings the rows themselves carry in
+         *     `reference_valuation.status`, read back off the rows rather than
+         *     recomputed, so the funnel and the rows can never give two
+         *     accounts of one event. Nothing in that arm admits or refuses an
+         *     asset — membership is decided before either valuation.
          */
         RWAFunnel: {
             /** @description The narrowing in pipeline order, coarse to fine. */
@@ -6933,9 +7164,10 @@ export interface components {
         /** @description One population on the way to the served set. */
         RWAFunnelStage: {
             /**
-             * @description Which membership arm this stage belongs to: `classic` for the
-             *     SEP-1 attestation walk, `contract` for the curated directory
-             *     walk.
+             * @description Which arm this stage belongs to: `classic` for the SEP-1
+             *     attestation walk, `contract` for the curated directory walk,
+             *     `valuation` for the reference-valuation accounting that
+             *     continues past the served set.
              *
              *     The two arms narrow DIFFERENT populations from different
              *     roots and meet only at the served set, so the stage
@@ -6948,9 +7180,15 @@ export interface components {
              *
              *     The arm is absent from `stages` when it was not measured;
              *     `basis` says so rather than serving a narrowing of zeros.
+             *
+             *     `valuation` is NOT a membership arm and admits nothing. It
+             *     takes the served set as its root and narrows it to the rows
+             *     carrying a reference-priced figure, so a reader can tell an
+             *     asset the definition refused from an admitted member whose
+             *     backing nobody independent prices.
              * @enum {string}
              */
-            arm: "classic" | "contract";
+            arm: "classic" | "contract" | "valuation";
             /**
              * @description The population.
              *
@@ -6994,9 +7232,21 @@ export interface components {
              *     arithmetic; folding it in would make the funnel close by
              *     adding a number that measures something else.
              *     `unreached_entities` names a bounded sample of them.
+             *
+             *     VALUATION arm:
+             *
+             *     `assets_served_all_arms` — every row in `assets`, both
+             *     membership arms together. The arms meet exactly here.
+             *     `assets_reference_valued` — the rows carrying
+             *     `reference_valuation.value_usd`. The drops between the two
+             *     name why each of the others does not, on the same
+             *     three-actor vocabulary. The MARKET basis is not walked here:
+             *     its coverage is `summary.assets_valued` and
+             *     `assets_unvalued`, and each of its refusals is already a
+             *     `valuation.status` on the row.
              * @enum {string}
              */
-            stage: "issuers_with_home_domain" | "issuers_with_sep1_attestation" | "issuers_declaring_currencies" | "sep1_currency_entries" | "issuer_bound_entries" | "candidate_assets_evaluated" | "assets_admitted" | "assets_served" | "curated_directory_entries" | "directory_contract_addresses" | "directory_recognised_contracts" | "contract_candidates_evaluated" | "contract_assets_admitted" | "contract_assets_served" | "directory_recognised_issuing_accounts";
+            stage: "issuers_with_home_domain" | "issuers_with_sep1_attestation" | "issuers_declaring_currencies" | "sep1_currency_entries" | "issuer_bound_entries" | "candidate_assets_evaluated" | "assets_admitted" | "assets_served" | "curated_directory_entries" | "directory_contract_addresses" | "directory_recognised_contracts" | "contract_candidates_evaluated" | "contract_assets_admitted" | "contract_assets_served" | "directory_recognised_issuing_accounts" | "assets_served_all_arms" | "assets_reference_valued";
             /**
              * @description What is counted at this stage. The unit CHANGES down the
              *     funnel, and comparing two counts of different units is the
@@ -7073,11 +7323,27 @@ export interface components {
              *     `over_contract_scan_cap` — the rebuild's contract cap bound
              *     the set.
              *
+             *     VALUATION arm: every drop is a value of
+             *     `reference_valuation.status` and is documented there and
+             *     under `RWAPremium.status`. `reference_contract_not_bound`,
+             *     `no_reference_feed`, `reference_unavailable`,
+             *     `reference_expired` and `supply_unavailable` are attributed
+             *     to the `operator` — a source that could be enabled, an
+             *     outage here, a supply pipeline that does not reach the
+             *     asset, or a curated contract binding a reviewer can add.
+             *     `withheld_issuer_flagged`, `reference_not_bound`,
+             *     `reference_not_instrument_scoped`,
+             *     `reference_not_usd_denominated` and
+             *     `reference_not_positive` are the `definition` working as
+             *     intended. None is the `issuer`'s: an issuer cannot make an
+             *     oracle price its instrument, and saying so would send a
+             *     reader to the one party who cannot fix it.
+             *
              *     The remaining values are the requirement refusals, matching
              *     `refused[]`.
              * @enum {string}
              */
-            reason: "sep1_attestation_never_fetched" | "sep1_payload_unreadable" | "sep1_declares_no_currencies" | "entry_declares_no_asset_code" | "entry_declares_no_issuer" | "entry_declares_another_issuer" | "not_a_classic_asset" | "no_issuer_bound_sep1_entry" | "issuer_scam_flagged" | "issuer_not_independently_recognised" | "no_real_world_instrument_basis" | "duplicate_declaration_of_the_same_asset" | "over_issuer_cap" | "admitted_but_never_observed_on_chain" | "directory_entry_names_an_account" | "contract_scam_flagged" | "contract_named_without_issuing_tag" | "no_real_world_instrument_basis_for_contract" | "duplicate_directory_entry_for_contract" | "over_contract_scan_cap" | "issuer_asset_page_truncated";
+            reason: "sep1_attestation_never_fetched" | "sep1_payload_unreadable" | "sep1_declares_no_currencies" | "entry_declares_no_asset_code" | "entry_declares_no_issuer" | "entry_declares_another_issuer" | "not_a_classic_asset" | "no_issuer_bound_sep1_entry" | "issuer_scam_flagged" | "issuer_not_independently_recognised" | "no_real_world_instrument_basis" | "duplicate_declaration_of_the_same_asset" | "over_issuer_cap" | "admitted_but_never_observed_on_chain" | "directory_entry_names_an_account" | "contract_scam_flagged" | "contract_named_without_issuing_tag" | "no_real_world_instrument_basis_for_contract" | "duplicate_directory_entry_for_contract" | "over_contract_scan_cap" | "issuer_asset_page_truncated" | "withheld_issuer_flagged" | "reference_unavailable" | "reference_contract_not_bound" | "reference_not_instrument_scoped" | "reference_not_bound" | "reference_not_usd_denominated" | "no_reference_feed" | "reference_expired" | "reference_not_positive" | "supply_unavailable";
             count: number;
             /**
              * @description Who can move this number. `operator` — a fetch nobody has
@@ -15476,14 +15742,29 @@ export interface operations {
                      *         "summary": {
                      *           "assets": 2,
                      *           "issuers": 1,
-                     *           "market_cap_usd": "1284500.00",
+                     *           "market_cap_usd": "1284447.02",
                      *           "assets_valued": 1,
                      *           "assets_unvalued": 1,
                      *           "lower_bound": true,
                      *           "earliest_first_seen_ledger": 55008233,
                      *           "assets_with_reference": 2,
                      *           "assets_compared": 1,
-                     *           "basis": "Sum of the published market caps of the assets meeting the four-requirement definition. Market cap is circulating supply times the served USD price, both as /v1/assets serves them, under the same substance, dust-liquidity and scam-issuer gates. Assets whose valuation is withheld or unavailable contribute nothing and are counted separately, so the total is a LOWER BOUND on the value of the set. Premium and discount compare the token's market price against an independent oracle's valuation of the instrument the issuer declares it anchors to; the correspondence between one token and one unit of that instrument is the issuer's own declaration, not an independent measurement."
+                     *           "reference_valuation": {
+                     *             "value_usd": "1425562.90",
+                     *             "assets_valued": 2,
+                     *             "assets_unvalued": 0,
+                     *             "lower_bound": false,
+                     *             "sources": [
+                     *               "redstone"
+                     *             ],
+                     *             "basis": "Sum of circulating supply times an independent oracle's published valuation of the real-world instrument each token declares it anchors to. THIS IS NOT A MARKET CAPITALISATION AND NOT AN OBSERVED PRICE: nobody was seen paying it. It is what an oracle says one unit of the backing is worth, multiplied by the tokens in circulation, resting on the issuer's own domain-bound declaration that one token is one unit of that instrument. The substance, dust-liquidity and scam-issuer gates that stand behind market_cap_usd cannot be applied to it, because there is no market here for them to measure. Published beside market_cap_usd and never added to it. Every asset in the set carries a reference valuation."
+                     *           },
+                     *           "both_bases": {
+                     *             "assets": 1,
+                     *             "market_cap_usd": "1284447.02",
+                     *             "reference_value_usd": "1324956.69"
+                     *           },
+                     *           "basis": "Sum of the published market caps of the assets meeting the four-requirement definition. Market cap is circulating supply times the served USD price, both as /v1/assets serves them, under the same substance, dust-liquidity and scam-issuer gates. Assets whose valuation is withheld or unavailable contribute nothing and are counted separately, so the total is a LOWER BOUND on the value of the set. Premium and discount compare the token's market price against an independent oracle's valuation of the instrument the issuer declares it anchors to; the correspondence between one token and one unit of that instrument is the issuer's own declaration, not an independent measurement. Reference-priced valuations are a separate basis and are NOT in this total: summary.reference_valuation carries them under their own name."
                      *         },
                      *         "assets": [
                      *           {
@@ -15503,7 +15784,11 @@ export interface operations {
                      *             "valuation": {
                      *               "status": "published",
                      *               "price_usd": "1.0412",
-                     *               "market_cap_usd": "1284500.00"
+                     *               "market_cap_usd": "1284447.02"
+                     *             },
+                     *             "reference_valuation": {
+                     *               "status": "published",
+                     *               "value_usd": "1324956.69"
                      *             },
                      *             "reference": {
                      *               "price_usd": "1.07403800",
@@ -15517,6 +15802,7 @@ export interface operations {
                      *               "pct": "-3.0574"
                      *             },
                      *             "circulating_supply": "12336218000000",
+                     *             "decimals": 7,
                      *             "volume_24h_usd": "8214.55",
                      *             "first_seen_ledger": 55008233,
                      *             "observation_count": 346312
@@ -15536,6 +15822,10 @@ export interface operations {
                      *             "valuation": {
                      *               "status": "unpriced"
                      *             },
+                     *             "reference_valuation": {
+                     *               "status": "published",
+                     *               "value_usd": "100606.21"
+                     *             },
                      *             "reference": {
                      *               "price_usd": "0.24538100",
                      *               "source": "redstone",
@@ -15546,7 +15836,8 @@ export interface operations {
                      *             "premium": {
                      *               "status": "no_market_price"
                      *             },
-                     *             "circulating_supply": "410000000",
+                     *             "circulating_supply": "4100000000000",
+                     *             "decimals": 7,
                      *             "first_seen_ledger": 56828412,
                      *             "observation_count": 13318
                      *           }
@@ -15555,8 +15846,10 @@ export interface operations {
                      *           {
                      *             "class": "bond",
                      *             "assets": 2,
-                     *             "market_cap_usd": "1284500.00",
-                     *             "assets_unvalued": 1
+                     *             "market_cap_usd": "1284447.02",
+                     *             "assets_unvalued": 1,
+                     *             "reference_value_usd": "1425562.90",
+                     *             "assets_reference_unvalued": 0
                      *           }
                      *         ],
                      *         "by_issuer": [
@@ -15565,8 +15858,10 @@ export interface operations {
                      *             "name": "Etherfuse",
                      *             "home_domain": "etherfuse.com",
                      *             "assets": 2,
-                     *             "market_cap_usd": "1284500.00",
-                     *             "assets_unvalued": 1
+                     *             "market_cap_usd": "1284447.02",
+                     *             "assets_unvalued": 1,
+                     *             "reference_value_usd": "1425562.90",
+                     *             "assets_reference_unvalued": 0
                      *           }
                      *         ],
                      *         "refused": [
@@ -15588,6 +15883,7 @@ export interface operations {
                      *           "basis": "Every issuer account that could carry a SEP-1 attestation, narrowed to the assets served. Units change down the funnel; `actor` names who can move a number.",
                      *           "stages": [
                      *             {
+                     *               "arm": "classic",
                      *               "stage": "issuers_with_home_domain",
                      *               "unit": "issuer_accounts",
                      *               "count": 44376,
@@ -15600,6 +15896,7 @@ export interface operations {
                      *               ]
                      *             },
                      *             {
+                     *               "arm": "classic",
                      *               "stage": "issuers_with_sep1_attestation",
                      *               "unit": "issuer_accounts",
                      *               "count": 14635,
@@ -15617,11 +15914,13 @@ export interface operations {
                      *               ]
                      *             },
                      *             {
+                     *               "arm": "classic",
                      *               "stage": "issuers_declaring_currencies",
                      *               "unit": "issuer_accounts",
                      *               "count": 12485
                      *             },
                      *             {
+                     *               "arm": "classic",
                      *               "stage": "sep1_currency_entries",
                      *               "unit": "sep1_currency_declarations",
                      *               "count": 1182000,
@@ -15644,6 +15943,7 @@ export interface operations {
                      *               ]
                      *             },
                      *             {
+                     *               "arm": "classic",
                      *               "stage": "issuer_bound_entries",
                      *               "unit": "sep1_currency_declarations",
                      *               "count": 23902,
@@ -15656,6 +15956,7 @@ export interface operations {
                      *               ]
                      *             },
                      *             {
+                     *               "arm": "classic",
                      *               "stage": "candidate_assets_evaluated",
                      *               "unit": "assets",
                      *               "count": 4162,
@@ -15678,12 +15979,26 @@ export interface operations {
                      *               ]
                      *             },
                      *             {
+                     *               "arm": "classic",
                      *               "stage": "assets_admitted",
                      *               "unit": "assets",
                      *               "count": 2
                      *             },
                      *             {
+                     *               "arm": "classic",
                      *               "stage": "assets_served",
+                     *               "unit": "assets",
+                     *               "count": 2
+                     *             },
+                     *             {
+                     *               "arm": "valuation",
+                     *               "stage": "assets_served_all_arms",
+                     *               "unit": "assets",
+                     *               "count": 2
+                     *             },
+                     *             {
+                     *               "arm": "valuation",
+                     *               "stage": "assets_reference_valued",
                      *               "unit": "assets",
                      *               "count": 2
                      *             }

@@ -494,7 +494,13 @@ func rwaContractAssetRows(members []rwaContractMember, rows map[string]AssetDeta
 			AnchorClass:         m.class,
 			Valuation:           rwaValuationOf(d),
 			CirculatingSupply:   d.CirculatingSupply,
-			Volume24hUSD:        d.VolumeUSD24h,
+			// The contract's REAL declared scale, overlaid by
+			// fillContractDecimals — not the 7 assetDetailFromAssetRow
+			// starts every row at. It is on the wire because a
+			// contract-issued row is the case where assuming 7 is
+			// actually wrong.
+			Decimals:     d.Decimals,
+			Volume24hUSD: d.VolumeUSD24h,
 		}
 		if len(a.IssuerDirectoryTags) == 0 {
 			a.IssuerDirectoryTags = m.dirTags

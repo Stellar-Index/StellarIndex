@@ -14,7 +14,7 @@ export const metadata: Metadata = {
   // completeness would be the same overclaim /markets had to correct.
   title: 'Real-world assets — tokenized instruments from recognised issuers',
   description:
-    'Tokenized real-world assets on Stellar, identified by (code, issuer): each one carries an issuer-bound SEP-1 declaration and independent recognition of the issuing account. Valuations come from the same gates the asset pages use, and a withheld valuation shows as unavailable rather than as zero.',
+    'Tokenized real-world assets on Stellar, identified by (code, issuer) or by contract address: each one carries an issuer-bound SEP-1 declaration or an independent directory naming that exact contract. Two valuations sit side by side and are never added together — market cap, from prices buyers were observed paying under the same gates the asset pages use, and the value of the backing, from an independent oracle. A withheld valuation shows as unavailable rather than as zero.',
 };
 
 /**

@@ -43,8 +43,13 @@ function asset(over: Partial<Schemas['RWAAsset']> = {}): Schemas['RWAAsset'] {
       quote: 'fiat:USD',
       as_of: '2026-09-09T15:08:40Z',
     },
+    // 12,336,218,000,000 smallest units at 7dp is 1,233,621.8 tokens;
+    // at the 1.074038 reference that is 1,324,956.69 — a different
+    // basis over the same float, never added to the market cap.
+    reference_valuation: { status: 'published', value_usd: '1324956.69' },
     premium: { status: 'published', pct: '-3.0574' },
     circulating_supply: '12336218000000',
+    decimals: 7,
     volume_24h_usd: '8214.55',
     first_seen_ledger: 55008233,
     observation_count: 346312,
@@ -90,6 +95,20 @@ function view(over: Partial<View> = {}): View {
       earliest_first_seen_ledger: 55008233,
       assets_with_reference: 1,
       assets_compared: 1,
+      reference_valuation: {
+        value_usd: '1324956.69',
+        assets_valued: 1,
+        assets_unvalued: 0,
+        lower_bound: false,
+        sources: ['redstone'],
+        basis:
+          'Sum of circulating supply times an independent oracle valuation of the instrument.',
+      },
+      both_bases: {
+        assets: 1,
+        market_cap_usd: '1284500.00',
+        reference_value_usd: '1324956.69',
+      },
       basis:
         'Sum of the published market caps of the assets meeting the four-requirement definition.',
     },
@@ -100,6 +119,8 @@ function view(over: Partial<View> = {}): View {
         assets: 1,
         market_cap_usd: '1284500.00',
         assets_unvalued: 0,
+        reference_value_usd: '1324956.69',
+        assets_reference_unvalued: 0,
       },
     ],
     by_issuer: [
@@ -110,6 +131,8 @@ function view(over: Partial<View> = {}): View {
         assets: 1,
         market_cap_usd: '1284500.00',
         assets_unvalued: 0,
+        reference_value_usd: '1324956.69',
+        assets_reference_unvalued: 0,
       },
     ],
     refused: [],
@@ -155,6 +178,9 @@ describe('RWAView', () => {
         assets: [
           asset({
             valuation: { status: 'withheld_issuer_flagged' },
+            reference_valuation: { status: 'withheld_issuer_flagged' },
+            reference: undefined,
+            premium: { status: 'withheld_issuer_flagged' },
             issuer_directory_tags: ['issuer', 'malicious'],
           }),
         ],
@@ -164,10 +190,30 @@ describe('RWAView', () => {
           assets_valued: 0,
           assets_unvalued: 1,
           lower_bound: true,
+          reference_valuation: {
+            assets_valued: 0,
+            assets_unvalued: 1,
+            lower_bound: true,
+            basis: 'No member currently carries a reference valuation.',
+          },
+          both_bases: { assets: 0 },
         },
-        by_class: [{ class: 'bond', assets: 1, assets_unvalued: 1 }],
+        by_class: [
+          {
+            class: 'bond',
+            assets: 1,
+            assets_unvalued: 1,
+            assets_reference_unvalued: 1,
+          },
+        ],
         by_issuer: [
-          { issuer: ISSUER, name: 'Etherfuse', assets: 1, assets_unvalued: 1 },
+          {
+            issuer: ISSUER,
+            name: 'Etherfuse',
+            assets: 1,
+            assets_unvalued: 1,
+            assets_reference_unvalued: 1,
+          },
         ],
       }),
     );
@@ -187,24 +233,56 @@ describe('RWAView', () => {
   it('says the total is not published rather than showing zero', async () => {
     apiGetData.mockResolvedValue(
       view({
-        assets: [asset({ valuation: { status: 'unpriced' } })],
+        assets: [
+          asset({
+            valuation: { status: 'unpriced' },
+            reference_valuation: { status: 'no_reference_feed' },
+            reference: undefined,
+            premium: { status: 'no_reference_feed' },
+          }),
+        ],
         summary: {
           ...view().summary,
           market_cap_usd: undefined,
           assets_valued: 0,
           assets_unvalued: 1,
           lower_bound: true,
+          assets_with_reference: 0,
+          assets_compared: 0,
+          reference_valuation: {
+            assets_valued: 0,
+            assets_unvalued: 1,
+            lower_bound: true,
+            basis: 'No member currently carries a reference valuation.',
+          },
+          both_bases: { assets: 0 },
         },
-        by_class: [{ class: 'bond', assets: 1, assets_unvalued: 1 }],
-        by_issuer: [{ issuer: ISSUER, assets: 1, assets_unvalued: 1 }],
+        by_class: [
+          {
+            class: 'bond',
+            assets: 1,
+            assets_unvalued: 1,
+            assets_reference_unvalued: 1,
+          },
+        ],
+        by_issuer: [
+          {
+            issuer: ISSUER,
+            assets: 1,
+            assets_unvalued: 1,
+            assets_reference_unvalued: 1,
+          },
+        ],
       }),
     );
     renderView();
 
-    expect(await screen.findByText('Not published')).toBeInTheDocument();
+    // Both valuation tiles say it: neither basis has anything to
+    // publish, and neither may render as a zero.
+    expect(await screen.findAllByText('Not published')).toHaveLength(2);
     expect(screen.queryByText('$0.00')).not.toBeInTheDocument();
     expect(
-      screen.getByText(/No asset in the set publishes a valuation/),
+      screen.getByText(/No asset in the set publishes a market valuation/),
     ).toBeInTheDocument();
   });
 
@@ -235,7 +313,7 @@ describe('RWAView', () => {
     ).toBeGreaterThan(0);
     expect(screen.getByText(/At least this\./)).toBeInTheDocument();
     expect(
-      screen.getByText(/publish no\s+valuation and contribute nothing/),
+      screen.getByText(/publish no market valuation and contribute nothing/),
     ).toBeInTheDocument();
   });
 
@@ -348,6 +426,13 @@ describe('RWAView', () => {
           lower_bound: false,
           assets_with_reference: 0,
           assets_compared: 0,
+          reference_valuation: {
+            assets_valued: 0,
+            assets_unvalued: 0,
+            lower_bound: false,
+            basis: 'No asset currently meets the definition.',
+          },
+          both_bases: { assets: 0 },
           basis: 'No asset currently meets the definition.',
         },
         by_class: [],
@@ -359,7 +444,9 @@ describe('RWAView', () => {
     expect(
       await screen.findByText('No asset currently meets the definition'),
     ).toBeInTheDocument();
-    expect(screen.getByText('Not published')).toBeInTheDocument();
+    // BOTH valuation tiles say it. An empty set has no market cap and
+    // no reference valuation, and neither may render as a zero.
+    expect(screen.getAllByText('Not published')).toHaveLength(2);
     expect(screen.queryByText('$0.00')).not.toBeInTheDocument();
   });
 
@@ -384,7 +471,7 @@ describe('RWAView', () => {
     expect(await screen.findByText('$1.0740')).toBeInTheDocument();
     // Who published it and when — a valuation whose age is invisible
     // invites a comparison it cannot support.
-    expect(screen.getByText(/redstone/)).toBeInTheDocument();
+    expect(screen.getAllByText(/redstone/).length).toBeGreaterThan(0);
     // And the gap itself, signed against the instrument.
     expect(screen.getByText('-3.06%')).toBeInTheDocument();
     // Coverage of the comparison, so the blanks are not read as zeros.
@@ -428,6 +515,7 @@ describe('RWAView', () => {
           asset({
             issuer_directory_tags: ['issuer', 'malicious'],
             valuation: { status: 'withheld_issuer_flagged' },
+            reference_valuation: { status: 'withheld_issuer_flagged' },
             reference: undefined,
             premium: { status: 'withheld_issuer_flagged' },
           }),
@@ -440,7 +528,31 @@ describe('RWAView', () => {
           lower_bound: true,
           assets_with_reference: 0,
           assets_compared: 0,
+          reference_valuation: {
+            assets_valued: 0,
+            assets_unvalued: 1,
+            lower_bound: true,
+            basis: 'No member currently carries a reference valuation.',
+          },
+          both_bases: { assets: 0 },
         },
+        by_class: [
+          {
+            class: 'bond',
+            assets: 1,
+            assets_unvalued: 1,
+            assets_reference_unvalued: 1,
+          },
+        ],
+        by_issuer: [
+          {
+            issuer: ISSUER,
+            name: 'Etherfuse',
+            assets: 1,
+            assets_unvalued: 1,
+            assets_reference_unvalued: 1,
+          },
+        ],
       }),
     );
     renderView();
@@ -450,8 +562,11 @@ describe('RWAView', () => {
     // platform's, and not a third party's valuation of the real
     // instrument, which would be the larger claim of the two.
     expect(screen.queryByText('$1.0740')).not.toBeInTheDocument();
-    expect(screen.queryByText(/redstone/)).not.toBeInTheDocument();
+    expect(screen.queryAllByText(/redstone/)).toHaveLength(0);
     expect(screen.queryByText('-3.06%')).not.toBeInTheDocument();
+    // Including the supply-multiplied form, which is the LARGER claim
+    // of the two: a real instrument's value times this account's float.
+    expect(screen.queryAllByText('$1,324,956.69')).toHaveLength(0);
   });
 
   it('never renders a real gap as 0.00%', async () => {
@@ -594,6 +709,139 @@ describe('RWAView', () => {
     // Labelled, not withheld: it is still the last value published.
     expect(screen.getByText('-3.06%')).toBeInTheDocument();
   });
+  it('shows the value of the backing beside the market cap, labelled as a claim', async () => {
+    apiGetData.mockResolvedValue(view());
+    renderView();
+
+    // The figure itself, on the row and in both breakdowns.
+    expect(
+      (await screen.findAllByText('$1,324,956.69')).length,
+    ).toBeGreaterThanOrEqual(3);
+    // Never as a market cap. The column heading, the caption under the
+    // cell and the tile all name the basis rather than borrowing the
+    // market's vocabulary.
+    expect(
+      screen.getByText('Value of backing (reference)'),
+    ).toBeInTheDocument();
+    expect(screen.getAllByText('at reference price').length).toBeGreaterThan(0);
+    expect(
+      screen.getByTitle(/Not a market capitalisation: nobody was observed/),
+    ).toBeInTheDocument();
+    // And the page states the difference in kind before either number.
+    expect(
+      screen.getByText('Two different kinds of number.'),
+    ).toBeInTheDocument();
+    expect(
+      screen.getAllByText((_, el) =>
+        (el?.textContent ?? '').includes('They are never added together'),
+      ).length,
+    ).toBeGreaterThan(0);
+  });
+
+  it('values an asset nobody trades without inventing a market cap for it', async () => {
+    // The case the second basis exists for. A tokenized treasury that
+    // has never traded has no market price, so its market-cap cell must
+    // stay empty — while an oracle prices its instrument daily and the
+    // reference cell is full.
+    apiGetData.mockResolvedValue(
+      view({
+        assets: [
+          asset({
+            code: 'USDY',
+            valuation: { status: 'unpriced' },
+            premium: { status: 'no_market_price' },
+          }),
+        ],
+        summary: {
+          ...view().summary,
+          market_cap_usd: undefined,
+          assets_valued: 0,
+          assets_unvalued: 1,
+          lower_bound: true,
+          assets_compared: 0,
+          both_bases: { assets: 0 },
+        },
+        by_class: [
+          {
+            class: 'bond',
+            assets: 1,
+            assets_unvalued: 1,
+            reference_value_usd: '1324956.69',
+            assets_reference_unvalued: 0,
+          },
+        ],
+        by_issuer: [
+          {
+            issuer: ISSUER,
+            assets: 1,
+            assets_unvalued: 1,
+            reference_value_usd: '1324956.69',
+            assets_reference_unvalued: 0,
+          },
+        ],
+      }),
+    );
+    renderView();
+
+    await screen.findByText('USDY');
+    // The reference figure is published...
+    expect(screen.getAllByText('$1,324,956.69').length).toBeGreaterThanOrEqual(
+      3,
+    );
+    // ...and the market cap is still absent, stated as unavailable
+    // rather than filled in from the figure beside it.
+    expect(screen.queryByText('$1,284,500.00')).not.toBeInTheDocument();
+    expect(screen.getAllByText('Not published').length).toBe(1);
+    expect(screen.getAllByText('Unavailable').length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('states why a reference valuation is missing rather than showing a dash', async () => {
+    apiGetData.mockResolvedValue(
+      view({
+        assets: [
+          asset({
+            reference_valuation: { status: 'supply_unavailable' },
+            circulating_supply: undefined,
+          }),
+        ],
+        summary: {
+          ...view().summary,
+          reference_valuation: {
+            assets_valued: 0,
+            assets_unvalued: 1,
+            lower_bound: true,
+            basis: 'No member currently carries a reference valuation.',
+          },
+          both_bases: { assets: 0 },
+        },
+        by_class: [
+          {
+            class: 'bond',
+            assets: 1,
+            market_cap_usd: '1284500.00',
+            assets_unvalued: 0,
+            assets_reference_unvalued: 1,
+          },
+        ],
+        by_issuer: [
+          {
+            issuer: ISSUER,
+            assets: 1,
+            market_cap_usd: '1284500.00',
+            assets_unvalued: 0,
+            assets_reference_unvalued: 1,
+          },
+        ],
+      }),
+    );
+    renderView();
+
+    await screen.findByText('USTRY');
+    expect(screen.queryAllByText('$1,324,956.69')).toHaveLength(0);
+    expect(
+      screen.getAllByTitle(/no circulating-supply reading does/).length,
+    ).toBeGreaterThan(0);
+  });
 });
 
 /**
@@ -698,5 +946,124 @@ describe('RWAView — contract arm', () => {
     ).toBeInTheDocument();
     expect(screen.getByText('Franklin Templeton')).toBeInTheDocument();
     expect(screen.getByText('franklintempleton.com')).toBeInTheDocument();
+  });
+
+  it('says a contract token is not reference-valued, and why', async () => {
+    apiGetData.mockResolvedValue(
+      view({
+        assets: [
+          asset({
+            asset_id: CONTRACT,
+            code: '',
+            issuer: '',
+            contract_id: CONTRACT,
+            symbol: 'USTRY',
+            basis: 'contract_oracle_rwa_feed',
+            reference_valuation: { status: 'reference_contract_not_bound' },
+            reference: undefined,
+            premium: { status: 'reference_contract_not_bound' },
+          }),
+        ],
+        summary: {
+          ...view().summary,
+          assets_with_reference: 0,
+          assets_compared: 0,
+          reference_valuation: {
+            assets_valued: 0,
+            assets_unvalued: 1,
+            lower_bound: true,
+            basis: 'No member currently carries a reference valuation.',
+          },
+          both_bases: { assets: 0 },
+        },
+        by_class: [
+          {
+            class: 'bond',
+            assets: 1,
+            market_cap_usd: '1284500.00',
+            assets_unvalued: 0,
+            assets_reference_unvalued: 1,
+          },
+        ],
+        by_issuer: [
+          {
+            issuer: ISSUER,
+            assets: 1,
+            market_cap_usd: '1284500.00',
+            assets_unvalued: 0,
+            assets_reference_unvalued: 1,
+          },
+        ],
+      }),
+    );
+    renderView();
+
+    // A stated refusal, not a blank. A reader must be able to tell "we
+    // will not do this" from "we forgot".
+    expect(
+      (await screen.findAllByTitle(/nothing binds a contract address/)).length,
+    ).toBeGreaterThan(0);
+    expect(screen.queryAllByText('$1,324,956.69')).toHaveLength(0);
+    // The market cap it DOES have is untouched by that refusal.
+    expect(screen.getAllByText('$1,284,500.00').length).toBeGreaterThan(0);
+  });
+
+  it('accounts in the funnel for every asset the oracles do not price', async () => {
+    apiGetData.mockResolvedValue(
+      view({
+        funnel: {
+          balanced: true,
+          basis: 'Every issuer account that could carry a SEP-1 attestation.',
+          stages: [
+            {
+              arm: 'classic',
+              stage: 'assets_served',
+              unit: 'assets',
+              count: 3,
+            },
+            {
+              arm: 'valuation',
+              stage: 'assets_served_all_arms',
+              unit: 'assets',
+              count: 3,
+              dropped: [
+                {
+                  reason: 'reference_not_instrument_scoped',
+                  count: 1,
+                  actor: 'definition',
+                },
+                { reason: 'supply_unavailable', count: 1, actor: 'operator' },
+              ],
+            },
+            {
+              arm: 'valuation',
+              stage: 'assets_reference_valued',
+              unit: 'assets',
+              count: 1,
+            },
+          ],
+        },
+      }),
+    );
+    renderView();
+
+    // The arm is labelled as an accounting rather than a narrowing, so
+    // an unpriced member is not read as an asset the rule refused.
+    expect(
+      await screen.findByText('Whose backing is independently priced'),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText('Whose backing an independent oracle prices'),
+    ).toBeInTheDocument();
+    // And each drop says who can move it — a gap here reads differently
+    // from the rule working.
+    expect(
+      screen.getByText('No circulating-supply reading'),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText('The feed prices an ounce, not a token'),
+    ).toBeInTheDocument();
+    expect(screen.getAllByText(/ours to fix/).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/the rule working/).length).toBeGreaterThan(0);
   });
 });

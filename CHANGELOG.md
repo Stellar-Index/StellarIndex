@@ -15,6 +15,128 @@ against.
 
 ## [Unreleased]
 
+### Added
+
+- **api,web:** `GET /v1/rwa/assets` publishes a second, separately-labelled
+  valuation — `reference_valuation`, the circulating supply valued at an
+  independent oracle's price for the underlying instrument — beside the
+  observed-market-price `market_cap_usd` it already served.
+
+  A tokenized real-world asset is bought and held, not traded. Measured
+  on the production classic set, four of the six members carry a bound,
+  current, dollar-denominated oracle valuation of their instrument and
+  **two** have ever produced a market price the substance gate will
+  publish:
+
+  | Asset | `market_cap_usd` | reference price held |
+  | --- | --- | --- |
+  | CETES | 3,306,721.22 | 0.069485 |
+  | TESOURO | 570,728.13 | 0.245350 |
+  | USTRY | — | 1.074182 |
+  | USDY | — | 1.145745 |
+  | XAU | — | — |
+  | AUMTL | — | — |
+
+  So `assets_with_reference: 4` sat next to `assets_valued: 2`, and USDY
+  and USTRY contributed nothing to the published total while a perfectly
+  good valuation of their backing was already on the row beside them.
+
+  **The two figures are different KINDS of number and the wire keeps
+  them apart.** `market_cap_usd` is adversarially verified: somebody was
+  observed paying it, and the thin-market substance gate, the
+  dust-liquidity guard and the scam-issuer suppression each declined to
+  withhold it. The new figure is a claim — what an oracle says one unit
+  of the backing is worth, times the float, resting on the issuer's own
+  domain-bound declaration that one token is one unit of that
+  instrument. Nobody was seen paying it, and none of those gates can
+  corroborate it because there is no market in it for them to measure.
+  It is never summed into `market_cap_usd` and never substitutes for a
+  withheld one; a test serves the same set twice, once with the oracle
+  stream wired and once with no oracle at all, and compares every
+  market-basis field AND every membership funnel stage across the two
+  runs.
+
+  Because the two totals are sums over DIFFERENT rows, their difference
+  is not a premium and must not be read as one. `summary.both_bases`
+  gives both figures restricted to the members carrying both — the only
+  subset the comparison means anything on — and `premium.pct` remains
+  the same gap per asset.
+
+  **The funnel accounts for every row that carries no figure.** A third
+  arm, `valuation`, continues past the served set and counts each
+  uncovered row under the reason that refused it, with the same
+  operator / issuer / definition vocabulary the membership arms use — so
+  "no oracle publishes this instrument" reads differently from "the rule
+  refused it". Its drop reasons are the strings the rows themselves
+  carry in `reference_valuation.status`, read back off the rows rather
+  than recomputed, so the funnel and the rows cannot give two accounts
+  of one event. Its arithmetic is not tautological: the stage counts
+  rows carrying a figure and the drops count rows whose status is not
+  published, so a row claiming `published` over an absent figure reports
+  the funnel unbalanced. It admits and refuses nothing — a fourth
+  balance check now also pins the two membership arms' served counts to
+  the row list that arm walks.
+
+  **One refusal, two fields.** Every rule that refuses a reference
+  refuses both figures that depend on it, so `premium.status` and
+  `reference_valuation.status` carry the same string on those rows,
+  assigned together from one constant at one line. They diverge only
+  where the reasons genuinely do: a row with a reference and no market
+  price has no premium and a full reference valuation, and a row with a
+  reference and no supply reading has the premium and no valuation.
+
+  **Contract-issued members are refused by name, not silently.** A
+  contract member arrives with everything the arithmetic needs — a lake
+  supply and its own declared decimals — and still gets no reference
+  valuation, because nothing binds a contract ADDRESS to an oracle feed.
+  The available join is refused deliberately: a contract admitted on
+  `contract_oracle_rwa_feed` got in because its on-chain SEP-41 symbol
+  is an ADR-0028 code, and a symbol is metadata the contract itself
+  authors, so pricing a token by it is the code-keyed join this surface
+  exists to refuse with a weaker key than the classic one. Recognition
+  of the address establishes who deployed it, not that one of its tokens
+  is one unit of the instrument an oracle prices under that name. The
+  row therefore carries `reference_contract_not_bound` — its own status,
+  rather than the `reference_not_bound` that names a `(code, issuer)`
+  pair a contract does not have.
+
+  Same arithmetic discipline the market basis uses, on the new basis:
+  exact `big.Rat` throughout with a single 2-dp rounding at the end
+  (ADR-0003), the scale read from the asset's own `decimals` rather than
+  a constant, the total ABSENT rather than `"0.00"` when nothing is
+  reference-valued, contributing and non-contributing rows counted
+  separately, and `lower_bound` true whenever a member carries no
+  reference valuation. XAU and AUMTL stay unvalued on the new basis and
+  no fallback is invented for them: an oracle does publish a feed called
+  `XAU`, but it prices a troy ounce of spot metal, and a token supply
+  multiplied by an ounce price is not a valuation of anything.
+
+  Every published figure carries its provenance — the row's existing
+  `reference` block names the publisher, the canonical feed id, the
+  denominator and the vintage, and `summary.reference_valuation.sources`
+  names the oracles behind the total. The curated `(code, issuer)` →
+  feed bindings that gate it are unchanged and are still served in full
+  as `definition.bound_instruments`. A scam-flagged issuer gets no
+  reference valuation, for the reason the flag exists: a real
+  instrument's value multiplied by an impersonator's own float is the
+  larger of the two suppressed claims.
+
+  Two supporting changes fall out of it. `circulating_supply` is now
+  filled on CLASSIC rows that carry no served price — the market-cap
+  fill reads a supply only when it is about to multiply it by a price,
+  which left the rows the reference basis exists for without the float
+  it needs; it is a chain fact rather than a price claim, and this
+  surface already documented serving one beside a withheld market cap.
+  (The contract arm needed no equivalent: it reads the lake supply for
+  every row before it looks at a price.) And `decimals` is on the row,
+  so both valuations can be re-derived by hand:
+  `circulating_supply / 10^decimals` is the whole-token float that each
+  price multiplies. It is 7 for a classic asset and whatever a SEP-41
+  contract declares for a contract-issued one, which is precisely why
+  assuming a constant is not safe on this surface.
+
+  `/v1/assets` is untouched.
+
 ## [v0.72.0] — 2026-09-10
 
 ### Added

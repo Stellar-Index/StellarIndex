@@ -2,6 +2,7 @@ package v1
 
 import (
 	"fmt"
+	"sort"
 
 	"github.com/Stellar-Index/StellarIndex/internal/rwa"
 )
@@ -78,6 +79,19 @@ const rwaFunnelContractsUnmeasured = "The `contract` arm was NOT MEASURED: no cu
 const rwaFunnelUnavailableBasis = "Not measured: the attestation scan or the curated account directory did not " +
 	"answer, so no population was walked. A funnel of zeros would read as a network with nothing in it."
 
+// rwaFunnelValuationBasis describes the third arm. It continues PAST
+// the served set rather than narrowing toward it, and says so: a reader
+// who took it for another membership narrowing would read a row with no
+// oracle feed as an asset the definition refused, when it is an
+// admitted member whose backing nobody independent prices.
+const rwaFunnelValuationBasis = "The `valuation` arm continues PAST the served set: it accounts for which served rows carry a " +
+	"REFERENCE-priced valuation — circulating supply times an independent oracle's value for the instrument — and " +
+	"counts every row that carries none under the reason that refused it. Its drop reasons are the same strings the " +
+	"rows carry in `reference_valuation.status`, read back off the rows rather than recomputed. It does NOT walk the " +
+	"market-cap basis: that coverage is `summary.assets_valued` and `assets_unvalued`, and each of its refusals is " +
+	"already a `valuation.status` on the row. Membership is decided before either valuation, so nothing in this arm " +
+	"admits or refuses an asset."
+
 // rwaFunnelUnavailable is the funnel for a response that publishes no
 // set because membership could not be established.
 func rwaFunnelUnavailable() RWAFunnel {
@@ -90,7 +104,9 @@ func rwaFunnelUnavailable() RWAFunnel {
 // The refusal tally is read back out of the membership rather than
 // restated, so the funnel can never disagree with `refused[]` about how
 // many candidates a requirement turned away.
-func rwaFunnelOf(m rwaMembership, join rwaCatalogueJoin, served, contractsServed int) RWAFunnel {
+func rwaFunnelOf(
+	m rwaMembership, join rwaCatalogueJoin, served, contractsServed int, assets []RWAAsset,
+) RWAFunnel {
 	stages := rwaClassicStages(m, join, served)
 	classicOK := m.census.Check() == ""
 	// The contract arm is appended only when its population was actually
@@ -104,25 +120,158 @@ func rwaFunnelOf(m rwaMembership, join rwaCatalogueJoin, served, contractsServed
 		stages = append(stages, rwaContractStages(m, contractsServed)...)
 		contractOK = m.contractCensus.dir.Check() == ""
 	}
+	stages = append(stages, rwaValuationStages(assets)...)
+	// The two membership arms and the row list are three accountings of
+	// the same served set, and only two of them are related by the
+	// stage arithmetic — the arm boundary is unbridgeable, so nothing
+	// would otherwise notice a row lost between the arms and the list
+	// the valuation arm walks.
+	servedOK := len(assets) == served+contractsServed
 	return RWAFunnel{
 		Stages: stages,
-		// Three checks now: each arm's own census (the storage layer's
-		// statement about its own numbers) and the stage arithmetic
-		// derived from them. The census checks keep holding if the stage
-		// list is ever restructured — which is exactly when a derived
-		// check quietly stops covering something.
-		Balanced: classicOK && contractOK && rwaFunnelImbalance(stages) == "",
+		// Four checks now: each arm's own census (the storage layer's
+		// statement about its own numbers), the served-set agreement
+		// above, and the stage arithmetic derived from them. The census
+		// checks keep holding if the stage list is ever restructured —
+		// which is exactly when a derived check quietly stops covering
+		// something.
+		Balanced: classicOK && contractOK && servedOK && rwaFunnelImbalance(stages) == "",
 		Basis:    rwaFunnelBasisFor(m.contractCensus.available),
 	}
+}
+
+// rwaValuationStages is the reference-valuation walk: the served set,
+// down to the rows carrying a reference-priced figure.
+//
+// The drops are read back OFF the served rows, exactly as the candidate
+// drops are read back out of the refusal tally rather than restated.
+// That is what makes this one story instead of two: a reader who filters
+// the rows by `reference_valuation.status` gets the counts printed here,
+// and the funnel cannot develop its own opinion about why a figure is
+// missing.
+//
+// Its arithmetic is NOT tautological, which is the point of deriving the
+// two counts differently. The stage below counts rows carrying a figure
+// (`value_usd` present); the drops count rows whose status is not
+// published. They reconcile only if published and carrying-money are the
+// same set of rows — so a row that claimed `published` with no money, or
+// carried money under a refusal, reports the funnel unbalanced.
+func rwaValuationStages(assets []RWAAsset) []RWAFunnelStage {
+	valued := 0
+	byReason := map[string]int{}
+	for _, a := range assets {
+		if a.ReferenceValuation.ValueUSD != nil {
+			valued++
+		}
+		if a.ReferenceValuation.Status == RWAReferenceValuationPublished {
+			continue
+		}
+		byReason[a.ReferenceValuation.Status]++
+	}
+	stages := []RWAFunnelStage{
+		{
+			Stage: rwaStageValuationCandidates, Unit: rwaUnitAssets, Count: len(assets),
+			Dropped: rwaReferenceDrops(byReason),
+		},
+		{Stage: rwaStageReferenceValued, Unit: rwaUnitAssets, Count: valued},
+	}
+	for i := range stages {
+		stages[i].Arm = rwaArmValuation
+	}
+	return stages
+}
+
+// rwaReferenceRefusalOrder is the order the rules refuse a reference in
+// [rwaApplyReference], which is the order the drops are reported in. A
+// map iteration would reorder the wire between two identical responses.
+var rwaReferenceRefusalOrder = []string{
+	RWAPremiumIssuerFlagged,
+	RWAPremiumReferenceUnavailable,
+	RWAPremiumContractNotBound,
+	RWAPremiumNotInstrumentScoped,
+	RWAPremiumNotBound,
+	RWAPremiumReferenceNotUSD,
+	RWAPremiumNoReference,
+	RWAPremiumReferenceExpired,
+	RWAPremiumReferenceNotPositive,
+	RWAReferenceValuationNoSupply,
+}
+
+// rwaReferenceDropActors names who can move each reference-valuation
+// drop, on the same three-actor vocabulary the membership arms use.
+//
+// `operator` where somebody here can act: no oracle publishes the
+// instrument (a source could be enabled), the read did not answer or
+// has gone stale (an outage here), no supply reading covers the asset
+// (a pipeline gap), or the curated contract-to-feed set is empty (a
+// reviewer with a primary source can add an entry).
+//
+// `definition` where the rule is working and nobody should act: a
+// flagged issuer, a pair no curated binding names — usually a token
+// wearing an instrument's ticker — a feed that prices an ounce rather
+// than a token, a value denominated in a reserve asset rather than
+// dollars, and a non-positive value nothing may be multiplied by.
+//
+// No drop here is the ISSUER's: an issuer cannot make an oracle price
+// its instrument, and attributing it to them would tell a reader to
+// chase the one party who cannot fix it.
+var rwaReferenceDropActors = map[string]string{
+	RWAPremiumIssuerFlagged:        rwaActorDefinition,
+	RWAPremiumNotBound:             rwaActorDefinition,
+	RWAPremiumNotInstrumentScoped:  rwaActorDefinition,
+	RWAPremiumReferenceNotUSD:      rwaActorDefinition,
+	RWAPremiumReferenceNotPositive: rwaActorDefinition,
+	RWAPremiumContractNotBound:     rwaActorOperator,
+	RWAPremiumNoReference:          rwaActorOperator,
+	RWAPremiumReferenceUnavailable: rwaActorOperator,
+	RWAPremiumReferenceExpired:     rwaActorOperator,
+	RWAReferenceValuationNoSupply:  rwaActorOperator,
+}
+
+// rwaReferenceDrops renders the tallied refusals in rule order.
+//
+// A status with no entry in [rwaReferenceDropActors] is a defect here
+// rather than in the data, so it is attributed to the OPERATOR — the
+// only party who can fix a missing mapping — and reported rather than
+// dropped. Dropping it would unbalance the funnel, which is the loudest
+// possible signal but not an informative one; a test pins every status
+// a row can carry to an actor so this path stays unreachable.
+func rwaReferenceDrops(byReason map[string]int) []RWAFunnelDrop {
+	out := make([]RWAFunnelDrop, 0, len(byReason))
+	seen := map[string]struct{}{}
+	for _, reason := range rwaReferenceRefusalOrder {
+		seen[reason] = struct{}{}
+		if n := byReason[reason]; n > 0 {
+			out = append(out, RWAFunnelDrop{
+				Reason: reason, Count: n, Actor: rwaReferenceDropActors[reason],
+			})
+		}
+	}
+	unknown := make([]string, 0, 2)
+	for reason := range byReason {
+		if _, ok := seen[reason]; !ok {
+			unknown = append(unknown, reason)
+		}
+	}
+	sort.Strings(unknown)
+	for _, reason := range unknown {
+		out = append(out, RWAFunnelDrop{
+			Reason: reason, Count: byReason[reason], Actor: rwaActorOperator,
+		})
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 // rwaFunnelBasisFor states what was measured, including whether the
 // contract arm was walked at all.
 func rwaFunnelBasisFor(contractsMeasured bool) string {
 	if !contractsMeasured {
-		return rwaFunnelBasis + " " + rwaFunnelContractsUnmeasured
+		return rwaFunnelBasis + " " + rwaFunnelContractsUnmeasured + " " + rwaFunnelValuationBasis
 	}
-	return rwaFunnelBasis + " " + rwaFunnelContractsBasis
+	return rwaFunnelBasis + " " + rwaFunnelContractsBasis + " " + rwaFunnelValuationBasis
 }
 
 // rwaClassicStages is the SEP-1 attestation walk: every issuer account

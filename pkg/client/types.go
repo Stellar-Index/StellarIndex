@@ -1451,8 +1451,48 @@ type RWASummary struct {
 	AssetsUnvalued          int     `json:"assets_unvalued"`
 	LowerBound              bool    `json:"lower_bound"`
 	EarliestFirstSeenLedger uint32  `json:"earliest_first_seen_ledger,omitempty"`
-	Basis                   string  `json:"basis"`
-	Truncated               bool    `json:"truncated,omitempty"`
+	// AssetsWithReference counts members carrying an independent oracle
+	// valuation of their instrument; AssetsCompared counts the subset
+	// where a market price could also be measured against it.
+	AssetsWithReference int `json:"assets_with_reference"`
+	AssetsCompared      int `json:"assets_compared"`
+	// ReferenceValuation is the SECOND total: the set valued at
+	// reference prices rather than at observed market prices. Never a
+	// component of MarketCapUSD and never added to it.
+	ReferenceValuation RWAReferenceSummary `json:"reference_valuation"`
+	// BothBases totals only the members carrying BOTH figures. The two
+	// totals above are sums over different rows, so subtracting one from
+	// the other measures nothing; these two are taken over the same rows
+	// and their difference is the aggregate gap.
+	BothBases RWABothBases `json:"both_bases"`
+	Basis     string       `json:"basis"`
+	Truncated bool         `json:"truncated,omitempty"`
+}
+
+// RWAReferenceSummary aggregates the reference-priced basis: supply
+// times what an oracle says the underlying instrument is worth.
+//
+// Not a market capitalisation. Nobody was observed paying it, and the
+// substance, dust-liquidity and scam-issuer gates behind MarketCapUSD
+// cannot corroborate it — there is no market in it for them to measure.
+// ValueUSD is nil when no member is reference-valued, never "0.00".
+type RWAReferenceSummary struct {
+	ValueUSD       *string `json:"value_usd,omitempty"`
+	AssetsValued   int     `json:"assets_valued"`
+	AssetsUnvalued int     `json:"assets_unvalued"`
+	LowerBound     bool    `json:"lower_bound"`
+	// Sources names the distinct oracles behind the total. Each
+	// contributing row carries its full provenance in RWAAsset.Reference.
+	Sources []string `json:"sources,omitempty"`
+	Basis   string   `json:"basis"`
+}
+
+// RWABothBases totals the members carrying a market cap AND a reference
+// valuation — the only subset on which the two bases compare.
+type RWABothBases struct {
+	Assets            int     `json:"assets"`
+	MarketCapUSD      *string `json:"market_cap_usd,omitempty"`
+	ReferenceValueUSD *string `json:"reference_value_usd,omitempty"`
 }
 
 // RWAValuation carries a row valuation or the reason there is none.
@@ -1464,6 +1504,54 @@ type RWAValuation struct {
 	// ("declared_peg" or "transitive"). Absent means market-derived.
 	PriceBasis   string  `json:"price_basis,omitempty"`
 	MarketCapUSD *string `json:"market_cap_usd,omitempty"`
+}
+
+// RWAReferenceValuation is the row's circulating supply valued at the
+// REFERENCE price — an oracle's published value for the real-world
+// instrument — rather than at anything the market was observed paying.
+//
+// The deliberate opposite of RWAValuation.MarketCapUSD, and never
+// folded into it. A market cap is an observation that survived three
+// gates; this is a claim about the value of the backing. ValueUSD is
+// populated if and only if Status is "published", and a published
+// figure always has an RWAAsset.Reference beside it naming the feed,
+// the denominator and the vintage it came from.
+//
+// Where a rule refuses the REFERENCE itself, Status carries the same
+// string as RWAPremium.Status on that row.
+type RWAReferenceValuation struct {
+	Status   string  `json:"status"`
+	ValueUSD *string `json:"value_usd,omitempty"`
+}
+
+// RWAReference is an independent oracle's valuation of the real-world
+// instrument an admitted token declares it anchors to — NOT this
+// platform's price for the token, and not derived from any Stellar
+// market. It is the provenance behind RWAReferenceValuation.
+type RWAReference struct {
+	// PriceUSD is the oracle's published value, verbatim at the feed's
+	// own decimal scale.
+	PriceUSD string `json:"price_usd"`
+	Source   string `json:"source"`
+	// Feed is the canonical `rwa:<CODE>` id, ready for /oracle/latest.
+	Feed string `json:"feed"`
+	// Quote is the denominator, always "fiat:USD" on a served row: a
+	// NAV feed denominated in a reserve asset is a ratio, and the
+	// difference is invisible in the number alone.
+	Quote string    `json:"quote"`
+	AsOf  time.Time `json:"as_of"`
+	// Stale marks a reference older than 72h — labelled, not withheld.
+	Stale bool `json:"stale,omitempty"`
+}
+
+// RWAPremium is the token's market price measured against the oracle's
+// valuation of the instrument, or the reason there is no such figure.
+// Pct is nil whenever Status is not "published" — never zero-filled,
+// because par is a finding and an absent comparison is not that
+// finding.
+type RWAPremium struct {
+	Status string  `json:"status"`
+	Pct    *string `json:"pct,omitempty"`
 }
 
 // RWAAsset is one member of the set, with the evidence that admitted
@@ -1481,39 +1569,54 @@ type RWAAsset struct {
 	// Symbol is the token symbol the CONTRACT declares on chain.
 	// Contract-authored display text, never identity — two contracts may
 	// declare the same symbol and they are different assets.
-	Symbol              string       `json:"symbol,omitempty"`
-	Slug                string       `json:"slug,omitempty"`
-	Name                string       `json:"name,omitempty"`
-	HomeDomain          string       `json:"home_domain,omitempty"`
-	IssuerDirectoryName string       `json:"issuer_directory_name,omitempty"`
-	IssuerDirectoryTags []string     `json:"issuer_directory_tags,omitempty"`
-	Basis               string       `json:"basis"`
-	AnchorClass         string       `json:"anchor_class,omitempty"`
-	AnchorAsset         string       `json:"anchor_asset,omitempty"`
-	Valuation           RWAValuation `json:"valuation"`
-	CirculatingSupply   *string      `json:"circulating_supply,omitempty"`
-	Volume24hUSD        *string      `json:"volume_24h_usd,omitempty"`
-	FirstSeenLedger     uint32       `json:"first_seen_ledger,omitempty"`
-	ObservationCount    int64        `json:"observation_count"`
+	Symbol              string   `json:"symbol,omitempty"`
+	Slug                string   `json:"slug,omitempty"`
+	Name                string   `json:"name,omitempty"`
+	HomeDomain          string   `json:"home_domain,omitempty"`
+	IssuerDirectoryName string   `json:"issuer_directory_name,omitempty"`
+	IssuerDirectoryTags []string `json:"issuer_directory_tags,omitempty"`
+	Basis               string   `json:"basis"`
+	AnchorClass         string   `json:"anchor_class,omitempty"`
+	AnchorAsset         string   `json:"anchor_asset,omitempty"`
+	// Valuation is the observed-market-price money, or the reason there
+	// is none; ReferenceValuation is the same float at the reference
+	// price. The two are separate bases and are never summed.
+	Valuation          RWAValuation          `json:"valuation"`
+	ReferenceValuation RWAReferenceValuation `json:"reference_valuation"`
+	Reference          *RWAReference         `json:"reference,omitempty"`
+	Premium            RWAPremium            `json:"premium"`
+	CirculatingSupply  *string               `json:"circulating_supply,omitempty"`
+	// Decimals is the on-chain smallest-unit scale — 7 for classic, and
+	// whatever a SEP-41 contract declares for a contract-issued row — so
+	// both valuations can be re-derived: CirculatingSupply /
+	// 10^Decimals is the whole-token float each price multiplies.
+	Decimals         int     `json:"decimals"`
+	Volume24hUSD     *string `json:"volume_24h_usd,omitempty"`
+	FirstSeenLedger  uint32  `json:"first_seen_ledger,omitempty"`
+	ObservationCount int64   `json:"observation_count"`
 }
 
 // RWAGroupTotal is one row of the per-declared-class breakdown.
 type RWAGroupTotal struct {
-	Class          string  `json:"class"`
-	Assets         int     `json:"assets"`
-	MarketCapUSD   *string `json:"market_cap_usd,omitempty"`
-	AssetsUnvalued int     `json:"assets_unvalued"`
+	Class                   string  `json:"class"`
+	Assets                  int     `json:"assets"`
+	MarketCapUSD            *string `json:"market_cap_usd,omitempty"`
+	AssetsUnvalued          int     `json:"assets_unvalued"`
+	ReferenceValueUSD       *string `json:"reference_value_usd,omitempty"`
+	AssetsReferenceUnvalued int     `json:"assets_reference_unvalued"`
 }
 
 // RWAIssuerTotal is one row of the per-issuer breakdown, keyed on the
 // G-address rather than on a company name.
 type RWAIssuerTotal struct {
-	Issuer         string  `json:"issuer"`
-	Name           string  `json:"name,omitempty"`
-	HomeDomain     string  `json:"home_domain,omitempty"`
-	Assets         int     `json:"assets"`
-	MarketCapUSD   *string `json:"market_cap_usd,omitempty"`
-	AssetsUnvalued int     `json:"assets_unvalued"`
+	Issuer                  string  `json:"issuer"`
+	Name                    string  `json:"name,omitempty"`
+	HomeDomain              string  `json:"home_domain,omitempty"`
+	Assets                  int     `json:"assets"`
+	MarketCapUSD            *string `json:"market_cap_usd,omitempty"`
+	AssetsUnvalued          int     `json:"assets_unvalued"`
+	ReferenceValueUSD       *string `json:"reference_value_usd,omitempty"`
+	AssetsReferenceUnvalued int     `json:"assets_reference_unvalued"`
 }
 
 // RWARefusal counts the candidates one membership requirement turned

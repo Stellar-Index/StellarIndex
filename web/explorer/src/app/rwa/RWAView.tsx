@@ -83,6 +83,24 @@ const PREMIUM_REASON: Record<string, string> = {
 };
 
 /**
+ * Why there is no reference-priced valuation.
+ *
+ * The shared refusals are taken VERBATIM from PREMIUM_REASON rather
+ * than reworded, because the server assigns one string to both fields
+ * and two paraphrases of it on one page would read as two findings.
+ * Only the two reasons that belong to the valuation alone are added.
+ */
+const REFERENCE_VALUE_REASON: Record<string, string> = {
+  ...PREMIUM_REASON,
+  reference_contract_not_bound:
+    'This token is issued by a contract, and nothing binds a contract address to an oracle feed. The only available join is the symbol the contract declares about itself, and pricing a token by a self-declared ticker is exactly what this page refuses to do with a code.',
+  supply_unavailable:
+    'An independent valuation of the instrument exists, but no circulating-supply reading does, so there is no float to value.',
+  reference_not_positive:
+    'The oracle published a non-positive value. Multiplying a supply by it would produce a figure the oracle never claimed.',
+};
+
+/**
  * The membership requirements, phrased for a reader rather than a
  * consumer. The server serves its own machine-readable list; this is
  * the same rule in prose, kept beside the numbers instead of behind a
@@ -127,6 +145,8 @@ const FUNNEL_STAGE_PROSE: Record<string, string> = {
   contract_assets_served: 'Served above',
   directory_recognised_issuing_accounts:
     'Recognised issuers we hold no token for',
+  assets_served_all_arms: 'Assets served above, both kinds',
+  assets_reference_valued: 'Whose backing an independent oracle prices',
 };
 
 const FUNNEL_DROP_PROSE: Record<string, string> = {
@@ -149,6 +169,19 @@ const FUNNEL_DROP_PROSE: Record<string, string> = {
     'Declares no real-world instrument',
   duplicate_directory_entry_for_contract: 'Same contract named twice',
   over_contract_scan_cap: 'Beyond the per-rebuild contract cap',
+  // The valuation arm's drops are the statuses the rows carry, so the
+  // labels here are the short form of the same reasons the table cells
+  // spell out in full.
+  withheld_issuer_flagged: 'Issuer flagged, so no valuation of any kind',
+  reference_unavailable: 'The oracle read did not answer',
+  reference_contract_not_bound: 'No oracle feed bound to this contract',
+  reference_not_instrument_scoped: 'The feed prices an ounce, not a token',
+  reference_not_bound: 'No oracle feed bound to this (code, issuer)',
+  reference_not_usd_denominated: 'The feed is quoted in a reserve asset',
+  no_reference_feed: 'Bound, but no oracle is publishing it',
+  reference_expired: 'The feed has been silent for over a week',
+  reference_not_positive: 'The oracle published a non-positive value',
+  supply_unavailable: 'No circulating-supply reading',
   ...REFUSAL_PROSE,
 };
 
@@ -166,6 +199,10 @@ const ARM_PROSE: Record<string, { title: string; lede: string }> = {
   contract: {
     title: 'Tokens issued by a contract',
     lede: 'A separate population. A contract token has no issuer account for a SEP-1 file to describe, so the independent directory naming the exact contract takes that requirement’s place — and it is a harder thing to forge, not an easier one.',
+  },
+  valuation: {
+    title: 'Whose backing is independently priced',
+    lede: 'Not a membership narrowing — every asset here is already in the set. It continues past the served rows to say which of them an independent oracle prices the backing of, and why each of the others is not priced. Nothing in it admits or refuses an asset.',
   },
 };
 
@@ -233,10 +270,15 @@ export function RWAView() {
     refused,
   } = data;
   const total = usd(summary.market_cap_usd);
+  const referenceTotal = usd(summary.reference_valuation?.value_usd);
 
   return (
     <div className="space-y-6">
-      <HeadlineStats summary={summary} total={total} />
+      <HeadlineStats
+        summary={summary}
+        total={total}
+        referenceTotal={referenceTotal}
+      />
 
       <Panel
         title="The set"
@@ -277,6 +319,8 @@ export function RWAView() {
                   assets: c.assets,
                   unvalued: c.assets_unvalued,
                   usd: usd(c.market_cap_usd),
+                  referenceUsd: usd(c.reference_value_usd),
+                  referenceUnvalued: c.assets_reference_unvalued,
                 }))}
                 firstHeading="Class"
               />
@@ -293,6 +337,8 @@ export function RWAView() {
                   assets: i.assets,
                   unvalued: i.assets_unvalued,
                   usd: usd(i.market_cap_usd),
+                  referenceUsd: usd(i.reference_value_usd),
+                  referenceUnvalued: i.assets_reference_unvalued,
                 }))}
                 firstHeading="Issuer"
               />
@@ -445,13 +491,17 @@ const CLASS_LABEL: Record<string, string> = {
 function HeadlineStats({
   summary,
   total,
+  referenceTotal,
 }: {
   summary: Schemas['RWASummary'];
   total: string | null;
+  referenceTotal: string | null;
 }) {
+  const reference = summary.reference_valuation;
+  const both = summary.both_bases;
   return (
     <div className="space-y-3">
-      <StatGrid cols={4}>
+      <StatGrid cols={5}>
         <StatCell>
           <Stat
             label="Market cap"
@@ -472,8 +522,38 @@ function HeadlineStats({
             }
             sub={
               total == null
-                ? 'No asset in the set publishes a valuation'
-                : `${summary.assets_valued} of ${summary.assets} valued`
+                ? 'No asset in the set publishes a market valuation'
+                : `${summary.assets_valued} of ${summary.assets} valued at traded prices`
+            }
+          />
+        </StatCell>
+        {/* Deliberately NOT labelled as a market cap, and deliberately
+            beside one: the reader who needs the difference is the one
+            who would otherwise read the market figure as the size of
+            the sector. The label says whose claim it is; the caption
+            says nobody was seen paying it. */}
+        <StatCell>
+          <Stat
+            label="Value of backing (reference)"
+            size="lg"
+            value={
+              referenceTotal == null ? (
+                <span className="text-ink-muted">Not published</span>
+              ) : (
+                <>
+                  {reference?.lower_bound && (
+                    <span className="text-ink-muted" aria-hidden>
+                      ≥{' '}
+                    </span>
+                  )}
+                  {referenceTotal}
+                </>
+              )
+            }
+            sub={
+              referenceTotal == null
+                ? 'No member carries an independent valuation of its instrument'
+                : `${reference?.assets_valued ?? 0} of ${summary.assets} priced by an oracle, not by a market`
             }
           />
         </StatCell>
@@ -506,11 +586,28 @@ function HeadlineStats({
         </StatCell>
       </StatGrid>
       <p className="text-ink-muted text-xs leading-relaxed">
+        <strong>Two different kinds of number.</strong> The market cap is what
+        buyers were observed paying, under the same price, liquidity and trust
+        gates the asset pages apply. The value of the backing is what an
+        independent oracle says the underlying instrument is worth, multiplied
+        by the tokens in circulation — nobody was seen paying it, and no gate
+        here can check it. A tokenized treasury is bought and held, so most of
+        this set has no market price at all and the two figures cover different
+        assets. They are never added together.{' '}
+        {both != null && both.assets > 0 && (
+          <>
+            <strong>Where both exist.</strong> {both.assets} of {summary.assets}{' '}
+            carry both figures: {usd(both.market_cap_usd)} at traded prices
+            against {usd(both.reference_value_usd)} at the reference. That gap,
+            per asset, is the premium or discount column below.{' '}
+          </>
+        )}
         {summary.lower_bound && (
           <>
             <strong>At least this.</strong> {summary.assets_unvalued} asset
             {summary.assets_unvalued === 1 ? '' : 's'} in the set publish no
-            valuation and contribute nothing to the total.{' '}
+            market valuation and contribute nothing to the market-cap
+            total.{' '}
           </>
         )}
         {summary.assets_with_reference > 0 && (
@@ -521,6 +618,13 @@ function HeadlineStats({
             {summary.assets_compared} of those also have a Stellar market price
             to measure it against. The rest state which requirement stopped the
             comparison rather than showing a zero.{' '}
+          </>
+        )}
+        {reference?.sources != null && reference.sources.length > 0 && (
+          <>
+            <strong>Where the reference comes from.</strong>{' '}
+            {reference.sources.join(', ')} — each row names its own feed and the
+            moment that feed published.{' '}
           </>
         )}
         {summary.basis}
@@ -538,6 +642,7 @@ function AssetTable({ assets }: { assets: RWAAsset[] }) {
           <Th>Issuer</Th>
           <Th>Anchor</Th>
           <Th align="right">Market cap</Th>
+          <Th align="right">Value of backing</Th>
           <Th align="right">Price</Th>
           <Th align="right">Instrument value</Th>
           <Th align="right">vs instrument</Th>
@@ -604,6 +709,9 @@ function AssetRow({ asset }: { asset: RWAAsset }) {
         </div>
       </Td>
       <Td align="right">{cap ?? <Withheld reason={reason} />}</Td>
+      <Td align="right">
+        <ReferenceValueCell asset={asset} />
+      </Td>
       <Td align="right">{price ?? <Withheld reason={reason} />}</Td>
       <Td align="right">
         <ReferenceCell asset={asset} />
@@ -647,6 +755,45 @@ function Withheld({ reason }: { reason?: string }) {
     >
       Unavailable
     </span>
+  );
+}
+
+/**
+ * The circulating supply valued at the reference price — what the
+ * backing behind the tokens in issue is CLAIMED to be worth.
+ *
+ * It sits beside the market cap on purpose. A tokenized treasury is
+ * bought and held, so for most of this set the market-cap column is
+ * empty and this one is not, and a reader who saw only the market
+ * column would take the sector for a fraction of its size. What must
+ * not follow from putting them side by side is the reader treating them
+ * as the same kind of figure, so this cell says whose claim it is
+ * rather than only what it says, and the reason is on the cell even
+ * when there IS a number.
+ */
+function ReferenceValueCell({ asset }: { asset: RWAAsset }) {
+  const rv = asset.reference_valuation;
+  const value = usd(rv?.value_usd);
+  if (value == null) {
+    return (
+      <Withheld
+        reason={
+          REFERENCE_VALUE_REASON[rv?.status ?? ''] ??
+          'No independent valuation of this instrument is available.'
+        }
+      />
+    );
+  }
+  return (
+    <div>
+      <div
+        className="tnum"
+        title={`Circulating supply times ${asset.reference?.source ?? 'an oracle'}’s value for the instrument. Not a market capitalisation: nobody was observed paying this, and the liquidity and price gates behind the market-cap column cannot check it.`}
+      >
+        {value}
+      </div>
+      <div className="text-ink-faint text-[11px]">at reference price</div>
+    </div>
   );
 }
 
@@ -747,6 +894,8 @@ function GroupTable({
     assets: number;
     unvalued: number;
     usd: string | null;
+    referenceUsd: string | null;
+    referenceUnvalued: number;
   }[];
   firstHeading: string;
 }) {
@@ -757,6 +906,7 @@ function GroupTable({
           <Th>{firstHeading}</Th>
           <Th align="right">Assets</Th>
           <Th align="right">Market cap</Th>
+          <Th align="right">Value of backing</Th>
         </TR>
       </THead>
       <TBody>
@@ -766,17 +916,10 @@ function GroupTable({
               <div>{r.label}</div>
               {r.sub && <div className="text-ink-muted text-xs">{r.sub}</div>}
             </Td>
-            <Td align="right">
-              {r.assets.toLocaleString('en-US')}
-              {r.unvalued > 0 && (
-                <div className="text-ink-muted text-[11px]">
-                  {r.unvalued} unvalued
-                </div>
-              )}
-            </Td>
+            <Td align="right">{r.assets.toLocaleString('en-US')}</Td>
             <Td align="right">
               {r.usd == null ? (
-                <Withheld reason="No asset in this group publishes a valuation." />
+                <Withheld reason="No asset in this group publishes a market valuation." />
               ) : (
                 <>
                   {r.unvalued > 0 && (
@@ -786,6 +929,34 @@ function GroupTable({
                   )}
                   {r.usd}
                 </>
+              )}
+              {r.unvalued > 0 && (
+                <div className="text-ink-muted text-[11px]">
+                  {r.unvalued} unvalued
+                </div>
+              )}
+            </Td>
+            {/* The same group on the reference basis. Split out rather
+                than merged because the two bases admit different assets:
+                a group can be empty on one and full on the other, and a
+                single column would hide which. */}
+            <Td align="right">
+              {r.referenceUsd == null ? (
+                <Withheld reason="No asset in this group carries an independent valuation of its instrument." />
+              ) : (
+                <>
+                  {r.referenceUnvalued > 0 && (
+                    <span className="text-ink-muted" aria-hidden>
+                      ≥{' '}
+                    </span>
+                  )}
+                  {r.referenceUsd}
+                </>
+              )}
+              {r.referenceUnvalued > 0 && (
+                <div className="text-ink-muted text-[11px]">
+                  {r.referenceUnvalued} unvalued
+                </div>
               )}
             </Td>
           </TR>
@@ -881,11 +1052,36 @@ function DefinitionPanel({
           </dl>
         </details>
       )}
+      <div className="text-ink-muted mt-3 text-xs leading-relaxed">
+        <p>
+          <strong className="text-ink-body">
+            Two valuations, kept apart on purpose.
+          </strong>{' '}
+          <em>Market cap</em> is circulating supply times a price somebody was
+          observed paying, and it reaches this page only after the same
+          thin-market, dust-liquidity and scam-issuer gates the asset pages
+          apply have each declined to withhold it. <em>Value of backing</em> is
+          circulating supply times what an independent oracle says one unit of
+          the underlying instrument is worth. Nobody was observed paying that,
+          and none of those gates can check it — there is no market in it for
+          them to measure.
+        </p>
+        <p className="mt-2">
+          Both are published because neither alone is honest here. A tokenized
+          treasury is bought and held rather than traded, so most of this set
+          has never produced a market price and the market-cap column is silent
+          about assets that plainly exist; equally, a figure the issuer and its
+          oracle assert is not evidence that anyone would pay it. They are never
+          added together, and an asset can appear in one column, both, or
+          neither. Where a token carries no reference figure, the coverage panel
+          below counts it under the reason.
+        </p>
+      </div>
       <p className="text-ink-muted mt-3 text-[11px] leading-relaxed">
-        Live data from <span className="font-mono">{ENDPOINT}</span>. Valuations
-        come from the same price, supply and trust gates the asset pages use, so
-        nothing here publishes a figure those pages withhold. The full
-        definition, with the evidence behind each requirement, is in the{' '}
+        Live data from <span className="font-mono">{ENDPOINT}</span>. Market
+        valuations come from the same price, supply and trust gates the asset
+        pages use, so nothing here publishes a figure those pages withhold. The
+        full definition, with the evidence behind each requirement, is in the{' '}
         <Link href="/methodology" className="hover:text-brand-600 underline">
           methodology
         </Link>

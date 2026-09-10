@@ -254,6 +254,23 @@ const (
 const (
 	rwaArmClassic  = "classic"
 	rwaArmContract = "contract"
+	// rwaArmValuation continues past the served set rather than
+	// narrowing a population toward it: it accounts for which served
+	// rows carry a REFERENCE-priced valuation and, for every row that
+	// does not, the reason that refused it. It is the same accounting
+	// the membership arms make, applied to the one figure whose
+	// coverage is otherwise visible only by reading every row.
+	rwaArmValuation = "valuation"
+)
+
+// Valuation-arm funnel stages. The market basis is not walked here: its
+// own coverage is `summary.assets_valued` and `assets_unvalued`, and
+// each of its refusals is already a `valuation.status` on the row.
+const (
+	// rwaStageValuationCandidates is the combined served set — both
+	// membership arms, which meet exactly here.
+	rwaStageValuationCandidates = "assets_served_all_arms"
+	rwaStageReferenceValued     = "assets_reference_valued"
 )
 
 // Contract-arm funnel stages, drops and units. Same rule as above: a
@@ -409,12 +426,79 @@ type RWASummary struct {
 	// premiums would take the gaps for zeros.
 	AssetsWithReference int `json:"assets_with_reference"`
 	AssetsCompared      int `json:"assets_compared"`
+	// ReferenceValuation is the SECOND, separately-labelled total: the
+	// set valued at reference prices instead of at observed market
+	// prices. A different basis over a different subset of the same
+	// rows — never a component of MarketCapUSD and never added to it.
+	ReferenceValuation RWAReferenceSummary `json:"reference_valuation"`
+	// BothBases totals only the members carrying BOTH figures, so the
+	// gap between the two bases can be read at set level without
+	// subtracting two totals taken over different rows.
+	BothBases RWABothBases `json:"both_bases"`
 	// Basis is a one-line statement of what was measured and how it was
 	// valued, in the same posture the DEX TVL headline takes.
 	Basis string `json:"basis"`
 	// Truncated reports that a cap bound the rebuild, so the set is
 	// known to be incomplete.
 	Truncated bool `json:"truncated,omitempty"`
+}
+
+// RWAReferenceSummary aggregates the reference-priced basis.
+//
+// Every field has a market-cap counterpart in [RWASummary] and behaves
+// the same way, because the discipline that makes the market-cap total
+// readable is not specific to market prices: the total is ABSENT rather
+// than "0.00" when nothing is reference-valued, the contributing and
+// non-contributing rows are counted separately, and LowerBound says
+// whether the total is less than the value of the set.
+//
+// What is NOT shared is the meaning. Nothing summed here was observed
+// being paid.
+type RWAReferenceSummary struct {
+	// ValueUSD is the exact sum of the published per-asset
+	// `reference_valuation.value_usd` strings — add up what you can see
+	// and you land on this number. ABSENT, never "0.00", when no member
+	// is reference-valued.
+	ValueUSD *string `json:"value_usd,omitempty"`
+	// AssetsValued and AssetsUnvalued split the set by whether it
+	// contributed. Counted independently of the market-cap split: the
+	// two bases admit different rows, which is the whole reason both
+	// totals exist.
+	AssetsValued   int `json:"assets_valued"`
+	AssetsUnvalued int `json:"assets_unvalued"`
+	// LowerBound is true whenever any member carries no reference
+	// valuation, i.e. whenever this total is less than the
+	// reference-priced value of the set.
+	LowerBound bool `json:"lower_bound"`
+	// Sources names the distinct oracles whose published values are in
+	// the total, sorted. A dollar figure that cannot be traced back to a
+	// publisher is worse than an absent one on this surface, and the
+	// per-row `reference` blocks carry the full provenance — feed,
+	// quote and vintage — that this list summarises.
+	Sources []string `json:"sources,omitempty"`
+	// Basis states in prose what was measured and, more importantly,
+	// what it is not.
+	Basis string `json:"basis"`
+}
+
+// RWABothBases totals the members that carry a market cap AND a
+// reference valuation.
+//
+// It exists to stop one specific misreading. `market_cap_usd` and
+// `reference_valuation.value_usd` are sums over DIFFERENT rows — an
+// asset that never trades has the second and not the first — so their
+// difference is not a premium, a discount, or anything else. These two
+// totals are taken over the same rows, so their difference is the
+// aggregate gap between what the market pays for that overlap and what
+// the reference says it is worth. Per asset, the same gap in
+// percentage terms is `premium.pct`.
+type RWABothBases struct {
+	// Assets is how many members carry both figures.
+	Assets int `json:"assets"`
+	// MarketCapUSD and ReferenceValueUSD are the two totals over those
+	// rows and only those rows. Both absent when Assets is zero.
+	MarketCapUSD      *string `json:"market_cap_usd,omitempty"`
+	ReferenceValueUSD *string `json:"reference_value_usd,omitempty"`
 }
 
 // RWAValuationStatus values. Every row carries exactly one, and a row
@@ -495,8 +579,14 @@ type RWAAsset struct {
 	// AnchorAsset is the off-chain instrument the issuer declared this
 	// token anchors to, verbatim.
 	AnchorAsset string `json:"anchor_asset,omitempty"`
-	// Valuation is the money, or the reason there is none.
+	// Valuation is the OBSERVED-MARKET-PRICE money, or the reason there
+	// is none. Unchanged by anything on the reference basis below.
 	Valuation RWAValuation `json:"valuation"`
+	// ReferenceValuation is the same float valued at the reference
+	// price instead — a claim about the backing, not an observation of
+	// a payment. Always present, always with a status, and never summed
+	// into Valuation.
+	ReferenceValuation RWAReferenceValuation `json:"reference_valuation"`
 	// Reference is an independent oracle's valuation of the real-world
 	// instrument this token declares it anchors to — not this platform's
 	// price for the token, and not derived from any Stellar market.
@@ -510,6 +600,13 @@ type RWAAsset struct {
 	// CirculatingSupply is a raw chain fact and is served even when the
 	// valuation is withheld, in the smallest integer unit.
 	CirculatingSupply *string `json:"circulating_supply,omitempty"`
+	// Decimals is the on-chain smallest-unit scale: 7 for every classic
+	// asset, and whatever a SEP-41 contract declares for a
+	// contract-issued one. Served so both valuations on this row can be
+	// re-derived by hand — circulating_supply / 10^decimals is the
+	// whole-token float that each price multiplies — rather than
+	// leaving a reader to assume a scale that is only sometimes 7.
+	Decimals int `json:"decimals"`
 	// Volume24hUSD is the trailing-24h USD trade volume as served on
 	// /v1/assets.
 	Volume24hUSD *string `json:"volume_24h_usd,omitempty"`
@@ -527,6 +624,13 @@ type RWAGroupTotal struct {
 	// for the same reason the summary total is.
 	MarketCapUSD   *string `json:"market_cap_usd,omitempty"`
 	AssetsUnvalued int     `json:"assets_unvalued"`
+	// ReferenceValueUSD is the same group on the reference basis, and
+	// AssetsReferenceUnvalued is that basis's own unvalued count. Both
+	// bases are broken down because the two admit different rows, and a
+	// breakdown carrying only one of them would leave a reader unable
+	// to see which class the difference between the totals came from.
+	ReferenceValueUSD       *string `json:"reference_value_usd,omitempty"`
+	AssetsReferenceUnvalued int     `json:"assets_reference_unvalued"`
 }
 
 // RWAIssuerTotal is one row of the per-issuer breakdown.
@@ -537,6 +641,10 @@ type RWAIssuerTotal struct {
 	Assets         int     `json:"assets"`
 	MarketCapUSD   *string `json:"market_cap_usd,omitempty"`
 	AssetsUnvalued int     `json:"assets_unvalued"`
+	// The reference basis for this issuer, on the same terms as
+	// [RWAGroupTotal].
+	ReferenceValueUSD       *string `json:"reference_value_usd,omitempty"`
+	AssetsReferenceUnvalued int     `json:"assets_reference_unvalued"`
 }
 
 // RWARefusal counts the candidates one requirement turned away.
@@ -909,7 +1017,7 @@ func (s *Server) handleRWAAssets(w http.ResponseWriter, r *http.Request) {
 	view.Summary = rwaSummarise(view.Assets, m.truncated)
 	view.ByClass = rwaByClass(view.Assets)
 	view.ByIssuer = rwaByIssuer(view.Assets)
-	view.Funnel = rwaFunnelOf(m, join, len(classicAssets), len(contractAssets))
+	view.Funnel = rwaFunnelOf(m, join, len(classicAssets), len(contractAssets), view.Assets)
 	writeEnvelope(w, Envelope{Data: view, Flags: Flags{}})
 }
 
@@ -1027,6 +1135,18 @@ func (s *Server) rwaListingRows(
 		s.stampListingCollisions(details)
 		s.applySubstanceGateToListing(ctx, details)
 		s.fillMarketCapsFromSupply(ctx, details, assetRowSourceCounts(keep))
+		// ADDITIVE, and additive only to a raw chain fact. The step
+		// above reads a supply only when it is about to multiply it by
+		// a price, so an asset with no served price keeps no supply on
+		// the listing — which is correct there and wrong here, where
+		// the reference basis values a float that has never traded.
+		// This fills the gap from the SAME two supply readers and
+		// touches nothing else: no price, no market cap, no gate.
+		//
+		// The contract arm needs no equivalent: fillContractMarketCaps
+		// reads the lake supply for every contract row before it looks
+		// at a price, so those rows already carry the fact.
+		s.rwaFillMissingSupply(ctx, details)
 		s.fillDeclaredPegPricesInListing(ctx, details)
 		s.fillIssuerDirectoryTags(ctx, details)
 		for _, d := range details {
@@ -1034,6 +1154,52 @@ func (s *Server) rwaListingRows(
 		}
 	}
 	return out, join, nil
+}
+
+// rwaFillMissingSupply attaches circulating supply to the RWA rows the
+// market-cap fill left without one.
+//
+// Only rows with no reading at all are touched, so a supply the
+// pipeline DECIDED on — the dust-suppressed and ticker-collision
+// branches both attach one deliberately — is never overwritten. The
+// only rows this reaches are the ones the market-cap fill returned from
+// early, before it looked a supply up, because the row carried no
+// price to multiply it by.
+//
+// Filling it changes no valuation and no gate. A circulating supply is
+// a chain fact rather than a price claim, which is why this surface
+// already serves one beside a WITHHELD market cap; the reference basis
+// is the first thing here that needs the fact on a row that has no
+// price at all. Scoped to this surface: /v1/assets is untouched.
+func (s *Server) rwaFillMissingSupply(ctx context.Context, rows []AssetDetail) {
+	missing := false
+	for i := range rows {
+		if rows[i].CirculatingSupply == nil {
+			missing = true
+			break
+		}
+	}
+	if !missing {
+		return
+	}
+	precise := s.latestPreciseSupply(ctx)
+	broad := s.cachedClassicSupply(ctx)
+	for i := range rows {
+		if rows[i].CirculatingSupply != nil {
+			continue
+		}
+		// Precise first, exactly as the market-cap fill prefers it: the
+		// three-domain pipeline includes claimable and LP-locked
+		// holdings, and the trustline-sum fallback slightly undercounts.
+		circ := precise[rows[i].AssetID]
+		if circ == "" {
+			circ = broad[rows[i].AssetID]
+		}
+		if circ == "" {
+			continue
+		}
+		rows[i].CirculatingSupply = &circ
+	}
 }
 
 // rwaKey is the membership join key: the code case-folded (the SEP-1
@@ -1072,7 +1238,12 @@ func (s *Server) rwaAssetRows(m rwaMembership, rows map[string]AssetDetail) ([]R
 			AnchorAsset:         strings.TrimSpace(mem.anchorAsset),
 			Valuation:           rwaValuationOf(d),
 			CirculatingSupply:   d.CirculatingSupply,
-			Volume24hUSD:        d.VolumeUSD24h,
+			// The asset's OWN scale, carried from the listing row. The
+			// reference valuation divides by it, and a constant in its
+			// place would be the hardcoded-decimals defect the
+			// market-cap path already had to fix, in a new coordinate.
+			Decimals:     d.Decimals,
+			Volume24hUSD: d.VolumeUSD24h,
 		}
 		if len(a.IssuerDirectoryTags) == 0 {
 			a.IssuerDirectoryTags = mem.dirTags
@@ -1169,6 +1340,130 @@ func rwaSumMarketCaps(assets []RWAAsset) (*string, int) {
 	return &s, valued
 }
 
+// rwaSumReferenceValues is [rwaSumMarketCaps] on the reference basis:
+// the exact sum of the published per-asset reference valuations, and
+// how many rows contributed. Same big.Rat arithmetic over the same
+// already-rounded 2-dp strings, so this level is likewise the exact sum
+// of the level below. nil when nothing was reference-valued — a zero
+// there would read as "the backing is worth nothing", which is the one
+// reading certain to be wrong.
+//
+// A separate function rather than a parameterised one because the two
+// bases must stay independently readable: a shared accessor invites a
+// later caller to pass the wrong selector and quietly sum a market cap
+// into the reference total.
+func rwaSumReferenceValues(assets []RWAAsset) (*string, int) {
+	sum := new(big.Rat)
+	valued := 0
+	for _, a := range assets {
+		r := ratFromOptionalString(a.ReferenceValuation.ValueUSD)
+		if r == nil {
+			continue
+		}
+		sum.Add(sum, r)
+		valued++
+	}
+	if valued == 0 {
+		return nil, 0
+	}
+	s := sum.FloatString(2)
+	return &s, valued
+}
+
+// rwaBothBases totals the rows carrying BOTH a market cap and a
+// reference valuation, on each basis separately.
+//
+// The restriction to the overlap is the entire point. Summing every
+// market cap and every reference valuation and subtracting compares two
+// different populations of assets, and the difference then reads as a
+// premium or discount that nobody measured.
+func rwaBothBases(assets []RWAAsset) RWABothBases {
+	market := new(big.Rat)
+	reference := new(big.Rat)
+	n := 0
+	for _, a := range assets {
+		mc := ratFromOptionalString(a.Valuation.MarketCapUSD)
+		rv := ratFromOptionalString(a.ReferenceValuation.ValueUSD)
+		if mc == nil || rv == nil {
+			continue
+		}
+		market.Add(market, mc)
+		reference.Add(reference, rv)
+		n++
+	}
+	if n == 0 {
+		return RWABothBases{}
+	}
+	m := market.FloatString(2)
+	r := reference.FloatString(2)
+	return RWABothBases{Assets: n, MarketCapUSD: &m, ReferenceValueUSD: &r}
+}
+
+// rwaReferenceSources lists the distinct oracles behind the published
+// reference valuations, sorted. Only the rows that CONTRIBUTED are
+// read: naming a publisher whose figure was refused would attribute to
+// it a number it is not in.
+func rwaReferenceSources(assets []RWAAsset) []string {
+	seen := map[string]struct{}{}
+	out := make([]string, 0, 2)
+	for _, a := range assets {
+		if a.ReferenceValuation.ValueUSD == nil || a.Reference == nil || a.Reference.Source == "" {
+			continue
+		}
+		if _, dup := seen[a.Reference.Source]; dup {
+			continue
+		}
+		seen[a.Reference.Source] = struct{}{}
+		out = append(out, a.Reference.Source)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// rwaSummariseReference builds the reference-basis aggregate.
+func rwaSummariseReference(assets []RWAAsset) RWAReferenceSummary {
+	total, valued := rwaSumReferenceValues(assets)
+	return RWAReferenceSummary{
+		ValueUSD:       total,
+		AssetsValued:   valued,
+		AssetsUnvalued: len(assets) - valued,
+		LowerBound:     len(assets)-valued > 0,
+		Sources:        rwaReferenceSources(assets),
+		Basis:          rwaReferenceBasis(len(assets), valued),
+	}
+}
+
+// rwaReferenceBasis states what the reference total measured and, at
+// least as importantly, what it is not.
+//
+// The prose carries weight the field name cannot. `market_cap_usd` is a
+// figure somebody was observed paying, filtered by three gates that can
+// each withhold it; this one is an assertion about the value of the
+// backing, and no gate on this platform can corroborate an assertion.
+// A reader who takes the two for the same kind of number will read a
+// claim as a measurement, so the difference is stated rather than
+// implied.
+func rwaReferenceBasis(total, valued int) string {
+	var b strings.Builder
+	b.WriteString("Sum of circulating supply times an independent oracle's published valuation of the real-world instrument each token declares it anchors to. ")
+	b.WriteString("THIS IS NOT A MARKET CAPITALISATION AND NOT AN OBSERVED PRICE: nobody was seen paying it. ")
+	b.WriteString("It is what an oracle says one unit of the backing is worth, multiplied by the tokens in circulation, resting on the issuer's own domain-bound declaration that one token is one unit of that instrument. ")
+	b.WriteString("The substance, dust-liquidity and scam-issuer gates that stand behind market_cap_usd cannot be applied to it, because there is no market here for them to measure — which is also why an asset that has never traded carries this figure at full size. ")
+	b.WriteString("Published beside market_cap_usd and never added to it: the two are different bases over different rows, and market_cap_usd is exactly what it was before this figure existed. ")
+	b.WriteString("Every contributing row names the feed, the denominator and the vintage behind its number in `reference`, and the funnel's `valuation` arm counts every row that carries no figure under the reason that refused it. ")
+	switch {
+	case total == 0:
+		b.WriteString("No asset currently meets the definition.")
+	case valued == 0:
+		b.WriteString("No member currently carries a reference valuation, so no total is published rather than a zero.")
+	case valued == total:
+		b.WriteString("Every asset in the set carries a reference valuation.")
+	default:
+		b.WriteString("Assets with no bound and current oracle feed, or no circulating-supply reading, contribute nothing and are counted separately, so the total is a LOWER BOUND on the reference-priced value of the set.")
+	}
+	return b.String()
+}
+
 func rwaSummarise(assets []RWAAsset, truncated bool) RWASummary {
 	total, valued := rwaSumMarketCaps(assets)
 	issuers := map[string]struct{}{}
@@ -1190,6 +1485,8 @@ func rwaSummarise(assets []RWAAsset, truncated bool) RWASummary {
 		EarliestFirstSeenLedger: earliest,
 		AssetsWithReference:     referenced,
 		AssetsCompared:          compared,
+		ReferenceValuation:      rwaSummariseReference(assets),
+		BothBases:               rwaBothBases(assets),
 		Basis:                   rwaBasis(len(assets), valued, compared, truncated),
 		Truncated:               truncated,
 	}
@@ -1219,6 +1516,11 @@ func rwaBasis(total, valued, compared int, truncated bool) string {
 		// certainty nobody established.
 		b.WriteString(" Premium and discount compare the token's market price against an independent oracle's valuation of the instrument the issuer declares it anchors to; the correspondence between one token and one unit of that instrument is the issuer's own declaration, not an independent measurement.")
 	}
+	// Stated on the market-cap basis as well as on the reference one,
+	// because the misreading to prevent is a reader arriving at THIS
+	// total and assuming it now includes the reference-priced figure.
+	// It does not, and no row moved into or out of it.
+	b.WriteString(" Reference-priced valuations are a separate basis and are NOT in this total: summary.reference_valuation carries them under their own name.")
 	if truncated {
 		b.WriteString(" The issuer cap bound this rebuild, so the set is known to be incomplete.")
 	}
@@ -1242,11 +1544,14 @@ func rwaByClass(assets []RWAAsset) []RWAGroupTotal {
 	out := make([]RWAGroupTotal, 0, len(byClass))
 	for c, group := range byClass {
 		total, valued := rwaSumMarketCaps(group)
+		refTotal, refValued := rwaSumReferenceValues(group)
 		out = append(out, RWAGroupTotal{
-			Class:          c,
-			Assets:         len(group),
-			MarketCapUSD:   total,
-			AssetsUnvalued: len(group) - valued,
+			Class:                   c,
+			Assets:                  len(group),
+			MarketCapUSD:            total,
+			AssetsUnvalued:          len(group) - valued,
+			ReferenceValueUSD:       refTotal,
+			AssetsReferenceUnvalued: len(group) - refValued,
 		})
 	}
 	sortRWAGroups(out)
@@ -1281,13 +1586,16 @@ func rwaByIssuer(assets []RWAAsset) []RWAIssuerTotal {
 	for _, issuer := range order {
 		group := byIssuer[issuer]
 		total, valued := rwaSumMarketCaps(group)
+		refTotal, refValued := rwaSumReferenceValues(group)
 		out = append(out, RWAIssuerTotal{
-			Issuer:         issuer,
-			Name:           group[0].IssuerDirectoryName,
-			HomeDomain:     group[0].HomeDomain,
-			Assets:         len(group),
-			MarketCapUSD:   total,
-			AssetsUnvalued: len(group) - valued,
+			Issuer:                  issuer,
+			Name:                    group[0].IssuerDirectoryName,
+			HomeDomain:              group[0].HomeDomain,
+			Assets:                  len(group),
+			MarketCapUSD:            total,
+			AssetsUnvalued:          len(group) - valued,
+			ReferenceValueUSD:       refTotal,
+			AssetsReferenceUnvalued: len(group) - refValued,
 		})
 	}
 	sort.SliceStable(out, func(i, j int) bool {
