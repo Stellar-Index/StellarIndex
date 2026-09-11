@@ -193,7 +193,10 @@ func (s *Server) classicLakeSupply(ctx context.Context, rows []AssetDetail) map[
 		return nil
 	}
 
-	out, missing, flight := s.readClassicLakeSupply(rd, wanted)
+	// contextcheck: readClassicLakeSupply deliberately does NOT take the
+	// caller's ctx — it may launch the detached refresh, which must outlive
+	// this request. The waiting below is what honours ctx here.
+	out, missing, flight := s.readClassicLakeSupply(rd, wanted) //nolint:contextcheck // the detachment is the point; see this function's doc.
 	// Wait only on a FULLY cold answer — a warm cache never blocks a request,
 	// and a partially warm one is already better than the fallback.
 	if len(out) > 0 || len(missing) == 0 || flight == nil {
@@ -203,7 +206,7 @@ func (s *Server) classicLakeSupply(ctx context.Context, rows []AssetDetail) map[
 	defer timer.Stop()
 	select {
 	case <-flight:
-		warmed, _, _ := s.readClassicLakeSupply(rd, wanted)
+		warmed, _, _ := s.readClassicLakeSupply(rd, wanted) //nolint:contextcheck // same detachment as above; the flight it could start is deliberate.
 		return warmed
 	case <-timer.C:
 		return out
