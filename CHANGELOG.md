@@ -15,6 +15,8 @@ against.
 
 ## [Unreleased]
 
+## [v0.74.0] — 2026-09-11
+
 ### Added
 
 - **rwa:** BENJI, GILTS and KTB are bound to the oracle feeds for the
