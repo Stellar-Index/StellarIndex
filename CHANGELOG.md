@@ -15,6 +15,42 @@ against.
 
 ## [Unreleased]
 
+### Added
+
+- **rwa:** BENJI, GILTS and KTB are bound to the oracle feeds for the
+  instruments their issuers declare, so a held-but-never-traded RWA can
+  carry a reference valuation.
+
+  All three have **zero trades and holding evidence only** — exactly
+  the population the holdings-based registry made visible in v0.73.0,
+  and the reason they were invisible before it. Each binding is on
+  `(code, issuer)`, never on the code: the network carries twenty-six
+  assets with the code BENJI and exactly one of them is the genuine
+  issuer, the rest served from look-alike domains and kept out by the
+  independent-recognition requirement.
+
+  Every binding is derivable from data this index already holds — the
+  issuer's on-chain `home_domain`, a SEP-1 attestation served from that
+  domain which verifies and declares the code bound to that same
+  account, and independent directory recognition under an issuing-class
+  tag. None of it rests on an external claim.
+
+  GILTS and KTB had been deliberately excluded on the recorded ground
+  that the account did not issue them on Stellar. That ground no longer
+  holds — both now carry holding evidence on chain — and the exclusion
+  note is corrected rather than silently dropped. They are economically
+  trivial (1.7 and 102 tokens); BENJI carries 444,199,576.0047079,
+  which matches Horizon's authoritative `balances.authorized` for the
+  asset exactly, to all seven decimals.
+
+  BENJI's entry carries the weakest evidence grade in the table and
+  says so: it has no Stellar market price, so the price-agreement that
+  corroborates the Etherfuse rows cannot reach it, and its feed is
+  pegged at 1.00 — which is what a money-market fund holding stable NAV
+  should read, but also what a broken feed reads. A drifting feed
+  proves itself by tracking; a pegged one cannot.
+
+
 ## [v0.73.0] — 2026-09-11
 
 ### Added
