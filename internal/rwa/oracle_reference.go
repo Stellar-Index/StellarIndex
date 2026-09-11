@@ -126,13 +126,36 @@ const etherfuseIssuer = "GCRYUGD5NVARGXT56XEZI5CIFCQETYHAPQQTHO2O3IQZTHDH4LATMYW
 // the two attributions matching.
 const ondoIssuer = "GAJMPX5NBOG6TQFPQGRABJEEB2YE7RFRLUKJDZAZGAD5GFX4J7TADAZ6"
 
+// franklinTempletonIssuer issues the tokenized money-market fund the
+// registry prices as BENJI.
+//
+// Evidence: the account sets www.franklintempleton.com as its on-chain
+// home_domain, and the SEP-1 served from that domain verifies and
+// declares BENJI with this account as its own issuer, anchored to FOBXX
+// — "Franklin OnChain U.S. Government Money Fund". The curated directory
+// independently attributes this G-address to `Franklin Templeton`,
+// tagged `issuer`. The toml declares five share classes against the same
+// fund (BENJI, FOCGX, gBENJI, grBENJI, sgBENJI); only BENJI is bound
+// here, because only BENJI is what the oracle prices.
+//
+// This account had no registry row at all until 2026-09-11: it holds
+// 12,498 trustlines and has never traded, and the registry was populated
+// from trades alone.
+const franklinTempletonIssuer = "GBHNGLLIE3KWGKCHIKMHJ5HVZHYIK7WTBE4QF5PLAKL4CJGSEU7HZIW5"
+
 // instrumentBindings is the curated set.
 //
-// Deliberately smaller than "every code an oracle prices". Etherfuse's
-// GILTS and KTB are in the oracle's set but are not issued on Stellar
-// under this account today; they are absent rather than pre-bound,
-// because a binding that fires the first time some account issues a
-// matching code is the code-keyed join again with extra steps.
+// Deliberately smaller than "every code an oracle prices". A binding
+// that fires the first time some account issues a matching code is the
+// code-keyed join again with extra steps, so a code is bound only once
+// THIS issuer is observed to have issued it.
+//
+// GILTS and KTB were excluded on exactly that ground and are now
+// included, because the ground no longer holds: both are issued by this
+// account and carry holding evidence on chain (2026-09-11). They were
+// invisible before only because the asset registry was populated from
+// trades alone, and neither has ever traded — which is what a
+// held-to-maturity instrument looks like.
 // Evidence grade is stated per entry, because the file's own policy
 // above says the weaker form is marked as such and a grade recorded only
 // on the issuer constant does not travel with the row a reviewer reads.
@@ -145,6 +168,37 @@ var instrumentBindings = []instrumentBinding{
 	// token, so nothing corroborates the two matching attributions.
 	// Challenge this one first.
 	{Code: "USDY", Issuer: ondoIssuer, Feed: "USDY"},
+	// Same issuer as the three above, same evidence for the ACCOUNT, but
+	// WEAKER per row: neither has a Stellar market price, so the
+	// price-agreement that corroborates CETES/USTRY/TESOURO does not
+	// reach these two. Both are declared in this account's own SEP-1
+	// bound to itself, and the oracle prices an instrument of the same
+	// name.
+	{Code: "GILTS", Issuer: etherfuseIssuer, Feed: "GILTS"},
+	{Code: "KTB", Issuer: etherfuseIssuer, Feed: "KTB"},
+	// WEAKEST GRADE PRESENT, and the largest figure — challenge this one
+	// before the others.
+	//
+	// Evidence: the account names www.franklintempleton.com on chain and
+	// serves a SEP-1 from it that verifies, declaring BENJI bound to
+	// ITSELF and anchored to FOBXX, "Franklin OnChain U.S. Government
+	// Money Fund". The curated directory attributes the same G-address to
+	// `Franklin Templeton` with tag `issuer`. Two independent
+	// attributions, by entity, agreeing.
+	//
+	// What does NOT corroborate it: no Stellar market price exists, so
+	// there is no price agreement; and the feed is a constant 1.00, which
+	// is what a money-market fund holding a stable NAV should read but is
+	// also what a broken feed reads. A drifting feed proves itself right
+	// by tracking; a pegged one cannot.
+	//
+	// Why the code alone is not enough here, concretely: this network
+	// carries TWENTY-SIX assets with the code BENJI and exactly one of
+	// them is this issuer. The rest sit on lookalike domains —
+	// franklintempleton.co.com, franklintempleton.hqlumens.com,
+	// stellar.dtcc.network — and are kept out by requirement 3, not by
+	// this table. Binding on the pair is what makes that safe.
+	{Code: "BENJI", Issuer: franklinTempletonIssuer, Feed: "BENJI"},
 }
 
 // bindingIndex is instrumentBindings keyed for lookup. Built once; the
