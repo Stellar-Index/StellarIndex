@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"math/big"
 	"testing"
+	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
@@ -279,10 +280,26 @@ func TestClassicLakeSupplyCachesNegativeAnswers(t *testing.T) {
 	if first != 1 {
 		t.Fatalf("first fill asked about %d contracts, want 1", first)
 	}
+	// The entry must EXIST and be empty. Asserting only "no second query"
+	// would pass for the wrong reason: classicLakeSupplyRetryGap alone would
+	// suppress the second read whether or not anything was cached.
+	s.lakeSupplyMu.Lock()
+	entry, cached := s.lakeSupply[cetesAsset]
+	s.lakeSupplyAttemptAt = time.Time{} // reopen the retry gap
+	s.lakeSupplyMu.Unlock()
+	if !cached {
+		t.Fatalf("no cache entry for an asset the lake could not answer for; "+
+			"cache=%v", s.lakeSupply)
+	}
+	if entry.value != "" {
+		t.Errorf("cached value = %q, want empty (the lake had no usable reading)", entry.value)
+	}
+
 	s.fillMarketCapsFromSupply(context.Background(), cetesRow(), map[string]int{})
 	if len(stub.asked) != first {
-		t.Errorf("second fill re-queried the lake (%d asks total); an asset with no "+
-			"usable reading must be negative-cached until the TTL lapses", len(stub.asked))
+		t.Errorf("second fill re-queried the lake (%d asks total) with the retry gap "+
+			"reopened; an asset with no usable reading must be negative-cached until "+
+			"the TTL lapses", len(stub.asked))
 	}
 }
 
