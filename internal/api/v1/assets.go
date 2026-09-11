@@ -1072,11 +1072,17 @@ func (s *Server) fillMarketCapsFromSupply(ctx context.Context, rows []AssetDetai
 	// Slightly undercounts (omits claimable + LP), so it only fills rows the
 	// precise pipeline doesn't cover.
 	broad := s.cachedClassicSupply(ctx)
-	if len(precise) == 0 && len(broad) == 0 {
+	// Lake-flows supply — Σmint−Σburn−Σclawback over the asset's Stellar
+	// Asset Contract, the one reading of the three that is not keyed on where
+	// the tokens are HELD and therefore the only one that can see claimable
+	// balances, LP reserves and SAC contract_data balances. It outranks the
+	// trustline sum but never falls below it; see classic_lake_supply.go.
+	lake := s.classicLakeSupply(ctx, rows)
+	if len(precise) == 0 && len(broad) == 0 && len(lake) == 0 {
 		return
 	}
 	for i := range rows {
-		s.fillRowMarketCap(&rows[i], precise, broad, sourceCounts)
+		s.fillRowMarketCap(&rows[i], precise, lake, broad, sourceCounts)
 	}
 }
 
@@ -1112,13 +1118,13 @@ func (s *Server) latestPreciseSupply(ctx context.Context) map[string]string {
 // The price_usd is untouched — we guard the valuation, not the price;
 // circulating_supply is a raw fact (not a valuation), so it still surfaces,
 // matching the detail path's populateSupplyFields.
-func (s *Server) fillRowMarketCap(row *AssetDetail, precise, broad map[string]string, sourceCounts map[string]int) {
+func (s *Server) fillRowMarketCap(row *AssetDetail, precise, lake, broad map[string]string, sourceCounts map[string]int) {
 	if row.MarketCapUSD != nil || row.PriceUSD == nil {
 		return
 	}
 	circ := precise[row.AssetID]
 	if circ == "" {
-		circ = broad[row.AssetID]
+		circ = higherClassicSupply(lake[row.AssetID], broad[row.AssetID])
 	}
 	if circ == "" {
 		return

@@ -1140,8 +1140,9 @@ func (s *Server) rwaListingRows(
 		// a price, so an asset with no served price keeps no supply on
 		// the listing — which is correct there and wrong here, where
 		// the reference basis values a float that has never traded.
-		// This fills the gap from the SAME two supply readers and
-		// touches nothing else: no price, no market cap, no gate.
+		// This fills the gap from the SAME supply readers, in the same
+		// preference order, and touches nothing else: no price, no
+		// market cap, no gate.
 		//
 		// The contract arm needs no equivalent: fillContractMarketCaps
 		// reads the lake supply for every contract row before it looks
@@ -1184,16 +1185,20 @@ func (s *Server) rwaFillMissingSupply(ctx context.Context, rows []AssetDetail) {
 	}
 	precise := s.latestPreciseSupply(ctx)
 	broad := s.cachedClassicSupply(ctx)
+	lake := s.classicLakeSupply(ctx, rows)
 	for i := range rows {
 		if rows[i].CirculatingSupply != nil {
 			continue
 		}
 		// Precise first, exactly as the market-cap fill prefers it: the
-		// three-domain pipeline includes claimable and LP-locked
-		// holdings, and the trustline-sum fallback slightly undercounts.
+		// four-domain pipeline includes claimable, LP-locked and SAC-held
+		// holdings and applies the operator's locked-set policy on top.
+		// Below it the SAME preference the market-cap fill uses — the
+		// lake-flows total, which sees all four domains, over the
+		// trustline sum, which sees one, and never below that sum.
 		circ := precise[rows[i].AssetID]
 		if circ == "" {
-			circ = broad[rows[i].AssetID]
+			circ = higherClassicSupply(lake[rows[i].AssetID], broad[rows[i].AssetID])
 		}
 		if circ == "" {
 			continue

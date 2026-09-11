@@ -246,6 +246,15 @@ type Server struct {
 	// retried the heavy query and paid the full request timeout (the 2026-07-21
 	// /v1/assets 15s latch). It gates retries to classicSupplyRetryGap.
 	classicSupplyAttemptAt time.Time
+	// Per-asset TTL cache for the lake-flows classic supply reading — the
+	// figure that includes the claimable-balance, LP-reserve and SAC-held
+	// supply the trustline sum above is structurally blind to. Filled a
+	// bounded batch at a time by a detached refresh; see
+	// classic_lake_supply.go for the full rationale.
+	lakeSupplyMu        sync.Mutex
+	lakeSupply          map[string]lakeSupplyEntry
+	lakeSupplyFlight    chan struct{}
+	lakeSupplyAttemptAt time.Time
 	// Per-server TTL + single-flight cache for the SEP-1 logo map
 	// (canonical asset_id → safe image URL), built from every verified
 	// issuer's cached sep1_payload in one scan. Backs the image fill on

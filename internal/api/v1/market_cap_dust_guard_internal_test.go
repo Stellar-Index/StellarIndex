@@ -122,7 +122,7 @@ func TestFillRowMarketCap_UnverifiedCollisionSuppressed(t *testing.T) {
 		UnverifiedTickerCollision: true,
 	}
 	precise := map[string]string{row.AssetID: "1000000000000000"}
-	s.fillRowMarketCap(&row, precise, nil, map[string]int{row.AssetID: 5})
+	s.fillRowMarketCap(&row, precise, nil, nil, map[string]int{row.AssetID: 5})
 	if row.MarketCapUSD != nil {
 		t.Errorf("market_cap_usd = %q, want suppressed (nil) for an unverified ticker collision", *row.MarketCapUSD)
 	}
@@ -143,7 +143,7 @@ func TestFillRowMarketCap_NativeNeverDustSuppressed(t *testing.T) {
 		PriceUSD: &price, VolumeUSD24h: &vol,
 	}
 	precise := map[string]string{"native": "100000000000000000"}
-	s.fillRowMarketCap(&row, precise, nil, map[string]int{})
+	s.fillRowMarketCap(&row, precise, nil, nil, map[string]int{})
 	if row.MarketCapUSD == nil {
 		t.Fatal("native market cap must never be dust-suppressed")
 	}

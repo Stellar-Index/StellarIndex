@@ -41,14 +41,24 @@ const classicCirculatingSupplyQuery = `SELECT asset, toString(sum(toInt128(balan
 // string holding an i128 sum (ADR-0003 — the running total can exceed
 // int64, so it is summed as Int128 and stringified, never truncated).
 //
-// For a classic asset, circulating supply IS the amount held by every
-// non-issuer account, which is exactly the trustline-balance sum — the
-// issuer holds no trustline to its own asset (its issuance shows as the
-// negative side, not a held balance). This slightly undercounts vs the
-// precise three-domain supply pipeline (it omits claimable-balance and
-// liquidity-pool-locked holdings), so callers that have a precise
-// supply_1d figure for an asset should prefer that and use this only as
-// the broad-coverage fallback for the long tail.
+// THIS IS A LOWER BOUND, NOT THE SUPPLY. A classic asset's supply sits in
+// FOUR places — trustlines, claimable balances, liquidity-pool reserves, and
+// the balances its Stellar Asset Contract holds for CONTRACT (C-address)
+// holders in contract_data — and ledger_entries_current populates its `asset`
+// column for trustlines ONLY (extract_entry_changes.go, ownerAndAsset). A
+// query keyed on `asset` therefore cannot see the other three at all; it is
+// blind to them by construction, not merely approximate. Measured against
+// Horizon on 2026-09-11 the hidden remainder was CETES +36.605%, TESOURO
+// +10.594%, USTRY +10.272%, USDY +1.274% — 99.9% of it SAC-held.
+//
+// Every trustline balance was minted, so this sum is a PROVABLE LOWER BOUND on
+// issued supply, which is exactly what makes it useful as a floor against a
+// fuller but possibly under-seeded reading. Callers should prefer, in order:
+// the precise supply_1d figure (ADR-0011 Algorithm 2, all four components plus
+// the operator's locked-set policy, operator-curated watch-list only); then
+// the lake-flows total over the asset's SAC contract (Σmint−Σburn−Σclawback
+// over stellar.supply_flows, holding-domain-agnostic and available for every
+// asset — see internal/api/v1/classic_lake_supply.go); and only then this.
 //
 // One GROUP BY over the ~2M-row trustline slice (~0.5s on r1). Callers
 // MUST cache the result (it changes slowly) rather than run it per

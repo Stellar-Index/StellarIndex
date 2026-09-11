@@ -182,6 +182,19 @@ func entryChangeRow(seq uint32, closeTime time.Time, txHash string, opIndex int3
 // types with no single owning account (claimable balances, liquidity pools,
 // contract data/code, ttl, config); asset is empty for everything but
 // trustlines.
+//
+// THE EMPTY `asset` ON THE OTHER HOLDING TYPES IS STRUCTURAL, NOT A GAP TO
+// FILL. This function is handed a LedgerKey, and for the three other places a
+// classic asset's supply can sit the key does not name the asset: a claimable
+// balance's key is a hash (the asset is in the ENTRY), a liquidity pool holds
+// TWO assets and TWO reserves so one (asset, balance) column pair cannot
+// represent it at all, and a SAC Balance entry names only its CONTRACT — and
+// contract → asset is a one-way hash in that direction, derivable FORWARD from
+// the asset only (canonical.Asset.SacContractID). Any per-asset supply summed
+// off this column is therefore a trustline-only LOWER BOUND; the reading that
+// sees all four domains is the lake-flows total over the asset's SAC contract
+// (stellar.supply_flows). See asset_supply_reader.go's ClassicCirculatingSupply
+// and internal/api/v1/classic_lake_supply.go.
 func ownerAndAsset(key xdr.LedgerKey) (accountID, asset string) {
 	switch key.Type {
 	case xdr.LedgerEntryTypeAccount:

@@ -251,6 +251,71 @@ func (r *SupplyReader) TokenSupply(ctx context.Context, contractID string) (Toke
 	return querySupply(ctx, r.conn, contractID)
 }
 
+// supplySumByContractsQuery is [supplySumQuery] for a SET of contracts, folded
+// into ONE read.
+//
+// `contract_id` LEADS stellar.supply_flows' ORDER BY, so an IN-list is a set of
+// primary-key prefix ranges: the scan touches only those contracts' granules,
+// and the GROUP BY's cardinality is bounded by the list, not by the table. That
+// is what makes a bulk read cheaper than N single-contract reads rather than
+// merely more convenient — the per-query overhead (FINAL's read-time merge
+// setup, the round trip) is paid once instead of N times.
+//
+// Int256 accumulation and the string projection are [supplySumQuery]'s,
+// verbatim and for its reasons: Σmint alone can exceed i128, and an i128 is
+// never handed to a JSON number (ADR-0003). Contracts with no flows are simply
+// ABSENT from the result — the caller must not read a missing key as zero
+// supply (see [SupplyReader.TokenSupplyForContracts]).
+const supplySumByContractsQuery = `
+	SELECT
+		contract_id,
+		toString(sum(toInt256(if(kind = 'mint', amount, toInt128(0))))) AS mint,
+		toString(sum(toInt256(if(kind = 'burn', amount, toInt128(0))))) AS burn,
+		toString(sum(toInt256(if(kind = 'clawback', amount, toInt128(0))))) AS clawback,
+		count() AS flows
+	FROM stellar.supply_flows FINAL
+	WHERE contract_id IN (?)
+	GROUP BY contract_id`
+
+// TokenSupplyForContracts sums [SupplyReader.TokenSupply] for many contracts in
+// one read, keyed by contract id.
+//
+// A contract with NO flows in the lake is OMITTED from the map rather than
+// returned as a zero [TokenSupply]. The distinction is the whole point: zero is
+// a claim ("this token has no supply"), absence is the absence of a claim
+// ("the lake has nothing to say about this token"), and a caller that is
+// choosing between supply sources must be able to tell them apart. A caller
+// that treated a missing key as zero would publish a fully-burned supply for
+// every token the lake has not seen.
+//
+// The Incomplete flag carries through per contract exactly as it does on the
+// single-contract path — a negative net total means that contract's flows are
+// incompletely seeded, not that its supply is negative — so callers keep
+// refusing those rather than clamping them.
+func (r *SupplyReader) TokenSupplyForContracts(ctx context.Context, contractIDs []string) (map[string]TokenSupply, error) {
+	if len(contractIDs) == 0 {
+		return map[string]TokenSupply{}, nil
+	}
+	rows, err := r.conn.Query(ctx, supplySumByContractsQuery, contractIDs)
+	if err != nil {
+		return nil, fmt.Errorf("clickhouse: supply for %d contracts: %w", len(contractIDs), err)
+	}
+	defer func() { _ = rows.Close() }()
+	out := make(map[string]TokenSupply, len(contractIDs))
+	for rows.Next() {
+		var contractID, mintS, burnS, clawbackS string
+		var flows uint64
+		if err := rows.Scan(&contractID, &mintS, &burnS, &clawbackS, &flows); err != nil {
+			return nil, fmt.Errorf("clickhouse: scan bulk supply row: %w", err)
+		}
+		out[contractID] = assembleTokenSupply(contractID, mintS, burnS, clawbackS, flows)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("clickhouse: bulk supply stream: %w", err)
+	}
+	return out, nil
+}
+
 // TokenSupplyBelowLedger returns a contract's supply summed STRICTLY BELOW
 // ledgerExclusive (Σmint − Σburn − Σclawback over ledger_seq < ledgerExclusive).
 // The SEP-41 genesis-baseline seed calls it with [SorobanGenesisLedger] to read

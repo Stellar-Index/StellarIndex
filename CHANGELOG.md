@@ -15,6 +15,55 @@ against.
 
 ## [Unreleased]
 
+### Fixed
+
+- **api:** `circulating_supply` and `market_cap_usd` on `/v1/assets` and
+  `/v1/rwa/assets` now see the supply a trustline sum structurally cannot.
+
+  A classic asset's supply sits in four places — trustlines, claimable
+  balances, liquidity-pool reserves, and the balances its Stellar Asset
+  Contract holds for contract (C-address) holders. The lake's
+  current-state projection populates its `asset` column for
+  `entry_type='trustline'` only, so the broad-coverage supply map — a
+  `GROUP BY asset` over that column — could not see the other three at
+  all. Not an approximation: blind by construction.
+
+  Measured against Horizon on the `/v1/rwa/assets` set, the hidden
+  remainder was CETES +36.605%, TESOURO +10.594%, USTRY +10.272%, USDY
+  +1.274% (BENJI genuinely has none). 99.9% of it was SAC-held; the
+  claimable and LP components together were 0.1%. The served USDY figure
+  of $528,900,546 against Dune's independent $535.6M is exactly the
+  1.274% residual.
+
+  The remaining three domains cannot be recovered by widening that
+  query. A liquidity pool holds two assets and two reserves in one row,
+  which one `(asset, balance)` column pair cannot represent; and a SAC
+  balance entry names its contract, never its asset, and contract →
+  asset is a one-way hash in that direction. So the listing surfaces now
+  prefer the lake-flows total — Σmint−Σburn−Σclawback over the asset's
+  deterministically derived SAC contract, from the decode-at-ingest
+  `stellar.supply_flows` log. A flow does not know where the tokens came
+  to rest, so that one reading covers all four domains at once. It is
+  the same figure `GET /v1/assets/{asset_id}/supply` already served for
+  these assets, and the same reader; the listing was simply not asking
+  it.
+
+  The served figure can only go UP. Every trustline balance was minted,
+  so the trustline sum is a provable lower bound on issued supply, and a
+  lake total below it is proof that contract's flows are incompletely
+  seeded rather than evidence the sum is too high — so the trustline
+  figure is kept in that case. The precise `supply_1d` snapshot (ADR-0011
+  Algorithm 2, all four components plus the operator's locked-set
+  policy) still outranks both where it exists. No backfill and no
+  migration: `supply_flows` is written live by the indexer and gap-filled
+  daily.
+
+  Still outstanding, deliberately: `/v1/assets/{id}` gates the same
+  lake-flows fallback on `AssetSoroban` (`assets_f2.go`), so a classic
+  asset outside the operator watch-list serves no supply on the detail
+  page. Closing it needs a new `supply_basis` enum value, which is a
+  wire change.
+
 ## [v0.74.0] — 2026-09-11
 
 ### Added
