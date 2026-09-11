@@ -15,6 +15,8 @@ against.
 
 ## [Unreleased]
 
+## [v0.75.0] — 2026-09-11
+
 ### Fixed
 
 - **api:** `circulating_supply` and `market_cap_usd` on `/v1/assets` and
