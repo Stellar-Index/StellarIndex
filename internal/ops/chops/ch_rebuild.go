@@ -245,6 +245,7 @@ func chRebuild(args []string) error { //nolint:gocognit,gocyclo,funlen // linear
 	contractsCSV := fs.String("contracts", "", "comma-separated contract C-strkeys to SCOPE the read to (default: no scope). For -sep41 this REPLACES [supply] watched_sep41_contracts as the contract_id READ prefilter, so a scoped recovery does an indexed scan of ONLY these contracts' events (far cheaper than all watched contracts) and idempotently ADDS their missing rows — the leanest way to recover dropped rows without a full re-derive. With -sep41 -write on the SUPPLY source, ONLY these contracts' sep41_supply_rollup fold rows are reset afterwards (genesis baseline preserved), so the worker re-folds their recovered below-checkpoint rows — a scoped recovery is safe by default, no manual rollup surgery. Must be a SUBSET of the watched set: the sep41 decoders still gate Matches() on the full watched set, so a contract outside it is read but decoded to nothing (a warning is printed). For the general event pass it is an extra decode-time contract gate. See docs/operations/sep41-mint-recovery.md.")
 	sep41SupplyOnly := fs.Bool("sep41-supply-only", false, "with -sep41 -sources sep41_supply: narrow the CH read to the supply-affecting topics (mint/burn/clawback) via the topic_0_sym prefilter, skipping the transfer firehose at the SQL layer — so recovering a high-transfer-volume contract's few mints does not re-read millions of transfer events. Invalid unless sep41_transfers is disabled (via -sources sep41_supply): the topic prefilter would otherwise silently drop transfer recovery.")
 	write := fs.Bool("write", false, "actually write to Postgres (default: dry-run, count only)")
+	bulkTrades := fs.Bool("bulk-trades", false, "with -write: land trade rows through the BULK backfill writer (timescale.Store.BulkBackfillTrades) instead of the per-batch upsert. Opt-in and BACKFILL-ONLY. It proves - per source, scoped by ledger AND ts - that the target range holds no stored rows, then resolves usd_volume for the whole buffer through a worker pool and streams the rows in over parallel binary COPY connections. Rows are identical to the upsert path's (same storability gate, same intra-batch PK dedupe, same tradeUSDVolume waterfall, same derive_generation, same source_entry_counts / registry / sentinel side effects); the difference is that a latency-bound workload stops being serial. If the range is NOT empty - or a COPY hits a unique violation because something wrote underneath it - the buffer is handed to the ordinary generation-guarded upsert instead and the run says so. Worth it for a historical re-derive below the source's floor; pointless (and it will just fall back) for a recovery into populated ledgers.")
 	allowLiveOverlap := fs.Bool("allow-live-overlap", false, "DANGEROUS: bypass the live-cursor guard and -write a range the live projector's cursor for a PROJECTED source is still inside. Only pass this if you have independently verified the live projector will not process this range concurrently — see the ADR-0048 D3 one-writer contract on checkCHRebuildLiveOverlap.")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -750,6 +751,13 @@ func chRebuild(args []string) error { //nolint:gocognit,gocyclo,funlen // linear
 			return pipeline.HandleEvent(ctx, logger, store, ev)
 		},
 	}
+	if *bulkTrades {
+		// Opt-in, and only ever set here: the live indexer never builds an
+		// eventWriter, so nothing outside this flag can reach the bulk writer.
+		w.bulkTrades = func(ctx context.Context, batch []canonical.Trade) (timescale.BulkBackfillResult, error) {
+			return store.BulkBackfillTrades(ctx, batch, timescale.BulkBackfillOptions{})
+		}
+	}
 	written, failed := drainAndWrite(ctx, logger, w, buf, *write)
 
 	if *write {
@@ -814,11 +822,50 @@ func chRebuild(args []string) error { //nolint:gocognit,gocyclo,funlen // linear
 type eventWriter struct {
 	batchTrades func(context.Context, []canonical.Trade) error
 	insertTrade func(context.Context, canonical.Trade) error
-	copyXfer    func(context.Context, []timescale.SEP41TransferRow) error
-	insertXfer  func(context.Context, timescale.SEP41TransferRow) error
-	copySup     func(context.Context, []timescale.SEP41SupplyEvent) error
-	insertSup   func(context.Context, timescale.SEP41SupplyEvent) error
-	handle      func(context.Context, consumer.Event) error
+	// bulkTrades, when non-nil (ch-rebuild -bulk-trades), replaces the
+	// per-batch upsert as the PRIMARY trade writer and raises the trade batch
+	// size to bulkTradeBatchN. It is the backfill-only COPY writer; see
+	// timescale.Store.BulkBackfillTrades. The per-row insertTrade fallback
+	// below is unchanged and still catches whatever it cannot land.
+	bulkTrades func(context.Context, []canonical.Trade) (timescale.BulkBackfillResult, error)
+	copyXfer   func(context.Context, []timescale.SEP41TransferRow) error
+	insertXfer func(context.Context, timescale.SEP41TransferRow) error
+	copySup    func(context.Context, []timescale.SEP41SupplyEvent) error
+	insertSup  func(context.Context, timescale.SEP41SupplyEvent) error
+	handle     func(context.Context, consumer.Event) error
+}
+
+// Trade batch sizes for drainAndWrite's flush. The upsert path is capped by
+// Postgres's 65535 bind parameters (13 per row); the bulk path has no
+// placeholder ceiling at all - COPY streams - so it is sized for amortising
+// the emptiness proof and filling the parallel writers instead.
+const (
+	upsertTradeBatchN = 1000
+	bulkTradeBatchN   = 100_000
+)
+
+// writeTradeBatch lands one trade batch through whichever primary writer is
+// wired: the bulk backfill COPY writer when ch-rebuild was given -bulk-trades,
+// otherwise the ordinary generation-guarded batch upsert. Returning an error
+// drops the caller into the unchanged per-row fallback.
+//
+// A bulk call that REFUSED its own precondition is not an error - the rows
+// landed, through the upsert - but it is reported, because a run that thinks
+// it took the fast path and did not is exactly the kind of silent revert that
+// makes a throughput measurement lie.
+func writeTradeBatch(ctx context.Context, logger *slog.Logger, w eventWriter, batch []canonical.Trade) error {
+	if w.bulkTrades == nil {
+		return w.batchTrades(ctx, batch)
+	}
+	res, err := w.bulkTrades(ctx, batch)
+	if err != nil {
+		return err
+	}
+	if res.Path != timescale.BulkBackfillPathCopy {
+		logger.Warn("bulk trade write fell back to the upsert path",
+			"n", len(batch), "reason", res.FallbackReason)
+	}
+	return nil
 }
 
 // drainAndWrite persists the buffered events to Postgres and returns per-source
@@ -841,14 +888,22 @@ func drainAndWrite(ctx context.Context, logger *slog.Logger, w eventWriter, buf 
 	written = map[string]int{}
 	failed = map[string]int{}
 
-	const tradeBatchN = 1000
+	// The bulk writer wants ONE large buffer, not 1000-row slices: its
+	// emptiness proof is one round trip per source per call, and its COPY
+	// partitions only pay for themselves above a few thousand rows. The upsert
+	// writer keeps the 1000-row batch it was tuned for (13 params/row against
+	// Postgres's 65535 parameter ceiling).
+	tradeBatchN := upsertTradeBatchN
+	if w.bulkTrades != nil {
+		tradeBatchN = bulkTradeBatchN
+	}
 	batch := make([]canonical.Trade, 0, tradeBatchN)
 	batchSrc := make([]string, 0, tradeBatchN)
 	flush := func() {
 		if len(batch) == 0 {
 			return
 		}
-		if err := w.batchTrades(ctx, batch); err != nil {
+		if err := writeTradeBatch(ctx, logger, w, batch); err != nil {
 			logger.Warn("batch trade insert failed; per-row fallback", "n", len(batch), "err", err)
 			for i, t := range batch {
 				if ierr := w.insertTrade(ctx, t); ierr != nil {
