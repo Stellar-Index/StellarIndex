@@ -4,8 +4,9 @@
 #
 # Time slot: 05:47 UTC + up to 5 min jitter. The daily band is dense —
 # 04:42 supply-snapshot, 05:07 stellar-stack-version-probe, 05:12
-# sep1-refresh, 05:30 compute-completeness — so this sits after the
-# last of them rather than between two. It shares this host with
+# sep1-refresh (hourly at :12 since it was right-sized; a run is ~15
+# min, so the 05:12 tick is done by 05:27), 05:30 compute-completeness
+# — so this sits after the last of them rather than between two. It shares this host with
 # galexie's captive core, Postgres and ClickHouse, and overlapping two
 # memory-capped jobs is how a box that is fine all day falls over at
 # 05:00.

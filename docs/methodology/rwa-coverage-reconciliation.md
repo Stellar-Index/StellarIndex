@@ -197,10 +197,18 @@ specifically enough to be falsifiable, and a class from the closed
 ### 3. Drain the SEP-1 refresh queue (operator — WisdomTree, and the classic long tail)
 
 29,741 issuers publish a `home_domain` whose `stellar.toml` has never
-been fetched, against 14,635 fetched. `sep1-refresh.timer` runs daily at
-`-limit 100`, so the queue needs roughly 297 days to clear. It is why
-Etherfuse and Ondo are the only two issuers with a payload, and
-therefore the only two the classic arm can serve.
+been fetched, against 14,635 fetched. It is why Etherfuse and Ondo are
+the only two issuers with a payload, and therefore the only two the
+classic arm can serve.
+
+The drain was the binding constraint. `sep1-refresh.timer` ran once a
+day at `-limit 500` against 76,658 domains — a 153-day cycle — and 58%
+of every run went to domains that have never returned a document,
+because a failure was re-queued on exactly the same schedule as a
+success. Both halves are fixed: the timer runs hourly at `-limit 750`
+(18,000 attempts/day) and a failing domain climbs a 1d/2d/4d/8d/16d/30d
+retry ladder, so the ~35.8k domains that answer cycle in about two days
+and the ~40.8k that do not cost roughly one attempt a month each.
 
 This is tracked as its own operator task. It closes WisdomTree's four
 classic-issuing addresses and an unknown share of the long tail; it does

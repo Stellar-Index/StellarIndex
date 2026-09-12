@@ -64,6 +64,14 @@ journalctl -u stellarindex-indexer -u stellarindex-api --since '2 hours ago' | g
 - **`domain="verdict"` stale:** the `compute-completeness.timer` isn't running —
   see `systemctl status compute-completeness.service`.
 - **`domain="sep1"` stale:** the `sep1-refresh.timer` isn't running.
+  **This probe cannot see a refresh that is running and failing.** It reads
+  `max(sep1_resolved_at)`, and every terminating path of the job stamps that
+  column — a failed fetch as much as a success — so a night where our DNS or
+  egress is broken leaves the gauge perfectly green. The signal for that case
+  is a *failed unit*, not a stale domain: the job judges its own failure rate
+  and exits non-zero when it crosses 90% over 50+ attempts, which trips
+  `stellarindex_systemd_unit_failed`. See
+  `journalctl -u sep1-refresh --since -24h | grep SYSTEMIC`.
 - **`domain="trades"` (CEX/DEX) stale:** the venue connector/dispatcher stopped;
   check the indexer. For `phoenix`/`comet` confirm it is not just a quiet market
   (query the lake for swap events on any known pool) before chasing a decoder.

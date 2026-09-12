@@ -15,6 +15,79 @@ against.
 
 ## [Unreleased]
 
+### Fixed
+
+- **ops:** the daily SEP-1 refresh was sized for a population that no
+  longer exists and spent most of its budget on domains that will never
+  answer. Both halves are fixed; the job now completes a full cycle in
+  about two days instead of 153.
+
+  Measured on r1, 2026-09-12: 76,658 issuers carry a `home_domain`;
+  40,837 of them (53%) have been attempted and have never produced a
+  payload; 35,820 hold one. The unit asked for `-older-than 24h` at
+  `-limit 500` once a day, which services 0.65% of that population per
+  run — the freshness the job requests was unreachable by two orders of
+  magnitude. The limit predates the registry fix that tripled the issuer
+  count (~59k → 190,408).
+
+  Worse, dead domains crowded out live ones indefinitely. Selection is
+  `ORDER BY sep1_resolved_at ASC NULLS FIRST` and every terminating path
+  — including each failure — stamps `sep1_resolved_at`, so a domain that
+  404s returns to the front on exactly the same schedule as a healthy
+  one. That stamp was itself a fix (a NULL pins a row at the head of
+  `NULLS FIRST` forever), but nothing recorded the difference between
+  "tried" and "succeeded", and nothing counted a streak: a domain that
+  had failed two hundred times was retried as eagerly as one never
+  tried. That day's run: 209 succeeded, 291 failed — 58% of the budget
+  on `coinonstellar.com` (NXDOMAIN) and large families of parked
+  subdomains (`*.litemint.store`, `*.8888skulls.com`,
+  `quantumstellar.vercel.app`).
+
+  Migration 0159 adds `issuers.sep1_consecutive_failures` and
+  `issuers.sep1_next_attempt_after` (both nullable, no defaults, no
+  table rewrite) and the queue index that read has never had. A failure
+  now defers the domain by 1d, 2d, 4d, 8d, 16d, then a 30-day cap; a
+  success clears the ladder, so a recovering domain is back on the fast
+  cadence on its first published document. The cap keeps this a
+  deferral, never an eviction. Rows already attempted with no payload
+  are seeded at one failure — the exact provable claim, not a guess at
+  how many times they have failed, since nothing counted.
+
+  This is not a revival of `sep1_resolved_status` (`fetch_failed` /
+  `parse_failed` / `tls_failed`): that column lived on `anchors`, not
+  `issuers`, and 0152 dropped `anchors` whole as one of six never-wired
+  scaffold tables. These two columns are a retry schedule written and
+  read by the refresh itself, not a status enum for a UI badge.
+
+  The budget: hourly at `:12` with `-limit 750` and `-timeout 25m`
+  (`TimeoutStartSec` 15m → 30m to match). 24 × 750 = 18,000 attempts a
+  day; 35,820 live domains cycle in 2.0 days, and the dead population at
+  the 30-day cap costs 40,837/30 = 1,361 attempts a day — 7.6% of the
+  budget, down from 58%. Sizing is off the measured 1.2s per sequential
+  attempt (500 attempts inside a 10m run), so 750 × 1.2s = 900s of work
+  against a 1500s budget. Hourly rather than one large daily run
+  deliberately: at `-limit 18000` a night of mass DNS timeouts loses the
+  whole day, where a small run just does fewer rows and the next hour
+  resumes.
+
+- **ops:** `sep1-refresh` now judges its own failure rate, so a backoff
+  cannot quietly swallow an outage on our side. A retry ladder cannot
+  distinguish "this domain is dead" from "our DNS is down" — both are a
+  failed fetch — and nothing downstream would have caught it: the
+  data-freshness watchdog reads `max(issuers.sep1_resolved_at)`, which a
+  FAILED attempt stamps exactly as a success does, so the gauge stays
+  green while the job does nothing useful. A run that fails ≥90% of ≥50
+  attempts (the measured healthy baseline is 58%) unwinds the ladder step
+  it just applied to every domain it failed and exits non-zero, tripping
+  `stellarindex_systemd_unit_failed`. `-systemic-failure-rate` above 1
+  disables the guard for an operator working through a known outage.
+
+- **ops:** an out-of-range `-limit` on `sep1-refresh` was snapped to
+  100 rather than to the ceiling, so an operator raising `LIMIT` past
+  the cap silently got a fifth of the previous budget — a change that
+  reads as "the job is slow", never as "your setting was rejected". It
+  now clamps into range, and the ceiling is 5,000.
+
 ## [v0.75.0] — 2026-09-11
 
 ### Fixed
