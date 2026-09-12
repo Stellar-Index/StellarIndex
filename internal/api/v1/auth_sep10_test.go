@@ -2,6 +2,7 @@ package v1_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"strings"
@@ -281,5 +282,136 @@ func TestSEP10Token_VerificationFailed_401(t *testing.T) {
 	resp := mustPostJSON(t, ts.URL+"/v1/auth/sep10/token", `{"transaction":"signed"}`)
 	if resp.StatusCode != http.StatusUnauthorized {
 		t.Errorf("status = %d, want 401", resp.StatusCode)
+	}
+}
+
+// TestSEP10Unavailable_TellsTheCallerWhatToDoInstead pins the BODY of
+// the 503, not just its code.
+//
+// Four separate branches produce this answer — no validator wired on
+// either route, and ErrNotImplemented surfacing from Challenge or
+// Verify — and they used to carry two different strings. The terser
+// one said only "this deployment has no SEP-10 validator wired",
+// which is the error code restated in prose: a caller reading it
+// learns nothing they can act on, and cannot tell a permanent
+// deployment posture from an outage worth retrying.
+//
+// Every document that once promised the flow now says it is off here
+// (/sdk, docs/getting-started.md, pkg/client's godoc, the spec). This
+// response is the surface that answers a caller who read none of
+// them, so it has to carry the same two facts on its own: WHY it
+// refuses, and WHAT WORKS INSTEAD.
+//
+// The assertions are about substance rather than wording, so the
+// sentence can be rewritten without a test edit — but it cannot be
+// hollowed back out to a bare code, and the four branches cannot
+// drift apart from each other again.
+func TestSEP10Unavailable_TellsTheCallerWhatToDoInstead(t *testing.T) {
+	notImplemented := func() *stubSEP10Validator {
+		return &stubSEP10Validator{
+			challenge: func(context.Context, string) (auth.Challenge, error) {
+				return auth.Challenge{}, auth.ErrNotImplemented
+			},
+			verify: func(context.Context, string) (auth.Token, error) {
+				return auth.Token{}, auth.ErrNotImplemented
+			},
+		}
+	}
+
+	cases := []struct {
+		name string
+		opts v1.Options
+		call func(t *testing.T, base string) *http.Response
+	}{
+		{
+			name: "challenge/no validator wired",
+			opts: v1.Options{},
+			call: func(t *testing.T, base string) *http.Response {
+				return mustGet(t, base+"/v1/auth/sep10/challenge?account=GAIN")
+			},
+		},
+		{
+			name: "challenge/validator returns ErrNotImplemented",
+			opts: v1.Options{SEP10: notImplemented()},
+			call: func(t *testing.T, base string) *http.Response {
+				return mustGet(t, base+"/v1/auth/sep10/challenge?account=GAIN")
+			},
+		},
+		{
+			name: "token/no validator wired",
+			opts: v1.Options{},
+			call: func(t *testing.T, base string) *http.Response {
+				return mustPostJSON(t, base+"/v1/auth/sep10/token", `{"transaction":"signed-xdr"}`)
+			},
+		},
+		{
+			name: "token/validator returns ErrNotImplemented",
+			opts: v1.Options{SEP10: notImplemented()},
+			call: func(t *testing.T, base string) *http.Response {
+				return mustPostJSON(t, base+"/v1/auth/sep10/token", `{"transaction":"signed-xdr"}`)
+			},
+		},
+	}
+
+	details := make(map[string]string, len(cases))
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			ts := startHTTPTest(t, v1.New(tc.opts).Handler())
+			resp := tc.call(t, ts.URL)
+			if resp.StatusCode != http.StatusServiceUnavailable {
+				t.Fatalf("status = %d, want 503", resp.StatusCode)
+			}
+			body, _ := readAll(resp)
+
+			var prob struct {
+				Type   string `json:"type"`
+				Detail string `json:"detail"`
+			}
+			if err := json.Unmarshal([]byte(body), &prob); err != nil {
+				t.Fatalf("decode problem body: %v\n  body=%s", err, body)
+			}
+			if !strings.HasSuffix(prob.Type, "/sep10-unavailable") {
+				t.Fatalf("type = %q, want .../sep10-unavailable", prob.Type)
+			}
+			if prob.Detail == "" {
+				t.Fatal("the 503 carries an empty detail — the code is all the caller gets")
+			}
+			details[tc.name] = prob.Detail
+
+			// Why it refuses. Not an outage: a deployment posture.
+			if !strings.Contains(prob.Detail, "signing seed") {
+				t.Errorf("detail does not name the missing signing seed as the cause: %q", prob.Detail)
+			}
+			// What works instead. This is the half a bare code cannot
+			// carry, and the half that makes the answer actionable.
+			if !strings.Contains(prob.Detail, "API key") {
+				t.Errorf("detail does not point the caller at the credential this deployment "+
+					"does verify: %q", prob.Detail)
+			}
+			// Enabling SEP-10 SWAPS the deployment's credential type
+			// rather than adding one — an operator who reads this as
+			// "turn it on as well" breaks every existing key holder.
+			if !strings.Contains(prob.Detail, "never both") {
+				t.Errorf("detail does not say API keys and SEP-10 JWTs are mutually exclusive: %q",
+					prob.Detail)
+			}
+		})
+	}
+
+	if len(details) != len(cases) {
+		t.Fatalf("collected %d details from %d branches — a subtest failed before recording, "+
+			"so the agreement check below would be vacuous", len(details), len(cases))
+	}
+	var first, firstName string
+	for _, tc := range cases {
+		got := details[tc.name]
+		if first == "" {
+			first, firstName = got, tc.name
+			continue
+		}
+		if got != first {
+			t.Errorf("the 503 body differs by branch — %q says:\n  %s\n%q says:\n  %s",
+				firstName, first, tc.name, got)
+		}
 	}
 }

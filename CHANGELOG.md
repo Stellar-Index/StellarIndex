@@ -15,6 +15,24 @@ against.
 
 ## [Unreleased]
 
+### Fixed
+
+- **api:** the `503 sep10-unavailable` body says why, and what to do
+  instead.
+
+  Four branches produce that answer and they carried two different
+  strings, the terser of which was "this deployment has no SEP-10
+  validator wired" — the error code restated in prose. A caller could
+  not tell a permanent deployment posture from an outage worth
+  retrying, nor learn which credential *does* work here. One shared
+  constant now names the cause (no signing seed, so no challenge can be
+  signed), the alternative (an API key), and the fact that enabling
+  SEP-10 **swaps** the deployment's credential type rather than adding
+  one — `middleware.authenticate` is a mutually exclusive switch over
+  `auth_mode`, so an operator who reads it as "turn it on as well"
+  breaks every existing key holder. No behaviour change: same code,
+  same type, same status.
+
 ## [v0.76.0] — 2026-09-12
 
 ### Fixed

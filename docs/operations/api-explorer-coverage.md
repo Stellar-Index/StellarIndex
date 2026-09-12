@@ -499,6 +499,15 @@ fitness issues.
    over the four `auth_mode` values, so no deployment accepts both —
    enabling SEP-10 turns `sip_*` keys off.
 
+   **The 503 body itself was finished 2026-09-12.** The documentation
+   fix left the one surface that answers a caller who read none of those
+   documents still saying only *"this deployment has no SEP-10 validator
+   wired"* — the error code restated, on two of the four branches that
+   produce it. All four now share one constant naming the cause, the
+   credential that does work here, and the swap-not-add nature of
+   enabling it. Still no product decision taken: the deployment is
+   unchanged and SEP-10 stays off.
+
 3. **Timezone leak — larger than two endpoints.** `/v1/price/at` and
    `/v1/history/since-inception` emit timestamps with a local UTC offset
    (`2026-09-07T11:00:00+02:00`, `2017-01-17T01:00:00+01:00`) where every
