@@ -15,6 +15,8 @@ against.
 
 ## [Unreleased]
 
+## [v0.77.0] — 2026-09-12
+
 ### Fixed
 
 - **api:** `/v1/methodology` no longer serves rows labelled with a class
