@@ -28,10 +28,11 @@ export default function MethodologyPage() {
         subtitle="What gets included in the VWAP — and what doesn't"
       >
         <p>
-          Every venue we ingest from is tagged with one of four source{' '}
+          Every venue we ingest from is tagged with one of seven source{' '}
           <em>classes</em>. The class determines whether a venue contributes
           price observations to the aggregate or is reported alongside as
-          context.
+          context. The first four carry a price; the last three are indexed for
+          flow and state, and never reach the aggregate.
         </p>
         <DefList
           rows={[
@@ -50,6 +51,18 @@ export default function MethodologyPage() {
             {
               term: 'authority_sanity',
               def: 'A small set of Stellar-blessed reference points (anchor home-domains, canonical fiat rates) used as sanity bounds, not price input. Catches catastrophic drift.',
+            },
+            {
+              term: 'lending',
+              def: 'On-chain lending protocols (Blend, SoroCredit). Their events are directional state changes — supply, borrow, liquidation auction, bad debt — taken on top of some other oracle’s price rather than new price observations. Surfaced as a secondary validation and protocol-health surface.',
+            },
+            {
+              term: 'router',
+              def: 'Soroban DEX routers and aggregator vaults (soroswap-router, defindex, upshift). They emit no independent trades — they invoke the contracts that do — so counting them would double-count the underlying pool’s swap. Indexed for per-transaction attribution (which router drove this swap) and requested-vs-realised path.',
+            },
+            {
+              term: 'bridge',
+              def: 'Cross-chain transfer protocols (Circle CCTP, Rozo). These move tokens between chains rather than exchanging them at a price: a deposit_for_burn on Stellar plus a mint_and_withdraw elsewhere is one logical transfer, not a two-leg trade. Surfaced for cross-chain flow attribution and USDC supply accounting.',
             },
           ]}
         />

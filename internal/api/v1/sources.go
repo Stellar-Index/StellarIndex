@@ -77,14 +77,15 @@ func buildSourceVolumeHistory(buckets []timescale.SourceVolumeBucket, hours int)
 type Source struct {
 	Name string `json:"name"`
 	// Class is the top-level taxonomy: exchange / aggregator /
-	// oracle / authority_sanity. Drives the aggregator's class
-	// filter (only `exchange` contributes to VWAP by default).
+	// oracle / authority_sanity / lending / router / bridge. Drives
+	// the aggregator's class filter (only `exchange` contributes to
+	// VWAP by default). /v1/methodology's `source_classes` defines
+	// each one.
 	Class string `json:"class"`
 	// Subclass refines `class=exchange` into `dex` / `cex` / `fx`
 	// so consumers can group venues (e.g. a UI rendering "DEX
-	// liquidity" alongside "CEX prices"). Empty for non-exchange
-	// classes (aggregator / oracle / authority_sanity have no
-	// subclass dimension).
+	// liquidity" alongside "CEX prices"). Empty for every other
+	// class — none of them has a subclass dimension.
 	Subclass          string `json:"subclass,omitempty"`
 	IncludeInVWAP     bool   `json:"include_in_vwap"`
 	Paid              bool   `json:"paid"`

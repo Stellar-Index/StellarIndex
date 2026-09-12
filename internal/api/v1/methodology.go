@@ -35,9 +35,16 @@ type Methodology struct {
 	// authoritative narratives.
 	Aggregation MethodologyAggregation `json:"aggregation"`
 
-	// SourceClasses enumerates the four class buckets and which
-	// contributes to the VWAP. Mirrors `internal/sources/external`.
-	// Subdivides ClassExchange into dex/cex/fx subclasses.
+	// SourceClasses enumerates EVERY class bucket a row in Sources
+	// can carry, and which of them contributes to the VWAP. Mirrors
+	// `internal/sources/external`. Subdivides ClassExchange into
+	// dex/cex/fx subclasses.
+	//
+	// "Every" is load-bearing and was not true until 2026-09-12:
+	// this list carried four classes while Sources served seven, so
+	// the eight router / lending / bridge venues came back stamped
+	// with a class the same document never defined.
+	// TestMethodology_EveryServedSourceClassIsDescribed holds it.
 	SourceClasses []MethodologySourceClass `json:"source_classes"`
 
 	// Sources is the flat list of registered venues with their
@@ -100,8 +107,9 @@ type MethodologyStablecoinPeg struct {
 	PegsTo  string `json:"pegs_to"`
 }
 
-// MethodologySourceClass describes one of the four registry
-// classes (exchange / aggregator / oracle / authority_sanity).
+// MethodologySourceClass describes one registry class (exchange /
+// aggregator / oracle / authority_sanity / lending / router /
+// bridge).
 type MethodologySourceClass struct {
 	Name              string `json:"name"`
 	ContributesToVWAP bool   `json:"contributes_to_vwap"`
@@ -154,11 +162,28 @@ func (s *Server) handleMethodology(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
+	// One entry per class the registry can stamp on a source —
+	// including the three that carry no price signal at all. They
+	// belong here because `sources` below is the WHOLE registry (the
+	// same rows /v1/sources serves), so a consumer that reads
+	// `class: "router"` off a row needs somewhere in this document
+	// to look that word up. Before 2026-09-12 there was nowhere: the
+	// list stopped at the four price-bearing classes and the eight
+	// router / lending / bridge venues were labelled with a term the
+	// document never defined, while the page, the spec and this
+	// package's own godoc all repeated the count of four.
+	//
+	// The three additions restate the class godoc in
+	// internal/sources/external/framework.go, which is the
+	// authoritative narrative for why each is excluded.
 	classes := []MethodologySourceClass{
 		{Name: string(external.ClassExchange), ContributesToVWAP: true, Description: "Real trading venues — DEXes (Soroswap, Phoenix, Aquarius, Comet, sdex), CEXes (Coinbase, Binance, Kraken, Bitstamp), FX vendors. The only sources that contribute to the VWAP."},
 		{Name: string(external.ClassAggregator), ContributesToVWAP: false, Description: "Third-party aggregators (CoinGecko, CoinMarketCap) that already aggregate the same upstream venues. Including them in our VWAP would double-count; surfaced separately for divergence checks."},
 		{Name: string(external.ClassOracle), ContributesToVWAP: false, Description: "Reflector, Band, Redstone, Chainlink. Each runs its own methodology; adding their output to our VWAP would impose theirs on top of ours. Surfaced as parallel readings + used for cross-checks."},
 		{Name: string(external.ClassAuthoritySanity), ContributesToVWAP: false, Description: "Stellar-blessed reference points (anchor home-domains, canonical fiat rates) used as sanity bounds, not price input."},
+		{Name: string(external.ClassLending), ContributesToVWAP: false, Description: "On-chain lending protocols (Blend, SoroCredit). Their events are directional state changes — supply, borrow, liquidation auction, bad debt — taken on top of some other oracle's price rather than new price observations. Surfaced as a secondary validation and protocol-health surface."},
+		{Name: string(external.ClassRouter), ContributesToVWAP: false, Description: "Soroban DEX routers and aggregator vaults (soroswap-router, defindex, upshift). They emit no independent trades — they invoke the contracts that do — so counting them would double-count the underlying pool's swap. Indexed for per-transaction attribution (which router drove this swap) and requested-vs-realised path."},
+		{Name: string(external.ClassBridge), ContributesToVWAP: false, Description: "Cross-chain transfer protocols (Circle CCTP, Rozo). These move tokens between chains rather than exchanging them at a price: a deposit_for_burn on Stellar plus a mint_and_withdraw elsewhere is one logical transfer, not a two-leg trade. Surfaced for cross-chain flow attribution and USDC supply accounting."},
 	}
 
 	names := make([]string, 0, len(external.Registry))

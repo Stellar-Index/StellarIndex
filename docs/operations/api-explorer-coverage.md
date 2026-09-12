@@ -264,12 +264,39 @@ take.
 
 ### `/methodology` — the one with a page that ignores it
 
-`/v1/methodology` returns a live ~6.9 KB machine-readable document: 29
-sources, 4 source classes, 6 ADR references, the stablecoin proxy list,
+`/v1/methodology` returns a live ~6.9 KB machine-readable document: 30
+sources, 7 source classes, 6 ADR references, the stablecoin proxy list,
 `version: "1.0"`. The explorer's `/methodology` page is **hand-written
 prose that does not call it.** So the page and the endpoint can disagree
 about how the index works and nothing notices. Worth wiring — it is the
 kind of drift that is invisible until it is embarrassing.
+
+**Gated rather than wired, 2026-09-12.** The page stays hand-written on
+purpose: it covers a superset of the endpoint (latency SLOs, numeric
+precision, the freeze policy have no endpoint counterpart) and the
+explorer is a static export, so rendering from the API at build time
+would trade a prose-drift risk for a build-time network dependency.
+`internal/api/v1/methodology_explorer_drift_test.go` is the compile step
+for the overlap instead — it renders the real handler, reads the real
+page, and fails on any claim they both make and disagree about. Eight
+assertions now: source-class names and count, the outlier default, the
+deferral on the operator-configured peg map, the formula's price method,
+the VWAP-eligibility class, and the venues each class description names.
+
+Auditing that overlap turned up a **larger disagreement inside the
+endpoint itself**: `source_classes` described four classes while
+`sources` served seven, so the eight `router` / `lending` / `bridge`
+venues carried a class the document never defined. The page, the spec,
+the Go godoc and the endpoint's own baseline test all repeated the count
+of four; none of them checked it against `external.Registry`. Fixed —
+all seven are described, and the class-coverage check is one of the new
+gates. What is still **not** gated is the reverse direction: a class
+description may omit a registered venue, and six are omitted today
+(cryptocompare, sushiswap_v3, massive, exchangeratesapi, ecb,
+blend_emitter). Both copies describe some venues by category — "FX
+vendors", "canonical fiat rates" — so an exhaustive-list gate would be
+noise. Nothing *named* can be wrong; something registered can be
+unmentioned.
 
 ### Account/admin surfaces with no UI (13)
 

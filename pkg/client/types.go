@@ -701,7 +701,12 @@ type MethodologyStablecoinPeg struct {
 	PegsTo  string `json:"pegs_to"`
 }
 
-// MethodologySourceClass describes one of the four registry classes.
+// MethodologySourceClass describes one registry class. The served
+// list is the complete glossary for the Class field on every
+// [MethodologySource] — the price-bearing classes (exchange,
+// aggregator, oracle, authority_sanity) and the ones indexed for
+// flow and state (lending, router, bridge) alike. Only exchange
+// carries ContributesToVWAP.
 type MethodologySourceClass struct {
 	Name              string `json:"name"`
 	ContributesToVWAP bool   `json:"contributes_to_vwap"`
