@@ -2521,11 +2521,17 @@ export interface paths {
          * Machine-readable summary of the active aggregation policy.
          * @description Returns a static projection of the aggregator's policy: the
          *     VWAP method, per-endpoint outlier filters, the operator's
-         *     stablecoin → fiat-USD proxy allow-list, the four source
-         *     classes (exchange / aggregator / oracle / authority_sanity)
-         *     and which contributes to the served price, the flat list of
-         *     registered venues with class / weight / VWAP-inclusion flags,
-         *     and pointers to the long-form ADRs that govern each section.
+         *     stablecoin → fiat-USD proxy allow-list, the seven source
+         *     classes (exchange / aggregator / oracle / authority_sanity /
+         *     lending / router / bridge) and which of them contributes to
+         *     the served price, the flat list of registered venues with
+         *     class / weight / VWAP-inclusion flags, and pointers to the
+         *     long-form ADRs that govern each section.
+         *
+         *     `source_classes` is the complete glossary for the `class`
+         *     field on every row of `sources`, including the three classes
+         *     that carry no price signal at all. Only `exchange`
+         *     contributes to the VWAP.
          *
          *     Designed for transparency consumers (compliance, auditors,
          *     AI agents, integrators verifying our open-methodology
@@ -2556,9 +2562,11 @@ export interface paths {
          * @description Static projection of the aggregator's source registry — every
          *     venue we know about, labelled with the class semantic that
          *     decides whether it contributes to VWAP. Sources with
-         *     `include_in_vwap=false` are intentional policy
-         *     (aggregator/oracle/authority_sanity classes), not missing
-         *     connectors. Operators consult this endpoint to confirm a
+         *     `include_in_vwap=false` are intentional policy (every class
+         *     except `exchange` — aggregator, oracle, authority_sanity,
+         *     lending, router, bridge), not missing connectors. Each of
+         *     those classes is defined on /v1/methodology under
+         *     `source_classes`. Operators consult this endpoint to confirm a
          *     venue is recognised before debugging an absence in /v1/markets
          *     or /v1/vwap.
          */
@@ -15401,7 +15409,7 @@ export interface operations {
                      *         "references": [
                      *           {
                      *             "id": "ADR-0007",
-                     *             "title": "Aggregation policy + cache-key contract",
+                     *             "title": "Redis as hot-path cache + rate-limit + ephemeral state",
                      *             "url": "/research/adr/0007"
                      *           }
                      *         ]

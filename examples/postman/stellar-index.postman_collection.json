@@ -22014,7 +22014,7 @@
           "request": {
             "name": "Machine-readable summary of the active aggregation policy.",
             "description": {
-              "content": "Returns a static projection of the aggregator's policy: the\nVWAP method, per-endpoint outlier filters, the operator's\nstablecoin → fiat-USD proxy allow-list, the four source\nclasses (exchange / aggregator / oracle / authority_sanity)\nand which contributes to the served price, the flat list of\nregistered venues with class / weight / VWAP-inclusion flags,\nand pointers to the long-form ADRs that govern each section.\n\nDesigned for transparency consumers (compliance, auditors,\nAI agents, integrators verifying our open-methodology\nclaims) who want to verify what the deployment is doing\nwithout parsing the explorer's HTML at /methodology or\nchasing ADR cross-refs. Sub-millisecond — no DB call;\nderived from compile-time constants + the in-memory source\nregistry + operator config.\n",
+              "content": "Returns a static projection of the aggregator's policy: the\nVWAP method, per-endpoint outlier filters, the operator's\nstablecoin → fiat-USD proxy allow-list, the seven source\nclasses (exchange / aggregator / oracle / authority_sanity /\nlending / router / bridge) and which of them contributes to\nthe served price, the flat list of registered venues with\nclass / weight / VWAP-inclusion flags, and pointers to the\nlong-form ADRs that govern each section.\n\n`source_classes` is the complete glossary for the `class`\nfield on every row of `sources`, including the three classes\nthat carry no price signal at all. Only `exchange`\ncontributes to the VWAP.\n\nDesigned for transparency consumers (compliance, auditors,\nAI agents, integrators verifying our open-methodology\nclaims) who want to verify what the deployment is doing\nwithout parsing the explorer's HTML at /methodology or\nchasing ADR cross-refs. Sub-millisecond — no DB call;\nderived from compile-time constants + the in-memory source\nregistry + operator config.\n",
               "type": "text/plain"
             },
             "url": {
@@ -22123,7 +22123,7 @@
           "request": {
             "name": "Source catalogue with class + IncludeInVWAP metadata.",
             "description": {
-              "content": "Static projection of the aggregator's source registry — every\nvenue we know about, labelled with the class semantic that\ndecides whether it contributes to VWAP. Sources with\n`include_in_vwap=false` are intentional policy\n(aggregator/oracle/authority_sanity classes), not missing\nconnectors. Operators consult this endpoint to confirm a\nvenue is recognised before debugging an absence in /v1/markets\nor /v1/vwap.\n",
+              "content": "Static projection of the aggregator's source registry — every\nvenue we know about, labelled with the class semantic that\ndecides whether it contributes to VWAP. Sources with\n`include_in_vwap=false` are intentional policy (every class\nexcept `exchange` — aggregator, oracle, authority_sanity,\nlending, router, bridge), not missing connectors. Each of\nthose classes is defined on /v1/methodology under\n`source_classes`. Operators consult this endpoint to confirm a\nvenue is recognised before debugging an absence in /v1/markets\nor /v1/vwap.\n",
               "type": "text/plain"
             },
             "url": {

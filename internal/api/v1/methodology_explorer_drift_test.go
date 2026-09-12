@@ -311,3 +311,370 @@ func TestMethodologyPage_OutlierClaimMatchesTheEndpoint(t *testing.T) {
 			methodologyPagePath)
 	}
 }
+
+// ─── the document against itself ────────────────────────────────────
+//
+// The two tests below never open the page. They hold /v1/methodology
+// to its own contents, because the page-vs-endpoint checks above are
+// worth nothing if the endpoint already disagrees with itself — and
+// it did. Both were found by reading the served bytes rather than the
+// source, which is why servedMethodology renders the real handler.
+
+// TestMethodology_EveryServedSourceClassIsDescribed makes
+// `source_classes` the complete glossary for the `class` field on
+// every row of `sources`.
+//
+// `sources` is the whole registry — the same rows /v1/sources serves.
+// `source_classes` is what a consumer looks a row's `class` up in. A
+// class that appears on a row but not in the glossary is a term the
+// document uses without defining, and that is exactly what shipped:
+// four classes described, seven served, and eight router / lending /
+// bridge venues labelled with a word nothing in the response
+// explained. Nothing caught it because the count was asserted
+// nowhere and repeated everywhere — the page said "one of four", the
+// spec said "the four source classes", and the Go type's own godoc
+// said "the four class buckets". Three surfaces agreeing with each
+// other is not the same as any of them agreeing with the registry.
+func TestMethodology_EveryServedSourceClassIsDescribed(t *testing.T) {
+	data := servedMethodology(t)
+
+	rawClasses, ok := data["source_classes"].([]any)
+	if !ok || len(rawClasses) == 0 {
+		t.Fatal("methodology served no source_classes[]")
+	}
+	described := map[string]bool{}
+	for _, raw := range rawClasses {
+		c, ok := raw.(map[string]any)
+		if !ok {
+			t.Fatalf("source class is not an object: %#v", raw)
+		}
+		name, _ := c["name"].(string)
+		if name == "" {
+			t.Fatalf("source class has no name: %#v", raw)
+		}
+		described[name] = true
+	}
+
+	rawSources, ok := data["sources"].([]any)
+	if !ok || len(rawSources) == 0 {
+		t.Fatal("methodology served no sources[] — there would be no class to check")
+	}
+	venuesByClass := map[string][]string{}
+	for _, raw := range rawSources {
+		s, ok := raw.(map[string]any)
+		if !ok {
+			t.Fatalf("source is not an object: %#v", raw)
+		}
+		name, _ := s["name"].(string)
+		class, _ := s["class"].(string)
+		if class == "" {
+			t.Errorf("/v1/methodology serves source %q with no class", name)
+			continue
+		}
+		venuesByClass[class] = append(venuesByClass[class], name)
+	}
+	if len(venuesByClass) == 0 {
+		t.Fatal("no served source carried a class — this assertion would be vacuous")
+	}
+
+	for _, class := range sortedKeys(venuesByClass) {
+		if described[class] {
+			continue
+		}
+		venues := venuesByClass[class]
+		sort.Strings(venues)
+		t.Errorf("/v1/methodology serves %d source(s) of class %q (%s) but source_classes[] "+
+			"never defines that class — the document uses a term it does not explain",
+			len(venues), class, strings.Join(venues, ", "))
+	}
+}
+
+// TestMethodology_ClassVWAPFlagMatchesItsSources holds the glossary's
+// `contributes_to_vwap` against the per-source `include_in_vwap` it
+// summarises.
+//
+// The class flags are hand-written literals in methodology.go; the
+// source flags come from the registry. Nothing derives one from the
+// other, so they can disagree — and "what feeds the price" is read
+// off the one-line class summary far more often than off the 30-row
+// table beneath it.
+//
+// Only the two directions that are actually wrong are asserted. A
+// class marked as not contributing may not contain a contributing
+// venue (the dangerous direction: the summary would be a false
+// negative about what moves the price), and a class marked as
+// contributing must contain at least one (or the claim is empty).
+// A contributing class holding SOME non-contributing venue is
+// legitimate — a newly added exchange can sit in the registry with
+// include_in_vwap=false until it is trusted — so that is not an
+// error.
+func TestMethodology_ClassVWAPFlagMatchesItsSources(t *testing.T) {
+	data := servedMethodology(t)
+
+	rawClasses, ok := data["source_classes"].([]any)
+	if !ok || len(rawClasses) == 0 {
+		t.Fatal("methodology served no source_classes[]")
+	}
+	contributes := map[string]bool{}
+	for _, raw := range rawClasses {
+		c, _ := raw.(map[string]any)
+		name, _ := c["name"].(string)
+		flag, ok := c["contributes_to_vwap"].(bool)
+		if name == "" || !ok {
+			t.Fatalf("source class carries no name/contributes_to_vwap: %#v", raw)
+		}
+		contributes[name] = flag
+	}
+
+	rawSources, ok := data["sources"].([]any)
+	if !ok || len(rawSources) == 0 {
+		t.Fatal("methodology served no sources[] — there would be no flag to check")
+	}
+	contributingVenues := map[string][]string{}
+	checked := 0
+	for _, raw := range rawSources {
+		s, _ := raw.(map[string]any)
+		name, _ := s["name"].(string)
+		class, _ := s["class"].(string)
+		included, ok := s["include_in_vwap"].(bool)
+		if !ok {
+			t.Errorf("/v1/methodology serves source %q with no include_in_vwap", name)
+			continue
+		}
+		checked++
+		if included {
+			contributingVenues[class] = append(contributingVenues[class], name)
+		}
+	}
+	if checked == 0 {
+		t.Fatal("no served source carried include_in_vwap — this assertion would be vacuous")
+	}
+
+	for _, class := range sortedKeys(contributes) {
+		venues := contributingVenues[class]
+		sort.Strings(venues)
+		switch {
+		case !contributes[class] && len(venues) > 0:
+			t.Errorf("/v1/methodology says class %q does not contribute to the VWAP, but serves "+
+				"%d venue(s) of that class with include_in_vwap=true (%s)",
+				class, len(venues), strings.Join(venues, ", "))
+		case contributes[class] && len(venues) == 0:
+			t.Errorf("/v1/methodology says class %q contributes to the VWAP, but no served venue "+
+				"of that class has include_in_vwap=true — the claim is empty", class)
+		}
+	}
+}
+
+// ─── the remaining claims the page and the endpoint both make ───────
+
+// TestMethodologyPage_FormulaMatchesTheServedPriceMethod pins the
+// headline formula.
+//
+// `aggregation.price_method` is the API's statement of how the served
+// price is derived; the page prints a formula and names it. A plain
+// substring search for the method would be worthless here — the page
+// mentions VWAP and TWAP many times over — so the assertion is
+// against the formula block specifically, which is the page's actual
+// claim about what the number is.
+func TestMethodologyPage_FormulaMatchesTheServedPriceMethod(t *testing.T) {
+	page := methodologyReadRepoFile(t, methodologyPagePath)
+	data := servedMethodology(t)
+
+	agg, ok := data["aggregation"].(map[string]any)
+	if !ok {
+		t.Fatal("methodology served no aggregation object")
+	}
+	method, _ := agg["price_method"].(string)
+	if method == "" {
+		t.Fatal("methodology served no aggregation.price_method")
+	}
+
+	m := regexp.MustCompile(`<Formula>\s*([A-Za-z]+)\s*=`).FindStringSubmatch(page)
+	if m == nil {
+		t.Fatalf("%s no longer opens its price section with a <Formula> naming the method — "+
+			"either restore it or drop this assertion deliberately", methodologyPagePath)
+	}
+	if !strings.EqualFold(m[1], method) {
+		t.Errorf("%s prints the formula for %s; /v1/methodology serves price_method=%q",
+			methodologyPagePath, m[1], method)
+	}
+}
+
+// TestMethodologyPage_VWAPEligibilityMatchesTheEndpoint holds the
+// page's eligibility rule to the served contributor set.
+//
+// The page states the rule as a single class ("each trade i is from a
+// source with class = exchange"). That phrasing is only true while
+// exactly one class contributes, which is the endpoint's to decide.
+// Admit a second contributing class and the page's formula silently
+// starts describing a subset of the number it claims to define.
+func TestMethodologyPage_VWAPEligibilityMatchesTheEndpoint(t *testing.T) {
+	page := methodologyReadRepoFile(t, methodologyPagePath)
+	data := servedMethodology(t)
+
+	rawClasses, ok := data["source_classes"].([]any)
+	if !ok || len(rawClasses) == 0 {
+		t.Fatal("methodology served no source_classes[]")
+	}
+	var contributors []string
+	for _, raw := range rawClasses {
+		c, _ := raw.(map[string]any)
+		name, _ := c["name"].(string)
+		if flag, _ := c["contributes_to_vwap"].(bool); flag {
+			contributors = append(contributors, name)
+		}
+	}
+	sort.Strings(contributors)
+	if len(contributors) == 0 {
+		t.Fatal("no served class contributes to the VWAP — the page's whole VWAP section " +
+			"describes a number nothing feeds; re-derive this test's premise")
+	}
+
+	m := regexp.MustCompile(`with class =[\s\S]{0,300}?>\s*([a-z_]+)\s*<`).FindStringSubmatch(page)
+	if m == nil {
+		t.Fatalf("%s no longer states which class a trade must carry to enter the VWAP — "+
+			"either restore the claim or drop this assertion deliberately", methodologyPagePath)
+	}
+	if len(contributors) != 1 || contributors[0] != m[1] {
+		t.Errorf("%s says a VWAP trade comes from class %q; /v1/methodology serves %d "+
+			"contributing class(es): %s", methodologyPagePath, m[1],
+			len(contributors), strings.Join(contributors, ", "))
+	}
+}
+
+// TestMethodologyPage_ClassVenueNamesAgree holds the two copies of
+// the same paragraph together.
+//
+// Each class is described twice in near-identical prose — once in
+// methodology.go, once in the page's DefList — and both name venues.
+// Two assertions, in the two directions that can be checked without
+// guessing at prose:
+//
+//  1. a venue named in a class's served description must be
+//     registered under THAT class in the same response, so the
+//     document cannot describe a venue into the wrong bucket;
+//  2. the page's entry for a class must name every venue the
+//     endpoint's entry for it names, so the endpoint's copy cannot
+//     gain a venue the page's copy never hears about.
+//
+// The reverse of (2) — every registered venue must be named — is
+// deliberately NOT asserted. Both copies describe some venues by
+// category rather than by name ("FX vendors", "canonical fiat
+// rates"), and forcing an exhaustive list into prose would make the
+// text worse and the gate noisier. The consequence is real and worth
+// stating: a venue can join the registry without either copy
+// mentioning it, and today several have (cryptocompare, sushiswap_v3,
+// massive, exchangeratesapi, ecb, blend_emitter are all registered
+// and named in neither copy). What is gated is that nothing NAMED is
+// wrong.
+//
+// Because the scan matches registry ids, a description should name a
+// venue by its id wherever the brand name is ambiguous — "Soroswap
+// Router" would be read as the exchange-class `soroswap`, so the
+// router class names `soroswap-router` instead.
+func TestMethodologyPage_ClassVenueNamesAgree(t *testing.T) {
+	page := methodologyReadRepoFile(t, methodologyPagePath)
+	data := servedMethodology(t)
+
+	rawSources, ok := data["sources"].([]any)
+	if !ok || len(rawSources) == 0 {
+		t.Fatal("methodology served no sources[] — there would be no venue to match")
+	}
+	classOf := map[string]string{}
+	ids := make([]string, 0, len(rawSources))
+	for _, raw := range rawSources {
+		s, _ := raw.(map[string]any)
+		name, _ := s["name"].(string)
+		class, _ := s["class"].(string)
+		if name == "" {
+			t.Fatalf("served source has no name: %#v", raw)
+		}
+		classOf[name] = class
+		ids = append(ids, name)
+	}
+
+	rawClasses, ok := data["source_classes"].([]any)
+	if !ok || len(rawClasses) == 0 {
+		t.Fatal("methodology served no source_classes[]")
+	}
+
+	matched := 0
+	for _, raw := range rawClasses {
+		c, _ := raw.(map[string]any)
+		class, _ := c["name"].(string)
+		desc, _ := c["description"].(string)
+		if desc == "" {
+			t.Errorf("/v1/methodology serves class %q with no description", class)
+			continue
+		}
+		pageDef := methodologyPageClassDef(t, page, class)
+
+		named := namedVenues(desc, ids)
+		for _, venue := range sortedKeys(named) {
+			matched++
+			if got := classOf[venue]; got != class {
+				t.Errorf("/v1/methodology's %q description names %q, which the same response "+
+					"registers under class %q", class, venue, got)
+			}
+			if len(namedVenues(pageDef, []string{venue})) == 0 {
+				t.Errorf("/v1/methodology's %q description names venue %q; the %q entry in %s "+
+					"does not — the two copies of this paragraph have drifted",
+					class, venue, class, methodologyPagePath)
+			}
+		}
+	}
+	if matched == 0 {
+		t.Fatal("no served class description named a single registered venue — the scan is " +
+			"broken, not the prose; every assertion above was vacuous")
+	}
+}
+
+// methodologyPageClassDef returns the `def:` string the page's
+// source-class DefList carries for one class term.
+func methodologyPageClassDef(t *testing.T, page, term string) string {
+	t.Helper()
+	re := regexp.MustCompile(`term:\s*'` + regexp.QuoteMeta(term) + `'\s*,\s*def:\s*'((?:[^'\\]|\\.)*)'`)
+	m := re.FindStringSubmatch(page)
+	if m == nil {
+		t.Fatalf("%s has no DefList entry for source class %q — /v1/methodology serves it",
+			methodologyPagePath, term)
+	}
+	return m[1]
+}
+
+// namedVenues returns which of `ids` the text names, as whole words
+// and case-insensitively.
+//
+// Longest id first, blanking each match as it is claimed, so that
+// `soroswap-router` takes its own text before a bare `soroswap` can
+// be read out of the middle of it — `\b` treats the hyphen as a
+// boundary, so without this the router class would look like it was
+// describing an exchange-class venue.
+func namedVenues(text string, ids []string) map[string]bool {
+	ordered := append([]string(nil), ids...)
+	sort.Slice(ordered, func(i, j int) bool { return len(ordered[i]) > len(ordered[j]) })
+
+	found := map[string]bool{}
+	for _, id := range ordered {
+		re := regexp.MustCompile(`(?i)\b` + regexp.QuoteMeta(id) + `\b`)
+		if !re.MatchString(text) {
+			continue
+		}
+		found[id] = true
+		text = re.ReplaceAllStringFunc(text, func(m string) string {
+			return strings.Repeat("\x00", len(m))
+		})
+	}
+	return found
+}
+
+// sortedKeys returns a map's keys in sorted order, so a failure
+// message lists the same thing in the same order every run.
+func sortedKeys[V any](m map[string]V) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
+}

@@ -9,6 +9,50 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/auth"
 )
 
+// sep10UnavailableType is the problem type every "SEP-10 is not on
+// here" answer carries.
+const sep10UnavailableType = "https://api.stellarindex.io/errors/sep10-unavailable"
+
+// sep10UnavailableDetail is the body those answers carry.
+//
+// A caller who reaches this has read a document that told them the
+// flow exists — /sdk, the getting-started guide, the SDK's godoc, the
+// spec — and every one of those now says it is off here. This is the
+// one surface that answers a caller who did not read them, so it has
+// to stand on its own: WHY the route refuses (no signing seed, so
+// there is nothing to sign a challenge with — not an outage, not a
+// bad request), and WHAT TO DO INSTEAD (an API key, which is the
+// credential this deployment actually verifies).
+//
+// The four call sites used to carry two different strings, the
+// terser of which said only "no SEP-10 validator wired" — a
+// restatement of the error code, which tells a caller nothing they
+// could act on. One constant means those branches cannot drift apart
+// again.
+//
+// The last sentence is for the operator reading their own logs, and
+// is deliberate about the cost: enabling SEP-10 does not ADD a
+// credential type, it SWAPS the deployment's one credential type,
+// because middleware.authenticate is a mutually exclusive switch over
+// auth_mode. A deployment verifies sip_* keys or SEP-10 JWTs, never
+// both, and an operator who reads this as "turn it on as well" would
+// break every existing key holder.
+const sep10UnavailableDetail = "no SEP-10 validator is wired on this deployment: " +
+	"no server signing seed is configured, so there is nothing to sign a challenge with. " +
+	"Authenticate with an API key instead (Authorization: Bearer sip_…) — see https://stellarindex.io/sdk. " +
+	"Enabling SEP-10 is an operator action: set STELLARINDEX_SEP10_SEED and STELLARINDEX_SEP10_JWT_SECRET " +
+	"on a deployment with Redis, and switch auth_mode to sep10 — which turns sip_* API keys OFF, " +
+	"since a deployment verifies one credential type or the other, never both."
+
+// writeSEP10Unavailable answers the 503 that says SEP-10 is not
+// offered here.
+func writeSEP10Unavailable(w http.ResponseWriter, r *http.Request) {
+	writeProblem(w, r,
+		sep10UnavailableType,
+		"SEP-10 not configured", http.StatusServiceUnavailable,
+		sep10UnavailableDetail)
+}
+
 // handleSEP10Challenge serves GET /v1/auth/sep10/challenge?account=G…
 //
 // Returns the SEP-10 challenge transaction the client must sign with
@@ -20,10 +64,7 @@ import (
 // SEP-10 is to bootstrap auth from a public Stellar G-strkey.
 func (s *Server) handleSEP10Challenge(w http.ResponseWriter, r *http.Request) {
 	if s.sep10 == nil {
-		writeProblem(w, r,
-			"https://api.stellarindex.io/errors/sep10-unavailable",
-			"SEP-10 not configured", http.StatusServiceUnavailable,
-			"this deployment has no SEP-10 validator wired — typically because the server signing seed isn't configured")
+		writeSEP10Unavailable(w, r)
 		return
 	}
 
@@ -46,10 +87,7 @@ func (s *Server) handleSEP10Challenge(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if errors.Is(err, auth.ErrNotImplemented) {
-			writeProblem(w, r,
-				"https://api.stellarindex.io/errors/sep10-unavailable",
-				"SEP-10 not configured", http.StatusServiceUnavailable,
-				"this deployment has no SEP-10 validator wired — typically because the server signing seed isn't configured")
+			writeSEP10Unavailable(w, r)
 			return
 		}
 		if clientAborted(r, err) {
@@ -122,10 +160,7 @@ type sep10TokenResponse struct {
 //   - 500 — anything else
 func (s *Server) handleSEP10Token(w http.ResponseWriter, r *http.Request) {
 	if s.sep10 == nil {
-		writeProblem(w, r,
-			"https://api.stellarindex.io/errors/sep10-unavailable",
-			"SEP-10 not configured", http.StatusServiceUnavailable,
-			"this deployment has no SEP-10 validator wired")
+		writeSEP10Unavailable(w, r)
 		return
 	}
 
@@ -204,10 +239,7 @@ func (s *Server) writeSEP10VerifyError(w http.ResponseWriter, r *http.Request, e
 		// error" — misleading because it's a deployment config
 		// state, not a server crash. Surfacing it as 503 with a
 		// detail makes the operator-side fix obvious.
-		writeProblem(w, r,
-			"https://api.stellarindex.io/errors/sep10-unavailable",
-			"SEP-10 not configured", http.StatusServiceUnavailable,
-			"this deployment has no SEP-10 validator wired — typically because the server signing seed isn't configured")
+		writeSEP10Unavailable(w, r)
 	default:
 		if clientAborted(r, err) {
 			return

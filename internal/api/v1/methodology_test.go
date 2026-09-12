@@ -2,10 +2,12 @@ package v1_test
 
 import (
 	"net/http"
+	"strings"
 	"testing"
 
 	v1 "github.com/Stellar-Index/StellarIndex/internal/api/v1"
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/sources/external"
 )
 
 // TestMethodology_BaselineShape pins the wire shape's required
@@ -37,16 +39,25 @@ func TestMethodology_BaselineShape(t *testing.T) {
 	if env.Data.Aggregation.ClosedBucketWindowSeconds <= 0 {
 		t.Errorf("closed_bucket_window_seconds = %d, want > 0", env.Data.Aggregation.ClosedBucketWindowSeconds)
 	}
-	// All four registry classes must appear, exactly one of which
-	// (exchange) contributes_to_vwap=true.
-	wantClasses := map[string]bool{
-		"exchange":         true,
-		"aggregator":       false,
-		"oracle":           false,
-		"authority_sanity": false,
+	// Every class the registry can stamp on a source must appear,
+	// exactly one of which (exchange) contributes_to_vwap=true.
+	//
+	// Derived from the registry rather than listed literally here: a
+	// hard-coded four in this very test is part of how the served
+	// document came to describe four classes while `sources` served
+	// seven. Four surfaces agreed with each other and none of them
+	// with external.Registry.
+	wantClasses := map[string]bool{}
+	for _, md := range external.Registry {
+		wantClasses[string(md.Class)] = md.Class == external.ClassExchange
 	}
-	if len(env.Data.SourceClasses) != 4 {
-		t.Fatalf("source_classes = %d entries, want 4", len(env.Data.SourceClasses))
+	if len(wantClasses) == 0 {
+		t.Fatal("external.Registry stamps no classes — this assertion would be vacuous")
+	}
+	if len(env.Data.SourceClasses) != len(wantClasses) {
+		t.Fatalf("source_classes = %d entries, want %d (%s)",
+			len(env.Data.SourceClasses), len(wantClasses),
+			strings.Join(sortedKeys(wantClasses), ", "))
 	}
 	for _, sc := range env.Data.SourceClasses {
 		want, ok := wantClasses[sc.Name]

@@ -15,6 +15,63 @@ against.
 
 ## [Unreleased]
 
+### Fixed
+
+- **api:** `/v1/methodology` no longer serves rows labelled with a class
+  the same response never defines.
+
+  `source_classes` described four classes; `sources` — the whole
+  registry, the same rows `/v1/sources` returns — served **seven**. The
+  eight `router` / `lending` / `bridge` venues (soroswap-router,
+  defindex, upshift, blend, blend_emitter, sorocredit, cctp, rozo) came
+  back stamped with a term a transparency consumer had nowhere in the
+  document to look up. Nothing caught it because the count of four was
+  asserted nowhere and repeated everywhere: the explorer's
+  `/methodology` page said "one of four source classes", the spec said
+  "the four source classes", the Go type's godoc said "the four class
+  buckets", and `TestMethodology_BaselineShape` pinned `== 4` against a
+  hard-coded map. Four surfaces agreeing with each other is not one of
+  them agreeing with `external.Registry`.
+
+  The glossary now carries all seven, each restating the class godoc in
+  `internal/sources/external/framework.go` for why it is excluded from
+  the VWAP. The baseline test derives its expectation from the registry
+  instead of listing it. `/v1/sources`' spec prose named the same three
+  non-contributing classes and now names all six.
+
+- **docs:** the spec's `/methodology` example served ADR-0007 as
+  "Aggregation policy + cache-key contract". That is not a document
+  that exists — 0007 is "Redis as hot-path cache + rate-limit +
+  ephemeral state" — and it is the same paraphrase the handler was
+  corrected for in 2026-08. The rendered reference at
+  docs.stellarindex.io carried it.
+
+### Added
+
+- **test:** five gates over the claims `/v1/methodology` and the
+  hand-written `/methodology` page both make, extending the drift file
+  that already held the source-class names, the outlier default and the
+  operator-configured peg map. Every one was proved to fail against a
+  deliberate mutation before being kept.
+
+  Two hold the endpoint against itself: every class appearing on a
+  `sources` row must be defined in `source_classes`, and a class marked
+  as not contributing to the VWAP may not contain a venue with
+  `include_in_vwap=true` (a class marked as contributing must contain
+  at least one, or the claim is empty). Three hold the page against the
+  endpoint: the page's formula must name the served `price_method`, its
+  stated eligibility class must be exactly the served contributor set,
+  and any venue the endpoint's class description names must be
+  registered under that class *and* named in the page's copy of the
+  same paragraph.
+
+  The reverse of the last one — every registered venue must be named —
+  is deliberately not gated, and the cost is stated in the test: both
+  copies describe some venues by category ("FX vendors", "canonical
+  fiat rates"), so cryptocompare, sushiswap_v3, massive,
+  exchangeratesapi, ecb and blend_emitter are registered and named in
+  neither. What is gated is that nothing named is wrong.
+
 ## [v0.76.0] — 2026-09-12
 
 ### Fixed
