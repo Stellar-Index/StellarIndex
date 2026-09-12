@@ -15,64 +15,6 @@ against.
 
 ## [Unreleased]
 
-## [v0.77.0] — 2026-09-12
-
-### Fixed
-
-- **api:** `/v1/methodology` no longer serves rows labelled with a class
-  the same response never defines.
-
-  `source_classes` described four classes; `sources` — the whole
-  registry, the same rows `/v1/sources` returns — served **seven**. The
-  eight `router` / `lending` / `bridge` venues (soroswap-router,
-  defindex, upshift, blend, blend_emitter, sorocredit, cctp, rozo) came
-  back stamped with a term a transparency consumer had nowhere in the
-  document to look up. Nothing caught it because the count of four was
-  asserted nowhere and repeated everywhere: the explorer's
-  `/methodology` page said "one of four source classes", the spec said
-  "the four source classes", the Go type's godoc said "the four class
-  buckets", and `TestMethodology_BaselineShape` pinned `== 4` against a
-  hard-coded map. Four surfaces agreeing with each other is not one of
-  them agreeing with `external.Registry`.
-
-  The glossary now carries all seven, each restating the class godoc in
-  `internal/sources/external/framework.go` for why it is excluded from
-  the VWAP. The baseline test derives its expectation from the registry
-  instead of listing it. `/v1/sources`' spec prose named the same three
-  non-contributing classes and now names all six.
-
-- **docs:** the spec's `/methodology` example served ADR-0007 as
-  "Aggregation policy + cache-key contract". That is not a document
-  that exists — 0007 is "Redis as hot-path cache + rate-limit +
-  ephemeral state" — and it is the same paraphrase the handler was
-  corrected for in 2026-08. The rendered reference at
-  docs.stellarindex.io carried it.
-
-### Added
-
-- **test:** five gates over the claims `/v1/methodology` and the
-  hand-written `/methodology` page both make, extending the drift file
-  that already held the source-class names, the outlier default and the
-  operator-configured peg map. Every one was proved to fail against a
-  deliberate mutation before being kept.
-
-  Two hold the endpoint against itself: every class appearing on a
-  `sources` row must be defined in `source_classes`, and a class marked
-  as not contributing to the VWAP may not contain a venue with
-  `include_in_vwap=true` (a class marked as contributing must contain
-  at least one, or the claim is empty). Three hold the page against the
-  endpoint: the page's formula must name the served `price_method`, its
-  stated eligibility class must be exactly the served contributor set,
-  and any venue the endpoint's class description names must be
-  registered under that class *and* named in the page's copy of the
-  same paragraph.
-
-  The reverse of the last one — every registered venue must be named —
-  is deliberately not gated, and the cost is stated in the test: both
-  copies describe some venues by category ("FX vendors", "canonical
-  fiat rates"), so cryptocompare, sushiswap_v3, massive,
-  exchangeratesapi, ecb and blend_emitter are registered and named in
-  neither. What is gated is that nothing named is wrong.
 ### Added
 
 - **ops,storage:** `ch-rebuild -bulk-trades` — a backfill-only trade writer
@@ -182,73 +124,65 @@ against.
   and the line breaks there. Callers with a complete series pass plain
   numbers and nothing changes for them.
 
-## [v0.76.0] — 2026-09-12
+
+## [v0.77.0] — 2026-09-12
 
 ### Fixed
 
-- **api,explorer:** the `/v1/rwa/assets` funnel no longer calls 40,837
-  already-fetched domains an unfetched backlog.
+- **api:** `/v1/methodology` no longer serves rows labelled with a class
+  the same response never defines.
 
-  The classic arm published the whole gap between the issuers carrying a
-  `home_domain` and the issuers holding a SEP-1 payload as one drop:
-  `sep1_attestation_never_fetched`, actor `operator`. It was derived by
-  subtracting one count from the other, so it never distinguished "no
-  payload" from "never asked". Measured 2026-09-12, the gap was 40,838
-  issuers and exactly **one** of them had never been attempted — an
-  overnight drain had reached the rest, whose domains are dead, parked,
-  or publish no SEP-1 document. On a published methodology surface whose
-  purpose is naming who can move each number, both halves of the label
-  were false: the fetch had run, and the coverage it implied was not
-  ours to reach.
+  `source_classes` described four classes; `sources` — the whole
+  registry, the same rows `/v1/sources` returns — served **seven**. The
+  eight `router` / `lending` / `bridge` venues (soroswap-router,
+  defindex, upshift, blend, blend_emitter, sorocredit, cctp, rozo) came
+  back stamped with a term a transparency consumer had nowhere in the
+  document to look up. Nothing caught it because the count of four was
+  asserted nowhere and repeated everywhere: the explorer's
+  `/methodology` page said "one of four source classes", the spec said
+  "the four source classes", the Go type's godoc said "the four class
+  buckets", and `TestMethodology_BaselineShape` pinned `== 4` against a
+  hard-coded map. Four surfaces agreeing with each other is not one of
+  them agreeing with `external.Registry`.
 
-  The drop is now split at the stage it belongs to. Only issuers with
-  `sep1_resolved_at IS NULL` remain `sep1_attestation_never_fetched`
-  (actor `operator`); the reached-and-empty ones are the new
-  `domain_served_no_sep1_attestation` (actor `issuer`). No per-attempt
-  outcome is recorded anywhere, so a 404, a dead name, a TLS failure and
-  an undecodable document stay one bucket, and the reason string says
-  what was observed rather than whose fault it was.
+  The glossary now carries all seven, each restating the class godoc in
+  `internal/sources/external/framework.go` for why it is excluded from
+  the VWAP. The baseline test derives its expectation from the registry
+  instead of listing it. `/v1/sources`' spec prose named the same three
+  non-contributing classes and now names all six.
 
-  Additive on the wire: a new `RWAFunnelDrop.reason` enum value, no
-  field added, removed or renamed, and the funnel's balance invariant is
-  unchanged — the two drops still account exactly for the difference to
-  the next stage. `Sep1BoundCensus` gained
-  `IssuersFetchedWithoutPayload` and a `Check()` rule bounding the split
-  against its own population, so a contradiction between the two reads
-  publishes `balanced: false` rather than a clamped number that looks
-  sound.
-- **api:** the lake-flows circulating supply behind `/v1/assets` and
-  `/v1/rwa/assets` is now warmed in the background, so the figure served
-  no longer depends on how recently somebody looked.
+- **docs:** the spec's `/methodology` example served ADR-0007 as
+  "Aggregation policy + cache-key contract". That is not a document
+  that exists — 0007 is "Redis as hot-path cache + rate-limit +
+  ephemeral state" — and it is the same paraphrase the handler was
+  corrected for in 2026-08. The rendered reference at
+  docs.stellarindex.io carried it.
 
-  v0.75.0 taught those surfaces to read supply from the mint/burn flow
-  log — the only reading that sees supply held in claimable balances, LP
-  reserves and SAC `contract_data` — but its cache warmed itself from
-  the request path alone: a listing request filled 32 assets and served
-  the trustline-only sum for the rest. That converges under sustained
-  traffic (the served figures then match Horizon's all-component totals
-  to within 0.012%) and never converges without it. On a service with no
-  consumer traffic the steady state is therefore a *cold* cache: entries
-  expire unread at the 30-minute TTL and the listing silently falls back.
-  Measured ~19 h after the last request:
+### Added
 
-  | asset | served | lake reading | understated |
-  |---|---|---|---|
-  | PYUSD | 3,149,454 | 11,778,001 | 73% |
-  | XRF | 21,895,149 | 118,333,629 | 82% |
+- **test:** five gates over the claims `/v1/methodology` and the
+  hand-written `/methodology` page both make, extending the drift file
+  that already held the source-class names, the outlier default and the
+  operator-configured peg map. Every one was proved to fail against a
+  deliberate mutation before being kept.
 
-  A background sweep now fills the cache for the assets the listing
-  actually serves, one bounded 32-contract batch at a time, starting at
-  boot and repeating every minute. The population is not a new list: the
-  sweep reads the same listing shapes `prewarmAssetListings` keeps warm
-  and reduces them with the request path's own candidate derivation, so
-  it cannot warm a slot the handler does not look up.
+  Two hold the endpoint against itself: every class appearing on a
+  `sources` row must be defined in `source_classes`, and a class marked
+  as not contributing to the VWAP may not contain a venue with
+  `include_in_vwap=true` (a class marked as contributing must contain
+  at least one, or the claim is empty). Three hold the page against the
+  endpoint: the page's formula must name the served `price_method`, its
+  stated eligibility class must be exactly the served contributor set,
+  and any venue the endpoint's class description names must be
+  registered under that class *and* named in the page's copy of the
+  same paragraph.
 
-  Nothing about the readings or the source ranking changed. `supply_1d`
-  still outranks the lake, the lake still cannot fall below the
-  trustline floor, and a failed listing or lake read still degrades to
-  exactly what was served before — a sweep that reads a failing lake
-  stops rather than walking the rest of the population into it.
+  The reverse of the last one — every registered venue must be named —
+  is deliberately not gated, and the cost is stated in the test: both
+  copies describe some venues by category ("FX vendors", "canonical
+  fiat rates"), so cryptocompare, sushiswap_v3, massive,
+  exchangeratesapi, ecb and blend_emitter are registered and named in
+  neither. What is gated is that nothing named is wrong.
 ### Fixed
 
 - **ops:** the daily SEP-1 refresh was sized for a population that no
@@ -322,6 +256,74 @@ against.
   reads as "the job is slow", never as "your setting was rejected". It
   now clamps into range, and the ceiling is 5,000.
 
+
+## [v0.76.0] — 2026-09-12
+
+### Fixed
+
+- **api,explorer:** the `/v1/rwa/assets` funnel no longer calls 40,837
+  already-fetched domains an unfetched backlog.
+
+  The classic arm published the whole gap between the issuers carrying a
+  `home_domain` and the issuers holding a SEP-1 payload as one drop:
+  `sep1_attestation_never_fetched`, actor `operator`. It was derived by
+  subtracting one count from the other, so it never distinguished "no
+  payload" from "never asked". Measured 2026-09-12, the gap was 40,838
+  issuers and exactly **one** of them had never been attempted — an
+  overnight drain had reached the rest, whose domains are dead, parked,
+  or publish no SEP-1 document. On a published methodology surface whose
+  purpose is naming who can move each number, both halves of the label
+  were false: the fetch had run, and the coverage it implied was not
+  ours to reach.
+
+  The drop is now split at the stage it belongs to. Only issuers with
+  `sep1_resolved_at IS NULL` remain `sep1_attestation_never_fetched`
+  (actor `operator`); the reached-and-empty ones are the new
+  `domain_served_no_sep1_attestation` (actor `issuer`). No per-attempt
+  outcome is recorded anywhere, so a 404, a dead name, a TLS failure and
+  an undecodable document stay one bucket, and the reason string says
+  what was observed rather than whose fault it was.
+
+  Additive on the wire: a new `RWAFunnelDrop.reason` enum value, no
+  field added, removed or renamed, and the funnel's balance invariant is
+  unchanged — the two drops still account exactly for the difference to
+  the next stage. `Sep1BoundCensus` gained
+  `IssuersFetchedWithoutPayload` and a `Check()` rule bounding the split
+  against its own population, so a contradiction between the two reads
+  publishes `balanced: false` rather than a clamped number that looks
+  sound.
+- **api:** the lake-flows circulating supply behind `/v1/assets` and
+  `/v1/rwa/assets` is now warmed in the background, so the figure served
+  no longer depends on how recently somebody looked.
+
+  v0.75.0 taught those surfaces to read supply from the mint/burn flow
+  log — the only reading that sees supply held in claimable balances, LP
+  reserves and SAC `contract_data` — but its cache warmed itself from
+  the request path alone: a listing request filled 32 assets and served
+  the trustline-only sum for the rest. That converges under sustained
+  traffic (the served figures then match Horizon's all-component totals
+  to within 0.012%) and never converges without it. On a service with no
+  consumer traffic the steady state is therefore a *cold* cache: entries
+  expire unread at the 30-minute TTL and the listing silently falls back.
+  Measured ~19 h after the last request:
+
+  | asset | served | lake reading | understated |
+  |---|---|---|---|
+  | PYUSD | 3,149,454 | 11,778,001 | 73% |
+  | XRF | 21,895,149 | 118,333,629 | 82% |
+
+  A background sweep now fills the cache for the assets the listing
+  actually serves, one bounded 32-contract batch at a time, starting at
+  boot and repeating every minute. The population is not a new list: the
+  sweep reads the same listing shapes `prewarmAssetListings` keeps warm
+  and reduces them with the request path's own candidate derivation, so
+  it cannot warm a slot the handler does not look up.
+
+  Nothing about the readings or the source ranking changed. `supply_1d`
+  still outranks the lake, the lake still cannot fall below the
+  trustline floor, and a failed listing or lake read still degrades to
+  exactly what was served before — a sweep that reads a failing lake
+  stops rather than walking the rest of the population into it.
 ## [v0.75.0] — 2026-09-11
 
 ### Fixed
@@ -1933,7 +1935,6 @@ against.
   collapses them.
 
 
-
 - **ops:** the archival-node role gained a single-host Prometheus path
   (`23-local-prometheus.yml`, gated on `run_local_prometheus`, default
   false, tag `local-prometheus`), and both test nets turn it on. They had
@@ -3042,16 +3043,7 @@ against.
 - **Expect the API 5xx rate to step up on this deploy, and do not read it as a new outage.** These requests were NOT previously counted as `499`: `obs.HTTPMetrics` is installed OUTSIDE `middleware.RequestTimeout`, so the `r.Context()` it inspects is the un-deadlined one — on a server-side deadline with the client still connected its `Err()` is nil, the 499 override never fires, and the recorder's default `http.StatusOK` stands. Every one of these was counted a **200** and, on that status, admitted into `http_request_success_duration_seconds`, the latency SLO's success numerator. They are 5xx now, so they enter `sum(rate(http_requests_total{status=~"5.."}[5m]))` and feed `stellarindex_api_error_rate_high` (ticket, >1%), `stellarindex_api_error_rate_critical` (page/SEV-1, >5%) and the availability burn-rate windows in `deploy/monitoring/rules/slo.yml`. The change is a disclosure, not a regression — the failures were always happening, they were being scored as successes — but a deployment that was silently timing out at any rate will page on the honest number. Watch the 5xx panel for the first two burn-rate windows and compare against the pre-deploy `/v1/lending/pools/{pool}/reserves` latency, not against the pre-deploy 5xx rate.
 
 
-
 - **api,assets:** `/v1/assets` stopped accepting four row filters and served the unfiltered page anyway. Two independent drops, one per serving path. (1) The default listing (no `asset_class`) built `ListAssetsOptions` **without `Q`**, so `?q=ZZZZNOSUCH&limit=3` returned the same USDC/yXLM/AQUA head that no filter returns — the storage layer has supported the search since the reader landed, and the unified path passes it, so only this one options bag was missing the field. (2) The `asset_class` dispatch called `handleAssetListUnified` **without the parsed filters**, so on `?asset_class=all` the `type` / `code` / `issuer` filters were dropped whole: `&code=AQUA`, `&issuer=GBNZ…AQUA` and `&type=native` each returned the byte-identical XLM/USDC/PYUSD baseline, while `&q=AQUA` on the same request correctly returned 4 rows — proof the plumbing worked and only these three were unplumbed. A silently-ignored filter is worse than a 400: the caller gets plausible wrong data and nothing in the 200 says the filter was never applied. This is the class of #355 (`include=sparkline7d` dropped in this same handler), so the filters now travel as one `assetListFilters` value through every path, which makes a future drop a compile error rather than a wrong page. Both phases of the unified listing honour them: `code`/`issuer`/`type` push down to the listing spine, and the catalogue phase narrows on its entries' **Stellar issuance** rather than the projected row — a catalogue row's wire `type` is `global`, but it stands in for the on-chain twin whose classic row it suppresses, so matching the wire shape would have dropped USDC from `type=classic`, the very asset asked for. Filtering there also runs before the market-cap fan-out, so an excluded entry no longer costs a supply + FX read. `type` gained a real predicate on the way: the fold it used to rely on — everything but `classic` short-circuits to an empty page, on the premise that the backing table is homogeneously classic — has been wrong since the spine became `classic_assets UNION` the traded Soroban-native contracts, and had been quietly answering `type=soroban` with an empty page over rows the store was holding. `classic` and `soroban` now narrow the spine by the only thing that separates its two arms (a classic asset has a G-issuer, a contract asset has none); `native` and `fiat` still fold without a round-trip, because those rows are served by the catalogue phase and `/v1/external/assets`. Narrowing to the contract arm also had to stop the alias fold from eating the page it selected: `foldAliasTwins` suppresses an alias row whose canonical primary is absent from the page — a stray SAC twin is the duplicate it removes — and `type=soroban` excludes every canonical classic row by the caller's own predicate, so `asset_class=all&type=soroban` answered `{"data":[]}` over the exact rows the store returned while the identical filter WITHOUT `asset_class=all` served them. The fold is skipped for that one filter, where it has nothing to merge into and no duplicate can exist; the two spellings now return the same rows. **Wire contract, new and documented on all four row filters:** every row filter narrows the spine BEFORE the alias fold that merges a SAC wrapper's trailing-24h volume onto its classic twin, so a filtered listing reports a spine-served SAC-wrapped asset's classic-arm `volume_24h_usd` alone — lower than the unfiltered figure. Pushdown rather than fold-then-filter because the spine is ~199K rows walked on a keyset cursor: filtering after the fold means asking the store for the UNFILTERED page and dropping rows in Go, an unbounded request-path scan of the shape the #43 latency work moved out of handlers, and `code` / `issuer` / `q` are indexed `classic_assets` columns with no other option regardless. **Verified-catalogue rows are the exception, and the spec now says so rather than the opposite:** `xlm`, `usdc`, `aqua`, `blnd` and the rest open the `asset_class=all` listing from the catalogue phase, whose analytics come from an exact-ISSUER lookup of the classic twin — and a SAC wrapper has no issuer — so those rows report their classic arm on EVERY request, filtered or not, and their unfiltered figure is not a cross-arm total. Since production always loads the embedded catalogue, that is what the endpoint actually serves for the assets the paragraph names; the fold-contract test now builds the server the way `cmd/stellarindex-api` does and pins a spine-served asset, with a second test pinning the catalogue row's figure, so neither half of the published contract rests on a configuration the binary never runs. The spec also now says that the filter matches an asset's Stellar ISSUANCE, not the `type` on the row it returns, which is why `type=classic` serves rows stamped `global`. `ListAssetsOptions.Type` consequently reaches the reader, so it joins the `ListAssetsExt` cache key in **both** expressions that build it — the reader's and the boot seed's — or `type=classic` and `type=soroban` would share one slot and whichever ran first would serve the other its rows. The store refuses an unrecognised non-empty `Type` with an error instead of composing it away: a `switch` with no `default` there would have recreated this ticket's own failure one layer down, serving the unfiltered page to the next caller that passed a value the edge had not already validated. `asset_class=fiat|stablecoin|crypto` still narrows on none of the four — those listings serve their whole class — and all four parameter descriptions plus `asset_class`'s now state it, instead of leaving it to a Go comment. Documented rather than refused: the explorer's search box and its class chips are independent controls, so the deployed client sends `asset_class=stablecoin&q=…` on every keystroke and a 400 would swap an over-broad list for an error page. No wire-shape change and no change to an unfiltered request; a filter that matches nothing still serves `"data": []`, never `null`. Left for its own change, and named on the lookup: a verified-catalogue row's volume is its classic arm even though the spine phase computes the classic+SAC sum for the same asset — making the catalogue lookup fold-aware alters a served money value on the flagship listing.
-
-
-
-
-
-
-
-
 
 
 ## [v0.59.1] — 2026-09-03
@@ -3522,7 +3514,6 @@ against.
   pins in `test/integration/oracle_raw_consumers_test.go` are back.
 
 
-
 - **`ch-schema-drift.service` failed every day on r1 because the repo and
   the host build `stellar.transactions` in different column orders.**
   `deploy/clickhouse/tier1_schema.sql` declared the nine `soroban_*`
@@ -3633,7 +3624,6 @@ against.
   reasoning as the existing `ecb` exception, which already had 4 days for
   exactly this. A feed genuinely dead on a Tuesday still trips within the
   day. (#370)
-
 
 
 - **The home page issued four duplicate `/v1/assets` requests per ledger
@@ -4033,7 +4023,6 @@ against.
   reason rather than silently bumped.
 
 
-
 - **The explorer's entire application shell crashed on the home page**
   — `TypeError: Cannot read properties of undefined (reading
   'toUpperCase')`, surfaced as "Stellar Index hit an unexpected error"
@@ -4064,7 +4053,6 @@ against.
   pre-fix component with the identical error.
 
 
-
 - **The actions SHA-pinning lint matched `uses:` as a substring**, so
   ordinary prose in a workflow tripped it: an error message reading
   "Usual ca**uses: sshd** not listening…" was parsed as a tag-pinned
@@ -4090,7 +4078,6 @@ against.
   probes the jump hop on its own, and reports which one is broken.
   Host names and counts only — never key material, and any
   key-shaped token in the captured stderr is redacted.
-
 
 
 - **`release.yml` failed the whole release when the CHANGELOG section
