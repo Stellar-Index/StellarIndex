@@ -73,6 +73,50 @@ against.
   fiat rates"), so cryptocompare, sushiswap_v3, massive,
   exchangeratesapi, ecb and blend_emitter are registered and named in
   neither. What is gated is that nothing named is wrong.
+### Added
+
+- **ops,storage:** `ch-rebuild -bulk-trades` — a backfill-only trade writer
+  for re-deriving a ledger range that holds no rows yet. Measured 2.8x on the
+  integration harness against a populated, compressed target
+  (4,205 → 11,903 rows/sec; `TestBulkBackfillTrades_Throughput`).
+
+  The SDEX history backfill (#349) landed rows at ~560 rows/sec on r1, which
+  prices a single 40,000-ledger chunk at ~58 minutes. Two costs, both measured
+  on the harness rather than assumed:
+
+  - **`usd_volume` resolution, not the INSERT, is the larger half.** With the
+    resolvers installed the batch writer ran at 6.7k rows/sec against 26k with
+    them absent — ~74 % of the wall clock. `BatchInsertTrades` resolves one row
+    at a time inside `tradeBatchValues`, and on a historical range the FX
+    resolver's `(asset, minute-bucket)` cache misses on most rows and pays a
+    serial `prices_1m` round trip for each miss.
+  - **The target chunk is compressed.** `trades` compresses at 7 days
+    (migration 0001), so every chunk a historical backfill touches is
+    compressed, and TimescaleDB enforcing the trade PK against compressed data
+    costs ~2.4x for the multi-row INSERT and ~3.3x for COPY versus a fresh
+    chunk. Nothing in this change removes that; it is the floor.
+
+  `Store.BulkBackfillTrades` attacks the first: it resolves the whole buffer's
+  `usd_volume` through a worker pool and streams the rows in over parallel
+  binary COPY connections, partitioned by conflict key so no two writers can
+  present the same trade PK. COPY itself is the smaller half of the win.
+
+  It is opt-in, and it proves its own precondition rather than trusting the
+  caller: for each source it probes `trades` for any stored row inside the
+  buffer's ledger AND `ts` extent — a superset of the PK space the buffer
+  occupies, so an empty result is a proof that no COPY'd row can conflict. A
+  non-empty range, or a concurrent writer that makes a COPY hit 23505, hands
+  the untouched buffer to `BatchInsertTrades` and reports the fallback.
+
+  Rows are identical to the upsert path's: same storability gate, same
+  intra-batch PK dedupe, same `tradeUSDVolume` waterfall behind the same
+  `reDeriveNullVolumeGuard`, same `derive_generation`, same
+  `source_entry_counts` tally, unit-ratio sentinel and classic-asset registry
+  effect — proven column-by-column in `TestBulkBackfillTrades_IdenticalToBatchUpsert`.
+  `routed_via` and `signer` stay untouched by both paths.
+
+  **The live ingest path is unchanged.** `BatchInsertTrades` and `InsertTrade`
+  are not modified; the bulk writer is reachable only through the new flag.
 
 ## [v0.76.0] — 2026-09-12
 

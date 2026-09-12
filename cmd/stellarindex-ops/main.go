@@ -861,7 +861,7 @@ Subcommands:
                           per-kind/per-ledger output counts match exactly —
                           proving decoders read ClickHouse identically. Writes
                           nothing; exits non-zero on any divergence.
-  ch-rebuild -config PATH -from N -to N [-ch-addr H:P] [-sources CSV] [-sdex] [-sep41] [-contract-calls] [-contracts CSV]
+  ch-rebuild -config PATH -from N -to N [-ch-addr H:P] [-sources CSV] [-sdex] [-sep41] [-contract-calls] [-contracts CSV] [-bulk-trades]
                           Re-derive event-based served tables (Timescale)
                           from the ClickHouse lake for a range by re-running
                           the production decoders — the ADR-0034 lake-replay
@@ -871,6 +871,19 @@ Subcommands:
                           -sep41 the watched SEP-41 supply/transfer sources
                           (see docs/operations/sep41-mint-recovery.md). Reads
                           the lake; idempotent ON CONFLICT writes.
+
+                          -bulk-trades (with -write) swaps the TRADE writer
+                          for the backfill-only bulk path: it proves the
+                          target range is empty per source (scoped by ledger
+                          AND ts), resolves usd_volume for the whole buffer
+                          through a worker pool instead of one serial
+                          prices_1m round trip per row, and streams the rows
+                          in over parallel binary COPY connections. Rows are
+                          identical to the upsert path's; a non-empty range
+                          or a concurrent writer falls back to that path and
+                          says so. Use it for a historical re-derive below
+                          the source's floor — for a recovery INTO populated
+                          ledgers it only adds a probe and then falls back.
   ch-supply -config PATH -from N -to N [-ch-addr H:P] [-top N] [-final] [-seed-flows]
                           Derive every token's total supply from the lake by
                           summing CAP-67 classic + SEP-41 mint/burn/clawback
