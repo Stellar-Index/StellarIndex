@@ -15,6 +15,8 @@ against.
 
 ## [Unreleased]
 
+## [v0.79.0] — 2026-09-13
+
 ### Added
 
 - **api,explorer:** `GET /v1/rwa/premium` — the premium or discount of a
