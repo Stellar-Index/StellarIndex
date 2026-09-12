@@ -15,6 +15,8 @@ against.
 
 ## [Unreleased]
 
+## [v0.78.0] — 2026-09-13
+
 ### Added
 
 - **ops,storage:** `ch-rebuild -bulk-trades` — a backfill-only trade writer
