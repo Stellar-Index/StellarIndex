@@ -11,6 +11,7 @@ import (
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
+	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 	"github.com/Stellar-Index/StellarIndex/internal/worker"
 )
 
@@ -98,6 +99,18 @@ const (
 	// times out here still leaves the detached refresh running, so the next
 	// one is served from cache.
 	classicLakeSupplyColdWait = 750 * time.Millisecond
+
+	// classicLakeSupplyPrewarmGap spaces the background prewarm's batches.
+	//
+	// It is deliberately NOT classicLakeSupplyRetryGap. That gap exists to
+	// stop a per-REQUEST retry storm from turning one slow supply_flows read
+	// into a sustained outage, and its 60s is sized for an unbounded number
+	// of concurrent callers. The prewarm is one serial driver: it runs a
+	// single batch at a time, waits for it, and abandons the whole pass on
+	// the first read that comes back with nothing (see
+	// [Server.warmClassicLakeSupply]), so it cannot storm. What it still owes
+	// ClickHouse is spacing between batches, which is what this is.
+	classicLakeSupplyPrewarmGap = 2 * time.Second
 )
 
 // classicLakeSupplyReader is the narrow bulk capability this file needs from
@@ -241,21 +254,15 @@ func (s *Server) readClassicLakeSupply(
 	defer s.lakeSupplyMu.Unlock()
 
 	out := make(map[string]string, len(wanted))
-	missing := make([]string, 0, len(wanted))
 	for assetID := range wanted {
-		entry, cached := s.lakeSupply[assetID]
-		if cached && time.Since(entry.at) < classicLakeSupplyTTL {
-			if entry.value != "" {
-				out[assetID] = entry.value
-			}
-			continue
+		if value, live := s.liveLakeSupplyLocked(assetID); live && value != "" {
+			out[assetID] = value
 		}
-		missing = append(missing, assetID)
 	}
+	missing := s.missingLakeSupplyLocked(wanted) // sorted: deterministic batching across concurrent requests
 	if len(missing) == 0 {
 		return out, nil, nil
 	}
-	sort.Strings(missing) // deterministic batching across concurrent requests
 
 	if s.lakeSupplyFlight != nil {
 		return out, missing, s.lakeSupplyFlight
@@ -263,6 +270,56 @@ func (s *Server) readClassicLakeSupply(
 	if time.Since(s.lakeSupplyAttemptAt) < classicLakeSupplyRetryGap {
 		return out, missing, nil
 	}
+	s.lakeSupplyAttemptAt = time.Now() // advances on failure too
+	flight := make(chan struct{})
+	s.lakeSupplyFlight = flight
+	// G118 is the intended behaviour, not a defect: detaching from the
+	// request context is what keeps a slow lake sum from being killed at the
+	// request deadline and retried, unbounded, by the next caller.
+	go s.refreshClassicLakeSupply(rd, classicLakeSupplyBatchOf(missing, wanted), flight) //nolint:gosec,contextcheck // G118 + contextcheck: the detachment is deliberate — see this function's doc.
+	return out, missing, flight
+}
+
+// liveLakeSupplyLocked reports one asset's cached reading and whether that
+// entry is still live. An entry with an EMPTY value is live and NEGATIVE —
+// "asked, and the lake had no usable answer" — which is why this returns a
+// second boolean instead of letting "" stand for absent. Caller holds
+// lakeSupplyMu.
+//
+// Extracted so the request path and the prewarm share ONE notion of what a
+// live entry is. Two copies of a TTL comparison is how a prewarm ends up
+// refilling slots the handler already considers warm (or, worse, skipping
+// slots the handler considers cold).
+func (s *Server) liveLakeSupplyLocked(assetID string) (string, bool) {
+	entry, cached := s.lakeSupply[assetID]
+	if !cached || time.Since(entry.at) >= classicLakeSupplyTTL {
+		return "", false
+	}
+	return entry.value, true
+}
+
+// missingLakeSupplyLocked returns the asset ids in `wanted` with no live cache
+// entry, sorted so that concurrent callers cut identical batches out of it.
+// Caller holds lakeSupplyMu.
+func (s *Server) missingLakeSupplyLocked(wanted map[string]string) []string {
+	missing := make([]string, 0, len(wanted))
+	for assetID := range wanted {
+		if _, live := s.liveLakeSupplyLocked(assetID); !live {
+			missing = append(missing, assetID)
+		}
+	}
+	sort.Strings(missing)
+	return missing
+}
+
+// classicLakeSupplyBatchOf takes the first [classicLakeSupplyBatch] entries of
+// `missing` as an asset_id → contract batch.
+//
+// One place, deliberately: the batch size is the only handle either caller has
+// on what a supply_flows sum costs, and a background driver that quietly cut a
+// bigger batch than the request path would be a second, unreviewed load
+// profile against the same table.
+func classicLakeSupplyBatchOf(missing []string, wanted map[string]string) map[string]string {
 	batch := make(map[string]string, classicLakeSupplyBatch)
 	for _, assetID := range missing {
 		if len(batch) >= classicLakeSupplyBatch {
@@ -270,14 +327,7 @@ func (s *Server) readClassicLakeSupply(
 		}
 		batch[assetID] = wanted[assetID]
 	}
-	s.lakeSupplyAttemptAt = time.Now() // advances on failure too
-	flight := make(chan struct{})
-	s.lakeSupplyFlight = flight
-	// G118 is the intended behaviour, not a defect: detaching from the
-	// request context is what keeps a slow lake sum from being killed at the
-	// request deadline and retried, unbounded, by the next caller.
-	go s.refreshClassicLakeSupply(rd, batch, flight) //nolint:gosec,contextcheck // G118 + contextcheck: the detachment is deliberate — see this function's doc.
-	return out, missing, flight
+	return batch
 }
 
 // refreshClassicLakeSupply sums one batch of contracts' lake flows on a
@@ -339,4 +389,196 @@ func (s *Server) endClassicLakeSupplyFlight(done chan struct{}) {
 	s.lakeSupplyFlight = nil
 	s.lakeSupplyMu.Unlock()
 	close(done)
+}
+
+// PrewarmClassicLakeSupply fills the lake-flows supply cache out of band, so
+// the supply /v1/assets and /v1/rwa/assets publish does not depend on how
+// recently somebody looked.
+//
+// # The defect this closes
+//
+// Everything above this line warms itself from the REQUEST path: a listing
+// request finds nothing cached, kicks a detached refresh for
+// [classicLakeSupplyBatch] of the assets it asked about, and serves the
+// trustline sum for the rest. That shape converges under sustained traffic —
+// the served figures then match Horizon's all-component totals to within
+// 0.012% — and it never converges without it. Convergence was the unstated
+// assumption, and it does not hold on a service with no consumer traffic:
+// entries expire unread at [classicLakeSupplyTTL] and the listing falls back
+// to the trustline-only sum, which is blind to claimable balances, LP reserves
+// and SAC-held supply by construction (see the top of this file). Measured on
+// r1 2026-09-12, ~19 h after the last request:
+//
+//	PYUSD  served  3,149,454   lake  11,778,001   (73% understated)
+//	XRF    served 21,895,149   lake 118,333,629   (82% understated)
+//
+// The readings and the preference chain were already right. Only the warming
+// was wrong, so this changes only the warming: the source ranking is untouched
+// (precise/supply_1d still outranks the lake, which still cannot fall below
+// the trustline floor), and every failure path still degrades to exactly what
+// is served today.
+//
+// # Why it lives in the API process rather than a job
+//
+// s.lakeSupply is per-process memory with no external store behind it, so no
+// timer, worker or cron outside this process can fill it. Moving the warming
+// out would mean materialising the sums into a table and teaching the read
+// path about it — a strictly larger change with its own staleness contract.
+//
+// # Which assets it covers
+//
+// `opts` is the set of listing shapes the caller already keeps warm —
+// production passes assetListingPrewarmOptions(), the SAME set
+// prewarmAssetListings warms — and the population is whatever those pages
+// return. Both alternatives are worse: "every classic asset" is 450k+ SAC
+// lookups for rows no page shows, and a hand-maintained asset list here would
+// drift from the pages callers actually receive. Asking the listing which
+// assets it serves cannot drift from the listing.
+//
+// Best-effort throughout, like every other supply overlay on this path: no
+// token-supply reader, no bulk capability, no assets reader, a listing error
+// or a lake error each leave the cache exactly as it was.
+func (s *Server) PrewarmClassicLakeSupply(ctx context.Context, opts []timescale.ListAssetsOptions) {
+	if s.tokenSupply == nil || s.assetsReader == nil {
+		return
+	}
+	rd, ok := s.tokenSupply.(classicLakeSupplyReader)
+	if !ok {
+		return
+	}
+	wanted := s.classicLakeSupplyPrewarmSet(ctx, opts)
+	if len(wanted) == 0 {
+		return
+	}
+	s.warmClassicLakeSupply(ctx, rd, wanted)
+}
+
+// classicLakeSupplyPrewarmSet asks the listing which assets it serves for
+// `opts` and reduces the answer with the REQUEST PATH's own candidate
+// derivation.
+//
+// Both halves are the drift guard, and they are the whole reason this function
+// exists rather than a list of asset ids. The rows come from
+// [Server.listAssetsExtAt], the call handleAssetList makes; the asset_id → SAC
+// map comes from [classicLakeSupplyCandidates], the function
+// [Server.classicLakeSupply] calls on the rows it is about to answer for; and
+// the row → detail projection is [assetDetailFromAssetRow], the one the
+// handler uses. Nothing about the population or the cache key is restated
+// here, so none of it can drift the way three earlier prewarms in this
+// codebase drifted on Order, Sources and Limit — each of which warmed a
+// phantom slot while every real request still paid the cold fill.
+//
+// The handler truncates the overfetch row before it fills market caps, so the
+// (Limit+1)th asset of each shape is warmed without being asked about on that
+// page. That is a superset, not a phantom: the extra row is the first row of
+// the caller's next page, and it costs nothing because it rides in a batch
+// that was going to run anyway.
+func (s *Server) classicLakeSupplyPrewarmSet(
+	ctx context.Context, opts []timescale.ListAssetsOptions,
+) map[string]string {
+	wanted := make(map[string]string)
+	for _, o := range opts {
+		// Checked per shape, not just per batch: a cold boot pass reads a
+		// dozen listing pages before it cuts its first batch, and this
+		// goroutine is tracked by the shutdown WaitGroup.
+		if ctx.Err() != nil {
+			return wanted
+		}
+		rows, _, _, err := s.listAssetsExtAt(ctx, o)
+		if err != nil {
+			s.logger.Debug("classic lake-supply prewarm: listing read failed",
+				"limit", o.Limit, "order", o.Order, "err", err)
+			continue
+		}
+		details := make([]AssetDetail, 0, len(rows))
+		for _, row := range rows {
+			details = append(details, assetDetailFromAssetRow(row))
+		}
+		for assetID, contractID := range classicLakeSupplyCandidates(details) {
+			wanted[assetID] = contractID
+		}
+	}
+	return wanted
+}
+
+// warmClassicLakeSupply fills `wanted` one bounded batch at a time until every
+// asset in it has a cache entry.
+//
+// Serial by construction — one batch in flight, then a pause, then the next —
+// because the cost of a supply_flows sum scales with the FLOW COUNT of the
+// contracts in it and a mature token carries millions of rows.
+//
+// It stops on the first batch that made no progress. That test is exact rather
+// than approximate: [Server.refreshClassicLakeSupply] writes an entry for
+// EVERY asset in its batch on success (an empty one where the lake had no
+// usable answer) and writes nothing at all on a read error, so "the missing
+// set did not shrink after a batch of ours" is precisely "the lake read
+// failed". The answer to a failing supply_flows read is to stop and let the
+// next sweep retry, not to walk the rest of the population into the same
+// failure — the lesson classicLakeSupplyRetryGap encodes for the request path.
+func (s *Server) warmClassicLakeSupply(
+	ctx context.Context, rd classicLakeSupplyReader, wanted map[string]string,
+) {
+	// One iteration per asset is a ceiling no healthy pass comes near
+	// (ceil(len/classicLakeSupplyBatch) is), and it is what stops a cache
+	// expiring underneath a long pass from turning this into a spin.
+	for range len(wanted) {
+		remaining, keepGoing := s.warmClassicLakeSupplyBatch(ctx, rd, wanted)
+		if remaining == 0 || !keepGoing {
+			return
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(classicLakeSupplyPrewarmGap):
+		}
+	}
+}
+
+// warmClassicLakeSupplyBatch starts (or joins) one refresh and waits for it.
+// Returns how many of `wanted` are still uncached afterwards, and whether the
+// pass should continue.
+//
+// The retry gap is not consulted — see [classicLakeSupplyPrewarmGap] — but it
+// is ADVANCED, because a prewarm batch is an attempt on the same table and
+// leaving the request path free to kick a competing refresh the instant this
+// one lands is the stampede the gap exists to prevent.
+func (s *Server) warmClassicLakeSupplyBatch(
+	ctx context.Context, rd classicLakeSupplyReader, wanted map[string]string,
+) (int, bool) {
+	s.lakeSupplyMu.Lock()
+	missing := s.missingLakeSupplyLocked(wanted)
+	if len(missing) == 0 {
+		s.lakeSupplyMu.Unlock()
+		return 0, false
+	}
+	before := len(missing)
+	flight, mine := s.lakeSupplyFlight, false
+	if flight == nil {
+		flight = make(chan struct{})
+		mine = true
+		s.lakeSupplyAttemptAt = time.Now()
+		s.lakeSupplyFlight = flight
+		// Detached for the same reason the request path detaches, and
+		// STARTED rather than called inline so the wait below can honour
+		// ctx: a shutdown returns this goroutine at once and still lets the
+		// refresh finish and record what it learned.
+		go s.refreshClassicLakeSupply(rd, classicLakeSupplyBatchOf(missing, wanted), flight) //nolint:gosec,contextcheck // G118 + contextcheck: the detachment is deliberate — see refreshClassicLakeSupply's doc.
+	}
+	s.lakeSupplyMu.Unlock()
+
+	select {
+	case <-flight:
+	case <-ctx.Done():
+		return before, false
+	}
+
+	s.lakeSupplyMu.Lock()
+	after := len(s.missingLakeSupplyLocked(wanted))
+	s.lakeSupplyMu.Unlock()
+	// A flight this pass merely JOINED was filling whatever batch its own
+	// caller chose, which may not overlap `wanted` at all — so no progress
+	// there says nothing about the lake's health. Only a batch of our own
+	// that came back with nothing cached is evidence of a failed read.
+	return after, after < before || !mine
 }

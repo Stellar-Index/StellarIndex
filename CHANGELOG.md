@@ -48,6 +48,38 @@ against.
   against its own population, so a contradiction between the two reads
   publishes `balanced: false` rather than a clamped number that looks
   sound.
+- **api:** the lake-flows circulating supply behind `/v1/assets` and
+  `/v1/rwa/assets` is now warmed in the background, so the figure served
+  no longer depends on how recently somebody looked.
+
+  v0.75.0 taught those surfaces to read supply from the mint/burn flow
+  log — the only reading that sees supply held in claimable balances, LP
+  reserves and SAC `contract_data` — but its cache warmed itself from
+  the request path alone: a listing request filled 32 assets and served
+  the trustline-only sum for the rest. That converges under sustained
+  traffic (the served figures then match Horizon's all-component totals
+  to within 0.012%) and never converges without it. On a service with no
+  consumer traffic the steady state is therefore a *cold* cache: entries
+  expire unread at the 30-minute TTL and the listing silently falls back.
+  Measured ~19 h after the last request:
+
+  | asset | served | lake reading | understated |
+  |---|---|---|---|
+  | PYUSD | 3,149,454 | 11,778,001 | 73% |
+  | XRF | 21,895,149 | 118,333,629 | 82% |
+
+  A background sweep now fills the cache for the assets the listing
+  actually serves, one bounded 32-contract batch at a time, starting at
+  boot and repeating every minute. The population is not a new list: the
+  sweep reads the same listing shapes `prewarmAssetListings` keeps warm
+  and reduces them with the request path's own candidate derivation, so
+  it cannot warm a slot the handler does not look up.
+
+  Nothing about the readings or the source ranking changed. `supply_1d`
+  still outranks the lake, the lake still cannot fall below the
+  trustline floor, and a failed listing or lake read still degrades to
+  exactly what was served before — a sweep that reads a failing lake
+  stops rather than walking the rest of the population into it.
 
 ## [v0.75.0] — 2026-09-11
 
