@@ -15,6 +15,8 @@ against.
 
 ## [Unreleased]
 
+## [v0.76.0] — 2026-09-12
+
 ### Fixed
 
 - **api,explorer:** the `/v1/rwa/assets` funnel no longer calls 40,837
