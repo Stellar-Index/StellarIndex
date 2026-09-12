@@ -2816,6 +2816,70 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/rwa/history": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The tokenized real-world asset set valued over time, on the reference basis.
+         * @description A daily series of what the RWA set is worth, valued at what
+         *     independent oracles say the underlying instruments are worth —
+         *     the time-series form of `summary.reference_valuation` on
+         *     `/v1/rwa/assets`.
+         *
+         *     WHAT THIS IS NOT. It is not a market capitalisation over time.
+         *     Most of this set is bought and held and has never traded, so a
+         *     market series would cover a handful of rows under a headline
+         *     about the sector. A per-asset market-cap history for the rows
+         *     that DO trade is at `/v1/chart?price_type=market_cap`.
+         *
+         *     HOW A DAY IS VALUED. One member's value on a day is its
+         *     circulating supply times that day's closing oracle value for its
+         *     bound instrument. The two legs come from different places and
+         *     have different rights:
+         *
+         *     * SUPPLY is cumulated from the lake's append-only
+         *       mint/burn/clawback log, keyed on the asset's deterministic
+         *       Stellar Asset Contract address. Because the log records every
+         *       event that can move the level, a day with no entry is a day
+         *       the supply did not change — carrying the running total across
+         *       it is arithmetic, not extrapolation.
+         *     * PRICE is the closing observation in the day's
+         *       `oracle_prices_1d` bucket for the `rwa:<CODE>` / `fiat:USD`
+         *       feed. It is a sampled observation of a quantity that moves on
+         *       its own, so a day the oracle was silent is a GAP: the member
+         *       contributes nothing that day and no value is invented for it.
+         *
+         *     GAPS, NEVER ZEROS. A day on which no member could be valued has
+         *     NO POINT AT ALL. Every point carries `assets_valued` /
+         *     `assets_unvalued` against the size of the WHOLE set and a
+         *     `lower_bound` flag, so a dip caused by a member dropping out of
+         *     the day is distinguishable from a dip in value.
+         *
+         *     MEMBERSHIP IS TODAY'S, APPLIED BACKWARDS. The set is decided
+         *     from today's SEP-1 attestations and today's curated directory
+         *     (`membership_as_of`). An asset that qualifies now is valued back
+         *     to its first mint; one that would have qualified last year but
+         *     does not now is absent for the whole window. Reconstructing
+         *     membership per day would need an attestation history the index
+         *     does not keep.
+         *
+         *     `excluded[]` accounts for every set member the series leaves out
+         *     and why, so the total is never a smaller claim wearing the same
+         *     label.
+         */
+        get: operations["getRWAHistory"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/pairs": {
         parameters: {
             query?: never;
@@ -6367,6 +6431,126 @@ export interface components {
                 subject: string;
                 reason: string;
             }[];
+        };
+        /**
+         * @description The RWA set valued daily on the reference basis, plus the account
+         *     of which members the series could not value.
+         *
+         *     `assets` / `issuers` size the WHOLE set; `members` is how many of
+         *     those contribute to the series at all. Every point's
+         *     `assets_unvalued` is counted against `assets`, so a point states
+         *     its coverage of the sector rather than of whatever happened to be
+         *     readable.
+         */
+        RWAHistoryView: {
+            /** @description What was measured, on which basis, and what it is not. */
+            basis: string;
+            /**
+             * @description Bucket width. Always `1d`: both legs are daily, and a finer
+             *     grain would interpolate one of them.
+             * @enum {string}
+             */
+            granularity: "1d";
+            /** @enum {string} */
+            timeframe: "1w" | "1mo" | "1y" | "all";
+            /**
+             * @description The denominator every figure is in. Always `fiat:USD`.
+             * @example fiat:USD
+             */
+            quote: string;
+            /** @description Size of the whole RWA set, including members this series cannot value. */
+            assets: number;
+            /** @description Distinct issuers across that whole set. */
+            issuers: number;
+            /**
+             * @description How many set members contribute to the series — those
+             *     carrying both a curated instrument binding and a readable
+             *     supply history.
+             */
+            members: number;
+            /**
+             * Format: date-time
+             * @description When the set was decided. Every point is valued against THIS
+             *     membership, including points that predate an asset's
+             *     admission.
+             */
+            membership_as_of: string;
+            /**
+             * @description Set members left out of the series, tallied by reason. Absent
+             *     when nothing was excluded.
+             */
+            excluded?: components["schemas"]["RWAHistoryExcluded"][];
+            /** @description Distinct oracles behind the values, sorted. */
+            sources?: string[];
+            /**
+             * @description The total series, ascending by day. A day no member could be
+             *     valued on is ABSENT — never a zero and never a repeat of the
+             *     previous day.
+             */
+            points: components["schemas"]["RWAHistoryPoint"][];
+            /**
+             * @description The same series decomposed, present only when `group_by`
+             *     asked for one.
+             */
+            groups?: components["schemas"]["RWAHistoryGroup"][];
+            /** @description A cap bound the series, so it is shorter than the data behind it. */
+            truncated?: boolean;
+        };
+        /** @description One day of an RWA value series. */
+        RWAHistoryPoint: {
+            /**
+             * Format: date-time
+             * @description The UTC day the bucket opens.
+             */
+            t: string;
+            /**
+             * @description Exact sum of the contributing members' values on this day, as
+             *     a 2-dp decimal STRING (ADR-0003 — never a JSON number).
+             * @example 997431002.55
+             */
+            value_usd: string;
+            /** @description Set members that contributed to this day's figure. */
+            assets_valued: number;
+            /**
+             * @description Set members that did not. Together with `assets_valued` this
+             *     sums to the view's `assets`.
+             */
+            assets_unvalued: number;
+            /**
+             * @description True whenever any set member is unvalued on this day — i.e.
+             *     whenever the figure is less than the reference-priced value
+             *     of the set on that day.
+             */
+            lower_bound: boolean;
+        };
+        /** @description One decomposition of the total RWA value series. */
+        RWAHistoryGroup: {
+            /** @description The asset_id under `group_by=asset`, the issuer G-address under `group_by=issuer`. */
+            key: string;
+            /** @description Human name where one is known. Display text, never identity. */
+            label?: string;
+            code?: string;
+            issuer?: string;
+            /**
+             * @description The ADR-0028 instrument feed an asset group was valued
+             *     against, in canonical `rwa:` form. Absent on an issuer group.
+             * @example rwa:USDY
+             */
+            feed?: string;
+            /** @description The oracle whose series was read. Absent on an issuer group. */
+            source?: string;
+            /** @description How many set members this group's series draws on. */
+            members: number;
+            points: components["schemas"]["RWAHistoryPoint"][];
+        };
+        /** @description One reason a set member is absent from the series. */
+        RWAHistoryExcluded: {
+            /** @enum {string} */
+            reason: "not_bound" | "contract_not_bound" | "issuer_flagged" | "no_supply_history" | "supply_incomplete" | "no_reference_history";
+            /** @description How many set members this reason accounts for. */
+            assets: number;
+            /** @description What the reason means and, where it matters, who can move it. */
+            detail: string;
         };
         /**
          * @description The tokenized-real-world-asset set, its aggregates, and the rule
@@ -16043,6 +16227,98 @@ export interface operations {
                     };
                 };
             };
+            500: components["responses"]["InternalError"];
+        };
+    };
+    getRWAHistory: {
+        parameters: {
+            query?: {
+                /**
+                 * @description Window ending at the most recent complete day. The series is
+                 *     daily, so the sub-daily tokens the chart endpoint accepts
+                 *     (`1h`, `24h`) are REJECTED here rather than answered with a
+                 *     one- or two-point series.
+                 */
+                timeframe?: "1w" | "1mo" | "1y" | "all";
+                /**
+                 * @description Decompose the total into per-asset or per-issuer series in
+                 *     `groups[]`. The group series do not necessarily sum to
+                 *     `points[]` on every day: a member absent from a day is
+                 *     absent from both, which is what the per-point counts expose.
+                 */
+                group_by?: "none" | "asset" | "issuer";
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The daily reference valuation of the set (standard envelope). */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "data": {
+                     *         "basis": "Circulating supply, reconstructed from the lake's complete mint/burn record, times the day's closing value published by an independent oracle for the real-world instrument each token declares it anchors to.",
+                     *         "granularity": "1d",
+                     *         "timeframe": "1y",
+                     *         "quote": "fiat:USD",
+                     *         "assets": 11,
+                     *         "issuers": 5,
+                     *         "members": 6,
+                     *         "membership_as_of": "2026-09-12T09:00:00Z",
+                     *         "excluded": [
+                     *           {
+                     *             "reason": "not_bound",
+                     *             "assets": 4,
+                     *             "detail": "No curated binding ties this exact (code, issuer) to an oracle feed."
+                     *           },
+                     *           {
+                     *             "reason": "contract_not_bound",
+                     *             "assets": 1,
+                     *             "detail": "A contract-issued member; the curated binding table is keyed on (code, issuer)."
+                     *           }
+                     *         ],
+                     *         "sources": [
+                     *           "redstone"
+                     *         ],
+                     *         "points": [
+                     *           {
+                     *             "t": "2026-09-10T00:00:00Z",
+                     *             "value_usd": "996214883.10",
+                     *             "assets_valued": 6,
+                     *             "assets_unvalued": 5,
+                     *             "lower_bound": true
+                     *           },
+                     *           {
+                     *             "t": "2026-09-11T00:00:00Z",
+                     *             "value_usd": "997431002.55",
+                     *             "assets_valued": 6,
+                     *             "assets_unvalued": 5,
+                     *             "lower_bound": true
+                     *           }
+                     *         ]
+                     *       },
+                     *       "as_of": "2026-09-12T09:00:00Z",
+                     *       "flags": {
+                     *         "stale": false,
+                     *         "reduced_redundancy": false,
+                     *         "triangulated": false,
+                     *         "divergence_warning": false,
+                     *         "divergence_checked": false
+                     *       }
+                     *     }
+                     */
+                    "application/json": {
+                        data: components["schemas"]["RWAHistoryView"];
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
             500: components["responses"]["InternalError"];
         };
     };

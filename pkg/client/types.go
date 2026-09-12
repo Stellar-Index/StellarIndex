@@ -1346,6 +1346,72 @@ type AccountOrg struct {
 	Status string `json:"status,omitempty"`
 }
 
+// ─── RWA value over time (/v1/rwa/history) ──────────────────────────
+
+// RWAHistoryView is the /v1/rwa/history payload: the RWA set valued
+// daily on the reference basis, plus the account of which members the
+// series could not value.
+//
+// Assets and Issuers size the WHOLE set; Members is how many of those
+// contribute to the series. Every point's AssetsUnvalued is counted
+// against Assets, so a point states its coverage of the sector.
+type RWAHistoryView struct {
+	Basis       string `json:"basis"`
+	Granularity string `json:"granularity"`
+	Timeframe   string `json:"timeframe"`
+	Quote       string `json:"quote"`
+	Assets      int    `json:"assets"`
+	Issuers     int    `json:"issuers"`
+	Members     int    `json:"members"`
+	// MembershipAsOf is when the set was decided. Every point is valued
+	// against THAT membership, including points predating an asset's
+	// admission — the series is today's set applied backwards.
+	MembershipAsOf time.Time            `json:"membership_as_of"`
+	Excluded       []RWAHistoryExcluded `json:"excluded,omitempty"`
+	Sources        []string             `json:"sources,omitempty"`
+	// Points is the total series, ascending by day. A day no member
+	// could be valued on is ABSENT.
+	Points []RWAHistoryPoint `json:"points"`
+	Groups []RWAHistoryGroup `json:"groups,omitempty"`
+	// Truncated reports that a cap bound the series.
+	Truncated bool `json:"truncated,omitempty"`
+}
+
+// RWAHistoryPoint is one day of an RWA value series.
+type RWAHistoryPoint struct {
+	T time.Time `json:"t"`
+	// ValueUSD is a 2-dp decimal STRING (ADR-0003), never a float.
+	ValueUSD       string `json:"value_usd"`
+	AssetsValued   int    `json:"assets_valued"`
+	AssetsUnvalued int    `json:"assets_unvalued"`
+	// LowerBound is true whenever any set member is unvalued on this
+	// day, i.e. whenever the figure is less than the reference-priced
+	// value of the set on that day.
+	LowerBound bool `json:"lower_bound"`
+}
+
+// RWAHistoryGroup is one decomposition of the total series. Feed and
+// Source are populated only on an asset group; an issuer group may span
+// several of each.
+type RWAHistoryGroup struct {
+	Key     string            `json:"key"`
+	Label   string            `json:"label,omitempty"`
+	Code    string            `json:"code,omitempty"`
+	Issuer  string            `json:"issuer,omitempty"`
+	Feed    string            `json:"feed,omitempty"`
+	Source  string            `json:"source,omitempty"`
+	Members int               `json:"members"`
+	Points  []RWAHistoryPoint `json:"points"`
+}
+
+// RWAHistoryExcluded is one reason a set member is absent from the
+// series, with how many members it accounts for.
+type RWAHistoryExcluded struct {
+	Reason string `json:"reason"`
+	Assets int    `json:"assets"`
+	Detail string `json:"detail"`
+}
+
 // ─── Tokenized real-world assets (/v1/rwa/assets) ───────────────────
 
 // RWAAssetsView is the /v1/rwa/assets payload: the tokenized

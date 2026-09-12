@@ -280,10 +280,23 @@ type Server struct {
 	// against. Separate from the membership cache and much shorter-lived
 	// because it is a PRICE: a ten-minute-old NAV compared against a live
 	// market price would report a premium that neither figure supports.
-	rwaRefMu               sync.Mutex
-	rwaRefCache            *rwaReferences
-	rwaRefAt               time.Time
-	rwaRefFlight           chan struct{}
+	rwaRefMu     sync.Mutex
+	rwaRefCache  *rwaReferences
+	rwaRefAt     time.Time
+	rwaRefFlight chan struct{}
+	// The RWA value-over-time assembly (/v1/rwa/history). Cached on the
+	// membership cadence rather than the reference one: it is a DAILY
+	// series, so its newest bucket cannot move faster than the oracle
+	// publishes into today, and both of its legs are scans — the lake's
+	// flow log and every day bucket the oracles have ever published.
+	rwaHistMu     sync.Mutex
+	rwaHistCache  *rwaValueHistory
+	rwaHistAt     time.Time
+	rwaHistFlight chan struct{}
+	// oracleHistory backs the price leg of that series. Held apart from
+	// `oracle`, which is the live-snapshot seam; see
+	// [RWAOracleHistoryReader].
+	oracleHistory          RWAOracleHistoryReader
 	soroswapPairs          SoroswapPairsReader
 	networkStats           NetworkStatsReader
 	aggregators            AggregatorsReader
@@ -588,6 +601,13 @@ type Options struct {
 	// Oracle, when non-nil, backs /v1/oracle/latest. Leave nil to
 	// return 503 on that path.
 	Oracle OracleReader
+	// OracleHistory, when non-nil, backs the price leg of
+	// /v1/rwa/history. Production wiring is timescale.Store directly.
+	// Nil makes that endpoint publish no series and say so in `basis`
+	// — a value series with the price leg missing is not a shorter
+	// series, it is no series, and an empty chart would read as a
+	// finding about the sector.
+	OracleHistory RWAOracleHistoryReader
 	// Sep1Cache, when non-nil, enables the SEP-1 overlay on
 	// /v1/assets/{id}. The handler reads from the `issuers.sep1_payload`
 	// JSONB column populated by `stellarindex-ops sep1-refresh`.
@@ -1421,6 +1441,7 @@ func New(opts Options) *Server { //nolint:funlen // pure field-mapping construct
 		coverageFloorCache:     &coverageFloorCache{entries: map[string]coverageFloorEntry{}},
 		markets:                opts.Markets,
 		oracle:                 opts.Oracle,
+		oracleHistory:          opts.OracleHistory,
 		sep1Cache:              opts.Sep1Cache,
 		accounts:               opts.Accounts,
 		accountKeyQuota:        opts.AccountKeyQuota,
@@ -2148,6 +2169,7 @@ func (s *Server) mountRoutes() { //nolint:funlen // route registration is intent
 	// not an asset here, because anyone can issue a token called
 	// anything. #352.
 	s.mux.HandleFunc("GET /v1/rwa/assets", s.handleRWAAssets)
+	s.mux.HandleFunc("GET /v1/rwa/history", s.handleRWAHistory)
 
 	// Account self-service. /me and /usage require an authenticated
 	// Subject; /keys (POST) additionally requires the AccountStore

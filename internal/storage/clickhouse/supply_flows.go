@@ -354,3 +354,119 @@ func mustBig(s string) *big.Int {
 	}
 	return n
 }
+
+// SupplyFlowDay is one contract's NET supply change across one UTC day —
+// Σmint − Σ(burn + clawback) over the flows whose ledger closed that day.
+//
+// It is a DELTA, never a level. The level is the running total of every
+// delta from the contract's first flow onward, which is what
+// [SupplyReader.DailySupplyFlowsForContracts] returns the whole history
+// for: a supply level computed from a windowed slice of an append-only
+// log would be the window's turnover presented as a supply.
+type SupplyFlowDay struct {
+	ContractID string
+	// Day is the UTC midnight the flows were bucketed into.
+	Day time.Time
+	// Net is Σmint − Σ(burn + clawback) within the day. Signed: a day of
+	// net redemptions is negative, which is a real reading and not an
+	// error.
+	Net *big.Int
+	// Flows counts the events behind Net. A day with a zero Net and a
+	// positive Flows saw mints and burns cancel, which is a different
+	// fact from a day with no flows at all — and the latter has no row
+	// here at all.
+	Flows uint64
+}
+
+// supplyFlowsDailyByContractsQuery buckets a contract set's flows by the
+// UTC day their ledger closed.
+//
+// `contract_id` LEADS stellar.supply_flows' ORDER BY, so the IN-list is a
+// set of primary-key prefix ranges — the same property that makes
+// [supplySumByContractsQuery] cheap. The GROUP BY adds a day dimension
+// whose cardinality is bounded by the contracts' lifetimes.
+//
+// The sign is assigned by an explicit multiIf over the THREE kinds the
+// DDL allows rather than by `if(kind = 'mint', +, -)`. A fourth kind
+// added upstream would silently SUBTRACT under the two-armed form; here
+// it contributes zero, which understates a supply rather than inventing
+// a redemption — and `flows` still counts it, so the discrepancy is
+// visible instead of silent.
+//
+// Int256 accumulation for [supplySumQuery]'s reason: Σmint alone can
+// exceed i128, and the result is stringified rather than handed to a
+// JSON number (ADR-0003).
+const supplyFlowsDailyByContractsQuery = `
+	SELECT
+		contract_id,
+		toStartOfDay(close_time) AS day,
+		toString(sum(multiIf(
+			kind = 'mint',                    toInt256(amount),
+			kind IN ('burn', 'clawback'),    -toInt256(amount),
+			toInt256(0)))) AS net,
+		count() AS flows
+	FROM stellar.supply_flows FINAL
+	WHERE contract_id IN (?)
+	GROUP BY contract_id, day
+	ORDER BY contract_id ASC, day ASC`
+
+// DailySupplyFlowsForContracts returns every day on which any of the
+// named contracts saw a supply flow, with that day's net change, in
+// ascending (contract, day) order.
+//
+// WHY THE WHOLE HISTORY, NEVER A WINDOW. supply_flows is an append-only
+// log of mints, burns and clawbacks; a supply LEVEL is the running total
+// of every flow that ever happened, so the series has to be cumulated
+// from the contract's first flow. Reading only a window and cumulating
+// from zero inside it would publish the window's turnover as if it were
+// the token's supply. Callers window the CUMULATED series, not this one.
+//
+// A day with no flows has NO ROW, and that absence means the supply did
+// not change — not that it was not observed. That is the one
+// forward-carry this data supports and it is arithmetic rather than
+// extrapolation: the log records every event that could move the level,
+// so "no event" is itself the observation. It is emphatically not the
+// same licence as carrying a PRICE forward across a day an oracle was
+// silent, and callers must not treat it as one.
+//
+// A contract with no flows at all is ABSENT from the result rather than
+// present with a zero, for [SupplyReader.TokenSupplyForContracts]'s
+// reason: absence is the absence of a claim, zero is a claim.
+//
+// The caller must check the running total for a NEGATIVE excursion. As
+// on the point-in-time path ([TokenSupply.Incomplete]), a level below
+// zero is physically impossible for a real token and means this
+// contract's flows are incompletely seeded in the lake — it is a reason
+// to refuse the series, never to clamp it.
+func (r *SupplyReader) DailySupplyFlowsForContracts(ctx context.Context, contractIDs []string) ([]SupplyFlowDay, error) {
+	if len(contractIDs) == 0 {
+		return nil, nil
+	}
+	rows, err := r.conn.Query(ctx, supplyFlowsDailyByContractsQuery, contractIDs)
+	if err != nil {
+		return nil, fmt.Errorf("clickhouse: daily supply flows for %d contracts: %w", len(contractIDs), err)
+	}
+	defer func() { _ = rows.Close() }()
+	out := make([]SupplyFlowDay, 0, 512)
+	for rows.Next() {
+		var (
+			contractID string
+			day        time.Time
+			netS       string
+			flows      uint64
+		)
+		if err := rows.Scan(&contractID, &day, &netS, &flows); err != nil {
+			return nil, fmt.Errorf("clickhouse: scan daily supply flow row: %w", err)
+		}
+		out = append(out, SupplyFlowDay{
+			ContractID: contractID,
+			Day:        day.UTC(),
+			Net:        mustBig(netS),
+			Flows:      flows,
+		})
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("clickhouse: daily supply flow stream: %w", err)
+	}
+	return out, nil
+}

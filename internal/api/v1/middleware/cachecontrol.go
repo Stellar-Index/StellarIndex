@@ -409,7 +409,14 @@ func policyForPath(path string, cdnEnabled bool) string {
 		// Multi-window delta strip. Refreshed every 5 min by the
 		// change-summary worker; 60s edge cache stays well inside
 		// that boundary, and 5 min s-maxage matches.
-		strings.HasPrefix(path, "/v1/changes/"):
+		strings.HasPrefix(path, "/v1/changes/"),
+		// RWA value-over-time (#352). Deliberately the LONGER band its
+		// /v1/rwa/assets sibling does not take: that surface carries
+		// live valuations whose CDN entry must not outlive them, while
+		// this one is a DAILY series assembled behind a 10-minute TTL
+		// — its newest bucket cannot move faster than the oracle
+		// publishes into today.
+		path == "/v1/rwa/history":
 		if cdnEnabled {
 			return "public, max-age=60, s-maxage=300"
 		}

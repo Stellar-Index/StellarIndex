@@ -79,6 +79,13 @@ func TestPolicyForPath_PinsDirectives(t *testing.T) {
 		{"/v1/assets/native", "public, max-age=30, s-maxage=60"},
 		{"/v1/assets/USDC-GA5Z/metadata", "public, max-age=30, s-maxage=60"},
 
+		// The two RWA surfaces take DIFFERENT bands, and the split is
+		// the point: /v1/rwa/assets carries live valuations, so a CDN
+		// entry must not outlive them, while /v1/rwa/history is a daily
+		// series behind a 10-minute assembly TTL.
+		{"/v1/rwa/assets", "public, max-age=30, s-maxage=60"},
+		{"/v1/rwa/history", "public, max-age=60, s-maxage=300"},
+
 		// Historical / closed-bucket
 		{"/v1/history", "public, max-age=60, s-maxage=300"},
 		{"/v1/history/since-inception", "public, max-age=60, s-maxage=300"},

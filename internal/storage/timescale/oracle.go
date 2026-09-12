@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math/big"
+	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
@@ -452,6 +454,113 @@ func (s *Store) LatestOracleStreams(ctx context.Context) ([]canonical.OracleUpda
 	}
 	if dropped > 0 {
 		slog.Warn("timescale: LatestOracleStreams: rows dropped for unparseable asset/quote", "dropped", dropped, "returned", len(out))
+	}
+	return out, nil
+}
+
+// OracleDayPoint is one day bucket of one oracle's observations of one
+// asset, read off the `oracle_prices_1d` continuous aggregate
+// (migration 0034).
+//
+// Price is the bucket's CLOSING observation (`last(price, ts)`) — the
+// same reduction the live snapshot applies when it takes the most recent
+// row per stream, applied at a day's grain. The bucket carries no
+// timestamp of its own, so two sources' closing observations within one
+// day cannot be ordered against each other; a caller choosing between
+// sources must do so on some other ground and say which it chose.
+type OracleDayPoint struct {
+	// Bucket is the UTC day (time_bucket('1 day', ts)).
+	Bucket time.Time
+	Source string
+	Asset  canonical.Asset
+	// Price is the day's closing value at Decimals scale, exactly as
+	// stored — never normalised here (ADR-0003; the raw integer and its
+	// scale travel together and the caller scales once).
+	Price    *big.Int
+	Decimals uint8
+	// Observations is how many publications the oracle made in the day.
+	// A bucket built from ONE observation and one built from a thousand
+	// are different evidence for the same closing figure, and a surface
+	// that publishes the figure should be able to say which it had.
+	Observations int64
+}
+
+// DailyOraclePrices returns the daily closing observation for each
+// (source, asset) among `assets`, denominated in `quote`, within the
+// inclusive bucket range [from, to] — ascending by bucket, then asset,
+// then source.
+//
+// This is the first read of the `oracle_prices_*` family: everything
+// else in this package reads the raw `oracle_updates` hypertable. The
+// CAGG is used here because the question is a HISTORY over a fixed
+// grain, which is exactly what it materialises, and because it carries
+// no retention policy (migration 0034) — the day series reaches back as
+// far as the oracle has ever published.
+//
+// There is deliberately NO carry-in row of the kind
+// [Store.DailyCirculatingSupply] returns. A supply is a stock whose last
+// reading stays true until something moves it; a price is an observation
+// of a quantity that moves on its own, so the most recent bucket BEFORE
+// the window says nothing about any day inside it. A caller wanting a
+// value on a day the oracle was silent has to report the silence, not
+// fill it.
+//
+// An empty `assets` returns (nil, nil): no keys is not a query.
+func (s *Store) DailyOraclePrices(
+	ctx context.Context,
+	assets []canonical.Asset,
+	quote canonical.Asset,
+	from, to time.Time,
+) ([]OracleDayPoint, error) {
+	if len(assets) == 0 {
+		return nil, nil
+	}
+	keys := make([]string, len(assets))
+	for i, a := range assets {
+		keys[i] = a.String()
+	}
+	const q = `
+        SELECT bucket, source, asset, last_price::text, last_decimals, observation_count
+          FROM oracle_prices_1d
+         WHERE asset = ANY($1)
+           AND quote = $2
+           AND bucket >= $3
+           AND bucket <= $4
+         ORDER BY bucket ASC, asset ASC, source ASC
+    `
+	rows, err := s.db.QueryContext(ctx, q, keys, quote.String(), from.UTC(), to.UTC())
+	if err != nil {
+		return nil, fmt.Errorf("timescale: DailyOraclePrices: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	out := make([]OracleDayPoint, 0, 512)
+	for rows.Next() {
+		var (
+			p        OracleDayPoint
+			assetStr string
+			priceStr string
+			decimals int
+		)
+		if err := rows.Scan(&p.Bucket, &p.Source, &assetStr, &priceStr, &decimals, &p.Observations); err != nil {
+			return nil, fmt.Errorf("timescale: DailyOraclePrices scan: %w", err)
+		}
+		asset, err := canonical.ParseAsset(assetStr)
+		if err != nil {
+			return nil, fmt.Errorf("timescale: DailyOraclePrices asset %q: %w", assetStr, err)
+		}
+		price, ok := new(big.Int).SetString(priceStr, 10)
+		if !ok {
+			return nil, fmt.Errorf("timescale: DailyOraclePrices parse price %q", priceStr)
+		}
+		p.Bucket = p.Bucket.UTC()
+		p.Asset = asset
+		p.Price = price
+		p.Decimals = uint8(decimals)
+		out = append(out, p)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("timescale: DailyOraclePrices rows: %w", err)
 	}
 	return out, nil
 }
