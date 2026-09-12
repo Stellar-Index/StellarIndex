@@ -1012,6 +1012,47 @@ func (c *Client) RWAAssets(ctx context.Context) (*Envelope[RWAAssetsView], error
 	return &env, nil
 }
 
+// RWAHistoryOptions windows and decomposes the RWA value series.
+//
+// Timeframe defaults to "1y" and must be one of 1w / 1mo / 1y / all —
+// the series is daily, so the sub-daily tokens /v1/chart accepts are
+// REJECTED with a 400 rather than answered with a two-point series.
+// GroupBy defaults to "none"; "asset" and "issuer" fill Groups.
+type RWAHistoryOptions struct {
+	Timeframe string
+	GroupBy   string
+}
+
+// RWAHistory returns the tokenized real-world-asset set valued daily on
+// the reference basis (GET /v1/rwa/history) — the time-series form of
+// RWAAssets' Summary.ReferenceValuation.
+//
+// It is NOT a market capitalisation over time. Most of the set is held
+// rather than traded; these values are what independent oracles say the
+// underlying instruments are worth, times the tokens in circulation.
+//
+// Read the per-point counts before reading the line. A day on which no
+// member could be valued is ABSENT from Points rather than plotted as
+// zero, and a day on which only some members could be valued carries
+// LowerBound with the split in AssetsValued / AssetsUnvalued — so a fall
+// in ValueUSD between two adjacent points may be a fall in coverage
+// rather than in value. Excluded accounts for the members the series
+// leaves out entirely.
+func (c *Client) RWAHistory(ctx context.Context, opts RWAHistoryOptions) (*Envelope[RWAHistoryView], error) {
+	v := url.Values{}
+	if opts.Timeframe != "" {
+		v.Set("timeframe", opts.Timeframe)
+	}
+	if opts.GroupBy != "" {
+		v.Set("group_by", opts.GroupBy)
+	}
+	var env Envelope[RWAHistoryView]
+	if err := c.doJSON(ctx, http.MethodGet, "/v1/rwa/history", v, nil, &env); err != nil {
+		return nil, err
+	}
+	return &env, nil
+}
+
 func (c *Client) SACWrappers(ctx context.Context) (*Envelope[map[string]string], error) {
 	var env Envelope[map[string]string]
 	if err := c.doJSON(ctx, http.MethodGet, "/v1/sac-wrappers", nil, nil, &env); err != nil {

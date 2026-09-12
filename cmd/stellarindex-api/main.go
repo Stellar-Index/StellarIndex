@@ -1319,8 +1319,14 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 		// scan ~24h of the trades hypertable on every hit (5-10s
 		// each); the explorer hits them on every page load. 30s
 		// freshness is plenty for trade-volume aggregates.
-		Markets:             cachedMarketsReader,
-		Oracle:              oracleReader,
+		Markets: cachedMarketsReader,
+		Oracle:  oracleReader,
+		// The day-bucket CAGG read behind /v1/rwa/history's price leg.
+		// Uncached here on purpose: the handler caches the whole
+		// ASSEMBLED series behind its own TTL + single flight, so a
+		// second cache at the reader would only add a second staleness
+		// window to the same figures.
+		OracleHistory:       store,
 		Sep1Cache:           store,
 		Accounts:            accountStore,
 		PlatformAccounts:    platformAccountStore,

@@ -15,6 +15,59 @@ against.
 
 ## [Unreleased]
 
+### Added
+
+- **api,explorer:** `GET /v1/rwa/history` — the tokenized-real-world-asset
+  set valued over time, and the chart for it on `/rwa`. API minor 1.29.0
+  (additive).
+
+  Every figure the RWA surface served was a point-in-time snapshot, so
+  the one question a reader actually brings to it — is this growing —
+  had no answer. The new endpoint is the time-series form of
+  `summary.reference_valuation`: a daily series of circulating supply
+  times the day's closing value an independent oracle published for each
+  instrument, with `group_by=asset` and `group_by=issuer`
+  decompositions.
+
+  It is deliberately NOT a market capitalisation over time. Most of this
+  set is bought and held and has never traded, so a market series would
+  cover a handful of rows under a headline about the sector; the
+  per-asset market-cap history for the rows that do trade already exists
+  at `/v1/chart?price_type=market_cap`.
+
+  The two legs are read differently, and the asymmetry is the whole
+  design. SUPPLY is cumulated from the lake's append-only
+  mint/burn/clawback log (`stellar.supply_flows`, keyed on the asset's
+  deterministic SAC address), so a day with no entry is a day the supply
+  did not change and carrying the running total across it is arithmetic.
+  PRICE is the closing observation in the day's `oracle_prices_1d`
+  bucket, a sampled observation of a quantity that moves on its own, so
+  a day the oracle was silent is a GAP: the member contributes nothing
+  and no value is invented for it. A day on which no member can be
+  valued produces no point at all — the series has holes, never zeros.
+
+  Every point carries `assets_valued` / `assets_unvalued` against the
+  size of the whole set plus a `lower_bound` flag, and `excluded[]`
+  tallies the members the series leaves out with a reason and who can
+  move each one. The chart renders that coverage in a pane below the
+  line, and it refuses to state a change across the window when the two
+  endpoints do not cover the same assets: their difference would be
+  partly the sector and partly our sight of it, with no way to separate
+  them.
+
+  Notes for the record. `supply_1d` — the CAGG the crypto market-cap
+  chart uses — was the obvious substrate and holds nothing for this set:
+  it rolls up `asset_supply_history`, which the aggregator writes only
+  for the operator-curated `watched_classic_assets` list, and no RWA
+  issuer is on it. Reading it would have produced an empty chart that
+  looked like a finding about the sector rather than a gap in a watch
+  list. The `oracle_prices_*` continuous aggregates (migration 0034) had
+  no Go reader at all until now.
+
+  Membership is today's set applied backwards, stated on the wire as
+  `membership_as_of` and in the basis prose: reconstructing membership
+  per day would need an attestation history the index does not keep.
+
 ## [v0.76.0] — 2026-09-12
 
 ### Fixed

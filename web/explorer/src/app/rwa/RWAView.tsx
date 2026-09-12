@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { useQuery } from '@tanstack/react-query';
 
 import { Panel } from '@/components/reveal';
+import { RWAHistoryPanel } from './RWAHistoryPanel';
 import { apiGetData, asExample } from '@/api/client';
 import type { components } from '@/api/types';
 import {
@@ -284,6 +285,11 @@ export function RWAView() {
         total={total}
         referenceTotal={referenceTotal}
       />
+
+      {/* Everything else on this page is a snapshot. The set's whole
+          claim is about real-world value on chain, and "is it growing"
+          is the question a snapshot cannot answer. */}
+      <RWAHistoryPanel />
 
       <Panel
         title="The set"
