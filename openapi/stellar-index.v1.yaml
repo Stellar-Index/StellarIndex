@@ -6794,7 +6794,8 @@ paths:
                       unit: issuer_accounts
                       count: 44376
                       dropped:
-                      - { reason: sep1_attestation_never_fetched, count: 29741, actor: operator }
+                      - { reason: sep1_attestation_never_fetched, count: 1, actor: operator }
+                      - { reason: domain_served_no_sep1_attestation, count: 29740, actor: issuer }
                     - arm: classic
                       stage: issuers_with_sep1_attestation
                       unit: issuer_accounts
@@ -14290,9 +14291,19 @@ components:
           type: string
           description: |
             `sep1_attestation_never_fetched` — the issuer publishes a
-            `home_domain` but no `stellar.toml` has been fetched from it.
-            Usually the largest coverage gap on this surface, and the one
-            an operator can close.
+            `home_domain` and nothing has yet tried to fetch a
+            `stellar.toml` from it. A backlog an operator closes by
+            running the refresh, and it counts ONLY the genuinely
+            untried: an attempt that came back empty is the next reason,
+            not this one.
+            `domain_served_no_sep1_attestation` — the domain WAS
+            reached and no usable `stellar.toml` came back. Dead, parked,
+            or simply publishing no SEP-1 document; nobody at this end
+            can fetch a file that is not there, so it is the `issuer`'s.
+            Why the fetch came back empty is not recorded — a 404, a
+            dead name, a TLS failure and an undecodable document are one
+            bucket — so the reason states what was observed rather than
+            whose fault it was.
             `sep1_payload_unreadable` — the cached payload would not
             decode.
             `sep1_declares_no_currencies` — it decoded and declares no
@@ -14359,6 +14370,7 @@ components:
             `refused[]`.
           enum:
             - sep1_attestation_never_fetched
+            - domain_served_no_sep1_attestation
             - sep1_payload_unreadable
             - sep1_declares_no_currencies
             - entry_declares_no_asset_code

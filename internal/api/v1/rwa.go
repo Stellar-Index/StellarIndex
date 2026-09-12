@@ -211,8 +211,9 @@ type RWAFunnelDrop struct {
 	// Actor names who can change this number: `operator` for a drop an
 	// operator could act on (an attestation never fetched, an issuer
 	// missing from the curated directory), `issuer` for one only the
-	// token's issuer can (a toml that declares nothing, or declares
-	// somebody else), `definition` for a drop that is the membership
+	// token's issuer can (a domain that serves no attestation at all, a
+	// toml that declares nothing, or declares somebody else),
+	// `definition` for a drop that is the membership
 	// rule working as intended. Served so a reader can tell a coverage
 	// gap from a refusal without knowing the codebase.
 	Actor string `json:"actor"`
@@ -238,6 +239,7 @@ const (
 	rwaStageServed                = "assets_served"
 
 	rwaDropNoAttestation        = "sep1_attestation_never_fetched"
+	rwaDropDomainServedNothing  = "domain_served_no_sep1_attestation"
 	rwaDropPayloadUnreadable    = "sep1_payload_unreadable"
 	rwaDropDeclaresNothing      = "sep1_declares_no_currencies"
 	rwaDropMissingCode          = "entry_declares_no_asset_code"

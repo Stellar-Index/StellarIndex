@@ -15,6 +15,40 @@ against.
 
 ## [Unreleased]
 
+### Fixed
+
+- **api,explorer:** the `/v1/rwa/assets` funnel no longer calls 40,837
+  already-fetched domains an unfetched backlog.
+
+  The classic arm published the whole gap between the issuers carrying a
+  `home_domain` and the issuers holding a SEP-1 payload as one drop:
+  `sep1_attestation_never_fetched`, actor `operator`. It was derived by
+  subtracting one count from the other, so it never distinguished "no
+  payload" from "never asked". Measured 2026-09-12, the gap was 40,838
+  issuers and exactly **one** of them had never been attempted — an
+  overnight drain had reached the rest, whose domains are dead, parked,
+  or publish no SEP-1 document. On a published methodology surface whose
+  purpose is naming who can move each number, both halves of the label
+  were false: the fetch had run, and the coverage it implied was not
+  ours to reach.
+
+  The drop is now split at the stage it belongs to. Only issuers with
+  `sep1_resolved_at IS NULL` remain `sep1_attestation_never_fetched`
+  (actor `operator`); the reached-and-empty ones are the new
+  `domain_served_no_sep1_attestation` (actor `issuer`). No per-attempt
+  outcome is recorded anywhere, so a 404, a dead name, a TLS failure and
+  an undecodable document stay one bucket, and the reason string says
+  what was observed rather than whose fault it was.
+
+  Additive on the wire: a new `RWAFunnelDrop.reason` enum value, no
+  field added, removed or renamed, and the funnel's balance invariant is
+  unchanged — the two drops still account exactly for the difference to
+  the next stage. `Sep1BoundCensus` gained
+  `IssuersFetchedWithoutPayload` and a `Check()` rule bounding the split
+  against its own population, so a contradiction between the two reads
+  publishes `balanced: false` rather than a clamped number that looks
+  sound.
+
 ## [v0.75.0] — 2026-09-11
 
 ### Fixed

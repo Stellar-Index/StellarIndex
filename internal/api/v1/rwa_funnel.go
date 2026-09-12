@@ -279,24 +279,51 @@ func rwaFunnelBasisFor(contractsMeasured bool) string {
 func rwaClassicStages(m rwaMembership, join rwaCatalogueJoin, served int) []RWAFunnelStage {
 	c := m.census
 
-	// Every issuer with an on-chain home_domain, less those with no
-	// fetched attestation. This is the coverage number an OPERATOR
-	// moves, and it is invisible everywhere else on this surface: from
-	// inside the pipeline an issuer the refresh cron has never reached
-	// is indistinguishable from one that declares nothing.
+	// Every issuer with an on-chain home_domain, less those holding no
+	// attestation — and that gap is TWO findings with two different
+	// owners, so it is reported as two drops.
+	//
+	// An issuer nothing has fetched yet is an operator's backlog: a
+	// cron that has not reached that account, movable by running it. An
+	// issuer whose domain WAS reached and served nothing storable is
+	// the issuer's own publication: dead, parked, or serving no SEP-1
+	// document. Nobody here can fetch a file that is not there.
+	//
+	// They were published as one bucket under the operator's name until
+	// the drain that emptied the first one proved how few of them it
+	// was: measured on production 2026-09-12, 40,838 domain-bearing
+	// issuers held no payload and exactly ONE of them had never been
+	// attempted. Naming all 40,838 an unfetched backlog overstated both
+	// this index's reachable coverage and the operator's share of the
+	// gap, on a page whose whole purpose is saying who can move a
+	// number.
+	//
+	// What the split cannot say is WHY a reached domain served nothing:
+	// no per-attempt outcome is stored, so a 404, a dead name, a TLS
+	// failure and a document with no SEP-1 in it are one count. It is
+	// attributed to the issuer because that is where the sampled
+	// population lives; a transport fault at this end would land here
+	// too, which is the reason the reason string says what was
+	// observed rather than whose fault it was.
 	//
 	// Clamped at zero because a negative difference is nonsense on the
-	// wire. The clamp cannot hide the inconsistency that produced one:
-	// the two counts then differ with no drop between them, and the
-	// stage arithmetic below reports the funnel as unbalanced.
-	neverFetched := max(c.IssuersWithHomeDomain-c.IssuersWithPayload, 0)
+	// wire, and the fetched-but-empty count is clamped to the gap for
+	// the same reason, with the never-attempted remainder taking what
+	// is left. Neither clamp can hide the inconsistency that produced
+	// one: the census Check() bounds the same two counts against the
+	// same population independently of the stage arithmetic, and
+	// Balanced requires both.
+	gap := max(c.IssuersWithHomeDomain-c.IssuersWithPayload, 0)
+	servedNothing := min(c.IssuersFetchedWithoutPayload, gap)
+	neverFetched := gap - servedNothing
 
 	stages := []RWAFunnelStage{
 		{
 			Stage: rwaStageIssuersWithHomeDomain, Unit: rwaUnitIssuers, Count: c.IssuersWithHomeDomain,
-			Dropped: rwaDrops(RWAFunnelDrop{
-				Reason: rwaDropNoAttestation, Count: neverFetched, Actor: rwaActorOperator,
-			}),
+			Dropped: rwaDrops(
+				RWAFunnelDrop{Reason: rwaDropNoAttestation, Count: neverFetched, Actor: rwaActorOperator},
+				RWAFunnelDrop{Reason: rwaDropDomainServedNothing, Count: servedNothing, Actor: rwaActorIssuer},
+			),
 		},
 		{
 			// The unreadable bucket was a bare early return before the

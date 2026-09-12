@@ -353,8 +353,16 @@ describe('RWAView', () => {
               dropped: [
                 {
                   reason: 'sep1_attestation_never_fetched',
-                  count: 29741,
+                  count: 1,
                   actor: 'operator',
+                },
+                // Reached, and served nothing usable. Same shape of
+                // number as the row above, opposite finding and a
+                // different owner — the page has to say which is which.
+                {
+                  reason: 'domain_served_no_sep1_attestation',
+                  count: 29740,
+                  actor: 'issuer',
                 },
               ],
             },
@@ -387,7 +395,15 @@ describe('RWAView', () => {
       screen.getByText(/stellar\.toml not fetched yet/),
     ).toBeInTheDocument();
     expect(screen.getByText(/ours to fix/)).toBeInTheDocument();
-    expect(screen.getByText('−29,741')).toBeInTheDocument();
+    expect(screen.getByText('−1')).toBeInTheDocument();
+    // And the far larger bucket beside it, attributed to the party who
+    // actually owns it. Rendering both under "ours to fix" would
+    // advertise coverage nobody here can reach.
+    expect(
+      screen.getByText(/Domain served no stellar\.toml/),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/the issuer’s to fix/)).toBeInTheDocument();
+    expect(screen.getByText('−29,740')).toBeInTheDocument();
   });
 
   it('says so when the coverage accounting could not be measured', async () => {

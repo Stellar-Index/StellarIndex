@@ -193,6 +193,33 @@ func TestSep1BoundCensus_ArithmeticCloses(t *testing.T) {
 	}
 }
 
+// The domain-bearing population splits into the issuers holding a
+// payload, the issuers a fetch reached that hold none, and — as a
+// REMAINDER — the ones nothing has tried yet. The first two are counted
+// by different queries, so they can contradict each other, and the
+// surface that publishes them clamps the split to keep its arithmetic
+// printable. Check is what stops that clamp turning an impossible
+// census into a sound-looking one.
+func TestSep1BoundCensus_FetchSplitCannotExceedThePopulation(t *testing.T) {
+	base := Sep1BoundCensus{
+		IssuersWithHomeDomain:        10,
+		IssuersWithPayload:           4,
+		IssuersFetchedWithoutPayload: 6,
+		IssuersDeclaring:             4,
+	}
+	if why := base.Check(); why != "" {
+		t.Errorf("census does not balance: %s — 4 payloads plus 6 reached-and-empty is exactly the "+
+			"population, leaving no issuer untried, which is what a completed drain looks like", why)
+	}
+
+	bad := base
+	bad.IssuersFetchedWithoutPayload++
+	if why := bad.Check(); why == "" {
+		t.Error("Check() passed a census claiming more fetched issuers than issuers with a domain — " +
+			"the never-attempted remainder would go negative and be published as zero")
+	}
+}
+
 // canonicalAccountStrkey is the shape gate the binding rule runs on.
 func TestCanonicalAccountStrkey(t *testing.T) {
 	const good = "GCRYUGD5NVARGXT56XEZI5CIFCQETYHAPQQTHO2O3IQZTHDH4LATMYWC"

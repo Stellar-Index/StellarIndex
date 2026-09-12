@@ -151,6 +151,11 @@ const FUNNEL_STAGE_PROSE: Record<string, string> = {
 
 const FUNNEL_DROP_PROSE: Record<string, string> = {
   sep1_attestation_never_fetched: 'stellar.toml not fetched yet',
+  // The one above counts issuers nothing has TRIED to fetch; this one
+  // counts domains that were reached and served nothing usable. They
+  // read alike as bare counts and are opposite findings, so the labels
+  // have to keep them apart on the page too.
+  domain_served_no_sep1_attestation: 'Domain served no stellar.toml',
   sep1_payload_unreadable: 'Fetched file would not parse',
   sep1_declares_no_currencies: 'Declares no assets',
   entry_declares_no_asset_code: 'Names no asset code',

@@ -7274,9 +7274,19 @@ export interface components {
         RWAFunnelDrop: {
             /**
              * @description `sep1_attestation_never_fetched` — the issuer publishes a
-             *     `home_domain` but no `stellar.toml` has been fetched from it.
-             *     Usually the largest coverage gap on this surface, and the one
-             *     an operator can close.
+             *     `home_domain` and nothing has yet tried to fetch a
+             *     `stellar.toml` from it. A backlog an operator closes by
+             *     running the refresh, and it counts ONLY the genuinely
+             *     untried: an attempt that came back empty is the next reason,
+             *     not this one.
+             *     `domain_served_no_sep1_attestation` — the domain WAS
+             *     reached and no usable `stellar.toml` came back. Dead, parked,
+             *     or simply publishing no SEP-1 document; nobody at this end
+             *     can fetch a file that is not there, so it is the `issuer`'s.
+             *     Why the fetch came back empty is not recorded — a 404, a
+             *     dead name, a TLS failure and an undecodable document are one
+             *     bucket — so the reason states what was observed rather than
+             *     whose fault it was.
              *     `sep1_payload_unreadable` — the cached payload would not
              *     decode.
              *     `sep1_declares_no_currencies` — it decoded and declares no
@@ -7343,7 +7353,7 @@ export interface components {
              *     `refused[]`.
              * @enum {string}
              */
-            reason: "sep1_attestation_never_fetched" | "sep1_payload_unreadable" | "sep1_declares_no_currencies" | "entry_declares_no_asset_code" | "entry_declares_no_issuer" | "entry_declares_another_issuer" | "not_a_classic_asset" | "no_issuer_bound_sep1_entry" | "issuer_scam_flagged" | "issuer_not_independently_recognised" | "no_real_world_instrument_basis" | "duplicate_declaration_of_the_same_asset" | "over_issuer_cap" | "admitted_but_never_observed_on_chain" | "directory_entry_names_an_account" | "contract_scam_flagged" | "contract_named_without_issuing_tag" | "no_real_world_instrument_basis_for_contract" | "duplicate_directory_entry_for_contract" | "over_contract_scan_cap" | "issuer_asset_page_truncated" | "withheld_issuer_flagged" | "reference_unavailable" | "reference_contract_not_bound" | "reference_not_instrument_scoped" | "reference_not_bound" | "reference_not_usd_denominated" | "no_reference_feed" | "reference_expired" | "reference_not_positive" | "supply_unavailable";
+            reason: "sep1_attestation_never_fetched" | "domain_served_no_sep1_attestation" | "sep1_payload_unreadable" | "sep1_declares_no_currencies" | "entry_declares_no_asset_code" | "entry_declares_no_issuer" | "entry_declares_another_issuer" | "not_a_classic_asset" | "no_issuer_bound_sep1_entry" | "issuer_scam_flagged" | "issuer_not_independently_recognised" | "no_real_world_instrument_basis" | "duplicate_declaration_of_the_same_asset" | "over_issuer_cap" | "admitted_but_never_observed_on_chain" | "directory_entry_names_an_account" | "contract_scam_flagged" | "contract_named_without_issuing_tag" | "no_real_world_instrument_basis_for_contract" | "duplicate_directory_entry_for_contract" | "over_contract_scan_cap" | "issuer_asset_page_truncated" | "withheld_issuer_flagged" | "reference_unavailable" | "reference_contract_not_bound" | "reference_not_instrument_scoped" | "reference_not_bound" | "reference_not_usd_denominated" | "no_reference_feed" | "reference_expired" | "reference_not_positive" | "supply_unavailable";
             count: number;
             /**
              * @description Who can move this number. `operator` — a fetch nobody has
@@ -15890,8 +15900,13 @@ export interface operations {
                      *               "dropped": [
                      *                 {
                      *                   "reason": "sep1_attestation_never_fetched",
-                     *                   "count": 29741,
+                     *                   "count": 1,
                      *                   "actor": "operator"
+                     *                 },
+                     *                 {
+                     *                   "reason": "domain_served_no_sep1_attestation",
+                     *                   "count": 29740,
+                     *                   "actor": "issuer"
                      *                 }
                      *               ]
                      *             },

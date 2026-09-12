@@ -78,17 +78,41 @@ type Sep1BoundCurrency struct {
 //	Entries            = EntriesMissingCode + EntriesMissingIssuer +
 //	                     EntriesNamingAnotherIssuer + EntriesBound
 //	EntriesBound       = EntriesFiltered + EntriesKept
+//
+// and the domain-bearing population splits three ways, which
+// [Sep1BoundCensus.Check] bounds rather than equates because the two
+// halves are read by different queries:
+//
+//	IssuersWithHomeDomain >= IssuersWithPayload +
+//	                         IssuersFetchedWithoutPayload
 type Sep1BoundCensus struct {
 	// IssuersWithHomeDomain is every issuer account carrying an
 	// on-chain home_domain — the population a SEP-1 attestation could
-	// exist for at all. IssuersWithHomeDomain minus IssuersWithPayload
-	// is the number of issuers the refresh cron has never successfully
-	// fetched, which no other stage can distinguish from an issuer that
-	// declares nothing.
+	// exist for at all. It splits three ways: the issuers holding a
+	// payload (IssuersWithPayload), the issuers a fetch has reached
+	// that hold none (IssuersFetchedWithoutPayload), and the remainder
+	// — the ones nothing has ever tried to fetch.
 	IssuersWithHomeDomain int
 	// IssuersWithPayload is the rows this scan actually read: issuers
 	// whose stellar.toml was fetched and parsed at least once.
 	IssuersWithPayload int
+	// IssuersFetchedWithoutPayload counts issuers whose domain a fetch
+	// has REACHED and which hold no payload all the same:
+	// sep1_resolved_at is set, sep1_payload is NULL. The refresh cron
+	// stamps sep1_resolved_at on every terminating path, success or
+	// failure, so these are domains that were asked and served nothing
+	// this index could store.
+	//
+	// It exists because the difference IssuersWithHomeDomain -
+	// IssuersWithPayload was read as "never fetched" and published as
+	// an operator's backlog. Measured on production 2026-09-12 that
+	// difference was 40,838 issuers, of which exactly ONE had never
+	// been attempted: the rest were dead, parked or non-SEP-1 domains
+	// that an overnight drain had already reached. Nothing here records
+	// WHY a reached domain served nothing — 404, dead DNS, a TLS
+	// failure and an undecodable document are one bucket — so the count
+	// says only that the fetch ran and produced no payload.
+	IssuersFetchedWithoutPayload int
 	// IssuersPayloadUnreadable counts payloads that would not decode.
 	// Previously a bare `return nil, 0`.
 	IssuersPayloadUnreadable int
@@ -158,6 +182,15 @@ func (c Sep1BoundCensus) Check() string {
 	if c.IssuersWithPayload > c.IssuersWithHomeDomain {
 		return fmt.Sprintf("IssuersWithPayload %d exceeds IssuersWithHomeDomain %d", c.IssuersWithPayload, c.IssuersWithHomeDomain)
 	}
+	// The domain-bearing population splits into the issuers holding a
+	// payload, the issuers a fetch reached that hold none, and the ones
+	// nothing has tried yet. The third is a REMAINDER, so an oversized
+	// second term would silently eat it and publish a backlog of zero
+	// where one exists.
+	if got := c.IssuersWithPayload + c.IssuersFetchedWithoutPayload; got > c.IssuersWithHomeDomain {
+		return fmt.Sprintf("IssuersWithPayload %d plus IssuersFetchedWithoutPayload %d exceed IssuersWithHomeDomain %d",
+			c.IssuersWithPayload, c.IssuersFetchedWithoutPayload, c.IssuersWithHomeDomain)
+	}
 	return ""
 }
 
@@ -191,13 +224,25 @@ func (s *Store) BoundSep1Currencies(ctx context.Context, keep Sep1CurrencyFilter
 	var census Sep1BoundCensus
 
 	// The population upstream of this scan. An issuer with no
-	// home_domain can serve no stellar.toml at all and is out of scope;
-	// one WITH a home_domain and no payload is a fetch the refresh cron
-	// has not completed, which is an operator fact and not a property of
-	// the network.
-	const popQ = `SELECT count(*) FILTER (WHERE home_domain IS NOT NULL AND btrim(home_domain) <> '')
+	// home_domain can serve no stellar.toml at all and is out of scope.
+	//
+	// The second count separates the two ways an in-scope issuer can
+	// hold no payload, which the difference from IssuersWithPayload
+	// cannot: a fetch nobody has run yet (sep1_resolved_at NULL —
+	// an operator's backlog) from a domain that WAS reached and served
+	// nothing storable (sep1_resolved_at set, sep1_payload NULL —
+	// the issuer's own publication). Every terminating path in the
+	// refresh cron stamps sep1_resolved_at, including each failure, so
+	// the second predicate really does mean "attempted at least once".
+	// Both counts come off one aggregate so they describe one moment.
+	const popQ = `SELECT count(*) FILTER (WHERE home_domain IS NOT NULL AND btrim(home_domain) <> ''),
+	                     count(*) FILTER (WHERE home_domain IS NOT NULL AND btrim(home_domain) <> ''
+	                                        AND sep1_resolved_at IS NOT NULL
+	                                        AND sep1_payload IS NULL)
 	                FROM issuers`
-	if err := s.db.QueryRowContext(ctx, popQ).Scan(&census.IssuersWithHomeDomain); err != nil {
+	if err := s.db.QueryRowContext(ctx, popQ).Scan(
+		&census.IssuersWithHomeDomain, &census.IssuersFetchedWithoutPayload,
+	); err != nil {
 		return nil, census, fmt.Errorf("timescale: BoundSep1Currencies population: %w", err)
 	}
 

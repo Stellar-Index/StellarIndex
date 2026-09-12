@@ -224,6 +224,9 @@ func TestRWAAssets_FunnelAccountsForTheWholePopulation(t *testing.T) {
 // `continue`, they are indistinguishable — and the first of the three
 // is the one an operator can fix today.
 func TestRWAAssets_FunnelSeparatesNeverFetchedFromDeclaresNothing(t *testing.T) {
+	// IssuersFetchedWithoutPayload is zero here on purpose: this census
+	// says no domain has been reached and come back empty, so all six
+	// issuers holding no payload really are a fetch nobody has run.
 	upstream := timescale.Sep1BoundCensus{
 		IssuersWithHomeDomain:    10,
 		IssuersWithPayload:       4,
@@ -252,6 +255,102 @@ func TestRWAAssets_FunnelSeparatesNeverFetchedFromDeclaresNothing(t *testing.T) 
 	}
 	if got := st["issuers_declaring_currencies"].Count; got != 1 {
 		t.Errorf("issuers_declaring_currencies = %d, want 1", got)
+	}
+}
+
+// TestRWAAssets_FunnelDoesNotCallAReachedDomainUnfetched is the
+// regression for a label that was false on both halves.
+//
+// The gap between the issuers publishing a domain and the issuers
+// holding a payload was published entirely as
+// `sep1_attestation_never_fetched`, actor `operator` — a backlog
+// somebody here could clear. Measured on production 2026-09-12 the gap
+// was 40,838 issuers and exactly ONE of them had never been attempted:
+// an overnight drain had already reached the other 40,837, and their
+// domains served nothing storable (quantumstellar.vercel.app,
+// 5138.8888skulls.com, rivalcoins.io — dead, parked, or publishing no
+// SEP-1 document). The surface named all of them an operator's unfetched
+// backlog, overstating both the coverage within reach and this side's
+// share of the gap, on a page whose whole purpose is saying who can
+// move a number.
+//
+// The fixture is that production shape. A fetch that ran and came back
+// empty belongs to the issuer; only the genuinely untried one belongs
+// to the operator.
+func TestRWAAssets_FunnelDoesNotCallAReachedDomainUnfetched(t *testing.T) {
+	upstream := timescale.Sep1BoundCensus{
+		IssuersWithHomeDomain: 76658,
+		IssuersWithPayload:    35820,
+		// Reached, and holding no payload all the same.
+		IssuersFetchedWithoutPayload: 40837,
+		IssuersPayloadUnreadable:     41,
+		IssuersDeclaringNothing:      2109,
+		IssuersDeclaring:             33670,
+	}
+	v := getRWA(t, rwaServerWithUpstream(t, upstream,
+		[]timescale.Sep1BoundCurrency{rwaBound("USTRY", rwaGoodIssuer, "etherfuse.com", "bond")},
+		map[string]timescale.DirectoryEntry{rwaGoodIssuer: recognisedIssuer(rwaGoodIssuer, "Etherfuse")},
+		map[string][]timescale.AssetRow{rwaGoodIssuer: {rwaRow("USTRY", rwaGoodIssuer, sptr("1.0412"), 3)}},
+	))
+	// The split must not buy its honesty by breaking the accounting:
+	// the two drops still have to account exactly for the difference to
+	// the next stage, and `balanced` still has to be true.
+	checkFunnelArithmetic(t, v)
+
+	st := rwaFunnelStages(t, v)
+	actors := map[string]string{}
+	counts := map[string]int{}
+	for _, d := range st["issuers_with_home_domain"].Dropped {
+		actors[d.Reason] = d.Actor
+		counts[d.Reason] = d.Count
+	}
+	if got := counts["domain_served_no_sep1_attestation"]; got != 40837 {
+		t.Errorf("domain_served_no_sep1_attestation = %d, want 40837 — every one of these domains was "+
+			"reached and served no usable SEP-1 (drops: %+v)", got, st["issuers_with_home_domain"].Dropped)
+	}
+	if got := actors["domain_served_no_sep1_attestation"]; got != "issuer" {
+		t.Errorf("reached-domain drop actor = %q, want issuer — nobody here can fetch a file that is not "+
+			"published, and attributing it to the operator advertises coverage that does not exist", got)
+	}
+	if got := counts["sep1_attestation_never_fetched"]; got != 1 {
+		t.Errorf("sep1_attestation_never_fetched = %d, want 1 — only the genuinely untried issuer is a "+
+			"backlog an operator can clear", got)
+	}
+	if got := actors["sep1_attestation_never_fetched"]; got != "operator" {
+		t.Errorf("never-fetched drop actor = %q, want operator", got)
+	}
+	if got := st["issuers_with_sep1_attestation"].Count; got != 35820 {
+		t.Errorf("issuers_with_sep1_attestation = %d, want 35820", got)
+	}
+}
+
+// TestRWAAssets_FunnelSaysUnbalancedWhenTheFetchSplitCannotHold — the
+// two halves of the domain-bearing population are read by different
+// queries, so they can contradict each other. The wire numbers are
+// clamped (a drop larger than the gap it explains is nonsense to
+// publish), and the clamp must not be able to make an impossible census
+// read as sound: `balanced` comes from the census check as well as the
+// stage arithmetic, and the census check bounds the two counts against
+// the population independently.
+func TestRWAAssets_FunnelSaysUnbalancedWhenTheFetchSplitCannotHold(t *testing.T) {
+	upstream := timescale.Sep1BoundCensus{
+		// 4 payloads plus 8 reached-and-empty is 12 issuers, out of a
+		// domain-bearing population of 10. No deployment looks like this.
+		IssuersWithHomeDomain:        10,
+		IssuersWithPayload:           4,
+		IssuersFetchedWithoutPayload: 8,
+		IssuersPayloadUnreadable:     1,
+		IssuersDeclaringNothing:      2,
+		IssuersDeclaring:             1,
+	}
+	v := getRWA(t, rwaServerWithUpstream(t, upstream,
+		[]timescale.Sep1BoundCurrency{rwaBound("USTRY", rwaGoodIssuer, "etherfuse.com", "bond")},
+		map[string]timescale.DirectoryEntry{rwaGoodIssuer: recognisedIssuer(rwaGoodIssuer, "Etherfuse")},
+		map[string][]timescale.AssetRow{rwaGoodIssuer: {rwaRow("USTRY", rwaGoodIssuer, sptr("1.0412"), 3)}},
+	))
+	if v.Funnel.Balanced {
+		t.Errorf("funnel.balanced = true over a census whose fetch split exceeds its own population: %+v",
+			v.Funnel.Stages)
 	}
 }
 

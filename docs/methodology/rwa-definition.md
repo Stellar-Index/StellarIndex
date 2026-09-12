@@ -425,14 +425,33 @@ as bare counts are opposite findings:
   expected to be the largest bucket on the whole surface and it needs no
   action: a `stellar.toml` describes only the account that served it.
 - `sep1_attestation_never_fetched` is an issuer that publishes a domain
-  whose file nobody has fetched yet. It is not a property of the network
-  at all — it is a refresh cron that has not reached that account — and
-  it is the largest coverage lever an operator holds.
+  and nothing has yet tried to fetch its file. It is not a property of
+  the network at all — it is a refresh cron that has not reached that
+  account — and it is a coverage lever an operator holds.
+- `domain_served_no_sep1_attestation` is an issuer whose domain **was**
+  reached and served nothing usable. It looks identical to the row above
+  as a bare count and it is the opposite finding: nobody here can fetch
+  a file that is not published.
+
+Those two were one bucket until 2026-09-12, published entirely under
+the operator's name. They are separated because the drain that emptied
+the first showed how few of them it was: of 40,838 domain-bearing
+issuers holding no payload, exactly **one** had never been attempted.
+The other 40,837 domains had been reached and were dead, parked, or
+serving no SEP-1 document. Calling that an unfetched backlog overstated
+both the coverage within reach and this index's share of the gap.
+
+What the split does *not* claim is why a reached domain came back empty.
+No per-attempt outcome is stored, so a 404, a dead name, a TLS failure
+and an undecodable document are one count, and a transport fault at this
+end would land in it too. The reason says what was observed — the domain
+served no attestation — not whose fault it was.
 
 The second class is where this surface's coverage actually comes from.
 Widening it means moving one of those numbers — fetching the
-attestations, or extending the curated directory so an issuer that
-publishes a correctly-bound real-world declaration can be recognised.
+attestations nobody has tried, or extending the curated directory so an
+issuer that publishes a correctly-bound real-world declaration can be
+recognised.
 It never means loosening R1–R4 until a bucket empties: a longer
 dashboard bought that way is a directory of impersonators with dollar
 figures attached, which is strictly worse than under-reporting.
