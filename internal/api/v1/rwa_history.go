@@ -652,7 +652,13 @@ func (s *Server) buildRWAValueHistory(ctx context.Context) rwaValueHistory {
 	defer cancel()
 
 	m := s.cachedRWAMembership(ctx)
-	if !m.available && len(m.members) == 0 {
+	// Unavailable means NEITHER arm answered — the same test
+	// handleRWAAssets applies. One arm reporting a set while the other
+	// failed is a partial measurement, and the excluded tally is where
+	// that shows up; refusing the whole series for it would publish less
+	// than we know.
+	if !m.available && !m.contractCensus.available &&
+		len(m.members) == 0 && len(m.contracts) == 0 {
 		return rwaValueHistory{}
 	}
 	out := rwaValueHistory{

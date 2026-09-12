@@ -4,7 +4,7 @@ import { describe, expect, it, vi, beforeEach } from 'vitest';
 
 import type { components } from '@/api/types';
 
-import { RWAHistoryPanel } from './RWAHistoryPanel';
+import { RWAHistoryPanel, assetLines, toLine } from './RWAHistoryPanel';
 
 // The panel's job is to keep a reader from misreading the line. The
 // tests below are almost entirely about the two ways that happens: a
@@ -265,5 +265,93 @@ describe('RWAHistoryPanel', () => {
       '/v1/rwa/history',
       expect.objectContaining({ timeframe: 'all' }),
     );
+  });
+});
+
+describe('toLine — the gaps the server left', () => {
+  it('emits a null-valued point for every missing day, so the line breaks', () => {
+    const got = toLine(
+      [
+        point({ t: '2026-09-10T00:00:00Z', value_usd: '10.00' }),
+        // 11th and 12th: no member could be valued.
+        point({ t: '2026-09-13T00:00:00Z', value_usd: '40.00' }),
+      ],
+      false,
+    );
+    expect(got.map((p) => p.value)).toEqual([10, null, null, 40]);
+    // The slots keep their place on the time axis — that is what makes
+    // the break a gap rather than a shortened series.
+    expect(got.map((p) => p.time)).toEqual([
+      Date.parse('2026-09-10T00:00:00Z') / 1000,
+      Date.parse('2026-09-11T00:00:00Z') / 1000,
+      Date.parse('2026-09-12T00:00:00Z') / 1000,
+      Date.parse('2026-09-13T00:00:00Z') / 1000,
+    ]);
+  });
+
+  it('never joins a hole with a straight line by omitting it', () => {
+    const got = toLine(
+      [
+        point({ t: '2026-09-10T00:00:00Z', value_usd: '10.00' }),
+        point({ t: '2026-09-20T00:00:00Z', value_usd: '10.00' }),
+      ],
+      false,
+    );
+    expect(got).toHaveLength(11);
+    expect(got.filter((p) => p.value == null)).toHaveLength(9);
+  });
+
+  it('carries coverage into the pane below only when asked', () => {
+    const [withIt] = toLine([point()], true);
+    const [without] = toLine([point()], false);
+    expect(withIt.volume).toBe(6);
+    expect(without.volume).toBeUndefined();
+  });
+});
+
+describe('assetLines — colour follows the entity, not the rank', () => {
+  const group = (code: string, value: string) => ({
+    key: `${code}-${ISSUER}`,
+    code,
+    issuer: ISSUER,
+    feed: `rwa:${code}`,
+    source: 'redstone',
+    members: 1,
+    points: [point({ value_usd: value })],
+  });
+
+  it('keeps a hue on its asset when the ranking changes', () => {
+    // The window switcher re-ranks the lines. A reader who learned
+    // "USTRY is this colour" must not be repainted by their own filter.
+    const yearly = assetLines([
+      group('USDY', '535000000.00'),
+      group('USTRY', '1300000.00'),
+    ]);
+    const monthly = assetLines([
+      group('USTRY', '1300000.00'),
+      group('USDY', '900000.00'),
+    ]);
+    const hueOf = (
+      lines: ReturnType<typeof assetLines>,
+      label: string,
+    ): string | undefined => lines.find((l) => l.label === label)?.color;
+    expect(hueOf(yearly, 'USTRY')).toBe(hueOf(monthly, 'USTRY'));
+    expect(hueOf(yearly, 'USDY')).toBe(hueOf(monthly, 'USDY'));
+    expect(hueOf(yearly, 'USTRY')).not.toBe(hueOf(yearly, 'USDY'));
+  });
+
+  it('draws largest-first, whatever the hue order', () => {
+    const lines = assetLines([
+      group('USDY', '535000000.00'),
+      group('USTRY', '1300000.00'),
+    ]);
+    expect(lines.map((l) => l.label)).toEqual(['USDY', 'USTRY']);
+  });
+
+  it('never cycles a hue back onto an asset already using it', () => {
+    const codes = ['AAA', 'BBB', 'CCC', 'DDD', 'EEE', 'FFF', 'GGG', 'HHH'];
+    const lines = assetLines(codes.map((c) => group(c, '1.00')));
+    const hues = lines.map((l) => l.color);
+    expect(new Set(hues).size).toBe(hues.length);
   });
 });

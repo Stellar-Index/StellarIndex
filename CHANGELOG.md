@@ -68,6 +68,18 @@ against.
   `membership_as_of` and in the basis prose: reconstructing membership
   per day would need an attestation history the index does not keep.
 
+- **explorer:** `LineChart` renders a point with no value as a gap
+  instead of drawing through it.
+
+  A daily series whose source can fall silent omits the silent days, and
+  handing those points straight to lightweight-charts joined the two
+  sides of every hole with a straight line — the same fabrication the
+  data layer refuses, reintroduced in pixels and drawn at the same
+  confidence as the real days. `LinePoint.value` now accepts null, which
+  becomes a whitespace item: the slot keeps its place on the time axis
+  and the line breaks there. Callers with a complete series pass plain
+  numbers and nothing changes for them.
+
 ## [v0.76.0] — 2026-09-12
 
 ### Fixed

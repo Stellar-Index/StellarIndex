@@ -11,7 +11,7 @@ import { formatCompact } from '@/lib/format';
 import { truncateMiddle } from '@/components/ui/Mono';
 import { CATEGORICAL_PALETTE } from '@/components/charts/DonutChart';
 import { Callout, EmptyState, Segmented, Skeleton } from '@/components/ui';
-import type { NamedLineSeries } from '@/components/charts/LineChart';
+import type { LinePoint, NamedLineSeries } from '@/components/charts/LineChart';
 
 type Schemas = components['schemas'];
 type RWAHistoryView = Schemas['RWAHistoryView'];
@@ -66,8 +66,26 @@ function pointTime(t: string): number | null {
   return Number.isFinite(ms) ? Math.floor(ms / 1000) : null;
 }
 
+const DAY_SECONDS = 86_400;
+
 /**
- * Served points → chart geometry.
+ * Ceiling on how many day slots one series may occupy. The server caps
+ * the POINT count; this caps the SPAN, so a series with two points a
+ * decade apart cannot make the gap-filling below allocate thousands of
+ * slots. Past it the points are plotted as they came, and the only
+ * casualty is that the holes are drawn joined.
+ */
+const MAX_DAY_SLOTS = 4096;
+
+/**
+ * Served points → chart geometry, with every missing day made EXPLICIT.
+ *
+ * The server omits a day no member could be valued on. Handing those
+ * points straight to the chart would join the two sides of the hole with
+ * a straight line — the fabrication the endpoint refuses on the wire,
+ * reintroduced in pixels and drawn at the same confidence as the real
+ * days. So the missing days are emitted as gap points (null value), and
+ * the line breaks at them.
  *
  * `value` is parsed to a JS number for the y-coordinate ONLY. The wire
  * carries exact decimal strings (ADR-0003) and every figure the panel
@@ -80,18 +98,34 @@ function pointTime(t: string): number | null {
  * with a fall in coverage is a fall in what we could see, not in what
  * the sector is worth.
  */
-function toLine(points: RWAHistoryPoint[], withCoverage: boolean) {
-  return points.flatMap((p) => {
-    const time = pointTime(p.t);
-    if (time == null) return [];
-    return [
-      {
-        time,
-        value: Number(p.value_usd),
-        ...(withCoverage ? { volume: p.assets_valued } : {}),
-      },
-    ];
+export function toLine(
+  points: RWAHistoryPoint[],
+  withCoverage: boolean,
+): LinePoint[] {
+  const byDay = new Map<number, RWAHistoryPoint>();
+  for (const p of points) {
+    const t = pointTime(p.t);
+    if (t != null) byDay.set(t - (t % DAY_SECONDS), p);
+  }
+  const days = [...byDay.keys()].sort((a, b) => a - b);
+  if (days.length === 0) return [];
+
+  const plot = (t: number, p: RWAHistoryPoint): LinePoint => ({
+    time: t,
+    value: Number(p.value_usd),
+    ...(withCoverage ? { volume: p.assets_valued } : {}),
   });
+  const first = days[0];
+  const last = days[days.length - 1];
+  if ((last - first) / DAY_SECONDS + 1 > MAX_DAY_SLOTS) {
+    return days.map((t) => plot(t, byDay.get(t) as RWAHistoryPoint));
+  }
+  const out: LinePoint[] = [];
+  for (let t = first; t <= last; t += DAY_SECONDS) {
+    const p = byDay.get(t);
+    out.push(p ? plot(t, p) : { time: t, value: null });
+  }
+  return out;
 }
 
 function usdCompact(n: number): string {
@@ -173,7 +207,7 @@ function HistoryBody({
 }: {
   data: RWAHistoryView;
   view: string;
-  total: { time: number; value: number; volume?: number }[];
+  total: LinePoint[];
   lines: NamedLineSeries[];
 }) {
   if (data.points.length === 0) {
@@ -203,7 +237,6 @@ function HistoryBody({
           data={total}
           height={300}
           area
-          positive
           ariaLabel={totalAriaLabel(data)}
           legend={{
             valueLabel: 'Value of backing',
@@ -342,14 +375,24 @@ function excludedLabel(reason: string): string {
 }
 
 /**
- * Per-asset lines, coloured from the shared categorical palette in the
- * order the server ranked them (largest last value first).
+ * Per-asset lines, drawn in the server's order (largest last value
+ * first) but COLOURED BY IDENTITY, never by rank.
  *
- * The hue follows the ENTITY's rank in a stable server-side order, and
- * the tail is dropped rather than cycled back onto the first hue.
+ * The distinction matters because the window switcher re-ranks the
+ * lines: over a year USDY leads, over a month a different instrument
+ * may. Assigning the palette by row number would repaint every survivor
+ * on that switch, so a reader who learned "USTRY is amber" is misled by
+ * their own filter. Hues are therefore handed out over the asset_ids
+ * sorted, which does not move when the values do, while the DRAW order
+ * stays value-descending so the legend reads largest-first.
  */
-function assetLines(groups: RWAHistoryGroup[]): NamedLineSeries[] {
-  return groups.slice(0, MAX_ASSET_LINES).flatMap((g, i) => {
+export function assetLines(groups: RWAHistoryGroup[]): NamedLineSeries[] {
+  const drawn = groups.slice(0, MAX_ASSET_LINES);
+  const hue = new Map<string, string>();
+  [...drawn]
+    .sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0))
+    .forEach((g, i) => hue.set(g.key, CATEGORICAL_PALETTE[i]));
+  return drawn.flatMap((g) => {
     const data = toLine(g.points, false);
     if (data.length === 0) return [];
     return [
@@ -357,7 +400,7 @@ function assetLines(groups: RWAHistoryGroup[]): NamedLineSeries[] {
         label: g.code || g.label || truncateMiddle(g.key, 6, 6),
         data,
         tone: 'brand' as const,
-        color: CATEGORICAL_PALETTE[i],
+        color: hue.get(g.key),
       },
     ];
   });

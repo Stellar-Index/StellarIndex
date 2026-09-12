@@ -245,7 +245,9 @@ export function LineLegend({ lines }: { lines: NamedLineSeries[] }) {
           />
           <span>{l.label}</span>
           <span className="text-ink-body font-mono tabular-nums">
-            {formatCompact(l.data.reduce((s, p) => s + p.value, 0))}
+            {/* A gap point (null value) contributes nothing to the
+                total — it is a day with no reading, not a zero. */}
+            {formatCompact(l.data.reduce((s, p) => s + (p.value ?? 0), 0))}
           </span>
         </li>
       ))}
