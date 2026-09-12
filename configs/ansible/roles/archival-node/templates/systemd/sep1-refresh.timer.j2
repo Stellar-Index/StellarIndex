@@ -1,19 +1,36 @@
-# systemd timer: daily SEP-1 issuer-metadata refresh.
+# systemd timer: hourly SEP-1 issuer-metadata refresh.
 #
 # Rendered by Ansible. Companion to sep1-refresh.service. This is the cron
 # that previously never existed — issuer org_name / org_verified only updated
 # on a manual run, so the /v1/issuers metadata went stale.
 #
-# Time slot: 05:12 UTC + up to 5 min jitter. Between supply-snapshot (04:42)
-# and compute-completeness (05:30). Persistent=true so a reboot doesn't skip
-# a day's refresh.
+# Time slot: :12 past every hour + up to 5 min jitter. It was 05:12 UTC once
+# a day, between supply-snapshot (04:42) and compute-completeness (05:30);
+# the minute is kept so the daily-slot reasoning still holds for the 05:12
+# tick. Persistent=true so a reboot doesn't skip a tick.
+#
+# WHY HOURLY. At 500 attempts a day against 76,658 domains a full cycle took
+# 153 days, so the job's own `-older-than 24h` was unreachable by two orders
+# of magnitude. The arithmetic for 750/hour is in sep1-refresh.service.j2;
+# the short version is that 24 small runs deliver the same daily throughput
+# as one big one, with a 25% duty cycle, a 25-minute worst case instead of a
+# six-hour one, and an hour of lost progress instead of a day when a run
+# fails.
+#
+# ON OVERLAP. A run takes ~15 min, so the :12 tick can still be going when
+# galexie-archive-fill starts at :17, and the 05:12 and 06:12 ticks overlap
+# compute-completeness (05:30) and verify-served-values (06:20). That is
+# accepted rather than overlooked: this job is network-bound, and its entire
+# Postgres footprint per run is one indexed `SELECT … LIMIT 750` plus at most
+# 750 single-row UPDATEs on a plain table. It is not one of the heavy jobs
+# the morning stagger exists to keep apart.
 
 [Unit]
-Description=Daily SEP-1 issuer-metadata refresh
+Description=Hourly SEP-1 issuer-metadata refresh
 Documentation=https://github.com/Stellar-Index/StellarIndex/blob/main/internal/metadata/doc.go
 
 [Timer]
-OnCalendar=*-*-* 05:12:00 UTC
+OnCalendar=*-*-* *:12:00 UTC
 RandomizedDelaySec=300
 Persistent=true
 Unit=sep1-refresh.service

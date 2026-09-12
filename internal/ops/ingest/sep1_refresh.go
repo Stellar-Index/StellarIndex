@@ -18,15 +18,25 @@ import (
 // with a home_domain set and writes the parsed payload back to
 // `issuers.sep1_payload` + bumps `sep1_resolved_at`.
 //
-// Run from cron at e.g. once an hour:
+// Run from cron once an hour (sep1-refresh.timer):
 //
 //	stellarindex-ops sep1-refresh -config /etc/stellarindex/api.toml \
-//	    -limit 200 -older-than 24h
+//	    -limit 750 -older-than 24h -timeout 25m
 //
 // Per-issuer fetch failures are logged + counted; they don't abort
 // the run. The resolver respects its built-in 10s per-request
 // timeout + SSRF guard so a slow/malicious operator domain can't
 // stall the whole batch.
+//
+// A failure also advances that issuer's retry ladder (migration 0159),
+// so a home_domain that serves nothing settles at ~1 attempt/month
+// instead of one a day, and the budget goes to domains that answer. A
+// success clears the ladder, so a recovering domain is back on the fast
+// cadence the moment it publishes a document. The loop is deliberately
+// SEQUENTIAL: the TOML parser's cost is superlinear in input size on
+// attacker-authored input (a measured 4.5 GB from 38 KB), and the unit
+// runs under MemoryMax=2G — concurrent parses would multiply the one
+// thing that ceiling exists to bound.
 //
 // Once a payload is written, /v1/issuers list responses surface
 // `org_name` from `sep1_payload->>'OrgName'`.
@@ -47,15 +57,19 @@ var sep1DomainOverrides = map[string]string{
 	"GDHU6WRG4IEQXM5NZ4BMPKOXHW76MZM4Y2IEMFDVXBSDP6SJY4ITNPP2": "centre.io",
 }
 
-//nolint:gocognit // linear refresh loop; per-issuer fetch + marshal + write reads better inline.
 func sep1RefreshCmd(args []string) error {
 	fs := flag.NewFlagSet("sep1-refresh", flag.ContinueOnError)
 	cfgPath := fs.String("config", "", "Path to TOML config file (required)")
-	limit := fs.Int("limit", 100, "Max issuers to refresh per run (1-1000)")
+	limit := fs.Int("limit", 100,
+		fmt.Sprintf("Max issuers to refresh per run (1-%d)", timescale.Sep1RefreshMaxLimit))
 	olderThan := fs.Duration("older-than", 24*time.Hour, "Skip issuers refreshed more recently than this")
 	timeout := fs.Duration("timeout", 5*time.Minute, "Wall-clock timeout for the whole run")
 	gate := opsutil.RegisterWriteGate(fs)
 	issuer := fs.String("issuer", "", "Refresh ONLY this issuer G-strkey, bypassing the staleness queue")
+	systemicRate := fs.Float64("systemic-failure-rate", defaultSystemicFailureRate,
+		"Failure fraction at or above which a run is judged a fault on OUR side: "+
+			"the retry backoff it applied is unwound and the run exits non-zero. "+
+			"Set above 1 to disable")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -78,33 +92,45 @@ func sep1RefreshCmd(args []string) error {
 	}
 	defer func() { _ = store.Close() }()
 
-	var candidates []timescale.IssuerSep1Candidate
-	if *issuer != "" {
-		// Targeted single-issuer refresh — skip the staleness queue entirely.
-		c, cerr := store.IssuerSep1CandidateByStrkey(ctx, *issuer)
-		if cerr != nil {
-			return cerr
-		}
-		candidates = []timescale.IssuerSep1Candidate{c}
-		fmt.Printf("Refreshing 1 issuer (targeted: %s)…\n", *issuer)
-	} else {
-		candidates, err = store.IssuersNeedingSep1Refresh(ctx, *olderThan, *limit)
-		if err != nil {
-			return err
-		}
-		if len(candidates) == 0 {
-			fmt.Println("No issuers need refresh.")
-			return nil
-		}
-		fmt.Printf("Refreshing %d issuer(s) (older than %s)…\n", len(candidates), *olderThan)
+	candidates, err := sep1Candidates(ctx, store, *issuer, *olderThan, *limit)
+	if err != nil || len(candidates) == 0 {
+		return err
 	}
 
+	ok, failedKeys := sep1RefreshLoop(ctx, store, candidates, dryRun)
+	failed := len(failedKeys)
+	fmt.Printf("\n%d succeeded, %d failed\n", ok, failed)
+	if dryRun {
+		fmt.Println("(dry-run; no rows written)")
+	}
+	if sep1RunVerdict(ok, failed, *systemicRate) {
+		return reportSep1Systemic(store, ok+failed, failedKeys, dryRun)
+	}
+	return nil
+}
+
+// sep1RefreshLoop resolves each candidate in turn and returns the
+// success count plus the g_strkeys of every attempt that produced no
+// payload. The failed keys are carried out (rather than just counted) so
+// a systemic verdict can take the ladder step back for exactly those
+// rows and nothing else.
+//
+// Sequential on purpose — see the package docblock: the TOML parser's
+// cost is superlinear on attacker-authored input and the unit runs under
+// a 2G ceiling.
+//
+//nolint:gocognit // linear refresh loop; per-issuer fetch + marshal + write reads better inline.
+func sep1RefreshLoop(
+	ctx context.Context, store *timescale.Store,
+	candidates []timescale.IssuerSep1Candidate, dryRun bool,
+) (int, []string) {
 	resolver := metadata.NewResolver(metadata.Options{Timeout: 10 * time.Second})
 
-	var ok, failed int
+	var ok int
+	failedKeys := make([]string, 0, len(candidates))
 	for _, c := range candidates {
 		if err := ctx.Err(); err != nil {
-			fmt.Printf("\nAborted at %d/%d (deadline): %v\n", ok+failed, len(candidates), err)
+			fmt.Printf("\nAborted at %d/%d (deadline): %v\n", ok+len(failedKeys), len(candidates), err)
 			break
 		}
 		sep, err := resolver.Resolve(ctx, sep1FetchDomain(c.GStrkey, c.HomeDomain))
@@ -115,7 +141,7 @@ func sep1RefreshCmd(args []string) error {
 			// domains clog the front of `ORDER BY ... NULLS FIRST` forever
 			// and good issuers behind them never get reached. Best-effort.
 			markSep1Attempted(ctx, store, c.GStrkey, dryRun)
-			failed++
+			failedKeys = append(failedKeys, c.GStrkey)
 			continue
 		}
 		// Bidirectional SEP-1 verification: the org is only "verified" if the
@@ -139,32 +165,130 @@ func sep1RefreshCmd(args []string) error {
 			// oversized payload can blow the run deadline so the write
 			// fails on an expired context). Cold audit 2026-08-03.
 			markSep1Attempted(ctx, store, c.GStrkey, dryRun)
-			failed++
+			failedKeys = append(failedKeys, c.GStrkey)
 			continue
 		}
 		if !dryRun {
 			if err := store.SetIssuerSep1Payload(ctx, c.GStrkey, payload); err != nil {
 				fmt.Printf("FAIL  %s  write: %v\n", c.GStrkey, err)
 				markSep1Attempted(ctx, store, c.GStrkey, dryRun)
-				failed++
+				failedKeys = append(failedKeys, c.GStrkey)
 				continue
 			}
 		}
 		fmt.Printf("OK    %s  %s  org=%q verified=%v\n", c.GStrkey, c.HomeDomain, sep.OrgName, orgVerified)
 		ok++
 	}
-	fmt.Printf("\n%d succeeded, %d failed\n", ok, failed)
-	if dryRun {
-		fmt.Println("(dry-run; no rows written)")
+	return ok, failedKeys
+}
+
+// sep1Candidates picks the run's work: one named issuer, or the head of
+// the staleness queue. An empty slice with a nil error means "nothing to
+// do" and the caller returns cleanly.
+//
+// The targeted path deliberately bypasses BOTH the staleness filter and
+// the retry ladder — it is the operator's override for a domain the queue
+// has deferred (a newly-onboarded org, or one that just fixed its TOML).
+func sep1Candidates(
+	ctx context.Context, store *timescale.Store, issuer string, olderThan time.Duration, limit int,
+) ([]timescale.IssuerSep1Candidate, error) {
+	if issuer != "" {
+		c, err := store.IssuerSep1CandidateByStrkey(ctx, issuer)
+		if err != nil {
+			return nil, err
+		}
+		fmt.Printf("Refreshing 1 issuer (targeted: %s)…\n", issuer)
+		return []timescale.IssuerSep1Candidate{c}, nil
 	}
-	return nil
+	candidates, err := store.IssuersNeedingSep1Refresh(ctx, olderThan, limit)
+	if err != nil {
+		return nil, err
+	}
+	if len(candidates) == 0 {
+		fmt.Println("No issuers need refresh.")
+		return nil, nil
+	}
+	fmt.Printf("Refreshing %d issuer(s) (older than %s)…\n", len(candidates), olderThan)
+	return candidates, nil
+}
+
+// Systemic-outage guard.
+//
+// THE PROBLEM WITH A BACKOFF, stated plainly: it cannot tell "this
+// domain is dead" from "our DNS is down". Both look like a failed
+// fetch. Left alone, an outage on our side walks the WHOLE population
+// up the ladder — six bad days is enough to reach the 30-day cap — and
+// then the job goes quiet. Nothing catches it downstream either: the
+// data-freshness watchdog reads `max(sep1_resolved_at)` over `issuers`,
+// and a failed attempt stamps that column just as a success does, so
+// the gauge stays green while the refresh is doing nothing useful.
+//
+// So the run judges ITSELF. A failure fraction this high over a sample
+// this large is not a property of the issuer population; it is a
+// property of the run. When that verdict lands the run does two things
+// no silent backoff would:
+//
+//  1. Unwinds the ladder step it just applied to every domain it
+//     failed, so a bad night leaves no trace on the schedule and
+//     recovery is immediate rather than metered out over 30 days.
+//  2. Returns an error, so the systemd oneshot enters `failed` and the
+//     existing stellarindex_systemd_unit_failed alert (infra.yml, 15m)
+//     tickets it. Loud beats quiet: the alternative is a job that
+//     reports "0 succeeded, 750 failed" to a journal nobody reads and
+//     exits 0.
+//
+// The threshold is calibrated against the measured baseline, not
+// guessed. On r1, 2026-09-12, a healthy run failed 291 of 500 — 58%,
+// because more than half of the population genuinely serves nothing.
+// 90% is comfortably above anything the population can produce and
+// comfortably below "everything is broken". minAttempts keeps a short
+// run (a nearly-drained queue, a deadline-truncated batch, a targeted
+// -issuer refresh) from tripping it on a handful of samples.
+const (
+	defaultSystemicFailureRate = 0.90
+	systemicMinAttempts        = 50
+)
+
+// sep1RunVerdict reports whether a run's failures should be read as a
+// fault on our side rather than on the issuers'. Pure, so the
+// calibration is testable without a network or a database.
+func sep1RunVerdict(ok, failed int, rate float64) bool {
+	attempts := ok + failed
+	if attempts < systemicMinAttempts || rate > 1 {
+		return false
+	}
+	return float64(failed)/float64(attempts) >= rate
+}
+
+// reportSep1Systemic applies the systemic verdict: unwind, then fail.
+func reportSep1Systemic(store *timescale.Store, attempts int, failedKeys []string, dryRun bool) error {
+	fmt.Printf("\nSYSTEMIC: %d of %d attempts failed — reading this as a fault on OUR side, "+
+		"not %d newly-dead domains.\n", len(failedKeys), attempts, len(failedKeys))
+	if !dryRun {
+		// The run's own context may already be past its deadline (that is
+		// one of the ways a run ends up looking systemic), and the unwind
+		// is the whole point of the verdict — it must not be skipped
+		// because the budget that produced the verdict has expired.
+		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second) //nolint:contextcheck // deliberately detached: the expired run budget must not cancel the corrective write
+		defer cancel()
+		n, err := store.UnwindIssuerSep1Backoff(ctx, failedKeys)
+		if err != nil {
+			fmt.Printf("WARN  unwind-backoff: %v\n", err)
+		} else {
+			fmt.Printf("Unwound the retry backoff on %d issuer(s); their schedule is untouched.\n", n)
+		}
+	}
+	return fmt.Errorf("sep1-refresh: %d of %d attempts failed — refusing to treat that as %d "+
+		"dead domains; check DNS/egress from this host, then re-run",
+		len(failedKeys), attempts, len(failedKeys))
 }
 
 // tomlListsIssuer reports whether the fetched SEP-1 toml's [[CURRENCIES]] lists
 // the given issuer back — the bidirectional half of org verification. Without
 // this match, ORG_NAME from a self-declared home_domain is spoofable.
 // markSep1Attempted bumps sep1_resolved_at so a failed issuer moves to
-// the BACK of the refresh queue.
+// the BACK of the refresh queue, and advances its retry ladder so a
+// domain that serves nothing stops costing an attempt a day.
 //
 // The queue is `ORDER BY sep1_resolved_at ASC NULLS FIRST`, so a row
 // left NULL stays candidate #1 on every subsequent run. Every failure
@@ -173,12 +297,21 @@ func sep1RefreshCmd(args []string) error {
 // behind it, and the run still exits 0 reporting "N failed" (cold
 // audit 2026-08-03). Best-effort — a failure to mark is logged, not
 // fatal.
+//
+// The streak count is echoed so the journal shows WHY a domain went
+// quiet. Without it a reader of a later run cannot tell a domain that
+// was skipped from one that was never a candidate.
 func markSep1Attempted(ctx context.Context, store *timescale.Store, gStrkey string, dryRun bool) {
 	if dryRun {
 		return
 	}
-	if err := store.MarkIssuerSep1Attempted(ctx, gStrkey); err != nil {
+	streak, err := store.MarkIssuerSep1Failed(ctx, gStrkey)
+	if err != nil {
 		fmt.Printf("WARN  %s  mark-attempted: %v\n", gStrkey, err)
+		return
+	}
+	if streak > 1 {
+		fmt.Printf("      %s  consecutive failures: %d\n", gStrkey, streak)
 	}
 }
 

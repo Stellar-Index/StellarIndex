@@ -133,10 +133,14 @@ issuer-controlled reference data that changes on the order of
 weeks-to-never, and a short TTL only makes every cold
 `/v1/assets/{id}` pay a ~500 ms upstream HTTPS fetch on the request
 path (`cachekeys.TOMLTTL`'s own doc comment). The
-`sep1-refresh.timer` re-resolves the whole watched set daily at
-**05:12 UTC**, so in practice an entry is at most a day stale even
-without a request touching it. Three cases need explicit
-invalidation:
+`sep1-refresh.timer` re-resolves the watched set on a rotation —
+**hourly at :12 UTC**, 750 issuers a run, so a domain that answers is
+re-fetched roughly every two days. (It was 500 once a day, which over
+76,658 domains was a 153-day cycle; the arithmetic is in
+`sep1-refresh.service.j2`.) A domain that fails climbs a retry ladder —
+1d, 2d, 4d, 8d, 16d, then a 30-day cap — and returns to the fast
+cadence on its first success, so the budget goes to domains that
+answer. Three cases need explicit invalidation:
 
 ### 1. Issuer publishes a corrected stellar.toml
 

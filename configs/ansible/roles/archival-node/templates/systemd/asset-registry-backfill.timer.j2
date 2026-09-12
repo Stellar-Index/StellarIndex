@@ -10,11 +10,12 @@
 # Postgres and ClickHouse. Overlapping two memory-capped jobs is how a box
 # that is fine all day falls over at 05:00.
 #
-# It also lands BEFORE sep1-refresh at 05:12, which is the point of the
-# ordering: a newly-registered issuer gets its home_domain from
+# It also lands BEFORE the 05:12 sep1-refresh tick, which is the point of
+# the ordering: a newly-registered issuer gets its home_domain from
 # issuer-enrich and its stellar.toml from sep1-refresh, and only then can
-# it enter /v1/rwa/assets. Running the registry after the refresh would
-# add a full day to that chain for every new issuer.
+# it enter /v1/rwa/assets. That chain is shorter than it was — sep1-refresh
+# runs hourly at :12 now, so a registry row landing at 03:19 is reachable
+# at 04:12 rather than the next morning.
 #
 # Persistent=true so a reboot does not skip a day. The first run is the
 # multi-hour 512k-asset backfill and systemd's one-instance rule makes

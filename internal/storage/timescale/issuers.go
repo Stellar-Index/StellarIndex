@@ -220,18 +220,41 @@ func (s *Store) IssuerSep1CandidateByStrkey(ctx context.Context, gStrkey string)
 	return c, nil
 }
 
+// Sep1RefreshMaxLimit is the ceiling IssuersNeedingSep1Refresh will
+// honour for a single run. It exists so a mistyped operator override
+// can't ask for the whole 77k-row population in one statement; the run
+// deadline is the real budget.
+const Sep1RefreshMaxLimit = 5000
+
 // IssuersNeedingSep1Refresh returns up to `limit` issuers whose
-// home_domain is set but sep1_resolved_at is missing or older than
-// `staleness`. Ordered by sep1_resolved_at ASC NULLS FIRST so
-// never-resolved issuers + the oldest cached payloads surface
-// first — same fairness rule a daemon worker would use.
+// home_domain is set, whose sep1_resolved_at is missing or older than
+// `staleness`, and whose retry deferral (migration 0159) has expired.
+// Ordered by sep1_resolved_at ASC NULLS FIRST so never-resolved issuers
+// + the oldest cached payloads surface first — same fairness rule a
+// daemon worker would use.
 //
 // `staleness` of 0 means "refresh anything" — useful for a forced
-// rerun after a code change to the SEP-1 parser.
+// rerun after a code change to the SEP-1 parser. It does NOT override
+// the deferral: a domain that has failed its way onto the ladder is
+// skipped until sep1_next_attempt_after passes, and `sep1-refresh
+// -issuer <G>` is the way to force one.
+//
+// `limit` is clamped INTO [1, Sep1RefreshMaxLimit] rather than reset to
+// a default. It used to snap any out-of-range value to 100, so an
+// operator raising LIMIT past the ceiling silently got a FIFTH of the
+// old budget instead of more — the failure mode reads as "the job is
+// slow", never as "your setting was rejected".
 func (s *Store) IssuersNeedingSep1Refresh(ctx context.Context, staleness time.Duration, limit int) ([]IssuerSep1Candidate, error) {
-	if limit <= 0 || limit > 1000 {
-		limit = 100
+	if limit <= 0 {
+		limit = 1
 	}
+	if limit > Sep1RefreshMaxLimit {
+		limit = Sep1RefreshMaxLimit
+	}
+	// The deferral arm is written `IS NULL OR <= NOW()` and NOT as
+	// `COALESCE(sep1_next_attempt_after, NOW()) <= NOW()` so it stays a
+	// plain column predicate the planner can answer from
+	// issuers_sep1_refresh_queue_idx's INCLUDE payload.
 	const q = `
         SELECT g_strkey, home_domain
           FROM issuers
@@ -239,13 +262,12 @@ func (s *Store) IssuersNeedingSep1Refresh(ctx context.Context, staleness time.Du
            AND home_domain != ''
            AND (sep1_resolved_at IS NULL
                 OR sep1_resolved_at < NOW() - $1::interval)
+           AND (sep1_next_attempt_after IS NULL
+                OR sep1_next_attempt_after <= NOW())
          ORDER BY sep1_resolved_at ASC NULLS FIRST, g_strkey ASC
          LIMIT $2
     `
-	// $1 is interval — render the duration as seconds. PG accepts
-	// `<seconds> seconds` literally.
-	intervalText := fmt.Sprintf("%d seconds", int(staleness.Seconds()))
-	rows, err := s.db.QueryContext(ctx, q, intervalText, limit)
+	rows, err := s.db.QueryContext(ctx, q, intervalArg(staleness), limit)
 	if err != nil {
 		return nil, fmt.Errorf("timescale: IssuersNeedingSep1Refresh: %w", err)
 	}
@@ -413,13 +435,21 @@ func (s *Store) AllSep1Images(ctx context.Context) ([]Sep1Image, error) {
 }
 
 // SetIssuerSep1Payload writes a SEP-1 fetch result back to the
-// issuers row — sep1_payload (jsonb) + sep1_resolved_at = now().
-// Caller is responsible for serialising the payload.
+// issuers row — sep1_payload (jsonb) + sep1_resolved_at = now() — and
+// clears the retry ladder (migration 0159).
+//
+// Clearing on success is what makes a RECOVERING domain cheap: an
+// issuer that finally publishes a stellar.toml after months of 404s
+// returns to the plain -older-than cadence on its very first success,
+// rather than serving out the 30-day deferral it earned while it was
+// dead. Caller is responsible for serialising the payload.
 func (s *Store) SetIssuerSep1Payload(ctx context.Context, gStrkey string, payload []byte) error {
 	const q = `
         UPDATE issuers
-           SET sep1_payload     = $2::jsonb,
-               sep1_resolved_at = NOW()
+           SET sep1_payload              = $2::jsonb,
+               sep1_resolved_at          = NOW(),
+               sep1_consecutive_failures = 0,
+               sep1_next_attempt_after   = NULL
          WHERE g_strkey = $1
     `
 	_, err := s.db.ExecContext(ctx, q, gStrkey, string(payload))
@@ -429,26 +459,120 @@ func (s *Store) SetIssuerSep1Payload(ctx context.Context, gStrkey string, payloa
 	return nil
 }
 
-// MarkIssuerSep1Attempted bumps sep1_resolved_at to now() WITHOUT
-// touching sep1_payload — recording that we tried this issuer's
-// home_domain but the fetch/parse failed (dead domain, TLS error,
-// SSRF-blocked, …).
+// Sep1 retry-ladder tuning. The base is one DAY on purpose: it is the
+// cadence a healthy domain already gets, so a domain's FIRST failure
+// costs it nothing at all. That matters more than it looks — when a
+// systemic outage on our side fails every domain at once, the whole
+// population lands on step 1 and keeps its normal schedule.
 //
-// Without this, a failed fetch leaves sep1_resolved_at NULL, so the
-// issuer stays permanently at the front of IssuersNeedingSep1Refresh's
-// `ORDER BY sep1_resolved_at ASC NULLS FIRST`. The thousands of dead
-// home_domains on pubnet would then clog the queue forever and good
-// issuers (Circle, Aquarius, …) behind them would never be reached —
-// org_name/org_verified could never populate. Bumping on failure moves
-// the dead domain to the back so the refresh makes forward progress;
-// it's retried on the next -older-than cadence and a later success
-// overwrites the payload.
-func (s *Store) MarkIssuerSep1Attempted(ctx context.Context, gStrkey string) error {
-	const q = `UPDATE issuers SET sep1_resolved_at = NOW() WHERE g_strkey = $1`
-	if _, err := s.db.ExecContext(ctx, q, gStrkey); err != nil {
-		return fmt.Errorf("timescale: MarkIssuerSep1Attempted: %w", err)
+// Steps are base * 2^(prior failures), capped: 1d, 2d, 4d, 8d, 16d,
+// 30d, 30d, … A dead domain settles at ~1 attempt/month. The cap is
+// what keeps this a deferral rather than an eviction — nothing is ever
+// removed from the queue, so an issuer that publishes a stellar.toml
+// years later is still found without operator action.
+const (
+	Sep1BackoffBase = 24 * time.Hour
+	Sep1BackoffCap  = 30 * 24 * time.Hour
+	// sep1BackoffMaxShift bounds the exponent so POWER() cannot reach
+	// float infinity on a row with an absurd counter; 2^20 days is
+	// already ~2,870 years, far past the cap that clamps it.
+	sep1BackoffMaxShift = 20
+)
+
+// MarkIssuerSep1Failed records a terminating attempt that produced no
+// payload — dead domain, TLS error, SSRF-blocked, unparseable TOML,
+// failed write — and advances the retry ladder. Returns the issuer's
+// new consecutive-failure count.
+//
+// Two separate jobs, and they are easy to conflate:
+//
+//   - sep1_resolved_at = NOW() is QUEUE HYGIENE, and predates the
+//     ladder. IssuersNeedingSep1Refresh orders `sep1_resolved_at ASC
+//     NULLS FIRST`, so a row left NULL stays candidate #1 on every
+//     subsequent run; the ~43k pubnet issuers with dead home_domains
+//     used to occupy the whole front of the queue and good issuers
+//     behind them were never reached. Every failure path must stamp it.
+//
+//   - sep1_consecutive_failures / sep1_next_attempt_after are the
+//     BUDGET. Stamping alone only reorders the queue; it still hands a
+//     domain that has 404'd two hundred times exactly as many attempts
+//     as one that answers. The ladder is what stops that.
+//
+// The whole update is one statement so the count and the deferral
+// derived from it cannot disagree. The SET expressions read the
+// PRE-UPDATE value of sep1_consecutive_failures (Postgres semantics),
+// which is why the deferral uses `prior failures` and the count uses
+// `prior + 1`: a first failure yields count 1 and a one-day deferral.
+//
+// Both interval parameters carry an explicit ::interval cast. An
+// untyped bind parameter beside an interval operator leaves Postgres
+// unable to resolve the operator and raises 42883 at runtime on every
+// call, while compiling and reviewing perfectly.
+func (s *Store) MarkIssuerSep1Failed(ctx context.Context, gStrkey string) (int, error) {
+	const q = `
+        UPDATE issuers
+           SET sep1_resolved_at          = NOW(),
+               sep1_consecutive_failures = COALESCE(sep1_consecutive_failures, 0) + 1,
+               sep1_next_attempt_after   = NOW() + LEAST(
+                   $2::interval * POWER(2::double precision,
+                       LEAST(COALESCE(sep1_consecutive_failures, 0), $4::int)::double precision),
+                   $3::interval)
+         WHERE g_strkey = $1
+        RETURNING sep1_consecutive_failures
+    `
+	var failures int
+	err := s.db.QueryRowContext(ctx, q, gStrkey,
+		intervalArg(Sep1BackoffBase), intervalArg(Sep1BackoffCap), sep1BackoffMaxShift,
+	).Scan(&failures)
+	if err != nil {
+		return 0, fmt.Errorf("timescale: MarkIssuerSep1Failed: %w", err)
 	}
-	return nil
+	return failures, nil
+}
+
+// UnwindIssuerSep1Backoff takes back exactly one ladder step for each
+// of the given issuers and lifts their deferral, leaving
+// sep1_resolved_at alone.
+//
+// This is the systemic-outage escape hatch. Each key passed here failed
+// exactly once during the run being unwound, so decrementing by one
+// restores the pre-run count precisely; clearing
+// sep1_next_attempt_after returns the row to the plain -older-than
+// cadence. sep1_resolved_at deliberately KEEPS its bump, so the queue
+// order still advances and the run cannot re-walk the same head.
+//
+// Why it exists: an outage on OUR side — DNS broken, egress blocked, a
+// bad resolver deploy — fails every domain in the run, and a backoff
+// that believed those failures would push the entire population toward
+// the 30-day cap over a few days and then go quiet. `max(sep1_resolved_at)`
+// keeps ticking the whole time, so the data-freshness watchdog stays
+// green. The caller decides what "systemic" means; this is the undo.
+func (s *Store) UnwindIssuerSep1Backoff(ctx context.Context, gStrkeys []string) (int64, error) {
+	if len(gStrkeys) == 0 {
+		return 0, nil
+	}
+	const q = `
+        UPDATE issuers
+           SET sep1_consecutive_failures = GREATEST(COALESCE(sep1_consecutive_failures, 1) - 1, 0),
+               sep1_next_attempt_after   = NULL
+         WHERE g_strkey = ANY($1::text[])
+    `
+	res, err := s.db.ExecContext(ctx, q, gStrkeys)
+	if err != nil {
+		return 0, fmt.Errorf("timescale: UnwindIssuerSep1Backoff: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("timescale: UnwindIssuerSep1Backoff rows: %w", err)
+	}
+	return n, nil
+}
+
+// intervalArg renders a duration as a Postgres interval literal. Whole
+// seconds is exact for every value the ladder uses and avoids the
+// locale-dependent parsing of a fractional form.
+func intervalArg(d time.Duration) string {
+	return fmt.Sprintf("%d seconds", int64(d/time.Second))
 }
 
 // issuerAssetsHardCap bounds one issuer's asset list.

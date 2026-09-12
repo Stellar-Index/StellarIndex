@@ -3,14 +3,16 @@
 # Rendered by Ansible. Resolves each issuer's home_domain stellar.toml and
 # writes org_name + org_verified back to issuers.sep1_payload (bidirectional
 # verification, #46 / rc.147). Failed fetches bump sep1_resolved_at so the
-# ~43k dead-domain issuers don't clog the front of the refresh queue.
+# dead-domain issuers don't clog the front of the refresh queue, and advance
+# the per-issuer retry ladder (migration 0159) so they stop consuming the
+# budget every single day.
 #
 # Without this timer the refresh only ran when invoked by hand, so issuer
 # org metadata (the /v1/issuers org_name + verified badge) never populated at
 # scale. Runs once per timer tick (oneshot); the timer schedules the cadence.
 
 [Unit]
-Description=Stellar Index — SEP-1 issuer-metadata refresh (daily)
+Description=Stellar Index — SEP-1 issuer-metadata refresh (hourly)
 Documentation=https://github.com/Stellar-Index/StellarIndex/blob/main/internal/metadata/doc.go
 After=network-online.target postgresql.service
 Wants=network-online.target
@@ -21,10 +23,44 @@ EnvironmentFile=-/etc/default/sep1-refresh
 EnvironmentFile=-/etc/default/stellarindex
 
 # Defaults. Operators override via /etc/default/sep1-refresh.
+#
+# THE BUDGET, and the arithmetic behind it. Measured on r1, 2026-09-12:
+# 76,658 issuers carry a home_domain; 40,837 (53%) have been attempted and
+# have never produced a payload; 35,820 hold one. That day's run did 209 ok
+# + 291 failed = 500 attempts inside RUN_TIMEOUT=10m, so a sequential attempt
+# costs AT MOST 1.2s wall clock (600s / 500) — network-bound, one domain at a
+# time, and the fetch already carries its own 10s cap.
+#
+#   old:  500/day  → 76,658 / 500  = 153 days for one full cycle, and 58% of
+#                    every run spent on domains that answer nothing. The
+#                    -older-than 24h the job asks for was unreachable by two
+#                    orders of magnitude.
+#
+#   new:  24 runs/day x 750 = 18,000 attempts/day.
+#         Live population 35,820 / 18,000 → a full cycle in 2.0 days.
+#         Dead population 40,837 at the ladder's 30-day cap contributes
+#         40,837/30 = 1,361 attempts/day = 7.6% of the budget (was 58%),
+#         leaving 16,639/day for domains that answer → 2.2 days.
+#
+# WHY HOURLY AND NOT ONE BIG DAILY RUN. Same throughput could come from
+# LIMIT=18000 once a day, but that is a 6-hour oneshot holding a 2G ceiling
+# on the box that also runs galexie's captive core, straddling every other
+# morning timer, and losing up to six hours of progress if it dies. It is
+# also brittle in exactly the way the old setting was: 1.2s/attempt is an
+# upper bound from ONE run, and a night of mass DNS timeouts (5s dial cap)
+# can triple it. At LIMIT=750 a 3x slowdown means a run does ~500 instead of
+# 750 and the next hour picks up where it stopped — the queue is ordered, so
+# a truncated run loses nothing. At LIMIT=18000 the same slowdown loses the
+# day. Small runs degrade; big runs get killed.
+#
+# RUN_TIMEOUT is sized off the same measurement: 750 x 1.2s = 900s of work
+# against a 1500s budget — 1.67x headroom, and the loop checks the deadline
+# before each fetch so an overrun aborts cleanly at a row boundary rather
+# than mid-write. TimeoutStartSec below must stay above RUN_TIMEOUT.
 Environment=CONFIG_PATH=/etc/stellarindex.toml
-Environment=LIMIT=500
+Environment=LIMIT=750
 Environment=OLDER_THAN=24h
-Environment=RUN_TIMEOUT=10m
+Environment=RUN_TIMEOUT=25m
 Environment=EXTRA_FLAGS=
 
 ExecStart=/usr/local/bin/stellarindex-ops sep1-refresh \
@@ -49,7 +85,10 @@ ProtectKernelModules=true
 ProtectControlGroups=true
 
 # The binary's own -timeout caps the run; give systemd a little more headroom.
-TimeoutStartSec=15min
+# Must stay above RUN_TIMEOUT (25m) or systemd kills a run the binary was
+# about to end cleanly — and a SIGKILL mid-loop skips the failure marking,
+# which is what keeps the queue moving.
+TimeoutStartSec=30min
 
 # Memory ceiling — this job parses ATTACKER-AUTHORED input.
 #
