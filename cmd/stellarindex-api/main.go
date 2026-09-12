@@ -1556,6 +1556,17 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 		}
 	}()
 
+	// Lake-flows supply prewarm: its own goroutine, for the same reason the
+	// protocol sweep below has one — a cold pass walks the whole listing
+	// population 32 contracts at a time and takes minutes, and it must never
+	// delay the cheap prewarms in the loop above.
+	bgWG.Add(1)
+	go func() {
+		defer bgWG.Done()
+		defer recoverBackgroundWorker(logger, "prewarm-classic-lake-supply")
+		prewarmClassicLakeSupply(rootCtx, apiSrv)
+	}()
+
 	// Protocol-detail prewarm: its own goroutine (NOT the 5-minute loop
 	// above — a full sweep is minutes of serial build work and must never
 	// delay the cheap prewarms). Sweeps ALL protocols × bespoke windows
@@ -5255,6 +5266,62 @@ func assetListingPrewarmOptions() []timescale.ListAssetsOptions {
 		}
 	}
 	return out
+}
+
+// classicLakeSupplySweepGap is the pause between lake-supply prewarm
+// sweeps.
+//
+// Sized against the cache's own 30-minute TTL rather than against the
+// cost of a sweep, because those are wildly different numbers: a sweep
+// with nothing expired is a dozen already-warm listing cache reads and
+// ZERO ClickHouse work — every asset it looks at has a live entry, so no
+// batch is cut. The expensive sweeps are the cold one at boot and the one
+// that lands after a TTL generation lapses.
+//
+// Since the population is warmed in one pass, it also EXPIRES in one, so
+// this gap is exactly the window in which a caller can still be served the
+// trustline-only figure. A minute keeps that window small; a 5-minute
+// cadence like the loop above would leave the understatement reachable for
+// 5 minutes out of every 30, which is most of the defect back again.
+const classicLakeSupplySweepGap = time.Minute
+
+// prewarmClassicLakeSupply keeps the per-asset lake-flows supply cache
+// warm for the assets the /v1/assets listing actually serves.
+//
+// Without it, that cache warms only from the request path — 32 assets per
+// request — so on a service with no consumer traffic it is cold by
+// default: entries expire unread and both /v1/assets and /v1/rwa/assets
+// fall back to the trustline-only sum, which cannot see supply held in
+// claimable balances, LP reserves or SAC contract_data. Measured on r1
+// 2026-09-12, ~19 h after the last request, PYUSD served 3,149,454 against
+// a lake reading of 11,778,001 and XRF 21,895,149 against 118,333,629.
+//
+// [assetListingPrewarmOptions] is passed rather than an asset list so the
+// warmed population IS the population prewarmAssetListings keeps warm.
+// Recomputed per sweep, not hoisted, so the two stay identical if the
+// shape set ever changes.
+//
+// Sweep-then-sleep rather than a ticker, like the protocol sweep: a cold
+// pass takes minutes and overlapping passes would double the ClickHouse
+// load exactly when it is already highest.
+//
+// Named rather than inlined at the call site so the startup property — the
+// first sweep runs immediately, not one sweep gap after boot — can be
+// asserted without standing up run(). It takes no logger because it decides
+// nothing worth reporting: the listing read and the lake read each log their
+// own failures inside the Server, where the detail lives.
+func prewarmClassicLakeSupply(ctx context.Context, srv *v1.Server) {
+	if srv == nil {
+		return
+	}
+	for {
+		srv.PrewarmClassicLakeSupply(ctx, assetListingPrewarmOptions())
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(classicLakeSupplySweepGap):
+		}
+	}
 }
 
 // prewarmIssuerLimits are the /v1/issuers limits worth keeping warm.
