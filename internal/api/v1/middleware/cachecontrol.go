@@ -416,7 +416,10 @@ func policyForPath(path string, cdnEnabled bool) string {
 		// this one is a DAILY series assembled behind a 10-minute TTL
 		// — its newest bucket cannot move faster than the oracle
 		// publishes into today.
-		path == "/v1/rwa/history":
+		path == "/v1/rwa/history",
+		// The premium-to-NAV series, on the same grounds: a daily
+		// series behind the same 10-minute assembly TTL.
+		path == "/v1/rwa/premium":
 		if cdnEnabled {
 			return "public, max-age=60, s-maxage=300"
 		}

@@ -1053,6 +1053,41 @@ func (c *Client) RWAHistory(ctx context.Context, opts RWAHistoryOptions) (*Envel
 	return &env, nil
 }
 
+// RWAPremiumHistoryOptions configures [Client.RWAPremiumHistory].
+// Timeframe is one of "1w", "1mo", "1y", "all" (default "1y").
+type RWAPremiumHistoryOptions struct {
+	Timeframe string
+}
+
+// RWAPremiumHistory returns each comparable RWA token's premium or
+// discount to its instrument's published net asset value, daily
+// (GET /v1/rwa/premium) — the time-series form of RWAAssets' per-row
+// Premium.Pct.
+//
+// Read the gaps before reading the line. A premium is a ratio of two
+// SAMPLED observations, so neither leg is ever carried across a day it
+// was not observed on: a day missing either side is ABSENT from Points
+// rather than flat. A day whose market did not clear the thin-market
+// floor is counted in MarketWithheldDays instead of published, so an
+// absent point is not evidence that nothing traded.
+//
+// Coverage is small by construction. Only curated (code, issuer) → feed
+// bindings may value an instrument (Bound is the ceiling), and of those
+// only the tokens that actually trade against a dollar can carry a
+// premium — most of this set is bought and held. Excluded names every
+// member left out and why.
+func (c *Client) RWAPremiumHistory(ctx context.Context, opts RWAPremiumHistoryOptions) (*Envelope[RWAPremiumHistoryView], error) {
+	v := url.Values{}
+	if opts.Timeframe != "" {
+		v.Set("timeframe", opts.Timeframe)
+	}
+	var env Envelope[RWAPremiumHistoryView]
+	if err := c.doJSON(ctx, http.MethodGet, "/v1/rwa/premium", v, nil, &env); err != nil {
+		return nil, err
+	}
+	return &env, nil
+}
+
 func (c *Client) SACWrappers(ctx context.Context) (*Envelope[map[string]string], error) {
 	var env Envelope[map[string]string]
 	if err := c.doJSON(ctx, http.MethodGet, "/v1/sac-wrappers", nil, nil, &env); err != nil {

@@ -1326,7 +1326,11 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 		// ASSEMBLED series behind its own TTL + single flight, so a
 		// second cache at the reader would only add a second staleness
 		// window to the same figures.
-		OracleHistory:       store,
+		OracleHistory: store,
+		// The hour-bucket CAGG read behind /v1/rwa/premium's market
+		// leg. Uncached here for OracleHistory's reason — the handler
+		// caches the assembled series, not the read.
+		MarketHistory:       store,
 		Sep1Cache:           store,
 		Accounts:            accountStore,
 		PlatformAccounts:    platformAccountStore,

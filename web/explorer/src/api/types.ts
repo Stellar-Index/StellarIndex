@@ -2880,6 +2880,78 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/rwa/premium": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Premium or discount to net asset value, over time.
+         * @description A daily series of the token's own observed dollar price measured
+         *     against what an independent oracle published that same day for
+         *     the real-world instrument the issuer declares it anchors to.
+         *     Positive is a premium, negative a discount. It is the
+         *     time-series form of `premium.pct` on `/v1/rwa/assets`.
+         *
+         *     NEITHER LEG MAY BE CARRIED FORWARD. The sibling
+         *     `/v1/rwa/history` carries one of its legs across a silent day,
+         *     because supply is cumulated from an append-only log that records
+         *     every event able to move the level — a day with no entry is a
+         *     day the level did not change. A premium has no such leg. Both
+         *     sides are SAMPLED observations: a day with no trade is a day
+         *     nobody transacted, not a day the price stayed put, and a day the
+         *     oracle was silent is a day nobody stated a value. So a point
+         *     exists only where BOTH legs were independently observed on the
+         *     SAME day, and every other day is a hole in the series.
+         *
+         *     THE MARKET LEG IS GATED, NOT MERELY READ. The point-in-time
+         *     premium compares against the SERVED price, which has already
+         *     passed the thin-market substance gate — on a permissionless DEX
+         *     an attacker can mint a token, seed a handful of dust trades and
+         *     have their own rate published as ours. A history built on the
+         *     raw daily VWAP would publish for every past day exactly the
+         *     claim the live surface refuses. So each day's market leg is a
+         *     volume-weighted average held to a floor of the same three legs
+         *     (dollar volume, distinct buckets, wall-clock span), measured at
+         *     HOUR grain — the coarsest-reaching aggregate that still says
+         *     when inside a past day the trading happened, and the one whose
+         *     history is not subject to a retention policy an operator can
+         *     arm. A day that fails the floor is COUNTED in
+         *     `series[].market_withheld_days`, never published and never
+         *     silently dropped.
+         *
+         *     The floor is not, and cannot be, the live gate: that one
+         *     measures a trailing 24 hours ending now. So an asset may carry a
+         *     premium on a past day and none today, because its market was
+         *     substantial then and is too thin now. The two surfaces are
+         *     measuring two different days, not disagreeing.
+         *
+         *     COVERAGE IS SMALL AND THE RESPONSE SAYS HOW SMALL. Only a
+         *     curated (code, issuer) → feed binding may value an instrument,
+         *     and that set is deliberately far smaller than "every code an
+         *     oracle prices" — `bound` is the ceiling. Of those, only the ones
+         *     that actually TRADE against a dollar can carry a premium at all:
+         *     a tokenized bill that is bought and held has a published value
+         *     every day and a market price on none. `excluded[]` names every
+         *     member left out and who can move it.
+         *
+         *     THERE IS NO TOTAL SERIES. A premium is a percentage of a
+         *     different denominator for every member, so the set has no sum;
+         *     an average would need a weighting nobody published and would
+         *     hide the dispersion, which on this measurement is the finding.
+         *     `coverage[]` carries the per-day account instead.
+         */
+        get: operations["getRWAPremiumHistory"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/pairs": {
         parameters: {
             query?: never;
@@ -6543,14 +6615,185 @@ export interface components {
             members: number;
             points: components["schemas"]["RWAHistoryPoint"][];
         };
-        /** @description One reason a set member is absent from the series. */
+        /**
+         * @description One reason a set member is absent from a series. Shared by
+         *     `/rwa/history` and `/rwa/premium`: the first four reasons are the
+         *     same refusal by the same rule on both, and two spellings of one
+         *     reason is how a funnel starts lying. The last five are specific
+         *     to one series — the supply pair to the value series, the market
+         *     trio to the premium series.
+         */
         RWAHistoryExcluded: {
             /** @enum {string} */
-            reason: "not_bound" | "contract_not_bound" | "issuer_flagged" | "no_supply_history" | "supply_incomplete" | "no_reference_history";
+            reason: "not_bound" | "contract_not_bound" | "issuer_flagged" | "no_reference_history" | "no_supply_history" | "supply_incomplete" | "no_market_history" | "market_below_floor" | "no_same_day_observation";
             /** @description How many set members this reason accounts for. */
             assets: number;
             /** @description What the reason means and, where it matters, who can move it. */
             detail: string;
+        };
+        /**
+         * @description The premium or discount of each comparable RWA token to its
+         *     instrument's published net asset value, daily, plus the account
+         *     of which members could not be compared.
+         *
+         *     `assets` / `issuers` size the WHOLE set. `bound` is how many
+         *     members carry a curated (code, issuer) → feed binding — the
+         *     ceiling on coverage. `members` is how many series are actually
+         *     published; `coverage[]` carries the per-day account of the rest.
+         */
+        RWAPremiumHistoryView: {
+            /** @description What was measured, on which basis, and what it is not. */
+            basis: string;
+            /**
+             * @description Bucket width. Always `1d` — both legs are daily.
+             * @enum {string}
+             */
+            granularity: "1d";
+            /** @enum {string} */
+            timeframe: "1w" | "1mo" | "1y" | "all";
+            /**
+             * @description The denominator both legs are in. Always `fiat:USD`.
+             * @example fiat:USD
+             */
+            quote: string;
+            /** @description Size of the whole RWA set, including members with no premium. */
+            assets: number;
+            /** @description Distinct issuers across that whole set. */
+            issuers: number;
+            /**
+             * @description Members carrying a curated (code, issuer) → instrument-feed
+             *     binding. The ceiling on how many series could ever exist.
+             */
+            bound: number;
+            /**
+             * @description How many set members could be compared at all. `members`
+             *     plus every `excluded[].assets` is exactly `assets`, so the
+             *     account closes. NOT windowed: a narrower `timeframe` can
+             *     leave `series` shorter than this, because a member with no
+             *     observation inside the window is not a member that could
+             *     not be compared.
+             */
+            members: number;
+            /**
+             * Format: date-time
+             * @description When the set was decided. Every point is measured against
+             *     THIS membership, including points that predate an asset's
+             *     admission.
+             */
+            membership_as_of: string;
+            /** @description Set members with no series, tallied by reason. */
+            excluded?: components["schemas"]["RWAHistoryExcluded"][];
+            /** @description Distinct oracles behind the reference leg, sorted. */
+            sources?: string[];
+            /**
+             * @description One premium history per comparable member, widest ABSOLUTE
+             *     latest premium first. There is no total series — a premium
+             *     is a percentage of a different denominator for every member.
+             */
+            series: components["schemas"]["RWAPremiumSeries"][];
+            /**
+             * @description Per-day account of how much of the whole set carried a
+             *     premium, for the days any member did.
+             */
+            coverage?: components["schemas"]["RWAPremiumCoveragePoint"][];
+            /** @description A cap bound a series, so it is shorter than the data behind it. */
+            truncated?: boolean;
+        };
+        /** @description One member's premium-to-NAV history. */
+        RWAPremiumSeries: {
+            /** @description The canonical `CODE-ISSUER` identity. */
+            asset_id: string;
+            code?: string;
+            issuer?: string;
+            /** @description SEP-1 currency name where one is known. Display text, never identity. */
+            label?: string;
+            /**
+             * @description The ADR-0028 instrument feed, in canonical `rwa:` form.
+             * @example rwa:CETES
+             */
+            feed: string;
+            /** @description The oracle whose day buckets the reference leg was read from. */
+            source: string;
+            /**
+             * @description Ascending by day. A day either leg was not observed on is
+             *     ABSENT — never a zero and never a repeat of the day before.
+             */
+            points: components["schemas"]["RWAPremiumHistoryPoint"][];
+            /**
+             * @description Days inside the window that carried observed trades which did
+             *     NOT clear the thin-market floor. Served because "we saw
+             *     trades and refused to price them" and "there were no trades"
+             *     are opposite findings that an absent point renders
+             *     identically.
+             */
+            market_withheld_days?: number;
+            /**
+             * @description Days inside the window with a published value and no market
+             *     at all. On this asset class that is the ordinary case, not
+             *     a defect. Counted only from this member's FIRST observed
+             *     market day onward, and never on a day already counted in
+             *     `market_withheld_days`: before the first observed day "did
+             *     not trade" and "the aggregate does not reach back that far"
+             *     are one thing from here, and a tally that conflated them
+             *     would report an infrastructure gap as a fact about the
+             *     market.
+             */
+            reference_only_days?: number;
+        };
+        /**
+         * @description One day of one member's premium. Both prices are served beside
+         *     the ratio, because a reader who can see only their quotient
+         *     cannot tell which side moved.
+         */
+        RWAPremiumHistoryPoint: {
+            /**
+             * Format: date-time
+             * @description The UTC day the bucket opens.
+             */
+            t: string;
+            /**
+             * @description (market − reference) / reference × 100 as a SIGNED 4-dp
+             *     decimal STRING (ADR-0003 — never a JSON number). Positive
+             *     when the token traded ABOVE the instrument's independent
+             *     valuation.
+             * @example -0.0868
+             */
+            premium_pct: string;
+            /**
+             * @description The day's volume-weighted average price, exact decimal string.
+             * @example 0.0698283638
+             */
+            market_usd: string;
+            /**
+             * @description The day's closing oracle value at the feed's own scale, exact decimal string.
+             * @example 0.0698890000
+             */
+            reference_usd: string;
+            /**
+             * @description The day's dollar volume — the figure the thin-market floor
+             *     was applied to. A premium off a day that barely cleared the
+             *     floor is a weaker claim than one off a deep day, and nothing
+             *     else on the wire would say so.
+             * @example 18420.55
+             */
+            volume_usd: string;
+            /**
+             * Format: int64
+             * @description The day's trade count, as evidence rather than as a gate.
+             */
+            trades: number;
+        };
+        /** @description One day's account of how much of the set could be compared. */
+        RWAPremiumCoveragePoint: {
+            /** Format: date-time */
+            t: string;
+            /** @description Set members that carried a premium on this day. */
+            assets_measured: number;
+            /**
+             * @description Set members that did not. Together with `assets_measured`
+             *     this sums to the view's `assets`.
+             */
+            assets_unmeasured: number;
         };
         /**
          * @description The tokenized-real-world-asset set, its aggregates, and the rule
@@ -16315,6 +16558,123 @@ export interface operations {
                      */
                     "application/json": {
                         data: components["schemas"]["RWAHistoryView"];
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    getRWAPremiumHistory: {
+        parameters: {
+            query?: {
+                /**
+                 * @description Window ending at the most recent COMPLETE UTC day. Today is
+                 *     excluded from both legs: a partial day's VWAP is not the
+                 *     day's price, and holding it to a floor measured over a whole
+                 *     day would report every morning as a thin market.
+                 */
+                timeframe?: "1w" | "1mo" | "1y" | "all";
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The daily premium/discount series (standard envelope). */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "data": {
+                     *         "basis": "The token's own observed dollar price on a day, measured against what an independent oracle published that same day for the real-world instrument the issuer declares it anchors to.",
+                     *         "granularity": "1d",
+                     *         "timeframe": "1y",
+                     *         "quote": "fiat:USD",
+                     *         "assets": 11,
+                     *         "issuers": 5,
+                     *         "bound": 7,
+                     *         "members": 1,
+                     *         "membership_as_of": "2026-09-12T09:00:00Z",
+                     *         "excluded": [
+                     *           {
+                     *             "reason": "not_bound",
+                     *             "assets": 4,
+                     *             "detail": "No curated binding ties this exact (code, issuer) to an oracle feed."
+                     *           },
+                     *           {
+                     *             "reason": "no_market_history",
+                     *             "assets": 4,
+                     *             "detail": "No dollar-quoted trade in this token has ever been observed."
+                     *           },
+                     *           {
+                     *             "reason": "contract_not_bound",
+                     *             "assets": 1,
+                     *             "detail": "A contract-issued member; the curated binding table is keyed on (code, issuer)."
+                     *           }
+                     *         ],
+                     *         "sources": [
+                     *           "redstone"
+                     *         ],
+                     *         "series": [
+                     *           {
+                     *             "asset_id": "CETES-GCRYUGD5NVARGXT56XEZI5CIFCQETYHAPQQTHO2O3IQZTHDH4LATMYWC",
+                     *             "code": "CETES",
+                     *             "issuer": "GCRYUGD5NVARGXT56XEZI5CIFCQETYHAPQQTHO2O3IQZTHDH4LATMYWC",
+                     *             "label": "Etherfuse CETES",
+                     *             "feed": "rwa:CETES",
+                     *             "source": "redstone",
+                     *             "market_withheld_days": 12,
+                     *             "reference_only_days": 43,
+                     *             "points": [
+                     *               {
+                     *                 "t": "2026-09-10T00:00:00Z",
+                     *                 "premium_pct": "-0.0868",
+                     *                 "market_usd": "0.0698283638",
+                     *                 "reference_usd": "0.0698890000",
+                     *                 "volume_usd": "18420.55",
+                     *                 "trades": 37
+                     *               },
+                     *               {
+                     *                 "t": "2026-09-11T00:00:00Z",
+                     *                 "premium_pct": "0.1421",
+                     *                 "market_usd": "0.0699883100",
+                     *                 "reference_usd": "0.0698890000",
+                     *                 "volume_usd": "9106.20",
+                     *                 "trades": 21
+                     *               }
+                     *             ]
+                     *           }
+                     *         ],
+                     *         "coverage": [
+                     *           {
+                     *             "t": "2026-09-10T00:00:00Z",
+                     *             "assets_measured": 1,
+                     *             "assets_unmeasured": 10
+                     *           },
+                     *           {
+                     *             "t": "2026-09-11T00:00:00Z",
+                     *             "assets_measured": 1,
+                     *             "assets_unmeasured": 10
+                     *           }
+                     *         ]
+                     *       },
+                     *       "as_of": "2026-09-12T09:00:00Z",
+                     *       "flags": {
+                     *         "stale": false,
+                     *         "reduced_redundancy": false,
+                     *         "triangulated": false,
+                     *         "divergence_warning": false,
+                     *         "divergence_checked": false
+                     *       }
+                     *     }
+                     */
+                    "application/json": {
+                        data: components["schemas"]["RWAPremiumHistoryView"];
                     };
                 };
             };

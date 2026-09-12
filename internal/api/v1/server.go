@@ -296,7 +296,19 @@ type Server struct {
 	// oracleHistory backs the price leg of that series. Held apart from
 	// `oracle`, which is the live-snapshot seam; see
 	// [RWAOracleHistoryReader].
-	oracleHistory          RWAOracleHistoryReader
+	oracleHistory RWAOracleHistoryReader
+	// The RWA premium-over-time assembly (/v1/rwa/premium). Its own
+	// cache rather than a field on the value history: the two share a
+	// membership and a reference leg but not a market leg, and one
+	// assembly failing must not blank the other.
+	rwaPremMu     sync.Mutex
+	rwaPremCache  *rwaPremiumHistory
+	rwaPremAt     time.Time
+	rwaPremFlight chan struct{}
+	// marketHistory backs the market leg of that series — the observed
+	// daily dollar VWAP the oracle's NAV is measured against. See
+	// [RWAMarketHistoryReader].
+	marketHistory          RWAMarketHistoryReader
 	soroswapPairs          SoroswapPairsReader
 	networkStats           NetworkStatsReader
 	aggregators            AggregatorsReader
@@ -608,6 +620,14 @@ type Options struct {
 	// series, it is no series, and an empty chart would read as a
 	// finding about the sector.
 	OracleHistory RWAOracleHistoryReader
+	// MarketHistory, when non-nil, backs the market leg of
+	// /v1/rwa/premium — the observed daily dollar VWAP an instrument's
+	// published value is measured against. Production wiring is
+	// timescale.Store directly. Nil makes that endpoint publish no
+	// series and say so in `basis`, for [OracleHistory]'s reason: a
+	// premium with one leg missing is not a shorter series, it is no
+	// series.
+	MarketHistory RWAMarketHistoryReader
 	// Sep1Cache, when non-nil, enables the SEP-1 overlay on
 	// /v1/assets/{id}. The handler reads from the `issuers.sep1_payload`
 	// JSONB column populated by `stellarindex-ops sep1-refresh`.
@@ -1442,6 +1462,7 @@ func New(opts Options) *Server { //nolint:funlen // pure field-mapping construct
 		markets:                opts.Markets,
 		oracle:                 opts.Oracle,
 		oracleHistory:          opts.OracleHistory,
+		marketHistory:          opts.MarketHistory,
 		sep1Cache:              opts.Sep1Cache,
 		accounts:               opts.Accounts,
 		accountKeyQuota:        opts.AccountKeyQuota,
@@ -2170,6 +2191,12 @@ func (s *Server) mountRoutes() { //nolint:funlen // route registration is intent
 	// anything. #352.
 	s.mux.HandleFunc("GET /v1/rwa/assets", s.handleRWAAssets)
 	s.mux.HandleFunc("GET /v1/rwa/history", s.handleRWAHistory)
+	// The premium/discount to net asset value over time — the same
+	// measurement `premium.pct` publishes point-in-time, as a daily
+	// series. A ratio of two SAMPLED observations, so unlike the value
+	// series neither leg may be carried across a day it was not
+	// observed on. See rwa_premium_history.go.
+	s.mux.HandleFunc("GET /v1/rwa/premium", s.handleRWAPremiumHistory)
 
 	// Account self-service. /me and /usage require an authenticated
 	// Subject; /keys (POST) additionally requires the AccountStore

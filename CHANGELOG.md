@@ -15,6 +15,94 @@ against.
 
 ## [Unreleased]
 
+### Added
+
+- **api,explorer:** `GET /v1/rwa/premium` — the premium or discount of a
+  tokenized real-world asset to its instrument's net asset value, daily, plus
+  a panel on `/rwa` that draws it with a zero line. `/v1/rwa/assets` has
+  published `premium.pct` point-in-time since #352; this is the same
+  measurement over time, and it is the chart a chain-query tool structurally
+  cannot draw — it needs an observed market price and an oracle's published
+  NAV on one clock, and a chain query has neither leg.
+
+  **Neither leg may be carried forward, and that is the whole design.** The
+  sibling `/v1/rwa/history` carries ONE of its legs across a silent day,
+  because supply is cumulated from an append-only log that records every event
+  able to move the level: a day with no entry is a day the level did not
+  change, so carrying it is arithmetic. A premium has no such leg. Both sides
+  are sampled observations — a day with no trade is a day nobody transacted,
+  not a day the price stayed put, and a day the oracle was silent is a day
+  nobody stated a value. A point therefore exists only where BOTH legs were
+  independently observed on the SAME day; every other day is a hole, on the
+  wire and in pixels.
+
+  **The market leg is gated, not merely read.** The point-in-time premium
+  compares against the SERVED price, which has already passed the thin-market
+  substance gate — on a permissionless DEX an attacker can mint a token, seed
+  a handful of dust trades and have their own rate published as ours
+  (2026-08-04). A history built on the raw daily VWAP would publish, for every
+  past day, exactly the claim the live surface refuses. So each day's market
+  leg is a volume-weighted average held to a floor of the same three legs
+  (dollar volume, distinct buckets, wall-clock span), measured at HOUR grain:
+  `prices_1h` is the coarsest-reaching aggregate that still says WHEN inside a
+  past day the trading happened, and unlike `prices_1m` — whose 30-day
+  retention went in 0002, came out in 0031 and returned in 0156 as a
+  ships-disarmed 90-day policy — its history is not subject to a job an
+  operator can arm. A day that fails the floor is counted in
+  `series[].market_withheld_days`, never published and never silently dropped:
+  "we saw trades and refused to price them" and "there were no trades" are
+  opposite findings.
+
+  `reference_only_days` is bounded the same way round. It counts only from a
+  member's FIRST observed market day, because before it "did not trade", "did
+  not exist yet" and "the aggregate does not reach back that far" are one
+  thing from the reader's position — and 0115/0147 dropped all seven price
+  CAGGs and left re-materialisation to the operator, so the third is a live
+  possibility. A tally that conflated them would report an infrastructure gap
+  as a fact about the market.
+
+  That floor is not the live gate and cannot be: the live gate measures a
+  trailing 24 hours ending now. An asset may therefore carry a premium on a
+  past day and none today, because its market was substantial then and is too
+  thin now. The two surfaces measure two different days rather than disagree.
+
+  **There is no total series.** A premium is a percentage of a different
+  denominator for every member, so the set has no sum, and an average would
+  need a weighting nobody published while hiding the dispersion that is the
+  finding. `coverage[]` carries the per-day account instead, counted against
+  the size of the WHOLE set.
+
+  Coverage is small and the payload says how small: `bound` is the ceiling —
+  the curated `(code, issuer)` → feed bindings, seven of the fourteen `rwa:`
+  feeds — and of those only the tokens that actually trade against a dollar
+  can carry a premium at all, because a tokenized bill is bought and held.
+  `excluded[]` names every member left out and who can move it, including the
+  three refusals this series has and the value series does not
+  (`no_market_history`, `market_below_floor`, `no_same_day_observation`).
+
+  Scam-flagged issuers never reach it: `rwa.Qualify` refuses them at
+  membership, and the endpoint re-applies the suppression ahead of the binding
+  lookup so that adding a binding later can never turn a suppression into a
+  published claim.
+
+  API minor 1.30.0 (additive), `pkg/client.RWAPremiumHistory`.
+
+- **storage:** `Store.DailyMarketDays` — the observed daily dollar market per
+  asset, read off `prices_1h`, folding every spelling of the dollar (the
+  operator's verified USD-pegged classics in each canonical form, plus
+  `fiat:USD`) into one day figure because those spellings hold disjoint venue
+  populations. It returns the day's exact volume-weighted price beside the
+  three substance measurements rather than applying a floor in SQL: a floor is
+  policy, this is a measurement, and the caller has to be able to say what it
+  refused. The market twin of `Store.DailyOraclePrices`.
+
+### Changed
+
+- **explorer:** `LineChart` draws `priceLines` in multi-series mode as well as
+  single. They belong to the shared price scale rather than to any one line,
+  and on a signed measure a drawn zero is what tells a reader which side of
+  nothing a line is on.
+
 ## [v0.78.0] — 2026-09-13
 
 ### Added

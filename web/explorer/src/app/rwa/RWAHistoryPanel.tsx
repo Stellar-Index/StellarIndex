@@ -10,6 +10,7 @@ import type { components } from '@/api/types';
 import { formatCompact } from '@/lib/format';
 import { truncateMiddle } from '@/components/ui/Mono';
 import { CATEGORICAL_PALETTE } from '@/components/charts/DonutChart';
+import { hueByIdentity, toDailyLine } from '@/components/charts/dailyGaps';
 import { Callout, EmptyState, Segmented, Skeleton } from '@/components/ui';
 import type { LinePoint, NamedLineSeries } from '@/components/charts/LineChart';
 
@@ -60,72 +61,28 @@ function useRWAHistory(timeframe: string, groupBy: string) {
   });
 }
 
-/** Unix seconds for a served RFC 3339 day, or null when unparsable. */
-function pointTime(t: string): number | null {
-  const ms = Date.parse(t);
-  return Number.isFinite(ms) ? Math.floor(ms / 1000) : null;
-}
-
-const DAY_SECONDS = 86_400;
-
 /**
- * Ceiling on how many day slots one series may occupy. The server caps
- * the POINT count; this caps the SPAN, so a series with two points a
- * decade apart cannot make the gap-filling below allocate thousands of
- * slots. Past it the points are plotted as they came, and the only
- * casualty is that the holes are drawn joined.
- */
-const MAX_DAY_SLOTS = 4096;
-
-/**
- * Served points → chart geometry, with every missing day made EXPLICIT.
+ * Served points → chart geometry, with every missing day made EXPLICIT
+ * so the line BREAKS at a hole instead of being drawn straight across
+ * it. The mechanics live in [toDailyLine], shared with the premium
+ * panel: a hole is not a thing two charts should disagree about.
  *
- * The server omits a day no member could be valued on. Handing those
- * points straight to the chart would join the two sides of the hole with
- * a straight line — the fabrication the endpoint refuses on the wire,
- * reintroduced in pixels and drawn at the same confidence as the real
- * days. So the missing days are emitted as gap points (null value), and
- * the line breaks at them.
- *
- * `value` is parsed to a JS number for the y-coordinate ONLY. The wire
- * carries exact decimal strings (ADR-0003) and every figure the panel
- * PRINTS comes from those; a pixel is allowed to be a float.
- *
- * `volume` carries the day's `assets_valued` into the pane below the
- * line. It is not a second y-axis on the same plot — lightweight-charts
- * gives it its own pane and its own scale — and it is the whole reason
- * this chart can be read honestly: a fall in the line that coincides
- * with a fall in coverage is a fall in what we could see, not in what
- * the sector is worth.
+ * `withCoverage` carries the day's `assets_valued` into the pane below
+ * the line. It is not a second y-axis on the same plot —
+ * lightweight-charts gives it its own pane and its own scale — and it
+ * is the whole reason this chart can be read honestly: a fall in the
+ * line that coincides with a fall in coverage is a fall in what we
+ * could see, not in what the sector is worth.
  */
 export function toLine(
   points: RWAHistoryPoint[],
   withCoverage: boolean,
 ): LinePoint[] {
-  const byDay = new Map<number, RWAHistoryPoint>();
-  for (const p of points) {
-    const t = pointTime(p.t);
-    if (t != null) byDay.set(t - (t % DAY_SECONDS), p);
-  }
-  const days = [...byDay.keys()].sort((a, b) => a - b);
-  if (days.length === 0) return [];
-
-  const plot = (t: number, p: RWAHistoryPoint): LinePoint => ({
-    time: t,
-    value: Number(p.value_usd),
-    ...(withCoverage ? { volume: p.assets_valued } : {}),
-  });
-  const first = days[0];
-  const last = days[days.length - 1];
-  if ((last - first) / DAY_SECONDS + 1 > MAX_DAY_SLOTS) {
-    return days.map((t) => plot(t, byDay.get(t) as RWAHistoryPoint));
-  }
-  const out: LinePoint[] = [];
-  for (let t = first; t <= last; t += DAY_SECONDS) {
-    const p = byDay.get(t);
-    out.push(p ? plot(t, p) : { time: t, value: null });
-  }
-  return out;
+  return toDailyLine(
+    points,
+    (p) => Number(p.value_usd),
+    withCoverage ? (p) => p.assets_valued : undefined,
+  );
 }
 
 function usdCompact(n: number): string {
@@ -388,10 +345,10 @@ function excludedLabel(reason: string): string {
  */
 export function assetLines(groups: RWAHistoryGroup[]): NamedLineSeries[] {
   const drawn = groups.slice(0, MAX_ASSET_LINES);
-  const hue = new Map<string, string>();
-  [...drawn]
-    .sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0))
-    .forEach((g, i) => hue.set(g.key, CATEGORICAL_PALETTE[i]));
+  const hue = hueByIdentity(
+    drawn.map((g) => g.key),
+    CATEGORICAL_PALETTE,
+  );
   return drawn.flatMap((g) => {
     const data = toLine(g.points, false);
     if (data.length === 0) return [];

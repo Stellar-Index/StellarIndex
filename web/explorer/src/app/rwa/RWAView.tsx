@@ -5,6 +5,7 @@ import { useQuery } from '@tanstack/react-query';
 
 import { Panel } from '@/components/reveal';
 import { RWAHistoryPanel } from './RWAHistoryPanel';
+import { RWAPremiumPanel } from './RWAPremiumPanel';
 import { apiGetData, asExample } from '@/api/client';
 import type { components } from '@/api/types';
 import {
@@ -290,6 +291,12 @@ export function RWAView() {
           claim is about real-world value on chain, and "is it growing"
           is the question a snapshot cannot answer. */}
       <RWAHistoryPanel />
+
+      {/* And the other question a snapshot cannot answer: whether the
+          market has been paying more or less than the instrument is
+          worth. The premium column in the table below is one day of
+          this line. */}
+      <RWAPremiumPanel />
 
       <Panel
         title="The set"

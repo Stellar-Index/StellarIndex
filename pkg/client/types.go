@@ -1404,12 +1404,96 @@ type RWAHistoryGroup struct {
 	Points  []RWAHistoryPoint `json:"points"`
 }
 
-// RWAHistoryExcluded is one reason a set member is absent from the
-// series, with how many members it accounts for.
+// RWAHistoryExcluded is one reason a set member is absent from a
+// series, with how many members it accounts for. Shared by
+// /v1/rwa/history and /v1/rwa/premium.
 type RWAHistoryExcluded struct {
 	Reason string `json:"reason"`
 	Assets int    `json:"assets"`
 	Detail string `json:"detail"`
+}
+
+// ─── RWA premium to NAV over time (/v1/rwa/premium) ─────────────────
+
+// RWAPremiumHistoryView is the /v1/rwa/premium payload: each comparable
+// token's own observed dollar price measured daily against what an
+// independent oracle published for the instrument it anchors to.
+//
+// NEITHER LEG IS EVER CARRIED. Both are sampled observations — a day
+// with no trade is a day nobody transacted, and a day the oracle was
+// silent is a day nobody stated a value — so a point exists only where
+// both were observed on the SAME day. Every other day is absent.
+//
+// There is no total series: a premium is a percentage of a different
+// denominator for every member, so the set has no sum. Read Coverage
+// for the per-day account of how much of the set could be compared.
+type RWAPremiumHistoryView struct {
+	Basis       string `json:"basis"`
+	Granularity string `json:"granularity"`
+	Timeframe   string `json:"timeframe"`
+	Quote       string `json:"quote"`
+	Assets      int    `json:"assets"`
+	Issuers     int    `json:"issuers"`
+	// Bound is how many set members carry a curated (code, issuer) →
+	// instrument-feed binding: the ceiling on how many series can exist.
+	Bound int `json:"bound"`
+	// Members is how many set members could be compared at all.
+	// Members plus every Excluded[].Assets is exactly Assets, so the
+	// account closes. NOT windowed — a narrower Timeframe can leave
+	// Series shorter than this.
+	Members        int                       `json:"members"`
+	MembershipAsOf time.Time                 `json:"membership_as_of"`
+	Excluded       []RWAHistoryExcluded      `json:"excluded,omitempty"`
+	Sources        []string                  `json:"sources,omitempty"`
+	Series         []RWAPremiumSeries        `json:"series"`
+	Coverage       []RWAPremiumCoveragePoint `json:"coverage,omitempty"`
+	Truncated      bool                      `json:"truncated,omitempty"`
+}
+
+// RWAPremiumSeries is one member's premium-to-NAV history.
+type RWAPremiumSeries struct {
+	AssetID string                   `json:"asset_id"`
+	Code    string                   `json:"code,omitempty"`
+	Issuer  string                   `json:"issuer,omitempty"`
+	Label   string                   `json:"label,omitempty"`
+	Feed    string                   `json:"feed"`
+	Source  string                   `json:"source"`
+	Points  []RWAPremiumHistoryPoint `json:"points"`
+	// MarketWithheldDays counts days with observed trades that did NOT
+	// clear the thin-market floor. "We saw trades and refused to price
+	// them" and "there were no trades" are opposite findings that an
+	// absent point renders identically.
+	MarketWithheldDays int `json:"market_withheld_days,omitempty"`
+	// ReferenceOnlyDays counts days with a published value and no
+	// market at all — the ordinary case for a tokenized instrument
+	// that is bought and held. Counted only from the member's FIRST
+	// observed market day onward, and never on a day already in
+	// MarketWithheldDays.
+	ReferenceOnlyDays int `json:"reference_only_days,omitempty"`
+}
+
+// RWAPremiumHistoryPoint is one day of one member's premium. Both
+// prices travel beside the ratio: a reader who sees only the quotient
+// cannot tell which side moved.
+type RWAPremiumHistoryPoint struct {
+	T time.Time `json:"t"`
+	// PremiumPct is (market − reference) / reference × 100 as a SIGNED
+	// 4-dp decimal STRING (ADR-0003), never a float.
+	PremiumPct   string `json:"premium_pct"`
+	MarketUSD    string `json:"market_usd"`
+	ReferenceUSD string `json:"reference_usd"`
+	// VolumeUSD and Trades are the market leg's evidence — the figures
+	// the day's thin-market floor was applied to.
+	VolumeUSD string `json:"volume_usd"`
+	Trades    int64  `json:"trades"`
+}
+
+// RWAPremiumCoveragePoint is one day's account of how much of the whole
+// set could be compared. AssetsMeasured + AssetsUnmeasured is Assets.
+type RWAPremiumCoveragePoint struct {
+	T                time.Time `json:"t"`
+	AssetsMeasured   int       `json:"assets_measured"`
+	AssetsUnmeasured int       `json:"assets_unmeasured"`
 }
 
 // ─── Tokenized real-world assets (/v1/rwa/assets) ───────────────────
