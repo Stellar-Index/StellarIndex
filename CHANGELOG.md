@@ -17,6 +17,45 @@ against.
 
 ### Fixed
 
+- **api:** `/v1/assets` intermittently stalled 10–13s against a normal
+  10ms, because the SEP-1 logo map was rebuilt on the calling request's
+  own context.
+
+  Two faults, one symptom. Whichever request found the map expired paid
+  for the whole rebuild inline; and when that request's client gave up,
+  its cancellation killed the rebuild with it — `AllSep1Images rows:
+  context canceled`, logged on r1 at the exact second of each smoke
+  timeout. Nothing was cached, the freshness clock never advanced, and
+  the next request started the whole scan again. That loop ran for two
+  days: 202 failing smoke samples over 4 days, roughly half of all runs.
+
+  What tipped a tolerable design over the 10s smoke budget was the
+  population. The scan reads every verified issuer's cached
+  `stellar.toml` — 448MB of JSON across 35,829 issuers on r1, up ~50% in
+  two days on a deliberate SEP-1 backfill.
+
+  The rebuild is now detached: a request is handed whatever the cache
+  holds and the refresh runs behind it on its own 2-minute budget, so no
+  request waits on the scan and no cancelled request can discard it. A
+  failed refresh keeps serving the last good map and is rate-limited to
+  one attempt a minute, instead of being retried by every request. A
+  cold map costs a request its logos, not its latency — decoration
+  degrades, the listing does not. `cmd/stellarindex-api` warms it on
+  boot and every 5 minutes against a 10-minute TTL, so a cold map is
+  a deploy-window state rather than a steady one.
+
+  The scan itself got ~5.8x cheaper on the way past, by projecting the
+  `(code, issuer, image)` triples server-side instead of shipping whole
+  payloads to Go to be parsed. Measured on the integration harness'
+  TimescaleDB against a 611MB equivalent set: 2,500ms → 431ms, over
+  15MB of wire instead of 610MB. No index and no migration — measurement
+  put 89% of the cost in `json.Unmarshal` and 12ms in the row scan, and
+  the planner refuses a partial index offered to it.
+
+  `/v1/assets` returns the same rows, the same fields and the same
+  order; only whether a row carries a logo can differ, and only while
+  the map is cold.
+
 - **ops:** the SLA probe measured the anonymous rate limit instead of the
   SLA, and pinged Healthchecks `/fail` every ten minutes for it.
 

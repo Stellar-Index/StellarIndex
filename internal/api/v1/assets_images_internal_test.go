@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -13,6 +14,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/currency"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
+
+// errStubSep1Scan stands in for a failing AllSep1Images scan.
+var errStubSep1Scan = errors.New("stub: sep1 scan failed")
 
 // stubSep1ImagesReader implements both Sep1CachedReader (unused here) and
 // the optional AllSep1Images capability cachedSep1Images type-asserts for.
@@ -74,6 +78,11 @@ func TestFillImagesFromSep1_Overlay(t *testing.T) {
 		{AssetID: "EVIL-" + imgIssuerUSDC, Type: "classic", Code: "EVIL", Issuer: ptr(imgIssuerUSDC)},
 	}
 
+	// The logo map is filled OFF the request path now (production does this
+	// from main.go's prewarm loop), so warm it exactly as production does
+	// before asserting on the overlay. A cold map serves no logos by
+	// design — that is the trade that keeps the listing off the scan.
+	s.PrewarmSep1Images(context.Background())
 	s.fillImagesFromSep1(context.Background(), rows)
 
 	if rows[0].Image == nil || *rows[0].Image != "https://circle.com/usdc.svg" {
@@ -102,6 +111,7 @@ func TestCachedSep1Images_TTLSingleQuery(t *testing.T) {
 	}}
 	s := discardServer(stub)
 
+	s.PrewarmSep1Images(context.Background())
 	for i := 0; i < 3; i++ {
 		m := s.cachedSep1Images(context.Background())
 		if got := m[sep1ImageKey("USDC", imgIssuerUSDC)]; got != "https://circle.com/usdc.svg" {
@@ -117,6 +127,7 @@ func TestCachedSep1Images_NoReaderIsNoOp(t *testing.T) {
 	// sep1Cache that lacks AllSep1Images (plain Sep1CachedReader) → nil map,
 	// and fillImagesFromSep1 leaves rows untouched.
 	s := discardServer(&plainSep1Cache{})
+	s.PrewarmSep1Images(context.Background()) // must be a no-op, not a panic
 	if m := s.cachedSep1Images(context.Background()); m != nil {
 		t.Errorf("expected nil map when reader lacks AllSep1Images, got %v", m)
 	}
@@ -179,6 +190,7 @@ func TestProjectCatalogueRows_Sep1ImageOverlay(t *testing.T) {
 	}
 	caps := make([]string, len(matched))
 
+	s.PrewarmSep1Images(context.Background())
 	rows := s.projectCatalogueRows(context.Background(), matched, caps)
 
 	if rows[0].Image == nil || *rows[0].Image != "https://circle.com/usdc.svg" {
@@ -208,6 +220,7 @@ func TestHandleAssetListFromCatalogue_Sep1ImageOverlay(t *testing.T) {
 	}}
 	s := discardServer(stub)
 	s.verifiedCurrencies = cat
+	s.PrewarmSep1Images(context.Background())
 
 	req := httptest.NewRequest(http.MethodGet, "/v1/assets?asset_class=stablecoin", nil)
 	w := httptest.NewRecorder()

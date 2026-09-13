@@ -255,15 +255,21 @@ type Server struct {
 	lakeSupply          map[string]lakeSupplyEntry
 	lakeSupplyFlight    chan struct{}
 	lakeSupplyAttemptAt time.Time
-	// Per-server TTL + single-flight cache for the SEP-1 logo map
-	// (canonical asset_id → safe image URL), built from every verified
-	// issuer's cached sep1_payload in one scan. Backs the image fill on
-	// the /v1/assets listing so the homepage grid renders real logos
-	// instead of fallback avatars — see cachedSep1Images.
-	sep1ImagesMu     sync.Mutex
-	sep1ImagesCache  map[string]string
-	sep1ImagesAt     time.Time
-	sep1ImagesFlight chan struct{}
+	// Per-server stale-while-revalidate cache for the SEP-1 logo map
+	// (case-folded CODE-ISSUER → safe image URL), built from every
+	// verified issuer's cached sep1_payload in one scan. Backs the image
+	// fill on the /v1/assets listing so the homepage grid renders real
+	// logos instead of fallback avatars — see cachedSep1Images.
+	//
+	// sep1ImagesAt is when the map was last REBUILT; sep1ImagesAttemptAt
+	// is when a rebuild was last STARTED. They are different clocks on
+	// purpose: the first drives freshness, the second rate-limits
+	// attempts so a failing scan cannot be retried by every request.
+	sep1ImagesMu        sync.Mutex
+	sep1ImagesCache     map[string]string
+	sep1ImagesAt        time.Time
+	sep1ImagesAttemptAt time.Time
+	sep1ImagesFlight    chan struct{}
 
 	// RWA membership set (/v1/rwa/assets) — the (code, issuer) pairs
 	// meeting the internal/rwa definition, rebuilt off the request

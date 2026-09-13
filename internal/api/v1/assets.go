@@ -1635,10 +1635,28 @@ func computeMarketCapUSD(circRaw, priceRaw string, decimals int) string {
 }
 
 // sep1ImagesTTL bounds how long the SEP-1 logo map is reused before a
-// refresh. The payloads only move on the sep1-refresh cron cadence
-// (hours), so a 10-minute TTL keeps the scan off the API hot path while
-// staying fresh enough for a newly-verified issuer's logo to appear.
+// refresh is KICKED. It is not how long the map may be SERVED: past the
+// TTL the last good map keeps being served while the refresh runs behind
+// it (see [Server.cachedSep1Images]). The payloads only move on the
+// sep1-refresh cron cadence (hours), so 10 minutes is fresh enough for a
+// newly-verified issuer's logo to appear.
 const sep1ImagesTTL = 10 * time.Minute
+
+// sep1ImagesRetryGap rate-limits refresh ATTEMPTS, not refreshes. Same
+// lesson as classicLakeSupplyRetryGap: once a heavy read starts failing,
+// retrying it on every request is what turns one slow query into a
+// sustained outage. It is what the old code lacked — a failed refresh
+// left sep1ImagesAt un-advanced, so the very next request started the
+// whole scan again, for as long as the failure lasted.
+const sep1ImagesRetryGap = 60 * time.Second
+
+// sep1ImagesBudget is the DETACHED refresh's own deadline. It must
+// exceed the API request timeout precisely because it does not run on a
+// request's context — that is the whole point of detaching. Sized well
+// above the measured cost (sub-second on the projected scan, seconds on
+// a loaded r1) so a slow-but-progressing scan finishes and populates the
+// cache rather than being killed and repeated.
+const sep1ImagesBudget = 2 * time.Minute
 
 // sep1ImageKey is the join key shared by the logo-map build + lookup.
 // Asset codes are matched case-insensitively (as the per-asset SEP-1
@@ -1647,70 +1665,185 @@ func sep1ImageKey(code, issuer string) string {
 	return strings.ToUpper(strings.TrimSpace(code)) + "-" + issuer
 }
 
+// sep1ImagesReader is the narrow capability the logo overlay needs. It is
+// type-asserted off [Server.sep1Cache] rather than added to
+// [Sep1CachedReader] so every existing stub implementing that seam keeps
+// compiling and simply opts out — the same optional-seam idiom
+// [Server.latestPreciseSupply] and [classicLakeSupplyReader] use.
+//
+// Production wiring: *timescale.Store, via v1.New(v1.Options{Sep1Cache:
+// store}) in cmd/stellarindex-api/main.go.
+type sep1ImagesReader interface {
+	AllSep1Images(ctx context.Context) ([]timescale.Sep1Image, error)
+}
+
 // cachedSep1Images returns the SEP-1 logo map (case-folded CODE-ISSUER →
-// safe image URL) built from every verified issuer's cached payload,
-// cached per-server with a TTL + single-flight. The backing scan is one
-// indexed SELECT over the few-dozen issuers carrying a sep1_payload;
-// caching it means the /v1/assets listing image overlay costs a map
-// lookup per row, never a per-row JOIN into the hot listing query.
+// safe image URL) built from every verified issuer's cached payload.
+//
+// # It never blocks, and it never dies with its caller
+//
+// This is stale-while-revalidate: the caller is handed whatever the cache
+// holds, immediately, and a refresh is kicked BEHIND it on a detached
+// context when the entry is past [sep1ImagesTTL]. A cold cache serves no
+// logos for that one request rather than waiting for one.
+//
+// Both properties are the defect this replaces, and both were live on r1
+// for two days. The refresh used to run INLINE on the calling request's
+// context, so:
+//
+//   - every TTL expiry made one unlucky /v1/assets request wait for the
+//     whole scan — 10 s to 13 s against a normal 10 ms, 202 failing smoke
+//     samples over 4 days, roughly half of all runs; and
+//   - when that request's client gave up, `ctx` was cancelled and the
+//     scan died with it ("AllSep1Images rows: context canceled" in the r1
+//     log, at the exact second of each smoke timeout), discarding the
+//     work. Nothing was cached, sep1ImagesAt never advanced, and the NEXT
+//     request started the whole scan again — a self-sustaining loop that
+//     ran until the population happened to be scanned inside one client's
+//     patience.
+//
+// The population is what made a tolerable design intolerable: 448 MB of
+// SEP-1 JSON across 35,829 issuers on 2026-09-13, up ~50% in two days on
+// a deliberate backfill. [allSep1ImagesQuery] cut the scan ~5.8x by
+// projecting server-side, but the cost is bounded by a population this
+// code does not control, so the detachment is the load-bearing half: no
+// request waits on it at any population size.
+//
+// Logos are decoration and the listing is the product, so every failure
+// path here degrades to "no logo" — never to an error, never to a wait.
 // Returns nil when no reader exposing AllSep1Images is wired (test stubs
-// / overlay disabled) — the listing then simply omits images, exactly as
-// before. Serves the last good map on a refresh error.
+// / overlay disabled).
 func (s *Server) cachedSep1Images(ctx context.Context) map[string]string {
-	reader, ok := s.sep1Cache.(interface {
-		AllSep1Images(context.Context) ([]timescale.Sep1Image, error)
-	})
+	reader, ok := s.sep1Cache.(sep1ImagesReader)
 	if !ok {
 		return nil
 	}
+	// contextcheck: readSep1Images deliberately does NOT take the caller's
+	// ctx — it may launch the detached refresh, which must outlive this
+	// request. ctx is unused on purpose; see this function's doc.
+	_ = ctx
+	m, _ := s.readSep1Images(reader) //nolint:contextcheck // the detachment is the point; see this function's doc.
+	return m
+}
+
+// readSep1Images serves what the cache holds and kicks a detached refresh
+// when the entry is stale (or absent) and no attempt is already running or
+// too recent. Returns the served map — possibly nil on a cold cache, and
+// possibly stale, both of which are fine — and the in-flight refresh's
+// completion channel (nil when no refresh is running).
+//
+// The channel exists for [Server.PrewarmSep1Images], which is the ONLY
+// caller allowed to wait on it. Request handlers take the map and go.
+func (s *Server) readSep1Images(reader sep1ImagesReader) (map[string]string, chan struct{}) {
 	s.sep1ImagesMu.Lock()
+	defer s.sep1ImagesMu.Unlock()
+
+	served := s.sep1ImagesCache // last good map; nil only before the first success
 	if s.sep1ImagesCache != nil && time.Since(s.sep1ImagesAt) < sep1ImagesTTL {
-		m := s.sep1ImagesCache
-		s.sep1ImagesMu.Unlock()
-		return m
+		return served, nil
 	}
-	if ch := s.sep1ImagesFlight; ch != nil {
-		s.sep1ImagesMu.Unlock()
-		select {
-		case <-ch:
-			s.sep1ImagesMu.Lock()
-			m := s.sep1ImagesCache
-			s.sep1ImagesMu.Unlock()
-			return m
-		case <-ctx.Done():
-			return nil
-		}
+	if s.sep1ImagesFlight != nil {
+		return served, s.sep1ImagesFlight
 	}
-	done := make(chan struct{})
-	s.sep1ImagesFlight = done
-	s.sep1ImagesMu.Unlock()
+	if time.Since(s.sep1ImagesAttemptAt) < sep1ImagesRetryGap {
+		return served, nil
+	}
+	s.sep1ImagesAttemptAt = time.Now() // advances on failure too
+	flight := make(chan struct{})
+	s.sep1ImagesFlight = flight
+	// G118 is the intended behaviour, not a defect: detaching from the
+	// request context is what stops a scan being killed at the request
+	// deadline and restarted, unbounded, by the next caller.
+	go s.refreshSep1Images(reader, flight) //nolint:gosec,contextcheck // G118 + contextcheck: the detachment is deliberate — see cachedSep1Images' doc.
+	return served, flight
+}
+
+// refreshSep1Images rebuilds the logo map on a DETACHED context and swaps
+// it in. On error the previous map is left exactly as it was — a failed
+// refresh must never blank logos that were rendering a moment ago.
+func (s *Server) refreshSep1Images(reader sep1ImagesReader, done chan struct{}) {
+	// Deferred so a panic in the scan cannot leave the single-flight marker
+	// set — which would freeze the cache for the life of the process, since
+	// a non-nil flight is never replaced.
+	defer s.endSep1ImagesFlight(done)
+	defer worker.Recover(s.logger, "api-sep1-images-refresh")
+
+	ctx, cancel := context.WithTimeout(context.Background(), sep1ImagesBudget)
+	defer cancel()
 
 	imgs, err := reader.AllSep1Images(ctx)
-	var built map[string]string
-	if err == nil {
-		built = make(map[string]string, len(imgs))
-		for _, img := range imgs {
-			if !isSafeImageURL(img.Image) {
-				continue
-			}
-			built[sep1ImageKey(img.Code, img.Issuer)] = img.Image
+	if err != nil {
+		// Not an error path for the caller: the previous map keeps being
+		// served, and sep1ImagesAttemptAt (already advanced) is what stops
+		// this becoming a retry storm.
+		s.logger.Warn("sep1 image refresh failed (serving the last good logo map)", "err", err)
+		return
+	}
+
+	built := make(map[string]string, len(imgs))
+	for _, img := range imgs {
+		if !isSafeImageURL(img.Image) {
+			continue
 		}
+		built[sep1ImageKey(img.Code, img.Issuer)] = img.Image
 	}
 
 	s.sep1ImagesMu.Lock()
-	if err == nil {
-		s.sep1ImagesCache = built
-		s.sep1ImagesAt = time.Now()
-	} else {
-		built = s.sep1ImagesCache // serve last good on error
-	}
+	s.sep1ImagesCache = built
+	s.sep1ImagesAt = time.Now()
+	s.sep1ImagesMu.Unlock()
+}
+
+// endSep1ImagesFlight releases the single-flight marker and wakes the
+// prewarm's waiter. Deferred by refreshSep1Images so it runs on EVERY
+// exit, panic included.
+func (s *Server) endSep1ImagesFlight(done chan struct{}) {
+	s.sep1ImagesMu.Lock()
 	s.sep1ImagesFlight = nil
 	s.sep1ImagesMu.Unlock()
 	close(done)
-	if err != nil {
-		s.logger.Warn("sep1 image refresh failed", "err", err)
+}
+
+// PrewarmSep1Images fills the SEP-1 logo map out of band, so no request
+// ever meets a cold one.
+//
+// Without it the map warms only from the request path. That is now
+// harmless — a cold request serves no logos instead of waiting — but it
+// means the FIRST /v1/assets after every deploy renders fallback avatars,
+// which is the visible half of the bug this file is fixing. Running here
+// on the boot pass and then on the caller's cadence keeps it permanently
+// warm.
+//
+// # No cache key, so nothing to drift
+//
+// The repo's prewarm rule is that a prewarm must call the cached reader
+// with byte-identical arguments to the handler, or it warms a different
+// slot and does nothing (three production bugs: Order, Sources, Limit).
+// It is satisfied here structurally rather than by matching arguments:
+// the logo map is ONE process-wide entry with no key at all, and this
+// calls [Server.readSep1Images] — the exact function
+// [Server.cachedSep1Images] calls — so there is no second slot for it to
+// land in. The only thing it adds is the wait.
+//
+// Best-effort, like every other prewarm: no reader, no capability, or a
+// failed scan each leave the cache exactly as it was.
+func (s *Server) PrewarmSep1Images(ctx context.Context) {
+	reader, ok := s.sep1Cache.(sep1ImagesReader)
+	if !ok {
+		return
 	}
-	return built
+	_, flight := s.readSep1Images(reader) //nolint:contextcheck // same detachment as the request path; ctx is honoured by the wait below, not by the scan.
+	if flight == nil {
+		return // already warm, or an attempt is gapped out — either way, nothing to wait for
+	}
+	// Waiting is what makes this a prewarm rather than a nudge: the caller's
+	// next pass should find the entry warm, not find its own kick still
+	// running. Shutdown returns at once and still lets the detached refresh
+	// finish and record what it learned.
+	select {
+	case <-flight:
+	case <-ctx.Done():
+	}
 }
 
 // fillImagesFromSep1 overlays the SEP-1 [[CURRENCIES]] logo URL onto

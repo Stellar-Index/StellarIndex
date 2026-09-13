@@ -1538,6 +1538,15 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 	// refresh at its own 60s TTL — so this cadence is a
 	// never-cold/repair guarantee, not the freshness mechanism, and the
 	// call is a no-op whenever the entry is already warm.
+	// PrewarmSep1Images joins them (2026-09-13): the /v1/assets logo map
+	// is a scan over every issuer's cached stellar.toml — 448 MB of JSON
+	// across 35,829 issuers on r1, and growing — which used to be
+	// rebuilt INLINE on whichever request happened to find it expired,
+	// costing that request 10-13 s and firing the assets smoke check for
+	// two days. The rebuild is detached now, so a cold map costs a
+	// request nothing but its logos; this is what stops it being cold in
+	// the first place. Its 10-minute TTL gives this cadence two cycles of
+	// slack, exactly like PrewarmClassicSupply above.
 	bgWG.Add(1)
 	go func() {
 		defer bgWG.Done()
@@ -1549,6 +1558,7 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 		apiSrv.PrewarmOpTypeStats(rootCtx)
 		apiSrv.PrewarmNetworkThroughput(rootCtx)
 		apiSrv.PrewarmNativeLiquidityPools(rootCtx)
+		apiSrv.PrewarmSep1Images(rootCtx)
 		t := time.NewTicker(cadence)
 		defer t.Stop()
 		for {
@@ -1562,6 +1572,7 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 				apiSrv.PrewarmOpTypeStats(rootCtx)
 				apiSrv.PrewarmNetworkThroughput(rootCtx)
 				apiSrv.PrewarmNativeLiquidityPools(rootCtx)
+				apiSrv.PrewarmSep1Images(rootCtx)
 			}
 		}
 	}()

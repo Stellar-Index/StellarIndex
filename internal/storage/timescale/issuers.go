@@ -353,62 +353,133 @@ type Sep1Image struct {
 	Image  string
 }
 
-// AllSep1Images returns every populated [[CURRENCIES]] image across all
-// issuers whose sep1_payload is set — the raw material for the
-// /v1/assets listing logo overlay. It is one indexed scan over the (few
-// dozen) verified issuers; the API layer caches the result with a TTL so
-// this never runs on the per-request hot path, and applies its own
-// URL-scheme safety filter. Malformed payloads are skipped, not fatal.
-// sep1ImagesFromPayload extracts the currency images one issuer's
-// cached SEP-1 payload is entitled to declare.
+// sep1ImageFrom builds one [Sep1Image] from a single projected
+// (code, declaredIssuer, image) triple, or reports that the entry does
+// not qualify.
 //
 // The provenance rule is the whole point: a currency entry counts only
 // when its declared Issuer names gStrkey — the account whose
-// stellar.toml actually carried it. Split out of [Store.AllSep1Images]
-// so the rule is testable without a database.
-//
-// The rule itself is [sep1EntryBindsTo], shared with the bound-currency
-// scan rather than restated here: two copies of a provenance check are
-// two chances to drift, and a drift between them would mean an entry
-// good enough to overlay a logo but not good enough to attest an asset,
-// or the reverse.
-func sep1ImagesFromPayload(gStrkey, payload string) []Sep1Image {
-	var parsed IssuerSep1Cached
-	if err := json.Unmarshal([]byte(payload), &parsed); err != nil {
-		// One issuer's corrupt payload must not blank the whole map.
-		return nil
+// stellar.toml actually carried it. Kept in Go, on the row, rather than
+// pushed into the SQL alongside the projection, so the rule itself is
+// [sep1EntryBindsTo] — shared with the bound-currency scan rather than
+// restated. Two copies of a provenance check are two chances to drift,
+// and a drift between them would mean an entry good enough to overlay a
+// logo but not good enough to attest an asset, or the reverse. A SQL
+// transliteration of the strkey canonicalisation would have been a
+// third copy, in a second language.
+func sep1ImageFrom(gStrkey, code, declaredIssuer, image string) (Sep1Image, bool) {
+	code = strings.TrimSpace(code)
+	if image == "" || code == "" {
+		return Sep1Image{}, false
 	}
-	out := make([]Sep1Image, 0, len(parsed.Currencies))
-	for _, c := range parsed.Currencies {
-		code := strings.TrimSpace(c.Code)
-		if c.Image == "" || code == "" {
-			continue
-		}
-		if !sep1EntryBindsTo(c.Issuer, gStrkey) {
-			continue
-		}
-		out = append(out, Sep1Image{Code: code, Issuer: gStrkey, Image: c.Image})
+	if !sep1EntryBindsTo(declaredIssuer, gStrkey) {
+		return Sep1Image{}, false
 	}
-	return out
+	return Sep1Image{Code: code, Issuer: gStrkey, Image: image}, true
 }
 
+// allSep1ImagesQuery projects the (code, issuer, image) triples out of
+// every issuer's cached SEP-1 payload SERVER-SIDE, one row per declared
+// currency, instead of shipping the payloads to Go to be parsed.
+//
+// # Why the projection, measured
+//
+// The column is not a few dozen rows of metadata any more. On r1
+// 2026-09-13 it held 35,829 payloads totalling 448 MB of JSON, up ~50%
+// in two days on the back of a deliberate SEP-1 backfill. Reproduced on
+// the integration harness' TimescaleDB with a 611 MB equivalent set, the
+// old `SELECT g_strkey, sep1_payload` split as:
+//
+//	row scan + IS NOT NULL predicate     12 ms   (EXPLAIN ANALYZE)
+//	detoast + wire transfer of 610 MB   ~250 ms
+//	json.Unmarshal of 610 MB in Go     2,238 ms   ← 89% of the wall clock
+//	                                   -------
+//	                                    2,500 ms
+//
+// This form returns the same 107,487 images in 431 ms over 15 MB of
+// wire — 5.8x faster — because the 89% simply stops happening.
+//
+// # Why there is no index here
+//
+// Because the predicate was never the cost. The planner picks a seq scan
+// for `sep1_payload IS NOT NULL` at this selectivity (35,829 of 59,829)
+// and REFUSES a partial index offered to it — measured: 12.3 ms
+// unindexed against 8.9 ms with `(g_strkey) WHERE sep1_payload IS NOT
+// NULL` present, which is noise on a 2.5 s query. A migration here would
+// have bought 3 ms of a 2,500 ms problem.
+//
+// # Why the CASE rather than a WHERE guard
+//
+// `jsonb_array_elements` raises 22023 ("cannot extract elements from an
+// object") on anything that is not an array, and ONE such row fails the
+// whole statement — which would blank the logo map for every issuer
+// because a single attacker wrote `Currencies = "nope"` in their TOML.
+//
+// A `WHERE jsonb_typeof(...) = 'array'` guard appears to prevent that and
+// mostly does: measured on TimescaleDB 2.26.4-pg15, the planner pushes
+// that qual below the lateral and the hostile shapes never reach the
+// function. But that is a property of the plan, not of the query —
+// nothing in the SQL standard or in Postgres orders a WHERE qual against
+// a set-returning function in the FROM clause, and the plan is free to
+// change with row estimates, a parallel scan, or a join added above. The
+// CASE substitutes an empty array inside the function's own argument, so
+// the guard cannot be separated from the thing it guards at any plan
+// shape. It is the difference between a query that does not error today
+// and one that cannot.
+//
+// TestAllSep1ImagesProjection exercises the whole hostile set — Currencies
+// absent, null, an object, a string, an array of scalars, an array of
+// mixed junk, plus payloads that are themselves an array or a bare scalar
+// — and passes with either form on today's plans. It pins the OUTCOME
+// (right rows, no error); the CASE is what stops a future plan from
+// changing that.
+//
+// Key lookups are case-SENSITIVE where Go's encoding/json is not. That
+// is safe here and only here: [marshalSep1Payload] is the sole writer of
+// this column and spells every key as a hardcoded Go literal
+// ("Currencies", "Code", "Issuer", "Image"), so attacker-authored TOML
+// supplies values and never keys.
+const allSep1ImagesQuery = `
+SELECT i.g_strkey,
+       c.value ->> 'Code'   AS code,
+       c.value ->> 'Issuer' AS issuer,
+       c.value ->> 'Image'  AS image
+  FROM issuers i
+  CROSS JOIN LATERAL jsonb_array_elements(
+       CASE WHEN jsonb_typeof(i.sep1_payload -> 'Currencies') = 'array'
+            THEN i.sep1_payload -> 'Currencies'
+            ELSE '[]'::jsonb
+       END) AS c(value)
+ WHERE i.sep1_payload IS NOT NULL
+   AND jsonb_typeof(c.value)            = 'object'
+   AND jsonb_typeof(c.value -> 'Image') = 'string'
+   AND jsonb_typeof(c.value -> 'Code')  = 'string'`
+
+// AllSep1Images returns every populated [[CURRENCIES]] image across all
+// issuers whose sep1_payload is set — the raw material for the
+// /v1/assets listing logo overlay.
+//
+// The API layer caches the result behind a TTL and refreshes it on a
+// DETACHED context, so this never runs on a request's deadline; it also
+// applies its own URL-scheme safety filter ([isSafeImageURL]) on top of
+// the provenance rule enforced here. Entries that do not qualify are
+// skipped, not fatal — one issuer's junk must not blank the whole map.
+//
+// The provenance rule ([sep1ImageFrom]) is why g_strkey is projected
+// alongside each entry's DECLARED issuer. Without that comparison the
+// map was keyed purely on TOML-supplied (code, issuer): any Stellar
+// account could publish
+//
+//	[[CURRENCIES]] code = "USDC" issuer = "<Circle's G-key>"
+//	               image = "https://attacker.example/x.png"
+//
+// and — since nothing here filters on org_verified either, and
+// projectCatalogueRows assigns the result unconditionally — take over
+// the logo served for USDC on /v1/assets and the explorer homepage,
+// giving a per-visitor beacon under a verified brand (cold audit
+// 2026-08-03). A TOML may still describe only the issuer that served it.
 func (s *Store) AllSep1Images(ctx context.Context) ([]Sep1Image, error) {
-	// g_strkey is selected so each currency's DECLARED issuer can be
-	// checked against the account whose stellar.toml actually carried
-	// it. Without that check the map was keyed purely on
-	// TOML-supplied (code, issuer): any Stellar account could publish
-	//
-	//     [[CURRENCIES]] code = "USDC" issuer = "<Circle's G-key>"
-	//                    image = "https://attacker.example/x.png"
-	//
-	// and — since nothing here filtered on org_verified either, and
-	// projectCatalogueRows assigns the result unconditionally — take
-	// over the logo served for USDC on /v1/assets and the explorer
-	// homepage, giving a per-visitor beacon under a verified brand
-	// (cold audit 2026-08-03). A TOML may still describe only the
-	// issuer that served it.
-	const q = `SELECT g_strkey, sep1_payload FROM issuers WHERE sep1_payload IS NOT NULL`
-	rows, err := s.db.QueryContext(ctx, q)
+	rows, err := s.db.QueryContext(ctx, allSep1ImagesQuery)
 	if err != nil {
 		return nil, fmt.Errorf("timescale: AllSep1Images: %w", err)
 	}
@@ -416,17 +487,14 @@ func (s *Store) AllSep1Images(ctx context.Context) ([]Sep1Image, error) {
 
 	out := make([]Sep1Image, 0, 64)
 	for rows.Next() {
-		var (
-			gStrkey string
-			payload sql.NullString
-		)
-		if err := rows.Scan(&gStrkey, &payload); err != nil {
+		var gStrkey string
+		var code, declaredIssuer, image sql.NullString
+		if err := rows.Scan(&gStrkey, &code, &declaredIssuer, &image); err != nil {
 			return nil, fmt.Errorf("timescale: AllSep1Images scan: %w", err)
 		}
-		if !payload.Valid || payload.String == "" {
-			continue
+		if img, ok := sep1ImageFrom(gStrkey, code.String, declaredIssuer.String, image.String); ok {
+			out = append(out, img)
 		}
-		out = append(out, sep1ImagesFromPayload(gStrkey, payload.String)...)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("timescale: AllSep1Images rows: %w", err)
