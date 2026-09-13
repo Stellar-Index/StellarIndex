@@ -15,6 +15,34 @@ against.
 
 ## [Unreleased]
 
+### Fixed
+
+- **ops:** the SLA probe measured the anonymous rate limit instead of the
+  SLA, and pinged Healthchecks `/fail` every ten minutes for it.
+
+  `sla-probe.sh` never passed `-api-key`. The binary's help says the flag
+  defaults to `$STELLARINDEX_PROBE_API_KEY`, but it does not read that
+  variable from the unit's EnvironmentFile. Measured on r1 2026-09-13,
+  same host, same API, one flag apart:
+
+      no flag, variable exported : verdict fail, availability   5.68%
+      -api-key passed explicitly : verdict pass, availability 100.00%
+
+  5.68% is 60/1057 — the anonymous tier's 60 req/min ceiling, which the
+  probe's own help warns "reads as a fail". Latencies were healthy
+  throughout (p50 0ms, p99 13ms); the requests were being refused, not
+  served slowly. So a healthy API produced a failing SLA verdict on
+  every run. The wrapper now passes the flag, and warns loudly when no
+  key is configured rather than emitting a verdict that measures our own
+  rate limiter.
+
+- **ops:** a failing API smoke run now says what failed in the journal.
+  The failing check names went only into the Healthchecks.io ping body,
+  so `journalctl -u stellarindex-smoke` showed nothing but Starting and
+  Finished — diagnosing an alert required the dashboard, which is
+  precisely when the host should be able to answer for itself.
+
+
 ## [v0.79.0] — 2026-09-13
 
 ### Added

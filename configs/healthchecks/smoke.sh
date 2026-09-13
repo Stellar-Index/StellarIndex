@@ -96,6 +96,17 @@ fi
 OUT="$(bash "$SMOKE_SCRIPT" 2>&1)"
 RC=$?
 
+# On failure the reason must reach the JOURNAL, not only the ping body.
+# Until 2026-09-13 a failing run put the failing check names solely into
+# the Healthchecks.io ping, so the dashboard knew what broke and the host
+# did not — `journalctl -u stellarindex-smoke` showed only Starting and
+# Finished. Diagnosing an alert then required the dashboard, which is
+# exactly when you want the host to be able to answer for itself.
+if [ "$RC" -ne 0 ]; then
+  echo "smoke: FAILED — $RC check(s) tripped:" >&2
+  printf '%s\n' "$OUT" | grep -iE '^[[:space:]]*(FAIL|not ok)|✗' >&2 || printf '%s\n' "$OUT" | tail -20 >&2
+fi
+
 # Emitted before the ping: the metric is the always-wired sink, and it
 # must land even when curl spends its whole retry budget hanging.
 emit_metric "$RC"

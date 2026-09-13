@@ -79,6 +79,22 @@ if [ -n "$TEXTFILE_OUTPUT" ]; then
 fi
 
 # Run the probe. JSON report on stdout; pass=0, fail=1 on exit.
+# -api-key is passed EXPLICITLY. The binary's help says it defaults to
+# $STELLARINDEX_PROBE_API_KEY, but it does not pick the variable up from
+# the unit's EnvironmentFile — measured on r1 2026-09-13:
+#
+#   no flag, variable exported : verdict fail, availability 5.68%
+#   -api-key passed explicitly : verdict pass, availability 100.00%
+#
+# 5.68% is 60/1057 — the anonymous tier's 60 req/min limit, which the
+# probe's own help warns "reads as a fail". So every run was pinging
+# Healthchecks /fail on a healthy API, which is an alert every 10
+# minutes for as long as the probe has existed. Do not drop this flag.
+API_KEY_FLAG=()
+if [ -n "${STELLARINDEX_PROBE_API_KEY:-}" ]; then
+  API_KEY_FLAG=(-api-key "$STELLARINDEX_PROBE_API_KEY")
+fi
+
 OUT="$(
   "$PROBE_BIN" \
     -base-url "$BASE_URL" \
@@ -86,9 +102,17 @@ OUT="$(
     -concurrency "$CONCURRENCY" \
     -pair "$PAIR" \
     -report-format json \
+    "${API_KEY_FLAG[@]}" \
     "${TEXTFILE_FLAG[@]}" 2>&1
 )"
 RC=$?
+
+# An unauthenticated probe cannot produce a trustworthy verdict: it
+# measures our rate limiter, not our SLA. Say so loudly rather than
+# pinging /fail and letting an operator chase a phantom outage.
+if [ "${#API_KEY_FLAG[@]}" -eq 0 ]; then
+  echo "sla-probe: WARNING no STELLARINDEX_PROBE_API_KEY — this run measured the anonymous rate limit, not the SLA" >&2
+fi
 
 if [ -n "$URL" ]; then
   if [ "$RC" -eq 0 ]; then
