@@ -956,7 +956,7 @@ captive_peer_port_backfill:         11727
 #   r3: galexie-live local; galexie-archive on Vultr Object Storage
 #       (S3-compatible, region-local Singapore endpoint).
 # ]
-galexie_version:         "galexie-v28.0.0"   # pinned — update via VERSIONS.md. Tag format: galexie-vX.Y.Z (matches Stellar protocol version). 2026-07-09: bumped 26→27 with the CAP-0071 SEV fix. 2026-08-27: bumped 27→28 for Protocol 28 — a v27 galexie cannot DECODE P28 ledger meta (observed on futurenet: "decoding LedgerCloseMetaV2: … ParallelTxExecutionStage" halted the archive backfill at ledger 92747), and mainnet crosses the P28 upgrade ledger 2026-09-16.
+galexie_version:         "galexie-v28.0.1"   # pinned — update via VERSIONS.md. Tag format: galexie-vX.Y.Z (matches Stellar protocol version). 2026-07-09: bumped 26→27 with the CAP-0071 SEV fix. 2026-08-27: bumped 27→28 for Protocol 28 — a v27 galexie cannot DECODE P28 ledger meta (observed on futurenet: "decoding LedgerCloseMetaV2: … ParallelTxExecutionStage" halted the archive backfill at ledger 92747), and mainnet crosses the P28 upgrade ledger 2026-09-16. 2026-09-13: bumped v28.0.0 -> v28.0.1 (same protocol major) ahead of that activation — the point release should be in place BEFORE the network crosses P28, not during it. Version string stamped from a real build on r1, not computed.
 # Drift guard (docs/operations/runbooks/stellar-stack-version-lag.md,
 # 2026-07-09). Distinct from `galexie_version` above on purpose:
 # that var is the go-install TAG; this is the literal, verbatim
@@ -968,7 +968,7 @@ galexie_version:         "galexie-v28.0.0"   # pinned — update via VERSIONS.md
 # crash-loop) that never got codified here is exactly the drift
 # ansible-drift.yml exists to catch. Update BOTH this value AND
 # galexie_version in the SAME PR whenever galexie is upgraded.
-galexie_expected_version_string: "stellar-galexie v0.0.0-20260814232054-a94b31e18ce4"
+galexie_expected_version_string: "stellar-galexie v0.0.0-20260827205142-72ee2a965e7e"
 # Second guard: sha256 of the /usr/local/bin/galexie file itself
 # (belt-and-suspenders alongside the version-string assert above —
 # catches a same-version-string-but-different-bytes swap, e.g. a

@@ -11,7 +11,7 @@ that reference them.
 
 | Repo | SHA | Last commit | Tag | Our dependency? |
 | ---- | --- | ----------- | --- | --------------- |
-| `stellar/stellar-galexie` | _(pending v27 build stamp)_ | _(pending)_ | `galexie-v27.0.0` | Runtime binary — we run Galexie alongside our code, not link as a library. Pinned in `configs/ansible/roles/archival-node/defaults/main.yml` (`galexie_version`), bumped 26→27 on 2026-07-09 (CAP-0071 SEV fix). SHA/date to be stamped from the built galexie-v27.0.0 artifact — not fabricated offline; see audit deps F-002. Prior v26.0.0 SHA was `6dec23e2` (2026-04-01). |
+| `stellar/stellar-galexie` | `72ee2a965e7ece1cf55246808c793d85b95c0261` | 2026-08-27 | `galexie-v28.0.1` | Runtime binary — we run Galexie alongside our code, not link as a library. Pinned in `configs/ansible/roles/archival-node/defaults/main.yml` (`galexie_version`). 2026-09-13: bumped v28.0.0 -> v28.0.1 ahead of the mainnet P28 activation ledger (2026-09-16); same protocol major, so this is a point upgrade, not a protocol cutover. SHA and date are the galexie-v28.0.1 tag commit; the built binary reports `stellar-galexie v0.0.0-20260827205142-72ee2a965e7e`, stamped from a real build on r1 rather than computed offline (audit deps F-002). Prior v28.0.0 commit was `a94b31e18ce4` (2026-08-14); v26.0.0 was `6dec23e2` (2026-04-01). |
 | `stellar/rs-stellar-archivist` | `a6a25033dc2dd1783314ff5b009123e6bfc00e7a` | 2026-04-20 | (no tag yet) | Runtime binary — we call it from scripts. Pin SHA since no tag. |
 | `stellar/stellar-rpc` | `99a61f337b66635ba6f9d70d2403ee5faed1d7c1` | 2026-04-07 | (no tag visible locally) | Removed from r1 on 2026-04-23 — kept ONLY for the `stellarindex-ops rpc-probe` operator diagnostic that dials remote public endpoints; not on the data path. |
 | `stellar/go-stellar-sdk` | `dd844ab32ac8bef7984c76ad1e59c2209a4aacc5` | 2026-07-01 | `v0.6.0` | **Go library — direct dep.** SHA is the `v0.6.0` tag commit (go.mod pins `v0.6.0`). Compat pass done 2026-07-01: v0.6 changed `datastore.DataStore.GetFile` to return `(io.ReadCloser, int64, error)` (adds object size); adapted `internal/ledgerstream/tiered.go` (+test) + `cmd/stellarindex-ops/rehydrate_galexie_archive.go` (size threaded through, unused). Full `go build ./...` + unit suite green (SCVal/XDR decoding + ingest path unchanged). Prior `v0.5.0` SHA was `475bbd9a`. |
@@ -56,8 +56,9 @@ Reference link kept in the pinned-snapshots table above.
 Runtime binaries / Debian packages:
 
 ```
-stellar-galexie   v27.0.0      (pinned per tag galexie-v27.0.0; SHA pending
-                                v27 build stamp — see the galexie row above)
+stellar-galexie   v28.0.1      (pinned per tag galexie-v28.0.1; commit
+                                72ee2a965e7e, 2026-08-27; binary reports
+                                v0.0.0-20260827205142-72ee2a965e7e)
                                 — embeds captive stellar-core internally;
                                   the only stellar-core on r1 today.
 rs-stellar-archivist  (pre-tag; pin SHA a6a25033)
