@@ -122,11 +122,32 @@ expect_status() {
   # global default.
   local url
   url="$(printf '%s%s' "$API_BASE_URL" "$path")"
-  body="$(curl -sS -m "$per_check_timeout" -A "stellarindex-smoke/1" -w "\n%{http_code}" "$url" 2>&1)" || {
-    printf "  %sFAIL%s %-32s %s%s (timeout=%ss)%s\n" "$RED" "$OFF" "$name" "$DIM" "curl error" "$per_check_timeout" "$OFF"
+  # Capture curl's EXIT CODE, not just the fact that it failed. Until
+  # 2026-09-13 every curl failure printed the same "curl error
+  # (timeout=Ns)" string, so a connection reset, a refused connect and a
+  # genuine timeout were indistinguishable in the Healthchecks alert
+  # body. The failure that was flooding the dashboard read as a timeout
+  # when nothing had shown it was one.
+  curl_err="$(mktemp)"
+  body="$(curl -sS -m "$per_check_timeout" -A "stellarindex-smoke/1" -w "\n%{http_code}" "$url" 2>"$curl_err")" || curl_rc=$?
+  curl_rc="${curl_rc:-0}"
+  if [ "$curl_rc" -ne 0 ]; then
+    case "$curl_rc" in
+      28) why="timed out after ${per_check_timeout}s" ;;
+      7)  why="connection refused" ;;
+      52) why="empty reply from server" ;;
+      56) why="receive error (connection reset)" ;;
+      *)  why="curl exit ${curl_rc}" ;;
+    esac
+    printf "  %sFAIL%s %-32s %s%s — %s%s\n" "$RED" "$OFF" "$name" "$DIM" "$why" \
+      "$(tr -d '\n' < "$curl_err" | cut -c1-90)" "$OFF"
+    rm -f "$curl_err"
+    unset curl_rc
     FAILS=$((FAILS + 1))
     return
-  }
+  fi
+  rm -f "$curl_err"
+  unset curl_rc
   status="$(echo "$body" | tail -1)"
   body="$(echo "$body" | sed '$d')"
 
