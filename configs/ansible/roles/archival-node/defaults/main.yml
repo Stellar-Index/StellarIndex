@@ -1002,7 +1002,10 @@ galexie_expected_version_string: "stellar-galexie v0.0.0-20260827205142-72ee2a96
 # the correct signal — do not stand it down by editing the constant to
 # match whatever the box happens to report; that would codify an
 # uncodified binary, which is the drift this guard exists to catch.
-galexie_expected_binary_sha256: "de8200fccdc027ffd0d022ddcea0029db8c331c4323211f0a16cb47f69304d54"
+galexie_expected_binary_sha256: "3ca291300f1b646ae43a217697b9a3d112d4c9a422895292c4f9b9f57a1f9810"   # galexie-v28.0.1, 2026-09-13. Stamped from a REPRODUCIBLE build: `go install -trimpath`
+#   twice on r1 produced this sha both times. NOTE the -trimpath: without it two builds of the
+#   SAME tag differ (measured: 72d443a6... then e4bd4960...), so a sha taken from a non-trimpath
+#   build is a one-off and will fail this very assert on the next apply.
 
 galexie_s3_endpoint:     "http://127.0.0.1:9000"
 galexie_s3_bucket:       "galexie-live"

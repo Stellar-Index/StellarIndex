@@ -134,8 +134,18 @@
   # second guard. `go install` is itself idempotent at the
   # module-cache layer, so re-runs at the same version tag are a
   # no-op even without `creates:`.
+  # -trimpath is LOAD-BEARING, not tidiness. Without it two `go install`
+  # runs of the SAME tag produce different binaries — measured on r1
+  # 2026-09-13: 72d443a6… then e4bd4960… for galexie-v28.0.1. That makes
+  # galexie_expected_binary_sha256 unmatchable across rebuilds, so the
+  # pre-install sha assert below refuses EVERY upgrade and the codified
+  # path is unusable — which is exactly what it did. defaults/main.yml's
+  # own documented recipe for producing that constant already says
+  # `go install -trimpath`; this task had drifted from it. With -trimpath
+  # the build is reproducible (same sha twice, verified) and the guard
+  # means what it claims.
   ansible.builtin.command: >-
-    go install github.com/stellar/stellar-galexie@{{ galexie_version }}
+    go install -trimpath github.com/stellar/stellar-galexie@{{ galexie_version }}
   environment:
     GOPATH:  /root/go
     GOCACHE: /root/.cache/go-build
