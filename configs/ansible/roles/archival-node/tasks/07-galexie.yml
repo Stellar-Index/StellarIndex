@@ -149,6 +149,18 @@
   environment:
     GOPATH:  /root/go
     GOCACHE: /root/.cache/go-build
+    # CGO_ENABLED/GOOS/GOARCH are part of the REPRODUCIBLE build identity,
+    # not defaults. Measured on r1 2026-09-13, same tag, same -trimpath:
+    #   without these : 08cf899f…   (cgo-linked)
+    #   with these    : 3ca29130…   (static)
+    # Both are individually reproducible, so omitting them does not make
+    # the build random — it makes it a DIFFERENT binary than the one
+    # defaults/main.yml documents for stamping galexie_expected_binary_sha256,
+    # so the pre-install assert can never match. Keep these three in step
+    # with that recipe.
+    CGO_ENABLED: "0"
+    GOOS: linux
+    GOARCH: amd64
   when: galexie_version != (galexie_stamp.content | default('') | b64decode | trim)
   register: galexie_build
   notify: Restart galexie
