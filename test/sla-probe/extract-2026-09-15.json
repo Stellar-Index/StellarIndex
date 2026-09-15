@@ -1,0 +1,2513 @@
+{
+  "effective_seconds": 604788,
+  "extract_version": 1,
+  "first_sample": 1788882331.664,
+  "generator": "scripts/ops/sla-proof-from-probe.sh",
+  "host_filter": "",
+  "last_sample": 1789487119.664,
+  "prom_url": "http://127.0.0.1:19090",
+  "queried_at": 1789487131.664482,
+  "queries": {
+    "api_versions": "count by (version) (count_over_time(stellarindex_binary_version_info{binary=\"stellarindex-api\"}[604788s]))",
+    "avail_min": "min_over_time(stellarindex_sla_probe_availability_pct{}[604788s])",
+    "avail_under_frac": "avg_over_time((stellarindex_sla_probe_availability_pct{} < bool 99.9)[604788s:15s])",
+    "avail_weighted_den": "avg_over_time((stellarindex_sla_probe_samples{})[604788s:15s])",
+    "avail_weighted_num": "avg_over_time((stellarindex_sla_probe_availability_pct{} * stellarindex_sla_probe_samples{})[604788s:15s])",
+    "fresh_max": "max_over_time(stellarindex_sla_probe_freshness_sec{}[604788s])",
+    "fresh_typ": "quantile_over_time(0.5, stellarindex_sla_probe_freshness_sec{}[604788s])",
+    "no_pass_max_sec": "max_over_time((time() - stellarindex_sla_probe_last_pass_timestamp{})[604788s:15s])",
+    "p50_max": "max_over_time(stellarindex_sla_probe_latency_ms{quantile=\"0.5\"}[604788s])",
+    "p95_max": "max_over_time(stellarindex_sla_probe_latency_ms{quantile=\"0.95\"}[604788s])",
+    "p95_min": "min_over_time(stellarindex_sla_probe_latency_ms{quantile=\"0.95\"}[604788s])",
+    "p95_over_frac": "avg_over_time((stellarindex_sla_probe_latency_ms{quantile=\"0.95\"} > bool 200)[604788s:15s])",
+    "p95_typ": "quantile_over_time(0.5, stellarindex_sla_probe_latency_ms{quantile=\"0.95\"}[604788s])",
+    "p99_max": "max_over_time(stellarindex_sla_probe_latency_ms{quantile=\"0.99\"}[604788s])",
+    "p99_over_frac": "avg_over_time((stellarindex_sla_probe_latency_ms{quantile=\"0.99\"} > bool 500)[604788s:15s])",
+    "p99_typ": "quantile_over_time(0.5, stellarindex_sla_probe_latency_ms{quantile=\"0.99\"}[604788s])",
+    "pass_present": "count_over_time(stellarindex_sla_probe_last_pass_timestamp{}[604788s])",
+    "passing_runs": "changes(stellarindex_sla_probe_last_pass_timestamp{}[604788s])",
+    "run_duration_max": "max_over_time(stellarindex_sla_probe_run_duration_seconds{}[604788s])",
+    "run_duration_min": "min_over_time(stellarindex_sla_probe_run_duration_seconds{}[604788s])",
+    "samples_avg": "avg_over_time(stellarindex_sla_probe_samples{}[604788s])",
+    "samples_max": "max_over_time(stellarindex_sla_probe_samples{}[604788s])",
+    "samples_min": "min_over_time(stellarindex_sla_probe_samples{}[604788s])",
+    "scrape_count": "count_over_time(stellarindex_sla_probe_latency_ms{quantile=\"0.95\"}[604788s])",
+    "scrape_count_1h": "count_over_time(stellarindex_sla_probe_latency_ms{quantile=\"0.95\"}[1h])",
+    "unit_failed_frac": "avg_over_time(stellarindex_sla_probe_unit_failed{}[604788s])"
+  },
+  "range_step_seconds": 303,
+  "series": {
+    "api_versions": [
+      {
+        "metric": {
+          "version": "v0.64.0"
+        },
+        "value": [
+          1789487119.664,
+          "1"
+        ]
+      },
+      {
+        "metric": {
+          "version": "v0.65.0"
+        },
+        "value": [
+          1789487119.664,
+          "1"
+        ]
+      },
+      {
+        "metric": {
+          "version": "v0.66.0"
+        },
+        "value": [
+          1789487119.664,
+          "1"
+        ]
+      },
+      {
+        "metric": {
+          "version": "v0.66.1"
+        },
+        "value": [
+          1789487119.664,
+          "1"
+        ]
+      },
+      {
+        "metric": {
+          "version": "v0.67.0"
+        },
+        "value": [
+          1789487119.664,
+          "1"
+        ]
+      },
+      {
+        "metric": {
+          "version": "v0.68.0"
+        },
+        "value": [
+          1789487119.664,
+          "1"
+        ]
+      },
+      {
+        "metric": {
+          "version": "v0.69.0"
+        },
+        "value": [
+          1789487119.664,
+          "1"
+        ]
+      },
+      {
+        "metric": {
+          "version": "v0.70.0"
+        },
+        "value": [
+          1789487119.664,
+          "1"
+        ]
+      },
+      {
+        "metric": {
+          "version": "v0.71.0"
+        },
+        "value": [
+          1789487119.664,
+          "1"
+        ]
+      },
+      {
+        "metric": {
+          "version": "v0.73.0"
+        },
+        "value": [
+          1789487119.664,
+          "1"
+        ]
+      },
+      {
+        "metric": {
+          "version": "v0.74.0"
+        },
+        "value": [
+          1789487119.664,
+          "1"
+        ]
+      },
+      {
+        "metric": {
+          "version": "v0.75.0"
+        },
+        "value": [
+          1789487119.664,
+          "1"
+        ]
+      },
+      {
+        "metric": {
+          "version": "v0.76.0"
+        },
+        "value": [
+          1789487119.664,
+          "1"
+        ]
+      },
+      {
+        "metric": {
+          "version": "v0.77.0"
+        },
+        "value": [
+          1789487119.664,
+          "1"
+        ]
+      },
+      {
+        "metric": {
+          "version": "v0.78.0"
+        },
+        "value": [
+          1789487119.664,
+          "1"
+        ]
+      },
+      {
+        "metric": {
+          "version": "v0.79.0"
+        },
+        "value": [
+          1789487119.664,
+          "1"
+        ]
+      },
+      {
+        "metric": {
+          "version": "v0.80.0"
+        },
+        "value": [
+          1789487119.664,
+          "1"
+        ]
+      },
+      {
+        "metric": {
+          "version": "v0.81.0"
+        },
+        "value": [
+          1789487119.664,
+          "1"
+        ]
+      }
+    ],
+    "avail_min": [
+      {
+        "metric": {
+          "endpoint": "assets",
+          "host": "r1",
+          "instance": "localhost:9100",
+          "job": "node_exporter"
+        },
+        "value": [
+          1789487119.664,
+          "0.039"
+        ]
+      },
+      {
+        "metric": {
+          "endpoint": "diagnostics-cursors",
+          "host": "r1",
+          "instance": "localhost:9100",
+          "job": "node_exporter"
+        },
+        "value": [
+          1789487119.664,
+          "0.039"
+        ]
+      },
+      {
+        "metric": {
+          "endpoint": "healthz",
+          "host": "r1",
+          "instance": "localhost:9100",
+          "job": "node_exporter"
+        },
+        "value": [
+          1789487119.664,
+          "0.039"
+        ]
+      },
+      {
+        "metric": {
+          "endpoint": "issuers",
+          "host": "r1",
+          "instance": "localhost:9100",
+          "job": "node_exporter"
+        },
+        "value": [
+          1789487119.664,
+          "0.039"
+        ]
+      },
+      {
+        "metric": {
+          "endpoint": "markets",
+          "host": "r1",
+          "instance": "localhost:9100",
+          "job": "node_exporter"
+        },
+        "value": [
+          1789487119.664,
+          "0.039"
+        ]
+      },
+      {
+        "metric": {
+          "endpoint": "oracle-latest",
+          "host": "r1",
+          "instance": "localhost:9100",
+          "job": "node_exporter"
+        },
+        "value": [
+          1789487119.664,
+          "0.039"
+        ]
+      },
+      {
+        "metric": {
+          "endpoint": "price",
+          "host": "r1",
+          "instance": "localhost:9100",
+          "job": "node_exporter"
+        },
+        "value": [
+          1789487119.664,
+          "0"
+        ]
+      },
+      {
+        "metric": {
+          "endpoint": "price-tip",
+          "host": "r1",
+          "instance": "localhost:9100",
+          "job": "node_exporter"
+        },
+        "value": [
+          1789487119.664,
+          "0.039"
+        ]
+      },
+      {
+        "metric": {
+          "endpoint": "readyz",
+          "host": "r1",
+          "instance": "localhost:9100",
+          "job": "node_exporter"
+        },
+        "value": [
+          1789487119.664,
+          "0.039"
+        ]
+      },
+      {
+        "metric": {
+          "endpoint": "version",
+          "host": "r1",
+          "instance": "localhost:9100",
+          "job": "node_exporter"
+        },
+        "value": [
+          1789487119.664,
+          "0.039"
+        ]
+      }
+    ],
+    "avail_under_frac": [
+      {
+        "metric": {
+          "endpoint": "issuers",
+          "host": "r1",
+          "instance": "localhost:9100",
+          "job": "node_exporter"
+        },
+        "value": [
+          1789487119.664,
+          "0.007688682755028612"
+        ]
+      },
+      {
+        "metric": {
+          "endpoint": "markets",
+          "host": "r1",
+          "instance": "localhost:9100",
+          "job": "node_exporter"
+        },
+        "value": [
+          1789487119.664,
+          "0.007688682755028612"
+        ]
+      },
+      {
+        "metric": {
+          "endpoint": "price",
+          "host": "r1",
+          "instance": "localhost:9100",
+          "job": "node_exporter"
+        },
+        "value": [
+          1789487119.664,
+          "0.010813760261911259"
+        ]
+      },
+      {
+        "metric": {
+          "endpoint": "readyz",
+          "host": "r1",
+          "instance": "localhost:9100",
+          "job": "node_exporter"
+        },
+        "value": [
+          1789487119.664,
+          "0.009276023710905466"
+        ]
+      },
+      {
+        "metric": {
+          "endpoint": "version",
+          "host": "r1",
+          "instance": "localhost:9100",
+          "job": "node_exporter"
+        },
+        "value": [
+          1789487119.664,
+          "0.007688682755028612"
+        ]
+      },
+      {
+        "metric": {
+          "endpoint": "assets",
+          "host": "r1",
+          "instance": "localhost:9100",
+          "job": "node_exporter"
+        },
+        "value": [
+          1789487119.664,
+          "0.007688682755028612"
+        ]
+      },
+      {
+        "metric": {
+          "endpoint": "diagnostics-cursors",
+          "host": "r1",
+          "instance": "localhost:9100",
+          "job": "node_exporter"
+        },
+        "value": [
+          1789487119.664,
+          "0.009276023710905466"
+        ]
+      },
+      {
+        "metric": {
+          "endpoint": "healthz",
+          "host": "r1",
+          "instance": "localhost:9100",
+          "job": "node_exporter"
+        },
+        "value": [
+          1789487119.664,
+          "0.007688682755028612"
+        ]
+      },
+      {
+        "metric": {
+          "endpoint": "oracle-latest",
+          "host": "r1",
+          "instance": "localhost:9100",
+          "job": "node_exporter"
+        },
+        "value": [
+          1789487119.664,
+          "0.009276023710905466"
+        ]
+      },
+      {
+        "metric": {
+          "endpoint": "price-tip",
+          "host": "r1",
+          "instance": "localhost:9100",
+          "job": "node_exporter"
+        },
+        "value": [
+          1789487119.664,
+          "0.009276023710905466"
+        ]
+      }
+    ],
+    "avail_weighted_den": [
+      {
+        "metric": {
+          "endpoint": "assets",
+          "host": "r1",
+          "instance": "localhost:9100",
+          "job": "node_exporter"
+        },
+        "value": [
+          1789487119.664,
+          "813.7914134775176"
+        ]
+      },
+      {
+        "metric": {
+          "endpoint": "diagnostics-cursors",
+          "host": "r1",
+          "instance": "localhost:9100",
+          "job": "node_exporter"
+        },
+        "value": [
+          1789487119.664,
+          "813.6219400282704"
+        ]
+      },
+      {
+        "metric": {
+          "endpoint": "healthz",
+          "host": "r1",
+          "instance": "localhost:9100",
+          "job": "node_exporter"
+        },
+        "value": [
+          1789487119.664,
+          "814.1754755822319"
+        ]
+      },
+      {
+        "metric": {
+          "endpoint": "issuers",
+          "host": "r1",
+          "instance": "localhost:9100",
+          "job": "node_exporter"
+        },
+        "value": [
+          1789487119.664,
+          "813.746595897717"
+        ]
+      },
+      {
+        "metric": {
+          "endpoint": "markets",
+          "host": "r1",
+          "instance": "localhost:9100",
+          "job": "node_exporter"
+        },
+        "value": [
+          1789487119.664,
+          "813.7189910464036"
+        ]
+      },
+      {
+        "metric": {
+          "endpoint": "oracle-latest",
+          "host": "r1",
+          "instance": "localhost:9100",
+          "job": "node_exporter"
+        },
+        "value": [
+          1789487119.664,
+          "813.1816513306327"
+        ]
+      },
+      {
+        "metric": {
+          "endpoint": "price",
+          "host": "r1",
+          "instance": "localhost:9100",
+          "job": "node_exporter"
+        },
+        "value": [
+          1789487119.664,
+          "813.2451697710749"
+        ]
+      },
+      {
+        "metric": {
+          "endpoint": "price-tip",
+          "host": "r1",
+          "instance": "localhost:9100",
+          "job": "node_exporter"
+        },
+        "value": [
+          1789487119.664,
+          "813.2096778193875"
+        ]
+      },
+      {
+        "metric": {
+          "endpoint": "readyz",
+          "host": "r1",
+          "instance": "localhost:9100",
+          "job": "node_exporter"
+        },
+        "value": [
+          1789487119.664,
+          "814.1708375703753"
+        ]
+      },
+      {
+        "metric": {
+          "endpoint": "version",
+          "host": "r1",
+          "instance": "localhost:9100",
+          "job": "node_exporter"
+        },
+        "value": [
+          1789487119.664,
+          "814.1660755475039"
+        ]
+      }
+    ],
+    "avail_weighted_num": [
+      {
+        "metric": {
+          "endpoint": "readyz",
+          "host": "r1",
+          "instance": "localhost:9100",
+          "job": "node_exporter"
+        },
+        "value": [
+          1789487119.664,
+          "80727.07805230815"
+        ]
+      },
+      {
+        "metric": {
+          "endpoint": "diagnostics-cursors",
+          "host": "r1",
+          "instance": "localhost:9100",
+          "job": "node_exporter"
+        },
+        "value": [
+          1789487119.664,
+          "80672.34122364088"
+        ]
+      },
+      {
+        "metric": {
+          "endpoint": "healthz",
+          "host": "r1",
+          "instance": "localhost:9100",
+          "job": "node_exporter"
+        },
+        "value": [
+          1789487119.664,
+          "80770.08259587314"
+        ]
+      },
+      {
+        "metric": {
+          "endpoint": "issuers",
+          "host": "r1",
+          "instance": "localhost:9100",
+          "job": "node_exporter"
+        },
+        "value": [
+          1789487119.664,
+          "80727.34991840091"
+        ]
+      },
+      {
+        "metric": {
+          "endpoint": "price",
+          "host": "r1",
+          "instance": "localhost:9100",
+          "job": "node_exporter"
+        },
+        "value": [
+          1789487119.664,
+          "80634.66190681749"
+        ]
+      },
+      {
+        "metric": {
+          "endpoint": "price-tip",
+          "host": "r1",
+          "instance": "localhost:9100",
+          "job": "node_exporter"
+        },
+        "value": [
+          1789487119.664,
+          "80631.26951662965"
+        ]
+      },
+      {
+        "metric": {
+          "endpoint": "version",
+          "host": "r1",
+          "instance": "localhost:9100",
+          "job": "node_exporter"
+        },
+        "value": [
+          1789487119.664,
+          "80769.29630454628"
+        ]
+      },
+      {
+        "metric": {
+          "endpoint": "assets",
+          "host": "r1",
+          "instance": "localhost:9100",
+          "job": "node_exporter"
+        },
+        "value": [
+          1789487119.664,
+          "80731.98074161091"
+        ]
+      },
+      {
+        "metric": {
+          "endpoint": "markets",
+          "host": "r1",
+          "instance": "localhost:9100",
+          "job": "node_exporter"
+        },
+        "value": [
+          1789487119.664,
+          "80724.58943326927"
+        ]
+      },
+      {
+        "metric": {
+          "endpoint": "oracle-latest",
+          "host": "r1",
+          "instance": "localhost:9100",
+          "job": "node_exporter"
+        },
+        "value": [
+          1789487119.664,
+          "80628.31034512314"
+        ]
+      }
+    ],
+    "fresh_max": [
+      {
+        "metric": {
+          "endpoint": "price",
+          "host": "r1",
+          "instance": "localhost:9100",
+          "job": "node_exporter"
+        },
+        "value": [
+          1789487119.664,
+          "109.419"
+        ]
+      },
+      {
+        "metric": {
+          "endpoint": "price-tip",
+          "host": "r1",
+          "instance": "localhost:9100",
+          "job": "node_exporter"
+        },
+        "value": [
+          1789487119.664,
+          "103.542"
+        ]
+      }
+    ],
+    "fresh_typ": [
+      {
+        "metric": {
+          "endpoint": "price",
+          "host": "r1",
+          "instance": "localhost:9100",
+          "job": "node_exporter"
+        },
+        "value": [
+          1789487119.664,
+          "76.309"
+        ]
+      },
+      {
+        "metric": {
+          "endpoint": "price-tip",
+          "host": "r1",
+          "instance": "localhost:9100",
+          "job": "node_exporter"
+        },
+        "value": [
+          1789487119.664,
+          "0.001"
+        ]
+      }
+    ],
+    "no_pass_max_sec": [
+      {
+        "metric": {
+          "host": "r1",
+          "instance": "localhost:9100",
+          "job": "node_exporter"
+        },
+        "value": [
+          1789487119.664,
+          "1186"
+        ]
+      }
+    ],
+    "p50_max": [
+      {
+        "metric": {
+          "endpoint": "assets",
+          "host": "r1",
+          "instance": "localhost:9100",
+          "job": "node_exporter",
+          "quantile": "0.5"
+        },
+        "value": [
+          1789487119.664,
+          "551.5"
+        ]
+      },
+      {
+        "metric": {
+          "endpoint": "diagnostics-cursors",
+          "host": "r1",
+          "instance": "localhost:9100",
+          "job": "node_exporter",
+          "quantile": "0.5"
+        },
+        "value": [
+          1789487119.664,
+          "5"
+        ]
+      },
+      {
+        "metric": {
+          "endpoint": "healthz",
+          "host": "r1",
+          "instance": "localhost:9100",
+          "job": "node_exporter",
+          "quantile": "0.5"
+        },
+        "value": [
+          1789487119.664,
+          "1.5"
+        ]
+      },
+      {
+        "metric": {
+          "endpoint": "issuers",
+          "host": "r1",
+          "instance": "localhost:9100",
+          "job": "node_exporter",
+          "quantile": "0.5"
+        },
+        "value": [
+          1789487119.664,
+          "0"
+        ]
+      },
+      {
+        "metric": {
+          "endpoint": "markets",
+          "host": "r1",
+          "instance": "localhost:9100",
+          "job": "node_exporter",
+          "quantile": "0.5"
+        },
+        "value": [
+          1789487119.664,
+          "1"
+        ]
+      },
+      {
+        "metric": {
+          "endpoint": "oracle-latest",
+          "host": "r1",
+          "instance": "localhost:9100",
+          "job": "node_exporter",
+          "quantile": "0.5"
+        },
+        "value": [
+          1789487119.664,
+          "0"
+        ]
+      },
+      {
+        "metric": {
+          "endpoint": "price",
+          "host": "r1",
+          "instance": "localhost:9100",
+          "job": "node_exporter",
+          "quantile": "0.5"
+        },
+        "value": [
+          1789487119.664,
+          "15001"
+        ]
+      },
+      {
+        "metric": {
+          "endpoint": "price-tip",
+          "host": "r1",
+          "instance": "localhost:9100",
+          "job": "node_exporter",
+          "quantile": "0.5"
+        },
+        "value": [
+          1789487119.664,
+          "13"
+        ]
+      },
+      {
+        "metric": {
+          "endpoint": "readyz",
+          "host": "r1",
+          "instance": "localhost:9100",
+          "job": "node_exporter",
+          "quantile": "0.5"
+        },
+        "value": [
+          1789487119.664,
+          "4.5"
+        ]
+      },
+      {
+        "metric": {
+          "endpoint": "version",
+          "host": "r1",
+          "instance": "localhost:9100",
+          "job": "node_exporter",
+          "quantile": "0.5"
+        },
+        "value": [
+          1789487119.664,
+          "0"
+        ]
+      }
+    ],
+    "p95_max": [
+      {
+        "metric": {
+          "endpoint": "assets",
+          "host": "r1",
+          "instance": "localhost:9100",
+          "job": "node_exporter",
+          "quantile": "0.95"
+        },
+        "value": [
+          1789487119.664,
+          "1009.15"
+        ]
+      },
+      {
+        "metric": {
+          "endpoint": "diagnostics-cursors",
+          "host": "r1",
+          "instance": "localhost:9100",
+          "job": "node_exporter",
+          "quantile": "0.95"
+        },
+        "value": [
+          1789487119.664,
+          "18"
+        ]
+      },
+      {
+        "metric": {
+          "endpoint": "healthz",
+          "host": "r1",
+          "instance": "localhost:9100",
+          "job": "node_exporter",
+          "quantile": "0.95"
+        },
+        "value": [
+          1789487119.664,
+          "2.85"
+        ]
+      },
+      {
+        "metric": {
+          "endpoint": "issuers",
+          "host": "r1",
+          "instance": "localhost:9100",
+          "job": "node_exporter",
+          "quantile": "0.95"
+        },
+        "value": [
+          1789487119.664,
+          "2"
+        ]
+      },
+      {
+        "metric": {
+          "endpoint": "markets",
+          "host": "r1",
+          "instance": "localhost:9100",
+          "job": "node_exporter",
+          "quantile": "0.95"
+        },
+        "value": [
+          1789487119.664,
+          "2"
+        ]
+      },
+      {
+        "metric": {
+          "endpoint": "oracle-latest",
+          "host": "r1",
+          "instance": "localhost:9100",
+          "job": "node_exporter",
+          "quantile": "0.95"
+        },
+        "value": [
+          1789487119.664,
+          "2"
+        ]
+      },
+      {
+        "metric": {
+          "endpoint": "price",
+          "host": "r1",
+          "instance": "localhost:9100",
+          "job": "node_exporter",
+          "quantile": "0.95"
+        },
+        "value": [
+          1789487119.664,
+          "15001"
+        ]
+      },
+      {
+        "metric": {
+          "endpoint": "price-tip",
+          "host": "r1",
+          "instance": "localhost:9100",
+          "job": "node_exporter",
+          "quantile": "0.95"
+        },
+        "value": [
+          1789487119.664,
+          "24"
+        ]
+      },
+      {
+        "metric": {
+          "endpoint": "readyz",
+          "host": "r1",
+          "instance": "localhost:9100",
+          "job": "node_exporter",
+          "quantile": "0.95"
+        },
+        "value": [
+          1789487119.664,
+          "6"
+        ]
+      },
+      {
+        "metric": {
+          "endpoint": "version",
+          "host": "r1",
+          "instance": "localhost:9100",
+          "job": "node_exporter",
+          "quantile": "0.95"
+        },
+        "value": [
+          1789487119.664,
+          "0"
+        ]
+      }
+    ],
+    "p95_min": [
+      {
+        "metric": {
+          "endpoint": "assets",
+          "host": "r1",
+          "instance": "localhost:9100",
+          "job": "node_exporter",
+          "quantile": "0.95"
+        },
+        "value": [
+          1789487119.664,
+          "0"
+        ]
+      },
+      {
+        "metric": {
+          "endpoint": "diagnostics-cursors",
+          "host": "r1",
+          "instance": "localhost:9100",
+          "job": "node_exporter",
+          "quantile": "0.95"
+        },
+        "value": [
+          1789487119.664,
+          "0"
+        ]
+      },
+      {
+        "metric": {
+          "endpoint": "healthz",
+          "host": "r1",
+          "instance": "localhost:9100",
+          "job": "node_exporter",
+          "quantile": "0.95"
+        },
+        "value": [
+          1789487119.664,
+          "0"
+        ]
+      },
+      {
+        "metric": {
+          "endpoint": "issuers",
+          "host": "r1",
+          "instance": "localhost:9100",
+          "job": "node_exporter",
+          "quantile": "0.95"
+        },
+        "value": [
+          1789487119.664,
+          "0"
+        ]
+      },
+      {
+        "metric": {
+          "endpoint": "markets",
+          "host": "r1",
+          "instance": "localhost:9100",
+          "job": "node_exporter",
+          "quantile": "0.95"
+        },
+        "value": [
+          1789487119.664,
+          "0"
+        ]
+      },
+      {
+        "metric": {
+          "endpoint": "oracle-latest",
+          "host": "r1",
+          "instance": "localhost:9100",
+          "job": "node_exporter",
+          "quantile": "0.95"
+        },
+        "value": [
+          1789487119.664,
+          "0"
+        ]
+      },
+      {
+        "metric": {
+          "endpoint": "price",
+          "host": "r1",
+          "instance": "localhost:9100",
+          "job": "node_exporter",
+          "quantile": "0.95"
+        },
+        "value": [
+          1789487119.664,
+          "0"
+        ]
+      },
+      {
+        "metric": {
+          "endpoint": "price-tip",
+          "host": "r1",
+          "instance": "localhost:9100",
+          "job": "node_exporter",
+          "quantile": "0.95"
+        },
+        "value": [
+          1789487119.664,
+          "0"
+        ]
+      },
+      {
+        "metric": {
+          "endpoint": "readyz",
+          "host": "r1",
+          "instance": "localhost:9100",
+          "job": "node_exporter",
+          "quantile": "0.95"
+        },
+        "value": [
+          1789487119.664,
+          "0"
+        ]
+      },
+      {
+        "metric": {
+          "endpoint": "version",
+          "host": "r1",
+          "instance": "localhost:9100",
+          "job": "node_exporter",
+          "quantile": "0.95"
+        },
+        "value": [
+          1789487119.664,
+          "0"
+        ]
+      }
+    ],
+    "p95_over_frac": [
+      {
+        "metric": {
+          "endpoint": "assets",
+          "host": "r1",
+          "instance": "localhost:9100",
+          "job": "node_exporter",
+          "quantile": "0.95"
+        },
+        "value": [
+          1789487119.664,
+          "0.0015377365510057528"
+        ]
+      },
+      {
+        "metric": {
+          "endpoint": "price-tip",
+          "host": "r1",
+          "instance": "localhost:9100",
+          "job": "node_exporter",
+          "quantile": "0.95"
+        },
+        "value": [
+          1789487119.664,
+          "0"
+        ]
+      },
+      {
+        "metric": {
+          "endpoint": "version",
+          "host": "r1",
+          "instance": "localhost:9100",
+          "job": "node_exporter",
+          "quantile": "0.95"
+        },
+        "value": [
+          1789487119.664,
+          "0"
+        ]
+      },
+      {
+        "metric": {
+          "endpoint": "price",
+          "host": "r1",
+          "instance": "localhost:9100",
+          "job": "node_exporter",
+          "quantile": "0.95"
+        },
+        "value": [
+          1789487119.664,
+          "0.0015377365510057528"
+        ]
+      },
+      {
+        "metric": {
+          "endpoint": "readyz",
+          "host": "r1",
+          "instance": "localhost:9100",
+          "job": "node_exporter",
+          "quantile": "0.95"
+        },
+        "value": [
+          1789487119.664,
+          "0"
+        ]
+      },
+      {
+        "metric": {
+          "endpoint": "diagnostics-cursors",
+          "host": "r1",
+          "instance": "localhost:9100",
+          "job": "node_exporter",
+          "quantile": "0.95"
+        },
+        "value": [
+          1789487119.664,
+          "0"
+        ]
+      },
+      {
+        "metric": {
+          "endpoint": "healthz",
+          "host": "r1",
+          "instance": "localhost:9100",
+          "job": "node_exporter",
+          "quantile": "0.95"
+        },
+        "value": [
+          1789487119.664,
+          "0"
+        ]
+      },
+      {
+        "metric": {
+          "endpoint": "issuers",
+          "host": "r1",
+          "instance": "localhost:9100",
+          "job": "node_exporter",
+          "quantile": "0.95"
+        },
+        "value": [
+          1789487119.664,
+          "0"
+        ]
+      },
+      {
+        "metric": {
+          "endpoint": "markets",
+          "host": "r1",
+          "instance": "localhost:9100",
+          "job": "node_exporter",
+          "quantile": "0.95"
+        },
+        "value": [
+          1789487119.664,
+          "0"
+        ]
+      },
+      {
+        "metric": {
+          "endpoint": "oracle-latest",
+          "host": "r1",
+          "instance": "localhost:9100",
+          "job": "node_exporter",
+          "quantile": "0.95"
+        },
+        "value": [
+          1789487119.664,
+          "0"
+        ]
+      }
+    ],
+    "p95_typ": [
+      {
+        "metric": {
+          "endpoint": "assets",
+          "host": "r1",
+          "instance": "localhost:9100",
+          "job": "node_exporter",
+          "quantile": "0.95"
+        },
+        "value": [
+          1789487119.664,
+          "15"
+        ]
+      },
+      {
+        "metric": {
+          "endpoint": "diagnostics-cursors",
+          "host": "r1",
+          "instance": "localhost:9100",
+          "job": "node_exporter",
+          "quantile": "0.95"
+        },
+        "value": [
+          1789487119.664,
+          "4"
+        ]
+      },
+      {
+        "metric": {
+          "endpoint": "healthz",
+          "host": "r1",
+          "instance": "localhost:9100",
+          "job": "node_exporter",
+          "quantile": "0.95"
+        },
+        "value": [
+          1789487119.664,
+          "0"
+        ]
+      },
+      {
+        "metric": {
+          "endpoint": "issuers",
+          "host": "r1",
+          "instance": "localhost:9100",
+          "job": "node_exporter",
+          "quantile": "0.95"
+        },
+        "value": [
+          1789487119.664,
+          "0"
+        ]
+      },
+      {
+        "metric": {
+          "endpoint": "markets",
+          "host": "r1",
+          "instance": "localhost:9100",
+          "job": "node_exporter",
+          "quantile": "0.95"
+        },
+        "value": [
+          1789487119.664,
+          "0"
+        ]
+      },
+      {
+        "metric": {
+          "endpoint": "oracle-latest",
+          "host": "r1",
+          "instance": "localhost:9100",
+          "job": "node_exporter",
+          "quantile": "0.95"
+        },
+        "value": [
+          1789487119.664,
+          "0"
+        ]
+      },
+      {
+        "metric": {
+          "endpoint": "price",
+          "host": "r1",
+          "instance": "localhost:9100",
+          "job": "node_exporter",
+          "quantile": "0.95"
+        },
+        "value": [
+          1789487119.664,
+          "15"
+        ]
+      },
+      {
+        "metric": {
+          "endpoint": "price-tip",
+          "host": "r1",
+          "instance": "localhost:9100",
+          "job": "node_exporter",
+          "quantile": "0.95"
+        },
+        "value": [
+          1789487119.664,
+          "4"
+        ]
+      },
+      {
+        "metric": {
+          "endpoint": "readyz",
+          "host": "r1",
+          "instance": "localhost:9100",
+          "job": "node_exporter",
+          "quantile": "0.95"
+        },
+        "value": [
+          1789487119.664,
+          "0"
+        ]
+      },
+      {
+        "metric": {
+          "endpoint": "version",
+          "host": "r1",
+          "instance": "localhost:9100",
+          "job": "node_exporter",
+          "quantile": "0.95"
+        },
+        "value": [
+          1789487119.664,
+          "0"
+        ]
+      }
+    ],
+    "p99_max": [
+      {
+        "metric": {
+          "endpoint": "assets",
+          "host": "r1",
+          "instance": "localhost:9100",
+          "job": "node_exporter",
+          "quantile": "0.99"
+        },
+        "value": [
+          1789487119.664,
+          "7621.75"
+        ]
+      },
+      {
+        "metric": {
+          "endpoint": "diagnostics-cursors",
+          "host": "r1",
+          "instance": "localhost:9100",
+          "job": "node_exporter",
+          "quantile": "0.99"
+        },
+        "value": [
+          1789487119.664,
+          "46.72"
+        ]
+      },
+      {
+        "metric": {
+          "endpoint": "healthz",
+          "host": "r1",
+          "instance": "localhost:9100",
+          "job": "node_exporter",
+          "quantile": "0.99"
+        },
+        "value": [
+          1789487119.664,
+          "2.97"
+        ]
+      },
+      {
+        "metric": {
+          "endpoint": "issuers",
+          "host": "r1",
+          "instance": "localhost:9100",
+          "job": "node_exporter",
+          "quantile": "0.99"
+        },
+        "value": [
+          1789487119.664,
+          "11.75"
+        ]
+      },
+      {
+        "metric": {
+          "endpoint": "markets",
+          "host": "r1",
+          "instance": "localhost:9100",
+          "job": "node_exporter",
+          "quantile": "0.99"
+        },
+        "value": [
+          1789487119.664,
+          "7.72"
+        ]
+      },
+      {
+        "metric": {
+          "endpoint": "oracle-latest",
+          "host": "r1",
+          "instance": "localhost:9100",
+          "job": "node_exporter",
+          "quantile": "0.99"
+        },
+        "value": [
+          1789487119.664,
+          "11.8"
+        ]
+      },
+      {
+        "metric": {
+          "endpoint": "price",
+          "host": "r1",
+          "instance": "localhost:9100",
+          "job": "node_exporter",
+          "quantile": "0.99"
+        },
+        "value": [
+          1789487119.664,
+          "15001"
+        ]
+      },
+      {
+        "metric": {
+          "endpoint": "price-tip",
+          "host": "r1",
+          "instance": "localhost:9100",
+          "job": "node_exporter",
+          "quantile": "0.99"
+        },
+        "value": [
+          1789487119.664,
+          "54.27"
+        ]
+      },
+      {
+        "metric": {
+          "endpoint": "readyz",
+          "host": "r1",
+          "instance": "localhost:9100",
+          "job": "node_exporter",
+          "quantile": "0.99"
+        },
+        "value": [
+          1789487119.664,
+          "12"
+        ]
+      },
+      {
+        "metric": {
+          "endpoint": "version",
+          "host": "r1",
+          "instance": "localhost:9100",
+          "job": "node_exporter",
+          "quantile": "0.99"
+        },
+        "value": [
+          1789487119.664,
+          "2.36"
+        ]
+      }
+    ],
+    "p99_over_frac": [
+      {
+        "metric": {
+          "endpoint": "price",
+          "host": "r1",
+          "instance": "localhost:9100",
+          "job": "node_exporter",
+          "quantile": "0.99"
+        },
+        "value": [
+          1789487119.664,
+          "0.0015377365510057528"
+        ]
+      },
+      {
+        "metric": {
+          "endpoint": "price-tip",
+          "host": "r1",
+          "instance": "localhost:9100",
+          "job": "node_exporter",
+          "quantile": "0.99"
+        },
+        "value": [
+          1789487119.664,
+          "0"
+        ]
+      },
+      {
+        "metric": {
+          "endpoint": "assets",
+          "host": "r1",
+          "instance": "localhost:9100",
+          "job": "node_exporter",
+          "quantile": "0.99"
+        },
+        "value": [
+          1789487119.664,
+          "0.004613209653017237"
+        ]
+      },
+      {
+        "metric": {
+          "endpoint": "diagnostics-cursors",
+          "host": "r1",
+          "instance": "localhost:9100",
+          "job": "node_exporter",
+          "quantile": "0.99"
+        },
+        "value": [
+          1789487119.664,
+          "0"
+        ]
+      },
+      {
+        "metric": {
+          "endpoint": "healthz",
+          "host": "r1",
+          "instance": "localhost:9100",
+          "job": "node_exporter",
+          "quantile": "0.99"
+        },
+        "value": [
+          1789487119.664,
+          "0"
+        ]
+      },
+      {
+        "metric": {
+          "endpoint": "issuers",
+          "host": "r1",
+          "instance": "localhost:9100",
+          "job": "node_exporter",
+          "quantile": "0.99"
+        },
+        "value": [
+          1789487119.664,
+          "0"
+        ]
+      },
+      {
+        "metric": {
+          "endpoint": "oracle-latest",
+          "host": "r1",
+          "instance": "localhost:9100",
+          "job": "node_exporter",
+          "quantile": "0.99"
+        },
+        "value": [
+          1789487119.664,
+          "0"
+        ]
+      },
+      {
+        "metric": {
+          "endpoint": "markets",
+          "host": "r1",
+          "instance": "localhost:9100",
+          "job": "node_exporter",
+          "quantile": "0.99"
+        },
+        "value": [
+          1789487119.664,
+          "0"
+        ]
+      },
+      {
+        "metric": {
+          "endpoint": "readyz",
+          "host": "r1",
+          "instance": "localhost:9100",
+          "job": "node_exporter",
+          "quantile": "0.99"
+        },
+        "value": [
+          1789487119.664,
+          "0"
+        ]
+      },
+      {
+        "metric": {
+          "endpoint": "version",
+          "host": "r1",
+          "instance": "localhost:9100",
+          "job": "node_exporter",
+          "quantile": "0.99"
+        },
+        "value": [
+          1789487119.664,
+          "0"
+        ]
+      }
+    ],
+    "p99_typ": [
+      {
+        "metric": {
+          "endpoint": "assets",
+          "host": "r1",
+          "instance": "localhost:9100",
+          "job": "node_exporter",
+          "quantile": "0.99"
+        },
+        "value": [
+          1789487119.664,
+          "23"
+        ]
+      },
+      {
+        "metric": {
+          "endpoint": "diagnostics-cursors",
+          "host": "r1",
+          "instance": "localhost:9100",
+          "job": "node_exporter",
+          "quantile": "0.99"
+        },
+        "value": [
+          1789487119.664,
+          "6.54"
+        ]
+      },
+      {
+        "metric": {
+          "endpoint": "healthz",
+          "host": "r1",
+          "instance": "localhost:9100",
+          "job": "node_exporter",
+          "quantile": "0.99"
+        },
+        "value": [
+          1789487119.664,
+          "0"
+        ]
+      },
+      {
+        "metric": {
+          "endpoint": "issuers",
+          "host": "r1",
+          "instance": "localhost:9100",
+          "job": "node_exporter",
+          "quantile": "0.99"
+        },
+        "value": [
+          1789487119.664,
+          "2"
+        ]
+      },
+      {
+        "metric": {
+          "endpoint": "markets",
+          "host": "r1",
+          "instance": "localhost:9100",
+          "job": "node_exporter",
+          "quantile": "0.99"
+        },
+        "value": [
+          1789487119.664,
+          "2"
+        ]
+      },
+      {
+        "metric": {
+          "endpoint": "oracle-latest",
+          "host": "r1",
+          "instance": "localhost:9100",
+          "job": "node_exporter",
+          "quantile": "0.99"
+        },
+        "value": [
+          1789487119.664,
+          "2"
+        ]
+      },
+      {
+        "metric": {
+          "endpoint": "price",
+          "host": "r1",
+          "instance": "localhost:9100",
+          "job": "node_exporter",
+          "quantile": "0.99"
+        },
+        "value": [
+          1789487119.664,
+          "25"
+        ]
+      },
+      {
+        "metric": {
+          "endpoint": "price-tip",
+          "host": "r1",
+          "instance": "localhost:9100",
+          "job": "node_exporter",
+          "quantile": "0.99"
+        },
+        "value": [
+          1789487119.664,
+          "7"
+        ]
+      },
+      {
+        "metric": {
+          "endpoint": "readyz",
+          "host": "r1",
+          "instance": "localhost:9100",
+          "job": "node_exporter",
+          "quantile": "0.99"
+        },
+        "value": [
+          1789487119.664,
+          "2"
+        ]
+      },
+      {
+        "metric": {
+          "endpoint": "version",
+          "host": "r1",
+          "instance": "localhost:9100",
+          "job": "node_exporter",
+          "quantile": "0.99"
+        },
+        "value": [
+          1789487119.664,
+          "0"
+        ]
+      }
+    ],
+    "pass_present": [
+      {
+        "metric": {
+          "host": "r1",
+          "instance": "localhost:9100",
+          "job": "node_exporter"
+        },
+        "value": [
+          1789487119.664,
+          "39511"
+        ]
+      }
+    ],
+    "passing_runs": [
+      {
+        "metric": {
+          "host": "r1",
+          "instance": "localhost:9100",
+          "job": "node_exporter"
+        },
+        "value": [
+          1789487119.664,
+          "637"
+        ]
+      }
+    ],
+    "run_duration_max": [
+      {
+        "metric": {
+          "host": "r1",
+          "instance": "localhost:9100",
+          "job": "node_exporter"
+        },
+        "value": [
+          1789487119.664,
+          "30.021"
+        ]
+      }
+    ],
+    "run_duration_min": [
+      {
+        "metric": {
+          "host": "r1",
+          "instance": "localhost:9100",
+          "job": "node_exporter"
+        },
+        "value": [
+          1789487119.664,
+          "30"
+        ]
+      }
+    ],
+    "samples_avg": [
+      {
+        "metric": {
+          "endpoint": "assets",
+          "host": "r1",
+          "instance": "localhost:9100",
+          "job": "node_exporter"
+        },
+        "value": [
+          1789487119.664,
+          "813.7885063743242"
+        ]
+      },
+      {
+        "metric": {
+          "endpoint": "diagnostics-cursors",
+          "host": "r1",
+          "instance": "localhost:9100",
+          "job": "node_exporter"
+        },
+        "value": [
+          1789487119.664,
+          "813.6190287216576"
+        ]
+      },
+      {
+        "metric": {
+          "endpoint": "healthz",
+          "host": "r1",
+          "instance": "localhost:9100",
+          "job": "node_exporter"
+        },
+        "value": [
+          1789487119.664,
+          "814.1725780048602"
+        ]
+      },
+      {
+        "metric": {
+          "endpoint": "issuers",
+          "host": "r1",
+          "instance": "localhost:9100",
+          "job": "node_exporter"
+        },
+        "value": [
+          1789487119.664,
+          "813.7436876829275"
+        ]
+      },
+      {
+        "metric": {
+          "endpoint": "markets",
+          "host": "r1",
+          "instance": "localhost:9100",
+          "job": "node_exporter"
+        },
+        "value": [
+          1789487119.664,
+          "813.7160821469334"
+        ]
+      },
+      {
+        "metric": {
+          "endpoint": "oracle-latest",
+          "host": "r1",
+          "instance": "localhost:9100",
+          "job": "node_exporter"
+        },
+        "value": [
+          1789487119.664,
+          "813.1787539064389"
+        ]
+      },
+      {
+        "metric": {
+          "endpoint": "price",
+          "host": "r1",
+          "instance": "localhost:9100",
+          "job": "node_exporter"
+        },
+        "value": [
+          1789487119.664,
+          "813.2422491195017"
+        ]
+      },
+      {
+        "metric": {
+          "endpoint": "price-tip",
+          "host": "r1",
+          "instance": "localhost:9100",
+          "job": "node_exporter"
+        },
+        "value": [
+          1789487119.664,
+          "813.2067810903279"
+        ]
+      },
+      {
+        "metric": {
+          "endpoint": "readyz",
+          "host": "r1",
+          "instance": "localhost:9100",
+          "job": "node_exporter"
+        },
+        "value": [
+          1789487119.664,
+          "814.1679398779692"
+        ]
+      },
+      {
+        "metric": {
+          "endpoint": "version",
+          "host": "r1",
+          "instance": "localhost:9100",
+          "job": "node_exporter"
+        },
+        "value": [
+          1789487119.664,
+          "814.1631777369845"
+        ]
+      }
+    ],
+    "samples_max": [
+      {
+        "metric": {
+          "endpoint": "assets",
+          "host": "r1",
+          "instance": "localhost:9100",
+          "job": "node_exporter"
+        },
+        "value": [
+          1789487119.664,
+          "2580"
+        ]
+      },
+      {
+        "metric": {
+          "endpoint": "diagnostics-cursors",
+          "host": "r1",
+          "instance": "localhost:9100",
+          "job": "node_exporter"
+        },
+        "value": [
+          1789487119.664,
+          "2580"
+        ]
+      },
+      {
+        "metric": {
+          "endpoint": "healthz",
+          "host": "r1",
+          "instance": "localhost:9100",
+          "job": "node_exporter"
+        },
+        "value": [
+          1789487119.664,
+          "2581"
+        ]
+      },
+      {
+        "metric": {
+          "endpoint": "issuers",
+          "host": "r1",
+          "instance": "localhost:9100",
+          "job": "node_exporter"
+        },
+        "value": [
+          1789487119.664,
+          "2580"
+        ]
+      },
+      {
+        "metric": {
+          "endpoint": "markets",
+          "host": "r1",
+          "instance": "localhost:9100",
+          "job": "node_exporter"
+        },
+        "value": [
+          1789487119.664,
+          "2580"
+        ]
+      },
+      {
+        "metric": {
+          "endpoint": "oracle-latest",
+          "host": "r1",
+          "instance": "localhost:9100",
+          "job": "node_exporter"
+        },
+        "value": [
+          1789487119.664,
+          "2580"
+        ]
+      },
+      {
+        "metric": {
+          "endpoint": "price",
+          "host": "r1",
+          "instance": "localhost:9100",
+          "job": "node_exporter"
+        },
+        "value": [
+          1789487119.664,
+          "2580"
+        ]
+      },
+      {
+        "metric": {
+          "endpoint": "price-tip",
+          "host": "r1",
+          "instance": "localhost:9100",
+          "job": "node_exporter"
+        },
+        "value": [
+          1789487119.664,
+          "2580"
+        ]
+      },
+      {
+        "metric": {
+          "endpoint": "readyz",
+          "host": "r1",
+          "instance": "localhost:9100",
+          "job": "node_exporter"
+        },
+        "value": [
+          1789487119.664,
+          "2581"
+        ]
+      },
+      {
+        "metric": {
+          "endpoint": "version",
+          "host": "r1",
+          "instance": "localhost:9100",
+          "job": "node_exporter"
+        },
+        "value": [
+          1789487119.664,
+          "2581"
+        ]
+      }
+    ],
+    "samples_min": [
+      {
+        "metric": {
+          "endpoint": "assets",
+          "host": "r1",
+          "instance": "localhost:9100",
+          "job": "node_exporter"
+        },
+        "value": [
+          1789487119.664,
+          "2"
+        ]
+      },
+      {
+        "metric": {
+          "endpoint": "diagnostics-cursors",
+          "host": "r1",
+          "instance": "localhost:9100",
+          "job": "node_exporter"
+        },
+        "value": [
+          1789487119.664,
+          "2"
+        ]
+      },
+      {
+        "metric": {
+          "endpoint": "healthz",
+          "host": "r1",
+          "instance": "localhost:9100",
+          "job": "node_exporter"
+        },
+        "value": [
+          1789487119.664,
+          "2"
+        ]
+      },
+      {
+        "metric": {
+          "endpoint": "issuers",
+          "host": "r1",
+          "instance": "localhost:9100",
+          "job": "node_exporter"
+        },
+        "value": [
+          1789487119.664,
+          "2"
+        ]
+      },
+      {
+        "metric": {
+          "endpoint": "markets",
+          "host": "r1",
+          "instance": "localhost:9100",
+          "job": "node_exporter"
+        },
+        "value": [
+          1789487119.664,
+          "2"
+        ]
+      },
+      {
+        "metric": {
+          "endpoint": "oracle-latest",
+          "host": "r1",
+          "instance": "localhost:9100",
+          "job": "node_exporter"
+        },
+        "value": [
+          1789487119.664,
+          "1"
+        ]
+      },
+      {
+        "metric": {
+          "endpoint": "price",
+          "host": "r1",
+          "instance": "localhost:9100",
+          "job": "node_exporter"
+        },
+        "value": [
+          1789487119.664,
+          "1"
+        ]
+      },
+      {
+        "metric": {
+          "endpoint": "price-tip",
+          "host": "r1",
+          "instance": "localhost:9100",
+          "job": "node_exporter"
+        },
+        "value": [
+          1789487119.664,
+          "1"
+        ]
+      },
+      {
+        "metric": {
+          "endpoint": "readyz",
+          "host": "r1",
+          "instance": "localhost:9100",
+          "job": "node_exporter"
+        },
+        "value": [
+          1789487119.664,
+          "2"
+        ]
+      },
+      {
+        "metric": {
+          "endpoint": "version",
+          "host": "r1",
+          "instance": "localhost:9100",
+          "job": "node_exporter"
+        },
+        "value": [
+          1789487119.664,
+          "2"
+        ]
+      }
+    ],
+    "scrape_count": [
+      {
+        "metric": {
+          "endpoint": "assets",
+          "host": "r1",
+          "instance": "localhost:9100",
+          "job": "node_exporter",
+          "quantile": "0.95"
+        },
+        "value": [
+          1789487119.664,
+          "40318"
+        ]
+      },
+      {
+        "metric": {
+          "endpoint": "diagnostics-cursors",
+          "host": "r1",
+          "instance": "localhost:9100",
+          "job": "node_exporter",
+          "quantile": "0.95"
+        },
+        "value": [
+          1789487119.664,
+          "40318"
+        ]
+      },
+      {
+        "metric": {
+          "endpoint": "healthz",
+          "host": "r1",
+          "instance": "localhost:9100",
+          "job": "node_exporter",
+          "quantile": "0.95"
+        },
+        "value": [
+          1789487119.664,
+          "40318"
+        ]
+      },
+      {
+        "metric": {
+          "endpoint": "issuers",
+          "host": "r1",
+          "instance": "localhost:9100",
+          "job": "node_exporter",
+          "quantile": "0.95"
+        },
+        "value": [
+          1789487119.664,
+          "40318"
+        ]
+      },
+      {
+        "metric": {
+          "endpoint": "markets",
+          "host": "r1",
+          "instance": "localhost:9100",
+          "job": "node_exporter",
+          "quantile": "0.95"
+        },
+        "value": [
+          1789487119.664,
+          "40318"
+        ]
+      },
+      {
+        "metric": {
+          "endpoint": "oracle-latest",
+          "host": "r1",
+          "instance": "localhost:9100",
+          "job": "node_exporter",
+          "quantile": "0.95"
+        },
+        "value": [
+          1789487119.664,
+          "40318"
+        ]
+      },
+      {
+        "metric": {
+          "endpoint": "price",
+          "host": "r1",
+          "instance": "localhost:9100",
+          "job": "node_exporter",
+          "quantile": "0.95"
+        },
+        "value": [
+          1789487119.664,
+          "40318"
+        ]
+      },
+      {
+        "metric": {
+          "endpoint": "price-tip",
+          "host": "r1",
+          "instance": "localhost:9100",
+          "job": "node_exporter",
+          "quantile": "0.95"
+        },
+        "value": [
+          1789487119.664,
+          "40318"
+        ]
+      },
+      {
+        "metric": {
+          "endpoint": "readyz",
+          "host": "r1",
+          "instance": "localhost:9100",
+          "job": "node_exporter",
+          "quantile": "0.95"
+        },
+        "value": [
+          1789487119.664,
+          "40318"
+        ]
+      },
+      {
+        "metric": {
+          "endpoint": "version",
+          "host": "r1",
+          "instance": "localhost:9100",
+          "job": "node_exporter",
+          "quantile": "0.95"
+        },
+        "value": [
+          1789487119.664,
+          "40318"
+        ]
+      }
+    ],
+    "scrape_count_1h": [
+      {
+        "metric": {
+          "endpoint": "assets",
+          "host": "r1",
+          "instance": "localhost:9100",
+          "job": "node_exporter",
+          "quantile": "0.95"
+        },
+        "value": [
+          1789487119.664,
+          "240"
+        ]
+      },
+      {
+        "metric": {
+          "endpoint": "diagnostics-cursors",
+          "host": "r1",
+          "instance": "localhost:9100",
+          "job": "node_exporter",
+          "quantile": "0.95"
+        },
+        "value": [
+          1789487119.664,
+          "240"
+        ]
+      },
+      {
+        "metric": {
+          "endpoint": "healthz",
+          "host": "r1",
+          "instance": "localhost:9100",
+          "job": "node_exporter",
+          "quantile": "0.95"
+        },
+        "value": [
+          1789487119.664,
+          "240"
+        ]
+      },
+      {
+        "metric": {
+          "endpoint": "issuers",
+          "host": "r1",
+          "instance": "localhost:9100",
+          "job": "node_exporter",
+          "quantile": "0.95"
+        },
+        "value": [
+          1789487119.664,
+          "240"
+        ]
+      },
+      {
+        "metric": {
+          "endpoint": "markets",
+          "host": "r1",
+          "instance": "localhost:9100",
+          "job": "node_exporter",
+          "quantile": "0.95"
+        },
+        "value": [
+          1789487119.664,
+          "240"
+        ]
+      },
+      {
+        "metric": {
+          "endpoint": "oracle-latest",
+          "host": "r1",
+          "instance": "localhost:9100",
+          "job": "node_exporter",
+          "quantile": "0.95"
+        },
+        "value": [
+          1789487119.664,
+          "240"
+        ]
+      },
+      {
+        "metric": {
+          "endpoint": "price",
+          "host": "r1",
+          "instance": "localhost:9100",
+          "job": "node_exporter",
+          "quantile": "0.95"
+        },
+        "value": [
+          1789487119.664,
+          "240"
+        ]
+      },
+      {
+        "metric": {
+          "endpoint": "price-tip",
+          "host": "r1",
+          "instance": "localhost:9100",
+          "job": "node_exporter",
+          "quantile": "0.95"
+        },
+        "value": [
+          1789487119.664,
+          "240"
+        ]
+      },
+      {
+        "metric": {
+          "endpoint": "readyz",
+          "host": "r1",
+          "instance": "localhost:9100",
+          "job": "node_exporter",
+          "quantile": "0.95"
+        },
+        "value": [
+          1789487119.664,
+          "240"
+        ]
+      },
+      {
+        "metric": {
+          "endpoint": "version",
+          "host": "r1",
+          "instance": "localhost:9100",
+          "job": "node_exporter",
+          "quantile": "0.95"
+        },
+        "value": [
+          1789487119.664,
+          "240"
+        ]
+      }
+    ],
+    "unit_failed_frac": [
+      {
+        "metric": {
+          "host": "r1",
+          "instance": "localhost:9100",
+          "job": "node_exporter"
+        },
+        "value": [
+          1789487119.664,
+          "0.020015873803264035"
+        ]
+      }
+    ]
+  },
+  "series_gaps": [],
+  "subquery_step_seconds": 15,
+  "window_requested": "7d",
+  "window_requested_seconds": 604800
+}

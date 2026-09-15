@@ -118,6 +118,62 @@ expect 'SLA_PROOF_MAX_AGE_DAYS=400 admits the 240-day-old proof → rc 0' 0 'OK 
 
 unset K6_TARGET STELLARINDEX_LOAD_API_KEY
 
+# ── The second source: the probe aggregate ──────────────────────────────
+# Leg 2 reads a committed sla-proof-<YYYY-MM-DD>.md and does not care which
+# producer wrote it, so it needed no change and got none. Leg 1 did: it
+# asked only "are the k6 secrets set", which would have reported a feed
+# producing evidence from the probe every Sunday as RED forever, for the
+# absence of a load target it no longer needs. These cases pin the source
+# selector, and above all pin that naming one source never smuggles in the
+# other's readiness.
+run_src() { # run_src <source> <fixture-dir>
+  OUT="$(SLA_EVIDENCE_SOURCE="$1" SLA_EVIDENCE_DIR="$2" \
+    SLA_EVIDENCE_NOW="$NOW_EPOCH" bash "$CHECK" 2>&1)"
+  RC=$?
+}
+
+unset SLA_PROBE_PROM_URL
+run_src probe "$TMP/fresh"
+expect 'source=probe with no SLA_PROBE_PROM_URL → rc 1' 1 'NO PROBE SOURCE'
+
+export SLA_PROBE_PROM_URL='http://127.0.0.1:9090'
+run_src probe "$TMP/fresh"
+expect 'source=probe + a fresh proof → rc 0, no k6 secret required' 0 \
+  'OK — probe aggregate configured'
+run_src probe "$TMP/empty"
+expect 'source=probe + no proof → rc 2, not rc 1' 2 'the probe aggregate can be read'
+
+# The load-bearing separation: a configured probe source must NOT satisfy
+# a caller that asked for k6, or k6-weekly would run k6 with no target.
+run_src k6 "$TMP/fresh"
+expect 'source=k6 is not satisfied by the probe source → rc 1' 1 'NO TARGET'
+
+# ...and the reverse. A k6 target must not satisfy a caller that asked for
+# the probe: the proof would be rendered from series nothing can read.
+unset SLA_PROBE_PROM_URL
+export K6_TARGET='https://api.staging.example.invalid/v1'
+export STELLARINDEX_LOAD_API_KEY='not-a-real-key'
+run_src probe "$TMP/fresh"
+expect 'source=probe is not satisfied by the k6 secrets → rc 1' 1 'NO PROBE SOURCE'
+
+# `any` is the "is this feed alive at all" question and takes either.
+unset K6_TARGET STELLARINDEX_LOAD_API_KEY
+export SLA_PROBE_PROM_URL='http://127.0.0.1:9090'
+run_src any "$TMP/fresh"
+expect 'source=any is satisfied by the probe source alone → rc 0' 0 \
+  'OK — probe aggregate configured'
+unset SLA_PROBE_PROM_URL
+run_src any "$TMP/fresh"
+expect 'source=any with neither source → rc 1, the shipped no-op state' 1 'NO TARGET'
+
+# An unknown source is a caller bug, not a verdict. Never rc 0.
+OUT="$(SLA_EVIDENCE_SOURCE=grafana SLA_EVIDENCE_DIR="$TMP/fresh" \
+  SLA_EVIDENCE_NOW="$NOW_EPOCH" bash "$CHECK" 2>&1)"; RC=$?
+expect 'an unknown SLA_EVIDENCE_SOURCE is refused, never silently green' 1 \
+  'is not'
+
+unset SLA_PROBE_PROM_URL K6_TARGET STELLARINDEX_LOAD_API_KEY
+
 
 # ── Wiring: the verdict is worthless if the workflow ignores it ─────────
 # The defect lived in the YAML, not only in the decision logic, so pin the
@@ -489,6 +545,262 @@ else
   echo "FAIL: the wiring block passed vacuously on an unparseable workflow —" \
        "renaming or breaking k6-weekly.yml would silently delete these" \
        "assertions" >&2
+  fail=$((fail + 1))
+fi
+
+
+# ── Wiring: the SCHEDULED producer ──────────────────────────────────────
+# The block above is about k6-weekly.yml, which is now dispatch-only: its
+# scenarios and its load run are a retained capability waiting on a target
+# that does not exist. The workflow that actually runs every Sunday is
+# sla-proof-weekly.yml, and every property #316 and #378 fought for has to
+# hold there now or it holds nowhere. Same fail-closed shape as above.
+EVIDENCE_EXPECTED=16
+
+# run_evidence_wiring <evidence-workflow> <k6-workflow>
+# Sets EV_OUT / EV_RC / EV_SEEN.
+run_evidence_wiring() {
+  EV_OUT="$(SLA_EV_WF="$1" SLA_K6_WF="$2" python3 - <<'PY' 2>&1
+import os
+import re
+import sys
+
+try:
+    import yaml
+except ImportError:
+    print("FAIL: evidence wiring — PyYAML not available; refusing to pass "
+          "vacuously (install pyyaml)")
+    sys.exit(1)
+
+# NOTE: no apostrophes below. bash 3.2 (the macOS system bash) lexes
+# quote characters INSIDE a quoted-delimiter heredoc when that heredoc sits
+# in a $(...) command substitution, so an apostrophe in this block swallows
+# the following lines and `bash -n` reports a syntax error a hundred lines
+# from the real cause. The workflow conditions this block matches contain
+# single quotes, so they are spelled with chr(39).
+Q = chr(39)
+WF = os.environ["SLA_EV_WF"]
+K6 = os.environ["SLA_K6_WF"]
+
+raw = open(WF).read()
+wf = yaml.safe_load(raw)
+if not isinstance(wf, dict):
+    print("FAIL: evidence wiring — %s did not parse as a mapping" % WF)
+    sys.exit(1)
+# PyYAML parses the bare key `on:` as the boolean True.
+triggers = wf.get("on", wf.get(True)) or {}
+jobs = wf.get("jobs", {}) or {}
+steps = [st for job in jobs.values() for st in (job.get("steps") or [])]
+runs = [st.get("run") or "" for st in steps]
+
+
+def check(name, cond, detail=""):
+    print(("ok: " if cond else "FAIL: ") + name
+          + (("" if cond else " — " + detail) if detail else ""))
+
+
+check("the evidence producer is actually scheduled",
+      "schedule" in triggers,
+      "%s has no schedule: trigger, so nothing produces the weekly proof "
+      "and the feed is back where #316 found it" % WF)
+
+k6_raw = yaml.safe_load(open(K6).read()) or {}
+k6_triggers = k6_raw.get("on", k6_raw.get(True)) or {}
+check("the retired k6 schedule is actually gone",
+      "schedule" not in k6_triggers,
+      "%s still carries a schedule: trigger. Two scheduled workflows both "
+      "publishing docs/operations/sla-proof-<same-date>.md race each other, "
+      "and the one with no target goes red forever" % K6)
+
+# EXECUTED, not merely mentioned — the same prefix rule check-verify-parity
+# uses. Matching a bare path would be satisfied by a commit message that
+# names the generator, which is a gate that passes on a comment.
+GEN = os.path.join("scripts", "ops", "sla-proof-from-probe.sh")
+RUNS_GEN = re.compile(r"(\./|bash +)scripts/ops/sla-proof-from-probe\.sh")
+gen_at = [i for i, r in enumerate(runs) if RUNS_GEN.search(r)]
+check("the scheduled run renders the durable dated proof report",
+      bool(gen_at),
+      "no step runs %s, so the run can read the probe series and still leave "
+      "no docs/operations/sla-proof-<YYYY-MM-DD>.md — the only thing "
+      "check-sla-evidence.sh counts as evidence" % GEN)
+
+check("the proof generator exists and is executable",
+      os.access(GEN, os.X_OK),
+      "%s is missing or not executable — the render step would fail every "
+      "week for a reason unrelated to the SLA" % GEN)
+
+check("the run consults scripts/ci/check-sla-evidence.sh",
+      any("scripts/ci/check-sla-evidence.sh" in r for r in runs),
+      "nothing calls the decision core")
+
+# Without the source selector the decision core asks "are the k6 secrets
+# set", which they are not and will not be — so this workflow would report
+# RED forever for the absence of a load target it does not use.
+check("the decision core is asked with SLA_EVIDENCE_SOURCE=probe",
+      all("SLA_EVIDENCE_SOURCE=probe" in r
+          for r in runs if "scripts/ci/check-sla-evidence.sh" in r),
+      "a call to check-sla-evidence.sh does not name the probe source; it "
+      "would be answered about the k6 load target, which is deliberately "
+      "unset, and this workflow could never report itself healthy")
+
+publish = [st for st in steps
+           if "gh api" in (st.get("run") or "")
+           and "contents/" in (st.get("run") or "")]
+check("the rendered report is committed, not merely uploaded",
+      bool(publish),
+      "nothing commits the report. An artifact expires at 90 days and a run "
+      "summary ages out with the job page, so a run that renders but does "
+      "not publish leaves the freshness leg permanently red")
+
+render_jobs = sorted({
+    jname for jname, job in jobs.items()
+    if any(RUNS_GEN.search(st.get("run") or "")
+           for st in (job.get("steps") or []))
+})
+missing_write = [j for j in render_jobs
+                 if (jobs[j].get("permissions") or {}).get("contents") != "write"]
+check("the evidence job can actually write the report to the repo",
+      bool(render_jobs) and not missing_write,
+      "job(s) %s render a proof report but do not hold contents: write, so "
+      "the commit that makes it durable cannot succeed" % missing_write)
+
+# The verdict driving the issue and the exit status must be recomputed
+# AFTER the report lands. Taken before, a first healthy run reports "no
+# proof inside the window" for the absence of the file it just wrote.
+stale_verdict = []
+for jname, job in jobs.items():
+    sts = job.get("steps") or []
+    at = [i for i, st in enumerate(sts) if RUNS_GEN.search(st.get("run") or "")]
+    if not at:
+        continue
+    consumed = set()
+    for st in sts:
+        cond = str(st.get("if", ""))
+        if "verdict_rc" in cond:
+            consumed.update(
+                re.findall(r"steps\.([A-Za-z0-9_-]+)\.outputs\.verdict_rc", cond))
+    for sid in sorted(consumed):
+        idx = [i for i, st in enumerate(sts) if st.get("id") == sid]
+        if idx and idx[0] < max(at):
+            stale_verdict.append("%s.%s" % (jname, sid))
+check("the verdict driving the issue is recomputed AFTER the report lands",
+      bool(gen_at) and not stale_verdict,
+      "step id(s) %s produce the consumed verdict_rc BEFORE the render step; "
+      "a first healthy run would go red for the absence of the report it had "
+      "just written" % stale_verdict)
+
+# Only the steps that must fire on a BAD verdict. The close step is
+# deliberately not among them: it runs on the healthy path and must stay
+# skipped when a render failed, or a broken run would close the issue.
+NEG = "verdict_rc != " + Q + "0" + Q
+verdict_steps = [st for st in steps if NEG in str(st.get("if", ""))]
+missing_always = [str(st.get("name", "?")) for st in verdict_steps
+                  if "always()" not in str(st.get("if", ""))]
+check("the verdict-driven steps survive a failing render (always())",
+      bool(verdict_steps) and not missing_always,
+      "step(s) %s carry an implicit success(): a failing render step would "
+      "suppress the sla-evidence issue this workflow exists to file"
+      % missing_always)
+
+fail_steps = [st for st in steps if "exit 1" in (st.get("run") or "")]
+check("a non-zero verdict FAILS the run (silence != success)",
+      any(("verdict_rc != " + Q + "0" + Q) in str(st.get("if", ""))
+          for st in fail_steps),
+      "no step fails the run on a non-zero verdict — the badge would stay "
+      "green while nothing produced evidence")
+
+# A rendered-but-NOT-PROVEN week is the single most important report this
+# feed produces. It must be retained (the publish step is gated on the
+# path, not on the verdict) AND it must redden the run.
+check("a NOT PROVEN week is retained as evidence AND reddens the run",
+      any(("proof_rc != " + Q + "0" + Q) in str(st.get("if", ""))
+          for st in fail_steps)
+      and all("proof_rc" not in str(st.get("if", "")) or
+              "proof_path" in str(st.get("if", "")) for st in publish),
+      "either nothing reddens the run on a NOT PROVEN verdict, or the "
+      "publish step is gated on the verdict rather than on a report having "
+      "been written — the run whose finding matters most would leave "
+      "nothing behind or pass quietly")
+
+close_steps = [st for st in steps if "issue close" in (st.get("run") or "")]
+unguarded_close = [str(st.get("name", "?")) for st in close_steps
+                   if "proof_path" not in str(st.get("if", ""))]
+check("the tracking issue only closes on a run that itself produced a proof",
+      bool(close_steps) and not unguarded_close,
+      "step(s) %s close the sla-evidence issue without requiring THIS run to "
+      "have rendered a report — a run that read nothing would report the "
+      "feed healthy on the strength of a file some earlier run wrote"
+      % unguarded_close)
+
+# The scheduled-control declaration is void unless it names a step that
+# really exists, matched in full. A marker that outlives the step whose
+# existence is its whole basis silently downgrades the class of this
+# workflow.
+marker = re.search(r"^#\s*scheduled-control:\s*reports-by-failing\s+\"(.+)\"\s*$",
+                   raw, re.M)
+names = {str(st.get("name", "")) for st in steps}
+check("the reports-by-failing marker names a step that exists",
+      bool(marker) and marker.group(1) in names,
+      "the marker is absent or names a step this workflow does not have "
+      "(%s); the scheduled-control sweep voids it and reports this control "
+      "as broken plumbing rather than as a finding to read"
+      % (marker.group(1) if marker else "no marker"))
+
+# This job holds an ssh key. A secret interpolated into a run: body lands
+# in the rendered shell; routed through env: it does not.
+inline_secret = [str(st.get("name", "?")) for st in steps
+                 if "secrets." in (st.get("run") or "")]
+check("no secret is interpolated into a run: body",
+      not inline_secret,
+      "step(s) %s interpolate a ${{ secrets.* }} directly into the shell "
+      "instead of routing it through env: (F-1298)" % inline_secret)
+
+checkouts = [st for st in steps if "actions/checkout" in str(st.get("uses", ""))]
+leaky = [str(st.get("name", st.get("uses", "?"))) for st in checkouts
+         if (st.get("with") or {}).get("persist-credentials") is not False]
+check("every checkout leaves no push credential on disk",
+      bool(checkouts) and not leaky,
+      "checkout(s) %s do not set persist-credentials: false, so a job that "
+      "already carries an ssh key would also carry a git push token" % leaky)
+PY
+)"
+  EV_RC=$?
+  EV_SEEN="$(printf '%s\n' "$EV_OUT" | grep -c -E '^(ok|FAIL): ' || true)"
+}
+
+run_evidence_wiring ".github/workflows/sla-proof-weekly.yml" \
+                    ".github/workflows/k6-weekly.yml"
+printf '%s\n' "$EV_OUT"
+while IFS= read -r line; do
+  case "$line" in
+    ok:*)   pass=$((pass + 1)) ;;
+    FAIL:*) fail=$((fail + 1)) ;;
+  esac
+done <<EOF
+$EV_OUT
+EOF
+echo "evidence wiring: ${EV_SEEN} of ${EVIDENCE_EXPECTED} structural assertions reported (python3 rc=${EV_RC})"
+if [ "$EV_RC" -ne 0 ]; then
+  echo "FAIL: evidence wiring block — python3 exited $EV_RC, so the structural" \
+       "assertions did not all run" >&2
+  fail=$((fail + 1))
+fi
+if [ "$EV_SEEN" -ne "$EVIDENCE_EXPECTED" ]; then
+  echo "FAIL: evidence wiring block — only $EV_SEEN of $EVIDENCE_EXPECTED" \
+       "assertions reported; a gate that does not run reports clean by" \
+       "printing nothing" >&2
+  fail=$((fail + 1))
+fi
+
+run_evidence_wiring "$TMP/unparseable.yml" ".github/workflows/k6-weekly.yml"
+if [ "$EV_RC" -ne 0 ] || [ "$EV_SEEN" -ne "$EVIDENCE_EXPECTED" ]; then
+  echo "ok: the evidence wiring block is fail-closed on an unparseable" \
+       "workflow (rc=$EV_RC, ${EV_SEEN}/${EVIDENCE_EXPECTED} reported)"
+  pass=$((pass + 1))
+else
+  echo "FAIL: the evidence wiring block passed vacuously on an unparseable" \
+       "workflow — renaming or breaking sla-proof-weekly.yml would silently" \
+       "delete these assertions" >&2
   fail=$((fail + 1))
 fi
 

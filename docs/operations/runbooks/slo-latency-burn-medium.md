@@ -57,9 +57,11 @@ Same as fast-burn — capture p95 trend graphs, recent deploy timestamps, and `p
 
 ## Known false-positive patterns
 
-- **Weekly k6 load test** — `k6-weekly.yml` runs on a schedule (cron
-  `0 2 * * 0`, 02:00 UTC every Sunday) and targets **staging only** — it
-  cannot trip this alert on r1.
+- **Weekly k6 load test** — `k6-weekly.yml` has no `schedule:` trigger since
+  2026-09-15 and targets **staging only** even on dispatch, so it cannot trip
+  this alert on r1. The Sunday 02:00 UTC slot now belongs to
+  `sla-proof-weekly.yml`, which reads Prometheus over an ssh port-forward and
+  drives no load against anything.
 
 ## Related
 

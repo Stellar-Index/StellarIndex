@@ -173,3 +173,6 @@ gcp-key*.json
 
 # pnpm's per-project fallback store, created when the configured store is on another device.
 .pnpm-store/
+
+# Run-scoped output of .github/workflows/sla-proof-weekly.yml.
+.sla-proof/
