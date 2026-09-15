@@ -7019,8 +7019,10 @@ export interface components {
              *     `issuers` table the classic arm walks is written only when a
              *     CLASSIC asset is registered, so an entity whose Stellar
              *     presence is contract-issued never enters that population.
-             *     Measured on 2026-09-10, Franklin Templeton and Spiko are both
-             *     in this position: recognised, correct domains, and absent.
+             *     Measured on 2026-09-15, Spiko is in this position: recognised,
+             *     correct domain, and absent, because its five T-Bill funds are
+             *     Soroban contracts and no classic asset carries them. Franklin
+             *     Templeton left it when BENJI, a classic asset, was collected.
              *
              *     Serving them admits nothing. It exists so a reader can tell a
              *     recognised entity this surface cannot see from one that does
@@ -16320,6 +16322,12 @@ export interface operations {
                      *             "issuer independently recognised in the curated account directory and not scam-flagged",
                      *             "real-world instrument by SEP-1 anchor_asset_type or by an ADR-0028 oracle feed"
                      *           ],
+                     *           "contract_requirements": [
+                     *             "contract-issued token identified by its contract address",
+                     *             "that exact contract address named in the curated account directory",
+                     *             "named with an issuing-class tag and no scam-class tag",
+                     *             "real-world instrument by an in-repo curated binding or by an ADR-0028 oracle feed on the on-chain symbol"
+                     *           ],
                      *           "anchor_classes": [
                      *             "bond",
                      *             "commodity",
@@ -16334,6 +16342,11 @@ export interface operations {
                      *             "issuer",
                      *             "sdf"
                      *           ],
+                     *           "contract_recognition_tags": [
+                     *             "anchor",
+                     *             "custodian",
+                     *             "issuer"
+                     *           ],
                      *           "scam_flag_tags": [
                      *             "malicious",
                      *             "unsafe",
@@ -16344,9 +16357,24 @@ export interface operations {
                      *           ],
                      *           "bound_instruments": [
                      *             {
+                     *               "code": "BENJI",
+                     *               "issuer": "GBHNGLLIE3KWGKCHIKMHJ5HVZHYIK7WTBE4QF5PLAKL4CJGSEU7HZIW5",
+                     *               "feed": "rwa:BENJI"
+                     *             },
+                     *             {
                      *               "code": "CETES",
                      *               "issuer": "GCRYUGD5NVARGXT56XEZI5CIFCQETYHAPQQTHO2O3IQZTHDH4LATMYWC",
                      *               "feed": "rwa:CETES"
+                     *             },
+                     *             {
+                     *               "code": "GILTS",
+                     *               "issuer": "GCRYUGD5NVARGXT56XEZI5CIFCQETYHAPQQTHO2O3IQZTHDH4LATMYWC",
+                     *               "feed": "rwa:GILTS"
+                     *             },
+                     *             {
+                     *               "code": "KTB",
+                     *               "issuer": "GCRYUGD5NVARGXT56XEZI5CIFCQETYHAPQQTHO2O3IQZTHDH4LATMYWC",
+                     *               "feed": "rwa:KTB"
                      *             },
                      *             {
                      *               "code": "TESOURO",
@@ -16364,32 +16392,33 @@ export interface operations {
                      *               "feed": "rwa:USTRY"
                      *             }
                      *           ],
+                     *           "bound_contract_instruments": [],
                      *           "documentation_url": "https://stellarindex.io/docs/methodology/rwa-definition"
                      *         },
                      *         "summary": {
-                     *           "assets": 2,
-                     *           "issuers": 1,
-                     *           "market_cap_usd": "1284447.02",
-                     *           "assets_valued": 1,
-                     *           "assets_unvalued": 1,
+                     *           "assets": 11,
+                     *           "issuers": 5,
+                     *           "market_cap_usd": "17128565.34",
+                     *           "assets_valued": 3,
+                     *           "assets_unvalued": 8,
                      *           "lower_bound": true,
-                     *           "earliest_first_seen_ledger": 55008233,
-                     *           "assets_with_reference": 2,
-                     *           "assets_compared": 1,
+                     *           "earliest_first_seen_ledger": 38565742,
+                     *           "assets_with_reference": 7,
+                     *           "assets_compared": 3,
                      *           "reference_valuation": {
-                     *             "value_usd": "1425562.90",
-                     *             "assets_valued": 2,
-                     *             "assets_unvalued": 0,
-                     *             "lower_bound": false,
+                     *             "value_usd": "992488360.69",
+                     *             "assets_valued": 7,
+                     *             "assets_unvalued": 4,
+                     *             "lower_bound": true,
                      *             "sources": [
                      *               "redstone"
                      *             ],
-                     *             "basis": "Sum of circulating supply times an independent oracle's published valuation of the real-world instrument each token declares it anchors to. THIS IS NOT A MARKET CAPITALISATION AND NOT AN OBSERVED PRICE: nobody was seen paying it. It is what an oracle says one unit of the backing is worth, multiplied by the tokens in circulation, resting on the issuer's own domain-bound declaration that one token is one unit of that instrument. The substance, dust-liquidity and scam-issuer gates that stand behind market_cap_usd cannot be applied to it, because there is no market here for them to measure. Published beside market_cap_usd and never added to it. Every asset in the set carries a reference valuation."
+                     *             "basis": "Sum of circulating supply times an independent oracle's published valuation of the real-world instrument each token declares it anchors to. THIS IS NOT A MARKET CAPITALISATION AND NOT AN OBSERVED PRICE: nobody was seen paying it. It is what an oracle says one unit of the backing is worth, multiplied by the tokens in circulation, resting on the issuer's own domain-bound declaration that one token is one unit of that instrument. The substance, dust-liquidity and scam-issuer gates that stand behind market_cap_usd cannot be applied to it, because there is no market here for them to measure — which is also why an asset that has never traded carries this figure at full size. Published beside market_cap_usd and never added to it: the two are different bases over different rows, and market_cap_usd is exactly what it was before this figure existed. Every contributing row names the feed, the denominator and the vintage behind its number in `reference`, and the funnel's `valuation` arm counts every row that carries no figure under the reason that refused it. Assets with no bound and current oracle feed, or no circulating-supply reading, contribute nothing and are counted separately, so the total is a LOWER BOUND on the reference-priced value of the set."
                      *           },
                      *           "both_bases": {
-                     *             "assets": 1,
-                     *             "market_cap_usd": "1284447.02",
-                     *             "reference_value_usd": "1324956.69"
+                     *             "assets": 3,
+                     *             "market_cap_usd": "17128565.34",
+                     *             "reference_value_usd": "17128272.13"
                      *           },
                      *           "basis": "Sum of the published market caps of the assets meeting the four-requirement definition. Market cap is circulating supply times the served USD price, both as /v1/assets serves them, under the same substance, dust-liquidity and scam-issuer gates. Assets whose valuation is withheld or unavailable contribute nothing and are counted separately, so the total is a LOWER BOUND on the value of the set. Premium and discount compare the token's market price against an independent oracle's valuation of the instrument the issuer declares it anchors to; the correspondence between one token and one unit of that instrument is the issuer's own declaration, not an independent measurement. Reference-priced valuations are a separate basis and are NOT in this total: summary.reference_valuation carries them under their own name."
                      *         },
@@ -16398,8 +16427,8 @@ export interface operations {
                      *             "asset_id": "USTRY-GCRYUGD5NVARGXT56XEZI5CIFCQETYHAPQQTHO2O3IQZTHDH4LATMYWC",
                      *             "code": "USTRY",
                      *             "issuer": "GCRYUGD5NVARGXT56XEZI5CIFCQETYHAPQQTHO2O3IQZTHDH4LATMYWC",
-                     *             "slug": "ustry",
-                     *             "name": "US Treasury Bill",
+                     *             "slug": "USTRY-GCRYUGD5NVARGXT56XEZI5CIFCQETYHAPQQTHO2O3IQZTHDH4LATMYWC",
+                     *             "name": "Etherfuse USTRY",
                      *             "home_domain": "etherfuse.com",
                      *             "issuer_directory_name": "Etherfuse",
                      *             "issuer_directory_tags": [
@@ -16410,73 +16439,87 @@ export interface operations {
                      *             "anchor_asset": "US Treasury Notes",
                      *             "valuation": {
                      *               "status": "published",
-                     *               "price_usd": "1.0412",
-                     *               "market_cap_usd": "1284447.02"
+                     *               "price_usd": "1.0747968578",
+                     *               "market_cap_usd": "12375300.73"
                      *             },
                      *             "reference_valuation": {
                      *               "status": "published",
-                     *               "value_usd": "1324956.69"
+                     *               "value_usd": "12371134.26"
                      *             },
                      *             "reference": {
-                     *               "price_usd": "1.07403800",
+                     *               "price_usd": "1.07443500",
                      *               "source": "redstone",
                      *               "feed": "rwa:USTRY",
                      *               "quote": "fiat:USD",
-                     *               "as_of": "2026-09-09T15:08:40Z"
+                     *               "as_of": "2026-09-15T04:42:10Z"
                      *             },
                      *             "premium": {
                      *               "status": "published",
-                     *               "pct": "-3.0574"
+                     *               "pct": "0.0337"
                      *             },
-                     *             "circulating_supply": "12336218000000",
+                     *             "circulating_supply": "115140834616685",
                      *             "decimals": 7,
-                     *             "volume_24h_usd": "8214.55",
-                     *             "first_seen_ledger": 55008233,
-                     *             "observation_count": 346312
+                     *             "volume_24h_usd": "4594.22488778",
+                     *             "first_seen_ledger": 54958633,
+                     *             "observation_count": 352337
                      *           },
                      *           {
-                     *             "asset_id": "TESOURO-GCRYUGD5NVARGXT56XEZI5CIFCQETYHAPQQTHO2O3IQZTHDH4LATMYWC",
-                     *             "code": "TESOURO",
-                     *             "issuer": "GCRYUGD5NVARGXT56XEZI5CIFCQETYHAPQQTHO2O3IQZTHDH4LATMYWC",
-                     *             "home_domain": "etherfuse.com",
-                     *             "issuer_directory_name": "Etherfuse",
+                     *             "asset_id": "USDY-GAJMPX5NBOG6TQFPQGRABJEEB2YE7RFRLUKJDZAZGAD5GFX4J7TADAZ6",
+                     *             "code": "USDY",
+                     *             "issuer": "GAJMPX5NBOG6TQFPQGRABJEEB2YE7RFRLUKJDZAZGAD5GFX4J7TADAZ6",
+                     *             "slug": "USDY-GAJMPX5NBOG6TQFPQGRABJEEB2YE7RFRLUKJDZAZGAD5GFX4J7TADAZ6",
+                     *             "name": "Ondo US Dollar Yield",
+                     *             "home_domain": "ondo.finance",
+                     *             "issuer_directory_name": "Ondo",
                      *             "issuer_directory_tags": [
                      *               "issuer"
                      *             ],
-                     *             "basis": "sep1_anchor_declaration",
-                     *             "anchor_class": "bond",
-                     *             "anchor_asset": "Brazilian Tesouro Bonds",
+                     *             "basis": "oracle_rwa_feed",
                      *             "valuation": {
                      *               "status": "unpriced"
                      *             },
                      *             "reference_valuation": {
                      *               "status": "published",
-                     *               "value_usd": "100606.21"
+                     *               "value_usd": "535897722.98"
                      *             },
                      *             "reference": {
-                     *               "price_usd": "0.24538100",
+                     *               "price_usd": "1.14629994",
                      *               "source": "redstone",
-                     *               "feed": "rwa:TESOURO",
+                     *               "feed": "rwa:USDY",
                      *               "quote": "fiat:USD",
-                     *               "as_of": "2026-09-09T15:06:10Z"
+                     *               "as_of": "2026-09-15T04:42:30Z"
                      *             },
                      *             "premium": {
                      *               "status": "no_market_price"
                      *             },
-                     *             "circulating_supply": "4100000000000",
+                     *             "circulating_supply": "4675021818256512",
                      *             "decimals": 7,
-                     *             "first_seen_ledger": 56828412,
-                     *             "observation_count": 13318
+                     *             "volume_24h_usd": "299.43160494",
+                     *             "first_seen_ledger": 58662786,
+                     *             "observation_count": 95250
                      *           }
                      *         ],
                      *         "by_class": [
                      *           {
                      *             "class": "bond",
+                     *             "assets": 6,
+                     *             "market_cap_usd": "17128565.34",
+                     *             "assets_unvalued": 3,
+                     *             "reference_value_usd": "17128274.66",
+                     *             "assets_reference_unvalued": 1
+                     *           },
+                     *           {
+                     *             "class": "commodity",
                      *             "assets": 2,
-                     *             "market_cap_usd": "1284447.02",
-                     *             "assets_unvalued": 1,
-                     *             "reference_value_usd": "1425562.90",
-                     *             "assets_reference_unvalued": 0
+                     *             "assets_unvalued": 2,
+                     *             "assets_reference_unvalued": 2
+                     *           },
+                     *           {
+                     *             "class": "unclassified",
+                     *             "assets": 3,
+                     *             "assets_unvalued": 3,
+                     *             "reference_value_usd": "975360086.03",
+                     *             "assets_reference_unvalued": 1
                      *           }
                      *         ],
                      *         "by_issuer": [
@@ -16484,45 +16527,76 @@ export interface operations {
                      *             "issuer": "GCRYUGD5NVARGXT56XEZI5CIFCQETYHAPQQTHO2O3IQZTHDH4LATMYWC",
                      *             "name": "Etherfuse",
                      *             "home_domain": "etherfuse.com",
+                     *             "assets": 6,
+                     *             "market_cap_usd": "17128565.34",
+                     *             "assets_unvalued": 3,
+                     *             "reference_value_usd": "17128274.66",
+                     *             "assets_reference_unvalued": 1
+                     *           },
+                     *           {
+                     *             "issuer": "GACKTN5DAZGWXRWB2WLM6OPBDHAMT6SJNGLJZPQMEZBUR4JUGBX2UK7V",
+                     *             "name": "montelibero.org",
+                     *             "home_domain": "mtl.montelibero.org",
                      *             "assets": 2,
-                     *             "market_cap_usd": "1284447.02",
+                     *             "assets_unvalued": 2,
+                     *             "assets_reference_unvalued": 2
+                     *           },
+                     *           {
+                     *             "issuer": "GAJMPX5NBOG6TQFPQGRABJEEB2YE7RFRLUKJDZAZGAD5GFX4J7TADAZ6",
+                     *             "name": "Ondo",
+                     *             "home_domain": "ondo.finance",
+                     *             "assets": 1,
                      *             "assets_unvalued": 1,
-                     *             "reference_value_usd": "1425562.90",
+                     *             "reference_value_usd": "535897722.98",
+                     *             "assets_reference_unvalued": 0
+                     *           },
+                     *           {
+                     *             "issuer": "GBCB4WO6J4ET55RWK2SVX76LUQ4PQ7TCDHG2YFILQML7D6XR3HACLXAU",
+                     *             "name": "XAU CL",
+                     *             "home_domain": "xau.cl",
+                     *             "assets": 1,
+                     *             "assets_unvalued": 1,
+                     *             "assets_reference_unvalued": 1
+                     *           },
+                     *           {
+                     *             "issuer": "GBHNGLLIE3KWGKCHIKMHJ5HVZHYIK7WTBE4QF5PLAKL4CJGSEU7HZIW5",
+                     *             "name": "Franklin Templeton",
+                     *             "home_domain": "www.franklintempleton.com",
+                     *             "assets": 1,
+                     *             "assets_unvalued": 1,
+                     *             "reference_value_usd": "439462363.05",
                      *             "assets_reference_unvalued": 0
                      *           }
                      *         ],
                      *         "refused": [
                      *           {
                      *             "reason": "no_real_world_instrument_basis",
-                     *             "assets": 19740
-                     *           },
-                     *           {
-                     *             "reason": "issuer_not_independently_recognised",
-                     *             "assets": 3861
+                     *             "assets": 102039
                      *           },
                      *           {
                      *             "reason": "issuer_scam_flagged",
-                     *             "assets": 289
+                     *             "assets": 6198
+                     *           },
+                     *           {
+                     *             "reason": "issuer_not_independently_recognised",
+                     *             "assets": 323
+                     *           },
+                     *           {
+                     *             "reason": "no_real_world_instrument_basis_for_contract",
+                     *             "assets": 9
                      *           }
                      *         ],
                      *         "funnel": {
-                     *           "balanced": true,
-                     *           "basis": "Every issuer account that could carry a SEP-1 attestation, narrowed to the assets served. Units change down the funnel; `actor` names who can move a number.",
                      *           "stages": [
                      *             {
                      *               "arm": "classic",
                      *               "stage": "issuers_with_home_domain",
                      *               "unit": "issuer_accounts",
-                     *               "count": 44376,
+                     *               "count": 76656,
                      *               "dropped": [
                      *                 {
-                     *                   "reason": "sep1_attestation_never_fetched",
-                     *                   "count": 1,
-                     *                   "actor": "operator"
-                     *                 },
-                     *                 {
                      *                   "reason": "domain_served_no_sep1_attestation",
-                     *                   "count": 29740,
+                     *                   "count": 40815,
                      *                   "actor": "issuer"
                      *                 }
                      *               ]
@@ -16531,16 +16605,11 @@ export interface operations {
                      *               "arm": "classic",
                      *               "stage": "issuers_with_sep1_attestation",
                      *               "unit": "issuer_accounts",
-                     *               "count": 14635,
+                     *               "count": 35841,
                      *               "dropped": [
                      *                 {
                      *                   "reason": "sep1_declares_no_currencies",
-                     *                   "count": 2109,
-                     *                   "actor": "issuer"
-                     *                 },
-                     *                 {
-                     *                   "reason": "sep1_payload_unreadable",
-                     *                   "count": 41,
+                     *                   "count": 1658,
                      *                   "actor": "issuer"
                      *                 }
                      *               ]
@@ -16549,28 +16618,28 @@ export interface operations {
                      *               "arm": "classic",
                      *               "stage": "issuers_declaring_currencies",
                      *               "unit": "issuer_accounts",
-                     *               "count": 12485
+                     *               "count": 34183
                      *             },
                      *             {
                      *               "arm": "classic",
                      *               "stage": "sep1_currency_entries",
                      *               "unit": "sep1_currency_declarations",
-                     *               "count": 1182000,
+                     *               "count": 3961240,
                      *               "dropped": [
                      *                 {
-                     *                   "reason": "entry_declares_another_issuer",
-                     *                   "count": 1145346,
-                     *                   "actor": "definition"
+                     *                   "reason": "entry_declares_no_asset_code",
+                     *                   "count": 16,
+                     *                   "actor": "issuer"
                      *                 },
                      *                 {
                      *                   "reason": "entry_declares_no_issuer",
-                     *                   "count": 9612,
+                     *                   "count": 38,
                      *                   "actor": "issuer"
                      *                 },
                      *                 {
-                     *                   "reason": "entry_declares_no_asset_code",
-                     *                   "count": 3140,
-                     *                   "actor": "issuer"
+                     *                   "reason": "entry_declares_another_issuer",
+                     *                   "count": 3852615,
+                     *                   "actor": "definition"
                      *                 }
                      *               ]
                      *             },
@@ -16578,11 +16647,11 @@ export interface operations {
                      *               "arm": "classic",
                      *               "stage": "issuer_bound_entries",
                      *               "unit": "sep1_currency_declarations",
-                     *               "count": 23902,
+                     *               "count": 108571,
                      *               "dropped": [
                      *                 {
                      *                   "reason": "no_real_world_instrument_basis",
-                     *                   "count": 19740,
+                     *                   "count": 102039,
                      *                   "actor": "definition"
                      *                 }
                      *               ]
@@ -16591,22 +16660,17 @@ export interface operations {
                      *               "arm": "classic",
                      *               "stage": "candidate_assets_evaluated",
                      *               "unit": "assets",
-                     *               "count": 4162,
+                     *               "count": 6532,
                      *               "dropped": [
                      *                 {
-                     *                   "reason": "issuer_not_independently_recognised",
-                     *                   "count": 3861,
-                     *                   "actor": "definition"
-                     *                 },
-                     *                 {
                      *                   "reason": "issuer_scam_flagged",
-                     *                   "count": 289,
+                     *                   "count": 6198,
                      *                   "actor": "definition"
                      *                 },
                      *                 {
-                     *                   "reason": "duplicate_declaration_of_the_same_asset",
-                     *                   "count": 10,
-                     *                   "actor": "issuer"
+                     *                   "reason": "issuer_not_independently_recognised",
+                     *                   "count": 323,
+                     *                   "actor": "definition"
                      *                 }
                      *               ]
                      *             },
@@ -16614,30 +16678,143 @@ export interface operations {
                      *               "arm": "classic",
                      *               "stage": "assets_admitted",
                      *               "unit": "assets",
-                     *               "count": 2
+                     *               "count": 11
                      *             },
                      *             {
                      *               "arm": "classic",
                      *               "stage": "assets_served",
                      *               "unit": "assets",
-                     *               "count": 2
+                     *               "count": 11
+                     *             },
+                     *             {
+                     *               "arm": "contract",
+                     *               "stage": "curated_directory_entries",
+                     *               "unit": "directory_addresses",
+                     *               "count": 18979,
+                     *               "dropped": [
+                     *                 {
+                     *                   "reason": "directory_entry_names_an_account",
+                     *                   "count": 18592,
+                     *                   "actor": "definition"
+                     *                 }
+                     *               ]
+                     *             },
+                     *             {
+                     *               "arm": "contract",
+                     *               "stage": "directory_contract_addresses",
+                     *               "unit": "contracts",
+                     *               "count": 387,
+                     *               "dropped": [
+                     *                 {
+                     *                   "reason": "contract_scam_flagged",
+                     *                   "count": 2,
+                     *                   "actor": "definition"
+                     *                 },
+                     *                 {
+                     *                   "reason": "contract_named_without_issuing_tag",
+                     *                   "count": 376,
+                     *                   "actor": "operator"
+                     *                 }
+                     *               ]
+                     *             },
+                     *             {
+                     *               "arm": "contract",
+                     *               "stage": "directory_recognised_contracts",
+                     *               "unit": "contracts",
+                     *               "count": 9
+                     *             },
+                     *             {
+                     *               "arm": "contract",
+                     *               "stage": "contract_candidates_evaluated",
+                     *               "unit": "assets",
+                     *               "count": 9,
+                     *               "dropped": [
+                     *                 {
+                     *                   "reason": "no_real_world_instrument_basis_for_contract",
+                     *                   "count": 9,
+                     *                   "actor": "definition"
+                     *                 }
+                     *               ]
+                     *             },
+                     *             {
+                     *               "arm": "contract",
+                     *               "stage": "contract_assets_admitted",
+                     *               "unit": "assets",
+                     *               "count": 0
+                     *             },
+                     *             {
+                     *               "arm": "contract",
+                     *               "stage": "contract_assets_served",
+                     *               "unit": "assets",
+                     *               "count": 0
+                     *             },
+                     *             {
+                     *               "arm": "contract",
+                     *               "stage": "directory_recognised_issuing_accounts",
+                     *               "unit": "directory_addresses",
+                     *               "count": 142
                      *             },
                      *             {
                      *               "arm": "valuation",
                      *               "stage": "assets_served_all_arms",
                      *               "unit": "assets",
-                     *               "count": 2
+                     *               "count": 11,
+                     *               "dropped": [
+                     *                 {
+                     *                   "reason": "reference_not_bound",
+                     *                   "count": 4,
+                     *                   "actor": "definition"
+                     *                 }
+                     *               ]
                      *             },
                      *             {
                      *               "arm": "valuation",
                      *               "stage": "assets_reference_valued",
                      *               "unit": "assets",
-                     *               "count": 2
+                     *               "count": 7
                      *             }
-                     *           ]
-                     *         }
+                     *           ],
+                     *           "balanced": true,
+                     *           "basis": "Every issuer account that could carry a SEP-1 attestation, narrowed to the assets served. Units change down the funnel: issuer accounts, then the SEP-1 [[CURRENCIES]] declarations they publish, then the (code, issuer) assets those bind to. Each stage's drops account exactly for the difference to the next stage of the same unit. `actor` names who can move a number: an operator, the token's own issuer, or nobody — the definition refusing it. The `contract` arm walks a SEPARATE population: every entry in the curated third-party directory, narrowed to the contract addresses it names with an issuing tag, then to the tokens the definition admits. It exists because the issuers table the classic arm walks is populated only when a CLASSIC asset is registered, so an entity whose Stellar presence is contract-issued is absent from that population entirely rather than refused by any requirement. Stage counts reconcile WITHIN an arm; the two arms meet only at the assets served. `directory_recognised_issuing_accounts` is a terminal census, not part of the narrowing: it counts recognised issuing entities this index holds no token for, and names a bounded sample of them in `unreached_entities`. The `valuation` arm continues PAST the served set: it accounts for which served rows carry a REFERENCE-priced valuation — circulating supply times an independent oracle's value for the instrument — and counts every row that carries none under the reason that refused it. Its drop reasons are the same strings the rows carry in `reference_valuation.status`, read back off the rows rather than recomputed. It does NOT walk the market-cap basis: that coverage is `summary.assets_valued` and `assets_unvalued`, and each of its refusals is already a `valuation.status` on the row. Membership is decided before either valuation, so nothing in this arm admits or refuses an asset."
+                     *         },
+                     *         "unreached_entities": [
+                     *           {
+                     *             "address": "GA2VRL65L3ZFEDDJ357RGI3MAOKPJZ2Z3IJTPSC24I4KDTNFSVEQURRA",
+                     *             "name": "SDF Escrow Jan 1 2023",
+                     *             "domain": "stellar.org",
+                     *             "tags": [
+                     *               "sdf",
+                     *               "custodian"
+                     *             ]
+                     *           },
+                     *           {
+                     *             "address": "GA5ZXXHHXX766BEEB33WN7Y4SHKUX2ZIGNRVJTAJM3K7PZMBM7DEJCFL",
+                     *             "name": "Zeam.Money",
+                     *             "domain": "zeam.money",
+                     *             "tags": [
+                     *               "issuer"
+                     *             ]
+                     *           },
+                     *           {
+                     *             "address": "GA6D2S6XDBT7WZIZNDGUBLXUGDAGLZGZ2SYT2JLXD4BB2W76XS66FZ2S",
+                     *             "name": "SDF Early Employee Grants",
+                     *             "domain": "stellar.org",
+                     *             "tags": [
+                     *               "custodian",
+                     *               "sdf"
+                     *             ]
+                     *           },
+                     *           {
+                     *             "address": "GAAXDZA2OY3J4H4DDUV4YI2V6NOU76ETHX72TP7X5MMD63DYYSW5VLIO",
+                     *             "name": "LabIO distributor",
+                     *             "domain": "surface-concept.com",
+                     *             "tags": [
+                     *               "issuer"
+                     *             ]
+                     *           }
+                     *         ]
                      *       },
-                     *       "as_of": "2026-09-05T10:20:00Z",
+                     *       "as_of": "2026-09-15T12:39:50.002303292Z",
                      *       "flags": {
                      *         "stale": false,
                      *         "reduced_redundancy": false,
@@ -20493,31 +20670,31 @@ export interface operations {
                      *         "creators": [
                      *           {
                      *             "rank": 1,
-                     *             "account": "GBMUZ7DCFWJ47CI2FGFR4NIVSZNPPZENJJWNG7THSRWQWFZVNUNZJTR4",
-                     *             "accounts_created": 108730,
-                     *             "funded_stroops": "5290690000000",
-                     *             "live_accounts": 4346,
-                     *             "live_stroops": "71721284463",
-                     *             "first_ledger": 50000101,
-                     *             "last_ledger": 50999236,
-                     *             "first_created_at": "2024-03-18T04:11:02Z",
-                     *             "last_created_at": "2024-05-02T22:07:44Z"
+                     *             "account": "GC7BKVSFWQPVSHINTTXEIVI6EK2Z2YW245RA7KRODJA4EN27H2CMPJL5",
+                     *             "accounts_created": 1569693,
+                     *             "funded_stroops": "23676663000000",
+                     *             "live_accounts": 76210,
+                     *             "live_stroops": "1304777822353",
+                     *             "first_ledger": 52651627,
+                     *             "last_ledger": 59446198,
+                     *             "first_created_at": "2024-07-20T03:10:32Z",
+                     *             "last_created_at": "2025-10-19T01:44:46Z"
                      *           }
                      *         ],
                      *         "totals": {
-                     *           "creators": 1348217,
-                     *           "accounts_created": 31980254,
-                     *           "live_accounts": 19595189
+                     *           "creators": 955023,
+                     *           "accounts_created": 24889916,
+                     *           "live_accounts": 11134056
                      *         },
                      *         "coverage": {
                      *           "from_ledger": 3,
-                     *           "thru_ledger": 64184370,
-                     *           "from_time": "2015-09-30T16:46:54Z",
-                     *           "thru_time": "2026-09-05T09:12:31Z"
+                     *           "thru_ledger": 64428994,
+                     *           "from_time": "2015-09-30T17:15:54Z",
+                     *           "thru_time": "2026-09-14T19:14:00Z"
                      *         },
-                     *         "computed_at": "2026-09-05T09:30:00Z"
+                     *         "computed_at": "2026-09-14T19:31:29Z"
                      *       },
-                     *       "as_of": "2026-09-05T09:45:00Z",
+                     *       "as_of": "2026-09-15T12:42:19.255109004Z",
                      *       "flags": {
                      *         "stale": false,
                      *         "reduced_redundancy": false,
@@ -20615,32 +20792,32 @@ export interface operations {
                      *         "sponsors": [
                      *           {
                      *             "rank": 1,
-                     *             "account": "GAUA7XL5K54CC2DDGP77FJ2YBHRJLT36CPZDXWPM6MP7MANOGG77PNJU",
-                     *             "sponsorships_started": 30512,
-                     *             "distinct_sponsored": 28011,
-                     *             "revocations_issued": 0,
-                     *             "first_ledger": 64000015,
-                     *             "last_ledger": 64277239,
-                     *             "first_seen_at": "2026-08-17T19:41:52Z",
-                     *             "last_seen_at": "2026-09-05T00:14:59Z"
+                     *             "account": "GDB3RSSWTUXO7MBTNMHUP3DRBIUR3QRV2CVFRAKMN4GM2B4QNGEUT6CU",
+                     *             "sponsorships_started": 2585729,
+                     *             "distinct_sponsored": 785615,
+                     *             "revocations_issued": 1712,
+                     *             "first_ledger": 35545954,
+                     *             "last_ledger": 64427999,
+                     *             "first_seen_at": "2021-05-23T17:01:53Z",
+                     *             "last_seen_at": "2026-09-14T17:40:53Z"
                      *           }
                      *         ],
                      *         "totals": {
-                     *           "sponsors": 41208,
-                     *           "sponsorships_started": 11487143,
-                     *           "distinct_sponsored": 9120044,
-                     *           "revocations_issued": 88525
+                     *           "sponsors": 2427,
+                     *           "sponsorships_started": 10015119,
+                     *           "distinct_sponsored": 4105077,
+                     *           "revocations_issued": 39540
                      *         },
                      *         "coverage": {
                      *           "from_ledger": 32747295,
-                     *           "thru_ledger": 64277243,
-                     *           "from_time": "2021-02-16T18:21:00Z",
-                     *           "thru_time": "2026-09-05T00:15:11Z",
-                     *           "ambiguous_transactions": 0
+                     *           "thru_ledger": 64428050,
+                     *           "from_time": "2020-11-23T16:00:18Z",
+                     *           "thru_time": "2026-09-14T17:45:39Z",
+                     *           "ambiguous_transactions": 173
                      *         },
-                     *         "computed_at": "2026-09-05T04:30:00Z"
+                     *         "computed_at": "2026-09-14T17:57:59Z"
                      *       },
-                     *       "as_of": "2026-09-05T04:45:00Z",
+                     *       "as_of": "2026-09-15T12:42:19.034838873Z",
                      *       "flags": {
                      *         "stale": false,
                      *         "reduced_redundancy": false,
