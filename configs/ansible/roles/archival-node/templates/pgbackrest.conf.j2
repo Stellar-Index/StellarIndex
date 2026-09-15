@@ -80,12 +80,30 @@ repo2-path=/pgbackrest
 # That is a recovery-objective decision, so the value stays operator-set
 # rather than being quietly tuned to fit a bill.
 #
-# The larger lever is upstream: 252 GB/day of WAL against 16 GB/day of
-# growth is ~16x write amplification, and the rollup cycles that rebuild
-# whole staging tables and EXCHANGE them are the obvious source. Staging
-# tables are regenerated from scratch every cycle, so UNLOGGED would cost
-# nothing on crash and would cut WAL — and therefore this bill — far more
-# than any retention setting can.
+# The larger lever is upstream, and it is NOT what the first version of
+# this comment guessed. It blamed the rollup cycles that rebuild staging
+# tables and EXCHANGE them; those are ClickHouse tables and generate no
+# Postgres WAL at all. Attributed properly with pg_stat_statements over
+# 71 days:
+#
+#   52.9%  decompress_chunk(format(...))      344 calls, 564.8M FPIs
+#    7.3%  decompress_chunk($1)                12 calls
+#    3.0%  policy_compression_execute       5,511 calls
+#    1.7%  compress_chunk(format(...))        344 calls
+#
+# Nearly two thirds of all WAL is TimescaleDB compression churn, and the
+# trigger is a historical backfill writing into compressed chunks. The
+# `trades` compression policy compresses anything older than 7 days; the
+# SDEX history backfill writes trades ~200 days old. Every chunk it
+# touches must be decompressed to accept the insert (1.5GB of rows,
+# 12.7GB of WAL) and the policy recompresses it within 12 hours — and the
+# job has failed 144 of 398 runs, which is the two fighting.
+#
+# So the fix is to stop the backfill and the compression policy
+# undoing each other, not to change what the database stores. Coordinate
+# them: pause the policy while a backfill runs and compress each chunk
+# once as the backfill passes it, so a chunk is compressed once instead
+# of once per visit.
 #
 # PITR window = the archive retention. Raising these scales storage
 # ~linearly; re-measure the per-day figure before trusting any estimate

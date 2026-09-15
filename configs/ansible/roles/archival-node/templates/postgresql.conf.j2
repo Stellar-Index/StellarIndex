@@ -48,12 +48,36 @@ wal_compression           = {{ postgres_wal_compression }}
 synchronous_commit        = on
 checkpoint_timeout        = 15min
 checkpoint_completion_target = 0.9
-# WAL sizing matches r1's live config (postgresql.auto.conf ALTER
-# SYSTEM overrides). 2GB/512MB is comfortable for the ingest +
-# CAGG-refresh write profile; a from-scratch rebuild inherits the
-# running values directly rather than the larger 8GB/2GB defaults.
-max_wal_size              = 2GB   # 2026-07-03 drift audit: the 8GB that sat in the live FILE was inert — postgresql.auto.conf (ALTER SYSTEM) overrode it to 2GB the whole time; 2GB is the proven effective value. auto.conf overrides RESET so this file is the single source.
-min_wal_size              = 512MB
+# WAL sizing. The 2GB this replaced was never chosen against this
+# workload: the 2026-07-03 drift audit found 8GB sitting inert in the
+# file while postgresql.auto.conf overrode it to 2GB, and codified the
+# EFFECTIVE value. That fixed the drift and inherited the number.
+#
+# MEASURED 2026-09-15, 71 days of pg_stat_bgwriter: 14,282 REQUESTED
+# checkpoints against 2,630 timed — 84.4% of checkpoints fired because
+# WAL hit max_wal_size, not because checkpoint_timeout elapsed. That is
+# one checkpoint every ~6 minutes against a 15-minute timeout, and with
+# full_page_writes on, every checkpoint restarts full-page-image
+# amplification: the first write to each 8KB page afterwards writes the
+# whole page to WAL.
+#
+# The cost shows up in the archive bill. A single TimescaleDB
+# decompress_chunk on `trades` rewrites a 1.5GB chunk and emits 12.7GB
+# of WAL — roughly 8x the data, which is the FPI multiplier. At 2GB,
+# one such decompression forces several checkpoints on its own.
+#
+# 16GB is chosen so that neither the steady rate nor a single chunk
+# decompression can trigger one: at the measured 275GB/day the interval
+# would be ~83 minutes, far past the 15-minute timeout, so checkpoints
+# become timeout-driven as intended. The disk cost is nothing — pg_wal
+# sits on a dataset with 2.7TB free — and the exposure is a longer
+# crash recovery, bounded by checkpoint_timeout either way.
+#
+# max_wal_size is SIGHUP, so this applies on reload and needs no
+# restart. Raise checkpoint_timeout only after re-measuring this ratio:
+# one variable at a time is the whole reason the 84.4% was legible.
+max_wal_size              = {{ postgres_max_wal_size | default('16GB') }}
+min_wal_size              = {{ postgres_min_wal_size | default('2GB') }}
 
 # ─── Planner ────────────────────────────────────────────────────────
 random_page_cost          = 1.1     # NVMe
