@@ -104,7 +104,9 @@ const rwaFunnelListingBasis = "The `listing` arm walks C2's SECOND route to reco
 	"binding NEVER admits on its own — that would be this index vouching for itself — and a listing entry never " +
 	"admits on its own either: the listing is a convenience built for price aggregation, so it corroborates a claim " +
 	"rather than attesting to one, and both sources must name the same exact address. A scam-class tag on that " +
-	"address refuses it whatever either source says. `listing_contracts_without_curated_binding` is a terminal " +
+	"address refuses it whatever either source says — and when the curated read that carries those tags does not " +
+	"answer, the arm closes under `curated_tag_lookup_unavailable`, which names THAT source rather than borrowing " +
+	"the listing's name for somebody else's outage. `listing_contracts_without_curated_binding` is a terminal " +
 	"census, not part of the narrowing: it counts addresses the listing names that no curated binding does, which " +
 	"is what makes `a listing admits nothing alone` auditable rather than merely asserted. The arm FAILS CLOSED: if " +
 	"the listing read does not answer, or its cached snapshot is past the recognition bound, every binding it would " +
@@ -589,9 +591,23 @@ func rwaListingStages(m rwaMembership, served int) []RWAFunnelStage {
 				// operator's to fix, and it is reported apart from the
 				// finding below because a read that did not answer may
 				// not report an absence.
+				//
+				// It names the LISTING directory and nothing else. The
+				// arm's other source has its own drop beneath it, and
+				// keeping them apart is what stops a curated-directory
+				// failure raising an alarm against a listing sync that
+				// is running perfectly well.
 				RWAFunnelDrop{
 					Reason: rwa.RejectContractListingUnavailable,
 					Count:  lc.listingUnavailable, Actor: rwaActorOperator,
+				},
+				// The arm's OTHER outage: the curated tag read C3
+				// depends on did not answer. Same actor — an operator
+				// fixes both — and a different reason, because the
+				// actor says who acts and the reason says where.
+				RWAFunnelDrop{
+					Reason: rwa.RejectContractCuratedTagsUnavailable,
+					Count:  lc.tagsUnavailable, Actor: rwaActorOperator,
 				},
 				// The requirement doing its job. `operator` rather than
 				// `definition` because somebody here CAN move it — by

@@ -16,6 +16,27 @@ against.
 ## [Unreleased]
 
 ### Changed
+
+- **rwa:** a curated-directory tag read that fails now closes C2's
+  second arm under its own reason, `curated_tag_lookup_unavailable`,
+  instead of borrowing `independent_listing_unavailable`.
+
+  The arm rests on two unrelated sources: the listing directory supplies
+  its recognition, and the curated account directory supplies the scam
+  tags C3 reads. Either read failing closes the arm, and both closed it
+  under the listing's name. The two failures are not correlated — the
+  curated directory can be unreadable while the listing directory sits
+  there perfectly fresh — so the funnel could raise an operator-addressed
+  outage against a listing sync that was running perfectly well, in the
+  same response that published a healthy, freshly-read listing
+  directory. A refusal reason is an instruction about where to look, and
+  that one sent an operator to the wrong system.
+
+  Same actor on both drops, deliberately: an operator fixes either. The
+  actor says who acts and the reason says where, and it was the second
+  of those that was being destroyed. Consumers reading `refused[]` or
+  the `listing` arm's drops gain one reason value.
+
 ### Added
 
 - **rwa:** `funnel.listing_directory` on `GET /v1/rwa/assets` publishes

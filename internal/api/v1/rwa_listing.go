@@ -223,12 +223,24 @@ type rwaListingCensus struct {
 	// alsoInDirectoryArm counts bindings the first arm already
 	// evaluates. Removed here so no address is evaluated twice.
 	alsoInDirectoryArm int
-	// listingUnavailable counts bindings refused because the listing
-	// read did not answer or the scam-tag lookup that C3 depends on did
-	// not answer. Both close the arm for the same reason: a
-	// requirement could not be evaluated, so it may not be assumed
-	// satisfied.
+	// listingUnavailable counts bindings refused because the LISTING
+	// read did not answer. One source, named exactly.
+	//
+	// A failed curated-tag lookup used to land here too, and the
+	// conflation was wrong in the way this surface exists to prevent.
+	// The two reads are unrelated sources with unrelated failure modes,
+	// and they are not even correlated: the curated directory can be
+	// unreadable while the listing directory sits there perfectly
+	// fresh. Folded together, the funnel then reported an outage of the
+	// source that ANSWERED and sent an operator to a working sync.
 	listingUnavailable int
+	// tagsUnavailable counts bindings refused because the CURATED
+	// DIRECTORY's tag read did not answer, leaving C3 unevaluated.
+	//
+	// Counted apart from listingUnavailable because a refusal reason is
+	// an instruction to somebody, and these two send that somebody to
+	// different systems.
+	tagsUnavailable int
 	// notListed counts bindings the listing directory does not name.
 	// The refusal that holds independence up.
 	notListed int
@@ -287,8 +299,14 @@ type rwaListingCensus struct {
 // place a scam flag exists is the curated directory — so a candidate
 // whose tags could not be read has not had C3 evaluated and must not be
 // admitted. A failed lookup therefore closes the arm exactly as a failed
-// listing read does, and is counted under the same reason: something a
-// requirement depends on did not answer.
+// listing read does — under its OWN reason, never the listing's.
+//
+// Two sources, two reasons. They are unrelated systems with unrelated
+// failure modes, and a refusal reason is an instruction about where to
+// go and look. Under one reason the funnel could report an outage of
+// the listing directory while that directory sat there perfectly
+// fresh — an alarm naming a working sync, raised by the failure of
+// something else entirely.
 func (s *Server) rwaListingCandidates(
 	ctx context.Context, listing rwaListing, directoryEvaluated map[string]struct{},
 ) ([]rwaListingCandidate, rwaListingCensus) {
@@ -335,9 +353,17 @@ func (s *Server) rwaListingCandidates(
 	tags, tagsOK := s.rwaDirectoryTagsFor(ctx, pending)
 	out := make([]rwaListingCandidate, 0, len(pending))
 	for _, addr := range pending {
+		// Ordered by which source is missing, most specific first. The
+		// listing read is this arm's RECOGNITION source, so its absence
+		// closes the arm whatever the curated directory said; only when
+		// the listing answered can a tag failure be the thing standing
+		// in the way, and that is exactly the case that used to be
+		// reported as a listing outage.
 		switch {
-		case !listing.available || !tagsOK:
+		case !listing.available:
 			census.listingUnavailable++
+		case !tagsOK:
+			census.tagsUnavailable++
 		case !listing.names(addr):
 			census.notListed++
 		default:
