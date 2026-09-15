@@ -1177,6 +1177,26 @@ jobs:
         # re-creates the false-evidence artifact under a new name. No
         # network, no k6, no token.
         run: ./scripts/ci/render-sla-proof-test.sh
+      - name: sla-proof-from-probe self-test
+        # The weekly proof's second source. k6 needs a production-shaped
+        # target nobody has provisioned; the SLA probe has been measuring
+        # ten endpoints on r1 every 15 minutes the whole time, and
+        # scripts/ops/sla-proof-from-probe.sh renders that into the same
+        # dated report. The risk of aggregating it is publishing a number
+        # that is not what it says it is, so what these fixtures pin is
+        # mostly refusal and mostly labelling: every provenance field
+        # missing on its own, an absent headline series, a credential in
+        # the target URL, two hosts merged into one table, a retained
+        # window under the floor, an unreachable Prometheus — each rc 2
+        # with nothing written. Then the labelling: a window with a hole
+        # in it cannot reach PROVEN even with otherwise-clean numbers, the
+        # excludes-the-edge caveat follows the recorded probe target
+        # rather than being asserted, and the filename follows the window
+        # it measured. The base fixture is a real capture from r1's
+        # Prometheus, and one case stands up a stub HTTP server so the
+        # fetch path — the promql, the window clamp, the gap detector —
+        # is not left untested. No network, no Prometheus, no token.
+        run: bash scripts/ops/sla-proof-from-probe-test.sh
       - name: check-public-dataset self-test
         # backup-restore-6 (audit-2026-08-29): fixtures for the
         # aws-public-blockchain drift verdict public-dataset-check.yml

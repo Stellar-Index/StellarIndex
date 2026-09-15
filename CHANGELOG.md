@@ -16,6 +16,60 @@ against.
 ## [Unreleased]
 
 ## [v0.82.0] — 2026-09-15
+### Added
+
+- **ops:** `scripts/ops/sla-proof-from-probe.sh` renders the dated SLA
+  proof report by aggregating the `stellarindex_sla_probe_*` series that
+  `stellarindex-sla-probe` has been writing into node_exporter's textfile
+  collector every 15 minutes, rather than from a k6 soak against a target
+  that does not exist.
+
+  The weekly proof had exactly one source and that source was blocked:
+  `K6_TARGET_STAGING` is deliberately unset, the scenarios refuse a
+  production target by design, and the canonical scenario is a 300 rps ×
+  10 min soak — so the single production host was never a candidate. The
+  probe has meanwhile been measuring ten endpoints continuously, and a
+  measurement that exists is better evidence than a measurement that is
+  waiting on a host nobody has provisioned.
+
+  What it aggregates and what it refuses to claim are the same decision.
+  Percentiles do not average, and the probe exports one p50/p95/p99 per
+  run and never the underlying samples, so the request-level percentile
+  for the week is not recoverable and is not computed. The headline is
+  the largest per-run percentile, which is a true upper bound on the
+  pooled one — every run has at least 95 % of its samples at or below its
+  own p95, so pooling runs keeps at least 95 % at or below the largest of
+  those values, for any run sizes. The bound runs one way, and the report
+  says so: under the target it proves the target held, over it the bound
+  simply cannot settle the question. Availability is a ratio rather than
+  a percentile and gets the opposite treatment — a window ratio weighted
+  by each run's own sample count, because gating it on the worst single
+  30-second run would fail a window the SLO was comfortably met in.
+  Nothing is rolled up across endpoints; the verdict is a conjunction of
+  per-endpoint bounds and there is no "overall p95" in the document.
+
+  The report states, in the document rather than only in the code, that
+  it is not a load test and at what concurrency it was taken; that the
+  probe reads `http://localhost:3000/v1` from inside the box and
+  therefore excludes DNS, TLS, the reverse proxy and any CDN, so a
+  client's p95 is strictly larger than every figure in it; how many
+  samples per run and over what measured window; and how many API builds
+  were live inside that window. The network-path sentence is derived from
+  the recorded probe target rather than asserted, so repointing the probe
+  at the public name changes the claim instead of leaving a stale one.
+
+  It refuses — rc 2, writing nothing — when Prometheus is unreachable,
+  when a headline series is absent, when provenance is unset, when the
+  series span more than one host, when the target URL carries a
+  credential, or when the retained window is below the floor. That last
+  one is not hypothetical: retention here is the 15-day default, not
+  unbounded, so a requested week is a fact to measure rather than assume.
+  A window with holes in it renders but cannot reach PROVEN, and says
+  which kind of hole it had — a gap in the series means scraping stopped,
+  while a frozen `last_pass_timestamp` means the probe stopped and the
+  textfile collector kept re-serving its last output.
+
+## [v0.81.0] — 2026-09-15
 
 ### Added
 

@@ -290,6 +290,7 @@ echo "=== Deploy-protection self-test ===" && ./scripts/ci/check-deploy-protecti
 echo "=== Main-CI-health decision-core self-test ===" && ./scripts/ci/check-main-ci-health-test.sh
 echo "=== SLA-evidence decision-core + k6-weekly wiring self-test ===" && ./scripts/ci/check-sla-evidence-test.sh
 echo "=== SLA proof renderer self-test ===" && ./scripts/ci/render-sla-proof-test.sh
+echo "=== SLA proof from probe-aggregate self-test ===" && bash scripts/ops/sla-proof-from-probe-test.sh
 echo "=== deploy/systemd authority ===" && bash ./scripts/ci/lint-deploy-systemd-authority.sh
 echo "=== Textfile-collector exposition ===" && ./scripts/ci/lint-textfile-exposition.sh
 echo "=== Textfile-collector exposition self-test ===" && ./scripts/ci/lint-textfile-exposition-test.sh
