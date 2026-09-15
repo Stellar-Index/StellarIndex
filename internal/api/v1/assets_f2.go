@@ -414,6 +414,12 @@ func (s *Server) populateMarketCap(ctx context.Context, detail *AssetDetail, ass
 		if mc, err := usdMarketValue(snap.CirculatingSupply, usdPrice, detail.Decimals); err != nil {
 			s.logger.Warn("market_cap_usd compute failed",
 				"err", err, "asset_key", key, "price", usdPrice)
+		} else if capExceedsObservedTurnover(mc, detail.VolumeUSD24h, s.maxMarketCapVolumeRatio) {
+			// The ceiling is a test of the computed FIGURE, so unlike the
+			// floor above it can only run here. The detail page and the
+			// listing must agree on the verdict or the same asset reads as
+			// valued on one surface and unvalued on the other.
+			detail.MarketCapLowLiquidity = true
 		} else {
 			detail.MarketCapUSD = &mc
 		}
@@ -422,7 +428,12 @@ func (s *Server) populateMarketCap(ctx context.Context, detail *AssetDetail, ass
 		if fdv, err := usdMarketValue(snap.MaxSupply, usdPrice, detail.Decimals); err != nil {
 			s.logger.Warn("fdv_usd compute failed",
 				"err", err, "asset_key", key, "price", usdPrice)
-		} else {
+		} else if !capExceedsObservedTurnover(fdv, detail.VolumeUSD24h, s.maxMarketCapVolumeRatio) {
+			// FDV is the cap computed over MAX supply, so it is the larger
+			// of the two figures and clears the ceiling strictly less often
+			// than the cap does. Withholding the cap while still publishing
+			// an even bigger FDV beside it would defeat the guard on the
+			// same row.
 			detail.FDVUSD = &fdv
 		}
 	}

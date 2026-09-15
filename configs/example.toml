@@ -270,6 +270,7 @@ vwap_window_seconds          = 300
 twap_window_seconds          = 300
 min_usd_volume               = 10000.0
 min_market_cap_volume_usd    = 1000.0   # valuation-integrity floor (USD): market_cap_usd/fdv_usd are suppressed (served null, market_cap_low_liquidity=true) when the backing price came from a single venue AND trailing-24h volume < this. 0 disables.
+max_market_cap_volume_ratio  = 50000.0  # valuation-integrity ceiling: market_cap_usd/fdv_usd are suppressed the same way when the computed figure exceeds this multiple of the asset's own trailing-24h volume. Reads as days-to-turn-over; the floor above cannot see a large claim sitting on real but tiny trading. 0 disables.
 outlier_sigma_threshold      = 4.0
 triangulation_enabled        = true
 interval_seconds             = 30

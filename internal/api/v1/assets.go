@@ -1219,10 +1219,21 @@ func (s *Server) fillRowMarketCap(
 		stampCirculatingSupply(row, circ, basis)
 		return
 	}
-	if mc := computeMarketCapUSD(circ, *row.PriceUSD, row.Decimals); mc != "" {
-		row.MarketCapUSD = &mc
-		stampCirculatingSupply(row, circ, basis)
+	mc := computeMarketCapUSD(circ, *row.PriceUSD, row.Decimals)
+	if mc == "" {
+		return
 	}
+	// The turnover ceiling can only be applied once the figure exists —
+	// it is a test of the CLAIM, not of the inputs, which is exactly why
+	// the absolute floor above cannot stand in for it.
+	if row.AssetID != "native" &&
+		capExceedsObservedTurnover(mc, row.VolumeUSD24h, s.maxMarketCapVolumeRatio) {
+		row.MarketCapLowLiquidity = true
+		stampCirculatingSupply(row, circ, basis)
+		return
+	}
+	row.MarketCapUSD = &mc
+	stampCirculatingSupply(row, circ, basis)
 }
 
 // applySubstanceGateToListing extends the thin-market substance gate
@@ -1651,6 +1662,60 @@ func dustLiquiditySuppressed(sourceCount int, volume24hUSD *string, floor float6
 		return false
 	}
 	return vol.Cmp(big.NewFloat(floor)) < 0
+}
+
+// capExceedsObservedTurnover reports whether a computed market cap (or FDV)
+// is so large against the asset's OWN observed trading that no market has
+// valued anything close to it.
+//
+// It is the ceiling to [dustLiquiditySuppressed]'s floor, and it exists
+// because the floor cannot see this case. The floor asks whether trading is
+// SMALL in absolute dollars; an asset clears it with real four-figure volume
+// and can still claim a cap nine orders of magnitude larger, because an
+// absolute threshold does not scale with the size of the claim. A $1,000
+// floor is a meaningful test of a $50,000 asset and no test at all of a
+// $3,000,000,000 one.
+//
+// The ratio reads as DAYS TO TURN OVER: a cap of N × trailing-24h volume is
+// the number of days the whole float would take to change hands once at the
+// observed rate. Measured across the served pubnet set on 2026-09-15 that
+// number separated cleanly, with no middle ground to arbitrate: every
+// recognised asset sat at or below 2,856 (TFT, 7.8 years), and two vanity
+// mints from a single domain sat at 826,462 and 928,117 — 2,300 and 2,500
+// years — publishing $5.89B of the listing's headline total between them on
+// $6,759 of combined daily volume. The default line (50,000, about 137 years)
+// is set an order of magnitude above the highest recognised asset rather than
+// just above it, so an asset that is merely illiquid keeps its cap.
+//
+// An asset whose cap is refused here is not being called fraudulent and its
+// supply is not being doubted. Both remain facts and both remain served; what
+// is withheld is the CLAIM that a market has valued them, which is the only
+// thing market_cap_usd asserts. The RWA surface's reference_valuation is
+// where a supply × an independent price belongs.
+//
+// UNMEASURED INPUTS NEVER SUPPRESS, mirroring the floor: a nil, unparseable
+// or non-positive volume is the absence of a reading rather than evidence of
+// thin trading, and acting on it would suppress caps for a data gap. Every
+// cap the listing published on 2026-09-15 carried a positive volume, so the
+// two guards between them cover the served set; an asset that publishes a cap
+// with NO volume reading at all would pass both, and nothing on that surface
+// does today.
+func capExceedsObservedTurnover(capUSD string, volume24hUSD *string, maxRatio float64) bool {
+	if maxRatio <= 0 || volume24hUSD == nil {
+		return false
+	}
+	vol, ok := new(big.Float).SetPrec(128).SetString(strings.TrimSpace(*volume24hUSD))
+	if !ok || vol.Sign() <= 0 {
+		return false
+	}
+	cap, ok := new(big.Float).SetPrec(128).SetString(strings.TrimSpace(capUSD))
+	if !ok || cap.Sign() <= 0 {
+		return false
+	}
+	// cap > maxRatio × volume, as a multiplication rather than a division:
+	// the division would need a zero guard the Sign check above already
+	// makes redundant, and big.Float has no exact reciprocal.
+	return cap.Cmp(new(big.Float).SetPrec(128).Mul(big.NewFloat(maxRatio), vol)) > 0
 }
 
 // computeMarketCapUSD = (circulating / 10^decimals) × priceUSD, as a

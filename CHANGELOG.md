@@ -15,6 +15,42 @@ against.
 
 ## [Unreleased]
 
+### Fixed
+
+- **assets:** a market cap is no longer published when the asset's own
+  market has never valued anything close to it.
+
+  The valuation-integrity guard was an absolute floor — a cap is
+  suppressed when its price came from a single venue AND trailing-24h
+  volume is under $1,000. That asks whether trading is SMALL. It cannot
+  ask whether the CLAIM is large against the trading there is, because an
+  absolute threshold does not scale with the size of the claim: $1,000 is
+  a meaningful test of a $50,000 asset and no test at all of a $3B one.
+
+  Measured on pubnet 2026-09-15, two assets from one domain were sitting
+  in that gap. `SLVR` published a $3,133,231,779.97 market cap on
+  $3,791.14 of 24h volume, and `GOLD` $2,754,485,981.60 on $2,967.82 —
+  826,462x and 928,117x their own turnover, or 2,264 and 2,542 years to
+  change the float over once. Both cleared the floor on real volume.
+  Between them they were $5.89B of the listing's headline total.
+
+  Rows now also carry a CEILING: `aggregate.max_market_cap_volume_ratio`,
+  default 50,000. The number comes from the served set rather than from
+  taste — every recognised asset on the surface sat at or below 2,856x
+  (TFT, 7.8 years), so the default is an order of magnitude above the
+  least liquid asset that still publishes a cap, and the gap either side
+  of the line is a factor of 289 with nothing in it. 0 disables it.
+
+  A refused row is not being called fraudulent and its supply is not
+  being doubted. `price_usd` and `circulating_supply` are facts and both
+  still serve; what is withheld is the claim that a market valued them,
+  which is the only thing `market_cap_usd` asserts. The existing
+  `market_cap_low_liquidity` flag says so, on all three surfaces that
+  compute a cap — the listing, the asset detail page and the RWA contract
+  arm — and `fdv_usd` is withheld with it, since FDV is the larger figure
+  and publishing it beside a suppressed cap would defeat the guard on the
+  same row.
+
 ### Added
 
 - **rwa:** `/v1/rwa/assets` rows now publish `supply_basis` and
