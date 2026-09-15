@@ -56,13 +56,26 @@ all:
     vm_overcommit_memory: 0
     clickhouse_max_server_memory_usage_bytes: 4294967296   # 4 GiB
     run_stellar_core:    false
-    # From-scratch bootstrap: the network-aware binaries are on this branch,
-    # not a GitHub release yet — so build + install them from the local
-    # checkout (the task forces GOOS=linux GOARCH=amd64) instead of a release.
-    manage_stellarindex_binaries: true
-    # Greenfield bring-up: apply migrations from the checkout (opt-in — on prod
-    # deploy.yml is the canonical applier, staged from the release tag).
-    stellarindex_apply_migrations: true
+    # Binaries come from the RELEASE, as they do on r1. This read
+    # `true` from the greenfield bring-up, when the network-aware
+    # binaries were on a branch and no release carried them; that has
+    # not been the case since. Leaving it true meant a config apply
+    # rebuilt the binaries from whatever the operator's checkout
+    # happened to be and installed them over the release — so
+    # `/v1/version` reported a build nobody tagged and fleet-release-drift
+    # could not mean anything. deploy.yml is the applier for all three
+    # regions now; flip this back only for a from-scratch bring-up of a
+    # region whose release does not exist yet.
+    manage_stellarindex_binaries: false
+    # Migrations come from the RELEASE TAG, via deploy.yml, exactly as
+    # they do on r1 (which leaves this at its `false` default). This
+    # read `true` from the greenfield bring-up. The task it enables
+    # syncs from the OPERATOR'S LOCAL CHECKOUT, so with it on, a plain
+    # config apply from a working tree could move the schema ahead of
+    # the deployed binary — the shape that once applied an unreleased
+    # migration to production. One applier, and it is the one that
+    # stages from the tag.
+    stellarindex_apply_migrations: false
     run_galexie:         true
     # A fresh `go install` on the VM yields a different-bytes galexie than
     # r1's codified binary — skip the drift-guard asserts (they exist to catch
