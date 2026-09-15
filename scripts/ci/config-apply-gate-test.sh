@@ -937,15 +937,31 @@ run_hostset() {
 }
 
 FULL_SET="stellarindex-indexer stellarindex-aggregator stellarindex-api stellarindex-sla-probe stellarindex-ops stellarindex-migrate"
+# The host column is `<is-enabled>/<is-active>`, the same pair
+# preflight-deploy.sh reads, because the two must agree about what
+# "deployable" means — see case 30.
+#
 # The CLI binaries have no unit anywhere — r1's ops and migrate really do
-# report LoadState=not-found — so the table below is what a healthy r1
-# looks like, and any rule that judged them by unit state would fail here.
-HEALTHY_R1="stellarindex-indexer${TAB}loaded${TAB}v0.63.0
-stellarindex-aggregator${TAB}loaded${TAB}v0.63.0
-stellarindex-api${TAB}loaded${TAB}v0.63.0
-stellarindex-sla-probe${TAB}loaded${TAB}v0.63.0
-stellarindex-ops${TAB}not-found${TAB}v0.63.0
-stellarindex-migrate${TAB}not-found${TAB}v0.63.0"
+# report not-found — so the table below is what a healthy r1 looks like,
+# and any rule that judged them by unit state would fail here.
+# host_table <aggregator-state> [sla-probe-version] [migrate-version]
+#
+# Written out rather than derived with ${var//pat/rep}: the host column now
+# contains a '/', which is that expansion's own delimiter, and a backslash
+# before it stays literal inside double quotes. A fixture that silently fails
+# to substitute is a test that silently stops testing.
+host_table() {
+  local agg="$1" sla="${2:-v0.63.0}" mig="${3:-v0.63.0}"
+  printf '%s\t%s\t%s\n' \
+    stellarindex-indexer    "enabled/active"    v0.63.0 \
+    stellarindex-aggregator "$agg"              v0.63.0 \
+    stellarindex-api        "enabled/active"    v0.63.0 \
+    stellarindex-sla-probe  "enabled/active"    "$sla" \
+    stellarindex-ops        "not-found/unknown" v0.63.0 \
+    stellarindex-migrate    "not-found/unknown" "$mig"
+}
+
+HEALTHY_R1="$(host_table "enabled/active")"
 
 fake_host_ssh 0 "$HEALTHY_R1"
 run_hostset "$(tr ' ' ',' <<<"$FULL_SET")" "" "$FULL_SET" ""
@@ -958,8 +974,7 @@ else
 fi
 
 # --- 26. THE FOUR-OF-SIX r1 FAILURE -----------------------------------
-BEHIND_R1="${HEALTHY_R1//stellarindex-sla-probe${TAB}loaded${TAB}v0.63.0/stellarindex-sla-probe${TAB}loaded${TAB}v0.61.1}"
-BEHIND_R1="${BEHIND_R1//stellarindex-migrate${TAB}not-found${TAB}v0.63.0/stellarindex-migrate${TAB}not-found${TAB}v0.28.1}"
+BEHIND_R1="$(host_table "enabled/active" v0.61.1 v0.28.1)"
 fake_host_ssh 0 "$BEHIND_R1"
 run_hostset "stellarindex-indexer,stellarindex-aggregator,stellarindex-api,stellarindex-ops" \
             "stellarindex-sla-probe stellarindex-migrate" "$FULL_SET" ""
@@ -992,7 +1007,7 @@ else
 fi
 
 # --- 28. a stale manifest is DETECTED, in both directions -------------
-STALE_A="${HEALTHY_R1//stellarindex-aggregator${TAB}loaded/stellarindex-aggregator${TAB}not-found}"
+STALE_A="$(host_table "not-found/unknown")"
 fake_host_ssh 0 "$STALE_A"
 run_hostset "$(tr ' ' ',' <<<"$FULL_SET")" "" "$FULL_SET" ""
 if [[ "$HS_RC" -ne 0 && "$HS_OUT" == *"--refresh-manifest"* ]]; then
@@ -1026,17 +1041,57 @@ else
   fail=$((fail + 1))
 fi
 
-# --- 30. enablement is never consulted --------------------------------
+# --- 30. off at boot but RUNNING still deploys -------------------------
 #
-# Structural, because the behavioural cases cannot prove an absence:
-# testnet's aggregator is UnitFileState=disabled and must still deploy, so
-# the step must read LoadState and nothing else.
-if grep -qE 'is-enabled|UnitFileState' "$TMP/hostset.sh"; then
-  echo "FAIL: the reconciliation reads unit ENABLEMENT — testnet's aggregator is disabled and active, and excluding it re-creates the skew this exists to prevent"
-  fail=$((fail + 1))
-else
-  echo "ok: deployability is read as unit presence (LoadState), never enablement"
+# This case used to be structural — a grep forbidding `is-enabled` — on the
+# ground that testnet's aggregator was UnitFileState=disabled with
+# ActiveState=active, so reading enablement would have excluded a unit that
+# must still deploy, re-creating the skew the manifest exists to prevent.
+#
+# The hazard is real and is still asserted here. What expired is the proxy.
+# Forbidding a property read is not the same statement as forbidding the
+# wrong conclusion, and holding the proxy cost a real dispatch: testnet's
+# aggregator later STOPPED (run_aggregator: false on both test nets), at
+# which point this step's LoadState read and preflight-deploy.sh's
+# enabled/active read disagreed about the same unit. The dispatch was
+# refused as stale-manifest drift and the remedy it printed,
+# --refresh-manifest, re-derived a byte-identical row. Two implementations
+# of one derivation is the defect the proxy was protecting.
+#
+# So the hazard is now tested directly, in both directions, which the
+# comment above said could not be done — it can, because the hazard is a
+# conclusion about a state, not the absence of a read.
+DISABLED_ACTIVE="$(host_table "disabled/active")"
+fake_host_ssh 0 "$DISABLED_ACTIVE"
+run_hostset "$(tr ' ' ',' <<<"$FULL_SET")" "" "$FULL_SET" ""
+if [[ "$HS_RC" -eq 0 ]]; then
+  echo "ok: a unit disabled at boot but RUNNING is still deployable"
   pass=$((pass + 1))
+else
+  echo "FAIL: a disabled-but-running unit was excluded — it would be left behind at every release, which is the skew the manifest exists to prevent"
+  fail=$((fail + 1))
+fi
+
+# --- 30b. off at boot AND stopped is NOT deployable --------------------
+#
+# The other half, and the one the old proxy could not express. Restarting a
+# daemon somebody deliberately stopped is not a deploy, and deploy-binary.yml
+# requires `is-active` after the restart — so a unit in this state fails the
+# probe and rolls the binary back. Both test nets set run_aggregator: false,
+# so this is their real state, and the manifest correctly calls it
+# undeployable. The reconciliation has to agree, or it reports the agreement
+# as drift.
+DISABLED_STOPPED="$(host_table "disabled/inactive")"
+fake_host_ssh 0 "$DISABLED_STOPPED"
+run_hostset "stellarindex-indexer,stellarindex-api,stellarindex-sla-probe,stellarindex-ops,stellarindex-migrate" \
+            "" "stellarindex-indexer stellarindex-api stellarindex-sla-probe stellarindex-ops stellarindex-migrate" \
+            "stellarindex-aggregator:unit-off-disabled-inactive"
+if [[ "$HS_RC" -eq 0 ]]; then
+  echo "ok: a unit off at boot and stopped is undeployable, and the manifest saying so is not drift"
+  pass=$((pass + 1))
+else
+  echo "FAIL: the manifest and the host agree that a stopped unit is undeployable, and the reconciliation called it drift (rc=$HS_RC): $HS_OUT"
+  fail=$((fail + 1))
 fi
 
 # ─── The evidence step and the gate, as one loop ─────────────────────

@@ -729,6 +729,7 @@ describe('RWAView', () => {
               feed: 'rwa:USTRY',
               quote: 'fiat:USD',
               as_of: '2026-08-01T00:00:00Z',
+              provenance: 'oracle_instrument_nav',
               stale: true,
             },
           }),
