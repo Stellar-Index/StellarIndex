@@ -7113,14 +7113,18 @@ export interface components {
              */
             bound_instruments: components["schemas"]["RWABoundInstrument"][];
             /**
-             * @description The CURATED set of contract addresses this surface will admit
-             *     on the curated basis, and the real-world instrument each is
-             *     bound to.
+             * @description The CURATED set of contract addresses that have cleared the
+             *     evidence bar, and the real-world instrument each is bound to.
              *
-             *     EMPTY is a meaningful answer, not a missing one: it says no
-             *     contract has yet cleared the evidence bar for a curated
-             *     binding, so the only contracts admissible today are those
-             *     whose on-chain symbol an independent oracle already prices.
+             *     An address appearing here is NOT a statement that it is in
+             *     the set. The binding answers the instrument requirement (C4)
+             *     only; independent naming of that same address by the curated
+             *     directory (C2) is still required, and the candidate scan only
+             *     ever enumerates addresses the directory named. So an address
+             *     can be listed here and still be refused — read this list
+             *     against the admitted rows to see which identities are known
+             *     but not yet independently vouched for.
+             *
              *     Adding an entry is a code change, review-gated the same way
              *     the audited wasm-hash set is, and requires the address from a
              *     primary source — an address inferred from a dashboard is a
@@ -7629,8 +7633,9 @@ export interface components {
              *     of its tokens is one unit of the instrument an oracle prices
              *     under that name. The curated contract set
              *     (`definition.bound_contract_instruments`) records instrument
-             *     and class rather than a feed, and ships empty for want of
-             *     primary sources.
+             *     and class rather than a feed, so it cannot answer this
+             *     however many entries it holds — a fund's identity is not a
+             *     price for it.
              *     `no_reference_feed` — the pair IS bound, but the oracle stream
              *     carries no row for its feed.
              *     `reference_unavailable` — the oracle read did not answer, so
