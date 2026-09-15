@@ -113,4 +113,27 @@ describe('SponsorBoard', () => {
 
     expect(await screen.findByText(/warming/i)).toBeInTheDocument();
   });
+
+  /**
+   * THE FINDING THIS GUARDS. The board answers "who sponsors the most"
+   * and immediately raises "which accounts, and when" — and for a long
+   * time every row led to the generic /accounts/{g} page, where the
+   * sponsorship arm is one panel among a dozen. A board row must be a
+   * way INTO its own subject.
+   */
+  it('links every row through to that sponsor’s own page', async () => {
+    renderWithQuery(<SponsorBoard />);
+
+    const account = 'GAUA7XL5K54CC2DDGP77FJ2YBHRJLT36CPZDXWPM6MP7MANOGG77PNJU';
+    const link = await screen.findByTitle(account);
+    expect(link).toHaveAttribute('href', `/insights/sponsors/${account}/`);
+
+    // Every row, not just the first — the regression that matters is one
+    // row wired up and the rest left behind.
+    const rows = screen.getAllByRole('link', { name: /^G/ });
+    expect(rows.length).toBeGreaterThan(1);
+    for (const row of rows) {
+      expect(row.getAttribute('href')).toMatch(/^\/insights\/sponsors\/G/);
+    }
+  });
 });

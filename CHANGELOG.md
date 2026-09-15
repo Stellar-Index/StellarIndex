@@ -61,6 +61,48 @@ against.
   additional event, only scatter the same ones. Both arms are
   primary-key range reads over the account's own edges, so neither the
   query nor the payload grows with the 21M-row creation graph behind it.
+- **explorer:** per-address pages for the two graph boards —
+  `/insights/sponsors/{g_strkey}` and `/insights/creators/{g_strkey}`,
+  with `/sponsor/{g_strkey}` and `/creator/{g_strkey}` as 301 aliases and
+  every board row linking through. The board answers "who tops the
+  list"; these answer the question a row immediately raises — WHICH
+  accounts, WHEN, and what the address holds.
+
+  Each page carries: the relation's whole-history summary and the
+  inbound edges that made the address (who created or sponsored IT); its
+  rank on the board, plus — for a creator — how much of the created set
+  still exists and the native XLM that surviving set holds now; a
+  monthly chart over `graph/history`; the paginated counterparty list
+  over `graph?relation=`; and the address's own portfolio, rendered by
+  the same positions reader the account page uses rather than a second
+  copy of the pricing rules.
+
+  The chart states what it cannot: a month with no activity emits no
+  point, so the monthly lines BREAK there instead of being drawn through
+  a zero nobody served. The running total is the one series that crosses
+  a quiet month, because a total that gained nothing has not become
+  unknown — and the copy says which of the two a reader is looking at.
+  The event series is labelled a lower bound whenever the payload says
+  so, and `unplaced[]` is printed by reason and count rather than
+  dropped.
+
+  The counterparty table's column sorts reorder the LOADED PAGE and say
+  so. The endpoint is keyset-paged by counterparty account id — that
+  ordering is the cursor — so there is no whole-set ranking to request,
+  and the busiest sponsor's set is 785,615 accounts. Funded totals sort
+  through BigInt on the exact decimal string: a float comparator rounds
+  everything past 2^53 to the same value and would mis-order exactly the
+  biggest funders the sort exists to surface.
+
+  A deployment whose API predates `graph/history` answers 404 there. The
+  panel says the endpoint has not shipped rather than calling it warming,
+  which would tell a reader to wait for a rollup cycle that has already
+  run; the rest of the page is unaffected.
+
+  Both routes are one built shell served for every address by a CF Pages
+  Function — the pattern `/accounts/{g}` and `/issuers/{g}` already use,
+  and the only one available when the creator population is 955,023. The
+  shells are noindex for the same reason theirs are.
 
 ## [v0.80.0] — 2026-09-13
 
