@@ -148,6 +148,7 @@ var subcommands = map[string]func(args []string) error{
 	"sep1-refresh":            ingest.Run,
 	"issuer-flags":            ingest.Run,
 	"directory-sync":          ingest.Run,
+	"listing-sync":            ingest.Run,
 	"asset-registry-backfill": ingest.Run,
 
 	"verify-archive":            archive.Run,
@@ -340,6 +341,23 @@ Subcommands:
                           prune; refuses an empty parse. Display-only data —
                           never feeds verification or the in-repo scam list.
                           Run daily from a timer.
+  listing-sync -config PATH [-base-url URL] [-dry-run] [-timeout DUR]
+                          Cache the Stellar slice of an independent price-
+                          aggregation platform's own per-coin platform->address
+                          map (CoinGecko /coins/list?include_platform=true
+                          joined to /coins/markets) into
+                          asset_listing_directory. ~50 of the upstream's ~21k
+                          coins carry a Stellar address, in both network forms
+                          (Soroban C-strkeys and classic CODE-GISSUER pairs);
+                          malformed ones are skipped and counted. Full upsert +
+                          prune; refuses an empty parse. Prices are carried as
+                          decimal strings and a price with no upstream
+                          publication time is REJECTED, never given a
+                          fabricated one. Corroborating data — it never
+                          attests, and carries no scam flags. Key from
+                          COINGECKO_API_KEY (Pro, auto-selects
+                          pro-api.coingecko.com) or COINGECKO_DEMO_API_KEY.
+                          Run hourly from a timer.
   verify-decoders -config PATH -from N -to N
                           Stream a bounded ledger range from Galexie through
                           every registered decoder and print a per-source tally

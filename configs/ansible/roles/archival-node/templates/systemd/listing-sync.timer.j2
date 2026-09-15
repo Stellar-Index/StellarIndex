@@ -1,0 +1,45 @@
+# systemd timer: hourly independent listing-directory sync.
+#
+# Rendered by Ansible. Companion to listing-sync.service.
+#
+# WHY HOURLY, where the sibling directory-sync is daily. The two cache
+# different kinds of fact. directory-sync mirrors curated LABELS, which
+# change at community-curation cadence. This one caches an
+# address→instrument map AND that platform's published price, and the
+# price is the half that decides the cadence: the storage layer will only
+# serve a price whose upstream publication time is inside 24 hours, so a
+# daily sync would spend most of every day at the edge of that bound and
+# blank the price on the first missed run. Hourly keeps the price well
+# inside it, and the recognition half — bounded at 48 hours on our own
+# sync clock — then has 48 consecutive missed passes of slack before the
+# admitted set starts to shrink. That shrink is fail-closed and counted
+# (ListingDirectoryCensus.Stale), so a dead sync is visible from the read
+# side rather than silently serving forever.
+#
+# COST. One ~3.7 MB catalogue GET plus one small price GET per tick = 48
+# requests/day against a metered API key, which is negligible against
+# either tier's daily allowance and leaves the poller's own budget
+# untouched.
+#
+# Time slot: :34 past every hour + up to 2 min jitter. Chosen to miss
+# every other hourly tick on this host — memory-mappings runs at
+# :01,:06,…,:56 and galexie-archive-tip-lag at :03,:08,…,:58 (so every
+# minute ≡ 1 or 3 mod 5 is taken), sep1-refresh at :12,
+# galexie-archive-fill at :17, galexie-archive-contiguity at :26, and
+# data-freshness at :00/:15/:30/:45. The jitter is capped at 120s rather
+# than the usual 300s so the 04:34 tick cannot drift into
+# verify-archive-tier-b (04:37). Persistent=true so a reboot doesn't skip
+# a tick.
+
+[Unit]
+Description=Hourly independent listing-directory sync
+Documentation=https://github.com/Stellar-Index/StellarIndex/blob/main/migrations/0160_create_asset_listing_directory.up.sql
+
+[Timer]
+OnCalendar=*-*-* *:34:00 UTC
+RandomizedDelaySec=120
+Persistent=true
+Unit=listing-sync.service
+
+[Install]
+WantedBy=timers.target
