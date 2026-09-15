@@ -92,6 +92,29 @@ const (
 	// own it would readmit the code-only identity the whole definition
 	// refuses.
 	BasisOracleFeed = "oracle_rwa_feed"
+	// BasisSep1ISIN — the issuer-bound [[CURRENCIES]] entry declares an
+	// anchor_asset whose value is a well-formed ISIN, check digit and
+	// all. It admits WITHOUT a class, for the same reason
+	// [BasisOracleFeed] does: this arm establishes that a real-world
+	// instrument exists, not what category it belongs to, and inventing
+	// one would publish a classification nothing declared.
+	//
+	// Why an ISIN is evidence at all. anchor_asset_type is a string the
+	// issuer picks from a vocabulary it is free to ignore — Franklin
+	// Templeton's four Stellar share classes all declare `other`. An
+	// ISIN is not picked: it is assigned by a national numbering agency
+	// to a registered security, it is externally checkable, and its
+	// final digit is a Luhn check over the rest. As evidence that a
+	// real-world instrument stands behind a token it is at least as
+	// strong as a self-chosen class string, and arguably stronger.
+	//
+	// What it is NOT is evidence that THIS issuer is entitled to that
+	// ISIN. Nothing here checks that, and nothing needs to: R2 has
+	// already required the declaration to come from the issuer's own
+	// on-chain domain and to name its own account, and R3 has required
+	// an independent directory to recognise that account and not flag
+	// it. An impersonator reaches this arm only after defeating both.
+	BasisSep1ISIN = "sep1_isin_declaration"
 )
 
 // Reject names why a candidate is not in the set. Served on the
@@ -228,6 +251,13 @@ type Candidate struct {
 	// DeclaredAnchorType is the anchor_asset_type from that bound
 	// entry, verbatim. Empty when the entry declares none.
 	DeclaredAnchorType string
+	// DeclaredAnchorAsset is the anchor_asset from that same entry,
+	// verbatim. Carried separately from the type because the two answer
+	// different questions: the type proposes a CLASS, the asset names
+	// the INSTRUMENT. An issuer may give a usable answer to one and not
+	// the other — Franklin Templeton declares type `other` beside ISINs
+	// LU2900381208 and LU3258450587.
+	DeclaredAnchorAsset string
 	// DirectoryTags are the curated third-party tags on the issuer
 	// G-address. Empty when the directory does not list it, which is a
 	// refusal under R3 and not an error.
@@ -241,9 +271,9 @@ type Verdict struct {
 	// Basis names which R4 arm admitted the asset. Empty when refused.
 	Basis string
 	// AnchorClass is the closed-vocabulary class when [BasisSep1Anchor]
-	// admitted it. Empty under [BasisOracleFeed]: an oracle feed names
-	// an instrument, not its class, and inventing one would publish a
-	// classification nothing declared.
+	// admitted it. Empty under [BasisOracleFeed] and [BasisSep1ISIN]:
+	// both name an instrument rather than a class, and inventing one
+	// would publish a classification nothing declared.
 	AnchorClass string
 	// Reject names the FIRST requirement the candidate failed, in R1→R4
 	// order. Empty when admitted.
@@ -294,6 +324,15 @@ func Qualify(c Candidate) Verdict {
 	// recognised entity is that same instrument.
 	if isOracleRWACode(c.Code) {
 		return Verdict{InSet: true, Basis: BasisOracleFeed}
+	}
+	// The ISIN arm, last because it is the weakest of the three in what
+	// it TELLS us — it establishes an instrument and no class — while
+	// being the strongest in identity. An issuer that declared a usable
+	// class has already been admitted above with more information; an
+	// oracle feed has an independent party behind it. This arm carries
+	// only the issuer's own declaration, checked for form.
+	if IsISIN(c.DeclaredAnchorAsset) {
+		return Verdict{InSet: true, Basis: BasisSep1ISIN}
 	}
 	return Verdict{Reject: RejectNoInstrumentClaim}
 }
