@@ -1708,14 +1708,14 @@ func capExceedsObservedTurnover(capUSD string, volume24hUSD *string, maxRatio fl
 	if !ok || vol.Sign() <= 0 {
 		return false
 	}
-	cap, ok := new(big.Float).SetPrec(128).SetString(strings.TrimSpace(capUSD))
-	if !ok || cap.Sign() <= 0 {
+	claim, ok := new(big.Float).SetPrec(128).SetString(strings.TrimSpace(capUSD))
+	if !ok || claim.Sign() <= 0 {
 		return false
 	}
-	// cap > maxRatio × volume, as a multiplication rather than a division:
+	// claim > maxRatio × volume, as a multiplication rather than a division:
 	// the division would need a zero guard the Sign check above already
 	// makes redundant, and big.Float has no exact reciprocal.
-	return cap.Cmp(new(big.Float).SetPrec(128).Mul(big.NewFloat(maxRatio), vol)) > 0
+	return claim.Cmp(new(big.Float).SetPrec(128).Mul(big.NewFloat(maxRatio), vol)) > 0
 }
 
 // computeMarketCapUSD = (circulating / 10^decimals) × priceUSD, as a
