@@ -500,11 +500,189 @@ const CLASS_LABEL: Record<string, string> = {
 };
 
 /**
- * The headline strip. The market-cap tile follows the same three-state
- * rule the DEX TVL headline follows: a plain figure; a figure prefixed
- * "≥" when any member is unvalued; and, when nothing publishes a
- * valuation at all, the words "Not published" — never "$0.00", which
- * would read as a real total of zero dollars.
+ * Splits a served basis into the part the page shows without asking and
+ * the part behind a disclosure.
+ *
+ * The basis is a paragraph, and a headline this size may not carry its
+ * meaning in a tooltip — a figure nobody hovers is a figure read on its
+ * label alone. So the opening claims render inline and the remainder
+ * sits one click away.
+ *
+ * The split is taken from the SERVED text rather than restated here, so
+ * there is one authority for what the number means. A client-side gloss
+ * would keep saying whatever it said on the day it was written, however
+ * the server later revised the basis.
+ */
+export function splitBasis(
+  basis: string | null | undefined,
+  leadSentences = 2,
+): { lead: string; rest: string } {
+  const text = (basis ?? '').trim();
+  if (!text) return { lead: '', rest: '' };
+  const sentences = text.match(/[^.]+\.(?:\s+|$)/g);
+  if (sentences == null || sentences.length <= leadSentences) {
+    return { lead: text, rest: '' };
+  }
+  return {
+    lead: sentences.slice(0, leadSentences).join('').trim(),
+    rest: sentences.slice(leadSentences).join('').trim(),
+  };
+}
+
+/** The full basis, one click away from the figure it describes. */
+function BasisDisclosure({ label, text }: { label: string; text: string }) {
+  return (
+    <details className="mt-2">
+      <summary className="text-ink-muted hover:text-ink cursor-pointer text-xs font-medium underline decoration-dotted underline-offset-2">
+        {label}
+      </summary>
+      <p className="text-ink-muted mt-2 text-xs leading-relaxed">{text}</p>
+    </details>
+  );
+}
+
+/**
+ * The lead figure: what the backing behind the set is worth.
+ *
+ * It leads because it is the question the page is asked. Market cap
+ * requires an observed on-chain price, and a tokenized treasury is
+ * bought and held — so on the live set the two largest instruments by
+ * far, a $535.90M and a $439.46M fund, contribute NOTHING to market cap
+ * while carrying $975M of backing between them. A page that headlined
+ * the market figure published $17.13M for a sector holding $992.49M and
+ * invited exactly one reading: that this is a sector of no consequence.
+ *
+ * What must not follow from leading with it is the reader taking it for
+ * a market capitalisation. Nobody was observed paying this, and none of
+ * the gates behind the market figure can check it. So the basis is on
+ * the page beside the number rather than in a tooltip, the count of
+ * assets it could not value is stated, and the market figure keeps its
+ * own tile at full size rather than being demoted to a footnote.
+ */
+function ReferenceHeadline({
+  summary,
+  referenceTotal,
+}: {
+  summary: Schemas['RWASummary'];
+  referenceTotal: string | null;
+}) {
+  const reference = summary.reference_valuation;
+  const { lead, rest } = splitBasis(reference?.basis);
+  const unvalued = reference?.assets_unvalued ?? 0;
+  return (
+    <StatCell className="lg:col-span-2">
+      <div className="text-ink-muted text-[11px] font-medium tracking-wider uppercase">
+        Value of the backing
+      </div>
+      <div className="tnum text-ink mt-1 text-3xl font-semibold tracking-tight sm:text-4xl">
+        {referenceTotal == null ? (
+          <span className="text-ink-muted text-2xl sm:text-3xl">
+            Not published
+          </span>
+        ) : (
+          <>
+            {reference?.lower_bound && (
+              <span className="text-ink-muted" aria-hidden>
+                ≥{' '}
+              </span>
+            )}
+            {referenceTotal}
+          </>
+        )}
+      </div>
+      <div className="text-ink-muted mt-0.5 text-sm">
+        {referenceTotal == null
+          ? 'No member carries an independent valuation of its instrument'
+          : `Circulating supply × an independent oracle's valuation of the instrument — ${reference?.assets_valued ?? 0} of ${summary.assets} assets`}
+      </div>
+      {/* The floor, stated rather than implied by the "≥". A reader who
+          reads past the glyph still has to be told the total is short
+          of the sector, and by how many assets. */}
+      {reference?.lower_bound && unvalued > 0 && (
+        <p className="text-ink-muted mt-2 text-xs leading-relaxed">
+          <strong className="text-ink">A floor, not a total.</strong> {unvalued}{' '}
+          of {summary.assets} asset{summary.assets === 1 ? '' : 's'} in the set
+          carr{unvalued === 1 ? 'ies' : 'y'} no reference valuation — no bound
+          and current oracle feed, or no circulating-supply reading — and
+          contribute{unvalued === 1 ? 's' : ''} nothing to this figure. The
+          sector is worth at least this much, not exactly this much.
+        </p>
+      )}
+      {lead && (
+        <p className="text-ink-muted mt-2 text-xs leading-relaxed">{lead}</p>
+      )}
+      {rest && (
+        <BasisDisclosure label="What this figure is, in full" text={rest} />
+      )}
+    </StatCell>
+  );
+}
+
+/**
+ * The second figure, at full size beside the first and never folded
+ * into it. It is the only one of the two that somebody was observed
+ * paying, which is precisely why it may not be dropped: it is the
+ * number with evidence behind it, over the rows that have any.
+ */
+function MarketCapHeadline({
+  summary,
+  total,
+}: {
+  summary: Schemas['RWASummary'];
+  total: string | null;
+}) {
+  const { lead, rest } = splitBasis(summary.basis);
+  return (
+    <StatCell>
+      <Stat
+        label="Market cap (observed trades)"
+        size="lg"
+        value={
+          total == null ? (
+            <span className="text-ink-muted">Not published</span>
+          ) : (
+            <>
+              {summary.lower_bound && (
+                <span className="text-ink-muted" aria-hidden>
+                  ≥{' '}
+                </span>
+              )}
+              {total}
+            </>
+          )
+        }
+        sub={
+          total == null
+            ? 'No asset in the set publishes a market valuation'
+            : `${summary.assets_valued} of ${summary.assets} valued at traded prices`
+        }
+      />
+      {summary.lower_bound && summary.assets_unvalued > 0 && (
+        <p className="text-ink-muted mt-2 text-xs leading-relaxed">
+          <strong className="text-ink">Also a floor.</strong>{' '}
+          {summary.assets_unvalued} asset
+          {summary.assets_unvalued === 1 ? '' : 's'} publish
+          {summary.assets_unvalued === 1 ? 'es' : ''} no market valuation and
+          contribute{summary.assets_unvalued === 1 ? 's' : ''} nothing here —
+          mostly because a tokenized instrument is bought and held, not traded.
+        </p>
+      )}
+      {lead && (
+        <p className="text-ink-muted mt-2 text-xs leading-relaxed">{lead}</p>
+      )}
+      {rest && (
+        <BasisDisclosure label="What this figure is, in full" text={rest} />
+      )}
+    </StatCell>
+  );
+}
+
+/**
+ * The headline strip. Both money tiles follow the same three-state rule
+ * the DEX TVL headline follows: a plain figure; a figure prefixed "≥"
+ * when any member is unvalued; and, when nothing publishes a valuation
+ * at all, the words "Not published" — never "$0.00", which would read
+ * as a real total of zero dollars.
  */
 function HeadlineStats({
   summary,
@@ -519,62 +697,13 @@ function HeadlineStats({
   const both = summary.both_bases;
   return (
     <div className="space-y-3">
-      <StatGrid cols={5}>
-        <StatCell>
-          <Stat
-            label="Market cap"
-            size="lg"
-            value={
-              total == null ? (
-                <span className="text-ink-muted">Not published</span>
-              ) : (
-                <>
-                  {summary.lower_bound && (
-                    <span className="text-ink-muted" aria-hidden>
-                      ≥{' '}
-                    </span>
-                  )}
-                  {total}
-                </>
-              )
-            }
-            sub={
-              total == null
-                ? 'No asset in the set publishes a market valuation'
-                : `${summary.assets_valued} of ${summary.assets} valued at traded prices`
-            }
-          />
-        </StatCell>
-        {/* Deliberately NOT labelled as a market cap, and deliberately
-            beside one: the reader who needs the difference is the one
-            who would otherwise read the market figure as the size of
-            the sector. The label says whose claim it is; the caption
-            says nobody was seen paying it. */}
-        <StatCell>
-          <Stat
-            label="Value of backing (reference)"
-            size="lg"
-            value={
-              referenceTotal == null ? (
-                <span className="text-ink-muted">Not published</span>
-              ) : (
-                <>
-                  {reference?.lower_bound && (
-                    <span className="text-ink-muted" aria-hidden>
-                      ≥{' '}
-                    </span>
-                  )}
-                  {referenceTotal}
-                </>
-              )
-            }
-            sub={
-              referenceTotal == null
-                ? 'No member carries an independent valuation of its instrument'
-                : `${reference?.assets_valued ?? 0} of ${summary.assets} priced by an oracle, not by a market`
-            }
-          />
-        </StatCell>
+      {/* The two bases, in the order a reader should meet them, and
+          never added together. */}
+      <div className="rounded-card border-line bg-line grid grid-cols-1 gap-px overflow-hidden border lg:grid-cols-3">
+        <ReferenceHeadline summary={summary} referenceTotal={referenceTotal} />
+        <MarketCapHeadline summary={summary} total={total} />
+      </div>
+      <StatGrid cols={3}>
         <StatCell>
           <Stat
             label="Assets"
@@ -604,28 +733,20 @@ function HeadlineStats({
         </StatCell>
       </StatGrid>
       <p className="text-ink-muted text-xs leading-relaxed">
-        <strong>Two different kinds of number.</strong> The market cap is what
-        buyers were observed paying, under the same price, liquidity and trust
-        gates the asset pages apply. The value of the backing is what an
-        independent oracle says the underlying instrument is worth, multiplied
-        by the tokens in circulation — nobody was seen paying it, and no gate
-        here can check it. A tokenized treasury is bought and held, so most of
-        this set has no market price at all and the two figures cover different
-        assets. They are never added together.{' '}
+        <strong>Two different kinds of number.</strong> The value of the backing
+        is what an independent oracle says the underlying instrument is worth,
+        multiplied by the tokens in circulation — nobody was seen paying it, and
+        no gate here can check it. The market cap is what buyers were observed
+        paying, under the same price, liquidity and trust gates the asset pages
+        apply. A tokenized treasury is bought and held, so most of this set has
+        no market price at all and the two figures cover different assets. They
+        are never added together.{' '}
         {both != null && both.assets > 0 && (
           <>
             <strong>Where both exist.</strong> {both.assets} of {summary.assets}{' '}
-            carry both figures: {usd(both.market_cap_usd)} at traded prices
-            against {usd(both.reference_value_usd)} at the reference. That gap,
-            per asset, is the premium or discount column below.{' '}
-          </>
-        )}
-        {summary.lower_bound && (
-          <>
-            <strong>At least this.</strong> {summary.assets_unvalued} asset
-            {summary.assets_unvalued === 1 ? '' : 's'} in the set publish no
-            market valuation and contribute nothing to the market-cap
-            total.{' '}
+            carry both figures: {usd(both.reference_value_usd)} at the reference
+            against {usd(both.market_cap_usd)} at traded prices. That gap, per
+            asset, is the premium or discount column below.{' '}
           </>
         )}
         {summary.assets_with_reference > 0 && (
@@ -645,7 +766,6 @@ function HeadlineStats({
             moment that feed published.{' '}
           </>
         )}
-        {summary.basis}
       </p>
     </div>
   );
@@ -659,8 +779,10 @@ function AssetTable({ assets }: { assets: RWAAsset[] }) {
           <Th>Asset</Th>
           <Th>Issuer</Th>
           <Th>Anchor</Th>
-          <Th align="right">Market cap</Th>
+          {/* Same order as the headline: the basis most of this set
+              actually has, then the one most of it does not. */}
           <Th align="right">Value of backing</Th>
+          <Th align="right">Market cap</Th>
           <Th align="right">Price</Th>
           <Th align="right">Instrument value</Th>
           <Th align="right">vs instrument</Th>
@@ -726,10 +848,10 @@ function AssetRow({ asset }: { asset: RWAAsset }) {
             : 'priced by an independent oracle feed'}
         </div>
       </Td>
-      <Td align="right">{cap ?? <Withheld reason={reason} />}</Td>
       <Td align="right">
         <ReferenceValueCell asset={asset} />
       </Td>
+      <Td align="right">{cap ?? <Withheld reason={reason} />}</Td>
       <Td align="right">{price ?? <Withheld reason={reason} />}</Td>
       <Td align="right">
         <ReferenceCell asset={asset} />

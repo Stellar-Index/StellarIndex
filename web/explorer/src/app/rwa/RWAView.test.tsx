@@ -4,7 +4,7 @@ import { describe, expect, it, vi, beforeEach } from 'vitest';
 
 import type { components } from '@/api/types';
 
-import { RWAView } from './RWAView';
+import { RWAView, splitBasis } from './RWAView';
 
 type Schemas = components['schemas'];
 type View = Schemas['RWAAssetsView'];
@@ -311,9 +311,9 @@ describe('RWAView', () => {
     expect(
       (await screen.findAllByText('$1,284,500.00')).length,
     ).toBeGreaterThan(0);
-    expect(screen.getByText(/At least this\./)).toBeInTheDocument();
+    expect(screen.getByText(/Also a floor\./)).toBeInTheDocument();
     expect(
-      screen.getByText(/publish no market valuation and contribute nothing/),
+      screen.getByText(/no market valuation and contribute/),
     ).toBeInTheDocument();
   });
 
@@ -736,8 +736,9 @@ describe('RWAView', () => {
     // Never as a market cap. The column heading, the caption under the
     // cell and the tile all name the basis rather than borrowing the
     // market's vocabulary.
+    expect(screen.getByText('Value of the backing')).toBeInTheDocument();
     expect(
-      screen.getByText('Value of backing (reference)'),
+      screen.getByText(/Circulating supply × an independent oracle/),
     ).toBeInTheDocument();
     expect(screen.getAllByText('at reference price').length).toBeGreaterThan(0);
     expect(
@@ -1081,5 +1082,197 @@ describe('RWAView — contract arm', () => {
     ).toBeInTheDocument();
     expect(screen.getAllByText(/ours to fix/).length).toBeGreaterThan(0);
     expect(screen.getAllByText(/the rule working/).length).toBeGreaterThan(0);
+  });
+
+  // ─── the reported defect ────────────────────────────────────────
+  //
+  // The page led with market cap. On the live set that is $17.13M
+  // against $992.49M of backing, because the two largest instruments —
+  // a $535.90M and a $439.46M fund — are bought and held and have no
+  // observed Stellar price at all: they contribute nothing to market
+  // cap while carrying $975M of backing between them. An operator
+  // comparing the page against a supply-times-NAV figure published
+  // elsewhere read the difference as missing data. Nothing was missing.
+  // The page was leading with the basis that this set, by its nature,
+  // mostly does not have.
+  describe('leads with the basis the set actually has', () => {
+    const LIVE_BASIS =
+      'Sum of circulating supply times an independent oracle’s published ' +
+      'valuation of the real-world instrument each token declares it anchors ' +
+      'to. THIS IS NOT A MARKET CAPITALISATION AND NOT AN OBSERVED PRICE: ' +
+      'nobody was seen paying it. It is what an oracle says one unit of the ' +
+      'backing is worth, multiplied by the tokens in circulation. Assets ' +
+      'with no bound and current oracle feed contribute nothing and are ' +
+      'counted separately, so the total is a LOWER BOUND.';
+
+    function liveView(over: Partial<Schemas['RWASummary']> = {}) {
+      return view({
+        assets: [
+          asset(),
+          asset({
+            asset_id: `BENJI-${ISSUER}`,
+            code: 'BENJI',
+            slug: 'benji',
+            name: 'Franklin OnChain U.S. Government Money Fund',
+            valuation: { status: 'unpriced' },
+            premium: { status: 'no_market_price' },
+            reference_valuation: {
+              status: 'published',
+              value_usd: '439462363.05',
+            },
+          }),
+          asset({
+            asset_id: `USDY-${ISSUER}`,
+            code: 'USDY',
+            slug: 'usdy',
+            name: 'Ondo US Dollar Yield',
+            valuation: { status: 'unpriced' },
+            premium: { status: 'no_market_price' },
+            reference_valuation: {
+              status: 'published',
+              value_usd: '535897722.98',
+            },
+          }),
+        ],
+        summary: {
+          ...view().summary,
+          assets: 11,
+          issuers: 5,
+          market_cap_usd: '17128565.34',
+          assets_valued: 3,
+          assets_unvalued: 8,
+          lower_bound: true,
+          assets_with_reference: 7,
+          assets_compared: 3,
+          reference_valuation: {
+            value_usd: '992488360.69',
+            assets_valued: 7,
+            assets_unvalued: 4,
+            lower_bound: true,
+            sources: ['redstone'],
+            basis: LIVE_BASIS,
+          },
+          ...over,
+        },
+      });
+    }
+
+    it('puts the reference total ahead of the market cap', async () => {
+      apiGetData.mockResolvedValue(liveView());
+      renderView();
+
+      const backing = await screen.findByText('Value of the backing');
+      const market = screen.getByText('Market cap (observed trades)');
+      // Node.DOCUMENT_POSITION_FOLLOWING === 4: `market` comes after
+      // `backing` in document order. Both are present at full size —
+      // the market figure is second, not hidden.
+      expect(
+        backing.compareDocumentPosition(market) &
+          Node.DOCUMENT_POSITION_FOLLOWING,
+      ).toBeTruthy();
+      expect(screen.getAllByText('$992,488,360.69').length).toBeGreaterThan(0);
+      expect(screen.getAllByText('$17,128,565.34').length).toBeGreaterThan(0);
+    });
+
+    it('carries the headline basis as page text, not only as a tooltip', async () => {
+      apiGetData.mockResolvedValue(liveView());
+      renderView();
+
+      // The sentence a reader must not have to hover to find. It comes
+      // from the SERVED basis, so the page cannot drift from what the
+      // server says the number means.
+      const stated = await screen.findByText(
+        /THIS IS NOT A MARKET CAPITALISATION AND NOT AN OBSERVED PRICE/,
+      );
+      expect(stated).toBeInTheDocument();
+      // Rendered text, not a title attribute on something invisible.
+      expect(stated.textContent).toMatch(/nobody was seen paying it/);
+      // And the tail of the basis is reachable without leaving the page.
+      expect(
+        screen.getAllByText('What this figure is, in full').length,
+      ).toBeGreaterThan(0);
+    });
+
+    it('says the headline is a floor and how many assets it could not value', async () => {
+      apiGetData.mockResolvedValue(liveView());
+      renderView();
+
+      expect(
+        await screen.findByText(/A floor, not a total\./),
+      ).toBeInTheDocument();
+      expect(
+        screen.getByText(/4 of 11 assets in the set carry no reference/),
+      ).toBeInTheDocument();
+      expect(
+        screen.getByText(/at least this much, not exactly this much/),
+      ).toBeInTheDocument();
+    });
+
+    it('shows a backing value on a row no market ever priced', async () => {
+      apiGetData.mockResolvedValue(liveView());
+      renderView();
+
+      // The two funds that produced the whole discrepancy. Each has no
+      // market cap and must still publish its backing, attributed to
+      // the reference basis rather than left blank.
+      expect(await screen.findByText('$439,462,363.05')).toBeInTheDocument();
+      expect(screen.getByText('$535,897,722.98')).toBeInTheDocument();
+      expect(
+        screen.getAllByText('at reference price').length,
+      ).toBeGreaterThanOrEqual(2);
+      // And the market column says withheld, never zero.
+      expect(screen.getAllByText('Unavailable').length).toBeGreaterThan(0);
+      expect(screen.queryByText('$0.00')).not.toBeInTheDocument();
+    });
+
+    it('never renders a withheld headline as zero', async () => {
+      apiGetData.mockResolvedValue(
+        liveView({
+          reference_valuation: {
+            assets_valued: 0,
+            assets_unvalued: 11,
+            lower_bound: false,
+            basis: 'No member currently carries a reference valuation.',
+          },
+        }),
+      );
+      renderView();
+
+      expect(await screen.findByText('Not published')).toBeInTheDocument();
+      expect(screen.queryByText('$0.00')).not.toBeInTheDocument();
+      expect(
+        screen.getByText(
+          'No member carries an independent valuation of its instrument',
+        ),
+      ).toBeInTheDocument();
+    });
+  });
+});
+
+// splitBasis decides what a reader sees without asking. Its edge cases
+// are the ones where a basis could silently stop being shown at all.
+describe('splitBasis', () => {
+  it('leads with the opening sentences and defers the rest', () => {
+    const { lead, rest } = splitBasis('One. Two. Three. Four.');
+    expect(lead).toBe('One. Two.');
+    expect(rest).toBe('Three. Four.');
+  });
+
+  it('shows everything when the basis is shorter than the lead', () => {
+    const { lead, rest } = splitBasis('Only one sentence.');
+    expect(lead).toBe('Only one sentence.');
+    expect(rest).toBe('');
+  });
+
+  it('shows text that carries no sentence break rather than dropping it', () => {
+    const { lead, rest } = splitBasis('no terminator here');
+    expect(lead).toBe('no terminator here');
+    expect(rest).toBe('');
+  });
+
+  it('is empty for an absent basis rather than throwing', () => {
+    expect(splitBasis(undefined)).toEqual({ lead: '', rest: '' });
+    expect(splitBasis(null)).toEqual({ lead: '', rest: '' });
+    expect(splitBasis('   ')).toEqual({ lead: '', rest: '' });
   });
 });

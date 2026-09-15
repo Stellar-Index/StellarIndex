@@ -64,6 +64,31 @@ against.
 
 ### Fixed
 
+- **explorer:** `/rwa` leads with the value of the backing rather than
+  with market cap. Market cap requires an observed on-chain price, and a
+  tokenized instrument is bought and held: on the live set the two
+  largest members — a $535.90M and a $439.46M fund — have no Stellar
+  market price at all, so they contribute nothing to market cap while
+  carrying $975M of backing between them. The page headlined $17.13M for
+  a sector holding $992.49M, which reads as a sector of no consequence
+  and, against a supply-times-NAV figure published elsewhere, as missing
+  data. Nothing was missing; the page was leading with the basis this
+  set mostly does not have.
+
+  The market figure keeps its own tile at full size beside it, never
+  folded in and never added to it — it remains the only one of the two
+  that anybody was observed paying. What the headline is now carries on
+  the page rather than in a tooltip: the opening of the server's own
+  `reference_valuation.basis` renders inline, the rest sits behind a
+  disclosure, and the split is taken from the served text so the page
+  cannot drift from what the server says the number means. When the
+  total is a lower bound, the page states it in words and names how many
+  assets carry no reference valuation, rather than leaving a "≥" to
+  carry the point alone. Both tiles keep the existing three-state rule:
+  a figure, a figure marked as a floor, or the words "Not published" —
+  never "$0.00". The table now orders its two money columns the same way
+  as the headline.
+
 - **api:** `/v1/rwa/assets`, `/v1/rwa/history` and `/v1/rwa/premium` no
   longer rebuild the RWA membership set on the request path. The set is
   an indexed scan over every issuer-bound SEP-1 payload (1.18M currency
