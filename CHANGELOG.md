@@ -34,6 +34,33 @@ against.
   identities the surface is still refusing, which distinguishes an issuer
   we cannot identify from one we have identified and cannot yet vouch
   for.
+- **api:** `GET /v1/accounts/{g_strkey}/graph/history` — the time axis of
+  the sponsorship/creation graph: one account's creations and
+  sponsorships bucketed into calendar months, both relations served
+  separately with their own data-derived coverage span.
+
+  What the served tier can place in time is stated rather than assumed.
+  The graph is stored as edges — one row per distinct pair — and an edge
+  carries `first_at` and `last_at` however many events sit behind it, so
+  `new_accounts` per month is exact and complete (it sums to
+  `totals.accounts`), while `events` per month is a lower bound. An edge
+  with N events places its first and its last; the other N-2 are counted
+  exactly in `totals.events_unplaced`, named in `unplaced[]` with the
+  reason that refused them, and flagged with `lower_bound` — never
+  smeared across the interval, never folded into a neighbouring month,
+  never dropped silently. `events_placed + events_unplaced == events`
+  holds by construction.
+
+  A month with no activity emits NO POINT: no zero row and no
+  carried-forward value. An absent month is read against the series'
+  coverage span, inside which it means nothing happened and outside which
+  it means nothing was observed — the two are never conflated.
+
+  Granularity is fixed at `1M` with no parameter, because two timestamps
+  per edge is all the source has: a finer bucket would place no
+  additional event, only scatter the same ones. Both arms are
+  primary-key range reads over the account's own edges, so neither the
+  query nor the payload grows with the 21M-row creation graph behind it.
 
 ## [v0.80.0] — 2026-09-13
 

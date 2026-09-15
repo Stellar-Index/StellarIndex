@@ -308,6 +308,12 @@ type ExplorerReader interface {
 	// ok=false while either graph arm is unbuilt, which the handler
 	// serves as a warming 503 rather than as "no relationships".
 	AccountGraph(ctx context.Context, account, relation string, limit int, cursor string) (clickhouse.AccountGraph, bool, error)
+	// AccountGraphHistory is the same graph on a time axis: one
+	// account's creation and sponsorship activity bucketed into calendar
+	// months, with the events the served tier cannot place in a month
+	// counted rather than smeared. ok=false on the same condition
+	// AccountGraph refuses — either arm unbuilt.
+	AccountGraphHistory(ctx context.Context, account string) (clickhouse.AccountGraphHistory, bool, error)
 	// ContractActivitySummaryFor is the per-contract liveness card
 	// (first/last seen + daily active-ledger series; ok=false when the
 	// active-ledgers index isn't usable — callers omit the card).

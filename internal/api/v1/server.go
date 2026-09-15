@@ -1998,6 +1998,12 @@ func (s *Server) mountRoutes() { //nolint:funlen // route registration is intent
 	// only surface that answers the inbound question "where did this
 	// account come from".
 	s.mux.HandleFunc("GET /v1/accounts/{g_strkey}/graph", s.explorerHandler.AccountGraph)
+	// The same graph on a time axis: monthly creation/sponsorship
+	// activity for one account. A sub-resource rather than a parameter on
+	// the snapshot above — it answers a different question, is read
+	// independently by the detail view's chart, and keeps the snapshot's
+	// payload from growing a series nobody asked for.
+	s.mux.HandleFunc("GET /v1/accounts/{g_strkey}/graph/history", s.explorerHandler.AccountGraphHistory)
 
 	s.mux.HandleFunc("GET /v1/incidents", s.handleIncidents)
 	s.mux.HandleFunc("GET /v1/incidents.atom", s.handleIncidentsAtom)

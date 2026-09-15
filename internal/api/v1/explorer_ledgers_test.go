@@ -49,12 +49,16 @@ type stubExplorerReader struct {
 	graphRelation       string
 	graphLimit          int
 	graphCursor         string
-	contractActivity    clickhouse.ContractActivitySummary
-	holders             []clickhouse.AssetHolder
-	holderCount         int64
-	wealth              []clickhouse.AccountWealth
-	pairStates          map[string]clickhouse.SoroswapPairState
-	tokenDisplays       map[string]clickhouse.TokenDisplayMeta
+	// graphHistory backs GET /v1/accounts/{g}/graph/history. Like the
+	// graph above, the creation arm's coverage span is the stub's "a
+	// cycle has run" signal.
+	graphHistory     clickhouse.AccountGraphHistory
+	contractActivity clickhouse.ContractActivitySummary
+	holders          []clickhouse.AssetHolder
+	holderCount      int64
+	wealth           []clickhouse.AccountWealth
+	pairStates       map[string]clickhouse.SoroswapPairState
+	tokenDisplays    map[string]clickhouse.TokenDisplayMeta
 	// tokenDisplaysErr fails ONLY TokenDisplays, so tests can exercise a
 	// display-lookup outage while the reserve read itself succeeds.
 	tokenDisplaysErr error
@@ -313,6 +317,19 @@ func (s *stubExplorerReader) AccountGraph(_ context.Context, _, relation string,
 		out.Page = append(out.Page, e)
 	}
 	return out, true, nil
+}
+
+// AccountGraphHistory mirrors the real reader's contract: a graph whose
+// creation arm has no covered span has not completed a cycle, and a
+// series over it would claim "this account has never created anything".
+func (s *stubExplorerReader) AccountGraphHistory(_ context.Context, _ string) (clickhouse.AccountGraphHistory, bool, error) {
+	if s.err != nil {
+		return clickhouse.AccountGraphHistory{}, false, s.err
+	}
+	if s.graphHistory.Created.Coverage.ThruLedger == 0 {
+		return clickhouse.AccountGraphHistory{}, false, nil
+	}
+	return s.graphHistory, true, nil
 }
 
 func explorerTestServer(t *testing.T, r v1.ExplorerReader) string {

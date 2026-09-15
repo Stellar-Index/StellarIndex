@@ -40149,6 +40149,205 @@
                   "protocolProfileBehavior": {
                     "disableBodyPruning": true
                   }
+                },
+                {
+                  "name": "history",
+                  "description": "",
+                  "item": [
+                    {
+                      "name": "The account's creation and sponsorship activity over time, by month.",
+                      "request": {
+                        "name": "The account's creation and sponsorship activity over time, by month.",
+                        "description": {
+                          "content": "The time axis of `/accounts/{g_strkey}/graph`: how much this\naccount created and sponsored, month by month. Two series, kept\napart rather than summed — they are different kinds of fact over\ndifferent spans, and an account can be busy in one and absent\nfrom the other.\n\nEVERYTHING HERE IS HISTORY, with the same reading the graph\nsnapshot carries: creations are immutable, and every sponsorship\nfigure counts arrangements **started**, never arrangements in\nforce.\n\nWHAT THE SERVED TIER CAN PLACE IN TIME, AND WHAT IT CANNOT. The\ngraph is stored as edges — one row per distinct pair — and an\nedge carries `first_at` and `last_at` however many events sit\nbehind it. Per-event timestamps exist only in the rollups'\nworking tables, which are truncated and refilled every cycle and\ntherefore hold a partial archive for the length of one. So:\n\n* `new_accounts` is COMPLETE. Every edge has exactly one\n  `first_at`, so summed over the points it equals\n  `totals.accounts` exactly.\n* `events` is a LOWER BOUND whenever `lower_bound` is true. An\n  edge with one event places it; an edge with N > 1 places its\n  first and its last and the other N-2 have no recorded month.\n  Those are counted exactly in `totals.events_unplaced` and\n  named in `unplaced[]` — never smeared across the interval,\n  never folded into a neighbouring month, never dropped\n  silently. `events_placed + events_unplaced == events`, always.\n\nA MONTH WITH NO ACTIVITY EMITS NO POINT. No zero row is written\nfor a quiet month and no value is carried across one. Read an\nabsent month against that series' `coverage`: INSIDE the covered\nspan it means nothing happened, OUTSIDE it means nothing was\nobserved. The two are never conflated into a zero.\n\nGRANULARITY IS FIXED at `1M` and there is deliberately no\nparameter for it. Two timestamps per edge is all the source has,\nso a finer bucket would place no additional event — it would\nonly scatter the same ones over mostly-empty buckets and make\nthe unplaced fraction read as noise.\n\nBOUNDED BY CONSTRUCTION: both arms are primary-key range reads\nover this account's own edges, and the response is one point per\nmonth the account was active, so neither the query nor the\npayload grows with the 21M-row creation graph behind it.\n",
+                          "type": "text/plain"
+                        },
+                        "url": {
+                          "path": [
+                            "accounts",
+                            ":g_strkey",
+                            "graph",
+                            "history"
+                          ],
+                          "host": [
+                            "{{baseUrl}}"
+                          ],
+                          "query": [],
+                          "variable": [
+                            {
+                              "type": "any",
+                              "value": "<string>",
+                              "key": "g_strkey",
+                              "disabled": false,
+                              "description": {
+                                "content": "(Required) G-strkey account id.",
+                                "type": "text/plain"
+                              }
+                            }
+                          ]
+                        },
+                        "header": [
+                          {
+                            "key": "Accept",
+                            "value": "application/json"
+                          }
+                        ],
+                        "method": "GET",
+                        "body": {},
+                        "auth": null
+                      },
+                      "response": [
+                        {
+                          "name": "The account's monthly creation and sponsorship activity.",
+                          "originalRequest": {
+                            "url": {
+                              "path": [
+                                "accounts",
+                                ":g_strkey",
+                                "graph",
+                                "history"
+                              ],
+                              "host": [
+                                "{{baseUrl}}"
+                              ],
+                              "query": [],
+                              "variable": [
+                                {
+                                  "disabled": false,
+                                  "description": {
+                                    "content": "(Required) G-strkey account id.",
+                                    "type": "text/plain"
+                                  },
+                                  "type": "any",
+                                  "value": "<string>",
+                                  "key": "g_strkey"
+                                }
+                              ]
+                            },
+                            "header": [
+                              {
+                                "key": "Accept",
+                                "value": "application/json"
+                              }
+                            ],
+                            "method": "GET",
+                            "body": {}
+                          },
+                          "status": "OK",
+                          "code": 200,
+                          "header": [
+                            {
+                              "key": "Content-Type",
+                              "value": "application/json"
+                            }
+                          ],
+                          "body": "{\n  \"data\": {\n    \"account\": \"<string>\",\n    \"granularity\": \"1M\",\n    \"series\": {\n      \"created\": {\n        \"points\": [\n          {\n            \"period\": \"<string>\",\n            \"period_start\": \"<dateTime>\",\n            \"new_accounts\": \"<integer>\",\n            \"events\": \"<integer>\"\n          },\n          {\n            \"period\": \"<string>\",\n            \"period_start\": \"<dateTime>\",\n            \"new_accounts\": \"<integer>\",\n            \"events\": \"<integer>\"\n          }\n        ],\n        \"totals\": {\n          \"accounts\": \"<integer>\",\n          \"events\": \"<integer>\",\n          \"events_placed\": \"<integer>\",\n          \"events_unplaced\": \"<integer>\"\n        },\n        \"lower_bound\": \"<boolean>\",\n        \"coverage\": {\n          \"from_ledger\": \"<integer>\",\n          \"thru_ledger\": \"<integer>\",\n          \"from_time\": \"<dateTime>\",\n          \"thru_time\": \"<dateTime>\",\n          \"computed_at\": \"<dateTime>\"\n        },\n        \"unplaced\": [\n          {\n            \"reason\": \"repeat-events-not-timestamped\",\n            \"events\": \"<integer>\",\n            \"detail\": \"<string>\"\n          },\n          {\n            \"reason\": \"repeat-events-not-timestamped\",\n            \"events\": \"<integer>\",\n            \"detail\": \"<string>\"\n          }\n        ]\n      },\n      \"sponsored\": {\n        \"points\": [\n          {\n            \"period\": \"<string>\",\n            \"period_start\": \"<dateTime>\",\n            \"new_accounts\": \"<integer>\",\n            \"events\": \"<integer>\"\n          },\n          {\n            \"period\": \"<string>\",\n            \"period_start\": \"<dateTime>\",\n            \"new_accounts\": \"<integer>\",\n            \"events\": \"<integer>\"\n          }\n        ],\n        \"totals\": {\n          \"accounts\": \"<integer>\",\n          \"events\": \"<integer>\",\n          \"events_placed\": \"<integer>\",\n          \"events_unplaced\": \"<integer>\"\n        },\n        \"lower_bound\": \"<boolean>\",\n        \"coverage\": {\n          \"from_ledger\": \"<integer>\",\n          \"thru_ledger\": \"<integer>\",\n          \"from_time\": \"<dateTime>\",\n          \"thru_time\": \"<dateTime>\",\n          \"computed_at\": \"<dateTime>\"\n        },\n        \"unplaced\": [\n          {\n            \"reason\": \"repeat-events-not-timestamped\",\n            \"events\": \"<integer>\",\n            \"detail\": \"<string>\"\n          },\n          {\n            \"reason\": \"repeat-events-not-timestamped\",\n            \"events\": \"<integer>\",\n            \"detail\": \"<string>\"\n          }\n        ]\n      }\n    },\n    \"note\": \"<string>\"\n  }\n}",
+                          "cookie": [],
+                          "_postman_previewlanguage": "json"
+                        },
+                        {
+                          "name": "Client-supplied parameters didn't validate.",
+                          "originalRequest": {
+                            "url": {
+                              "path": [
+                                "accounts",
+                                ":g_strkey",
+                                "graph",
+                                "history"
+                              ],
+                              "host": [
+                                "{{baseUrl}}"
+                              ],
+                              "query": [],
+                              "variable": [
+                                {
+                                  "disabled": false,
+                                  "description": {
+                                    "content": "(Required) G-strkey account id.",
+                                    "type": "text/plain"
+                                  },
+                                  "type": "any",
+                                  "value": "<string>",
+                                  "key": "g_strkey"
+                                }
+                              ]
+                            },
+                            "header": [
+                              {
+                                "key": "Accept",
+                                "value": "application/problem+json"
+                              }
+                            ],
+                            "method": "GET",
+                            "body": {}
+                          },
+                          "status": "Bad Request",
+                          "code": 400,
+                          "header": [
+                            {
+                              "key": "Content-Type",
+                              "value": "application/problem+json"
+                            }
+                          ],
+                          "body": "{\n  \"type\": \"<uri>\",\n  \"title\": \"<string>\",\n  \"status\": \"<integer>\",\n  \"detail\": \"<string>\",\n  \"instance\": \"<string>\",\n  \"request_id\": \"<string>\",\n  \"coverage_from\": \"<dateTime>\",\n  \"outside_coverage\": \"<boolean>\"\n}",
+                          "cookie": [],
+                          "_postman_previewlanguage": "json"
+                        },
+                        {
+                          "name": "Server is degraded (dependency outage, startup, shutdown).",
+                          "originalRequest": {
+                            "url": {
+                              "path": [
+                                "accounts",
+                                ":g_strkey",
+                                "graph",
+                                "history"
+                              ],
+                              "host": [
+                                "{{baseUrl}}"
+                              ],
+                              "query": [],
+                              "variable": [
+                                {
+                                  "disabled": false,
+                                  "description": {
+                                    "content": "(Required) G-strkey account id.",
+                                    "type": "text/plain"
+                                  },
+                                  "type": "any",
+                                  "value": "<string>",
+                                  "key": "g_strkey"
+                                }
+                              ]
+                            },
+                            "header": [
+                              {
+                                "key": "Accept",
+                                "value": "application/problem+json"
+                              }
+                            ],
+                            "method": "GET",
+                            "body": {}
+                          },
+                          "status": "Service Unavailable",
+                          "code": 503,
+                          "header": [
+                            {
+                              "key": "Content-Type",
+                              "value": "application/problem+json"
+                            }
+                          ],
+                          "body": "{\n  \"type\": \"<uri>\",\n  \"title\": \"<string>\",\n  \"status\": \"<integer>\",\n  \"detail\": \"<string>\",\n  \"instance\": \"<string>\",\n  \"request_id\": \"<string>\",\n  \"coverage_from\": \"<dateTime>\",\n  \"outside_coverage\": \"<boolean>\"\n}",
+                          "cookie": [],
+                          "_postman_previewlanguage": "json"
+                        }
+                      ],
+                      "event": [],
+                      "protocolProfileBehavior": {
+                        "disableBodyPruning": true
+                      }
+                    }
+                  ]
                 }
               ]
             },
@@ -40617,7 +40816,7 @@
                   "value": "application/json"
                 }
               ],
-              "body": "{\n  \"data\": {\n    \"query\": \"<string>\",\n    \"kind\": \"transaction\",\n    \"canonical\": \"<string>\",\n    \"href\": \"<string>\",\n    \"supported\": \"<boolean>\",\n    \"note\": \"<string>\"\n  }\n}",
+              "body": "{\n  \"data\": {\n    \"query\": \"<string>\",\n    \"kind\": \"contract\",\n    \"canonical\": \"<string>\",\n    \"href\": \"<string>\",\n    \"supported\": \"<boolean>\",\n    \"note\": \"<string>\"\n  }\n}",
               "cookie": [],
               "_postman_previewlanguage": "json"
             },
