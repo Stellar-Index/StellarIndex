@@ -953,7 +953,11 @@ func (s *Server) admitClassicCandidates(
 			Issuer:             c.Issuer,
 			BoundSep1:          true,
 			DeclaredAnchorType: c.AnchorAssetType,
-			DirectoryTags:      e.Tags,
+			// The declaration's two halves answer different questions
+			// and an issuer may give a usable answer to only one. Both
+			// are passed; the definition decides which it can use.
+			DeclaredAnchorAsset: c.AnchorAsset,
+			DirectoryTags:       e.Tags,
 		})
 		if !v.InSet {
 			out.refusals[v.Reject]++

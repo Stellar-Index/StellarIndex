@@ -15,6 +15,47 @@ against.
 
 ## [Unreleased]
 
+### Added
+
+- **rwa:** the classic arm admits an asset whose issuer-bound SEP-1
+  entry declares an `anchor_asset` that is a well-formed ISIN, under the
+  new basis `sep1_isin_declaration`.
+
+  This is not a relaxation of the definition so much as an inconsistency
+  closed. The requirement asks whether a real-world instrument stands
+  behind the token; the surface already answers that two ways, and the
+  oracle arm has always admitted WITHOUT a class on the stated ground
+  that "a feed names an instrument, not its classification". An ISIN is
+  the same kind of evidence and was being refused for want of a class it
+  was never going to supply.
+
+  What made this visible: Franklin Templeton's four Stellar share classes
+  all declare `anchor_asset_type: other` — a value outside the closed
+  vocabulary — beside ISINs LU2900381208, LU3258450587 and SGXZ71843866.
+  BENJI is in the set only because an oracle feed happens to exist for
+  it. The other three were refused under `no_real_world_instrument_basis`
+  while naming registered securities, which is the opposite of what that
+  reason says.
+
+  An `anchor_asset_type` is a string the issuer picks from a vocabulary
+  it is free to ignore. An ISIN is assigned by a national numbering
+  agency, is externally resolvable, and carries a Luhn check digit over
+  its own body — so a typo fails and an invention fails nine times in
+  ten. The check digit is validated; every positive test fixture had its
+  own reproduced by a separate implementation first, and one of them was
+  wrong on the first pass.
+
+  It admits no class, and it bypasses nothing. The arm runs last, so a
+  declared class still wins and carries more information. It sits below
+  R2 and R3, so an ISIN never carries a candidate past the issuer-bound
+  declaration or the independent recognition that make a self-declared
+  value safe to read at all — a test drives all three refusals to hold
+  that, and fails if the arm is hoisted.
+
+  Blast radius, measured against the live SEP-1 corpus: three assets,
+  all Franklin Templeton, all issuer-bound. Prose anchors like `FOBXX`
+  and `AU` stay refused.
+
 ### Changed
 ### Added
 
