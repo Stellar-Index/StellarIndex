@@ -6988,6 +6988,7 @@ export interface components {
         RWAAssetsView: {
             definition: components["schemas"]["RWADefinition"];
             summary: components["schemas"]["RWASummary"];
+            membership?: components["schemas"]["RWAMembershipSet"];
             /**
              * @description The set, ordered by published market cap descending, then by
              *     observation count. Rows with no published valuation sort
@@ -7923,9 +7924,69 @@ export interface components {
              *     with nothing in it.
              */
             balanced: boolean;
+            /**
+             * @description What did not close. Present exactly when `balanced` is false
+             *     — the two are one statement in two forms and cannot
+             *     disagree. Names the check that failed and the numbers that
+             *     disagreed, carrying each census's own sentence rather than
+             *     restating it. Semicolon-separated when several checks
+             *     failed: they are independent, and the first is not
+             *     necessarily the cause of the rest.
+             */
+            imbalance?: string;
             /** @description One-line statement of what the funnel measured, including the change of unit down the stages. */
             basis: string;
             listing_directory?: components["schemas"]["RWAListingDirectory"];
+        };
+        /**
+         * @description Dates the SET this response describes: when the rebuild that
+         *     produced it finished, and whether the copy being served is past
+         *     its own lifetime.
+         *
+         *     `built_at` is NOT the envelope's `as_of`. The envelope's is the
+         *     RESPONSE's instant and moves between requests; read as the set's
+         *     build time it says the set is refreshing continuously when it is
+         *     not. A set is BUILT, a response is AS OF.
+         *
+         *     The set is cached with a ten-minute lifetime and a lapsed copy
+         *     is served while a detached rebuild runs behind it — the inputs
+         *     move on daily cadences, so making a request wait for an
+         *     eleven-second rescan buys an answer that has not changed. Read
+         *     the two flags together:
+         *
+         *       stale false                        inside its lifetime
+         *       stale true, no rebuild_failed_at   lapsed, a rebuild is coming
+         *       stale true + rebuild_failed_at     lapsed, and the last attempt
+         *                                          to replace it FAILED - the
+         *                                          state to act on
+         *
+         *     Omitted before the first build has ever completed, when there is
+         *     no set to date.
+         */
+        RWAMembershipSet: {
+            /**
+             * Format: date-time
+             * @description When the rebuild that produced this set finished — not when
+             *     the response was rendered, and not when any source was last
+             *     written. Compare it against a source's own clock to tell a
+             *     set that PREDATES a sync from one that disagrees with it.
+             */
+            built_at: string;
+            /**
+             * @description The set has passed its lifetime and a rebuild is owed. It is
+             *     served regardless, which is the design.
+             */
+            stale: boolean;
+            /**
+             * Format: date-time
+             * @description When the most recent rebuild attempt failed. Present only
+             *     while that is still the latest thing to have happened — a
+             *     successful rebuild clears it. Beside `stale` it separates a
+             *     set that is about to be replaced from one that nothing is
+             *     replacing; without it both render as `stale: true`, and only
+             *     the second needs anybody to act.
+             */
+            rebuild_failed_at?: string;
         };
         /**
          * @description What the independent listing directory held at the moment this
