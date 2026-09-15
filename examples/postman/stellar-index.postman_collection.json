@@ -33804,7 +33804,7 @@
                     {
                       "disabled": false,
                       "description": {
-                        "content": "HttpOnly + Secure session cookie.",
+                        "content": "Two cookies. `stellarindex_session` is the HttpOnly +\nSecure session credential. `stellarindex_session_present`\nrepeats its Domain, Path, Secure, SameSite and expiry\nwithout HttpOnly, and carries the constant `1` — a\npresence flag a browser client reads to decide whether a\ncall to `/v1/account/me` can succeed. It carries no\nidentity and no token, no endpoint reads it, and it\nauthorizes nothing.\n",
                         "type": "text/plain"
                       },
                       "key": "Set-Cookie",
@@ -34131,7 +34131,7 @@
                     {
                       "disabled": false,
                       "description": {
-                        "content": "HttpOnly + Secure session cookie.",
+                        "content": "Two cookies. `stellarindex_session` is the HttpOnly +\nSecure session credential. `stellarindex_session_present`\nrepeats its Domain, Path, Secure, SameSite and expiry\nwithout HttpOnly, and carries the constant `1` — a\npresence flag a browser client reads to decide whether a\ncall to `/v1/account/me` can succeed. It carries no\nidentity and no token, no endpoint reads it, and it\nauthorizes nothing.\n",
                         "type": "text/plain"
                       },
                       "key": "Set-Cookie",
@@ -34303,7 +34303,7 @@
               "request": {
                 "name": "Customer dashboard — revoke the current session + clear the cookie.",
                 "description": {
-                  "content": "Idempotent. Calling without a session cookie is still a 200\n— the goal is just to leave the browser in a known\nsigned-out state. Sets a Max-Age=-1 cookie so the browser\ndrops it on the next response.\n",
+                  "content": "Idempotent. Calling without a session cookie is still a 200\n— the goal is just to leave the browser in a known\nsigned-out state. Sets a Max-Age=-1 cookie so the browser\ndrops it on the next response.\n\nClears `stellarindex_session_present` in the same response,\nso a browser is never left holding a presence flag for a\nsession that no longer exists.\n",
                   "type": "text/plain"
                 },
                 "url": {
@@ -34329,7 +34329,7 @@
               },
               "response": [
                 {
-                  "name": "Session revoked (if any) and cookie cleared.",
+                  "name": "Session revoked (if any) and both cookies cleared.",
                   "originalRequest": {
                     "url": {
                       "path": [
@@ -34347,7 +34347,17 @@
                   },
                   "status": "OK",
                   "code": 200,
-                  "header": [],
+                  "header": [
+                    {
+                      "disabled": false,
+                      "description": {
+                        "content": "Expires `stellarindex_session` and\n`stellarindex_session_present`.\n",
+                        "type": "text/plain"
+                      },
+                      "key": "Set-Cookie",
+                      "value": "<string>"
+                    }
+                  ],
                   "cookie": [],
                   "_postman_previewlanguage": "text"
                 },
@@ -34688,7 +34698,7 @@
                         {
                           "disabled": false,
                           "description": {
-                            "content": "HttpOnly + Secure session cookie.",
+                            "content": "Two cookies. `stellarindex_session` is the HttpOnly +\nSecure session credential. `stellarindex_session_present`\nrepeats its Domain, Path, Secure, SameSite and expiry\nwithout HttpOnly, and carries the constant `1` — a\npresence flag a browser client reads to decide whether a\ncall to `/v1/account/me` can succeed. It carries no\nidentity and no token, no endpoint reads it, and it\nauthorizes nothing.\n",
                             "type": "text/plain"
                           },
                           "key": "Set-Cookie",

@@ -3891,6 +3891,10 @@ export interface paths {
          *     — the goal is just to leave the browser in a known
          *     signed-out state. Sets a Max-Age=-1 cookie so the browser
          *     drops it on the next response.
+         *
+         *     Clears `stellarindex_session_present` in the same response,
+         *     so a browser is never left holding a presence flag for a
+         *     session that no longer exists.
          */
         post: operations["logout"];
         delete?: never;
@@ -19093,7 +19097,16 @@ export interface operations {
             /** @description Authenticated; session cookie set; redirect to dashboard. */
             303: {
                 headers: {
-                    /** @description HttpOnly + Secure session cookie. */
+                    /**
+                     * @description Two cookies. `stellarindex_session` is the HttpOnly +
+                     *     Secure session credential. `stellarindex_session_present`
+                     *     repeats its Domain, Path, Secure, SameSite and expiry
+                     *     without HttpOnly, and carries the constant `1` — a
+                     *     presence flag a browser client reads to decide whether a
+                     *     call to `/v1/account/me` can succeed. It carries no
+                     *     identity and no token, no endpoint reads it, and it
+                     *     authorizes nothing.
+                     */
                     "Set-Cookie"?: string;
                     [name: string]: unknown;
                 };
@@ -19154,7 +19167,16 @@ export interface operations {
             /** @description Authenticated; session cookie set. */
             200: {
                 headers: {
-                    /** @description HttpOnly + Secure session cookie. */
+                    /**
+                     * @description Two cookies. `stellarindex_session` is the HttpOnly +
+                     *     Secure session credential. `stellarindex_session_present`
+                     *     repeats its Domain, Path, Secure, SameSite and expiry
+                     *     without HttpOnly, and carries the constant `1` — a
+                     *     presence flag a browser client reads to decide whether a
+                     *     call to `/v1/account/me` can succeed. It carries no
+                     *     identity and no token, no endpoint reads it, and it
+                     *     authorizes nothing.
+                     */
                     "Set-Cookie"?: string;
                     [name: string]: unknown;
                 };
@@ -19205,9 +19227,14 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Session revoked (if any) and cookie cleared. */
+            /** @description Session revoked (if any) and both cookies cleared. */
             200: {
                 headers: {
+                    /**
+                     * @description Expires `stellarindex_session` and
+                     *     `stellarindex_session_present`.
+                     */
+                    "Set-Cookie"?: string;
                     [name: string]: unknown;
                 };
                 content?: never;
@@ -19282,7 +19309,16 @@ export interface operations {
             /** @description Authenticated; session cookie set. */
             200: {
                 headers: {
-                    /** @description HttpOnly + Secure session cookie. */
+                    /**
+                     * @description Two cookies. `stellarindex_session` is the HttpOnly +
+                     *     Secure session credential. `stellarindex_session_present`
+                     *     repeats its Domain, Path, Secure, SameSite and expiry
+                     *     without HttpOnly, and carries the constant `1` — a
+                     *     presence flag a browser client reads to decide whether a
+                     *     call to `/v1/account/me` can succeed. It carries no
+                     *     identity and no token, no endpoint reads it, and it
+                     *     authorizes nothing.
+                     */
                     "Set-Cookie"?: string;
                     [name: string]: unknown;
                 };

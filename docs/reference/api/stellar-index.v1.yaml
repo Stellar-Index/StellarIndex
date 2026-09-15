@@ -9316,7 +9316,15 @@ paths:
           headers:
             Set-Cookie:
               schema: { type: string }
-              description: HttpOnly + Secure session cookie.
+              description: |
+                Two cookies. `stellarindex_session` is the HttpOnly +
+                Secure session credential. `stellarindex_session_present`
+                repeats its Domain, Path, Secure, SameSite and expiry
+                without HttpOnly, and carries the constant `1` — a
+                presence flag a browser client reads to decide whether a
+                call to `/v1/account/me` can succeed. It carries no
+                identity and no token, no endpoint reads it, and it
+                authorizes nothing.
         "400": { $ref: "#/components/responses/BadRequest" }
         "403":
           description: |
@@ -9383,7 +9391,15 @@ paths:
           headers:
             Set-Cookie:
               schema: { type: string }
-              description: HttpOnly + Secure session cookie.
+              description: |
+                Two cookies. `stellarindex_session` is the HttpOnly +
+                Secure session credential. `stellarindex_session_present`
+                repeats its Domain, Path, Secure, SameSite and expiry
+                without HttpOnly, and carries the constant `1` — a
+                presence flag a browser client reads to decide whether a
+                call to `/v1/account/me` can succeed. It carries no
+                identity and no token, no endpoint reads it, and it
+                authorizes nothing.
           content:
             application/json:
               example:
@@ -9421,9 +9437,19 @@ paths:
         — the goal is just to leave the browser in a known
         signed-out state. Sets a Max-Age=-1 cookie so the browser
         drops it on the next response.
+
+        Clears `stellarindex_session_present` in the same response,
+        so a browser is never left holding a presence flag for a
+        session that no longer exists.
       responses:
         "200":
-          description: Session revoked (if any) and cookie cleared.
+          description: Session revoked (if any) and both cookies cleared.
+          headers:
+            Set-Cookie:
+              schema: { type: string }
+              description: |
+                Expires `stellarindex_session` and
+                `stellarindex_session_present`.
         "403":
           description: |
             Cross-site write blocked: state-changing dashboard + auth
@@ -9520,7 +9546,15 @@ paths:
           headers:
             Set-Cookie:
               schema: { type: string }
-              description: HttpOnly + Secure session cookie.
+              description: |
+                Two cookies. `stellarindex_session` is the HttpOnly +
+                Secure session credential. `stellarindex_session_present`
+                repeats its Domain, Path, Secure, SameSite and expiry
+                without HttpOnly, and carries the constant `1` — a
+                presence flag a browser client reads to decide whether a
+                call to `/v1/account/me` can succeed. It carries no
+                identity and no token, no endpoint reads it, and it
+                authorizes nothing.
           content:
             application/json:
               example:
@@ -11899,6 +11933,10 @@ components:
         origin. Gates the `/v1/dashboard/*` management surface —
         API keys are NOT accepted there. Cleared by
         `POST /v1/auth/logout`.
+
+        A non-HttpOnly companion, `stellarindex_session_present`, is
+        written and cleared alongside it as a presence flag for browser
+        clients. It is never accepted as a credential.
 
   parameters:
     AssetIdPath:
