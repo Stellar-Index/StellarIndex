@@ -253,6 +253,12 @@ jobs:
       STELLARINDEX_LOAD_API_KEY: ${{ secrets.STELLARINDEX_LOAD_API_KEY }}
       K6_PROMETHEUS_RW_SERVER_URL: ${{ secrets.K6_PROMETHEUS_RW_SERVER_URL }}
       SCENARIO: ${{ inputs.scenario || '06-mixed-realistic.js' }}
+      # Ask the decision core about THIS producer and no other. The core
+      # now knows two sources, and its default (`any`) is satisfied by
+      # either — which is the right answer to "is the feed alive" and the
+      # wrong answer here: a configured probe source would report rc 0 and
+      # this job would start k6 with nowhere to point.
+      SLA_EVIDENCE_SOURCE: k6
       ISSUE_LABEL: sla-evidence
       ISSUE_TITLE: "SLA evidence: the weekly k6 proof run is producing no evidence"
       # Run-scoped, gitignored output dir. Deliberately NOT the bare

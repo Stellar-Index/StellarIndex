@@ -90,7 +90,7 @@ For postmortem:
   < ~5 req/s real traffic a few probe 5xx can exceed 1.44 %. Check the total
   request rate (Quick diagnosis, first block) before mitigating.
 - **Brief upstream blips** — Cloudflare → R1 has periodic single-region network interruptions; if the burn was < 60 s and recovered without intervention, it's the network, not us. The `for: 2m` window catches most cases. (Caddy-generated 502/503 when the API is unreachable are not in `http_requests_total` and don't count against this SLO — `api-down.md` covers that case.)
-- **Weekly k6 load test** — `k6-weekly.yml` is SCHEDULED (cron `0 2 * * 0`, 02:00 UTC every Sunday), and it targets **staging only** — it cannot trip this alert on r1. Don't attribute an r1 burn to it.
+- **Weekly k6 load test** — not a candidate, for two reasons now. `k6-weekly.yml` no longer carries a `schedule:` trigger at all (retired 2026-09-15; the Sunday slot belongs to `sla-proof-weekly.yml`, which only READS Prometheus and drives no load), and it targets **staging only** even on dispatch. It cannot trip this alert on r1. Don't attribute an r1 burn to it.
 
 ## Related
 

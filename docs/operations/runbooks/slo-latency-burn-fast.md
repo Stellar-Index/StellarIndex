@@ -86,12 +86,18 @@ Capture for postmortem:
 ## Known false-positive patterns
 
 - **First 5 min after deploy** — connection pool warm-up + cache cold-start can push p95 transiently. The `for: 2m` window catches this; if it persists past 5 min it's real.
-- **Weekly k6 load test** — `k6-weekly.yml` runs on a SCHEDULE (cron
-  `0 2 * * 0`, 02:00 UTC every Sunday — not operator-triggered) and targets
-  **staging only**, so it cannot trip this alert on r1. To cross-reference a
-  firing time anyway, check the workflow's run timestamps
-  (`gh run list --workflow k6-weekly.yml`) — there is no
-  `k6_weekly_running` heartbeat metric.
+- **Weekly k6 load test** — `k6-weekly.yml` lost its `schedule:` trigger on
+  2026-09-15 and is dispatch-only, and it targets **staging only** even then,
+  so it cannot trip this alert on r1. To cross-reference a firing time anyway,
+  check the workflow's run timestamps (`gh run list --workflow k6-weekly.yml`)
+  — there is no `k6_weekly_running` heartbeat metric. The Sunday 02:00 UTC slot
+  is now `sla-proof-weekly.yml`, which reads Prometheus and drives no load;
+  what it CAN coincide with is a burn it did not cause but will report.
+- **The SLA probe itself** — `stellarindex-sla-probe.timer` fires every 15
+  minutes and drives ~30 s of requests at concurrency 1 against
+  `localhost:3000`. At low real traffic it is a measurable share of the
+  request mix, which is a reason to check the total request rate before
+  attributing a p95 move to a regression.
 
 ## Related
 
