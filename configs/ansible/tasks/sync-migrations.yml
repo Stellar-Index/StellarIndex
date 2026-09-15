@@ -98,6 +98,15 @@
   register: migrations_archive
   changed_when: false
   delegate_to: localhost
+  # NEVER escalate on the controller. deploy-binary.yml runs `become:
+  # false` at play level so this was invisible there, but archival-node.yml
+  # sets `become: true` for the remote host and a delegated task inherits
+  # it — which makes ansible try sudo on the OPERATOR'S LAPTOP and die
+  # with "Premature end of stream waiting for become success: sudo: a
+  # password is required", 213 tasks into an apply. The same note sits on
+  # the controller-side `go build` in the archival-node role, for the same
+  # reason.
+  become: false
   run_once: true
 
 - name: Ensure migrations dir exists on host

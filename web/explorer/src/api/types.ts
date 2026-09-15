@@ -20687,6 +20687,28 @@ export interface operations {
             query?: {
                 /** @description Board rows to return, 1-500. Defaults to 50. */
                 limit?: number;
+                /**
+                 * @description Return only this account's row, with its `rank` intact.
+                 *
+                 *     The board is otherwise a top-N page while `rank` is a
+                 *     property of the WHOLE aggregation, so an address past
+                 *     `limit` has an UNKNOWN rank rather than a low one — and is
+                 *     indistinguishable from an address that never appears at
+                 *     all. Those are different answers. This is the keyed arm that
+                 *     separates them, and it exists so a client wanting one row
+                 *     does not pull 500 and hope.
+                 *
+                 *     `limit` does not apply: one account has at most one row.
+                 *     `totals` and `coverage` are unaffected and remain
+                 *     whole-aggregation figures, never the filtered row's.
+                 *
+                 *     A well-formed G-strkey holding no row serves an EMPTY array
+                 *     with 200 — "this account never did this" is an answer, not a
+                 *     404. A malformed address is a 400 rather than an empty
+                 *     board, because echoing a corrupted value back as "did
+                 *     nothing" is a claim about whatever the caller meant.
+                 */
+                account?: string;
             };
             header?: never;
             path?: never;
@@ -20809,6 +20831,28 @@ export interface operations {
             query?: {
                 /** @description Board rows to return, 1-500. Defaults to 50. */
                 limit?: number;
+                /**
+                 * @description Return only this account's row, with its `rank` intact.
+                 *
+                 *     The board is otherwise a top-N page while `rank` is a
+                 *     property of the WHOLE aggregation, so an address past
+                 *     `limit` has an UNKNOWN rank rather than a low one — and is
+                 *     indistinguishable from an address that never appears at
+                 *     all. Those are different answers. This is the keyed arm that
+                 *     separates them, and it exists so a client wanting one row
+                 *     does not pull 500 and hope.
+                 *
+                 *     `limit` does not apply: one account has at most one row.
+                 *     `totals` and `coverage` are unaffected and remain
+                 *     whole-aggregation figures, never the filtered row's.
+                 *
+                 *     A well-formed G-strkey holding no row serves an EMPTY array
+                 *     with 200 — "this account never did this" is an answer, not a
+                 *     404. A malformed address is a 400 rather than an empty
+                 *     board, because echoing a corrupted value back as "did
+                 *     nothing" is a claim about whatever the caller meant.
+                 */
+                account?: string;
             };
             header?: never;
             path?: never;

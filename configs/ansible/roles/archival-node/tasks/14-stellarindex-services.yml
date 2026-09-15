@@ -160,29 +160,31 @@
 
 # ──── Migrations (versioned schema for trades + oracle_updates + CAGGs) ───
 
-- name: Ensure migrations dir exists on r1
-  ansible.builtin.file:
-    path: /usr/local/share/stellarindex/migrations
-    state: directory
-    owner: root
-    group: root
-    mode: "0755"
-
+# Same ONE-transfer sync deploy-binary.yml uses, not a second
+# implementation of it. This step used to be a directory-src
+# `ansible.builtin.copy`, chosen because ansible.posix.synchronize runs
+# rsync on the CONTROLLER and so cannot inherit a ProxyJump — which is
+# true, and is why the NAT-only test-net VMs were unreachable through it.
+#
+# But `copy` with a directory src is O(files): one SFTP round-trip plus a
+# remote checksum PER FILE, with no ControlPersist between module
+# invocations. At 308 migrations over the test nets' jump host that task
+# alone ran past twenty minutes on an apply where every file was already
+# byte-identical, and two runs on 2026-09-15 were killed believing it had
+# hung. deploy-binary.yml had already hit this (>16 minutes for 291
+# identical files on r1) and solved it in ../../../tasks/sync-migrations.yml:
+# a deterministic tar built on the controller, one `unarchive` over the
+# same jump-safe connection every other module uses, and an explicit
+# fail-closed prune that restores the delete semantics `copy` silently
+# dropped.
+#
+# Importing it rather than copying it keeps one implementation. Its
+# `local_dist_dir` is the directory HOLDING `migrations/` — the release
+# artefact dir under deploy.yml, this checkout's root here.
 - name: Sync migrations from repo to the host
-  # ansible.builtin.copy (not ansible.posix.synchronize/rsync): synchronize
-  # fails over a ProxyJump connection ("'Connection' object has no attribute
-  # '_new_stdin'") because rsync runs on the controller and can't inherit the
-  # jump. copy is connection-agnostic (works over the private-NAT jump AND
-  # r1's direct SSH), content-hash idempotent, and forces root:root ownership
-  # regardless of the controller's uid — migrations are append-only, so the
-  # lack of stale-file deletion is immaterial.
-  ansible.builtin.copy:
-    src: "{{ playbook_dir }}/../../../migrations/"
-    dest: /usr/local/share/stellarindex/migrations/
-    owner: root
-    group: root
-    mode: "0644"
-    directory_mode: "0755"
+  ansible.builtin.import_tasks: ../../../tasks/sync-migrations.yml
+  vars:
+    local_dist_dir: "{{ playbook_dir }}/../../.."
 
 - name: Run pending migrations against the stellarindex database
   # OPT-IN since 2026-07-10: deploy.yml is the canonical migration

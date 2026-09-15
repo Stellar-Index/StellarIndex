@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"time"
+
+	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 )
 
 // Sponsorship operation type names as stellar.operations records them.
@@ -368,13 +370,18 @@ func RunSponsorsRollup(ctx context.Context, addr string, logf func(format string
 // the cycle's totals and covered span. ok=false (not an error) when the
 // rollup has not completed a cycle, or carries a board with no span to
 // qualify it.
-func (r *ExplorerReader) AccountSponsors(ctx context.Context, limit int) (AccountSponsors, bool, error) {
+//
+// `account`, when non-empty, narrows Board to that one sponsor's row.
+// See [ExplorerReader.AccountCreators] for why: rank is a property of
+// the whole aggregation, the board is a top-N page, and without a keyed
+// arm an address past the cap reads as absent rather than as unranked.
+func (r *ExplorerReader) AccountSponsors(ctx context.Context, limit int, account string) (AccountSponsors, bool, error) {
 	if !r.probeSchema(ctx, &r.accountSponsorsProbe,
 		`SELECT rank FROM stellar.account_sponsors_rollup LIMIT 1`, true) {
 		return AccountSponsors{}, false, nil
 	}
 	var out AccountSponsors
-	if err := r.readSponsorsBoard(ctx, &out, limit); err != nil {
+	if err := r.readSponsorsBoard(ctx, &out, limit, account); err != nil {
 		return AccountSponsors{}, false, err
 	}
 	if err := r.readSponsorsStats(ctx, &out); err != nil {
@@ -386,11 +393,25 @@ func (r *ExplorerReader) AccountSponsors(ctx context.Context, limit int) (Accoun
 	return out, true, nil
 }
 
-func (r *ExplorerReader) readSponsorsBoard(ctx context.Context, out *AccountSponsors, limit int) error {
-	rows, err := r.conn.Query(ctx, `
-		SELECT rank, sponsor, sponsorships_started, distinct_sponsored, revocations_issued,
-		       first_ledger, last_ledger, first_seen_at, last_seen_at, computed_at
+func (r *ExplorerReader) readSponsorsBoard(ctx context.Context, out *AccountSponsors, limit int, account string) error {
+	const cols = `rank, sponsor, sponsorships_started, distinct_sponsored, revocations_issued,
+		       first_ledger, last_ledger, first_seen_at, last_seen_at, computed_at`
+	// Same two shapes as the creator board, and the same reason: the
+	// rollup is keyed by sponsor, so the filtered read returns at most
+	// one row carrying its whole-aggregation rank.
+	var (
+		rows driver.Rows
+		err  error
+	)
+	if account != "" {
+		rows, err = r.conn.Query(ctx, `
+		SELECT `+cols+`
+		FROM stellar.account_sponsors_rollup WHERE sponsor = ?`, account)
+	} else {
+		rows, err = r.conn.Query(ctx, `
+		SELECT `+cols+`
 		FROM stellar.account_sponsors_rollup ORDER BY rank LIMIT ?`, limit)
+	}
 	if err != nil {
 		return fmt.Errorf("clickhouse: account sponsors board: %w", err)
 	}

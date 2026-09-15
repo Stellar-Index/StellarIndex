@@ -4,7 +4,10 @@ import (
 	"context"
 	"math/big"
 	"net/http"
+	"strings"
 	"time"
+
+	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
 // AccountCreatorsView is the wire response for GET /v1/accounts/creators
@@ -88,6 +91,34 @@ func stroopsString(v *big.Int) string {
 	return v.String()
 }
 
+// parseBoardAccount reads the optional `?account=` filter both league
+// tables accept: return only this address's row, with its rank intact.
+//
+// It exists because rank is a property of the whole aggregation while
+// the board is a top-N page. Without it a caller wanting one row has to
+// pull the cap and hope — and an address past the cap is
+// indistinguishable from one that never appears at all, which are
+// different answers a UI must not conflate.
+//
+// A malformed strkey is a 400, never a silently empty board: echoing a
+// mangled address back as "this account did nothing" is the same class
+// of lie parseGraphCursor refuses. A WELL-FORMED address holding no row
+// is a 200 with an empty array — "this account never did this" is an
+// answer.
+func (h *Handler) parseBoardAccount(w http.ResponseWriter, r *http.Request) (string, bool) {
+	raw := strings.TrimSpace(r.URL.Query().Get("account"))
+	if raw == "" {
+		return "", true
+	}
+	if !canonical.IsAccountID(raw) {
+		h.WriteProblem(w, r, "https://api.stellarindex.io/errors/invalid-account",
+			"Invalid account", http.StatusBadRequest,
+			"account must be a G-strkey account address")
+		return "", false
+	}
+	return raw, true
+}
+
 // AccountCreators serves GET /v1/accounts/creators from the
 // ch-creators-rollup cycle's precomputed tables — a keyed board read
 // plus seven metric rows.
@@ -100,10 +131,14 @@ func (h *Handler) AccountCreators(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	account, ok := h.parseBoardAccount(w, r)
+	if !ok {
+		return
+	}
 	ctx, cancel := context.WithTimeout(r.Context(), explorerReadTimeout)
 	defer cancel()
 
-	s, ok, err := h.Reader.AccountCreators(ctx, limit)
+	s, ok, err := h.Reader.AccountCreators(ctx, limit, account)
 	if err != nil {
 		if h.ClientAborted(r, err) {
 			return

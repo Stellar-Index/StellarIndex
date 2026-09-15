@@ -32,10 +32,15 @@ type stubExplorerReader struct {
 	// accountCreators backs GET /v1/accounts/creators; creatorsLimit
 	// records the limit the handler asked for, so a test can pin the
 	// handler's clamping rather than trusting it.
+	// creatorsAccount / sponsorsAccount record the ?account= filter the
+	// handler passed through, so a test can pin that a malformed value
+	// never reaches the reader and a well-formed one always does.
 	accountCreators clickhouse.AccountCreators
 	creatorsLimit   int
+	creatorsAccount string
 	accountSponsors clickhouse.AccountSponsors
 	sponsorsLimit   int
+	sponsorsAccount string
 	// accountGraph backs GET /v1/accounts/{g}/graph. graphCreatedEdges /
 	// graphSponsoredEdges are the FULL outbound edge sets; the stub
 	// applies the keyset cursor and the limit the way the ClickHouse
@@ -175,8 +180,8 @@ func (s *stubExplorerReader) AccountsStats(_ context.Context) (clickhouse.Accoun
 // AccountCreators mirrors the real reader's contract: ok=false unless
 // the snapshot carries a covered span, and the board is truncated to
 // the limit the handler asked for.
-func (s *stubExplorerReader) AccountCreators(_ context.Context, limit int) (clickhouse.AccountCreators, bool, error) {
-	s.creatorsLimit = limit
+func (s *stubExplorerReader) AccountCreators(_ context.Context, limit int, account string) (clickhouse.AccountCreators, bool, error) {
+	s.creatorsLimit, s.creatorsAccount = limit, account
 	if s.err != nil {
 		return clickhouse.AccountCreators{}, false, s.err
 	}
@@ -184,6 +189,19 @@ func (s *stubExplorerReader) AccountCreators(_ context.Context, limit int) (clic
 		return clickhouse.AccountCreators{}, false, nil
 	}
 	out := s.accountCreators
+	// Mirrors the keyed read: the filter selects, the limit does not
+	// apply, the row keeps the rank the rollup gave it, and totals and
+	// coverage are untouched.
+	if account != "" {
+		kept := make([]clickhouse.AccountCreatorRow, 0, 1)
+		for _, row := range out.Board {
+			if row.Creator == account {
+				kept = append(kept, row)
+			}
+		}
+		out.Board = kept
+		return out, true, nil
+	}
 	if limit < len(out.Board) {
 		out.Board = out.Board[:limit]
 	}
@@ -271,8 +289,8 @@ func (s *stubExplorerReader) AccountMovements(_ context.Context, _ string, _ int
 
 // AccountSponsors mirrors the real reader's contract: a snapshot with no
 // covered span is not servable, however many board rows it carries.
-func (s *stubExplorerReader) AccountSponsors(_ context.Context, limit int) (clickhouse.AccountSponsors, bool, error) {
-	s.sponsorsLimit = limit
+func (s *stubExplorerReader) AccountSponsors(_ context.Context, limit int, account string) (clickhouse.AccountSponsors, bool, error) {
+	s.sponsorsLimit, s.sponsorsAccount = limit, account
 	if s.err != nil {
 		return clickhouse.AccountSponsors{}, false, s.err
 	}
@@ -280,6 +298,16 @@ func (s *stubExplorerReader) AccountSponsors(_ context.Context, limit int) (clic
 		return clickhouse.AccountSponsors{}, false, nil
 	}
 	out := s.accountSponsors
+	if account != "" {
+		kept := make([]clickhouse.AccountSponsorRow, 0, 1)
+		for _, row := range out.Board {
+			if row.Sponsor == account {
+				kept = append(kept, row)
+			}
+		}
+		out.Board = kept
+		return out, true, nil
+	}
 	if limit < len(out.Board) {
 		out.Board = out.Board[:limit]
 	}

@@ -44,11 +44,11 @@ describe('AccountRelationStanding', () => {
     apiGet.mockResolvedValue(sponsors);
   });
 
-  it('asks for the deepest page the board endpoint serves', async () => {
+  it('asks the board for one account rather than paging it', async () => {
     renderPanel(OTHER);
     await screen.findByText('#1');
     expect(apiGet).toHaveBeenCalledWith('/v1/accounts/sponsors', {
-      limit: 500,
+      account: OTHER,
     });
   });
 
@@ -58,19 +58,33 @@ describe('AccountRelationStanding', () => {
     expect(screen.getByText('of 2,427 sponsors')).toBeInTheDocument();
   });
 
-  /**
-   * THE FINDING THIS GUARDS. The board endpoint takes no account filter
-   * and caps a page at 500 rows, so an address outside that page has an
-   * UNKNOWN rank, not a low one. Rendering the absence as "unranked" —
-   * or as a blank cell — would turn a reach limit of the lookup into a
-   * claim about the address, and the address's own figures on this page
-   * are exact whether or not the board reaches it.
-   */
-  it('says an unfound rank is beyond the lookup, not a low rank', async () => {
+  it('reads an empty keyed result as "no row", not as a missed page', async () => {
+    apiGet.mockResolvedValue({
+      data: {
+        sponsors: [],
+        totals: { sponsors: 2_427 },
+        computed_at: sponsors.data.computed_at,
+      },
+    });
     renderPanel();
-    const note = await screen.findByText(/not in the top 500/i);
-    expect(note.textContent).toMatch(/unknown here rather than low/i);
+    const note = await screen.findByText(/holds no row on the/i);
     expect(note.textContent).toContain('2,427');
+    expect(screen.queryByText('Rank')).not.toBeInTheDocument();
+  });
+
+  /**
+   * THE FINDING THIS GUARDS. `?account=` is a keyed read, but a
+   * deployment whose API predates it IGNORES the parameter and serves
+   * the default page. Taking rows[0] on that response would publish the
+   * top-ranked account's rank as this address's — a wrong number
+   * wearing the right label, which is worse than an absent one. The
+   * panel matches the address instead of trusting the filter.
+   */
+  it("never claims another account's rank when the filter was ignored", async () => {
+    renderPanel(); // ACCOUNT, while the stub answers with OTHER at rank 1
+    const note = await screen.findByText(/holds no row on the/i);
+    expect(note).toBeInTheDocument();
+    expect(screen.queryByText('#1')).not.toBeInTheDocument();
     expect(screen.queryByText('Rank')).not.toBeInTheDocument();
   });
 

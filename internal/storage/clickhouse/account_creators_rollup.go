@@ -6,6 +6,8 @@ import (
 	"math/big"
 	"strconv"
 	"time"
+
+	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 )
 
 // AccountCreatorRow is one row of the account-creator league table: a
@@ -434,13 +436,22 @@ func RunCreatorsRollup(ctx context.Context, addr string, logf func(format string
 // error) when the rollup isn't provisioned or hasn't completed a cycle —
 // the handler 503s rather than serving zeros, and rather than serving a
 // board with no span to qualify it.
-func (r *ExplorerReader) AccountCreators(ctx context.Context, limit int) (AccountCreators, bool, error) {
+//
+// `account`, when non-empty, narrows Board to that one creator's row,
+// keyed rather than paged. It exists because rank is a property of the
+// WHOLE aggregation and the board is a top-N page: without it, a caller
+// asking "where does this address stand" has to pull `limit` rows and
+// hope the address is inside them, and an address past the cap is
+// indistinguishable from one that never created an account. `limit` is
+// ignored in that mode — one account has one row — and the totals and
+// coverage stay whole-aggregation figures, never the filtered row's.
+func (r *ExplorerReader) AccountCreators(ctx context.Context, limit int, account string) (AccountCreators, bool, error) {
 	if !r.probeSchema(ctx, &r.accountCreatorsProbe,
 		`SELECT rank FROM stellar.account_creators_rollup LIMIT 1`, true) {
 		return AccountCreators{}, false, nil
 	}
 	var out AccountCreators
-	if err := r.readCreatorsBoard(ctx, &out, limit); err != nil {
+	if err := r.readCreatorsBoard(ctx, &out, limit, account); err != nil {
 		return AccountCreators{}, false, err
 	}
 	if err := r.readCreatorsStats(ctx, &out); err != nil {
@@ -455,11 +466,27 @@ func (r *ExplorerReader) AccountCreators(ctx context.Context, limit int) (Accoun
 	return out, true, nil
 }
 
-func (r *ExplorerReader) readCreatorsBoard(ctx context.Context, out *AccountCreators, limit int) error {
-	rows, err := r.conn.Query(ctx, `
-		SELECT rank, creator, accounts_created, funded_stroops, live_accounts, live_stroops,
-		       first_ledger, last_ledger, first_created_at, last_created_at, computed_at
+func (r *ExplorerReader) readCreatorsBoard(ctx context.Context, out *AccountCreators, limit int, account string) error {
+	const cols = `rank, creator, accounts_created, funded_stroops, live_accounts, live_stroops,
+		       first_ledger, last_ledger, first_created_at, last_created_at, computed_at`
+	// Two shapes, one row-scan. The keyed arm carries no ORDER BY and no
+	// LIMIT because the rollup holds exactly one row per creator — the
+	// primary key is the creator — so the filter selects at most one row
+	// and its precomputed `rank` is the true rank over the whole
+	// aggregation, not a position within a page.
+	var (
+		rows driver.Rows
+		err  error
+	)
+	if account != "" {
+		rows, err = r.conn.Query(ctx, `
+		SELECT `+cols+`
+		FROM stellar.account_creators_rollup WHERE creator = ?`, account)
+	} else {
+		rows, err = r.conn.Query(ctx, `
+		SELECT `+cols+`
 		FROM stellar.account_creators_rollup ORDER BY rank LIMIT ?`, limit)
+	}
 	if err != nil {
 		return fmt.Errorf("clickhouse: account creators board: %w", err)
 	}
