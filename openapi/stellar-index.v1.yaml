@@ -16519,9 +16519,31 @@ components:
         listing_valuation:  { $ref: "#/components/schemas/AssetListingValuation" }
         supply_basis:
           type: [string, "null"]
-          enum: [xlm_sdf_reserve_exclusion, xlm_total_only, issuer_exclusion, admin_exclusion, override, sep1_declared_max, sep41_lake_flows, no_metadata]
+          enum: [xlm_sdf_reserve_exclusion, xlm_total_only, issuer_exclusion, admin_exclusion, override, sep1_declared_max, sep41_lake_flows, classic_lake_flows, classic_trustline_sum, contract_storage_balances, no_metadata]
           description: |
-            Which ADR-0011 policy produced the supply numbers.
+            Which ADR-0011 policy produced the supply numbers, and on
+            LISTING rows additionally which ARM answered — three can,
+            and they are not equally complete.
+
+            An exclusion basis (`issuer_exclusion`,
+            `xlm_sdf_reserve_exclusion` and the rest) means a LIVE
+            observation no older than six hours, the same reading
+            `/v1/assets/{asset_id}` publishes for that asset.
+            `classic_lake_flows` sums mint minus burn minus clawback
+            over the asset's Stellar Asset Contract: it sees every
+            holding domain, but over-counts an asset whose historical
+            burn stream was incompletely replayed, and nothing in the
+            reading can detect that.
+            `classic_trustline_sum` is trustline balances ONLY — a
+            LOWER BOUND, blind by construction to claimable balances,
+            liquidity-pool reserves and SAC-held balances.
+            `contract_storage_balances` sums the per-holder Balance
+            entries out of a contract's own storage, for a token whose
+            event log is empty. Also a lower bound, but blind to TIME
+            rather than to domains: Soroban state expiry archives
+            contract-data entries, so a real and restorable balance can
+            be invisible to it.
+
             Surfaced so consumers can decide how much to trust the
             absolute value: `issuer_exclusion`/`admin_exclusion` are
             algorithm defaults; `override` indicates an operator
@@ -16882,8 +16904,20 @@ components:
         flow_count:     { type: integer, format: int64, description: "Number of supply-affecting events summed." }
         source:
           type: string
-          enum: [mint_burn_flows, ledger_total_coins]
-          description: "How total_supply was derived: mint/burn/clawback flows, or the ledger header total_coins (native XLM)."
+          enum: [mint_burn_flows, ledger_total_coins, contract_storage_balances]
+          description: "How total_supply was derived: mint/burn/clawback flows, the ledger header total_coins (native XLM), or — for a token whose event log is empty — the per-holder Balance entries summed out of the contract's own storage."
+        total_supply_lower_bound:
+          type: boolean
+          description: "True when total_supply is a provable FLOOR rather than the figure itself, and must not be presented as exact. Set for source=contract_storage_balances: that reading sees only balances that are ledger entries right now, and Soroban state expiry archives contract-data entries, so a real and restorable balance can be invisible to it. Omitted when false."
+        balance_entries:
+          type: integer
+          description: "Number of per-holder balance entries summed. Only present for source=contract_storage_balances."
+        contract_self_checks_agreed:
+          type: boolean
+          description: "Whether every cross-check the contract itself published agreed with what was summed — its own TotalSupply against the sum, and its own HolderCount against the number of entries visible. False means the contract reports more holders (or a larger total) than the lake can show, which is what an archived balance looks like; the figure is still served, but as a floor. Only present for source=contract_storage_balances; absent means the contract offered no cross-checks, which is not the same as a failed one."
+        declared_decimals:
+          type: integer
+          description: "The scale the CONTRACT ITSELF declares, read from its instance storage (METADATA or Config, either spelling). Only present for source=contract_storage_balances. OMITTED when the chain declares no scale — a consumer must not substitute a default, because a wrong exponent is a published money figure wrong by a power of ten."
         as_of_ledger: { type: integer, format: int64, description: "Lake watermark this read is fresh to (ADR-0041): the highest ledger captured at serve time (for native, the exact ledger total_coins came from). Omitted when no watermark reader is wired. Pairs with flags.stale." }
       required: [asset_id, total_supply, flow_count, source]
 

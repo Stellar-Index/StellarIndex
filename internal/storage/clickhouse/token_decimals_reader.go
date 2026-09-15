@@ -41,6 +41,28 @@ const maxSaneTokenDecimals = 38
 // happens when a contract declares both and they disagree.
 var tokenDecimalsKeys = []string{"decimal", "decimals"}
 
+// tokenMetadataMapKeys are the instance-storage keys whose value is a map that
+// may carry the scale, in preference order.
+//
+// `METADATA` is the soroban-token-sdk convention and was the only spelling read
+// until a MEASURED gap forced the second, in the same shape as the
+// decimal/decimals split above. The twenty-four private-credit deal tokens the
+// storage-supply basis was built for carry NO METADATA key at all — their
+// instance storage holds `Config`, a map whose `decimals` field is the scale,
+// alongside `TotalSupply`, `Nav` and the deal's identifiers.
+//
+// This mattered more than a missed display value. Those contracts publish a
+// nine-figure supply, and the working assumption before the entry was read was
+// that their exponent was NOT on-chain and had to be borrowed from a
+// third-party seed file. It is on-chain, and reading it is the difference
+// between a published money figure resting on our own measurement and one
+// resting on someone else's spreadsheet.
+//
+// As with the two `decimal` spellings, both maps are read and never blended:
+// a contract that declares a different scale in each has not told us its scale,
+// and [decimalsFromInstance] refuses rather than picking one.
+var tokenMetadataMapKeys = []string{"METADATA", "Config"}
+
 // TokenDecimals resolves a token contract's `decimals()` value from the
 // certified lake: the soroban-token-sdk convention — followed by SACs (always
 // 7) and by token-sdk-shaped SEP-41 WASM tokens — persists TokenMetadata in
@@ -112,17 +134,54 @@ func decimalsFromInstanceEntry(b64 string) (uint32, bool) {
 		return 0, false
 	}
 	inst, ok := cd.Val.GetInstance()
-	if !ok || inst.Storage == nil {
+	if !ok {
 		return 0, false
 	}
-	for _, kv := range *inst.Storage {
-		sym, ok := kv.Key.GetSym()
-		if !ok || string(sym) != "METADATA" || kv.Val.Type != xdr.ScValTypeScvMap || kv.Val.Map == nil {
-			continue
-		}
-		return decimalsFromMetadataMap(**kv.Val.Map)
+	return decimalsFromInstance(inst)
+}
+
+// decimalsFromInstance reads the declared scale out of a decoded contract
+// instance, under either map spelling in [tokenMetadataMapKeys] and either field
+// spelling in [tokenDecimalsKeys].
+//
+// ok=false when the instance stores no scale, when a declaration is out of sane
+// bounds, or when two declarations DISAGREE — across the two map names for the
+// same reason [decimalsFromMetadataMap] refuses across the two field names: a
+// contract claiming two different scales for itself has not told us its scale,
+// and choosing between them would be this layer inventing an exponent for a
+// money figure.
+func decimalsFromInstance(inst xdr.ScContractInstance) (uint32, bool) {
+	if inst.Storage == nil {
+		return 0, false
 	}
-	return 0, false
+	var (
+		found bool
+		value uint32
+	)
+	for _, want := range tokenMetadataMapKeys {
+		for _, kv := range *inst.Storage {
+			// Both key encodings: a bare Symbol (soroban-token-sdk) and the
+			// single-element Vec a Rust enum variant derives to. See
+			// [instanceStorageKeyName].
+			name, ok := instanceStorageKeyName(kv.Key)
+			if !ok || name != want || kv.Val.Type != xdr.ScValTypeScvMap || kv.Val.Map == nil {
+				continue
+			}
+			d, ok := decimalsFromMetadataMap(**kv.Val.Map)
+			if !ok {
+				// A present-but-unusable map is a refusal for the whole
+				// instance, matching how a present-but-unusable field
+				// refuses the whole map.
+				return 0, false
+			}
+			if found && value != d {
+				return 0, false
+			}
+			found, value = true, d
+			break
+		}
+	}
+	return value, found
 }
 
 // decimalsFromMetadataMap reads the scale out of one decoded METADATA map.

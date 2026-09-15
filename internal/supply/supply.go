@@ -114,6 +114,39 @@ const (
 	// published as a smaller truth.
 	BasisClassicTrustlineSum Basis = "classic_trustline_sum"
 
+	// BasisContractStorageBalances — a Soroban token's supply summed from the
+	// per-holder BALANCE LEDGER ENTRIES in its contract storage
+	// (`Balance(Address) → i128`), rather than from its event log. Produced by
+	// internal/storage/clickhouse.ContractStorageSupply.
+	//
+	// It is a DIFFERENT BASIS, not a better reading of the same one. Every
+	// other supply basis in this vocabulary accumulates ISSUANCE — what was
+	// minted, less what was destroyed. This one measures DISTRIBUTION — the
+	// balances that exist right now. For a token whose event log is complete
+	// the two agree exactly, and that was measured rather than assumed: on
+	// pubnet 2026-09-15 three event-emitting Wasm tokens (EUTBL, USTBL,
+	// deJTRSY) reproduced their [BasisSEP41LakeFlows] totals to the unit.
+	//
+	// It exists for the case where they cannot agree, because one of them is
+	// not there. A token that emits NO SEP-41 events is not undercounted in
+	// stellar.supply_flows, it is ABSENT from it, and an absent contract sums
+	// to a confident zero rather than to a gap anything would notice. Twenty-
+	// four private-credit deal tokens on pubnet held 548,113,042.88 tokens in
+	// storage while every event-derived reading of them returned 0.
+	//
+	// The two readings are NEVER SUMMED — the same tokens are in both, so
+	// adding them double-counts. Where a token has both, this basis supersedes
+	// the event reading outright: a level cannot be made wrong by missing
+	// history, while an accumulation is only as complete as its log.
+	//
+	// A figure on this basis is a LOWER BOUND and carries the
+	// circulating_supply_lower_bound flag. It is blind to balances that are not
+	// ledger entries right now — Soroban state expiry archives contract-data
+	// entries, and an archived balance is real, restorable, and invisible here.
+	// That is a different blindness from the classic trustline sum's, which
+	// misses whole holding DOMAINS: this one misses TIME.
+	BasisContractStorageBalances Basis = "contract_storage_balances"
+
 	// BasisNoMetadata — we don't have a defensible value for
 	// at least one of total / circulating / max. Per ADR-0011
 	// "we don't fabricate" — the corresponding field is nil.
