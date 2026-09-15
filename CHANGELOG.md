@@ -15,6 +15,8 @@ against.
 
 ## [Unreleased]
 
+## [v0.81.0] — 2026-09-15
+
 ### Added
 
 - **assets:** USDT0 joins the verified catalogue — the omnichain USDT
