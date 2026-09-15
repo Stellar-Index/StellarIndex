@@ -311,7 +311,35 @@ const (
 	// It is also the shape of the fail-closed guarantee. When the
 	// listing goes away the set SHRINKS, and this reason is what stops
 	// that shrink from being silent.
+	//
+	// It names ONE source: the listing directory. A refusal caused by
+	// any other read failing must not borrow it — see
+	// [RejectContractCuratedTagsUnavailable].
 	RejectContractListingUnavailable = "independent_listing_unavailable"
+	// RejectContractCuratedTagsUnavailable — the CURATED DIRECTORY's tag
+	// read did not answer, so C3 could not be evaluated and arm 2 is
+	// closed for this rebuild.
+	//
+	// Arm 2 depends on two sources that have nothing to do with each
+	// other. The listing directory supplies its recognition; the curated
+	// directory supplies the scam vocabulary C3 reads, and C3 refuses a
+	// flagged address whatever named it. Either read failing closes the
+	// arm, and until this constant existed both closed it under
+	// [RejectContractListingUnavailable].
+	//
+	// That conflation was a defect of the same kind this whole surface
+	// exists to prevent, one level up: a refusal reason is an
+	// instruction to somebody, and these two instruct different people
+	// to look in different places. Worse, the two states are not even
+	// correlated — the curated directory can be unreadable while the
+	// listing directory sits there perfectly fresh, and the funnel would
+	// then report an outage of the source that ANSWERED and send an
+	// operator to a working sync.
+	//
+	// Same actor as the reason above, deliberately: an operator fixes
+	// both. The actor says WHO acts and the reason says WHERE, and it
+	// was the second of those that was being destroyed.
+	RejectContractCuratedTagsUnavailable = "curated_tag_lookup_unavailable"
 )
 
 // contractRecognitionTags is the curated-directory vocabulary that

@@ -326,6 +326,7 @@ func (s *Server) buildRWAListingMembership(
 	// reader of `refused[]` must not have to know that, and the funnel
 	// reconciles against one vocabulary.
 	refusals[rwa.RejectContractListingUnavailable] += census.listingUnavailable
+	refusals[rwa.RejectContractCuratedTagsUnavailable] += census.tagsUnavailable
 	refusals[rwa.RejectContractCuratedNotListed] += census.notListed
 	if len(candidates) == 0 {
 		return nil, census

@@ -366,6 +366,27 @@ answer has not earned a finding. A deployment with no listing reader at
 all is different again: the arm reports itself **not measured** and
 makes no refusals, since nobody looked.
 
+Arm 2 rests on **two** sources, and each names itself when it fails. The
+listing directory supplies the recognition above; the curated account
+directory supplies the tags C3 reads, and a binding whose tags could not
+be read has not had C3 evaluated either. That closes the arm under
+`curated_tag_lookup_unavailable`, never under the listing's name — the
+two reads are unrelated systems, and the curated directory can be
+unreadable while the listing directory sits there perfectly fresh. A
+refusal reason is an instruction about where to go and look, so one
+reason for both would send an operator to a working sync.
+
+`funnel.listing_directory` publishes the evidence behind whichever
+verdict the arm reached: what the listing directory held, and when this
+index read it. `entries` counts fresh rows only, with `stale` counting
+the rows past the recognition bound beside them — so zero entries with
+zero stale is a directory nobody has ever synced, and zero entries with
+stale rows is a sync that died. `observed_at` is the read's own instant,
+and it is what separates a closed arm from a stopped sync: a listing
+sync that completed *after* it means the set in hand simply predates the
+rows, nothing is broken, and the next rebuild carries them. The counts
+can be re-derived from the table at any time; that instant cannot.
+
 ### C3 — Recognition, not flagged
 
 The entry carries at least one tag from a vocabulary deliberately

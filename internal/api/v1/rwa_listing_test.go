@@ -49,7 +49,13 @@ type stubRWAListings struct {
 	// stale is the count the storage layer refused to serve as past the
 	// recognition bound — the visible form of the fail-closed shrink.
 	stale int
-	err   error
+	// census, when set, is served verbatim instead of being derived
+	// from rows. The derivation below counts every served row as a
+	// CONTRACT row, which is true of every fixture that serves rows and
+	// cannot express the one state that serves none while being
+	// perfectly healthy: a directory holding only classic rows.
+	census *timescale.ListingDirectoryCensus
+	err    error
 }
 
 func (s *stubRWAListings) ListingDirectoryContracts(
@@ -57,6 +63,9 @@ func (s *stubRWAListings) ListingDirectoryContracts(
 ) ([]timescale.ListingEntry, timescale.ListingDirectoryCensus, error) {
 	if s.err != nil {
 		return nil, timescale.ListingDirectoryCensus{}, s.err
+	}
+	if s.census != nil {
+		return s.rows, *s.census, nil
 	}
 	c := timescale.ListingDirectoryCensus{
 		Contracts: len(s.rows),

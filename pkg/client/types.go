@@ -1610,6 +1610,37 @@ type RWAFunnel struct {
 	Stages   []RWAFunnelStage `json:"stages"`
 	Balanced bool             `json:"balanced"`
 	Basis    string           `json:"basis"`
+	// ListingDirectory is the evidence behind the "listing" arm's
+	// verdict. Nil when nothing was observed: no listing reader wired,
+	// or a read that did not answer.
+	ListingDirectory *RWAListingDirectory `json:"listing_directory,omitempty"`
+}
+
+// RWAListingDirectory is what the independent listing directory held at
+// the moment the served set was built, published so a closed "listing"
+// arm can be told apart from a stopped sync without a database:
+//
+// Entries counts the FRESH rows only (Entries = Contracts + Classic),
+// with Stale beside them and never inside them, so the two zero cases
+// are told apart by Stale:
+//
+//	Entries == 0 && Stale == 0     never synced: the table is empty
+//	Entries == 0 && Stale > 0      every row aged out: the sync stopped
+//	Entries > 0 && Contracts == 0  healthy, but it names no Stellar
+//	                               contract address — nothing to consult
+//	Entries > 0 && Contracts > 0   healthy and populated
+//
+// Then compare ObservedAt against the sync's own clock: a sync that
+// completed after this instant means the set in hand predates the rows
+// it would have used, nothing is broken, and the next rebuild carries
+// them. ObservedAt is when THIS INDEX read the directory, not when the
+// directory was synced. The counts can be re-derived from the table
+// afterwards; that instant cannot be, which is why it is served.
+type RWAListingDirectory struct {
+	ObservedAt time.Time `json:"observed_at"`
+	Entries    int       `json:"entries"`
+	Contracts  int       `json:"contracts"`
+	Stale      int       `json:"stale"`
 }
 
 // RWAFunnelStage is one population on the way to the served set. Unit

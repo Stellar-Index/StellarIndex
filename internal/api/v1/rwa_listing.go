@@ -3,6 +3,7 @@ package v1
 import (
 	"context"
 	"sort"
+	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/rwa"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
@@ -105,6 +106,22 @@ type rwaListing struct {
 	// the funnel has to be loudest about, because it is the one an
 	// operator can fix.
 	wired bool
+	// read reports that the directory ANSWERED, which is what makes
+	// `census` a real observation rather than a zero value. A failed
+	// read leaves both false, and the difference matters on the wire:
+	// zero entries observed says the table has never been synced, while
+	// a read that did not complete has observed nothing and must not be
+	// published as a count of anything.
+	read bool
+	// observedAt is when the read that produced `census` was taken.
+	//
+	// It is the one fact on this struct that cannot be recovered later.
+	// Every count beside it can be re-derived by querying the table
+	// again; the moment the served set looked at that table cannot be,
+	// and it is the only thing that distinguishes "the directory is
+	// empty" from "this set was built before the directory filled".
+	// Zero when nothing was observed.
+	observedAt time.Time
 }
 
 // names reports whether the listing directory names this exact address,
@@ -162,12 +179,20 @@ func (s *Server) rwaListingSnapshot(ctx context.Context) rwaListing {
 		//
 		// A table nobody has ever synced lands in the same branch and
 		// deserves the same answer: zero fresh rows is zero evidence.
-		available: len(rows) > 0,
-		wired:     true,
+		available:  len(rows) > 0,
+		wired:      true,
+		read:       true,
+		observedAt: time.Now().UTC(),
 	}
 	if !out.available {
+		// The same two numbers the funnel now publishes. They were
+		// computed here, printed once, and dropped — which meant the
+		// question "is the sync down, or is this set older than the
+		// sync" could only be answered by somebody with a database
+		// prompt. They are carried onto the census below and served.
 		s.logger.Warn("rwa listing directory: no fresh contract rows",
-			"stale", census.Stale, "entries", census.Entries)
+			"stale", census.Stale, "entries", census.Entries,
+			"observed_at", out.observedAt.Format(time.RFC3339))
 	}
 	for _, r := range rows {
 		out.byAddress[r.Address] = r
@@ -198,12 +223,24 @@ type rwaListingCensus struct {
 	// alsoInDirectoryArm counts bindings the first arm already
 	// evaluates. Removed here so no address is evaluated twice.
 	alsoInDirectoryArm int
-	// listingUnavailable counts bindings refused because the listing
-	// read did not answer or the scam-tag lookup that C3 depends on did
-	// not answer. Both close the arm for the same reason: a
-	// requirement could not be evaluated, so it may not be assumed
-	// satisfied.
+	// listingUnavailable counts bindings refused because the LISTING
+	// read did not answer. One source, named exactly.
+	//
+	// A failed curated-tag lookup used to land here too, and the
+	// conflation was wrong in the way this surface exists to prevent.
+	// The two reads are unrelated sources with unrelated failure modes,
+	// and they are not even correlated: the curated directory can be
+	// unreadable while the listing directory sits there perfectly
+	// fresh. Folded together, the funnel then reported an outage of the
+	// source that ANSWERED and sent an operator to a working sync.
 	listingUnavailable int
+	// tagsUnavailable counts bindings refused because the CURATED
+	// DIRECTORY's tag read did not answer, leaving C3 unevaluated.
+	//
+	// Counted apart from listingUnavailable because a refusal reason is
+	// an instruction to somebody, and these two send that somebody to
+	// different systems.
+	tagsUnavailable int
 	// notListed counts bindings the listing directory does not name.
 	// The refusal that holds independence up.
 	notListed int
@@ -218,6 +255,39 @@ type rwaListingCensus struct {
 	listedWithoutBinding int
 	// available is false when the arm was not walked at all.
 	available bool
+
+	// dir is the storage layer's account of the listing directory
+	// ITSELF — every row it holds, not just the ones this arm narrowed
+	// — carried so the arm can publish the EVIDENCE for its verdict and
+	// not only the verdict. The sibling of [rwaContractCensus].dir, and
+	// there for the same reason.
+	//
+	// The verdict alone is ambiguous in the one direction that costs an
+	// operator an afternoon. `listing_corroborated_contracts: 0` is
+	// produced by a directory nobody has ever synced, by a sync that
+	// died two days ago, and by a healthy directory this set simply
+	// predates — three states with three different responses, and
+	// nothing on the wire separated them. These counts do:
+	//
+	//   - Entries 0                 → never synced
+	//   - Entries > 0, Stale = all  → the sync stopped
+	//   - Entries > 0, Stale 0      → healthy, and this set predates it
+	//
+	// Zero when nothing was observed; observedAt below is what says
+	// which.
+	dir timescale.ListingDirectoryCensus
+	// observedAt is when the read behind `dir` was taken, and it is the
+	// load-bearing half of this pair. The counts are a convenience —
+	// anyone holding a database prompt can re-derive them at will. The
+	// moment the served set looked cannot be re-derived by anyone,
+	// afterwards, at any cost, and without it a reader comparing a
+	// healthy directory against a closed arm has no way to tell that
+	// the two observations are of different moments.
+	//
+	// Zero means nothing was observed: no reader wired, or a read that
+	// did not answer. Never confused with the Unix epoch, because a
+	// zero time publishes no evidence at all rather than a timestamp.
+	observedAt time.Time
 }
 
 // rwaListingCandidates builds the second arm's population: every curated
@@ -229,8 +299,14 @@ type rwaListingCensus struct {
 // place a scam flag exists is the curated directory — so a candidate
 // whose tags could not be read has not had C3 evaluated and must not be
 // admitted. A failed lookup therefore closes the arm exactly as a failed
-// listing read does, and is counted under the same reason: something a
-// requirement depends on did not answer.
+// listing read does — under its OWN reason, never the listing's.
+//
+// Two sources, two reasons. They are unrelated systems with unrelated
+// failure modes, and a refusal reason is an instruction about where to
+// go and look. Under one reason the funnel could report an outage of
+// the listing directory while that directory sat there perfectly
+// fresh — an alarm naming a working sync, raised by the failure of
+// something else entirely.
 func (s *Server) rwaListingCandidates(
 	ctx context.Context, listing rwaListing, directoryEvaluated map[string]struct{},
 ) ([]rwaListingCandidate, rwaListingCensus) {
@@ -244,6 +320,14 @@ func (s *Server) rwaListingCandidates(
 	}
 	bindings := rwa.ContractInstrumentBindings()
 	census := rwaListingCensus{bindings: len(bindings), available: true}
+	// Carried only from a read that ANSWERED. A failed read observed
+	// nothing, and a zero census published beside a zero timestamp
+	// would read as a directory holding no rows — which is a finding,
+	// from a query that did not complete.
+	if listing.read {
+		census.dir = listing.census
+		census.observedAt = listing.observedAt
+	}
 
 	bound := make(map[string]struct{}, len(bindings))
 	pending := make([]string, 0, len(bindings))
@@ -269,9 +353,17 @@ func (s *Server) rwaListingCandidates(
 	tags, tagsOK := s.rwaDirectoryTagsFor(ctx, pending)
 	out := make([]rwaListingCandidate, 0, len(pending))
 	for _, addr := range pending {
+		// Ordered by which source is missing, most specific first. The
+		// listing read is this arm's RECOGNITION source, so its absence
+		// closes the arm whatever the curated directory said; only when
+		// the listing answered can a tag failure be the thing standing
+		// in the way, and that is exactly the case that used to be
+		// reported as a listing outage.
 		switch {
-		case !listing.available || !tagsOK:
+		case !listing.available:
 			census.listingUnavailable++
+		case !tagsOK:
+			census.tagsUnavailable++
 		case !listing.names(addr):
 			census.notListed++
 		default:
