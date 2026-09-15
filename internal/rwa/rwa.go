@@ -248,6 +248,20 @@ type Verdict struct {
 	// Reject names the FIRST requirement the candidate failed, in R1→R4
 	// order. Empty when admitted.
 	Reject string
+	// Recognition names WHICH independent party's naming satisfied the
+	// recognition requirement. Empty on the classic arm, where there is
+	// exactly one such party and naming it would say nothing, and on
+	// every refusal.
+	//
+	// It exists because the contract arm now has TWO ways to satisfy
+	// C2 ([RecognitionCuratedDirectory] and
+	// [RecognitionListingCorroborated]), and they do not carry the same
+	// weight: one is an address-level identity attestation that admits
+	// on its own, the other is a pair of sources that corroborate each
+	// other and admit neither alone. A row that could not say which one
+	// let it in would publish two different strengths of evidence under
+	// one indistinguishable membership.
+	Recognition string
 }
 
 // Qualify applies the four requirements in order and returns the

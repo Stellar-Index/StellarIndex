@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/Stellar-Index/StellarIndex/internal/rwa"
+	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
 // The contract arm of the definition (#352).
@@ -292,16 +293,259 @@ const (
 // argument (an independent party named THIS address) has been replaced
 // by our own say-so without anyone deciding to.
 func TestSpikoBinding_StillNeedsIndependentRecognition(t *testing.T) {
+	// Both ways the independent half can be missing. Neither admits,
+	// and each says which half was missing rather than reporting one
+	// indistinguishable recognition failure.
+	for _, tc := range []struct {
+		name      string
+		available bool
+		want      string
+	}{
+		{
+			// Nobody looked: no listing reader wired, the read failed,
+			// or the snapshot aged past the recognition bound. An
+			// outage may not report an absence as a finding.
+			name: "listing read did not answer", available: false,
+			want: rwa.RejectContractListingUnavailable,
+		},
+		{
+			// Somebody looked and the listing does not name it. This
+			// is a finding, and it is the one holding independence up.
+			name: "listing answered and does not name it", available: true,
+			want: rwa.RejectContractCuratedNotListed,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			v := rwa.QualifyContract(rwa.ContractCandidate{
+				ContractID:       spikoEUTBLContract,
+				DirectoryNamed:   false,
+				DirectoryTags:    []string{"issuer"},
+				ListingNamed:     false,
+				ListingAvailable: tc.available,
+			})
+			if v.InSet {
+				t.Fatalf("a curated binding admitted its contract with no independent recognition (basis %q)", v.Basis)
+			}
+			if v.Reject != tc.want {
+				t.Errorf("reject = %q, want %q", v.Reject, tc.want)
+			}
+		})
+	}
+}
+
+// ─── C2 arm 2: an independent listing corroborating a curated binding ──
+//
+// The addresses below are REAL and are the measured state of the two
+// sources on 2026-09-15. They are fixtures in the sense that the test
+// pins a rule, but unlike contractA/contractB they are not invented:
+// the whole point of arm 2 is that two parties who do not read each
+// other arrived at the same 56 characters, and a made-up address could
+// not express that.
+const (
+	// Named by the listing directory AND by an in-repo curated binding.
+	// The curated binding was derived from the issuer's own deployment
+	// manifest reached through its own registrable domain; the listing
+	// entry was not.
+	listedAndBoundEUTBL = spikoEUTBLContract
+	listedAndBoundUKTBL = "CDT3KU6TQZNOHKNOHNAFFDQZDURVC3MSTL4ML7TUTZGNOPBZCLABP4FR"
+	// BOUND, and the listing directory does NOT name it. The control
+	// that proves arm 2 is not simply admitting everything this
+	// repository has an opinion about: same issuer, same deployment,
+	// same evidence bar, no independent naming, no admission.
+	boundNotListedUSTBL = "CARUUX2FZNPH6DGJOEUFSIUQWYHNL5AVDV7PMVSHWL7OBYIBFC76F4TO"
+	// LISTED, and no in-repo curated binding names it. Real entries
+	// from the same listing map: a tokenized gold contract and the
+	// native asset's own Stellar Asset Contract. The listing is a
+	// price-aggregation convenience and carries anything with a
+	// market, which is exactly why it may not admit on its own.
+	listedNotBoundXAUM = "CC2RBGYNCFBCVENIDL5BFBWPH4OUZM2UA3OD2K2N54GLMWCC4KWPVAGO"
+	listedNotBoundUSDC = "CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75"
+)
+
+// TestListingCorroboratingCuratedBinding_Admits is the unlock, and the
+// only combination in this file that admits without a directory entry.
+//
+// Two independent parties naming the same exact address is what C2 asks
+// for. The row says which pair let it in, because the evidence is not
+// the same strength as a curated directory attestation and a consumer
+// must be able to tell them apart.
+func TestListingCorroboratingCuratedBinding_Admits(t *testing.T) {
+	for _, id := range []string{listedAndBoundEUTBL, listedAndBoundUKTBL} {
+		v := rwa.QualifyContract(rwa.ContractCandidate{
+			ContractID:       id,
+			DirectoryNamed:   false,
+			ListingNamed:     true,
+			ListingAvailable: true,
+		})
+		if !v.InSet {
+			t.Fatalf("%s: refused %q; an independent listing plus a curated binding must satisfy C2", id, v.Reject)
+		}
+		if v.Basis != rwa.BasisCuratedContract {
+			t.Errorf("%s: basis = %q, want %q", id, v.Basis, rwa.BasisCuratedContract)
+		}
+		if v.Recognition != rwa.RecognitionListingCorroborated {
+			t.Errorf("%s: recognition = %q, want %q", id, v.Recognition, rwa.RecognitionListingCorroborated)
+		}
+		if v.AnchorClass != "bond" {
+			t.Errorf("%s: class = %q, want bond", id, v.AnchorClass)
+		}
+	}
+}
+
+// TestListingAlone_AdmitsNothing is the negative control the arm lives
+// or dies by, run against REAL addresses the listing directory really
+// does name and this repository holds no binding for.
+//
+// If this ever passes as an admission, C2 has been replaced by "some
+// price aggregator has heard of it" and the surface would publish the
+// native asset's own SAC as a tokenized real-world asset.
+func TestListingAlone_AdmitsNothing(t *testing.T) {
+	for _, id := range []string{listedNotBoundXAUM, listedNotBoundUSDC} {
+		v := rwa.QualifyContract(rwa.ContractCandidate{
+			ContractID:       id,
+			DirectoryNamed:   false,
+			ListingNamed:     true,
+			ListingAvailable: true,
+		})
+		if v.InSet {
+			t.Fatalf("%s: a listing entry alone admitted a contract (basis %q, recognition %q)", id, v.Basis, v.Recognition)
+		}
+		if v.Reject != rwa.RejectContractListedNotCurated {
+			t.Errorf("%s: reject = %q, want %q", id, v.Reject, rwa.RejectContractListedNotCurated)
+		}
+	}
+}
+
+// TestBoundButNotListed_StaysRefused pins the other control. USTBL is
+// bound on identical evidence to EUTBL and UKTBL, deployed by the same
+// account under the same wasm hash, and holds a 32.9M-token supply the
+// lake can see. The listing directory carries no Stellar address for
+// it, so it is not admitted and the rule is demonstrably not a rubber
+// stamp for the curated set.
+func TestBoundButNotListed_StaysRefused(t *testing.T) {
 	v := rwa.QualifyContract(rwa.ContractCandidate{
-		ContractID:     spikoEUTBLContract,
-		DirectoryNamed: false,
-		DirectoryTags:  []string{"issuer"},
+		ContractID:       boundNotListedUSTBL,
+		DirectoryNamed:   false,
+		ListingNamed:     false,
+		ListingAvailable: true,
 	})
 	if v.InSet {
-		t.Fatalf("a curated binding admitted its contract with no independent recognition (basis %q)", v.Basis)
+		t.Fatalf("a bound contract nobody independent named was admitted (recognition %q)", v.Recognition)
 	}
-	if v.Reject != rwa.RejectContractNotNamed {
-		t.Errorf("reject = %q, want %q", v.Reject, rwa.RejectContractNotNamed)
+	if v.Reject != rwa.RejectContractCuratedNotListed {
+		t.Errorf("reject = %q, want %q", v.Reject, rwa.RejectContractCuratedNotListed)
+	}
+}
+
+// TestScamPrecedence_SurvivesTheListingArm is the single most important
+// test in this file.
+//
+// The listing directory carries no flags and never will. If the scam
+// check had stayed inside the directory arm, an address the curated
+// directory named ONLY to flag as malicious could have walked in
+// through arm 2 — the precedence would have protected exactly the
+// population that did not need it.
+//
+// Every scam-class tag in the one shared vocabulary is exercised, so a
+// tag added to that list cannot quietly fail to bind here.
+func TestScamPrecedence_SurvivesTheListingArm(t *testing.T) {
+	for _, tag := range timescale.DirectoryScamFlagTags {
+		v := rwa.QualifyContract(rwa.ContractCandidate{
+			ContractID:       listedAndBoundEUTBL,
+			DirectoryNamed:   true,
+			DirectoryTags:    []string{"issuer", tag},
+			ListingNamed:     true,
+			ListingAvailable: true,
+		})
+		if v.InSet {
+			t.Fatalf("tag %q: a scam-flagged address was admitted through the listing arm (recognition %q)", tag, v.Recognition)
+		}
+		if v.Reject != rwa.RejectContractScam {
+			t.Errorf("tag %q: reject = %q, want %q", tag, v.Reject, rwa.RejectContractScam)
+		}
+	}
+}
+
+// TestListingUnavailable_FailsClosed pins the shrink direction. When the
+// listing read cannot answer, arm 2 stops admitting — it does not carry
+// a recognition forward from a snapshot nobody re-established — and the
+// refusal names the outage so the set does not shrink in silence.
+func TestListingUnavailable_FailsClosed(t *testing.T) {
+	v := rwa.QualifyContract(rwa.ContractCandidate{
+		ContractID:     listedAndBoundEUTBL,
+		DirectoryNamed: false,
+		// Even asserted as named: an unavailable read means the naming
+		// was never established, so the field may not be read at all.
+		ListingNamed:     true,
+		ListingAvailable: false,
+	})
+	if v.InSet {
+		t.Fatalf("arm 2 admitted while the listing read was unavailable (recognition %q)", v.Recognition)
+	}
+	if v.Reject != rwa.RejectContractListingUnavailable {
+		t.Errorf("reject = %q, want %q", v.Reject, rwa.RejectContractListingUnavailable)
+	}
+}
+
+// TestDirectoryArm_UnchangedByTheSecondArm pins that adding arm 2 moved
+// nothing on arm 1. A directory-recognised contract is admitted with no
+// listing anywhere in sight, and says the directory recognised it.
+func TestDirectoryArm_UnchangedByTheSecondArm(t *testing.T) {
+	v := rwa.QualifyContract(rwa.ContractCandidate{
+		ContractID:       listedAndBoundEUTBL,
+		DirectoryNamed:   true,
+		DirectoryTags:    []string{"issuer"},
+		ListingNamed:     false,
+		ListingAvailable: false,
+	})
+	if !v.InSet {
+		t.Fatalf("the curated directory arm stopped admitting: %q", v.Reject)
+	}
+	if v.Recognition != rwa.RecognitionCuratedDirectory {
+		t.Errorf("recognition = %q, want %q", v.Recognition, rwa.RecognitionCuratedDirectory)
+	}
+}
+
+// TestListingArm_IsOnTheAddressNotTheSymbol is the non-negotiable rule
+// in arm 2's coordinate. An impersonator whose contract the listing
+// directory happens to carry — a token with a real market is exactly
+// what that map collects — gets nothing, because the curated binding is
+// keyed on the 56-character address and the impersonator does not have
+// it.
+func TestListingArm_IsOnTheAddressNotTheSymbol(t *testing.T) {
+	v := rwa.QualifyContract(rwa.ContractCandidate{
+		ContractID:       contractB, // not a bound address
+		Symbol:           "EUTBL",
+		DirectoryNamed:   false,
+		ListingNamed:     true,
+		ListingAvailable: true,
+	})
+	if v.InSet {
+		t.Fatalf("a listed impersonator carrying a bound symbol was admitted (basis %q)", v.Basis)
+	}
+	if v.Reject != rwa.RejectContractListedNotCurated {
+		t.Errorf("reject = %q, want %q", v.Reject, rwa.RejectContractListedNotCurated)
+	}
+}
+
+// TestEveryAdmittedContract_NamesItsRecogniser pins the wire guarantee:
+// no contract is ever admitted without saying who recognised it, and
+// the value is always one of the two published sources. A third arm
+// added later without a recognition source would land here.
+func TestEveryAdmittedContract_NamesItsRecogniser(t *testing.T) {
+	sources := rwa.ContractRecognitionSources()
+	for _, c := range []rwa.ContractCandidate{
+		{ContractID: listedAndBoundEUTBL, DirectoryNamed: true, DirectoryTags: []string{"issuer"}},
+		{ContractID: listedAndBoundEUTBL, ListingNamed: true, ListingAvailable: true},
+		{ContractID: contractA, DirectoryNamed: true, DirectoryTags: []string{"anchor"}, Symbol: "USTRY"},
+	} {
+		v := rwa.QualifyContract(c)
+		if !v.InSet {
+			t.Fatalf("%+v: refused %q", c, v.Reject)
+		}
+		if !slices.Contains(sources, v.Recognition) {
+			t.Errorf("%s: recognition %q is not in the published vocabulary %v", c.ContractID, v.Recognition, sources)
+		}
 	}
 }
 

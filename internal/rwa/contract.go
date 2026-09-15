@@ -83,6 +83,85 @@ import (
 // and the issuer's own voice, measured, is the part of the evidence an
 // impersonator supplies for ten dollars.
 //
+// # Two ways to satisfy C2, and why they are not the same shape
+//
+// The curated account directory is not the only independent party that
+// names Stellar contract addresses, and requiring it to be the only one
+// cost the surface a measured, defensible set. Measured 2026-09-15: the
+// directory names 387 contract addresses; a public listing platform's
+// per-coin platform→address map names 17 on Stellar; FOUR are in both.
+// Thirteen addresses are named by the listing and by nobody in the
+// directory, and among them are the Spiko T-Bill funds this repository
+// already holds verified curated bindings for.
+//
+// So C2 is satisfiable two ways:
+//
+//  1. THE CURATED DIRECTORY NAMES THE ADDRESS, with an issuing-class
+//     tag. Unchanged, and it still admits ON ITS OWN.
+//  2. AN INDEPENDENT LISTING DIRECTORY NAMES THE ADDRESS **and** an
+//     in-repo curated binding names the same address. Requires TWO
+//     sources, and admits on NEITHER alone.
+//
+// The asymmetry is the point, and it is not squeamishness about a
+// second source — it is about what each source IS.
+//
+// The curated directory is an ADVERSARIAL IDENTITY SYSTEM: Stellar
+// -specific, address-level, review-gated, and carrying a scam
+// vocabulary whose entire purpose is to say that an address is lying
+// about who it is. Being named in it is an assertion about identity
+// that somebody reviewed. It ATTESTS.
+//
+// A listing map is a CONVENIENCE BUILT FOR PRICE AGGREGATION. It exists
+// so a price page can show which chains a coin trades on. It carries no
+// flags, runs no adversarial review of Stellar addresses, and would not
+// claim to. Being named in it is an assertion that a market exists,
+// from which an identity can be INFERRED but was never the point. It
+// CORROBORATES.
+//
+// A corroborating source may not carry an attesting source's authority,
+// so it is not given one. What it can do is agree — and two parties
+// that do not read each other, arriving independently at the same
+// 56-character address for the same instrument, is the thing C2 asks
+// for. The in-repo binding answers C4 (WHICH instrument) and is not
+// allowed to answer C2 (who else says so), because this repository
+// vouching for itself is not independence at any number of sources. It
+// is the SECOND source in arm 2 and never the first.
+//
+// # Why the listing map is not the curated directory wearing a hat
+//
+// This file already refuses to treat a block explorer as independent,
+// on the grounds that explorers read the same curated directories we
+// do, so counting one would double-count a single claim. That objection
+// has to be put to the listing map before the map can be used, and it
+// does not survive contact with the numbers.
+//
+//   - THE SETS DISAGREE IN BOTH DIRECTIONS. A derived set is a subset
+//     of its source, possibly filtered, never a superset. The listing
+//     names 13 contract addresses the directory does not name at all,
+//     so it cannot be derived FROM the directory; the directory names
+//     383 the listing does not, so it is not derived from the listing
+//     either. Four addresses in common out of 400 distinct — a 1%
+//     overlap — is not two views of one claim.
+//   - THEY DISAGREE ABOUT WHAT AN ADDRESS IS, not merely about which
+//     to carry. CBI7UCH5… is in both: the directory tags it `defi`,
+//     which this arm's vocabulary reads as infrastructure that issues
+//     nothing, while the listing carries it as a coin with a price. A
+//     mirror does not contradict its original.
+//   - THE KEYS ARE DIFFERENT. The directory is keyed by Stellar
+//     address and holds only Stellar. The listing is keyed by a
+//     chain-independent coin id and holds the same instrument's
+//     addresses on every chain it trades on; the Stellar entry is one
+//     field of a row whose subject is the instrument, not the address.
+//     A derivation would have had to invent the coin id.
+//   - THE FIELDS ARE DIFFERENT. The directory carries the scam
+//     vocabulary; the listing carries none. Neither column could be
+//     produced from the other.
+//
+// The block-explorer objection stands for explorers and does not reach
+// this map. Both statements rest on the same test — does this source
+// re-publish the curated directory's claims, or make its own — and the
+// same test answers yes for one and no for the other.
+//
 // # Why recognition alone still is not enough
 //
 // A directory entry says who an address belongs to. It does not say the
@@ -146,10 +225,44 @@ const (
 	BasisContractOracleFeed = "contract_oracle_rwa_feed"
 )
 
+// Contract-arm recognition sources. They name WHICH independent party's
+// naming satisfied C2, and are served on the row so a consumer can
+// filter on the strength of the recognition rather than trusting the
+// membership decision wholesale — the same reason the C4 bases are
+// served beside them.
+//
+// The two are NOT interchangeable, and the difference is the subject of
+// this file's "Two ways to satisfy C2" section.
+const (
+	// RecognitionCuratedDirectory — the curated third-party account
+	// directory holds an entry for this exact address with an
+	// issuing-class tag. Admits on its own.
+	RecognitionCuratedDirectory = "curated_account_directory"
+	// RecognitionListingCorroborated — an independent listing directory
+	// names this exact address AND an in-repo curated binding names the
+	// same address. Requires BOTH; neither admits alone.
+	RecognitionListingCorroborated = "independent_listing_corroborating_curated_binding"
+)
+
+// ContractRecognitionSources lists the recognition vocabulary in a
+// stable order, served for the same reason [ContractRecognitionTags]
+// is: a consumer reads the rule from the response rather than inferring
+// it from whichever rows qualified today.
+func ContractRecognitionSources() []string {
+	return []string{RecognitionCuratedDirectory, RecognitionListingCorroborated}
+}
+
 // Contract-arm refusals. Distinct constants rather than reuse of the
 // classic reasons, because the ACTION each implies is different: a
 // contract absent from the directory needs a curated entry, while a
 // classic asset failing R2 needs its issuer to publish a file.
+//
+// The four listed after the original set exist because C2 now has two
+// arms, and a single reason covering both would tell a reader that
+// recognition failed without saying which half of which arm was
+// missing — which is the one thing that determines who can act. They
+// are ADDED rather than folded into [RejectContractNotNamed], which
+// keeps its original meaning exactly: nobody named this address.
 const (
 	RejectNotContract       = "not_a_contract_address"
 	RejectContractNotNamed  = "contract_not_named_in_directory"
@@ -157,6 +270,48 @@ const (
 	RejectContractScam      = "contract_scam_flagged"
 	RejectNoContractBasis   = "no_real_world_instrument_basis_for_contract"
 	RejectContractDuplicate = "duplicate_contract_declaration"
+
+	// RejectContractListedNotCurated — an independent listing directory
+	// names the address and NO in-repo curated binding does. This is
+	// arm 2 failing on its second half, and it is the refusal that
+	// keeps a listing from admitting anything by itself.
+	//
+	// It is the commonest refusal on that arm by a wide margin and it
+	// is meant to be: the listing set is built for price aggregation
+	// and holds stablecoin contracts, wrapped bitcoin and the native
+	// asset's own SAC alongside anything else with a market. Every one
+	// of those is named by an independent party and none of them is
+	// admitted, because the second source — the one that says WHICH
+	// real-world instrument the address holds, to the evidence bar
+	// [contractInstrument] documents — has never been written for them.
+	RejectContractListedNotCurated = "contract_listed_without_curated_binding"
+	// RejectContractCuratedNotListed — an in-repo curated binding names
+	// the address and no independent party does. Arm 2 failing on its
+	// FIRST half.
+	//
+	// This is the refusal that holds the independence requirement up,
+	// and the one worth reading twice: the address is identified, its
+	// instrument is named, its class is known, its supply is in the
+	// lake and a price for it may well exist. Everything needed to
+	// publish a number is present except somebody other than this
+	// repository saying the address is what this repository says it is.
+	// Publishing it anyway would be this surface vouching for itself.
+	RejectContractCuratedNotListed = "contract_curated_binding_without_independent_listing"
+	// RejectContractListingUnavailable — the listing read did not
+	// answer, or its most recent answer is older than the recognition
+	// bound, so arm 2 is CLOSED for this rebuild.
+	//
+	// Distinct from [RejectContractCuratedNotListed] for the reason
+	// [RWAPremiumReferenceUnavailable] is distinct from every refusal
+	// beside it: a read that did not answer is not entitled to report
+	// an absence as a finding. A bound contract refused under this
+	// reason may well be listed; nobody looked, or nobody looked
+	// recently enough.
+	//
+	// It is also the shape of the fail-closed guarantee. When the
+	// listing goes away the set SHRINKS, and this reason is what stops
+	// that shrink from being silent.
+	RejectContractListingUnavailable = "independent_listing_unavailable"
 )
 
 // contractRecognitionTags is the curated-directory vocabulary that
@@ -231,7 +386,34 @@ type ContractCandidate struct {
 	// DirectoryTags are the curated tags on that entry. Empty when the
 	// directory does not name the contract, which is a refusal and not
 	// an error.
+	//
+	// Read on BOTH C2 arms, not only the first. The scam vocabulary
+	// lives here and nowhere else, so a candidate reaching the second
+	// arm still has to have had this column looked up — otherwise the
+	// scam precedence would hold only for the population that did not
+	// need it.
 	DirectoryTags []string
+	// ListingNamed reports whether an independent LISTING directory —
+	// a price-aggregation platform's own per-coin map from its coin ids
+	// to the chain addresses that carry them — names THIS EXACT
+	// address on Stellar. Established by the caller from a cached read;
+	// this package never assumes a naming it did not see.
+	//
+	// Half of C2's second arm. On its own it admits NOTHING, and the
+	// refusal that says so is [RejectContractListedNotCurated].
+	ListingNamed bool
+	// ListingAvailable reports whether the listing read ANSWERED, and
+	// answered recently enough to be reused. False covers three cases a
+	// caller cannot distinguish and should not have to: no listing
+	// reader is wired, the read failed, or the cached snapshot is past
+	// the recognition bound.
+	//
+	// All three close arm 2, and they close it the same way: a
+	// candidate that would have needed it is refused under
+	// [RejectContractListingUnavailable] rather than admitted on a
+	// recognition nobody re-established. ListingNamed is meaningless
+	// when this is false, and the verdict never reads it.
+	ListingAvailable bool
 	// Symbol is the token symbol read from the contract instance
 	// storage METADATA map. Contract-authored display text, used only by
 	// [BasisContractOracleFeed] and only after recognition. Empty when
@@ -253,37 +435,128 @@ func QualifyContract(c ContractCandidate) Verdict {
 	if !canonical.IsContractID(strings.TrimSpace(c.ContractID)) {
 		return Verdict{Reject: RejectNotContract}
 	}
-	// C2 — INDEPENDENT NAMING OF THIS EXACT ADDRESS. The requirement
-	// that replaces R2, and the one an attacker has to defeat.
-	if !c.DirectoryNamed {
-		return Verdict{Reject: RejectContractNotNamed}
-	}
-	// C3 — RECOGNITION, NOT SCAM-FLAGGED. Scam before recognition, the
-	// same precedence [Qualify] applies: an address carrying both is
-	// refused as flagged, which is the stronger and more useful
-	// statement. The scam vocabulary is read from the ONE list in
+	// C3 — NOT SCAM-FLAGGED. Hoisted ABOVE C2 rather than sitting
+	// inside it, because C2 now has two arms and the scam precedence
+	// has to apply to both. Left where it was, an address the curated
+	// directory named ONLY to flag it could still have been admitted by
+	// the listing arm, which does not carry flags and never will — the
+	// precedence would have held for exactly the population that did
+	// not need it.
+	//
+	// The reported reason is unchanged for the population that reaches
+	// it today: an address carrying both a recognition tag and a
+	// scam-class tag was already refused as flagged, which is the
+	// stronger and more useful statement, and still is. The scam
+	// vocabulary is read from the ONE list in
 	// timescale.DirectoryScamFlagTags via [ScamFlagged], so a contract
-	// whose price the serving gates withhold can never be admitted here.
+	// whose price the serving gates withhold can never be admitted here
+	// by any arm.
 	if ScamFlagged(c.DirectoryTags) {
 		return Verdict{Reject: RejectContractScam}
 	}
-	if !HasContractRecognitionTag(c.DirectoryTags) {
-		return Verdict{Reject: RejectContractNoTag}
+	// C2 — INDEPENDENT NAMING OF THIS EXACT ADDRESS. The requirement
+	// that replaces R2, and the one an attacker has to defeat.
+	recognition, reject := contractRecognitionOf(c)
+	if recognition == "" {
+		return Verdict{Reject: reject}
 	}
 	// C4 — REAL-WORLD INSTRUMENT. The curated binding first: it names
 	// the instrument AND its class, so it produces a strictly more
 	// informative row than the oracle arm and should win when both
 	// apply.
 	if b, ok := contractInstrumentOf(c.ContractID); ok {
-		return Verdict{InSet: true, Basis: BasisCuratedContract, AnchorClass: b.Class}
+		return Verdict{
+			InSet: true, Basis: BasisCuratedContract,
+			AnchorClass: b.Class, Recognition: recognition,
+		}
 	}
 	// The oracle arm carries no class: a feed names an instrument, not
 	// its classification, and inventing one would publish a category
 	// nothing declared. Same rule the classic oracle arm follows.
+	//
+	// Unreachable under [RecognitionListingCorroborated] by
+	// construction — that arm requires a curated binding, which the
+	// branch above has already answered — so a row admitted here was
+	// recognised by the directory. It is written as a general branch
+	// rather than gated on the recognition source because the gate
+	// would be a second statement of the same fact, and the two could
+	// drift.
 	if isOracleRWACode(c.Symbol) {
-		return Verdict{InSet: true, Basis: BasisContractOracleFeed}
+		return Verdict{InSet: true, Basis: BasisContractOracleFeed, Recognition: recognition}
 	}
 	return Verdict{Reject: RejectNoContractBasis}
+}
+
+// contractRecognitionOf applies C2's two arms and returns either the
+// recognition source that satisfied it, or the refusal that names what
+// was missing. Exactly one of the two returns is non-empty.
+//
+// Called with the scam check already made, so neither arm has to
+// re-state it and neither can forget to.
+//
+// # The order
+//
+// Arm 1 is tried first because it admits on its own and produces the
+// stronger row. Arm 2 is tried second, and is also allowed to rescue an
+// address the directory named WITHOUT an issuing tag: the two arms rest
+// on different evidence, and a directory entry that describes the
+// address as something other than an issuer is simply not evidence
+// arm 2 uses.
+//
+// # The refusals
+//
+// Reported most-specific-first, and the order is the order of what
+// would have to change:
+//
+//   - a directory entry without an issuing tag is still reported as
+//     [RejectContractNoTag], unchanged, because the directory naming an
+//     address is the strongest signal present and its tag is the one
+//     thing that would have had to differ;
+//   - then the fail-closed case, so an outage never masquerades as a
+//     finding about the data;
+//   - then the two halves of arm 2, each naming the half that answered
+//     so the half that did not is implied exactly;
+//   - and finally the original reason, which keeps its original
+//     meaning: nobody named this address at all.
+func contractRecognitionOf(c ContractCandidate) (recognition, reject string) {
+	_, bound := contractInstrumentOf(c.ContractID)
+	listed := c.ListingAvailable && c.ListingNamed
+
+	// ARM 1 — THE CURATED ACCOUNT DIRECTORY, ALONE.
+	//
+	// Admits by itself, and the file header says why it may: it is a
+	// Stellar-specific, ADDRESS-level directory whose whole purpose is
+	// identity attestation, synced from a reviewed third-party
+	// repository, and it carries the scam vocabulary that C3 reads.
+	// Landing a false entry in it means landing a reviewed change in
+	// somebody else's published set under the name of the entity being
+	// impersonated.
+	if c.DirectoryNamed && HasContractRecognitionTag(c.DirectoryTags) {
+		return RecognitionCuratedDirectory, ""
+	}
+	// ARM 2 — AN INDEPENDENT LISTING AND A CURATED BINDING, TOGETHER.
+	//
+	// Requires TWO sources that do not read each other, and admits on
+	// NEITHER alone. The asymmetry with arm 1 is deliberate and is
+	// argued in the file header: a listing map is a convenience built
+	// for price aggregation, not an adversarial identity system, so it
+	// CORROBORATES a claim rather than attesting to one.
+	if listed && bound {
+		return RecognitionListingCorroborated, ""
+	}
+
+	switch {
+	case c.DirectoryNamed:
+		return "", RejectContractNoTag
+	case !c.ListingAvailable && bound:
+		return "", RejectContractListingUnavailable
+	case c.ListingNamed && c.ListingAvailable:
+		return "", RejectContractListedNotCurated
+	case bound:
+		return "", RejectContractCuratedNotListed
+	default:
+		return "", RejectContractNotNamed
+	}
 }
 
 // contractInstrument is one curated binding from a contract address to
@@ -314,15 +587,32 @@ func QualifyContract(c ContractCandidate) Verdict {
 //
 // # What an entry does NOT do
 //
-// It does not admit anything by itself. C2 runs before C4, and the
-// candidate population upstream is drawn from the curated directory
-// (buildRWAContractMembership reads DirectoryRecognisedContracts), so a
-// contract the directory does not name is never enumerated, never has
-// its symbol read, and never reaches this table at all. An entry here
-// says only WHICH instrument an address holds, for the day recognition
-// of that address exists. Until then it is published on the wire as a
-// verified identity the surface is still refusing — which is a different
-// and more useful statement than silence.
+// It does not admit anything by itself, and the guarantee is structural
+// rather than a matter of care at the call site. C2 runs before C4. An
+// entry here is read TWICE and neither read is an admission:
+//
+//   - by [contractRecognitionOf], as the SECOND half of C2's arm 2,
+//     where it is worthless without an independent listing naming the
+//     same address; and
+//   - by [QualifyContract] at C4, which only ever runs on a candidate
+//     C2 has already admitted.
+//
+// So an address listed here and named by nobody else is refused under
+// [RejectContractCuratedNotListed], with its instrument and class
+// published on the wire beside the refusal. It is a verified identity
+// the surface is still declining to value — which is a different and
+// more useful statement than silence, and it is what this repository
+// declining to vouch for itself looks like from outside.
+//
+// The candidate population DOES now enumerate every entry here, which
+// it did not before: the population is the union of the addresses the
+// curated directory recognises and the addresses this table names. That
+// is a change to who gets EVALUATED, not to who gets admitted. The
+// alternative — enumerating only what the directory names — meant an
+// entry whose recognition arrived through the listing could never be
+// reached to be tested, and an entry whose recognition never arrives
+// would vanish from the accounting rather than appear in it under a
+// reason.
 //
 // This set previously shipped empty because the work that built the arm
 // had no access to a primary source for any address. That is no longer
