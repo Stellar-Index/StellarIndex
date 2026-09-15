@@ -717,25 +717,56 @@ const (
 	spikoUKTBL    = "CDT3KU6TQZNOHKNOHNAFFDQZDURVC3MSTL4ML7TUTZGNOPBZCLABP4FR"
 	spikoEurUSTBL = "CCFIYXF32QI45KXO43J7XY3DMH6W6DKT7XFDEHA65UG4ONNPWBWR4YMA"
 	spikoEurUKTBL = "CCPLGWIIZX6GUIV6JUWJBCGW3PB24ZTHKOVGQQNTTAZIJRRLFJ4PIUMZ"
+
+	// The Spiko Amundi Overnight Swap Fund, one address per share
+	// class. Co-created with a fund manager, swapped with a bank
+	// counterparty, and a UCITS with an ISIN per class.
+	//
+	// These are `fund`, not `bond`, and the distinction is the reason
+	// [contractAnchorClasses] exists. The fund holds 152 listed equities
+	// (119% of net assets) and hands every penny of their return to the
+	// swap counterparty in exchange for the overnight index rate: `bond`
+	// would be false on the assets and false on the exposure, `stock`
+	// would be true of the assets and the exact opposite of the
+	// instrument. Held unbound until the vocabulary had a word for it.
+	spikoEurSAFO = "CBOOCGZSVRSZFRE4U2NWR2B4RXYVJWRCBTGOUD2JPI2TDJPWMTJX7FZP"
+	spikoSAFO    = "CDGSC6BA4TCAOVSFQCUEHDMOIIHYYVNYBT6YEARS4MX3ITAHUINVGQHX"
+	spikoGbpSAFO = "CAGYRRKPFSWKM6SJOE4QAAVYMOSHMDS5WOQ4T5A2E6XNCU7LZZKUNQKP"
+	spikoChfSAFO = "CAJD2IBSP7VO2VYJQUYJSOGPJINTUYV7MQITINXVPTIH3CCLCUENNMW4"
 )
 
 // contractInstruments is the curated set. See [contractInstrument] for
 // the evidence bar each entry has to meet, and for what an entry does
 // and does not do.
 //
-// Class is `bond` throughout: each fund is a short-maturity Treasury
-// Bill money-market fund, the same instrument class the SEP-1 arm
-// accepts as `bond` from Etherfuse's sovereign-debt declarations.
+// The T-Bill funds are `bond`: each is a short-maturity Treasury Bill
+// money-market fund, the same instrument class the SEP-1 arm accepts as
+// `bond` from Etherfuse's sovereign-debt declarations. The overnight
+// swap fund's share classes are `fund`, for the reason recorded above
+// their addresses and argued at [contractAnchorClasses] — the same
+// issuer, a different instrument, and the vocabulary now has a word for
+// the difference rather than rounding it to the nearest wrong one.
 //
 // Supply read on 2026-09-15, at the 5 decimals every one of these
-// contracts declares. It is recorded because it is the figure a reader
-// should be able to falsify, and because two of the five hold none:
+// contracts declares — decoded from each contract's own METADATA map,
+// not assumed. It is recorded because it is the figure a reader should
+// be able to falsify, and because three of the nine hold none:
 //
-//	EUTBL     283,278,671.09 tokens
-//	USTBL      32,964,659.79
-//	UKTBL       9,320,573.45
+//	eurSAFO   918,684,368.85782 tokens
+//	EUTBL     283,278,671.09034
+//	SAFO       65,690,636.43583
+//	USTBL      36,216,376.34835
+//	gbpSAFO    30,414,646.27691
+//	UKTBL       9,295,007.40439
+//	chfSAFO             none — 1,000,000 shares exist, none on Stellar
 //	eurUSTBL            none — deployed, never minted
 //	eurUKTBL            none — deployed, never minted
+//
+// Each figure above is three measurements that agree TO THE UNIT, not
+// one: the lake's mint−burn−clawback, the contract's own TotalSupply in
+// instance storage, and the sum of every per-holder Balance entry in
+// contract storage. The three arrive by independent paths, so a wrong
+// decimals exponent could not survive all of them.
 //
 // The two empty ones are bound anyway. The evidence is per ADDRESS and
 // is identical for all five; an unminted token is an empty token, not an
@@ -751,6 +782,20 @@ var contractInstruments = []contractInstrument{
 	{ContractID: spikoUKTBL, Instrument: "Spiko UK T-Bills Money Market Fund (UKTBL)", Class: "bond"},
 	{ContractID: spikoEurUSTBL, Instrument: "Spiko US T-Bills Money Market Fund, EUR share class (eurUSTBL)", Class: "bond"},
 	{ContractID: spikoEurUKTBL, Instrument: "Spiko UK T-Bills Money Market Fund, EUR share class (eurUKTBL)", Class: "bond"},
+	{ContractID: spikoEurSAFO, Instrument: "Spiko Amundi Overnight Swap Fund, EUR share class (eurSAFO)", Class: "fund"},
+	{ContractID: spikoSAFO, Instrument: "Spiko Amundi Overnight Swap Fund, USD share class (SAFO)", Class: "fund"},
+	{ContractID: spikoGbpSAFO, Instrument: "Spiko Amundi Overnight Swap Fund, GBP share class (gbpSAFO)", Class: "fund"},
+	{ContractID: spikoChfSAFO, Instrument: "Spiko Amundi Overnight Swap Fund, CHF share class (chfSAFO)", Class: "fund"},
+}
+
+// ContractInstrumentClass reports whether a class string is one a
+// curated binding may carry. Exported for the guard that holds
+// [contractInstruments] to [contractAnchorClasses]; the bindings are a
+// hand-maintained literal, so nothing else would notice a typo or a
+// class invented in a hurry to get an address admitted.
+func ContractInstrumentClass(class string) bool {
+	_, ok := contractAnchorClasses[strings.ToLower(strings.TrimSpace(class))]
+	return ok
 }
 
 // contractInstrumentOf returns the curated binding for a contract, if

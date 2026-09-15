@@ -164,6 +164,64 @@ func AnchorClass(declared string) string {
 	return c
 }
 
+// contractAnchorClasses is the closed vocabulary a CURATED CONTRACT
+// BINDING may use. It is [anchorClasses] plus the terms SEP-1 has no
+// word for.
+//
+// The two vocabularies differ because the two arms are doing different
+// things with the word. The classic arm READS the issuer's own free-text
+// anchor_asset_type, so its vocabulary has to be SEP-1's: accepting a
+// term SEP-1 does not define is accepting an invented spelling, which is
+// the exact failure the closed set exists to prevent (the production set
+// carries `equity`, `etf`, `metal`, `rwa`, `sovereign` and dozens more).
+// The contract arm does not read a declaration at all. The class on a
+// curated binding is OUR OWN statement, made in code from a primary
+// source and reviewed as a change — so it may use a term SEP-1 lacks,
+// and it has to, because SEP-1 has no word for a share in a fund.
+//
+//   - `fund` — a share in a pooled investment vehicle, whose exposure is
+//     the fund's stated objective rather than any one asset type it
+//     happens to hold. It exists because forcing an asset-type label
+//     onto a fund share states something false in BOTH directions, and
+//     the Spiko Amundi Overnight Swap Fund is the case that proved it:
+//     152 of its 160 holdings are listed equities (119% of net assets),
+//     and total return swaps with a counterparty hand every penny of
+//     that equity return away in exchange for the overnight index rate.
+//     `stock` would tell a holder it tracks equities, which is the
+//     precise opposite of what the instrument does; `bond` would be
+//     false on the assets (not one bond) and false on the exposure
+//     (an overnight rate, not credit or duration), and the fund's own
+//     AMF classification is "EUR UCITS" rather than a money-market
+//     fund. `fund` says what is true of every share class of it: the
+//     holder owns a piece of a vehicle, and the vehicle's objective is
+//     the exposure.
+//
+// Adding a term here widens what a BINDING may say. It does not widen
+// what is admitted: C1, C2 and C3 are untouched, and a contract still
+// needs its address named by two independent parties or by the curated
+// directory before a class is ever read.
+var contractAnchorClasses = func() map[string]struct{} {
+	out := make(map[string]struct{}, len(anchorClasses)+1)
+	for c := range anchorClasses {
+		out[c] = struct{}{}
+	}
+	out["fund"] = struct{}{}
+	return out
+}()
+
+// ContractAnchorClasses lists the contract-binding vocabulary in a
+// stable order, served beside [AnchorClasses] so a consumer can see that
+// the two arms do not answer with the same words and why a contract row
+// may carry a class no SEP-1 declaration could.
+func ContractAnchorClasses() []string {
+	out := make([]string, 0, len(contractAnchorClasses))
+	for c := range contractAnchorClasses {
+		out = append(out, c)
+	}
+	sort.Strings(out)
+	return out
+}
+
 // AnchorClasses lists the closed vocabulary in a stable order. The
 // API serves it so a consumer reads the rule from the response rather
 // than inferring it from the rows present on the day.

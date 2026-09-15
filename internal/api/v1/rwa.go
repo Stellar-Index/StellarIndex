@@ -487,6 +487,27 @@ type RWADefinition struct {
 	// AnchorClasses is the closed SEP-1 anchor_asset_type vocabulary
 	// that admits an asset on the declaration basis.
 	AnchorClasses []string `json:"anchor_classes"`
+	// ContractAnchorClasses is the vocabulary a CURATED CONTRACT BINDING
+	// may use, which is a superset of the one above. The two arms do not
+	// answer with the same words, and the difference is not an oversight.
+	//
+	// The classic arm READS an issuer's free-text anchor_asset_type, so
+	// it can only accept terms SEP-1 defines: anything else is an
+	// invented spelling, and the served population carries dozens
+	// (`equity`, `etf`, `metal`, `rwa`, `sovereign`). The contract arm
+	// reads no declaration at all — a binding's class is this index's own
+	// statement, made in code from a primary source and reviewed as a
+	// change — so it may use a term SEP-1 lacks, and `fund` is there
+	// because SEP-1 has no word for a share in a pooled vehicle whose
+	// exposure is the vehicle's objective rather than any asset type it
+	// holds.
+	//
+	// A wider vocabulary widens what a binding may SAY. It does not widen
+	// what is admitted: the identity, recognition and scam requirements
+	// are untouched, and a contract's class is never read until its
+	// address has already been named by two independent parties or by the
+	// curated directory.
+	ContractAnchorClasses []string `json:"contract_anchor_classes"`
 	// RecognitionTags is the curated-directory vocabulary that counts
 	// as independent recognition of the issuer account.
 	RecognitionTags []string `json:"recognition_tags"`
@@ -1573,6 +1594,7 @@ func rwaDefinition() RWADefinition {
 			"real-world instrument by an in-repo curated binding or by an ADR-0028 oracle feed on the on-chain symbol",
 		},
 		AnchorClasses:              rwa.AnchorClasses(),
+		ContractAnchorClasses:      rwa.ContractAnchorClasses(),
 		RecognitionTags:            rwa.RecognitionTags(),
 		ContractRecognitionTags:    rwa.ContractRecognitionTags(),
 		ContractRecognitionSources: rwa.ContractRecognitionSources(),

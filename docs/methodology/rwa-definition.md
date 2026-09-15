@@ -1,6 +1,6 @@
 ---
 title: What counts as a tokenized real-world asset
-last_verified: 2026-09-11
+last_verified: 2026-09-15
 status: current
 ---
 
@@ -427,11 +427,13 @@ inferred from a dashboard is a fabricated identity for a financial
 instrument. It shipped **empty** until the first such source was in
 hand, which was correct for a set with no verified members.
 
-It now holds Spiko's five tokenized T-Bill money-market funds — EUTBL,
-USTBL, UKTBL and the two EUR share classes — bound to their exact
-mainnet contract addresses and classed `bond`. The addresses come from
-Spiko's own deployment manifest, reached only through `spiko.io`: the
-firm's own engineering subdomain publishes its Soroban source, that
+It now holds nine funds from one issuer. Five are tokenized T-Bill
+money-market funds — EUTBL, USTBL, UKTBL and the two EUR share classes —
+classed `bond`. Four are the share classes of a tokenized overnight swap
+fund — eurSAFO, SAFO, gbpSAFO, chfSAFO — classed `fund`. All nine are
+bound to their exact mainnet contract addresses. The addresses come from
+the issuer's own deployment manifest, reached only through `spiko.io`:
+the firm's own engineering subdomain publishes its Soroban source, that
 repository names one mainnet address per token, and a companion file
 names the fund each address carries. The ledger corroborates but does
 not source them — every contract's `name()`, `symbol()` and `decimals()`
@@ -441,9 +443,49 @@ cannot reproduce this: the chain is rooted at a domain the curator
 picked, and the five accounts already issuing classic assets coded
 `EUTBL`/`USTBL` from lookalike domains cannot publish at `spiko.io`.
 
-Spiko's cash-and-carry fund is deliberately **not** bound. A
-digital-asset basis-trade fund is not a bond, a stock, a commodity or
-real estate, and the closed vocabulary excludes crypto on purpose.
+#### The class follows the instrument, not the issuer
+
+The two families share an issuer and are not the same instrument, and
+the class says so.
+
+The T-Bill funds are invested in short-dated sovereign debt, which is
+what makes `bond` defensible for them — the same reading the classic arm
+accepts from a sovereign-debt `anchor_asset_type` declaration.
+
+The overnight swap fund is not. On its own published holdings it is 152
+listed equities at 119% of net assets, one cash line, and seven total
+return swaps that hand every penny of that equity return to a bank
+counterparty in exchange for the overnight index rate; the share class's
+reference index is the capitalised overnight rate plus a spread, and its
+regulatory classification is a UCITS rather than a money-market fund.
+`bond` would be false twice over — no bonds in it, and no credit or
+duration exposure. `stock` would be true of what the fund holds and the
+exact opposite of what the token gives you, since the equity return has
+been swapped away in full. So the fund was held **unbound**, worth over
+a billion dollars, until the vocabulary had a word that was true.
+
+That word is `fund`: a share in a pooled vehicle, whose exposure is the
+vehicle's stated objective rather than any one asset type it happens to
+hold. It is served on `definition.contract_anchor_classes`, which is the
+classic vocabulary plus this term, and the two lists are published side
+by side because they are not the same list and the difference is not an
+oversight. The classic arm READS an issuer's free-text
+`anchor_asset_type`, so it can only accept what SEP-1 defines —
+accepting anything else is accepting an invented spelling, and the
+served population already carries dozens. A binding's class is this
+index's own statement, made in code from a primary source and reviewed
+as a change, so it may use a term SEP-1 lacks. An issuer cannot declare
+its way to `fund`; only a reviewed binding can.
+
+Widening what a binding may SAY does not widen what is ADMITTED. C1, C2
+and C3 are untouched, and a contract's class is never read until its
+address has already been named by two independent parties or by the
+curated directory.
+
+Spiko's cash-and-carry fund is still deliberately **not** bound, and the
+reason is different in kind: a digital-asset basis-trade fund holds
+crypto and futures, which the definition excludes from the real-world
+population on purpose. That is an exclusion, not a vocabulary gap.
 
 A binding is **not** an admission. C2 runs first, and a binding is only
 ever the *second* of the two sources
