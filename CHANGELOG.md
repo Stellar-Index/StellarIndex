@@ -15,6 +15,47 @@ against.
 
 ## [Unreleased]
 
+### Added
+
+- **rwa:** a tokenized overnight swap fund worth over a billion dollars
+  is now in the set, under a class that is true of it.
+
+  Its four share classes were identified, addressed, priced and
+  deliberately LEFT OUT, because the closed class vocabulary had no word
+  that was not a false statement. On the fund's own published holdings it
+  is 152 listed equities at 119% of net assets, one cash line, and seven
+  total return swaps that hand every penny of that equity return to a
+  bank counterparty in exchange for the overnight index rate. `bond` is
+  false twice over — not one bond in it, and no credit or duration
+  exposure. `stock` is true of what the fund holds and the exact opposite
+  of what the token gives you, since the equity return has been swapped
+  away in full.
+
+  The contract arm now has its own vocabulary, served as
+  `definition.contract_anchor_classes` beside the existing
+  `anchor_classes`, and it adds one term: `fund` — a share in a pooled
+  vehicle, whose exposure is the vehicle's stated objective rather than
+  any one asset type it happens to hold.
+
+  The two lists differ because the two arms do different things with the
+  word. The classic arm READS an issuer's free-text `anchor_asset_type`,
+  so it can only accept terms SEP-1 defines; accepting anything else is
+  accepting an invented spelling, and the served population already
+  carries `equity`, `etf`, `metal`, `rwa` and `sovereign`. A binding's
+  class is this index's own statement, made in code from a primary source
+  and reviewed as a change, so it may use a term SEP-1 lacks. An issuer
+  cannot declare its way to `fund`; only a reviewed binding can, and a
+  test asserts both halves.
+
+  Widening what a binding may SAY does not widen what is ADMITTED. The
+  identity, independent-naming and scam requirements are untouched: each
+  address still needs a listing directory naming it AND the in-repo
+  binding, and the class is not read until that has happened. The T-Bill
+  funds keep the `bond` they shipped with — they are invested in
+  short-dated sovereign debt, the instrument has not changed, and
+  reclassifying a published row on a vocabulary edit made for a different
+  fund would be its own kind of wrong.
+
 ### Fixed
 
 - **assets:** a market cap is no longer published when the asset's own

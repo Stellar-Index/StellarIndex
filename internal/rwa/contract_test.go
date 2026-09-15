@@ -223,7 +223,7 @@ func TestQualifyContract_RefusesAMalformedAddress(t *testing.T) {
 // malformed entry would silently admit or silently refuse, and both are
 // worse than a compile error.
 func TestContractInstrumentBindings_AreWellFormed(t *testing.T) {
-	classes := rwa.AnchorClasses()
+	classes := rwa.ContractAnchorClasses()
 	seen := map[string]struct{}{}
 	for _, b := range rwa.ContractInstrumentBindings() {
 		if !slices.Contains(classes, b.Class) {
@@ -602,27 +602,54 @@ func TestSpikoBinding_ExcludesTheCashAndCarryFund(t *testing.T) {
 	}
 }
 
-// TestSpikoBindings_AreAllBondClass pins that the five bound funds
-// classify as `bond` and that each names a falsifiable instrument rather
-// than a category. `US Treasury money market fund` is a category; a
-// named fund with a share class is an instrument.
-func TestSpikoBindings_AreAllBondClass(t *testing.T) {
-	var spiko int
+// TestSpikoBindings_ClassifyByInstrumentNotByIssuer pins that each bound fund
+// names a falsifiable instrument rather than a category — `US Treasury money
+// market fund` is a category, a named fund with a share class is an
+// instrument — and that the class follows the INSTRUMENT.
+//
+// One issuer now has two kinds of fund bound. The T-Bill funds are `bond`,
+// invested in short-dated sovereign debt. The overnight swap fund's share
+// classes are `fund`: 152 of its 160 holdings are listed equities at 119% of
+// net assets, and total return swaps hand every penny of that return away for
+// the overnight index rate, so `bond` would be false on the assets and false
+// on the exposure while `stock` would be true of the assets and the exact
+// opposite of the instrument. Classifying by issuer rather than by instrument
+// is how the wrong one of those gets published.
+func TestSpikoBindings_ClassifyByInstrumentNotByIssuer(t *testing.T) {
+	var spiko, tbill, swap int
 	for _, b := range rwa.ContractInstrumentBindings() {
 		if !strings.Contains(b.Instrument, "Spiko") {
 			continue
 		}
 		spiko++
-		if b.Class != "bond" {
-			t.Errorf("%s: class = %q, want %q", b.ContractID, b.Class, "bond")
+		switch {
+		case strings.Contains(b.Instrument, "T-Bills Money Market Fund"):
+			tbill++
+			if b.Class != "bond" {
+				t.Errorf("%s: class = %q, want %q", b.ContractID, b.Class, "bond")
+			}
+		case strings.Contains(b.Instrument, "Overnight Swap Fund"):
+			swap++
+			if b.Class != "fund" {
+				t.Errorf("%s: class = %q, want %q", b.ContractID, b.Class, "fund")
+			}
+		default:
+			t.Errorf("%s: instrument %q matches neither bound fund family — a new one "+
+				"needs its class argued here, not defaulted", b.ContractID, b.Instrument)
 		}
 		if !strings.Contains(b.Instrument, "(") {
 			t.Errorf("%s: instrument %q names no share class — the bar wants a fund, not a category",
 				b.ContractID, b.Instrument)
 		}
 	}
-	if spiko != 5 {
-		t.Errorf("bound Spiko funds = %d, want 5 (EUTBL, USTBL, UKTBL, eurUSTBL, eurUKTBL)", spiko)
+	if tbill != 5 {
+		t.Errorf("bound T-Bill funds = %d, want 5 (EUTBL, USTBL, UKTBL, eurUSTBL, eurUKTBL)", tbill)
+	}
+	if swap != 4 {
+		t.Errorf("bound overnight-swap share classes = %d, want 4 (eurSAFO, SAFO, gbpSAFO, chfSAFO)", swap)
+	}
+	if spiko != tbill+swap {
+		t.Errorf("bound Spiko funds = %d, but only %d were classified", spiko, tbill+swap)
 	}
 }
 
@@ -630,17 +657,25 @@ func TestSpikoBindings_AreAllBondClass(t *testing.T) {
 // the funnel's arm-2 comment used to claim existed and did not.
 //
 // QualifyContract returns a curated binding's Class VERBATIM — it never
-// checks it against [AnchorClasses]. So a sixth entry added with a class
-// outside that vocabulary would be ADMITTED and its class published,
-// while `definition.anchor_classes` continues to tell consumers the
-// vocabulary is closed. The wire contract would then describe a row it
-// does not cover, which is worse than a refusal.
+// checks it against a vocabulary. So an entry added with a class outside
+// one would be ADMITTED and its class published, while the definition
+// block continues to tell consumers the vocabulary is closed. The wire
+// contract would then describe a row it does not cover, which is worse
+// than a refusal.
+//
+// The vocabulary here is [ContractAnchorClasses], not [AnchorClasses], and
+// the two are different on purpose. The classic arm READS an issuer's
+// free-text anchor_asset_type, so it can only accept terms SEP-1 defines.
+// A binding's class is this repository's own statement from a primary
+// source, so it may use a term SEP-1 lacks — and `definition`
+// serves BOTH lists, which is what keeps this check honest: the wire
+// declares exactly the set a row may draw from.
 //
 // A test rather than a runtime check because the set is a hand-reviewed
 // table in this repository: the failure belongs at the moment the entry
 // is written, not at the moment a response is served.
 func TestCuratedBindings_DeclareAClassFromTheClosedVocabulary(t *testing.T) {
-	classes := rwa.AnchorClasses()
+	classes := rwa.ContractAnchorClasses()
 	bindings := rwa.ContractInstrumentBindings()
 	if len(bindings) == 0 {
 		t.Fatal("no curated bindings — a check over an empty set passes forever")
