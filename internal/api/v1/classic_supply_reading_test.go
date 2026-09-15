@@ -267,3 +267,43 @@ func TestFillRowMarketCap_PublishesTheBasisItUsed(t *testing.T) {
 		})
 	}
 }
+
+// TestStampCirculatingSupplyNeverOverwrites covers the guard, not the happy
+// path. Two branches attach a supply DELIBERATELY before this fill runs — the
+// dust-suppressed and ticker-collision paths — and a later arm overwriting one
+// would replace a figure the pipeline decided on with one it merely found.
+//
+// The basis is asserted alongside it because the pair travels together. A
+// stamp that skipped the value but wrote the name would leave a row claiming
+// its supply came from an arm that did not produce it, which is worse than the
+// unlabelled row the wire had before either field existed.
+func TestStampCirculatingSupplyNeverOverwrites(t *testing.T) {
+	existing := "42"
+	row := AssetDetail{CirculatingSupply: &existing}
+
+	stampCirculatingSupply(&row, "999", supply.BasisClassicTrustlineSum)
+
+	if *row.CirculatingSupply != "42" {
+		t.Errorf("circulating_supply = %q, want the value already attached", *row.CirculatingSupply)
+	}
+	if row.SupplyBasis != nil {
+		t.Errorf("supply_basis = %q, want absent — no value was stamped", *row.SupplyBasis)
+	}
+}
+
+// TestStampCirculatingSupplyRefusesAnUnnamedArm — an empty basis is not a
+// claim. The value is a chain fact and is published either way; the name is
+// omitted rather than written as "", which a consumer reading the field as a
+// string would have to special-case.
+func TestStampCirculatingSupplyRefusesAnUnnamedArm(t *testing.T) {
+	var row AssetDetail
+
+	stampCirculatingSupply(&row, "1000000000", "")
+
+	if row.CirculatingSupply == nil || *row.CirculatingSupply != "1000000000" {
+		t.Fatalf("circulating_supply = %v, want the value published", row.CirculatingSupply)
+	}
+	if row.SupplyBasis != nil {
+		t.Errorf("supply_basis = %q, want absent", *row.SupplyBasis)
+	}
+}
