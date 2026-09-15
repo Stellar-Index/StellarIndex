@@ -336,6 +336,48 @@ describe('RWAView', () => {
     ).toBeInTheDocument();
   });
 
+  it('names the classes only a curated contract binding may use, and does not repeat the ones both arms share', async () => {
+    apiGetData.mockResolvedValue(
+      view({
+        definition: {
+          ...view().definition,
+          contract_anchor_classes: [
+            'bond',
+            'commodity',
+            'fund',
+            'realestate',
+            'stock',
+          ],
+        },
+      }),
+    );
+    renderView();
+
+    // The served contract vocabulary is a SUPERSET of the classic one, so
+    // printing it whole would repeat four of five words and bury the one
+    // that differs. Only the difference is shown.
+    expect(await screen.findByText('fund')).toBeInTheDocument();
+    expect(
+      screen.getByText(/statement from a primary source/),
+    ).toBeInTheDocument();
+    expect(screen.getByText('bond, commodity, realestate, stock')).toBeInTheDocument();
+  });
+
+  it('omits the contract-class clause entirely when the server publishes no contract vocabulary', async () => {
+    // Every build before the field existed, and the reason the read is
+    // optional: an absent list must render nothing, never an empty clause
+    // trailing a dash.
+    apiGetData.mockResolvedValue(view());
+    renderView();
+
+    expect(
+      await screen.findByText('bond, commodity, realestate, stock'),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText(/statement from a primary source/),
+    ).not.toBeInTheDocument();
+  });
+
   it('states the definition and how many candidates each requirement refused', async () => {
     apiGetData.mockResolvedValue(
       view({

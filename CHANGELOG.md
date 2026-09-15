@@ -17,6 +17,13 @@ against.
 
 ### Added
 
+- **explorer:** the `/rwa` page renders the new `fund` class and names the
+  classes only a curated contract binding may use. The served contract
+  vocabulary is a superset of the classic one, so the page prints the
+  DIFFERENCE rather than the whole list — printing both in full repeats
+  four of five words and buries the one that is not shared. The clause
+  disappears entirely against a server that publishes no contract
+  vocabulary.
 - **rwa:** a tokenized overnight swap fund worth over a billion dollars
   is now in the set, under a class that is true of it.
 
