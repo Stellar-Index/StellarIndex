@@ -823,14 +823,23 @@ jobs:
         #      must still have none. Either disagreement refuses the deploy
         #      and names the one read-only command that fixes the row.
         #
-        #      DEPLOYABILITY IS UNIT PRESENCE, NOT ENABLEMENT — measured,
-        #      because the obvious test is wrong. testnet's aggregator is
-        #      UnitFileState=disabled with ActiveState=active: off at boot,
-        #      running now, and deployed there by this workflow. An
-        #      enablement test would drop it and re-create the very skew
-        #      this exists to prevent. futurenet's is LoadState=not-found,
-        #      which is the real exclusion. So LoadState is the property
-        #      read, and nothing else.
+        #      DEPLOYABILITY IS NOT ENABLEMENT ALONE — measured, because
+        #      the obvious test is wrong in both directions. When this note
+        #      was written testnet's aggregator was UnitFileState=disabled
+        #      with ActiveState=active: off at boot, running now, deployed
+        #      there by this workflow. A pure enablement test would have
+        #      dropped it and re-created the very skew this exists to
+        #      prevent. futurenet's is not-found, which is a real exclusion.
+        #
+        #      But presence alone is wrong too, and reading LoadState by
+        #      itself is what this step used to do. Both test nets set
+        #      run_aggregator: false, so testnet's unit FILE is still on
+        #      disk from when the aggregator did run there while the daemon
+        #      is deliberately stopped — present, and correctly excluded.
+        #      The predicate below is therefore the enabled/active pair,
+        #      identical to preflight-deploy.sh's unit_deployable: absent,
+        #      bad or masked is never deployable, and neither is off-at-boot
+        #      AND not-running.
         #
         #      The CLI binaries (deploy-binary.yml's cli_binaries
         #      deny-list) are exempt: they have no unit to restart and no
@@ -889,16 +898,30 @@ jobs:
           # and an unquoted expansion is how a ProxyJump ends up split.
           ssh_opts=(-i ~/.ssh/id_deploy -o BatchMode=yes -o ConnectTimeout=20)
           if [ -n "${DEPLOY_JUMP:-}" ]; then ssh_opts+=(-o "ProxyJump=${DEPLOY_JUMP}"); fi
-          # LoadState for the unit, and the deployed-versions sidecar for
-          # the version. `awk 1`, not `cat`: the sidecars are written with
-          # ansible.builtin.copy `content:` and carry NO trailing newline.
+          # is-enabled/is-active for the unit, and the deployed-versions
+          # sidecar for the version. `awk 1`, not `cat`: the sidecars are
+          # written with ansible.builtin.copy `content:` and carry NO
+          # trailing newline.
+          #
+          # This reads the SAME pair preflight-deploy.sh reads, in the same
+          # vocabulary, because the two must agree about what "deployable"
+          # means — and on 2026-09-15 they did not. This step read LoadState
+          # alone, which is unit PRESENCE; preflight reads the
+          # enabled/active pair and additionally refuses a unit that is
+          # switched off and not running. While testnet's aggregator was
+          # disabled-but-running the two rules happened to agree. When it
+          # stopped they diverged, preflight kept excluding it, and this
+          # step refused the dispatch as stale-manifest drift — pointing at
+          # a --refresh-manifest that re-derived the identical row. Two
+          # implementations of one derivation is the defect; one predicate,
+          # read from one place, is the fix.
           remote="d=/var/lib/stellarindex/deployed-versions
           for b in ${probe}; do
-            l=\$(systemctl show \"\$b.service\" -p LoadState --value 2>/dev/null)
-            [ -n \"\$l\" ] || l=unknown
+            e=\$(systemctl is-enabled \"\$b.service\" 2>/dev/null); [ -n \"\$e\" ] || e=not-found
+            a=\$(systemctl is-active \"\$b.service\" 2>/dev/null); [ -n \"\$a\" ] || a=unknown
             if [ -f \"\$d/\$b\" ]; then v=\$(awk 1 \"\$d/\$b\" | tr -d '\r'); else v=-; fi
             [ -n \"\$v\" ] || v=-
-            printf '%s\t%s\t%s\n' \"\$b\" \"\$l\" \"\$v\"
+            printf '%s\t%s/%s\t%s\n' \"\$b\" \"\$e\" \"\$a\" \"\$v\"
           done"
           set +e
           # shellcheck disable=SC2029  # the binary list IS meant to expand
@@ -913,21 +936,35 @@ jobs:
           fi
           printf '%s\n' "$host_states" | sed 's/^/  /'
 
-          load_state() { awk -F'\t' -v b="$1" '$1 == b { print $2 }' <<<"$host_states"; }
+          unit_state() { awk -F'\t' -v b="$1" '$1 == b { print $2 }' <<<"$host_states"; }
           live_version() { awk -F'\t' -v b="$1" '$1 == b { print $3 }' <<<"$host_states"; }
           is_cli() { case " $cli_binaries " in *" $1 "*) return 0 ;; esac; return 1; }
+
+          # Byte-for-byte the rule in preflight-deploy.sh's unit_deployable:
+          # absent, bad or masked is never deployable, and neither is a unit
+          # switched off at boot AND not running — restarting that starts a
+          # daemon somebody deliberately stopped. Both test nets set
+          # run_aggregator: false, which is exactly that state.
+          unit_deployable() {
+            local enabled="${1%%/*}" active="${1##*/}"
+            case "$enabled" in
+              not-found|bad|masked|masked-runtime|"") return 1 ;;
+            esac
+            [ "$enabled" = disabled ] && [ "$active" != active ] && return 1
+            return 0
+          }
 
           drift=""
           for b in $REGION_SET; do
             if is_cli "$b"; then continue; fi
-            state="$(load_state "$b")"
-            [ "$state" = loaded ] || drift="${drift}${b}(manifest:deployable,host:${state:-unread}) "
+            state="$(unit_state "$b")"
+            unit_deployable "$state" || drift="${drift}${b}(manifest:deployable,host:${state:-unread}) "
           done
           for entry in $NOT_DEPLOYABLE; do
             b="${entry%%:*}"
             if is_cli "$b"; then continue; fi
-            state="$(load_state "$b")"
-            [ "$state" = loaded ] && drift="${drift}${b}(manifest:${entry#*:},host:loaded) "
+            state="$(unit_state "$b")"
+            unit_deployable "$state" && drift="${drift}${b}(manifest:${entry#*:},host:${state}) "
           done
           if [ -n "$drift" ]; then
             echo "::error::${MANIFEST} no longer matches ${REGION}: ${drift% }. The host is the fact and the manifest is a cache of it, so this dispatch is running on a stale contract. Re-derive the row read-only with 'scripts/dev/preflight-deploy.sh --region ${REGION} --version ${VERSION} --refresh-manifest', commit it, and re-dispatch."
