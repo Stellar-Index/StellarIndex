@@ -8539,6 +8539,59 @@ export interface components {
              */
             last_seen?: string;
         };
+        /**
+         * @description An independent listing platform's own USD price for the EXACT Stellar address this asset lives at. It is NOT this index's price for the asset, and it is derived from no Stellar market — the asset's own price_usd, when there is one, sits beside it unchanged.
+         *     Present only on a verified-catalogue asset whose market_cap_usd this index declines to publish, and only when the cached listing directory names either the asset's classic `CODE-GISSUER` id or the Stellar Asset Contract address deterministically derived from that (code, issuer) pair and the network passphrase. No code is ever matched: PYUSD, USDT, USDC and XLM are each worn by impersonators on this network, so a code match would hand the real instrument's price to whichever account minted the ticker.
+         */
+        AssetListingReference: {
+            /** @description The platform's published USD price, verbatim as the decimal string it published (ADR-0003). Never re-rounded, and never parsed through a float at any point on the path from the wire to here. */
+            price_usd: string;
+            /** @description The listing platform the row came from. */
+            source: string;
+            /** @description That platform's own opaque coin id, so a reader can pull the same figure from the same source. NOT an ADR-0028 oracle feed id — the meaning of this block follows `provenance`. */
+            listing_id: string;
+            /** @description The denominator, always "fiat:USD" on a served row. On the wire rather than assumed, because a price denominated in a reserve asset is a ratio and the difference is invisible in the number alone. */
+            quote: string;
+            /** @description The EXACT Stellar address the platform named — the whole of the binding. Published so a reader can check the join rather than trust it. */
+            address: string;
+            /**
+             * @description Which route matched. `classic`: the platform named the asset's own `CODE-GISSUER` id. `sac`: the platform named a contract address, and it is the one canonical.Asset.SacContractID() derives from this asset's (code, issuer) and the network passphrase. The second is a DERIVED address and is exact rather than probable — SAC derivation is a pure function of the asset and the network, so no other issuer's asset derives to it.
+             * @enum {string}
+             */
+            address_form: "classic" | "sac";
+            /**
+             * Format: date-time
+             * @description The PLATFORM's own publication time for the price, not when this index read it. The distinction is why a sync that succeeded five minutes ago cannot launder a price that froze two weeks ago.
+             */
+            as_of: string;
+            /** @description True when the price is older than 72h — served, but labelled. Past 7 days it is not served at all and `listing_valuation.status` is `listing_price_expired`. Omitted when false. */
+            stale?: boolean;
+            /**
+             * @description What KIND of figure this is. Mandatory on every served reference rather than defaulted, so a consumer that later meets a second kind cannot mistake it for this one. Same vocabulary as RWAReference.provenance.
+             * @enum {string}
+             */
+            provenance: "listing_platform_price";
+        };
+        /**
+         * @description The asset's circulating supply valued at the listing platform's price — and NOT a market capitalisation. `market_cap_usd` is a price somebody was observed paying, past the thin-market substance gate, the dust-liquidity guard and the scam-issuer suppression. This is supply times a figure a third party published about venues this index does not observe. Never summed into `market_cap_usd`, never a substitute for it, and a consumer that adds the two must say in its own copy that the total mixes two bases.
+         *     Present (carrying at least a `status`) on a verified-catalogue asset with no market cap; absent everywhere else.
+         */
+        AssetListingValuation: {
+            /**
+             * @description The single authority on why there is or is not a figure. `published`: a listing price and a supply reading were both available. `market_cap_published`: an observed market cap is served, so this arm stands down — it fills a hole, and there is none. `market_price_observed`: the row carries an observed market price that cleared every gate and still no cap, so the hole is a missing supply reading rather than a price problem, and filling it from a third party would hide a gap in this index's own data. `listing_unavailable`: the listing directory could not be read, is not wired, or holds no fresh rows — nobody looked, which is never the same statement as "nobody lists it". `not_listed`: the directory WAS read and names neither the classic id nor the SAC; the ordinary state of almost every asset on this network, and not an accusation. `no_listing_price`: named, but unpriced, or priced past the 24h bound the directory enforces on the platform's own publication clock. `listing_price_expired`: the publication time is past the absolute 7-day bound. `no_supply`: no supply reading to multiply, refused rather than published as zero.
+             * @enum {string}
+             */
+            status: "published" | "market_cap_published" | "market_price_observed" | "listing_unavailable" | "not_listed" | "no_listing_price" | "listing_price_not_positive" | "listing_price_expired" | "no_supply";
+            /** @description circulating_supply / 10^decimals x listing_reference.price_usd, two fractional digits. Exact rational arithmetic throughout, rounded once at the end, so a consumer can add the served strings by hand and reach the same total. Present if and only if status is `published`. */
+            value_usd?: string | null;
+            /** @description The multiplicand: the raw integer supply, in the asset's smallest unit, that value_usd was computed from. Published here rather than inferred from the row's own `circulating_supply`, because the two can legitimately differ — this arm takes the LARGER of the row's reading and the lake's mint-burn total over the asset's SAC, and on the detail surface the row often has no reading at all. Scale it by the row's `decimals`. */
+            circulating_supply?: string | null;
+            /**
+             * @description Where that number came from. `lake_flows`: Sum(mint) - Sum(burn) - Sum(clawback) over the asset's Stellar Asset Contract, the only reading of the three that is not keyed on where the tokens are HELD and therefore the only one that can see claimable balances, liquidity-pool reserves and SAC-held balances. `served`: the row's own circulating_supply, used when it is the larger of the two or when the lake could not answer. The difference is material rather than cosmetic: USDT0's trustline-visible supply is 6,469 tokens against 2,581,052 by mint-burn.
+             * @enum {string}
+             */
+            supply_basis?: "lake_flows" | "served";
+        };
         Asset: {
             /**
              * @description Wire-shape discriminator for the /v1/assets/{asset_id} oneOf (ADR-0042). Always "stellar_asset" on this schema. See `Asset.type` for the separate protocol/class discriminator (native/classic/soroban/fiat/global/external) — `kind` says which SHAPE this payload is, `type` says which Stellar asset CLASS within that shape.
@@ -8605,6 +8658,8 @@ export interface components {
             fdv_usd?: string | null;
             /** @description True when market_cap_usd and fdv_usd were deliberately suppressed (served null) because the backing price came from negligible liquidity — a single venue AND trailing-24h USD volume below the server's aggregate.min_market_cap_volume_usd floor. Disambiguates 'suppressed on purpose' from 'no supply/price data'; the price_usd itself still serves — the guard is on the valuation, not the price. Omitted when a cap is present. */
             market_cap_low_liquidity?: boolean;
+            listing_reference?: components["schemas"]["AssetListingReference"];
+            listing_valuation?: components["schemas"]["AssetListingValuation"];
             /**
              * @description Which ADR-0011 policy produced the supply numbers.
              *     Surfaced so consumers can decide how much to trust the
