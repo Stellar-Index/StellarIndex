@@ -97,6 +97,17 @@
       PY
   register: migrations_archive
   changed_when: false
+  # MUST run under --check. ansible.builtin.shell is skipped in check mode,
+  # which would leave the archive unbuilt and the unarchive below failing on
+  # a missing file — turning the weekly ansible-drift preview red for a
+  # reason that has nothing to do with the host. deploy-binary.yml never
+  # runs --check so this was invisible there; the archival-node role does,
+  # every week.
+  #
+  # Safe to force: the task writes ONE file into the controller's own dist
+  # directory, touches no host, and is already changed_when: false. It is a
+  # preparatory read, not a change.
+  check_mode: false
   delegate_to: localhost
   # NEVER escalate on the controller. deploy-binary.yml runs `become:
   # false` at play level so this was invisible there, but archival-node.yml
