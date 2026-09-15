@@ -9,6 +9,7 @@ import (
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
+	"github.com/Stellar-Index/StellarIndex/internal/supply"
 )
 
 // TokenSupplyReader is the seam GET /v1/assets/{asset_id}/supply reads through:
@@ -61,9 +62,44 @@ type AssetSupply struct {
 	ClawbackTotal *string `json:"clawback_total,omitempty"`
 	FlowCount     uint64  `json:"flow_count"`
 	// Source is how TotalSupply was derived: "mint_burn_flows" (Σmint−Σburn−
-	// Σclawback from supply_flows) or "ledger_total_coins" (XLM, from the ledger
-	// header — XLM has no SAC mint/burn events).
+	// Σclawback from supply_flows), "ledger_total_coins" (XLM, from the ledger
+	// header — XLM has no SAC mint/burn events), or
+	// "contract_storage_balances" (Σ of the per-holder balance entries in the
+	// token's own Soroban contract storage — a DIFFERENT BASIS, see
+	// supply.BasisContractStorageBalances, served only for tokens that emit no
+	// supply events at all).
 	Source string `json:"source"`
+
+	// CirculatingSupplyLowerBound is true when TotalSupply is a PROVABLE FLOOR
+	// rather than the figure itself, and the consumer must not present it as an
+	// exact supply.
+	//
+	// It is set for "contract_storage_balances": that reading sees only
+	// balances that exist as ledger entries right now, and Soroban state expiry
+	// archives contract-data entries, so a real and restorable balance can be
+	// invisible to it. Where the contract publishes its own holder count,
+	// SupplyConsistent reports whether the two agreed — a disagreement is what
+	// an archived balance looks like from here.
+	CirculatingSupplyLowerBound bool `json:"circulating_supply_lower_bound,omitempty"`
+
+	// BalanceEntries is how many per-holder balance entries were summed.
+	// Only set for "contract_storage_balances".
+	BalanceEntries int `json:"balance_entries,omitempty"`
+
+	// SupplyConsistent, when non-nil, reports whether every cross-check the
+	// contract itself published agreed with what we summed — its own
+	// `TotalSupply` against our sum, and its own `HolderCount` against the
+	// number of entries we could see. Only set for
+	// "contract_storage_balances"; nil means the contract offered no
+	// cross-checks, which is not the same as a failed one.
+	SupplyConsistent *bool `json:"supply_consistent,omitempty"`
+
+	// Decimals is the scale the CONTRACT ITSELF declares, when it declares one.
+	// Only set for "contract_storage_balances", where it is the difference
+	// between a decimalised figure resting on our own measurement and one
+	// resting on a borrowed exponent. Omitted when the chain declares no scale,
+	// in which case a consumer MUST NOT invent one.
+	Decimals *uint32 `json:"decimals,omitempty"`
 	// AsOfLedger is the lake watermark this read is fresh to (ADR-0041
 	// Decision 4): the highest ledger captured in the ClickHouse lake at
 	// serve time (for native, the exact ledger the total_coins row came
@@ -152,6 +188,22 @@ func (s *Server) handleAssetSupply(w http.ResponseWriter, r *http.Request) {
 			"This token's on-chain supply flows are incompletely seeded (recorded burns exceed recorded mints), so a total supply isn't available for it yet.")
 		return
 	}
+	// A token with NO flows at all is the one case the event log cannot speak
+	// to: supply_flows scans a contract it has never seen to zeros, and zero is
+	// a claim ("fully burned") rather than an absence of one. Before publishing
+	// that claim, ask the contract's own storage.
+	//
+	// Gated on FlowCount == 0 rather than on a magnitude comparison, so the two
+	// readings can never both contribute to one figure — they measure the same
+	// tokens from opposite ends (issuance vs distribution) and summing them
+	// would double-count every holder.
+	if sup.FlowCount == 0 {
+		if resp, storageStale, ok := s.storageSupplyResponse(ctx, assetID, contractID); ok {
+			writeJSON(w, resp, Flags{Stale: storageStale})
+			return
+		}
+	}
+
 	mint, burn, clawback := sup.Mint.String(), sup.Burn.String(), sup.Clawback.String()
 	wmLedger, stale, _ := s.lakeWatermark(ctx)
 	writeJSON(w, AssetSupply{
@@ -165,6 +217,62 @@ func (s *Server) handleAssetSupply(w http.ResponseWriter, r *http.Request) {
 		Source:        "mint_burn_flows",
 		AsOfLedger:    wmLedger,
 	}, Flags{Stale: stale})
+}
+
+// ContractStorageSupplyReader is the seam the storage-derived supply reading is
+// read through. Declared HERE rather than added to [TokenSupplyReader] so every
+// existing stub implementing that interface keeps compiling, and so a
+// deployment can wire one source without the other.
+type ContractStorageSupplyReader interface {
+	ContractStorageSupply(ctx context.Context, contractID string) (clickhouse.ContractStorageSupply, error)
+}
+
+// storageSupplyResponse builds the storage-derived answer for a token the event
+// log has nothing to say about. ok=false means "no defensible answer" and the
+// caller falls back to the event reading (which, for a token with no flows, is
+// the zero it has always published).
+//
+// Every refusal below is silent to the client by design: this path is a
+// fallback, and a fallback that turns a 200 into a 502 because its own optional
+// source declined would be worse than the gap it closes.
+func (s *Server) storageSupplyResponse(ctx context.Context, assetID, contractID string) (AssetSupply, bool, bool) {
+	if s.storageSupply == nil {
+		return AssetSupply{}, false, false
+	}
+	st, err := s.storageSupply.ContractStorageSupply(ctx, contractID)
+	if err != nil {
+		// Both refusals (a SAC, an oversized holder set) and genuine read
+		// errors land here. A SAC is the expected case — every classic asset
+		// routed through resolveSupplyContractID derives one — so this is
+		// logged at debug volume, not warned.
+		s.logger.Debug("supply: contract storage fallback declined",
+			"contract_id", contractID, "err", err)
+		return AssetSupply{}, false, false
+	}
+	if st.BalanceEntries == 0 || st.Total == nil || st.Total.Sign() == 0 {
+		// No balances is not a supply of zero — it is the absence of a
+		// reading. Publishing it would replace one unfounded zero with
+		// another.
+		return AssetSupply{}, false, false
+	}
+
+	consistent := st.SelfConsistent()
+	resp := AssetSupply{
+		AssetID:                     assetID,
+		ContractID:                  contractID,
+		TotalSupply:                 st.Total.String(),
+		Source:                      string(supply.BasisContractStorageBalances),
+		CirculatingSupplyLowerBound: true,
+		BalanceEntries:              st.BalanceEntries,
+		SupplyConsistent:            &consistent,
+		AsOfLedger:                  st.AsOfLedger,
+	}
+	if st.DecimalsFound {
+		d := st.Decimals
+		resp.Decimals = &d
+	}
+	_, stale, _ := s.lakeWatermark(ctx)
+	return resp, stale, true
 }
 
 // resolveSupplyContractID maps an asset_id to the contract_id supply_flows is

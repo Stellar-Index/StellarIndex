@@ -18,6 +18,72 @@ against.
 ### Changed
 ### Added
 
+- **supply:** a token that emits no SEP-41 events now reports the supply it
+  actually holds, summed from the per-holder balance entries in its own Soroban
+  contract storage, under the new `supply_basis` value
+  `contract_storage_balances`.
+
+  The pipeline derives supply from events, which is complete for everything
+  that emits them — CAP-67 makes a classic issuer payment emit a mint, so even
+  pre-Soroban classic history is covered. It is blind to a token that emits
+  none. Such a token is not undercounted in `stellar.supply_flows`, it is
+  ABSENT from it, and a contract with no rows sums to `0` — a claim that the
+  token was fully burned, served as confidently as a measurement. Twenty-four
+  private-credit deal tokens on pubnet were in that state, reporting
+  `total_supply: "0"` while their storage held 548,113,042.88 tokens. The data
+  was never missing; `ledger_entries_current` holds 616,854,424 `contract_data`
+  rows. Nothing read it.
+
+  It is a DIFFERENT BASIS, not a better reading of the same one. Event-derived
+  supply accumulates ISSUANCE (`Σmint − Σburn − Σclawback`); this measures
+  DISTRIBUTION (`Σ` held balances). The two are NEVER SUMMED — the same tokens
+  are in both — and where a token has both, the storage level supersedes the
+  event accumulation outright: a level cannot be made wrong by missing history,
+  while an accumulation is only as complete as its log. The serving path
+  enforces this by construction, consulting storage only when the event reading
+  found zero flows.
+
+  That the two agree when the log is complete was measured, not assumed. Summed
+  both ways on the same lake, three event-emitting Wasm tokens reproduced their
+  event-derived totals EXACTLY, across three scales and two value encodings:
+  EUTBL 28,327,867,109,034; USTBL 3,621,637,634,835; deJTRSY
+  8,763,619,974,700,234,898,508,352.
+
+  The figure is a LOWER BOUND and carries `circulating_supply_lower_bound`. It
+  sees only balances that are ledger entries right now, and Soroban state expiry
+  archives contract-data entries — a different blindness from the classic
+  trustline sum's, which misses whole holding DOMAINS while this misses TIME.
+  Where a contract publishes its own `HolderCount` and `TotalSupply`, the
+  response reports whether they matched what was summed (`supply_consistent`);
+  all 24 matched exactly on both counts.
+
+  Stellar Asset Contracts are REFUSED, structurally, on their instance
+  executable type. A SAC's storage holds only the slice of a classic asset
+  wrapped into Soroban — measured against KALE, storage read 471,938,508,419,832
+  against an event-derived 3,224,226,487,856,012, a 6.8x understatement with no
+  internal sign of being wrong. An oversized holder set is refused rather than
+  truncated, and a negative balance refuses the whole reading.
+
+  The reader is general over any contract rather than a curated list of the
+  twenty-four: the safety comes from on-chain evidence — the SAC refusal, the
+  contract's own cross-checks, a scale that must be declared — none of which
+  needs to know which token it is looking at. Methodology in
+  `docs/methodology/contract-storage-supply.md`.
+
+- **supply:** token decimals are now read under a second instance-storage
+  spelling, `Config` alongside `METADATA`, and at both key encodings — a bare
+  `Symbol` and the single-element vector Rust derives for a fieldless enum
+  variant.
+
+  This corrects a live conclusion, not just a gap. The twenty-four deal tokens
+  were believed to carry no on-chain scale at all, leaving their exponent to be
+  borrowed from a third-party seed file; reading only the token-sdk spelling
+  found nothing and reported "no metadata". The exponent IS on-chain, under
+  `Vec[Symbol("Config")].decimals`. A borrowed exponent is a published money
+  figure resting on someone else's spreadsheet, and a wrong one is a supply
+  figure wrong by a power of ten. Two declarations that disagree are still
+  refused rather than resolved by preference.
+
 - **assets:** a verified-catalogue asset whose market capitalisation the
   gates decline to publish can carry a valuation from an independent
   listing platform, under its own name and its own provenance.

@@ -166,6 +166,7 @@ type Server struct {
 	scam                PriceScamGate
 	supply              SupplyLooker
 	tokenSupply         TokenSupplyReader
+	storageSupply       ContractStorageSupplyReader
 	tokenDecimals       TokenDecimalsReader
 	tokenSymbol         TokenSymbolReader
 	rwaContracts        RWADirectoryContractReader
@@ -830,6 +831,18 @@ type Options struct {
 	// circulating/max policy over the 9-asset asset_supply_history). Production
 	// wiring is *clickhouse.SupplyReader. Nil → the endpoint 503s.
 	TokenSupply TokenSupplyReader
+
+	// ContractStorageSupply, when non-nil, gives GET /v1/assets/{asset_id}/supply
+	// a second source for the tokens the event log cannot see: the sum of the
+	// per-holder balance entries in a contract's own Soroban storage.
+	//
+	// It is consulted ONLY when the event-derived reading found NO flows at all
+	// — never to adjust a figure that has any event basis, because the two
+	// readings measure the same tokens and adding them would double-count. See
+	// clickhouse.ContractStorageSupply for the handover rule. Production wiring
+	// is *clickhouse.ExplorerReader. Nil → a token with no flows keeps
+	// reporting the zero it reports today.
+	ContractStorageSupply ContractStorageSupplyReader
 
 	// TokenDecimals, when non-nil, overlays real on-chain `decimals()` onto
 	// /v1/assets/{id} for Soroban tokens, read from the lake's captured
@@ -1525,6 +1538,7 @@ func New(opts Options) *Server { //nolint:funlen // pure field-mapping construct
 		scam:                   opts.Scam,
 		supply:                 opts.Supply,
 		tokenSupply:            opts.TokenSupply,
+		storageSupply:          opts.ContractStorageSupply,
 		tokenDecimals:          opts.TokenDecimals,
 		tokenSymbol:            opts.TokenSymbol,
 		rwaContracts:           opts.RWAContracts,

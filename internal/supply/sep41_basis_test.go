@@ -141,17 +141,18 @@ func TestSEP41_Compute_BasisNeverClaimsAnExclusionThatDidNotHappen(t *testing.T)
 // lie this fix removes.
 func TestBasis_TotalOnlyValuesAreDistinct(t *testing.T) {
 	all := map[supply.Basis]string{
-		supply.BasisXLMSDFReserveExclusion: "xlm_sdf_reserve_exclusion",
-		supply.BasisXLMTotalOnly:           "xlm_total_only",
-		supply.BasisIssuerExclusion:        "issuer_exclusion",
-		supply.BasisAdminExclusion:         "admin_exclusion",
-		supply.BasisSEP41TotalOnly:         "sep41_total_only",
-		supply.BasisOverride:               "override",
-		supply.BasisSEP1DeclaredMax:        "sep1_declared_max",
-		supply.BasisSEP41LakeFlows:         "sep41_lake_flows",
-		supply.BasisNoMetadata:             "no_metadata",
+		supply.BasisXLMSDFReserveExclusion:  "xlm_sdf_reserve_exclusion",
+		supply.BasisXLMTotalOnly:            "xlm_total_only",
+		supply.BasisIssuerExclusion:         "issuer_exclusion",
+		supply.BasisAdminExclusion:          "admin_exclusion",
+		supply.BasisSEP41TotalOnly:          "sep41_total_only",
+		supply.BasisOverride:                "override",
+		supply.BasisSEP1DeclaredMax:         "sep1_declared_max",
+		supply.BasisSEP41LakeFlows:          "sep41_lake_flows",
+		supply.BasisContractStorageBalances: "contract_storage_balances",
+		supply.BasisNoMetadata:              "no_metadata",
 	}
-	if len(all) != 9 {
+	if len(all) != 10 {
 		t.Fatalf("basis values collided: %v", all)
 	}
 	for basis, want := range all {
