@@ -60,6 +60,13 @@ if [ -z "$mx" ]; then
 else
   n=$(printf '%s\n' "$mx" | grep -c .)
   pass "apex MX: $n record(s)"
+  # A count alone would pass on an MX pointing anywhere at all, including a
+  # host that accepts nothing. Assert the destination, not just its presence.
+  mx_one_line="$(printf '%s\n' "$mx" | tr '\n' ' ')"
+  case "$(printf '%s' "$mx_one_line" | tr '[:upper:]' '[:lower:]')" in
+    *google.com*) pass "apex MX points at Google Workspace" ;;
+    *)            fail "apex MX does not point at Google Workspace: $mx_one_line" ;;
+  esac
 fi
 
 # --- 2. SPF: exactly one apex record, hard fail ------------------------------
@@ -76,8 +83,8 @@ else
     *" -all") pass "apex SPF ends in -all (hard fail)" ;;
     *)        fail "apex SPF does not end in -all: $spf" ;;
   esac
-  # Resend rides SES; Cloudflare Email Routing rides its own include.
-  for inc in "include:amazonses.com" "include:_spf.mx.cloudflare.net"; do
+  # Resend rides SES; Google Workspace rides its own include.
+  for inc in "include:amazonses.com" "include:_spf.google.com"; do
     case "$spf" in
       *"$inc"*) pass "apex SPF carries $inc" ;;
       *)        fail "apex SPF missing $inc — that sender will hard-fail" ;;
@@ -118,7 +125,7 @@ fi
 
 # --- 4. DKIM -----------------------------------------------------------------
 echo "dkim"
-for sel in resend cf2024-1; do
+for sel in resend google; do
   if grep -q 'p=' <<<"$(q TXT "${sel}._domainkey.$DOMAIN")"; then
     pass "DKIM selector ${sel}: published"
   else

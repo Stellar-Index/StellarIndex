@@ -1,6 +1,6 @@
 ---
 title: DNS + email perimeter — the intended record set for stellarindex.io
-last_verified: 2026-09-03
+last_verified: 2026-09-15
 status: living doc
 ---
 
@@ -26,11 +26,11 @@ change this file and the check script in the same commit.
 
 | name | type | value | why |
 |---|---|---|---|
-| `stellarindex.io` | MX 32/48/66 | `route3/route1/route2.mx.cloudflare.net` | Cloudflare Email Routing — inbound for `security@`, `hello@` |
-| `stellarindex.io` | TXT | `v=spf1 include:amazonses.com include:_spf.mx.cloudflare.net -all` | apex SPF |
+| `stellarindex.io` | MX 1 | `smtp.google.com` | Google Workspace — inbound for `security@`, `hello@` |
+| `stellarindex.io` | TXT | `v=spf1 include:amazonses.com include:_spf.google.com -all` | apex SPF |
 | `_dmarc` | TXT | `v=DMARC1; p=quarantine; rua=mailto:dmarc@stellarindex.io; fo=1; pct=100` | anti-spoofing policy |
 | `resend._domainkey` | TXT | `p=…` | Resend DKIM (`d=stellarindex.io`) |
-| `cf2024-1._domainkey` | TXT | `v=DKIM1; …` | Cloudflare Email Routing DKIM |
+| `google._domainkey` | TXT | `v=DKIM1; k=rsa; p=…` | Google Workspace DKIM |
 | `send` | MX 10 | `feedback-smtp.us-east-1.amazonses.com` | Resend bounce/complaint feedback |
 | `send` | TXT | `v=spf1 include:amazonses.com ~all` | Resend Return-Path authorisation |
 | `stellarindex.io` | CAA | `issue`/`issuewild` for `letsencrypt.org`, `pki.goog; cansignhttpexchanges=yes`, `ssl.com`, `sectigo.com`, `comodoca.com`, `digicert.com; cansignhttpexchanges=yes` | restrict certificate issuance |
@@ -39,29 +39,30 @@ change this file and the check script in the same commit.
 
 ## The four decisions worth knowing, and why they went the way they did
 
-### 1. Apex SPF is `-all`, and it is safe here specifically because nothing sends from the apex
+### 1. Apex SPF is `-all`, and every apex sender must be inside it before it can stay that way
 
-Resend's `Return-Path` is `@send.stellarindex.io`, not the apex, so the
-apex SPF record governs **only** mail claiming an apex `MAIL FROM` — of
-which we send none. A hard fail there rejects spoofers and leaves every
-legitimate message untouched, including forwarded ones (a forwarded
-Resend message still carries the `send.` Return-Path, governed by that
-subdomain's `~all`).
+Resend's `Return-Path` is `@send.stellarindex.io`, not the apex, so it is
+governed by that subdomain's `~all` and not by this record — including
+when a message is forwarded, which keeps the `send.` Return-Path. Google
+Workspace is the one sender that does claim an apex `MAIL FROM`, and
+`include:_spf.google.com` is what authorises it.
+
+That ordering is the whole rule: **a hard fail is only safe while every
+apex sender is already inside the record.** Add the sender's `include:`
+first; a new apex sender added without one is rejected outright, not
+soft-failed, and the bounces start immediately.
 
 Both includes resolve to flat `ip4`/`ip6` lists, so the record costs
 **two** of SPF's ten permitted DNS lookups.
 
-**Relax it to `~all`** the moment anything begins sending with an apex
-`MAIL FROM` — a Google Workspace mailbox, a ticketing system, a
-newsletter tool. Add the sender's `include:` first, and only then
-consider softening the qualifier.
+**Relax it to `~all`** only if a sender appears that cannot be expressed
+as an `include:` at all.
 
 **There must be exactly one apex SPF record.** Two is a `permerror`,
 which does not degrade to "the stricter one wins" — it disables SPF
 evaluation entirely. The check asserts the record as an exact string
-rather than a substring for this reason. Cloudflare Email Routing offers
-to add its own apex SPF during setup; that offer was declined and the
-include folded into the single record by hand.
+rather than a substring for this reason. Google Workspace offers to add its own apex SPF during setup; that offer
+was declined and the include folded into the single record by hand.
 
 ### 2. DMARC alignment is relaxed, deliberately
 
@@ -74,8 +75,9 @@ mail would still have been delivered — but the SPF half would have been
 silently dead, and the failure would only have surfaced the day DKIM
 broke. Relaxed alignment is correct and is asserted by the check.
 
-`p=quarantine` rather than `p=none` was chosen because the only sender is
-Resend and its DKIM already aligns, so there is no tuning period to wait
+`p=quarantine` rather than `p=none` was chosen because both senders
+publish DKIM that aligns — `resend._domainkey` and `google._domainkey`,
+each signing `d=stellarindex.io` — so there is no tuning period to wait
 out. Move to `p=reject` once the aggregate reports show a clean week.
 
 ### 3. No `ruf=`
@@ -104,18 +106,18 @@ for the Cloudflare Pages hosts.
 
 ## Open: two things only the account owner can finish
 
-**1. Verify the Email Routing destination.** Cloudflare has sent a
-verification link to `the maintainer address on file`. Until it is clicked, the MX
-records exist but no rule can be created, and mail to `security@` is
-rejected at SMTP time with a clear bounce rather than being silently
-dropped (the catch-all is deliberately left disabled so the failure is
-loud). Once verified, create the forwarding rules for `security@`,
-`hello@`, `dmarc@`, `abuse@` and `postmaster@`.
+**1. Confirm the published mailboxes deliver.** Inbound moved from
+Cloudflare Email Routing to Google Workspace, and DNS can only show that
+mail is routed there — not that a mailbox exists behind it. The check
+asserts the MX destination and stops, because the next assertion would
+have to send mail. Confirm from the Workspace console that `security@`,
+`hello@`, `dmarc@`, `abuse@` and `postmaster@` each resolve to a real
+mailbox or group.
 
 This is the sharpest half of #334: `security@stellarindex.io` is the
 RFC 9116 `Contact:` on the live `.well-known/security.txt`, so a
-researcher following the published disclosure channel currently gets a
-bounce. `SECURITY.md` hedges that the mailbox may not be provisioned;
+researcher following the published disclosure channel has nowhere else
+to go. `SECURITY.md` hedges that the mailbox may not be provisioned;
 `security.txt` makes no such hedge and cannot.
 
 **2. Publish the DS record at the registrar.** DNSSEC is enabled in
