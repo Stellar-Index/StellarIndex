@@ -104,6 +104,19 @@ against.
 
 ### Fixed
 
+- **rwa:** a contract row whose own declared scale could not be READ now
+  carries no valuation on either basis (`decimals_unavailable`) instead
+  of one computed against the catalogue's hardcoded 7. The API binary
+  dials ClickHouse twice — supply and decimals are separate readers, and
+  each failure leaves the other wired — so "supply up, decimals down" is
+  a reachable process state in which a 5-decimal fund published one
+  hundredth of its capitalisation under `status: published`. Three other
+  routes reach the same default with every reader up: an instance
+  missing from the lake, a METADATA map declaring no scale, and a
+  contract declaring both spellings with different values. The
+  circulating supply is still served — it is a chain fact and needs no
+  scale to be true.
+
 - **lake:** the token scale is read from the contract instance
   `METADATA` map under both spellings the network uses. The decoder
   accepted only `decimal`, the soroban-token-sdk field name; measured

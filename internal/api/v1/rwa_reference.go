@@ -190,10 +190,20 @@ const (
 	// produce a premium, because a premium against an aggregate of the
 	// markets is the market compared with itself.
 	//
-	// Available only to contract members admitted on
-	// [rwa.RecognitionListingCorroborated] — the rows whose address the
-	// listing named. A contract the listing never named has no listing
-	// price to serve, which is the same fact that refused it at C2.
+	// Available to any contract row the listing directory NAMES,
+	// whichever C2 arm admitted it. That is deliberately not the same
+	// set as "admitted on [rwa.RecognitionListingCorroborated]": four
+	// addresses are named by both sources, and one of those admitted by
+	// the curated directory on its own is still an address an
+	// independent listing bound a price to. Refusing it would withhold
+	// a figure this surface can correctly make.
+	//
+	// What the listing entry supplies is the same in both cases — a USD
+	// price bound to a 56-character address by a party that did not
+	// read our directory — so the prose describes THAT rather than the
+	// requirement the row happened to satisfy. A contract the listing
+	// never named has no listing price to serve, which is the same fact
+	// that refuses it at C2 when nothing else names it either.
 	RWAReferenceListingPrice = "listing_platform_price"
 )
 
@@ -245,6 +255,17 @@ const (
 	// RWAReferenceValuationPublished — a reference price and a supply
 	// reading were both available.
 	RWAReferenceValuationPublished = "published"
+	// RWAReferenceValuationDecimalsUnknown — a reference and a supply
+	// both exist and the token's own declared SCALE does not, so there
+	// is no exponent to divide the float by.
+	//
+	// The same refusal [RWAValuationDecimalsUnknown] makes on the market
+	// basis, for the same reason and with more at stake: this basis
+	// values tokens that never trade, so it is the figure most likely to
+	// be the only number on the row. Defaulting the exponent would
+	// publish a dollar total wrong by a factor of ten to the something,
+	// silently, under `status: published`.
+	RWAReferenceValuationDecimalsUnknown = "decimals_unavailable"
 	// RWAReferenceValuationNoSupply — a reference exists but no
 	// circulating-supply reading does, so there is no float to value. A
 	// non-numeric or negative reading is treated the same way: it is
@@ -668,13 +689,22 @@ func rwaApplyReference(a *RWAAsset, snap rwaReferences, listings map[string]time
 // instrument and a class, not a feed, so it cannot answer a price
 // however many entries it holds.
 //
-// What changed is not that join. It is that a member admitted on
-// [rwa.RecognitionListingCorroborated] got in because an independent
-// listing directory named its exact ADDRESS, and that same directory
-// publishes a USD price for the thing it named — bound to the address,
-// through the identical row that satisfied C2. No code is matched
-// anywhere on this path. A token wearing a bound instrument's symbol
-// gets nothing here, because it was never in the listing row.
+// What changed is not that join. It is that this surface now holds, for
+// some contract addresses, a row from an independent listing directory
+// that NAMES the exact address and publishes a USD price for the thing
+// it named — price bound to address, in one row, by a party that did
+// not read our curated directory. No code is matched anywhere on this
+// path. A token wearing a bound instrument's symbol gets nothing here,
+// because it was never in the listing row.
+//
+// It applies to any contract row the listing names, not only to rows
+// the listing ADMITTED. Those two sets overlap but are not equal: a
+// contract the curated directory attested on its own may also be named
+// by the listing, and the price that listing publishes is exactly as
+// well bound to the address in that case as in the other. Gating on the
+// recognition source would withhold a figure this surface can correctly
+// make, for a reason about how the row got in rather than about where
+// the price came from.
 //
 // # What it is, stated rather than implied
 //
@@ -794,6 +824,13 @@ func rwaReferenceValuationOf(a *RWAAsset, ref rwaReference) RWAReferenceValuatio
 	}
 	if a.CirculatingSupply == nil {
 		return RWAReferenceValuation{Status: RWAReferenceValuationNoSupply}
+	}
+	// The exponent, before the arithmetic that uses it. A contract row
+	// whose scale could not be read carries the catalogue's default of
+	// 7, which is a convention and not a reading — see
+	// [RWAReferenceValuationDecimalsUnknown].
+	if a.DecimalsUnresolved {
+		return RWAReferenceValuation{Status: RWAReferenceValuationDecimalsUnknown}
 	}
 	value := rwaReferenceValueUSD(*a.CirculatingSupply, a.Decimals, ref.priceUSD)
 	if value == "" {

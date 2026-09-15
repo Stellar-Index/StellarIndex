@@ -6,10 +6,18 @@
 -- the public catalogue every listed coin appears in, joined to
 -- `/api/v3/coins/markets` for that coin's published USD price. Synced by
 -- `stellarindex-ops listing-sync`, which upserts the full Stellar slice
--- and prunes rows the upstream no longer carries, scoped by `source` so a
--- second aggregation platform can land beside this one without the two
--- syncs deleting each other's rows (the `account_directory` arrangement,
--- migration 0136, for the same reason).
+-- and prunes rows the upstream no longer carries — the `account_directory`
+-- arrangement, migration 0136.
+--
+-- SINGLE SOURCE, DELIBERATELY. The prune is scoped by `source`, but the
+-- primary key is the ADDRESS alone, so the two do not add up to
+-- multi-source coexistence and this table must not be described as
+-- supporting it. Two platforms listing the same address would fight over
+-- one row: the later upsert flips `source` and replaces the price, and
+-- the loser's next prune (same source, older synced_at) then deletes the
+-- row the winner is publishing. Admitting a second platform means making
+-- the key `(source, address)` FIRST, in a new migration, and teaching the
+-- reader that an address can now carry more than one row.
 --
 -- WHY IT IS CACHED AND NOT FETCHED. The upstream catalogue is ~21k coin
 -- objects / ~3.7 MB for the ~50 that carry a Stellar address, behind a
@@ -123,8 +131,10 @@ CREATE TABLE IF NOT EXISTS asset_listing_directory (
     -- freshness cannot be verified is not stored as a price.
     priced_at  timestamptz,
 
-    -- Which aggregation platform this row came from. Every upsert and
-    -- the prune are scoped by it.
+    -- Which aggregation platform this row came from. The prune is scoped
+    -- by it; the upsert is NOT — it conflicts on the address alone. See
+    -- the header for why that makes this a single-source table until the
+    -- key changes.
     source     text        NOT NULL,
 
     -- OUR sync time. Written as now(), which is transaction-stable in
@@ -176,9 +186,10 @@ COMMENT ON COLUMN asset_listing_directory.priced_at IS
     'price serve it as fresh. NULL whenever there is no price or no '
     'verifiable publication time.';
 COMMENT ON COLUMN asset_listing_directory.source IS
-    'The aggregation platform this row came from. Upserts and the prune '
-    'are both scoped by it, so a second platform can coexist without the '
-    'two syncs deleting each other''s rows.';
+    'The aggregation platform this row came from. The prune is scoped by '
+    'it; the upsert conflicts on the address alone, so this table holds '
+    'ONE source at a time. A second platform needs the key to become '
+    '(source, address) first, or the two syncs delete each other''s rows.';
 COMMENT ON COLUMN asset_listing_directory.synced_at IS
     'OUR sync time, written as transaction-stable now(). The prune deletes '
     'same-source rows older than it, and the 48h recognition bound is '

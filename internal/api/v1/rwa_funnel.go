@@ -117,10 +117,12 @@ const rwaFunnelListingBasis = "The `listing` arm walks C2's SECOND route to reco
 // more here: this arm's refusals are about whether a second party
 // agrees, and reporting "nobody agrees" when nobody was asked would be
 // the strongest possible misstatement the surface could make.
-const rwaFunnelListingUnmeasured = "The `listing` arm was NOT MEASURED: no independent listing reader is wired, or its " +
-	"cached snapshot is older than the recognition bound, so that corroboration was never established. Every curated " +
-	"binding it would have evaluated is refused under `independent_listing_unavailable` rather than under a finding " +
-	"that no independent party names it. The set is SMALLER than it would otherwise be and this sentence is why."
+const rwaFunnelListingUnmeasured = "The `listing` arm was NOT MEASURED: no independent listing reader is wired, so that " +
+	"population was never walked and no corroboration was looked for. A reader that IS wired and cannot answer — a " +
+	"failed read, or a snapshot past the recognition bound — is a different state and takes the measured branch, " +
+	"reporting every binding dropped under `independent_listing_unavailable`. Here, nothing was refused at all: an " +
+	"unwired reader makes no finding, because nobody looked. The set is SMALLER than it would otherwise be and this " +
+	"sentence is why."
 
 // rwaFunnelUnavailable is the funnel for a response that publishes no
 // set because membership could not be established.
@@ -232,6 +234,7 @@ var rwaReferenceRefusalOrder = []string{
 	RWAPremiumReferenceExpired,
 	RWAPremiumReferenceNotPositive,
 	RWAReferenceValuationNoSupply,
+	RWAReferenceValuationDecimalsUnknown,
 }
 
 // rwaReferenceDropActors names who can move each reference-valuation
@@ -263,6 +266,11 @@ var rwaReferenceDropActors = map[string]string{
 	RWAPremiumReferenceUnavailable: rwaActorOperator,
 	RWAPremiumReferenceExpired:     rwaActorOperator,
 	RWAReferenceValuationNoSupply:  rwaActorOperator,
+	// The operator's: the scale is on chain and readable, so a row
+	// carrying this reason means a reader here is unwired, failing, or
+	// has not captured the contract instance. Never the issuer's — the
+	// token declared its scale, we could not read it.
+	RWAReferenceValuationDecimalsUnknown: rwaActorOperator,
 }
 
 // rwaReferenceDrops renders the tallied refusals in rule order.
@@ -633,14 +641,21 @@ func rwaListingAdmitted(m rwaMembership) int {
 //
 // C2's own refusals are decided by the candidate build and appear as
 // drops on the stage above, so they are unreachable here — the same
-// relationship the contract arm has with its C1-to-C3 constants. What
-// remains is C3 and C4: a scam flag on an address the curated directory
-// named only to flag, and a binding whose class the C4 vocabulary
-// cannot express.
+// relationship the contract arm has with its C1-to-C3 constants.
 //
-// The scam drop is `definition`: the rule is working, and the address
-// being simultaneously verified by this repository and flagged by a
-// third party is precisely the case the precedence exists for.
+// What remains in practice is C3: a scam flag on an address the curated
+// directory named ONLY to flag. It is attributed to `definition`,
+// because the rule is working and an address simultaneously verified by
+// this repository and flagged by a third party is precisely the case
+// the precedence exists for.
+//
+// The C4 drop is carried but is UNREACHABLE on this arm by
+// construction: a candidate reaches the verdict only if a curated
+// binding names it, and a curated binding is exactly what C4's first
+// branch answers on. It is listed rather than omitted so that a future
+// arm-2 candidate admitted on some other evidence cannot drop out of
+// the accounting silently — an unlisted reason unbalances the funnel,
+// which is loud but uninformative.
 func rwaListingCandidateDrops(m rwaMembership) []RWAFunnelDrop {
 	out := make([]RWAFunnelDrop, 0, 2)
 	for _, d := range []struct {

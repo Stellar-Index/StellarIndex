@@ -570,6 +570,23 @@ const (
 	// RWAValuationNoSupply — a price exists but no circulating-supply
 	// reading does, so no market cap can be computed.
 	RWAValuationNoSupply = "supply_unavailable"
+	// RWAValuationDecimalsUnknown — a price and a supply both exist, and
+	// the token's own declared SCALE does not, so there is no exponent
+	// to divide the supply by.
+	//
+	// Contract rows only. A classic asset is 7 decimals by protocol and
+	// a SAC inherits that; a SEP-41 token declares its own, and when
+	// that declaration cannot be read the catalogue's default of 7 is a
+	// convention rather than a reading. Multiplying by it would publish
+	// a figure wrong by a factor of ten to the something — one hundredth
+	// for the 5-decimal funds in the measured population, eleven orders
+	// of magnitude the other way for the 18-decimal one.
+	//
+	// Refused rather than defaulted because the error is silent and
+	// unbounded, and because this is the one surface where the exponent
+	// IS the number. The circulating supply is still served beside it:
+	// that is a raw chain fact and needs no scale to be true.
+	RWAValuationDecimalsUnknown = "decimals_unavailable"
 )
 
 // RWAValuation carries a row valuation and the reason when there is
@@ -636,6 +653,12 @@ type RWAAsset struct {
 	// A consumer that wants only the first can filter on this field
 	// rather than having to reconstruct the rule.
 	Recognition string `json:"recognition,omitempty"`
+	// DecimalsUnresolved is true when Decimals is the hardcoded default
+	// rather than a reading from the token's own on-chain metadata.
+	// INTERNAL — never serialised. It exists to stop a figure being
+	// published, and both valuation bases consult it before they
+	// divide by 10^Decimals.
+	DecimalsUnresolved bool `json:"-"`
 	// AnchorClass is the closed-vocabulary class, present only under
 	// the declaration basis.
 	AnchorClass string `json:"anchor_class,omitempty"`
@@ -1565,6 +1588,12 @@ func rwaValuationOf(d AssetDetail) RWAValuation {
 	if d.MarketCapUSD == nil {
 		if d.MarketCapLowLiquidity {
 			return RWAValuation{Status: RWAValuationLowLiquidity, PriceUSD: d.PriceUSD, PriceBasis: d.PriceBasis}
+		}
+		// Reported before the supply reason, because it is the more
+		// specific finding: a row here HAS a supply and is missing the
+		// exponent, which is a different gap with a different owner.
+		if d.DecimalsUnresolved {
+			return RWAValuation{Status: RWAValuationDecimalsUnknown, PriceUSD: d.PriceUSD, PriceBasis: d.PriceBasis}
 		}
 		return RWAValuation{Status: RWAValuationNoSupply, PriceUSD: d.PriceUSD, PriceBasis: d.PriceBasis}
 	}

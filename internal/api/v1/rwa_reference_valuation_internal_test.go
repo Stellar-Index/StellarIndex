@@ -433,6 +433,10 @@ func TestRWAReferenceDropActors_CoverEveryStatusARowCanCarry(t *testing.T) {
 		RWAPremiumReferenceExpired:     {},
 		RWAPremiumReferenceNotPositive: {},
 		RWAReferenceValuationNoSupply:  {},
+		// A contract row whose own declared scale could not be read.
+		// The exponent IS the figure on this surface, so an unread one
+		// refuses the valuation rather than defaulting to 7.
+		RWAReferenceValuationDecimalsUnknown: {},
 	}
 	for status := range carried {
 		if _, ok := rwaReferenceDropActors[status]; !ok {
@@ -455,7 +459,14 @@ func TestRWAReferenceDropActors_CoverEveryStatusARowCanCarry(t *testing.T) {
 	// The premium-only statuses must NOT be in either table: attributing
 	// an actor to a comparison failure would put it in a funnel arm that
 	// does not account for comparisons.
-	for _, premiumOnly := range []string{RWAPremiumNoMarketPrice, RWAPremiumMarketNotObserved, RWAPremiumPublished} {
+	for _, premiumOnly := range []string{
+		RWAPremiumNoMarketPrice, RWAPremiumMarketNotObserved, RWAPremiumPublished,
+		// The listing-price refusal is premium-only BY DESIGN and is
+		// the one status that refuses a premium while the reference
+		// valuation beside it is published — so it must never appear
+		// as a valuation drop.
+		RWAPremiumReferenceNotOracle,
+	} {
 		if _, ok := rwaReferenceDropActors[premiumOnly]; ok {
 			t.Errorf("%q is a premium-only status and must not be a reference-valuation drop", premiumOnly)
 		}

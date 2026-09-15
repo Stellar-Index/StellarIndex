@@ -424,13 +424,16 @@ Spiko's cash-and-carry fund is deliberately **not** bound. A
 digital-asset basis-trade fund is not a bond, a stock, a commodity or
 real estate, and the closed vocabulary excludes crypto on purpose.
 
-A binding is **not** an admission. C2 runs first, and the candidate scan
-only ever enumerates addresses the curated directory named — which names
-none of Spiko's. All five are therefore still refused as
-`contract_not_named_in_directory`, and are published on
+A binding is **not** an admission. C2 runs first, and a binding is only
+ever the *second* of the two sources
+[arm 2](#two-ways-to-satisfy-it-and-why-they-are-not-the-same-shape)
+requires — the curated directory names none of these addresses, so each
+one waits on an independent listing naming it too. Two of the five clear
+that bar today; the rest are refused as
+`contract_curated_binding_without_independent_listing` and published on
 `definition.bound_contract_instruments` as verified identities the
-surface is still refusing. That distinguishes an issuer we cannot
-identify from one we have identified and cannot yet vouch for.
+surface is still declining to value. That distinguishes an issuer we
+cannot identify from one we have identified and cannot yet vouch for.
 
 **`contract_oracle_rwa_feed`** — the token's on-chain SEP-41 `symbol` is
 an ADR-0028 allow-listed RWA code. The symbol is contract-authored,
@@ -794,15 +797,25 @@ would make a deliberate refusal indistinguishable from an oversight.
 
 #### The one price a contract row can carry
 
-A contract admitted through
+A contract the independent listing directory **names** is the exception,
+and not because the join above was relaxed. That directory publishes a
+USD price in the same row in which it names the address — price bound to
+address, by a party that did not read our curated directory. No code is
+matched anywhere on that path. A token wearing a bound instrument's
+symbol gets nothing, because it was never in the listing row.
+
+This is a **wider** set than the rows
 [C2 arm 2](#two-ways-to-satisfy-it-and-why-they-are-not-the-same-shape)
-is the exception, and not because the join above was relaxed. It got in
-because an independent listing directory named its exact **address**,
-and that same directory publishes a USD price for the thing it named —
-bound to the address, through the identical row that satisfied C2. No
-code is matched anywhere on that path. A token wearing a bound
-instrument's symbol gets nothing, because it was never in the listing
-row.
+admitted, and deliberately so: four addresses are named by both sources,
+and one the curated directory attested on its own is still an address an
+independent listing bound a price to. Gating the price on which
+requirement admitted the row would withhold a figure this surface can
+correctly make, for a reason about membership rather than about
+provenance.
+
+Whichever arm admitted it, a row whose own declared **scale** could not
+be read carries no valuation on either basis —
+`decimals_unavailable` — because the exponent is the figure.
 
 It is a **different claim** from an oracle NAV and is published as one.
 Each served reference carries a `provenance`:
@@ -1057,6 +1070,17 @@ which is a finding a failed read has not earned.
   the listing snapshot is filled hourly and may be reused for
   recognition for 48 hours and for pricing for 24. An address the
   listing platform corrects therefore stays admitted for up to two days.
+- **A frozen membership rebuild has no upper age bound, and that is the
+  one gap in the fail-closed claim.** On a rebuild failure the previous
+  set is served rather than an empty one, and the requirement reads that
+  decide membership all go through the same Postgres — so a sustained
+  outage there freezes the served set indefinitely rather than shrinking
+  it. Arm 2's recognition may not be *carried forward within a rebuild*,
+  and is not; a rebuild that never happens is a different mechanism and
+  this one still has it. The response carries no build timestamp, so a
+  reader cannot currently tell a frozen set from a fresh one. Closing it
+  properly means an `as_of` on the view and an absolute bound on cache
+  reuse, which is a separate change.
 
 ## References
 

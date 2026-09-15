@@ -631,3 +631,104 @@ func TestRWAListing_DirectoryArmWinsWhenBothNameIt(t *testing.T) {
 	}
 	checkFunnelArithmetic(t, view)
 }
+
+// TestRWAListing_UnreadDecimalsPublishNoFigure is the 10^n guard in the
+// form that would actually have shipped.
+//
+// The API binary dials ClickHouse TWICE — once for the supply reader and
+// once for the explorer reader that resolves decimals — and each failure
+// is a warning that leaves the other wired. "Supply up, decimals down"
+// is therefore a reachable process state, not a hypothetical, and in it
+// every contract row keeps the catalogue's hardcoded 7.
+//
+// For a 5-decimal fund that publishes ONE HUNDREDTH of its
+// capitalisation: $3,455,999.79 against a real $345,599,978.73, under
+// `status: published`, with `decimals: 7` served as though it were a
+// reading and the funnel counting the row as successfully valued.
+//
+// The same silent default is reachable with every reader up: an instance
+// missing from the lake, a METADATA map declaring no scale, or a
+// contract declaring both spellings with different values. Refusing is
+// the only honest answer — the supply is still served, because that is a
+// chain fact and needs no scale to be true.
+func TestRWAListing_UnreadDecimalsPublishNoFigure(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		decimals map[string]uint32
+	}{
+		// The reader answers for no address — an unwired or failing
+		// explorer reader beside a working supply reader.
+		{"decimals reader answers for nothing", map[string]uint32{}},
+		// The reader is up and this contract's scale is simply not
+		// derivable: no instance in the lake, no scale in METADATA, or
+		// two contradictory declarations.
+		{"this contract has no readable scale", map[string]uint32{"CCCCCC": 7}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			view := getRWA(t, rwaListingServer(t,
+				&stubRWAListings{rows: []timescale.ListingEntry{
+					listed(rwaListedBoundEUTBL, "eutbl", "eutbl", "1.22"),
+				}},
+				map[string]timescale.AssetRow{
+					rwaListedBoundEUTBL: rwaContractRow(rwaListedBoundEUTBL, sptr("1.22")),
+				},
+				map[string]string{rwaListedBoundEUTBL: "28327867109034"},
+				tc.decimals,
+				map[string]timescale.DirectoryEntry{},
+			))
+			a, ok := assetByContract(view, rwaListedBoundEUTBL)
+			if !ok {
+				t.Fatal("an unread scale removed the row from the set; it refuses the VALUATION, not the membership")
+			}
+			if a.ReferenceValuation.ValueUSD != nil {
+				t.Errorf("published %s against an exponent nobody read — the 5dp fund at the default 7 is 100x low",
+					*a.ReferenceValuation.ValueUSD)
+			}
+			if a.ReferenceValuation.Status != v1.RWAReferenceValuationDecimalsUnknown {
+				t.Errorf("reference_valuation.status = %q, want %q",
+					a.ReferenceValuation.Status, v1.RWAReferenceValuationDecimalsUnknown)
+			}
+			if a.Valuation.MarketCapUSD != nil {
+				t.Errorf("market_cap_usd %s was computed against an unread exponent", *a.Valuation.MarketCapUSD)
+			}
+			if a.Valuation.Status != v1.RWAValuationDecimalsUnknown {
+				t.Errorf("valuation.status = %q, want %q", a.Valuation.Status, v1.RWAValuationDecimalsUnknown)
+			}
+			// The supply is a chain fact and needs no scale to be true,
+			// so it is still served — withholding it would lose a
+			// verifiable number to protect a derived one.
+			if a.CirculatingSupply == nil || *a.CirculatingSupply != "28327867109034" {
+				t.Errorf("circulating_supply = %v, want the raw lake figure", a.CirculatingSupply)
+			}
+			// And the refusal is attributed in the funnel rather than
+			// counted as a successful valuation.
+			if n := dropCount(view, "assets_served_all_arms", v1.RWAReferenceValuationDecimalsUnknown); n != 1 {
+				t.Errorf("the decimals refusal is not reported in the valuation arm (got %d)", n)
+			}
+		})
+	}
+}
+
+// TestRWAListing_ReadDecimalsStillPublish is the other half: the guard
+// must refuse an UNREAD scale, not every scale. Without this a fix that
+// withheld every contract valuation would pass the test above.
+func TestRWAListing_ReadDecimalsStillPublish(t *testing.T) {
+	view := getRWA(t, rwaListingServer(t,
+		&stubRWAListings{rows: []timescale.ListingEntry{
+			listed(rwaListedBoundEUTBL, "eutbl", "eutbl", "1.22"),
+		}},
+		map[string]timescale.AssetRow{
+			rwaListedBoundEUTBL: rwaContractRow(rwaListedBoundEUTBL, sptr("1.22")),
+		},
+		map[string]string{rwaListedBoundEUTBL: "28327867109034"},
+		map[string]uint32{rwaListedBoundEUTBL: 5},
+		map[string]timescale.DirectoryEntry{},
+	))
+	a, _ := assetByContract(view, rwaListedBoundEUTBL)
+	if a.ReferenceValuation.ValueUSD == nil || *a.ReferenceValuation.ValueUSD != "345599978.73" {
+		t.Fatalf("a READ scale of 5 must still publish: got %v", a.ReferenceValuation.ValueUSD)
+	}
+	if a.Valuation.MarketCapUSD == nil {
+		t.Error("a read scale must still produce a market cap")
+	}
+}

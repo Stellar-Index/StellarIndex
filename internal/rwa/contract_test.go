@@ -625,3 +625,33 @@ func TestSpikoBindings_AreAllBondClass(t *testing.T) {
 		t.Errorf("bound Spiko funds = %d, want 5 (EUTBL, USTBL, UKTBL, eurUSTBL, eurUKTBL)", spiko)
 	}
 }
+
+// TestCuratedBindings_DeclareAClassFromTheClosedVocabulary is the guard
+// the funnel's arm-2 comment used to claim existed and did not.
+//
+// QualifyContract returns a curated binding's Class VERBATIM — it never
+// checks it against [AnchorClasses]. So a sixth entry added with a class
+// outside that vocabulary would be ADMITTED and its class published,
+// while `definition.anchor_classes` continues to tell consumers the
+// vocabulary is closed. The wire contract would then describe a row it
+// does not cover, which is worse than a refusal.
+//
+// A test rather than a runtime check because the set is a hand-reviewed
+// table in this repository: the failure belongs at the moment the entry
+// is written, not at the moment a response is served.
+func TestCuratedBindings_DeclareAClassFromTheClosedVocabulary(t *testing.T) {
+	classes := rwa.AnchorClasses()
+	bindings := rwa.ContractInstrumentBindings()
+	if len(bindings) == 0 {
+		t.Fatal("no curated bindings — a check over an empty set passes forever")
+	}
+	for _, b := range bindings {
+		if !slices.Contains(classes, b.Class) {
+			t.Errorf("%s (%s) declares class %q, which is not in the closed vocabulary %v",
+				b.ContractID, b.Instrument, b.Class, classes)
+		}
+		if strings.TrimSpace(b.Instrument) == "" {
+			t.Errorf("%s declares no instrument — the evidence bar requires a falsifiable one", b.ContractID)
+		}
+	}
+}

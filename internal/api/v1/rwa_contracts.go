@@ -489,8 +489,8 @@ func (s *Server) rwaContractListingRows(
 	// a figure the fill just produced rather than racing it.
 	mctx, cancel := context.WithTimeout(ctx, rwaContractMetadataBudget)
 	defer cancel()
-	s.fillContractDecimals(mctx, details, rows)
-	s.fillContractMarketCaps(mctx, details, rows)
+	scaled := s.fillContractDecimals(mctx, details, rows)
+	s.fillContractMarketCaps(mctx, details, rows, scaled)
 	s.fillContractDirectoryTags(ctx, details)
 
 	out := make(map[string]AssetDetail, len(details))
@@ -510,11 +510,36 @@ func (s *Server) rwaContractListingRows(
 // 18-decimal one publishes a hundred billion times it. A wrong decimals
 // reading is not a display defect on this page, it is the number.
 //
-// A token with no readable metadata keeps the default, which is the same
-// thing /v1/assets/{id} does.
-func (s *Server) fillContractDecimals(ctx context.Context, rows []AssetDetail, src map[string]timescale.AssetRow) {
+// A token with no readable metadata keeps the default of 7, which is
+// what /v1/assets/{id} does — and on THIS surface that default may not
+// be multiplied by anything. The set of addresses whose scale was
+// actually READ is returned, and a row absent from it carries no
+// valuation of either kind.
+//
+// # Why the default is not good enough here
+//
+// Everywhere else a missed reading costs a wrong display amount on a
+// token that, by construction, has no market. Here it is the published
+// money figure, and the error is not small: the measured population
+// holds 5-decimal funds (read at 7 they publish one HUNDREDTH of their
+// capitalisation) and an 18-decimal token (read at 7 it publishes
+// eleven orders of magnitude too much).
+//
+// The reading can go missing four ways, and only one of them is an
+// outage: the decimals reader is unwired or fails while the SUPPLY
+// reader stays up (they are separate ClickHouse dials in the API
+// binary, so this is a reachable process state rather than a
+// hypothetical); the contract instance is not captured in the lake; the
+// METADATA map declares no scale under either spelling; or the contract
+// declares both spellings with DIFFERENT values, which the lake reader
+// refuses outright. In every one of them the honest answer is that we
+// do not know the scale — which is a refusal, not a 7.
+func (s *Server) fillContractDecimals(
+	ctx context.Context, rows []AssetDetail, src map[string]timescale.AssetRow,
+) map[string]struct{} {
+	resolved := make(map[string]struct{}, len(rows))
 	if s.tokenDecimals == nil {
-		return
+		return resolved
 	}
 	for i := range rows {
 		if _, ok := src[rows[i].AssetID]; !ok {
@@ -525,7 +550,9 @@ func (s *Server) fillContractDecimals(ctx context.Context, rows []AssetDetail, s
 			continue
 		}
 		rows[i].Decimals = int(d)
+		resolved[rows[i].AssetID] = struct{}{}
 	}
+	return resolved
 }
 
 // fillContractMarketCaps fills circulating supply and market cap for
@@ -544,7 +571,10 @@ func (s *Server) fillContractDecimals(ctx context.Context, rows []AssetDetail, s
 // applies it to. A single-venue price under the volume floor suppresses
 // the CAP and leaves the price and the supply — both of which are facts
 // the surface is willing to state — exactly as fillRowMarketCap does.
-func (s *Server) fillContractMarketCaps(ctx context.Context, rows []AssetDetail, src map[string]timescale.AssetRow) {
+func (s *Server) fillContractMarketCaps(
+	ctx context.Context, rows []AssetDetail, src map[string]timescale.AssetRow,
+	scaled map[string]struct{},
+) {
 	if s.tokenSupply == nil {
 		return
 	}
@@ -555,6 +585,16 @@ func (s *Server) fillContractMarketCaps(ctx context.Context, rows []AssetDetail,
 			continue
 		}
 		circ := sup.Total.String()
+		// The supply is a raw chain fact and is served either way. The
+		// CAP is not: it divides by 10^decimals, and an unread scale
+		// means that exponent is a convention rather than a reading.
+		// Multiplying by it would publish a figure off by a factor of
+		// ten to the something.
+		if _, ok := scaled[row.AssetID]; !ok {
+			row.CirculatingSupply = &circ
+			row.DecimalsUnresolved = true
+			continue
+		}
 		// Circulating supply is a raw chain fact, not a valuation, so it
 		// is served even when no cap can be. Same split the listing and
 		// the detail page both make.
@@ -645,8 +685,11 @@ func rwaContractAssetRows(members []rwaContractMember, rows map[string]AssetDeta
 			// starts every row at. It is on the wire because a
 			// contract-issued row is the case where assuming 7 is
 			// actually wrong.
-			Decimals:     d.Decimals,
-			Volume24hUSD: d.VolumeUSD24h,
+			Decimals: d.Decimals,
+			// Carried so both valuation bases can refuse to multiply by
+			// an exponent nobody read. Never serialised.
+			DecimalsUnresolved: d.DecimalsUnresolved,
+			Volume24hUSD:       d.VolumeUSD24h,
 		}
 		if len(a.IssuerDirectoryTags) == 0 {
 			a.IssuerDirectoryTags = m.dirTags
