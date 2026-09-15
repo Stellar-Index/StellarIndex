@@ -143,8 +143,31 @@ func (s *Server) rwaListingSnapshot(ctx context.Context) rwaListing {
 	out := rwaListing{
 		byAddress: make(map[string]timescale.ListingEntry, len(rows)),
 		census:    census,
-		available: true,
+		// A snapshot carrying NO fresh contract rows cannot support the
+		// finding "nobody independent names this address", whatever the
+		// reason it is empty. The storage reader drops every row past
+		// the recognition bound, so a table that has gone entirely
+		// stale arrives here as zero rows beside a non-zero Stale
+		// count — indistinguishable, from this side, from a listing
+		// that genuinely names nothing.
+		//
+		// The two are NOT the same statement and the difference is the
+		// whole fail-closed guarantee. Treated as available, an aged-out
+		// snapshot would refuse every binding under
+		// contract_curated_binding_without_independent_listing — a
+		// finding about the world — when the truth is that our copy
+		// expired. Reported as unavailable it refuses them under
+		// independent_listing_unavailable, which names an outage an
+		// operator can fix.
+		//
+		// A table nobody has ever synced lands in the same branch and
+		// deserves the same answer: zero fresh rows is zero evidence.
+		available: len(rows) > 0,
 		wired:     true,
+	}
+	if !out.available {
+		s.logger.Warn("rwa listing directory: no fresh contract rows",
+			"stale", census.Stale, "entries", census.Entries)
 	}
 	for _, r := range rows {
 		out.byAddress[r.Address] = r

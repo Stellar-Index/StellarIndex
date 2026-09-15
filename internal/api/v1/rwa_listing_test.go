@@ -378,6 +378,41 @@ func TestRWAListing_UnavailableShrinksTheSetAndSaysSo(t *testing.T) {
 	}
 }
 
+// TestRWAListing_EntirelyStaleSnapshotIsAnOutageNotAFinding is the
+// fail-closed guarantee in its subtlest form.
+//
+// `synced_at` is stamped once per sync transaction, so every row ages
+// out together: a table that has gone past the recognition bound
+// arrives from the reader as ZERO rows beside a non-zero stale count —
+// shaped exactly like a listing that genuinely names nothing.
+//
+// Those are not the same statement. Treated as a populated snapshot,
+// every binding would be refused under a finding about the world when
+// the truth is that our copy expired.
+func TestRWAListing_EntirelyStaleSnapshotIsAnOutageNotAFinding(t *testing.T) {
+	view := getRWA(t, rwaListingServer(t,
+		// The shape a fully-aged-out table produces: nothing fresh to
+		// serve, and the count of what was dropped for being stale.
+		&stubRWAListings{rows: nil, stale: 17},
+		map[string]timescale.AssetRow{
+			rwaListedBoundEUTBL: rwaContractRow(rwaListedBoundEUTBL, nil),
+		},
+		map[string]string{rwaListedBoundEUTBL: "28327867109034"},
+		map[string]uint32{rwaListedBoundEUTBL: 5},
+		map[string]timescale.DirectoryEntry{},
+	))
+	if _, ok := assetByContract(view, rwaListedBoundEUTBL); ok {
+		t.Fatal("an aged-out snapshot still admitted a row")
+	}
+	bindings := stageCount(t, view, "curated_contract_bindings")
+	if n := dropCount(view, "curated_contract_bindings", rwa.RejectContractListingUnavailable); n != bindings {
+		t.Errorf("stale-snapshot drop = %d, want every one of the %d bindings", n, bindings)
+	}
+	if n := dropCount(view, "curated_contract_bindings", rwa.RejectContractCuratedNotListed); n != 0 {
+		t.Errorf("an expired snapshot reported %d addresses as named by nobody — an outage published as a finding", n)
+	}
+}
+
 // TestRWAListing_UnwiredIsNotMeasured draws the distinction this whole
 // surface is built on. No reader wired means nobody looked, which is
 // not the same finding as nobody agreeing — so the arm reports itself
