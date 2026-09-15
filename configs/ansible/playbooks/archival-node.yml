@@ -74,5 +74,41 @@
         si_region_token: "{{ region_id }}"
       tags: [always]
 
+    - name: Stat the secrets file this run will use
+      ansible.builtin.stat:
+        path: "{{ playbook_dir }}/{{ secrets_file | default('../inventory/r1.secrets.yml') }}"
+      register: si_secrets_stat
+      delegate_to: localhost
+      become: false
+      changed_when: false
+      tags: [always]
+
+    - name: Refuse a secrets file that does not exist
+      # The assert above reads the PATH STRING. A path can name the right
+      # region and name nothing at all, and `vars_files` does not stop the
+      # play over a missing entry: on 2026-09-15 a run against si-testnet
+      # whose secrets file had not been copied into a fresh worktree got
+      # FORTY tasks in before dying inside a no_log Postgres task, where
+      # the real cause — an undefined password variable — was censored
+      # out of the output.
+      #
+      # Nothing was changed by that run, but the failure was expensive to
+      # read and the next one need not be as harmless. A guard on the
+      # string and a guard on the file are different guards, and this
+      # play needs both.
+      ansible.builtin.assert:
+        that:
+          - si_secrets_stat.stat.exists
+        fail_msg: >-
+          secrets_file
+          '{{ secrets_file | default('../inventory/r1.secrets.yml') }}'
+          resolves to
+          '{{ playbook_dir }}/{{ secrets_file | default('../inventory/r1.secrets.yml') }}',
+          which does not exist, so every variable it should define is
+          undefined. These files are gitignored — a fresh checkout or a
+          new worktree does not have them.
+        success_msg: "secrets file is present"
+      tags: [always]
+
   roles:
     - role: archival-node
