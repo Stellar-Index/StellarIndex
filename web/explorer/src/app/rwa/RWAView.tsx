@@ -509,11 +509,35 @@ function UnreachedPanel({
   );
 }
 
+/**
+ * The classes a CURATED CONTRACT BINDING may use that no SEP-1 declaration
+ * can. The served `contract_anchor_classes` is a superset of
+ * `anchor_classes`, so printing both in full would repeat four of five
+ * words and bury the one that is actually different.
+ *
+ * Empty (and the whole clause omitted) when the server publishes no
+ * contract vocabulary, which is every build before it existed.
+ */
+function contractOnlyClasses(definition: {
+  anchor_classes: string[];
+  contract_anchor_classes?: string[];
+}): string[] {
+  const classic = new Set(definition.anchor_classes);
+  return (definition.contract_anchor_classes ?? []).filter(
+    (c) => !classic.has(c),
+  );
+}
+
 const CLASS_LABEL: Record<string, string> = {
   bond: 'Bonds and treasuries',
   stock: 'Equities',
   commodity: 'Commodities',
   realestate: 'Real estate',
+  // A share in a pooled vehicle, where the exposure is the vehicle's own
+  // objective rather than any asset type it happens to hold. It is the one
+  // class no issuer can declare — only a reviewed in-repo binding produces
+  // it — which is why it reads as a fund rather than as a holding.
+  fund: 'Funds',
   unclassified: 'Unclassified',
 };
 
@@ -1422,6 +1446,18 @@ function DefinitionPanel({
         <span className="font-mono">
           {definition.anchor_classes.join(', ')}
         </span>
+        {contractOnlyClasses(definition).length > 0 ? (
+          <>
+            {' '}
+            — plus{' '}
+            <span className="font-mono">
+              {contractOnlyClasses(definition).join(', ')}
+            </span>{' '}
+            on a contract, where the class is this index&rsquo;s own
+            statement from a primary source rather than something an issuer
+            declared
+          </>
+        ) : null}
         . Fiat-anchored tokens are stablecoins and are counted elsewhere.
       </p>
       <div className="text-ink-muted mt-3 text-xs leading-relaxed">
