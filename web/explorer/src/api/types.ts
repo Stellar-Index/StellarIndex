@@ -7395,6 +7395,18 @@ export interface components {
              *
              *     `sep1_anchor_declaration` — the issuer-bound SEP-1 entry
              *     declares a real-world `anchor_asset_type`.
+             *     `sep1_isin_declaration` — that same entry declares an
+             *     `anchor_asset` which is a well-formed ISIN, check digit and
+             *     all. It admits WITHOUT a class, like the oracle arms and for
+             *     the same reason: it establishes that a real-world instrument
+             *     exists, not what category it belongs to. An
+             *     `anchor_asset_type` is a string the issuer picks from a
+             *     vocabulary it may ignore; an ISIN is assigned by a national
+             *     numbering agency, is externally resolvable, and carries a
+             *     check digit over its own body. Form is validated and form is
+             *     all that is claimed — this says an identifier was declared,
+             *     never that the declarer is entitled to it, which is what
+             *     requirements 2 and 3 are for.
              *     `oracle_rwa_feed` — an independent oracle publishes a
              *     net-asset-value feed for an instrument of this code
              *     (ADR-0028); keyed on the code, so admissible only because
@@ -7409,7 +7421,7 @@ export interface components {
              *     WHETHER the address is vouched for.
              * @enum {string}
              */
-            basis: "sep1_anchor_declaration" | "oracle_rwa_feed" | "curated_contract_instrument" | "contract_oracle_rwa_feed";
+            basis: "sep1_anchor_declaration" | "sep1_isin_declaration" | "oracle_rwa_feed" | "curated_contract_instrument" | "contract_oracle_rwa_feed";
             /**
              * @description Which independent party's naming satisfied the contract
              *     arm's second requirement. Present on CONTRACT-issued rows
@@ -7432,8 +7444,8 @@ export interface components {
             /**
              * @description Declared class. Present under `sep1_anchor_declaration` and
              *     `curated_contract_instrument`. Absent under either oracle
-             *     basis — a feed names an instrument, not its class, and none
-             *     is invented.
+             *     basis and under `sep1_isin_declaration` — each of those
+             *     names an instrument, not its class, and none is invented.
              * @enum {string}
              */
             anchor_class?: "stock" | "bond" | "commodity" | "realestate";
@@ -7868,7 +7880,7 @@ export interface components {
          */
         RWARefusal: {
             /** @enum {string} */
-            reason: "not_a_classic_asset" | "no_issuer_bound_sep1_entry" | "issuer_scam_flagged" | "issuer_not_independently_recognised" | "no_real_world_instrument_basis" | "not_a_contract_address" | "contract_not_named_in_directory" | "contract_scam_flagged" | "contract_named_without_issuing_tag" | "no_real_world_instrument_basis_for_contract" | "contract_listed_without_curated_binding" | "contract_curated_binding_without_independent_listing" | "independent_listing_unavailable";
+            reason: "not_a_classic_asset" | "no_issuer_bound_sep1_entry" | "issuer_scam_flagged" | "issuer_not_independently_recognised" | "no_real_world_instrument_basis" | "not_a_contract_address" | "contract_not_named_in_directory" | "contract_scam_flagged" | "contract_named_without_issuing_tag" | "no_real_world_instrument_basis_for_contract" | "contract_listed_without_curated_binding" | "contract_curated_binding_without_independent_listing" | "independent_listing_unavailable" | "curated_tag_lookup_unavailable";
             assets: number;
         };
         /**
@@ -7913,6 +7925,49 @@ export interface components {
             balanced: boolean;
             /** @description One-line statement of what the funnel measured, including the change of unit down the stages. */
             basis: string;
+            listing_directory?: components["schemas"]["RWAListingDirectory"];
+        };
+        /**
+         * @description What the independent listing directory held at the moment this
+         *     set was built — the EVIDENCE behind the `listing` arm's verdict.
+         *
+         *     The verdict alone is ambiguous. An arm reporting nothing
+         *     corroborated is produced by a directory nobody has ever synced,
+         *     by a sync that stopped days ago, and by a healthy directory this
+         *     set simply predates. `entries` counts FRESH rows only
+         *     (`entries = contracts + classic`) with `stale` beside it and
+         *     never inside it, so:
+         *
+         *       entries == 0 && stale == 0      never synced
+         *       entries == 0 && stale > 0       every row aged out: sync STOPPED
+         *       entries > 0 && contracts == 0   healthy, names no contract address
+         *       entries > 0 && contracts > 0    healthy and populated
+         *
+         *     Then compare `observed_at` against the sync's own clock: a sync
+         *     that completed after it means this set predates the rows,
+         *     nothing is broken, and the next rebuild carries them.
+         *
+         *     Omitted entirely when nothing was observed — no listing reader
+         *     wired, or a read that did not answer — so a census of zeros is
+         *     never published out of a query that never ran.
+         */
+        RWAListingDirectory: {
+            /**
+             * Format: date-time
+             * @description When THIS INDEX read the directory — not when the directory
+             *     was synced, and not when the response was rendered. Every
+             *     count beside it can be re-derived by reading the table
+             *     again; this instant cannot be recovered by anyone once it
+             *     has passed, which is why it is served rather than left to be
+             *     looked up.
+             */
+            observed_at: string;
+            /** @description Fresh rows of either address form. Rows past the recognition bound are in `stale`, not here. */
+            entries: number;
+            /** @description How many fresh rows name a Stellar CONTRACT address — the only form this arm can consult. */
+            contracts: number;
+            /** @description Rows present but past the recognition bound. The one number separating a sync that stopped from one that never ran. */
+            stale: number;
         };
         /** @description One population on the way to the served set. */
         RWAFunnelStage: {
@@ -8125,6 +8180,13 @@ export interface components {
              *     read that did not answer may not report an absence, and this
              *     is the reason that keeps a fail-closed shrink from being
              *     silent.
+             *     `curated_tag_lookup_unavailable` — the CURATED DIRECTORY's
+             *     tag read did not answer, so the third requirement could not
+             *     be evaluated and the arm is CLOSED. `operator`. Kept apart
+             *     from the listing's own outage because the two are unrelated
+             *     sources: the curated directory can be unreadable while the
+             *     listing sits there perfectly fresh, and one reason for both
+             *     would raise an alarm against a sync that is running well.
              *     `contract_curated_binding_without_independent_listing` — the
              *     in-repo binding is verified and no independent party names
              *     the address. `operator`, because finding a second source is
@@ -8150,7 +8212,7 @@ export interface components {
              *     `refused[]`.
              * @enum {string}
              */
-            reason: "sep1_attestation_never_fetched" | "domain_served_no_sep1_attestation" | "sep1_payload_unreadable" | "sep1_declares_no_currencies" | "entry_declares_no_asset_code" | "entry_declares_no_issuer" | "entry_declares_another_issuer" | "not_a_classic_asset" | "no_issuer_bound_sep1_entry" | "issuer_scam_flagged" | "issuer_not_independently_recognised" | "no_real_world_instrument_basis" | "duplicate_declaration_of_the_same_asset" | "over_issuer_cap" | "admitted_but_never_observed_on_chain" | "directory_entry_names_an_account" | "contract_scam_flagged" | "contract_named_without_issuing_tag" | "no_real_world_instrument_basis_for_contract" | "duplicate_directory_entry_for_contract" | "over_contract_scan_cap" | "issuer_asset_page_truncated" | "withheld_issuer_flagged" | "reference_unavailable" | "reference_contract_not_bound" | "reference_not_instrument_scoped" | "reference_not_bound" | "reference_not_usd_denominated" | "no_reference_feed" | "reference_expired" | "reference_not_positive" | "supply_unavailable" | "decimals_unavailable" | "contract_already_evaluated_by_directory_arm" | "independent_listing_unavailable" | "contract_curated_binding_without_independent_listing" | "contract_listed_without_curated_binding";
+            reason: "sep1_attestation_never_fetched" | "domain_served_no_sep1_attestation" | "sep1_payload_unreadable" | "sep1_declares_no_currencies" | "entry_declares_no_asset_code" | "entry_declares_no_issuer" | "entry_declares_another_issuer" | "not_a_classic_asset" | "no_issuer_bound_sep1_entry" | "issuer_scam_flagged" | "issuer_not_independently_recognised" | "no_real_world_instrument_basis" | "duplicate_declaration_of_the_same_asset" | "over_issuer_cap" | "admitted_but_never_observed_on_chain" | "directory_entry_names_an_account" | "contract_scam_flagged" | "contract_named_without_issuing_tag" | "no_real_world_instrument_basis_for_contract" | "duplicate_directory_entry_for_contract" | "over_contract_scan_cap" | "issuer_asset_page_truncated" | "withheld_issuer_flagged" | "reference_unavailable" | "reference_contract_not_bound" | "reference_not_instrument_scoped" | "reference_not_bound" | "reference_not_usd_denominated" | "no_reference_feed" | "reference_expired" | "reference_not_positive" | "supply_unavailable" | "decimals_unavailable" | "contract_already_evaluated_by_directory_arm" | "independent_listing_unavailable" | "contract_curated_binding_without_independent_listing" | "contract_listed_without_curated_binding" | "curated_tag_lookup_unavailable";
             count: number;
             /**
              * @description Who can move this number. `operator` — a fetch nobody has

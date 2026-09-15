@@ -14848,7 +14848,7 @@ components:
         basis:
           type: string
           enum:
-            [sep1_anchor_declaration, oracle_rwa_feed,
+            [sep1_anchor_declaration, sep1_isin_declaration, oracle_rwa_feed,
              curated_contract_instrument, contract_oracle_rwa_feed]
           description: |
             Which final requirement admitted this asset. The first two
@@ -14856,6 +14856,18 @@ components:
 
             `sep1_anchor_declaration` — the issuer-bound SEP-1 entry
             declares a real-world `anchor_asset_type`.
+            `sep1_isin_declaration` — that same entry declares an
+            `anchor_asset` which is a well-formed ISIN, check digit and
+            all. It admits WITHOUT a class, like the oracle arms and for
+            the same reason: it establishes that a real-world instrument
+            exists, not what category it belongs to. An
+            `anchor_asset_type` is a string the issuer picks from a
+            vocabulary it may ignore; an ISIN is assigned by a national
+            numbering agency, is externally resolvable, and carries a
+            check digit over its own body. Form is validated and form is
+            all that is claimed — this says an identifier was declared,
+            never that the declarer is entitled to it, which is what
+            requirements 2 and 3 are for.
             `oracle_rwa_feed` — an independent oracle publishes a
             net-asset-value feed for an instrument of this code
             (ADR-0028); keyed on the code, so admissible only because
@@ -14895,8 +14907,8 @@ components:
           description: |
             Declared class. Present under `sep1_anchor_declaration` and
             `curated_contract_instrument`. Absent under either oracle
-            basis — a feed names an instrument, not its class, and none
-            is invented.
+            basis and under `sep1_isin_declaration` — each of those
+            names an instrument, not its class, and none is invented.
         anchor_asset:
           type: string
           description: The off-chain instrument the issuer declared this token anchors to, verbatim.
@@ -15390,6 +15402,7 @@ components:
             - contract_listed_without_curated_binding
             - contract_curated_binding_without_independent_listing
             - independent_listing_unavailable
+            - curated_tag_lookup_unavailable
         assets: { type: integer }
 
     RWAFunnel:
@@ -15439,6 +15452,49 @@ components:
         basis:
           type: string
           description: One-line statement of what the funnel measured, including the change of unit down the stages.
+        listing_directory:
+          $ref: "#/components/schemas/RWAListingDirectory"
+
+    RWAListingDirectory:
+      type: object
+      description: |
+        What the independent listing directory held at the moment this
+        set was built — the EVIDENCE behind the `listing` arm's verdict.
+
+        The verdict alone is ambiguous. An arm reporting nothing
+        corroborated is produced by a directory nobody has ever synced,
+        by a sync that stopped days ago, and by a healthy directory this
+        set simply predates. `entries` counts FRESH rows only
+        (`entries = contracts + classic`) with `stale` beside it and
+        never inside it, so:
+
+          entries == 0 && stale == 0      never synced
+          entries == 0 && stale > 0       every row aged out: sync STOPPED
+          entries > 0 && contracts == 0   healthy, names no contract address
+          entries > 0 && contracts > 0    healthy and populated
+
+        Then compare `observed_at` against the sync's own clock: a sync
+        that completed after it means this set predates the rows,
+        nothing is broken, and the next rebuild carries them.
+
+        Omitted entirely when nothing was observed — no listing reader
+        wired, or a read that did not answer — so a census of zeros is
+        never published out of a query that never ran.
+      required: [observed_at, entries, contracts, stale]
+      properties:
+        observed_at:
+          type: string
+          format: date-time
+          description: |
+            When THIS INDEX read the directory — not when the directory
+            was synced, and not when the response was rendered. Every
+            count beside it can be re-derived by reading the table
+            again; this instant cannot be recovered by anyone once it
+            has passed, which is why it is served rather than left to be
+            looked up.
+        entries:   { type: integer, description: "Fresh rows of either address form. Rows past the recognition bound are in `stale`, not here." }
+        contracts: { type: integer, description: "How many fresh rows name a Stellar CONTRACT address — the only form this arm can consult." }
+        stale:     { type: integer, description: "Rows present but past the recognition bound. The one number separating a sync that stopped from one that never ran." }
 
     RWAFunnelStage:
       type: object
@@ -15688,6 +15744,13 @@ components:
             read that did not answer may not report an absence, and this
             is the reason that keeps a fail-closed shrink from being
             silent.
+            `curated_tag_lookup_unavailable` — the CURATED DIRECTORY's
+            tag read did not answer, so the third requirement could not
+            be evaluated and the arm is CLOSED. `operator`. Kept apart
+            from the listing's own outage because the two are unrelated
+            sources: the curated directory can be unreadable while the
+            listing sits there perfectly fresh, and one reason for both
+            would raise an alarm against a sync that is running well.
             `contract_curated_binding_without_independent_listing` — the
             in-repo binding is verified and no independent party names
             the address. `operator`, because finding a second source is
@@ -15749,6 +15812,7 @@ components:
             - independent_listing_unavailable
             - contract_curated_binding_without_independent_listing
             - contract_listed_without_curated_binding
+            - curated_tag_lookup_unavailable
         count: { type: integer }
         actor:
           type: string
