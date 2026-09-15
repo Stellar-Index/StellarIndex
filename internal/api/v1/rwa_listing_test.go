@@ -183,6 +183,12 @@ func TestRWAListing_CorroboratedBindingIsAdmittedAndValued(t *testing.T) {
 	if a.Decimals != 5 {
 		t.Fatalf("decimals = %d, want 5 — the exponent is the valuation", a.Decimals)
 	}
+	// The name comes from the in-repo curated binding, never from the
+	// listing platform's display text — that source corroborates the
+	// address, it does not attest to an identity.
+	if a.Name != "Spiko EU T-Bills Money Market Fund (EUTBL)" {
+		t.Errorf("name = %q, want the curated binding's instrument", a.Name)
+	}
 	if a.Reference == nil {
 		t.Fatal("no reference on a listing-corroborated row")
 	}

@@ -631,7 +631,7 @@ func rwaContractAssetRows(members []rwaContractMember, rows map[string]AssetDeta
 			// identity.
 			Symbol:              m.symbol,
 			Slug:                d.Slug,
-			Name:                strings.TrimSpace(m.dirName),
+			Name:                rwaContractName(m),
 			HomeDomain:          m.dirDomain,
 			IssuerDirectoryName: m.dirName,
 			IssuerDirectoryTags: d.IssuerDirectoryTags,
@@ -692,6 +692,33 @@ func rwaContractArmSplit(
 		arm.notObserved++
 	}
 	return directory, listing
+}
+
+// rwaContractName is the human-readable name for a contract row.
+//
+// The curated directory's label first, which is what the first C2 arm
+// admitted on. A row admitted on the SECOND arm has no directory entry
+// by definition, so it falls back to the in-repo curated binding's
+// instrument — the same string [rwa.ContractInstrumentBindings]
+// publishes on the wire, so a reader can trace the name to the entry it
+// came from.
+//
+// What it never falls back to is the listing platform's own display
+// text. That source is this surface's CORROBORATION, not its identity:
+// letting it name a row would put a price aggregator's label where the
+// definition says an independent identity attestation goes, and a
+// reader could not tell the two apart. An unnamed row is the correct
+// outcome if neither source names it.
+func rwaContractName(m rwaContractMember) string {
+	if n := strings.TrimSpace(m.dirName); n != "" {
+		return n
+	}
+	for _, b := range rwa.ContractInstrumentBindings() {
+		if b.ContractID == m.contractID {
+			return b.Instrument
+		}
+	}
+	return ""
 }
 
 // rwaUnreachedRows projects the coverage sample onto the wire.
