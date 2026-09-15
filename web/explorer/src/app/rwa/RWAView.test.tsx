@@ -4,17 +4,30 @@ import { describe, expect, it, vi, beforeEach } from 'vitest';
 
 import type { components } from '@/api/types';
 
-import { RWAView, splitBasis } from './RWAView';
+import { RWAView, splitBasis, sumUsd } from './RWAView';
 
 type Schemas = components['schemas'];
 type View = Schemas['RWAAssetsView'];
 
 const apiGetData = vi.hoisted(() => vi.fn());
+// useAssets (the stablecoin arm) reads through apiGet, not apiGetData.
+// Mocked here so the sector tiles are deterministic and no test reaches
+// the network.
+const apiGet = vi.hoisted(() => vi.fn());
 vi.mock('@/api/client', async () => {
   const actual =
     await vi.importActual<typeof import('@/api/client')>('@/api/client');
-  return { ...actual, apiGetData };
+  return { ...actual, apiGetData, apiGet };
 });
+
+/** One fiat-backed token, valued, as the served catalogue returns it. */
+function stablecoinPage(
+  rows: { code: string; market_cap_usd?: string }[] = [
+    { code: 'USDC', market_cap_usd: '354959662.86' },
+  ],
+) {
+  return { data: rows.map((r) => ({ ...r, class: 'stablecoin' })) };
+}
 
 const ISSUER = 'GCRYUGD5NVARGXT56XEZI5CIFCQETYHAPQQTHO2O3IQZTHDH4LATMYWC';
 
@@ -154,6 +167,8 @@ function renderView() {
 describe('RWAView', () => {
   beforeEach(() => {
     apiGetData.mockReset();
+    apiGet.mockReset();
+    apiGet.mockResolvedValue(stablecoinPage());
   });
 
   it('renders an admitted asset with its issuer identity, not the code alone', async () => {
@@ -279,7 +294,9 @@ describe('RWAView', () => {
 
     // Both valuation tiles say it: neither basis has anything to
     // publish, and neither may render as a zero.
-    expect(await screen.findAllByText('Not published')).toHaveLength(2);
+    // Backing, market cap, and Combined — which may not be published
+    // from the stablecoin arm alone.
+    expect(await screen.findAllByText('Not published')).toHaveLength(3);
     expect(screen.queryByText('$0.00')).not.toBeInTheDocument();
     expect(
       screen.getByText(/No asset in the set publishes a market valuation/),
@@ -462,7 +479,7 @@ describe('RWAView', () => {
     ).toBeInTheDocument();
     // BOTH valuation tiles say it. An empty set has no market cap and
     // no reference valuation, and neither may render as a zero.
-    expect(screen.getAllByText('Not published')).toHaveLength(2);
+    expect(screen.getAllByText('Not published')).toHaveLength(3);
     expect(screen.queryByText('$0.00')).not.toBeInTheDocument();
   });
 
@@ -873,6 +890,8 @@ describe('RWAView', () => {
 describe('RWAView — contract arm', () => {
   beforeEach(() => {
     apiGetData.mockReset();
+    apiGet.mockReset();
+    apiGet.mockResolvedValue(stablecoinPage());
   });
 
   const CONTRACT = 'CAAQEAYEAUDAOCAJBIFQYDIOB4IBCEQTCQKRMFYYDENBWHA5DYPSBFLM';
@@ -1238,7 +1257,9 @@ describe('RWAView — contract arm', () => {
       );
       renderView();
 
-      expect(await screen.findByText('Not published')).toBeInTheDocument();
+      expect(
+        (await screen.findAllByText('Not published')).length,
+      ).toBeGreaterThan(0);
       expect(screen.queryByText('$0.00')).not.toBeInTheDocument();
       expect(
         screen.getByText(
@@ -1274,5 +1295,146 @@ describe('splitBasis', () => {
     expect(splitBasis(undefined)).toEqual({ lead: '', rest: '' });
     expect(splitBasis(null)).toEqual({ lead: '', rest: '' });
     expect(splitBasis('   ')).toEqual({ lead: '', rest: '' });
+  });
+});
+
+// Money is summed in integer cents, never in floats. A page total that
+// drifts in the last place is a figure nobody published.
+describe('sumUsd', () => {
+  it('sums served decimal strings exactly', () => {
+    expect(
+      sumUsd(['354959662.86', '11780447.97', '3595985.29', '3368263.79']),
+    ).toEqual({ total: '373704359.91', valued: 4, unvalued: 0 });
+  });
+
+  it('does not drift the way a float sum does', () => {
+    // 0.1 + 0.2 === 0.30000000000000004 in float64.
+    expect(sumUsd(['0.10', '0.20']).total).toBe('0.30');
+  });
+
+  it('counts what it could not read and still totals the rest', () => {
+    expect(sumUsd(['10.00', null, undefined, 'n/a', '5.50'])).toEqual({
+      total: '15.50',
+      valued: 2,
+      unvalued: 3,
+    });
+  });
+
+  it('is null, never zero, when nothing was readable', () => {
+    expect(sumUsd([null, undefined])).toEqual({
+      total: null,
+      valued: 0,
+      unvalued: 2,
+    });
+    expect(sumUsd([])).toEqual({ total: null, valued: 0, unvalued: 0 });
+  });
+});
+
+// The operator was reading a COMBINED figure published elsewhere
+// against our real-world-asset-only headline — a whole against a part.
+// The page carries all three quantities so that comparison is
+// like-for-like, and keeps the stablecoin arm out of the RWA total.
+describe('RWAView — the wider sector', () => {
+  beforeEach(() => {
+    apiGetData.mockReset();
+    apiGet.mockReset();
+    apiGet.mockResolvedValue(
+      stablecoinPage([
+        { code: 'USDC', market_cap_usd: '354959662.86' },
+        { code: 'PYUSD', market_cap_usd: '11780447.97' },
+        { code: 'EURC', market_cap_usd: '3595985.29' },
+        { code: 'yUSDC', market_cap_usd: '3368263.79' },
+      ]),
+    );
+  });
+
+  function sectorView() {
+    return view({
+      summary: {
+        ...view().summary,
+        assets: 11,
+        market_cap_usd: '17128565.34',
+        assets_valued: 3,
+        assets_unvalued: 8,
+        lower_bound: true,
+        reference_valuation: {
+          value_usd: '992488360.69',
+          assets_valued: 7,
+          assets_unvalued: 4,
+          lower_bound: true,
+          sources: ['redstone'],
+          basis: 'A. B. C.',
+        },
+      },
+    });
+  }
+
+  it('publishes the stablecoin total from the served catalogue', async () => {
+    apiGetData.mockResolvedValue(sectorView());
+    renderView();
+
+    expect(await screen.findByText('Stablecoins')).toBeInTheDocument();
+    expect(screen.getByText('$373,704,359.91')).toBeInTheDocument();
+    expect(
+      screen.getByText('4 fiat-backed tokens issued on Stellar'),
+    ).toBeInTheDocument();
+  });
+
+  it('adds the two arms into a combined figure and says it is two bases', async () => {
+    apiGetData.mockResolvedValue(sectorView());
+    renderView();
+
+    expect(await screen.findByText('Combined')).toBeInTheDocument();
+    // 992,488,360.69 + 373,704,359.91, exactly.
+    expect(screen.getByText('$1,366,192,720.60')).toBeInTheDocument();
+    expect(screen.getByText(/Two bases, added\./)).toBeInTheDocument();
+    expect(
+      screen.getByText(/not the real-world-asset figure/),
+    ).toBeInTheDocument();
+  });
+
+  it('keeps stablecoins out of the real-world-asset figure', async () => {
+    apiGetData.mockResolvedValue(sectorView());
+    renderView();
+
+    // The headline is exactly what the server served for the RWA set —
+    // the stablecoin arm moved it by nothing.
+    expect(await screen.findByText('$992,488,360.69')).toBeInTheDocument();
+    expect(screen.getByText(/Not a real-world asset\./)).toBeInTheDocument();
+    expect(
+      screen.getByText(/the definition above refuses the whole class/),
+    ).toBeInTheDocument();
+  });
+
+  it('withholds the combined figure when the stablecoin arm fails', async () => {
+    apiGetData.mockResolvedValue(sectorView());
+    apiGet.mockRejectedValue(new Error('stablecoin catalogue unreachable'));
+    renderView();
+
+    // The RWA arm still publishes; the sector arm says it does not know.
+    expect(await screen.findByText('$992,488,360.69')).toBeInTheDocument();
+    expect(screen.getByText('Unavailable')).toBeInTheDocument();
+    // And Combined is withheld rather than published from one arm — a
+    // smaller claim must never wear the bigger name.
+    expect(screen.getByText('Not published')).toBeInTheDocument();
+    expect(screen.queryByText('$992,488,360.69extra')).not.toBeInTheDocument();
+  });
+
+  it('marks the combined figure as a floor when either arm is short', async () => {
+    apiGetData.mockResolvedValue(sectorView());
+    apiGet.mockResolvedValue(
+      stablecoinPage([
+        { code: 'USDC', market_cap_usd: '354959662.86' },
+        { code: 'USDT0' }, // in the catalogue, no supply reading yet
+      ]),
+    );
+    renderView();
+
+    await screen.findByText('Combined');
+    // Three floors: the backing, the market cap, and the sum of both.
+    expect(screen.getAllByText('≥').length).toBeGreaterThanOrEqual(3);
+    expect(
+      screen.getByText('1 fiat-backed token issued on Stellar'),
+    ).toBeInTheDocument();
   });
 });

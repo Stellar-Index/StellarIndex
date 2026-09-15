@@ -7,6 +7,7 @@ import { Panel } from '@/components/reveal';
 import { RWAHistoryPanel } from './RWAHistoryPanel';
 import { RWAPremiumPanel } from './RWAPremiumPanel';
 import { apiGetData, asExample } from '@/api/client';
+import { useAssets } from '@/api/hooks';
 import type { components } from '@/api/types';
 import {
   formatCompact,
@@ -257,6 +258,11 @@ function usd(value: string | null | undefined): string | null {
  */
 export function RWAView() {
   const { data, isLoading, isError, error } = useRWAAssets();
+  // The stablecoin arm, from the served catalogue. Its own query, so a
+  // slow or failed stablecoin read degrades one tile instead of holding
+  // the whole page — the real-world-asset set is a complete answer to
+  // its own question without it.
+  const stablecoins = useAssets('stablecoin', 100, '', undefined);
 
   if (isLoading && !data) return <Skeleton className="h-96 w-full" />;
   if (isError || !data) {
@@ -279,6 +285,16 @@ export function RWAView() {
   const total = usd(summary.market_cap_usd);
   const referenceTotal = usd(summary.reference_valuation?.value_usd);
 
+  const stableRows = stablecoins.data?.assets ?? [];
+  const stableSum = sumUsd(stableRows.map((r) => r.market_cap_usd));
+  const stable: StablecoinTotals = {
+    // Loading is not the same as unavailable, but for one tile it reads
+    // the same and settles within a request — what must not happen is a
+    // total published from an arm that has not answered.
+    available: !stablecoins.isError && stablecoins.data != null,
+    ...stableSum,
+  };
+
   return (
     <div className="space-y-6">
       <HeadlineStats
@@ -286,6 +302,8 @@ export function RWAView() {
         total={total}
         referenceTotal={referenceTotal}
       />
+
+      <SectorTotals summary={summary} stable={stable} />
 
       {/* Everything else on this page is a snapshot. The set's whole
           claim is about real-world value on chain, and "is it growing"
@@ -500,6 +518,55 @@ const CLASS_LABEL: Record<string, string> = {
 };
 
 /**
+ * Exact cents from a served USD decimal string, or null when there is
+ * no figure to read.
+ *
+ * Money is summed in integer cents rather than in floats, the same rule
+ * the server sums by: these are already-rounded 2-decimal strings
+ * (ADR-0003), and a float total of a page of them is a figure nobody
+ * published.
+ */
+function usdCents(value: string | null | undefined): bigint | null {
+  if (value == null) return null;
+  const t = value.trim();
+  if (!/^\d+(\.\d+)?$/.test(t)) return null;
+  const [whole, frac = ''] = t.split('.');
+  return BigInt(whole) * 100n + BigInt(`${frac}00`.slice(0, 2));
+}
+
+/**
+ * Sums served USD strings exactly, and counts what it could not read.
+ *
+ * Returns a null total when NOTHING was readable, never "0.00" — the
+ * same rule every money figure on this page follows. A total over some
+ * of the rows is a floor, and `unvalued` is what says so.
+ */
+export function sumUsd(values: (string | null | undefined)[]): {
+  total: string | null;
+  valued: number;
+  unvalued: number;
+} {
+  let cents = 0n;
+  let valued = 0;
+  let unvalued = 0;
+  for (const v of values) {
+    const c = usdCents(v);
+    if (c == null) {
+      unvalued += 1;
+      continue;
+    }
+    cents += c;
+    valued += 1;
+  }
+  if (valued === 0) return { total: null, valued, unvalued };
+  return {
+    total: `${cents / 100n}.${(cents % 100n).toString().padStart(2, '0')}`,
+    valued,
+    unvalued,
+  };
+}
+
+/**
  * Splits a served basis into the part the page shows without asking and
  * the part behind a disclosure.
  *
@@ -674,6 +741,139 @@ function MarketCapHeadline({
         <BasisDisclosure label="What this figure is, in full" text={rest} />
       )}
     </StatCell>
+  );
+}
+
+/**
+ * What the stablecoin arm knows, or that it does not know it.
+ *
+ * `available: false` is held apart from a zero total on purpose: a
+ * failed fetch and an empty sector are opposite findings, and the
+ * combined figure below may not be published from one arm when the
+ * other did not answer.
+ */
+export type StablecoinTotals = {
+  available: boolean;
+  total: string | null;
+  valued: number;
+  unvalued: number;
+};
+
+/**
+ * The sector strip: stablecoins, and the two arms added.
+ *
+ * Fiat-backed tokens sit OUTSIDE the real-world-asset definition and
+ * always have — a dollar in a custodian's bank account is not a
+ * tokenized instrument with a net asset value, and the membership rule
+ * refuses the whole `fiat` anchor class for that reason. So this figure
+ * never joins the one above it, and the combined tile states that it is
+ * two bases added rather than one total measured.
+ *
+ * It is published because the alternative is worse. "Tokenized value on
+ * Stellar" is commonly quoted as the two together, and a reader holding
+ * such a figure beside a real-world-asset-only headline is comparing a
+ * whole against a part without being told. Naming all three is what
+ * makes the comparison a like-for-like one.
+ *
+ * Identity comes from the served catalogue, never from the code string.
+ * PYUSD, USDT, USDC and XLM are each worn by impersonators on this
+ * network — one carrying a 920-billion fake balance — so "the token
+ * called USDC" is not a set anybody should sum.
+ */
+function SectorTotals({
+  summary,
+  stable,
+}: {
+  summary: Schemas['RWASummary'];
+  stable: StablecoinTotals;
+}) {
+  const reference = summary.reference_valuation;
+  const rwaTotal = reference?.value_usd ?? null;
+  const stableTotal = stable.available ? stable.total : null;
+  // Combined needs BOTH arms. One arm missing makes the sum a smaller
+  // claim wearing a bigger name, so it is withheld rather than guessed.
+  const combined =
+    rwaTotal != null && stableTotal != null
+      ? sumUsd([rwaTotal, stableTotal]).total
+      : null;
+  const combinedFloor =
+    (reference?.lower_bound ?? false) || stable.unvalued > 0;
+  return (
+    <div className="space-y-2">
+      <p className="text-ink-muted text-[11px] font-medium tracking-wider uppercase">
+        The wider tokenized sector
+      </p>
+      <StatGrid cols={2}>
+        <StatCell>
+          <Stat
+            label="Stablecoins"
+            size="lg"
+            value={
+              stableTotal == null ? (
+                <span className="text-ink-muted">
+                  {stable.available ? 'Not published' : 'Unavailable'}
+                </span>
+              ) : (
+                <>
+                  {stable.unvalued > 0 && (
+                    <span className="text-ink-muted" aria-hidden>
+                      ≥{' '}
+                    </span>
+                  )}
+                  {usd(stableTotal)}
+                </>
+              )
+            }
+            sub={
+              stableTotal == null
+                ? 'The stablecoin catalogue did not answer'
+                : `${stable.valued} fiat-backed token${stable.valued === 1 ? '' : 's'} issued on Stellar`
+            }
+          />
+          <p className="text-ink-muted mt-2 text-xs leading-relaxed">
+            <strong className="text-ink">Not a real-world asset.</strong> A
+            fiat-anchored token is a claim on a bank balance, not a tokenized
+            instrument with a net asset value, so the definition above refuses
+            the whole class and this figure is never part of it. Market caps as
+            the asset pages serve them, over the issuer-bound identities in the
+            served catalogue — never over a token code, which anyone can mint.
+          </p>
+        </StatCell>
+        <StatCell>
+          <Stat
+            label="Combined"
+            size="lg"
+            value={
+              combined == null ? (
+                <span className="text-ink-muted">Not published</span>
+              ) : (
+                <>
+                  {combinedFloor && (
+                    <span className="text-ink-muted" aria-hidden>
+                      ≥{' '}
+                    </span>
+                  )}
+                  {usd(combined)}
+                </>
+              )
+            }
+            sub={
+              combined == null
+                ? 'Published only when both arms answer'
+                : 'Real-world assets plus stablecoins'
+            }
+          />
+          <p className="text-ink-muted mt-2 text-xs leading-relaxed">
+            <strong className="text-ink">Two bases, added.</strong> An oracle’s
+            valuation of the backing plus observed stablecoin market caps. It is
+            not a market capitalisation, and it is not the real-world-asset
+            figure — it is the size of the two arms together, which is the
+            quantity usually meant by tokenized value on Stellar. Read it
+            against the arms, never in place of them.
+          </p>
+        </StatCell>
+      </StatGrid>
+    </div>
   );
 }
 

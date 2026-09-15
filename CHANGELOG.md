@@ -62,6 +62,30 @@ against.
   primary-key range reads over the account's own edges, so neither the
   query nor the payload grows with the 21M-row creation graph behind it.
 
+### Added
+
+- **explorer:** `/rwa` publishes the wider tokenized sector beside the
+  real-world-asset set — a stablecoin total and the two arms combined.
+  Fiat-backed tokens are deliberately outside the RWA definition (a
+  claim on a bank balance is not a tokenized instrument with a net asset
+  value, so the membership rule refuses the whole `fiat` anchor class),
+  and they stay outside it here: the figure is published beside the set,
+  never folded into it, and the combined tile states that it is two
+  bases added rather than one total measured. It exists because
+  "tokenized value on Stellar" is commonly quoted as the two together,
+  and a reader holding such a figure beside a real-world-asset-only
+  headline is comparing a whole against a part without being told.
+
+  The stablecoin figure comes from the served catalogue's issuer-bound
+  identities, never from a token code: PYUSD, USDT, USDC and XLM are
+  each worn by impersonators on this network, one carrying a
+  920-billion fake balance, so "the token called USDC" is not a set
+  anybody should sum. Totals are summed in integer cents from the
+  served decimal strings, so a page total cannot drift in the last
+  place the way a float sum does. The combined figure is withheld
+  entirely unless both arms answer — a smaller claim must never wear
+  the bigger name — and is marked as a floor whenever either arm is.
+
 ### Fixed
 
 - **explorer:** `/rwa` leads with the value of the backing rather than
