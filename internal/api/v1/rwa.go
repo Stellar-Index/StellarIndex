@@ -174,6 +174,84 @@ type RWAFunnel struct {
 	Balanced bool `json:"balanced"`
 	// Basis is a one-line statement of what the funnel measured.
 	Basis string `json:"basis"`
+	// ListingDirectory is the EVIDENCE behind the `listing` arm's
+	// verdict: what the independent listing directory held at the
+	// moment this set was built.
+	//
+	// Omitted when nothing was observed — no listing reader wired, or a
+	// read that did not answer. Its absence is therefore a statement in
+	// its own right and never a default: an arm reporting refusals with
+	// no evidence block beside them is an arm whose source could not be
+	// read at all.
+	ListingDirectory *RWAListingDirectory `json:"listing_directory,omitempty"`
+}
+
+// RWAListingDirectory is what the independent listing directory looked
+// like at the moment the served set was built.
+//
+// It exists because the funnel published a VERDICT and none of the
+// evidence for it, and the verdict alone cannot be acted on. A `listing`
+// arm reporting nothing corroborated is produced by three different
+// states of the world — a directory nobody has ever synced, a sync that
+// stopped days ago, and a perfectly healthy directory that this set
+// simply predates — and they call for three different responses, from
+// "run the sync" through "go and fix it" to "do nothing at all". Told
+// apart, before this block, only by somebody with a database prompt.
+//
+// Read it as a decision table. Entries counts the FRESH rows only —
+// `Entries = Contracts + Classic`, with Stale counted beside them and
+// never inside them — so the two zero cases are told apart by Stale,
+// which is the single number that says whether anything was ever there:
+//
+//	Entries == 0 && Stale == 0     never synced: the table is empty
+//	Entries == 0 && Stale > 0      every row aged out: the sync STOPPED
+//	Entries > 0 && Contracts == 0  healthy, but it names no Stellar
+//	                               CONTRACT address — nothing this arm
+//	                               can consult, and nothing to fix
+//	Entries > 0 && Contracts > 0   healthy and populated
+//
+// Classic rows are not published separately because they are the
+// remainder: `Classic = Entries - Contracts`, by the invariant above.
+//
+// Then, whatever the counts say, compare ObservedAt against the sync's
+// own clock. A sync that completed AFTER this instant means the set in
+// hand predates the rows it would have used and the next rebuild will
+// carry them — nothing is broken and nobody needs to act. That is the
+// comparison this block exists for, and the one no count can answer:
+// the evidence and the verdict in a response always come from the same
+// read, so they can never contradict each other, and a reader with only
+// the verdict has no way to place it in time.
+type RWAListingDirectory struct {
+	// ObservedAt is when this index read the directory — NOT when the
+	// directory was itself synced, and not when the response was
+	// rendered. It is the field the rest of the block is useless
+	// without.
+	//
+	// Every count below can be recovered afterwards by reading the
+	// table again. This instant cannot be recovered by anyone, at any
+	// point, once the moment has passed — so it is the one fact that
+	// has to be published rather than left to be looked up, and the
+	// only one that lets a reader place a closed arm and a healthy
+	// directory in time relative to each other.
+	ObservedAt WireTime `json:"observed_at"`
+	// Entries is every FRESH row the directory held, of either address
+	// form — the recognised population, before the contract/classic
+	// split. Rows past the recognition bound are not in it; they are in
+	// Stale.
+	Entries int `json:"entries"`
+	// Contracts is how many of those rows name a Stellar CONTRACT
+	// address, which is the only form C2's second arm can consult. A
+	// directory full of classic rows and no contract rows closes the
+	// arm while being perfectly healthy, and this is the count that
+	// says so.
+	Contracts int `json:"contracts"`
+	// Stale is how many rows are PRESENT in the directory but past the
+	// recognition bound — counted beside Entries, never inside it. It
+	// is the visible form of the fail-closed guarantee, and the one
+	// number that separates a sync that has stopped from one that has
+	// never run: both leave Entries at zero, and only a dead sync
+	// leaves rows behind to go stale.
+	Stale int `json:"stale"`
 }
 
 // RWAFunnelStage is one population on the way to the served set.

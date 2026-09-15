@@ -18,6 +18,31 @@ against.
 ### Changed
 ### Added
 
+- **rwa:** `funnel.listing_directory` on `GET /v1/rwa/assets` publishes
+  the EVIDENCE behind C2's second arm, not only its verdict: what the
+  independent listing directory held, and when this index read it.
+
+  The verdict alone is ambiguous in the direction that costs an operator
+  an afternoon. A `listing` arm reporting nothing corroborated is
+  produced by a directory nobody has ever synced, by a sync that stopped
+  days ago, and by a healthy directory the served set simply predates —
+  three states calling for three different responses, and nothing on the
+  wire separated them. On 2026-09-15 the third of those took four
+  production queries, a role-switch test and a row-level-security check
+  to establish, and the answer was that nothing was wrong: the set had
+  been built from a read taken fifty-three seconds before the rows
+  landed.
+
+  `entries` counts fresh rows only and `stale` counts the rows past the
+  recognition bound beside them, so zero entries with zero stale is a
+  directory nobody has synced, and zero entries with stale rows is a
+  sync that died. `observed_at` is the load-bearing field and the reason
+  the block exists: every count in it can be re-derived by reading the
+  table again, and the moment the served set looked at that table cannot
+  be recovered by anyone afterwards. Omitted entirely when nothing was
+  observed — no reader wired, or a read that did not answer — so a
+  census of zeros is never published out of a query that never ran.
+
 - **assets:** a verified-catalogue asset whose market capitalisation the
   gates decline to publish can carry a valuation from an independent
   listing platform, under its own name and its own provenance.

@@ -109,7 +109,13 @@ const rwaFunnelListingBasis = "The `listing` arm walks C2's SECOND route to reco
 	"is what makes `a listing admits nothing alone` auditable rather than merely asserted. The arm FAILS CLOSED: if " +
 	"the listing read does not answer, or its cached snapshot is past the recognition bound, every binding it would " +
 	"have corroborated is dropped under `independent_listing_unavailable` and the set is SMALLER, rather than being " +
-	"held up by a recognition nobody re-established."
+	"held up by a recognition nobody re-established. `funnel.listing_directory` carries the EVIDENCE behind that " +
+	"verdict — what the directory held and WHEN this set read it — so a closed arm can be told apart from a stopped " +
+	"sync without a database. `entries` counts FRESH rows only and `stale` counts the rows past the recognition " +
+	"bound beside them, so zero entries with zero stale is a directory nobody has ever synced, zero entries with " +
+	"stale rows is a sync that DIED, and entries with no contracts among them is a healthy directory that names no " +
+	"Stellar contract address. Compare `observed_at` against the sync's own clock in every closed-arm case: a sync " +
+	"that completed after it means this set predates the rows and the next rebuild carries them."
 
 // rwaFunnelListingUnmeasured is served instead when no listing reader is
 // wired or its cached snapshot is past the recognition bound. The
@@ -174,8 +180,31 @@ func rwaFunnelOf(
 		// checks keep holding if the stage list is ever restructured —
 		// which is exactly when a derived check quietly stops covering
 		// something.
-		Balanced: classicOK && contractOK && servedOK && rwaFunnelImbalance(stages) == "",
-		Basis:    rwaFunnelBasisFor(m.contractCensus.available, m.listingCensus.available),
+		Balanced:         classicOK && contractOK && servedOK && rwaFunnelImbalance(stages) == "",
+		Basis:            rwaFunnelBasisFor(m.contractCensus.available, m.listingCensus.available),
+		ListingDirectory: rwaListingDirectoryOf(m.listingCensus),
+	}
+}
+
+// rwaListingDirectoryOf publishes the listing arm's evidence, or nil
+// when there is none to publish.
+//
+// Gated on the TIMESTAMP rather than on any of the counts, and the
+// choice is the whole point. A census of zeros is what both a directory
+// holding no rows and a read that never completed leave behind, and
+// only the first of those is an observation — so the field that says
+// an observation happened at all is the one that decides whether the
+// block is served. Serving zeros from a failed read would publish
+// "the directory is empty", a finding, out of a query that did not run.
+func rwaListingDirectoryOf(lc rwaListingCensus) *RWAListingDirectory {
+	if lc.observedAt.IsZero() {
+		return nil
+	}
+	return &RWAListingDirectory{
+		ObservedAt: WireTime(lc.observedAt),
+		Entries:    lc.dir.Entries,
+		Contracts:  lc.dir.Contracts,
+		Stale:      lc.dir.Stale,
 	}
 }
 
