@@ -1,3 +1,9 @@
+---
+title: Contract-storage supply
+last_verified: 2026-09-15
+status: current
+---
+
 # Contract-storage supply
 
 **Status:** implemented · `supply_basis = contract_storage_balances`
