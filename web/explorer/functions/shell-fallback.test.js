@@ -14,6 +14,8 @@ import { onRequest as issuersOnRequest } from './issuers/[[path]].js';
 import { onRequest as ledgersOnRequest } from './ledgers/[[path]].js';
 import { onRequest as marketsOnRequest } from './markets/[[path]].js';
 import { onRequest as transactionsOnRequest } from './transactions/[[path]].js';
+import { onRequest as creatorsOnRequest } from './insights/creators/[[path]].js';
+import { onRequest as sponsorsOnRequest } from './insights/sponsors/[[path]].js';
 
 // REL-02 (+ the sibling absence finding on contracts/issuers/ledgers): every
 // one of these functions used to hardcode `status: 200` on the shell
@@ -21,13 +23,21 @@ import { onRequest as transactionsOnRequest } from './transactions/[[path]].js';
 // a missing/broken shell asset into a soft-200 "error page" that caches,
 // uptime monitors, and search engines can't distinguish from a real page.
 
+// [name, handler, the shell path that handler must read]. The shell path
+// is carried EXPLICITLY rather than derived from the name: the two
+// insights handlers are nested two segments deep, and a `/${name}/shell/`
+// convention would have quietly asserted the wrong path for them — which
+// is the same copy-paste failure the last describe in this file exists to
+// catch.
 const cases = [
-  ['accounts', accountsOnRequest],
-  ['contracts', contractsOnRequest],
-  ['issuers', issuersOnRequest],
-  ['ledgers', ledgersOnRequest],
-  ['markets', marketsOnRequest],
-  ['transactions', transactionsOnRequest],
+  ['accounts', accountsOnRequest, '/accounts/shell/'],
+  ['contracts', contractsOnRequest, '/contracts/shell/'],
+  ['issuers', issuersOnRequest, '/issuers/shell/'],
+  ['ledgers', ledgersOnRequest, '/ledgers/shell/'],
+  ['markets', marketsOnRequest, '/markets/shell/'],
+  ['transactions', transactionsOnRequest, '/transactions/shell/'],
+  ['insights/creators', creatorsOnRequest, '/insights/creators/shell/'],
+  ['insights/sponsors', sponsorsOnRequest, '/insights/sponsors/shell/'],
 ];
 
 function makeContext({ shellStatus }) {
@@ -130,7 +140,7 @@ describe.each(cases)(
 // one another, and the pre-existing fake matched on `/shell/` alone — so a
 // handler that fetched a sibling's shell passed every assertion.
 describe('each handler fetches its own shell path', () => {
-  it.each(cases)('%s', async (name, onRequest) => {
+  it.each(cases)('%s', async (_name, onRequest, shellPath) => {
     let fetched = null;
     const ctx = {
       request: new Request('https://stellarindex.io/whatever/long-tail-id'),
@@ -148,6 +158,6 @@ describe('each handler fetches its own shell path', () => {
       },
     };
     await onRequest(ctx);
-    expect(fetched).toBe(`/${name}/shell/`);
+    expect(fetched).toBe(shellPath);
   });
 });

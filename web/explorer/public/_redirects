@@ -125,6 +125,24 @@
 # string), so a _redirects 301 is correct. SEO plan D-redirect set.
 /address/*  /accounts/:splat  301
 
+# Singular short aliases for the two graph boards' per-address pages.
+# /sponsor/{G} and /creator/{G} are what a reader types or is handed; the
+# canonical page lives under the board it belongs to, the same shape as
+# /address/{G} → /accounts/{G} above. The splat carries the G-strkey
+# through untouched — these are case-SENSITIVE base32, and a rule that
+# lowercased one would send every link to a nonexistent account.
+#
+# Bare form too: /sponsor and /creator alone name no address, so they go
+# to the board rather than to a detail page with nothing in it. Listed
+# with and without the trailing slash because next.js's trailingSlash 308
+# fires on the explorer's OWN routes, not on aliases it does not serve.
+/sponsor           /insights/sponsors/             301
+/sponsor/          /insights/sponsors/             301
+/sponsor/*         /insights/sponsors/:splat       301
+/creator           /insights/creators/             301
+/creator/          /insights/creators/             301
+/creator/*         /insights/creators/:splat       301
+
 # Dashboard relocated /account/* → /dashboard/* (SEO plan, dashboard is noindex;
 # entities use plural /accounts/{g}). Keep old bookmarks working.
 /account            /dashboard/         301

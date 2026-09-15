@@ -187,8 +187,14 @@ export function CreatorBoard() {
                 <TR key={c.account}>
                   <Td align="right">{c.rank}</Td>
                   <Td>
+                    {/* Through to the creator's own page, not straight to
+                        the generic account page: the board's columns are
+                        summaries of a set, and the question a row raises
+                        — WHICH accounts, and when — is what
+                        /insights/creators/{g} answers. That page links on
+                        to /accounts/{g} for everything else. */}
                     <Link
-                      href={`/accounts/${encodeURIComponent(c.account)}/`}
+                      href={`/insights/creators/${encodeURIComponent(c.account)}/`}
                       className="text-brand-600 font-mono text-xs hover:underline"
                       title={c.account}
                     >

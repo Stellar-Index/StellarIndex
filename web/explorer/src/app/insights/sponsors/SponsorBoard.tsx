@@ -198,8 +198,14 @@ export function SponsorBoard() {
                 <TR key={s.account}>
                   <Td align="right">{s.rank}</Td>
                   <Td>
+                    {/* Through to the sponsor's own page, not straight to
+                        the generic account page: the board's columns are
+                        summaries of a set, and the question a row raises
+                        — WHICH accounts, and when — is what
+                        /insights/sponsors/{g} answers. That page links on
+                        to /accounts/{g} for everything else. */}
                     <Link
-                      href={`/accounts/${encodeURIComponent(s.account)}/`}
+                      href={`/insights/sponsors/${encodeURIComponent(s.account)}/`}
                       className="text-brand-600 font-mono text-xs hover:underline"
                       title={s.account}
                     >

@@ -111,4 +111,21 @@ describe('CreatorBoard', () => {
 
     expect(await screen.findByText(/warming/i)).toBeInTheDocument();
   });
+
+  /**
+   * THE FINDING THIS GUARDS. The board answers "who created the most"
+   * and immediately raises "which accounts, and when" — and for a long
+   * time every row led to the generic /accounts/{g} page, where the
+   * creation arm is one panel among a dozen. A board row must be a way
+   * INTO its own subject.
+   */
+  it('links every row through to that creator’s own page', async () => {
+    renderWithQuery(<CreatorBoard />);
+
+    const rows = await screen.findAllByRole('link', { name: /^G/ });
+    expect(rows.length).toBeGreaterThan(1);
+    for (const row of rows) {
+      expect(row.getAttribute('href')).toMatch(/^\/insights\/creators\/G/);
+    }
+  });
 });
