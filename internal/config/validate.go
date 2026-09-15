@@ -598,6 +598,10 @@ func (a AggregateConfig) validate() error {
 		return fmt.Errorf("%w: aggregate.min_market_cap_volume_usd must be >= 0",
 			ErrInvalidConfig)
 	}
+	if a.MaxMarketCapVolumeRatio < 0 {
+		return fmt.Errorf("%w: aggregate.max_market_cap_volume_ratio must be >= 0",
+			ErrInvalidConfig)
+	}
 	// A cap above the store's ceiling is REFUSED, not clamped. Silently
 	// clamping does double damage: the scan does not widen, AND the
 	// orchestrator's truncation detector (len(t) >= MaxTradesPerWindow)

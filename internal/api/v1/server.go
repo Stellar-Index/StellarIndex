@@ -334,21 +334,22 @@ type Server struct {
 	// marketHistory backs the market leg of that series — the observed
 	// daily dollar VWAP the oracle's NAV is measured against. See
 	// [RWAMarketHistoryReader].
-	marketHistory          RWAMarketHistoryReader
-	soroswapPairs          SoroswapPairsReader
-	networkStats           NetworkStatsReader
-	aggregators            AggregatorsReader
-	marketSources          MarketSourceReader
-	sourcesStats           SourcesStatsReader
-	lending                LendingReader
-	mev                    MEVReader
-	anomalies              AnomalyReader
-	divergences            DivergenceReader
-	divergenceThresholdPct float64
-	minMarketCapVolumeUSD  float64
-	currencies             CurrenciesReader
-	explorer               ExplorerReader
-	explorerHandler        *explorerpkg.Handler // network-explorer endpoints (ADR-0038); see explorer.go
+	marketHistory           RWAMarketHistoryReader
+	soroswapPairs           SoroswapPairsReader
+	networkStats            NetworkStatsReader
+	aggregators             AggregatorsReader
+	marketSources           MarketSourceReader
+	sourcesStats            SourcesStatsReader
+	lending                 LendingReader
+	mev                     MEVReader
+	anomalies               AnomalyReader
+	divergences             DivergenceReader
+	divergenceThresholdPct  float64
+	minMarketCapVolumeUSD   float64
+	maxMarketCapVolumeRatio float64
+	currencies              CurrenciesReader
+	explorer                ExplorerReader
+	explorerHandler         *explorerpkg.Handler // network-explorer endpoints (ADR-0038); see explorer.go
 	// directory resolves curated third-party issuer labels
 	// (account_directory, migration 0136) for the additive
 	// issuer_directory_* fields on /v1/assets + /v1/assets/{id}.
@@ -1103,6 +1104,15 @@ type Options struct {
 	// whose own default is 1000.
 	MinMarketCapVolumeUSD float64
 
+	// MaxMarketCapVolumeRatio is the valuation-integrity CEILING (config
+	// aggregate.max_market_cap_volume_ratio): a market cap or FDV is
+	// suppressed when the computed figure exceeds this multiple of the
+	// asset's own trailing-24h USD volume. The sibling of
+	// MinMarketCapVolumeUSD and not a substitute for it — one asks
+	// whether trading is small, the other whether the claim is large
+	// against the trading there is. See [capExceedsObservedTurnover].
+	MaxMarketCapVolumeRatio float64
+
 	// Currencies, when non-nil, supplies the world fiat-currency
 	// rates snapshot used by /v1/assets fiat rows + chart fiat:fiat
 	// fallback. The standalone /v1/currencies route was removed in
@@ -1520,107 +1530,108 @@ func New(opts Options) *Server { //nolint:funlen // pure field-mapping construct
 		logger = slog.Default()
 	}
 	s := &Server{
-		logger:                 logger,
-		network:                opts.Network,
-		checks:                 opts.ReadyChecks,
-		assets:                 opts.Assets,
-		prices:                 opts.Prices,
-		history:                opts.History,
-		coverageFloorReader:    opts.CoverageFloor,
-		coverageFloorCache:     &coverageFloorCache{entries: map[string]coverageFloorEntry{}},
-		markets:                opts.Markets,
-		oracle:                 opts.Oracle,
-		oracleHistory:          opts.OracleHistory,
-		marketHistory:          opts.MarketHistory,
-		sep1Cache:              opts.Sep1Cache,
-		accounts:               opts.Accounts,
-		accountKeyQuota:        opts.AccountKeyQuota,
-		platformAccounts:       opts.PlatformAccounts,
-		registerAccounts:       opts.RegisterAccounts,
-		apiKeyBudgets:          opts.APIKeyBudgets,
-		statusNotices:          opts.StatusNotices,
-		signups:                opts.Signups,
-		signupIPThrottle:       opts.SignupIPThrottle,
-		signupVerifier:         opts.SignupVerifier,
-		signupVerifyEmailer:    opts.SignupVerifyEmailer,
-		apiKeyEmailVerifier:    opts.APIKeyEmailVerifier,
-		divergence:             opts.Divergence,
-		freeze:                 opts.Freeze,
-		substance:              opts.Substance,
-		transitive:             opts.TransitivePricer,
-		scam:                   opts.Scam,
-		supply:                 opts.Supply,
-		tokenSupply:            opts.TokenSupply,
-		storageSupply:          opts.ContractStorageSupply,
-		tokenDecimals:          opts.TokenDecimals,
-		tokenSymbol:            opts.TokenSymbol,
-		rwaContracts:           opts.RWAContracts,
-		rwaListings:            opts.RWAListings,
-		listings:               opts.Listings,
-		contractCatalogue:      opts.ContractCatalogue,
-		lakeWatermarkReader:    opts.LakeWatermark,
-		volume:                 opts.Volume,
-		change24h:              opts.Change24h,
-		priceAt:                opts.PriceAt,
-		changesum:              opts.ChangeSummary,
-		assetsReader:           opts.AssetsReader,
-		issuers:                opts.Issuers,
-		sep41Transfers:         opts.SEP41Transfers,
-		cursors:                opts.Cursors,
-		coverageReader:         opts.CoverageReader,
-		networkStats:           opts.NetworkStats,
-		aggregators:            opts.Aggregators,
-		marketSources:          opts.MarketSources,
-		sourcesStats:           opts.SourcesStats,
-		lending:                opts.Lending,
-		mev:                    opts.MEV,
-		anomalies:              opts.Anomalies,
-		divergences:            opts.Divergences,
-		divergenceThresholdPct: opts.DivergenceThresholdPct,
-		minMarketCapVolumeUSD:  opts.MinMarketCapVolumeUSD,
-		currencies:             opts.Currencies,
-		explorer:               opts.Explorer,
-		directory:              opts.Directory,
-		volumeCharacter:        opts.VolumeCharacter,
-		fxHistory:              opts.FXHistory,
-		sessionPeeker:          opts.SessionPeeker,
-		audit:                  opts.Audit,
-		sep10:                  opts.SEP10,
-		cors:                   opts.CORS,
-		auth:                   opts.Auth,
-		keyPolicy:              opts.KeyPolicy,
-		rateLimit:              opts.RateLimit,
-		monthlyQuota:           opts.MonthlyQuota,
-		touchUsage:             opts.TouchUsage,
-		requireEmailVerified:   opts.RequireEmailVerified,
-		usageTracker:           opts.UsageTracker,
-		usageReader:            opts.UsageReader,
-		usageRollupReader:      opts.UsageRollupReader,
-		hub:                    opts.Hub,
-		streamDrain:            streaming.NewDrain(),
-		confidence:             opts.Confidence,
-		triangulated:           opts.Triangulated,
-		cdnEnabled:             opts.CDNEnabled,
-		statusBackend:          opts.StatusBackend,
-		backupMetrics:          backupMetricsFor(opts),
-		archiveReportPath:      opts.ArchiveReportPath,
-		regionName:             valueOr(opts.RegionName, "unknown"),
-		regionDeployment:       valueOr(opts.RegionDeployment, "production"),
-		statusServices:         statusServicesOr(opts.StatusServices),
-		dashboardAuth:          opts.DashboardAuth,
-		dashboardKeys:          opts.DashboardKeys,
-		dashboardWebhooks:      opts.DashboardWebhooks,
-		dashboardPriceAlerts:   opts.DashboardPriceAlerts,
-		sessionAuth:            opts.SessionAuth,
-		verifiedCurrencies:     opts.VerifiedCurrencies,
-		backfillCoverage:       opts.BackfillCoverage,
-		nonstandardDecimals:    opts.NonstandardDecimals,
-		globalPrice:            opts.GlobalPrice,
-		globalPriceOpts:        globalPriceOptsWithDefaults(opts.GlobalPriceOpts),
-		sacWrappers:            opts.SACWrappers,
-		networkPassphrase:      opts.NetworkPassphrase,
-		usdPeggedClassics:      opts.USDPeggedClassics,
-		fiatPeggedClassics:     opts.FiatPeggedClassics,
+		logger:                  logger,
+		network:                 opts.Network,
+		checks:                  opts.ReadyChecks,
+		assets:                  opts.Assets,
+		prices:                  opts.Prices,
+		history:                 opts.History,
+		coverageFloorReader:     opts.CoverageFloor,
+		coverageFloorCache:      &coverageFloorCache{entries: map[string]coverageFloorEntry{}},
+		markets:                 opts.Markets,
+		oracle:                  opts.Oracle,
+		oracleHistory:           opts.OracleHistory,
+		marketHistory:           opts.MarketHistory,
+		sep1Cache:               opts.Sep1Cache,
+		accounts:                opts.Accounts,
+		accountKeyQuota:         opts.AccountKeyQuota,
+		platformAccounts:        opts.PlatformAccounts,
+		registerAccounts:        opts.RegisterAccounts,
+		apiKeyBudgets:           opts.APIKeyBudgets,
+		statusNotices:           opts.StatusNotices,
+		signups:                 opts.Signups,
+		signupIPThrottle:        opts.SignupIPThrottle,
+		signupVerifier:          opts.SignupVerifier,
+		signupVerifyEmailer:     opts.SignupVerifyEmailer,
+		apiKeyEmailVerifier:     opts.APIKeyEmailVerifier,
+		divergence:              opts.Divergence,
+		freeze:                  opts.Freeze,
+		substance:               opts.Substance,
+		transitive:              opts.TransitivePricer,
+		scam:                    opts.Scam,
+		supply:                  opts.Supply,
+		tokenSupply:             opts.TokenSupply,
+		storageSupply:           opts.ContractStorageSupply,
+		tokenDecimals:           opts.TokenDecimals,
+		tokenSymbol:             opts.TokenSymbol,
+		rwaContracts:            opts.RWAContracts,
+		rwaListings:             opts.RWAListings,
+		listings:                opts.Listings,
+		contractCatalogue:       opts.ContractCatalogue,
+		lakeWatermarkReader:     opts.LakeWatermark,
+		volume:                  opts.Volume,
+		change24h:               opts.Change24h,
+		priceAt:                 opts.PriceAt,
+		changesum:               opts.ChangeSummary,
+		assetsReader:            opts.AssetsReader,
+		issuers:                 opts.Issuers,
+		sep41Transfers:          opts.SEP41Transfers,
+		cursors:                 opts.Cursors,
+		coverageReader:          opts.CoverageReader,
+		networkStats:            opts.NetworkStats,
+		aggregators:             opts.Aggregators,
+		marketSources:           opts.MarketSources,
+		sourcesStats:            opts.SourcesStats,
+		lending:                 opts.Lending,
+		mev:                     opts.MEV,
+		anomalies:               opts.Anomalies,
+		divergences:             opts.Divergences,
+		divergenceThresholdPct:  opts.DivergenceThresholdPct,
+		minMarketCapVolumeUSD:   opts.MinMarketCapVolumeUSD,
+		maxMarketCapVolumeRatio: opts.MaxMarketCapVolumeRatio,
+		currencies:              opts.Currencies,
+		explorer:                opts.Explorer,
+		directory:               opts.Directory,
+		volumeCharacter:         opts.VolumeCharacter,
+		fxHistory:               opts.FXHistory,
+		sessionPeeker:           opts.SessionPeeker,
+		audit:                   opts.Audit,
+		sep10:                   opts.SEP10,
+		cors:                    opts.CORS,
+		auth:                    opts.Auth,
+		keyPolicy:               opts.KeyPolicy,
+		rateLimit:               opts.RateLimit,
+		monthlyQuota:            opts.MonthlyQuota,
+		touchUsage:              opts.TouchUsage,
+		requireEmailVerified:    opts.RequireEmailVerified,
+		usageTracker:            opts.UsageTracker,
+		usageReader:             opts.UsageReader,
+		usageRollupReader:       opts.UsageRollupReader,
+		hub:                     opts.Hub,
+		streamDrain:             streaming.NewDrain(),
+		confidence:              opts.Confidence,
+		triangulated:            opts.Triangulated,
+		cdnEnabled:              opts.CDNEnabled,
+		statusBackend:           opts.StatusBackend,
+		backupMetrics:           backupMetricsFor(opts),
+		archiveReportPath:       opts.ArchiveReportPath,
+		regionName:              valueOr(opts.RegionName, "unknown"),
+		regionDeployment:        valueOr(opts.RegionDeployment, "production"),
+		statusServices:          statusServicesOr(opts.StatusServices),
+		dashboardAuth:           opts.DashboardAuth,
+		dashboardKeys:           opts.DashboardKeys,
+		dashboardWebhooks:       opts.DashboardWebhooks,
+		dashboardPriceAlerts:    opts.DashboardPriceAlerts,
+		sessionAuth:             opts.SessionAuth,
+		verifiedCurrencies:      opts.VerifiedCurrencies,
+		backfillCoverage:        opts.BackfillCoverage,
+		nonstandardDecimals:     opts.NonstandardDecimals,
+		globalPrice:             opts.GlobalPrice,
+		globalPriceOpts:         globalPriceOptsWithDefaults(opts.GlobalPriceOpts),
+		sacWrappers:             opts.SACWrappers,
+		networkPassphrase:       opts.NetworkPassphrase,
+		usdPeggedClassics:       opts.USDPeggedClassics,
+		fiatPeggedClassics:      opts.FiatPeggedClassics,
 		// 120s TTL on /v1/assets/{id} responses. MUST exceed the
 		// selfPrewarmAssetEndpoints cadence (60s) with margin — at the
 		// old 30s TTL the cache expired for 30 of every 60 seconds

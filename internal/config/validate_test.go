@@ -643,3 +643,29 @@ func TestValidate_CompositeReferenceBounds(t *testing.T) {
 		t.Errorf("boundary / sentinel values rejected: %v", err)
 	}
 }
+
+// TestMaxMarketCapVolumeRatioRejectsANegativeCeiling — 0 is the documented
+// off switch and every positive value is a real ceiling, so a negative one is
+// neither. Accepting it would silently disable the guard while reading, in a
+// config file, as though a ceiling had been set.
+func TestMaxMarketCapVolumeRatioRejectsANegativeCeiling(t *testing.T) {
+	cfg := config.Default()
+	cfg.Aggregate.MaxMarketCapVolumeRatio = -1
+
+	err := cfg.Validate()
+
+	if err == nil {
+		t.Fatal("a negative aggregate.max_market_cap_volume_ratio was accepted")
+	}
+	if !errors.Is(err, config.ErrInvalidConfig) {
+		t.Errorf("err = %v, want config.ErrInvalidConfig", err)
+	}
+	if !strings.Contains(err.Error(), "max_market_cap_volume_ratio") {
+		t.Errorf("err = %v, want it to name the field the operator has to fix", err)
+	}
+
+	cfg.Aggregate.MaxMarketCapVolumeRatio = 0
+	if err := cfg.Validate(); err != nil {
+		t.Errorf("0 must be accepted as the documented off switch: %v", err)
+	}
+}

@@ -619,9 +619,15 @@ func (s *Server) fillContractMarketCaps(
 			row.MarketCapLowLiquidity = true
 			continue
 		}
-		if mc := computeMarketCapUSD(circ, *row.PriceUSD, row.Decimals); mc != "" {
-			row.MarketCapUSD = &mc
+		mc := computeMarketCapUSD(circ, *row.PriceUSD, row.Decimals)
+		if mc == "" {
+			continue
 		}
+		if capExceedsObservedTurnover(mc, row.VolumeUSD24h, s.maxMarketCapVolumeRatio) {
+			row.MarketCapLowLiquidity = true
+			continue
+		}
+		row.MarketCapUSD = &mc
 	}
 }
 
