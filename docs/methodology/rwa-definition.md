@@ -201,6 +201,17 @@ only table we hold that ties a real-world entity to a Stellar address
 without passing through classic issuance. Its `CHECK` has always
 accepted both strkey forms.
 
+That population is now the **union** of two sets: the contract addresses
+the curated directory recognises, and every address the in-repo curated
+binding set names. The second half exists because drawing candidates
+only from the directory reproduced the same silent-discard one level
+down — an address the directory had never heard of was not refused by
+any requirement, it was never enumerated, and its absence appeared in no
+tally. Enumerating a binding is **not** admitting one: each still has to
+satisfy [C2](#c2--independent-naming-of-that-exact-address), and what
+enumeration buys is that the ones that cannot are now reported under a
+reason.
+
 ### C1 — Identity
 
 A contract address, CRC-checked. It is the whole identity — never a
@@ -209,10 +220,9 @@ assets, exactly as two issuers of a classic `BENJI` are.
 
 ### C2 — Independent naming of that exact address
 
-The curated third-party directory holds an entry for **that exact
-contract address**. Not the entity. Not a domain. Not a G-account that
-might have deployed it. The address whose supply this surface is about
-to multiply by a price.
+An independent party names **that exact contract address**. Not the
+entity. Not a domain. Not a G-account that might have deployed it. The
+address whose supply this surface is about to multiply by a price.
 
 This is what replaces R2, and it is **not** a relaxation — because of
 what R2 was actually worth.
@@ -245,6 +255,117 @@ The contract arm is therefore **strictly harder to defeat** than the
 classic one. What it gives up is the issuer's own voice, and the
 issuer's own voice is the part an impersonator supplies for ten dollars.
 
+#### Two ways to satisfy it, and why they are not the same shape
+
+The curated account directory is not the only independent party that
+names Stellar contract addresses, and requiring it to be the only one
+cost this surface a real and defensible set.
+
+Measured 2026-09-15: the curated directory names **387** contract
+addresses. A public listing platform's per-asset platform-to-address map
+names **17** on Stellar. **Four** are in both. Thirteen are named by the
+listing and by nobody in the directory — and among those are the
+tokenized Treasury funds this repository already holds verified
+[curated bindings](#c4--real-world-instrument) for, which therefore
+shipped dormant with no route to recognition at all.
+
+So C2 is satisfiable two ways:
+
+1. **The curated account directory names the address**, with an
+   issuing-class tag. Unchanged, and it still admits **on its own**.
+2. **An independent listing directory names the address _and_ an
+   in-repo curated binding names the same address.** Requires **two**
+   sources that do not read each other, and admits on **neither** alone.
+
+The asymmetry is deliberate, and it is about what each source *is*.
+
+The curated directory is an **adversarial identity system**:
+Stellar-specific, address-level, review-gated, and carrying the scam
+vocabulary whose entire purpose is to say that an address is lying about
+who it is. Being named in it is an assertion about identity that
+somebody reviewed. It **attests**.
+
+A listing map is a **convenience built for price aggregation**. It
+exists so a price page can show which chains an asset trades on. It
+carries no flags and runs no adversarial review of Stellar addresses,
+and would not claim to. Being named in it is an assertion that a market
+exists, from which an identity can be inferred but was never the point.
+It **corroborates**.
+
+A corroborating source may not carry an attesting source's authority, so
+it is not given one. What it can do is *agree* — and two parties that do
+not read each other, arriving independently at the same 56-character
+address for the same instrument, is what C2 asks for. The in-repo
+binding answers C4 (*which* instrument) and is never allowed to answer
+C2 (*who else says so*), because this index vouching for itself is not
+independence at any number of sources. It is the **second** source in
+arm 2 and never the first.
+
+Two consequences follow, and both are published rather than implied:
+
+- An address the listing names that **no** curated binding names is
+  **refused** — `contract_listed_without_curated_binding`. That is most
+  of the map: it carries stablecoin contracts, wrapped bitcoin and the
+  native asset's own Stellar Asset Contract, every one of them named by
+  an independent party and none of them admitted. The refused set is
+  counted on the funnel as
+  `listing_contracts_without_curated_binding`, which is what makes "a
+  listing admits nothing alone" auditable rather than merely asserted.
+- A curated binding **no** independent party names is refused —
+  `contract_curated_binding_without_independent_listing`. Its address is
+  verified, its instrument named, its class known and its supply in the
+  lake; the only thing missing is somebody other than this repository
+  saying the address is what this repository says it is.
+
+#### Why the listing map is not the curated directory re-published
+
+[C4 below](#c4--real-world-instrument) refuses to treat a block explorer
+as independent, on the grounds that explorers read the same curated
+directories we do, so counting one would double-count a single claim.
+That objection has to be put to the listing map before the map can be
+used, and it does not survive contact with the numbers.
+
+- **The sets disagree in both directions.** A derived set is a subset of
+  its source, possibly filtered, never a superset. The listing names 13
+  contract addresses the directory does not name at all, so it cannot be
+  derived *from* the directory; the directory names 383 the listing does
+  not, so it is not derived from the listing either. Four in common out
+  of 400 distinct — a **1% overlap** — is not two views of one claim.
+- **They disagree about what an address *is*,** not merely about which
+  to carry. `CBI7UCH5…` is in both: the directory tags it `defi`, which
+  this arm's vocabulary reads as infrastructure that issues nothing,
+  while the listing carries it as an asset with a price. A mirror does
+  not contradict its original.
+- **The keys are different.** The directory is keyed by Stellar address
+  and holds only Stellar. The listing is keyed by a chain-independent
+  asset id and holds the same instrument's addresses on every chain it
+  trades on; the Stellar entry is one field of a row whose subject is
+  the instrument. A derivation would have had to invent the id.
+- **The fields are different.** The directory carries the scam
+  vocabulary; the listing carries none. Neither column could be produced
+  from the other.
+
+The block-explorer objection stands for explorers and does not reach
+this map. Both conclusions rest on the same test — does this source
+re-publish the curated directory's claims, or make its own?
+
+#### Failing closed
+
+The listing is read from a cache filled by an hourly sync, never
+per-request. If that read does not answer, or its most recent answer is
+older than the 48-hour recognition bound, **arm 2 stops admitting**. It
+does not carry a recognition forward from a snapshot nobody
+re-established: serving a slightly old *price* is a labelled
+approximation, while serving an old *recognition* admits an asset on the
+strength of a fact nobody checked.
+
+The set therefore **shrinks**, and the funnel says so — every affected
+binding is dropped under `independent_listing_unavailable`, reported
+apart from the finding that nobody names it, because a read that did not
+answer has not earned a finding. A deployment with no listing reader at
+all is different again: the arm reports itself **not measured** and
+makes no refusals, since nobody looked.
+
 ### C3 — Recognition, not flagged
 
 The entry carries at least one tag from a vocabulary deliberately
@@ -258,7 +379,14 @@ AMM pool contracts under exactly those tags, and admitting them would
 put liquidity-pool shares on a page asserting real-world backing.
 
 The scam vocabulary is the same single list every other consumer reads,
-and a scam tag beats every recognition tag on the same address.
+and a scam tag beats every recognition tag on the same address — **on
+both C2 arms**. The check is applied before either arm is consulted, not
+inside the directory one. Left there it would have protected exactly the
+population that did not need it: the listing map carries no flags, so an
+address the curated directory named *only* to flag as malicious could
+have walked in through arm 2. An address admitted on a listing still has
+its curated tags read, and a lookup that cannot answer closes the arm
+rather than assuming the address is unflagged.
 
 ### C4 — Real-world instrument
 
@@ -296,13 +424,16 @@ Spiko's cash-and-carry fund is deliberately **not** bound. A
 digital-asset basis-trade fund is not a bond, a stock, a commodity or
 real estate, and the closed vocabulary excludes crypto on purpose.
 
-A binding is **not** an admission. C2 runs first, and the candidate scan
-only ever enumerates addresses the curated directory named — which names
-none of Spiko's. All five are therefore still refused as
-`contract_not_named_in_directory`, and are published on
+A binding is **not** an admission. C2 runs first, and a binding is only
+ever the *second* of the two sources
+[arm 2](#two-ways-to-satisfy-it-and-why-they-are-not-the-same-shape)
+requires — the curated directory names none of these addresses, so each
+one waits on an independent listing naming it too. Two of the five clear
+that bar today; the rest are refused as
+`contract_curated_binding_without_independent_listing` and published on
 `definition.bound_contract_instruments` as verified identities the
-surface is still refusing. That distinguishes an issuer we cannot
-identify from one we have identified and cannot yet vouch for.
+surface is still declining to value. That distinguishes an issuer we
+cannot identify from one we have identified and cannot yet vouch for.
 
 **`contract_oracle_rwa_feed`** — the token's on-chain SEP-41 `symbol` is
 an ADR-0028 allow-listed RWA code. The symbol is contract-authored,
@@ -352,6 +483,20 @@ Decimals come from the token's own on-chain metadata, not the hardcoded
 7 a catalogue row carries. On this surface that is not a display detail:
 market cap divides supply by 10^decimals, so a 6-decimal token valued at
 7 publishes a tenth of its real capitalisation.
+
+The scale is read from the contract instance's `METADATA` map under
+**either** spelling the network uses. The soroban-token-sdk names the
+field `decimal`; hand-written tokens name it `decimals`. Measured over
+the 17 Soroban addresses the listing platform names on Stellar, seven
+use the first and **ten** use the second — so reading only the SDK
+spelling returned "no usable metadata" for the majority and left every
+one of them on the caller's default of 7. For a fund declaring 5 that is
+one **hundredth** of its capitalisation; for the 18-decimal token in the
+same sample it is eleven orders of magnitude the other way. A contract
+declaring both keys with different values is refused rather than
+resolved by preference: it has not stated its scale, and choosing
+between two contradictory self-declarations would be inventing an
+exponent for a money figure.
 
 Everything else is the `/v1/assets` pipeline unchanged, including the
 substance gate — which explicitly covers Soroban assets — and the
@@ -645,10 +790,62 @@ and class rather than a feed, so it cannot answer this however many
 entries it holds — a fund's identity is not a price for it, and the
 funds bound there today have no oracle feed to bind to.
 
-So the row carries `reference_contract_not_bound` — its own status,
-not the `reference_not_bound` that names a `(code, issuer)` pair a
-contract does not have. A silently absent figure would make a
-deliberate refusal indistinguishable from an oversight.
+So a row nothing else priced carries `reference_contract_not_bound` —
+its own status, not the `reference_not_bound` that names a
+`(code, issuer)` pair a contract does not have. A silently absent figure
+would make a deliberate refusal indistinguishable from an oversight.
+
+#### The one price a contract row can carry
+
+A contract the independent listing directory **names** is the exception,
+and not because the join above was relaxed. That directory publishes a
+USD price in the same row in which it names the address — price bound to
+address, by a party that did not read our curated directory. No code is
+matched anywhere on that path. A token wearing a bound instrument's
+symbol gets nothing, because it was never in the listing row.
+
+This is a **wider** set than the rows
+[C2 arm 2](#two-ways-to-satisfy-it-and-why-they-are-not-the-same-shape)
+admitted, and deliberately so: four addresses are named by both sources,
+and one the curated directory attested on its own is still an address an
+independent listing bound a price to. Gating the price on which
+requirement admitted the row would withhold a figure this surface can
+correctly make, for a reason about membership rather than about
+provenance.
+
+Whichever arm admitted it, a row whose own declared **scale** could not
+be read carries no valuation on either basis —
+`decimals_unavailable` — because the exponent is the figure.
+
+It is a **different claim** from an oracle NAV and is published as one.
+Each served reference carries a `provenance`:
+
+| `provenance` | what it values | what it rests on |
+|---|---|---|
+| `oracle_instrument_nav` | the **instrument** | an oracle's published valuation, plus the issuer's own domain-bound declaration that one token is one unit of it |
+| `listing_platform_price` | the **token** | a listing platform's aggregate of what the token changes hands at on the venues it tracks |
+
+The second is weaker in one way — nobody independent has said what
+stands behind the token — and narrower in another: it carries no
+unstated one-for-one assumption, because it makes no claim about the
+backing at all.
+
+**No premium is published against a listing price.** A premium is the
+gap between what the market pays and what the backing is independently
+worth; a listing price is an aggregate of the same markets our own price
+samples, so the gap between the two measures the disagreement of two
+samples of one market. The row carries `reference_is_a_listing_price` —
+the one status on this surface that refuses the premium while the
+reference valuation beside it is **published**, which is a genuine
+divergence of reasons rather than two accounts of one event.
+
+`summary.reference_valuation.provenances` lists the distinct kinds in
+the total, and the basis prose is **derived from the rows that
+contributed**: an all-oracle total does not describe listing prices, and
+a total that gains its first listing-priced row stops claiming an issuer
+declared a one-for-one correspondence. A basis string naming a
+provenance the total does not contain is exactly as wrong as one that
+omits a provenance it does.
 
 ### Comparing the two totals
 
@@ -851,14 +1048,39 @@ which is a finding a failed read has not earned.
   is counted rather than silently absorbed. A second recognition source
   would widen the set without weakening the rule; the
   `account_directory` schema is already scoped by `source` for exactly
-  that.
+  that. On the CONTRACT arm that second source now exists, under the
+  asymmetric rule
+  [C2 states](#two-ways-to-satisfy-it-and-why-they-are-not-the-same-shape);
+  the classic arm still has one.
+- **Arm 2 is only as wide as the curated binding set.** It can admit
+  nothing this repository has not already bound to a named instrument at
+  the [three-part evidence bar](#c4--real-world-instrument), so growing
+  it is a reviewed code change and not a sync. Addresses the listing
+  names that no binding covers are counted on the funnel rather than
+  admitted, which is where an operator looks to see what is next.
+- **A listing price is not an oracle valuation,** and rows carrying one
+  are labelled rather than blended. It prices the token, carries no
+  premium, and asserts nothing about the backing.
 - **No historical series.** Market cap over time needs a per-asset daily
   supply-and-price rollup that does not exist yet. Nothing on this
   surface is back-projected from current state, and no monthly series is
   published from a figure that was only ever measured today.
-- **Soroban-issued RWAs are out of scope** until there is a binding for
-  a contract address equivalent to what `[[CURRENCIES]]` gives a
-  `(code, issuer)` pair.
+- **The membership cache and the listing cache decay at different
+  rates.** Membership rebuilds every ten minutes off the request path;
+  the listing snapshot is filled hourly and may be reused for
+  recognition for 48 hours and for pricing for 24. An address the
+  listing platform corrects therefore stays admitted for up to two days.
+- **A frozen membership rebuild has no upper age bound, and that is the
+  one gap in the fail-closed claim.** On a rebuild failure the previous
+  set is served rather than an empty one, and the requirement reads that
+  decide membership all go through the same Postgres — so a sustained
+  outage there freezes the served set indefinitely rather than shrinking
+  it. Arm 2's recognition may not be *carried forward within a rebuild*,
+  and is not; a rebuild that never happens is a different mechanism and
+  this one still has it. The response carries no build timestamp, so a
+  reader cannot currently tell a frozen set from a fresh one. Closing it
+  properly means an `as_of` on the view and an absolute bound on cache
+  reuse, which is a separate change.
 
 ## References
 
@@ -869,7 +1091,11 @@ which is a finding a failed read has not earned.
   `internal/api/v1/rwa_reference.go` (the oracle reference, the
   reference-priced valuation and the premium),
   `internal/api/v1/rwa_funnel.go` (the accounting, including the
-  valuation arm).
+  valuation arm), `internal/api/v1/rwa_listing.go` (C2's second arm and
+  its candidate population),
+  `internal/storage/timescale/asset_listing_directory.go` (the cached
+  listing directory and its two staleness bounds), and
+  `internal/ops/ingest/listing_sync.go` (the hourly sync that fills it).
 - [ADR-0028](../adr/0028-rwa-asset-representation.md) — the `rwa:`
   reference-asset namespace and the oracle feed allow-list R4 reads.
 - [dex-tvl.md](dex-tvl.md) — the same posture applied to a different

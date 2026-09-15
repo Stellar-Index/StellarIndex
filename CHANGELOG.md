@@ -42,6 +42,91 @@ against.
   address is a 400 rather than an empty board: echoing a corrupted
   value back as "did nothing" is a claim about whatever the caller
   actually meant.
+- **rwa:** the contract arm admits a token when an independent listing
+  directory and an in-repo curated binding name the same contract
+  address. `GET /v1/rwa/assets` serves two tokenized Treasury funds it
+  previously could not reach, taking `reference_valuation` from
+  $992.4M to $1.351B.
+
+  C2 previously required the curated account directory, which names
+  **387** contract addresses and none of the ones this repository holds
+  verified bindings for. A public listing platform names **17** on
+  Stellar; four are in both. Thirteen are named by the listing and by
+  nobody in the directory, so the bindings shipped dormant with no route
+  to recognition.
+
+  The two arms are deliberately asymmetric. The curated directory still
+  admits on its own: it is an address-level identity directory, review
+  gated, carrying the scam vocabulary. A listing map is a convenience
+  built for price aggregation, so it corroborates rather than attests
+  and admits only alongside a curated binding for the same address —
+  two sources that do not read each other. An in-repo binding never
+  answers C2 alone, which would be this index vouching for itself.
+
+  The independence is argued from measurement, not assumed: the two sets
+  disagree in both directions (neither can be derived from the other),
+  disagree about what an address *is* rather than only which to carry,
+  and are keyed and fielded differently. The block-explorer objection
+  the definition already makes stands for explorers and does not reach
+  this map.
+
+  Four refusal reasons are added rather than folded into one, because
+  the missing half of the evidence is what determines who can act:
+  `contract_listed_without_curated_binding`,
+  `contract_curated_binding_without_independent_listing`,
+  `independent_listing_unavailable`, and the existing
+  `contract_not_named_in_directory` unchanged. Every admitted contract
+  row carries `recognition` naming which pair let it in, and the
+  definition block publishes the closed vocabulary.
+
+  The arm fails closed and says so. A failed or stale listing read
+  drops every binding under `independent_listing_unavailable` and the
+  set SHRINKS; an unwired reader reports the arm not measured and makes
+  no refusals at all. The scam check now runs above both arms — left
+  inside the directory one it would have protected exactly the
+  population that did not need it.
+
+- **rwa:** a contract row admitted on the listing arm carries a
+  reference valuation priced from that same listing, under its own
+  `provenance`. It is not an oracle NAV and is not published as one: it
+  values the token rather than the instrument, carries no premium
+  (`reference_is_a_listing_price` — a premium against an aggregate of
+  the same markets our price samples is the market compared with
+  itself), and the summary basis prose is derived from the provenances
+  actually in the total rather than inheriting the oracle wording.
+
+- **ops:** `stellarindex-ops listing-sync` mirrors a listing platform's
+  per-asset platform-to-address map into `asset_listing_directory`
+  (migration 0160), hourly. Two separate clocks: `synced_at` bounds
+  recognition reuse at 48h, `priced_at` — the platform's own
+  publication time — bounds price reuse at 24h, both enforced in the
+  reader's SQL. A row past the price bound is still returned, unpriced.
+
+### Fixed
+
+- **rwa:** a contract row whose own declared scale could not be READ now
+  carries no valuation on either basis (`decimals_unavailable`) instead
+  of one computed against the catalogue's hardcoded 7. The API binary
+  dials ClickHouse twice — supply and decimals are separate readers, and
+  each failure leaves the other wired — so "supply up, decimals down" is
+  a reachable process state in which a 5-decimal fund published one
+  hundredth of its capitalisation under `status: published`. Three other
+  routes reach the same default with every reader up: an instance
+  missing from the lake, a METADATA map declaring no scale, and a
+  contract declaring both spellings with different values. The
+  circulating supply is still served — it is a chain fact and needs no
+  scale to be true.
+
+- **lake:** the token scale is read from the contract instance
+  `METADATA` map under both spellings the network uses. The decoder
+  accepted only `decimal`, the soroban-token-sdk field name; measured
+  over the 17 Soroban addresses a listing platform names on Stellar,
+  seven use it and **ten** use `decimals`. For that majority the reader
+  returned "no usable metadata" and every caller fell back to a
+  hardcoded 7 — which on `/v1/rwa/assets` IS the published figure: a
+  fund declaring 5 decimals read at 7 publishes one hundredth of its
+  capitalisation. A contract declaring both keys with different values
+  is refused rather than resolved by preference.
 
 - **assets:** USDT0 joins the verified catalogue — the omnichain USDT
   live on Stellar mainnet since 2026-09-02, distinct from the

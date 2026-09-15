@@ -161,6 +161,19 @@ type AssetDetail struct {
 	// price. Omitted (false) whenever a cap is present or unaffected.
 	MarketCapLowLiquidity bool `json:"market_cap_low_liquidity,omitempty"`
 
+	// DecimalsUnresolved is true when this row's `decimals` is the
+	// hardcoded default rather than a value read from the token's own
+	// on-chain metadata. INTERNAL — never serialised — because it
+	// exists to stop a figure being published, not to be published.
+	//
+	// Set only on the RWA surface's contract rows, which are the only
+	// place an unread scale is load-bearing: everywhere else a
+	// contract row carries no valuation anyway. See
+	// [Server.fillContractDecimals] for the four ways a reading goes
+	// missing, one of which is a reachable process state rather than a
+	// hypothetical.
+	DecimalsUnresolved bool `json:"-"`
+
 	// SupplyBasis identifies which ADR-0011 policy produced the
 	// supply numbers; null when no snapshot exists. Lets consumers
 	// decide how much to trust the absolute value (e.g. `override`

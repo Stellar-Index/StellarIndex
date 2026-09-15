@@ -561,6 +561,12 @@ func TestRWAAssets_EveryReferenceValuationCarriesItsProvenance(t *testing.T) {
 // one a careless reader actually reads. The basis must say, in the
 // response itself, that nobody was observed paying this, and the
 // market-cap basis must say the reference figure is not in its total.
+//
+// The "nobody was seen paying it" claim is asserted here against an
+// ORACLE-priced total, which is the only kind it is true of. A
+// listing-priced row IS a price somebody paid, on venues this index does
+// not gate, and TestRWAAssets_ListingBasisDoesNotInheritTheOracleWording
+// pins that the prose says so instead of inheriting this sentence.
 func TestRWAAssets_ReferenceBasisNamesItselfAsAClaim(t *testing.T) {
 	v := getRWA(t, rwaProductionShapedServer(t, true))
 

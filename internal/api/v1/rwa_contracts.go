@@ -115,6 +115,15 @@ type rwaContractMember struct {
 	dirName    string
 	dirDomain  string
 	dirTags    []string
+	// recognition names WHICH independent party's naming satisfied C2.
+	// Served on the row because the two arms are not the same strength
+	// of evidence — see [rwa.Verdict].Recognition.
+	recognition string
+	// listing is the independent listing row that corroborated this
+	// address, when one did. It carries the price this arm values the
+	// row at; an empty ListingID means no listing named the address,
+	// which is the normal case for a directory-recognised member.
+	listing timescale.ListingEntry
 }
 
 // rwaUnreachedEntity is a curated-directory entity recognised as an
@@ -155,12 +164,69 @@ type rwaContractCensus struct {
 // then the per-candidate verdict. Nothing here reads a price — the
 // contract arm decides membership before valuation for exactly the same
 // reason the classic arm does.
-func (s *Server) buildRWAContractMembership(ctx context.Context) ([]rwaContractMember, []rwaUnreachedEntity, rwaContractCensus, map[string]int) {
-	refusals := map[string]int{}
-	var census rwaContractCensus
+func (s *Server) buildRWAContractMembership(ctx context.Context) rwaContractBuild {
+	var out rwaContractBuild
+	out.refusals = map[string]int{}
+	out.listingRefusals = map[string]int{}
+
+	// ONE listing read per rebuild, shared by both arms. The first arm
+	// reads it only to record which of its members a second party also
+	// names; the second arm's whole recognition rests on it.
+	listing := s.rwaListingSnapshot(ctx)
+
 	if s.rwaContracts == nil {
-		return nil, nil, census, refusals
+		// The directory arm is unwired, which says nothing about the
+		// listing arm — they draw on different readers. The second arm
+		// still runs, over a population that is a table in this
+		// repository rather than anything the directory supplies.
+		out.members, out.listingCensus = s.buildRWAListingMembership(
+			ctx, listing, map[string]struct{}{}, out.listingRefusals)
+		return out
 	}
+	census, members, evaluated := s.buildRWADirectoryMembership(ctx, listing, out.refusals)
+	out.census = census
+	out.members = members
+	out.unreached = s.rwaUnreachedEntities(ctx, rwa.ContractRecognitionTags())
+
+	listingMembers, listingCensus := s.buildRWAListingMembership(
+		ctx, listing, evaluated, out.listingRefusals)
+	out.members = append(out.members, listingMembers...)
+	out.listingCensus = listingCensus
+	return out
+}
+
+// rwaContractBuild is one contract-side rebuild: the admitted set from
+// BOTH C2 arms, and each arm's own census and refusal tally.
+//
+// The refusal tallies are kept APART rather than merged here. Both arms
+// run the same rwa.QualifyContract and can therefore produce the same
+// reason string, so one tally would make the funnel attribute an arm-2
+// refusal to arm 1's narrowing and stop the stage arithmetic closing.
+// They are merged once, at the very top, into the single `refused[]`
+// the response publishes — which is a statement about the whole
+// surface and correctly does not care which arm turned a candidate away.
+type rwaContractBuild struct {
+	members         []rwaContractMember
+	unreached       []rwaUnreachedEntity
+	census          rwaContractCensus
+	listingCensus   rwaListingCensus
+	refusals        map[string]int
+	listingRefusals map[string]int
+}
+
+// buildRWADirectoryMembership is C2's first arm: the contract addresses
+// the curated account directory names with an issuing tag.
+//
+// Returns the set of addresses it EVALUATED alongside its members, so
+// the second arm can remove them from its own population. Evaluated, not
+// admitted: an address this arm looked at and refused must still not be
+// re-evaluated by the other arm under a different rule, or the funnel
+// would report one candidate twice and the refusal that turned it away
+// would be contradicted by an admission.
+func (s *Server) buildRWADirectoryMembership(
+	ctx context.Context, listing rwaListing, refusals map[string]int,
+) (rwaContractCensus, []rwaContractMember, map[string]struct{}) {
+	var census rwaContractCensus
 	tags := rwa.ContractRecognitionTags()
 	entries, dirCensus, err := s.rwaContracts.DirectoryRecognisedContracts(ctx, tags)
 	if err != nil {
@@ -171,7 +237,7 @@ func (s *Server) buildRWAContractMembership(ctx context.Context) ([]rwaContractM
 		// publish exactly the unvouched-for population the definition
 		// refuses.
 		s.logger.Warn("rwa contract membership: directory scan failed", "err", err)
-		return nil, nil, census, refusals
+		return census, nil, map[string]struct{}{}
 	}
 	census.available = true
 	census.dir = dirCensus
@@ -208,23 +274,102 @@ func (s *Server) buildRWAContractMembership(ctx context.Context) ([]rwaContractM
 			DirectoryNamed: true,
 			DirectoryTags:  e.Tags,
 			Symbol:         symbol,
+			// Passed even though this arm does not need it. A member
+			// the listing ALSO names is a stronger row than one only
+			// the directory names, and the verdict is where that is
+			// decided rather than here — this layer supplies inputs
+			// and never reasons about which requirement uses them.
+			ListingNamed:     listing.names(e.Address),
+			ListingAvailable: listing.available,
 		})
 		if !v.InSet {
 			refusals[v.Reject]++
 			continue
 		}
 		members = append(members, rwaContractMember{
-			contractID: e.Address,
-			symbol:     symbol,
-			basis:      v.Basis,
-			class:      v.AnchorClass,
-			dirName:    e.Name,
-			dirDomain:  e.Domain,
-			dirTags:    e.Tags,
+			contractID:  e.Address,
+			symbol:      symbol,
+			basis:       v.Basis,
+			class:       v.AnchorClass,
+			dirName:     e.Name,
+			dirDomain:   e.Domain,
+			dirTags:     e.Tags,
+			recognition: v.Recognition,
+			listing:     listing.byAddress[e.Address],
 		})
 	}
 
-	return members, s.rwaUnreachedEntities(ctx, tags), census, refusals
+	return census, members, admitted
+}
+
+// buildRWAListingMembership is C2's second arm: every in-repo curated
+// binding the first arm is not already evaluating, put to the
+// definition with an independent listing as its recognition.
+//
+// Structurally smaller than the first arm, and for a reason worth
+// stating: its population is a hand-reviewed table in this repository,
+// so it needs no scan cap, no duplicate guard and no truncation
+// accounting. It cannot grow without a code change, and
+// [rwa.ContractInstrumentBindings] returns it deduplicated and ordered.
+func (s *Server) buildRWAListingMembership(
+	ctx context.Context, listing rwaListing,
+	directoryEvaluated map[string]struct{}, refusals map[string]int,
+) ([]rwaContractMember, rwaListingCensus) {
+	candidates, census := s.rwaListingCandidates(ctx, listing, directoryEvaluated)
+	if !census.available {
+		return nil, census
+	}
+	// The refusals the candidate build already decided, folded into the
+	// tally under the SAME reason strings rwa.QualifyContract would
+	// have produced. They are decided upstream because they are
+	// properties of the population rather than of a candidate — but a
+	// reader of `refused[]` must not have to know that, and the funnel
+	// reconciles against one vocabulary.
+	refusals[rwa.RejectContractListingUnavailable] += census.listingUnavailable
+	refusals[rwa.RejectContractCuratedNotListed] += census.notListed
+	if len(candidates) == 0 {
+		return nil, census
+	}
+
+	mctx, cancel := context.WithTimeout(ctx, rwaContractMetadataBudget)
+	defer cancel()
+
+	members := make([]rwaContractMember, 0, len(candidates))
+	for _, c := range candidates {
+		symbol := s.rwaContractSymbol(mctx, c.contractID)
+		v := rwa.QualifyContract(rwa.ContractCandidate{
+			ContractID: c.contractID,
+			// The directory does not name this address as an issuer —
+			// that is the whole reason the candidate is on this arm.
+			// Its TAGS are still supplied, because C3 reads them and a
+			// scam flag beats recognition from any source.
+			DirectoryNamed:   false,
+			DirectoryTags:    c.dirTags,
+			Symbol:           symbol,
+			ListingNamed:     true,
+			ListingAvailable: true,
+		})
+		if !v.InSet {
+			refusals[v.Reject]++
+			continue
+		}
+		entry := listing.byAddress[c.contractID]
+		members = append(members, rwaContractMember{
+			contractID:  c.contractID,
+			symbol:      symbol,
+			basis:       v.Basis,
+			class:       v.AnchorClass,
+			recognition: v.Recognition,
+			listing:     entry,
+			// No curated-directory label: the directory does not name
+			// this address. The row's name comes from the curated
+			// binding's instrument, filled at projection, so the
+			// surface never presents a listing platform's display text
+			// as an identity attestation.
+			dirTags: c.dirTags,
+		})
+	}
+	return members, census
 }
 
 // rwaContractSymbol reads one contract's on-chain symbol, best-effort.
@@ -344,8 +489,8 @@ func (s *Server) rwaContractListingRows(
 	// a figure the fill just produced rather than racing it.
 	mctx, cancel := context.WithTimeout(ctx, rwaContractMetadataBudget)
 	defer cancel()
-	s.fillContractDecimals(mctx, details, rows)
-	s.fillContractMarketCaps(mctx, details, rows)
+	scaled := s.fillContractDecimals(mctx, details, rows)
+	s.fillContractMarketCaps(mctx, details, rows, scaled)
 	s.fillContractDirectoryTags(ctx, details)
 
 	out := make(map[string]AssetDetail, len(details))
@@ -365,11 +510,36 @@ func (s *Server) rwaContractListingRows(
 // 18-decimal one publishes a hundred billion times it. A wrong decimals
 // reading is not a display defect on this page, it is the number.
 //
-// A token with no readable metadata keeps the default, which is the same
-// thing /v1/assets/{id} does.
-func (s *Server) fillContractDecimals(ctx context.Context, rows []AssetDetail, src map[string]timescale.AssetRow) {
+// A token with no readable metadata keeps the default of 7, which is
+// what /v1/assets/{id} does — and on THIS surface that default may not
+// be multiplied by anything. The set of addresses whose scale was
+// actually READ is returned, and a row absent from it carries no
+// valuation of either kind.
+//
+// # Why the default is not good enough here
+//
+// Everywhere else a missed reading costs a wrong display amount on a
+// token that, by construction, has no market. Here it is the published
+// money figure, and the error is not small: the measured population
+// holds 5-decimal funds (read at 7 they publish one HUNDREDTH of their
+// capitalisation) and an 18-decimal token (read at 7 it publishes
+// eleven orders of magnitude too much).
+//
+// The reading can go missing four ways, and only one of them is an
+// outage: the decimals reader is unwired or fails while the SUPPLY
+// reader stays up (they are separate ClickHouse dials in the API
+// binary, so this is a reachable process state rather than a
+// hypothetical); the contract instance is not captured in the lake; the
+// METADATA map declares no scale under either spelling; or the contract
+// declares both spellings with DIFFERENT values, which the lake reader
+// refuses outright. In every one of them the honest answer is that we
+// do not know the scale — which is a refusal, not a 7.
+func (s *Server) fillContractDecimals(
+	ctx context.Context, rows []AssetDetail, src map[string]timescale.AssetRow,
+) map[string]struct{} {
+	resolved := make(map[string]struct{}, len(rows))
 	if s.tokenDecimals == nil {
-		return
+		return resolved
 	}
 	for i := range rows {
 		if _, ok := src[rows[i].AssetID]; !ok {
@@ -380,7 +550,9 @@ func (s *Server) fillContractDecimals(ctx context.Context, rows []AssetDetail, s
 			continue
 		}
 		rows[i].Decimals = int(d)
+		resolved[rows[i].AssetID] = struct{}{}
 	}
+	return resolved
 }
 
 // fillContractMarketCaps fills circulating supply and market cap for
@@ -399,7 +571,10 @@ func (s *Server) fillContractDecimals(ctx context.Context, rows []AssetDetail, s
 // applies it to. A single-venue price under the volume floor suppresses
 // the CAP and leaves the price and the supply — both of which are facts
 // the surface is willing to state — exactly as fillRowMarketCap does.
-func (s *Server) fillContractMarketCaps(ctx context.Context, rows []AssetDetail, src map[string]timescale.AssetRow) {
+func (s *Server) fillContractMarketCaps(
+	ctx context.Context, rows []AssetDetail, src map[string]timescale.AssetRow,
+	scaled map[string]struct{},
+) {
 	if s.tokenSupply == nil {
 		return
 	}
@@ -410,6 +585,16 @@ func (s *Server) fillContractMarketCaps(ctx context.Context, rows []AssetDetail,
 			continue
 		}
 		circ := sup.Total.String()
+		// The supply is a raw chain fact and is served either way. The
+		// CAP is not: it divides by 10^decimals, and an unread scale
+		// means that exponent is a convention rather than a reading.
+		// Multiplying by it would publish a figure off by a factor of
+		// ten to the something.
+		if _, ok := scaled[row.AssetID]; !ok {
+			row.CirculatingSupply = &circ
+			row.DecimalsUnresolved = true
+			continue
+		}
 		// Circulating supply is a raw chain fact, not a valuation, so it
 		// is served even when no cap can be. Same split the listing and
 		// the detail page both make.
@@ -486,11 +671,12 @@ func rwaContractAssetRows(members []rwaContractMember, rows map[string]AssetDeta
 			// identity.
 			Symbol:              m.symbol,
 			Slug:                d.Slug,
-			Name:                strings.TrimSpace(m.dirName),
+			Name:                rwaContractName(m),
 			HomeDomain:          m.dirDomain,
 			IssuerDirectoryName: m.dirName,
 			IssuerDirectoryTags: d.IssuerDirectoryTags,
 			Basis:               m.basis,
+			Recognition:         m.recognition,
 			AnchorClass:         m.class,
 			Valuation:           rwaValuationOf(d),
 			CirculatingSupply:   d.CirculatingSupply,
@@ -499,8 +685,11 @@ func rwaContractAssetRows(members []rwaContractMember, rows map[string]AssetDeta
 			// starts every row at. It is on the wire because a
 			// contract-issued row is the case where assuming 7 is
 			// actually wrong.
-			Decimals:     d.Decimals,
-			Volume24hUSD: d.VolumeUSD24h,
+			Decimals: d.Decimals,
+			// Carried so both valuation bases can refuse to multiply by
+			// an exponent nobody read. Never serialised.
+			DecimalsUnresolved: d.DecimalsUnresolved,
+			Volume24hUSD:       d.VolumeUSD24h,
 		}
 		if len(a.IssuerDirectoryTags) == 0 {
 			a.IssuerDirectoryTags = m.dirTags
@@ -514,6 +703,65 @@ func rwaContractAssetRows(members []rwaContractMember, rows map[string]AssetDeta
 		out = append(out, a)
 	}
 	return out
+}
+
+// rwaContractArmCounts is one C2 arm's share of the catalogue join.
+type rwaContractArmCounts struct {
+	served      int
+	notObserved int
+}
+
+// rwaContractArmSplit attributes each admitted contract's catalogue-join
+// outcome to the arm that admitted it.
+//
+// Derived from the SAME two values the projection uses — the member list
+// and the valued-row map — rather than counted alongside it, so the
+// funnel's per-arm stages cannot disagree with the rows actually served.
+// A member whose address is absent from the map was admitted and never
+// observed on chain, which is the structural drop both arms report under
+// rwaDropNotInCatalogue.
+func rwaContractArmSplit(
+	members []rwaContractMember, rows map[string]AssetDetail,
+) (directory, listing rwaContractArmCounts) {
+	for _, m := range members {
+		arm := &directory
+		if m.recognition == rwa.RecognitionListingCorroborated {
+			arm = &listing
+		}
+		if _, ok := rows[m.contractID]; ok {
+			arm.served++
+			continue
+		}
+		arm.notObserved++
+	}
+	return directory, listing
+}
+
+// rwaContractName is the human-readable name for a contract row.
+//
+// The curated directory's label first, which is what the first C2 arm
+// admitted on. A row admitted on the SECOND arm has no directory entry
+// by definition, so it falls back to the in-repo curated binding's
+// instrument — the same string [rwa.ContractInstrumentBindings]
+// publishes on the wire, so a reader can trace the name to the entry it
+// came from.
+//
+// What it never falls back to is the listing platform's own display
+// text. That source is this surface's CORROBORATION, not its identity:
+// letting it name a row would put a price aggregator's label where the
+// definition says an independent identity attestation goes, and a
+// reader could not tell the two apart. An unnamed row is the correct
+// outcome if neither source names it.
+func rwaContractName(m rwaContractMember) string {
+	if n := strings.TrimSpace(m.dirName); n != "" {
+		return n
+	}
+	for _, b := range rwa.ContractInstrumentBindings() {
+		if b.ContractID == m.contractID {
+			return b.Instrument
+		}
+	}
+	return ""
 }
 
 // rwaUnreachedRows projects the coverage sample onto the wire.

@@ -257,6 +257,14 @@ const (
 const (
 	rwaArmClassic  = "classic"
 	rwaArmContract = "contract"
+	// rwaArmListing is C2's SECOND arm: the in-repo curated contract
+	// bindings, narrowed to the ones an independent listing directory
+	// corroborates. A separate arm rather than extra stages on the
+	// contract one because it narrows a different population from a
+	// different root — the contract arm starts at a third party's
+	// directory, this one starts at a table in this repository and
+	// looks for somebody else to agree with it.
+	rwaArmListing = "listing"
 	// rwaArmValuation continues past the served set rather than
 	// narrowing a population toward it: it accounts for which served
 	// rows carry a REFERENCE-priced valuation and, for every row that
@@ -295,6 +303,18 @@ const (
 	rwaDropDuplicateContractEntry  = "duplicate_directory_entry_for_contract"
 )
 
+// Listing-arm funnel stages and drops — C2's second arm. Same rule as
+// above: a wire vocabulary, spelled once.
+const (
+	rwaStageCuratedBindings      = "curated_contract_bindings"
+	rwaStageListingCorroborated  = "listing_corroborated_contracts"
+	rwaStageListingAdmitted      = "listing_contract_assets_admitted"
+	rwaStageListingServed        = "listing_contract_assets_served"
+	rwaStageListedWithoutBinding = "listing_contracts_without_curated_binding"
+
+	rwaDropAlreadyEvaluatedByDirectory = "contract_already_evaluated_by_directory_arm"
+)
+
 // RWADefinition is the machine-readable membership rule.
 type RWADefinition struct {
 	// Requirements names the four conjunctive requirements of the
@@ -325,6 +345,14 @@ type RWADefinition struct {
 	// describe a piece of infrastructure that issues nothing. Served so
 	// the narrowing is auditable rather than implied.
 	ContractRecognitionTags []string `json:"contract_recognition_tags"`
+	// ContractRecognitionSources is the closed vocabulary of ways C2
+	// can be satisfied, in the order of their strength. Served for the
+	// same reason every other rule on this block is: a consumer reads
+	// which routes exist from the response rather than inferring them
+	// from whichever rows qualified today, and can tell that a row
+	// admitted on a corroborating pair is not the same claim as one
+	// admitted on a directory attestation.
+	ContractRecognitionSources []string `json:"contract_recognition_sources"`
 	// ScamFlagTags is the vocabulary that excludes an issuer outright.
 	ScamFlagTags []string `json:"scam_flag_tags"`
 	// BoundInstruments is the CURATED set of (code, issuer) pairs this
@@ -479,12 +507,23 @@ type RWAReferenceSummary struct {
 	// valuation, i.e. whenever this total is less than the
 	// reference-priced value of the set.
 	LowerBound bool `json:"lower_bound"`
-	// Sources names the distinct oracles whose published values are in
-	// the total, sorted. A dollar figure that cannot be traced back to a
-	// publisher is worse than an absent one on this surface, and the
-	// per-row `reference` blocks carry the full provenance — feed,
-	// quote and vintage — that this list summarises.
+	// Sources names the distinct PUBLISHERS whose published values are
+	// in the total, sorted. Not "oracles": the total now mixes two
+	// provenances, and a field that called a listing platform an oracle
+	// would misdescribe the weaker half of its own figure.
+	//
+	// A dollar figure that cannot be traced back to a publisher is
+	// worse than an absent one on this surface, and the per-row
+	// `reference` blocks carry the full provenance — kind, feed, quote
+	// and vintage — that this list summarises. Which kind each
+	// publisher contributed is on the row, never inferred from the
+	// name.
 	Sources []string `json:"sources,omitempty"`
+	// Provenances names the distinct `reference.provenance` values in
+	// the total, sorted. Served so the mixture is visible at the
+	// summary level: a reader of one number must be able to see that it
+	// is not all one kind of claim without walking every row.
+	Provenances []string `json:"provenances,omitempty"`
 	// Basis states in prose what was measured and, more importantly,
 	// what it is not.
 	Basis string `json:"basis"`
@@ -531,6 +570,23 @@ const (
 	// RWAValuationNoSupply — a price exists but no circulating-supply
 	// reading does, so no market cap can be computed.
 	RWAValuationNoSupply = "supply_unavailable"
+	// RWAValuationDecimalsUnknown — a price and a supply both exist, and
+	// the token's own declared SCALE does not, so there is no exponent
+	// to divide the supply by.
+	//
+	// Contract rows only. A classic asset is 7 decimals by protocol and
+	// a SAC inherits that; a SEP-41 token declares its own, and when
+	// that declaration cannot be read the catalogue's default of 7 is a
+	// convention rather than a reading. Multiplying by it would publish
+	// a figure wrong by a factor of ten to the something — one hundredth
+	// for the 5-decimal funds in the measured population, eleven orders
+	// of magnitude the other way for the 18-decimal one.
+	//
+	// Refused rather than defaulted because the error is silent and
+	// unbounded, and because this is the one surface where the exponent
+	// IS the number. The circulating supply is still served beside it:
+	// that is a raw chain fact and needs no scale to be true.
+	RWAValuationDecimalsUnknown = "decimals_unavailable"
 )
 
 // RWAValuation carries a row valuation and the reason when there is
@@ -582,6 +638,27 @@ type RWAAsset struct {
 	IssuerDirectoryTags []string `json:"issuer_directory_tags,omitempty"`
 	// Basis names which requirement-4 arm admitted this asset.
 	Basis string `json:"basis"`
+	// Recognition names WHICH independent party's naming satisfied C2,
+	// on contract-issued rows. Absent on classic rows, where R3 has
+	// exactly one source and naming it would say nothing.
+	//
+	// It is on the wire because the contract arm's two routes to
+	// recognition are NOT the same strength of evidence. A row reading
+	// `curated_account_directory` was vouched for by an address-level
+	// identity directory that carries scam flags and admits on its own.
+	// A row reading `independent_listing_corroborating_curated_binding`
+	// required TWO sources that do not read each other — a listing
+	// platform naming the address, and an in-repo curated binding
+	// naming the same address — because neither is sufficient alone.
+	// A consumer that wants only the first can filter on this field
+	// rather than having to reconstruct the rule.
+	Recognition string `json:"recognition,omitempty"`
+	// DecimalsUnresolved is true when Decimals is the hardcoded default
+	// rather than a reading from the token's own on-chain metadata.
+	// INTERNAL — never serialised. It exists to stop a figure being
+	// published, and both valuation bases consult it before they
+	// divide by 10^Decimals.
+	DecimalsUnresolved bool `json:"-"`
 	// AnchorClass is the closed-vocabulary class, present only under
 	// the declaration basis.
 	AnchorClass string `json:"anchor_class,omitempty"`
@@ -714,6 +791,21 @@ type rwaMembership struct {
 	// contractCensus accounts for the curated-directory population that
 	// arm narrowed, including the stages upstream of rwa.QualifyContract.
 	contractCensus rwaContractCensus
+	// listingCensus accounts for C2's SECOND arm — the curated bindings
+	// an independent listing directory was asked to corroborate.
+	listingCensus rwaListingCensus
+	// contractRefusals and listingRefusals are the two contract-side
+	// tallies kept apart. Both arms run the same rwa.QualifyContract and
+	// can produce the same reason string, so a single tally would let
+	// the funnel attribute one arm's refusal to the other's narrowing.
+	// Their union is already folded into refusals above, which is what
+	// `refused[]` publishes.
+	contractRefusals map[string]int
+	listingRefusals  map[string]int
+	// listingNotObserved is the same count for C2's second arm, kept
+	// apart for the reason the refusal tallies are: each arm closes its
+	// own arithmetic, and one combined count would leave both unable to.
+	listingNotObserved int
 	// contractsNotObserved counts admitted contracts with no catalogue
 	// row. Recorded on the membership rather than returned beside the
 	// rows because the funnel is built from this value, and a count that
@@ -748,12 +840,21 @@ func rwaCandidateFilter(c timescale.Sep1BoundCurrency) bool {
 // surface rather than about whichever arm a consumer happened to read.
 func (s *Server) buildRWAMembership(ctx context.Context) rwaMembership {
 	out := s.buildRWAClassicMembership(ctx)
-	contracts, unreached, census, refusals := s.buildRWAContractMembership(ctx)
-	out.contracts = contracts
-	out.unreached = unreached
-	out.contractCensus = census
-	for reason, n := range refusals {
-		out.refusals[reason] += n
+	c := s.buildRWAContractMembership(ctx)
+	out.contracts = c.members
+	out.unreached = c.unreached
+	out.contractCensus = c.census
+	out.listingCensus = c.listingCensus
+	out.contractRefusals = c.refusals
+	out.listingRefusals = c.listingRefusals
+	// One `refused[]` for the whole surface. The per-arm tallies stay
+	// on the membership for the funnel, which has to attribute a
+	// refusal to the narrowing it belongs to; a consumer counting how
+	// many candidates a requirement turned away does not.
+	for _, tally := range []map[string]int{c.refusals, c.listingRefusals} {
+		for reason, n := range tally {
+			out.refusals[reason] += n
+		}
 	}
 	return out
 }
@@ -1152,16 +1253,21 @@ func (s *Server) handleRWAAssets(w http.ResponseWriter, r *http.Request) {
 	// than failing the response: the classic arm is a complete answer to
 	// its own question, and emptying it because a second population
 	// could not be read would publish less than we know.
-	contractRows, contractsUnobserved, contractErr := s.rwaContractListingRows(r.Context(), m.contracts)
+	contractRows, _, contractErr := s.rwaContractListingRows(r.Context(), m.contracts)
 	if contractErr != nil {
 		if clientAborted(r, contractErr) {
 			return
 		}
 		s.logger.Error("rwa contract listing read failed", "err", contractErr)
 		contractRows = map[string]AssetDetail{}
-		contractsUnobserved = len(m.contracts)
 	}
-	m.contractsNotObserved = contractsUnobserved
+	// Attributed per C2 arm, from the same two values the projection
+	// reads. The two arms narrow separate populations and each has to
+	// close its own arithmetic, so one combined count would leave both
+	// unable to.
+	dirCounts, listingCounts := rwaContractArmSplit(m.contracts, contractRows)
+	m.contractsNotObserved = dirCounts.notObserved
+	m.listingNotObserved = listingCounts.notObserved
 	contractAssets := rwaContractAssetRows(m.contracts, contractRows)
 
 	view.Assets = append(classicAssets, contractAssets...)
@@ -1175,14 +1281,20 @@ func (s *Server) handleRWAAssets(w http.ResponseWriter, r *http.Request) {
 	// reads the gated row (including the scam-flag suppression) and must
 	// not be able to put a figure on a row the gates emptied.
 	refs := s.cachedRWAReferences(r.Context())
+	// The listing rows that priced the admitted contracts, indexed from
+	// the MEMBERSHIP rather than from a second read: the row that
+	// prices an asset must be the same row that recognised it, or the
+	// surface could publish a price from a snapshot in which the
+	// address was not named.
+	listingRefs := rwaListingReferencesOf(m.contracts)
 	now := time.Now()
 	for i := range view.Assets {
-		rwaApplyReference(&view.Assets[i], refs, now)
+		rwaApplyReference(&view.Assets[i], refs, listingRefs, now)
 	}
 	view.Summary = rwaSummarise(view.Assets, m.truncated)
 	view.ByClass = rwaByClass(view.Assets)
 	view.ByIssuer = rwaByIssuer(view.Assets)
-	view.Funnel = rwaFunnelOf(m, join, len(classicAssets), len(contractAssets), view.Assets)
+	view.Funnel = rwaFunnelOf(m, join, len(classicAssets), dirCounts.served, listingCounts.served, view.Assets)
 	writeEnvelope(w, Envelope{Data: view, Flags: Flags{}})
 }
 
@@ -1201,17 +1313,19 @@ func rwaDefinition() RWADefinition {
 		},
 		ContractRequirements: []string{
 			"contract-issued token identified by its contract address",
-			"that exact contract address named in the curated account directory",
-			"named with an issuing-class tag and no scam-class tag",
+			"no scam-class tag on that address in the curated account directory",
+			"that exact contract address named either by the curated account directory with an issuing-class tag, " +
+				"or by an independent listing directory AND an in-repo curated binding together",
 			"real-world instrument by an in-repo curated binding or by an ADR-0028 oracle feed on the on-chain symbol",
 		},
-		AnchorClasses:            rwa.AnchorClasses(),
-		RecognitionTags:          rwa.RecognitionTags(),
-		ContractRecognitionTags:  rwa.ContractRecognitionTags(),
-		ScamFlagTags:             append([]string(nil), timescale.DirectoryScamFlagTags...),
-		BoundInstruments:         rwaBoundInstruments(),
-		BoundContractInstruments: rwaBoundContractInstruments(),
-		DocumentationURL:         "https://stellarindex.io/docs/methodology/rwa-definition",
+		AnchorClasses:              rwa.AnchorClasses(),
+		RecognitionTags:            rwa.RecognitionTags(),
+		ContractRecognitionTags:    rwa.ContractRecognitionTags(),
+		ContractRecognitionSources: rwa.ContractRecognitionSources(),
+		ScamFlagTags:               append([]string(nil), timescale.DirectoryScamFlagTags...),
+		BoundInstruments:           rwaBoundInstruments(),
+		BoundContractInstruments:   rwaBoundContractInstruments(),
+		DocumentationURL:           "https://stellarindex.io/docs/methodology/rwa-definition",
 	}
 }
 
@@ -1475,6 +1589,12 @@ func rwaValuationOf(d AssetDetail) RWAValuation {
 		if d.MarketCapLowLiquidity {
 			return RWAValuation{Status: RWAValuationLowLiquidity, PriceUSD: d.PriceUSD, PriceBasis: d.PriceBasis}
 		}
+		// Reported before the supply reason, because it is the more
+		// specific finding: a row here HAS a supply and is missing the
+		// exponent, which is a different gap with a different owner.
+		if d.DecimalsUnresolved {
+			return RWAValuation{Status: RWAValuationDecimalsUnknown, PriceUSD: d.PriceUSD, PriceBasis: d.PriceBasis}
+		}
 		return RWAValuation{Status: RWAValuationNoSupply, PriceUSD: d.PriceUSD, PriceBasis: d.PriceBasis}
 	}
 	return RWAValuation{
@@ -1590,16 +1710,102 @@ func rwaReferenceSources(assets []RWAAsset) []string {
 	return out
 }
 
+// rwaReferenceProvenances lists the distinct kinds of claim in the
+// reference total, read off the CONTRIBUTING rows only. A row whose
+// reference was published but whose valuation was refused contributed
+// nothing, so naming its provenance here would describe the total by
+// something not in it.
+func rwaReferenceProvenances(assets []RWAAsset) []string {
+	seen := map[string]struct{}{}
+	out := make([]string, 0, 2)
+	for _, a := range assets {
+		if a.ReferenceValuation.ValueUSD == nil || a.Reference == nil || a.Reference.Provenance == "" {
+			continue
+		}
+		if _, dup := seen[a.Reference.Provenance]; dup {
+			continue
+		}
+		seen[a.Reference.Provenance] = struct{}{}
+		out = append(out, a.Reference.Provenance)
+	}
+	sort.Strings(out)
+	return out
+}
+
 // rwaSummariseReference builds the reference-basis aggregate.
 func rwaSummariseReference(assets []RWAAsset) RWAReferenceSummary {
 	total, valued := rwaSumReferenceValues(assets)
+	provenances := rwaReferenceProvenances(assets)
 	return RWAReferenceSummary{
+		Provenances:    provenances,
 		ValueUSD:       total,
 		AssetsValued:   valued,
 		AssetsUnvalued: len(assets) - valued,
 		LowerBound:     len(assets)-valued > 0,
 		Sources:        rwaReferenceSources(assets),
-		Basis:          rwaReferenceBasis(len(assets), valued),
+		Basis:          rwaReferenceBasis(len(assets), valued, provenances),
+	}
+}
+
+// rwaReferenceProvenanceProse describes WHAT KIND of claim is in the
+// total, from the provenances actually present in it.
+//
+// This exists because the basis string used to describe one provenance
+// and the total now admits two, which are different claims about
+// different subjects:
+//
+//   - an ORACLE NAV values the INSTRUMENT, and the step from there to
+//     the token rests on the issuer's own domain-bound declaration that
+//     one token is one unit of it;
+//   - a LISTING PRICE values the TOKEN directly, and makes no claim
+//     about the backing at all — which is weaker in one way (nobody
+//     independent has said what is behind the token) and stronger in
+//     another (no unstated one-for-one assumption sits inside it).
+//
+// The sentence is derived from the rows rather than written once for
+// all cases, because a total that is entirely oracle-priced today must
+// not carry a paragraph about listing prices, and a total that gains
+// its first listing-priced row must not keep describing itself as
+// resting on an issuer's declaration. A basis string that describes a
+// provenance the total does not contain is exactly as wrong as one that
+// omits a provenance it does.
+func rwaReferenceProvenanceProse(provenances []string) string {
+	var (
+		oracle  bool
+		listing bool
+	)
+	for _, p := range provenances {
+		switch p {
+		case RWAReferenceOracleNAV:
+			oracle = true
+		case RWAReferenceListingPrice:
+			listing = true
+		}
+	}
+	const oracleProse = "Oracle-priced rows (`provenance: oracle_instrument_nav`) are what an independent oracle says one unit " +
+		"of the BACKING is worth, multiplied by the tokens in circulation, resting on the issuer's own domain-bound " +
+		"declaration that one token is one unit of that instrument. On those rows nobody was seen paying it: it is an " +
+		"assertion about the value of the backing, and no gate on this platform can corroborate an assertion. "
+	const listingProse = "Listing-priced rows (`provenance: listing_platform_price`) are an independent listing platform's own USD price " +
+		"for the TOKEN, from the same source that corroborated the token's contract address at C2 — bound to the address " +
+		"and never matched on a code. It is a different and weaker claim than an oracle NAV: it says what the token " +
+		"changes hands at on the venues that platform tracks, and asserts NOTHING about what stands behind it. No premium " +
+		"is published against it, because a premium measured against an aggregate of the same markets our own price " +
+		"samples would be the market compared with itself. Somebody WAS seen paying something like it — on venues this " +
+		"index does not gate — which is precisely why it may not be added to market_cap_usd, whose whole meaning is a " +
+		"price that survived those gates. "
+	switch {
+	case oracle && listing:
+		return "The total MIXES TWO KINDS OF CLAIM and the per-row `provenance` field says which is which. " +
+			oracleProse + listingProse
+	case listing:
+		return listingProse
+	case oracle:
+		return oracleProse
+	default:
+		// No contributing rows, so no claim to describe. The callers
+		// below state the absence.
+		return ""
 	}
 }
 
@@ -1613,14 +1819,13 @@ func rwaSummariseReference(assets []RWAAsset) RWAReferenceSummary {
 // A reader who takes the two for the same kind of number will read a
 // claim as a measurement, so the difference is stated rather than
 // implied.
-func rwaReferenceBasis(total, valued int) string {
+func rwaReferenceBasis(total, valued int, provenances []string) string {
 	var b strings.Builder
-	b.WriteString("Sum of circulating supply times an independent oracle's published valuation of the real-world instrument each token declares it anchors to. ")
-	b.WriteString("THIS IS NOT A MARKET CAPITALISATION AND NOT AN OBSERVED PRICE: nobody was seen paying it. ")
-	b.WriteString("It is what an oracle says one unit of the backing is worth, multiplied by the tokens in circulation, resting on the issuer's own domain-bound declaration that one token is one unit of that instrument. ")
-	b.WriteString("The substance, dust-liquidity and scam-issuer gates that stand behind market_cap_usd cannot be applied to it, because there is no market here for them to measure — which is also why an asset that has never traded carries this figure at full size. ")
+	b.WriteString("Sum of each member's circulating supply times an independent published price for it. ")
+	b.WriteString("THIS IS NOT A MARKET CAPITALISATION: no row in it passed the substance, dust-liquidity and scam-issuer gates that stand behind market_cap_usd, and an asset that has never traded carries this figure at full size. ")
+	b.WriteString(rwaReferenceProvenanceProse(provenances))
 	b.WriteString("Published beside market_cap_usd and never added to it: the two are different bases over different rows, and market_cap_usd is exactly what it was before this figure existed. ")
-	b.WriteString("Every contributing row names the feed, the denominator and the vintage behind its number in `reference`, and the funnel's `valuation` arm counts every row that carries no figure under the reason that refused it. ")
+	b.WriteString("Every contributing row names the kind of claim, the publisher, the key, the denominator and the vintage behind its number in `reference`, and the funnel's `valuation` arm counts every row that carries no figure under the reason that refused it. ")
 	switch {
 	case total == 0:
 		b.WriteString("No asset currently meets the definition.")

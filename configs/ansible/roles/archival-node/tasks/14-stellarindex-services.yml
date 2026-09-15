@@ -777,6 +777,8 @@
     - sep1-refresh.timer
     - directory-sync.service
     - directory-sync.timer
+    - listing-sync.service
+    - listing-sync.timer
     # cap67-movements: a continuous FOLLOW DAEMON now (5.3), not a
     # timer+oneshot — only the .service is rendered; the old .timer is
     # retired below.
@@ -831,6 +833,7 @@
     - supply-snapshot.timer
     - sep1-refresh.timer
     - directory-sync.timer
+    - listing-sync.timer
     - holders-rollup.timer
     - creators-rollup.timer
     - sponsors-rollup.timer

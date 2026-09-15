@@ -8,6 +8,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/rwa"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/external"
+	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
 // Oracle NAV reference and premium/discount for /v1/rwa/assets.
@@ -155,7 +156,56 @@ type RWAReference struct {
 	AsOf WireTime `json:"as_of"`
 	// Stale marks a reference older than 72h — served, but labelled.
 	Stale bool `json:"stale,omitempty"`
+	// Provenance names WHAT KIND of figure this is. Two are published
+	// and they are not the same claim, so the field is mandatory on
+	// every served reference rather than defaulted.
+	//
+	// [RWAReferenceOracleNAV] is an oracle's published valuation of the
+	// INSTRUMENT, which the token declares it anchors to one-for-one.
+	// [RWAReferenceListingPrice] is a listing platform's aggregate of
+	// what the TOKEN trades at across the venues it tracks. The first
+	// is a statement about the backing; the second is a statement about
+	// the token. Folding them under one name would let a summary total
+	// describe itself with the wrong provenance, which is the exact
+	// defect the summary basis prose exists to prevent.
+	Provenance string `json:"provenance"`
 }
+
+// RWAReference provenances.
+const (
+	// RWAReferenceOracleNAV — an ADR-0028 oracle feed's published value
+	// for the real-world instrument, joined through the curated
+	// (code, issuer) binding. The original and stronger arm: the
+	// publisher is a registered oracle, the subject is the instrument,
+	// and the correspondence to one token is the issuer's own
+	// domain-bound declaration.
+	RWAReferenceOracleNAV = "oracle_instrument_nav"
+	// RWAReferenceListingPrice — the independent listing directory's
+	// own USD price for the token, from the same source that
+	// corroborated the address at C2.
+	//
+	// Weaker than the oracle arm in one specific and stated way: it
+	// prices the TOKEN, not the instrument. It therefore carries no
+	// claim that one token is one unit of anything, and it cannot
+	// produce a premium, because a premium against an aggregate of the
+	// markets is the market compared with itself.
+	//
+	// Available to any contract row the listing directory NAMES,
+	// whichever C2 arm admitted it. That is deliberately not the same
+	// set as "admitted on [rwa.RecognitionListingCorroborated]": four
+	// addresses are named by both sources, and one of those admitted by
+	// the curated directory on its own is still an address an
+	// independent listing bound a price to. Refusing it would withhold
+	// a figure this surface can correctly make.
+	//
+	// What the listing entry supplies is the same in both cases — a USD
+	// price bound to a 56-character address by a party that did not
+	// read our directory — so the prose describes THAT rather than the
+	// requirement the row happened to satisfy. A contract the listing
+	// never named has no listing price to serve, which is the same fact
+	// that refuses it at C2 when nothing else names it either.
+	RWAReferenceListingPrice = "listing_platform_price"
+)
 
 // RWAReferenceValuation is the token's circulating supply valued at the
 // REFERENCE price — the oracle's published value of the instrument —
@@ -205,6 +255,17 @@ const (
 	// RWAReferenceValuationPublished — a reference price and a supply
 	// reading were both available.
 	RWAReferenceValuationPublished = "published"
+	// RWAReferenceValuationDecimalsUnknown — a reference and a supply
+	// both exist and the token's own declared SCALE does not, so there
+	// is no exponent to divide the float by.
+	//
+	// The same refusal [RWAValuationDecimalsUnknown] makes on the market
+	// basis, for the same reason and with more at stake: this basis
+	// values tokens that never trade, so it is the figure most likely to
+	// be the only number on the row. Defaulting the exponent would
+	// publish a dollar total wrong by a factor of ten to the something,
+	// silently, under `status: published`.
+	RWAReferenceValuationDecimalsUnknown = "decimals_unavailable"
 	// RWAReferenceValuationNoSupply — a reference exists but no
 	// circulating-supply reading does, so there is no float to value. A
 	// non-numeric or negative reading is treated the same way: it is
@@ -303,6 +364,24 @@ const (
 	// RWAPremiumReferenceNotPositive — the oracle published a
 	// non-positive value. Nothing is divided by it.
 	RWAPremiumReferenceNotPositive = "reference_not_positive"
+	// RWAPremiumReferenceNotOracle — the row carries a reference, and
+	// it is a LISTING PRICE rather than an oracle's valuation of the
+	// instrument, so no premium may be computed against it.
+	//
+	// This is R-C applied to the new arm, and it is the one status on
+	// this list that refuses the premium while the reference valuation
+	// beside it is PUBLISHED. A premium is the gap between what the
+	// market pays and what the backing is independently worth. A
+	// listing price is an aggregate of the same markets our own price
+	// comes from, so the gap between them measures the disagreement
+	// between two samples of one market — not a premium to anything,
+	// and it would be published under a name that says it is.
+	//
+	// The obvious arithmetic is available and is refused, for the same
+	// reason [RWAPremiumContractNotBound] refuses the symbol join: a
+	// number that can be computed is not thereby a number that means
+	// something.
+	RWAPremiumReferenceNotOracle = "reference_is_a_listing_price"
 )
 
 // ─── snapshot ───────────────────────────────────────────────────────
@@ -494,7 +573,7 @@ func (s *Server) cachedRWAReferences(ctx context.Context) rwaReferences {
 // load-bearing for the reason reported: a flagged issuer is answered as
 // flagged before anything else is consulted, because that refusal is
 // about who is asking rather than about what the data holds.
-func rwaApplyReference(a *RWAAsset, snap rwaReferences, now time.Time) {
+func rwaApplyReference(a *RWAAsset, snap rwaReferences, listings map[string]timescale.ListingEntry, now time.Time) {
 	// The scam-flag suppression comes first and covers the reference
 	// too. /v1/assets withholds this issuer's own price; handing it a
 	// real instrument's independent NAV instead would publish a larger
@@ -504,20 +583,23 @@ func rwaApplyReference(a *RWAAsset, snap rwaReferences, now time.Time) {
 		rwaRefuseReference(a, RWAPremiumIssuerFlagged)
 		return
 	}
+	// A contract-issued member, answered BEFORE the oracle snapshot is
+	// consulted. It never falls through to the (code, issuer) binding
+	// below, which would answer with a reason naming an identity this
+	// row does not have — and it must not be answered by the oracle
+	// read's availability either, because a contract row's reference
+	// does not come from the oracle stream at any point. Reporting an
+	// oracle outage on a row the oracle could never have priced would
+	// withhold a figure for a reason that has nothing to do with it.
+	if a.ContractID != "" {
+		rwaApplyContractReference(a, listings[a.ContractID], now)
+		return
+	}
 	// A read that did not answer knows nothing either way. Reporting it
 	// as an absence would publish a finding the read did not earn, and on
 	// the wire it would be indistinguishable from a genuine one.
 	if !snap.available {
 		rwaRefuseReference(a, RWAPremiumReferenceUnavailable)
-		return
-	}
-	// A contract-issued member. Refused here rather than falling through
-	// to the (code, issuer) binding below, which would answer with a
-	// reason naming an identity this row does not have. See
-	// [RWAPremiumContractNotBound] for why the available join is not
-	// taken.
-	if a.ContractID != "" {
-		rwaRefuseReference(a, RWAPremiumContractNotBound)
 		return
 	}
 
@@ -560,12 +642,13 @@ func rwaApplyReference(a *RWAAsset, snap rwaReferences, now time.Time) {
 	}
 
 	a.Reference = &RWAReference{
-		PriceUSD: ref.wire,
-		Source:   ref.source,
-		Feed:     ref.feed,
-		Quote:    "fiat:USD",
-		AsOf:     WireTime(ref.asOf),
-		Stale:    now.Sub(ref.asOf) > rwaReferenceStaleAfter,
+		PriceUSD:   ref.wire,
+		Source:     ref.source,
+		Feed:       ref.feed,
+		Quote:      "fiat:USD",
+		AsOf:       WireTime(ref.asOf),
+		Stale:      now.Sub(ref.asOf) > rwaReferenceStaleAfter,
+		Provenance: RWAReferenceOracleNAV,
 	}
 	// Only now, with the reference attached and its provenance on the
 	// row beside it. A supply-valued figure whose feed and vintage were
@@ -591,6 +674,120 @@ func rwaApplyReference(a *RWAAsset, snap rwaReferences, now time.Time) {
 		s := pct.FloatString(4)
 		a.Premium = RWAPremium{Status: RWAPremiumPublished, Pct: &s}
 	}
+}
+
+// rwaApplyContractReference attaches the LISTING-priced reference to a
+// contract member, or the reason there is none.
+//
+// # Why a contract row can carry a reference at all now
+//
+// It could not before, and the reason was sound and is unchanged:
+// nothing binds a contract ADDRESS to an oracle feed, and the available
+// joins — the contract's own SEP-41 symbol, or the curated binding's
+// instrument name — are both code-keyed joins onto a feed, which is
+// exactly what R-0 exists to refuse. The curated set records an
+// instrument and a class, not a feed, so it cannot answer a price
+// however many entries it holds.
+//
+// What changed is not that join. It is that this surface now holds, for
+// some contract addresses, a row from an independent listing directory
+// that NAMES the exact address and publishes a USD price for the thing
+// it named — price bound to address, in one row, by a party that did
+// not read our curated directory. No code is matched anywhere on this
+// path. A token wearing a bound instrument's symbol gets nothing here,
+// because it was never in the listing row.
+//
+// It applies to any contract row the listing names, not only to rows
+// the listing ADMITTED. Those two sets overlap but are not equal: a
+// contract the curated directory attested on its own may also be named
+// by the listing, and the price that listing publishes is exactly as
+// well bound to the address in that case as in the other. Gating on the
+// recognition source would withhold a figure this surface can correctly
+// make, for a reason about how the row got in rather than about where
+// the price came from.
+//
+// # What it is, stated rather than implied
+//
+// It is a listing platform's aggregate of what the TOKEN trades at, not
+// an oracle's valuation of the INSTRUMENT. So:
+//
+//   - the reference carries [RWAReferenceListingPrice], and the
+//     summary basis prose describes the mixture rather than inheriting
+//     the oracle wording;
+//   - NO PREMIUM is published against it, under
+//     [RWAPremiumReferenceNotOracle] — a premium against an aggregate
+//     of the same markets our own price samples is the market compared
+//     with itself;
+//   - it makes no claim that one token is one unit of anything, which
+//     is the claim the oracle arm rests on and the reason that arm is
+//     the stronger of the two.
+//
+// # One refusal, two fields — and the one place they diverge
+//
+// This is the only path on which the premium is refused while the
+// reference valuation beside it is PUBLISHED. That is a genuine
+// divergence of reasons rather than two accounts of one event: there IS
+// a reference and there IS a supply, so the valuation exists; there is
+// no oracle, so the comparison does not. The file header names exactly
+// this shape as the case where the two fields are allowed to differ.
+func rwaApplyContractReference(a *RWAAsset, entry timescale.ListingEntry, now time.Time) {
+	// A contract no listing named. The original refusal, unchanged, and
+	// still the right one: no source binds this address to a price.
+	if entry.PriceUSD == "" {
+		rwaRefuseReference(a, RWAPremiumContractNotBound)
+		return
+	}
+	price := ratFromOptionalString(&entry.PriceUSD)
+	if price == nil || price.Sign() <= 0 {
+		// Not a valuation. Refused rather than multiplied, the same way
+		// the oracle path refuses a non-positive net asset value.
+		rwaRefuseReference(a, RWAPremiumReferenceNotPositive)
+		return
+	}
+	// The storage reader enforces the price bound in SQL, so a row that
+	// arrives here is already inside it. Re-checked on the OBSERVATION
+	// anyway, for the reason the oracle path re-checks its own: the
+	// bound this surface documents has to hold however the row reached
+	// it, not only on the path that was expected to deliver it.
+	if entry.PricedAt.IsZero() || now.Sub(entry.PricedAt) > rwaReferenceMaxAge {
+		rwaRefuseReference(a, RWAPremiumReferenceExpired)
+		return
+	}
+	a.Reference = &RWAReference{
+		PriceUSD: entry.PriceUSD,
+		Source:   entry.Source,
+		// The listing platform's own coin id — the key its price is
+		// published under, so a reader can pull the same figure from
+		// the same source. Not an ADR-0028 feed id, and it does not
+		// pretend to be: the field's meaning follows `provenance`.
+		Feed:       entry.ListingID,
+		Quote:      "fiat:USD",
+		AsOf:       WireTime(entry.PricedAt),
+		Stale:      now.Sub(entry.PricedAt) > rwaReferenceStaleAfter,
+		Provenance: RWAReferenceListingPrice,
+	}
+	a.ReferenceValuation = rwaReferenceValuationOf(a, rwaReference{priceUSD: price})
+	// R-C, on the new arm. The reference is published and the premium
+	// is not, and the status says which kind of figure refused it.
+	a.Premium = RWAPremium{Status: RWAPremiumReferenceNotOracle}
+}
+
+// rwaListingReferencesOf indexes the admitted contract members' listing
+// rows by address, for the per-row reference pass.
+//
+// Built from the MEMBERSHIP rather than from a second read of the
+// listing directory: the row that priced an asset must be the same row
+// that recognised it, or the surface could publish a price from a
+// snapshot in which the address was not named.
+func rwaListingReferencesOf(members []rwaContractMember) map[string]timescale.ListingEntry {
+	out := make(map[string]timescale.ListingEntry, len(members))
+	for _, m := range members {
+		if m.listing.ListingID == "" {
+			continue
+		}
+		out[m.contractID] = m.listing
+	}
+	return out
 }
 
 // rwaRefuseReference records ONE refusal in BOTH places it has to
@@ -627,6 +824,13 @@ func rwaReferenceValuationOf(a *RWAAsset, ref rwaReference) RWAReferenceValuatio
 	}
 	if a.CirculatingSupply == nil {
 		return RWAReferenceValuation{Status: RWAReferenceValuationNoSupply}
+	}
+	// The exponent, before the arithmetic that uses it. A contract row
+	// whose scale could not be read carries the catalogue's default of
+	// 7, which is a convention and not a reading — see
+	// [RWAReferenceValuationDecimalsUnknown].
+	if a.DecimalsUnresolved {
+		return RWAReferenceValuation{Status: RWAReferenceValuationDecimalsUnknown}
 	}
 	value := rwaReferenceValueUSD(*a.CirculatingSupply, a.Decimals, ref.priceUSD)
 	if value == "" {
