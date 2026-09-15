@@ -17,8 +17,6 @@ against.
 
 ## [v0.82.0] — 2026-09-15
 
-## [v0.81.0] — 2026-09-15
-
 ### Added
 
 - **accounts:** `/v1/accounts/creators` and `/v1/accounts/sponsors` take
@@ -129,6 +127,10 @@ against.
   fund declaring 5 decimals read at 7 publishes one hundredth of its
   capitalisation. A contract declaring both keys with different values
   is refused rather than resolved by preference.
+
+## [v0.81.0] — 2026-09-15
+
+### Added
 
 - **assets:** USDT0 joins the verified catalogue — the omnichain USDT
   live on Stellar mainnet since 2026-09-02, distinct from the
