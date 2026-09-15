@@ -75,10 +75,12 @@ type ContractStorageSupply struct {
 	// AsOfLedger is the highest ledger any summed entry was last written at.
 	AsOfLedger uint32
 
-	// isSAC records that the instance entry named a Stellar Asset Contract.
-	// Unexported so the refusal can only leave this package as an error —
-	// a caller must not be able to read the field and serve the sum anyway.
-	isSAC bool
+	// isSAC records that the instance entry named a Stellar Asset Contract,
+	// and sawInstance that an instance entry was decoded at all. Unexported so
+	// the refusals can only leave this package as an error — a caller must not
+	// be able to read the fields and serve the sum anyway.
+	isSAC       bool
+	sawInstance bool
 }
 
 // SelfConsistent reports whether every cross-check the contract itself offered
@@ -123,6 +125,18 @@ var ErrStorageSupplyIsStellarAsset = fmt.Errorf("clickhouse: contract is a Stell
 // exactly like a right one, which is the failure mode this whole reader exists
 // to remove.
 var ErrStorageSupplyTooManyEntries = fmt.Errorf("clickhouse: contract holds more storage balance entries than this reader will decode")
+
+// ErrStorageSupplyNoInstance is returned when a contract holds balances but the
+// lake captured no contract-instance entry for it.
+//
+// The instance entry carries the executable type, and that is the only evidence
+// that separates a Wasm token — whose storage balances ARE its supply — from a
+// Stellar Asset Contract, whose storage balances are a fraction of a classic
+// asset's supply. With no instance entry the SAC refusal has not been evaluated,
+// it has merely not fired, and the two cases are indistinguishable from the
+// balances alone. Refusing is the only honest outcome; see
+// [ErrStorageSupplyIsStellarAsset] for what serving one anyway would cost.
+var ErrStorageSupplyNoInstance = fmt.Errorf("clickhouse: no contract instance entry captured, so the Stellar-Asset-Contract check could not be run")
 
 // maxContractStorageBalanceEntries bounds one storage-supply read.
 //
@@ -285,6 +299,16 @@ func (r *ExplorerReader) ContractStorageSupply(ctx context.Context, contractID s
 	if out.isSAC {
 		return ContractStorageSupply{}, fmt.Errorf("%w: %s", ErrStorageSupplyIsStellarAsset, contractID)
 	}
+	if out.BalanceEntries > 0 && !out.sawInstance {
+		// The instance entry is the ONLY thing that proves this is not a
+		// Stellar Asset Contract. Without it the SAC refusal above has not
+		// actually been evaluated — it has merely not fired — and summing a
+		// SAC's storage understates a classic asset by whatever never entered
+		// Soroban. Absence of the disproof is not the proof, so refuse.
+		return ContractStorageSupply{}, fmt.Errorf(
+			"%w: %s (no contract instance entry captured, so the Stellar-Asset-Contract check could not be run)",
+			ErrStorageSupplyNoInstance, contractID)
+	}
 	return out, nil
 }
 
@@ -311,6 +335,7 @@ func (s *ContractStorageSupply) apply(keyB64, entryB64 string, ledger uint32) er
 	}
 
 	if cd.Key.Type == xdr.ScValTypeScvLedgerKeyContractInstance {
+		s.sawInstance = true
 		s.applyInstance(ed.Val)
 		return nil
 	}

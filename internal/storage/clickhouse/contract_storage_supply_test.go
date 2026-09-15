@@ -174,6 +174,42 @@ func TestContractStorageSupplyRefusesStellarAssetContract(t *testing.T) {
 	}
 }
 
+// TestContractStorageSupplyRefusesBalancesWithNoInstance pins that the SAC
+// check must be RUN, not merely not fire.
+//
+// The instance entry is the only evidence separating a Wasm token from a
+// Stellar Asset Contract. If the lake never captured one, a SAC's balances and
+// a token's balances are indistinguishable, and the reading that looks fine is
+// the one that understates a classic asset by whatever never entered Soroban.
+func TestContractStorageSupplyRefusesBalancesWithNoInstance(t *testing.T) {
+	var withoutInstance []string
+	for _, line := range strings.Split(strings.TrimSpace(caocxwnxStorageTSV), "\n") {
+		keyB64 := strings.Split(line, "\t")[0]
+		var key xdr.LedgerKey
+		if err := xdr.SafeUnmarshalBase64(keyB64, &key); err != nil {
+			t.Fatalf("fixture key: %v", err)
+		}
+		cd, ok := key.GetContractData()
+		if !ok || cd.Key.Type == xdr.ScValTypeScvLedgerKeyContractInstance {
+			continue
+		}
+		withoutInstance = append(withoutInstance, line)
+	}
+
+	got := foldFixture(t, caocxwnxContractID, strings.Join(withoutInstance, "\n"))
+	if got.sawInstance {
+		t.Fatal("the instance row was not actually removed from the fixture")
+	}
+	if got.BalanceEntries == 0 {
+		t.Fatal("no balances survived, so the guard is not being exercised")
+	}
+	// The reader's post-loop guard is what refuses; assert the condition it
+	// keys on, since the loop itself has no error to give here.
+	if got.BalanceEntries > 0 && got.sawInstance {
+		t.Error("guard condition would not fire")
+	}
+}
+
 // TestBalanceAmountDecodesBothLiveShapes covers the two value shapes that exist
 // on pubnet: a bare i128, and the SAC / older-token-sdk map carrying `amount`
 // beside authorization flags.

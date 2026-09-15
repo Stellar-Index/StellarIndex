@@ -167,6 +167,7 @@ func TestSupplyKeepsEventReadingWhenStorageDeclines(t *testing.T) {
 		{"not wired", nil},
 		{"stellar asset contract", &fakeStorageSupply{err: clickhouse.ErrStorageSupplyIsStellarAsset}},
 		{"too many entries", &fakeStorageSupply{err: clickhouse.ErrStorageSupplyTooManyEntries}},
+		{"no instance entry captured", &fakeStorageSupply{err: clickhouse.ErrStorageSupplyNoInstance}},
 		{"read failed", &fakeStorageSupply{err: errors.New("clickhouse down")}},
 		{"contract holds no balances", &fakeStorageSupply{out: clickhouse.ContractStorageSupply{Total: big.NewInt(0)}}},
 	}
