@@ -212,14 +212,44 @@
 
 - name: Assert the bind + retention flags actually applied
   when: not ansible_check_mode
+  # Compared by DURATION, never by spelling. Prometheus re-prints a
+  # duration in the largest unit that divides it exactly, so a
+  # configured `7d` comes back as `1w` and a string compare calls a
+  # correctly-applied flag a failure. It did: si-testnet configures 7d
+  # and this assert failed on `1w != 7d` while the process was running
+  # exactly what was asked. r1 was unaffected only because 30d is not a
+  # whole number of weeks and so survives the round trip unchanged — a
+  # gate that passes on one host for a reason that has nothing to do
+  # with the property it is testing.
+  #
+  # Sub-second retention has no meaning here, so `ms` is not in the
+  # unit table; a duration carrying one would sum its other terms and
+  # compare unequal, which is the safe direction.
+  vars:
+    prom_duration_units: { y: 31536000, w: 604800, d: 86400, h: 3600, m: 60, s: 1 }
+    prom_retention_effective_s: >-
+      {%- set ns = namespace(total=0) -%}
+      {%- for n, unit in ((local_prom_flags.json.data['storage.tsdb.retention.time'] | default('') | string) | regex_findall('([0-9]+)(y|w|d|h|m|s)')) -%}
+      {%- set ns.total = ns.total + (n | int) * prom_duration_units[unit] -%}
+      {%- endfor -%}
+      {{ ns.total }}
+    prom_retention_intended_s: >-
+      {%- set ns = namespace(total=0) -%}
+      {%- for n, unit in ((local_prometheus_retention_time | string) | regex_findall('([0-9]+)(y|w|d|h|m|s)')) -%}
+      {%- set ns.total = ns.total + (n | int) * prom_duration_units[unit] -%}
+      {%- endfor -%}
+      {{ ns.total }}
   ansible.builtin.assert:
     that:
-      - local_prom_flags.json.data['storage.tsdb.retention.time'] | default('') == local_prometheus_retention_time
+      - prom_retention_intended_s | int > 0
+      - prom_retention_effective_s | int == prom_retention_intended_s | int
       - local_prometheus_listen in (local_prom_flags.json.data['web.listen-address'] | default('') | string)
     fail_msg: >-
       /etc/default/prometheus did not reach the process: effective
       web.listen-address={{ local_prom_flags.json.data['web.listen-address'] | default('?') }},
-      storage.tsdb.retention.time={{ local_prom_flags.json.data['storage.tsdb.retention.time'] | default('?') }}.
+      storage.tsdb.retention.time={{ local_prom_flags.json.data['storage.tsdb.retention.time'] | default('?') }}
+      ({{ prom_retention_effective_s }}s) against the intended
+      {{ local_prometheus_retention_time }} ({{ prom_retention_intended_s }}s).
       The packaged prometheus.service is expected to source
       EnvironmentFile=/etc/default/prometheus and append $ARGS to its
       ExecStart; check `systemctl cat prometheus`. Until this holds the
