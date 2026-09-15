@@ -32,7 +32,9 @@ describe('readCookie', () => {
   it('reads an empty value as absent', () => {
     // A cookie cleared as `name=` without an expiry would otherwise
     // look exactly like a live session.
-    expect(readCookie('stellarindex_session_present=', SESSION_HINT_COOKIE)).toBeNull();
+    expect(
+      readCookie('stellarindex_session_present=', SESSION_HINT_COOKIE),
+    ).toBeNull();
   });
 });
 
