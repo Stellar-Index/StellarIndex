@@ -17,6 +17,11 @@ import (
 // heartbeat interval so a slow-but-alive client isn't killed.
 const streamWriteDeadline = 25 * time.Second
 
+// drainWriteDeadline bounds the single courtesy frame written when the
+// SERVER ends a stream at shutdown. Deliberately far shorter than
+// streamWriteDeadline: see endStreamForDrain.
+const drainWriteDeadline = time.Second
+
 // maxConcurrentStreams caps simultaneous SSE connections across all stream
 // endpoints, so a flood of connections can't exhaust file descriptors /
 // goroutines (CS-013 / F4). Generous by default (legit fan-out is small on
@@ -137,6 +142,14 @@ type StreamOptions struct {
 	// heartbeats. Zero = DefaultHeartbeatInterval. Tests may want a
 	// faster value to keep wall-clock test time short.
 	HeartbeatInterval time.Duration
+
+	// Drain, when wired, is the server-shutdown broadcast the writer
+	// watches alongside r.Context(). Nil (the default) means "no
+	// shutdown signal" and the writer runs until the client leaves —
+	// the behaviour that made one attached stream cost a 30s deploy
+	// stall. See [Drain] for the mechanism and for why this is not
+	// http.Server.BaseContext.
+	Drain *Drain
 }
 
 // Stream wires an http.ResponseWriter into the Hub for the supplied
@@ -251,6 +264,13 @@ func writeStream(w http.ResponseWriter, r *http.Request, ch <-chan Event, opts S
 	}
 
 	ctx := r.Context()
+	// r.Context() alone is only half the teardown story: it cancels when
+	// the CLIENT goes away. draining is the other half — the server
+	// going away — and an SSE connection would otherwise never learn
+	// about it, pinning http.Server.Shutdown for the whole drain budget
+	// (see [Drain]). Nil when no Drain is wired, and a nil channel never
+	// becomes ready, so the select below keeps its pre-drain behaviour.
+	draining := opts.Drain.Done()
 	ticker := time.NewTicker(heartbeat)
 	defer ticker.Stop()
 
@@ -267,6 +287,9 @@ func writeStream(w http.ResponseWriter, r *http.Request, ch <-chan Event, opts S
 	for {
 		select {
 		case <-ctx.Done():
+			return
+		case <-draining:
+			endStreamForDrain(w, flusher, rc)
 			return
 		case ev, ok := <-ch:
 			if !ok {
@@ -288,6 +311,45 @@ func writeStream(w http.ResponseWriter, r *http.Request, ch <-chan Event, opts S
 			flusher.Flush()
 		}
 	}
+}
+
+// endStreamForDrain closes a stream the SERVER is ending, as cleanly as
+// SSE allows one to be ended.
+//
+// SSE has no end-of-stream frame, so "clean" here means the HTTP
+// response body is terminated properly: writeStream returns, the
+// handler returns, and net/http finishes the chunked body. The client
+// then sees a complete response and an EventSource reconnects on its
+// normal schedule. That is the difference this makes — before the
+// drain existed the process exited on top of the open connection and
+// the reverse proxy logged `reading: unexpected EOF` against a
+// truncated response (r1, 2026-09-15 16:26:14).
+//
+// The final frame is an SSE COMMENT rather than a named event on
+// purpose. A comment is spec-legal, ignored by every conforming client,
+// and adds nothing to the endpoints' documented event vocabulary — so
+// the wire contract in openapi/stellar-index.v1.yaml is unchanged and
+// no client needs to learn a new event type to be shut down politely.
+// It earns its place in the proxy/tcpdump record, where it marks a
+// server-initiated close and distinguishes it from a client hang-up.
+//
+// The write gets [drainWriteDeadline] rather than the stream's rolling
+// [streamWriteDeadline]. A courtesy frame must never become the new
+// reason the drain is slow: a stalled or zero-window client whose
+// socket buffer is full would otherwise block this write for the full
+// 25s stream deadline, which is most of the shutdown budget this
+// function exists to protect. Each connection blocks only its own
+// goroutine, so the cost across many stalled streams is the maximum,
+// not the sum.
+//
+// A failed write here is deliberately ignored: the connection is going
+// away either way, and the caller returns next regardless.
+func endStreamForDrain(w http.ResponseWriter, flusher http.Flusher, rc *http.ResponseController) {
+	_ = rc.SetWriteDeadline(time.Now().Add(drainWriteDeadline))
+	if _, err := fmt.Fprint(w, ":draining\n\n"); err != nil {
+		return
+	}
+	flusher.Flush()
 }
 
 // LastEventIDFrom returns the resume cursor from the request:

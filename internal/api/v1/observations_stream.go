@@ -156,7 +156,7 @@ func (s *Server) handleObservationsStream(w http.ResponseWriter, r *http.Request
 		prodCtx, ch, &gen, pair, source, aggregate, interval, first,
 	)
 
-	streaming.StreamFromChannelPreAdmitted(w, r, ch, streaming.StreamOptions{})
+	streaming.StreamFromChannelPreAdmitted(w, r, ch, s.streamOptions())
 }
 
 // computeObservations is the shared core of [Server.handleObservations]

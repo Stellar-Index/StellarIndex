@@ -387,6 +387,13 @@ type Server struct {
 	usageReader          UsageReader
 	usageRollupReader    UsageRollupReader
 	hub                  *streaming.Hub
+	// streamDrain is the server-shutdown broadcast every SSE writer on
+	// this Server watches alongside its request context. Created here
+	// rather than taken from Options because it is not a deployment
+	// choice: every Server that serves a stream needs one. The owner of
+	// the http.Server hands it to RegisterOnShutdown — see
+	// [Server.BeginStreamDrain].
+	streamDrain *streaming.Drain
 	// tipProducers is the shared tip-stream producer registry (RT-1):
 	// one compute loop per distinct (asset, quote, window) publishing
 	// into the hub, refcounted by open /v1/price/tip/stream
@@ -1590,6 +1597,7 @@ func New(opts Options) *Server { //nolint:funlen // pure field-mapping construct
 		usageReader:            opts.UsageReader,
 		usageRollupReader:      opts.UsageRollupReader,
 		hub:                    opts.Hub,
+		streamDrain:            streaming.NewDrain(),
 		confidence:             opts.Confidence,
 		triangulated:           opts.Triangulated,
 		cdnEnabled:             opts.CDNEnabled,
@@ -1751,6 +1759,36 @@ func globalPriceOptsWithDefaults(o aggregate.GlobalPriceOptions) aggregate.Globa
 		o.MaxAggregatorAge = defaults.MaxAggregatorAge
 	}
 	return o
+}
+
+// BeginStreamDrain tells every SSE connection this Server is serving
+// that the process is shutting down, so each one ends promptly instead
+// of holding http.Server.Shutdown open until the drain budget expires.
+//
+// Register it with http.Server.RegisterOnShutdown. That is the whole
+// contract: Shutdown fires the registered hooks the moment it starts,
+// which is precisely when the streams need to hear about it, and
+// nothing else in the process can trip it by accident.
+//
+// Deliberately NOT http.Server.BaseContext. Deriving every request
+// context from the process root context would also end the streams,
+// but it would end every ordinary in-flight request with them the
+// instant SIGTERM landed — an abrupt teardown for the traffic that is
+// not streaming, bought to tidy up the traffic that is. This signal is
+// visible only to the stream writers; every other handler drains
+// exactly as it did before. See [streaming.Drain].
+//
+// Idempotent and safe from any goroutine.
+func (s *Server) BeginStreamDrain() { s.streamDrain.Begin() }
+
+// streamOptions is the [streaming.StreamOptions] every stream handler
+// on this Server passes. Centralised so a new stream endpoint picks up
+// the shutdown drain by construction rather than by remembering to —
+// the failure mode otherwise is silent and only shows up as a 30s
+// deploy stall when that one endpoint happens to have a client
+// attached.
+func (s *Server) streamOptions() streaming.StreamOptions {
+	return streaming.StreamOptions{Drain: s.streamDrain}
 }
 
 // Handler returns the mux wrapped in the standard middleware stack

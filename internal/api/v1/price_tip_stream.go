@@ -262,7 +262,7 @@ func (s *Server) handlePriceTipStream(w http.ResponseWriter, r *http.Request) {
 
 		ch := make(chan streaming.Event, tipStreamProducerQueueDepth)
 		go s.forwardTipStream(r.Context(), ch, sub, firstEv)
-		streaming.StreamFromChannelPreAdmitted(w, r, ch, streaming.StreamOptions{})
+		streaming.StreamFromChannelPreAdmitted(w, r, ch, s.streamOptions())
 		return
 	}
 
@@ -272,7 +272,7 @@ func (s *Server) handlePriceTipStream(w http.ResponseWriter, r *http.Request) {
 
 	go s.runTipStreamProducer(prodCtx, ch, &gen, asset, quote, window, firstEv)
 
-	streaming.StreamFromChannelPreAdmitted(w, r, ch, streaming.StreamOptions{})
+	streaming.StreamFromChannelPreAdmitted(w, r, ch, s.streamOptions())
 }
 
 // forwardTipStream bridges a Hub subscription onto the SSE writer

@@ -34,8 +34,11 @@
 // Environment overrides for secrets apply on top of the file. See
 // internal/config/load.go LoadWithEnv.
 //
-// Graceful shutdown: SIGINT / SIGTERM cancel the root context;
-// the HTTP server drains for up to 30 s before hard-exiting.
+// Graceful shutdown: SIGINT / SIGTERM cancel the root context; the
+// HTTP server drains for up to 30 s before hard-exiting. Open SSE
+// connections are signalled separately (see the RegisterOnShutdown call
+// in run()) because they never go idle and would otherwise hold that
+// drain open for its full budget.
 package main
 
 import (
@@ -783,9 +786,9 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 	// came back and the process exited with workers mid-flight — the
 	// customer-webhook sender could be between "customer accepted the
 	// POST" and "MarkDelivered", which is exactly how a delivery gets
-	// repeated on the next boot. The wait is bounded by the same
-	// shutdown budget as the listener drain, so a wedged worker delays
-	// exit but cannot prevent it.
+	// repeated on the next boot. The wait shares one deadline with the
+	// listener drain — see the wait itself at the end of run() — so a
+	// wedged worker delays exit but cannot prevent it.
 	//
 	// The three warmers started as named functions (prewarmCaches,
 	// selfPrewarmAssetEndpoints, runSubscriberSupervised) deliberately
@@ -1726,6 +1729,31 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 		IdleTimeout:       120 * time.Second,
 	}
 
+	// Tell the SSE writers when the drain starts. httpSrv.Shutdown waits
+	// for every active connection to become IDLE, and an SSE connection
+	// never is — it holds an open response for as long as the client
+	// reads. The stream handlers watch r.Context(), which cancels when
+	// the CLIENT leaves, not when this process does, so without this
+	// hook a single attached stream pinned the drain for the whole 30s
+	// budget below: Shutdown returned "context deadline exceeded", the
+	// process exited on top of the still-open connection (the client saw
+	// a truncated response), and the background-worker wait that shares
+	// the deadline inherited nothing. Measured on r1 2026-09-15, same
+	// binary: 30.18s with one browser on /v1/ledger/stream, 0.21s with
+	// none — 30s of avoidable downtime on every deploy that happened to
+	// have a viewer attached, against a 99.9% availability SLO.
+	//
+	// Shutdown invokes registered hooks the instant it starts, which is
+	// exactly the moment the streams need to hear about it.
+	//
+	// NOT BaseContext. Deriving every request context from rootCtx would
+	// also free the streams, and would cancel every ordinary in-flight
+	// request along with them the moment SIGTERM landed — trading a
+	// stream problem for an abrupt teardown of the overwhelming
+	// majority of traffic that is not a stream. The drain is visible
+	// only to the stream writers.
+	httpSrv.RegisterOnShutdown(apiSrv.BeginStreamDrain)
+
 	// Run the closed-bucket subscriber alongside the HTTP server.
 	// Bound to rootCtx — SIGINT/SIGTERM cancels both the server and
 	// the subscriber together. Run errors don't take the API down
@@ -1924,10 +1952,22 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 	// Now let the background workers finish (#368 LOW). rootCtx is
 	// already cancelled — that is the only reason we reached this line —
 	// so each worker is unwinding; this waits for the unwind instead of
-	// exiting on top of it. Bounded by the same 30s budget as the
-	// listener drain, and deliberately AFTER httpSrv.Shutdown so serving
-	// stops first: a worker that outlives its budget delays the exit, it
-	// does not hold requests open.
+	// exiting on top of it. Deliberately AFTER httpSrv.Shutdown so
+	// serving stops first: a worker that outlives its budget delays the
+	// exit, it does not hold requests open.
+	//
+	// It shares shutdownCtx with the listener drain, so 30s is the
+	// budget for BOTH — what the drain does not spend is what the
+	// workers get, not a second 30s. That is intentional: this budget is
+	// the deploy's downtime, and two independent budgets would let one
+	// restart cost 60s. It does mean a listener that spends the lot
+	// leaves the workers nothing, which is what happened on r1 on
+	// 2026-09-15: one attached SSE stream held Shutdown for the full
+	// 30s and this wait then reported "did not drain" 51µs later, having
+	// never actually waited. The registered stream drain above is what
+	// keeps the listener's share small; the workers themselves were
+	// never the problem — every one of them returns on rootCtx
+	// cancellation and its in-flight work is context-bounded.
 	workersDone := make(chan struct{})
 	go func() {
 		// Guarded like every other detached goroutine here. The only way
