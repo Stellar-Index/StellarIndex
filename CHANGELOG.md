@@ -62,6 +62,36 @@ against.
   primary-key range reads over the account's own edges, so neither the
   query nor the payload grows with the 21M-row creation graph behind it.
 
+### Fixed
+
+- **api:** `/v1/rwa/assets`, `/v1/rwa/history` and `/v1/rwa/premium` no
+  longer rebuild the RWA membership set on the request path. The set is
+  an indexed scan over every issuer-bound SEP-1 payload (1.18M currency
+  entries) plus the curated-directory walk — measured at ~11.5 s — and
+  it sat behind a ten-minute cache that was refilled INLINE by whichever
+  request happened to find it expired. Route latency on the production
+  node was perfectly bimodal as a result: over a 14-minute sampling run,
+  49 of 56 requests came back under 1 s and exactly one took 13.2 s. At
+  no more than one page load per cache window, that is roughly one
+  visitor in ten meeting a thirteen-second page.
+
+  A stale set is now served as it stands while the rebuild runs detached
+  behind it, on its own context and its own budget — the same shape the
+  SEP-1 logo map uses, for the same reason. The inputs move on daily
+  cadences, so a set a few minutes past its TTL is the same set; waiting
+  for the rescan was the whole of the cost. Rebuild ATTEMPTS are gapped
+  so a failing scan cannot become a scan storm, and a failed rebuild
+  leaves the last good set exactly as it was rather than blanking the
+  surface.
+
+  The one case that still waits is a cache that has never been filled,
+  where an empty set would not be a stale answer but the false statement
+  that no real-world asset exists on Stellar. A background prewarm on a
+  five-minute cadence now covers that, so the waiter for the first build
+  after a deploy is that goroutine and not a visitor; it warms the two
+  history series behind the page's other panels on the same pass, behind
+  the same reader guards their handlers apply.
+
 ## [v0.80.0] — 2026-09-13
 
 ### Fixed
