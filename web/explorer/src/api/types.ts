@@ -7094,6 +7094,40 @@ export interface components {
              *     them is how a closed set stops being closed.
              */
             anchor_classes: string[];
+            /**
+             * @description The vocabulary a CURATED CONTRACT BINDING may use, which is
+             *     `anchor_classes` plus the terms SEP-1 has no word for. Both
+             *     lists are served because they are not the same list and the
+             *     difference is not an oversight.
+             *
+             *     The classic arm READS an issuer's free-text
+             *     `anchor_asset_type`, so it can only accept terms SEP-1
+             *     defines — anything else is an invented spelling, and the
+             *     served population already carries dozens (`equity`, `etf`,
+             *     `metal`, `rwa`, `sovereign`). The contract arm reads no
+             *     declaration: a binding's class is this index's own statement,
+             *     made in code from a primary source and reviewed as a change,
+             *     so it may use a term SEP-1 lacks. An issuer cannot declare
+             *     its way into one of these; only a reviewed binding can.
+             *
+             *     `fund` — a share in a pooled investment vehicle, whose
+             *     exposure is the vehicle's stated objective rather than any
+             *     one asset type it happens to hold. It exists because forcing
+             *     an asset-type label onto a fund share can be false in both
+             *     directions at once: a tokenized overnight swap fund on this
+             *     surface holds 152 listed equities at 119% of net assets and
+             *     swaps every penny of that return away for the overnight index
+             *     rate, so `bond` is false on the assets and on the exposure
+             *     while `stock` is true of the holdings and the exact opposite
+             *     of the instrument.
+             *
+             *     A wider vocabulary widens what a binding may SAY, never what
+             *     is ADMITTED: the identity, independent-naming and scam
+             *     requirements are untouched, and a contract's class is not
+             *     read until its address has already been named by two
+             *     independent parties or by the curated directory.
+             */
+            contract_anchor_classes?: string[];
             /** @description Curated-directory tags that count as an independent party recognising the ACCOUNT as an issuing entity. */
             recognition_tags: string[];
             /**
@@ -16757,6 +16791,13 @@ export interface operations {
                      *           "anchor_classes": [
                      *             "bond",
                      *             "commodity",
+                     *             "realestate",
+                     *             "stock"
+                     *           ],
+                     *           "contract_anchor_classes": [
+                     *             "bond",
+                     *             "commodity",
+                     *             "fund",
                      *             "realestate",
                      *             "stock"
                      *           ],
