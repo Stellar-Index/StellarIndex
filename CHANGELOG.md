@@ -104,6 +104,34 @@ against.
   and the only one available when the creator population is 955,023. The
   shells are noindex for the same reason theirs are.
 
+### Changed
+
+- **api, explorer:** an anonymous explorer visitor no longer makes a
+  credentialed request on every page load. The sign-in flows now write a
+  second cookie, `stellarindex_session_present`, beside the session
+  cookie — same `Domain`, `Path`, `Secure`, `SameSite` and expiry, but
+  readable from JavaScript, and carrying nothing but the constant `1`.
+  `POST /v1/auth/logout` clears both in the same response.
+
+  The session cookie itself is unchanged and stays `HttpOnly`: the hint
+  authorizes nothing, no server-side code reads it, and every
+  authenticated route still resolves the session token against the
+  sessions table. Forging it buys a caller one 401.
+
+  The explorer's `useMe()` probe is gated on the hint, so a signed-out
+  visitor now issues zero requests to `GET /v1/account/me` instead of one
+  per page load plus a refetch every five minutes — each of which was a
+  401 the browser logged to the console from its own network layer, where
+  no client-side handler could reach it.
+
+  A hint can outlive its session (server-side expiry, revocation, one
+  cookie cleared without the other). That degrades to exactly the previous
+  behaviour: the probe runs, 401s, resolves to signed-out, and the stale
+  hint is dropped so the next page load is quiet too. An absent hint reads
+  as signed-out, which is also what an API that does not set it yet
+  produces — so the explorer is safe against an API without this change,
+  and the API is safe against a client that ignores the cookie.
+
 ## [v0.80.0] — 2026-09-13
 
 ### Fixed
