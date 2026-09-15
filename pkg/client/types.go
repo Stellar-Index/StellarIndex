@@ -345,6 +345,13 @@ type AssetDetail struct {
 	// itself still serves. Omitted (false) when a cap is present.
 	MarketCapLowLiquidity bool `json:"market_cap_low_liquidity,omitempty"`
 
+	// ListingReference and ListingValuation carry an independent listing
+	// platform's price for this exact address, and the supply valued at
+	// it. Present only where this index declines to publish a market cap;
+	// never a substitute for one. See [AssetListingValuation].
+	ListingReference *AssetListingReference `json:"listing_reference,omitempty"`
+	ListingValuation *AssetListingValuation `json:"listing_valuation,omitempty"`
+
 	// SupplyBasis identifies which ADR-0011 policy produced the
 	// supply numbers (e.g. "issuer_exclusion", "admin_exclusion",
 	// "override"); null when no snapshot exists.
@@ -1275,6 +1282,60 @@ type GlobalAssetView struct {
 	// wire parity with AssetDetail; the fiat market cap (M2 × deep FX rate)
 	// is never dust-gated, so this stays false on catalogue rows today.
 	MarketCapLowLiquidity bool `json:"market_cap_low_liquidity,omitempty"`
+}
+
+// AssetListingReference is an independent listing platform's own USD
+// price for the EXACT Stellar address this asset lives at. It is NOT
+// this index's price for the asset and is derived from no Stellar
+// market: PriceUSD sits beside it unchanged when there is one.
+//
+// Present only on a verified-catalogue asset whose market cap this index
+// declines to publish, and only when the cached listing directory names
+// either the classic `CODE-GISSUER` id or the Stellar Asset Contract
+// address derived from that (code, issuer) and the network passphrase.
+// No code is ever matched — PYUSD, USDT, USDC and XLM are each worn by
+// impersonators on this network.
+type AssetListingReference struct {
+	PriceUSD  string `json:"price_usd"`
+	Source    string `json:"source"`
+	ListingID string `json:"listing_id"`
+	Quote     string `json:"quote"`
+	// Address is the exact Stellar address the platform named — the whole
+	// of the binding, published so a reader can check the join.
+	Address string `json:"address"`
+	// AddressForm is "classic" or "sac". A "sac" match is a DERIVED
+	// address and exact rather than probable: SAC derivation is a pure
+	// function of the asset and the network passphrase.
+	AddressForm string `json:"address_form"`
+	// AsOf is the PLATFORM's publication time, not when this index read
+	// it — which is why a sync that succeeded minutes ago cannot launder
+	// a price that froze weeks ago.
+	AsOf       string `json:"as_of"`
+	Stale      bool   `json:"stale,omitempty"`
+	Provenance string `json:"provenance"`
+}
+
+// AssetListingValuation is the asset's circulating supply valued at the
+// listing platform's price — and NOT a market capitalisation. MarketCap
+// is a price somebody was observed paying past the substance,
+// dust-liquidity and scam gates; this is supply times a figure a third
+// party published about venues this index does not observe. Never sum
+// the two without saying the total mixes two bases.
+type AssetListingValuation struct {
+	// Status is the single authority on why there is or is not a figure.
+	// "listing_unavailable" means nobody looked; "not_listed" means the
+	// directory was read and does not name it — the ordinary state of
+	// almost every asset here, and not an accusation.
+	Status   string  `json:"status"`
+	ValueUSD *string `json:"value_usd,omitempty"`
+	// CirculatingSupply is the multiplicand, in the asset's smallest
+	// unit. Published here rather than inferred from the row's own field
+	// because the two can legitimately differ.
+	CirculatingSupply *string `json:"circulating_supply,omitempty"`
+	// SupplyBasis is "lake_flows" or "served". The difference is
+	// material: USDT0's trustline-visible supply is 6,469 tokens against
+	// 2,581,052 by mint minus burn.
+	SupplyBasis string `json:"supply_basis,omitempty"`
 }
 
 // VerifiedCurrencyListItem is one row in the response to
