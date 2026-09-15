@@ -118,6 +118,62 @@ expect 'SLA_PROOF_MAX_AGE_DAYS=400 admits the 240-day-old proof → rc 0' 0 'OK 
 
 unset K6_TARGET STELLARINDEX_LOAD_API_KEY
 
+# ── The second source: the probe aggregate ──────────────────────────────
+# Leg 2 reads a committed sla-proof-<YYYY-MM-DD>.md and does not care which
+# producer wrote it, so it needed no change and got none. Leg 1 did: it
+# asked only "are the k6 secrets set", which would have reported a feed
+# producing evidence from the probe every Sunday as RED forever, for the
+# absence of a load target it no longer needs. These cases pin the source
+# selector, and above all pin that naming one source never smuggles in the
+# other's readiness.
+run_src() { # run_src <source> <fixture-dir>
+  OUT="$(SLA_EVIDENCE_SOURCE="$1" SLA_EVIDENCE_DIR="$2" \
+    SLA_EVIDENCE_NOW="$NOW_EPOCH" bash "$CHECK" 2>&1)"
+  RC=$?
+}
+
+unset SLA_PROBE_PROM_URL
+run_src probe "$TMP/fresh"
+expect 'source=probe with no SLA_PROBE_PROM_URL → rc 1' 1 'NO PROBE SOURCE'
+
+export SLA_PROBE_PROM_URL='http://127.0.0.1:9090'
+run_src probe "$TMP/fresh"
+expect 'source=probe + a fresh proof → rc 0, no k6 secret required' 0 \
+  'OK — probe aggregate configured'
+run_src probe "$TMP/empty"
+expect 'source=probe + no proof → rc 2, not rc 1' 2 'the probe aggregate can be read'
+
+# The load-bearing separation: a configured probe source must NOT satisfy
+# a caller that asked for k6, or k6-weekly would run k6 with no target.
+run_src k6 "$TMP/fresh"
+expect 'source=k6 is not satisfied by the probe source → rc 1' 1 'NO TARGET'
+
+# ...and the reverse. A k6 target must not satisfy a caller that asked for
+# the probe: the proof would be rendered from series nothing can read.
+unset SLA_PROBE_PROM_URL
+export K6_TARGET='https://api.staging.example.invalid/v1'
+export STELLARINDEX_LOAD_API_KEY='not-a-real-key'
+run_src probe "$TMP/fresh"
+expect 'source=probe is not satisfied by the k6 secrets → rc 1' 1 'NO PROBE SOURCE'
+
+# `any` is the "is this feed alive at all" question and takes either.
+unset K6_TARGET STELLARINDEX_LOAD_API_KEY
+export SLA_PROBE_PROM_URL='http://127.0.0.1:9090'
+run_src any "$TMP/fresh"
+expect 'source=any is satisfied by the probe source alone → rc 0' 0 \
+  'OK — probe aggregate configured'
+unset SLA_PROBE_PROM_URL
+run_src any "$TMP/fresh"
+expect 'source=any with neither source → rc 1, the shipped no-op state' 1 'NO TARGET'
+
+# An unknown source is a caller bug, not a verdict. Never rc 0.
+OUT="$(SLA_EVIDENCE_SOURCE=grafana SLA_EVIDENCE_DIR="$TMP/fresh" \
+  SLA_EVIDENCE_NOW="$NOW_EPOCH" bash "$CHECK" 2>&1)"; RC=$?
+expect 'an unknown SLA_EVIDENCE_SOURCE is refused, never silently green' 1 \
+  'is not'
+
+unset SLA_PROBE_PROM_URL K6_TARGET STELLARINDEX_LOAD_API_KEY
+
 
 # ── Wiring: the verdict is worthless if the workflow ignores it ─────────
 # The defect lived in the YAML, not only in the decision logic, so pin the
