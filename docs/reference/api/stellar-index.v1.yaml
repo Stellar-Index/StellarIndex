@@ -14923,6 +14923,42 @@ components:
           description: |
             Raw chain fact in the smallest integer unit. Served even when
             the valuation is withheld — a supply is not a price claim.
+        supply_basis:
+          type: string
+          enum: [xlm_sdf_reserve_exclusion, xlm_total_only, issuer_exclusion, admin_exclusion, override, sep1_declared_max, sep41_lake_flows, classic_lake_flows, classic_trustline_sum, contract_storage_balances]
+          description: |
+            Which reading produced `circulating_supply`, in the same
+            ADR-0011 vocabulary `Asset.supply_basis` uses. Absent when no
+            arm answered, and absent on the rows whose supply another
+            branch attached without one — an arm that did not answer is
+            never named.
+
+            It is load-bearing on THIS surface in a way it is not on a
+            plain listing. Every `reference_valuation` here is
+            `circulating_supply` multiplied by an oracle price, so the
+            completeness of the supply is half of every total this page
+            publishes; a consumer reconciling against an issuer's own
+            figure needs to know whether it is comparing two four-domain
+            totals or a total against a floor.
+        circulating_supply_lower_bound:
+          type: boolean
+          description: |
+            True when `circulating_supply` is a provable FLOOR rather than
+            a complete reading — the per-row sibling of the `lower_bound`
+            this surface's totals already carry. Absent (not `false`) when
+            the figure is not a floor or when there is no figure.
+
+            Derived from `supply_basis` rather than reported beside it, so
+            the two can never disagree. Two bases are floors, blind in
+            different ways. `classic_trustline_sum` misses holding
+            DOMAINS: it is trustline balances only, so claimable balances,
+            liquidity-pool reserves and SAC-held balances are absent by
+            construction — measured across the served set on 2026-09-15
+            that was 89.5% of EURMTL, 73.3% of PYUSD, 64.5% of SHX and
+            15.4% of USDC. `contract_storage_balances` misses TIME:
+            Soroban state expiry archives contract-data entries, and an
+            archived balance is real, restorable, and not a ledger entry
+            right now.
         decimals:
           type: integer
           description: |

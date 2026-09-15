@@ -157,6 +157,36 @@ const (
 // labels. Equivalent to a direct cast; provided for fluency.
 func (b Basis) String() string { return string(b) }
 
+// LowerBound reports whether a figure carrying this basis is a provable
+// FLOOR rather than a complete reading of what exists.
+//
+// Two bases are floors, and they are blind in different ways.
+// [BasisClassicTrustlineSum] misses holding DOMAINS: the lake's
+// current-state projection stamps its asset column for trustlines alone,
+// so claimable balances, liquidity-pool reserves and SAC-held contract
+// balances are absent by construction. Measured across the served set on
+// 2026-09-15 that was 89.5% of EURMTL, 73.3% of PYUSD, 64.5% of SHX and
+// 15.4% of USDC. [BasisContractStorageBalances] misses TIME: Soroban
+// state expiry archives contract-data entries, and an archived balance is
+// real, restorable, and not a ledger entry right now.
+//
+// Every other basis in this vocabulary either covers all four holding
+// domains at once (the flow sums, which do not know where a token came to
+// rest) or is an observer's own certified reading, and marking those as
+// floors would carry exactly as much information as marking none of them.
+//
+// The wire flag is DERIVED from the basis rather than stored beside it,
+// so a row can never publish a basis that says one thing and a marker
+// that says another.
+func (b Basis) LowerBound() bool {
+	switch b {
+	case BasisClassicTrustlineSum, BasisContractStorageBalances:
+		return true
+	default:
+		return false
+	}
+}
+
 // Supply is the wire-shape result of a supply derivation. Every
 // per-algorithm computer in this package returns one of these.
 //

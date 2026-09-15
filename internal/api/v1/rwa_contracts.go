@@ -8,6 +8,7 @@ import (
 
 	"github.com/Stellar-Index/StellarIndex/internal/rwa"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
+	"github.com/Stellar-Index/StellarIndex/internal/supply"
 )
 
 // The contract arm of GET /v1/rwa/assets — membership, valuation and the
@@ -586,6 +587,13 @@ func (s *Server) fillContractMarketCaps(
 			continue
 		}
 		circ := sup.Total.String()
+		// The reading and its name travel together. This arm is the lake's
+		// event-flow sum over the contract's own mint/burn/clawback log —
+		// the same figure and the same reader GET /v1/assets/{id}/supply
+		// uses — and a figure served with no basis is indistinguishable on
+		// the wire from a trustline floor.
+		basis := supply.BasisSEP41LakeFlows.String()
+		row.SupplyBasis = &basis
 		// The supply is a raw chain fact and is served either way. The
 		// CAP is not: it divides by 10^decimals, and an unread scale
 		// means that exponent is a convention rather than a reading.
@@ -692,6 +700,7 @@ func rwaContractAssetRows(members []rwaContractMember, rows map[string]AssetDeta
 			DecimalsUnresolved: d.DecimalsUnresolved,
 			Volume24hUSD:       d.VolumeUSD24h,
 		}
+		a.SupplyBasis, a.CirculatingSupplyLowerBound = rwaSupplyProvenance(d)
 		if len(a.IssuerDirectoryTags) == 0 {
 			a.IssuerDirectoryTags = m.dirTags
 		}

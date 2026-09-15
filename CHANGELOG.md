@@ -15,6 +15,37 @@ against.
 
 ## [Unreleased]
 
+### Added
+
+- **rwa:** `/v1/rwa/assets` rows now publish `supply_basis` and
+  `circulating_supply_lower_bound`, so a reader can tell a complete
+  supply from a floor.
+
+  The listing path already named the arm that answered; the RWA
+  projection dropped the name on the way to the wire, and the contract
+  arm attached a figure with no name at all. A row therefore served
+  `circulating_supply` and nothing else — verified against production,
+  where a BENJI row came back with exactly two supply-adjacent keys,
+  `basis` (the MEMBERSHIP basis) and `circulating_supply`.
+
+  It matters more here than on a plain listing: every
+  `reference_valuation` on this surface is `circulating_supply`
+  multiplied by an oracle price, so the completeness of the supply is
+  half of every total the page publishes. The degraded arm is reachable
+  rather than hypothetical — with the lake-flows cache cold the listing
+  serves the trustline sum, which is blind by construction to claimable
+  balances, liquidity-pool reserves and SAC-held supply. Measured across
+  the served set, what that arm cannot see was 89.5% of EURMTL, 73.3% of
+  PYUSD, 64.5% of SHX and 15.4% of USDC.
+
+  The floor marker is DERIVED from the basis rather than recorded beside
+  it, so a row can never publish a basis that says one thing and a marker
+  that says another. Two bases are floors and they are blind in different
+  ways: `classic_trustline_sum` misses holding DOMAINS, while
+  `contract_storage_balances` misses TIME — Soroban state expiry archives
+  contract-data entries, and an archived balance is real, restorable, and
+  not a ledger entry right now.
+
 ### Changed
 
 - **assets:** the authoritative circulating-supply arm now reads the

@@ -11,6 +11,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/pricingguard"
 	"github.com/Stellar-Index/StellarIndex/internal/rwa"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
+	"github.com/Stellar-Index/StellarIndex/internal/supply"
 	"github.com/Stellar-Index/StellarIndex/internal/worker"
 )
 
@@ -837,6 +838,23 @@ type RWAAsset struct {
 	// CirculatingSupply is a raw chain fact and is served even when the
 	// valuation is withheld, in the smallest integer unit.
 	CirculatingSupply *string `json:"circulating_supply,omitempty"`
+	// SupplyBasis names the reading that produced CirculatingSupply —
+	// the ADR-0011 vocabulary, carried verbatim from the listing row.
+	// Absent when no arm answered and no supply is served.
+	//
+	// It is load-bearing on THIS surface in a way it is not on a plain
+	// listing. Every reference_valuation here is circulating_supply
+	// multiplied by an oracle price, so the completeness of the supply
+	// is half of every total the page publishes; a consumer reconciling
+	// against an issuer's own figure needs to know whether it is
+	// comparing two four-domain totals or a total against a floor.
+	SupplyBasis string `json:"supply_basis,omitempty"`
+	// CirculatingSupplyLowerBound is true when CirculatingSupply is a
+	// provable floor rather than a complete reading — the per-row
+	// sibling of the lower_bound this surface's totals already carry.
+	// DERIVED from SupplyBasis ([supply.Basis.LowerBound]) rather than
+	// carried alongside it, so the two can never disagree.
+	CirculatingSupplyLowerBound bool `json:"circulating_supply_lower_bound,omitempty"`
 	// Decimals is the on-chain smallest-unit scale: 7 for every classic
 	// asset, and whatever a SEP-41 contract declares for a
 	// contract-issued one. Served so both valuations on this row can be
@@ -1758,6 +1776,7 @@ func (s *Server) rwaAssetRows(m rwaMembership, rows map[string]AssetDetail) ([]R
 			Decimals:     d.Decimals,
 			Volume24hUSD: d.VolumeUSD24h,
 		}
+		a.SupplyBasis, a.CirculatingSupplyLowerBound = rwaSupplyProvenance(d)
 		if len(a.IssuerDirectoryTags) == 0 {
 			a.IssuerDirectoryTags = mem.dirTags
 		}
@@ -1770,6 +1789,26 @@ func (s *Server) rwaAssetRows(m rwaMembership, rows map[string]AssetDetail) ([]R
 		out = append(out, a)
 	}
 	return out, notObserved
+}
+
+// rwaSupplyProvenance carries the listing row's supply basis onto the RWA
+// row, together with whether a figure on that basis is a floor.
+//
+// Both are read off the SAME field, which is the point: the flag is
+// [supply.Basis.LowerBound] applied to the basis actually stamped, not a
+// second fact recorded beside it that a later arm could forget to set.
+//
+// A row with a supply but no basis returns nothing rather than guessing
+// one. That state is reachable — a supply another branch attached
+// deliberately (the dust-suppressed and ticker-collision paths both do)
+// travels without one — and naming an arm that did not answer would be a
+// worse failure than naming none.
+func rwaSupplyProvenance(d AssetDetail) (string, bool) {
+	if d.CirculatingSupply == nil || d.SupplyBasis == nil {
+		return "", false
+	}
+	b := supply.Basis(*d.SupplyBasis)
+	return b.String(), b.LowerBound()
 }
 
 // rwaSortAssets applies the served ordering: published market cap
