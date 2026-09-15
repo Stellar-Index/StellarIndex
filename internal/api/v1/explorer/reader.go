@@ -295,12 +295,15 @@ type ExplorerReader interface {
 	// ledger span the cycle that built it actually aggregated (#351).
 	// ok=false while the rollup hasn't completed a cycle, or when it
 	// carries a board with no span to qualify it.
-	AccountCreators(ctx context.Context, limit int) (clickhouse.AccountCreators, bool, error)
+	// `account`, when non-empty, narrows the board to that one row,
+	// keyed, so a caller can read a rank the top-N page does not reach.
+	AccountCreators(ctx context.Context, limit int, account string) (clickhouse.AccountCreators, bool, error)
 	// AccountSponsors is the sponsor league table plus the ledger span
 	// the cycle that built it aggregated (#351). History only — it never
 	// carries a live sponsored set. ok=false while the rollup hasn't
 	// completed a cycle, or when it carries a board with no span.
-	AccountSponsors(ctx context.Context, limit int) (clickhouse.AccountSponsors, bool, error)
+	// `account` narrows it the same way AccountCreators does.
+	AccountSponsors(ctx context.Context, limit int, account string) (clickhouse.AccountSponsors, bool, error)
 	// AccountGraph is one account's neighbourhood in the sponsorship and
 	// account-creation graph: the inbound edges (bounded — who created
 	// or sponsored this account), both outbound summaries, and, when

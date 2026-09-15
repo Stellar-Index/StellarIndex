@@ -37894,6 +37894,15 @@
                       },
                       "key": "limit",
                       "value": "50"
+                    },
+                    {
+                      "disabled": false,
+                      "description": {
+                        "content": "Return only this account's row, with its `rank` intact.\n\nThe board is otherwise a top-N page while `rank` is a\nproperty of the WHOLE aggregation, so an address past\n`limit` has an UNKNOWN rank rather than a low one — and is\nindistinguishable from an address that never appears at\nall. Those are different answers. This is the keyed arm that\nseparates them, and it exists so a client wanting one row\ndoes not pull 500 and hope.\n\n`limit` does not apply: one account has at most one row.\n`totals` and `coverage` are unaffected and remain\nwhole-aggregation figures, never the filtered row's.\n\nA well-formed G-strkey holding no row serves an EMPTY array\nwith 200 — \"this account never did this\" is an answer, not a\n404. A malformed address is a 400 rather than an empty\nboard, because echoing a corrupted value back as \"did\nnothing\" is a claim about whatever the caller meant.\n",
+                        "type": "text/plain"
+                      },
+                      "key": "account",
+                      "value": "G2XRVL7CK6DUI7TCAJGK22OVQL4XUTZNZCRIEBH3L6YNP57422QMSZZG"
                     }
                   ],
                   "variable": []
@@ -37929,6 +37938,15 @@
                           },
                           "key": "limit",
                           "value": "50"
+                        },
+                        {
+                          "disabled": false,
+                          "description": {
+                            "content": "Return only this account's row, with its `rank` intact.\n\nThe board is otherwise a top-N page while `rank` is a\nproperty of the WHOLE aggregation, so an address past\n`limit` has an UNKNOWN rank rather than a low one — and is\nindistinguishable from an address that never appears at\nall. Those are different answers. This is the keyed arm that\nseparates them, and it exists so a client wanting one row\ndoes not pull 500 and hope.\n\n`limit` does not apply: one account has at most one row.\n`totals` and `coverage` are unaffected and remain\nwhole-aggregation figures, never the filtered row's.\n\nA well-formed G-strkey holding no row serves an EMPTY array\nwith 200 — \"this account never did this\" is an answer, not a\n404. A malformed address is a 400 rather than an empty\nboard, because echoing a corrupted value back as \"did\nnothing\" is a claim about whatever the caller meant.\n",
+                            "type": "text/plain"
+                          },
+                          "key": "account",
+                          "value": "G2XRVL7CK6DUI7TCAJGK22OVQL4XUTZNZCRIEBH3L6YNP57422QMSZZG"
                         }
                       ],
                       "variable": []
@@ -37974,6 +37992,15 @@
                           },
                           "key": "limit",
                           "value": "50"
+                        },
+                        {
+                          "disabled": false,
+                          "description": {
+                            "content": "Return only this account's row, with its `rank` intact.\n\nThe board is otherwise a top-N page while `rank` is a\nproperty of the WHOLE aggregation, so an address past\n`limit` has an UNKNOWN rank rather than a low one — and is\nindistinguishable from an address that never appears at\nall. Those are different answers. This is the keyed arm that\nseparates them, and it exists so a client wanting one row\ndoes not pull 500 and hope.\n\n`limit` does not apply: one account has at most one row.\n`totals` and `coverage` are unaffected and remain\nwhole-aggregation figures, never the filtered row's.\n\nA well-formed G-strkey holding no row serves an EMPTY array\nwith 200 — \"this account never did this\" is an answer, not a\n404. A malformed address is a 400 rather than an empty\nboard, because echoing a corrupted value back as \"did\nnothing\" is a claim about whatever the caller meant.\n",
+                            "type": "text/plain"
+                          },
+                          "key": "account",
+                          "value": "G2XRVL7CK6DUI7TCAJGK22OVQL4XUTZNZCRIEBH3L6YNP57422QMSZZG"
                         }
                       ],
                       "variable": []
@@ -38019,6 +38046,15 @@
                           },
                           "key": "limit",
                           "value": "50"
+                        },
+                        {
+                          "disabled": false,
+                          "description": {
+                            "content": "Return only this account's row, with its `rank` intact.\n\nThe board is otherwise a top-N page while `rank` is a\nproperty of the WHOLE aggregation, so an address past\n`limit` has an UNKNOWN rank rather than a low one — and is\nindistinguishable from an address that never appears at\nall. Those are different answers. This is the keyed arm that\nseparates them, and it exists so a client wanting one row\ndoes not pull 500 and hope.\n\n`limit` does not apply: one account has at most one row.\n`totals` and `coverage` are unaffected and remain\nwhole-aggregation figures, never the filtered row's.\n\nA well-formed G-strkey holding no row serves an EMPTY array\nwith 200 — \"this account never did this\" is an answer, not a\n404. A malformed address is a 400 rather than an empty\nboard, because echoing a corrupted value back as \"did\nnothing\" is a claim about whatever the caller meant.\n",
+                            "type": "text/plain"
+                          },
+                          "key": "account",
+                          "value": "G2XRVL7CK6DUI7TCAJGK22OVQL4XUTZNZCRIEBH3L6YNP57422QMSZZG"
                         }
                       ],
                       "variable": []
@@ -38081,6 +38117,15 @@
                       },
                       "key": "limit",
                       "value": "50"
+                    },
+                    {
+                      "disabled": false,
+                      "description": {
+                        "content": "Return only this account's row, with its `rank` intact.\n\nThe board is otherwise a top-N page while `rank` is a\nproperty of the WHOLE aggregation, so an address past\n`limit` has an UNKNOWN rank rather than a low one — and is\nindistinguishable from an address that never appears at\nall. Those are different answers. This is the keyed arm that\nseparates them, and it exists so a client wanting one row\ndoes not pull 500 and hope.\n\n`limit` does not apply: one account has at most one row.\n`totals` and `coverage` are unaffected and remain\nwhole-aggregation figures, never the filtered row's.\n\nA well-formed G-strkey holding no row serves an EMPTY array\nwith 200 — \"this account never did this\" is an answer, not a\n404. A malformed address is a 400 rather than an empty\nboard, because echoing a corrupted value back as \"did\nnothing\" is a claim about whatever the caller meant.\n",
+                        "type": "text/plain"
+                      },
+                      "key": "account",
+                      "value": "G2XRVL7CK6DUI7TCAJGK22OVQL4XUTZNZCRIEBH3L6YNP57422QMSZZG"
                     }
                   ],
                   "variable": []
@@ -38116,6 +38161,15 @@
                           },
                           "key": "limit",
                           "value": "50"
+                        },
+                        {
+                          "disabled": false,
+                          "description": {
+                            "content": "Return only this account's row, with its `rank` intact.\n\nThe board is otherwise a top-N page while `rank` is a\nproperty of the WHOLE aggregation, so an address past\n`limit` has an UNKNOWN rank rather than a low one — and is\nindistinguishable from an address that never appears at\nall. Those are different answers. This is the keyed arm that\nseparates them, and it exists so a client wanting one row\ndoes not pull 500 and hope.\n\n`limit` does not apply: one account has at most one row.\n`totals` and `coverage` are unaffected and remain\nwhole-aggregation figures, never the filtered row's.\n\nA well-formed G-strkey holding no row serves an EMPTY array\nwith 200 — \"this account never did this\" is an answer, not a\n404. A malformed address is a 400 rather than an empty\nboard, because echoing a corrupted value back as \"did\nnothing\" is a claim about whatever the caller meant.\n",
+                            "type": "text/plain"
+                          },
+                          "key": "account",
+                          "value": "G2XRVL7CK6DUI7TCAJGK22OVQL4XUTZNZCRIEBH3L6YNP57422QMSZZG"
                         }
                       ],
                       "variable": []
@@ -38161,6 +38215,15 @@
                           },
                           "key": "limit",
                           "value": "50"
+                        },
+                        {
+                          "disabled": false,
+                          "description": {
+                            "content": "Return only this account's row, with its `rank` intact.\n\nThe board is otherwise a top-N page while `rank` is a\nproperty of the WHOLE aggregation, so an address past\n`limit` has an UNKNOWN rank rather than a low one — and is\nindistinguishable from an address that never appears at\nall. Those are different answers. This is the keyed arm that\nseparates them, and it exists so a client wanting one row\ndoes not pull 500 and hope.\n\n`limit` does not apply: one account has at most one row.\n`totals` and `coverage` are unaffected and remain\nwhole-aggregation figures, never the filtered row's.\n\nA well-formed G-strkey holding no row serves an EMPTY array\nwith 200 — \"this account never did this\" is an answer, not a\n404. A malformed address is a 400 rather than an empty\nboard, because echoing a corrupted value back as \"did\nnothing\" is a claim about whatever the caller meant.\n",
+                            "type": "text/plain"
+                          },
+                          "key": "account",
+                          "value": "G2XRVL7CK6DUI7TCAJGK22OVQL4XUTZNZCRIEBH3L6YNP57422QMSZZG"
                         }
                       ],
                       "variable": []
@@ -38206,6 +38269,15 @@
                           },
                           "key": "limit",
                           "value": "50"
+                        },
+                        {
+                          "disabled": false,
+                          "description": {
+                            "content": "Return only this account's row, with its `rank` intact.\n\nThe board is otherwise a top-N page while `rank` is a\nproperty of the WHOLE aggregation, so an address past\n`limit` has an UNKNOWN rank rather than a low one — and is\nindistinguishable from an address that never appears at\nall. Those are different answers. This is the keyed arm that\nseparates them, and it exists so a client wanting one row\ndoes not pull 500 and hope.\n\n`limit` does not apply: one account has at most one row.\n`totals` and `coverage` are unaffected and remain\nwhole-aggregation figures, never the filtered row's.\n\nA well-formed G-strkey holding no row serves an EMPTY array\nwith 200 — \"this account never did this\" is an answer, not a\n404. A malformed address is a 400 rather than an empty\nboard, because echoing a corrupted value back as \"did\nnothing\" is a claim about whatever the caller meant.\n",
+                            "type": "text/plain"
+                          },
+                          "key": "account",
+                          "value": "G2XRVL7CK6DUI7TCAJGK22OVQL4XUTZNZCRIEBH3L6YNP57422QMSZZG"
                         }
                       ],
                       "variable": []

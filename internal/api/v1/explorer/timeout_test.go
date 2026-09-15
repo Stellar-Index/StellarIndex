@@ -61,11 +61,11 @@ func (r *capReader) AccountsStats(context.Context) (clickhouse.AccountsStats, bo
 	return clickhouse.AccountsStats{}, false, nil
 }
 
-func (r *capReader) AccountCreators(context.Context, int) (clickhouse.AccountCreators, bool, error) {
+func (r *capReader) AccountCreators(context.Context, int, string) (clickhouse.AccountCreators, bool, error) {
 	return clickhouse.AccountCreators{}, false, nil
 }
 
-func (r *capReader) AccountSponsors(context.Context, int) (clickhouse.AccountSponsors, bool, error) {
+func (r *capReader) AccountSponsors(context.Context, int, string) (clickhouse.AccountSponsors, bool, error) {
 	return clickhouse.AccountSponsors{}, false, nil
 }
 

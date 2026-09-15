@@ -19,6 +19,30 @@ against.
 
 ### Added
 
+- **accounts:** `/v1/accounts/creators` and `/v1/accounts/sponsors` take
+  an `?account=` filter that returns one address's row with its rank
+  intact.
+
+  Rank is a property of the whole aggregation — 955,023 creators,
+  2,427 sponsors — while the board is a top-N page capped at 500. A
+  caller asking "where does this address stand" previously had to pull
+  the cap and hope the address was inside it, and an address past the
+  cap was indistinguishable from one that never appears at all. Those
+  are different answers and a reader must not be made to guess between
+  them.
+
+  The filtered read is keyed, not scanned: both rollups hold exactly
+  one row per account and carry a precomputed rank, so the answer is a
+  primary-key lookup. `limit` does not apply in that mode, and `totals`
+  and `coverage` stay whole-aggregation figures — a filtered board that
+  also narrowed those would publish "there is 1 creator on Stellar".
+
+  A well-formed address holding no row is an empty array with 200,
+  because "this account never did this" is an answer. A malformed
+  address is a 400 rather than an empty board: echoing a corrupted
+  value back as "did nothing" is a claim about whatever the caller
+  actually meant.
+
 - **assets:** USDT0 joins the verified catalogue — the omnichain USDT
   live on Stellar mainnet since 2026-09-02, distinct from the
   third-party bridged USDT already carried as a pricing reference with

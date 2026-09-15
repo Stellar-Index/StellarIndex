@@ -82,10 +82,14 @@ func (h *Handler) AccountSponsors(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	account, ok := h.parseBoardAccount(w, r)
+	if !ok {
+		return
+	}
 	ctx, cancel := context.WithTimeout(r.Context(), explorerReadTimeout)
 	defer cancel()
 
-	s, ok, err := h.Reader.AccountSponsors(ctx, limit)
+	s, ok, err := h.Reader.AccountSponsors(ctx, limit, account)
 	if err != nil {
 		if h.ClientAborted(r, err) {
 			return
