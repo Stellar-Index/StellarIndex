@@ -93,6 +93,10 @@ type RWAAssetsView struct {
 	Definition RWADefinition `json:"definition"`
 	// Summary is the aggregate over the assets below.
 	Summary RWASummary `json:"summary"`
+	// Membership dates the SET — when it was built, and whether what is
+	// being served is a lapsed copy of it. Omitted only before the
+	// first build has ever completed, when there is no set to date.
+	Membership *RWAMembershipSet `json:"membership,omitempty"`
 	// Assets is the set, ordered by published market cap descending,
 	// then by observation count. Rows with no published valuation sort
 	// after every valued row — an unvalued asset is never ranked above
@@ -172,6 +176,19 @@ type RWAFunnel struct {
 	// reconciled — stated rather than hidden, because an accounting
 	// that silently fails to add up is worse than none.
 	Balanced bool `json:"balanced"`
+	// Imbalance names WHAT did not close, and is empty exactly when
+	// Balanced is true — the two are one statement in two forms and
+	// cannot disagree.
+	//
+	// Every reason in it was already being computed: each census
+	// publishes a Check() that returns the invariant it broke, and each
+	// adjacent stage pair reports the arithmetic that failed. All of it
+	// was reduced to a boolean at this boundary and the sentences went
+	// to a log, so a reader was told the accounting does not close and
+	// given no way to find out what did not close. Semicolon-separated
+	// when more than one check failed, because they are independent and
+	// the first is not necessarily the cause of the rest.
+	Imbalance string `json:"imbalance,omitempty"`
 	// Basis is a one-line statement of what the funnel measured.
 	Basis string `json:"basis"`
 	// ListingDirectory is the EVIDENCE behind the `listing` arm's
@@ -184,6 +201,62 @@ type RWAFunnel struct {
 	// no evidence block beside them is an arm whose source could not be
 	// read at all.
 	ListingDirectory *RWAListingDirectory `json:"listing_directory,omitempty"`
+}
+
+// RWAMembershipSet dates the SET this response describes: when the
+// rebuild that produced it finished, and whether the copy being served
+// is past its own lifetime.
+//
+// It exists because the response could not say how old the thing it was
+// describing was, and on 2026-09-15 that cost most of an afternoon. The
+// envelope's `as_of` is the RESPONSE's instant and moves sub-second
+// between requests; read as the set's build time it says the set is
+// refreshing continuously, which is the opposite of what was happening.
+// Every field here is named to make that substitution impossible:
+// `built_at`, not `as_of`, because a set is BUILT and a response is AS
+// OF — two different events that were being read as one.
+//
+// # The state this is loudest about
+//
+// The cache deliberately serves a lapsed set while a detached rebuild
+// runs behind it, and that is correct: the inputs move on daily
+// cadences, so a set a few minutes past its lifetime is the same set,
+// and making a request wait for an eleven-second rescan is what the
+// detachment exists to prevent. What was missing is that a reader could
+// not tell it was happening.
+//
+//	Stale false                         the set is inside its lifetime
+//	Stale true, RebuildFailedAt nil     lapsed, and a rebuild is running
+//	                                    or about to — expected, transient
+//	Stale true, RebuildFailedAt set     lapsed, and the last attempt to
+//	                                    replace it FAILED. The set being
+//	                                    served is the last good one and
+//	                                    nothing is replacing it. This is
+//	                                    the state to act on.
+type RWAMembershipSet struct {
+	// BuiltAt is when the rebuild that produced this set finished —
+	// NOT when the response was rendered, and not when any source was
+	// last written. Compare it against a source's own clock to tell a
+	// set that predates a sync from a set that disagrees with one.
+	//
+	// It is deliberately the same instant the lifetime clock starts
+	// from, so `stale` beside it is never a statement about a different
+	// moment.
+	BuiltAt WireTime `json:"built_at"`
+	// Stale reports that the set has passed its lifetime and a rebuild
+	// is owed. Served regardless, which is the design: an expired set
+	// is the same set until the inputs move, and a request that waited
+	// for the rescan would pay eleven seconds for an answer that has
+	// not changed.
+	Stale bool `json:"stale"`
+	// RebuildFailedAt is when the most recent rebuild attempt failed,
+	// present only while that is still the latest thing to have
+	// happened — a successful rebuild clears it.
+	//
+	// Beside Stale it separates a set that is about to be replaced from
+	// one that nothing is replacing. Without it both render as `stale:
+	// true`, and the second is the only one anybody needs to act on.
+	RebuildFailedAt *WireTime `json:"rebuild_failed_at,omitempty"`
 }
 
 // RWAListingDirectory is what the independent listing directory looked
@@ -892,6 +965,20 @@ type rwaMembership struct {
 	// unreached names the recognised issuing entities this index holds
 	// no token for. It admits nothing; see RWAUnreachedEntity.
 	unreached []rwaUnreachedEntity
+
+	// builtAt is when the rebuild that produced this set finished. Set
+	// once, by that rebuild, and never touched again — so a set carries
+	// its own age wherever it travels and a reader of it can never be
+	// looking at one instant while reasoning about another.
+	builtAt time.Time
+	// servedStale and rebuildFailedAt are the only two fields here a
+	// rebuild does NOT set. They are properties of this SERVE rather
+	// than of the set, stamped onto a copy on the way out by
+	// [Server.stampRWAServeState] — a set that recorded its own
+	// staleness at build time would say `false` forever, since it is
+	// never stale at the instant it is built.
+	servedStale     bool
+	rebuildFailedAt time.Time
 }
 
 // rwaCandidateFilter keeps only the bound SEP-1 entries that could
@@ -1116,7 +1203,7 @@ const rwaMembershipBudget = 2 * time.Minute
 func (s *Server) cachedRWAMembership(ctx context.Context) rwaMembership {
 	served, flight := s.readRWAMembership() //nolint:contextcheck // the rebuild is deliberately detached from this request's context — see this function's doc; ctx is honoured by the cold-cache wait below.
 	if served != nil {
-		return *served
+		return s.stampRWAServeState(*served)
 	}
 	if flight == nil {
 		// Never built, and an attempt is gapped out. The handler turns
@@ -1131,9 +1218,58 @@ func (s *Server) cachedRWAMembership(ctx context.Context) rwaMembership {
 	s.rwaMu.Lock()
 	defer s.rwaMu.Unlock()
 	if s.rwaCache != nil {
-		return *s.rwaCache
+		return s.stampServeStateLocked(*s.rwaCache)
 	}
 	return rwaMembership{refusals: map[string]int{}}
+}
+
+// rwaMembershipSetOf dates the served set, or returns nil when there is
+// no set to date.
+//
+// Gated on the BUILD INSTANT, for the reason the listing evidence is
+// gated on its read instant: a zero-valued set and a real set that
+// happens to be empty render identically in every other field, and only
+// one of them is an answer. Before the first build has ever completed
+// there is nothing to date, and saying so by omission is more honest
+// than publishing the Unix epoch.
+func rwaMembershipSetOf(m rwaMembership) *RWAMembershipSet {
+	if m.builtAt.IsZero() {
+		return nil
+	}
+	out := &RWAMembershipSet{BuiltAt: WireTime(m.builtAt), Stale: m.servedStale}
+	if !m.rebuildFailedAt.IsZero() {
+		failed := WireTime(m.rebuildFailedAt)
+		out.RebuildFailedAt = &failed
+	}
+	return out
+}
+
+// stampRWAServeState records, on a COPY of the set, the two facts that
+// belong to this serve rather than to the set: whether the copy has
+// outlived its lifetime, and whether the rebuild that should have
+// replaced it failed.
+//
+// They are stamped here, on the way out, rather than carried on the
+// cached value, because both are answers to "as of now" and the cached
+// value is by definition not from now. A set that recorded its own
+// staleness when it was built would report `false` for the whole of its
+// life, which is exactly backwards.
+//
+// The copy matters: the value returned by [Server.readRWAMembership]
+// points AT the cache. Writing through it would make one request's
+// view of the clock permanent for every later reader.
+func (s *Server) stampRWAServeState(m rwaMembership) rwaMembership {
+	s.rwaMu.Lock()
+	defer s.rwaMu.Unlock()
+	return s.stampServeStateLocked(m)
+}
+
+// stampServeStateLocked is [Server.stampRWAServeState] for callers that
+// already hold rwaMu.
+func (s *Server) stampServeStateLocked(m rwaMembership) rwaMembership {
+	m.servedStale = !s.rwaAt.IsZero() && time.Since(s.rwaAt) >= rwaMembershipTTL
+	m.rebuildFailedAt = s.rwaFailedAt
+	return m
 }
 
 // readRWAMembership serves what the cache holds and kicks a detached
@@ -1185,6 +1321,11 @@ func (s *Server) refreshRWAMembership(done chan struct{}) {
 	defer cancel()
 
 	built := s.buildRWAMembership(ctx)
+	// ONE instant for the set's published age and for the lifetime
+	// clock, so `stale` is never a statement about a different moment
+	// from the `built_at` it is served beside.
+	at := time.Now().UTC()
+	built.builtAt = at
 
 	s.rwaMu.Lock()
 	defer s.rwaMu.Unlock()
@@ -1196,11 +1337,20 @@ func (s *Server) refreshRWAMembership(done chan struct{}) {
 		// Not an error path for the caller: the previous set keeps being
 		// served, and rwaAttemptAt (already advanced) is what stops this
 		// becoming a retry storm.
+		//
+		// Recorded rather than only logged. From outside, a lapsed set
+		// that a rebuild is about to replace and a lapsed set that
+		// nothing is replacing are identical — and the second is the
+		// only one anybody needs to act on.
+		s.rwaFailedAt = at
 		s.logger.Warn("rwa membership rebuild failed (serving the last good set)")
 		return
 	}
+	// Cleared on success: the field answers "is the latest thing to
+	// have happened a failure", not "has one ever happened".
+	s.rwaFailedAt = time.Time{}
 	s.rwaCache = &built
-	s.rwaAt = time.Now()
+	s.rwaAt = at
 }
 
 // endRWAMembershipFlight releases the single-flight marker and wakes
@@ -1305,6 +1455,10 @@ func (s *Server) handleRWAAssets(w http.ResponseWriter, r *http.Request) {
 	m := s.cachedRWAMembership(r.Context())
 	view.Refused = rwaRefusalRows(m.refusals)
 	view.UnreachedEntities = rwaUnreachedRows(m.unreached)
+	// Dated BEFORE the unavailable branch below, because a response
+	// that publishes no set is exactly where a reader most needs to
+	// know whether one was ever built and when.
+	view.Membership = rwaMembershipSetOf(m)
 	// Unavailable means NEITHER arm answered. One arm failing while the
 	// other reports a set is a partial measurement, not an absent one,
 	// and the funnel is what says which of the two happened.

@@ -1567,11 +1567,16 @@ type RWAPremiumCoveragePoint struct {
 // string (ADR-0003) and is ABSENT rather than zero when withheld or
 // unavailable — read Valuation.Status before reading a number.
 type RWAAssetsView struct {
-	Definition RWADefinition    `json:"definition"`
-	Summary    RWASummary       `json:"summary"`
-	Assets     []RWAAsset       `json:"assets"`
-	ByClass    []RWAGroupTotal  `json:"by_class"`
-	ByIssuer   []RWAIssuerTotal `json:"by_issuer"`
+	Definition RWADefinition `json:"definition"`
+	Summary    RWASummary    `json:"summary"`
+	Assets     []RWAAsset    `json:"assets"`
+	// Membership dates the SET — when it was built, and whether the
+	// copy served is past its own lifetime. Nil only before the first
+	// build has ever completed. Not the envelope's AsOf, which is the
+	// RESPONSE's instant and moves between requests.
+	Membership *RWAMembershipSet `json:"membership,omitempty"`
+	ByClass    []RWAGroupTotal   `json:"by_class"`
+	ByIssuer   []RWAIssuerTotal  `json:"by_issuer"`
 	// Refused is the ordered requirement tally over the candidates
 	// that reached the full evaluation — not the whole population. Read
 	// Funnel for that.
@@ -1609,11 +1614,34 @@ type RWAUnreachedEntity struct {
 type RWAFunnel struct {
 	Stages   []RWAFunnelStage `json:"stages"`
 	Balanced bool             `json:"balanced"`
-	Basis    string           `json:"basis"`
+	// Imbalance names what did not close, and is empty exactly when
+	// Balanced is true. Semicolon-separated when several checks failed.
+	Imbalance string `json:"imbalance,omitempty"`
+	Basis     string `json:"basis"`
 	// ListingDirectory is the evidence behind the "listing" arm's
 	// verdict. Nil when nothing was observed: no listing reader wired,
 	// or a read that did not answer.
 	ListingDirectory *RWAListingDirectory `json:"listing_directory,omitempty"`
+}
+
+// RWAMembershipSet dates the set a /v1/rwa/assets response describes.
+//
+// BuiltAt is when the rebuild that produced the set FINISHED — not when
+// the response was rendered. The envelope's AsOf is the response's own
+// instant and moves between requests; reading it as the set's build
+// time says the set is refreshing continuously when it is not.
+//
+// The cache deliberately serves a lapsed set while a detached rebuild
+// runs behind it, so Stale alone is expected and transient:
+//
+//	Stale false                        inside its lifetime
+//	Stale true, RebuildFailedAt nil    lapsed, a rebuild is coming
+//	Stale true, RebuildFailedAt set    lapsed, and the last attempt to
+//	                                   replace it FAILED — act on this
+type RWAMembershipSet struct {
+	BuiltAt         time.Time  `json:"built_at"`
+	Stale           bool       `json:"stale"`
+	RebuildFailedAt *time.Time `json:"rebuild_failed_at,omitempty"`
 }
 
 // RWAListingDirectory is what the independent listing directory held at

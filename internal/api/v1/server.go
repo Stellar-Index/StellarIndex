@@ -289,10 +289,16 @@ type Server struct {
 	// rebuild was last STARTED. The second is what rate-limits a
 	// failing rebuild, and it advances on failure as well as success —
 	// see [Server.readRWAMembership].
+	// rwaFailedAt is when the most recent rebuild FAILED, cleared by the
+	// next success. It is what lets the response separate a lapsed set
+	// that a rebuild is about to replace from a lapsed set that nothing
+	// is replacing — states that are identical from the outside and
+	// call for opposite responses.
 	rwaMu        sync.Mutex
 	rwaCache     *rwaMembership
 	rwaAt        time.Time
 	rwaAttemptAt time.Time
+	rwaFailedAt  time.Time
 	rwaFlight    chan struct{}
 	// Oracle reference snapshot for the same surface — the independent
 	// per-instrument valuations the premium/discount is measured
