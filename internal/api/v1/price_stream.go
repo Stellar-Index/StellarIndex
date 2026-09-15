@@ -124,5 +124,5 @@ func (s *Server) handlePriceStream(w http.ResponseWriter, r *http.Request) {
 			topics = append(topics, PriceStreamTopic(a, q, window))
 		}
 	}
-	streaming.Stream(w, r, s.hub, topics, streaming.StreamOptions{})
+	streaming.Stream(w, r, s.hub, topics, s.streamOptions())
 }

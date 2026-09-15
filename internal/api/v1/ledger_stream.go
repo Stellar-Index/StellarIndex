@@ -121,7 +121,7 @@ func (s *Server) handleLedgerStream(w http.ResponseWriter, r *http.Request) {
 
 	go s.runLedgerStreamProducer(prodCtx, ch, first)
 
-	streaming.StreamFromChannelPreAdmitted(w, r, ch, streaming.StreamOptions{})
+	streaming.StreamFromChannelPreAdmitted(w, r, ch, s.streamOptions())
 }
 
 // runLedgerStreamProducer is the per-connection poll loop. It emits

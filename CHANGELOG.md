@@ -357,6 +357,56 @@ against.
   says there are three. An honest, slightly more complex total is worth
   more than a clean one that is quietly mixed.
 
+### Fixed
+
+- **api:** an open SSE connection no longer holds the shutdown drain,
+  cutting a restart with a stream attached from 30s to milliseconds.
+
+  `http.Server.Shutdown` waits for every active connection to become
+  idle, and an SSE connection never is — it holds an open response for
+  as long as the client keeps reading. The stream handlers watched only
+  `r.Context()`, which cancels when the CLIENT leaves rather than when
+  the server does, so nothing in the writer's event loop ever learned a
+  drain had started. One attached stream therefore pinned the listener
+  for the full 30s budget, after which `Shutdown` returned `context
+  deadline exceeded` and the process exited on top of the still-open
+  connection.
+
+  Measured on r1 on 2026-09-15 across two restarts of the same binary:
+  30.18s with one browser on `/v1/ledger/stream`, 0.21s with none. The
+  proxy's own record closes it — at the instant of exit Caddy logged
+  `aborting with incomplete response` for that stream with `reading:
+  unexpected EOF`, against a response it had been serving since
+  14:34:19. Every ordinary request during those 30s was refused
+  connection, on a deploy path already named as the likely cause of the
+  first weekly SLA proof coming back NOT PROVEN at 99.15–99.20% against
+  a 99.9% objective.
+
+  `httpSrv.RegisterOnShutdown` now fires a one-shot drain the SSE
+  writer selects on alongside the request context, so all four stream
+  endpoints — `/v1/price/stream`, `/v1/price/tip/stream`,
+  `/v1/ledger/stream`, `/v1/observations/stream` — end promptly. They
+  also end CLEANLY: the writer emits a final `:draining` comment frame
+  and returns, so the response body is terminated properly and an
+  `EventSource` reconnects on its normal schedule instead of seeing a
+  truncated response. The comment frame is spec-legal and ignored by
+  conforming clients, so no documented event type changed.
+
+  Explicitly NOT `http.Server.BaseContext`. Deriving every request
+  context from the process root context would also free the streams,
+  and would cancel every ordinary in-flight request the instant SIGTERM
+  landed — trading a stream problem for an abrupt teardown of the
+  traffic that is not streaming. The signal is visible only to the
+  stream writers; every other handler drains exactly as before, which
+  a test asserts.
+
+  The same shutdown's "background workers did not drain" warning was a
+  consequence of this, not a second defect: the worker wait shares one
+  deadline with the listener drain, so a listener that spent the whole
+  30s left the workers none — the two warnings are 51µs apart in the
+  journal. The comments that described that budget now say what the
+  code does.
+
 ## [v0.82.0] — 2026-09-15
 
 - **ci:** the weekly SLA proof is now produced by
