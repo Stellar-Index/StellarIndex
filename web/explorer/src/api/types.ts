@@ -7462,6 +7462,42 @@ export interface components {
              */
             circulating_supply?: string;
             /**
+             * @description Which reading produced `circulating_supply`, in the same
+             *     ADR-0011 vocabulary `Asset.supply_basis` uses. Absent when no
+             *     arm answered, and absent on the rows whose supply another
+             *     branch attached without one — an arm that did not answer is
+             *     never named.
+             *
+             *     It is load-bearing on THIS surface in a way it is not on a
+             *     plain listing. Every `reference_valuation` here is
+             *     `circulating_supply` multiplied by an oracle price, so the
+             *     completeness of the supply is half of every total this page
+             *     publishes; a consumer reconciling against an issuer's own
+             *     figure needs to know whether it is comparing two four-domain
+             *     totals or a total against a floor.
+             * @enum {string}
+             */
+            supply_basis?: "xlm_sdf_reserve_exclusion" | "xlm_total_only" | "issuer_exclusion" | "admin_exclusion" | "override" | "sep1_declared_max" | "sep41_lake_flows" | "classic_lake_flows" | "classic_trustline_sum" | "contract_storage_balances";
+            /**
+             * @description True when `circulating_supply` is a provable FLOOR rather than
+             *     a complete reading — the per-row sibling of the `lower_bound`
+             *     this surface's totals already carry. Absent (not `false`) when
+             *     the figure is not a floor or when there is no figure.
+             *
+             *     Derived from `supply_basis` rather than reported beside it, so
+             *     the two can never disagree. Two bases are floors, blind in
+             *     different ways. `classic_trustline_sum` misses holding
+             *     DOMAINS: it is trustline balances only, so claimable balances,
+             *     liquidity-pool reserves and SAC-held balances are absent by
+             *     construction — measured across the served set on 2026-09-15
+             *     that was 89.5% of EURMTL, 73.3% of PYUSD, 64.5% of SHX and
+             *     15.4% of USDC. `contract_storage_balances` misses TIME:
+             *     Soroban state expiry archives contract-data entries, and an
+             *     archived balance is real, restorable, and not a ledger entry
+             *     right now.
+             */
+            circulating_supply_lower_bound?: boolean;
+            /**
              * @description On-chain smallest-unit scale: 7 for every classic Stellar
              *     asset, and whatever a SEP-41 contract declares for a
              *     contract-issued one. Served so both valuations on the row can
@@ -8779,7 +8815,7 @@ export interface components {
             market_cap_usd?: string | null;
             /** @description max_supply × USD price / 10^decimals, two fractional digits. Null when max_supply is null, USD price unavailable, OR when suppressed as dust-liquidity (see market_cap_low_liquidity). */
             fdv_usd?: string | null;
-            /** @description True when market_cap_usd and fdv_usd were deliberately suppressed (served null) because the backing price came from negligible liquidity — a single venue AND trailing-24h USD volume below the server's aggregate.min_market_cap_volume_usd floor. Disambiguates 'suppressed on purpose' from 'no supply/price data'; the price_usd itself still serves — the guard is on the valuation, not the price. Omitted when a cap is present. */
+            /** @description True when market_cap_usd and fdv_usd were deliberately suppressed (served null) because the observed market cannot support the figure. Two independent guards set it. FLOOR: the backing price came from a single venue AND trailing-24h USD volume is below the server's aggregate.min_market_cap_volume_usd — trading is negligible in absolute terms. CEILING: the computed cap exceeds aggregate.max_market_cap_volume_ratio times the asset's own trailing-24h volume — the claim is large against whatever trading there is, which an absolute floor cannot detect (measured 2026-09-15, two assets published $5.89B of this surface's headline total on $6,759 of combined daily volume while clearing the floor). Disambiguates 'suppressed on purpose' from 'no supply/price data'; price_usd and circulating_supply both still serve — the guard is on the valuation, not on the facts behind it. Omitted when a cap is present. */
             market_cap_low_liquidity?: boolean;
             listing_reference?: components["schemas"]["AssetListingReference"];
             listing_valuation?: components["schemas"]["AssetListingValuation"];
