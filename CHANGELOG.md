@@ -15,7 +15,6 @@ against.
 
 ## [Unreleased]
 
-## [v0.82.0] — 2026-09-15
 ### Changed
 
 - **ci:** the weekly SLA proof is now produced by
@@ -109,7 +108,7 @@ against.
   while a frozen `last_pass_timestamp` means the probe stopped and the
   textfile collector kept re-serving its last output.
 
-## [v0.81.0] — 2026-09-15
+## [v0.82.0] — 2026-09-15
 
 ### Added
 
