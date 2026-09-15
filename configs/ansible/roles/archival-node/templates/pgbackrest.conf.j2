@@ -53,12 +53,47 @@ repo2-s3-region={{ pgbackrest_repo2_s3_region | default('auto') }}
 repo2-s3-key={{ pgbackrest_repo2_s3_key }}
 repo2-s3-key-secret={{ pgbackrest_repo2_s3_key_secret }}
 repo2-path=/pgbackrest
-# Retention is deliberately LEAN (ADR-0043 amendment 2026-08-29, AWS Budget
-# $30/mo): one full + 7 days of diffs/WAL ≈ 460–670 GB in S3 Standard.
-# PITR window = the diff retention. Raising these scales storage ~linearly.
+# Retention is deliberately LEAN (ADR-0043 amendment 2026-08-29). The
+# original estimate beside these lines read "one full + 7 days of
+# diffs/WAL ≈ 460–670 GB in S3 Standard". MEASURED 2026-09-15, the repo
+# holds 2.5 TiB: 252 GiB of backups and 2.2 TiB of WAL. The estimate was
+# not wrong about the backups — it was wrong about WAL by about four
+# times, and WAL is 90% of the bill.
+#
+# The number it missed: this database writes 251.9 GB of WAL PER DAY,
+# measured over 71 days from pg_stat_wal, against ~16 GB/day of actual
+# growth. `wal_compression=zstd` is already on, so pgBackRest's own zst
+# pass compresses already-compressed pages at roughly 1:1 and ~250 GB
+# lands in S3 every day. repo2-retention-archive is unset and therefore
+# defaults to repo2-retention-diff (7), i.e. "seven backups worth of
+# continuous WAL" — about nine days at the current cadence.
+#
+#   retention-archive   WAL in S3     repo total    S3 Standard eu-central-1
+#   1                   ~0.25 TiB     ~0.5 TiB      ~$12/mo
+#   2                   ~0.5 TiB      ~0.75 TiB     ~$18/mo
+#   3                   ~0.75 TiB     ~1.0 TiB      ~$25/mo
+#   7 (today, default)  ~2.2 TiB      ~2.5 TiB      ~$63/mo
+#
+# Lowering it does NOT risk a restore: pgBackRest always keeps the WAL
+# needed to make each retained backup consistent. What shrinks is the
+# PITR window — how far back an arbitrary point-in-time target can be.
+# That is a recovery-objective decision, so the value stays operator-set
+# rather than being quietly tuned to fit a bill.
+#
+# The larger lever is upstream: 252 GB/day of WAL against 16 GB/day of
+# growth is ~16x write amplification, and the rollup cycles that rebuild
+# whole staging tables and EXCHANGE them are the obvious source. Staging
+# tables are regenerated from scratch every cycle, so UNLOGGED would cost
+# nothing on crash and would cut WAL — and therefore this bill — far more
+# than any retention setting can.
+#
+# PITR window = the archive retention. Raising these scales storage
+# ~linearly; re-measure the per-day figure before trusting any estimate
+# written here, including this one.
 repo2-retention-full={{ pgbackrest_repo2_retention_full | default(1) }}
 repo2-retention-diff={{ pgbackrest_repo2_retention_diff | default(7) }}
 repo2-retention-archive-type=diff
+repo2-retention-archive={{ pgbackrest_repo2_retention_archive | default(pgbackrest_repo2_retention_diff | default(7)) }}
 repo2-bundle=y
 repo2-block=y
 # Offsite copies are encrypted at rest by US, not just the provider.
