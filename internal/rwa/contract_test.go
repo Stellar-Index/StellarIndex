@@ -2,6 +2,7 @@ package rwa_test
 
 import (
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/Stellar-Index/StellarIndex/internal/rwa"
@@ -209,16 +210,17 @@ func TestQualifyContract_RefusesAMalformedAddress(t *testing.T) {
 	}
 }
 
-// TestContractInstrumentBindings_ShipsEmptyAndFailsClosed pins the
-// curated set's posture. It holds no entries — populating it needs
-// contract addresses from a primary source, and an address written from
-// memory is a fabricated identity for a financial instrument.
+// TestContractInstrumentBindings_AreWellFormed pins the curated set's
+// posture. Populating it needs contract addresses from a primary source,
+// and an address written from memory is a fabricated identity for a
+// financial instrument.
 //
-// The test is not "the list is empty" (which would have to be deleted
-// the day someone adds a verified entry). It is that whatever the list
-// holds is well-formed: a real strkey, a named instrument, and a class
-// from the closed vocabulary. A malformed entry would silently admit or
-// silently refuse, and both are worse than a compile error.
+// The test is not "the list is empty" (which would have had to be
+// deleted the day someone added a verified entry, as the Spiko funds
+// now are). It is that whatever the list holds is well-formed: a real
+// strkey, a named instrument, and a class from the closed vocabulary. A
+// malformed entry would silently admit or silently refuse, and both are
+// worse than a compile error.
 func TestContractInstrumentBindings_AreWellFormed(t *testing.T) {
 	classes := rwa.AnchorClasses()
 	seen := map[string]struct{}{}
@@ -257,5 +259,125 @@ func TestCouldQualifyContract_IsAPreFilterNotADecision(t *testing.T) {
 	v := rwa.QualifyContract(rwa.ContractCandidate{ContractID: contractB, Symbol: "CETES"})
 	if v.InSet {
 		t.Fatal("the pre-filter's yes became a membership yes without a directory entry")
+	}
+}
+
+// The Spiko curated bindings.
+//
+// These are real mainnet addresses rather than fixtures, which the note
+// at the top of this file warns against — that warning is about standing
+// a real address in for an imaginary one, and these stand for
+// themselves. Each is asserted against the exact property its curated
+// entry claims.
+const (
+	// Bound: "Spiko EU T-Bills Money Market Fund", the largest of the
+	// five by supply.
+	spikoEUTBLContract = "CBGV2QFQBBGEQRUKUMCPO3SZOHDDYO6SCP5CH6TW7EALKVHCXTMWDDOF"
+	// Deliberately NOT bound: "Spiko Digital Assets Cash and Carry
+	// Fund". Same issuer, same evidence, no class in the closed
+	// vocabulary that describes a crypto basis-trade fund.
+	spikoSPKCCContract = "CDS2GCAQTNQINSCJUJIVBJXILKBWP5PU7LOBGHMP3X47QCQBFKPMTCNT"
+)
+
+// TestSpikoBinding_StillNeedsIndependentRecognition is the reason adding
+// these bindings does not change what the surface publishes today.
+//
+// The curated entry answers C4 and nothing else. With no directory entry
+// for the address — which is the live state, every Spiko contract
+// returning 404 from the curated directory on 2026-09-15 — the candidate
+// must still be refused, and refused on C2.
+//
+// If this ever starts passing as an admission, a curated in-repo entry
+// has silently become sufficient on its own, and the arm's whole
+// argument (an independent party named THIS address) has been replaced
+// by our own say-so without anyone deciding to.
+func TestSpikoBinding_StillNeedsIndependentRecognition(t *testing.T) {
+	v := rwa.QualifyContract(rwa.ContractCandidate{
+		ContractID:     spikoEUTBLContract,
+		DirectoryNamed: false,
+		DirectoryTags:  []string{"issuer"},
+	})
+	if v.InSet {
+		t.Fatalf("a curated binding admitted its contract with no independent recognition (basis %q)", v.Basis)
+	}
+	if v.Reject != rwa.RejectContractNotNamed {
+		t.Errorf("reject = %q, want %q", v.Reject, rwa.RejectContractNotNamed)
+	}
+}
+
+// TestSpikoBinding_IsOnTheAddressNotTheSymbol is the non-negotiable rule
+// in its contract-arm coordinate. An impersonator deploying a token
+// whose symbol is EUTBL gets nothing from the curated set, however
+// recognised its own address might be.
+//
+// The network already carries at least five accounts issuing classic
+// assets coded EUTBL and USTBL from lookalike domains. Any of them can
+// deploy a Soroban token with the same symbol for the price of a
+// transaction.
+func TestSpikoBinding_IsOnTheAddressNotTheSymbol(t *testing.T) {
+	v := rwa.QualifyContract(rwa.ContractCandidate{
+		ContractID:     contractB, // not Spiko's address
+		DirectoryNamed: true,
+		DirectoryTags:  []string{"issuer"},
+		Symbol:         "EUTBL",
+	})
+	if v.InSet {
+		t.Fatalf("admitted a non-Spiko contract wearing the symbol EUTBL (basis %q)", v.Basis)
+	}
+	if v.Reject != rwa.RejectNoContractBasis {
+		t.Errorf("reject = %q, want %q", v.Reject, rwa.RejectNoContractBasis)
+	}
+	// And the real address IS bound, so the refusal above is the address
+	// mismatch rather than the whole table being unreachable.
+	if !rwa.CouldQualifyContract(spikoEUTBLContract, "") {
+		t.Error("the curated EUTBL address is not bound — the assertion above proves nothing")
+	}
+}
+
+// TestSpikoBinding_ExcludesTheCashAndCarryFund pins the classification
+// judgement rather than leaving it to a comment. SPKCC is Spiko's, is
+// deployed, and carries exactly the same identity evidence as the five
+// bound funds — it is out because a digital-asset basis-trade fund is
+// not a bond, a stock, a commodity or real estate, and [anchorClasses]
+// excludes crypto on purpose.
+func TestSpikoBinding_ExcludesTheCashAndCarryFund(t *testing.T) {
+	if rwa.CouldQualifyContract(spikoSPKCCContract, "") {
+		t.Error("the cash-and-carry fund is bound — it has no class in the closed vocabulary")
+	}
+	v := rwa.QualifyContract(rwa.ContractCandidate{
+		ContractID:     spikoSPKCCContract,
+		DirectoryNamed: true,
+		DirectoryTags:  []string{"issuer"},
+		Symbol:         "SPKCC",
+	})
+	if v.InSet {
+		t.Fatalf("admitted the cash-and-carry fund as a real-world instrument (basis %q)", v.Basis)
+	}
+	if v.Reject != rwa.RejectNoContractBasis {
+		t.Errorf("reject = %q, want %q", v.Reject, rwa.RejectNoContractBasis)
+	}
+}
+
+// TestSpikoBindings_AreAllBondClass pins that the five bound funds
+// classify as `bond` and that each names a falsifiable instrument rather
+// than a category. `US Treasury money market fund` is a category; a
+// named fund with a share class is an instrument.
+func TestSpikoBindings_AreAllBondClass(t *testing.T) {
+	var spiko int
+	for _, b := range rwa.ContractInstrumentBindings() {
+		if !strings.Contains(b.Instrument, "Spiko") {
+			continue
+		}
+		spiko++
+		if b.Class != "bond" {
+			t.Errorf("%s: class = %q, want %q", b.ContractID, b.Class, "bond")
+		}
+		if !strings.Contains(b.Instrument, "(") {
+			t.Errorf("%s: instrument %q names no share class — the bar wants a fund, not a category",
+				b.ContractID, b.Instrument)
+		}
+	}
+	if spiko != 5 {
+		t.Errorf("bound Spiko funds = %d, want 5 (EUTBL, USTBL, UKTBL, eurUSTBL, eurUKTBL)", spiko)
 	}
 }

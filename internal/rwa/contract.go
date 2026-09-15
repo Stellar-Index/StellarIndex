@@ -312,16 +312,24 @@ func QualifyContract(c ContractCandidate) Verdict {
 //     SEP-1 arm normalises to, so a curated row and a declared row mean
 //     the same thing by the same rule.
 //
-// # Why it ships empty
+// # What an entry does NOT do
 //
-// It holds no entries, and that is a deliberate refusal rather than an
-// oversight. Populating it requires contract addresses, and this work
-// had no access to a host or to a primary source for any of them. An
-// address written from memory or inferred from a dashboard screenshot is
-// a fabricated identity for a financial instrument — the precise failure
-// this whole definition exists to prevent, committed by the person
-// writing the guard. An empty curated set refuses everything, which is
-// the correct behaviour for a set with no verified members.
+// It does not admit anything by itself. C2 runs before C4, and the
+// candidate population upstream is drawn from the curated directory
+// (buildRWAContractMembership reads DirectoryRecognisedContracts), so a
+// contract the directory does not name is never enumerated, never has
+// its symbol read, and never reaches this table at all. An entry here
+// says only WHICH instrument an address holds, for the day recognition
+// of that address exists. Until then it is published on the wire as a
+// verified identity the surface is still refusing — which is a different
+// and more useful statement than silence.
+//
+// This set previously shipped empty because the work that built the arm
+// had no access to a primary source for any address. That is no longer
+// true for the entries below; it remains true for every address not
+// listed, and an address written from memory or inferred from a
+// dashboard screenshot is still a fabricated identity for a financial
+// instrument.
 //
 // Adding an entry is a code change, exactly as changing the audited
 // wasm-hash set is.
@@ -336,9 +344,96 @@ type contractInstrument struct {
 	Class string
 }
 
+// Spiko's tokenized money-market funds.
+//
+// Spiko Finance is an investment firm licensed by the French Prudential
+// Control and Resolution Authority; spiko.io is its own registrable
+// domain. The chain from that domain to these exact C-strkeys has no
+// third party anywhere in it:
+//
+//  1. spiko.io links to its own engineering subdomain, tech.spiko.io.
+//  2. tech.spiko.io/posts/stellar-integration/ — Spiko's own account of
+//     the October 2025 Soroban deployment — publishes the source as
+//     github.com/spiko-tech/stellar-contracts.
+//  3. That repository's address/production.json names one mainnet
+//     contract address per token, and its config/production.json names
+//     the fund each address carries.
+//
+// The ledger CORROBORATES the addresses; it is not where they came from.
+// Each contract's own name(), symbol() and decimals() were read over
+// public Soroban RPC (2026-09-15) and byte-match config/production.json
+// — every name verbatim, every decimals 5. That is the contract talking
+// about itself, which admits nothing on its own and is read here for the
+// one thing contract metadata is allowed to answer: whether the address
+// the primary source named holds the instrument the primary source
+// claimed. All seven deployments share one creator account and one wasm
+// hash, so they are one deployment event rather than seven coincidences.
+//
+// # Why an impersonator cannot produce this
+//
+// The chain is rooted at spiko.io, and the curator picks the domain that
+// has to corroborate — the property this file's header names as the
+// strongest available strengthener. This network already carries at
+// least five accounts issuing classic assets coded EUTBL and USTBL, from
+// rwa.xlmhq.org, stellar.dtcc.network, treasury.dtcc.company,
+// lumenvaultx.org and rwa.stellarsynth.org, each serving a valid and
+// correctly self-bound stellar.toml, several with round duplicated
+// supplies across both codes. Every one of them satisfies R2. None of
+// them can publish at spiko.io, and none of them appears below — the
+// real Spiko issues no classic asset at all, so those five collide with
+// a code and nothing else.
+//
+// # Why the cash-and-carry funds are absent
+//
+// Spiko's production set also holds SPKCC and eurSPKCC
+// ("Spiko Digital Assets Cash and Carry Fund"), deployed and verified on
+// the same evidence as the five below. They are deliberately NOT bound:
+// a digital-asset basis-trade fund holds crypto and futures, which
+// [anchorClasses] excludes on purpose, and no class in that closed
+// vocabulary describes it. Forcing one would publish a classification
+// nothing supports. Their combined supply is under four million tokens,
+// so the omission is a discipline point rather than a material one.
+const (
+	spikoEUTBL    = "CBGV2QFQBBGEQRUKUMCPO3SZOHDDYO6SCP5CH6TW7EALKVHCXTMWDDOF"
+	spikoUSTBL    = "CARUUX2FZNPH6DGJOEUFSIUQWYHNL5AVDV7PMVSHWL7OBYIBFC76F4TO"
+	spikoUKTBL    = "CDT3KU6TQZNOHKNOHNAFFDQZDURVC3MSTL4ML7TUTZGNOPBZCLABP4FR"
+	spikoEurUSTBL = "CCFIYXF32QI45KXO43J7XY3DMH6W6DKT7XFDEHA65UG4ONNPWBWR4YMA"
+	spikoEurUKTBL = "CCPLGWIIZX6GUIV6JUWJBCGW3PB24ZTHKOVGQQNTTAZIJRRLFJ4PIUMZ"
+)
+
 // contractInstruments is the curated set. See [contractInstrument] for
-// the evidence bar and for why it is empty.
-var contractInstruments = []contractInstrument{}
+// the evidence bar each entry has to meet, and for what an entry does
+// and does not do.
+//
+// Class is `bond` throughout: each fund is a short-maturity Treasury
+// Bill money-market fund, the same instrument class the SEP-1 arm
+// accepts as `bond` from Etherfuse's sovereign-debt declarations.
+//
+// Supply read on 2026-09-15, at the 5 decimals every one of these
+// contracts declares. It is recorded because it is the figure a reader
+// should be able to falsify, and because two of the five hold none:
+//
+//	EUTBL     283,278,671.09 tokens
+//	USTBL      32,964,659.79
+//	UKTBL       9,320,573.45
+//	eurUSTBL            none — deployed, never minted
+//	eurUKTBL            none — deployed, never minted
+//
+// The two empty ones are bound anyway. The evidence is per ADDRESS and
+// is identical for all five; an unminted token is an empty token, not an
+// unidentified one, and binding it now means the day it mints it is
+// already named rather than guessed at. This differs from the rule
+// [instrumentBindings] applies one file over — bind a CODE only once
+// this issuer is observed to have issued it — because that rule guards
+// against attaching a code to a guessed issuer, and there is no guess
+// here: the address is exact and its metadata was read off the ledger.
+var contractInstruments = []contractInstrument{
+	{ContractID: spikoEUTBL, Instrument: "Spiko EU T-Bills Money Market Fund (EUTBL)", Class: "bond"},
+	{ContractID: spikoUSTBL, Instrument: "Spiko US T-Bills Money Market Fund (USTBL)", Class: "bond"},
+	{ContractID: spikoUKTBL, Instrument: "Spiko UK T-Bills Money Market Fund (UKTBL)", Class: "bond"},
+	{ContractID: spikoEurUSTBL, Instrument: "Spiko US T-Bills Money Market Fund, EUR share class (eurUSTBL)", Class: "bond"},
+	{ContractID: spikoEurUKTBL, Instrument: "Spiko UK T-Bills Money Market Fund, EUR share class (eurUKTBL)", Class: "bond"},
+}
 
 // contractInstrumentOf returns the curated binding for a contract, if
 // any. Exact match on the address.

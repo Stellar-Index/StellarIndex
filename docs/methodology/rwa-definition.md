@@ -273,11 +273,36 @@ exact contract address to a named instrument and its class. The
 [ADR-0040](../adr/0040-completing-contract-gating.md) curated-set
 mechanism, the same one the oracle bindings use.
 
-It ships **empty**, and that is a refusal rather than an oversight:
-populating it needs contract addresses from a primary source, and an
-address inferred from a dashboard is a fabricated identity for a
-financial instrument. An empty curated set refuses everything, which is
-correct for a set with no verified members.
+Populating it needs contract addresses from a primary source; an address
+inferred from a dashboard is a fabricated identity for a financial
+instrument. It shipped **empty** until the first such source was in
+hand, which was correct for a set with no verified members.
+
+It now holds Spiko's five tokenized T-Bill money-market funds — EUTBL,
+USTBL, UKTBL and the two EUR share classes — bound to their exact
+mainnet contract addresses and classed `bond`. The addresses come from
+Spiko's own deployment manifest, reached only through `spiko.io`: the
+firm's own engineering subdomain publishes its Soroban source, that
+repository names one mainnet address per token, and a companion file
+names the fund each address carries. The ledger corroborates but does
+not source them — every contract's `name()`, `symbol()` and `decimals()`
+byte-match the manifest, which is the one question contract metadata is
+allowed to answer (*which* instrument, never *whether*). An impersonator
+cannot reproduce this: the chain is rooted at a domain the curator
+picked, and the five accounts already issuing classic assets coded
+`EUTBL`/`USTBL` from lookalike domains cannot publish at `spiko.io`.
+
+Spiko's cash-and-carry fund is deliberately **not** bound. A
+digital-asset basis-trade fund is not a bond, a stock, a commodity or
+real estate, and the closed vocabulary excludes crypto on purpose.
+
+A binding is **not** an admission. C2 runs first, and the candidate scan
+only ever enumerates addresses the curated directory named — which names
+none of Spiko's. All five are therefore still refused as
+`contract_not_named_in_directory`, and are published on
+`definition.bound_contract_instruments` as verified identities the
+surface is still refusing. That distinguishes an issuer we cannot
+identify from one we have identified and cannot yet vouch for.
 
 **`contract_oracle_rwa_feed`** — the token's on-chain SEP-41 `symbol` is
 an ADR-0028 allow-listed RWA code. The symbol is contract-authored,
@@ -615,9 +640,10 @@ so pricing a token by it is the code-keyed join
 with a *weaker* key than the classic one. Recognition of the address
 establishes who deployed it; it does not establish that one of its
 tokens is one unit of the instrument an oracle prices under that name.
-The curated contract set records instrument and class rather than a
-feed, and [ships empty](#c4--real-world-instrument) for want of primary
-sources.
+The [curated contract set](#c4--real-world-instrument) records instrument
+and class rather than a feed, so it cannot answer this however many
+entries it holds — a fund's identity is not a price for it, and the
+funds bound there today have no oracle feed to bind to.
 
 So the row carries `reference_contract_not_bound` — its own status,
 not the `reference_not_bound` that names a `(code, issuer)` pair a

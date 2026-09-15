@@ -256,8 +256,11 @@ const (
 	// instrument an oracle prices under that name, which is the claim a
 	// reference valuation makes. The curated contract set
 	// ([rwa.ContractInstrumentBindings]) records instrument and class,
-	// not a feed, and ships empty for want of primary sources — so
-	// there is no bound contract to answer either.
+	// NOT a feed, so it cannot answer this either however many entries
+	// it holds — a fund's identity is not a price for it. Pricing a
+	// curated contract would need a contract-to-feed binding set that
+	// does not exist, and for the funds currently bound there is no
+	// oracle feed to bind to.
 	RWAPremiumContractNotBound = "reference_contract_not_bound"
 	// RWAPremiumNotBound — no curated binding ties this exact
 	// (code, issuer) to an oracle feed. The commonest cause by far is

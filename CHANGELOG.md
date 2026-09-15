@@ -15,6 +15,26 @@ against.
 
 ## [Unreleased]
 
+### Added
+
+- **rwa:** curated contract bindings for Spiko's five tokenized T-Bill
+  money-market funds — EUTBL, USTBL, UKTBL and the two EUR share classes
+  — naming the exact mainnet contract address of each and classifying it
+  `bond`. The addresses come from Spiko's own published deployment
+  manifest, reached only through spiko.io, and were corroborated against
+  the ledger: every contract's `name()`, `symbol()` and `decimals()`
+  byte-match the manifest. Spiko's cash-and-carry fund is deliberately
+  left unbound — a digital-asset basis-trade fund has no class in the
+  closed vocabulary.
+
+  This does NOT change what `/v1/rwa/assets` admits. C2 still requires
+  the curated directory to name the contract address, and it names none
+  of them, so all five remain refused as `contract_not_named_in_directory`.
+  The bindings are published on `bound_contract_instruments` as verified
+  identities the surface is still refusing, which distinguishes an issuer
+  we cannot identify from one we have identified and cannot yet vouch
+  for.
+
 ## [v0.80.0] — 2026-09-13
 
 ### Fixed

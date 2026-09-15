@@ -342,12 +342,18 @@ type RWADefinition struct {
 	// this surface will admit on the curated basis, and the real-world
 	// instrument each is bound to.
 	//
-	// Served in full, and EMPTY is a meaningful answer rather than a
-	// missing one: it says no contract has yet cleared the evidence bar
-	// for a curated binding, so the only contracts that can be admitted
-	// are those whose on-chain symbol an independent oracle already
-	// prices. A consumer reads the rule from this list rather than
-	// inferring it from whichever rows appear today.
+	// Served in full, and an address appearing here is NOT a statement
+	// that the asset is in the set. The curated binding answers C4 —
+	// which instrument an address holds — while C2 still requires the
+	// curated directory to name that same address, and the candidate
+	// scan upstream only ever enumerates addresses the directory named.
+	// So this list is the surface's verified-identity register: every
+	// address on it has cleared the evidence bar, some of them while
+	// still being refused membership for want of independent
+	// recognition. A consumer reads the rule from this list rather than
+	// inferring it from whichever rows appear today, and compares it
+	// against the admitted rows to see which identities are known but
+	// unvouched-for.
 	BoundContractInstruments []RWABoundContractInstrument `json:"bound_contract_instruments"`
 	// DocumentationURL points at the prose statement of the rule.
 	DocumentationURL string `json:"documentation_url"`
