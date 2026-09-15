@@ -50,3 +50,68 @@ func TestMergeTwinStats_LeavesOwnSupplyAndDecimalsAlone(t *testing.T) {
 		t.Errorf("decimals = %d, want its own 0", dst.Decimals)
 	}
 }
+
+// TestMergeTwinStats_CarriesTheListingValuation — the listing-priced arm
+// runs on the TWIN row (the one carrying the asset_id the directory's
+// addresses derive from, the price, and the gate outcome), so the
+// catalogue row it stands in for only sees the result if the merge
+// carries it.
+//
+// This is the same failure the dust flag had: a value computed on the
+// twin, correct on the classic row and the detail page, and absent from
+// the catalogue-listing row the /rwa stablecoin tile actually sums.
+func TestMergeTwinStats_CarriesTheListingValuation(t *testing.T) {
+	value := "2581052.90"
+	twin := AssetDetail{
+		MarketCapLowLiquidity: true,
+		ListingReference: &AssetListingReference{
+			PriceUSD:    "1",
+			Source:      "coingecko",
+			ListingID:   "usdt0",
+			Address:     "CBSJZEIO5C7KC2SF3MKSNXXJSW5G3VTNBX4ATMKUI3B2MR4JKM4R26YF",
+			AddressForm: ListingAddressFormSAC,
+			Provenance:  RWAReferenceListingPrice,
+		},
+		ListingValuation: &AssetListingValuation{
+			Status:      ListingValuationPublished,
+			ValueUSD:    &value,
+			SupplyBasis: ListingSupplyBasisLakeFlows,
+		},
+	}
+	var dst AssetDetail
+	mergeTwinStats(&dst, twin)
+
+	if dst.ListingValuation == nil || dst.ListingValuation.ValueUSD == nil {
+		t.Fatalf("listing_valuation = %+v, want the twin's published figure", dst.ListingValuation)
+	}
+	if *dst.ListingValuation.ValueUSD != value {
+		t.Errorf("value_usd = %q, want %q", *dst.ListingValuation.ValueUSD, value)
+	}
+	if dst.ListingReference == nil {
+		t.Fatal("the reference was dropped — a figure with no traceable source")
+	}
+	if dst.ListingReference.Provenance != RWAReferenceListingPrice {
+		t.Errorf("provenance = %q, want %q", dst.ListingReference.Provenance, RWAReferenceListingPrice)
+	}
+	// And the cap it stands beside is still absent.
+	if dst.MarketCapUSD != nil {
+		t.Errorf("market_cap_usd = %q, want none", *dst.MarketCapUSD)
+	}
+}
+
+// TestMergeTwinStats_CarriesARefusalToo — a status with no figure has to
+// cross as well. A catalogue row silently missing the block reads as
+// "this arm does not apply here", which is a different statement from
+// "it applies and the directory could not be read".
+func TestMergeTwinStats_CarriesARefusalToo(t *testing.T) {
+	var dst AssetDetail
+	mergeTwinStats(&dst, AssetDetail{
+		ListingValuation: &AssetListingValuation{Status: ListingValuationNotListed},
+	})
+	if dst.ListingValuation == nil || dst.ListingValuation.Status != ListingValuationNotListed {
+		t.Fatalf("listing_valuation = %+v, want status %q", dst.ListingValuation, ListingValuationNotListed)
+	}
+	if dst.ListingReference != nil {
+		t.Error("a refusal must not carry a reference")
+	}
+}

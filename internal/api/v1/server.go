@@ -170,6 +170,12 @@ type Server struct {
 	tokenSymbol         TokenSymbolReader
 	rwaContracts        RWADirectoryContractReader
 	rwaListings         RWAListingDirectoryReader
+	listings            AssetListingDirectoryReader
+	// assetListings memoises one read of the listing directory for the
+	// /v1/assets listing-priced valuation arm — see
+	// asset_listing_valuation.go. Not shared with rwaListings' snapshot:
+	// that one serves contract rows only and is rebuilt per RWA request.
+	assetListings       assetListingCache
 	contractCatalogue   ContractCatalogueReader
 	lakeWatermarkReader LakeWatermarkReader
 	// Cached lake watermark (ADR-0041 D4) — see lakeWatermark() in
@@ -864,6 +870,18 @@ type Options struct {
 	// addresses, which nobody looked to establish.
 	RWAListings RWAListingDirectoryReader
 
+	// Listings, when non-nil, backs the listing-priced valuation arm on
+	// GET /v1/assets and GET /v1/assets/{asset_id}: the same cached
+	// directory RWAListings reads, through a reader that serves BOTH
+	// address forms rather than contract rows alone. Production wiring
+	// is *timescale.Store, fed by the `listing-sync` ops command.
+	//
+	// Nil is a configuration statement and is served as one: every
+	// catalogue asset whose market cap is withheld carries
+	// `listing_valuation.status = "listing_unavailable"`, which says
+	// nobody looked — never that nobody lists the address.
+	Listings AssetListingDirectoryReader
+
 	// ContractCatalogue, when non-nil, reads catalogue rows for an explicit
 	// contract set — the volume-gate-free read the RWA contract arm needs,
 	// since a tokenized fund can carry a nine-figure supply and never appear
@@ -1511,6 +1529,7 @@ func New(opts Options) *Server { //nolint:funlen // pure field-mapping construct
 		tokenSymbol:            opts.TokenSymbol,
 		rwaContracts:           opts.RWAContracts,
 		rwaListings:            opts.RWAListings,
+		listings:               opts.Listings,
 		contractCatalogue:      opts.ContractCatalogue,
 		lakeWatermarkReader:    opts.LakeWatermark,
 		volume:                 opts.Volume,

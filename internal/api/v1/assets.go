@@ -161,6 +161,28 @@ type AssetDetail struct {
 	// price. Omitted (false) whenever a cap is present or unaffected.
 	MarketCapLowLiquidity bool `json:"market_cap_low_liquidity,omitempty"`
 
+	// ListingReference / ListingValuation are the listing-sourced
+	// second opinion for a VERIFIED-CATALOGUE asset whose market cap
+	// this index declines to publish — an independent platform's USD
+	// price for the exact address, and this asset's supply valued at
+	// it. See asset_listing_valuation.go for the rule and the reasoning.
+	//
+	// They are NOT a market capitalisation and must never be summed
+	// into one: `market_cap_usd` is a price somebody was observed
+	// paying, past the substance, dust-liquidity and scam gates, while
+	// `listing_valuation.value_usd` is supply times a figure a third
+	// party published about venues this index does not observe. A
+	// consumer that adds the two must say in its own copy that the
+	// total mixes two bases, exactly as the /rwa page's combined tile
+	// does.
+	//
+	// Both are omitted entirely on every row outside that population —
+	// which is almost every row. Present together on a published
+	// valuation; `listing_valuation` alone, carrying only a status,
+	// when the arm is refusing and can say why.
+	ListingReference *AssetListingReference `json:"listing_reference,omitempty"`
+	ListingValuation *AssetListingValuation `json:"listing_valuation,omitempty"`
+
 	// DecimalsUnresolved is true when this row's `decimals` is the
 	// hardcoded default rather than a value read from the token's own
 	// on-chain metadata. INTERNAL — never serialised — because it
@@ -1026,6 +1048,12 @@ func (s *Server) handleAssetListFromAssets(
 	// fill (so no valuation derives from it) — see
 	// fillDeclaredPegPricesInListing's ordering contract.
 	s.fillDeclaredPegPricesInListing(r.Context(), out)
+	// LAST among the valuation producers. It reads the outcome of every
+	// one above it — the served cap, the gated price, the dust flag and
+	// the peg basis — to decide whether there is a hole to fill, so it
+	// can only run once all of them have finished deciding. See
+	// asset_listing_valuation.go.
+	s.applyListingValuations(r.Context(), out)
 	s.fillImagesFromSep1(r.Context(), out)
 	// Curated third-party issuer label (account_directory) — one batch
 	// query for the page's issuer set (no N+1). DISPLAY-ONLY; additive.
@@ -2671,6 +2699,12 @@ func (s *Server) fetchClassicUnifiedRows(
 	// fill (so no valuation derives from it) — see
 	// fillDeclaredPegPricesInListing's ordering contract.
 	s.fillDeclaredPegPricesInListing(r.Context(), out)
+	// LAST among the valuation producers. It reads the outcome of every
+	// one above it — the served cap, the gated price, the dust flag and
+	// the peg basis — to decide whether there is a hole to fill, so it
+	// can only run once all of them have finished deciding. See
+	// asset_listing_valuation.go.
+	s.applyListingValuations(r.Context(), out)
 	s.fillImagesFromSep1(r.Context(), out)
 	// Curated third-party issuer label (account_directory) — one batch
 	// query for the page's issuer set (no N+1). DISPLAY-ONLY; additive.
@@ -2934,6 +2968,25 @@ func (s *Server) handleAssetGet(w http.ResponseWriter, r *http.Request) {
 	// last bucket IS the withheld number. Runs after every producer and
 	// every suppressor, so nothing can re-publish the series below it.
 	withholdPriceSeriesWhenUnpriced(&detail)
+
+	// Listing-priced valuation — the /v1/assets/{id} twin of the listing
+	// paths' call, and in the same position: LAST, after every price
+	// producer and every suppressor, because it decides whether there is
+	// a hole to fill by reading what all of them left behind. A row this
+	// arm publishes for has no market cap and never gains one here; the
+	// figure lands in `listing_valuation`, under its own provenance.
+	//
+	// The slice round-trip is what lets one implementation serve both
+	// surfaces. It matters more than it looks: the detail path's supply
+	// comes from asset_supply_history and NEVER from the lake's flow
+	// totals (classic_lake_supply.go is unreachable from this handler),
+	// so an arm that valued whatever this handler already had would
+	// price USDT0's 6,469 trustline-visible tokens instead of the
+	// 2,581,052 that exist. applyListingValuations does the lake read
+	// itself, for exactly that reason.
+	listingRows := []AssetDetail{detail}
+	s.applyListingValuations(r.Context(), listingRows)
+	detail = listingRows[0]
 
 	// Verified-currency overlay (R-018 Phase 1.1) — attaches the
 	// `unverified_warning` body + flips flags.unverified_ticker_collision
@@ -3958,6 +4011,12 @@ func (s *Server) fillCatalogueStatsForPage(ctx context.Context, page []AssetDeta
 		// market_cap_low_liquidity flag onto the catalogue-listing row so it
 		// matches the twin's classic row / detail page (M4).
 		s.fillMarketCapsFromSupply(statsCtx, twin, assetRowSourceCounts([]timescale.AssetRow{*twinRow}))
+		// On the TWIN, not on the catalogue row: the twin is the row
+		// that carries the asset_id the listing directory's addresses
+		// derive from, the price the gates ruled on, and the dust flag
+		// they set. mergeTwinStats carries the result across, the same
+		// way it carries the cap and its suppression flag.
+		s.applyListingValuations(statsCtx, twin)
 		mergeTwinStats(&page[i], twin[0])
 	})
 }
@@ -4108,6 +4167,16 @@ func mergeTwinStats(dst *AssetDetail, twin AssetDetail) {
 		dst.MarketCapUSD = nil
 		dst.FDVUSD = nil
 	}
+	// The listing-priced second opinion rides along with the (absent)
+	// cap for the same reason the suppression flag does: the arm ran on
+	// the twin, because that is the row carrying the asset_id, the price
+	// and the gate outcome it reads. Carried unconditionally rather than
+	// only when dst's is nil — the catalogue row never computes one of
+	// its own, so there is nothing here to preserve, and a half-carried
+	// pair (a reference with no valuation) would be a price on the wire
+	// with no statement of what it was used for.
+	dst.ListingReference = twin.ListingReference
+	dst.ListingValuation = twin.ListingValuation
 }
 
 // filterCatalogueEntries narrows catalogue entries by the structural
