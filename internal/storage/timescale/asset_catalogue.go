@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
@@ -173,38 +174,119 @@ func (s *Store) ListAssets(ctx context.Context, limit int, issuer, cursor string
 	return s.ListAssetsExt(ctx, ListAssetsOptions{Limit: limit, Issuer: issuer, Cursor: cursor})
 }
 
-// LatestCirculatingSupply returns the most-recent circulating supply per
-// canonical asset_id from the supply_1d CAGG — the set the three-domain
-// supply pipeline currently tracks (the major classic + native assets).
-// Keys are canonical asset_ids: supply_1d's asset_key is CODE:ISSUER
+// SupplyObservation is one asset's most recent ADR-0011 supply
+// observation, as the supply observer recorded it.
+//
+// ObservedAt travels with the value because a supply figure with no
+// vintage is unfalsifiable: it reads the same whether the observer wrote
+// it thirty seconds ago or stopped running a week ago, and the serving
+// path's whole decision about whether to trust this arm over the lake's
+// live flow sum turns on which of those it is.
+type SupplyObservation struct {
+	// CirculatingSupply is the raw integer in the asset's smallest
+	// unit (stroops for classic + native), as a decimal string —
+	// NUMERIC, never a fixed-width Go type (ADR-0003).
+	CirculatingSupply string
+	// Basis is the ADR-0011 policy that produced the figure, straight
+	// from the observation row: `issuer_exclusion`,
+	// `xlm_sdf_reserve_exclusion`, `override`, and so on. Carried
+	// through to the wire so a listing row names the same basis the
+	// detail endpoint publishes for the same asset.
+	Basis string
+	// ObservedAt is when the observer computed it.
+	ObservedAt time.Time
+}
+
+// LatestSupplyObservations returns the most-recent supply observation per
+// canonical asset_id, restricted to observations no older than maxAge.
+// Keys are canonical asset_ids: the observer's asset_key is CODE:ISSUER
 // (colon) and `XLM`, which we translate to the listing's CODE-ISSUER
 // (dash) and `native`. The /v1/assets listing uses this to fill
 // market_cap WHERE supply exists rather than leaving every row null;
-// coverage grows as the supply pipeline expands (it's small today).
-func (s *Store) LatestCirculatingSupply(ctx context.Context) (map[string]string, error) {
+// coverage is whatever the observer's watch-list covers.
+//
+// # Why this reads the observation log and not the supply_1d CAGG
+//
+// It used to take `max(bucket)` from supply_1d with no vintage bound at
+// all. supply_1d is a DAILY roll-up of this same table — `last()` per
+// asset per day — and its refresh policy carries an end_offset, so the
+// current day's bucket is never fully covered by a refresh window and is
+// never materialised. The newest bucket is therefore always a COMPLETED
+// PREVIOUS day, which puts the value it holds between 18 and 42 hours
+// behind the observations it was rolled up from, in normal healthy
+// operation, with nothing on the wire saying so.
+//
+// The distance that opens up is not a rounding matter. Measured on r1
+// 2026-09-15, the newest supply_1d bucket put USDC — this index's single
+// largest served market cap — at 354,858,863.57 while the observer's own
+// live row said 376,302,129.55 and Horizon's all-domain total said
+// 375,766,247.91: a 5.57% understatement, about $21M of market cap, from
+// a roll-up that was itself a faithful copy of a reading that was correct
+// when it was taken. The underlying observation log ticks every five
+// minutes and agreed with the lake's independent flow sum to within
+// 0.14% at every instant compared.
+//
+// So the arm was reading the right pipeline through the wrong table.
+// Reading the observations directly makes the arm as fresh as the
+// observer, and makes the vintage bound below meaningful rather than
+// decorative — against supply_1d a 24h bound would have disabled this
+// arm entirely (every bucket is older than that by construction) and a
+// 48h bound would have admitted the 354.8M figure unchanged.
+//
+// maxAge must be positive. A non-positive value admits nothing, which is
+// the safe direction — the caller falls back to its next arm rather than
+// publishing an observation of unknown vintage.
+func (s *Store) LatestSupplyObservations(ctx context.Context, maxAge time.Duration) (map[string]SupplyObservation, error) {
+	// The cutoff is computed by POSTGRES, not by the caller: these rows
+	// are stamped with the writer's clock, and comparing them against a
+	// reader's clock would turn any skew between the two processes into
+	// a phantom staleness verdict on a healthy observer.
+	//
+	// $1 is cast explicitly and multiplied by an interval LITERAL rather
+	// than passed as an interval. An untyped bind parameter sitting
+	// beside INTERVAL leaves Postgres unable to resolve the operator and
+	// it fails with 42883 on every call, which is a whole-arm outage
+	// that no unit test sees.
+	//
+	// The bound is the ONLY predicate, with no `OR unbounded` escape
+	// beside it. A disjunction here cannot be resolved at plan time, so
+	// the generic plan stops excluding chunks and the read walks the
+	// whole hypertable: measured on r1, 90,118 shared buffers and 40.2ms
+	// with the disjunction against 2,067 and 4.2ms without it, for the
+	// same 48 rows.
 	const q = `
         SELECT CASE WHEN asset_key = 'XLM' THEN 'native'
                     ELSE replace(asset_key, ':', '-') END AS asset_id,
-               circulating_supply::text
-          FROM supply_1d s1
-         WHERE circulating_supply IS NOT NULL
-           AND bucket = (SELECT max(bucket) FROM supply_1d s2 WHERE s2.asset_key = s1.asset_key)
+               circulating_supply::text,
+               basis,
+               observed_at
+          FROM (
+            SELECT DISTINCT ON (asset_key)
+                   asset_key,
+                   circulating_supply,
+                   basis,
+                   "time" AS observed_at
+              FROM asset_supply_history
+             WHERE "time" >= now() - ($1::bigint * interval '1 second')
+             ORDER BY asset_key, "time" DESC
+          ) latest
     `
-	rows, err := s.db.QueryContext(ctx, q)
+	rows, err := s.db.QueryContext(ctx, q, int64(maxAge/time.Second))
 	if err != nil {
-		return nil, fmt.Errorf("timescale: LatestCirculatingSupply: %w", err)
+		return nil, fmt.Errorf("timescale: LatestSupplyObservations: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
-	out := make(map[string]string)
+	out := make(map[string]SupplyObservation)
 	for rows.Next() {
-		var assetID, circ string
-		if err := rows.Scan(&assetID, &circ); err != nil {
-			return nil, fmt.Errorf("timescale: LatestCirculatingSupply scan: %w", err)
+		var assetID string
+		var obs SupplyObservation
+		if err := rows.Scan(&assetID, &obs.CirculatingSupply, &obs.Basis, &obs.ObservedAt); err != nil {
+			return nil, fmt.Errorf("timescale: LatestSupplyObservations scan: %w", err)
 		}
-		out[assetID] = circ
+		out[assetID] = obs
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("timescale: LatestCirculatingSupply rows: %w", err)
+		return nil, fmt.Errorf("timescale: LatestSupplyObservations rows: %w", err)
 	}
 	return out, nil
 }

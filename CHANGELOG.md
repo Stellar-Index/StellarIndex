@@ -16,6 +16,54 @@ against.
 ## [Unreleased]
 
 ### Changed
+
+- **assets:** the authoritative circulating-supply arm now reads the
+  supply observer's live row instead of a daily roll-up of it, and every
+  served figure names the arm that produced it.
+
+  The arm read `supply_1d` — a DAILY roll-up of `asset_supply_history` —
+  took `max(bucket)` with no vintage bound of any kind, and that reading
+  unconditionally outranked the live lake figure. `supply_1d`'s refresh
+  policy carries an `end_offset`, so the current day's bucket is never
+  fully covered by a refresh window and never materialises: the newest
+  bucket is always a COMPLETED PREVIOUS day, which puts the value in it
+  between 18 and 42 hours behind the observations it summarised, in
+  normal healthy operation, with `flags.stale` reporting false throughout.
+
+  On USDC — the single largest served market cap on this index — that
+  published 354,858,863.57 against 375,766,247.91 actually outstanding:
+  5.57% low, about $21M of market capitalisation, from a number that was
+  correct at the moment it was taken. Across the priced set the served
+  error came to roughly -$15.3M, of which USDC was -$15.5M.
+
+  The obvious repair is the wrong one and was rejected on measurement.
+  Re-measured against Horizon's all-domain totals on 2026-09-15, the
+  lake-flows arm reads BLND at 128,119,614.53 against 114,854,773.04
+  outstanding (+11.53%) and PHO at 199,999,999.31 against 77,882,787.15
+  (+156.79%) — its flow history carries replayed historical mints whose
+  matching burns are missing, and the completeness check it carries fires
+  only on the opposite asymmetry (a NEGATIVE net). Promoting it above the
+  observation would have traded a 5.57% understatement on one asset for a
+  156.79% overstatement on another. The arm order is unchanged.
+
+  What changed is where the observation is read and that it is bounded:
+  `LatestSupplyObservations` takes the newest row per asset straight from
+  `asset_supply_history`, no older than six hours — nine times the widest
+  observation gap measured on any asset over the preceding fortnight. An
+  observation past that bound is not offered at all, so a stale reading can
+  no longer outrank a live lake figure that disagrees with it, and an asset
+  whose observer has stopped falls through to the lake arms instead of
+  publishing a figure nobody is computing.
+
+  Every listing and RWA row that carries a circulating supply now also
+  carries `supply_basis` naming the arm behind it: the observer's own
+  ADR-0011 basis (`issuer_exclusion`, `xlm_sdf_reserve_exclusion`, …) when
+  the observation answered, `classic_lake_flows` when the lake's four-domain
+  flow sum did, and `classic_trustline_sum` when only the trustline floor
+  did — a reading that is blind by construction to claimable balances,
+  liquidity-pool reserves and SAC-held balances, and is therefore a lower
+  bound rather than a total. Nothing on the wire could tell those apart
+  before. Served USDC moves 354,858,863.57 -> 376,302,129.55.
 ### Added
 
 - **assets:** a verified-catalogue asset whose market capitalisation the

@@ -79,6 +79,41 @@ const (
 	// admin tracking the flow sum doesn't carry); total == circulating here.
 	BasisSEP41LakeFlows Basis = "sep41_lake_flows"
 
+	// BasisClassicLakeFlows — a CLASSIC asset's raw on-chain total
+	// (Σmint−Σburn−Σclawback) summed live over the lake's
+	// stellar.supply_flows for the asset's deterministically derived
+	// Stellar Asset Contract. The classic sibling of
+	// [BasisSEP41LakeFlows], and the only listing-path reading that is
+	// not keyed on WHERE the tokens are held: a flow does not know
+	// whether the tokens came to rest in a trustline, a claimable
+	// balance, a liquidity-pool reserve or a SAC-held contract balance,
+	// so one sum covers all four domains.
+	//
+	// It is an UPPER reading, not a certified one. The sum is only as
+	// complete as the flow history behind it, and the completeness check
+	// it carries (clickhouse.TokenSupply.Incomplete) fires only when the
+	// net goes NEGATIVE — i.e. only when the MINT side is under-seeded.
+	// The opposite asymmetry, a replayed historical mint with no matching
+	// burn, produces a too-LARGE total that nothing in the reading itself
+	// can detect. Measured against Horizon's all-domain totals on r1
+	// 2026-09-15: BLND +11.53% and PHO +156.79% (a single replayed
+	// 200,000,000-token issuance at ledger 51571763 against 77,882,787
+	// actually outstanding), while USDC, EURC, AQUA, yXLM and VELO all
+	// landed within 0.03%. That is why this basis ranks BELOW a direct
+	// supply observation and above only the trustline sum.
+	BasisClassicLakeFlows Basis = "classic_lake_flows"
+
+	// BasisClassicTrustlineSum — a CLASSIC asset's supply summed from
+	// TRUSTLINE BALANCES ONLY. It is a LOWER BOUND and nothing more: the
+	// lake's current-state projection stamps its `asset` column for
+	// trustlines alone, so this reading is blind by construction to the
+	// other three holding domains (claimable balances, liquidity-pool
+	// reserves, SAC contract_data balances). Every trustline balance was
+	// minted, which is what makes it a floor rather than an estimate, and
+	// the floor is what keeps an under-seeded flow sum from being
+	// published as a smaller truth.
+	BasisClassicTrustlineSum Basis = "classic_trustline_sum"
+
 	// BasisNoMetadata — we don't have a defensible value for
 	// at least one of total / circulating / max. Per ADR-0011
 	// "we don't fabricate" — the corresponding field is nil.

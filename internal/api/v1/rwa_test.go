@@ -23,9 +23,11 @@ import (
 	"encoding/json"
 	"net/http"
 	"testing"
+	"time"
 
 	v1 "github.com/Stellar-Index/StellarIndex/internal/api/v1"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
+	"github.com/Stellar-Index/StellarIndex/internal/supply"
 )
 
 const (
@@ -108,12 +110,24 @@ func (l *rwaListStub) ListAssetsExt(
 	return l.byIssuer[opts.Issuer], nil
 }
 
-// LatestCirculatingSupply satisfies the optional supply seam
+// LatestSupplyObservations satisfies the optional supply seam
 // fillMarketCapsFromSupply type-asserts for, so these tests exercise
 // the real market-cap fill rather than a path where every row is
-// unvalued for want of a supply reader.
-func (l *rwaListStub) LatestCirculatingSupply(context.Context) (map[string]string, error) {
-	return l.supply, nil
+// unvalued for want of a supply reader. The stub ignores the freshness
+// bound — [TestLatestPreciseSupply_AsksForABoundedRead] is what pins that
+// the serving path asks for one.
+func (l *rwaListStub) LatestSupplyObservations(
+	context.Context, time.Duration,
+) (map[string]timescale.SupplyObservation, error) {
+	out := make(map[string]timescale.SupplyObservation, len(l.supply))
+	for assetID, circ := range l.supply {
+		out[assetID] = timescale.SupplyObservation{
+			CirculatingSupply: circ,
+			Basis:             string(supply.BasisIssuerExclusion),
+			ObservedAt:        time.Now(),
+		}
+	}
+	return out, nil
 }
 
 func rwaRow(code, issuer string, price *string, obs int64) timescale.AssetRow {

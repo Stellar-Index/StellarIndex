@@ -6,6 +6,7 @@ package v1
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/currency"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
@@ -20,7 +21,7 @@ const dustGuardUSDCIssuer = "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K
 // shape that trips the dust-liquidity guard on the LISTING path — plus a huge
 // circulating supply, so an un-guarded cap would assert billions.
 type dustTwinAssets struct {
-	AssetsReader // nil embedded — only ListAssetsExt + LatestCirculatingSupply are called
+	AssetsReader // nil embedded — only ListAssetsExt + LatestSupplyObservations are called
 }
 
 func (s *dustTwinAssets) ListAssetsExt(_ context.Context, opts timescale.ListAssetsOptions) ([]timescale.AssetRow, error) {
@@ -38,10 +39,13 @@ func (s *dustTwinAssets) ListAssetsExt(_ context.Context, opts timescale.ListAss
 	}}, nil
 }
 
-// LatestCirculatingSupply feeds fillMarketCapsFromSupply the precise supply so
-// the market-cap fill actually runs (10^17 raw @ 7dp × $0.50 = $5B un-guarded).
-func (s *dustTwinAssets) LatestCirculatingSupply(context.Context) (map[string]string, error) {
-	return map[string]string{"USDC-" + dustGuardUSDCIssuer: "100000000000000000"}, nil
+// LatestSupplyObservations feeds fillMarketCapsFromSupply the observed supply
+// so the market-cap fill actually runs (10^17 raw @ 7dp × $0.50 = $5B
+// un-guarded).
+func (s *dustTwinAssets) LatestSupplyObservations(
+	context.Context, time.Duration,
+) (map[string]timescale.SupplyObservation, error) {
+	return observedSupply(map[string]string{"USDC-" + dustGuardUSDCIssuer: "100000000000000000"}), nil
 }
 
 // TestCatalogueTwinDustFlagPropagates is the M4 regression: a verified-currency

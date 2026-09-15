@@ -1104,7 +1104,8 @@ func (s *Server) handleAssetListFromAssets(
 // of asserting a dust-backed headline. A missing entry is "unmeasured" → not
 // suppressed (see [dustLiquiditySuppressed]).
 func (s *Server) fillMarketCapsFromSupply(ctx context.Context, rows []AssetDetail, sourceCounts map[string]int) {
-	// Precise supply — the three-domain pipeline (supply_1d, ~9 assets).
+	// Precise supply — the ADR-0011 observer's most recent live reading
+	// (asset_supply_history, ~48 assets), bounded by [preciseSupplyMaxAge].
 	// Authoritative (includes claimable + LP-locked holdings); preferred.
 	precise := s.latestPreciseSupply(ctx)
 	// Broad-coverage fallback — trustline-balance sums for EVERY classic
@@ -1127,23 +1128,44 @@ func (s *Server) fillMarketCapsFromSupply(ctx context.Context, rows []AssetDetai
 	}
 }
 
-// latestPreciseSupply reads the three-domain supply pipeline (supply_1d,
-// ~9 assets) — authoritative because it includes claimable balances and
-// LP-locked holdings. Type-asserted so a reader without the method (test
-// stubs) yields nil rather than failing the caller, and a read error is
-// likewise nil: a supply overlay is best-effort everywhere it is used.
+// preciseSupplyReader is the optional seam [Server.latestPreciseSupply] reads
+// the ADR-0011 supply observer through. Named rather than inlined at the type
+// assertion so the production readers can be checked against it at COMPILE
+// time — an optional seam that stops matching is not a build failure, it is a
+// silent opt-out, and the arm would simply go quiet on every surface.
+type preciseSupplyReader interface {
+	LatestSupplyObservations(context.Context, time.Duration) (map[string]timescale.SupplyObservation, error)
+}
+
+// Compile-time proof that both production readers still satisfy the seam: the
+// bare store, and the cache the binary actually wires in front of it.
+var (
+	_ preciseSupplyReader = (*timescale.Store)(nil)
+	_ preciseSupplyReader = (*CachedAssetsReader)(nil)
+)
+
+// latestPreciseSupply reads the ADR-0011 supply observer's most recent live
+// observation per asset — authoritative because it covers all four holding
+// domains and applies the operator's locked-set policy. Type-asserted so a
+// reader without the method (test stubs) yields nil rather than failing the
+// caller, and a read error is likewise nil: a supply overlay is best-effort
+// everywhere it is used.
+//
+// Bounded by [preciseSupplyMaxAge]. The bound is the fix for the defect this
+// arm used to carry: it read supply_1d, a DAILY roll-up of the observer, whose
+// newest bucket is a completed previous day and therefore between 18 and 42
+// hours behind the observations in it — with no bound of any kind, so a figure
+// of any age outranked a live lake reading that disagreed with it.
 //
 // Extracted from [Server.fillMarketCapsFromSupply] so the RWA read path
 // can consult the same reader with the same preference order, rather
 // than growing a second, drifting notion of which supply is better.
-func (s *Server) latestPreciseSupply(ctx context.Context) map[string]string {
-	sr, ok := s.assetsReader.(interface {
-		LatestCirculatingSupply(context.Context) (map[string]string, error)
-	})
+func (s *Server) latestPreciseSupply(ctx context.Context) map[string]timescale.SupplyObservation {
+	sr, ok := s.assetsReader.(preciseSupplyReader)
 	if !ok {
 		return nil
 	}
-	m, err := sr.LatestCirculatingSupply(ctx)
+	m, err := sr.LatestSupplyObservations(ctx, preciseSupplyMaxAge)
 	if err != nil {
 		return nil
 	}
@@ -1159,14 +1181,16 @@ func (s *Server) latestPreciseSupply(ctx context.Context) map[string]string {
 // The price_usd is untouched — we guard the valuation, not the price;
 // circulating_supply is a raw fact (not a valuation), so it still surfaces,
 // matching the detail path's populateSupplyFields.
-func (s *Server) fillRowMarketCap(row *AssetDetail, precise, lake, broad map[string]string, sourceCounts map[string]int) {
+func (s *Server) fillRowMarketCap(
+	row *AssetDetail,
+	precise map[string]timescale.SupplyObservation,
+	lake, broad map[string]string,
+	sourceCounts map[string]int,
+) {
 	if row.MarketCapUSD != nil || row.PriceUSD == nil {
 		return
 	}
-	circ := precise[row.AssetID]
-	if circ == "" {
-		circ = higherClassicSupply(lake[row.AssetID], broad[row.AssetID])
-	}
+	circ, basis := classicSupplyReading(row.AssetID, precise, lake, broad)
 	if circ == "" {
 		return
 	}
@@ -1181,10 +1205,7 @@ func (s *Server) fillRowMarketCap(row *AssetDetail, precise, lake, broad map[str
 	// machine-readable reason. circulating_supply is a raw fact, not a
 	// valuation — it still surfaces.
 	if row.UnverifiedTickerCollision {
-		if row.CirculatingSupply == nil {
-			c := circ
-			row.CirculatingSupply = &c
-		}
+		stampCirculatingSupply(row, circ, basis)
 		return
 	}
 	// Native carve-out, mirroring the detail path (populateMarketCap's
@@ -1194,18 +1215,12 @@ func (s *Server) fillRowMarketCap(row *AssetDetail, precise, lake, broad map[str
 	if row.AssetID != "native" &&
 		dustLiquiditySuppressed(sourceCounts[row.AssetID], row.VolumeUSD24h, s.minMarketCapVolumeUSD) {
 		row.MarketCapLowLiquidity = true
-		if row.CirculatingSupply == nil {
-			c := circ
-			row.CirculatingSupply = &c
-		}
+		stampCirculatingSupply(row, circ, basis)
 		return
 	}
 	if mc := computeMarketCapUSD(circ, *row.PriceUSD, row.Decimals); mc != "" {
 		row.MarketCapUSD = &mc
-		if row.CirculatingSupply == nil {
-			c := circ
-			row.CirculatingSupply = &c
-		}
+		stampCirculatingSupply(row, circ, basis)
 	}
 }
 

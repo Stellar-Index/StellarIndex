@@ -130,16 +130,23 @@ func NewCachedAssetsReader(upstream AssetsReader, ttl time.Duration) *CachedAsse
 	}
 }
 
-// LatestCirculatingSupply passes through to the upstream's supply
+// LatestSupplyObservations passes through to the upstream's supply
 // reader (used by the /v1/assets market_cap enrichment). Not part of
 // AssetsReader — exposed so the handler's type-assert resolves through
 // this wrapper instead of skipping enrichment. Uncached: the underlying
-// supply_1d lookup is a handful of rows.
-func (c *CachedAssetsReader) LatestCirculatingSupply(ctx context.Context) (map[string]string, error) {
+// observation lookup is one indexed row per watched asset.
+//
+// Deliberately NOT cached here on top of that. The freshness bound the
+// caller passes is the whole point of the read, and a cache in front of it
+// would age the observation by its own TTL behind the bound's back — which
+// is a smaller version of exactly the defect that made this method exist.
+func (c *CachedAssetsReader) LatestSupplyObservations(
+	ctx context.Context, maxAge time.Duration,
+) (map[string]timescale.SupplyObservation, error) {
 	if sr, ok := c.upstream.(interface {
-		LatestCirculatingSupply(context.Context) (map[string]string, error)
+		LatestSupplyObservations(context.Context, time.Duration) (map[string]timescale.SupplyObservation, error)
 	}); ok {
-		return sr.LatestCirculatingSupply(ctx)
+		return sr.LatestSupplyObservations(ctx, maxAge)
 	}
 	return nil, nil
 }
