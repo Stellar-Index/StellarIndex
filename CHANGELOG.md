@@ -26,9 +26,12 @@ against.
   unconditionally outranked the live lake figure. `supply_1d`'s refresh
   policy carries an `end_offset`, so the current day's bucket is never
   fully covered by a refresh window and never materialises: the newest
-  bucket is always a COMPLETED PREVIOUS day, which puts the value in it
-  between 18 and 42 hours behind the observations it summarised, in
-  normal healthy operation, with `flags.stale` reporting false throughout.
+  bucket is always a COMPLETED PREVIOUS day, so the value in it is the
+  last observation of the previous UTC day and nothing fresher can ever
+  be served from that arm. On r1's 6-hourly refresh it ages from about
+  2.9 hours when the bucket lands to about 26.9 hours just before the
+  next one does — it was 17 h 47 m old when this was measured — with
+  `flags.stale` reporting false throughout.
 
   On USDC — the single largest served market cap on this index — that
   published 354,858,863.57 against 375,766,247.91 actually outstanding:

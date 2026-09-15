@@ -19,8 +19,9 @@ import (
 // kind, and that reading unconditionally outranked the live lake figure. The
 // roll-up's newest bucket is always a COMPLETED PREVIOUS day (its refresh
 // policy's end_offset means the current day's bucket is never fully covered
-// and never materialises), so the served figure was between 18 and 42 hours
-// old in normal healthy operation while the envelope reported it fresh.
+// and never materialises), so the served figure was the last observation of
+// the PREVIOUS UTC day — between about 2.9 and about 26.9 hours old on r1's
+// 6-hourly refresh — while the envelope reported it fresh.
 //
 // On USDC — this index's single largest served market cap — that published
 // 354,858,863.57 against 375,766,247.91 actually outstanding: 5.57% low, about
@@ -221,8 +222,10 @@ func TestLatestPreciseSupply_AsksForABoundedRead(t *testing.T) {
 		t.Errorf("freshness bound = %v, want preciseSupplyMaxAge (%v)", stub.gotMaxAge, preciseSupplyMaxAge)
 	}
 	// The bound has to be short enough to exclude the daily roll-up this arm
-	// used to read, whose newest value is never less than 18 hours old.
-	if stub.gotMaxAge >= 18*time.Hour {
+	// used to read. That roll-up's newest value is the last observation of the
+	// previous UTC day, so it spends most of its serving life past twelve
+	// hours old and reaches about twenty-seven.
+	if stub.gotMaxAge >= 12*time.Hour {
 		t.Errorf("freshness bound = %v — too loose to exclude a day-old reading", stub.gotMaxAge)
 	}
 	if len(got) != 1 {

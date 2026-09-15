@@ -19,11 +19,12 @@ import (
 // asset_supply_history — with `bucket = max(bucket)` and no vintage bound at
 // all. supply_1d's refresh policy carries an end_offset, so the current day's
 // bucket is never fully covered by a refresh window and never materialises;
-// the newest bucket is therefore always a COMPLETED PREVIOUS day, putting the
-// value it holds between 18 and 42 hours behind the observations it summarised.
-// Measured on r1 that served USDC at 354,858,863.57 against 375,766,247.91
-// outstanding — 5.57% low, roughly $21M of market cap — while the response
-// envelope reported the figure fresh.
+// the newest bucket is therefore always a COMPLETED PREVIOUS day, so the value
+// in it is the last observation of the PREVIOUS UTC day — on r1's 6-hourly
+// refresh, between about 2.9 and about 26.9 hours old, and 17 h 47 m old at
+// the moment of measurement. On r1 that served USDC at 354,858,863.57 against
+// 375,766,247.91 outstanding — 5.57% low, roughly $21M of market cap — while
+// the response envelope reported the figure fresh.
 //
 // Two properties are asserted together because either alone is satisfied by
 // code that still has the bug: the read returns the LATEST observation (not a

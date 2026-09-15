@@ -1153,9 +1153,10 @@ var (
 //
 // Bounded by [preciseSupplyMaxAge]. The bound is the fix for the defect this
 // arm used to carry: it read supply_1d, a DAILY roll-up of the observer, whose
-// newest bucket is a completed previous day and therefore between 18 and 42
-// hours behind the observations in it — with no bound of any kind, so a figure
-// of any age outranked a live lake reading that disagreed with it.
+// newest bucket is a completed previous day and therefore carries the last
+// observation of the previous UTC day, ageing to about twenty-seven hours
+// before the next bucket lands — with no bound of any kind, so a figure of any
+// age outranked a live lake reading that disagreed with it.
 //
 // Extracted from [Server.fillMarketCapsFromSupply] so the RWA read path
 // can consult the same reader with the same preference order, rather

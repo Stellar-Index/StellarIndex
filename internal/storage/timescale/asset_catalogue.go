@@ -212,9 +212,12 @@ type SupplyObservation struct {
 // asset per day — and its refresh policy carries an end_offset, so the
 // current day's bucket is never fully covered by a refresh window and is
 // never materialised. The newest bucket is therefore always a COMPLETED
-// PREVIOUS day, which puts the value it holds between 18 and 42 hours
-// behind the observations it was rolled up from, in normal healthy
-// operation, with nothing on the wire saying so.
+// PREVIOUS day, so the value it holds is the last observation of the
+// previous UTC day and nothing fresher can ever come out of that arm. On
+// r1's 6-hourly refresh it ages from about 2.9 hours when the bucket
+// lands to about 26.9 hours just before the next one does — it was
+// 17 h 47 m old when this was measured — with nothing on the wire
+// saying so.
 //
 // The distance that opens up is not a rounding matter. Measured on r1
 // 2026-09-15, the newest supply_1d bucket put USDC — this index's single
