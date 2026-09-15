@@ -26,6 +26,14 @@ import {
 //   - signed-out → client redirect to /signin
 //   - signed-in → render children with the resolved `me`
 //
+// A DISABLED probe — no session hint, or no accounts backend on this
+// network — is a fourth input, not a fourth state: it must land in
+// "signed-out". TanStack reports a disabled query as pending but
+// fetch-idle, and `isLoading` is `isPending && isFetching`, so it reads
+// as false: settled, not loading. That is what makes this safe. A gate
+// that waited on `isPending` instead would hold the skeleton forever
+// for a query that is never going to run.
+//
 // `signedIn` mirrors the navbar's check (Sidebar.tsx): a magic-link
 // session populates `me.user.email`; an API-key caller populates
 // `me.key_id`. Only the magic-link session carries the account
@@ -46,7 +54,8 @@ export function AccountGate({
   useEffect(() => {
     // Once the probe settles and the visitor isn't signed in, bounce
     // to the magic-link sign-in. While `isLoading` we hold (the cookie
-    // may yet resolve); `me.data === null` after settle = anonymous.
+    // may yet resolve); `me.data === null` after settle = anonymous, and
+    // so is a probe that was never enabled to run in the first place.
     // error/auth availability: an ERRORED probe (timeout, network
     // failure, 5xx) is NOT the same signal as "signed out" — useMe's
     // queryFn only resolves to `null` on an authoritative 401. Bouncing

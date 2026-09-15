@@ -12,6 +12,7 @@
 // `src/api/hooks.ts::useMe`.
 
 import { API_BASE_URL, timeoutSignal } from './client';
+import { clearSessionHint } from './sessionHint';
 import type { components } from './types';
 
 export class ApiError extends Error {
@@ -71,7 +72,18 @@ async function accountFetch<T>(
 
 /** POST /v1/auth/logout — clears the magic-link session cookie. */
 export async function logout(): Promise<void> {
-  await accountFetch<void>('/auth/logout', { method: 'POST' });
+  try {
+    await accountFetch<void>('/auth/logout', { method: 'POST' });
+  } finally {
+    // The API clears the session hint in the same response, but that
+    // only changes the cookie jar — nothing re-reads it until something
+    // happens to re-render. Drop it here too so every `useMe()` observer
+    // is notified and the signed-out surfaces appear at once, even when
+    // the caller stays in the SPA instead of doing a full navigation.
+    // Also covers a failed logout: local sign-out state should not
+    // depend on the request that just failed.
+    clearSessionHint();
+  }
 }
 
 /**

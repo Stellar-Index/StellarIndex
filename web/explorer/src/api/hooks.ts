@@ -19,6 +19,7 @@
 
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { API_BASE_URL, apiGet, timeoutSignal } from './client';
+import { clearSessionHint, useSessionHint } from './sessionHint';
 import type { components, paths } from './types';
 import { CURRENT_NETWORK } from '@/lib/networks';
 
@@ -280,17 +281,33 @@ export type MeResponse = Omit<Schemas['Account'], 'tier'> & {
 //      (cookie_domain) so it's visible to the apex,
 //   2. the API CORS middleware emits Access-Control-Allow-Credentials
 //      for the explorer origin allow-list (allow_credentials=true),
-//   3. the cookie is SameSite=None;Secure so browsers send it on the
-//      cross-origin request.
-// A signed-out visitor gets 401 → null (navbar shows the sign-in CTAs).
+//   3. the cookie is SameSite=Lax, which is enough because the two
+//      origins share the `stellarindex.io` registrable domain, so the
+//      request is cross-ORIGIN but same-SITE (CS-124).
+// A signed-out visitor is now detected from the session hint and never
+// makes the request at all; one that slips through (a hint that outlived
+// its session) still gets 401 → null, and the navbar shows the sign-in
+// CTAs either way.
 export function useMe() {
+  // The API writes a JS-readable presence flag beside the HttpOnly
+  // session cookie (see ./sessionHint). Without it there is certainly
+  // no session to find, and the probe below would be a guaranteed 401 —
+  // which the browser logs to the console from its network layer, where
+  // the `res.status === 401` branch cannot reach it.
+  const hasSessionHint = useSessionHint();
   return useQuery<MeResponse | null>({
-    queryKey: ['/v1/account/me', 'credentialed'],
-    // The lean test nets run no accounts backend, so /v1/account/me 503s
-    // there — skip the probe entirely (data stays undefined → treated as
-    // signed-out) rather than erroring on every page load. Accounts UI is
-    // hidden on those networks anyway (CURRENT_NETWORK.accounts).
-    enabled: CURRENT_NETWORK.accounts,
+    // The hint is part of the key, not just the gate: when it is dropped
+    // mid-session the query must read as "no data yet", not keep serving
+    // the signed-in object it cached before the session went away.
+    queryKey: ['/v1/account/me', 'credentialed', hasSessionHint],
+    // Two conditions, both meaning "this request cannot succeed":
+    //   - the lean test nets run no accounts backend, so /v1/account/me
+    //     503s there, and the accounts UI is hidden anyway
+    //     (CURRENT_NETWORK.accounts);
+    //   - no session hint means no session, so the probe would 401.
+    // Either way data stays undefined and every consumer treats the
+    // visitor as signed out, which is what a 401 produces today.
+    enabled: CURRENT_NETWORK.accounts && hasSessionHint,
     queryFn: async () => {
       // Same per-network resolution as every other request (client.ts);
       // only the fetch options differ — apiGet doesn't pass
@@ -304,7 +321,14 @@ export function useMe() {
         // page on it — stuck in "loading" forever with no escape hatch.
         signal: timeoutSignal(),
       });
-      if (res.status === 401) return null;
+      if (res.status === 401) {
+        // The hint outlived the real session — server-side expiry,
+        // revocation, or one cookie cleared without the other. Drop it
+        // so the next page load skips the probe instead of repeating
+        // this 401 (and its console line) forever.
+        clearSessionHint();
+        return null;
+      }
       if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
       const env = (await res.json()) as { data: MeResponse };
       return env.data;

@@ -800,6 +800,10 @@ func (h *Handlers) mintSession(w http.ResponseWriter, r *http.Request, user plat
 		Secure:   h.cfg.CookieSecure,
 		SameSite: sessionSameSite(),
 	})
+	// The JS-readable shadow of the cookie above, written in the same
+	// response so the two can never disagree about whether a session
+	// was just issued. See [SessionHintCookieName].
+	h.setSessionHintCookie(w, sess.ExpiresAt)
 	return nil
 }
 
@@ -829,6 +833,10 @@ func (h *Handlers) HandleLogout(w http.ResponseWriter, r *http.Request) {
 		Secure:   h.cfg.CookieSecure,
 		SameSite: sessionSameSite(),
 	})
+	// Drop the presence flag in the same response. A hint left behind
+	// here would send the explorer back for one more 401 per page load
+	// until it expired on its own.
+	h.clearSessionHintCookie(w)
 	w.WriteHeader(http.StatusOK)
 }
 
