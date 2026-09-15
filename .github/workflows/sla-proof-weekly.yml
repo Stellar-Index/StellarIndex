@@ -1,0 +1,517 @@
+name: sla-proof-weekly
+
+# The weekly SLA proof, rendered from the SLA probe's own series.
+#
+# WHY THIS EXISTS AND WHY IT IS NOT k6-weekly.yml. The weekly proof used
+# to have exactly one source: a k6 soak against K6_TARGET_STAGING. That
+# secret is deliberately unset (deleted on purpose "so the weekly cron
+# keeps its designed skip-until-staging behavior"),
+# test/load/scenarios/lib/env.js refuses production targets by design, and
+# the canonical scenario is 300 rps for 10 minutes — so r1, the single
+# production host, was never a candidate. k6-weekly.yml's header offered
+# two ways out, "provision a production-shaped target, or retire this
+# workflow", and neither happened: the schedule went red, stayed red, and
+# the scheduled-control sweep flagged it.
+#
+# There was a third source running the whole time. stellarindex-sla-probe
+# fires every 15 minutes on r1 and writes per-endpoint p50/p95/p99,
+# availability, freshness and sample counts into node_exporter's textfile
+# collector; Prometheus scrapes them at 15 s. Ten endpoints, ~814 samples
+# per endpoint per run, ~650 runs a week. This workflow aggregates that
+# into the same durable artefact — docs/operations/sla-proof-<date>.md —
+# that scripts/ci/check-sla-evidence.sh has always counted as evidence.
+#
+# WHY A SEPARATE FILE RATHER THAN AN EDIT TO k6-weekly.yml. The two runs
+# answer different questions, fail for unrelated reasons, and depend on
+# different infrastructure. This one needs an ssh path to r1 and nothing
+# else; that one needs a load target that does not exist. Folding the
+# probe aggregate into a workflow called k6-weekly would leave a file
+# whose name describes neither of its halves, and would make one job's
+# broken plumbing read as the other's finding — the exact confusion #316
+# and #502 were both about. k6-weekly.yml keeps the k6 capability: its
+# scenario compile-check still runs on every pull_request touching
+# test/load/**, and the load run is one workflow_dispatch away the moment
+# a production-shaped target exists. What it no longer has is a schedule,
+# because a scheduled control that cannot run is not a control.
+#
+# THIS WORKFLOW REPORTS BY FAILING, AND SAYS SO IN ONE MACHINE-READABLE
+# LINE. A red run here is usually this control WORKING: the probe series
+# say the week did not prove the claim, and the proof report naming which
+# endpoint and by how much is committed before the run goes red. The
+# marker below moves it from the scheduled-control sweep's FAIL class to
+# its ALARM class — still flagged, still counted, still failing
+# ci-health.yml, the sweep grants no relief for declaring — but named as a
+# finding to read rather than as plumbing to repair. The quoted step name
+# is load-bearing: the sweep ignores the marker unless a step of exactly
+# that name exists here, and scripts/ci/check-scheduled-controls-test.sh
+# fails on every PR if it does not.
+#
+# scheduled-control: reports-by-failing "SLA proof verdict (fails when the week is not proven, and NAMES what)"
+#
+# WHAT THE RUN CAN AND CANNOT SAY. All of it is in the rendered report
+# rather than only here, because the report is what outlives this file:
+# it is not a load test and names the concurrency that was not exercised;
+# the probe reads the API from inside the box so the numbers exclude DNS,
+# TLS, the reverse proxy and any CDN; percentiles are bounded rather than
+# averaged and nothing is rolled up across endpoints; the sample count and
+# the measured window are stated; and a window with holes in it renders
+# but cannot reach PROVEN. scripts/ops/sla-proof-from-probe.sh REFUSES
+# (rc 2, writing nothing) rather than publish an unlabelled number.
+#
+# SECRETS — all three already exist and are in use by deploy.yml and
+# ansible-drift.yml. Nothing here needs minting:
+#   - DEPLOY_SSH_PRIVATE_KEY  ssh key with access to the probe host
+#   - R1_HOST                 the probe host
+#   - R1_SSH_KNOWN_HOSTS      base64 of `ssh-keyscan -t ed25519 <host>`
+#   - R1_USER                 ssh user; defaults to root
+# The run reads r1 and writes nothing to it: one ssh command reads two
+# config values, and one local port-forward carries read-only Prometheus
+# queries.
+
+on:
+  schedule:
+    - cron: '0 2 * * 0'   # 02:00 UTC every Sunday — k6-weekly's old slot
+  workflow_dispatch:
+    inputs:
+      window:
+        description: >-
+          Aggregation window as a promql duration (default 7d). Prometheus
+          on the probe host keeps the 15-day default retention, so a window
+          beyond that is clamped to what is retained and the report says so.
+        required: false
+        default: '7d'
+
+permissions:
+  contents: read
+
+jobs:
+  sla-proof:
+    name: weekly SLA proof from the probe aggregate
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      # What makes the evidence DURABLE. The run publishes
+      # docs/operations/sla-proof-<YYYY-MM-DD>.md through the contents API
+      # with the job token — that committed file is the only thing
+      # scripts/ci/check-sla-evidence.sh counts as evidence, and a step
+      # summary or a 90-day artifact both age out.
+      contents: write
+      issues: write
+    env:
+      WINDOW: ${{ inputs.window || '7d' }}
+      PROM_PORT: '19090'
+      ISSUE_LABEL: sla-evidence
+      ISSUE_TITLE: "SLA evidence: the weekly SLA proof run is producing no evidence"
+      # Workspace-relative on purpose: the `runner` context is not
+      # available in a job-level `env:` block. Gitignored, and nothing in
+      # this workflow stages anything — the publish step PUTs one named
+      # path through the contents API and never touches the index.
+      EXTRACT_DIR: .sla-proof/run-${{ github.run_id }}
+      # The probe's documented defaults, from configs/healthchecks/sla-probe.sh.
+      # Used ONLY when the host carries no override; when they are used the
+      # report says the value came from the documented default rather than
+      # from a value read off the host, because a proof must not assert a
+      # configuration it did not read.
+      DEFAULT_PROBE_TARGET: 'http://localhost:3000/v1'
+      DEFAULT_PROBE_CONCURRENCY: '1'
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Assess the SLA evidence feed
+        id: gate
+        # Deterministic, offline verdict (unit-tested by
+        # scripts/ci/check-sla-evidence-test.sh), asked with
+        # SLA_EVIDENCE_SOURCE=probe so a missing k6 load target — which
+        # this run does not need and will never have — cannot report it
+        # red. rc 1 = no readable probe source, skip the run; rc 2 = no
+        # recent proof, run anyway, because a stale report must not block
+        # the run that refreshes it. This step never fails: the issue and
+        # fail steps below need to run.
+        env:
+          R1_HOST: ${{ secrets.R1_HOST }}
+          SSH_KEY: ${{ secrets.DEPLOY_SSH_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          # The source is "configured" when the run can actually reach the
+          # probe host's Prometheus, which binds 127.0.0.1 there — so the
+          # ssh path IS the source. Declaring the URL unconditionally would
+          # make an unset key read as a configured source and fail later,
+          # in a step whose error names a tunnel rather than a secret.
+          prom_url=""
+          if [ -n "${R1_HOST:-}" ] && [ -n "${SSH_KEY:-}" ]; then
+            prom_url="http://127.0.0.1:${PROM_PORT}"
+          fi
+          set +e
+          report="$(SLA_EVIDENCE_SOURCE=probe SLA_PROBE_PROM_URL="$prom_url" \
+            ./scripts/ci/check-sla-evidence.sh 2>&1)"
+          rc=$?
+          set -e
+          echo "$report"
+          # `if`, not `&&`: under `set -e` a false `[ ]` test at the head of
+          # an && list aborts the step.
+          source_ready=true
+          if [ "$rc" -eq 1 ]; then source_ready=false; fi
+          {
+            echo "verdict_rc=${rc}"
+            echo "source_ready=${source_ready}"
+            echo "prom_url=${prom_url}"
+            echo "report<<REPORT_EOF"
+            echo "$report"
+            echo "REPORT_EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Set up SSH to the probe host
+        id: ssh
+        if: steps.gate.outputs.source_ready == 'true'
+        # Mirrors deploy.yml / ansible-drift.yml (F-1297/F-1298): the key
+        # travels through `env:`, never interpolated into the shell, and is
+        # written with printf; the host key is PINNED from
+        # R1_SSH_KNOWN_HOSTS with no live ssh-keyscan fallback, which was a
+        # MITM hole. This job holds an ssh key, so that matters here too.
+        #
+        # It also READS the probe's live configuration, because the report
+        # derives two of its load-bearing caveats from it: the "not a load
+        # test" sentence names the concurrency, and the "excludes DNS, TLS
+        # and the CDN" sentence is emitted only when the recorded target is
+        # a loopback address. Hard-coding either would let the document
+        # keep asserting a configuration the host had moved off.
+        env:
+          SSH_KEY: ${{ secrets.DEPLOY_SSH_PRIVATE_KEY }}
+          KNOWN_HOSTS_B64: ${{ secrets.R1_SSH_KNOWN_HOSTS }}
+          R1_HOST: ${{ secrets.R1_HOST }}
+          R1_USER: ${{ secrets.R1_USER }}
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/id_sla_proof
+          chmod 600 ~/.ssh/id_sla_proof
+          if [ -z "${KNOWN_HOSTS_B64:-}" ]; then
+            echo "::error::R1_SSH_KNOWN_HOSTS is unset — pin the probe host key before retrying (capture once out-of-band with ssh-keyscan -t ed25519 and base64 it, then set it as a repo secret). There is no live ssh-keyscan fallback: it trusts whatever key is served on the wire." >&2
+            exit 1
+          fi
+          echo "$KNOWN_HOSTS_B64" | base64 -d > ~/.ssh/known_hosts
+          chmod 644 ~/.ssh/known_hosts
+
+          remote="${R1_USER:-root}@${R1_HOST}"
+          echo "remote=${remote}" >> "$GITHUB_OUTPUT"
+
+          ssh_opts=(-i ~/.ssh/id_sla_proof -o BatchMode=yes -o ConnectTimeout=20
+                    -o StrictHostKeyChecking=yes)
+          if ! ssh "${ssh_opts[@]}" "$remote" true; then
+            echo "::error::cannot ssh to the probe host with the deploy key. This is the hop that fails, not Prometheus — check the key is in that host's authorized_keys." >&2
+            exit 1
+          fi
+
+          # Read the two overrides out of the probe's EnvironmentFile. sed
+          # prints nothing when the key is absent, which is the signal to
+          # fall back to the documented default. No secret is read: only
+          # these two keys are matched, and the file's API key is never
+          # touched. Landed in files rather than piped — an early-exit pipe
+          # consumer under pipefail is the #475 bug class
+          # (scripts/ci/lint-shell-sigpipe.sh).
+          # Single-quoted remote commands: nothing expands locally, so what
+          # runs on the host is exactly what is written here.
+          ssh "${ssh_opts[@]}" "$remote" \
+            'sed -n "s/^SLA_PROBE_BASE_URL=//p" /etc/default/stellarindex-healthchecks 2>/dev/null' \
+            > target.txt || true
+          ssh "${ssh_opts[@]}" "$remote" \
+            'sed -n "s/^SLA_PROBE_CONCURRENCY=//p" /etc/default/stellarindex-healthchecks 2>/dev/null' \
+            > conc.txt || true
+
+          target="$(cat target.txt)"
+          target="${target%%$'\n'*}"
+          target="${target%\"}"; target="${target#\"}"
+          conc="$(cat conc.txt)"
+          conc="${conc%%$'\n'*}"
+          conc="${conc%\"}"; conc="${conc#\"}"
+
+          defaulted=""
+          if [ -z "$target" ]; then
+            target="$DEFAULT_PROBE_TARGET"
+            defaulted="probe target"
+          fi
+          if [ -z "$conc" ]; then
+            conc="$DEFAULT_PROBE_CONCURRENCY"
+            defaulted="${defaulted:+${defaulted} and }probe concurrency"
+          fi
+
+          {
+            echo "probe_target=${target}"
+            echo "probe_concurrency=${conc}"
+            echo "defaulted=${defaulted}"
+          } >> "$GITHUB_OUTPUT"
+          echo "Probe reads ${target} at concurrency ${conc}${defaulted:+ (${defaulted} from the documented default, not read off the host)}."
+
+      - name: Render the durable SLA proof report
+        id: proof
+        if: always() && steps.ssh.outcome == 'success'
+        # The tunnel and the render are ONE step on purpose: a backgrounded
+        # ssh that dies between steps would surface as "Prometheus is
+        # unreachable", which is a true sentence pointing at the wrong
+        # thing. ExitOnForwardFailure makes a forward that cannot bind a
+        # hard failure rather than a silent no-op — the k6 remote-write
+        # trap in a different spelling, where an unset sink streamed a
+        # whole run into the runner's own localhost and discarded it.
+        #
+        # The generator is deterministic given its extract, is offline in
+        # --extract mode, and is unit-tested by
+        # scripts/ops/sla-proof-from-probe-test.sh on every PR. It REFUSES
+        # (rc 2, writing nothing) when a headline series is absent, when
+        # provenance is unset, when the series span more than one host, or
+        # when the retained window is under the floor.
+        env:
+          REMOTE: ${{ steps.ssh.outputs.remote }}
+          SLA_PROOF_PROBE_TARGET: ${{ steps.ssh.outputs.probe_target }}
+          SLA_PROOF_PROBE_CONCURRENCY: ${{ steps.ssh.outputs.probe_concurrency }}
+          SLA_PROOF_COMMIT: ${{ github.sha }}
+          SLA_PROOF_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          DEFAULTED: ${{ steps.ssh.outputs.defaulted }}
+        run: |
+          set -uo pipefail
+          mkdir -p "$EXTRACT_DIR"
+
+          note="Rendered by the scheduled sla-proof-weekly run from a read-only"
+          note="${note} port-forward to the probe host's Prometheus."
+          if [ -n "${DEFAULTED:-}" ]; then
+            note="${note} The ${DEFAULTED} recorded above came from the documented"
+            note="${note} default in configs/healthchecks/sla-probe.sh, not from a"
+            note="${note} value read off the host."
+          fi
+          export SLA_PROOF_NOTE="$note"
+
+          # A control socket, not a backgrounded pid: the forward is closed
+          # by name at the end of the step. `pkill -f <port pattern>` would
+          # match this very shell, whose command line contains the pattern.
+          sock=~/.ssh/sla-proof-tunnel.sock
+          set +e
+          ssh -i ~/.ssh/id_sla_proof -o BatchMode=yes -o ConnectTimeout=20 \
+              -o StrictHostKeyChecking=yes -o ExitOnForwardFailure=yes \
+              -M -S "$sock" -f -N -L "${PROM_PORT}:127.0.0.1:9090" "$REMOTE"
+          tunnel_rc=$?
+          set -e
+          if [ "$tunnel_rc" -ne 0 ]; then
+            echo "::error::could not open the read-only port-forward to the probe host's Prometheus (ssh exit ${tunnel_rc}). The probe keeps running; what is missing is the reader." >&2
+            echo "proof_rc=2" >> "$GITHUB_OUTPUT"
+            echo "proof_path=" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          set +e
+          out="$(./scripts/ops/sla-proof-from-probe.sh \
+            --prom-url "http://127.0.0.1:${PROM_PORT}" \
+            --window "$WINDOW" \
+            --extract-out "$EXTRACT_DIR/probe-extract.json" 2>&1)"
+          rc=$?
+          set -e
+          printf '%s\n' "$out"
+
+          # Close the forward immediately: the job holds a key, and nothing
+          # after this step needs the tunnel.
+          ssh -S "$sock" -O exit "$REMOTE" 2>/dev/null || true
+
+          proof_path=""
+          if [ "$rc" -eq 0 ] || [ "$rc" -eq 1 ]; then
+            # The generator prints the written path as its last line.
+            proof_path="${out##*$'\n'}"
+            cp "$proof_path" "$EXTRACT_DIR/"
+            # From the H1 onward: the YAML front matter renders as a stray
+            # horizontal rule in a step summary. The committed file keeps it.
+            sed -n '/^# /,$p' "$proof_path" >> "$GITHUB_STEP_SUMMARY"
+          else
+            {
+              echo "## Weekly SLA proof — ${WINDOW} of probe series"
+              echo
+              echo "**No proof report was produced.** The generator refused the"
+              echo "series, so this run read nothing that can be labelled:"
+              echo
+              echo '```'
+              printf '%s\n' "$out"
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+          {
+            echo "proof_rc=${rc}"
+            echo "proof_path=${proof_path}"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Publish the proof report
+        id: publish
+        # What makes it DURABLE. Committed through the contents API with
+        # the job token rather than a credentialed checkout, so no step in
+        # this workflow ever holds push credentials on disk (the checkout
+        # stays `persist-credentials: false`). A commit made with
+        # GITHUB_TOKEN does not re-trigger workflows, and ci.yml's
+        # push-to-main trigger ignores docs/** anyway, so this costs no CI.
+        #
+        # A failure here is a real failure: the run measured something and
+        # then failed to retain it. It is NOT swallowed.
+        if: always() && steps.proof.outputs.proof_path != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          PROOF_PATH: ${{ steps.proof.outputs.proof_path }}
+          PROOF_RC: ${{ steps.proof.outputs.proof_rc }}
+          BRANCH: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          verdict=PROVEN
+          if [ "$PROOF_RC" = "1" ]; then verdict="NOT PROVEN"; fi
+
+          content="$(base64 -w0 "$PROOF_PATH")"
+          message="$(printf 'docs(sla): weekly SLA proof %s (%s)\n\nRendered by scripts/ops/sla-proof-from-probe.sh from a %s window of\nstellarindex_sla_probe_* series. Run %s, commit %s.\n' \
+            "${PROOF_PATH##*/}" "$verdict" "$WINDOW" "${GITHUB_RUN_ID:-?}" "${GITHUB_SHA:-?}")"
+
+          # An existing file at this path (a same-day re-run) needs its blob
+          # sha to update rather than 422. Absent file => empty sha => create.
+          existing="$(gh api "repos/${GH_REPO}/contents/${PROOF_PATH}?ref=${BRANCH}" \
+            --jq '.sha' 2>/dev/null || true)"
+
+          args=(--method PUT "repos/${GH_REPO}/contents/${PROOF_PATH}"
+                -f "message=${message}" -f "content=${content}" -f "branch=${BRANCH}")
+          if [ -n "$existing" ] && [ "$existing" != "null" ]; then
+            args+=(-f "sha=${existing}")
+          fi
+          gh api "${args[@]}" --jq '.commit.sha' > "$EXTRACT_DIR/published-commit.txt"
+          echo "Published ${PROOF_PATH} to ${BRANCH} as $(cat "$EXTRACT_DIR/published-commit.txt")."
+
+      - name: Re-assess the SLA evidence feed
+        id: verdict
+        # Taken AFTER the report lands, not before. Taken before, a first
+        # successful run would still report rc 2 ("no proof inside the
+        # window") and go red for the absence of the very file it had just
+        # produced — the feed would need two weeks to report itself healthy
+        # once. Never fails; the steps below need to run.
+        if: always() && steps.gate.outcome == 'success'
+        env:
+          PROM_URL: ${{ steps.gate.outputs.prom_url }}
+        run: |
+          set -euo pipefail
+          set +e
+          report="$(SLA_EVIDENCE_SOURCE=probe SLA_PROBE_PROM_URL="$PROM_URL" \
+            ./scripts/ci/check-sla-evidence.sh 2>&1)"
+          rc=$?
+          set -e
+          echo "$report"
+          {
+            echo "verdict_rc=${rc}"
+            echo "report<<REPORT_EOF"
+            echo "$report"
+            echo "REPORT_EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Upload the probe extract
+        # The extract is every query result the report was rendered from,
+        # including the promql of every query, so a reader can re-render the
+        # document offline and get the same numbers. Scoped to this run's
+        # directory and gated on the run having actually produced one:
+        # an artifact named after a run that measured nothing, asserting a
+        # pass, is worse than no artifact.
+        if: always() && steps.proof.outputs.proof_path != ''
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7
+        with:
+          name: sla-probe-extract-${{ github.run_id }}
+          path: ${{ env.EXTRACT_DIR }}/
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Open or update the tracking issue (no SLA evidence)
+        # `always() && verdict computed && ...`, not the implicit success():
+        # a failing render must not suppress the report. The verdict step
+        # never fails by design, so gating on its outcome means "the verdict
+        # was actually computed" (an aborted checkout leaves verdict_rc
+        # empty, which would otherwise read as non-zero).
+        if: always() && steps.verdict.outcome == 'success' && steps.verdict.outputs.verdict_rc != '0'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          REPORT: ${{ steps.verdict.outputs.report }}
+        run: |
+          set -euo pipefail
+          gh label create "$ISSUE_LABEL" --color B60205 \
+            --description "the weekly SLA-evidence feed is not producing evidence" 2>/dev/null || true
+
+          body="$(printf '%s\n\n---\n_Auto-managed by the sla-proof-weekly workflow (run %s). Closes automatically once a scheduled run renders a dated proof report AND one is inside the freshness window (docs/operations/sla-proof-procedure.md)._\n' \
+            "$REPORT" "${GITHUB_RUN_ID:-?}")"
+
+          existing="$(gh issue list --label "$ISSUE_LABEL" --state open \
+            --json number --jq '.[0].number' || true)"
+          if [ -n "$existing" ] && [ "$existing" != "null" ]; then
+            gh issue comment "$existing" --body "$body"
+            echo "Updated existing sla-evidence issue #$existing."
+          else
+            gh issue create --title "$ISSUE_TITLE" --label "$ISSUE_LABEL" --body "$body"
+            echo "Opened new sla-evidence issue."
+          fi
+
+      - name: Close the tracking issue (evidence feed healthy)
+        # Keyed on the POST-run verdict AND on this run having produced a
+        # proof of its own. Without the second clause a run that read
+        # nothing would still close the issue on the strength of a report
+        # some earlier run landed inside the window — the feed reported
+        # healthy by a run that was not.
+        #
+        # A run whose week was NOT PROVEN still closes this issue, and that
+        # is correct: this issue tracks whether the feed produces evidence,
+        # not whether the SLA held. A NOT PROVEN report is evidence, and the
+        # most useful kind. The finding itself reddens the run below.
+        if: steps.verdict.outputs.verdict_rc == '0' && steps.proof.outputs.proof_path != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          for n in $(gh issue list --label "$ISSUE_LABEL" --state open \
+              --json number --jq '.[].number' || true); do
+            gh issue close "$n" --comment "The SLA-evidence feed is producing evidence again — sla-proof-weekly closing automatically."
+            echo "Closed sla-evidence issue #$n."
+          done
+
+      - name: SLA proof verdict (fails when the week is not proven, and NAMES what)
+        # The step the scheduled-control marker at the top of this file
+        # names. Rename it and that marker must be renamed with it, or the
+        # sweep voids the declaration and this workflow falls back to its
+        # stricter FAIL class.
+        #
+        # Four independent ways a week can fail to leave proven evidence,
+        # and the verdict says which:
+        #
+        #   verdict_rc != 0  no readable probe source, or no dated proof
+        #                    inside the window even after this run.
+        #   proof_rc == 2    the generator REFUSED the series — no headline
+        #                    metric, no provenance, more than one host, or a
+        #                    retained window under the floor. Evidence that
+        #                    cannot be labelled is not evidence.
+        #   proof_rc == 1    the report was rendered and the week did NOT
+        #                    prove the claim. This is the control speaking:
+        #                    read the committed report, which names the
+        #                    endpoint, the bound and how much of the window
+        #                    was over it.
+        #   publish failed   the run measured something and then failed to
+        #                    retain it; the step's own failure already
+        #                    reddens the job, and it is named here so the
+        #                    ::error:: says which limb broke.
+        if: >-
+          always() && steps.verdict.outcome == 'success' &&
+          (steps.verdict.outputs.verdict_rc != '0' ||
+           steps.proof.outputs.proof_rc != '0' ||
+           steps.publish.outcome == 'failure')
+        env:
+          VERDICT_RC: ${{ steps.verdict.outputs.verdict_rc }}
+          PROOF_RC: ${{ steps.proof.outputs.proof_rc }}
+          PROOF_PATH: ${{ steps.proof.outputs.proof_path }}
+          PUBLISH_OUTCOME: ${{ steps.publish.outcome }}
+        run: |
+          if [ "${PROOF_RC:-}" = "1" ] && [ -n "${PROOF_PATH:-}" ]; then
+            echo "::error::The week did not prove the SLA claim — the report is committed at ${PROOF_PATH}; read its per-endpoint table for which bound did not hold and for how much of the window."
+          else
+            echo "::error::This run did not leave durable SLA evidence behind" \
+                 "(check-sla-evidence rc=${VERDICT_RC:-?}," \
+                 "render rc=${PROOF_RC:-skipped}, publish=${PUBLISH_OUTCOME:-skipped})" \
+                 "— see the sla-evidence tracking issue."
+          fi
+          exit 1

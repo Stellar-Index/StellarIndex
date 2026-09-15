@@ -16,6 +16,46 @@ against.
 ## [Unreleased]
 
 ## [v0.82.0] — 2026-09-15
+### Changed
+
+- **ci:** the weekly SLA proof is now produced by
+  `.github/workflows/sla-proof-weekly.yml`, which aggregates the SLA
+  probe's series over a read-only ssh port-forward to the probe host's
+  Prometheus, and `k6-weekly.yml` has lost its `schedule:` trigger.
+
+  A scheduled control that cannot run is not a control — it is a red
+  badge that teaches people to ignore red badges. k6-weekly needed a load
+  target that is deliberately unset, and its own header offered only
+  "provision a production-shaped target, or retire this workflow". The
+  retirement is of the schedule, not the capability: the scenario
+  compile-check still runs on every `pull_request` touching
+  `test/load/**`, and the load run keeps its `workflow_dispatch` path,
+  its scenario input, its p(99) summary export, its renderer and its
+  publish step. Mint `K6_TARGET_STAGING` and one dispatch produces the
+  same dated report it always would have.
+
+  The two workflows are separate files because they answer different
+  questions and fail for unrelated reasons: one needs an ssh path to the
+  probe host, the other a load target that does not exist. Folding them
+  together would make one job's broken plumbing read as the other's
+  finding. The probe aggregate does not replace load at volume, and the
+  report it generates says so and points back at the scenarios.
+
+  The new workflow declares `scheduled-control: reports-by-failing`, so a
+  red run is classified by the scheduled-control sweep as a finding to
+  read rather than as plumbing to repair. It is still flagged, still
+  counted and still fails `ci-health.yml` — the declaration buys no
+  quiet. A NOT PROVEN week commits its report first and goes red second,
+  because the run whose finding matters most must not be the one that
+  leaves nothing behind.
+
+  Also fixed while in the file: `k6-weekly.yml`'s `Run scenario` step
+  carried `set -uo pipefail`, which adds `-u` and `pipefail` without ever
+  clearing the `-e` GitHub supplies as `bash -e {0}`. A k6 exit 99 — a
+  breached threshold — therefore aborted the step, which is exactly what
+  that step's own comment says must not happen: the breaching run could
+  never reach the renderer.
+
 ### Added
 
 - **ops:** `scripts/ops/sla-proof-from-probe.sh` renders the dated SLA

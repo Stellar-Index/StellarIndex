@@ -111,6 +111,39 @@ name: k6-weekly
 # Restoring the feed means provisioning a production-shaped target, not
 # load-testing production.
 #
+# 2026-09-15 — THE SCHEDULE IS RETIRED; THE CAPABILITY IS NOT. The two
+# ways out named above were "provision a production-shaped target, or
+# retire this workflow", and a third was taken instead: the weekly proof
+# is now rendered from the SLA probe's own series by
+# .github/workflows/sla-proof-weekly.yml, which needs an ssh path to the
+# probe host and no load target at all. So the `schedule:` trigger is
+# gone from this file. A scheduled control that cannot run is not a
+# control — it is a red badge that teaches people to ignore red badges,
+# which is what four months of green no-ops followed by weeks of red runs
+# actually cost.
+#
+# Everything that still works is still here, and nothing about the k6
+# capability was weakened:
+#
+#   - The scenario compile-check keeps its own job with no secret and no
+#     target dependency, and keeps running on every `pull_request`
+#     touching test/load/**. It was never blocked on the target and is
+#     the gate that caught the object-spread bug; retiring the schedule
+#     must not cost it, and does not.
+#   - The load run keeps its `workflow_dispatch` path, its scenario
+#     input, its summary export with p(99), its conditional remote-write
+#     sink, its renderer and its publish step. Mint K6_TARGET_STAGING
+#     against a production-shaped target and `gh workflow run
+#     k6-weekly.yml` produces the same dated proof report it always
+#     would have. Nothing needs rebuilding first.
+#
+# What the probe aggregate does NOT replace is load at volume. It
+# measures served latency at concurrency 1 from inside the box; the
+# scenarios below measure client-observed latency under synthetic
+# concurrency across the edge. The rendered probe report says so in its
+# own "does not prove" section and points back here. When a target
+# exists, this workflow is the one that closes that gap.
+#
 # History of the target secret, so nobody re-derives it: the org
 # migration ate the original secrets (the workflow "had failed SILENTLY"
 # — docs/operations/v1-launch-plan.md, 2026-07-30 ~14:40Z), the load key
@@ -143,10 +176,13 @@ name: k6-weekly
 # waiting for next Sunday.
 
 on:
-  # Weekly SLA-evidence run — restored 2026-07-06 (was disabled under the
-  # Actions spending cap, Task #50). Kept cheap: one ≤30-min job a week.
-  schedule:
-    - cron: '0 2 * * 0'   # 02:00 UTC every Sunday
+  # NO `schedule:`. The Sunday 02:00 UTC slot moved to
+  # .github/workflows/sla-proof-weekly.yml, which renders the weekly proof
+  # from the SLA probe and needs no load target. Re-adding a cron here
+  # without first minting K6_TARGET_STAGING recreates the red-forever
+  # scheduled control this retirement removes — and would put two
+  # workflows in the same week both trying to publish
+  # docs/operations/sla-proof-<same-date>.md.
   workflow_dispatch:
     inputs:
       scenario:
@@ -309,6 +345,14 @@ jobs:
           # while still looking complete. render-sla-proof.sh REFUSES such
           # an export, so dropping this flag fails the run rather than
           # publishing half a proof.
+          # `set +e` around the run, not `set -uo pipefail` alone. GitHub
+          # runs a `run:` block as `bash -e {0}`, and `set -uo pipefail`
+          # adds -u and pipefail without ever clearing that -e — so a k6
+          # exit 99 aborted the step here, which is precisely what the
+          # comment above says must not happen. The breaching run is the
+          # one whose report matters most, and it was the one that could
+          # never reach the renderer.
+          set +e
           k6 run \
             "${out_args[@]}" \
             --summary-export "$REPORT_DIR/summary.json" \
@@ -317,6 +361,7 @@ jobs:
             --tag run_attempt=${{ github.run_attempt }} \
             "test/load/scenarios/$SCENARIO"
           k6_rc=$?
+          set -e
 
           ended_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
           # Captured then sliced, never `k6 version | head -1`: an
