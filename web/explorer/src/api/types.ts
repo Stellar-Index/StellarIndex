@@ -7073,6 +7073,16 @@ export interface components {
              *     means landing a reviewed change in a third party's published
              *     directory, and it grants exactly one address rather than
              *     every token an account will ever issue.
+             *
+             *     That second requirement is satisfiable TWO ways — see
+             *     `contract_recognition_sources`, and `recognition` on each
+             *     admitted row for which one applied. The curated directory
+             *     naming the address still admits alone. An independent
+             *     listing directory naming it admits only ALONGSIDE an in-repo
+             *     curated binding for the same address: two sources that do
+             *     not read each other, neither sufficient by itself. The
+             *     asymmetry is about what each source is, not about how many
+             *     there are.
              */
             contract_requirements: string[];
             /**
@@ -7095,6 +7105,33 @@ export interface components {
              *     implied.
              */
             contract_recognition_tags: string[];
+            /**
+             * @description The closed vocabulary of ways the contract arm's SECOND
+             *     requirement can be satisfied, strongest first. Two routes
+             *     exist and they are NOT the same strength of evidence.
+             *
+             *     `curated_account_directory` — the curated third-party account
+             *     directory names the exact contract address with an
+             *     issuing-class tag. Admits ON ITS OWN: it is a
+             *     Stellar-specific, address-level directory whose purpose is
+             *     identity attestation, synced from a reviewed repository, and
+             *     it carries the scam vocabulary that the third requirement
+             *     reads.
+             *     `independent_listing_corroborating_curated_binding` — an
+             *     independent listing directory names the exact address AND an
+             *     in-repo curated binding names the same address. Requires
+             *     BOTH and admits on NEITHER alone. A listing map is a
+             *     convenience built for price aggregation rather than an
+             *     adversarial identity system, so it CORROBORATES a claim
+             *     rather than attesting to one; and an in-repo binding may
+             *     never satisfy this requirement by itself, which would be
+             *     this index vouching for itself.
+             * @example [
+             *       "curated_account_directory",
+             *       "independent_listing_corroborating_curated_binding"
+             *     ]
+             */
+            contract_recognition_sources: ("curated_account_directory" | "independent_listing_corroborating_curated_binding")[];
             /** @description Curated-directory tags that exclude an issuer outright. Same vocabulary the price-withholding gate reads. */
             scam_flag_tags: string[];
             /**
@@ -7250,16 +7287,38 @@ export interface components {
             /** @description True whenever any member carries no reference valuation, i.e. whenever this total is less than the reference-priced value of the set. */
             lower_bound: boolean;
             /**
-             * @description The distinct oracles whose published values make up the
-             *     total, sorted. A dollar figure that cannot be traced to a
-             *     publisher is worse than an absent one here; each contributing
-             *     row carries the full provenance — feed, denominator and
-             *     vintage — in its own `reference` block.
+             * @description The distinct PUBLISHERS whose published values make up the
+             *     total, sorted. Not "oracles": the total can mix two
+             *     provenances, and calling a listing platform an oracle would
+             *     misdescribe the weaker half of its own figure. A dollar
+             *     figure that cannot be traced to a publisher is worse than an
+             *     absent one here; each contributing row carries the full
+             *     provenance — kind, publisher, key, denominator and vintage —
+             *     in its own `reference` block. Which kind each publisher
+             *     contributed is on the row, never inferred from the name.
              * @example [
+             *       "coingecko",
              *       "redstone"
              *     ]
              */
             sources?: string[];
+            /**
+             * @description The distinct `reference.provenance` values CONTRIBUTING to
+             *     the total, sorted. Served so the mixture is visible at
+             *     summary level without walking every row.
+             *
+             *     `basis` is derived from exactly this list: an all-oracle
+             *     total does not describe listing prices, and a total that
+             *     gains its first listing-priced row stops claiming an issuer
+             *     declared a one-for-one correspondence. A basis string naming
+             *     a provenance the total does not contain is exactly as wrong
+             *     as one omitting a provenance it does.
+             * @example [
+             *       "listing_platform_price",
+             *       "oracle_instrument_nav"
+             *     ]
+             */
+            provenances?: ("oracle_instrument_nav" | "listing_platform_price")[];
             /** @description Prose statement of what was measured and, as importantly, what it is not. */
             basis: string;
         };
@@ -7352,6 +7411,25 @@ export interface components {
              */
             basis: "sep1_anchor_declaration" | "oracle_rwa_feed" | "curated_contract_instrument" | "contract_oracle_rwa_feed";
             /**
+             * @description Which independent party's naming satisfied the contract
+             *     arm's second requirement. Present on CONTRACT-issued rows
+             *     only; absent on classic rows, where the classic third
+             *     requirement has exactly one source and naming it would say
+             *     nothing.
+             *
+             *     On the wire because the two routes are not the same strength
+             *     of evidence — see `definition.contract_recognition_sources`.
+             *     A row reading `curated_account_directory` was vouched for by
+             *     an address-level identity directory that carries scam flags
+             *     and admits on its own. A row reading
+             *     `independent_listing_corroborating_curated_binding` required
+             *     TWO sources that do not read each other. A consumer that
+             *     wants only directory-attested rows filters on this rather
+             *     than reconstructing the rule.
+             * @enum {string}
+             */
+            recognition?: "curated_account_directory" | "independent_listing_corroborating_curated_binding";
+            /**
              * @description Declared class. Present under `sep1_anchor_declaration` and
              *     `curated_contract_instrument`. Absent under either oracle
              *     basis — a feed names an instrument, not its class, and none
@@ -7412,9 +7490,21 @@ export interface components {
              *     dust-liquidity guard refused to turn it into a market cap.
              *     `supply_unavailable` — a price exists but no
              *     circulating-supply reading does.
+             *     `decimals_unavailable` — a price and a supply both exist and
+             *     the token's own declared SCALE does not. CONTRACT rows only:
+             *     a classic asset is 7 decimals by protocol and a Stellar
+             *     Asset Contract inherits that, while a SEP-41 token declares
+             *     its own, and when that declaration cannot be read the
+             *     catalogue's default of 7 is a convention rather than a
+             *     reading. Market cap divides supply by 10^decimals, so
+             *     multiplying by it would publish a figure wrong by a factor of
+             *     ten to the something — one hundredth for a 5-decimal fund,
+             *     eleven orders of magnitude the other way for an 18-decimal
+             *     token. `circulating_supply` is still served beside it: that
+             *     is a chain fact and needs no scale to be true.
              * @enum {string}
              */
-            status: "published" | "withheld_issuer_flagged" | "unpriced" | "withheld_low_liquidity" | "supply_unavailable";
+            status: "published" | "withheld_issuer_flagged" | "unpriced" | "withheld_low_liquidity" | "supply_unavailable" | "decimals_unavailable";
             /** @description Served USD price (decimal string — ADR-0003). Absent unless a price was published. */
             price_usd?: string;
             /**
@@ -7484,7 +7574,7 @@ export interface components {
              *     string on the same row.
              * @enum {string}
              */
-            status: "published" | "withheld_issuer_flagged" | "reference_unavailable" | "reference_contract_not_bound" | "reference_not_instrument_scoped" | "reference_not_bound" | "reference_not_usd_denominated" | "no_reference_feed" | "reference_expired" | "reference_not_positive" | "supply_unavailable";
+            status: "published" | "withheld_issuer_flagged" | "reference_unavailable" | "reference_contract_not_bound" | "reference_not_instrument_scoped" | "reference_not_bound" | "reference_not_usd_denominated" | "no_reference_feed" | "reference_expired" | "reference_not_positive" | "supply_unavailable" | "decimals_unavailable";
             /**
              * @description `circulating_supply / 10^decimals x reference.price_usd`, as
              *     a 2-dp decimal string (ADR-0003). Exact rational arithmetic
@@ -7565,9 +7655,15 @@ export interface components {
              */
             source: string;
             /**
-             * @description Canonical asset id of the instrument the oracle priced,
-             *     `rwa:<CODE>`. Present so the same row can be pulled from
-             *     `/oracle/latest` and checked against its origin.
+             * @description The key the price is published under, whose meaning follows
+             *     `provenance`: under `oracle_instrument_nav` it is the
+             *     canonical asset id of the instrument the oracle priced,
+             *     `rwa:<CODE>`, so the same row can be pulled from
+             *     `/oracle/latest` and checked against its origin; under
+             *     `listing_platform_price` it is the listing platform's own
+             *     asset id, so the same figure can be pulled from that
+             *     platform. It is NOT an ADR-0028 feed id in the second case
+             *     and does not pretend to be.
              * @example rwa:USTRY
              */
             feed: string;
@@ -7586,6 +7682,32 @@ export interface components {
              *     separately visible.
              */
             as_of: string;
+            /**
+             * @description WHAT KIND of figure this is. Two are published and they are
+             *     not the same claim, so this is mandatory on every served
+             *     reference rather than defaulted.
+             *
+             *     `oracle_instrument_nav` — an ADR-0028 oracle's published
+             *     value for the INSTRUMENT, joined through the curated
+             *     `(code, issuer)` binding. The step from there to the token
+             *     rests on the issuer's own domain-bound declaration that one
+             *     token is one unit of it. The five rules above govern it, and
+             *     a premium may be measured against it.
+             *     `listing_platform_price` — an independent listing platform's
+             *     own USD price for the TOKEN, published in the same row of
+             *     that platform's own map in which it NAMES the token's
+             *     contract address. Bound to the address, never matched on a
+             *     code. It asserts NOTHING about what stands behind the token,
+             *     and carries NO premium: a premium measured against an
+             *     aggregate of the same markets this platform's own price
+             *     samples would be the market compared with itself. Available
+             *     to any contract row the listing names — which is a WIDER set
+             *     than the rows the listing admitted, since an address the
+             *     curated directory attested on its own may also be named by
+             *     the listing.
+             * @enum {string}
+             */
+            provenance: "oracle_instrument_nav" | "listing_platform_price";
             /**
              * @description True when the reference is older than 72h — the longest
              *     ordinary gap between two strikes of a real-world instrument's
@@ -7625,6 +7747,14 @@ export interface components {
              *     `(code, issuer)` to a feed. Usually a code collision: a token
              *     wearing an instrument's ticker that no oracle has priced. See
              *     `definition.bound_instruments`.
+             *     `reference_is_a_listing_price` — the row carries a reference
+             *     and it is a LISTING PRICE rather than an oracle's valuation
+             *     of the instrument, so no premium may be computed against it:
+             *     the gap between two samples of one market is not a premium
+             *     to anything. It is the ONE status that refuses the premium
+             *     while `reference_valuation` beside it is PUBLISHED — there is
+             *     a reference and a supply, so the valuation exists; there is
+             *     no oracle, so the comparison does not.
              *     `reference_contract_not_bound` — the member is
              *     CONTRACT-issued, and nothing binds a contract address to an
              *     oracle feed. Reported apart from `reference_not_bound`,
@@ -7667,7 +7797,7 @@ export interface components {
              *     non-positive value; nothing is divided by it.
              * @enum {string}
              */
-            status: "published" | "withheld_issuer_flagged" | "reference_not_bound" | "reference_contract_not_bound" | "no_reference_feed" | "reference_unavailable" | "reference_expired" | "reference_not_instrument_scoped" | "reference_not_usd_denominated" | "no_market_price" | "market_price_not_observed" | "reference_not_positive";
+            status: "published" | "withheld_issuer_flagged" | "reference_not_bound" | "reference_contract_not_bound" | "no_reference_feed" | "reference_unavailable" | "reference_expired" | "reference_not_instrument_scoped" | "reference_not_usd_denominated" | "no_market_price" | "market_price_not_observed" | "reference_not_positive" | "reference_is_a_listing_price";
             /**
              * @description (market − reference) ÷ reference × 100 as a decimal string:
              *     POSITIVE when the token trades above the instrument's
@@ -7738,7 +7868,7 @@ export interface components {
          */
         RWARefusal: {
             /** @enum {string} */
-            reason: "not_a_classic_asset" | "no_issuer_bound_sep1_entry" | "issuer_scam_flagged" | "issuer_not_independently_recognised" | "no_real_world_instrument_basis" | "not_a_contract_address" | "contract_not_named_in_directory" | "contract_scam_flagged" | "contract_named_without_issuing_tag" | "no_real_world_instrument_basis_for_contract";
+            reason: "not_a_classic_asset" | "no_issuer_bound_sep1_entry" | "issuer_scam_flagged" | "issuer_not_independently_recognised" | "no_real_world_instrument_basis" | "not_a_contract_address" | "contract_not_named_in_directory" | "contract_scam_flagged" | "contract_named_without_issuing_tag" | "no_real_world_instrument_basis_for_contract" | "contract_listed_without_curated_binding" | "contract_curated_binding_without_independent_listing" | "independent_listing_unavailable";
             assets: number;
         };
         /**
@@ -7801,6 +7931,16 @@ export interface components {
              *     presence is contract-issued is absent from that population
              *     entirely rather than refused by any requirement.
              *
+             *     The `listing` arm walks the contract arm's SECOND route to
+             *     recognition and a THIRD population: every in-repo curated
+             *     contract binding, narrowed to the addresses an independent
+             *     listing directory ALSO names. It is a separate arm because
+             *     it narrows a different population from a different root —
+             *     the `contract` arm starts at a third party's directory,
+             *     this one starts at a table in this repository and looks for
+             *     somebody else to agree with it. Its counts reconcile within
+             *     itself and meet the others only at the served set.
+             *
              *     The arm is absent from `stages` when it was not measured;
              *     `basis` says so rather than serving a narrowing of zeros.
              *
@@ -7811,7 +7951,7 @@ export interface components {
              *     backing nobody independent prices.
              * @enum {string}
              */
-            arm: "classic" | "contract" | "valuation";
+            arm: "classic" | "contract" | "listing" | "valuation";
             /**
              * @description The population.
              *
@@ -7869,7 +8009,7 @@ export interface components {
              *     `valuation.status` on the row.
              * @enum {string}
              */
-            stage: "issuers_with_home_domain" | "issuers_with_sep1_attestation" | "issuers_declaring_currencies" | "sep1_currency_entries" | "issuer_bound_entries" | "candidate_assets_evaluated" | "assets_admitted" | "assets_served" | "curated_directory_entries" | "directory_contract_addresses" | "directory_recognised_contracts" | "contract_candidates_evaluated" | "contract_assets_admitted" | "contract_assets_served" | "directory_recognised_issuing_accounts" | "assets_served_all_arms" | "assets_reference_valued";
+            stage: "issuers_with_home_domain" | "issuers_with_sep1_attestation" | "issuers_declaring_currencies" | "sep1_currency_entries" | "issuer_bound_entries" | "candidate_assets_evaluated" | "assets_admitted" | "assets_served" | "curated_directory_entries" | "directory_contract_addresses" | "directory_recognised_contracts" | "contract_candidates_evaluated" | "contract_assets_admitted" | "contract_assets_served" | "directory_recognised_issuing_accounts" | "curated_contract_bindings" | "listing_corroborated_contracts" | "listing_contract_assets_admitted" | "listing_contract_assets_served" | "listing_contracts_without_curated_binding" | "assets_served_all_arms" | "assets_reference_valued";
             /**
              * @description What is counted at this stage. The unit CHANGES down the
              *     funnel, and comparing two counts of different units is the
@@ -7972,11 +8112,45 @@ export interface components {
              *     oracle price its instrument, and saying so would send a
              *     reader to the one party who cannot fix it.
              *
+             *     LISTING arm:
+             *
+             *     `contract_already_evaluated_by_directory_arm` — not a
+             *     refusal. The `contract` arm already evaluates this address on
+             *     its own recognition, and evaluating it twice would serve it
+             *     twice. `definition`.
+             *     `independent_listing_unavailable` — the listing read did not
+             *     answer, or its cached snapshot is past the recognition
+             *     bound, so the arm is CLOSED and the served set is SMALLER.
+             *     `operator`. Reported apart from the finding below because a
+             *     read that did not answer may not report an absence, and this
+             *     is the reason that keeps a fail-closed shrink from being
+             *     silent.
+             *     `contract_curated_binding_without_independent_listing` — the
+             *     in-repo binding is verified and no independent party names
+             *     the address. `operator`, because finding a second source is
+             *     something somebody here can do. The refusal that holds the
+             *     independence requirement up.
+             *     `contract_listed_without_curated_binding` — the listing names
+             *     the address and no curated binding does. `operator`. Most of
+             *     the listing map by construction: it carries stablecoin
+             *     contracts, wrapped bitcoin and the native asset's own
+             *     Stellar Asset Contract, every one of them named by an
+             *     independent party and none of them admitted. Counted at
+             *     `listing_contracts_without_curated_binding`, which is what
+             *     makes "a listing admits nothing alone" auditable rather than
+             *     asserted.
+             *
+             *     `decimals_unavailable` is attributed to the `operator`: the
+             *     token's scale is on chain and readable, so a row carrying it
+             *     means a reader here is unwired, failing, or has not captured
+             *     the contract instance. Never the `issuer`'s — the token did
+             *     declare its scale, we could not read it.
+             *
              *     The remaining values are the requirement refusals, matching
              *     `refused[]`.
              * @enum {string}
              */
-            reason: "sep1_attestation_never_fetched" | "domain_served_no_sep1_attestation" | "sep1_payload_unreadable" | "sep1_declares_no_currencies" | "entry_declares_no_asset_code" | "entry_declares_no_issuer" | "entry_declares_another_issuer" | "not_a_classic_asset" | "no_issuer_bound_sep1_entry" | "issuer_scam_flagged" | "issuer_not_independently_recognised" | "no_real_world_instrument_basis" | "duplicate_declaration_of_the_same_asset" | "over_issuer_cap" | "admitted_but_never_observed_on_chain" | "directory_entry_names_an_account" | "contract_scam_flagged" | "contract_named_without_issuing_tag" | "no_real_world_instrument_basis_for_contract" | "duplicate_directory_entry_for_contract" | "over_contract_scan_cap" | "issuer_asset_page_truncated" | "withheld_issuer_flagged" | "reference_unavailable" | "reference_contract_not_bound" | "reference_not_instrument_scoped" | "reference_not_bound" | "reference_not_usd_denominated" | "no_reference_feed" | "reference_expired" | "reference_not_positive" | "supply_unavailable";
+            reason: "sep1_attestation_never_fetched" | "domain_served_no_sep1_attestation" | "sep1_payload_unreadable" | "sep1_declares_no_currencies" | "entry_declares_no_asset_code" | "entry_declares_no_issuer" | "entry_declares_another_issuer" | "not_a_classic_asset" | "no_issuer_bound_sep1_entry" | "issuer_scam_flagged" | "issuer_not_independently_recognised" | "no_real_world_instrument_basis" | "duplicate_declaration_of_the_same_asset" | "over_issuer_cap" | "admitted_but_never_observed_on_chain" | "directory_entry_names_an_account" | "contract_scam_flagged" | "contract_named_without_issuing_tag" | "no_real_world_instrument_basis_for_contract" | "duplicate_directory_entry_for_contract" | "over_contract_scan_cap" | "issuer_asset_page_truncated" | "withheld_issuer_flagged" | "reference_unavailable" | "reference_contract_not_bound" | "reference_not_instrument_scoped" | "reference_not_bound" | "reference_not_usd_denominated" | "no_reference_feed" | "reference_expired" | "reference_not_positive" | "supply_unavailable" | "decimals_unavailable" | "contract_already_evaluated_by_directory_arm" | "independent_listing_unavailable" | "contract_curated_binding_without_independent_listing" | "contract_listed_without_curated_binding";
             count: number;
             /**
              * @description Who can move this number. `operator` — a fetch nobody has
@@ -16328,9 +16502,13 @@ export interface operations {
                      *           ],
                      *           "contract_requirements": [
                      *             "contract-issued token identified by its contract address",
-                     *             "that exact contract address named in the curated account directory",
-                     *             "named with an issuing-class tag and no scam-class tag",
+                     *             "no scam-class tag on that address in the curated account directory",
+                     *             "that exact contract address named either by the curated account directory with an issuing-class tag, or by an independent listing directory AND an in-repo curated binding together",
                      *             "real-world instrument by an in-repo curated binding or by an ADR-0028 oracle feed on the on-chain symbol"
+                     *           ],
+                     *           "contract_recognition_sources": [
+                     *             "curated_account_directory",
+                     *             "independent_listing_corroborating_curated_binding"
                      *           ],
                      *           "anchor_classes": [
                      *             "bond",
@@ -16455,7 +16633,8 @@ export interface operations {
                      *               "source": "redstone",
                      *               "feed": "rwa:USTRY",
                      *               "quote": "fiat:USD",
-                     *               "as_of": "2026-09-15T04:42:10Z"
+                     *               "as_of": "2026-09-15T04:42:10Z",
+                     *               "provenance": "oracle_instrument_nav"
                      *             },
                      *             "premium": {
                      *               "status": "published",
@@ -16491,7 +16670,8 @@ export interface operations {
                      *               "source": "redstone",
                      *               "feed": "rwa:USDY",
                      *               "quote": "fiat:USD",
-                     *               "as_of": "2026-09-15T04:42:30Z"
+                     *               "as_of": "2026-09-15T04:42:30Z",
+                     *               "provenance": "oracle_instrument_nav"
                      *             },
                      *             "premium": {
                      *               "status": "no_market_price"
