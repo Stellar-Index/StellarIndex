@@ -1705,20 +1705,13 @@ func (s *Server) rwaFillMissingSupply(ctx context.Context, rows []AssetDetail) {
 		if rows[i].CirculatingSupply != nil {
 			continue
 		}
-		// Precise first, exactly as the market-cap fill prefers it: the
-		// four-domain pipeline includes claimable, LP-locked and SAC-held
-		// holdings and applies the operator's locked-set policy on top.
-		// Below it the SAME preference the market-cap fill uses — the
-		// lake-flows total, which sees all four domains, over the
-		// trustline sum, which sees one, and never below that sum.
-		circ := precise[rows[i].AssetID]
-		if circ == "" {
-			circ = higherClassicSupply(lake[rows[i].AssetID], broad[rows[i].AssetID])
-		}
+		// One shared preference chain with the market-cap fill, and it
+		// names the arm it took: [classicSupplyReading].
+		circ, basis := classicSupplyReading(rows[i].AssetID, precise, lake, broad)
 		if circ == "" {
 			continue
 		}
-		rows[i].CirculatingSupply = &circ
+		stampCirculatingSupply(&rows[i], circ, basis)
 	}
 }
 

@@ -13,6 +13,7 @@ import (
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
+	"github.com/Stellar-Index/StellarIndex/internal/supply"
 )
 
 // The measured defect this file guards (2026-09-11).
@@ -337,8 +338,22 @@ func TestHigherClassicSupply(t *testing.T) {
 		{"lexically smaller but numerically larger", huge, "9999999999999999999", huge},
 	}
 	for _, tt := range tests {
-		if got := higherClassicSupply(tt.lake, tt.trustline); got != tt.want {
+		got, basis := higherClassicSupply(tt.lake, tt.trustline)
+		if got != tt.want {
 			t.Errorf("%s: higherClassicSupply(%q, %q) = %q, want %q", tt.name, tt.lake, tt.trustline, got, tt.want)
+		}
+		// The basis must name the arm the value actually came from — a
+		// figure whose provenance is re-derived by comparing it back
+		// against the inputs mislabels every tie.
+		wantBasis := supply.BasisClassicLakeFlows
+		switch {
+		case tt.want == "":
+			wantBasis = ""
+		case tt.want == tt.trustline && tt.want != tt.lake:
+			wantBasis = supply.BasisClassicTrustlineSum
+		}
+		if basis != wantBasis {
+			t.Errorf("%s: basis = %q, want %q", tt.name, basis, wantBasis)
 		}
 	}
 }

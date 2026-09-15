@@ -12,6 +12,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
+	"github.com/Stellar-Index/StellarIndex/internal/supply"
 	"github.com/Stellar-Index/StellarIndex/internal/worker"
 )
 
@@ -100,6 +101,26 @@ const (
 	// one is served from cache.
 	classicLakeSupplyColdWait = 750 * time.Millisecond
 
+	// preciseSupplyMaxAge bounds how old an ADR-0011 supply observation may
+	// be and still outrank the lake arms.
+	//
+	// The observer writes every asset on its watch-list every few minutes;
+	// measured on r1 over the fourteen days to 2026-09-15 the widest gap
+	// between consecutive observations of any asset was 40 minutes. Six
+	// hours is nine times that worst case, so a restart, a redeploy or a
+	// slow pass never costs an asset its observation, while an observer
+	// that has genuinely stopped hands the asset to the lake arms within
+	// one working morning rather than indefinitely.
+	//
+	// The bound is load-bearing in BOTH directions and neither is
+	// hypothetical. Too loose and a dead observer keeps publishing a figure
+	// nobody is computing — the defect this replaces served USDC at
+	// 354,858,863.57 against 375,766,247.91 outstanding because the arm it
+	// read had no vintage bound at all. Too tight and a healthy asset is
+	// handed to an arm that read BLND +11.53% and PHO +156.79% high on the
+	// same day (see [classicSupplyReading]).
+	preciseSupplyMaxAge = 6 * time.Hour
+
 	// classicLakeSupplyPrewarmGap spaces the background prewarm's batches.
 	//
 	// It is deliberately NOT classicLakeSupplyRetryGap. That gap exists to
@@ -157,27 +178,101 @@ func classicSACContractID(assetID string) (string, bool) {
 }
 
 // higherClassicSupply returns the larger of two raw decimal supply readings,
-// preferring `lake` on a tie or when only one is present.
+// preferring `lake` on a tie or when only one is present, together with the
+// basis that produced the winner.
 //
 // The asymmetry is the floor guard described at the top of this file: a lake
 // figure below the trustline sum is incomplete seeding, so the trustline sum
 // wins; a lake figure at or above it includes the claimable / LP / SAC-held
 // supply the trustline sum cannot see, so the lake wins. An unparseable
 // reading is treated as absent rather than as zero.
-func higherClassicSupply(lake, trustline string) string {
+//
+// It returns the basis rather than only the number because the two arms are
+// not the same KIND of answer and the wire could not tell them apart: the lake
+// sum covers all four holding domains, while the trustline sum is blind to
+// three of them and is therefore a LOWER BOUND. An empty basis accompanies an
+// empty value and means no reading at all.
+func higherClassicSupply(lake, trustline string) (string, supply.Basis) {
 	l, lok := new(big.Int).SetString(lake, 10)
 	t, tok := new(big.Int).SetString(trustline, 10)
 	switch {
 	case !lok && !tok:
-		return ""
+		return "", ""
 	case !lok:
-		return trustline
+		return trustline, supply.BasisClassicTrustlineSum
 	case !tok:
-		return lake
+		return lake, supply.BasisClassicLakeFlows
 	case l.Cmp(t) < 0:
-		return trustline
+		return trustline, supply.BasisClassicTrustlineSum
 	default:
-		return lake
+		return lake, supply.BasisClassicLakeFlows
+	}
+}
+
+// classicSupplyReading resolves one listing row's circulating supply and names
+// the basis that produced it.
+//
+// It is the ONE place the listing path's three-arm preference order lives.
+// Every surface that publishes a listing-derived circulating supply calls it —
+// [Server.fillRowMarketCap] on /v1/assets, [Server.rwaFillMissingSupply] on
+// /v1/rwa/assets — because two copies of a preference chain is how one surface
+// ends up publishing a floor while the other publishes a four-domain total
+// under the same field name.
+//
+// # Why the observation still outranks the lake
+//
+// The order is unchanged: the ADR-0011 supply observation first, then the
+// lake-flows total, then the trustline sum, never below the trustline floor.
+// The reason it is unchanged is worth stating, because the defect that
+// prompted this code looked exactly like a reason to invert it — the served
+// USDC figure was 5.57% below both the lake and Horizon.
+//
+// Re-measured against Horizon's all-domain totals on r1 2026-09-15, the lake
+// arm is the one that cannot be promoted. It read BLND at 128,119,614.53
+// against 114,854,773.04 outstanding (+11.53%) and PHO at 199,999,999.31
+// against 77,882,787.15 (+156.79%), because its flow history carries replayed
+// historical mints whose matching burns are missing — an over-count no
+// completeness check in the reading can see (see [supply.BasisClassicLakeFlows]).
+// On the same day the observation arm matched Horizon to the stroop on PHO and
+// to 0.02% on BLND.
+//
+// What was actually wrong was the observation's VINTAGE, and that is fixed
+// where it was broken — at the read, which now takes the observer's live row
+// instead of a daily roll-up of it (timescale.Store.LatestSupplyObservations),
+// bounded by [preciseSupplyMaxAge]. An observation older than that bound is not
+// offered here at all, so a stale-but-present reading can no longer outrank a
+// live lake figure that disagrees with it.
+func classicSupplyReading(
+	assetID string, precise map[string]timescale.SupplyObservation, lake, broad map[string]string,
+) (string, supply.Basis) {
+	if obs, ok := precise[assetID]; ok && obs.CirculatingSupply != "" {
+		// The observation publishes the basis the OBSERVER recorded
+		// (issuer_exclusion, xlm_sdf_reserve_exclusion, override …), which
+		// is the same basis /v1/assets/{asset_id} publishes for the same
+		// asset. Inventing a listing-only name for it would put two labels
+		// on one number.
+		return obs.CirculatingSupply, supply.Basis(obs.Basis)
+	}
+	return higherClassicSupply(lake[assetID], broad[assetID])
+}
+
+// stampCirculatingSupply publishes `circ` on a listing row together with the
+// basis that produced it.
+//
+// Nil-guarded on CirculatingSupply for the reason [Server.fillRowMarketCap]
+// already was: a row whose supply another branch attached deliberately (the
+// dust-suppressed and ticker-collision paths both do) must not have it
+// overwritten here. The basis travels WITH the value, so a row can never carry
+// a figure from one arm and a basis from another.
+func stampCirculatingSupply(row *AssetDetail, circ string, basis supply.Basis) {
+	if row.CirculatingSupply != nil || circ == "" {
+		return
+	}
+	c := circ
+	row.CirculatingSupply = &c
+	if basis != "" {
+		b := basis.String()
+		row.SupplyBasis = &b
 	}
 }
 
@@ -414,9 +509,9 @@ func (s *Server) endClassicLakeSupplyFlight(done chan struct{}) {
 //
 // The readings and the preference chain were already right. Only the warming
 // was wrong, so this changes only the warming: the source ranking is untouched
-// (precise/supply_1d still outranks the lake, which still cannot fall below
-// the trustline floor), and every failure path still degrades to exactly what
-// is served today.
+// (the ADR-0011 supply observation still outranks the lake, which still cannot
+// fall below the trustline floor), and every failure path still degrades to
+// exactly what is served today.
 //
 // # Why it lives in the API process rather than a job
 //

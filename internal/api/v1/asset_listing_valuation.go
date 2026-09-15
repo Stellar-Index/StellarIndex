@@ -12,6 +12,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/pricingguard"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
+	"github.com/Stellar-Index/StellarIndex/internal/supply"
 )
 
 // A listing-sourced valuation for a verified-catalogue asset whose
@@ -653,14 +654,18 @@ func (s *Server) publishListingValuation(row *AssetDetail, lake string) {
 	if row.CirculatingSupply != nil {
 		served = *row.CirculatingSupply
 	}
-	circ := higherClassicSupply(lake, served)
+	circ, reading := higherClassicSupply(lake, served)
 	if circ == "" {
 		row.ListingValuation = &AssetListingValuation{Status: ListingValuationNoSupply}
 		row.ListingReference = nil
 		return
 	}
+	// Taken from the picker rather than re-derived by comparing the winner
+	// back against `lake`: that comparison called a served figure that
+	// merely EQUALS the lake total "served", so two identical readings
+	// published two different provenances.
 	basis := ListingSupplyBasisServed
-	if circ == lake && lake != "" {
+	if reading == supply.BasisClassicLakeFlows {
 		basis = ListingSupplyBasisLakeFlows
 	}
 	price := ratFromOptionalString(&row.ListingReference.PriceUSD)
