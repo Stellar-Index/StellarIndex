@@ -11,12 +11,15 @@ import { formatCompact } from '@/lib/format';
 import { formatTimestamp, stroopsToXlm } from '../explorer-shared';
 import { RELATION, type Relation } from './accountRelation';
 
-// The board endpoints cap a page at 500 rows and take no account filter,
-// so a rank lookup is "fetch the top 500 and look". That is a real reach
-// limit, not a rendering choice: 500 of 2,427 sponsors and 500 of
-// 955,023 creators. The panel states which side of it the address fell
-// on rather than showing an absent rank as "unranked".
-const BOARD_LIMIT = 500;
+// The board endpoints take `?account=`, a keyed read that returns one
+// row with its whole-aggregation rank. That is why this panel asks for
+// one address rather than paging: rank is a property of all 955,023
+// creators and 2,427 sponsors, and pulling a 500-row page to look for
+// one address would leave every address past the cap indistinguishable
+// from one that never appears at all.
+//
+// An empty result is therefore unambiguous here — it means this address
+// holds no row on this board, not that it fell outside a page.
 
 interface CreatorRow {
   rank: number;
@@ -76,15 +79,15 @@ export function AccountRelationStanding({
   const creation = relation === 'created';
   const path = creation ? '/v1/accounts/creators' : '/v1/accounts/sponsors';
   const vocabulary = RELATION[relation];
-  const source = asExample(path, { limit: BOARD_LIMIT });
+  const source = asExample(path, { account });
 
   const { data, isLoading, isError } = useQuery<CreatorsResp | SponsorsResp>({
-    queryKey: [path, BOARD_LIMIT],
+    queryKey: [path, 'account', account],
     retry: false,
     staleTime: 10 * 60_000,
     queryFn: async () => {
       const env = await apiGet<Envelope<CreatorsResp | SponsorsResp>>(path, {
-        limit: BOARD_LIMIT,
+        account,
       });
       return env.data;
     },
@@ -125,6 +128,11 @@ export function AccountRelationStanding({
   const population = creation
     ? (data as CreatorsResp).totals?.creators
     : (data as SponsorsResp).totals?.sponsors;
+  // The keyed read returns at most this address's row, but the filter is
+  // still checked rather than assumed: a deployment whose API predates
+  // `?account=` ignores the parameter and serves the default page, and
+  // taking rows[0] there would publish the top-ranked account's rank as
+  // this address's.
   const row = rows.find((r) => r.account === account);
 
   return (
@@ -169,7 +177,7 @@ export function AccountRelationStanding({
         </dl>
       ) : (
         <p className="text-ink-muted text-sm">
-          This address is not in the top {numFmt.format(BOARD_LIMIT)} of the{' '}
+          This address holds no row on the{' '}
           <Link
             href={`${vocabulary.board}/`}
             className="underline decoration-dotted"
@@ -183,9 +191,8 @@ export function AccountRelationStanding({
               {creation ? ' creators' : ' sponsors'})
             </>
           )}
-          , which is as deep as the board endpoint pages. Its rank is therefore
-          unknown here rather than low — every other figure on this page is
-          exact for this address and does not depend on the board.
+          , as of the snapshot below. Every other figure on this page is exact
+          for this address and does not depend on the board.
         </p>
       )}
 
