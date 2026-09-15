@@ -120,6 +120,15 @@ type ListingDirectoryCensus struct {
 	// counts in Contracts and not here, which is the whole point of
 	// separating the two clocks.
 	Priced int
+	// PricedClassic is the same count over the CLASSIC rows.
+	//
+	// It exists because [Store.ListingDirectoryByAddress] serves both
+	// forms, and a caller of that reader comparing its map size against
+	// [ListingDirectoryCensus.Priced] alone would be comparing against
+	// the contract half of the population. Counted separately rather
+	// than folded into Priced so the contract arm's existing invariant
+	// (Priced <= Contracts) keeps meaning what it says.
+	PricedClassic int
 }
 
 // Check returns the reason the census does not balance, or "" when it
@@ -133,6 +142,9 @@ func (c ListingDirectoryCensus) Check() string {
 	}
 	if c.Priced > c.Contracts {
 		return fmt.Sprintf("Priced %d exceeds Contracts %d", c.Priced, c.Contracts)
+	}
+	if c.PricedClassic > c.Classic {
+		return fmt.Sprintf("PricedClassic %d exceeds Classic %d", c.PricedClassic, c.Classic)
 	}
 	return ""
 }
@@ -428,7 +440,10 @@ const listingDirectoryCensusSQL = `
 		  count(*) FILTER (WHERE NOT (` + listingRecognisedSQL + `))        AS stale,
 		  count(*) FILTER (WHERE ` + listingRecognisedSQL + `
 		                     AND ` + listingIsContractSQL + `
-		                     AND ` + listingPriceFreshSQL + `)              AS priced
+		                     AND ` + listingPriceFreshSQL + `)              AS priced,
+		  count(*) FILTER (WHERE ` + listingRecognisedSQL + `
+		                     AND ` + listingIsClassicSQL + `
+		                     AND ` + listingPriceFreshSQL + `)              AS priced_classic
 		  FROM asset_listing_directory`
 
 // ListingDirectoryContracts returns the recognised CONTRACT rows of the
@@ -497,10 +512,93 @@ func (s *Store) ListingDirectoryContracts(
 func (s *Store) listingDirectoryCensus(ctx context.Context) (ListingDirectoryCensus, error) {
 	var c ListingDirectoryCensus
 	err := s.db.QueryRowContext(ctx, listingDirectoryCensusSQL).Scan(
-		&c.Entries, &c.Contracts, &c.Classic, &c.Stale, &c.Priced,
+		&c.Entries, &c.Contracts, &c.Classic, &c.Stale, &c.Priced, &c.PricedClassic,
 	)
 	if err != nil {
 		return ListingDirectoryCensus{}, fmt.Errorf("listing directory: census: %w", err)
 	}
 	return c, nil
+}
+
+// listingDirectoryByAddressSQL reads EVERY recognised row, of either
+// address form, for the surface that binds a verified-catalogue asset to
+// a listing price.
+//
+// It is the twin of [listingDirectoryContractsSQL] with the address-form
+// predicate removed, and the removal is the whole point: a classic asset
+// can be named by the listing under EITHER form — its own
+// `CODE-GISSUER` id, or the C-strkey of the Stellar Asset Contract that
+// (code, issuer) deterministically derives — and a reader that saw only
+// one form would miss whichever one the platform happened to publish.
+// Live proof of both halves (2026-09-15): the listing names EURC, AQUA,
+// SHX, VELO, BLND and yUSDC by their classic ids, and USDC, PYUSD,
+// USDT0 and XLM by their SAC addresses ONLY.
+//
+// The two staleness bounds are spliced in identically, so recognition
+// and price age on their own clocks here exactly as they do next door.
+const listingDirectoryByAddressSQL = `
+		SELECT address, listing_id, symbol,
+		       CASE WHEN ` + listingPriceFreshSQL + `
+		            THEN price_usd::text END AS price_usd,
+		       CASE WHEN ` + listingPriceFreshSQL + `
+		            THEN priced_at END       AS priced_at,
+		       source
+		  FROM asset_listing_directory
+		 WHERE ` + listingRecognisedSQL + `
+		 ORDER BY address`
+
+// ListingDirectoryByAddress returns every recognised row of the cached
+// listing directory keyed by its exact Stellar address, together with
+// the census of the whole cache.
+//
+// The map key is the ADDRESS AS PUBLISHED and nothing else — no code, no
+// symbol, no case folding. That is the entire safety property a caller
+// rests on: `PYUSD`, `USDT`, `USDC` and even `XLM` are each worn by
+// impersonating issuers on this network, so a lookup by code would hand
+// a real instrument's price to whichever account minted the ticker
+// first. A 56-character strkey, or a code bound to its issuer's
+// G-address, cannot be collided into.
+//
+// Same three properties as [ListingDirectoryContracts], and for the same
+// reasons: the recognition bound is in the SQL so no caller can forget
+// it; a row past the PRICE bound comes back recognised but unpriced
+// rather than disappearing; and there is no scan cap because the
+// recognised set is bounded by how many Stellar assets a third party
+// chose to list (50 today) and the census is what a caller compares
+// len() against.
+func (s *Store) ListingDirectoryByAddress(
+	ctx context.Context,
+) (map[string]ListingEntry, ListingDirectoryCensus, error) {
+	census, err := s.listingDirectoryCensus(ctx)
+	if err != nil {
+		return nil, ListingDirectoryCensus{}, err
+	}
+
+	rows, err := s.db.QueryContext(ctx, listingDirectoryByAddressSQL)
+	if err != nil {
+		return nil, ListingDirectoryCensus{}, fmt.Errorf("listing directory: by address: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	out := make(map[string]ListingEntry, 64)
+	for rows.Next() {
+		var (
+			e        ListingEntry
+			price    sql.NullString
+			pricedAt sql.NullTime
+		)
+		if err := rows.Scan(&e.Address, &e.ListingID, &e.Symbol, &price, &pricedAt, &e.Source); err != nil {
+			return nil, ListingDirectoryCensus{}, fmt.Errorf("listing directory: scan row: %w", err)
+		}
+		// Both or neither, exactly as [ListingDirectoryContracts] does.
+		if price.Valid && pricedAt.Valid {
+			e.PriceUSD = price.String
+			e.PricedAt = pricedAt.Time.UTC()
+		}
+		out[e.Address] = e
+	}
+	if err := rows.Err(); err != nil {
+		return nil, ListingDirectoryCensus{}, fmt.Errorf("listing directory: rows: %w", err)
+	}
+	return out, census, nil
 }

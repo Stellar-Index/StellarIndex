@@ -286,7 +286,7 @@ export function RWAView() {
   const referenceTotal = usd(summary.reference_valuation?.value_usd);
 
   const stableRows = stablecoins.data?.assets ?? [];
-  const stableSum = sumUsd(stableRows.map((r) => r.market_cap_usd));
+  const stableSum = sumStablecoins(stableRows);
   const stable: StablecoinTotals = {
     // Loading is not the same as unavailable, but for one tile it reads
     // the same and settles within a request — what must not happen is a
@@ -567,6 +567,57 @@ export function sumUsd(values: (string | null | undefined)[]): {
 }
 
 /**
+ * Totals the stablecoin catalogue across BOTH bases it can be valued on,
+ * and reports how much of the total came from the weaker one.
+ *
+ * A row's figure is its observed `market_cap_usd` whenever there is one.
+ * Where there is not — because the dust-liquidity guard suppressed it, or
+ * because no market price survived the substance gate — the row may still
+ * carry `listing_valuation`: its supply valued at an independent listing
+ * platform's own USD price for that exact Stellar address, published by
+ * the server under `provenance: listing_platform_price`.
+ *
+ * Preferring the observed cap is not a detail. The two are different
+ * kinds of claim, an observed one is the stronger, and a total that
+ * silently replaced a gated figure with a third party's would be worse
+ * than one that omits the third party entirely.
+ *
+ * `listingPriced` is what the tile's copy keys off. The moment it is
+ * non-zero the published total mixes two bases, and a total that mixes
+ * bases without saying so is the defect the combined tile beside it
+ * already exists to avoid.
+ *
+ * USDT0 is the live case: on Stellar it trades about a hundred dollars a
+ * day, so this index refuses to derive a market cap from that market —
+ * and a listing platform prices the same token at a dollar, against
+ * 2.58M tokens the lake can see. Omitting it made the tile a floor with
+ * an invisible hole in it.
+ */
+export function sumStablecoins(
+  rows: {
+    market_cap_usd?: string | null;
+    listing_valuation?: { status: string; value_usd?: string | null } | null;
+  }[],
+): {
+  total: string | null;
+  valued: number;
+  unvalued: number;
+  listingPriced: number;
+} {
+  let listingPriced = 0;
+  const values = rows.map((r) => {
+    if (r.market_cap_usd != null) return r.market_cap_usd;
+    const lv = r.listing_valuation;
+    if (lv?.status === 'published' && lv.value_usd != null) {
+      listingPriced += 1;
+      return lv.value_usd;
+    }
+    return null;
+  });
+  return { ...sumUsd(values), listingPriced };
+}
+
+/**
  * Splits a served basis into the part the page shows without asking and
  * the part behind a disclosure.
  *
@@ -757,6 +808,14 @@ export type StablecoinTotals = {
   total: string | null;
   valued: number;
   unvalued: number;
+  /**
+   * How many of the valued rows were priced by an independent listing
+   * platform rather than by observed trades. Non-zero means the
+   * published total MIXES TWO BASES, and both tiles' copy says so — a
+   * mixed total that reads as one measurement is the whole defect the
+   * combined tile was built to avoid.
+   */
+  listingPriced: number;
 };
 
 /**
@@ -827,7 +886,10 @@ function SectorTotals({
             sub={
               stableTotal == null
                 ? 'The stablecoin catalogue did not answer'
-                : `${stable.valued} fiat-backed token${stable.valued === 1 ? '' : 's'} issued on Stellar`
+                : `${stable.valued} fiat-backed token${stable.valued === 1 ? '' : 's'} issued on Stellar` +
+                  (stable.listingPriced > 0
+                    ? `, ${stable.listingPriced} of them listing-priced`
+                    : '')
             }
           />
           <p className="text-ink-muted mt-2 text-xs leading-relaxed">
@@ -838,6 +900,18 @@ function SectorTotals({
             the asset pages serve them, over the issuer-bound identities in the
             served catalogue — never over a token code, which anyone can mint.
           </p>
+          {stable.listingPriced > 0 && (
+            <p className="text-ink-muted mt-2 text-xs leading-relaxed">
+              <strong className="text-ink">This total mixes two bases.</strong>{' '}
+              {stable.listingPriced} of the {stable.valued} tokens trade too
+              thinly on Stellar for this index to publish a market cap from what
+              it observed, so the figure used for them is their supply valued at
+              an independent listing platform&rsquo;s own price for that exact
+              address — <code>provenance: listing_platform_price</code> on the
+              asset. Nobody was observed paying it here. The rest are observed
+              market caps, and the per-asset pages say which is which.
+            </p>
+          )}
         </StatCell>
         <StatCell>
           <Stat
@@ -864,11 +938,25 @@ function SectorTotals({
             }
           />
           <p className="text-ink-muted mt-2 text-xs leading-relaxed">
-            <strong className="text-ink">Two bases, added.</strong> An oracle’s
-            valuation of the backing plus observed stablecoin market caps. It is
-            not a market capitalisation, and it is not the real-world-asset
-            figure — it is the size of the two arms together, which is the
-            quantity usually meant by tokenized value on Stellar. Read it
+            {stable.listingPriced > 0 ? (
+              <>
+                <strong className="text-ink">Three bases, added.</strong> An
+                oracle&rsquo;s valuation of the backing, plus observed
+                stablecoin market caps, plus {stable.listingPriced} stablecoin
+                {stable.listingPriced === 1 ? '' : 's'} valued at an independent
+                listing platform&rsquo;s price because this index will not
+                publish a market cap from the thin market it observed.
+              </>
+            ) : (
+              <>
+                <strong className="text-ink">Two bases, added.</strong> An
+                oracle&rsquo;s valuation of the backing plus observed stablecoin
+                market caps.
+              </>
+            )}{' '}
+            It is not a market capitalisation, and it is not the
+            real-world-asset figure — it is the size of the arms together, which
+            is the quantity usually meant by tokenized value on Stellar. Read it
             against the arms, never in place of them.
           </p>
         </StatCell>

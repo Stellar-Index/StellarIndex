@@ -255,8 +255,9 @@ func TestListingDirectory_BothBoundsAreEnforcedInSQL(t *testing.T) {
 	wantPrice := "priced_at > now() - INTERVAL '" + listingPriceMaxAge + "'"
 
 	for name, q := range map[string]string{
-		"contracts read": listingDirectoryContractsSQL,
-		"census":         listingDirectoryCensusSQL,
+		"contracts read":  listingDirectoryContractsSQL,
+		"by-address read": listingDirectoryByAddressSQL,
+		"census":          listingDirectoryCensusSQL,
 	} {
 		if !strings.Contains(q, wantRecognition) {
 			t.Errorf("%s: must bound recognition with %q — without it a dead sync's rows "+
@@ -414,6 +415,52 @@ func TestListingDirectoryCensus_Check(t *testing.T) {
 	}
 	if got := (ListingDirectoryCensus{Entries: 50, Contracts: 17, Classic: 33, Priced: 18}).Check(); got == "" {
 		t.Error("Priced exceeding Contracts must be reported — a priced row is a contract row")
+	}
+	if got := (ListingDirectoryCensus{Entries: 50, Contracts: 17, Classic: 33, PricedClassic: 34}).Check(); got == "" {
+		t.Error("PricedClassic exceeding Classic must be reported — a priced classic row is a classic row")
+	}
+	// The two priced counts are over DISJOINT halves of the population,
+	// so both may be at their own ceiling at once and the census still
+	// balances. A Check that summed them against Entries would reject
+	// the fully-priced table, which is a legitimate state.
+	full := ListingDirectoryCensus{Entries: 50, Contracts: 17, Classic: 33, Priced: 17, PricedClassic: 33}
+	if got := full.Check(); got != "" {
+		t.Errorf("a fully-priced census reported %q, want \"\"", got)
+	}
+}
+
+// TestListingDirectoryByAddressSQL_ServesBothForms — the by-address read
+// exists BECAUSE the contract read cannot answer for a classic asset,
+// and the one way to get it wrong is to copy the contract read's
+// address-form predicate along with everything else.
+//
+// Measured against the live upstream 2026-09-15, six of the ten
+// catalogue assets it names are named by their CLASSIC ids (EURC, AQUA,
+// SHX, VELO, BLND, yUSDC). A read that kept the contract filter would
+// drop every one of them and look like a working query while doing it.
+func TestListingDirectoryByAddressSQL_ServesBothForms(t *testing.T) {
+	t.Parallel()
+
+	if strings.Contains(listingDirectoryByAddressSQL, listingIsContractSQL) {
+		t.Error("the by-address read must NOT filter by address form — a classic " +
+			"catalogue asset is named by its CODE-GISSUER id, and six live rows are")
+	}
+	if strings.Contains(listingDirectoryByAddressSQL, listingIsClassicSQL) {
+		t.Error("the by-address read must NOT filter to classic rows either — four " +
+			"live catalogue assets are named only by their SAC address")
+	}
+	// Its recognition bound still belongs in the WHERE and its price
+	// bound still belongs in the projected CASE, for the same reasons
+	// the contract read's do.
+	whereIdx := strings.Index(listingDirectoryByAddressSQL, " WHERE ")
+	if whereIdx < 0 {
+		t.Fatal("by-address read has no WHERE clause")
+	}
+	priceIdx := strings.Index(listingDirectoryByAddressSQL,
+		"priced_at > now() - INTERVAL '"+listingPriceMaxAge+"'")
+	if priceIdx > whereIdx {
+		t.Error("the price bound must sit in the projected CASE, NOT the WHERE — in the " +
+			"WHERE it drops a still-recognised address the moment its price goes stale")
 	}
 }
 

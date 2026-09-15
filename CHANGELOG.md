@@ -16,6 +16,82 @@ against.
 ## [Unreleased]
 
 ### Changed
+### Added
+
+- **assets:** a verified-catalogue asset whose market capitalisation the
+  gates decline to publish can carry a valuation from an independent
+  listing platform, under its own name and its own provenance.
+
+  USDT0 is the case. It launched on Stellar on 2026-09-02 and trades
+  about $106 a day there, so the dust-liquidity guard suppresses its
+  market cap — correctly, and that refusal is unchanged. What the
+  refusal did not establish is that the price is unknowable: a listing
+  platform publishes a USD price for that exact token, from venues this
+  index does not observe. Supply times that price is now served as
+  `listing_valuation.value_usd`, beside a `listing_reference` block
+  naming the address, the source, the platform's own publication time
+  and `provenance: listing_platform_price`. It is never written into
+  `market_cap_usd`, never summed into one, and never a substitute for
+  one.
+
+  The binding is on the ADDRESS and never on the code. Two routes
+  count and both are exact: the listing names the asset's classic
+  `CODE-GISSUER` id, or it names the Stellar Asset Contract address
+  `canonical.Asset.SacContractID()` derives from that exact
+  (code, issuer) pair and the network passphrase. The second is safe
+  structurally rather than probabilistically — SAC derivation is a pure
+  function of the asset and the network, so no other issuer's asset
+  derives to that address. Both routes are needed: measured against the
+  live upstream 2026-09-15, EURC, AQUA, SHX, VELO, BLND and yUSDC are
+  named by their classic ids while USDC, PYUSD, USDT0 and XLM are named
+  only by their SAC addresses. A code match would have been worth
+  nothing on a network that carries impersonating issuers of PYUSD,
+  USDT, USDC and XLM, one of them holding a 920-billion fake balance.
+
+  It only ever fills a hole. A row publishing a market cap is left
+  untouched and records `market_cap_published`; a row carrying an
+  observed market price that cleared the substance gate with no dust
+  suppression records `market_price_observed` and publishes nothing,
+  because its missing cap is a missing supply reading and filling that
+  from a third party would hide a gap in this index's own data behind
+  somebody else's number.
+
+  The supply comes from the lake's mint−burn total over the asset's
+  SAC, not from a trustline sum, and `supply_basis` says which was
+  used. USDT0 is why: 6,469 tokens are visible to a trustline query
+  against 2,581,052 by mint−burn, because almost all of its float sits
+  in balances such a query is blind to by construction. The detail
+  endpoint never reached that reading before, so the arm performs it
+  rather than valuing whatever the handler already had.
+
+  Fails closed. An unreadable or empty directory snapshot publishes
+  nothing and records `listing_unavailable` — nobody looked, which is
+  never the same statement as nobody lists it. The price's own age is
+  bounded on the platform's publication clock by the same two constants
+  the RWA reference arm uses: 72 hours labels it stale, 7 days
+  withholds it.
+
+  Methodology: `docs/methodology/listing-priced-valuation.md`.
+
+### Changed
+
+- **explorer:** the `/rwa` page's stablecoin tile sums listing-priced
+  figures alongside observed market caps, and says so.
+
+  It summed `market_cap_usd` over the served stablecoin catalogue and
+  reached $373.8M from four of five tokens, with USDT0 contributing
+  nothing — a floor with an invisible hole in it. The tile now falls
+  back to a row's listing-priced valuation where there is no observed
+  cap, always preferring the observed one where both exist.
+
+  The moment the total contains such a row the tile's copy reads "This
+  total mixes two bases", names how many rows came from which, and
+  quotes the provenance a reader can check on the asset page. The
+  combined tile beside it stops claiming there are only two bases and
+  says there are three. An honest, slightly more complex total is worth
+  more than a clean one that is quietly mixed.
+
+## [v0.82.0] — 2026-09-15
 
 - **ci:** the weekly SLA proof is now produced by
   `.github/workflows/sla-proof-weekly.yml`, which aggregates the SLA

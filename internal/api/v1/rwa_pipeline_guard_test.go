@@ -40,6 +40,22 @@ var listingOnlyPipelineCalls = map[string]string{
 	// attached. It is a DISPLAY fill, never a gate — recording it here
 	// costs nothing that guards a number.
 	"fillImagesFromSep1": "this surface serves no image field, so the overlay would write nothing",
+	// The listing-priced valuation arm. Recorded as a divergence rather
+	// than copied, and the reason is that the RWA surface ALREADY makes
+	// this exact claim through its own, older path: rwaApplyContractReference
+	// publishes a `reference` block carrying provenance
+	// listing_platform_price, from the same directory, with a summary
+	// basis that names the mixture in prose. Running this arm here would
+	// attach a second block making the same statement under a different
+	// field name, and the RWAAsset projection has no field to receive it
+	// — so it would cost a directory read and a lake read per rebuild to
+	// write something nothing serves.
+	//
+	// It is NOT a gate, which is the property this register exists to
+	// protect: it can only ADD a figure to a row that has none, never
+	// withhold one, so an arm missing it cannot publish anything
+	// /v1/assets would refuse.
+	"applyListingValuations": "the RWA surface publishes this claim already, through its own reference block (rwa_reference.go); it is additive, never a gate",
 }
 
 func TestRWAListingPipelineMatchesTheAssetsListing(t *testing.T) {
