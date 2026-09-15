@@ -430,7 +430,8 @@ func policyForPath(path string, cdnEnabled bool) string {
 	// GET /v1/accounts, /v1/accounts/{g}, /v1/accounts/{g}/transactions,
 	// /v1/accounts/{g}/operations, /v1/accounts/{g}/movements
 	// (ADR-0048 D5), /v1/accounts/{g}/positions, /v1/accounts/{g}/trades,
-	// /v1/accounts/{g}/activity and /v1/accounts/{g}/graph (#351)
+	// /v1/accounts/{g}/activity, /v1/accounts/{g}/graph and
+	// /v1/accounts/{g}/graph/history (#351)
 	// never had an explicit case here — they've always
 	// fallen through to the conservative default below. Made EXPLICIT
 	// (still private, no-store, no behavior change) when D5 added

@@ -4943,6 +4943,70 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/accounts/{g_strkey}/graph/history": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The account's creation and sponsorship activity over time, by month.
+         * @description The time axis of `/accounts/{g_strkey}/graph`: how much this
+         *     account created and sponsored, month by month. Two series, kept
+         *     apart rather than summed — they are different kinds of fact over
+         *     different spans, and an account can be busy in one and absent
+         *     from the other.
+         *
+         *     EVERYTHING HERE IS HISTORY, with the same reading the graph
+         *     snapshot carries: creations are immutable, and every sponsorship
+         *     figure counts arrangements **started**, never arrangements in
+         *     force.
+         *
+         *     WHAT THE SERVED TIER CAN PLACE IN TIME, AND WHAT IT CANNOT. The
+         *     graph is stored as edges — one row per distinct pair — and an
+         *     edge carries `first_at` and `last_at` however many events sit
+         *     behind it. Per-event timestamps exist only in the rollups'
+         *     working tables, which are truncated and refilled every cycle and
+         *     therefore hold a partial archive for the length of one. So:
+         *
+         *     * `new_accounts` is COMPLETE. Every edge has exactly one
+         *       `first_at`, so summed over the points it equals
+         *       `totals.accounts` exactly.
+         *     * `events` is a LOWER BOUND whenever `lower_bound` is true. An
+         *       edge with one event places it; an edge with N > 1 places its
+         *       first and its last and the other N-2 have no recorded month.
+         *       Those are counted exactly in `totals.events_unplaced` and
+         *       named in `unplaced[]` — never smeared across the interval,
+         *       never folded into a neighbouring month, never dropped
+         *       silently. `events_placed + events_unplaced == events`, always.
+         *
+         *     A MONTH WITH NO ACTIVITY EMITS NO POINT. No zero row is written
+         *     for a quiet month and no value is carried across one. Read an
+         *     absent month against that series' `coverage`: INSIDE the covered
+         *     span it means nothing happened, OUTSIDE it means nothing was
+         *     observed. The two are never conflated into a zero.
+         *
+         *     GRANULARITY IS FIXED at `1M` and there is deliberately no
+         *     parameter for it. Two timestamps per edge is all the source has,
+         *     so a finer bucket would place no additional event — it would
+         *     only scatter the same ones over mostly-empty buckets and make
+         *     the unplaced fraction read as noise.
+         *
+         *     BOUNDED BY CONSTRUCTION: both arms are primary-key range reads
+         *     over this account's own edges, and the response is one point per
+         *     month the account was active, so neither the query nor the
+         *     payload grows with the 21M-row creation graph behind it.
+         */
+        get: operations["getAccountGraphHistory"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/accounts/{g_strkey}/activity": {
         parameters: {
             query?: never;
@@ -5685,6 +5749,119 @@ export interface components {
             /**
              * @description Always present. States that every figure is history and that
              *     no sponsorship figure is a count of arrangements in force.
+             */
+            note: string;
+        };
+        /**
+         * @description One calendar month of one relation's activity. Points exist only
+         *     for months that carry something — a quiet month emits no point
+         *     and no zero.
+         */
+        AccountGraphHistoryPoint: {
+            /** @description The month as YYYY-MM. */
+            period: string;
+            /**
+             * Format: date-time
+             * @description First instant of the month
+             */
+            period_start: string;
+            /**
+             * @description Counterparties FIRST created or sponsored in this month.
+             *     Exact and complete — summed over the series it equals
+             *     `totals.accounts`.
+             */
+            new_accounts: number;
+            /**
+             * @description Individual creations / sponsorship arrangements KNOWN to fall
+             *     in this month. A lower bound whenever the series sets
+             *     `lower_bound`; the shortfall is in `totals.events_unplaced`
+             *     and is NOT distributed over the points.
+             */
+            events: number;
+        };
+        /**
+         * @description Whole-history denominators for one relation — the account's
+         *     entire history, not the returned points.
+         */
+        AccountGraphHistoryTotals: {
+            /** @description Distinct counterparties ever created or sponsored. */
+            accounts: number;
+            /** @description Operations behind them — creations */
+            events: number;
+            /** @description How many of `events` the points account for. */
+            events_placed: number;
+            /**
+             * @description Events whose month is not recoverable from the served tier.
+             *     `events_placed + events_unplaced == events`, always.
+             */
+            events_unplaced: number;
+        };
+        /**
+         * @description One reason events could not be given a month, with the exact
+         *     count it accounts for. The same register `/rwa/assets` publishes
+         *     as `excluded`, for the same purpose: a figure that silently
+         *     dropped rows is a smaller claim wearing the full one's name.
+         */
+        AccountGraphHistoryUnplaced: {
+            /**
+             * @description `repeat-events-not-timestamped` — the graph stores one row
+             *     per distinct pair carrying `first_at` and `last_at`, so
+             *     events between the first and the last of a repeated
+             *     relationship have no recorded month.
+             * @enum {string}
+             */
+            reason: "repeat-events-not-timestamped";
+            events: number;
+            detail: string;
+        };
+        /**
+         * @description One relation's monthly series plus the totals and coverage span
+         *     that qualify it.
+         */
+        AccountGraphHistorySeries: {
+            /**
+             * @description Only the months that carry something, ascending. Never null —
+             *     an account with no relationship in this direction serves an
+             *     empty array.
+             */
+            points: components["schemas"]["AccountGraphHistoryPoint"][];
+            totals: components["schemas"]["AccountGraphHistoryTotals"];
+            /**
+             * @description True when the points cannot account for every event — i.e.
+             *     `totals.events_unplaced` is non-zero. Each point's `events`
+             *     is then a lower bound; `new_accounts` is exact either way.
+             */
+            lower_bound: boolean;
+            /** @description What the series could not place and why. Absent when nothing was refused. */
+            unplaced?: components["schemas"]["AccountGraphHistoryUnplaced"][];
+            coverage: components["schemas"]["AccountGraphCoverage"];
+        };
+        /**
+         * @description One account's creation and sponsorship activity over time. Always
+         *     carries `note` — the history-not-live-state contract and the
+         *     absent-month rule apply to every response, including an empty
+         *     one.
+         */
+        AccountGraphHistory: {
+            account: string;
+            /**
+             * @description Bucket width. Always `1M`; fixed rather than a parameter — see the endpoint description.
+             * @enum {string}
+             */
+            granularity: "1M";
+            /**
+             * @description The two relations, kept SEPARATE because they are separate
+             *     cycles over separate sources with different floors: creation
+             *     reaches genesis, sponsorship only protocol 14.
+             */
+            series: {
+                created: components["schemas"]["AccountGraphHistorySeries"];
+                sponsored: components["schemas"]["AccountGraphHistorySeries"];
+            };
+            /**
+             * @description Always present. States that every figure is history, that an
+             *     absent month is a gap rather than a zero, and how to read
+             *     `lower_bound`.
              */
             note: string;
         };
@@ -21110,6 +21287,125 @@ export interface operations {
                      */
                     "application/json": {
                         data?: components["schemas"]["AccountGraph"];
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    getAccountGraphHistory: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description G-strkey account id. */
+                g_strkey: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The account's monthly creation and sponsorship activity. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "data": {
+                     *         "account": "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
+                     *         "granularity": "1M",
+                     *         "series": {
+                     *           "created": {
+                     *             "points": [
+                     *               {
+                     *                 "period": "2021-03",
+                     *                 "period_start": "2021-03-01T00:00:00Z",
+                     *                 "new_accounts": 2,
+                     *                 "events": 2
+                     *               },
+                     *               {
+                     *                 "period": "2023-07",
+                     *                 "period_start": "2023-07-01T00:00:00Z",
+                     *                 "new_accounts": 1,
+                     *                 "events": 2
+                     *               },
+                     *               {
+                     *                 "period": "2024-01",
+                     *                 "period_start": "2024-01-01T00:00:00Z",
+                     *                 "new_accounts": 0,
+                     *                 "events": 1
+                     *               }
+                     *             ],
+                     *             "totals": {
+                     *               "accounts": 3,
+                     *               "events": 7,
+                     *               "events_placed": 5,
+                     *               "events_unplaced": 2
+                     *             },
+                     *             "lower_bound": true,
+                     *             "unplaced": [
+                     *               {
+                     *                 "reason": "repeat-events-not-timestamped",
+                     *                 "events": 2,
+                     *                 "detail": "an edge stores first_at and last_at only, so events between the first and the last of a repeated relationship have no recorded month; they are counted here rather than spread across the interval or dropped"
+                     *               }
+                     *             ],
+                     *             "coverage": {
+                     *               "from_ledger": 3,
+                     *               "thru_ledger": 64346048,
+                     *               "from_time": "2015-09-30T16:46:00Z",
+                     *               "thru_time": "2026-09-09T11:02:56Z",
+                     *               "computed_at": "2026-09-09T12:00:00Z"
+                     *             }
+                     *           },
+                     *           "sponsored": {
+                     *             "points": [
+                     *               {
+                     *                 "period": "2023-07",
+                     *                 "period_start": "2023-07-01T00:00:00Z",
+                     *                 "new_accounts": 1,
+                     *                 "events": 1
+                     *               },
+                     *               {
+                     *                 "period": "2023-08",
+                     *                 "period_start": "2023-08-01T00:00:00Z",
+                     *                 "new_accounts": 1,
+                     *                 "events": 1
+                     *               }
+                     *             ],
+                     *             "totals": {
+                     *               "accounts": 2,
+                     *               "events": 2,
+                     *               "events_placed": 2,
+                     *               "events_unplaced": 0
+                     *             },
+                     *             "lower_bound": false,
+                     *             "coverage": {
+                     *               "from_ledger": 32747295,
+                     *               "thru_ledger": 64346120,
+                     *               "from_time": "2020-11-23T15:20:18Z",
+                     *               "thru_time": "2026-09-09T11:14:08Z",
+                     *               "computed_at": "2026-09-09T12:00:00Z"
+                     *             }
+                     *           }
+                     *         },
+                     *         "note": "History, not live state. Buckets are calendar months in UTC. A month with no activity emits NO POINT — never a zero and never a carried-forward value."
+                     *       },
+                     *       "as_of": "2026-09-09T12:05:00Z",
+                     *       "flags": {
+                     *         "stale": false,
+                     *         "reduced_redundancy": false,
+                     *         "triangulated": false,
+                     *         "divergence_warning": false,
+                     *         "divergence_checked": false
+                     *       }
+                     *     }
+                     */
+                    "application/json": {
+                        data?: components["schemas"]["AccountGraphHistory"];
                     };
                 };
             };
