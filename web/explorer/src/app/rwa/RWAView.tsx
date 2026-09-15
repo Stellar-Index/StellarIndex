@@ -1045,8 +1045,9 @@ function GroupTable({
         <TR>
           <Th>{firstHeading}</Th>
           <Th align="right">Assets</Th>
-          <Th align="right">Market cap</Th>
+          {/* Same order as the headline and the asset table. */}
           <Th align="right">Value of backing</Th>
+          <Th align="right">Market cap</Th>
         </TR>
       </THead>
       <TBody>
@@ -1057,29 +1058,10 @@ function GroupTable({
               {r.sub && <div className="text-ink-muted text-xs">{r.sub}</div>}
             </Td>
             <Td align="right">{r.assets.toLocaleString('en-US')}</Td>
-            <Td align="right">
-              {r.usd == null ? (
-                <Withheld reason="No asset in this group publishes a market valuation." />
-              ) : (
-                <>
-                  {r.unvalued > 0 && (
-                    <span className="text-ink-muted" aria-hidden>
-                      ≥{' '}
-                    </span>
-                  )}
-                  {r.usd}
-                </>
-              )}
-              {r.unvalued > 0 && (
-                <div className="text-ink-muted text-[11px]">
-                  {r.unvalued} unvalued
-                </div>
-              )}
-            </Td>
-            {/* The same group on the reference basis. Split out rather
-                than merged because the two bases admit different assets:
-                a group can be empty on one and full on the other, and a
-                single column would hide which. */}
+            {/* The group on the reference basis. Split from the market
+                column rather than merged because the two bases admit
+                different assets: a group can be empty on one and full on
+                the other, and a single column would hide which. */}
             <Td align="right">
               {r.referenceUsd == null ? (
                 <Withheld reason="No asset in this group carries an independent valuation of its instrument." />
@@ -1096,6 +1078,25 @@ function GroupTable({
               {r.referenceUnvalued > 0 && (
                 <div className="text-ink-muted text-[11px]">
                   {r.referenceUnvalued} unvalued
+                </div>
+              )}
+            </Td>
+            <Td align="right">
+              {r.usd == null ? (
+                <Withheld reason="No asset in this group publishes a market valuation." />
+              ) : (
+                <>
+                  {r.unvalued > 0 && (
+                    <span className="text-ink-muted" aria-hidden>
+                      ≥{' '}
+                    </span>
+                  )}
+                  {r.usd}
+                </>
+              )}
+              {r.unvalued > 0 && (
+                <div className="text-ink-muted text-[11px]">
+                  {r.unvalued} unvalued
                 </div>
               )}
             </Td>
