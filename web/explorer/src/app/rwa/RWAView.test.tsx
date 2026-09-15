@@ -4,7 +4,7 @@ import { describe, expect, it, vi, beforeEach } from 'vitest';
 
 import type { components } from '@/api/types';
 
-import { RWAView, splitBasis, sumUsd } from './RWAView';
+import { RWAView, splitBasis, sumStablecoins, sumUsd } from './RWAView';
 
 type Schemas = components['schemas'];
 type View = Schemas['RWAAssetsView'];
@@ -22,9 +22,11 @@ vi.mock('@/api/client', async () => {
 
 /** One fiat-backed token, valued, as the served catalogue returns it. */
 function stablecoinPage(
-  rows: { code: string; market_cap_usd?: string }[] = [
-    { code: 'USDC', market_cap_usd: '354959662.86' },
-  ],
+  rows: {
+    code: string;
+    market_cap_usd?: string;
+    listing_valuation?: { status: string; value_usd?: string };
+  }[] = [{ code: 'USDC', market_cap_usd: '354959662.86' }],
 ) {
   return { data: rows.map((r) => ({ ...r, class: 'stablecoin' })) };
 }
@@ -1437,5 +1439,106 @@ describe('RWAView — the wider sector', () => {
     expect(
       screen.getByText('1 fiat-backed token issued on Stellar'),
     ).toBeInTheDocument();
+  });
+
+  // USDT0's case, end to end on the tile. It trades ~$106/day on
+  // Stellar, so no market cap is published for it and the tile used to
+  // show a floor with an invisible hole. The listing-priced figure fills
+  // the hole — and the tile has to SAY that the total now mixes two
+  // bases rather than quietly reading as one measurement.
+  it('sums a listing-priced stablecoin and says the total mixes two bases', async () => {
+    apiGetData.mockResolvedValue(sectorView());
+    apiGet.mockResolvedValue(
+      stablecoinPage([
+        { code: 'USDC', market_cap_usd: '354959662.86' },
+        {
+          code: 'USDT0',
+          listing_valuation: { status: 'published', value_usd: '2581052.90' },
+        },
+      ]),
+    );
+    renderView();
+
+    await screen.findByText('Stablecoins');
+    // 354,959,662.86 + 2,581,052.90, exactly.
+    expect(screen.getByText('$357,540,715.76')).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        '2 fiat-backed tokens issued on Stellar, 1 of them listing-priced',
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/This total mixes two bases\./),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/provenance: listing_platform_price/),
+    ).toBeInTheDocument();
+    // And the combined tile stops claiming there are only two.
+    expect(screen.getByText(/Three bases, added\./)).toBeInTheDocument();
+    expect(screen.queryByText(/Two bases, added\./)).not.toBeInTheDocument();
+  });
+
+  // The negative control the whole design rests on: an observed market
+  // cap is never replaced by a listing price, even when both are served.
+  it('prefers an observed market cap over a listing price on the same row', async () => {
+    apiGetData.mockResolvedValue(sectorView());
+    apiGet.mockResolvedValue(
+      stablecoinPage([
+        {
+          code: 'USDC',
+          market_cap_usd: '354959662.86',
+          listing_valuation: { status: 'published', value_usd: '999999999.00' },
+        },
+      ]),
+    );
+    renderView();
+
+    await screen.findByText('Stablecoins');
+    expect(screen.getByText('$354,959,662.86')).toBeInTheDocument();
+    // One basis only, so the mixed-basis copy must not appear.
+    expect(
+      screen.queryByText(/This total mixes two bases\./),
+    ).not.toBeInTheDocument();
+    expect(screen.getByText(/Two bases, added\./)).toBeInTheDocument();
+  });
+
+  // A refusal is not a figure. Only `published` counts.
+  it('ignores a listing valuation that is not published', async () => {
+    apiGetData.mockResolvedValue(sectorView());
+    apiGet.mockResolvedValue(
+      stablecoinPage([
+        { code: 'USDC', market_cap_usd: '354959662.86' },
+        { code: 'USDT0', listing_valuation: { status: 'listing_unavailable' } },
+      ]),
+    );
+    renderView();
+
+    await screen.findByText('Stablecoins');
+    expect(screen.getByText('$354,959,662.86')).toBeInTheDocument();
+    expect(
+      screen.getByText('1 fiat-backed token issued on Stellar'),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText(/This total mixes two bases\./),
+    ).not.toBeInTheDocument();
+  });
+});
+
+describe('sumStablecoins', () => {
+  it('counts the listing-priced rows it fell back to', () => {
+    expect(
+      sumStablecoins([
+        { market_cap_usd: '1.00' },
+        { listing_valuation: { status: 'published', value_usd: '2.50' } },
+        { listing_valuation: { status: 'not_listed' } },
+        {},
+      ]),
+    ).toEqual({ total: '3.50', valued: 2, unvalued: 2, listingPriced: 1 });
+  });
+
+  it('never reports a zero total for a set nothing could value', () => {
+    expect(
+      sumStablecoins([{ listing_valuation: { status: 'no_supply' } }]),
+    ).toEqual({ total: null, valued: 0, unvalued: 1, listingPriced: 0 });
   });
 });
