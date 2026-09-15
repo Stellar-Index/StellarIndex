@@ -605,7 +605,27 @@ Each stage's drops account exactly for the difference to the next stage
 of the same unit, and `funnel.balanced` states whether that
 reconciliation held. When membership cannot be established the funnel is
 **empty and unbalanced** rather than a column of zeros, for the same
-reason `market_cap_usd` is absent rather than `"0.00"`.
+reason `market_cap_usd` is absent rather than `"0.00"`. When it did not
+hold, `funnel.imbalance` names *what* did not close — which check, and
+the numbers that disagreed. It is empty exactly when `balanced` is true,
+so the two can never give different answers.
+
+### Dating the set
+
+`membership.built_at` is when the rebuild that produced the served set
+finished. It is **not** the envelope's `as_of`, which is the response's
+own instant and moves between requests — a set is *built*, a response is
+*as of*, and reading one for the other says a frozen set is refreshing
+continuously.
+
+The set is cached with a ten-minute lifetime and a lapsed copy is served
+while a rebuild runs behind it, because the inputs move on daily
+cadences and making a request wait for an eleven-second rescan buys an
+answer that has not changed. `membership.stale` says when that is
+happening. `membership.rebuild_failed_at` appears only when the most
+recent attempt to replace the set **failed**, and it is the field to act
+on: without it, a set that a rebuild is about to replace and a set that
+nothing is replacing are indistinguishable.
 
 Every drop carries an `actor` naming who can move it — `operator`,
 `issuer`, or `definition` for a drop that is the rule working as

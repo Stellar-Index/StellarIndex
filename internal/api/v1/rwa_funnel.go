@@ -148,17 +148,27 @@ func rwaFunnelOf(
 	m rwaMembership, join rwaCatalogueJoin, served, contractsServed, listingServed int, assets []RWAAsset,
 ) RWAFunnel {
 	stages := rwaClassicStages(m, join, served)
-	classicOK := m.census.Check() == ""
+	// Every check below reports WHY it failed rather than merely that it
+	// did. The reasons were being computed already — each Check() and
+	// each stage comparison returns a sentence naming the invariant that
+	// broke — and thrown away at the boundary, so the wire carried a
+	// bare `balanced: false` and a reader was told the accounting did
+	// not close without being told what did not close.
+	var why []string
+	if w := m.census.Check(); w != "" {
+		why = append(why, "classic census: "+w)
+	}
 	// The contract arm is appended only when its population was actually
 	// measured. A deployment with no directory contract reader wired has
 	// not looked, and a run of contract stages reading zero would assert
 	// that the curated directory names no real-world contracts — a
 	// finding, from a scan that never ran. The funnel basis says which
 	// of the two happened.
-	contractOK := true
 	if m.contractCensus.available {
 		stages = append(stages, rwaContractStages(m, contractsServed)...)
-		contractOK = m.contractCensus.dir.Check() == ""
+		if w := m.contractCensus.dir.Check(); w != "" {
+			why = append(why, "contract census: "+w)
+		}
 	}
 	// C2's SECOND arm, appended only when it was walked. Same rule and
 	// same reason as the arm above: an unwired listing reader has not
@@ -173,16 +183,25 @@ func rwaFunnelOf(
 	// stage arithmetic — the arm boundary is unbridgeable, so nothing
 	// would otherwise notice a row lost between the arms and the list
 	// the valuation arm walks.
-	servedOK := len(assets) == served+contractsServed+listingServed
+	if armsServed := served + contractsServed + listingServed; len(assets) != armsServed {
+		why = append(why, fmt.Sprintf(
+			"served set: %d rows listed, %d counted across the arms", len(assets), armsServed))
+	}
+	// Four checks: each arm's own census (the storage layer's statement
+	// about its own numbers), the served-set agreement above, and the
+	// stage arithmetic derived from them. The census checks keep holding
+	// if the stage list is ever restructured — which is exactly when a
+	// derived check quietly stops covering something.
+	if w := rwaFunnelImbalance(stages); w != "" {
+		why = append(why, "stages: "+w)
+	}
 	return RWAFunnel{
 		Stages: stages,
-		// Four checks now: each arm's own census (the storage layer's
-		// statement about its own numbers), the served-set agreement
-		// above, and the stage arithmetic derived from them. The census
-		// checks keep holding if the stage list is ever restructured —
-		// which is exactly when a derived check quietly stops covering
-		// something.
-		Balanced:         classicOK && contractOK && servedOK && rwaFunnelImbalance(stages) == "",
+		// Balanced and Imbalance are one statement in two forms, and
+		// they cannot disagree: the boolean IS the emptiness of the
+		// list. A reader may branch on either.
+		Balanced:         len(why) == 0,
+		Imbalance:        strings.Join(why, "; "),
 		Basis:            rwaFunnelBasisFor(m.contractCensus.available, m.listingCensus.available),
 		ListingDirectory: rwaListingDirectoryOf(m.listingCensus),
 	}

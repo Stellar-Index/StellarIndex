@@ -17,6 +17,25 @@ against.
 
 ### Added
 
+- **rwa:** `membership` on `GET /v1/rwa/assets` dates the served SET —
+  `built_at`, `stale`, and `rebuild_failed_at`.
+
+  The response could not say how old the thing it was describing was.
+  On 2026-09-15 that cost most of an afternoon: the envelope's `as_of`
+  is the RESPONSE's instant and moves sub-second between requests, and
+  read as the set's build time it says the set is refreshing
+  continuously — the opposite of what was happening, which was a
+  ten-minute-old set whose sources nothing had looked at since before
+  the sync landed. The field is named so that substitution is not
+  available: a set is BUILT, a response is AS OF.
+
+  `stale` reports the deliberate behaviour that a lapsed set is served
+  while a detached rebuild runs behind it — correct, and previously
+  invisible. `rebuild_failed_at` appears only while the most recent
+  attempt to replace the set failed, and separates a set a rebuild is
+  about to replace from a set nothing is replacing. From outside those
+  are identical, and only the second needs anybody to act.
+
 - **rwa:** the classic arm admits an asset whose issuer-bound SEP-1
   entry declares an `anchor_asset` that is a well-formed ISIN, under the
   new basis `sep1_isin_declaration`.
@@ -57,6 +76,18 @@ against.
   and `AU` stay refused.
 
 ### Changed
+
+- **rwa:** `funnel.balanced: false` now says WHAT did not close, in
+  `funnel.imbalance`.
+
+  Every reason was already being computed and thrown away at the
+  boundary: each census publishes a `Check()` returning the invariant it
+  broke, and each adjacent stage pair reports the arithmetic that
+  failed. All of it collapsed to a boolean and the sentences went to a
+  log, so a reader was told the accounting does not close and given no
+  way to find out what does not close. `imbalance` is empty exactly when
+  `balanced` is true, so the two can never give different answers, and
+  it carries the censuses' own sentences rather than restating them.
 
 - **rwa:** a curated-directory tag read that fails now closes C2's
   second arm under its own reason, `curated_tag_lookup_unavailable`,
