@@ -17,6 +17,26 @@ against.
 
 ### Added
 
+- **assets:** USDT0 joins the verified catalogue — the omnichain USDT
+  live on Stellar mainnet since 2026-09-02, distinct from the
+  third-party bridged USDT already carried as a pricing reference with
+  no native issuer.
+
+  Its identity is settled by arithmetic rather than by a domain. The
+  issuer publishes no `home_domain`, while three imitators wearing
+  vanity-suffixed addresses do — so the usual "has a SEP-1 attestation"
+  test would have admitted all three and refused the real one. The
+  Stellar Asset Contract derived from this (code, issuer) pair instead
+  matches, byte for byte, the token contract in the operator's own
+  deployment manifest; that derivation is a pure function of the asset
+  and the network passphrase, so no other issuer can produce it.
+
+  Worth recording for what it shows about supply: on 2026-09-15 the
+  trustline sum over this asset was 6,469 tokens against 2,581,054 by
+  mint minus burn over its contract. Nearly all of it is held outside
+  trustlines, where a trustline sum is blind, which is the case the
+  classic lake-supply path exists to serve.
+
 - **rwa:** curated contract bindings for Spiko's five tokenized T-Bill
   money-market funds — EUTBL, USTBL, UKTBL and the two EUR share classes
   — naming the exact mainnet contract address of each and classifying it
@@ -103,8 +123,6 @@ against.
   Function — the pattern `/accounts/{g}` and `/issuers/{g}` already use,
   and the only one available when the creator population is 955,023. The
   shells are noindex for the same reason theirs are.
-
-### Added
 
 - **explorer:** `/rwa` publishes the wider tokenized sector beside the
   real-world-asset set — a stablecoin total and the two arms combined.

@@ -102,6 +102,34 @@ verified_currencies:
         issuer: GDQE7IXJ4HUHV6RQHIUPRJSEZE4DRS5WY577O2FY6YQ5LVWZ7JZTU2V5
         asset_id: PYUSD-GDQE7IXJ4HUHV6RQHIUPRJSEZE4DRS5WY577O2FY6YQ5LVWZ7JZTU2V5
 
+  - ticker: USDT0
+    slug: usdt0
+    name: USDT0
+    description: Omnichain USDT, operated by Everdawn Labs under licence from Tether. Live on Stellar mainnet since 2026-09-02. Distinct from the third-party bridged USDT above, which has no Tether-native issuer.
+    class: stablecoin
+    coingecko_id: usdt0
+    verified_issuer_label: Everdawn Labs (usdt0.to)
+    networks:
+      # This issuer carries NO home_domain on-chain, so the SEP-1 path
+      # cannot vouch for it and three imitators with vanity suffixes
+      # (…FLQBANK, …R67HUSDT, …CB5BINA) DO publish domains — "has a
+      # home_domain" would have kept all three and discarded this one.
+      # What binds it instead is arithmetic: the SAC derived from this
+      # (code, issuer) pair is CBSJZEIO5C7KC2SF3MKSNXXJSW5G3VTNBX4ATMKU
+      # I3B2MR4JKM4R26YF, byte-identical to the token contract published
+      # in the operator's own deployment manifest. SAC derivation is a
+      # pure function of (asset, network passphrase), so no other issuer
+      # can produce that address.
+      #
+      # Its supply also lives almost entirely OFF trustlines — 6,469 by
+      # trustline sum against 2,581,054 by mint−burn over the SAC
+      # (2026-09-15) — so the classic lake-supply path, not the
+      # trustline sum, is what serves a true figure here.
+      - network: stellar
+        code: USDT0
+        issuer: GATISXX6BZ6NC7IKQBY37CJD4SOZL3CYZJWXEDG6JVIY4WBS6KXJHN6Q
+        asset_id: USDT0-GATISXX6BZ6NC7IKQBY37CJD4SOZL3CYZJWXEDG6JVIY4WBS6KXJHN6Q
+
   # ─── EUR stablecoins ────────────────────────────────────────────
   - ticker: EURC
     slug: eurc
