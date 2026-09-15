@@ -1366,7 +1366,15 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 		// Postgres store the classic arm already reads its curated
 		// directory through — the contract arm draws a different
 		// population from it, not a different trust source.
-		RWAContracts:       store,
+		RWAContracts: store,
+		// C2's SECOND arm: the cached independent listing directory the
+		// `listing-sync` ops command fills. Also the same store — the
+		// independence that matters is between the two SOURCES whose
+		// claims are compared, not between the tables they are cached
+		// in, and both staleness bounds are enforced in the reader's
+		// own SQL so a stale snapshot closes the arm rather than
+		// admitting on it.
+		RWAListings:        store,
 		ContractCatalogue:  store,
 		LakeWatermark:      lakeWatermarkReader,
 		Explorer:           explorerReader,

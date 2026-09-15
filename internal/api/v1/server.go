@@ -86,7 +86,7 @@ type ReadyChecker interface {
 // This constant MUST equal the head under migrations/; the parity test
 // TestExpectedSchemaVersionMatchesMigrationsHead fails CI if a migration
 // is added without bumping it.
-const ExpectedSchemaVersion uint = 159
+const ExpectedSchemaVersion uint = 160
 
 // SchemaVersionReader reports the applied golang-migrate schema state
 // (schema_migrations.version + dirty). cmd/stellarindex-api adapts
@@ -169,6 +169,7 @@ type Server struct {
 	tokenDecimals       TokenDecimalsReader
 	tokenSymbol         TokenSymbolReader
 	rwaContracts        RWADirectoryContractReader
+	rwaListings         RWAListingDirectoryReader
 	contractCatalogue   ContractCatalogueReader
 	lakeWatermarkReader LakeWatermarkReader
 	// Cached lake watermark (ADR-0041 D4) — see lakeWatermark() in
@@ -851,6 +852,18 @@ type Options struct {
 	// it as an empty one.
 	RWAContracts RWADirectoryContractReader
 
+	// RWAListings, when non-nil, backs C2's SECOND arm on GET
+	// /v1/rwa/assets: the cached independent listing directory that
+	// corroborates an in-repo curated contract binding. Production wiring
+	// is *timescale.Store, fed by the `listing-sync` ops command.
+	//
+	// Nil is a CONFIGURATION statement and is served as one. The arm
+	// reports itself NOT MEASURED and every curated binding it would have
+	// evaluated is refused under independent_listing_unavailable — never
+	// as a measured finding that no independent party names these
+	// addresses, which nobody looked to establish.
+	RWAListings RWAListingDirectoryReader
+
 	// ContractCatalogue, when non-nil, reads catalogue rows for an explicit
 	// contract set — the volume-gate-free read the RWA contract arm needs,
 	// since a tokenized fund can carry a nine-figure supply and never appear
@@ -1497,6 +1510,7 @@ func New(opts Options) *Server { //nolint:funlen // pure field-mapping construct
 		tokenDecimals:          opts.TokenDecimals,
 		tokenSymbol:            opts.TokenSymbol,
 		rwaContracts:           opts.RWAContracts,
+		rwaListings:            opts.RWAListings,
 		contractCatalogue:      opts.ContractCatalogue,
 		lakeWatermarkReader:    opts.LakeWatermark,
 		volume:                 opts.Volume,

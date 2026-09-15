@@ -3,6 +3,7 @@ package v1
 import (
 	"fmt"
 	"sort"
+	"strings"
 
 	"github.com/Stellar-Index/StellarIndex/internal/rwa"
 )
@@ -92,6 +93,35 @@ const rwaFunnelValuationBasis = "The `valuation` arm continues PAST the served s
 	"already a `valuation.status` on the row. Membership is decided before either valuation, so nothing in this arm " +
 	"admits or refuses an asset."
 
+// rwaFunnelListingBasis describes C2's second arm. Appended rather than
+// folded in for the same reason the contract arm's sentence is: its
+// root is a different population, and a reader who took one narrowing
+// for the whole would misread every count in it.
+const rwaFunnelListingBasis = "The `listing` arm walks C2's SECOND route to recognition and a THIRD population: every in-repo " +
+	"curated contract binding, narrowed to the addresses an independent listing directory ALSO names. It exists " +
+	"because the curated account directory the `contract` arm walks names none of those addresses, so a verified " +
+	"in-repo identity could never be reached to be tested and its refusal never appeared in any tally. An in-repo " +
+	"binding NEVER admits on its own — that would be this index vouching for itself — and a listing entry never " +
+	"admits on its own either: the listing is a convenience built for price aggregation, so it corroborates a claim " +
+	"rather than attesting to one, and both sources must name the same exact address. A scam-class tag on that " +
+	"address refuses it whatever either source says. `listing_contracts_without_curated_binding` is a terminal " +
+	"census, not part of the narrowing: it counts addresses the listing names that no curated binding does, which " +
+	"is what makes `a listing admits nothing alone` auditable rather than merely asserted. The arm FAILS CLOSED: if " +
+	"the listing read does not answer, or its cached snapshot is past the recognition bound, every binding it would " +
+	"have corroborated is dropped under `independent_listing_unavailable` and the set is SMALLER, rather than being " +
+	"held up by a recognition nobody re-established."
+
+// rwaFunnelListingUnmeasured is served instead when no listing reader is
+// wired or its cached snapshot is past the recognition bound. The
+// distinction is the same one the contract arm draws, and it matters
+// more here: this arm's refusals are about whether a second party
+// agrees, and reporting "nobody agrees" when nobody was asked would be
+// the strongest possible misstatement the surface could make.
+const rwaFunnelListingUnmeasured = "The `listing` arm was NOT MEASURED: no independent listing reader is wired, or its " +
+	"cached snapshot is older than the recognition bound, so that corroboration was never established. Every curated " +
+	"binding it would have evaluated is refused under `independent_listing_unavailable` rather than under a finding " +
+	"that no independent party names it. The set is SMALLER than it would otherwise be and this sentence is why."
+
 // rwaFunnelUnavailable is the funnel for a response that publishes no
 // set because membership could not be established.
 func rwaFunnelUnavailable() RWAFunnel {
@@ -105,7 +135,7 @@ func rwaFunnelUnavailable() RWAFunnel {
 // restated, so the funnel can never disagree with `refused[]` about how
 // many candidates a requirement turned away.
 func rwaFunnelOf(
-	m rwaMembership, join rwaCatalogueJoin, served, contractsServed int, assets []RWAAsset,
+	m rwaMembership, join rwaCatalogueJoin, served, contractsServed, listingServed int, assets []RWAAsset,
 ) RWAFunnel {
 	stages := rwaClassicStages(m, join, served)
 	classicOK := m.census.Check() == ""
@@ -120,13 +150,20 @@ func rwaFunnelOf(
 		stages = append(stages, rwaContractStages(m, contractsServed)...)
 		contractOK = m.contractCensus.dir.Check() == ""
 	}
+	// C2's SECOND arm, appended only when it was walked. Same rule and
+	// same reason as the arm above: an unwired listing reader has not
+	// looked, and a run of zeros would assert that no independent party
+	// names any curated binding — a finding, from a read that never ran.
+	if m.listingCensus.available {
+		stages = append(stages, rwaListingStages(m, listingServed)...)
+	}
 	stages = append(stages, rwaValuationStages(assets)...)
 	// The two membership arms and the row list are three accountings of
 	// the same served set, and only two of them are related by the
 	// stage arithmetic — the arm boundary is unbridgeable, so nothing
 	// would otherwise notice a row lost between the arms and the list
 	// the valuation arm walks.
-	servedOK := len(assets) == served+contractsServed
+	servedOK := len(assets) == served+contractsServed+listingServed
 	return RWAFunnel{
 		Stages: stages,
 		// Four checks now: each arm's own census (the storage layer's
@@ -136,7 +173,7 @@ func rwaFunnelOf(
 		// which is exactly when a derived check quietly stops covering
 		// something.
 		Balanced: classicOK && contractOK && servedOK && rwaFunnelImbalance(stages) == "",
-		Basis:    rwaFunnelBasisFor(m.contractCensus.available),
+		Basis:    rwaFunnelBasisFor(m.contractCensus.available, m.listingCensus.available),
 	}
 }
 
@@ -267,11 +304,19 @@ func rwaReferenceDrops(byReason map[string]int) []RWAFunnelDrop {
 
 // rwaFunnelBasisFor states what was measured, including whether the
 // contract arm was walked at all.
-func rwaFunnelBasisFor(contractsMeasured bool) string {
-	if !contractsMeasured {
-		return rwaFunnelBasis + " " + rwaFunnelContractsUnmeasured + " " + rwaFunnelValuationBasis
+func rwaFunnelBasisFor(contractsMeasured, listingMeasured bool) string {
+	parts := []string{rwaFunnelBasis}
+	if contractsMeasured {
+		parts = append(parts, rwaFunnelContractsBasis)
+	} else {
+		parts = append(parts, rwaFunnelContractsUnmeasured)
 	}
-	return rwaFunnelBasis + " " + rwaFunnelContractsBasis + " " + rwaFunnelValuationBasis
+	if listingMeasured {
+		parts = append(parts, rwaFunnelListingBasis)
+	} else {
+		parts = append(parts, rwaFunnelListingUnmeasured)
+	}
+	return strings.Join(append(parts, rwaFunnelValuationBasis), " ")
 }
 
 // rwaClassicStages is the SEP-1 attestation walk: every issuer account
@@ -436,7 +481,12 @@ func rwaContractStages(m rwaMembership, served int) []RWAFunnelStage {
 			Dropped: rwaContractCandidateDrops(m),
 		},
 		{
-			Stage: rwaStageContractsAdmitted, Unit: rwaUnitAssets, Count: len(m.contracts),
+			// This arm's OWN admissions, not every contract member.
+			// m.contracts carries both C2 arms' rows since they share
+			// one projection, and counting all of them here would make
+			// this arm claim credit for the other's and stop its
+			// arithmetic closing.
+			Stage: rwaStageContractsAdmitted, Unit: rwaUnitAssets, Count: rwaDirectoryAdmitted(m),
 			Dropped: rwaDrops(RWAFunnelDrop{
 				Reason: rwaDropNotInCatalogue, Count: m.contractsNotObserved, Actor: rwaActorIssuer,
 			}),
@@ -460,6 +510,151 @@ func rwaContractStages(m rwaMembership, served int) []RWAFunnelStage {
 		stages[i].Arm = rwaArmContract
 	}
 	return stages
+}
+
+// rwaListingStages is C2's SECOND arm: every in-repo curated contract
+// binding, narrowed to the tokens an independent listing directory
+// corroborated into the set.
+//
+// It is a separate arm rather than extra stages on the contract one
+// because it narrows a DIFFERENT population from a different root. The
+// contract arm starts at the curated account directory, which this
+// repository does not control; this one starts at a hand-reviewed table
+// inside this repository, and the thing it is looking for is somebody
+// else agreeing. Folding them would produce a stage whose count is the
+// sum of two unrelated populations, and a reader could not tell which
+// narrowing a drop belonged to.
+//
+// The arm is SHORT, and the shape is the argument: three drops sit
+// between a verified in-repo identity and an admitted asset, and all
+// three are somebody other than this repository declining to agree, or
+// nobody having been asked.
+func rwaListingStages(m rwaMembership, served int) []RWAFunnelStage {
+	lc := m.listingCensus
+	stages := []RWAFunnelStage{
+		{
+			// The root: every address this repository has bound to a
+			// named real-world instrument at the evidence bar
+			// internal/rwa/contract.go documents. A constant of the
+			// build — it cannot move without a reviewed code change,
+			// which is what makes the drops below readable as
+			// statements about the world rather than about our scan.
+			Stage: rwaStageCuratedBindings, Unit: rwaUnitContracts, Count: lc.bindings,
+			Dropped: rwaDrops(
+				// Not a refusal. The contract arm already evaluates
+				// this address on its own recognition, and evaluating
+				// it twice would serve it twice.
+				RWAFunnelDrop{
+					Reason: rwaDropAlreadyEvaluatedByDirectory,
+					Count:  lc.alsoInDirectoryArm, Actor: rwaActorDefinition,
+				},
+				// The fail-closed shrink, named. An outage here is an
+				// operator's to fix, and it is reported apart from the
+				// finding below because a read that did not answer may
+				// not report an absence.
+				RWAFunnelDrop{
+					Reason: rwa.RejectContractListingUnavailable,
+					Count:  lc.listingUnavailable, Actor: rwaActorOperator,
+				},
+				// The requirement doing its job. `operator` rather than
+				// `definition` because somebody here CAN move it — by
+				// finding a second independent source that names the
+				// address — and it would be wrong to tell a reader the
+				// rule has finished with it.
+				RWAFunnelDrop{
+					Reason: rwa.RejectContractCuratedNotListed,
+					Count:  lc.notListed, Actor: rwaActorOperator,
+				},
+			),
+		},
+		{
+			// Unit changes from contracts to assets, and reconciles: a
+			// contract IS the asset it issues, the same one-to-one
+			// relabelling the contract arm makes.
+			Stage: rwaStageListingCorroborated, Unit: rwaUnitAssets, Count: lc.evaluated,
+			Dropped: rwaListingCandidateDrops(m),
+		},
+		{
+			Stage: rwaStageListingAdmitted, Unit: rwaUnitAssets, Count: rwaListingAdmitted(m),
+			Dropped: rwaDrops(RWAFunnelDrop{
+				Reason: rwaDropNotInCatalogue, Count: m.listingNotObserved, Actor: rwaActorIssuer,
+			}),
+		},
+		{Stage: rwaStageListingServed, Unit: rwaUnitAssets, Count: served},
+		{
+			// A TERMINAL census, the sibling of
+			// directory_recognised_issuing_accounts on the arm above.
+			// It counts the addresses the listing directory names that
+			// no curated binding does — the population an operator
+			// would review to grow the set, and the auditable form of
+			// the claim that a listing admits nothing on its own.
+			//
+			// Carries no drops and nothing follows it, so it takes no
+			// part in the arithmetic.
+			Stage: rwaStageListedWithoutBinding, Unit: rwaUnitContracts,
+			Count: lc.listedWithoutBinding,
+		},
+	}
+	for i := range stages {
+		stages[i].Arm = rwaArmListing
+	}
+	return stages
+}
+
+// rwaDirectoryAdmitted counts the members C2's FIRST arm admitted, read
+// back off the membership by recognition source. The counterpart of
+// [rwaListingAdmitted], and the pair of them partition m.contracts
+// exactly — every admitted contract carries one recognition or the
+// other, which [rwa.QualifyContract] guarantees.
+func rwaDirectoryAdmitted(m rwaMembership) int {
+	n := 0
+	for _, c := range m.contracts {
+		if c.recognition == rwa.RecognitionCuratedDirectory {
+			n++
+		}
+	}
+	return n
+}
+
+// rwaListingAdmitted counts the members this arm admitted, read back off
+// the membership by recognition source rather than tallied separately.
+func rwaListingAdmitted(m rwaMembership) int {
+	n := 0
+	for _, c := range m.contracts {
+		if c.recognition == rwa.RecognitionListingCorroborated {
+			n++
+		}
+	}
+	return n
+}
+
+// rwaListingCandidateDrops is what happened to the candidates that
+// reached the full ordered evaluation on this arm.
+//
+// C2's own refusals are decided by the candidate build and appear as
+// drops on the stage above, so they are unreachable here — the same
+// relationship the contract arm has with its C1-to-C3 constants. What
+// remains is C3 and C4: a scam flag on an address the curated directory
+// named only to flag, and a binding whose class the C4 vocabulary
+// cannot express.
+//
+// The scam drop is `definition`: the rule is working, and the address
+// being simultaneously verified by this repository and flagged by a
+// third party is precisely the case the precedence exists for.
+func rwaListingCandidateDrops(m rwaMembership) []RWAFunnelDrop {
+	out := make([]RWAFunnelDrop, 0, 2)
+	for _, d := range []struct {
+		reason string
+		actor  string
+	}{
+		{rwa.RejectContractScam, rwaActorDefinition},
+		{rwa.RejectNoContractBasis, rwaActorDefinition},
+	} {
+		if n := m.listingRefusals[d.reason]; n > 0 {
+			out = append(out, RWAFunnelDrop{Reason: d.reason, Count: n, Actor: d.actor})
+		}
+	}
+	return out
 }
 
 // rwaContractCandidateDrops is what happened to the contracts that
@@ -603,7 +798,7 @@ func rwaUnbridgeablePair(cur, next RWAFunnelStage) (string, bool) {
 	switch {
 	case cur.Arm != next.Arm:
 		return "is the last stage of the " + cur.Arm + " arm", true
-	case next.Stage == rwaStageRecognisedIssuingAcct:
+	case next.Stage == rwaStageRecognisedIssuingAcct, next.Stage == rwaStageListedWithoutBinding:
 		return "precedes a terminal census stage that takes no part in the narrowing", true
 	case cur.Unit == rwaUnitIssuers && next.Unit != rwaUnitIssuers:
 		return "is the last stage counted in issuer accounts", true

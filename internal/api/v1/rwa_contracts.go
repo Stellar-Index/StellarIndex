@@ -115,6 +115,15 @@ type rwaContractMember struct {
 	dirName    string
 	dirDomain  string
 	dirTags    []string
+	// recognition names WHICH independent party's naming satisfied C2.
+	// Served on the row because the two arms are not the same strength
+	// of evidence — see [rwa.Verdict].Recognition.
+	recognition string
+	// listing is the independent listing row that corroborated this
+	// address, when one did. It carries the price this arm values the
+	// row at; an empty ListingID means no listing named the address,
+	// which is the normal case for a directory-recognised member.
+	listing timescale.ListingEntry
 }
 
 // rwaUnreachedEntity is a curated-directory entity recognised as an
@@ -155,12 +164,69 @@ type rwaContractCensus struct {
 // then the per-candidate verdict. Nothing here reads a price — the
 // contract arm decides membership before valuation for exactly the same
 // reason the classic arm does.
-func (s *Server) buildRWAContractMembership(ctx context.Context) ([]rwaContractMember, []rwaUnreachedEntity, rwaContractCensus, map[string]int) {
-	refusals := map[string]int{}
-	var census rwaContractCensus
+func (s *Server) buildRWAContractMembership(ctx context.Context) rwaContractBuild {
+	var out rwaContractBuild
+	out.refusals = map[string]int{}
+	out.listingRefusals = map[string]int{}
+
+	// ONE listing read per rebuild, shared by both arms. The first arm
+	// reads it only to record which of its members a second party also
+	// names; the second arm's whole recognition rests on it.
+	listing := s.rwaListingSnapshot(ctx)
+
 	if s.rwaContracts == nil {
-		return nil, nil, census, refusals
+		// The directory arm is unwired, which says nothing about the
+		// listing arm — they draw on different readers. The second arm
+		// still runs, over a population that is a table in this
+		// repository rather than anything the directory supplies.
+		out.members, out.listingCensus = s.buildRWAListingMembership(
+			ctx, listing, map[string]struct{}{}, out.listingRefusals)
+		return out
 	}
+	census, members, evaluated := s.buildRWADirectoryMembership(ctx, listing, out.refusals)
+	out.census = census
+	out.members = members
+	out.unreached = s.rwaUnreachedEntities(ctx, rwa.ContractRecognitionTags())
+
+	listingMembers, listingCensus := s.buildRWAListingMembership(
+		ctx, listing, evaluated, out.listingRefusals)
+	out.members = append(out.members, listingMembers...)
+	out.listingCensus = listingCensus
+	return out
+}
+
+// rwaContractBuild is one contract-side rebuild: the admitted set from
+// BOTH C2 arms, and each arm's own census and refusal tally.
+//
+// The refusal tallies are kept APART rather than merged here. Both arms
+// run the same rwa.QualifyContract and can therefore produce the same
+// reason string, so one tally would make the funnel attribute an arm-2
+// refusal to arm 1's narrowing and stop the stage arithmetic closing.
+// They are merged once, at the very top, into the single `refused[]`
+// the response publishes — which is a statement about the whole
+// surface and correctly does not care which arm turned a candidate away.
+type rwaContractBuild struct {
+	members         []rwaContractMember
+	unreached       []rwaUnreachedEntity
+	census          rwaContractCensus
+	listingCensus   rwaListingCensus
+	refusals        map[string]int
+	listingRefusals map[string]int
+}
+
+// buildRWADirectoryMembership is C2's first arm: the contract addresses
+// the curated account directory names with an issuing tag.
+//
+// Returns the set of addresses it EVALUATED alongside its members, so
+// the second arm can remove them from its own population. Evaluated, not
+// admitted: an address this arm looked at and refused must still not be
+// re-evaluated by the other arm under a different rule, or the funnel
+// would report one candidate twice and the refusal that turned it away
+// would be contradicted by an admission.
+func (s *Server) buildRWADirectoryMembership(
+	ctx context.Context, listing rwaListing, refusals map[string]int,
+) (rwaContractCensus, []rwaContractMember, map[string]struct{}) {
+	var census rwaContractCensus
 	tags := rwa.ContractRecognitionTags()
 	entries, dirCensus, err := s.rwaContracts.DirectoryRecognisedContracts(ctx, tags)
 	if err != nil {
@@ -171,7 +237,7 @@ func (s *Server) buildRWAContractMembership(ctx context.Context) ([]rwaContractM
 		// publish exactly the unvouched-for population the definition
 		// refuses.
 		s.logger.Warn("rwa contract membership: directory scan failed", "err", err)
-		return nil, nil, census, refusals
+		return census, nil, map[string]struct{}{}
 	}
 	census.available = true
 	census.dir = dirCensus
@@ -208,23 +274,102 @@ func (s *Server) buildRWAContractMembership(ctx context.Context) ([]rwaContractM
 			DirectoryNamed: true,
 			DirectoryTags:  e.Tags,
 			Symbol:         symbol,
+			// Passed even though this arm does not need it. A member
+			// the listing ALSO names is a stronger row than one only
+			// the directory names, and the verdict is where that is
+			// decided rather than here — this layer supplies inputs
+			// and never reasons about which requirement uses them.
+			ListingNamed:     listing.names(e.Address),
+			ListingAvailable: listing.available,
 		})
 		if !v.InSet {
 			refusals[v.Reject]++
 			continue
 		}
 		members = append(members, rwaContractMember{
-			contractID: e.Address,
-			symbol:     symbol,
-			basis:      v.Basis,
-			class:      v.AnchorClass,
-			dirName:    e.Name,
-			dirDomain:  e.Domain,
-			dirTags:    e.Tags,
+			contractID:  e.Address,
+			symbol:      symbol,
+			basis:       v.Basis,
+			class:       v.AnchorClass,
+			dirName:     e.Name,
+			dirDomain:   e.Domain,
+			dirTags:     e.Tags,
+			recognition: v.Recognition,
+			listing:     listing.byAddress[e.Address],
 		})
 	}
 
-	return members, s.rwaUnreachedEntities(ctx, tags), census, refusals
+	return census, members, admitted
+}
+
+// buildRWAListingMembership is C2's second arm: every in-repo curated
+// binding the first arm is not already evaluating, put to the
+// definition with an independent listing as its recognition.
+//
+// Structurally smaller than the first arm, and for a reason worth
+// stating: its population is a hand-reviewed table in this repository,
+// so it needs no scan cap, no duplicate guard and no truncation
+// accounting. It cannot grow without a code change, and
+// [rwa.ContractInstrumentBindings] returns it deduplicated and ordered.
+func (s *Server) buildRWAListingMembership(
+	ctx context.Context, listing rwaListing,
+	directoryEvaluated map[string]struct{}, refusals map[string]int,
+) ([]rwaContractMember, rwaListingCensus) {
+	candidates, census := s.rwaListingCandidates(ctx, listing, directoryEvaluated)
+	if !census.available {
+		return nil, census
+	}
+	// The refusals the candidate build already decided, folded into the
+	// tally under the SAME reason strings rwa.QualifyContract would
+	// have produced. They are decided upstream because they are
+	// properties of the population rather than of a candidate — but a
+	// reader of `refused[]` must not have to know that, and the funnel
+	// reconciles against one vocabulary.
+	refusals[rwa.RejectContractListingUnavailable] += census.listingUnavailable
+	refusals[rwa.RejectContractCuratedNotListed] += census.notListed
+	if len(candidates) == 0 {
+		return nil, census
+	}
+
+	mctx, cancel := context.WithTimeout(ctx, rwaContractMetadataBudget)
+	defer cancel()
+
+	members := make([]rwaContractMember, 0, len(candidates))
+	for _, c := range candidates {
+		symbol := s.rwaContractSymbol(mctx, c.contractID)
+		v := rwa.QualifyContract(rwa.ContractCandidate{
+			ContractID: c.contractID,
+			// The directory does not name this address as an issuer —
+			// that is the whole reason the candidate is on this arm.
+			// Its TAGS are still supplied, because C3 reads them and a
+			// scam flag beats recognition from any source.
+			DirectoryNamed:   false,
+			DirectoryTags:    c.dirTags,
+			Symbol:           symbol,
+			ListingNamed:     true,
+			ListingAvailable: true,
+		})
+		if !v.InSet {
+			refusals[v.Reject]++
+			continue
+		}
+		entry := listing.byAddress[c.contractID]
+		members = append(members, rwaContractMember{
+			contractID:  c.contractID,
+			symbol:      symbol,
+			basis:       v.Basis,
+			class:       v.AnchorClass,
+			recognition: v.Recognition,
+			listing:     entry,
+			// No curated-directory label: the directory does not name
+			// this address. The row's name comes from the curated
+			// binding's instrument, filled at projection, so the
+			// surface never presents a listing platform's display text
+			// as an identity attestation.
+			dirTags: c.dirTags,
+		})
+	}
+	return members, census
 }
 
 // rwaContractSymbol reads one contract's on-chain symbol, best-effort.
@@ -491,6 +636,7 @@ func rwaContractAssetRows(members []rwaContractMember, rows map[string]AssetDeta
 			IssuerDirectoryName: m.dirName,
 			IssuerDirectoryTags: d.IssuerDirectoryTags,
 			Basis:               m.basis,
+			Recognition:         m.recognition,
 			AnchorClass:         m.class,
 			Valuation:           rwaValuationOf(d),
 			CirculatingSupply:   d.CirculatingSupply,
@@ -514,6 +660,38 @@ func rwaContractAssetRows(members []rwaContractMember, rows map[string]AssetDeta
 		out = append(out, a)
 	}
 	return out
+}
+
+// rwaContractArmCounts is one C2 arm's share of the catalogue join.
+type rwaContractArmCounts struct {
+	served      int
+	notObserved int
+}
+
+// rwaContractArmSplit attributes each admitted contract's catalogue-join
+// outcome to the arm that admitted it.
+//
+// Derived from the SAME two values the projection uses — the member list
+// and the valued-row map — rather than counted alongside it, so the
+// funnel's per-arm stages cannot disagree with the rows actually served.
+// A member whose address is absent from the map was admitted and never
+// observed on chain, which is the structural drop both arms report under
+// rwaDropNotInCatalogue.
+func rwaContractArmSplit(
+	members []rwaContractMember, rows map[string]AssetDetail,
+) (directory, listing rwaContractArmCounts) {
+	for _, m := range members {
+		arm := &directory
+		if m.recognition == rwa.RecognitionListingCorroborated {
+			arm = &listing
+		}
+		if _, ok := rows[m.contractID]; ok {
+			arm.served++
+			continue
+		}
+		arm.notObserved++
+	}
+	return directory, listing
 }
 
 // rwaUnreachedRows projects the coverage sample onto the wire.

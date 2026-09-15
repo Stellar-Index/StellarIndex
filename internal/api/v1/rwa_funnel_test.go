@@ -55,8 +55,36 @@ func rwaDropCount(stages map[string]v1.RWAFunnelStage, stage, reason string) int
 func checkFunnelArithmetic(t *testing.T, v v1.RWAAssetsView) {
 	t.Helper()
 	st := v.Funnel.Stages
+	// Stages that COUNT a population an earlier stage already dropped
+	// and that nothing follows from. They take no part in the
+	// narrowing, so no subtraction relates them to their neighbours on
+	// either side. Re-derived here from the wire rather than read out
+	// of production, so this check stays independent of the code it is
+	// checking.
+	terminal := map[string]bool{
+		"directory_recognised_issuing_accounts":     true,
+		"listing_contracts_without_curated_binding": true,
+	}
 	for i := 0; i+1 < len(st); i++ {
 		cur, next := st[i], st[i+1]
+		// An ARM BOUNDARY. The arms narrow different populations from
+		// different roots and meet only at the served set, so the last
+		// stage of one arm has no arithmetic relation to the first
+		// stage of the next — and must carry no drops, since a drop
+		// across it could not be accounted for anywhere.
+		if cur.Arm != next.Arm {
+			if len(cur.Dropped) > 0 {
+				t.Errorf("stage %q is the last of the %q arm and drops %d reasons — "+
+					"a drop across an arm boundary cannot be reconciled", cur.Stage, cur.Arm, len(cur.Dropped))
+			}
+			continue
+		}
+		if terminal[cur.Stage] || terminal[next.Stage] {
+			if terminal[cur.Stage] && len(cur.Dropped) > 0 {
+				t.Errorf("terminal census stage %q carries drops — it takes no part in the narrowing", cur.Stage)
+			}
+			continue
+		}
 		// The one place a subtraction means nothing: issuer accounts to
 		// the declarations they publish. That pair must carry no drops.
 		// Every other unit change is a relabelling of a population that
