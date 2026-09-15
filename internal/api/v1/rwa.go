@@ -11,6 +11,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/pricingguard"
 	"github.com/Stellar-Index/StellarIndex/internal/rwa"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
+	"github.com/Stellar-Index/StellarIndex/internal/worker"
 )
 
 // GET /v1/rwa/assets — tokenized real-world assets on Stellar.
@@ -889,54 +890,210 @@ func (s *Server) admitClassicCandidates(
 	}
 }
 
-// cachedRWAMembership returns the membership set, rebuilt at most once
-// per TTL window and shared across concurrent requests by a
-// single-flight gate. The last good set is served on a rebuild error —
-// a directory or SEP-1 read that fails must not empty a surface whose
-// inputs move on a daily cadence.
+// rwaMembershipRetryGap rate-limits rebuild ATTEMPTS, not rebuilds. A
+// rebuild that fails leaves the entry stale, so without a gap the next
+// request would start another one immediately and a broken read would
+// become a scan storm against the same tables that are already
+// struggling. Same role as sep1ImagesRetryGap beside it.
+const rwaMembershipRetryGap = 60 * time.Second
+
+// rwaMembershipBudget is the DETACHED rebuild's own deadline. It is not
+// a request budget: the whole point of detaching is that no request is
+// waiting on it. It has to exceed the measured build cost with room to
+// spare — the production build was ~11.5 s on 2026-09-15 — or the
+// refresh that was supposed to keep the entry warm is killed halfway
+// and the entry never warms at all.
+const rwaMembershipBudget = 2 * time.Minute
+
+// cachedRWAMembership returns the membership set for a request.
+//
+// It NEVER blocks on a rebuild once a set has ever been built. A stale
+// set is served as-is and a detached rebuild is kicked behind it,
+// because the inputs move on daily cadences: a set a few minutes past
+// its TTL is the same set, and waiting for the rescan is what cost the
+// request the wall-clock time.
+//
+// That wait was the whole of this surface's latency. Measured on r1
+// (2026-09-15) the route was perfectly bimodal — 39 of 43 requests
+// under 1 s, the other 4 over 10 s — because the rebuild is an
+// indexed scan over every issuer-bound SEP-1 payload (1.18M currency
+// entries) plus the curated-directory walk, and whichever request
+// happened to find the ten-minute entry expired paid all ~11.5 s of it
+// inline. With no more than one page load per TTL window, that is
+// roughly one visitor in ten meeting a twelve-second page. It is the
+// same defect, with the same fix, as the SEP-1 logo map in
+// [Server.readSep1Images].
+//
+// The ONE case that still waits is a cache that has never been filled.
+// An empty set there is not a stale answer, it is the false statement
+// that no real-world asset exists on Stellar — so a cold process waits
+// for its first build rather than publishing that. [Server.PrewarmRWA]
+// is what makes sure the waiter is the prewarm goroutine and not a
+// visitor.
 func (s *Server) cachedRWAMembership(ctx context.Context) rwaMembership {
+	served, flight := s.readRWAMembership() //nolint:contextcheck // the rebuild is deliberately detached from this request's context — see this function's doc; ctx is honoured by the cold-cache wait below.
+	if served != nil {
+		return *served
+	}
+	if flight == nil {
+		// Never built, and an attempt is gapped out. The handler turns
+		// this into a stated absence, not an empty set.
+		return rwaMembership{refusals: map[string]int{}}
+	}
+	select {
+	case <-flight:
+	case <-ctx.Done():
+		return rwaMembership{refusals: map[string]int{}}
+	}
 	s.rwaMu.Lock()
-	if s.rwaCache != nil && time.Since(s.rwaAt) < rwaMembershipTTL {
-		m := *s.rwaCache
-		s.rwaMu.Unlock()
-		return m
+	defer s.rwaMu.Unlock()
+	if s.rwaCache != nil {
+		return *s.rwaCache
 	}
-	if ch := s.rwaFlight; ch != nil {
-		s.rwaMu.Unlock()
-		select {
-		case <-ch:
-			s.rwaMu.Lock()
-			var m rwaMembership
-			if s.rwaCache != nil {
-				m = *s.rwaCache
-			}
-			s.rwaMu.Unlock()
-			return m
-		case <-ctx.Done():
-			return rwaMembership{refusals: map[string]int{}}
-		}
+	return rwaMembership{refusals: map[string]int{}}
+}
+
+// readRWAMembership serves what the cache holds and kicks a detached
+// rebuild when the entry is stale (or absent) and no attempt is already
+// running or too recent. Returns the served set — nil only before the
+// first successful build, possibly stale otherwise, both of which are
+// fine — and the in-flight rebuild's completion channel (nil when no
+// rebuild is running).
+//
+// The channel exists for [Server.PrewarmRWA] and for the cold-cache arm
+// of [Server.cachedRWAMembership]. A warm-or-stale request path takes
+// the set and goes.
+func (s *Server) readRWAMembership() (*rwaMembership, chan struct{}) {
+	s.rwaMu.Lock()
+	defer s.rwaMu.Unlock()
+
+	served := s.rwaCache // last good set; nil only before the first success
+	if served != nil && time.Since(s.rwaAt) < rwaMembershipTTL {
+		return served, nil
 	}
-	done := make(chan struct{})
-	s.rwaFlight = done
-	s.rwaMu.Unlock()
+	if s.rwaFlight != nil {
+		return served, s.rwaFlight
+	}
+	if time.Since(s.rwaAttemptAt) < rwaMembershipRetryGap {
+		return served, nil
+	}
+	s.rwaAttemptAt = time.Now() // advances on failure too
+	flight := make(chan struct{})
+	s.rwaFlight = flight
+	// G118 is the intended behaviour, not a defect: detaching from the
+	// request context is what stops the scan being killed at the request
+	// deadline and restarted, unbounded, by the next caller.
+	go s.refreshRWAMembership(flight) //nolint:gosec,contextcheck // G118 + contextcheck: the detachment is deliberate — see cachedRWAMembership's doc.
+	return served, flight
+}
+
+// refreshRWAMembership rebuilds the set on a DETACHED context and swaps
+// it in. On a failed rebuild the previous set is left exactly as it
+// was — a directory or SEP-1 read that fails must not empty a surface
+// whose inputs move on a daily cadence.
+func (s *Server) refreshRWAMembership(done chan struct{}) {
+	// Deferred so a panic in the scan cannot leave the single-flight
+	// marker set — which would freeze the cache for the life of the
+	// process, since a non-nil flight is never replaced.
+	defer s.endRWAMembershipFlight(done)
+	defer worker.Recover(s.logger, "api-rwa-membership-refresh")
+
+	ctx, cancel := context.WithTimeout(context.Background(), rwaMembershipBudget)
+	defer cancel()
 
 	built := s.buildRWAMembership(ctx)
 
 	s.rwaMu.Lock()
+	defer s.rwaMu.Unlock()
 	// EITHER arm answering makes the rebuild worth caching. Requiring
 	// both would mean a deployment with only one reader wired rebuilt on
 	// every request and never cached, and a transient failure of one arm
 	// would discard a good rebuild of the other.
-	if built.available || built.contractCensus.available {
-		s.rwaCache = &built
-		s.rwaAt = time.Now()
-	} else if s.rwaCache != nil {
-		built = *s.rwaCache
+	if !built.available && !built.contractCensus.available {
+		// Not an error path for the caller: the previous set keeps being
+		// served, and rwaAttemptAt (already advanced) is what stops this
+		// becoming a retry storm.
+		s.logger.Warn("rwa membership rebuild failed (serving the last good set)")
+		return
 	}
+	s.rwaCache = &built
+	s.rwaAt = time.Now()
+}
+
+// endRWAMembershipFlight releases the single-flight marker and wakes
+// every waiter. Deferred by refreshRWAMembership so it runs on EVERY
+// exit, panic included.
+func (s *Server) endRWAMembershipFlight(done chan struct{}) {
+	s.rwaMu.Lock()
 	s.rwaFlight = nil
 	s.rwaMu.Unlock()
 	close(done)
-	return built
+}
+
+// PrewarmRWA fills the three caches the /rwa page reads out of band, so
+// no request ever meets a cold one: the membership set shared by all
+// three RWA routes, then the value and premium series behind the page's
+// two history panels.
+//
+// The detached rebuild above already means a STALE membership entry
+// costs a request nothing. This is what stops the entry being stale in
+// the first place, and — the case that still blocks — what makes the
+// waiter for the very first build the prewarm goroutine rather than the
+// first visitor after a deploy.
+//
+// The two series are warmed for the reason the page is measured by its
+// slowest panel rather than by its first: they are their own
+// ten-minute caches over their own scans, and a visitor who found the
+// membership warm could still sit behind one of them. They are warmed
+// AFTER the membership because each builds on it.
+//
+// # No cache key, so nothing to drift
+//
+// The repo's prewarm rule is that a prewarm must call the cached reader
+// with byte-identical arguments to the handler, or it warms a different
+// slot and does nothing (three production bugs: Order, Sources, Limit).
+// It is satisfied here structurally rather than by matching arguments:
+// the membership set is ONE process-wide entry with no key at all, and
+// this calls [Server.readRWAMembership] — the exact function
+// [Server.cachedRWAMembership] calls — so there is no second slot for
+// it to land in. The only thing it adds is the wait.
+//
+// Best-effort, like every other prewarm: no reader wired, or a failed
+// scan, each leave the cache exactly as it was.
+func (s *Server) PrewarmRWA(ctx context.Context) {
+	// The membership set is shared by all three RWA routes and depends
+	// on neither history reader, so it warms on its own terms.
+	if _, flight := s.readRWAMembership(); flight != nil { //nolint:contextcheck // same detachment as the request path; ctx is honoured by the wait below, not by the scan.
+		// Waiting is what makes this a prewarm rather than a nudge: the
+		// caller's next pass should find the entry warm, not find its
+		// own kick still running. Shutdown returns at once and still
+		// lets the detached rebuild finish and record what it learned.
+		select {
+		case <-flight:
+		case <-ctx.Done():
+		}
+	}
+	if ctx.Err() != nil {
+		return
+	}
+	// The two series below are warmed behind the SAME guards their
+	// handlers apply, and in the same order. A prewarm that started a
+	// build its handler would have refused to start is reading through
+	// readers the handler proved it may not — which is the prewarm
+	// drift class, in its most expensive form.
+	//
+	// Both of these BLOCK on their own build, unlike the membership
+	// above. That is what makes warming them worth the goroutine's
+	// time: whoever pays the build should be this goroutine, not a
+	// reader of the page.
+	if s.assetsReader == nil || s.oracleHistory == nil {
+		return
+	}
+	s.cachedRWAValueHistory(ctx)
+	if ctx.Err() != nil || s.marketHistory == nil {
+		return
+	}
+	s.cachedRWAPremiumHistory(ctx)
 }
 
 // ─── handler ────────────────────────────────────────────────────────

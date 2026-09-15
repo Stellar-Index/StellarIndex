@@ -104,6 +104,85 @@ against.
   and the only one available when the creator population is 955,023. The
   shells are noindex for the same reason theirs are.
 
+### Added
+
+- **explorer:** `/rwa` publishes the wider tokenized sector beside the
+  real-world-asset set — a stablecoin total and the two arms combined.
+  Fiat-backed tokens are deliberately outside the RWA definition (a
+  claim on a bank balance is not a tokenized instrument with a net asset
+  value, so the membership rule refuses the whole `fiat` anchor class),
+  and they stay outside it here: the figure is published beside the set,
+  never folded into it, and the combined tile states that it is two
+  bases added rather than one total measured. It exists because
+  "tokenized value on Stellar" is commonly quoted as the two together,
+  and a reader holding such a figure beside a real-world-asset-only
+  headline is comparing a whole against a part without being told.
+
+  The stablecoin figure comes from the served catalogue's issuer-bound
+  identities, never from a token code: PYUSD, USDT, USDC and XLM are
+  each worn by impersonators on this network, one carrying a
+  920-billion fake balance, so "the token called USDC" is not a set
+  anybody should sum. Totals are summed in integer cents from the
+  served decimal strings, so a page total cannot drift in the last
+  place the way a float sum does. The combined figure is withheld
+  entirely unless both arms answer — a smaller claim must never wear
+  the bigger name — and is marked as a floor whenever either arm is.
+
+### Fixed
+
+- **explorer:** `/rwa` leads with the value of the backing rather than
+  with market cap. Market cap requires an observed on-chain price, and a
+  tokenized instrument is bought and held: on the live set the two
+  largest members — a $535.90M and a $439.46M fund — have no Stellar
+  market price at all, so they contribute nothing to market cap while
+  carrying $975M of backing between them. The page headlined $17.13M for
+  a sector holding $992.49M, which reads as a sector of no consequence
+  and, against a supply-times-NAV figure published elsewhere, as missing
+  data. Nothing was missing; the page was leading with the basis this
+  set mostly does not have.
+
+  The market figure keeps its own tile at full size beside it, never
+  folded in and never added to it — it remains the only one of the two
+  that anybody was observed paying. What the headline is now carries on
+  the page rather than in a tooltip: the opening of the server's own
+  `reference_valuation.basis` renders inline, the rest sits behind a
+  disclosure, and the split is taken from the served text so the page
+  cannot drift from what the server says the number means. When the
+  total is a lower bound, the page states it in words and names how many
+  assets carry no reference valuation, rather than leaving a "≥" to
+  carry the point alone. Both tiles keep the existing three-state rule:
+  a figure, a figure marked as a floor, or the words "Not published" —
+  never "$0.00". The table now orders its two money columns the same way
+  as the headline.
+
+- **api:** `/v1/rwa/assets`, `/v1/rwa/history` and `/v1/rwa/premium` no
+  longer rebuild the RWA membership set on the request path. The set is
+  an indexed scan over every issuer-bound SEP-1 payload (1.18M currency
+  entries) plus the curated-directory walk — measured at ~11.5 s — and
+  it sat behind a ten-minute cache that was refilled INLINE by whichever
+  request happened to find it expired. Route latency on the production
+  node was perfectly bimodal as a result: over a 14-minute sampling run,
+  49 of 56 requests came back under 1 s and exactly one took 13.2 s. At
+  no more than one page load per cache window, that is roughly one
+  visitor in ten meeting a thirteen-second page.
+
+  A stale set is now served as it stands while the rebuild runs detached
+  behind it, on its own context and its own budget — the same shape the
+  SEP-1 logo map uses, for the same reason. The inputs move on daily
+  cadences, so a set a few minutes past its TTL is the same set; waiting
+  for the rescan was the whole of the cost. Rebuild ATTEMPTS are gapped
+  so a failing scan cannot become a scan storm, and a failed rebuild
+  leaves the last good set exactly as it was rather than blanking the
+  surface.
+
+  The one case that still waits is a cache that has never been filled,
+  where an empty set would not be a stale answer but the false statement
+  that no real-world asset exists on Stellar. A background prewarm on a
+  five-minute cadence now covers that, so the waiter for the first build
+  after a deploy is that goroutine and not a visitor; it warms the two
+  history series behind the page's other panels on the same pass, behind
+  the same reader guards their handlers apply.
+
 ## [v0.80.0] — 2026-09-13
 
 ### Fixed

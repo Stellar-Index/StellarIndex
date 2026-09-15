@@ -1588,6 +1588,46 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 		prewarmClassicLakeSupply(rootCtx, apiSrv)
 	}()
 
+	// RWA prewarm: its own goroutine, NOT the 5-minute loop above, for
+	// the same reason the lake-supply pass has one — the membership
+	// rebuild is an indexed scan over every issuer-bound SEP-1 payload
+	// (1.18M currency entries on r1) plus the curated-directory walk,
+	// measured at ~11.5 s, and it must never delay the cheap prewarms.
+	//
+	// What it is for: until 2026-09-15 the /rwa page's three routes
+	// shared ONE ten-minute membership cache that rebuilt INLINE on
+	// whichever request happened to find it expired. The route's
+	// latency on r1 was perfectly bimodal — 39 of 43 requests under 1 s,
+	// the other 4 over 10 s — so roughly one visitor in ten met a
+	// twelve-second page. The rebuild is detached now, so a stale set
+	// costs a request nothing; this is what stops it being cold in the
+	// first place, and what makes the waiter for the first build after
+	// a deploy this goroutine rather than a visitor.
+	//
+	// Cadence: 5 minutes against the caches' 10-minute TTLs, the same
+	// two-cycles-of-slack rule PrewarmClassicSupply and
+	// PrewarmSep1Images follow. Freshness does not depend on it — the
+	// request-kicked detached refresh maintains that — so this is a
+	// never-cold/repair guarantee, and every pass that finds the entry
+	// warm is a no-op.
+	bgWG.Add(1)
+	go func() {
+		defer bgWG.Done()
+		defer recoverBackgroundWorker(logger, "prewarm-rwa")
+		const cadence = 5 * time.Minute
+		apiSrv.PrewarmRWA(rootCtx)
+		t := time.NewTicker(cadence)
+		defer t.Stop()
+		for {
+			select {
+			case <-rootCtx.Done():
+				return
+			case <-t.C:
+				apiSrv.PrewarmRWA(rootCtx)
+			}
+		}
+	}()
+
 	// Protocol-detail prewarm: its own goroutine (NOT the 5-minute loop
 	// above — a full sweep is minutes of serial build work and must never
 	// delay the cheap prewarms). Sweeps ALL protocols × bespoke windows

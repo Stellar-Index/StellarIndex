@@ -271,16 +271,22 @@ type Server struct {
 	sep1ImagesAttemptAt time.Time
 	sep1ImagesFlight    chan struct{}
 
-	// RWA membership set (/v1/rwa/assets) — the (code, issuer) pairs
-	// meeting the internal/rwa definition, rebuilt off the request
-	// path behind a TTL + single-flight because its inputs (the SEP-1
-	// payloads and the curated directory) move on daily cadences. It
-	// holds NO valuation: membership is decided before any number is
-	// attached.
-	rwaMu     sync.Mutex
-	rwaCache  *rwaMembership
-	rwaAt     time.Time
-	rwaFlight chan struct{}
+	// RWA membership set (/v1/rwa/assets, /v1/rwa/history,
+	// /v1/rwa/premium) — the (code, issuer) pairs meeting the
+	// internal/rwa definition, rebuilt off the request path behind a
+	// TTL + single-flight because its inputs (the SEP-1 payloads and
+	// the curated directory) move on daily cadences. It holds NO
+	// valuation: membership is decided before any number is attached.
+	//
+	// rwaAt is when the set was last REBUILT; rwaAttemptAt is when a
+	// rebuild was last STARTED. The second is what rate-limits a
+	// failing rebuild, and it advances on failure as well as success —
+	// see [Server.readRWAMembership].
+	rwaMu        sync.Mutex
+	rwaCache     *rwaMembership
+	rwaAt        time.Time
+	rwaAttemptAt time.Time
+	rwaFlight    chan struct{}
 	// Oracle reference snapshot for the same surface — the independent
 	// per-instrument valuations the premium/discount is measured
 	// against. Separate from the membership cache and much shorter-lived
