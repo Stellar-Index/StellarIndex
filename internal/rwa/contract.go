@@ -735,6 +735,46 @@ const (
 	spikoChfSAFO = "CAJD2IBSP7VO2VYJQUYJSOGPJINTUYV7MQITINXVPTIH3CCLCUENNMW4"
 )
 
+// Matrixdock's tokenized gold.
+//
+// XAUm is one token per troy ounce of London Good Delivery gold held in
+// Singapore vaults, issued by Matrixdock, Matrixport's real-world-asset
+// arm. matrixdock.com is its own registrable domain, and the chain from
+// that domain to this C-strkey has no third party in it: the XAUm
+// product page at matrixdock.com/xaum lists the chains the token is
+// available on, and its Stellar entry names this exact contract address
+// (read 2026-09-16).
+//
+// Two independent corroborations, neither of which is where the address
+// came from:
+//
+//   - The deployed code is SOURCE-VERIFIED: the on-chain wasm hash
+//     2f91a70d…abdd reproduces from github.com/Matrixdock-RWA/RWA-Contracts
+//     at path `xaum-stellar`, package `xaum`. That is a stronger
+//     statement than any of the Spiko bindings carry — it says the
+//     contract executing at this address is built from published source,
+//     not merely that its metadata agrees with a manifest.
+//   - The independent listing directory names the same address under
+//     `matrixdock-gold`, which is what C2's second arm requires and what
+//     admits this row at all.
+//
+// The ledger agrees about what it is: code XAUM, token name
+// "Matrixdock Gold", decimals 9 read from the contract's own instance
+// storage, 1,060.884000000 tokens outstanding on 2026-09-16 with 38
+// trades across 5 markets in the preceding day.
+//
+// # Why `commodity` and not `fund`
+//
+// The distinction [contractAnchorClasses] was widened for cuts the other
+// way here. XAUm is not a claim on a portfolio managed by anyone; it is
+// a bearer claim on a specific quantity of a specific metal, redeemable
+// for the metal. `commodity` is exactly the word, and it is the same
+// word the SEP-1 arm already accepts from issuers declaring
+// anchor_asset_type="commodity". This is the first commodity row on this
+// surface for which an independent price exists at all — the two
+// classic ones carry supply and no feed.
+const matrixdockXAUM = "CC2RBGYNCFBCVENIDL5BFBWPH4OUZM2UA3OD2K2N54GLMWCC4KWPVAGO"
+
 // contractInstruments is the curated set. See [contractInstrument] for
 // the evidence bar each entry has to meet, and for what an entry does
 // and does not do.
@@ -786,6 +826,7 @@ var contractInstruments = []contractInstrument{
 	{ContractID: spikoSAFO, Instrument: "Spiko Amundi Overnight Swap Fund, USD share class (SAFO)", Class: "fund"},
 	{ContractID: spikoGbpSAFO, Instrument: "Spiko Amundi Overnight Swap Fund, GBP share class (gbpSAFO)", Class: "fund"},
 	{ContractID: spikoChfSAFO, Instrument: "Spiko Amundi Overnight Swap Fund, CHF share class (chfSAFO)", Class: "fund"},
+	{ContractID: matrixdockXAUM, Instrument: "Matrixdock Gold (XAUm)", Class: "commodity"},
 }
 
 // ContractInstrumentClass reports whether a class string is one a

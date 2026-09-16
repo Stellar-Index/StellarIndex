@@ -36,9 +36,13 @@ const (
 	rwaListedBoundEUTBL = "CBGV2QFQBBGEQRUKUMCPO3SZOHDDYO6SCP5CH6TW7EALKVHCXTMWDDOF"
 	// Bound in-repo, NOT named by the listing directory. The control.
 	rwaBoundNotListedUSTBL = "CARUUX2FZNPH6DGJOEUFSIUQWYHNL5AVDV7PMVSHWL7OBYIBFC76F4TO"
-	// Named by the listing directory, bound by NOBODY. Tokenized gold,
-	// a real entry in the same map. The negative control.
-	rwaListedNotBoundXAUM = "CC2RBGYNCFBCVENIDL5BFBWPH4OUZM2UA3OD2K2N54GLMWCC4KWPVAGO"
+	// Named by the listing directory, bound by NOBODY. The native
+	// asset's own Stellar Asset Contract — a real entry in the same
+	// map. The negative control, and a permanent one: XLM can never
+	// acquire a curated RWA binding, so no later admission can retire
+	// this test the way binding the tokenized-gold contract that used
+	// to stand here did.
+	rwaListedNotBoundXLM = "CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA"
 )
 
 // stubRWAListings serves a canned listing-directory read. It censuses
@@ -272,16 +276,16 @@ func TestRWAListing_DecimalsAreReadNotAssumed(t *testing.T) {
 func TestRWAListing_ListingAloneAdmitsNothing(t *testing.T) {
 	view := getRWA(t, rwaListingServer(t,
 		&stubRWAListings{rows: []timescale.ListingEntry{
-			listed(rwaListedNotBoundXAUM, "matrixdock-gold", "xaum", "4283.35"),
+			listed(rwaListedNotBoundXLM, "stellar", "xlm", "0.175549"),
 		}},
 		map[string]timescale.AssetRow{
-			rwaListedNotBoundXAUM: rwaContractRow(rwaListedNotBoundXAUM, sptr("4283.35")),
+			rwaListedNotBoundXLM: rwaContractRow(rwaListedNotBoundXLM, sptr("4283.35")),
 		},
-		map[string]string{rwaListedNotBoundXAUM: "1060884000000"},
-		map[string]uint32{rwaListedNotBoundXAUM: 8},
+		map[string]string{rwaListedNotBoundXLM: "1060884000000"},
+		map[string]uint32{rwaListedNotBoundXLM: 8},
 		map[string]timescale.DirectoryEntry{},
 	))
-	if _, ok := assetByContract(view, rwaListedNotBoundXAUM); ok {
+	if _, ok := assetByContract(view, rwaListedNotBoundXLM); ok {
 		t.Fatal("a listing entry alone admitted a contract — C2 has been replaced by `a price aggregator has heard of it`")
 	}
 	if n := stageCount(t, view, "listing_contracts_without_curated_binding"); n != 1 {
@@ -549,7 +553,7 @@ func TestRWAListing_FunnelClosesWithBothArms(t *testing.T) {
 		RWAListings: &stubRWAListings{
 			rows: []timescale.ListingEntry{
 				listed(rwaListedBoundEUTBL, "eutbl", "eutbl", "1.22"),
-				listed(rwaListedNotBoundXAUM, "matrixdock-gold", "xaum", "4283.35"),
+				listed(rwaListedNotBoundXLM, "stellar", "xlm", "0.175549"),
 			},
 			stale: 3,
 		},

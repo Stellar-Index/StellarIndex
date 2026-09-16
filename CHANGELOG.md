@@ -15,6 +15,32 @@ against.
 
 ## [Unreleased]
 
+### Added
+
+- **rwa:** Matrixdock's tokenized gold, XAUm, joins the curated contract
+  bindings as `commodity` — the first commodity row on this surface for
+  which an independent price exists at all. The two classic ones carry
+  supply and no feed.
+
+  The chain to the address has no third party in it: matrixdock.com's own
+  XAUm product page names this exact contract under the chains the token
+  is available on. Two corroborations follow, neither of them the source:
+  the deployed code is SOURCE-VERIFIED — the on-chain wasm hash
+  reproduces from `github.com/Matrixdock-RWA/RWA-Contracts` at path
+  `xaum-stellar` — and the independent listing directory names the same
+  address, which is what C2's second arm requires and what admits the row.
+
+  The ledger agrees about what it is: code `XAUM`, token name
+  "Matrixdock Gold", decimals 9 read from the contract's own instance
+  storage, 1,060.884 tokens outstanding, 38 trades across 5 markets in
+  the preceding day.
+
+  Binding it retired a negative control that had been standing on this
+  address — "listed by a price aggregator, bound by nobody". Both
+  controls now stand on the native asset's SAC and USDC's, which can
+  never acquire a curated RWA binding, so no later admission can quietly
+  retire them the same way.
+
 ### Fixed
 
 - **observability:** a Healthchecks.io ping that never leaves this host

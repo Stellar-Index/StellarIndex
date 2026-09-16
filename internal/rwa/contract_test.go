@@ -354,11 +354,18 @@ const (
 	// same evidence bar, no independent naming, no admission.
 	boundNotListedUSTBL = "CARUUX2FZNPH6DGJOEUFSIUQWYHNL5AVDV7PMVSHWL7OBYIBFC76F4TO"
 	// LISTED, and no in-repo curated binding names it. Real entries
-	// from the same listing map: a tokenized gold contract and the
-	// native asset's own Stellar Asset Contract. The listing is a
-	// price-aggregation convenience and carries anything with a
-	// market, which is exactly why it may not admit on its own.
-	listedNotBoundXAUM = "CC2RBGYNCFBCVENIDL5BFBWPH4OUZM2UA3OD2K2N54GLMWCC4KWPVAGO"
+	// from the same listing map: the native asset's own Stellar Asset
+	// Contract, and USDC's. The listing is a price-aggregation
+	// convenience and carries anything with a market, which is exactly
+	// why it may not admit on its own.
+	//
+	// Both are permanent controls by construction. Neither the native
+	// asset nor a fiat-backed stablecoin can ever acquire a curated
+	// RWA binding, so unlike the tokenized-gold contract that used to
+	// stand here, no later admission can quietly retire this test —
+	// which is what happened when XAUm's own primary source was found
+	// and it became a bound instrument.
+	listedNotBoundXLM  = "CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA"
 	listedNotBoundUSDC = "CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75"
 )
 
@@ -392,6 +399,43 @@ func TestListingCorroboratingCuratedBinding_Admits(t *testing.T) {
 	}
 }
 
+// TestCuratedSetCarriesMoreThanOneClass guards a property the surface's
+// by-class breakdown depends on and nothing else asserts: the curated
+// contract set is not a set of bonds with a vocabulary bolted on.
+//
+// Every binding in this file was a Treasury-bill fund or a money-market
+// share class until XAUm, so `commodity` and `fund` existed in
+// [contractAnchorClasses] while only `bond` and `fund` were ever
+// produced. A refactor that narrowed the admitted classes to the ones
+// in use would have passed every other test here.
+func TestCuratedSetCarriesMoreThanOneClass(t *testing.T) {
+	seen := map[string]string{}
+	for _, b := range rwa.ContractInstrumentBindings() {
+		if !rwa.ContractInstrumentClass(b.Class) {
+			t.Errorf("%s (%s): class %q is not in the contract vocabulary", b.ContractID, b.Instrument, b.Class)
+		}
+		seen[b.Class] = b.ContractID
+	}
+	for _, want := range []string{"bond", "fund", "commodity"} {
+		if _, ok := seen[want]; !ok {
+			t.Errorf("no curated binding carries class %q; the by-class breakdown cannot show it", want)
+		}
+	}
+	// XAUm specifically: tokenized gold is a bearer claim on metal, not
+	// a claim on a managed portfolio. Classifying it `fund` or `bond`
+	// would be false on both the asset and the exposure.
+	const xaum = "CC2RBGYNCFBCVENIDL5BFBWPH4OUZM2UA3OD2K2N54GLMWCC4KWPVAGO"
+	var class string
+	for _, b := range rwa.ContractInstrumentBindings() {
+		if b.ContractID == xaum {
+			class = b.Class
+		}
+	}
+	if class != "commodity" {
+		t.Errorf("XAUm is bound as %q, want commodity", class)
+	}
+}
+
 // TestListingAlone_AdmitsNothing is the negative control the arm lives
 // or dies by, run against REAL addresses the listing directory really
 // does name and this repository holds no binding for.
@@ -400,7 +444,7 @@ func TestListingCorroboratingCuratedBinding_Admits(t *testing.T) {
 // price aggregator has heard of it" and the surface would publish the
 // native asset's own SAC as a tokenized real-world asset.
 func TestListingAlone_AdmitsNothing(t *testing.T) {
-	for _, id := range []string{listedNotBoundXAUM, listedNotBoundUSDC} {
+	for _, id := range []string{listedNotBoundXLM, listedNotBoundUSDC} {
 		v := rwa.QualifyContract(rwa.ContractCandidate{
 			ContractID:       id,
 			DirectoryNamed:   false,
