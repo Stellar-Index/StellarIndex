@@ -15,6 +15,8 @@ against.
 
 ## [Unreleased]
 
+## [v0.83.0] — 2026-09-16
+
 ### Added
 
 - **explorer:** the `/rwa` page renders the new `fund` class and names the
@@ -493,6 +495,8 @@ against.
 
 ## [v0.82.0] — 2026-09-15
 
+### Changed
+
 - **ci:** the weekly SLA proof is now produced by
   `.github/workflows/sla-proof-weekly.yml`, which aggregates the SLA
   probe's series over a read-only ssh port-forward to the probe host's
@@ -583,10 +587,6 @@ against.
   which kind of hole it had — a gap in the series means scraping stopped,
   while a frozen `last_pass_timestamp` means the probe stopped and the
   textfile collector kept re-serving its last output.
-
-## [v0.82.0] — 2026-09-15
-
-### Added
 
 - **accounts:** `/v1/accounts/creators` and `/v1/accounts/sponsors` take
   an `?account=` filter that returns one address's row with its rank
