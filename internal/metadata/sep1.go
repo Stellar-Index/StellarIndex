@@ -51,6 +51,27 @@ type SEP1 struct {
 	// FetchedAt is when the fetch happened (UTC). Populated by
 	// [Resolver.Resolve] — not part of the TOML itself.
 	FetchedAt time.Time
+
+	// RecoveredSections is non-empty when the document did not parse
+	// whole and was read section by section instead. Each entry names
+	// a top-level table this index could NOT read, and the parser
+	// error that refused it.
+	//
+	// It is the visible form of a partial read. A caller that treats an
+	// absent field as "the issuer declared nothing" would be wrong
+	// about a document whose section carrying that field is listed
+	// here, so the list has to travel with the result rather than being
+	// logged and dropped. Empty on every document that parsed whole,
+	// which is almost all of them.
+	RecoveredSections []SkippedSection
+}
+
+// SkippedSection is one top-level table a recovered parse could not
+// read. Header is the table line verbatim ("[[CURRENCIES]]",
+// "[DOCUMENTATION]"), Err the parser's own message.
+type SkippedSection struct {
+	Header string
+	Err    string
 }
 
 // Currency is one entry from the [[CURRENCIES]] array. Subset of
@@ -324,14 +345,20 @@ func (r *Resolver) Resolve(ctx context.Context, domain string) (*SEP1, error) {
 // the HTTP path so tests can exercise the parser directly.
 func parseSEP1(body []byte) (*SEP1, error) {
 	raw := map[string]any{}
+	var skipped []SkippedSection
 	if err := toml.Unmarshal(body, &raw); err != nil {
-		return nil, fmt.Errorf("sep1: parse TOML: %w", err)
+		var rerr error
+		raw, skipped, rerr = recoverSEP1Sections(body)
+		if rerr != nil {
+			return nil, fmt.Errorf("sep1: parse TOML: %w", err)
+		}
 	}
 
 	sep := &SEP1{
-		Raw:           raw,
-		FetchedAt:     time.Now().UTC(),
-		Documentation: map[string]string{},
+		Raw:               raw,
+		FetchedAt:         time.Now().UTC(),
+		Documentation:     map[string]string{},
+		RecoveredSections: skipped,
 	}
 
 	if v, ok := raw["VERSION"].(string); ok {
@@ -562,4 +589,188 @@ func (d *ssrfDialer) isBlocked(ip net.IP) bool {
 		return false
 	}
 	return nettools.IsBlockedIP(ip)
+}
+
+// ─── partial parse ──────────────────────────────────────────────────
+
+// recoverSEP1Sections reads a document that does not parse whole, one
+// top-level table at a time, and returns what it could read plus the
+// tables it could not.
+//
+// # Why this exists
+//
+// A stellar.toml is published by the issuer, not by us, and a syntax
+// error in one table is not evidence about the others. WisdomTree's
+// file (stellar.wisdomtree.com, measured 2026-09-16) ends its ACCOUNTS
+// array with an unterminated string on line 20. Every one of its
+// eighteen [[CURRENCIES]] tables is well-formed, thirteen of them
+// declare an RWA anchor class, and those thirteen carry 7,023,543
+// tokens across roughly 30,000 trustlines each. A whole-document parse
+// threw all of it away over a missing quotation mark in an unrelated
+// table.
+//
+// Discarding a whole document for a defect in one table is the same
+// class of mistake as counting a missing field as a zero: it turns an
+// issuer's typo into OUR silence about assets that demonstrably exist.
+//
+// # What this is NOT
+//
+// It is not a lenient parser. Nothing is repaired, guessed or
+// re-punctuated. Each kept section is handed to the SAME toml.Unmarshal
+// with the SAME strictness; a section that does not parse is dropped
+// and named. The result can therefore only ever be a SUBSET of what a
+// valid document would have produced — recovery can never admit a
+// declaration that strict TOML would have rejected.
+//
+// An attacker gains nothing: they control their own file, so anything
+// they could smuggle through here they could simply have written as
+// valid TOML in the first place.
+//
+// # Why the multi-line-string gate
+//
+// Splitting on lines that start a table is only sound if such a line
+// cannot be DATA. Without multi-line strings it cannot be: TOML has no
+// other construct in which a bare [[NAME]] at column zero is a value.
+// Inside a triple-quoted literal it could be, and then this function
+// would read a table the real parser would have seen as text. So a
+// document containing either delimiter is refused outright rather than
+// split on a guess — which is why the gate is on the DOCUMENT and not
+// on the section.
+func recoverSEP1Sections(body []byte) (map[string]any, []SkippedSection, error) {
+	text := string(body)
+	if strings.Contains(text, `"""`) || strings.Contains(text, `'''`) {
+		return nil, nil, errors.New("sep1: refusing section recovery: document uses multi-line strings, in which a table header cannot be told from text")
+	}
+
+	lines := strings.Split(text, "\n")
+	var starts []int
+	for i, ln := range lines {
+		if isTOMLTableHeader(ln) {
+			starts = append(starts, i)
+		}
+	}
+	if len(starts) == 0 {
+		return nil, nil, errors.New("sep1: refusing section recovery: no top-level table to read independently")
+	}
+
+	// The preamble — everything before the first table — carries the
+	// bare top-level keys (VERSION, NETWORK_PASSPHRASE, ACCOUNTS). It is
+	// a section like any other and is dropped the same way when it does
+	// not parse, which is exactly what happens to WisdomTree's.
+	sections := [][2]int{{0, starts[0]}}
+	for n, st := range starts {
+		end := len(lines)
+		if n+1 < len(starts) {
+			end = starts[n+1]
+		}
+		sections = append(sections, [2]int{st, end})
+	}
+
+	out := map[string]any{}
+	var skipped []SkippedSection
+	kept := 0
+	for _, se := range sections {
+		chunk := strings.Join(lines[se[0]:se[1]], "\n")
+		if strings.TrimSpace(chunk) == "" {
+			continue
+		}
+		part := map[string]any{}
+		if err := toml.Unmarshal([]byte(chunk), &part); err != nil {
+			header := "(top-level keys)"
+			if se[0] < len(lines) && isTOMLTableHeader(lines[se[0]]) {
+				header = strings.TrimSpace(lines[se[0]])
+			}
+			skipped = append(skipped, SkippedSection{Header: header, Err: err.Error()})
+			continue
+		}
+		mergeTOMLSection(out, part)
+		kept++
+	}
+
+	if kept == 0 {
+		return nil, nil, errors.New("sep1: section recovery read nothing")
+	}
+	return out, skipped, nil
+}
+
+// isTOMLTableHeader reports whether a line begins a top-level table or
+// array-of-tables. Deliberately strict: column zero, no leading
+// whitespace, a bare or quoted key name, and nothing after the closing
+// bracket but whitespace or a comment. A line this refuses is treated
+// as part of the section above it, which is the conservative direction
+// — it can only cause a section to be dropped, never a declaration to
+// be invented.
+func isTOMLTableHeader(line string) bool {
+	if len(line) == 0 || line[0] != '[' {
+		return false
+	}
+	rest := line
+	if strings.HasPrefix(rest, "[[") {
+		rest = rest[2:]
+		i := strings.Index(rest, "]]")
+		if i < 0 {
+			return false
+		}
+		return tomlTableName(rest[:i]) && tomlTrailerOK(rest[i+2:])
+	}
+	rest = rest[1:]
+	i := strings.Index(rest, "]")
+	if i < 0 {
+		return false
+	}
+	return tomlTableName(rest[:i]) && tomlTrailerOK(rest[i+1:])
+}
+
+// tomlTableName accepts the characters TOML allows in a bare or dotted
+// table name, plus the quotes a quoted key may carry.
+func tomlTableName(s string) bool {
+	if s == "" {
+		return false
+	}
+	for _, r := range s {
+		switch {
+		case r >= 'A' && r <= 'Z', r >= 'a' && r <= 'z', r >= '0' && r <= '9':
+		case r == '_', r == '-', r == '.', r == '"', r == '\'', r == ' ':
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+// tomlTrailerOK accepts only whitespace or a comment after the header's
+// closing bracket.
+func tomlTrailerOK(s string) bool {
+	s = strings.TrimSpace(s)
+	return s == "" || strings.HasPrefix(s, "#")
+}
+
+// mergeTOMLSection folds one independently-parsed section into the
+// accumulating document.
+//
+// Arrays of tables APPEND, because that is what they mean and because
+// each [[CURRENCIES]] block arrives as its own section. Everything else
+// keeps the FIRST occurrence: a key defined twice is a duplicate-key
+// error in strict TOML, and letting a later section overwrite an
+// earlier one would make recovery produce a document strict TOML would
+// never have produced. First-wins is the reading that stays a subset.
+func mergeTOMLSection(dst, src map[string]any) {
+	for k, v := range src {
+		prev, exists := dst[k]
+		if !exists {
+			dst[k] = v
+			continue
+		}
+		pa, pok := prev.([]map[string]any)
+		va, vok := v.([]map[string]any)
+		if pok && vok {
+			dst[k] = append(pa, va...)
+			continue
+		}
+		pl, plok := prev.([]any)
+		vl, vlok := v.([]any)
+		if plok && vlok {
+			dst[k] = append(pl, vl...)
+		}
+	}
 }

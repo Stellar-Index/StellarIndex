@@ -17,6 +17,42 @@ against.
 
 ### Added
 
+- **sep1:** a stellar.toml that does not parse whole is now read one
+  top-level table at a time, instead of being discarded entire.
+
+  WisdomTree's file at `stellar.wisdomtree.com` ends its `ACCOUNTS`
+  array with an unterminated string on line 20. Every one of its
+  eighteen `[[CURRENCIES]]` tables is well-formed; thirteen declare an
+  RWA anchor class, and those thirteen carry 7,023,543 tokens across
+  roughly 30,000 trustlines each. A missing quotation mark in a table
+  this index does not even consult was silencing the issuer's whole
+  declaration — which is the same class of mistake as reading a missing
+  field as a zero: it turns their typo into our silence about assets
+  that demonstrably exist.
+
+  This is NOT a lenient parser. Nothing is repaired, guessed or
+  re-punctuated: each kept section goes through the same decoder at the
+  same strictness, and a section that fails is dropped and NAMED on
+  `RecoveredSections` so a partial read cannot be mistaken for a
+  complete one. The result can only ever be a SUBSET of what a valid
+  document would have produced, so recovery can never admit a
+  declaration strict TOML would have refused — and an issuer who wanted
+  to smuggle something through could simply have written valid TOML.
+
+  Recovery is refused outright for any document containing a
+  triple-quoted string, because that is the only construct in which a
+  line that looks like a table header can be text. The gate is on the
+  whole document rather than the section for exactly that reason.
+
+  What it does not change: the twelve WisdomTree issuers the curated
+  directory recognises still have to clear every other requirement, and
+  the three lookalike domains serving well-formed self-bound files under
+  the same org name — `wisdomtree.bond`, `wisdomtree.co.com` — are
+  directory-flagged `malicious` and stay refused. The thirteenth real
+  asset, `CRDT`, stays out too: its issuer is the one named on the
+  broken line and it is in no directory.
+
+
 - **rwa:** Matrixdock's tokenized gold, XAUm, joins the curated contract
   bindings as `commodity` — the first commodity row on this surface for
   which an independent price exists at all. The two classic ones carry
