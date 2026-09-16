@@ -17,6 +17,29 @@ against.
 
 ### Fixed
 
+- **web:** two tests that measured machine load rather than correctness
+  now have a budget that reflects what they actually do.
+
+  `fetchPrice.test.ts` costs one `await import('./page')` — the
+  static-export page module and its whole Next.js dependency graph,
+  resolved and transformed once — and `network-hardcodes.test.ts` walks
+  the source tree with `readdirSync`/`readFileSync`. Both assert in
+  milliseconds after that; both were running against vitest's 5 s
+  default.
+
+  Idle, they take ~750 ms and under a second. On a loaded machine they
+  do not: between them they timed out four times in one session while
+  deploys, an SSH session and a container gate shared the box, each time
+  passing in under a second on a clean re-run. A 5 s budget on a module
+  import or a whole-tree scan is a load sensor, and a gate that goes red
+  for the machine teaches people to re-run red gates instead of reading
+  them — which is the expensive failure, not the minute lost.
+
+  30 s is roughly 40x the idle cost, so a genuine hang still fails.
+
+
+### Fixed
+
 - **rwa:** the supply prewarm now covers the RWA set, not just the assets
   listing's ranked pages.
 
