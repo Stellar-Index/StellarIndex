@@ -15,6 +15,36 @@ against.
 
 ## [Unreleased]
 
+### Fixed
+
+- **rwa:** a contract token that emits no SEP-41 events no longer
+  publishes a confident zero on the contract arm.
+
+  The arm reads supply from the event log, which is complete for
+  everything that emits one. A token that emits none is not
+  UNDERCOUNTED by that reader, it is ABSENT from it, and an absent
+  contract sums to `0` — served as certainly as a measurement, and
+  reading on the wire as a fully-burned token. Twenty-four
+  private-credit deal contracts on pubnet are in exactly that state,
+  reporting nothing while their storage holds 548,113,042.88 tokens.
+
+  Where the log has no flows at all, the arm now reads the per-holder
+  balance entries out of the contract's own storage instead — the same
+  fallback, on the same condition, that `GET /v1/assets/{asset_id}/supply`
+  already makes. The row publishes `contract_storage_balances` so the
+  wire says which of the two bases answered.
+
+  It is consulted ONLY where the event log is empty, so the two are
+  never summed: the same tokens are in both, and a token with any flow
+  history keeps the event reading untouched. A zero-entry storage read
+  is refused rather than published — no balances is the absence of a
+  reading, not a supply of zero, and publishing it would replace one
+  unfounded zero with another.
+
+  No price is claimed for any of them. What changes is that a supply
+  that exists is now reported as existing.
+
+
 ## [v0.83.0] — 2026-09-16
 
 ### Added
