@@ -16548,10 +16548,25 @@ components:
           description: |
             State of the SEP-1 overlay for this asset.
             - not_applicable: no home-domain (native, fiat, SAC-only).
-            - not_fetched:    has a home-domain but resolver wasn't wired.
+            - not_fetched:    no fetch has been ATTEMPTED for this issuer.
+              OURS — a backlog or an unwired resolver, never a statement
+              about the issuer.
             - verified:       SEP-1 fetched + matching [[CURRENCIES]] entry found.
             - no_match:       SEP-1 fetched but no matching issuer+code entry.
-            - unreachable:    fetch / parse failed (see server logs).
+            - unreachable:    a fetch WAS attempted and produced nothing
+              storable — a 404, a dead name, a TLS failure, or a document
+              that would not parse. THEIRS, and the one an issuer can act
+              on.
+
+            The last two are the distinction worth reading carefully,
+            because they were one value until 2026-09-16. An asset
+            manager's stellar.toml carried an unterminated string on line
+            20; one missing quote made the whole file unparseable, so
+            thirteen live RWA-class declarations were refused and every
+            one of those asset pages reported `not_fetched` — we never
+            tried. The fetch had run five days running. A consumer
+            reading `unreachable` now knows the document exists and is
+            broken, which is the only version of this an issuer can fix.
         # Overlay fields, populated only when sep1_status == "verified"
         # (some also present for "no_match" — org_name).
         name:              { type: [string, "null"] }

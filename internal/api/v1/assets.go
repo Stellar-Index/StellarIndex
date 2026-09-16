@@ -32,6 +32,17 @@ type Sep1CachedReader interface {
 	GetIssuerSep1Cached(ctx context.Context, gStrkey string) (*timescale.IssuerSep1Cached, error)
 }
 
+// Sep1FetchStateReader answers the one question a payload cannot: was a fetch
+// ever ATTEMPTED for this issuer?
+//
+// Declared HERE rather than added to the interface above so every existing
+// stub implementing that one keeps compiling — the same reasoning
+// [ContractStorageSupplyReader] records, and the reason this is consulted
+// through a type assertion rather than required.
+type Sep1FetchStateReader interface {
+	IssuerSep1Attempted(ctx context.Context, gStrkey string) (bool, error)
+}
+
 // AssetReader is the storage-side interface for asset reads.
 // Implementations:
 //   - *timescale.Store (queries trades hypertable's distinct assets).
@@ -105,10 +116,13 @@ type AssetDetail struct {
 	Class string `json:"class,omitempty"`
 	// Sep1Status is the state of the SEP-1 overlay for this asset:
 	//   - "not_applicable" — no home-domain (native, fiat, SAC-only).
-	//   - "not_fetched"    — has a home-domain but overlay not configured.
+	//   - "not_fetched"    — no fetch has been attempted for this issuer.
+	//     OURS, never a statement about the issuer.
 	//   - "verified"       — SEP-1 fetched + matching [[CURRENCIES]] entry found.
 	//   - "no_match"       — SEP-1 fetched but no matching issuer+code entry.
-	//   - "unreachable"    — fetch / parse failed (see server logs).
+	//   - "unreachable"    — a fetch WAS attempted and produced nothing
+	//     storable: a 404, a dead name, a TLS failure, or a document
+	//     that would not parse. THEIRS, and the one an issuer can act on.
 	Sep1Status string `json:"sep1_status"`
 
 	// ─── SEP-1 overlay fields (populated when Sep1Status=="verified") ─
@@ -3526,7 +3540,45 @@ func (s *Server) handleAssetMetadata(w http.ResponseWriter, r *http.Request) {
 // (~4s long tail on cold issuers); it now lives only in the
 // `sep1-refresh` cron, which the API reads from.
 //
+// sep1StatusForNoPayload tells the two ways an issuer can hold no SEP-1
+// payload apart, because they are opposite findings and only one of them is
+// about the issuer.
+//
+// `not_fetched` is OURS: nothing has run for this issuer yet. `unreachable` is
+// THEIRS: the domain was reached and served nothing this index could store — a
+// 404, a dead name, a TLS failure, or a document that would not parse.
+//
+// They were one value until 2026-09-16, when a real asset manager's
+// stellar.toml turned out to carry an unterminated string on line 20. One
+// missing quote made the whole file unparseable, so thirteen live RWA-class
+// declarations — each bound to its own issuer, several with
+// attestation-of-reserve URLs — were refused, and every one of those asset
+// pages said `not_fetched`: we never tried. We had tried, five days running.
+// Nobody reading that could tell, least of all the issuer who could fix it in
+// one character.
+//
+// Falls back to `not_fetched` when no fetch-state reader is wired, which is
+// the pre-2026-09-16 answer and is the conservative direction: it claims
+// nothing about the issuer.
+//
 //nolint:gocyclo // linear field-overlay sequence; splitting would scatter the per-field nil checks across helpers.
+func (s *Server) sep1StatusForNoPayload(ctx context.Context, issuer string) string {
+	rd, ok := s.sep1Cache.(Sep1FetchStateReader)
+	if !ok {
+		return "not_fetched"
+	}
+	attempted, err := rd.IssuerSep1Attempted(ctx, issuer)
+	if err != nil {
+		s.logger.Warn("sep1 overlay: fetch-state read failed",
+			"issuer", issuer, "err", err)
+		return "not_fetched"
+	}
+	if attempted {
+		return "unreachable"
+	}
+	return "not_fetched"
+}
+
 func (s *Server) applySep1Overlay(ctx context.Context, detail *AssetDetail, asset canonical.Asset) {
 	// Soroban + native assets have no issuer row to look up. Mark
 	// not_applicable so the response is shaped consistently.
@@ -3538,11 +3590,12 @@ func (s *Server) applySep1Overlay(ctx context.Context, detail *AssetDetail, asse
 	if err != nil {
 		s.logger.Debug("sep1 cached lookup failed", "asset_id", asset.String(),
 			"issuer", asset.Issuer, "err", err)
+		// OUR read failed, which says nothing about the issuer.
 		detail.Sep1Status = "not_fetched"
 		return
 	}
 	if sep == nil {
-		detail.Sep1Status = "not_fetched"
+		detail.Sep1Status = s.sep1StatusForNoPayload(ctx, asset.Issuer)
 		return
 	}
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -328,6 +329,34 @@ type IssuerSep1Currency struct {
 // [metadata.Resolver.Resolve] — that fetch dominated /v1/assets/{id}
 // p95 (4+ seconds on cold issuers). The DB-cached path is one indexed
 // SELECT.
+// IssuerSep1Attempted reports whether a SEP-1 fetch has ever been ATTEMPTED
+// for this issuer, which the payload alone cannot say.
+//
+// [GetIssuerSep1Cached] returns (nil, nil) for both of the ways an issuer can
+// hold no payload, and they are opposite findings. `sep1_resolved_at IS NULL`
+// is OUR backlog — nothing has run. `sep1_resolved_at` set with a NULL payload
+// is the ISSUER's publication: the domain was reached and served nothing this
+// index could store, which on 2026-09-16 meant a real asset manager's
+// stellar.toml with an unterminated string on line 20 — one missing quote,
+// thirteen live RWA-class declarations unreadable.
+//
+// Every terminating path in the refresh cron stamps `sep1_resolved_at`,
+// including each failure, so "attempted at least once" is exactly what a
+// non-NULL value means.
+func (s *Store) IssuerSep1Attempted(ctx context.Context, gStrkey string) (bool, error) {
+	const q = `SELECT sep1_resolved_at IS NOT NULL FROM issuers WHERE g_strkey = $1`
+	var attempted bool
+	if err := s.db.QueryRowContext(ctx, q, gStrkey).Scan(&attempted); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			// No issuer row at all: nothing has been attempted, because
+			// there is nothing to attempt it against.
+			return false, nil
+		}
+		return false, fmt.Errorf("timescale: IssuerSep1Attempted: %w", err)
+	}
+	return attempted, nil
+}
+
 func (s *Store) GetIssuerSep1Cached(ctx context.Context, gStrkey string) (*IssuerSep1Cached, error) {
 	const q = `SELECT sep1_payload FROM issuers WHERE g_strkey = $1`
 	var payload sql.NullString
