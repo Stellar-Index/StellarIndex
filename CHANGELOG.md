@@ -15,6 +15,8 @@ against.
 
 ## [Unreleased]
 
+## [v0.86.0] — 2026-09-16
+
 ### Fixed
 
 - **dev:** a failing integration shard now NAMES the tests that failed.
