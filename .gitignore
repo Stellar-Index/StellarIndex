@@ -176,3 +176,13 @@ gcp-key*.json
 
 # Run-scoped output of .github/workflows/sla-proof-weekly.yml.
 .sla-proof/
+
+# Controller-side build product of configs/ansible/tasks/sync-migrations.yml.
+# That task carries `check_mode: false` on purpose — the archive must exist
+# for the unarchive below it to preview against, or the weekly ansible-drift
+# run goes red for a reason that has nothing to do with the host. So a
+# READ-ONLY `--check --diff` still writes this file, and with `local_dist_dir`
+# defaulting to the repo root it lands here. Untracked and unignored, it
+# refused a prepush ("working tree is not clean") and would have been swept
+# into a commit by `git add -A`.
+/migrations.deploy.tar.gz
