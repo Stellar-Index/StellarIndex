@@ -36,7 +36,19 @@ against.
       USTRY    served  10,442,505.28   all domains  11,513,946.49   (9.31%)
       TESOURO  served   1,417,840.27   all domains   1,666,298.84   (14.91%)
 
-  About $7.95M of understatement on a $2.5B page, and permanent.
+  Those three cleared within the hour, as request traffic warmed them,
+  and the floors moved onto four other members. That ROTATION is the
+  defect, not any one shortfall: whichever members were looked at
+  recently serve the four-domain figure and the rest fall back, so the
+  understatement is real, moves between rows, and is bounded only by
+  whatever happens to be cold. A figure that depends on who looked
+  recently is the thing being removed.
+
+  (The rotation also means no single dollar total describes it. When the
+  floors landed on BENJI a few minutes later they cost nothing at all —
+  every BENJI token is in a trustline, so its floor IS its all-domain
+  total. The shortfall is a property of which rows are cold, not of the
+  page.)
 
   The remedy is the same principle rather than an exception to it: ask the
   RWA surface which assets it serves, exactly as the sweep already asks
