@@ -15,6 +15,24 @@ against.
 
 ## [Unreleased]
 
+### Added
+
+- **rwa:** the `unclassified` group on `/v1/rwa/assets` now says what it
+  means. It carried $971,860,304.89 of a $2,535,764,187.91 total on
+  2026-09-16 — BENJI and USDY — and the word reads as a gap in THIS
+  index's data when it is a statement about the issuers'. Franklin
+  Templeton's own SEP-1 for BENJI declares `anchor_asset_type = "other"`;
+  Ondo declares no anchor type for USDY at all. Both were admitted
+  because an independent oracle prices the instrument, not because
+  anyone declared a class.
+
+  Publishing one would contradict the first issuer on their own asset and
+  invent one for the second, so the group is named rather than filled —
+  and now carries the reason, because a reader comparing this breakdown
+  with a third party's (which classifies everything, because it is not
+  reading the issuers) would otherwise take the largest group on the page
+  for missing work. Every group that names itself stays silent.
+
 ## [v0.86.0] — 2026-09-16
 
 ### Fixed

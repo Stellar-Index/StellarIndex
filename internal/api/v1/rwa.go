@@ -907,6 +907,21 @@ type RWAGroupTotal struct {
 	// to see which class the difference between the totals came from.
 	ReferenceValueUSD       *string `json:"reference_value_usd,omitempty"`
 	AssetsReferenceUnvalued int     `json:"assets_reference_unvalued"`
+	// Note explains a class name that does not speak for itself.
+	// Present only on `unclassified`, and it is there because the word
+	// reads as a gap in OUR data when it is a statement about the
+	// issuer's: these rows were admitted because an independent oracle
+	// prices the instrument, and nobody declared a class for them in the
+	// SEP-1 vocabulary. Franklin Templeton's own attestation for BENJI
+	// says `anchor_asset_type = "other"`; Ondo's for USDY declares none
+	// at all. Publishing a class here would contradict one issuer on
+	// their own asset and invent one for the other.
+	//
+	// A reader comparing this breakdown with a third party's — which
+	// classifies everything, because it is not reading the issuers —
+	// would otherwise take the largest group on the page for missing
+	// work. Absent on every group that named itself.
+	Note string `json:"note,omitempty"`
 }
 
 // RWAIssuerTotal is one row of the per-issuer breakdown.
@@ -2197,6 +2212,15 @@ func rwaBasis(total, valued, compared int, truncated bool) string {
 // class for it would not be.
 const rwaUnclassified = "unclassified"
 
+// rwaUnclassifiedNote travels with the group so the word cannot be read
+// as a gap in this index's data. It is a statement about what the
+// ISSUERS declared, which is the only thing the classic arm is allowed
+// to classify on.
+const rwaUnclassifiedNote = "Admitted because an independent oracle prices the instrument, not because an issuer declared a class. " +
+	"No class is published for these rows because none was declared in the SEP-1 vocabulary — one issuer's own attestation " +
+	"says `other`, another declares no anchor type at all. A class here would contradict the first issuer on their own asset " +
+	"and invent one for the second, so the group is named rather than filled."
+
 func rwaByClass(assets []RWAAsset) []RWAGroupTotal {
 	byClass := map[string][]RWAAsset{}
 	for _, a := range assets {
@@ -2210,14 +2234,18 @@ func rwaByClass(assets []RWAAsset) []RWAGroupTotal {
 	for c, group := range byClass {
 		total, valued := rwaSumMarketCaps(group)
 		refTotal, refValued := rwaSumReferenceValues(group)
-		out = append(out, RWAGroupTotal{
+		row := RWAGroupTotal{
 			Class:                   c,
 			Assets:                  len(group),
 			MarketCapUSD:            total,
 			AssetsUnvalued:          len(group) - valued,
 			ReferenceValueUSD:       refTotal,
 			AssetsReferenceUnvalued: len(group) - refValued,
-		})
+		}
+		if c == rwaUnclassified {
+			row.Note = rwaUnclassifiedNote
+		}
+		out = append(out, row)
 	}
 	sortRWAGroups(out)
 	return out
