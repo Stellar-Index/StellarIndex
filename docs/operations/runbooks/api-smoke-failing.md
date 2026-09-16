@@ -128,6 +128,10 @@ API_BASE_URL=https://api.stellarindex.io bash scripts/dev/r1-smoke.sh
   smoke asserts shape, the probe asserts speed.
 - `api-5xx.md` / `api-down.md` — work these first when they are firing;
   a broken API makes the smoke fail as a consequence.
+- `healthcheck-ping-undelivered.md` — read it before trusting any
+  Healthchecks.io "down" email for this check. A ping that never left
+  the host reaches the dashboard as silence, which looks identical to a
+  smoke that stopped.
 
 ## Changelog
 

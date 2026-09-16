@@ -1,0 +1,100 @@
+---
+# promtool unit tests for stellarindex_healthcheck_ping_undelivered.
+#
+#   promtool test rules deploy/monitoring/rule-tests/healthcheck-ping_test.yml
+#
+# The defect this rule closes: every Healthchecks.io ping in
+# configs/healthchecks/ ended in `curl … || true` with the output on
+# /dev/null. A ping that never left the host produced the same thing at
+# Healthchecks.io as a service that had stopped — silence, then a "down"
+# email — and produced nothing at all on the host. The fix routes every
+# ping through hc_ping, which counts undelivered attempts into
+# node_exporter's textfile collector, and adds this alert so a
+# Healthchecks.io notice can be read against it.
+#
+# PROVEN-RED: delete the `and (time() - …last_success_unix) > (15 * 60)`
+# clause from healthcheck-ping.yml and re-run — "a lost ping followed by
+# recovery" fires (FAIL), because one failed attempt is enough to make
+# `increase(…[15m]) > 0` true for the next fifteen minutes. That clause
+# is the whole difference between reporting a broken egress and
+# reporting a blip, which is the distinction this rule exists to make.
+
+rule_files:
+  - ../rules/healthcheck-ping.yml
+
+evaluation_interval: 1m
+
+tests:
+  # ── sustained egress failure: the case worth a ticket ──
+  # The counter climbs on every attempt for the whole window. The
+  # service under the check may be perfectly healthy; what has failed is
+  # this host's ability to say so.
+  - interval: 1m
+    name: a check that cannot reach Healthchecks.io for 35m fires the ticket
+    input_series:
+      - series: 'stellarindex_healthcheck_ping_failures_total{check="api"}'
+        values: '0+1x40'
+      # Last delivered at t=0 and never since — the stamp hc_ping writes
+      # only on an accepted ping.
+      - series: 'stellarindex_healthcheck_ping_last_success_unix{check="api"}'
+        values: '0x40'
+    alert_rule_test:
+      - eval_time: 35m
+        alertname: stellarindex_healthcheck_ping_undelivered
+        exp_alerts:
+          - exp_labels:
+              severity: ticket
+              team: stellarindex
+              component: observability
+              check: api
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/healthcheck-ping-undelivered.md
+              summary: "check api could not deliver its Healthchecks.io ping for ≥ 15m — a 'down' email for it would be about egress, not the service"
+              description: |
+                `hc_ping` has failed to reach Healthchecks.io for the
+                `api` check on every attempt for at least 15
+                minutes. Healthchecks.io sees only silence, so it will mark
+                the check down and email on its own grace timer — about this
+                host's ability to make an outbound HTTPS request, not about
+                the service under the check.
+                Read the reason from
+                `journalctl -u 'stellarindex-*' | grep hc-ping`, which
+                carries curl's exit code (6 = DNS, 7 = connect refused,
+                22 = HTTP error, 28 = timeout). Confirm the service itself is
+                healthy before acting on any Healthchecks.io notice for it.
+
+  # ── one lost ping, then delivery resumes: must stay quiet ──
+  # hc_ping already retries twice inside a single attempt, so a lone
+  # increment is a transient that has survived three tries and then
+  # cleared. Alerting on it would put an operator in front of a page for
+  # a check that is now green — the same failure mode as the emails.
+  - interval: 1m
+    name: a single lost ping followed by recovery stays silent
+    input_series:
+      - series: 'stellarindex_healthcheck_ping_failures_total{check="smoke"}'
+        values: '0 1 1x40'
+      # The next firing was accepted: last_success advances past the
+      # failure. `increase()` still sees the step for another fifteen
+      # minutes, which is exactly when this must not fire.
+      - series: 'stellarindex_healthcheck_ping_last_success_unix{check="smoke"}'
+        values: '0 0 120+60x39'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: stellarindex_healthcheck_ping_undelivered
+        exp_alerts: []
+      - eval_time: 14m
+        alertname: stellarindex_healthcheck_ping_undelivered
+        exp_alerts: []
+
+  # ── delivery working normally: flat counter, no alert ──
+  - interval: 1m
+    name: a check delivering every ping never fires
+    input_series:
+      - series: 'stellarindex_healthcheck_ping_failures_total{check="sla-probe"}'
+        values: '0x40'
+      - series: 'stellarindex_healthcheck_ping_last_success_unix{check="sla-probe"}'
+        values: '60+60x39'
+    alert_rule_test:
+      - eval_time: 35m
+        alertname: stellarindex_healthcheck_ping_undelivered
+        exp_alerts: []

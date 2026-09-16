@@ -12,6 +12,12 @@
 
 set -uo pipefail
 
+# hc_ping records whether the ping actually reached Healthchecks.io.
+# Sourced from the script's own directory so a checkout and the
+# installed copy under /opt/stellarindex/healthchecks both resolve it.
+# shellcheck source=configs/healthchecks/hc-ping.sh
+. "$(dirname "${BASH_SOURCE[0]}")/hc-ping.sh"
+
 SERVICE="${1:-${SERVICE_NAME:-}}"
 if [ -z "$SERVICE" ]; then
   echo "usage: $0 <indexer|aggregator|api>" >&2
@@ -48,22 +54,16 @@ curl -sSf --max-time 5 -o /dev/null "http://localhost:${PORT}/metrics" || PROBE_
 
 if [ "$PROBE_RC" -ne 0 ]; then
   echo "heartbeat: $SERVICE probe FAILED on :${PORT} (rc=$PROBE_RC)" >&2
-  if [ -n "$PING_URL" ]; then
-    # Healthchecks.io's /fail endpoint records a failure — the
-    # check turns red on the dashboard immediately, no waiting
-    # for the grace period.
-    curl -fsS --max-time 5 -o /dev/null --retry 2 "${PING_URL}/fail" || true
-  fi
+  # Healthchecks.io's /fail endpoint records a failure — the check
+  # turns red on the dashboard immediately, no waiting for the grace
+  # period.
+  hc_ping "$SERVICE" "${PING_URL:+${PING_URL}/fail}"
   exit 0
 fi
 
 # Probe succeeded — ping the heartbeat URL. POST body carries a
 # short health summary so the dashboard's "last ping" entry is
 # useful at a glance.
-if [ -n "$PING_URL" ]; then
-  curl -fsS --max-time 5 -o /dev/null --retry 2 \
-    -d "stellarindex-${SERVICE} ok :${PORT}" \
-    "$PING_URL" || true
-fi
+hc_ping "$SERVICE" "$PING_URL" -d "stellarindex-${SERVICE} ok :${PORT}"
 
 exit 0

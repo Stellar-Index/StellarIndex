@@ -29,6 +29,9 @@ SYSTEMD_DIR="/etc/systemd/system"
 ENV_FILE="/etc/default/stellarindex-healthchecks"
 
 mkdir -p "$INSTALL_DIR"
+# Sourced by all three wrappers — first, so none of them can land
+# ahead of the library they source.
+install -m 0644 "$SCRIPT_DIR/hc-ping.sh" "$INSTALL_DIR/hc-ping.sh"
 install -m 0755 "$SCRIPT_DIR/heartbeat.sh" "$INSTALL_DIR/heartbeat.sh"
 install -m 0755 "$SCRIPT_DIR/smoke.sh" "$INSTALL_DIR/smoke.sh"
 install -m 0755 "$SCRIPT_DIR/sla-probe.sh" "$INSTALL_DIR/sla-probe.sh"

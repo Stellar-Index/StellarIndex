@@ -19,6 +19,10 @@
 
 set -uo pipefail
 
+# hc_ping records whether the ping actually reached Healthchecks.io.
+# shellcheck source=configs/healthchecks/hc-ping.sh
+. "$(dirname "${BASH_SOURCE[0]}")/hc-ping.sh"
+
 PROBE_BIN="${PROBE_BIN:-/usr/local/bin/stellarindex-sla-probe}"
 BASE_URL="${SLA_PROBE_BASE_URL:-http://localhost:3000/v1}"
 # F-1305 (codex audit-2026-05-13): 30s default keeps the probe
@@ -62,11 +66,7 @@ TEXTFILE_OUTPUT="${SLA_PROBE_TEXTFILE_OUTPUT:-/var/lib/node_exporter/textfile_co
 if [ ! -x "$PROBE_BIN" ]; then
   MSG="sla-probe: $PROBE_BIN not found or not executable"
   echo "$MSG" >&2
-  if [ -n "$URL" ]; then
-    curl -fsS --max-time 10 -o /dev/null --retry 2 \
-      --data-binary "$MSG" \
-      "${URL}/fail" || true
-  fi
+  hc_ping sla-probe "${URL:+${URL}/fail}" --data-binary "$MSG"
   exit 0
 fi
 
@@ -114,16 +114,10 @@ if [ "${#API_KEY_FLAG[@]}" -eq 0 ]; then
   echo "sla-probe: WARNING no STELLARINDEX_PROBE_API_KEY — this run measured the anonymous rate limit, not the SLA" >&2
 fi
 
-if [ -n "$URL" ]; then
-  if [ "$RC" -eq 0 ]; then
-    curl -fsS --max-time 10 -o /dev/null --retry 2 \
-      --data-binary "$OUT" \
-      "$URL" || true
-  else
-    curl -fsS --max-time 10 -o /dev/null --retry 2 \
-      --data-binary "$OUT" \
-      "${URL}/fail" || true
-  fi
+if [ "$RC" -eq 0 ]; then
+  hc_ping sla-probe "$URL" --data-binary "$OUT"
+else
+  hc_ping sla-probe "${URL:+${URL}/fail}" --data-binary "$OUT"
 fi
 
 # Always exit 0 from the timer's perspective — failures route

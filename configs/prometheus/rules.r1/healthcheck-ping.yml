@@ -1,0 +1,67 @@
+---
+# Healthchecks.io ping-delivery alerts. Pair with configs/healthchecks/
+# hc-ping.sh, which every wrapper in that directory now routes its pings
+# through.
+#
+# Scrape source: node_exporter's textfile_collector reads
+# `/var/lib/node_exporter/textfile_collector/hc_ping_<check>.prom`,
+# rewritten by hc_ping on every ping attempt.
+#
+# Why this rule exists. Healthchecks.io decides a check is down by
+# waiting: no ping inside the period plus grace, and it emails. It cannot
+# distinguish a service that stopped from a ping that never left this
+# host, because both reach it as silence — and until hc-ping.sh neither
+# could the host, since every ping ended in `curl ... || true` with the
+# output on /dev/null. That asymmetry is how a monitoring stack teaches
+# its operator to ignore it: the emails arrive on a healthy service, no
+# evidence survives the run, and the next one is believed a little less.
+#
+# The counter below is the other half of the email. When it is moving,
+# the "down" notice is about our egress; when it is flat, the notice is
+# about the thing under the check, and the runbooks for THAT check apply.
+#
+# Severity is `ticket`, not `page`: a lost ping degrades the fidelity of
+# an external notifier, it does not degrade the service. Escalating it to
+# `page` on component `api` would also inhibit the api-plane tickets it
+# is meant to sit beside (configs/alertmanager/alertmanager.r1.yml).
+
+groups:
+  - name: stellarindex.healthcheck_ping
+    interval: 60s
+    rules:
+
+      # Two clauses, because one lost ping is not the condition worth a
+      # ticket. `increase(...) > 0` says a ping failed recently;
+      # `time() - last_success` says none has landed since. A blip that
+      # hc_ping's own `--retry 2` did not absorb but that cleared on the
+      # next timer firing satisfies the first and not the second, and
+      # stays silent — otherwise this rule would become the noise it
+      # exists to explain. A check that has NEVER delivered carries
+      # last_success = 0, so the second clause is true by construction:
+      # a freshly-installed URL that was wrong from the start is exactly
+      # the case an operator needs told.
+      - alert: stellarindex_healthcheck_ping_undelivered
+        expr: |
+          increase(stellarindex_healthcheck_ping_failures_total[15m]) > 0
+          and
+          (time() - stellarindex_healthcheck_ping_last_success_unix) > (15 * 60)
+        for: 5m
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: observability
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/healthcheck-ping-undelivered.md
+          summary: "check {{ $labels.check }} could not deliver its Healthchecks.io ping for ≥ 15m — a 'down' email for it would be about egress, not the service"
+          description: |
+            `hc_ping` has failed to reach Healthchecks.io for the
+            `{{ $labels.check }}` check on every attempt for at least 15
+            minutes. Healthchecks.io sees only silence, so it will mark
+            the check down and email on its own grace timer — about this
+            host's ability to make an outbound HTTPS request, not about
+            the service under the check.
+            Read the reason from
+            `journalctl -u 'stellarindex-*' | grep hc-ping`, which
+            carries curl's exit code (6 = DNS, 7 = connect refused,
+            22 = HTTP error, 28 = timeout). Confirm the service itself is
+            healthy before acting on any Healthchecks.io notice for it.

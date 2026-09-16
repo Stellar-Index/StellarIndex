@@ -134,6 +134,9 @@ means nothing is being scraped at all.
   for the general "is the check itself alive" pattern.
 - `data-freshness-watchdog-silent.md` — the frozen-textfile failure mode
   in a different emitter.
+- `healthcheck-ping-undelivered.md` — the other reason Healthchecks.io
+  goes quiet about this check: the ping was never delivered. That alert
+  tells you which of the two silences you are looking at.
 
 ## Changelog
 

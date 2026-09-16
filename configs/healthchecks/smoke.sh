@@ -30,6 +30,11 @@
 
 set -uo pipefail
 
+# hc_ping records whether the ping actually reached Healthchecks.io,
+# and shares TEXTFILE_DIR with emit_metric below.
+# shellcheck source=configs/healthchecks/hc-ping.sh
+. "$(dirname "${BASH_SOURCE[0]}")/hc-ping.sh"
+
 SMOKE_SCRIPT="${SMOKE_SCRIPT:-/opt/stellarindex/healthchecks/r1-smoke.sh}"
 URL="${HEALTHCHECKS_URL_SMOKE:-}"
 # Same directory + atomic-write convention as the pgbackrest and
@@ -81,11 +86,7 @@ if [ ! -x "$SMOKE_SCRIPT" ]; then
   # longer run — the frozen-textfile trap the data-freshness watchdog
   # hit (#319).
   emit_metric 1
-  if [ -n "$URL" ]; then
-    curl -fsS --max-time 10 -o /dev/null --retry 2 \
-      --data-binary "$MSG" \
-      "${URL}/fail" || true
-  fi
+  hc_ping smoke "${URL:+${URL}/fail}" --data-binary "$MSG"
   exit 0
 fi
 
@@ -111,16 +112,10 @@ fi
 # must land even when curl spends its whole retry budget hanging.
 emit_metric "$RC"
 
-if [ -n "$URL" ]; then
-  if [ "$RC" -eq 0 ]; then
-    curl -fsS --max-time 10 -o /dev/null --retry 2 \
-      --data-binary "$OUT" \
-      "$URL" || true
-  else
-    curl -fsS --max-time 10 -o /dev/null --retry 2 \
-      --data-binary "$OUT" \
-      "${URL}/fail" || true
-  fi
+if [ "$RC" -eq 0 ]; then
+  hc_ping smoke "$URL" --data-binary "$OUT"
+else
+  hc_ping smoke "${URL:+${URL}/fail}" --data-binary "$OUT"
 fi
 
 # Always exit 0 from the timer's perspective — same contract as

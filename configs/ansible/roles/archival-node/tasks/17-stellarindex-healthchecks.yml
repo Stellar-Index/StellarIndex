@@ -41,6 +41,21 @@
 # files/); the same convention 14-stellarindex-services.yml uses
 # to pull binaries from bin/ and migrations from migrations/.
 
+- name: Install hc-ping.sh
+  # Sourced by all three wrappers, not run on its own. It has to land
+  # before them: a wrapper whose `. hc-ping.sh` cannot resolve exits
+  # immediately, which would take out the very checks it instruments.
+  ansible.builtin.copy:
+    src: "{{ playbook_dir }}/../../../configs/healthchecks/hc-ping.sh"
+    dest: /opt/stellarindex/healthchecks/hc-ping.sh
+    owner: root
+    group: root
+    mode: "0644"
+  notify:
+    - Restart stellarindex-heartbeat timers
+    - Restart stellarindex-smoke timer
+    - Restart stellarindex-sla-probe timer
+
 - name: Install heartbeat.sh
   ansible.builtin.copy:
     src: "{{ playbook_dir }}/../../../configs/healthchecks/heartbeat.sh"

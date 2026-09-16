@@ -27,7 +27,7 @@ enforced 2026-04-23 onward).
   | Severity | Rules | AlertManager route | Delivery |
   | --- | --- | --- | --- |
   | `page` | 57 | `receiver: chat-page` | Discord **#stellarindex-pages**, `repeat_interval` 12 h. There is **no** PagerDuty leg — `pagerduty_configs` is unset, so nothing wakes anyone up. |
-  | `ticket` | 159 | `receiver: chat-default` | Discord **#stellarindex-alerts**, `repeat_interval` 24 h. |
+  | `ticket` | 160 | `receiver: chat-default` | Discord **#stellarindex-alerts**, `repeat_interval` 24 h. |
   | `informational` | 11 | `receiver: chat-informational` | Discord **#stellarindex-informational**, a dedicated low-traffic channel kept separate from `alerts` so a routine notice cannot bury a ticket. `send_resolved: false`. If `DISCORD_WEBHOOK_URL_INFORMATIONAL` is unset the renderer strips the block and the receiver degrades to the old `silent` stub — delivered to nobody, which is a no-op rather than a config error. |
 
   **`informational` is not "a low-priority ticket".** There is no
@@ -241,6 +241,17 @@ the api-plane tickets it exists to complement.
 | ---- | ------ | --------- | -------- | ------- |
 | `stellarindex_api_smoke_failing` | `stellarindex_api_smoke_failures` | > 0 for ≥ 30 min (six consecutive failing runs at the 5-min cadence) | ticket | [api-smoke-failing](runbooks/api-smoke-failing.md) |
 | `stellarindex_api_smoke_stale` | `time() - stellarindex_api_smoke_last_run_unix`, plus an `absent_over_time(…[30m])` branch for the never-ran case | > 30 min for ≥ 5 min | ticket | [api-smoke-stale](runbooks/api-smoke-stale.md) |
+
+## Healthchecks.io ping delivery
+
+Rules in `deploy/monitoring/rules/healthcheck-ping.yml` (and the R1
+overlay). Healthchecks.io judges a check by silence, so a ping that never
+left this host and a service that stopped produce the same email. This
+alert says which one you are holding.
+
+| Name | Metric | Condition | Severity | Runbook |
+| ---- | ------ | --------- | -------- | ------- |
+| `stellarindex_healthcheck_ping_undelivered` | `stellarindex_healthcheck_ping_failures_total` and `stellarindex_healthcheck_ping_last_success_unix` | a ping failed in the last 15 min AND none has been accepted in 15 min, for ≥ 5 min | ticket | [healthcheck-ping-undelivered](runbooks/healthcheck-ping-undelivered.md) |
 
 ## SLO burn-rate alerts (multi-window)
 

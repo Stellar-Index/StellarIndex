@@ -15,6 +15,24 @@ against.
 
 ## [Unreleased]
 
+### Fixed
+
+- **observability:** a Healthchecks.io ping that never leaves this host
+  now says so. Every ping in `configs/healthchecks/` ended in
+  `curl … || true` with the output on `/dev/null`, so a lost ping and a
+  dead service reached the dashboard identically — as silence — and left
+  nothing on the host to tell them apart afterwards. All three wrappers
+  now route through `hc_ping`, which logs the failure with curl's exit
+  code and counts it into node_exporter's textfile collector;
+  `stellarindex_healthcheck_ping_undelivered` fires when a check has
+  failed to deliver recently AND nothing has been accepted in fifteen
+  minutes, so a blip that cleared on the next firing stays quiet while a
+  broken egress does not.
+
+  The alert is the other half of the email: while it is firing, a
+  Healthchecks.io notice for that check is about this host's ability to
+  make an outbound request, not about the service under the check.
+
 ## [v0.85.0] — 2026-09-16
 
 ### Fixed

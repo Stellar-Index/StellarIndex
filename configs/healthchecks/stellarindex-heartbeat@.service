@@ -16,3 +16,12 @@ NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=true
 PrivateTmp=true
+# heartbeat.sh records whether its Healthchecks.io ping was actually
+# delivered, in
+# /var/lib/node_exporter/textfile_collector/hc_ping_<service>.prom.
+# ProtectSystem=strict makes /var read-only; without ReadWritePaths the
+# write fails with EROFS and a lost ping goes back to being invisible —
+# the same grant the smoke and sla-probe units already carry. The
+# archival-node role provisions the directory 0775 group stellarindex.
+ReadWritePaths=/var/lib/node_exporter/textfile_collector
+SupplementaryGroups=stellarindex
