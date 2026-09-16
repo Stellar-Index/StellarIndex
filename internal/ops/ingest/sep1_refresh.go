@@ -349,14 +349,29 @@ func marshalSep1Payload(sep *metadata.SEP1, orgVerified bool) ([]byte, error) {
 			"Status":          c.Status,
 		})
 	}
-	return json.Marshal(map[string]any{
+	out := map[string]any{
 		"OrgName":       sep.OrgName,
 		"OrgVerified":   orgVerified,
 		"Version":       sep.Version,
 		"Documentation": sep.Documentation,
 		"Currencies":    currencies,
 		"FetchedAt":     sep.FetchedAt.UTC().Format(time.RFC3339),
-	})
+	}
+	// A document that did not parse whole travels with the list of
+	// tables that were skipped. Without it the storage boundary erases
+	// the difference between "the issuer declared nothing here" and
+	// "we could not read the table that would have said", and every
+	// consumer downstream of this row reads the first when the second
+	// is true. Absent on the documents that parsed whole, which is
+	// almost all of them, so no row grows that did not have to.
+	if len(sep.RecoveredSections) > 0 {
+		skipped := make([]map[string]any, 0, len(sep.RecoveredSections))
+		for _, sec := range sep.RecoveredSections {
+			skipped = append(skipped, map[string]any{"Header": sec.Header, "Err": sec.Err})
+		}
+		out["RecoveredSections"] = skipped
+	}
+	return json.Marshal(out)
 }
 
 // sep1FetchDomain returns the domain to fetch an issuer's TOML from:

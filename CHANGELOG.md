@@ -44,6 +44,13 @@ against.
   line that looks like a table header can be text. The gate is on the
   whole document rather than the section for exactly that reason.
 
+  The record of what was skipped is persisted with the row, not only
+  returned by the parser. Dropping it at the storage boundary would have
+  erased the difference between "the issuer declared nothing here" and
+  "we could not read the table that would have said" for every consumer
+  downstream of `issuers.sep1_payload` — the absent-versus-zero mistake,
+  one layer down. The key is absent on documents that parsed whole.
+
   Blast radius, measured rather than argued: across the 150 domains with
   the most issuers behind them that currently store no SEP-1 payload,
   recovery rescues NONE. 137 are unreachable, 10 serve something that is
