@@ -15,6 +15,8 @@ against.
 
 ## [Unreleased]
 
+## [v0.84.0] — 2026-09-16
+
 ### Added
 
 - **observability:** the root filesystem is watched. It was not, and that
