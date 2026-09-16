@@ -593,6 +593,17 @@ func (s *Server) fillContractMarketCaps(
 		// uses — and a figure served with no basis is indistinguishable on
 		// the wire from a trustline floor.
 		basis := supply.BasisSEP41LakeFlows.String()
+		// A token that emits no SEP-41 events is not UNDERCOUNTED by that
+		// reader, it is ABSENT from it, and an absent contract sums to a
+		// confident zero rather than to a gap anything notices. Where the
+		// event log has nothing at all to say, read the balances the
+		// contract actually holds instead — the same fallback, on the same
+		// condition, that GET /v1/assets/{id}/supply already makes.
+		if sup.FlowCount == 0 {
+			if st, ok := s.contractStorageCirculating(ctx, row.AssetID); ok {
+				circ, basis = st, supply.BasisContractStorageBalances.String()
+			}
+		}
 		row.SupplyBasis = &basis
 		// The supply is a raw chain fact and is served either way. The
 		// CAP is not: it divides by 10^decimals, and an unread scale
@@ -629,6 +640,46 @@ func (s *Server) fillContractMarketCaps(
 		}
 		row.MarketCapUSD = &mc
 	}
+}
+
+// contractStorageCirculating reads a token's supply out of the per-holder
+// balance entries in its own contract storage, for the one case the event
+// reading cannot answer: a contract that emits no SEP-41 events at all.
+//
+// It is a DIFFERENT BASIS, not a better reading of the same one — an
+// accumulation of issuance versus a level of distribution — which is why it is
+// consulted only where the accumulation has no history to accumulate, and why
+// the two are never summed. Where a token has both, the event reading stands:
+// this path is not reached.
+//
+// Best-effort at every step, like every other supply overlay on this surface.
+// No reader wired, a read error, a Stellar Asset Contract (whose balances live
+// in trustlines, not contract storage), or a holder set past the reader's own
+// cap all yield ok=false and leave the caller with the reading it already had.
+// A fallback that turned a served row into an error because its optional source
+// declined would be worse than the gap it closes.
+//
+// A zero-entry read is refused rather than published. No balances is not a
+// supply of zero — it is the ABSENCE of a reading, and publishing it would
+// replace one unfounded zero with another, which is the entire defect this
+// path exists to remove.
+func (s *Server) contractStorageCirculating(ctx context.Context, contractID string) (string, bool) {
+	if s.storageSupply == nil {
+		return "", false
+	}
+	st, err := s.storageSupply.ContractStorageSupply(ctx, contractID)
+	if err != nil {
+		// A SAC is the expected refusal here — every classic asset's derived
+		// contract reaches this reader and is turned away structurally — so
+		// this is debug volume, not a warning.
+		s.logger.Debug("rwa: contract storage supply declined",
+			"contract_id", contractID, "err", err)
+		return "", false
+	}
+	if st.BalanceEntries == 0 || st.Total == nil || st.Total.Sign() == 0 {
+		return "", false
+	}
+	return st.Total.String(), true
 }
 
 // fillContractDirectoryTags stamps the curated label from the CONTRACT
