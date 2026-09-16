@@ -21,7 +21,7 @@
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join, relative } from 'node:path';
 
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 // Budget, not speed. This file walks the source tree with readdirSync +
 // readFileSync and greps every file; the cost is disk and is proportional to
