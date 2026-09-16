@@ -4,6 +4,22 @@
 // static-export /assets/[slug] page — no DOM involved.
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
+// Budget, not speed. This file's cost is ONE `await import('./page')` — the
+// static-export page module and its whole Next.js dependency graph, resolved
+// and transformed once. The assertions after it take milliseconds.
+//
+// Measured on an idle machine the file runs in ~750 ms, comfortably inside
+// vitest's 5 s default. Under a loaded one it does not: this test timed out
+// three times in a single session while deploys, an SSH session and a
+// container gate shared the box, each time passing in under a second when
+// re-run alone. A 5 s budget on a module import is a load sensor, not a
+// correctness check, and a gate that goes red for the machine teaches people
+// to re-run red gates instead of reading them.
+//
+// 30 s is ~40x the idle cost, so a genuine hang still fails.
+vi.setConfig({ testTimeout: 30_000 });
+
+
 function envelopeResponse(body: Record<string, unknown>) {
   return new Response(JSON.stringify(body), {
     status: 200,

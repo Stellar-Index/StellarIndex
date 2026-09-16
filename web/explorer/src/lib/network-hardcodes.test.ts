@@ -21,7 +21,20 @@
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join, relative } from 'node:path';
 
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+
+// Budget, not speed. This file walks the source tree with readdirSync +
+// readFileSync and greps every file; the cost is disk and is proportional to
+// the repo, not to anything under test.
+//
+// Measured idle it runs in well under a second. Under a loaded machine it has
+// exceeded vitest's 5 s default and failed the gate while passing instantly on
+// a re-run. A 5 s budget on a whole-tree scan measures the machine, and a gate
+// that goes red for that teaches people to ignore red gates.
+//
+// 30 s leaves a genuine hang failing.
+vi.setConfig({ testTimeout: 30_000 });
+
 
 const SRC = join(__dirname, '..');
 
