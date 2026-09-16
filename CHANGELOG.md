@@ -17,6 +17,41 @@ against.
 
 ### Fixed
 
+- **assets:** `sep1_status` now says WHICH kind of SEP-1 failure happened,
+  instead of reporting an issuer's broken file as something we never
+  tried.
+
+  Two opposite findings reach the overlay identically, as a nil payload:
+  a fetch nobody has run yet, and a domain that WAS reached and served
+  nothing storable. Both reported `not_fetched` — "no fetch has been
+  attempted" — so the wire made our backlog and an issuer's unparseable
+  document indistinguishable. `unreachable` already existed in the
+  vocabulary for exactly the second case, documented in two places, and
+  was assigned nowhere.
+
+  The cause was one column: the cached-payload read selected
+  `sep1_payload` and not `sep1_resolved_at`, so the API layer physically
+  could not tell the two apart. An optional `Sep1FetchStateReader` seam
+  supplies it, type-asserted rather than required so every existing stub
+  keeps compiling, and an unwired deployment still answers exactly as
+  before.
+
+  Found through a real case. An asset manager publishes a valid SEP-1 at
+  its on-chain home domain declaring **13 RWA-class assets** — bond,
+  stock and commodity, all `status="live"`, each bound to its own issuer
+  account, several carrying attestation-of-reserve URLs — and the file
+  has an unterminated string on line 20. One missing quote makes the
+  whole TOML unparseable, so every one of those declarations is refused.
+  Our fetcher behaved correctly; the asset pages then said `not_fetched`,
+  which told the reader we had never looked. We had looked five days
+  running, and the issuer could fix it in one character.
+
+  The fallback direction is load-bearing and tested: with no fetch-state
+  reader, or when our own state read fails, the answer stays
+  `not_fetched`, because that claims nothing about the issuer while
+  `unreachable` claims something specific.
+
+
 - **observability:** the three root-filesystem alerts now point at their
   own runbooks instead of a Redis one.
 
