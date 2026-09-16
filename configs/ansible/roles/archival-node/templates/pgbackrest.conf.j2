@@ -63,22 +63,49 @@ repo2-path=/pgbackrest
 # The number it missed: this database writes 251.9 GB of WAL PER DAY,
 # measured over 71 days from pg_stat_wal, against ~16 GB/day of actual
 # growth. `wal_compression=zstd` is already on, so pgBackRest's own zst
-# pass compresses already-compressed pages at roughly 1:1 and ~250 GB
-# lands in S3 every day. repo2-retention-archive is unset and therefore
-# defaults to repo2-retention-diff (7), i.e. "seven backups worth of
-# continuous WAL" — about nine days at the current cadence.
+# pass over already-compressed pages still returns about 3.2:1, and
+# roughly 79 GB lands in S3 each day.
 #
-#   retention-archive   WAL in S3     repo total    S3 Standard eu-central-1
-#   1                   ~0.25 TiB     ~0.5 TiB      ~$12/mo
-#   2                   ~0.5 TiB      ~0.75 TiB     ~$18/mo
-#   3                   ~0.75 TiB     ~1.0 TiB      ~$25/mo
-#   7 (today, default)  ~2.2 TiB      ~2.5 TiB      ~$63/mo
+# WHAT AN UNSET repo2-retention-archive ACTUALLY DOES, measured rather
+# than inferred. An earlier version of this comment said it "defaults to
+# repo2-retention-diff (7), about nine days". It does not. With the
+# option unset, pgBackRest 2.58 DOES NOT EXPIRE ARCHIVE AT ALL on that
+# repo, and the repo shows it:
 #
-# Lowering it does NOT risk a restore: pgBackRest always keeps the WAL
-# needed to make each retained backup consistent. What shrinks is the
-# PITR window — how far back an arbitrary point-in-time target can be.
-# That is a recovery-objective decision, so the value stays operator-set
-# rather than being quietly tuned to fit a bill.
+#   off-site repo total      2.5 TiB   464,890 objects
+#     archive (WAL)          2.2 TiB   459,948 objects
+#     backup                 252 GiB     4,942 objects
+#
+# The retained BACKUP set is one full (2026-09-13) and two diffs, which
+# is exactly what repo2-retention-full=1 asks for. The WAL is not:
+# 421,115 of those 459,948 segments — 91.6% of them, about 2.0 TiB —
+# are OLDER than the only full backup in the repo. A point-in-time
+# restore runs FORWARD from a backup, so not one of them can contribute
+# to any recovery from this repo. A dry-run expire agrees with the
+# config rather than with the intent: it completes in 151 ms having
+# selected nothing to remove.
+#
+# So the first 2.0 TiB is not a recovery-objective trade. It is WAL that
+# restores nothing, retained because nothing was ever told to remove it.
+# Setting the option is what enables expiry at all:
+#
+#   retention-archive          WAL in S3   repo total   S3 Standard eu-central-1
+#   1                          ~0.1 TiB    ~0.35 TiB    ~$8/mo
+#   2                          ~0.16 TiB   ~0.41 TiB    ~$10/mo
+#   7 (the default set below)  ~0.55 TiB   ~0.80 TiB    ~$19/mo
+#   unset (r1 today)           ~2.2 TiB    ~2.5 TiB     ~$58/mo AND RISING
+#
+# The last row has no ceiling. It grows by ~79 GB every day for as long
+# as the option stays unset, which is why a budget was passed rather
+# than approached, and why the number will be different again next
+# month.
+#
+# BELOW that dead 2.0 TiB, lowering the value IS a real trade:
+# pgBackRest always keeps the WAL needed to make each retained backup
+# consistent, so what shrinks is the PITR window — how far back an
+# arbitrary point-in-time target can be. That part is a
+# recovery-objective decision and stays operator-set rather than being
+# quietly tuned to fit a bill.
 #
 # The larger lever is upstream, and it is NOT what the first version of
 # this comment guessed. It blamed the rollup cycles that rebuild staging
