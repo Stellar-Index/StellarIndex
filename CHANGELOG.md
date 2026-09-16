@@ -15,6 +15,27 @@ against.
 
 ## [Unreleased]
 
+### Added
+
+- **observability:** the root filesystem is watched. It was not, and that
+  is the detection gap behind the 2026-09-16 outage — ten hours passed
+  between the change that filled it and the crash, with nothing paging,
+  and the first signal was an unrelated deploy step failing on
+  `connection refused`.
+
+  The existing disk alerts select `fstype="zfs"` — the data pool. Root is
+  a different volume with a different shape: small, shared between
+  `/usr`, `/var/log`, a swapfile and (through a symlink out of the data
+  directory) Postgres' `pg_wal`. It is therefore watched in ABSOLUTE
+  bytes rather than as a percentage, because 3 GB free on a 49 GB volume
+  is an emergency and the same 6% on a 2 TB volume is not.
+
+  Ticket under 8 GB, page under 3 GB, in both rule trees, with
+  [root-filesystem-full](docs/operations/runbooks/root-filesystem-full.md).
+  The selector is by filesystem type rather than `mountpoint="/"`, so a
+  host that splits `/var` onto its own volume is covered without a rule
+  edit.
+
 ### Fixed
 
 - **ansible:** `max_wal_size` is back to 2GB, and an apply that does not
