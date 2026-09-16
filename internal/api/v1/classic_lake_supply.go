@@ -530,6 +530,27 @@ func (s *Server) endClassicLakeSupplyFlight(done chan struct{}) {
 // drift from the pages callers actually receive. Asking the listing which
 // assets it serves cannot drift from the listing.
 //
+// THE LISTING IS NOT THE ONLY SURFACE THAT READS THIS CACHE, and taking its
+// pages as the whole population left the other one short. /v1/rwa/assets
+// publishes supply for a set chosen by ATTESTATION, not by rank, and a
+// tokenized instrument is bought and held — so its members can sit well
+// outside pages ordered by observation count and 24h volume, never be warmed,
+// and serve the trustline floor indefinitely rather than for one TTL gap.
+//
+// Measured on r1 2026-09-16, an hour after a restart, with the floor now
+// visible on the wire because the row declares its own basis:
+//
+//	USDY     served 461,621,813.40   all domains 467,502,151.70   (1.26% short)
+//	USTRY    served  10,442,505.28   all domains  11,513,946.49   (9.31%)
+//	TESOURO  served   1,417,840.27   all domains   1,666,298.84   (14.91%)
+//
+// about $7.95M of understatement on a $2.5B page, and permanent rather than
+// transient. The remedy is the same principle, not an exception to it: ask the
+// RWA SURFACE which assets it serves, exactly as this asks the listing. That
+// set cannot drift from the RWA page for the same reason the listing pages
+// cannot drift from the listing, and it is bounded by the membership cap
+// rather than by the chain.
+//
 // Best-effort throughout, like every other supply overlay on this path: no
 // token-supply reader, no bulk capability, no assets reader, a listing error
 // or a lake error each leave the cache exactly as it was.
@@ -542,10 +563,41 @@ func (s *Server) PrewarmClassicLakeSupply(ctx context.Context, opts []timescale.
 		return
 	}
 	wanted := s.classicLakeSupplyPrewarmSet(ctx, opts)
+	for assetID, contractID := range s.rwaClassicPrewarmSet(ctx) {
+		wanted[assetID] = contractID
+	}
 	if len(wanted) == 0 {
 		return
 	}
 	s.warmClassicLakeSupply(ctx, rd, wanted)
+}
+
+// rwaClassicPrewarmSet asks the RWA surface which classic assets it serves, so
+// a member that never appears on a ranked listing page is warmed anyway.
+//
+// It reads the membership CACHE and never forces a rebuild. Before the first
+// build completes it returns nothing and the sweep covers the listing alone —
+// correct, because a membership that does not exist yet has no members to
+// warm, and a prewarm that could trigger the RWA rebuild would put an
+// expensive attestation scan on a timer that exists to avoid expensive work.
+//
+// The reduction is the REQUEST PATH's own ([classicLakeSupplyCandidates]), the
+// same one the listing side uses, so this cannot warm an asset the read path
+// would not look up: native and contract-issued members drop out here, and the
+// contract arm has its own reader.
+func (s *Server) rwaClassicPrewarmSet(ctx context.Context) map[string]string {
+	m := s.cachedRWAMembership(ctx)
+	if len(m.members) == 0 {
+		return nil
+	}
+	// Only AssetID is read by the reduction — it derives the SAC from the
+	// id itself — so nothing else is filled in, rather than filling fields
+	// that would look load-bearing and are not.
+	details := make([]AssetDetail, 0, len(m.members))
+	for _, mem := range m.members {
+		details = append(details, AssetDetail{AssetID: mem.code + "-" + mem.issuer})
+	}
+	return classicLakeSupplyCandidates(details)
 }
 
 // classicLakeSupplyPrewarmSet asks the listing which assets it serves for

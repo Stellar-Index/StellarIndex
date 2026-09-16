@@ -15,6 +15,38 @@ against.
 
 ## [Unreleased]
 
+### Fixed
+
+- **rwa:** the supply prewarm now covers the RWA set, not just the assets
+  listing's ranked pages.
+
+  The lake-flows supply cache took its population from `/v1/assets` pages
+  ordered by observation count and 24h volume. `/v1/rwa/assets` publishes
+  a set chosen by ATTESTATION rather than by rank, and a tokenized
+  instrument is bought and held — so a member can sit outside every one
+  of those pages, never be warmed, and serve the trustline floor
+  permanently rather than for one TTL gap.
+
+  The floor is blind by construction to claimable balances, liquidity-pool
+  reserves and SAC-held supply. Measured on r1 an hour after a restart,
+  with the shortfall visible on the wire for the first time because the
+  row now declares its own basis:
+
+      USDY     served 461,621,813.40   all domains 467,502,151.70   (1.26% short)
+      USTRY    served  10,442,505.28   all domains  11,513,946.49   (9.31%)
+      TESOURO  served   1,417,840.27   all domains   1,666,298.84   (14.91%)
+
+  About $7.95M of understatement on a $2.5B page, and permanent.
+
+  The remedy is the same principle rather than an exception to it: ask the
+  RWA surface which assets it serves, exactly as the sweep already asks
+  the listing. That set cannot drift from the RWA page, and it is bounded
+  by the membership cap rather than by the chain. It reads the membership
+  CACHE and never forces a rebuild — a prewarm that could trigger the
+  attestation scan would put that scan on a timer, which is the opposite
+  of why the sweep exists.
+
+
 ## [v0.84.0] — 2026-09-16
 
 ### Added
