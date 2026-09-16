@@ -66,17 +66,49 @@ checkpoint_completion_target = 0.9
 # of WAL — roughly 8x the data, which is the FPI multiplier. At 2GB,
 # one such decompression forces several checkpoints on its own.
 #
-# 16GB is chosen so that neither the steady rate nor a single chunk
-# decompression can trigger one: at the measured 275GB/day the interval
-# would be ~83 minutes, far past the 15-minute timeout, so checkpoints
-# become timeout-driven as intended. The disk cost is nothing — pg_wal
-# sits on a dataset with 2.7TB free — and the exposure is a longer
-# crash recovery, bounded by checkpoint_timeout either way.
+# 16GB was set on that reasoning on 2026-09-15 and TOOK THE DATABASE
+# DOWN ten hours later. It is reverted here, and the sentence that did
+# the damage is worth quoting because the arithmetic around it was all
+# correct:
+#
+#   "The disk cost is nothing — pg_wal sits on a dataset with 2.7TB
+#    free."
+#
+# It does not. `/var/lib/postgresql/15/main/pg_wal` is a SYMLINK to
+# /pgwal/15-main/pg_wal, and /pgwal is on the 49GB ROOT filesystem.
+# The 2.7TB dataset holds the DATA directory; the WAL was never on it.
+# The claim was inferred from where the data lives and never checked
+# with `df` against the path WAL is actually written to.
+#
+# What followed, on 2026-09-16 at 05:15 CEST: pg_wal grew from ~2GB to
+# 9.8GB, root reached 0 bytes available, Postgres crashed, and crash
+# recovery then could not complete —
+#
+#   redo done at 240F/2EFFFFA0
+#   FATAL: could not write to file "pg_wal/xlogtemp.3049031":
+#          No space left on device
+#
+# — so it shut down rather than come up inconsistent, which is correct
+# behaviour and the only reason this was an outage rather than damage.
+# Eighteen units failed behind it and the API served 503 for ~3 hours.
+# Nothing was lost: archiving was fully caught up (0 `.ready` files) and
+# the newest off-site backup was 5h old. Reverting this value to 2GB
+# returned 7.7GB of root within minutes of the restart, which is the
+# clearest confirmation of the cause available.
+#
+# The checkpoint measurement above still stands and the problem it
+# describes is real. The fix is NOT a bigger number on this line while
+# WAL lives on a 49GB volume shared with the OS. It is to move pg_wal
+# onto the pool that already has the room, and only then re-tune this —
+# at which point the original reasoning becomes true rather than
+# aspirational. Until that move lands, `postgres_wal_headroom_assert`
+# (roles/archival-node/tasks) refuses an apply whose max_wal_size does
+# not fit the filesystem pg_wal really sits on.
 #
 # max_wal_size is SIGHUP, so this applies on reload and needs no
-# restart. Raise checkpoint_timeout only after re-measuring this ratio:
-# one variable at a time is the whole reason the 84.4% was legible.
-max_wal_size              = {{ postgres_max_wal_size | default('16GB') }}
+# restart — which is also why a bad value reaches production without a
+# restart to think twice about.
+max_wal_size              = {{ postgres_max_wal_size | default('2GB') }}
 min_wal_size              = {{ postgres_min_wal_size | default('2GB') }}
 
 # ─── Planner ────────────────────────────────────────────────────────
