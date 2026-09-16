@@ -582,29 +582,12 @@ func (s *Server) fillContractMarketCaps(
 	}
 	for i := range rows {
 		row := &rows[i]
-		sup, err := s.tokenSupply.TokenSupply(ctx, row.AssetID)
-		if err != nil || sup.Total == nil || sup.Incomplete {
+		circ, basis, ok := s.contractSupplyReading(ctx, row.AssetID)
+		if !ok {
 			continue
 		}
-		circ := sup.Total.String()
-		// The reading and its name travel together. This arm is the lake's
-		// event-flow sum over the contract's own mint/burn/clawback log —
-		// the same figure and the same reader GET /v1/assets/{id}/supply
-		// uses — and a figure served with no basis is indistinguishable on
-		// the wire from a trustline floor.
-		basis := supply.BasisSEP41LakeFlows.String()
-		// A token that emits no SEP-41 events is not UNDERCOUNTED by that
-		// reader, it is ABSENT from it, and an absent contract sums to a
-		// confident zero rather than to a gap anything notices. Where the
-		// event log has nothing at all to say, read the balances the
-		// contract actually holds instead — the same fallback, on the same
-		// condition, that GET /v1/assets/{id}/supply already makes.
-		if sup.FlowCount == 0 {
-			if st, ok := s.contractStorageCirculating(ctx, row.AssetID); ok {
-				circ, basis = st, supply.BasisContractStorageBalances.String()
-			}
-		}
-		row.SupplyBasis = &basis
+		b := basis.String()
+		row.SupplyBasis = &b
 		// The supply is a raw chain fact and is served either way. The
 		// CAP is not: it divides by 10^decimals, and an unread scale
 		// means that exponent is a convention rather than a reading.
@@ -640,6 +623,45 @@ func (s *Server) fillContractMarketCaps(
 		}
 		row.MarketCapUSD = &mc
 	}
+}
+
+// contractSupplyReading resolves one contract token's circulating supply and
+// names the basis that produced it. It is the contract arm's counterpart to
+// [classicSupplyReading], and it exists for the same reason: the preference
+// order between two readings belongs in ONE place, or two surfaces end up
+// publishing different bases under the same field name.
+//
+// The order is not a ranking of quality. The two readings measure the same
+// tokens by different means — an accumulation of ISSUANCE against a level of
+// DISTRIBUTION — so they are never summed, and the event reading is not
+// "preferred" so much as the storage reading is only meaningful where there is
+// no event history at all to accumulate.
+//
+// ok=false means no defensible figure: no reader wired, a read error, or an
+// INCOMPLETE flow sum (a negative net, meaning the flows are under-seeded
+// rather than that supply is negative — the refusal SEP41Computer.Compute and
+// GET /v1/assets/{id}/supply both already make, never clamped to zero).
+func (s *Server) contractSupplyReading(
+	ctx context.Context, assetID string,
+) (string, supply.Basis, bool) {
+	sup, err := s.tokenSupply.TokenSupply(ctx, assetID)
+	if err != nil || sup.Total == nil || sup.Incomplete {
+		return "", "", false
+	}
+	// A token that emits no SEP-41 events is not UNDERCOUNTED by the event
+	// reader, it is ABSENT from it, and an absent contract sums to a confident
+	// zero rather than to a gap anything notices. Where the log has nothing at
+	// all to say, read the balances the contract actually holds instead — the
+	// same fallback, gated on the same condition, that
+	// GET /v1/assets/{id}/supply already makes.
+	if sup.FlowCount == 0 {
+		if st, ok := s.contractStorageCirculating(ctx, assetID); ok {
+			return st, supply.BasisContractStorageBalances, true
+		}
+	}
+	// The lake's event-flow sum over the contract's own mint/burn/clawback
+	// log — the same figure and the same reader that endpoint serves.
+	return sup.Total.String(), supply.BasisSEP41LakeFlows, true
 }
 
 // contractStorageCirculating reads a token's supply out of the per-holder
