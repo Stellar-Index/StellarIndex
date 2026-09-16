@@ -15,6 +15,16 @@ against.
 
 ## [Unreleased]
 
+### Fixed
+
+- **dev:** a failing integration shard now NAMES the tests that failed.
+  The runner printed the shard's last 160 lines, and on this suite those
+  are container-lifecycle and heavy-job chatter from tests that ran after
+  the failure — `--- FAIL: TestX` had long scrolled past. A reader of a
+  red gate had the fact of a failure and no name for it. The failure and
+  panic lines are now printed first, and the full shard logs survive a
+  red run instead of being deleted by the exit trap.
+
 ### Added
 
 - **sep1:** a stellar.toml that does not parse whole is now read one
