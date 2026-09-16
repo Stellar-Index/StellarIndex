@@ -175,6 +175,68 @@ groups:
             and Postgres. Reclaim space NOW (drop stale snapshots, move
             pgBackRest off-box) or ingestion will halt.
 
+      # ── Root filesystem ───────────────────────────────────────────
+      # The ZFS alerts above watch the DATA POOL. Nothing watched root,
+      # and on 2026-09-16 that cost three hours of API 503s: pg_wal is a
+      # SYMLINK from the Postgres data directory on the pool out to
+      # /pgwal on the 49 GB root volume, so raising max_wal_size filled
+      # root, Postgres crashed, and crash recovery could not write a new
+      # segment. Ten hours passed between the change and the crash with
+      # nothing paging; the first signal was an unrelated deploy step
+      # failing on "connection refused".
+      #
+      # Root is small, shared (/usr, /var/log, a swapfile, pg_wal) and
+      # is the volume a runaway log or WAL directory fills first, so it
+      # is watched in ABSOLUTE bytes rather than as a percentage: 3 GB
+      # free on a 49 GB volume is an emergency, and the same 6% on a
+      # 2 TB volume is not.
+      #
+      # fstype selector rather than mountpoint="/" so a host that splits
+      # /var onto its own ext4 volume is covered without a rule edit,
+      # and the pool (fstype="zfs") stays out of it — it has its own
+      # alerts above with capacity-aware thresholds.
+      - alert: stellarindex_root_filesystem_low_space
+        expr: |
+          min by (instance) (
+            node_filesystem_avail_bytes{fstype=~"ext4|xfs|btrfs"}
+          ) < 8e9
+        for: 15m
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: infra
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/root-filesystem-full.md
+          summary: "Root filesystem free space low ({{ $value | humanize1024 }}B free)"
+          description: |
+            Under 8 GB free on a non-pool filesystem. On this fleet that is
+            the ~49 GB root volume, which carries /usr, /var/log, the swapfile
+            and — via a symlink out of the data directory — Postgres' pg_wal.
+            Reclaim before it reaches the page threshold: rotated logs under
+            /var/log, `journalctl --vacuum-size=`, stale crash dumps in
+            /var/crash. If pg_wal is the growth, check max_wal_size against
+            THIS volume rather than against the pool the data directory is on.
+
+      - alert: stellarindex_root_filesystem_critically_low_space
+        expr: |
+          min by (instance) (
+            node_filesystem_avail_bytes{fstype=~"ext4|xfs|btrfs"}
+          ) < 3e9
+        for: 5m
+        labels:
+          severity: page
+          team: stellarindex
+          component: infra
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/root-filesystem-full.md
+          summary: "Root filesystem CRITICALLY low ({{ $value | humanize1024 }}B free) (SEV-1)"
+          description: |
+            Under 3 GB free on a non-pool filesystem. Postgres writes WAL here
+            (pg_wal is a symlink out of the data directory), so at zero it
+            crashes AND cannot complete crash recovery — the 2026-09-16
+            outage, where it shut down rather than come up inconsistent and
+            eighteen units failed behind it. Reclaim space NOW.
+
       # ── NVMe error log + thermal ──────────────────────────────────
       # Both alerts below named series nothing emits:
       # `node_disk_io_errors_total` and `node_nvme_temperature_celsius`
