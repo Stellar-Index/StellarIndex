@@ -182,7 +182,7 @@ groups:
           team: stellarindex
           component: storage
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/redis-write-blocked-disk-full.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/node-root-disk-full.md
           summary: "Root filesystem on {{ $labels.instance }} {{ $value | humanize }}% free (SEV-1)"
           description: |
             Root FS (/) under 10 % free on {{ $labels.instance }}.
@@ -202,7 +202,7 @@ groups:
           team: stellarindex
           component: storage
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/redis-write-blocked-disk-full.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/node-root-disk-warning.md
           summary: "Root filesystem on {{ $labels.instance }} {{ $value | humanize }}% free"
           description: |
             Root FS (/) under 20 % on {{ $labels.instance }}.

@@ -85,9 +85,36 @@ setting returned **7.7 GB** of root within minutes, with nothing else changed.
 
 ## What went wrong beyond the setting
 
-**Nothing detected it for ten hours.** The change was applied at 19:02 and the
-database died at 05:15. There is no alert on root-filesystem free space that
-paged, and the first signal was a deploy failing on an unrelated step.
+**Detection worked. Delivery did not.** This was written first as "nothing
+watched root", and that was wrong — checked properly, three root-filesystem
+alerts already existed, and the page-tier one fired long before the crash:
+
+| alert | threshold | severity | fired |
+|---|---|---|---|
+| `stellarindex_node_root_disk_full` | < 10% free | **page** | **2026-09-15 23:46 UTC (01:46 CEST)** |
+| `stellarindex_node_root_disk_filling_fast` | `predict_linear` to zero in 30 min | **page** | 03:16 UTC, as the disk hit zero |
+| `stellarindex_node_root_disk_warning` | < 20% free | ticket | earlier still |
+
+The page fired **3 h 29 min before Postgres died** and kept firing through the
+outage. The predictive alert did exactly what it was built for.
+
+What failed is the leg after that. `chat-page` in
+`/etc/prometheus/alertmanager.yml` carries only `discord_configs` — no
+PagerDuty, no OpsGenie, no Pushover — which the alerts catalog already states
+in as many words: *"there is no PagerDuty leg ... so nothing wakes anyone up"*.
+A page fired into a chat channel at 01:46 in the morning.
+
+So the ten hours are not a detection gap to be closed with another rule. They
+are the known, documented state of the paging path, demonstrated in production
+against a real P1. That is what launch-plan row 1.4's SEV drill exists to
+prove, and this incident proved the negative for free.
+
+**The runbook the page pointed at was the wrong one**, which is the smaller
+finding underneath: all three root-disk alerts carried
+`runbook_url: .../redis-write-blocked-disk-full.md`, a procedure about Redis
+MISCONF stop-writes. Anyone woken by the 01:46 page would have opened a
+document that says nothing about `pg_wal`. The catalog had always listed the
+correct per-alert runbooks; the rule files disagreed with it.
 
 **`max_wal_size` is SIGHUP.** A bad value reaches a running database on reload,
 with no restart to think twice about, and surfaces hours later as an outage
@@ -127,8 +154,11 @@ outage. The revert landed after the tag.
   number while WAL lives on a 49 GB volume shared with the OS. Moving `pg_wal`
   onto `data/postgres` (2.8 TB free) fixes the class rather than the instance,
   and would have made the original change harmless.
-- **No alert on root free space.** A disk that fills in ten hours with no page
-  is the detection gap, independent of what filled it.
+- **Nothing wakes anyone.** `chat-page` is Discord-only. Detection is fine and
+  a real page proved it; the delivery path is the gap, and it is the same gap
+  launch-plan row 1.4 (SEV drill) is meant to exercise. A page nobody receives
+  at 01:46 is indistinguishable from no page at all, which is exactly how this
+  was first written up.
 - **The 16 GB swapfile** holds 24 MB on a 188 GB host with 131 GB available. It
   is a third of the root filesystem doing nothing.
 
