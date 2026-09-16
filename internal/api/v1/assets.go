@@ -3609,6 +3609,19 @@ func (s *Server) applySep1Overlay(ctx context.Context, detail *AssetDetail, asse
 	}
 
 	detail.Sep1Status = "verified"
+	applySep1VerifiedFields(detail, sep, match)
+}
+
+// applySep1VerifiedFields copies the issuer's own [[CURRENCIES]] entry onto
+// the row. Split out of [Server.applySep1Overlay] because that function had
+// grown two jobs — deciding WHICH of the five SEP-1 states an asset is in, and
+// copying fields once the answer is "verified" — and only the first is worth
+// reading when something is reported wrong.
+//
+// Every field is copied only when the issuer actually supplied it, so an
+// absent value leaves the row's own answer in place rather than overwriting it
+// with an empty string.
+func applySep1VerifiedFields(detail *AssetDetail, sep *timescale.IssuerSep1Cached, match *timescale.IssuerSep1Currency) {
 	if name := strings.TrimSpace(sep.OrgName); name != "" {
 		detail.OrgName = &name
 	}
