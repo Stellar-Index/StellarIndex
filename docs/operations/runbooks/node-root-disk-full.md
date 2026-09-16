@@ -96,6 +96,43 @@ For postmortem:
 - Live PG logging settings vs the repo template.
 - The aggregator log around the moment Redis stopped accepting writes.
 
+### If `pg_wal` is what filled it (2026-09-16)
+
+Root carries Postgres' WAL, and the path hides it: `pg_wal` in the data
+directory is a **symlink** out to `/pgwal/…` on root, while the data directory
+itself sits on the multi-terabyte pool. Reading the data directory's free space
+and concluding WAL has room is the mistake that caused this, and the volume has
+to be measured through the link:
+
+```bash
+readlink -f /var/lib/postgresql/15/main/pg_wal      # -> /pgwal/15-main/pg_wal
+df -h "$(readlink -f /var/lib/postgresql/15/main/pg_wal)"
+du -sh "$(readlink -f /var/lib/postgresql/15/main/pg_wal)"
+grep max_wal_size /etc/postgresql/15/main/postgresql.conf
+```
+
+Lowering `max_wal_size` is a `SIGHUP` (`systemctl reload postgresql@15-main`)
+and Postgres trims the directory over the next checkpoints — on 2026-09-16 that
+returned 7.7 GB within minutes of the restart. Fix it in ansible too, or the
+next apply pushes the value straight back; `05-postgres.yml` now refuses an
+apply whose `max_wal_size` does not fit the volume the symlink resolves to.
+
+**Never delete anything inside `pg_wal` by hand.** Postgres owns that directory
+and removing a segment it still needs is unrecoverable. Check the archive
+backlog instead — zero `.ready` files means every segment reached the
+repository and nothing is waiting:
+
+```bash
+ls "$(readlink -f /var/lib/postgresql/15/main/pg_wal)"/archive_status | grep -c ready
+```
+
+**If Postgres has already failed**, `could not write to file
+"pg_wal/xlogtemp.N": No space left on device` during startup is this failure:
+it crashed, then could not complete crash recovery because recovery creates new
+segments. Free space first, then start it and watch recovery finish, then clear
+the units that failed behind it with `systemctl reset-failed`. Full account in
+[the 2026-09-16 post-mortem](../postmortems/2026-09-16-r1-pg-wal-fills-root.md).
+
 ## Known false-positive patterns
 
 - None known. Headroom can be under 5 min in a log-flood (3.8 GB/min on 2026-06-11), and the 49 G root carries a 16 G swap file (`/swap_f1209`; dropping it is an open operator decision). Fire = act immediately.

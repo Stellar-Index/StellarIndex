@@ -17,6 +17,23 @@ against.
 
 ### Fixed
 
+- **observability:** the three root-filesystem alerts now point at their
+  own runbooks instead of a Redis one.
+
+  All three carried
+  `runbook_url: .../redis-write-blocked-disk-full.md`, a procedure about
+  Redis MISCONF stop-writes. The alerts catalog had always listed the
+  correct per-alert runbooks; the rule files disagreed with it, so the
+  page that fired during the 2026-09-16 outage would have handed whoever
+  read it a document about the wrong subsystem.
+
+  `node-root-disk-full.md` also gains the `pg_wal` case, which none of
+  the three covered: WAL lives on root through a SYMLINK out of the data
+  directory, so the volume has to be measured through `readlink -f`
+  rather than read off the data directory beside it — the substitution
+  that caused that outage.
+
+
 - **web:** two tests that measured machine load rather than correctness
   now have a budget that reflects what they actually do.
 
@@ -85,25 +102,6 @@ against.
 ## [v0.84.0] — 2026-09-16
 
 ### Added
-
-- **observability:** the root filesystem is watched. It was not, and that
-  is the detection gap behind the 2026-09-16 outage — ten hours passed
-  between the change that filled it and the crash, with nothing paging,
-  and the first signal was an unrelated deploy step failing on
-  `connection refused`.
-
-  The existing disk alerts select `fstype="zfs"` — the data pool. Root is
-  a different volume with a different shape: small, shared between
-  `/usr`, `/var/log`, a swapfile and (through a symlink out of the data
-  directory) Postgres' `pg_wal`. It is therefore watched in ABSOLUTE
-  bytes rather than as a percentage, because 3 GB free on a 49 GB volume
-  is an emergency and the same 6% on a 2 TB volume is not.
-
-  Ticket under 8 GB, page under 3 GB, in both rule trees, with
-  [root-filesystem-full](docs/operations/runbooks/root-filesystem-full.md).
-  The selector is by filesystem type rather than `mountpoint="/"`, so a
-  host that splits `/var` onto its own volume is covered without a rule
-  edit.
 
 ### Fixed
 

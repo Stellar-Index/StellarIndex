@@ -179,11 +179,15 @@ groups:
           team: stellarindex
           component: storage
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/redis-write-blocked-disk-full.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/node-root-disk-full.md
           summary: "Root filesystem on {{ $labels.instance }} {{ $value | humanize }}% free (SEV-1)"
           description: |
             Root FS (/) under 10 % free on {{ $labels.instance }}.
-            Redis can't snapshot once full; with the default
+            TWO consequences, and the second is worse. Postgres writes
+            WAL here — pg_wal is a symlink out of the data directory —
+            so at zero it crashes AND cannot complete crash recovery
+            (incident 2026-09-16: 3 h of API 503s, 18 units failed).
+            Redis also can't snapshot once full; with the default
             stop-writes-on-bgsave-error=yes that blocks every cache
             write, blocking aggregator VWAP refresh, surfacing as
             `/v1/price` 404s on rewritten / triangulated /
@@ -199,7 +203,7 @@ groups:
           team: stellarindex
           component: storage
         annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/redis-write-blocked-disk-full.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/node-root-disk-warning.md
           summary: "Root filesystem on {{ $labels.instance }} {{ $value | humanize }}% free"
           description: |
             Root FS (/) under 20 % on {{ $labels.instance }}.
