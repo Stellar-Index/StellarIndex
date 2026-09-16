@@ -544,8 +544,14 @@ func (s *Server) endClassicLakeSupplyFlight(done chan struct{}) {
 //	USTRY    served  10,442,505.28   all domains  11,513,946.49   (9.31%)
 //	TESOURO  served   1,417,840.27   all domains   1,666,298.84   (14.91%)
 //
-// about $7.95M of understatement on a $2.5B page, and permanent rather than
-// transient. The remedy is the same principle, not an exception to it: ask the
+// Those three cleared within the hour as traffic warmed them, and the floors
+// moved onto four other members — which is the actual defect. The shortfall
+// ROTATES: whichever members were looked at recently serve the four-domain
+// figure and the rest fall back, so no single total describes it and the next
+// row to go cold is the next row understated. When the floors landed on BENJI
+// minutes later they cost nothing at all, because every BENJI token is in a
+// trustline and its floor IS its all-domain total. The remedy is the same
+// principle, not an exception to it: ask the
 // RWA SURFACE which assets it serves, exactly as this asks the listing. That
 // set cannot drift from the RWA page for the same reason the listing pages
 // cannot drift from the listing, and it is bounded by the membership cap
