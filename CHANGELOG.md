@@ -15,6 +15,8 @@ against.
 
 ## [Unreleased]
 
+## [v0.85.0] — 2026-09-16
+
 ### Fixed
 
 - **assets:** an unrecognised `asset_class` is now a 400 instead of the
@@ -38,7 +40,6 @@ against.
   three aliases, `all`, or omitted.
 
 
-### Fixed
 
 - **assets:** `sep1_status` now says WHICH kind of SEP-1 failure happened,
   instead of reporting an issuer's broken file as something we never
@@ -113,7 +114,6 @@ against.
   30 s is roughly 40x the idle cost, so a genuine hang still fails.
 
 
-### Fixed
 
 - **rwa:** the supply prewarm now covers the RWA set, not just the assets
   listing's ranked pages.
@@ -156,10 +156,7 @@ against.
   attestation scan would put that scan on a timer, which is the opposite
   of why the sweep exists.
 
-
 ## [v0.84.0] — 2026-09-16
-
-### Added
 
 ### Fixed
 
@@ -207,7 +204,6 @@ against.
   reasoning becomes true instead of aspirational.
 
 
-### Fixed
 
 - **rwa:** a contract token that emits no SEP-41 events no longer
   publishes a confident zero on the contract arm.
@@ -235,7 +231,6 @@ against.
 
   No price is claimed for any of them. What changes is that a supply
   that exists is now reported as existing.
-
 
 ## [v0.83.0] — 2026-09-16
 
