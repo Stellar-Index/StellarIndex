@@ -10982,6 +10982,17 @@ export interface operations {
                  *
                  *     Omitted: the legacy classic-assets page (unfiltered).
                  *
+                 *     **Any other value is a 400.** It used to fall through to the
+                 *     unfiltered listing and return 200, so `asset_class=rwa` came
+                 *     back byte-identical to `asset_class=bogus` and to no
+                 *     asset_class at all — a governance token and a wrapped lumen
+                 *     answering a request for real-world assets, with nothing in
+                 *     the response to say the filter had not applied.
+                 *
+                 *     There is no `rwa` class here by design. That set is decided
+                 *     by issuer attestation rather than by a class column, and it
+                 *     is served by `GET /v1/rwa/assets`.
+                 *
                  *     The major dispatch, not a row filter. `fiat`, `stablecoin`
                  *     and `crypto` serve their whole class from the catalogue and
                  *     narrow on NONE of the row filters — `type`, `code`,
