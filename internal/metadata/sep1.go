@@ -368,24 +368,41 @@ func parseSEP1(body []byte) (*SEP1, error) {
 		sep.NetworkPassphrase = truncateRunes(v, maxShortFieldRunes)
 	}
 
-	if doc, ok := raw["DOCUMENTATION"].(map[string]any); ok {
-		for k, v := range doc {
-			if s, ok := v.(string); ok {
-				sep.Documentation[k] = truncateRunes(s, sep1DocFieldCap(k))
-			}
-		}
-		if name, ok := doc["ORG_NAME"].(string); ok {
-			sep.OrgName = truncateRunes(name, maxShortFieldRunes)
+	applySEP1Documentation(sep, raw)
+	appendSEP1Currencies(sep, raw)
+
+	return sep, nil
+}
+
+// applySEP1Documentation copies the [DOCUMENTATION] table onto sep,
+// capping each field on a rune boundary.
+func applySEP1Documentation(sep *SEP1, raw map[string]any) {
+	doc, ok := raw["DOCUMENTATION"].(map[string]any)
+	if !ok {
+		return
+	}
+	for k, v := range doc {
+		if s, ok := v.(string); ok {
+			sep.Documentation[k] = truncateRunes(s, sep1DocFieldCap(k))
 		}
 	}
+	if name, ok := doc["ORG_NAME"].(string); ok {
+		sep.OrgName = truncateRunes(name, maxShortFieldRunes)
+	}
+}
 
+// appendSEP1Currencies reads the [[CURRENCIES]] array onto sep.
+//
+// Two shapes, because the decoder produces both: an array-of-tables
+// normally arrives as []map[string]any, and sometimes as []any of
+// map[string]any. Reading only one silently drops every currency in a
+// document that happened to decode as the other.
+func appendSEP1Currencies(sep *SEP1, raw map[string]any) {
 	if currencies, ok := raw["CURRENCIES"].([]map[string]any); ok {
 		for _, c := range currencies {
 			sep.Currencies = append(sep.Currencies, parseCurrency(c))
 		}
 	}
-	// BurntSushi/toml sometimes decodes [[ARRAY]] tables as
-	// []any of map[string]any — handle that variant too.
 	if arr, ok := raw["CURRENCIES"].([]any); ok {
 		for _, entry := range arr {
 			if m, ok := entry.(map[string]any); ok {
@@ -393,8 +410,6 @@ func parseSEP1(body []byte) (*SEP1, error) {
 			}
 		}
 	}
-
-	return sep, nil
 }
 
 func parseCurrency(m map[string]any) Currency {

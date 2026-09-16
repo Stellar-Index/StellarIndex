@@ -44,6 +44,12 @@ against.
   line that looks like a table header can be text. The gate is on the
   whole document rather than the section for exactly that reason.
 
+  Blast radius, measured rather than argued: across the 150 domains with
+  the most issuers behind them that currently store no SEP-1 payload,
+  recovery rescues NONE. 137 are unreachable, 10 serve something that is
+  not TOML at all (they fail at line 1, column 1 — parking and error
+  pages answering 200), and 3 now parse whole. WisdomTree is the case.
+
   What it does not change: the twelve WisdomTree issuers the curated
   directory recognises still have to clear every other requirement, and
   the three lookalike domains serving well-formed self-bound files under
