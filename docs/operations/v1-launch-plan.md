@@ -99,16 +99,30 @@ so it is written down here rather than re-derived.
 |---|---:|---|
 | One issuer's tokenized funds | $1,659.3M | **CLOSED 2026-09-15.** $395.2M was published; the other $1,182.3M was four share classes of an overnight swap fund held out because the class vocabulary had no true word for it. `fund` now exists on the contract arm and all four are bound. |
 | A private-credit platform, 24 deal contracts | $548.1M | **Three things, and the last one is the wall.** Storage-derived supply exists but is wired only to `/v1/assets/{id}/supply`; the class vocabulary has no `privatecredit`; and **no independent price exists for any of the 24**. Wiring the first two publishes a supply and adds **$0** of value. Their dollar figure comes from a hand-maintained price CSV. |
-| A real-estate issuer | $558.8M | **A policy call, and the recommendation is no.** $500M minted against a $40M offering, one holder, zero trades. Publishing it publishes unsold inventory as market value — the same shape `max_market_cap_volume_ratio` was added to refuse. |
+| A real-estate issuer | $558.8M | **Not a policy call — a refusal the scam gate already makes, and it should stand.** Measured 2026-09-16: **15 issuers on Stellar declare a `realestate` anchor. 13 are in the curated directory and all 13 are scam-flagged** (`serial SCAM Counterfeiter`, `SCAM`, `malicious`); the other 2 are in no directory at all, so they fail independent recognition anyway. **Zero are clean and recognised.** Separately, the line's own shape is the one `max_market_cap_volume_ratio` exists to refuse: $500M minted against a $40M offering, one holder, zero trades. No address for it was locatable from any primary source. |
 | A money-fund issuer's other three tokens | $82.0M | **We hold the supply for all three** (they are classic assets, already in the lake, reconciling to an independent source within 0.26%). Blocked on an independent PRICE: only the flagship is in the listing directory, and the other three have no oracle feed. |
 | Everything else | ≈$241M | Price feeds and supply bases we do not have, spread thin. |
 
 Two figures worth keeping separate: **what is on Stellar** and **what we can
 publish a defensible number for**. This index only ever publishes the second.
-After the vocabulary change the served reference total is roughly **$2.5B**; the
-remaining $1.5B is one policy call we should decline, one price source that does
-not exist, and a long tail of feeds — not a coverage failure to be fixed by
-trying harder.
+After the vocabulary change the served reference total is **$2,533,472,871.25**
+(measured live, 2026-09-16). The remaining ~$1.5B is: a class whose entire
+declared population on this chain is scam-flagged, a class of token with no
+independent price in existence, three tokens whose supply we hold and whose
+price we cannot source, and a long tail of feeds. None of it is a coverage
+failure to be fixed by trying harder, and two of the four are things this index
+refuses on purpose.
+
+One question is upstream of all of it and is the maintainer's: **the external
+figure measures LOCATION, not ownership.** Its query sums
+`trustline_balance + liquidity_pool_balance + contract_balance` with no issuer,
+treasury or distributor exclusion, so minted-but-unsold inventory sitting in an
+issuer's own address counts at full face value. Our classic arm excludes the
+issuer's balance (ADR-0011 Algorithm 2, `issuer_exclusion`); our contract arm,
+today, does not — it sums issuance, and `BasisSEP41TotalOnly` says so. Whether
+the headline should be measured by location or by ownership decides whether
+$4B is the right target at all. Publishing both, with a holder-concentration
+column, is the option that needs no one to choose in the dark.
 
 ### Tier 2 — real work that does NOT gate the announcement
 
