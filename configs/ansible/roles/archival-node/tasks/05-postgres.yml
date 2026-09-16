@@ -31,6 +31,79 @@
     path: "/var/lib/postgresql/{{ postgres_version }}/main"
   register: pg_main_dir
 
+# ── WAL headroom guard ──────────────────────────────────────────────
+#
+# Refuse to write a postgresql.conf whose max_wal_size does not fit the
+# filesystem pg_wal is ACTUALLY on. On 2026-09-16 raising max_wal_size
+# from 2GB to 16GB took r1's database down: the reasoning in the
+# template asserted "pg_wal sits on a dataset with 2.7TB free", which
+# was true of the DATA directory and false of pg_wal — a symlink to a
+# /pgwal path on the 49GB root filesystem. Root reached 0 bytes, and
+# crash recovery could not write a new segment.
+#
+# The check resolves the symlink rather than trusting the data
+# directory, because that substitution is the whole defect. It is a
+# pre-flight assert, not a post-hoc alert: max_wal_size is SIGHUP, so a
+# bad value reaches a running database without a restart to think twice
+# about, and the failure surfaces hours later as an outage.
+#
+# The 2x multiplier is not padding. Postgres treats max_wal_size as a
+# soft target for the CHECKPOINT interval, not a hard cap on the
+# directory: a checkpoint that cannot keep up, or an archiver that
+# stalls, both let pg_wal exceed it, and 2x is the commonly cited
+# working bound. Falling below it is the condition under which this
+# host has already failed once.
+- name: Resolve the filesystem pg_wal is really on
+  ansible.builtin.shell: |
+    set -eu
+    d=$(readlink -f "/var/lib/postgresql/{{ postgres_version }}/main/pg_wal" 2>/dev/null \
+        || echo "/var/lib/postgresql/{{ postgres_version }}/main/pg_wal")
+    # The directory may not exist yet on a fresh host; fall back to the
+    # nearest existing ancestor so df still describes the right volume.
+    while [ ! -d "$d" ] && [ "$d" != "/" ]; do d=$(dirname "$d"); done
+    printf '%s %s %s %s\n' "$d" \
+      "$(df -P -BM "$d" | tail -1 | awk '{print $4}' | tr -dc 0-9)" \
+      "$(df -P "$d" | tail -1 | awk '{print $1}')" \
+      "$(du -sm "$d" 2>/dev/null | awk '{print $1}' | tr -dc 0-9 || echo 0)"
+  register: pg_wal_fs
+  changed_when: false
+  check_mode: false
+
+- name: Refuse a max_wal_size that does not fit the pg_wal filesystem
+  vars:
+    _wal_path: "{{ pg_wal_fs.stdout.split()[0] }}"
+    _wal_avail_mb: "{{ pg_wal_fs.stdout.split()[1] | int }}"
+    _wal_device: "{{ pg_wal_fs.stdout.split()[2] }}"
+    # What WAL already occupies is capacity available TO WAL, so it
+    # counts toward the budget: a directory already holding 2GB of
+    # segments is not 2GB short, it is 2GB spent on the thing being
+    # sized. Without this the check would fail every healthy host.
+    _wal_used_mb: "{{ pg_wal_fs.stdout.split()[3] | default(0) | int }}"
+    # Accepts the GB/MB spellings this template uses. A unitless value
+    # is megabytes, matching Postgres' own default unit for this GUC.
+    _max_wal_mb: >-
+      {{ (postgres_max_wal_size | default('2GB') | regex_replace('(?i)\s*([kmgt]?b)$', '') | int)
+         * (1024 if (postgres_max_wal_size | default('2GB')) is search('(?i)gb$') else 1) }}
+  ansible.builtin.assert:
+    that:
+      - (_wal_avail_mb | int) + (_wal_used_mb | int) >= (_max_wal_mb | int) * 2
+    fail_msg: >-
+      max_wal_size={{ postgres_max_wal_size | default('2GB') }}
+      ({{ _max_wal_mb }}MB) needs {{ (_max_wal_mb | int) * 2 }}MB of room
+      on {{ _wal_path }} ({{ _wal_device }}), which has
+      {{ (_wal_avail_mb | int) + (_wal_used_mb | int) }}MB
+      ({{ _wal_avail_mb }}MB free + {{ _wal_used_mb }}MB already WAL).
+      Postgres
+      can exceed max_wal_size when a checkpoint or the archiver falls
+      behind. Either lower postgres_max_wal_size, or move pg_wal to a
+      volume with room — on this fleet the data pool has terabytes free
+      while pg_wal is on root. Raising this value past the volume is
+      what took r1 down on 2026-09-16.
+    success_msg: >-
+      max_wal_size {{ _max_wal_mb }}MB fits {{ _wal_path }} on
+      {{ _wal_device }}: {{ (_wal_avail_mb | int) + (_wal_used_mb | int) }}MB
+      available to WAL against {{ (_max_wal_mb | int) * 2 }}MB needed.
+
 - name: Template postgresql.conf
   ansible.builtin.template:
     src: postgresql.conf.j2

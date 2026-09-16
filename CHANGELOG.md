@@ -17,6 +17,52 @@ against.
 
 ### Fixed
 
+- **ansible:** `max_wal_size` is back to 2GB, and an apply that does not
+  fit the filesystem `pg_wal` is actually on is now refused.
+
+  16GB was set on 2026-09-15 to stop checkpoint thrash — 84.4% of
+  checkpoints were firing because WAL hit the cap rather than because
+  the timeout elapsed, which is a real problem and the measurement
+  behind it still stands. The change took r1 down ten hours later.
+
+  One sentence did it: "the disk cost is nothing — pg_wal sits on a
+  dataset with 2.7TB free". That was true of the DATA directory and
+  false of `pg_wal`, which is a symlink to a path on the 49GB ROOT
+  filesystem. It was inferred from where the data lives and never
+  checked with `df` against the path WAL is written to. Root reached 0
+  bytes, Postgres crashed, and crash recovery could not write a new
+  segment:
+
+      redo done at 240F/2EFFFFA0
+      FATAL: could not write to file "pg_wal/xlogtemp.3049031":
+             No space left on device
+
+  It shut down rather than come up inconsistent, which is correct and
+  is why this was an outage rather than damage. Eighteen units failed
+  behind it. Nothing was lost — archiving was fully caught up, 0
+  `.ready` files, newest off-site backup 5h old. Reverting the value
+  returned 7.7GB of root within minutes of the restart.
+
+  The guard is the actual fix. `05-postgres.yml` now resolves the
+  SYMLINK before measuring — that substitution is the whole defect —
+  and refuses to template a config whose `max_wal_size` needs more than
+  the volume can give, counting existing WAL as capacity already spent
+  on the thing being sized. It asks for 2x, because Postgres treats the
+  value as a checkpoint target rather than a hard cap and a stalled
+  archiver or a lagging checkpoint both overshoot it.
+
+  Run against r1's real numbers it refuses 16GB (needs 32,768MB, has
+  11,724MB) and passes 2GB (needs 4,096MB) — so it would have caught
+  this before the apply rather than after the outage.
+
+  The underlying problem is unchanged and is now stated plainly in the
+  template: the answer is to move `pg_wal` onto the pool that has
+  terabytes free, and only then re-tune, at which point the original
+  reasoning becomes true instead of aspirational.
+
+
+### Fixed
+
 - **rwa:** a contract token that emits no SEP-41 events no longer
   publishes a confident zero on the contract arm.
 
