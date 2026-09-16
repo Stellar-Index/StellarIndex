@@ -486,6 +486,18 @@ func hit(ctx context.Context, c *http.Client, baseURL, apiKey string, ep endpoin
 	if err != nil {
 		return 0, false, time.Time{}
 	}
+	// The API keeps synthetic traffic out of the customer-facing SLO and
+	// out of the access log by User-Agent prefix, and `stellarindex-probe/`
+	// is the prefix it reserves for operator probes
+	// (internal/obs.IsSyntheticUA). Sending none meant Go's default
+	// `Go-http-client/1.1`, so this probe's load — ~800 requests per
+	// endpoint per run, every 15 minutes — was counted as customer
+	// traffic in the availability ratio and in the latency histogram, and
+	// it cleared the burn alerts' own 5 req/s "don't burn on synthetic
+	// traffic" floor while doing it. A probe that cannot be told apart
+	// from a customer makes every number derived from the difference
+	// wrong.
+	req.Header.Set("User-Agent", "stellarindex-probe/1")
 	if apiKey != "" {
 		req.Header.Set("Authorization", "Bearer "+apiKey)
 	}

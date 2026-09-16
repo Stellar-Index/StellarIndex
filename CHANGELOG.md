@@ -33,6 +33,28 @@ against.
   Healthchecks.io notice for that check is about this host's ability to
   make an outbound request, not about the service under the check.
 
+- **api:** the SLA probe identifies itself. `internal/obs` keeps
+  first-party synthetic traffic out of the customer-facing availability
+  ratio and latency histogram by User-Agent prefix, and reserves
+  `stellarindex-probe/` for operator probes — but the probe sent no
+  User-Agent at all, so Go supplied `Go-http-client/1.1` and every one of
+  its requests was counted as a customer's.
+
+  That is most of the denominator. The probe drives roughly 800 requests
+  per endpoint per run across ten endpoints every fifteen minutes; on
+  2026-09-16 it was 98% of all API traffic. It also cleared, by itself,
+  the burn alerts' own 5 req/s "don't burn on synthetic traffic" floor —
+  a guard whose comment names the exact load that was defeating it.
+
+- **api:** a successful request from first-party synthetic traffic logs
+  at DEBUG rather than INFO, on the same argument the 429 case in that
+  file already makes. Measured on r1: 287,914 API journal entries in 5.4
+  hours, 98% of everything the journal held. Against `SystemMaxUse=500M`
+  a configured 14-day retention was delivering about five hours, so that
+  morning's outage had aged out of the journal before lunchtime. Failing
+  synthetic requests stay at WARN/ERROR — a probe seeing a 5xx is the
+  most valuable line in the file — and request counters are unchanged.
+
 ## [v0.85.0] — 2026-09-16
 
 ### Fixed

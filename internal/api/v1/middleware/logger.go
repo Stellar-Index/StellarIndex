@@ -4,12 +4,15 @@ import (
 	"log/slog"
 	"net/http"
 	"time"
+
+	"github.com/Stellar-Index/StellarIndex/internal/obs"
 )
 
 // Logger emits one structured log entry per request:
 //   - 5xx → ERROR
 //   - 4xx (except 429) → WARN
 //   - 429 → skipped (see below)
+//   - a SUCCESSFUL request from first-party synthetic traffic → DEBUG
 //   - everything else → INFO
 //
 // Fields (minimum):
@@ -30,6 +33,21 @@ import (
 // `internal/obs/http_middleware.go`); the per-line log adds journal
 // pressure without diagnostic value the metric doesn't already
 // carry.
+//
+// Synthetic traffic at DEBUG, same argument as the 429 case above and
+// the same judgement the SLO uses ([obs.IsSyntheticUA]). The SLA probe
+// drives ~800 requests per endpoint per run across ten endpoints every
+// 15 minutes; measured on r1 2026-09-16 that was 287,914 API entries in
+// 5.4 hours — 98% of everything the journal held. With SystemMaxUse at
+// 500 MB, a MaxRetentionSec of 14 d was delivering about five hours, so
+// the morning's outage had already aged out of the journal by lunchtime.
+// A log that cannot answer a question about yesterday is not a log.
+//
+// Only SUCCESSFUL synthetic requests are demoted. A probe seeing a 4xx
+// or 5xx is exactly the line worth keeping, and it stays at WARN/ERROR.
+// Counts remain exact either way — a demoted line is still emitted, at
+// a level the journal is not configured to store, and
+// `stellarindex_http_requests_total` is unaffected.
 //
 // Does NOT log query parameters or request bodies — they may
 // carry API keys or PII. Add named fields in specific handlers
@@ -102,6 +120,8 @@ func Logger(logger *slog.Logger) Middleware {
 				logger.Error("http request", attrs...)
 			case rec.status >= 400:
 				logger.Warn("http request", attrs...)
+			case obs.IsSyntheticUA(r.UserAgent()):
+				logger.Debug("http request", attrs...)
 			default:
 				logger.Info("http request", attrs...)
 			}

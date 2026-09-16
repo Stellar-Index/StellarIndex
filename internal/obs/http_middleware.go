@@ -95,7 +95,7 @@ func HTTPMetrics(next http.Handler) http.Handler {
 		// observability stream. Failures are caught by the smoke
 		// script's exit code + Healthchecks.io ping (see
 		// configs/healthchecks/smoke.sh).
-		if isSyntheticUA(r.UserAgent()) {
+		if IsSyntheticUA(r.UserAgent()) {
 			return
 		}
 
@@ -140,16 +140,21 @@ func isStreamingRoute(route string) bool {
 	return strings.HasSuffix(route, "/stream")
 }
 
-// isSyntheticUA reports whether the User-Agent identifies internal
+// IsSyntheticUA reports whether the User-Agent identifies internal
 // synthetic / maintenance traffic that must not pollute the
 // customer-facing SLO. Matches `stellarindex-smoke/...` (the
-// r1-smoke.sh wrapper), `stellarindex-probe/...` (operator probes),
-// and `stellarindex-prewarm/...` (the API's own self-prewarm
-// goroutine, which HTTP-GETs its endpoints to warm caches — its
-// requests are deliberately cold and would otherwise dominate the
-// latency histogram). The match is prefix-only so version suffixes
-// don't affect the decision.
-func isSyntheticUA(ua string) bool {
+// r1-smoke.sh wrapper), `stellarindex-probe/...` (operator probes,
+// including the SLA probe), and `stellarindex-prewarm/...` (the API's
+// own self-prewarm goroutine, which HTTP-GETs its endpoints to warm
+// caches — its requests are deliberately cold and would otherwise
+// dominate the latency histogram). The match is prefix-only so version
+// suffixes don't affect the decision.
+//
+// Exported because the same judgement decides the access log's level:
+// a request the SLO refuses to count is a request the journal should
+// not spend its retention on either, and the two must agree on which
+// requests those are or one of them is wrong.
+func IsSyntheticUA(ua string) bool {
 	if ua == "" {
 		return false
 	}
