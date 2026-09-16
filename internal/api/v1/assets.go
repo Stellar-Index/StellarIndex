@@ -867,6 +867,32 @@ func (s *Server) handleAssetList(w http.ResponseWriter, r *http.Request) {
 
 	assetClass := normaliseAssetClass(r.URL.Query().Get("asset_class"))
 
+	// An unrecognised asset_class 400s rather than falling through to the
+	// default listing, for the same reason order_by does a few lines below:
+	// accepting a filter and quietly not applying it is a wrong answer
+	// dressed as a right one.
+	//
+	// It mattered concretely. `asset_class=rwa` returned USDC, yXLM, AQUA,
+	// SHX and VELO — byte-identical to the unfiltered listing, and to
+	// `asset_class=bogus` — so a consumer asking for real-world assets got
+	// a governance token and a wrapped lumen back, with nothing in the 200
+	// to say the filter had never applied. There is no `rwa` class here by
+	// design: that set is decided by attestation rather than by a column,
+	// and it has its own surface at /v1/rwa/assets. Saying so is the
+	// answer; silently serving everything is not.
+	if !validAssetClass(assetClass) {
+		writeProblem(w, r,
+			"https://api.stellarindex.io/errors/invalid-asset-class",
+			"Invalid asset_class", http.StatusBadRequest,
+			"asset_class must be one of fiat, stablecoin, crypto or all "+
+				"(blockchain, cryptocurrency and cryptocurrencies fold to "+
+				"crypto), or be omitted for the default listing. Tokenized "+
+				"real-world assets are not an asset_class — they are served "+
+				"by GET /v1/rwa/assets, which decides membership by issuer "+
+				"attestation rather than by a class column.")
+		return
+	}
+
 	// The catalogue and unified listings rank on their own fixed
 	// schemes — the catalogue by market cap, the unified path by phase
 	// (catalogue market-cap first, then classic volume-desc), each with
@@ -2088,6 +2114,22 @@ func assetDetailFromAssetRow(row timescale.AssetRow) AssetDetail {
 // accepted as back-compat aliases for the catalogue's "crypto"
 // class. Empty + "all" both fall through unchanged; the handler
 // treats them as the legacy classic_assets path.
+// validAssetClass reports whether a normalised asset_class names a listing
+// this handler actually dispatches to. The empty string is valid — it is the
+// default listing, not a filter.
+//
+// Kept beside [normaliseAssetClass] so the alias folding and the accepted set
+// are read together: a new alias that folds to a value missing here would 400
+// on a spelling the normaliser was taught to accept.
+func validAssetClass(normalised string) bool {
+	switch normalised {
+	case "", "all", "fiat", "stablecoin", "crypto":
+		return true
+	default:
+		return false
+	}
+}
+
 func normaliseAssetClass(raw string) string {
 	c := strings.ToLower(strings.TrimSpace(raw))
 	switch c {

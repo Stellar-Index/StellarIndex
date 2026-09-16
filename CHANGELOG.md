@@ -17,6 +17,29 @@ against.
 
 ### Fixed
 
+- **assets:** an unrecognised `asset_class` is now a 400 instead of the
+  unfiltered listing.
+
+  It fell through silently, so `asset_class=rwa` returned USDC, yXLM,
+  AQUA, SHX and VELO — byte-identical to `asset_class=bogus` and to no
+  `asset_class` at all. A consumer asking for real-world assets got a
+  governance token and a wrapped lumen back, and nothing in the 200 said
+  the filter had never applied.
+
+  `order_by` on the same handler already refuses rather than quietly
+  ignoring, with a comment saying why: "silently ignoring is precisely
+  the defect being fixed here". `asset_class` never got the same
+  treatment.
+
+  There is no `rwa` class by design — that set is decided by issuer
+  attestation rather than a class column — so the refusal names
+  `GET /v1/rwa/assets` instead of leaving the caller to guess. The
+  accepted set is unchanged: `fiat`, `stablecoin`, `crypto` with its
+  three aliases, `all`, or omitted.
+
+
+### Fixed
+
 - **assets:** `sep1_status` now says WHICH kind of SEP-1 failure happened,
   instead of reporting an issuer's broken file as something we never
   tried.
