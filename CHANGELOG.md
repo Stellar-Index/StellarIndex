@@ -17,6 +17,30 @@ against.
 
 ### Added
 
+- **rwa:** a classic member now takes a price from the independent
+  listing directory when nothing binds its pair to an oracle. The
+  directory already priced the contract arm; it held **33 recognised
+  classic rows on 2026-09-16, every one of them priced**, against 17
+  contract rows — so two-thirds of one source was read by nothing while
+  this arm published rows as unpriced beside it.
+
+  This is not new evidence, it is the same evidence reaching rows the
+  surface was not offering it to. The lookup is keyed on the asset's own
+  `CODE-GISSUER` and never on the code: this network carries twenty-six
+  assets coded BENJI and one of them is Franklin Templeton's, so a
+  code-keyed join here would be the attacker-authored-pricing class in a
+  new coordinate.
+
+  It answers only "nobody bound this pair to an oracle". A finding about
+  a feed that IS bound — expired, non-USD, a non-positive net asset
+  value — still stands, because publishing a figure while suppressing
+  the finding that refused it is the failure this is shaped to avoid.
+  No premium is published against a listing price, unchanged, and the
+  summary's basis prose now distinguishes the two arms: on a contract row
+  the listing also corroborated the address at C2; on a classic row it
+  corroborated nothing and supplies only the price.
+
+
 - **rwa:** the `unclassified` group on `/v1/rwa/assets` now says what it
   means. It carried $971,860,304.89 of a $2,535,764,187.91 total on
   2026-09-16 — BENJI and USDY — and the word reads as a gap in THIS

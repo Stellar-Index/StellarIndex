@@ -573,7 +573,13 @@ func (s *Server) cachedRWAReferences(ctx context.Context) rwaReferences {
 // load-bearing for the reason reported: a flagged issuer is answered as
 // flagged before anything else is consulted, because that refusal is
 // about who is asking rather than about what the data holds.
-func rwaApplyReference(a *RWAAsset, snap rwaReferences, listings map[string]timescale.ListingEntry, now time.Time) {
+func rwaApplyReference(
+	a *RWAAsset,
+	snap rwaReferences,
+	listings map[string]timescale.ListingEntry,
+	classicListings map[string]timescale.ListingEntry,
+	now time.Time,
+) {
 	// The scam-flag suppression comes first and covers the reference
 	// too. /v1/assets withholds this issuer's own price; handing it a
 	// real instrument's independent NAV instead would publish a larger
@@ -612,11 +618,29 @@ func rwaApplyReference(a *RWAAsset, snap rwaReferences, listings map[string]time
 		// and the more specific one is worth reporting: a token coded XAU
 		// is not unbound by oversight — the oracle of that name prices a
 		// troy ounce of metal, which is not a quantity any token has.
+		notFound := RWAPremiumNotBound
 		if rwa.OffChainReferenceCode(a.Code) {
-			rwaRefuseReference(a, RWAPremiumNotInstrumentScoped)
-			return
+			notFound = RWAPremiumNotInstrumentScoped
 		}
-		rwaRefuseReference(a, RWAPremiumNotBound)
+		// Nothing binds this pair to an ORACLE. That is a statement
+		// about one source, and the independent listing directory is
+		// another — the same directory, the same bound, the same
+		// address-exact key that already prices the contract arm.
+		//
+		// Reading it here is not a new kind of evidence, it is the
+		// SAME evidence reaching a row the surface was not offering it
+		// to. Measured 2026-09-16: the directory held 33 recognised
+		// classic rows, every one of them priced, against 17 contract
+		// rows — so two-thirds of it was being read by nothing while
+		// this arm reported rows as unpriced beside it.
+		//
+		// The key is the asset's own `CODE-GISSUER`, never the code:
+		// this network carries twenty-six assets coded BENJI and one of
+		// them is Franklin Templeton's. A code-keyed lookup here would
+		// be the attacker-authored-pricing class in a new coordinate,
+		// which is the same reason [rwa.InstrumentFeed] is keyed on the
+		// pair above.
+		rwaApplyListingReference(a, classicListings[a.AssetID], notFound, now)
 		return
 	}
 
@@ -731,10 +755,27 @@ func rwaApplyReference(a *RWAAsset, snap rwaReferences, listings map[string]time
 // no oracle, so the comparison does not. The file header names exactly
 // this shape as the case where the two fields are allowed to differ.
 func rwaApplyContractReference(a *RWAAsset, entry timescale.ListingEntry, now time.Time) {
-	// A contract no listing named. The original refusal, unchanged, and
+	rwaApplyListingReference(a, entry, RWAPremiumContractNotBound, now)
+}
+
+// rwaApplyListingReference is the body both arms share. `notFound` is
+// the refusal to keep when the directory names nothing, because the two
+// arms refuse for differently-shaped reasons: a contract row has no
+// (code, issuer) to be unbound ON, and a classic row's oracle refusal
+// already says something more specific than "no listing either".
+//
+// The classic arm reaches this only AFTER the oracle arm has refused,
+// and only when that refusal was "nobody bound this pair" rather than a
+// finding about a feed that IS bound. An expired feed, a non-USD feed or
+// a non-positive net asset value are observations about a binding this
+// index made, and a listing price does not overturn them — it answers a
+// different question. Substituting one for the other would publish a
+// figure while suppressing the finding that refused it.
+func rwaApplyListingReference(a *RWAAsset, entry timescale.ListingEntry, notFound string, now time.Time) {
+	// An address no listing named. The original refusal, unchanged, and
 	// still the right one: no source binds this address to a price.
 	if entry.PriceUSD == "" {
-		rwaRefuseReference(a, RWAPremiumContractNotBound)
+		rwaRefuseReference(a, notFound)
 		return
 	}
 	price := ratFromOptionalString(&entry.PriceUSD)

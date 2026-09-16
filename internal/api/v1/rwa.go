@@ -1577,9 +1577,21 @@ func (s *Server) handleRWAAssets(w http.ResponseWriter, r *http.Request) {
 	// surface could publish a price from a snapshot in which the
 	// address was not named.
 	listingRefs := rwaListingReferencesOf(m.contracts)
+	// The classic arm's own listing rows, from the SAME cached read
+	// /v1/assets uses. A classic member is keyed by its `CODE-GISSUER`
+	// asset id, which is what the directory publishes for that form —
+	// the contract map above cannot answer for it, because the read
+	// behind it returns C-strkeys only.
+	//
+	// A snapshot that is not available yields a nil map, and a nil map
+	// answers every lookup with a zero entry — which is the "no listing
+	// named this address" refusal, unchanged. That is the right reading
+	// only because the refusal it produces is the one the row already
+	// had: this read can add a reference and can never remove one.
+	classicListingRefs := s.assetListingSnapshot(r.Context()).byAddress
 	now := time.Now()
 	for i := range view.Assets {
-		rwaApplyReference(&view.Assets[i], refs, listingRefs, now)
+		rwaApplyReference(&view.Assets[i], refs, listingRefs, classicListingRefs, now)
 	}
 	view.Summary = rwaSummarise(view.Assets, m.truncated)
 	view.ByClass = rwaByClass(view.Assets)
@@ -2092,8 +2104,10 @@ func rwaReferenceProvenanceProse(provenances []string) string {
 		"declaration that one token is one unit of that instrument. On those rows nobody was seen paying it: it is an " +
 		"assertion about the value of the backing, and no gate on this platform can corroborate an assertion. "
 	const listingProse = "Listing-priced rows (`provenance: listing_platform_price`) are an independent listing platform's own USD price " +
-		"for the TOKEN, from the same source that corroborated the token's contract address at C2 — bound to the address " +
-		"and never matched on a code. It is a different and weaker claim than an oracle NAV: it says what the token " +
+		"for the TOKEN, bound to the exact address it was published against and never matched on a code. On a " +
+		"contract-issued row it comes from the same source that corroborated the address at C2; on a classic row it " +
+		"corroborated nothing and supplies only the price, because that row was admitted by its issuer's own " +
+		"domain-bound declaration. It is a different and weaker claim than an oracle NAV: it says what the token " +
 		"changes hands at on the venues that platform tracks, and asserts NOTHING about what stands behind it. No premium " +
 		"is published against it, because a premium measured against an aggregate of the same markets our own price " +
 		"samples would be the market compared with itself. Somebody WAS seen paying something like it — on venues this " +
