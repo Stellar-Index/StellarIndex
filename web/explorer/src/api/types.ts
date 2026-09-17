@@ -7710,7 +7710,7 @@ export interface components {
              *     than reconstructing the rule.
              * @enum {string}
              */
-            recognition?: "curated_account_directory" | "independent_listing_corroborating_curated_binding" | "third_party_curator";
+            recognition?: "curated_account_directory" | "independent_listing_corroborating_curated_binding" | "curated_account_directory_via_domain_sibling" | "third_party_curator";
             /**
              * @description Declared class. Present under `sep1_anchor_declaration` and
              *     `curated_contract_instrument`. Absent under either oracle

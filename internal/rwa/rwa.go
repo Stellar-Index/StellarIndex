@@ -320,6 +320,15 @@ type Candidate struct {
 	// G-address. Empty when the directory does not list it, which is a
 	// refusal under R3 and not an error.
 	DirectoryTags []string
+	// SiblingRecognised reports that ANOTHER account on this candidate's
+	// own issuer-bound domain is directory-recognised and not flagged —
+	// the same SEP-1 that binds this issuer names that one too. It
+	// stands in for R3 when the directory has not listed this account
+	// itself, and the verdict says so ([RecognitionDomainSibling]). It
+	// never overrides a scam flag on this account, and it supplies no
+	// instrument claim: the class, oracle-code or ISIN arms still have
+	// to admit the asset on its own declaration.
+	SiblingRecognised bool
 }
 
 // Verdict is the definition applied to one candidate.
@@ -370,18 +379,22 @@ func Qualify(c Candidate) Verdict {
 	if ScamFlagged(c.DirectoryTags) {
 		return Verdict{Reject: RejectScamFlagged}
 	}
+	recognition := RecognitionDirectory
 	if !HasRecognitionTag(c.DirectoryTags) {
-		return Verdict{Reject: RejectNoRecognition}
+		if !c.SiblingRecognised {
+			return Verdict{Reject: RejectNoRecognition}
+		}
+		recognition = RecognitionDomainSibling
 	}
 	if class := AnchorClass(c.DeclaredAnchorType); class != "" {
-		return Verdict{InSet: true, Basis: BasisSep1Anchor, AnchorClass: class}
+		return Verdict{InSet: true, Basis: BasisSep1Anchor, AnchorClass: class, Recognition: recognition}
 	}
 	// The oracle arm matches on code the way the SEP-1 overlay matches
 	// a [[CURRENCIES]] code — case-insensitively — because R3 has
 	// already bound the issuer and a case variant of the ticker of a
 	// recognised entity is that same instrument.
 	if isOracleRWACode(c.Code) {
-		return Verdict{InSet: true, Basis: BasisOracleFeed}
+		return Verdict{InSet: true, Basis: BasisOracleFeed, Recognition: recognition}
 	}
 	// The ISIN arm, last because it is the weakest of the three in what
 	// it TELLS us — it establishes an instrument and no class — while
@@ -390,10 +403,28 @@ func Qualify(c Candidate) Verdict {
 	// oracle feed has an independent party behind it. This arm carries
 	// only the issuer's own declaration, checked for form.
 	if IsISIN(c.DeclaredAnchorAsset) {
-		return Verdict{InSet: true, Basis: BasisSep1ISIN}
+		return Verdict{InSet: true, Basis: BasisSep1ISIN, Recognition: recognition}
 	}
 	return Verdict{Reject: RejectNoInstrumentClaim}
 }
+
+// How R3 was satisfied for a classic member, served on the row.
+const (
+	// RecognitionDirectory — the curated account directory lists THIS
+	// issuer account with a recognition tag. The original arm.
+	RecognitionDirectory = "curated_account_directory"
+	// RecognitionDomainSibling — the directory does not list this
+	// account, but it lists (unflagged) another account that the SAME
+	// issuer-bound SEP-1 declares, on the same domain. The entity is
+	// recognised; this is one more of its accounts, named by the entity
+	// itself from its own domain. Weaker than the direct arm in one
+	// stated way: the directory never looked at this account. Franklin
+	// Templeton's Luxembourg and Singapore share classes (gBENJI,
+	// grBENJI, sgBENJI) are the case this exists for — ISIN-declared in
+	// franklintempleton.com's SEP-1 beside the directory-listed BENJI
+	// issuer, 82M tokens between them, unlisted by the directory.
+	RecognitionDomainSibling = "curated_account_directory_via_domain_sibling"
+)
 
 // isOracleRWACode reports whether an independent oracle publishes a
 // net-asset-value feed for an instrument of this code, per the

@@ -15207,6 +15207,7 @@ components:
           enum:
             - curated_account_directory
             - independent_listing_corroborating_curated_binding
+            - curated_account_directory_via_domain_sibling
             - third_party_curator
           description: |
             Which independent party's naming satisfied the contract

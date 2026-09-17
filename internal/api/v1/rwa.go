@@ -967,6 +967,7 @@ type rwaMember struct {
 	anchorAsset string
 	basis       string
 	anchorClass string
+	recognition string
 	dirName     string
 	dirTags     []string
 }
@@ -1176,8 +1177,22 @@ func (s *Server) admitClassicCandidates(
 ) {
 	issuers := map[string]struct{}{}
 	admitted := make(map[string]struct{}, len(bound))
+	// Domains with a directory-recognised, unflagged account among the
+	// issuers bound on them: an account the same SEP-1 names beside one
+	// of those is recognised by its sibling (rwa.RecognitionDomainSibling).
+	recognisedDomains := map[string]struct{}{}
+	for _, c := range bound {
+		if c.HomeDomain == "" {
+			continue
+		}
+		tags := entries[c.Issuer].Tags
+		if rwa.HasRecognitionTag(tags) && !rwa.ScamFlagged(tags) {
+			recognisedDomains[strings.ToLower(c.HomeDomain)] = struct{}{}
+		}
+	}
 	for _, c := range bound {
 		e := entries[c.Issuer]
+		_, sibling := recognisedDomains[strings.ToLower(c.HomeDomain)]
 		v := rwa.Qualify(rwa.Candidate{
 			Code:               c.Code,
 			Issuer:             c.Issuer,
@@ -1188,6 +1203,7 @@ func (s *Server) admitClassicCandidates(
 			// are passed; the definition decides which it can use.
 			DeclaredAnchorAsset: c.AnchorAsset,
 			DirectoryTags:       e.Tags,
+			SiblingRecognised:   sibling && c.HomeDomain != "",
 		})
 		if !v.InSet {
 			out.refusals[v.Reject]++
@@ -1219,6 +1235,7 @@ func (s *Server) admitClassicCandidates(
 			anchorAsset: c.AnchorAsset,
 			basis:       v.Basis,
 			anchorClass: v.AnchorClass,
+			recognition: v.Recognition,
 			dirName:     e.Name,
 			dirTags:     e.Tags,
 		})
@@ -1830,6 +1847,7 @@ func (s *Server) rwaAssetRows(m rwaMembership, rows map[string]AssetDetail) ([]R
 			IssuerDirectoryTags: d.IssuerDirectoryTags,
 			Basis:               mem.basis,
 			AnchorClass:         mem.anchorClass,
+			Recognition:         mem.recognition,
 			AnchorAsset:         strings.TrimSpace(mem.anchorAsset),
 			Valuation:           rwaValuationOf(d),
 			CirculatingSupply:   d.CirculatingSupply,

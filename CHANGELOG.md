@@ -15,6 +15,20 @@ against.
 
 ## [Unreleased]
 
+### Added
+
+- **rwa:** an issuer account the curated directory never listed is now
+  recognised when the SAME issuer-bound SEP-1, on the same domain, also
+  binds an account the directory does list and does not flag — served as
+  `recognition: curated_account_directory_via_domain_sibling`, apart
+  from the direct arm. A scam flag on the account itself still refuses
+  it, and the arm supplies no instrument claim: the class, oracle-code
+  or ISIN arms still have to admit the asset. The case is Franklin
+  Templeton's Luxembourg and Singapore share classes (gBENJI, grBENJI,
+  sgBENJI — 82.2M tokens, ISIN-declared beside the listed BENJI issuer),
+  which were refused for recognition while being named by the recognised
+  entity itself.
+
 ## [v0.89.1] — 2026-09-17
 
 ### Fixed
