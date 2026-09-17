@@ -53,3 +53,16 @@ f9157d5dc84fb5bf5f8acdaefe4b5a6d5c5b0f1e:internal/storage/clickhouse/blend_pool_
 f9157d5dc84fb5bf5f8acdaefe4b5a6d5c5b0f1e:internal/storage/clickhouse/blend_pool_state_reader_test.go:generic-api-key:34
 bd1e3b50c3d6e1bb58ad9b9b707d26c0440492c7:cmd/stellarindex-ops/usage_rollup_backfill_test.go:generic-api-key:73
 8c20079f7d2ccb5ecdebcfe0e2f1ddd27367819f:docs/agent-onboarding.md:generic-api-key:25
+
+# 2026-09-18 — two test fixtures the local gitleaks 8.30 reads as generic API
+# keys; CI's pinned 8.21 does not. Both are literal strings written to be
+# recognisably fake: a query-string redaction test whose URL carries an api_key
+# parameter with a Stripe-shaped placeholder and a token parameter with a JWT
+# prefix, to prove the shape logger strips both, and a usage rollup test whose
+# subject is a synthetic API-key id ("key:kid_…"), not a key.
+cb6b58cc5eaae69132535f305c71046303aee326:internal/api/v1/middleware/slow_query_shape_test.go:generic-api-key:38
+6721eacb1b40533c039ecd58b424c3071f29b7c5:cmd/stellarindex-ops/usage_rollup_backfill_test.go:generic-api-key:73
+# The first draft of the block above quoted one of those literals in its own
+# comment; that draft commit stays reachable from agent worktree branches
+# until they are pruned, so the local history scan reads it as a finding.
+f8356acf72bbe875f7ed0a29c288776059f04fbb:.gitleaksignore:generic-api-key:59
