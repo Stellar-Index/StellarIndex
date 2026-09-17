@@ -1248,73 +1248,36 @@ func (s *Store) scanBatchTradeOutcome(ctx context.Context, query string, args []
 	return perSourceNew, perSourceUnitRatio, seenAssets, nil
 }
 
-func (s *Store) BatchInsertTrades(ctx context.Context, trades []canonical.Trade) error {
-	if len(trades) == 0 {
-		return nil
+// tradeInsertMaxRows is the largest sub-batch one multi-row INSERT may
+// carry: 65,535 bind parameters is the extended-protocol ceiling, 13
+// parameters per row, and a round number below the 5,041 that gives.
+const tradeInsertMaxRows = 5000
+
+// tradeInsertChunkBounds splits n rows into [start, end) sub-batches of at
+// most tradeInsertMaxRows. n <= 0 yields no chunks.
+func tradeInsertChunkBounds(n int) [][2]int {
+	var out [][2]int
+	for start := 0; start < n; start += tradeInsertMaxRows {
+		end := start + tradeInsertMaxRows
+		if end > n {
+			end = n
+		}
+		out = append(out, [2]int{start, end})
 	}
+	return out
+}
 
-	// Drop rows the served tier cannot hold BEFORE building the
-	// all-or-nothing multi-row INSERT (see the godoc). A one-side-zero SDEX
-	// fill would otherwise trip the base/quote > 0 CHECK and roll back every
-	// good trade in the batch. When the whole batch is unstorable this
-	// returns early — there is nothing to insert, and the skips are already
-	// accounted for inside the filter.
-	storable := s.filterStorableTrades(trades)
-	if len(storable) == 0 {
-		return nil
-	}
-
-	// Deterministic PK order WITHIN the batch (2026-07-05 deadlock
-	// storm, 918 in one afternoon; recurred 2026-07-08 as a CEX-specific
-	// storm — ~15 deadlocks/5min, 40P01 2-/3-way ShareLock cycles between
-	// concurrent batch inserts). PersistWorkers fans a single event
-	// channel out to 8 goroutines with NO sharding by source/symbol (see
-	// persistWorker in internal/pipeline/sink.go), so any two workers can
-	// end up holding batches with overlapping trades.PK rows — most
-	// visibly for CEX sources, whose WS reconnect handling can redeliver
-	// the same exchange trade into the shared channel and have it picked
-	// up by two different workers at once. Two multi-row INSERT..ON
-	// CONFLICT statements that touch the same keys in different orders
-	// take row locks in different orders — a textbook AB/BA deadlock.
-	//
-	// The 2026-07-05 fix sorted by (source, ledger, tx_hash, op_index) —
-	// FOUR of the FIVE columns in the actual `ON CONFLICT (source,
-	// ledger, tx_hash, op_index, ts)` target. `ts` was left out, so rows
-	// that tie on those four columns fall back on `sort.Slice`'s
-	// unspecified (non-stable) tie order, which is a function of each
-	// batch's original element order — not guaranteed equal across two
-	// different workers' batches. That reopens exactly the AB/BA window
-	// the sort was meant to close. Sorting by the FULL conflict key
-	// (adding `ts` as the final tiebreaker) gives every writer, in every
-	// caller of BatchInsertTrades, one total, tie-free lock-acquisition
-	// order — implemented here, inside the batch builder, so ALL
-	// callers (the indexer's persistWorker drain, the external retry
-	// buffer, `stellarindex-ops ch-rebuild`) get the fix automatically
-	// rather than each having to remember to pre-sort. The per-row
-	// isolate-on-non-infra-error fallback in
-	// internal/pipeline/trade_sink.go::flushTradeBatch stays as
-	// belt-and-braces for whatever this doesn't catch.
-	sortTradesByConflictKey(storable)
-
-	// Collapse intra-batch PK duplicates BEFORE building the statement.
-	// The INV-3 fix (migration 0109) turns the batch `ON CONFLICT` into a
-	// DO UPDATE, and Postgres rejects a single INSERT..ON CONFLICT DO
-	// UPDATE that presents the same conflict key twice ("cannot affect
-	// row a second time") — which the old DO NOTHING silently absorbed. A
-	// CEX WS reconnect can redeliver the same exchange trade into one
-	// worker's batch (see the deadlock note above), so dedupe adjacent
-	// equal keys here (input is already conflict-key sorted), keeping the
-	// latest copy. The original `trades` slice is left intact so the
-	// per-source "sent" tally below still counts the collapsed duplicate
-	// as a duplicate — the outcome metric is unchanged.
-	insertRows := dedupeSortedTradesByConflictKey(storable)
-
+// insertTradeRows sends one parameter-safe sub-batch (see
+// BatchInsertTrades) and returns its landed-row outcome.
+func (s *Store) insertTradeRows(ctx context.Context, insertRows []canonical.Trade) (
+	perSourceNew, perSourceUnitRatio map[string]int,
+	seenAssets map[string]registryObservation, err error,
+) {
 	// Build VALUES placeholders + args slice (13 params/row incl.
-	// derive_generation) — extracted to keep this function under the length
-	// budget without splitting the deadlock/dedup narrative above.
+	// derive_generation).
 	valuesParts, args, err := s.tradeBatchValues(ctx, insertRows)
 	if err != nil {
-		return err
+		return nil, nil, nil, err
 	}
 
 	// CTE shape:
@@ -1396,9 +1359,97 @@ func (s *Store) BatchInsertTrades(ctx context.Context, trades []canonical.Trade)
           FROM ins WHERE inserted
     `, strings.Join(valuesParts, ", "))
 
-	perSourceNew, perSourceUnitRatio, seenAssets, err := s.scanBatchTradeOutcome(ctx, query, args)
-	if err != nil {
-		return err
+	return s.scanBatchTradeOutcome(ctx, query, args)
+}
+
+func (s *Store) BatchInsertTrades(ctx context.Context, trades []canonical.Trade) error {
+	if len(trades) == 0 {
+		return nil
+	}
+
+	// Drop rows the served tier cannot hold BEFORE building the
+	// all-or-nothing multi-row INSERT (see the godoc). A one-side-zero SDEX
+	// fill would otherwise trip the base/quote > 0 CHECK and roll back every
+	// good trade in the batch. When the whole batch is unstorable this
+	// returns early — there is nothing to insert, and the skips are already
+	// accounted for inside the filter.
+	storable := s.filterStorableTrades(trades)
+	if len(storable) == 0 {
+		return nil
+	}
+
+	// Deterministic PK order WITHIN the batch (2026-07-05 deadlock
+	// storm, 918 in one afternoon; recurred 2026-07-08 as a CEX-specific
+	// storm — ~15 deadlocks/5min, 40P01 2-/3-way ShareLock cycles between
+	// concurrent batch inserts). PersistWorkers fans a single event
+	// channel out to 8 goroutines with NO sharding by source/symbol (see
+	// persistWorker in internal/pipeline/sink.go), so any two workers can
+	// end up holding batches with overlapping trades.PK rows — most
+	// visibly for CEX sources, whose WS reconnect handling can redeliver
+	// the same exchange trade into the shared channel and have it picked
+	// up by two different workers at once. Two multi-row INSERT..ON
+	// CONFLICT statements that touch the same keys in different orders
+	// take row locks in different orders — a textbook AB/BA deadlock.
+	//
+	// The 2026-07-05 fix sorted by (source, ledger, tx_hash, op_index) —
+	// FOUR of the FIVE columns in the actual `ON CONFLICT (source,
+	// ledger, tx_hash, op_index, ts)` target. `ts` was left out, so rows
+	// that tie on those four columns fall back on `sort.Slice`'s
+	// unspecified (non-stable) tie order, which is a function of each
+	// batch's original element order — not guaranteed equal across two
+	// different workers' batches. That reopens exactly the AB/BA window
+	// the sort was meant to close. Sorting by the FULL conflict key
+	// (adding `ts` as the final tiebreaker) gives every writer, in every
+	// caller of BatchInsertTrades, one total, tie-free lock-acquisition
+	// order — implemented here, inside the batch builder, so ALL
+	// callers (the indexer's persistWorker drain, the external retry
+	// buffer, `stellarindex-ops ch-rebuild`) get the fix automatically
+	// rather than each having to remember to pre-sort. The per-row
+	// isolate-on-non-infra-error fallback in
+	// internal/pipeline/trade_sink.go::flushTradeBatch stays as
+	// belt-and-braces for whatever this doesn't catch.
+	sortTradesByConflictKey(storable)
+
+	// Collapse intra-batch PK duplicates BEFORE building the statement.
+	// The INV-3 fix (migration 0109) turns the batch `ON CONFLICT` into a
+	// DO UPDATE, and Postgres rejects a single INSERT..ON CONFLICT DO
+	// UPDATE that presents the same conflict key twice ("cannot affect
+	// row a second time") — which the old DO NOTHING silently absorbed. A
+	// CEX WS reconnect can redeliver the same exchange trade into one
+	// worker's batch (see the deadlock note above), so dedupe adjacent
+	// equal keys here (input is already conflict-key sorted), keeping the
+	// latest copy. The original `trades` slice is left intact so the
+	// per-source "sent" tally below still counts the collapsed duplicate
+	// as a duplicate — the outcome metric is unchanged.
+	insertRows := dedupeSortedTradesByConflictKey(storable)
+
+	// Postgres' extended protocol caps one statement at 65,535 bind
+	// parameters; at 13 per row that is 5,041 rows, and a 100,000-row batch
+	// (the bulk backfill's fallback size) failed outright — "extended
+	// protocol limited to 65535 parameters" — and dropped to one INSERT per
+	// row, which is why a 40k-ledger SDEX re-derive chunk took five hours on
+	// 2026-09-13. The batch is sent in parameter-safe sub-batches and the
+	// outcome tallied once across them, so the metrics and the registry
+	// hook see the whole batch exactly as before.
+	perSourceNew := map[string]int{}
+	perSourceUnitRatio := map[string]int{}
+	seenAssets := map[string]registryObservation{}
+	for _, b := range tradeInsertChunkBounds(len(insertRows)) {
+		n, u, seen, err := s.insertTradeRows(ctx, insertRows[b[0]:b[1]])
+		if err != nil {
+			return err
+		}
+		for k, v := range n {
+			perSourceNew[k] += v
+		}
+		for k, v := range u {
+			perSourceUnitRatio[k] += v
+		}
+		for k, v := range seen {
+			if _, dup := seenAssets[k]; !dup {
+				seenAssets[k] = v
+			}
+		}
 	}
 
 	emitBatchTradeOutcomeMetrics(storable, perSourceNew, perSourceUnitRatio)

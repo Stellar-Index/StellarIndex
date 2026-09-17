@@ -15,6 +15,15 @@ against.
 
 ## [Unreleased]
 
+### Fixed
+
+- **timescale:** `BatchInsertTrades` sends its rows in parameter-safe
+  sub-batches (5,000 rows × 13 binds, under Postgres' 65,535-parameter
+  ceiling) and tallies the outcome once across them. A 100,000-row batch —
+  the bulk backfill's fallback size — failed with "extended protocol
+  limited to 65535 parameters" and dropped to one INSERT per row, which
+  is why a 40k-ledger SDEX re-derive chunk took five hours.
+
 ## [v0.89.3] — 2026-09-17
 
 ### Added
