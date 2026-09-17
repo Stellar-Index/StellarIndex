@@ -75,6 +75,19 @@ against.
   the comment pointed at (`postgres_wal_headroom_assert`) does not
   exist; it names the real task now. Nothing applied to any host.
   (#512)
+- **rwa:** the prospectus constant-NAV reference carries a review bound.
+  Each `rwa.ConstantNAV` binding now derives a `ReviewBy` date from the
+  date its issuer page was read plus a documented 90-day interval (a
+  CNAV fund's NAV is 1.00 every day until the fund changes regime, and a
+  regime change surfaces in the fund's quarterly reporting), and past
+  that date `/v1/rwa/assets` serves the row with `stale: true` and a
+  `source` saying the binding is due for re-verification. It was the
+  one reference on the surface with no staleness mechanism — served
+  `stale: false` forever, so a class converted, merged or wound down
+  would have stayed at par until someone edited Go. The IB class
+  (gBENJI, LU2900381208) binding also cited the AB class's page as its
+  evidence; both bindings now cite their own share-class page as the
+  issuer's product sitemap enumerates them.
 - **ops:** `curated-rwa-sync` asks Dune for the `medium` execution tier.
   It asked for `small`, which Dune does not name; every run with a key
   configured was refused before the SQL ran (`HTTP 400: This performance

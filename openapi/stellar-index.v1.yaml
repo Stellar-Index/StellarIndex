@@ -15574,6 +15574,14 @@ components:
             feed silent for 7 days leaves the row with no reference at
             all. Absent when false.
 
+            On a `prospectus_constant_nav` reference it marks something
+            else: the binding has passed its review date. A prescribed
+            NAV does not age, but the reading of it does — each binding
+            records the date the issuer's page was read and is due to
+            be read again 90 days later — and past that date the same
+            figure is served with `stale: true` and `source` saying the
+            binding is due for re-verification. Labelled, not withheld.
+
     RWAPremium:
       type: object
       description: |

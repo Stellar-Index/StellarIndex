@@ -154,7 +154,11 @@ type RWAReference struct {
 	// carries the response's own as_of, so the two vintages are
 	// separately visible.
 	AsOf WireTime `json:"as_of"`
-	// Stale marks a reference older than 72h — served, but labelled.
+	// Stale marks a reference older than 72h — served, but labelled. On
+	// a [RWAReferenceProspectusCNAV] reference it marks instead that
+	// the binding has passed its review date: the prescribed NAV does
+	// not age, but the reading of it does, and past
+	// [rwa.ConstantNAVReviewInterval] the row says so.
 	Stale bool `json:"stale,omitempty"`
 	// Provenance names WHAT KIND of figure this is. Two are published
 	// and they are not the same claim, so the field is mandatory on
@@ -867,19 +871,33 @@ func rwaListingReferencesOf(members []rwaContractMember) map[string]timescale.Li
 // than at the binding's verification date: the value is a standing rule
 // of the fund, not an observation that ages, and the verification date
 // travels in Source for the reader who wants it.
+//
+// A rule is not an observation, but the READING of it is, and it is
+// bounded the way every other reference on this surface is: past the
+// binding's ReviewBy — VerifiedOn plus [rwa.ConstantNAVReviewInterval]
+// — the row is served `stale: true` with Source saying the binding is
+// due for re-verification. Labelled, not withheld, for the reason the
+// 72-hour bound labels an oracle figure: the prescribed NAV is the
+// fund's current NAV until the fund changes regime, and the label is
+// what tells a reader nobody has checked that lately.
 func rwaApplyConstantNAVReference(a *RWAAsset, b rwa.ConstantNAVBinding, now time.Time) {
 	price := ratFromOptionalString(&b.NAVUSD)
 	if price == nil || price.Sign() <= 0 {
 		rwaRefuseReference(a, RWAPremiumReferenceNotPositive)
 		return
 	}
+	due := b.ReviewDue(now)
+	source := b.Regime + "; issuer NAV page " + b.Source + " (read " + b.VerifiedOn + "; review by " + b.ReviewBy + ")"
+	if due {
+		source = b.Regime + "; issuer NAV page " + b.Source + " (read " + b.VerifiedOn + "; re-verification was due " + b.ReviewBy + " and has not been recorded — the binding is due for re-verification)"
+	}
 	a.Reference = &RWAReference{
 		PriceUSD:   b.NAVUSD,
-		Source:     b.Regime + "; issuer NAV page " + b.Source + " (read " + b.VerifiedOn + ")",
+		Source:     source,
 		Feed:       b.ISIN,
 		Quote:      "fiat:USD",
 		AsOf:       WireTime(now),
-		Stale:      false,
+		Stale:      due,
 		Provenance: RWAReferenceProspectusCNAV,
 	}
 	a.ReferenceValuation = rwaReferenceValuationOf(a, rwaReference{priceUSD: price})

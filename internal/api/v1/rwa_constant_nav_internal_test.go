@@ -1,9 +1,11 @@
 package v1
 
 import (
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/Stellar-Index/StellarIndex/internal/rwa"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
@@ -41,5 +43,61 @@ func TestRWAApplyReference_ProspectusConstantNAV(t *testing.T) {
 	rwaApplyReference(c, snap, nil, map[string]timescale.ListingEntry{}, now)
 	if c.Reference != nil {
 		t.Errorf("impostor got a reference: %+v", c.Reference)
+	}
+}
+
+// A prospectus constant NAV is a rule, but the READING of it is bounded
+// like every other reference: through the binding's review deadline the
+// row is served at par unlabelled; from the first instant after it the
+// same figure is served `stale: true` and Source says the binding is
+// due for re-verification. The figure itself is never withheld on this
+// bound — the label is the finding.
+func TestRWAApplyReference_ProspectusConstantNAV_StaleAfterReviewBy(t *testing.T) {
+	const issuer = "GD5J73EKK5IYL5XS3FBTHHX7CZIYRP7QXDL57XFWGC2WVYWT326OBXRP"
+	binding, ok := rwa.ConstantNAV("gBENJI", issuer)
+	if !ok {
+		t.Fatal("gBENJI binding missing")
+	}
+	deadline := binding.ReviewDeadline()
+	if deadline.IsZero() || binding.ReviewBy == "" {
+		t.Fatalf("gBENJI binding carries no review bound: %+v", binding)
+	}
+	supply := "566742721191613"
+	snap := rwaReferences{available: true, byFeed: map[string]rwaReference{}, nonUSD: map[string]string{}}
+	serve := func(now time.Time) *RWAAsset {
+		a := &RWAAsset{AssetID: "gBENJI-" + issuer, Code: "gBENJI", Issuer: issuer, CirculatingSupply: &supply, Decimals: 7}
+		rwaApplyReference(a, snap, nil, map[string]timescale.ListingEntry{}, now)
+		if a.Reference == nil || a.Reference.Provenance != RWAReferenceProspectusCNAV || a.Reference.PriceUSD != "1.00" {
+			t.Fatalf("at %s: reference = %+v, want the prospectus CNAV at 1.00", now.Format(time.RFC3339), a.Reference)
+		}
+		if a.ReferenceValuation.ValueUSD == nil || *a.ReferenceValuation.ValueUSD != "56674272.12" {
+			t.Errorf("at %s: valuation = %+v, want 56674272.12 — the bound labels, it does not withhold", now.Format(time.RFC3339), a.ReferenceValuation)
+		}
+		if a.Premium.Status != RWAPremiumReferenceNotOracle {
+			t.Errorf("at %s: premium = %+v, want the not-an-oracle status", now.Format(time.RFC3339), a.Premium)
+		}
+		return a
+	}
+
+	for _, now := range []time.Time{deadline.Add(-24 * time.Hour), deadline.Add(-time.Second), deadline} {
+		a := serve(now)
+		if a.Reference.Stale {
+			t.Errorf("at %s (on or before the review deadline %s): stale = true, want false", now.Format(time.RFC3339), binding.ReviewBy)
+		}
+		if !strings.Contains(a.Reference.Source, "review by "+binding.ReviewBy) || strings.Contains(a.Reference.Source, "due for re-verification") {
+			t.Errorf("at %s: source %q should name the review date and not claim the review is due", now.Format(time.RFC3339), a.Reference.Source)
+		}
+	}
+	for _, now := range []time.Time{deadline.Add(time.Second), deadline.Add(24 * time.Hour), deadline.AddDate(1, 0, 0)} {
+		a := serve(now)
+		if !a.Reference.Stale {
+			t.Errorf("at %s (after the review deadline %s): stale = false, want true", now.Format(time.RFC3339), binding.ReviewBy)
+		}
+		if !strings.Contains(a.Reference.Source, "due for re-verification") || !strings.Contains(a.Reference.Source, binding.ReviewBy) || !strings.Contains(a.Reference.Source, binding.VerifiedOn) {
+			t.Errorf("at %s: source %q should say the binding is due for re-verification and name both dates", now.Format(time.RFC3339), a.Reference.Source)
+		}
+		if !strings.Contains(a.Reference.Source, binding.ISIN) {
+			t.Errorf("at %s: source %q should cite the page for the binding's own ISIN", now.Format(time.RFC3339), a.Reference.Source)
+		}
 	}
 }
