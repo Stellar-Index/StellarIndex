@@ -23,6 +23,7 @@ status: snapshot of the on-box log
 > ## YYYY-MM-DD restore drill (repoN)
 > - restore: <s>s; tip lag <n> ledgers; hash-chain breaks: <n>; trades window match: <restored>=<live>
 > - CH re-derive (dry-run, fetch+decode only): <window> ledgers in <s>s from <bucket>; lake rows in window: <n>   (only with DRILL_CH_WINDOW)
+> - note: <DRILL_LOG_NOTE>   (only when DRILL_LOG_NOTE is set)
 > - failures: <n>
 > ```
 >
@@ -254,7 +255,7 @@ Two things the newer rows add to the picture above:
 - **The off-site RTO is reproducible.** The second repo2 restore took
   2,925 s against 2,813 s for the first — the ~47-49 minute figure is the
   number to quote for the site-gone case, not the ~9-10 minutes of a
-  repo1 restore (496-607 s across six runs).
+  repo1 restore (496-607 s across five scheduled runs; the manual 2026-07-03 Run 5 took 871 s).
 - **The CH re-derive stage has now run on a scheduled drill.** 100,000
   ledgers fetched and decoded from `galexie-archive` in 1,893 s (~53
   ledgers/s), and the lake held all 100,000 in the window. That is the
