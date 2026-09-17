@@ -144,6 +144,15 @@ func (p *Poller) backfillFeed(
 	logger *slog.Logger,
 	out chan<- canonical.OracleUpdate,
 ) error {
+	// Same scale gate as the live poll: a feed whose configured
+	// decimals disagrees with the chain (or is unknown) is refused
+	// rather than walked at the wrong scale for its whole history.
+	dec, err := p.resolveDecimals(ctx, pair, spec)
+	if err != nil {
+		return fmt.Errorf("decimals %s: %w", pair.String(), err)
+	}
+	spec.Decimals = dec
+
 	addresses := []string{strings.ToLower(spec.Address)}
 	topics := []any{AnswerUpdatedTopic0}
 

@@ -70,6 +70,29 @@ against.
   union the API did not honour. A spec test now pins both enums to the
   `internal/supply` const block in declaration order, the way the
   `/v1/ohlc` interval enum is pinned to its route table.
+- **sources/chainlink:** both Chainlink readers verify each feed's
+  scale against the AggregatorV3 proxy's on-chain `decimals()` instead
+  of trusting the configured (or built-in 8) value blind. The
+  `[divergence.chainlink]` cross-check reference and the
+  `[external.chainlink]` `oracle_updates` poller (and its backfill)
+  read `decimals()` over the JSON-RPC path they already use, on first
+  use and daily: an omitted `decimals` adopts the on-chain value; a set
+  value that agrees flows; a set value that disagrees is logged at
+  ERROR with both numbers, counted on the new
+  `stellarindex_chainlink_feed_decimals_mismatch_total{consumer,pair}`
+  and the feed is REFUSED (`price_unavailable` for the divergence
+  worker, a per-feed error for the poller) until they agree — a
+  cross-check that scales wrongly is a permanent false divergence, and
+  a mis-scaled oracle row is worse than none. A failed `decimals()`
+  read keeps the last known value with a WARN and retries after 5 min;
+  a feed with neither a configured nor a read value is refused rather
+  than guessed. r1 runs both readers enabled (EUR/GBP/JPY on the
+  cross-check, the six built-in feeds on the poller), every one at 8,
+  so no production reading changes; the guard is for the value that
+  drifts. `BuildFeedSet` and the divergence constructor no longer
+  substitute 8 for an omitted value (the poller's `project` refuses a
+  literal 0 as `ErrDecimalsUnresolved`), and the reference takes a
+  `Logger` so the verification lines land in the process log.
 - **ci:** the weekly ansible-drift verdict's comment-only classifier
   picks the comment token per file type (#519). It stripped from the
   first `#`, `--` or `//` whatever the file, so every URL host

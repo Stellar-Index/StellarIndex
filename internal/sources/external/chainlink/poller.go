@@ -53,6 +53,14 @@ type Poller struct {
 	// inside Alchemy's free-tier per-second budget for our pair
 	// counts and a polite ceiling for public RPCs.
 	Concurrency int
+
+	// decimals is the per-feed on-chain decimals() verification state
+	// (see decimals.go). Built by NewPoller, like Cache.
+	decimals *decimalsCache
+
+	// now is the injectable clock for the decimals() refresh / retry
+	// cadence. nil → time.Now.
+	now func() time.Time
 }
 
 // NewPoller builds a Poller with sensible defaults. Caller supplies
@@ -65,6 +73,7 @@ func NewPoller(rpcURL string, feedMap map[string]FeedSpec) *Poller {
 		FeedMap:     feedMap,
 		Cache:       newRoundCache(),
 		Concurrency: 8,
+		decimals:    newDecimalsCache(),
 	}
 }
 
@@ -128,6 +137,15 @@ func (p *Poller) PollOnce(ctx context.Context, pairs []canonical.Pair) ([]canoni
 		go func(pair canonical.Pair, spec FeedSpec) {
 			defer wg.Done()
 			defer func() { <-sem }()
+			// Scale first: the on-chain decimals() verified against the
+			// configured value (decimals.go). A disagreeing or unknown
+			// scale refuses the feed before its price is read.
+			dec, err := p.resolveDecimals(ctx, pair, spec)
+			if err != nil {
+				results <- result{err: err, pair: pair}
+				return
+			}
+			spec.Decimals = dec
 			rnd, err := p.fetchLatest(ctx, pair, spec)
 			if err != nil {
 				results <- result{err: err, pair: pair}
@@ -209,6 +227,12 @@ func (p *Poller) fetchLatest(ctx context.Context, pair canonical.Pair, spec Feed
 // suitable for InsertOracleUpdate. Applies the per-feed Decimals +
 // Invert transforms before populating the row.
 //
+// spec.Decimals must be the RESOLVED scale (resolveDecimals — the
+// on-chain decimals() verified against config). A literal 0 is refused
+// as ErrDecimalsUnresolved rather than silently substituted: dividing
+// by 10^0 would store a BTC/USD row 10^8 too large, and guessing 8
+// would hide exactly the scale drift the resolver exists to catch.
+//
 // Identity for off-chain sources is the synthesized tx_hash + ts
 // pair: Ledger=0, OpIndex=0, TxHash=sha256(feed||roundId)[:64],
 // Timestamp=Round.UpdatedAt. The PK (source, ledger, tx_hash,
@@ -217,7 +241,7 @@ func (p *Poller) fetchLatest(ctx context.Context, pair canonical.Pair, spec Feed
 func (p *Poller) project(pair canonical.Pair, spec FeedSpec, rnd Round) (canonical.OracleUpdate, error) {
 	decimals := spec.Decimals
 	if decimals == 0 {
-		decimals = DefaultDecimals
+		return canonical.OracleUpdate{}, fmt.Errorf("%w: %s feed=%s has no resolved decimals", ErrDecimalsUnresolved, pair.String(), spec.Address)
 	}
 
 	// Apply Invert: 1/answer at the same decimal scale. Inversion

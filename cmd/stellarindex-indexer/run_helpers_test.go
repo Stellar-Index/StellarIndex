@@ -76,10 +76,16 @@ func TestChainlinkFeedSetFromConfig_RejectsAMalformedPairKey(t *testing.T) {
 //
 // `decimals` is a uint8, so an operator who omits it in TOML gets 0.
 // Taking that literally would divide the raw int256 answer by 10^0 —
-// serving a BTC/USD price 10^8 times too large into the divergence
-// cross-check. BuildFeedSet substitutes DefaultDecimals (8) for 0, and
-// this pins that substitution end-to-end through the adapter.
-func TestChainlinkFeedSetFromConfig_ZeroDecimalsBecomesTheChainlinkDefault(t *testing.T) {
+// serving a BTC/USD price 10^8 times too large. BuildFeedSet used to
+// substitute DefaultDecimals (8) for 0 here; it now carries the 0
+// through VERBATIM, because the poller resolves the scale from the
+// feed's on-chain `decimals()` (an omitted value ADOPTS the chain's,
+// a set value is VERIFIED against it) and `project` refuses a literal
+// 0 as ErrDecimalsUnresolved. A substituted 8 would be indistinguishable
+// from an operator-asserted 8 and make the resolver refuse an
+// 18-decimal feed the operator never mis-configured. This pins the
+// pass-through end-to-end through the adapter.
+func TestChainlinkFeedSetFromConfig_ZeroDecimalsStaysAbsentForOnChainResolution(t *testing.T) {
 	t.Parallel()
 
 	feeds, _, err := chainlinkFeedSetFromConfig(map[string]config.ChainlinkFeedSetting{
@@ -92,10 +98,11 @@ func TestChainlinkFeedSetFromConfig_ZeroDecimalsBecomesTheChainlinkDefault(t *te
 	if !ok {
 		t.Fatalf("feed absent from %v", feeds)
 	}
-	if spec.Decimals != externalchainlink.DefaultDecimals {
-		t.Errorf("omitted decimals produced %d, want the Chainlink default %d — a literal 0 "+
-			"divides the raw int256 answer by 10^0 and feeds a price 10^8 times too large "+
-			"into the divergence cross-check", spec.Decimals, externalchainlink.DefaultDecimals)
+	if spec.Decimals != 0 {
+		t.Errorf("omitted decimals produced %d, want 0 (absent) — the poller adopts the feed's "+
+			"on-chain decimals() for an absent value; a substituted %d would be verified as if "+
+			"the operator had asserted it and refuse a non-8-decimal feed instead of adopting "+
+			"its real scale", spec.Decimals, externalchainlink.DefaultDecimals)
 	}
 }
 

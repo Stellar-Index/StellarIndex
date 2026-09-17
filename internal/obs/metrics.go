@@ -55,6 +55,7 @@ func registerAppMetrics() {
 		AMMSelfPairSwapTotal,
 		ExternalPollerPollsTotal,
 		ExternalPollerLastSuccessUnix,
+		ChainlinkFeedDecimalsMismatchTotal,
 		ExternalFXLastQuoteUnix,
 		ExternalFXRateRejectedTotal,
 		ExternalFXBaselineHealedTotal,
@@ -1280,6 +1281,30 @@ var ExternalPollerLastSuccessUnix = prometheus.NewGaugeVec(
 		Help: "UNIX seconds of the most recent successful PollOnce, per source. Zero = never succeeded since startup.",
 	},
 	[]string{"source"},
+)
+
+// ChainlinkFeedDecimalsMismatchTotal — count of Chainlink readings
+// REFUSED because the feed's configured `decimals` disagrees with the
+// AggregatorV3 proxy's on-chain `decimals()` view. Labels:
+//
+//   - consumer ∈ {divergence, ingest}: which Chainlink reader refused
+//     (internal/divergence/chainlink.go cross-check vs the
+//     internal/sources/external/chainlink oracle_updates poller).
+//   - pair: the canonical pair string the feed is mapped to.
+//
+// Incremented on EVERY refused reading (not once per detection), so
+// `increase(...[15m]) > 0` reads as "this feed is currently dark
+// because of a scale disagreement" for as long as the disagreement
+// lasts. A mis-scaled feed would otherwise produce a permanent
+// 10^(d-8) false divergence (or store 10^(d-8)-off oracle rows) with
+// no signal at all — the readers fail closed and count here instead.
+// Zero forever is the healthy state.
+var ChainlinkFeedDecimalsMismatchTotal = prometheus.NewCounterVec(
+	prometheus.CounterOpts{
+		Name: "stellarindex_chainlink_feed_decimals_mismatch_total",
+		Help: "Chainlink readings refused because the configured feed decimals disagree with the aggregator's on-chain decimals(), by consumer (divergence|ingest) and pair.",
+	},
+	[]string{"consumer", "pair"},
 )
 
 // ExternalFXLastQuoteUnix — per-source UNIX-seconds timestamp of the

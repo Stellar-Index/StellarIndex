@@ -263,12 +263,25 @@ func TestPollOnce_emitsOracleUpdate(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
 		var req struct {
-			Method string `json:"method"`
-			Params []any  `json:"params"`
+			Method string            `json:"method"`
+			Params []json.RawMessage `json:"params"`
 		}
 		_ = json.Unmarshal(body, &req)
 		if req.Method != "eth_call" {
 			t.Errorf("expected eth_call, got %s", req.Method)
+		}
+		// Dispatch on the selector: the poller verifies decimals() (8,
+		// Chainlink's standard, matching the spec below) before it reads
+		// latestRoundData().
+		var call struct {
+			Data string `json:"data"`
+		}
+		if len(req.Params) > 0 {
+			_ = json.Unmarshal(req.Params[0], &call)
+		}
+		if call.Data == SelDecimals {
+			fmt.Fprintf(w, `{"jsonrpc":"2.0","id":1,"result":"%s"}`, decimalsReturn(8))
+			return
 		}
 		fmt.Fprintf(w, `{"jsonrpc":"2.0","id":1,"result":"%s"}`, respBody)
 	}))
@@ -279,7 +292,7 @@ func TestPollOnce_emitsOracleUpdate(t *testing.T) {
 		Quote: canonical.Asset{Type: canonical.AssetFiat, Code: "USD"},
 	}
 	p := NewPoller(srv.URL, map[string]FeedSpec{
-		pair.String(): {Address: feedAddr},
+		pair.String(): {Address: feedAddr, Decimals: 8},
 	})
 
 	_, updates, err := p.PollOnce(context.Background(), []canonical.Pair{pair})
@@ -296,8 +309,8 @@ func TestPollOnce_emitsOracleUpdate(t *testing.T) {
 	if u.Price.String() != "250000000000" {
 		t.Errorf("Price = %q, want 250000000000", u.Price.String())
 	}
-	if u.Decimals != DefaultDecimals {
-		t.Errorf("Decimals = %d, want %d", u.Decimals, DefaultDecimals)
+	if u.Decimals != 8 {
+		t.Errorf("Decimals = %d, want 8", u.Decimals)
 	}
 	if u.Asset.Code != "ETH" || u.Quote.Code != "USD" {
 		t.Errorf("pair = %s/%s, want ETH/USD", u.Asset.Code, u.Quote.Code)

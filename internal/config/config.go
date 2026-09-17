@@ -521,14 +521,15 @@ type DivergenceChainlinkConfig struct {
 	RPCURL  string `toml:"rpc_url" doc:"Ethereum JSON-RPC endpoint. Shares the CHAINLINK_RPC_URL env var with the ingest poller (env overrides TOML). Empty defaults to https://cloudflare-eth.com." env:"CHAINLINK_RPC_URL" default:""`
 	// FeedMap maps canonical pair string → mainnet feed address.
 	// Pair string format: "<base>/<quote>" e.g. "fiat:EUR/fiat:USD".
-	// Decimals defaults to 8 (Chainlink's standard).
+	// Decimals omitted → the feed's on-chain decimals() is adopted; set →
+	// verified against decimals(), refused on disagreement.
 	FeedMap map[string]ChainlinkFeedConfig `toml:"feeds" doc:"Maps pair strings to {address, decimals, invert}. Empty disables Chainlink in practice." default:"{}"`
 }
 
 // ChainlinkFeedConfig is one entry in the [DivergenceChainlinkConfig.FeedMap].
 type ChainlinkFeedConfig struct {
 	Address  string `toml:"address" doc:"0x-prefixed mainnet feed contract address." default:""`
-	Decimals int    `toml:"decimals" doc:"Power-of-10 divisor for the raw int256. Defaults to 8 (Chainlink standard)." default:"8"`
+	Decimals int    `toml:"decimals" doc:"Power-of-10 divisor for the raw int256. Omit to adopt the feed's on-chain decimals() (8 on every Chainlink USD feed). When set it is verified against decimals() on first use and daily; on disagreement the feed's readings are refused (ERROR log + stellarindex_chainlink_feed_decimals_mismatch_total) until they agree." default:"8"`
 	Invert   bool   `toml:"invert" doc:"Set true when canonical pair is reciprocal of the feed's natural quote." default:"false"`
 	// MaxAgeHours is the CS-089 staleness ceiling: a latestRoundData
 	// round older than this is rejected as reference-unavailable.
@@ -695,7 +696,7 @@ type ChainlinkVenueConfig struct {
 // (divergence cross-check vs ingest source) can evolve independently.
 type ChainlinkFeedSetting struct {
 	Address  string `toml:"address"  doc:"0x-prefixed AggregatorV3 contract address on Ethereum mainnet."`
-	Decimals uint8  `toml:"decimals" doc:"Power-of-10 divisor for the raw int256 answer. Defaults to 8 (Chainlink's standard). Operator sets per-feed only when the feed publishes at a non-standard scale." default:"8"`
+	Decimals uint8  `toml:"decimals" doc:"Power-of-10 divisor for the raw int256 answer. Omit to adopt the feed's on-chain decimals() (8 on every Chainlink USD feed). When set it is verified against decimals() on the first poll and daily; on disagreement the feed is refused (ERROR log + stellarindex_chainlink_feed_decimals_mismatch_total) until they agree." default:"8"`
 	Invert   bool   `toml:"invert"   doc:"If true, the canonical pair is the reciprocal of the feed's natural quote — e.g. operator wants USD/EUR but the feed publishes EUR/USD. price → 1/price after scaling." default:"false"`
 }
 

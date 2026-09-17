@@ -5,11 +5,14 @@ import (
 	"context"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"math/big"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
@@ -40,25 +43,34 @@ import (
 type ChainlinkReference struct {
 	httpClient *http.Client
 	rpcURL     string
+	logger     *slog.Logger
+	now        func() time.Time // injectable clock for the decimals() cadence tests
 
 	// FeedMap routes canonical pair string ("native/fiat:USD",
 	// "fiat:EUR/fiat:USD", etc.) to a Chainlink AggregatorV3
 	// contract address (0x-prefixed hex). Operator-curated.
 	feedMap map[string]chainlinkFeedSpec
+
+	// decimals is the per-feed on-chain decimals() verification state
+	// (see chainlink_decimals.go), keyed by lowercase feed address.
+	decMu    sync.Mutex
+	decimals map[string]*chainlinkDecimalsState
 }
 
 // chainlinkFeedSpec captures everything needed to interpret one
-// AggregatorV3 contract's output: the address, the price decimals
-// (Chainlink standardises on 8 for crypto/USD and FX pairs; this is
-// STATIC config, defaulting to 8 — the code does NOT query the
-// contract's on-chain `decimals()`, so a non-8-decimal feed, e.g. an
-// 18-decimal ETH-denominated feed, MUST set Decimals explicitly or it
-// silently mis-scales by 10^(d-8)), and an optional inversion flag for
-// cases where the operator wants 1/feed_price (e.g. EUR/USD feed used
-// as USD/EUR signal).
+// AggregatorV3 contract's output: the address, the price decimals the
+// operator asserts (0 = none asserted; Chainlink standardises on 8 for
+// crypto/USD and FX pairs, ETH-denominated feeds are 18), and an
+// optional inversion flag for cases where the operator wants
+// 1/feed_price (e.g. EUR/USD feed used as USD/EUR signal).
+//
+// Decimals is VERIFIED against the contract's on-chain `decimals()`
+// view before the feed is read (chainlink_decimals.go): an absent value
+// adopts the on-chain one, a disagreeing value refuses the feed. The
+// scale actually applied is the resolver's, never this field directly.
 type chainlinkFeedSpec struct {
 	Address  string // 0x-prefixed
-	Decimals int    // power-of-10 to divide raw answer by
+	Decimals int    // operator-asserted power-of-10; 0 = adopt on-chain decimals()
 	Invert   bool
 	// MaxAge is the staleness ceiling: a round whose updatedAt is
 	// older than this (relative to the comparison's observedAt) is
@@ -95,6 +107,11 @@ type ChainlinkOptions struct {
 	// httptest.Server URLs.
 	RPCURL string
 
+	// Logger receives the decimals() verification lines (ERROR on a
+	// config/chain mismatch, WARN on a failed read, INFO when an
+	// unconfigured feed adopts the on-chain value). nil → slog.Default.
+	Logger *slog.Logger
+
 	// FeedMap maps canonical pair string → feed metadata. When empty
 	// the constructor seeds a built-in default covering BTC/ETH/LINK
 	// vs USD plus EUR/GBP/JPY vs USD (see defaultChainlinkFeedMap).
@@ -114,13 +131,16 @@ type ChainlinkFeed struct {
 	// Chainlink AggregatorV3 feed.
 	Address string
 
-	// Decimals is the divisor power-of-10 applied to the raw
-	// `latestAnswer()` int256. STATIC config, defaults to 8 (see the
-	// coercion in the reference constructor). Chainlink crypto/USD +
-	// most FX feeds are 8, but ETH-denominated feeds are 18. The code
-	// does NOT read the on-chain `decimals()` view — an operator adding
-	// a non-8-decimal feed MUST set this explicitly, or every comparison
-	// for that pair is off by 10^(d-8) (a permanent false divergence).
+	// Decimals is the divisor power-of-10 the operator asserts for the
+	// raw `latestRoundData()` answer. Chainlink crypto/USD + most FX
+	// feeds are 8, ETH-denominated feeds are 18. The reference reads the
+	// contract's on-chain `decimals()` view on first use and daily
+	// thereafter: 0 (omitted) adopts the on-chain value; a set value that
+	// disagrees with the chain REFUSES the feed (ErrPriceUnavailable +
+	// ErrChainlinkDecimalsMismatch, counted on
+	// stellarindex_chainlink_feed_decimals_mismatch_total) until they
+	// agree — a comparison off by 10^(d-8) is a permanent false
+	// divergence, so the reference fails closed instead.
 	Decimals int
 
 	// Invert is true when the canonical pair is the reciprocal of
@@ -176,12 +196,15 @@ func NewChainlinkReference(opts ChainlinkOptions) *ChainlinkReference {
 		rpcURL = "https://cloudflare-eth.com"
 	}
 	rpcURL = strings.TrimRight(rpcURL, "/")
+	logger := opts.Logger
+	if logger == nil {
+		logger = slog.Default()
+	}
 	feedMap := defaultChainlinkFeedMap()
 	for k, v := range opts.FeedMap {
 		spec := chainlinkFeedSpec(v)
-		if spec.Decimals == 0 {
-			spec.Decimals = 8 // Chainlink's overwhelming default
-		}
+		// Decimals == 0 is left as-is: it means "adopt the on-chain
+		// decimals()" (chainlink_decimals.go), not "divide by 10^0".
 		if spec.MaxAge == 0 {
 			// Crypto default — FX operators set ~76h explicitly
 			// (see defaultChainlinkMaxAgeFX's rationale).
@@ -192,7 +215,10 @@ func NewChainlinkReference(opts ChainlinkOptions) *ChainlinkReference {
 	return &ChainlinkReference{
 		httpClient: httpClient,
 		rpcURL:     rpcURL,
+		logger:     logger,
+		now:        time.Now,
 		feedMap:    feedMap,
+		decimals:   make(map[string]*chainlinkDecimalsState),
 	}
 }
 
@@ -238,10 +264,13 @@ func (*ChainlinkReference) Name() string { return ChainlinkSourceName }
 
 // LookupPrice implements [Reference].
 //
-// Constructs an eth_call JSON-RPC request against the configured
-// AggregatorV3 contract's `latestRoundData()` view function
-// (selector 0xfeaf968c). Decodes the answer AND the round's
-// updatedAt, applies the feed's decimals, (optionally) inverts, and
+// Resolves the feed's scale first — the on-chain `decimals()` view,
+// verified against the configured value (chainlink_decimals.go); a
+// disagreement REFUSES the feed as ErrPriceUnavailable before any
+// price is read. Then constructs an eth_call JSON-RPC request against
+// the configured AggregatorV3 contract's `latestRoundData()` view
+// function (selector 0xfeaf968c). Decodes the answer AND the round's
+// updatedAt, applies the resolved decimals, (optionally) inverts, and
 // — CS-089 — REJECTS the answer as ErrPriceUnavailable when
 // updatedAt is older than the feed's MaxAge relative to observedAt:
 // a frozen feed served as fresh can both mask a real divergence and
@@ -256,72 +285,26 @@ func (r *ChainlinkReference) LookupPrice(ctx context.Context, pair canonical.Pai
 		return 0, fmt.Errorf("%w: chainlink: no feed configured for %s", ErrAssetUnsupported, pair.String())
 	}
 
+	decimals, err := r.resolveDecimals(ctx, pair, spec)
+	if err != nil {
+		return 0, err
+	}
+
 	// `latestRoundData()` selector. AggregatorV3Interface.
 	// keccak256("latestRoundData()")[:4] = feaf968c. Returns
 	// (roundId uint80, answer int256, startedAt uint256,
 	// updatedAt uint256, answeredInRound uint80) — 160 bytes.
 	const latestRoundDataSelector = "0xfeaf968c"
 
-	body, err := json.Marshal(map[string]any{
-		"jsonrpc": "2.0",
-		"id":      1,
-		"method":  "eth_call",
-		"params": []any{
-			map[string]string{"to": spec.Address, "data": latestRoundDataSelector},
-			"latest",
-		},
-	})
+	result, err := r.ethCall(ctx, spec.Address, latestRoundDataSelector)
 	if err != nil {
-		return 0, fmt.Errorf("chainlink: marshal request: %w", err)
+		if errors.Is(err, errChainlinkEmptyResult) {
+			return 0, fmt.Errorf("chainlink: empty rpc result for %s", pair.String())
+		}
+		return 0, err
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, r.rpcURL, bytes.NewReader(body))
-	if err != nil {
-		return 0, fmt.Errorf("chainlink: new request: %w", err)
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "application/json")
-
-	resp, err := r.httpClient.Do(req)
-	if err != nil {
-		return 0, fmt.Errorf("chainlink: rpc transport: %w", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	// Bound the response body: a latestRoundData JSON-RPC reply is
-	// ~320 bytes, so cap generously at 64 KiB (matching the Dashboard
-	// fetcher). An operator may point rpc_url at a third-party public
-	// Ethereum RPC (eth.llamarpc.com / rpc.ankr.com, per the docstring),
-	// and this reference runs inside the internet-facing API + aggregator
-	// processes — an unbounded io.ReadAll on a misbehaving/huge body
-	// would OOM them. Every sibling fetcher in this package already caps.
-	const maxBody = 64 << 10
-	respBody, err := io.ReadAll(io.LimitReader(resp.Body, maxBody))
-	if err != nil {
-		return 0, fmt.Errorf("chainlink: read body: %w", err)
-	}
-	if resp.StatusCode != http.StatusOK {
-		return 0, fmt.Errorf("chainlink: rpc status %d: %s", resp.StatusCode, string(respBody))
-	}
-
-	var rpcResp struct {
-		Result string `json:"result"`
-		Error  *struct {
-			Code    int    `json:"code"`
-			Message string `json:"message"`
-		} `json:"error"`
-	}
-	if err := json.Unmarshal(respBody, &rpcResp); err != nil {
-		return 0, fmt.Errorf("chainlink: decode response: %w", err)
-	}
-	if rpcResp.Error != nil {
-		return 0, fmt.Errorf("chainlink: rpc error %d: %s", rpcResp.Error.Code, rpcResp.Error.Message)
-	}
-	if rpcResp.Result == "" || rpcResp.Result == "0x" {
-		return 0, fmt.Errorf("chainlink: empty rpc result for %s", pair.String())
-	}
-
-	answer, updatedAt, err := decodeChainlinkRoundData(rpcResp.Result)
+	answer, updatedAt, err := decodeChainlinkRoundData(result)
 	if err != nil {
 		return 0, fmt.Errorf("chainlink: decode round data for %s: %w", pair.String(), err)
 	}
@@ -341,7 +324,7 @@ func (r *ChainlinkReference) LookupPrice(ctx context.Context, pair canonical.Pai
 			ErrPriceUnavailable, pair.String(), age.Truncate(time.Second), spec.MaxAge)
 	}
 
-	priceFloat, err := scaleChainlinkAnswer(answer, spec.Decimals)
+	priceFloat, err := scaleChainlinkAnswer(answer, decimals)
 	if err != nil {
 		return 0, fmt.Errorf("chainlink: scale answer for %s: %w", pair.String(), err)
 	}
@@ -352,6 +335,78 @@ func (r *ChainlinkReference) LookupPrice(ctx context.Context, pair canonical.Pai
 		priceFloat = 1.0 / priceFloat
 	}
 	return priceFloat, nil
+}
+
+// errChainlinkEmptyResult — the RPC answered `0x` / empty. Wrong
+// contract address or a reverted view; callers add the pair context.
+var errChainlinkEmptyResult = errors.New("chainlink: empty rpc result")
+
+// ethCall performs one eth_call JSON-RPC round-trip against `to` with
+// the given calldata (selector, 0x-prefixed) at block "latest" and
+// returns the raw 0x-prefixed result for the caller to ABI-decode.
+// Shared by the latestRoundData() price read and the decimals()
+// verification so both go through the same endpoint, transport and
+// body cap.
+func (r *ChainlinkReference) ethCall(ctx context.Context, to, data string) (string, error) {
+	body, err := json.Marshal(map[string]any{
+		"jsonrpc": "2.0",
+		"id":      1,
+		"method":  "eth_call",
+		"params": []any{
+			map[string]string{"to": to, "data": data},
+			"latest",
+		},
+	})
+	if err != nil {
+		return "", fmt.Errorf("chainlink: marshal request: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, r.rpcURL, bytes.NewReader(body))
+	if err != nil {
+		return "", fmt.Errorf("chainlink: new request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := r.httpClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("chainlink: rpc transport: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	// Bound the response body: a latestRoundData JSON-RPC reply is
+	// ~320 bytes, so cap generously at 64 KiB (matching the Dashboard
+	// fetcher). An operator may point rpc_url at a third-party public
+	// Ethereum RPC (eth.llamarpc.com / rpc.ankr.com, per the docstring),
+	// and this reference runs inside the internet-facing API + aggregator
+	// processes — an unbounded io.ReadAll on a misbehaving/huge body
+	// would OOM them. Every sibling fetcher in this package already caps.
+	const maxBody = 64 << 10
+	respBody, err := io.ReadAll(io.LimitReader(resp.Body, maxBody))
+	if err != nil {
+		return "", fmt.Errorf("chainlink: read body: %w", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("chainlink: rpc status %d: %s", resp.StatusCode, string(respBody))
+	}
+
+	var rpcResp struct {
+		Result string `json:"result"`
+		Error  *struct {
+			Code    int    `json:"code"`
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(respBody, &rpcResp); err != nil {
+		return "", fmt.Errorf("chainlink: decode response: %w", err)
+	}
+	if rpcResp.Error != nil {
+		return "", fmt.Errorf("chainlink: rpc error %d: %s", rpcResp.Error.Code, rpcResp.Error.Message)
+	}
+	if rpcResp.Result == "" || rpcResp.Result == "0x" {
+		return "", fmt.Errorf("%w: to=%s data=%s", errChainlinkEmptyResult, to, data)
+	}
+	return rpcResp.Result, nil
 }
 
 // decodeChainlinkRoundData parses the 160-byte `latestRoundData()`

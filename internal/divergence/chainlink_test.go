@@ -2,7 +2,9 @@ package divergence
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"io"
 	"math/big"
 	"net/http"
 	"net/http/httptest"
@@ -13,8 +15,12 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// fakeChainlinkRPC returns a server that responds to eth_call with
-// the supplied 32-byte int256 answer (hex string with 0x prefix).
+// fakeChainlinkRPC returns a server that responds to a latestRoundData()
+// eth_call with the supplied result (hex string with 0x prefix) and to a
+// decimals() eth_call with 8 — Chainlink's standard, which is what every
+// feed spec in these tests asserts, so the on-chain verification agrees
+// and the price path under test is reached. Cases that need a different
+// or failing decimals() use newChainlinkFakeRPC (chainlink_decimals_test.go).
 func fakeChainlinkRPC(t *testing.T, answerHex string) *httptest.Server {
 	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -22,10 +28,38 @@ func fakeChainlinkRPC(t *testing.T, answerHex string) *httptest.Server {
 			t.Errorf("got %s, want POST", r.Method)
 		}
 		w.Header().Set("Content-Type", "application/json")
+		if ethCallData(r) == chainlinkDecimalsSelector {
+			_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":1,"result":"` + bigInt256Hex(big.NewInt(8)) + `"}`))
+			return
+		}
 		_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":1,"result":"` + answerHex + `"}`))
 	}))
 	t.Cleanup(srv.Close)
 	return srv
+}
+
+// ethCallData extracts params[0].data from a JSON-RPC eth_call request
+// body so fakes can dispatch on the function selector. Empty when the
+// body is not an eth_call.
+func ethCallData(r *http.Request) string {
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		return ""
+	}
+	var req struct {
+		Method string            `json:"method"`
+		Params []json.RawMessage `json:"params"`
+	}
+	if err := json.Unmarshal(body, &req); err != nil || req.Method != "eth_call" || len(req.Params) == 0 {
+		return ""
+	}
+	var call struct {
+		Data string `json:"data"`
+	}
+	if err := json.Unmarshal(req.Params[0], &call); err != nil {
+		return ""
+	}
+	return call.Data
 }
 
 func mustPair(t *testing.T, base, quote string) canonical.Pair {

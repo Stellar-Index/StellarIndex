@@ -87,7 +87,11 @@ rpc_url        = "https://eth-mainnet.g.alchemy.com/v2/<ALCHEMY_KEY>"
 poll_interval  = "30s"
 
 # Per-feed map. Address is the AggregatorV3 proxy on Ethereum mainnet.
-# decimals defaults to 8 (Chainlink's standard).
+# decimals may be omitted: the poller reads the proxy's on-chain
+# decimals() (8 on every Chainlink USD feed) on the first poll and daily.
+# When set, it is verified against decimals(); on disagreement the feed
+# is refused (ERROR log + stellarindex_chainlink_feed_decimals_mismatch_total)
+# until config and chain agree.
 [external.chainlink.feed_map]
   "crypto:BTC/fiat:USD"  = { address = "0xF4030086522a5bEEa4988F8cA5B36dbC97BeE88c" }
   "crypto:ETH/fiat:USD"  = { address = "0x5f4eC3Df9cbd43714FE2740f5E3616155c5b8419" }

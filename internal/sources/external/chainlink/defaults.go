@@ -41,6 +41,14 @@ func DefaultFeedMap() map[string]FeedSpec {
 // Returns an error on a pair string that fails canonical parsing —
 // silent skips would hide misconfiguration.
 //
+// Decimals is carried through VERBATIM: an omitted value (0) stays 0,
+// which the Poller reads as "adopt the feed's on-chain decimals()"
+// (decimals.go). It is deliberately NOT substituted with
+// DefaultDecimals here — a substituted 8 would be indistinguishable
+// from an operator-asserted 8, and the resolver would then refuse an
+// 18-decimal feed the operator never mis-configured instead of
+// adopting its real scale.
+//
 // Used by both the indexer (live poller) and stellarindex-ops
 // (backfill subcommand) so the same operator TOML drives both
 // paths.
@@ -56,13 +64,9 @@ func BuildFeedSet(operatorMap map[string]FeedSpec) (map[string]FeedSpec, []canon
 		if err != nil {
 			return nil, nil, fmt.Errorf("feed_map key %q: %w", pairStr, err)
 		}
-		dec := setting.Decimals
-		if dec == 0 {
-			dec = DefaultDecimals
-		}
 		out[p.String()] = FeedSpec{
 			Address:  setting.Address,
-			Decimals: dec,
+			Decimals: setting.Decimals,
 			Invert:   setting.Invert,
 		}
 		pairs = append(pairs, p)

@@ -2261,6 +2261,7 @@ func buildDivergenceReferences(cfg config.DivergenceConfig, oracles divergence.O
 			}
 			refs = append(refs, divergence.NewChainlinkReference(divergence.ChainlinkOptions{
 				RPCURL:  cfg.Chainlink.RPCURL,
+				Logger:  logger,
 				FeedMap: feedMap,
 			}))
 		}

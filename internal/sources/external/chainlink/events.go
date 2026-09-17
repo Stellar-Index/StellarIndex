@@ -53,9 +53,11 @@ const SourceName = "chainlink"
 const DefaultPollInterval = 30 * time.Second
 
 // DefaultDecimals — Chainlink's overwhelming standard for
-// crypto/USD and fiat/USD feeds. Operators can override per-feed
-// via FeedSpec.Decimals; we default here so the operator-facing
-// FeedMap stays terse.
+// crypto/USD and fiat/USD feeds; the value every built-in
+// DefaultFeedMap entry asserts. It is NOT substituted for an omitted
+// per-feed value: FeedSpec.Decimals == 0 means "adopt the feed's
+// on-chain decimals()" (decimals.go), and an asserted value is
+// verified against the chain before any row is projected.
 const DefaultDecimals uint8 = 8
 
 // DefaultEndpoint is the Cloudflare public Ethereum JSON-RPC

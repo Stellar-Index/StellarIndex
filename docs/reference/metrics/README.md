@@ -692,6 +692,28 @@ stale by N minutes" expressible as `time() - <gauge>` rather than
 multi-window rate math, which simplifies alerting (see
 `stellarindex_external_poller_stale`).
 
+### `stellarindex_chainlink_feed_decimals_mismatch_total`
+
+Counter, labels `consumer` ∈ {divergence, ingest}, `pair`.
+
+Count of Chainlink readings REFUSED because the feed's configured
+`decimals` disagrees with the AggregatorV3 proxy's on-chain
+`decimals()` view. Both Chainlink readers verify the scale before
+reading a price — the `[divergence.chainlink]` cross-check reference
+(`consumer="divergence"`, API + aggregator processes) and the
+`[external.chainlink]` `oracle_updates` poller and its backfill
+(`consumer="ingest"`, indexer + `stellarindex-ops`). An omitted
+`decimals` adopts the on-chain value; a set value that disagrees is
+logged at ERROR with both numbers and the feed is refused until they
+agree (re-checked every 5 min; an agreeing value is re-read daily).
+
+Incremented on EVERY refused reading, not once per detection, so
+`increase(...[15m]) > 0` reads as "this feed is currently dark because
+of a scale disagreement" for as long as it lasts. Zero forever is the
+healthy state. A mis-scaled feed would otherwise be a permanent
+10^(d-8) false divergence (or 10^(d-8)-off oracle rows) with no signal
+at all; failing closed and counting here is the alternative.
+
 ### `stellarindex_external_fx_last_quote_unix`
 
 Gauge, label `source`.

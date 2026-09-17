@@ -126,7 +126,7 @@ the `env:` column.
 | `external.chainlink.poll_interval` | `int64` | _(required)_ | — | Override the default 30s poll cadence. Empty/zero uses the package default. |
 | `external.chainlink.feed_map` | `map[string]ChainlinkFeedSetting` | `{}` | — | Maps canonical pair string ('crypto:BTC/fiat:USD' etc.) to the AggregatorV3 contract address + decimals + invert. Empty falls back to the built-in default covering BTC/ETH/LINK/EUR/GBP/JPY vs USD. |
 | `external.chainlink.feed_map.<key>.address` | `string` | _(required)_ | — | 0x-prefixed AggregatorV3 contract address on Ethereum mainnet. |
-| `external.chainlink.feed_map.<key>.decimals` | `uint8` | `8` | — | Power-of-10 divisor for the raw int256 answer. Defaults to 8 (Chainlink's standard). Operator sets per-feed only when the feed publishes at a non-standard scale. |
+| `external.chainlink.feed_map.<key>.decimals` | `uint8` | `8` | — | Power-of-10 divisor for the raw int256 answer. Omit to adopt the feed's on-chain decimals() (8 on every Chainlink USD feed). When set it is verified against decimals() on the first poll and daily; on disagreement the feed is refused (ERROR log + stellarindex_chainlink_feed_decimals_mismatch_total) until they agree. |
 | `external.chainlink.feed_map.<key>.invert` | `bool` | `false` | — | If true, the canonical pair is the reciprocal of the feed's natural quote — e.g. operator wants USD/EUR but the feed publishes EUR/USD. price → 1/price after scaling. |
 
 ### `[aggregate]`
@@ -285,7 +285,7 @@ the `env:` column.
 | `divergence.chainlink.rpc_url` | `string` | _(required)_ | `CHAINLINK_RPC_URL` | Ethereum JSON-RPC endpoint. Shares the CHAINLINK_RPC_URL env var with the ingest poller (env overrides TOML). Empty defaults to https://cloudflare-eth.com. |
 | `divergence.chainlink.feeds` | `map[string]ChainlinkFeedConfig` | `{}` | — | Maps pair strings to {address, decimals, invert}. Empty disables Chainlink in practice. |
 | `divergence.chainlink.feeds.<key>.address` | `string` | _(required)_ | — | 0x-prefixed mainnet feed contract address. |
-| `divergence.chainlink.feeds.<key>.decimals` | `int` | `8` | — | Power-of-10 divisor for the raw int256. Defaults to 8 (Chainlink standard). |
+| `divergence.chainlink.feeds.<key>.decimals` | `int` | `8` | — | Power-of-10 divisor for the raw int256. Omit to adopt the feed's on-chain decimals() (8 on every Chainlink USD feed). When set it is verified against decimals() on first use and daily; on disagreement the feed's readings are refused (ERROR log + stellarindex_chainlink_feed_decimals_mismatch_total) until they agree. |
 | `divergence.chainlink.feeds.<key>.invert` | `bool` | `false` | — | Set true when canonical pair is reciprocal of the feed's natural quote. |
 | `divergence.chainlink.feeds.<key>.max_age_hours` | `int` | `0` | — | Staleness ceiling in hours for the feed's latestRoundData updatedAt; rounds older than this are rejected as reference-unavailable (CS-089). 0 = 3h crypto default; use ~76 for FX feeds (they pause over market closes). |
 | `divergence.reflector.enabled` | `bool` | `true` | — | Whether this on-chain oracle reference is wired into the divergence service. |
