@@ -216,10 +216,15 @@ tables (DDL applied on r1 by hand 2026-09-17 — idempotent, in
 `tier1_schema.sql` and mirrored with a runbook in
 `deploy/clickhouse/account_cohort_rollup.sql`). Coverage floor: every
 sponsor, creators with ≥ 10 accounts; below it the API says `covered: false`.
-**Remaining, operator-free:** the first cycle runs once the ops binary that
-carries the command is deployed (v0.89.0) — start `cohort-rollup.service`
-by hand and read the step log; the movements walk is the long step and its
-first wall-clock is the number to put here. Until then the panel reads
+**Measured before the first cycle (r1, 2026-09-17):** membership fill 11 s
+(23.8M rows, 19.2M distinct accounts). One 1M-ledger movements window near
+tip is 657M rows; the board rollups' argMax GROUP BY de-duplication
+exceeded the 8 GiB budget on it at 2 AND 6 threads, so the walk reads the
+archive with `FINAL` at 6 threads — 151 s / 2.7 GiB for that window,
+~36 min projected for the 10.4B-row archive. **Remaining, operator-free:**
+the first cycle runs once the ops binary that carries the command is
+deployed (v0.89.0) — `systemctl start cohort-rollup.service`, read the
+step log, and put the real wall-clock here. Until then the panel reads
 "warming".
 
 ### Live findings — r1, 2026-09-04 evening (alert board read directly)
