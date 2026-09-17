@@ -15,6 +15,8 @@ against.
 
 ## [Unreleased]
 
+## [v0.88.0] — 2026-09-17
+
 ### Added
 
 - **ops:** `stellarindex-ops curated-rwa-sync` caches a third party's
