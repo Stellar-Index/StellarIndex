@@ -336,6 +336,9 @@ func reportAbandonedTrades(logger *slog.Logger, phase string, abandoned []canoni
 		return
 	}
 	lo, hi := ledgerRange(abandoned)
+	// Counted by ROW, not by batch: the alert's value is the size of the
+	// served-tier gap the cursor has already advanced past.
+	obs.SinkUndrainedRowsTotal.WithLabelValues(obs.SinkPersistEvents, "trade").Add(float64(len(abandoned)))
 	logger.Error("trade batch abandoned on shutdown — recoverable from the CH lake (ADR-0034); re-derive this ledger range",
 		"phase", phase, "batch_size", len(abandoned), "ledger_from", lo, "ledger_to", hi, "err", err)
 }

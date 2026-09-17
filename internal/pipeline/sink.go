@@ -1242,6 +1242,10 @@ func persistEventResilient(ctx context.Context, logger *slog.Logger, ep eventPer
 // the completeness verdict rather than a ledger range.
 func reportAbandonedEvent(logger *slog.Logger, ev consumer.Event, err error) {
 	obs.SourceInsertErrorsTotal.WithLabelValues(eventSource(ev), "dropped").Inc()
+	// The per-source `dropped` counter above feeds a RATE alert (≥ 0.1/s
+	// for 5 min) that a handful of rows lost at shutdown never trips;
+	// this one is the shutdown-loss signal in its own right.
+	obs.SinkUndrainedRowsTotal.WithLabelValues(obs.SinkPersistEvents, "event").Inc()
 	logger.Error("served-tier event abandoned on shutdown — re-derive this source's tail (per-source gap detector / completeness verdict will show it)",
 		"kind", ev.EventKind(), "source", eventSource(ev), "err", err)
 }

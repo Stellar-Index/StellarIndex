@@ -1182,6 +1182,46 @@ the per-tick delta.
   outcome had no alert of any kind. Runbook:
   [ch-live-sink-errors](../../operations/runbooks/ch-live-sink-errors.md).
 
+### `stellarindex_sink_undrained_rows_total`
+
+Counter, labels `sink` (`persist_events`) and `kind` (`trade` |
+`event`).
+
+Rows a sink's bounded SHUTDOWN drain could not land before its budget
+expired — the served-tier (Postgres) twin of
+`stellarindex_ch_live_sink_ledgers_total{outcome="dropped"}`. The
+indexer upserts the ledger cursor per ledger BEFORE the pipeline sink
+writes, so a row abandoned at shutdown is a served-tier gap the cursor
+never revisits. Until this counter the loss surfaced only as an ERROR
+log line (`abandoned on shutdown — re-derive this ledger range`) that
+nothing alerted on; a deploy that caught Postgres slow or down could
+lose rows silently.
+
+- `sink="persist_events"` — the pipeline's Postgres served-tier sink
+  (`pipeline.PersistEvents`); the only emitter today. Other sinks
+  with a bounded drain join under their own value.
+- `kind="trade"` — canonical trades (sdex / Soroban DEX / external),
+  counted per ROW of the abandoned batch. Recoverable from the CH lake
+  (ADR-0034): the ERROR line names the ledger range for
+  `stellarindex-ops ch-rebuild -sdex-gaps`.
+- `kind="event"` — non-trade served-tier writes (oracle updates,
+  supply observations, blend / cctp / rozo rows). `consumer.Event`
+  carries no ledger, so the re-derive hint is the source's own gap
+  detector / the completeness verdict.
+
+Incremented only where a row has nowhere left to go
+(`reportAbandonedTrades` / `reportAbandonedEvent`), never where a
+steady-state flush hands rows to the shutdown drain to retry — a carry
+is not a loss. Pre-seeded at zero for both kinds so "never lost a row"
+and "counter not wired" are distinguishable. When to look at it: it
+should read 0 across every clean deploy. The increment lands seconds
+before the process exits (the drain budget is derived from
+`pipeline.ShutdownDeadline`), so a 15 s scrape can miss it — the
+journal ERROR line is authoritative, the alert
+`stellarindex_ingestion_sink_undrained_rows` (ticket, `for: 0m`) is
+the machine-readable best-effort signal on top of it. Runbook:
+[sink-undrained-rows](../../operations/runbooks/sink-undrained-rows.md).
+
 ### `stellarindex_hashdb_append_total`
 
 Counter, label `outcome` (`ok` / `error`).

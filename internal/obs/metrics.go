@@ -211,6 +211,11 @@ func registerAppMetricsTail() {
 		// TestHandler_ExposesMetrics, which scrapes for this name.
 		SourceUnrepresentableSymbolsTotal,
 
+		// Served-tier shutdown-loss counter; the Postgres twin of
+		// ChLiveSinkLedgersTotal{outcome="dropped"}, registered here for
+		// the same funlen reason as its neighbour above.
+		SinkUndrainedRowsTotal,
+
 		MEVDetectRunsTotal,
 		MEVEventsInsertedTotal,
 		MEVDetectDurationSeconds,
@@ -335,6 +340,13 @@ func seedBoundedLabelSeries() {
 	for _, outcome := range []string{"written", "buffered", "dropped", "errored"} {
 		ChLiveSinkLedgersTotal.WithLabelValues(outcome)
 	}
+	// The shutdown-loss counter is EXPECTED to sit at zero across every
+	// clean deploy, so without the seed an operator could not tell "no
+	// row has ever been abandoned" from "the counter was never wired".
+	// Unrolled rather than looped: the loop tipped this function over the
+	// gocognit ceiling, and two literal kinds read no worse.
+	SinkUndrainedRowsTotal.WithLabelValues(SinkPersistEvents, "trade")
+	SinkUndrainedRowsTotal.WithLabelValues(SinkPersistEvents, "event")
 	for _, outcome := range []string{"ok", "scan_error", "write_error"} {
 		MEVDetectRunsTotal.WithLabelValues(outcome)
 	}
@@ -3835,6 +3847,48 @@ var ChLiveSinkLedgersTotal = prometheus.NewCounterVec(
 		Help: "Ledgers processed by the ClickHouse real-time dual-sink, labelled by outcome (written|buffered|dropped|errored).",
 	},
 	[]string{"outcome"},
+)
+
+// SinkPersistEvents is the `sink` label value of the Postgres served-tier
+// pipeline sink (pipeline.PersistEvents) on [SinkUndrainedRowsTotal].
+// Declared here rather than in internal/pipeline so the zero-seed in
+// seedBoundedLabelSeries and the emitter cannot drift apart.
+const SinkPersistEvents = "persist_events"
+
+// SinkUndrainedRowsTotal — rows a sink's SHUTDOWN drain could not land
+// before its bounded budget expired, by `sink` and `kind`. The served-tier
+// (Postgres) twin of ChLiveSinkLedgersTotal{outcome="dropped"}: the
+// indexer upserts the ledger cursor per ledger BEFORE the sink writes, so
+// a row abandoned at shutdown is a served-tier gap the cursor will never
+// revisit. Until this counter existed the loss was visible only as an
+// ERROR log line ("abandoned on shutdown — re-derive this ledger range"),
+// which nothing alerted on; a deploy that caught Postgres slow or down
+// could lose rows silently.
+//
+//   - kind="trade" — canonical trades (sdex / Soroban DEX / external).
+//     Recoverable from the CH lake (ADR-0034): the ERROR line names the
+//     ledger range for `stellarindex-ops ch-rebuild -sdex-gaps`.
+//   - kind="event" — non-trade served-tier writes (oracle updates,
+//     supply observations, blend / cctp / rozo rows). consumer.Event
+//     carries no ledger, so the re-derive hint is the source's own gap
+//     detector / completeness verdict.
+//
+// Incremented ONLY where a row has nowhere left to go
+// (pipeline.reportAbandonedTrades / reportAbandonedEvent) — never where a
+// steady-state flush hands rows to the shutdown drain to retry, so a
+// carry does not read as a loss. Pre-seeded at zero for every (sink,
+// kind) so the alert can tell "armed" from "dead metric" (F-0033).
+//
+// The increment lands seconds before the process exits (the drain
+// budget is derived from pipeline.ShutdownDeadline), so a 15 s scrape
+// can miss it; the ERROR log line stays the authoritative record and
+// the alert is the machine-readable best-effort signal on top of it.
+var SinkUndrainedRowsTotal = prometheus.NewCounterVec(
+	prometheus.CounterOpts{
+		Name: "stellarindex_sink_undrained_rows_total",
+		Help: "Rows a sink's bounded shutdown drain abandoned unwritten while the ledger cursor had already advanced, by sink and kind (trade|event). Every increment is a served-tier gap to re-derive.",
+	},
+	[]string{"sink", "kind"},
 )
 
 // MarketsSkippedRowsTotal — count of trades rows the /v1/markets

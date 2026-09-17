@@ -19,6 +19,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/band"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/reflector"
+	"github.com/Stellar-Index/StellarIndex/internal/sources/sdex"
 )
 
 // fakeEvent is a consumer.Event that hits the sink's default
@@ -327,6 +328,89 @@ func TestDrainFinalPass_SkipInSinkExcludedFromReport(t *testing.T) {
 	}
 	if strings.Contains(out, "undrained_events=2") {
 		t.Errorf("log output = %q; the skipped projector-owned event inflated undrained_events to 2", out)
+	}
+}
+
+// TestDrainBufferedEvents_UndrainedRowsAreCounted pins the served-tier
+// shutdown-loss counter: a sink shut down with buffered rows its bounded
+// drain cannot land must advance
+// stellarindex_sink_undrained_rows_total{persist_events,<kind>} by the
+// exact ROW count, per kind. Before the counter the only trace of this
+// loss was the ERROR log line, while the ledger cursor — upserted per
+// ledger BEFORE the sink writes — had already advanced past the rows, so
+// a deploy that caught Postgres slow or down lost served-tier rows with
+// nothing alerting (the CH live-sink half of the same class already had
+// its `dropped` counter + rules).
+//
+// Both fakes answer the way a store answers a drain whose budget has
+// expired — with the ctx error. flushTradeBatch hands such a batch
+// straight back (no per-row pass, no backoff) and persistEventResilient
+// returns it unchanged, so the drain's only remaining move is to REPORT,
+// which makes the count deterministic without waiting out a real
+// drainTimeout. The channel is closed so drainBufferedEvents takes its
+// `!ok` flush path rather than racing its own deadline arm.
+func TestDrainBufferedEvents_UndrainedRowsAreCounted(t *testing.T) {
+	tradesBefore := counter(t, obs.SinkUndrainedRowsTotal, obs.SinkPersistEvents, "trade")
+	eventsBefore := counter(t, obs.SinkUndrainedRowsTotal, obs.SinkPersistEvents, "event")
+
+	const trades, events = 3, 2
+	in := make(chan consumer.Event, trades+events)
+	for i := uint32(0); i < trades; i++ {
+		in <- sdex.TradeEvent{Trade: mkTrade("sdex", 700+i)}
+	}
+	for i := 0; i < events; i++ {
+		// NOT projector-owned under SinkModeSkipProjected (see
+		// TestDrainFinalPass_SkipInSinkExcludedFromReport), so the drain
+		// must try to persist it.
+		in <- band.UpdateEvent{Update: canonical.OracleUpdate{Source: band.SourceName}}
+	}
+	close(in)
+
+	store := &fakeTradeStore{failErr: context.DeadlineExceeded} // stays unhealthy
+	ep := func(context.Context, consumer.Event, bool) error { return context.DeadlineExceeded }
+
+	drainBufferedEvents(in, discardLogger(), ep, store, SinkModeSkipProjected, time.Now().Add(time.Minute))
+
+	if n := store.landedCount(); n != 0 {
+		t.Fatalf("landed %d trades through a store that refuses every write; want 0", n)
+	}
+	if got := counter(t, obs.SinkUndrainedRowsTotal, obs.SinkPersistEvents, "trade") - tradesBefore; got != trades {
+		t.Errorf("sink_undrained_rows{persist_events,trade} delta = %v; want %d (one per abandoned trade row)", got, trades)
+	}
+	if got := counter(t, obs.SinkUndrainedRowsTotal, obs.SinkPersistEvents, "event") - eventsBefore; got != events {
+		t.Errorf("sink_undrained_rows{persist_events,event} delta = %v; want %d (one per abandoned non-trade event)", got, events)
+	}
+}
+
+// TestDrainBufferedEvents_CleanDrainCountsNoUndrainedRows is the
+// non-vacuity half of the test above: the same buffered rows through a
+// store that accepts them must leave the counter untouched. The counter
+// means LOSS — a clean deploy must read as zero, or the alert on it
+// tickets every restart.
+func TestDrainBufferedEvents_CleanDrainCountsNoUndrainedRows(t *testing.T) {
+	tradesBefore := counter(t, obs.SinkUndrainedRowsTotal, obs.SinkPersistEvents, "trade")
+	eventsBefore := counter(t, obs.SinkUndrainedRowsTotal, obs.SinkPersistEvents, "event")
+
+	in := make(chan consumer.Event, 4)
+	in <- sdex.TradeEvent{Trade: mkTrade("sdex", 800)}
+	in <- sdex.TradeEvent{Trade: mkTrade("sdex", 801)}
+	in <- band.UpdateEvent{Update: canonical.OracleUpdate{Source: band.SourceName}}
+	close(in)
+
+	store := &fakeTradeStore{}
+	store.healthy.Store(true)
+	ep := func(context.Context, consumer.Event, bool) error { return nil }
+
+	drainBufferedEvents(in, discardLogger(), ep, store, SinkModeSkipProjected, time.Now().Add(time.Minute))
+
+	if n := store.landedCount(); n != 2 {
+		t.Fatalf("landed %d trades; want 2 — the fixture's clean path did not run, so the zero-delta below would be vacuous", n)
+	}
+	if got := counter(t, obs.SinkUndrainedRowsTotal, obs.SinkPersistEvents, "trade") - tradesBefore; got != 0 {
+		t.Errorf("sink_undrained_rows{persist_events,trade} delta = %v on a clean drain; want 0", got)
+	}
+	if got := counter(t, obs.SinkUndrainedRowsTotal, obs.SinkPersistEvents, "event") - eventsBefore; got != 0 {
+		t.Errorf("sink_undrained_rows{persist_events,event} delta = %v on a clean drain; want 0", got)
 	}
 }
 

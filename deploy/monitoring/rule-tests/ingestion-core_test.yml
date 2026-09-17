@@ -821,6 +821,88 @@ tests:
         alertname: stellarindex_ingestion_ch_live_sink_drops_sustained
         exp_alerts: []
 
+  # ══ stellarindex_ingestion_sink_undrained_rows ════════════════════
+  # ── firing: a shutdown drain abandoned 37 trade rows, then the ────
+  # process restarted (counter reset to 0). The step is a single
+  # sample — the indexer exits seconds after incrementing — so the rule
+  # must fire off ONE scraped value with no `for:` dwell, and
+  # increase() must carry the 37 across the reset that follows.
+  - interval: 1m
+    name: rows abandoned at shutdown ticket at once and survive the restart reset
+    input_series:
+      - series: 'stellarindex_sink_undrained_rows_total{job="stellarindex_indexer",instance="r1:9100",sink="persist_events",kind="trade"}'
+        values: '0 0 0 0 0 37 0+0x70'
+      - series: 'stellarindex_sink_undrained_rows_total{job="stellarindex_indexer",instance="r1:9100",sink="persist_events",kind="event"}'
+        values: '0+0x76'
+    alert_rule_test:
+      - eval_time: 6m
+        alertname: stellarindex_ingestion_sink_undrained_rows
+        exp_alerts:
+          - exp_labels:
+              job: stellarindex_indexer
+              instance: r1:9100
+              sink: persist_events
+              kind: trade
+              severity: ticket
+              team: stellarindex
+              component: ingestion
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/sink-undrained-rows.md
+              summary: "persist_events sink abandoned trade rows at shutdown — served-tier gap to re-derive"
+              description: |
+                The persist_events sink's bounded shutdown drain gave up
+                with trade rows still unwritten while the ledger
+                cursor had already advanced past them: a served-tier gap the
+                indexer will never revisit on its own. The indexer journal
+                carries the authoritative ERROR line ("abandoned on shutdown
+                — re-derive") with the exact ledger range (trades) or source
+                (events); re-derive it from the CH lake (ADR-0034) per the
+                runbook. Usually Postgres was slow or down during a deploy.
+      # Still visible half an hour later — the deploy's operator has time
+      # to read it — and only the kind that lost rows fires.
+      - eval_time: 36m
+        alertname: stellarindex_ingestion_sink_undrained_rows
+        exp_alerts:
+          - exp_labels:
+              job: stellarindex_indexer
+              instance: r1:9100
+              sink: persist_events
+              kind: trade
+              severity: ticket
+              team: stellarindex
+              component: ingestion
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/sink-undrained-rows.md
+              summary: "persist_events sink abandoned trade rows at shutdown — served-tier gap to re-derive"
+              description: |
+                The persist_events sink's bounded shutdown drain gave up
+                with trade rows still unwritten while the ledger
+                cursor had already advanced past them: a served-tier gap the
+                indexer will never revisit on its own. The indexer journal
+                carries the authoritative ERROR line ("abandoned on shutdown
+                — re-derive") with the exact ledger range (trades) or source
+                (events); re-derive it from the CH lake (ADR-0034) per the
+                runbook. Usually Postgres was slow or down during a deploy.
+      # Resolved once the step has left the trailing 1h window.
+      - eval_time: 70m
+        alertname: stellarindex_ingestion_sink_undrained_rows
+        exp_alerts: []
+
+  # ── guard: a seeded-at-zero counter across clean deploys is silent ─
+  # Every clean restart re-seeds both (sink, kind) series at 0. Flat
+  # zero must never ticket, or the alert fires on every deploy.
+  - interval: 1m
+    name: a sink that abandoned nothing raises nothing
+    input_series:
+      - series: 'stellarindex_sink_undrained_rows_total{job="stellarindex_indexer",instance="r1:9100",sink="persist_events",kind="trade"}'
+        values: '0+0x70'
+      - series: 'stellarindex_sink_undrained_rows_total{job="stellarindex_indexer",instance="r1:9100",sink="persist_events",kind="event"}'
+        values: '0+0x70'
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: stellarindex_ingestion_sink_undrained_rows
+        exp_alerts: []
+
   # ══ stellarindex_ingestion_trade_insert_backpressure ══════════════
   # ── firing: the sink retries continuously for 10m ─────────────────
   - interval: 1m

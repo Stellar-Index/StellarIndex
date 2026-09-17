@@ -15,6 +15,19 @@ against.
 
 ## [Unreleased]
 
+### Added
+
+- **ops:** `stellarindex_sink_undrained_rows_total{sink,kind}` counts the
+  rows the Postgres pipeline sink's bounded shutdown drain abandoned
+  unwritten, by row and by kind (`trade` / `event`), and
+  `stellarindex_ingestion_sink_undrained_rows` (ticket, fires at once)
+  alerts on any increase in both rule trees. The indexer upserts the
+  ledger cursor per ledger before the sink writes, so a row lost at
+  shutdown was a served-tier gap that surfaced only as an ERROR log line
+  nothing alerted on — the ClickHouse live-sink half of the same class
+  already had its `dropped` counter and rules. Runbook:
+  `docs/operations/runbooks/sink-undrained-rows.md`.
+
 ### Changed
 
 - **ci/docker:** the six `docker/stellarindex-*.Dockerfile`s pin both

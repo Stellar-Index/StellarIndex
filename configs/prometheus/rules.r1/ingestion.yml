@@ -564,6 +564,43 @@ groups:
             leaves the hole, and internal/projector clamps to the
             contiguous watermark behind it.
 
+      # Served-tier twin of the ch_live_sink rules above. The Postgres
+      # pipeline sink's shutdown drain is bounded (pipeline.ShutdownDeadline
+      # → drainTimeout) and the indexer upserts the ledger cursor per
+      # ledger BEFORE the sink writes, so a row the drain abandons is a
+      # served-tier gap the cursor never revisits. Until this counter the
+      # loss was one ERROR log line ("abandoned on shutdown — re-derive
+      # this ledger range") that nothing alerted on.
+      #
+      # `for: 0m` + a 1h range deliberately: the loss is a COMPLETED event,
+      # not a sustained condition — the process exits within seconds of
+      # the increment, so there is nothing to wait for and a `for:` would
+      # only risk the alert resolving before it fired. The 1h window keeps
+      # the ticket visible long enough to be read after a deploy;
+      # increase() carries the pre-restart value across the counter reset
+      # that follows. Ticket, not page: the rows are recoverable (trades
+      # from the CH lake via ch-rebuild -sdex-gaps, events via their
+      # source's gap detector) — but only if someone acts.
+      - alert: stellarindex_ingestion_sink_undrained_rows
+        expr: increase(stellarindex_sink_undrained_rows_total[1h]) > 0
+        for: 0m
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: ingestion
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/sink-undrained-rows.md
+          summary: "{{ $labels.sink }} sink abandoned {{ $labels.kind }} rows at shutdown — served-tier gap to re-derive"
+          description: |
+            The {{ $labels.sink }} sink's bounded shutdown drain gave up
+            with {{ $labels.kind }} rows still unwritten while the ledger
+            cursor had already advanced past them: a served-tier gap the
+            indexer will never revisit on its own. The indexer journal
+            carries the authoritative ERROR line ("abandoned on shutdown
+            — re-derive") with the exact ledger range (trades) or source
+            (events); re-derive it from the CH lake (ADR-0034) per the
+            runbook. Usually Postgres was slow or down during a deploy.
+
       # 2026-07-06 Postgres-outage fix (ADR-0041): the trade sink now
       # RETRIES an infrastructure-classified insert failure (connection
       # refused/reset, PG restarting) with backpressure instead of

@@ -435,6 +435,12 @@ func TestZeroSeed_F0033(t *testing.T) {
 	s := string(body)
 
 	mustContain := []string{
+		// Served-tier shutdown loss. Expected to sit at zero across every
+		// clean deploy, and the process exits seconds after any increment,
+		// so an ABSENT series would be indistinguishable from "never lost
+		// a row" — which is exactly the pre-counter state (log-only loss).
+		`stellarindex_sink_undrained_rows_total{kind="trade",sink="persist_events"} 0`,
+		`stellarindex_sink_undrained_rows_total{kind="event",sink="persist_events"} 0`,
 		`stellarindex_aggregator_triangulations_total{outcome="ok"} 0`,
 		`stellarindex_aggregator_triangulations_total{outcome="missing_leg"} 0`,
 		`stellarindex_aggregator_triangulations_total{outcome="parse_error"} 0`,

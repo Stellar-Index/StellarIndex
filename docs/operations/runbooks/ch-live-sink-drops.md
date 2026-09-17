@@ -98,3 +98,8 @@ tail integrity), follow `docs/operations/sev-playbook.md`.
   stops (this alert's path leaves live ingest healthy).
 - `internal/storage/clickhouse/live_sink.go` — the non-blocking
   buffer/drop contract.
+- [sink-undrained-rows](sink-undrained-rows.md) — the served-tier
+  (Postgres) twin of this alert: rows the pipeline sink's bounded
+  shutdown drain abandoned while the ledger cursor had already
+  advanced. Different remedy — re-derive from the lake, nothing heals
+  it by timer.
