@@ -149,6 +149,7 @@ var subcommands = map[string]func(args []string) error{
 	"issuer-flags":            ingest.Run,
 	"directory-sync":          ingest.Run,
 	"listing-sync":            ingest.Run,
+	"curated-rwa-sync":        ingest.Run,
 	"asset-registry-backfill": ingest.Run,
 
 	"verify-archive":            archive.Run,
@@ -341,6 +342,22 @@ Subcommands:
                           prune; refuses an empty parse. Display-only data —
                           never feeds verification or the in-repo scam list.
                           Run daily from a timer.
+  curated-rwa-sync -config PATH [-base-url URL] [-dry-run] [-timeout DUR] [-textfile PATH]
+                          Cache a third party's curated list of tokenized
+                          real-world assets on Stellar, and that party's own
+                          USD price per token, into rwa_curated_directory for
+                          the RWA surface's CURATED arm. First curator: the
+                          Stellar team's public Dune uploads
+                          (dune.stellar.dataset_recognized_assets joined to the
+                          latest day of dune.stellar.dataset_asset_prices), read
+                          with one SQL execution on the "small" tier; the
+                          execution's credit cost is printed and, with
+                          -textfile, emitted as a gauge. A row is the curator's
+                          word and is served under its own basis and total,
+                          never inside the verified set. Malformed addresses
+                          are skipped and counted; a price with no day is
+                          dropped, never given one. Refuses an empty result.
+                          Key from DUNE_API_KEY (required).
   listing-sync -config PATH [-base-url URL] [-dry-run] [-timeout DUR]
                           Cache the Stellar slice of an independent price-
                           aggregation platform's own per-coin platform->address

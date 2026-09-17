@@ -15,6 +15,27 @@ against.
 
 ## [Unreleased]
 
+### Added
+
+- **ops:** `stellarindex-ops curated-rwa-sync` caches a third party's
+  curated list of tokenized real-world assets on Stellar, and that
+  party's own USD price per token, into a new `rwa_curated_directory`
+  table (migration 0161). The first curator is the Stellar team's public
+  Dune uploads — `dune.stellar.dataset_recognized_assets` joined to the
+  latest day of `dune.stellar.dataset_asset_prices` — which are the two
+  tables the "RWAs on Stellar" dashboard's own query values
+  `stellar.token_balances` against. Reading them is the only way to show
+  line by line why that dashboard and this index differ.
+
+  A row is the curator's word: no signature, no proof of control, no
+  market. The table keys on `(curator, address)` and the reader enforces
+  two clocks in SQL — recognition on our sync (48 h), price on the
+  curator's day stamp (7 days) — so a stale price reads as an absence.
+  One SQL execution per run on Dune's "small" tier; the execution's
+  credit cost is printed and, with `-textfile`, emitted as a gauge so the
+  cost of the arm is a metric. Key from `DUNE_API_KEY`. Nothing on the
+  served surface reads the table yet; that arm follows.
+
 ## [v0.87.0] — 2026-09-17
 
 ### Added

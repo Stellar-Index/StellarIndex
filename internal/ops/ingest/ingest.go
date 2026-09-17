@@ -74,6 +74,8 @@ func Run(args []string) error { //nolint:gocyclo // flat command-dispatch switch
 		return directorySync(args[1:])
 	case "listing-sync":
 		return listingSync(args[1:])
+	case "curated-rwa-sync":
+		return curatedRWASync(args[1:])
 	default:
 		return fmt.Errorf("internal/ops/ingest: unknown subcommand %q", args[0])
 	}
