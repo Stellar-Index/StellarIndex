@@ -223,6 +223,27 @@ private credit and one refused bond — reachable only through the curated arm
 (SDF's own prices) or a par policy, never through a measurement. That is the
 honest ceiling of "independent", and it is written here so it is not re-derived.
 
+**SDEX trade history (#349, chunk 1) — RESUMED 2026-09-17 16:52 UTC.** The
+reverse-chronological `ch-rebuild -sources sdex -sdex -write` re-derive that
+someone had been running by hand in 40k-ledger chunks (2026-09-12 → 09-16,
+~5 h per chunk on the per-row writer) died in the 2026-09-16 Postgres outage
+mid-chunk [61249957,61289956] (579,533 rows failed to write, "context
+canceled"). `trades` for `sdex` now reaches back to ledger 61,249,957
+(2026-02-15) from the 61,609,957 floor the issue recorded. It is now driven by
+`/usr/local/sbin/sdex-history-driver.sh` as the transient unit
+`sdex-history-driver.service` (EnvironmentFile=/etc/default/stellarindex,
+Nice=10, idle IO): re-runs the killed chunk first (the upsert path is
+idempotent; `-bulk-trades` falls back to it on a non-empty range and says
+so), then descends 40,000 ledgers at a time with `-bulk-trades`, each chunk
+under `run-heavy-job.sh` (singleton lock, 20G cap), one retry per chunk, and
+stops on its own when `/var/lib/stellarindex/sdex-history.stop` exists, when
+the Postgres volume has < 300G free (2.7T free at start; `trades` is 95 GB),
+or at the floor 50,746,445 (2024-03-11, the first on-chain AMM trade). Next
+chunk's upper bound lives in `/var/lib/stellarindex/sdex-history.next`; the
+log is `/var/log/stellarindex/sdex-history.log`. Known caveat carried from
+the by-hand runs: `ch-rebuild -write` records no projection dirty window, so
+the completeness verdict keeps its prior claim over these ranges.
+
 **Sponsor / creator cohort pages — SHIPPED 2026-09-17 (post-1.0 item, done
 early because it was asked for by name).** `/insights/sponsors/{g}` and
 `/insights/creators/{g}` now read `GET /v1/accounts/{g}/graph/cohort?relation=`
