@@ -49,6 +49,32 @@ against.
   instead of vanishing from it. Not reachable on the real capture
   (every endpoint is in every family), but the first relabel or
   latency-only endpoint would have made it so silently (#513).
+- **ops:** `curated-rwa-sync.service` describes itself. Its header, its
+  `RUN_TIMEOUT` sizing note and its memory-ceiling note were the
+  listing-sync unit's verbatim — CoinGecko, migration 0160,
+  `COINGECKO_API_KEY`, a 3.7 MB catalogue — so `systemctl cat` told the
+  operator the alert sent there the wrong upstream, key and migration.
+  Directives unchanged. The key file is now ONE mechanism everywhere:
+  the role renders `/etc/default/curated-rwa-sync` from
+  `vault_dune_api_key` when the vault defines it (else installs the
+  placeholder once), `root:root 0600` — what r1 has carried since the
+  unit shipped and what the runbook and alert already prescribed, where
+  the role said `0640 root:stellarindex`. The new vault value is in the
+  preflight shell-metacharacter census like every other env-file
+  secret, and the runbook names the `medium` tier the code asks for.
+  (#518)
+- **ops:** `postgresql.conf.j2` renders `min_wal_size = 512MB` again.
+  The 2026-09-15 edit templated both WAL lines while sizing only
+  `max_wal_size`, and its inline default moved `min_wal_size` 512MB →
+  2GB unmentioned; the 09-16 revert restored `max_wal_size` alone, so
+  every host rendered `min_wal_size = max_wal_size` and r1 runs 2GB
+  today. The comment now states the intended pair (2GB / 512MB, the
+  values the 2026-07-03 drift audit proved effective), that the next
+  apply is an effective diff on r1 with the Postgres restart handler
+  behind it, and how to land it by reload instead. The headroom guard
+  the comment pointed at (`postgres_wal_headroom_assert`) does not
+  exist; it names the real task now. Nothing applied to any host.
+  (#512)
 - **ops:** `curated-rwa-sync` asks Dune for the `medium` execution tier.
   It asked for `small`, which Dune does not name; every run with a key
   configured was refused before the SQL ran (`HTTP 400: This performance

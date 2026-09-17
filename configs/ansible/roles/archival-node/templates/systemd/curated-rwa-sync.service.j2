@@ -1,36 +1,36 @@
-# systemd unit: independent listing-directory sync.
+# systemd unit: third-party curated RWA directory sync.
 #
-# Rendered by Ansible. Caches the Stellar slice of an independent
-# price-aggregation platform's own per-coin platform→address map
-# (CoinGecko /coins/list?include_platform=true, joined to /coins/markets
-# for that platform's published USD price) into asset_listing_directory
-# (migration 0160). Two HTTPS GETs, chunked transactional upsert + prune;
-# an empty parse is refused so a broken fetch can never wipe the table.
+# Rendered by Ansible. Caches a named third party's curated list of
+# tokenized real-world assets on Stellar — first curator: the Stellar
+# team's public Dune uploads — into rwa_curated_directory (migration
+# 0161) for the RWA surface's curated arm. One Dune SQL execution per
+# run on the "medium" tier (the only tier below "large" that Dune names;
+# "small" is refused with HTTP 400 before the SQL runs), then a status
+# poll every 2s until it finishes, then the result paged 1,000 rows at a
+# time, at most 5,000 rows. The credit cost Dune reports for the
+# execution is emitted as a gauge, so the price of this arm is a metric.
 #
-# WHAT IT CACHES, and what that is worth: a third party independently
-# arriving at the same (address → instrument) pairing this index arrived
-# at by another route. It CORROBORATES an address; it does not attest to
-# one. The table carries no scam flags and admits none — an absence from
-# it means "not listed", which is the normal condition of nearly every
-# asset on the network.
+# WHAT IT CACHES, and what that is worth: the curator's word. A row is a
+# name, an address and a figure that a third party chose to publish; no
+# signature, no proof of control, no market. The surface serves it under
+# `basis: third_party_curated` with its own total, beside the verified
+# set and never inside it, and the reader refuses any row whose
+# synced_at is older than 48 hours — a sync that stops leaves an
+# absence, not a stale price.
 #
-# THE API KEY. Read from COINGECKO_API_KEY (Pro) or
-# COINGECKO_DEMO_API_KEY (Demo) in the environment — the same two
-# variables the indexer reads for the same credential, already carried by
-# /etc/default/stellarindex, which is why this unit adds no config key of
-# its own. The host follows the key: a Pro key authenticates ONLY against
-# pro-api.coingecko.com and the public host rejects it, so the command
-# selects the matching host rather than making an operator know they move
-# together. With no key set the run still works against the public host,
-# unauthenticated and rate-limited; the mode is printed on the first line
-# of every run (auth_mode=pro|demo|none).
-
-# curated-rwa-sync — cache a named third party's curated list of tokenized
-# real-world assets on Stellar (first curator: the Stellar team's public Dune
-# uploads) for the RWA surface's curated arm. One Dune SQL execution per run on
-# the "small" tier; the credit cost is emitted as a gauge. Needs DUNE_API_KEY in
-# /etc/default/curated-rwa-sync — the run refuses to start without it rather
-# than pretending it read the curator.
+# THE API KEY. Read from DUNE_API_KEY in /etc/default/curated-rwa-sync
+# (root:root, mode 0600). Only systemd reads that file, as PID 1 before
+# it drops to User=stellarindex, so unlike /etc/default/stellarindex it
+# needs no group read. The archival-node role renders it from
+# `vault_dune_api_key` when the vault defines that, and otherwise
+# installs an empty `DUNE_API_KEY=` placeholder once (never overwriting
+# a key an operator pasted in). Without a key the run REFUSES rather
+# than pretending it read the curator: it exits clean, still stamps the
+# textfile, and sets the `refused` gauge that
+# stellarindex_curated_rwa_sync_refused alerts on.
+#
+# /etc/default/stellarindex is loaded too, for the Postgres DSN the
+# on-disk stellarindex.toml deliberately omits.
 [Unit]
 Description=Stellar Index — third-party curated RWA directory sync (daily)
 Documentation=https://github.com/Stellar-Index/StellarIndex/blob/main/migrations/0161_create_rwa_curated_directory.up.sql
@@ -44,12 +44,16 @@ EnvironmentFile=-/etc/default/stellarindex
 
 # Defaults. Operators override via /etc/default/curated-rwa-sync.
 #
-# RUN_TIMEOUT sizing: the catalogue fetch is one ~3.7 MB body and the
-# price fetch is one small request per 250 ids (~50 ids today, so one).
-# Measured against the live upstream both complete in a couple of
-# seconds. 2m is the binary's own default and leaves two orders of
-# magnitude of headroom for a slow day; it is finite because an
-# unbounded fetch against a third party is a hang, not a slow success.
+# RUN_TIMEOUT sizing: the run is bounded not by transfer size (the
+# result is under a hundred rows) but by Dune's engine — the execution
+# queues behind other tenants and the poll loop waits for it, with each
+# HTTP call individually capped at 90s in the code. 6m is above the
+# binary's own 5m default so the wall clock is visible here, and it is
+# finite because a hung execution against a third party is a hang, not
+# a slow success. A run that hits it exits non-zero WITHOUT stamping
+# the textfile, so repeated timeouts surface as
+# stellarindex_curated_rwa_sync_stale. TimeoutStartSec below sits above
+# it so the binary's own deadline, not systemd's SIGTERM, ends the run.
 Environment=CONFIG_PATH=/etc/stellarindex.toml
 Environment=RUN_TIMEOUT=6m
 Environment=EXTRA_FLAGS=
@@ -62,7 +66,7 @@ ExecStart=/usr/local/bin/stellarindex-ops curated-rwa-sync \
   ${EXTRA_FLAGS}
 
 # De-privileged, same shape as directory-sync and sep1-refresh
-# (CS-118/CS-119): reads config, fetches two HTTPS bodies, writes
+# (CS-118/CS-119): reads config, talks HTTPS to one third party, writes
 # Postgres.
 User=stellarindex
 Group=stellarindex
@@ -80,12 +84,13 @@ ProtectControlGroups=true
 TimeoutStartSec=8min
 
 # Memory ceiling — the input is a third-party JSON body. The code caps
-# each response read at 64 MB and streams the catalogue array one element
-# at a time (so ~21k coin objects are never simultaneously live), but
-# that is the code's own guard; this is the host-level backstop so a
-# surprise can never compete with galexie's captive core, Postgres and
-# ClickHouse on this single box — the 2026-07-05 wedge class.
-# MemorySwapMax=0 kills rather than swaps.
+# each response read at 32 MB and pages the result 1,000 rows at a time
+# with a 5,000-row ceiling on the whole sync (the curator's list is under
+# a hundred rows; anything past the ceiling is not that list), but that
+# is the code's own guard; this is the host-level backstop so a surprise
+# can never compete with galexie's captive core, Postgres and ClickHouse
+# on this single box — the 2026-07-05 wedge class. MemorySwapMax=0 kills
+# rather than swaps.
 MemoryMax=1G
 MemorySwapMax=0
 

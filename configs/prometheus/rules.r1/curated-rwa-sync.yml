@@ -78,5 +78,8 @@ groups:
             the curator because DUNE_API_KEY is empty in
             /etc/default/curated-rwa-sync. The curated arm of
             /v1/rwa/assets reports `unwired`/`unavailable` until a key is
-            set. Set it (mode 0600) and start curated-rwa-sync.service;
-            the gauge clears on the next stamped run.
+            set. Set vault_dune_api_key in the host's vault and re-apply
+            the archival-node role (it renders the file root:root 0600),
+            or paste it into the placeholder, then start
+            curated-rwa-sync.service; the gauge clears on the next
+            stamped run.

@@ -242,7 +242,7 @@ the api-plane tickets it exists to complement.
 | `stellarindex_api_smoke_failing` | `stellarindex_api_smoke_failures` | > 0 for ≥ 30 min (six consecutive failing runs at the 5-min cadence) | ticket | [api-smoke-failing](runbooks/api-smoke-failing.md) |
 | `stellarindex_api_smoke_stale` | `time() - stellarindex_api_smoke_last_run_unix`, plus an `absent_over_time(…[30m])` branch for the never-ran case | > 30 min for ≥ 5 min | ticket | [api-smoke-stale](runbooks/api-smoke-stale.md) |
 | `stellarindex_curated_rwa_sync_stale` | `time() - stellarindex_curated_rwa_sync_last_run_unix`, plus an `absent_over_time(…[30h])` branch for the never-ran case | > 30 h for ≥ 10 min | ticket | [curated-rwa-sync-stale](runbooks/curated-rwa-sync-stale.md) |
-| `stellarindex_curated_rwa_sync_refused` | `stellarindex_curated_rwa_sync_refused == 1` — the run stamped but read nothing because `DUNE_API_KEY` is unset | ≥ 2 h | ticket | [curated-rwa-sync-stale](runbooks/curated-rwa-sync-stale.md) |
+| `stellarindex_curated_rwa_sync_refused` | `stellarindex_curated_rwa_sync_refused == 1` — the run stamped but read nothing because `DUNE_API_KEY` is unset in `/etc/default/curated-rwa-sync` (`root:root 0600`; the archival-node role renders it from `vault_dune_api_key`) | ≥ 2 h | ticket | [curated-rwa-sync-stale](runbooks/curated-rwa-sync-stale.md) |
 
 ## Healthchecks.io ping delivery
 

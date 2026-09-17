@@ -101,15 +101,38 @@ checkpoint_completion_target = 0.9
 # WAL lives on a 49GB volume shared with the OS. It is to move pg_wal
 # onto the pool that already has the room, and only then re-tune this —
 # at which point the original reasoning becomes true rather than
-# aspirational. Until that move lands, `postgres_wal_headroom_assert`
-# (roles/archival-node/tasks) refuses an apply whose max_wal_size does
-# not fit the filesystem pg_wal really sits on.
+# aspirational. Until that move lands, the task "Refuse a max_wal_size
+# that does not fit the pg_wal filesystem" (roles/archival-node/tasks/
+# 05-postgres.yml, just before this file is templated) refuses an apply
+# whose max_wal_size does not fit the filesystem pg_wal really sits on.
 #
 # max_wal_size is SIGHUP, so this applies on reload and needs no
 # restart — which is also why a bad value reaches production without a
 # restart to think twice about.
+#
+# THE INTENDED PAIR IS max_wal_size = 2GB, min_wal_size = 512MB. That is
+# the pair the 2026-07-03 drift audit codified as the proven effective
+# values for the ingest + CAGG-refresh write profile, and min_wal_size
+# was never reasoned about since: the 2026-09-15 edit templated both
+# lines while sizing only max_wal_size, and its inline default silently
+# moved min_wal_size 512MB → 2GB; the 2026-09-16 revert restored
+# max_wal_size and left min_wal_size where the edit had put it. 512MB
+# is restored here. The two are not the same knob: max_wal_size is the
+# checkpoint trigger, min_wal_size is the floor below which idle WAL
+# segments are removed instead of recycled — at min = max, pg_wal never
+# shrinks below 2GB on the 49GB root volume, which is 1.5GB of root held
+# for nothing. Both are SIGHUP.
+#
+# NOTE FOR THE NEXT APPLY: r1 runs min_wal_size = 2GB today (rendered by
+# the 2026-09-15 apply; the hand revert on 09-16 touched max_wal_size
+# only), so this line is an EFFECTIVE diff on r1, not a comment-only one,
+# and the template's `Restart postgres` handler will run behind it. That
+# restart is the intended, announced consequence of this change — not a
+# side effect of applying held comment-only fixes. To land it without a
+# restart, set the value in the live file and `systemctl reload
+# postgresql` first; the apply is then comment-only.
 max_wal_size              = {{ postgres_max_wal_size | default('2GB') }}
-min_wal_size              = {{ postgres_min_wal_size | default('2GB') }}
+min_wal_size              = {{ postgres_min_wal_size | default('512MB') }}
 
 # ─── Planner ────────────────────────────────────────────────────────
 random_page_cost          = 1.1     # NVMe

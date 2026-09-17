@@ -755,20 +755,54 @@
     group: root
     mode: "0755"
 
-- name: Provision the curated-rwa-sync env file placeholder (first install only)
-  # Operator-populated: DUNE_API_KEY goes here and nowhere in git. `force:
-  # false` so a re-apply never overwrites the key the operator pasted in.
-  # Without the key the unit refuses to run rather than pretending it read
-  # the curator, and the RWA surface reports the arm as unavailable.
+# /etc/default/curated-rwa-sync — the ONE place DUNE_API_KEY lives on a
+# host; curated-rwa-sync.service loads it as an EnvironmentFile. Two
+# tasks, exactly one of which runs:
+#
+#   - `vault_dune_api_key` defined and non-empty (inventory/<host>.secrets.yml)
+#     → rendered from the vault on every apply, like every other secret
+#     in /etc/default/stellarindex. The vault is the source of record: a
+#     key pasted by hand is REPLACED by the vault's on the next apply, so
+#     move a hand-set key into the vault before defining the variable.
+#   - otherwise → an empty `DUNE_API_KEY=` placeholder, installed once
+#     (`force: false`), so a re-apply never overwrites a key an operator
+#     pasted in. Without a key the unit REFUSES to run rather than
+#     pretending it read the curator, stamps its textfile, and the
+#     `_refused` alert names this file.
+#
+# root:root 0600, NOT the 0640 root:stellarindex the sibling env files
+# carry: those are also sourced interactively by the service user and the
+# heavy-job wrapper, so they need group read; nothing reads this file but
+# systemd, as PID 1 before it drops to User=stellarindex. That is what r1
+# has carried since the unit shipped, and what the runbook and the alert
+# text tell the operator to set — the three must agree, or the operator
+# who follows the runbook is told they created drift.
+- name: Render /etc/default/curated-rwa-sync from the vault
   ansible.builtin.copy:
     dest: /etc/default/curated-rwa-sync
     content: |
-      # curated-rwa-sync: paste the Dune API key here. Never commit this file.
+      # Rendered by Ansible from vault_dune_api_key. Do not edit by hand —
+      # `ansible-vault edit inventory/<host>.secrets.yml`, then re-apply
+      # with `--tags stellarindex`. Never commit this file.
+      DUNE_API_KEY={{ vault_dune_api_key }}
+    owner: root
+    group: root
+    mode: "0600"
+  no_log: true
+  when: (vault_dune_api_key | default('')) | length > 0
+
+- name: Provision the curated-rwa-sync env file placeholder (first install only)
+  ansible.builtin.copy:
+    dest: /etc/default/curated-rwa-sync
+    content: |
+      # curated-rwa-sync: paste the Dune API key here, or set vault_dune_api_key
+      # in the vault and re-apply. Never commit this file.
       DUNE_API_KEY=
     owner: root
-    group: stellarindex
-    mode: "0640"
+    group: root
+    mode: "0600"
     force: false
+  when: (vault_dune_api_key | default('')) | length == 0
 
 - name: Install verify-archive-tier-a / supply-snapshot / galexie-archive-trim units
   ansible.builtin.template:

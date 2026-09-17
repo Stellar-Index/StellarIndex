@@ -158,6 +158,8 @@
       vault_chainlink_rpc_url: "{{ vault_chainlink_rpc_url | default('') }}"
       vault_resend_api_key: "{{ vault_resend_api_key | default('') }}"
       vault_dashboard_code_secret: "{{ vault_dashboard_code_secret | default('') }}"
+      # /etc/default/curated-rwa-sync (14-stellarindex-services.yml)
+      vault_dune_api_key: "{{ vault_dune_api_key | default('') }}"
       clickhouse_serving_password: "{{ clickhouse_serving_password | default('') }}"
       clickhouse_ops_batch_user: "{{ clickhouse_ops_batch_user | default('') }}"
       clickhouse_ops_batch_password: "{{ clickhouse_ops_batch_password | default('') }}"
@@ -172,7 +174,7 @@
       - env_file_unsafe_secrets | length == 0
     fail_msg: >-
       These vault values would be rendered unquoted into
-      /etc/default/{stellarindex,stellarindex-ops,galexie} but contain a shell metacharacter
+      /etc/default/{stellarindex,stellarindex-ops,galexie,curated-rwa-sync} but contain a shell metacharacter
       (whitespace $ ` ; & | quotes \ < > ( ) { } * ? [ ] ! ~), so systemd
       and any shell that sources the file would disagree on the value —
       refusing to render. Rotate to `openssl rand -hex 32`

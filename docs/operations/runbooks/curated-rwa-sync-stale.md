@@ -63,10 +63,28 @@ curl -s https://api.stellarindex.io/v1/rwa/assets | jq '.curated | {status, asse
    stamps `last_run_unix` (so `_stale` measures the timer, not the key)
    and sets `stellarindex_curated_rwa_sync_refused` to 1. This is the
    expected state of a fresh install until an operator sets the key.
-   Set it (`DUNE_API_KEY=…` in `/etc/default/curated-rwa-sync`, mode
-   0600), then `systemctl start curated-rwa-sync.service` and re-read
-   the textfile — the gauge clears on that run. The reader recognises
-   the arm within its 10-minute cache TTL.
+   The file is `/etc/default/curated-rwa-sync`, `root:root` mode `0600`
+   — only systemd reads it, as PID 1, so it carries no group read
+   unlike the sibling `/etc/default/*` files. Set the key the way the
+   role does, so the next apply agrees with the host:
+
+   ```sh
+   # on the workstation, from configs/ansible/
+   ansible-vault edit inventory/r1.secrets.yml     # set vault_dune_api_key
+   ansible-playbook -i inventory/r1.yml playbooks/archival-node.yml \
+     --tags stellarindex --check --diff            # always --check --diff first
+   ```
+
+   The role renders `DUNE_API_KEY={{ vault_dune_api_key }}` into the
+   file whenever the vault defines a non-empty value; with the variable
+   undefined it installs the empty placeholder once and never overwrites
+   what an operator pasted in. Pasting the key by hand still works
+   (that is how r1 was keyed on 2026-09-17), but the vault is the source
+   of record — a hand-set key is replaced by the vault's on the first
+   apply after the variable is defined. Then `systemctl start
+   curated-rwa-sync.service` and re-read the textfile — the gauge clears
+   on that run. The reader recognises the arm within its 10-minute cache
+   TTL.
 
    If `_stale` fires on a host that never stamped, the timer has not
    fired at all in 30 hours of scrapes: the `absent_over_time` arm is
@@ -89,7 +107,7 @@ curl -s https://api.stellarindex.io/v1/rwa/assets | jq '.curated | {status, asse
 
 4. **Journal shows `wait: execution did not finish`** — Dune's engine
    queued past `RUN_TIMEOUT` (6 min). Usually transient; if it repeats
-   across two days, the query is contending for the `small` tier —
+   across two days, the query is contending for the `medium` tier —
    check Dune's status page before touching the query.
 
 5. **Journal shows `parse:` / `rows:` errors** — the curator changed a
@@ -134,8 +152,12 @@ if that net is not expected to carry a key.
 - `configs/ansible/roles/archival-node/templates/systemd/curated-rwa-sync.service.j2`
   — the unit, its `EnvironmentFile`, and the `ReadWritePaths` grant for
   the textfile directory.
+- `configs/ansible/roles/archival-node/tasks/14-stellarindex-services.yml`
+  — the two tasks (vault render / first-install placeholder) that own
+  `/etc/default/curated-rwa-sync`, and why it is `root:root 0600`.
 
 ## Changelog
 
 - 2026-09-17 — created with the alert (curated arm, v0.88.0).
 - 2026-09-17 — `_refused` added; a keyless run stamps instead of failing, and the `_stale` absent arm is gated on 30 h of observed scrapes (it fired 10 min after the v0.88.1 deploy).
+- 2026-09-17 — key mechanism made one thing: the role renders `/etc/default/curated-rwa-sync` from `vault_dune_api_key` (`root:root 0600`, matching what r1 carries and what this runbook and the alert prescribe); the tier named here is `medium` (#518).
