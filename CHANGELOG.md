@@ -23,6 +23,17 @@ against.
   cap left unpriced. A large cohort carries up to 400 holdings and every
   price is a live read of 40–350 ms, so pricing them all serially spent
   the whole 8 s request budget on prices alone.
+- **explorer/api:** the repo's own drift guards applied in two spots the
+  2026-09-14→17 commits missed (#515). `Sep1FetchStateReader` — the
+  optional seam behind the `not_fetched` / `unreachable` split on
+  `/v1/assets/{id}` — now carries the compile-time `*timescale.Store`
+  assertion `preciseSupplyReader` already has, so a reader that stops
+  satisfying it is a build failure rather than a silent revert of every
+  attempted-and-failed issuer to `not_fetched`. The explorer's `Coin`
+  takes `listing_reference` / `listing_valuation` from the generated
+  `Asset` schema instead of a hand-written copy, and the account
+  board-standing panel derives the creator / sponsor bodies from the
+  generated `operations` types and reads the rows without `as` casts.
 
 ### Fixed
 

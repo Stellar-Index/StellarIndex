@@ -539,35 +539,6 @@ export type Coin = Omit<Schemas['Asset'], 'type'> & {
   // curated scam directory. Mirrors the `scam_reason` field on
   // /v1/issuers; clients render a prominent warning when present.
   issuer_scam_reason?: string | null;
-  // The listing-priced second opinion for a verified-catalogue asset
-  // whose market cap this index declines to publish — an independent
-  // platform's USD price for the exact address, and this asset's supply
-  // valued at it (internal/api/v1/asset_listing_valuation.go). Local
-  // narrowing until the spec's Asset schema carries it.
-  //
-  // It is NOT a market capitalisation and must never be summed into one
-  // silently: `market_cap_usd` is a price somebody was observed paying,
-  // past the substance, dust-liquidity and scam gates, while this is
-  // supply times a figure a third party published about venues this
-  // index does not observe. A total that adds the two has to say so in
-  // its own copy — see SectorTotals on the /rwa page.
-  listing_reference?: {
-    price_usd: string;
-    source: string;
-    listing_id: string;
-    quote: string;
-    address: string;
-    address_form: 'classic' | 'sac';
-    as_of: string;
-    stale?: boolean;
-    provenance: 'listing_platform_price';
-  } | null;
-  listing_valuation?: {
-    status: string;
-    value_usd?: string | null;
-    circulating_supply?: string | null;
-    supply_basis?: string | null;
-  } | null;
 };
 
 export type CoinsPage = {

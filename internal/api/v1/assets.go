@@ -43,6 +43,17 @@ type Sep1FetchStateReader interface {
 	IssuerSep1Attempted(ctx context.Context, gStrkey string) (bool, error)
 }
 
+// Compile-time proof that the production reader still satisfies the seam —
+// the same guard [preciseSupplyReader] carries, for the same reason: an
+// optional seam that stops matching is not a build failure, it is a silent
+// opt-out, and here the opt-out reverts every attempted-and-failed issuer
+// to `not_fetched` with nothing red anywhere. Only the bare store is listed
+// because that is what the binary wires (cmd/stellarindex-api/main.go,
+// `Sep1Cache: store`); [CachedAssetsReader] does not implement
+// [Sep1CachedReader] at all, so it cannot stand in front of this seam. A
+// caching wrapper that one day does must be added here the same day.
+var _ Sep1FetchStateReader = (*timescale.Store)(nil)
+
 // AssetReader is the storage-side interface for asset reads.
 // Implementations:
 //   - *timescale.Store (queries trades hypertable's distinct assets).

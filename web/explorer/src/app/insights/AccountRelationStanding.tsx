@@ -6,6 +6,7 @@ import { useQuery } from '@tanstack/react-query';
 import { Panel } from '@/components/reveal';
 import { Stat } from '@/components/ui';
 import { apiGet, asExample, type Envelope } from '@/api/client';
+import type { operations } from '@/api/types';
 import { formatCompact } from '@/lib/format';
 
 import { formatTimestamp, stroopsToXlm } from '../explorer-shared';
@@ -21,34 +22,18 @@ import { RELATION, type Relation } from './accountRelation';
 // An empty result is therefore unambiguous here — it means this address
 // holds no row on this board, not that it fell outside a page.
 
-interface CreatorRow {
-  rank: number;
-  account: string;
-  accounts_created: number;
-  funded_stroops: string;
-  live_accounts: number;
-  live_stroops: string;
-}
-
-interface SponsorRow {
-  rank: number;
-  account: string;
-  sponsorships_started: number;
-  distinct_sponsored: number;
-  revocations_issued: number;
-}
-
-interface CreatorsResp {
-  creators: CreatorRow[];
-  totals: { creators: number };
-  computed_at: string;
-}
-
-interface SponsorsResp {
-  sponsors: SponsorRow[];
-  totals: { sponsors: number };
-  computed_at: string;
-}
+// Both board bodies are derived from the generated OpenAPI contract
+// (src/api/types.ts, `make web-generate-api`) rather than restated here:
+// a hand-written copy matches the wire today and is free to drift from it
+// the day the spec moves.
+type CreatorsResp = NonNullable<
+  operations['getAccountCreators']['responses'][200]['content']['application/json']['data']
+>;
+type SponsorsResp = NonNullable<
+  operations['getAccountSponsors']['responses'][200]['content']['application/json']['data']
+>;
+type CreatorRow = CreatorsResp['creators'][number];
+type SponsorRow = SponsorsResp['sponsors'][number];
 
 const numFmt = new Intl.NumberFormat('en-US');
 
@@ -122,18 +107,21 @@ export function AccountRelationStanding({
     );
   }
 
-  const rows: (CreatorRow | SponsorRow)[] = creation
-    ? ((data as CreatorsResp).creators ?? [])
-    : ((data as SponsorsResp).sponsors ?? []);
-  const population = creation
-    ? (data as CreatorsResp).totals?.creators
-    : (data as SponsorsResp).totals?.sponsors;
+  // The two bodies are told apart by the shape the wire actually served
+  // — the board that answered — rather than by the path this panel asked
+  // for, so a body of the other kind cannot be read through the wrong
+  // field names.
+  const board = 'creators' in data ? data.creators : data.sponsors;
+  const population =
+    'creators' in data ? data.totals.creators : data.totals.sponsors;
   // The keyed read returns at most this address's row, but the filter is
   // still checked rather than assumed: a deployment whose API predates
   // `?account=` ignores the parameter and serves the default page, and
   // taking rows[0] there would publish the top-ranked account's rank as
   // this address's.
-  const row = rows.find((r) => r.account === account);
+  const row: CreatorRow | SponsorRow | undefined = board.find(
+    (r) => r.account === account,
+  );
 
   return (
     <Panel
@@ -153,24 +141,24 @@ export function AccountRelationStanding({
                 : undefined
             }
           />
-          {creation && (
+          {'live_accounts' in row && (
             <>
               <Stat
                 label="Created set still live"
-                value={numFmt.format((row as CreatorRow).live_accounts)}
-                sub={survival(row as CreatorRow)}
+                value={numFmt.format(row.live_accounts)}
+                sub={survival(row)}
               />
               <Stat
                 label="XLM the set holds now"
-                value={stroopsToXlm((row as CreatorRow).live_stroops)}
+                value={stroopsToXlm(row.live_stroops)}
                 sub="native only"
               />
             </>
           )}
-          {!creation && (
+          {'revocations_issued' in row && (
             <Stat
               label="Revocations issued"
-              value={numFmt.format((row as SponsorRow).revocations_issued)}
+              value={numFmt.format(row.revocations_issued)}
               sub="a lower bound on arrangements ended"
             />
           )}
