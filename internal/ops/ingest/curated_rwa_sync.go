@@ -193,7 +193,7 @@ func (c *curatedRWAClient) do(ctx context.Context, method, path string, body any
 		}
 		rdr = bytes.NewReader(b)
 	}
-	req, err := http.NewRequestWithContext(ctx, method, c.baseURL+path, rdr)
+	req, err := http.NewRequestWithContext(ctx, method, c.baseURL+path, rdr) //nolint:gosec // G704: base URL defaults to a constant and an operator override is validated https-only; path is one of this file's fixed API routes
 	if err != nil {
 		return nil, fmt.Errorf("curated-rwa-sync: build request: %w", err)
 	}
@@ -201,7 +201,7 @@ func (c *curatedRWAClient) do(ctx context.Context, method, path string, body any
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Dune-API-Key", c.key)
 	req.Header.Set("User-Agent", "stellarindex-curated-rwa-sync/1")
-	resp, err := c.http.Do(req)
+	resp, err := c.http.Do(req) //nolint:gosec // G704: see the request construction above
 	if err != nil {
 		return nil, fmt.Errorf("curated-rwa-sync: %s %s: %w", method, path, err)
 	}
@@ -420,7 +420,7 @@ func writeCuratedRWATextfile(path, curator string, c curatedRWACounts, dryRun bo
 		_ = os.Remove(tmp.Name())
 		return err
 	}
-	if err := os.Chmod(tmp.Name(), 0o644); err != nil {
+	if err := os.Chmod(tmp.Name(), 0o644); err != nil { //nolint:gosec // world-readable metrics file by design: the collector reads it
 		_ = os.Remove(tmp.Name())
 		return err
 	}

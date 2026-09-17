@@ -110,3 +110,25 @@ needed for the known-empty-key case on a test net — the rule is
 evaluated per instance and a test net whose unit never stamps will
 fire; silence it in Alertmanager with a matcher on the instance label
 if that net is not expected to carry a key.
+
+## Related
+
+- `internal/ops/ingest/curated_rwa_sync.go` — the sync command: the
+  Dune query, the execute/poll/page loop, and the textfile writer whose
+  `last_run_unix` this alert reads.
+- `internal/storage/timescale/rwa_curated_directory.go` — the reader
+  whose 48-hour recognition bound is the deadline this alert runs ahead
+  of; `internal/api/v1/rwa_curated.go` turns its empty set into
+  `curated.status: unavailable`.
+- `api-smoke-stale.md` — the same "textfile stamped every run, absent
+  branch for never-ran" shape; the diagnosis order there applies here.
+- `docs/methodology/rwa-coverage-reconciliation.md` § *The curated arm*
+  — why the curator's figure is served apart from the verified set, and
+  what a stale curated arm does and does not affect.
+- `configs/ansible/roles/archival-node/templates/systemd/curated-rwa-sync.service.j2`
+  — the unit, its `EnvironmentFile`, and the `ReadWritePaths` grant for
+  the textfile directory.
+
+## Changelog
+
+- 2026-09-17 — created with the alert (curated arm, v0.88.0).
