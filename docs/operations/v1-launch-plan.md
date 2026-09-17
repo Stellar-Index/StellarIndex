@@ -277,6 +277,18 @@ months of flows, 14 contracts, and the endpoint answers keyed. Daily via
 
 ### Live findings — r1, 2026-09-04 evening (alert board read directly)
 
+> **Re-read 2026-09-17 19:10 UTC (after v0.89.1):** the board carries ONE
+> alert — `stellarindex_deadmansswitch` (informational, by design). Cleared
+> today: `stellarindex_node_root_disk_warning` (root 80% → 70%: a 2.6 GB
+> ClickHouse apport dump from 2026-09-10 and a 2.3 GB Go module cache removed),
+> `stellarindex_assets_popular_priceless` (yBTC's SAC traded on aquarius while
+> the price lived under its classic id — the tripwire now aliases SAC → classic,
+> v0.89.1), and `stellarindex_curated_rwa_sync_stale` (a keyless run now stamps
+> a `refused` gauge instead of failing). Pending on purpose:
+> `stellarindex_curated_rwa_sync_refused` (2 h `for`, reset by each rules
+> reload) will ticket until `DUNE_API_KEY` is set on r1. Everything below this
+> box is the 2026-09-04 read and is superseded where it disagrees.
+
 Six alerts are active on r1 and none of them is `oracle_stale`, which row
 1.1 still names as the only non-heartbeat alert firing. That sentence is now
 out of date; the board reads:
