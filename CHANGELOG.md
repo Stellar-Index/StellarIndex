@@ -15,6 +15,8 @@ against.
 
 ## [Unreleased]
 
+## [v0.89.3] — 2026-09-17
+
 ### Added
 
 - **explorer:** the cohort's contracts table names a token contract the
@@ -22,7 +24,7 @@ against.
   classic asset's code, a SEP-41 token by its symbol — as `label`
   (`token USDC`) instead of leaving every such row unlabelled.
 
-## [v0.89.2] — 2026-09-17
+## [v0.89.2] — 2026-09-17 (tag only — the release workflow's asset upload failed; shipped as v0.89.3)
 
 ### Added
 
