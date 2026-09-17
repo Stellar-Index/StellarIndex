@@ -11961,9 +11961,11 @@ paths:
                       period_start: '2026-07-01T00:00:00Z'
                       movements: 50
                       active_accounts: 21
+                      inflow_usd_then: '100.80'
+                      outflow_usd_then: '24.95'
                       by_asset:
-                      - { asset: USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN, inflow: '100', outflow: '25', scaled: true, inflow_usd: '100.00', outflow_usd: '25.00' }
-                      - { asset: native, inflow: '3', outflow: '0', scaled: true, inflow_usd: '0.30', outflow_usd: '0.00' }
+                      - { asset: USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN, inflow: '100', outflow: '25', scaled: true, inflow_usd: '100.00', outflow_usd: '25.00', inflow_usd_then: '99.80', outflow_usd_then: '24.95', price_usd_then: '0.998' }
+                      - { asset: native, inflow: '3', outflow: '0', scaled: true, inflow_usd: '0.30', outflow_usd: '0.00', inflow_usd_then: '1.00', outflow_usd_then: '0.00', price_usd_then: '0.3333333333' }
                   contracts:
                   - { contract_id: CCVYPX4NRLMPGB6ZRJ6QOP4GYXPQPCU5EIQYYW3DK2UUOOGAJWIK7BN2, protocol: blend, movements: 40, active_accounts: 9, first_at: '2026-06-17T06:00:00Z', last_at: '2026-09-17T06:00:00Z' }
                   positions:
@@ -13342,6 +13344,8 @@ components:
         period_start: { type: string, format: date-time }
         movements: { type: integer, format: int64, description: Movement legs that month across EVERY asset (exact). }
         active_accounts: { type: integer, format: int64, description: Distinct members that moved something that month (uniqCombined estimate). }
+        inflow_usd_then: { type: string, description: "The month's inflow at that month's prices: the `by_asset` rows' `inflow_usd_then` summed exactly and rounded once. Absent when no asset of the month has a `price_usd_then`; never zero." }
+        outflow_usd_then: { type: string, description: "As `inflow_usd_then`, for the outflow." }
         by_asset:
           type: array
           items: { $ref: "#/components/schemas/AccountCohortAssetFlow" }
@@ -13353,14 +13357,20 @@ components:
         `scaled` (classic assets, seven places) and the contract's own
         smallest unit otherwise. The USD figures value the month's
         quantity at TODAY'S price and are absent where nothing prices
-        the asset.
+        the asset. The `*_usd_then` figures value the same quantity at
+        `price_usd_then` — then = that month's volume-weighted USD
+        price on this index's own markets — and are absent where no
+        USD-quoted market priced the asset that month; never zero.
       properties:
         asset: { type: string }
         inflow: { type: string }
         outflow: { type: string }
         scaled: { type: boolean }
-        inflow_usd: { type: string }
-        outflow_usd: { type: string }
+        inflow_usd: { type: string, description: "`inflow` × today's live USD price, exact, rounded once to two places." }
+        outflow_usd: { type: string, description: "`outflow` × today's live USD price, exact, rounded once to two places." }
+        inflow_usd_then: { type: string, description: "`inflow` × `price_usd_then`, exact, rounded once to two places." }
+        outflow_usd_then: { type: string, description: "`outflow` × `price_usd_then`, exact, rounded once to two places." }
+        price_usd_then: { type: string, description: "That month's volume-weighted USD price for the asset on this index's own USD-quoted markets (every alias spelling folded), as the cohort rollup's last cycle loaded it. Absent when the month had no such market." }
       required: [asset, inflow, outflow, scaled]
     AccountCohortContract:
       type: object

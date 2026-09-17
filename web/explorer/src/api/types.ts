@@ -6052,6 +6052,10 @@ export interface components {
              * @description Distinct members that moved something that month (uniqCombined estimate).
              */
             active_accounts: number;
+            /** @description The month's inflow at that month's prices: the `by_asset` rows' `inflow_usd_then` summed exactly and rounded once. Absent when no asset of the month has a `price_usd_then`; never zero. */
+            inflow_usd_then?: string;
+            /** @description As `inflow_usd_then`, for the outflow. */
+            outflow_usd_then?: string;
             by_asset: components["schemas"]["AccountCohortAssetFlow"][];
         };
         /**
@@ -6059,15 +6063,26 @@ export interface components {
          *     `scaled` (classic assets, seven places) and the contract's own
          *     smallest unit otherwise. The USD figures value the month's
          *     quantity at TODAY'S price and are absent where nothing prices
-         *     the asset.
+         *     the asset. The `*_usd_then` figures value the same quantity at
+         *     `price_usd_then` — then = that month's volume-weighted USD
+         *     price on this index's own markets — and are absent where no
+         *     USD-quoted market priced the asset that month; never zero.
          */
         AccountCohortAssetFlow: {
             asset: string;
             inflow: string;
             outflow: string;
             scaled: boolean;
+            /** @description `inflow` × today's live USD price, exact, rounded once to two places. */
             inflow_usd?: string;
+            /** @description `outflow` × today's live USD price, exact, rounded once to two places. */
             outflow_usd?: string;
+            /** @description `inflow` × `price_usd_then`, exact, rounded once to two places. */
+            inflow_usd_then?: string;
+            /** @description `outflow` × `price_usd_then`, exact, rounded once to two places. */
+            outflow_usd_then?: string;
+            /** @description That month's volume-weighted USD price for the asset on this index's own USD-quoted markets (every alias spelling folded), as the cohort rollup's last cycle loaded it. Absent when the month had no such market. */
+            price_usd_then?: string;
         };
         /** @description One C… contract the cohort moved value through. */
         AccountCohortContract: {
@@ -22651,6 +22666,8 @@ export interface operations {
                      *               "period_start": "2026-07-01T00:00:00Z",
                      *               "movements": 50,
                      *               "active_accounts": 21,
+                     *               "inflow_usd_then": "100.80",
+                     *               "outflow_usd_then": "24.95",
                      *               "by_asset": [
                      *                 {
                      *                   "asset": "USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
@@ -22658,7 +22675,10 @@ export interface operations {
                      *                   "outflow": "25",
                      *                   "scaled": true,
                      *                   "inflow_usd": "100.00",
-                     *                   "outflow_usd": "25.00"
+                     *                   "outflow_usd": "25.00",
+                     *                   "inflow_usd_then": "99.80",
+                     *                   "outflow_usd_then": "24.95",
+                     *                   "price_usd_then": "0.998"
                      *                 },
                      *                 {
                      *                   "asset": "native",
@@ -22666,7 +22686,10 @@ export interface operations {
                      *                   "outflow": "0",
                      *                   "scaled": true,
                      *                   "inflow_usd": "0.30",
-                     *                   "outflow_usd": "0.00"
+                     *                   "outflow_usd": "0.00",
+                     *                   "inflow_usd_then": "1.00",
+                     *                   "outflow_usd_then": "0.00",
+                     *                   "price_usd_then": "0.3333333333"
                      *                 }
                      *               ]
                      *             }

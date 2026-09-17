@@ -65,6 +65,15 @@ var cohortStagingTables = []string{
 	"account_cohort_activity",
 	"account_cohort_positions",
 	"defi_position_holders",
+	"asset_month_usd_prices",
+}
+
+// cohortLoadedTables are the staging twins RunCohortRollup fills from
+// the served tier by batch insert BEFORE the statements run — their
+// truncation is the loader's, not a statement's.
+var cohortLoadedTables = map[string]bool{
+	"defi_position_holders":  true,
+	"asset_month_usd_prices": true,
 }
 
 // cohortRollupStatements is one cycle. Membership first, then the two
@@ -240,10 +249,12 @@ func cohortExchangeSQL() string {
 }
 
 // RunCohortRollup runs one cycle: loads the served tier's DeFi position
-// snapshot into ClickHouse, then the statements above. holders may be
-// empty (a deployment with no DeFi folds) — the positions table then
-// swaps in empty, which is the truth on that network.
-func RunCohortRollup(ctx context.Context, addr string, holders []timescale.DeFiPositionHolder, logf func(format string, args ...any)) error {
+// snapshot and its monthly USD prices into ClickHouse, then the
+// statements above. holders may be empty (a deployment with no DeFi
+// folds) — the positions table then swaps in empty, which is the truth
+// on that network; likewise prices on a deployment with no USD-quoted
+// market yet.
+func RunCohortRollup(ctx context.Context, addr string, holders []timescale.DeFiPositionHolder, prices []timescale.MonthlyUSDVWAP, logf func(format string, args ...any)) error {
 	conn, err := openRead(ctx, addr)
 	if err != nil {
 		return err
@@ -257,6 +268,10 @@ func RunCohortRollup(ctx context.Context, addr string, holders []timescale.DeFiP
 		return err
 	}
 	logf("defi position snapshot: %d rows staged", len(holders))
+	if err := loadAssetMonthUSDPrices(ctx, conn, prices); err != nil {
+		return err
+	}
+	logf("monthly usd prices: %d rows staged", len(prices))
 	return runRollupSteps(ctx, conn, tip, "cohort rollup", cohortRollupStatements, logf)
 }
 
@@ -281,6 +296,33 @@ func loadDeFiPositionHolders(ctx context.Context, conn driver.Conn, holders []ti
 	}
 	if err := b.Send(); err != nil {
 		return fmt.Errorf("clickhouse: cohort rollup: send position snapshot: %w", err)
+	}
+	return nil
+}
+
+// loadAssetMonthUSDPrices truncates and refills
+// asset_month_usd_prices_staging with the served tier's per-month USD
+// VWAPs (timescale.Store.MonthlyUSDVWAPs), which readCohortFlows joins to
+// price a month's flow at that month's price.
+func loadAssetMonthUSDPrices(ctx context.Context, conn driver.Conn, prices []timescale.MonthlyUSDVWAP) error {
+	if err := conn.Exec(ctx, `TRUNCATE TABLE stellar.asset_month_usd_prices_staging`); err != nil {
+		return fmt.Errorf("clickhouse: cohort rollup: truncate month prices: %w", err)
+	}
+	if len(prices) == 0 {
+		return nil
+	}
+	b, err := conn.PrepareBatch(ctx, `INSERT INTO stellar.asset_month_usd_prices_staging
+		(asset, month, vwap_usd, volume_usd)`)
+	if err != nil {
+		return fmt.Errorf("clickhouse: cohort rollup: prepare month prices: %w", err)
+	}
+	for _, p := range prices {
+		if err := b.Append(p.Asset, p.Month.UTC(), p.VWAPUSD, p.VolumeUSD); err != nil {
+			return fmt.Errorf("clickhouse: cohort rollup: append month prices: %w", err)
+		}
+	}
+	if err := b.Send(); err != nil {
+		return fmt.Errorf("clickhouse: cohort rollup: send month prices: %w", err)
 	}
 	return nil
 }
@@ -336,6 +378,11 @@ type AccountCohortFlow struct {
 	Outflow        *big.Int
 	Movements      uint64
 	ActiveAccounts uint64
+	// PriceUSDThen is the asset's volume-weighted USD price for THIS
+	// month on the index's own markets (stellar.asset_month_usd_prices,
+	// joined at read time), nil where no USD-quoted market priced it
+	// that month. Never zero.
+	PriceUSDThen *string
 }
 
 // AccountCohortContract is one C… counterparty the cohort moved value
@@ -451,20 +498,25 @@ func (r *ExplorerReader) readCohortHoldings(ctx context.Context, out *AccountCoh
 // readCohortFlows serves every month for the cohortFlowAssets assets it
 // moved most, plus the all-assets row. Assets past the cap are not
 // summed into an "other" bucket — their units differ — so the view says
-// how many were left out.
+// how many were left out. Each row carries the month's own USD price
+// where the served tier had a USD-quoted market for the asset that
+// month (a LEFT JOIN on (asset, month); the empty string is the miss,
+// read as nil).
 func (r *ExplorerReader) readCohortFlows(ctx context.Context, out *AccountCohort) error {
 	rows, err := r.conn.Query(ctx, `
-		SELECT month, asset, inflow, outflow, movements, active_accounts
-		FROM stellar.account_cohort_flows
-		WHERE rel = ? AND root = ?
-		  AND (asset = ? OR asset IN (
+		SELECT f.month, f.asset, f.inflow, f.outflow, f.movements, f.active_accounts,
+		       ifNull(p.vwap_usd, '') AS price_usd_then
+		FROM stellar.account_cohort_flows AS f
+		LEFT JOIN stellar.asset_month_usd_prices AS p ON p.asset = f.asset AND p.month = f.month
+		WHERE f.rel = ? AND f.root = ?
+		  AND (f.asset = ? OR f.asset IN (
 		      SELECT asset FROM stellar.account_cohort_flows
 		      WHERE rel = ? AND root = ? AND asset != ?
 		      GROUP BY asset
 		      ORDER BY sum(movements) DESC, asset
 		      LIMIT ?
 		  ))
-		ORDER BY month, asset`,
+		ORDER BY f.month, f.asset`,
 		out.Relation, out.Root, CohortAllAssets, out.Relation, out.Root, CohortAllAssets, cohortFlowAssets)
 	if err != nil {
 		return fmt.Errorf("clickhouse: account cohort flows: %w", err)
@@ -473,11 +525,15 @@ func (r *ExplorerReader) readCohortFlows(ctx context.Context, out *AccountCohort
 	for rows.Next() {
 		var f AccountCohortFlow
 		var in, outAmt big.Int
-		if err := rows.Scan(&f.Month, &f.Asset, &in, &outAmt, &f.Movements, &f.ActiveAccounts); err != nil {
+		var priceThen string
+		if err := rows.Scan(&f.Month, &f.Asset, &in, &outAmt, &f.Movements, &f.ActiveAccounts, &priceThen); err != nil {
 			return fmt.Errorf("clickhouse: scan account cohort flow: %w", err)
 		}
 		f.Month = f.Month.UTC()
 		f.Inflow, f.Outflow = &in, &outAmt
+		if priceThen != "" {
+			f.PriceUSDThen = &priceThen
+		}
 		out.Flows = append(out.Flows, f)
 	}
 	return rows.Err()

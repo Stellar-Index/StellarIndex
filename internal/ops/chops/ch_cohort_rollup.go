@@ -7,11 +7,17 @@ import (
 	"os"
 	"time"
 
+	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/config"
 	"github.com/Stellar-Index/StellarIndex/internal/ops/opsutil"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
+
+// cohortPricesFrom is the first month the cycle prices: the network's
+// genesis month. Every USD-quoted month the served tier holds is
+// loaded, so a cohort's oldest flow can be valued at its own month.
+var cohortPricesFrom = time.Date(2015, time.September, 1, 0, 0, 0, 0, time.UTC)
 
 // ch-cohort-rollup — what the accounts an address created or sponsored
 // went on to hold and do: current holdings, monthly flows, the contracts
@@ -23,7 +29,10 @@ import (
 // served tier's per-protocol folds (the six behind
 // /v1/accounts/{g}/positions) and staged into ClickHouse first, so the
 // cohort join happens beside the 25M-row membership instead of
-// shipping the membership to Postgres. The rest is ClickHouse only:
+// shipping the membership to Postgres. The served tier's monthly USD
+// VWAPs (prices_1mo, alias-folded) ride along the same way, into
+// asset_month_usd_prices, so the flows read can value a month at that
+// month's own price. The rest is ClickHouse only:
 // membership from the board rollups' edge tables, one walk over the
 // movements archive, and folds.
 //
@@ -50,18 +59,35 @@ func chCohortRollup(args []string) error {
 		fmt.Fprintf(os.Stderr, "ch-cohort-rollup: "+format+"\n", a...)
 	}
 
+	// The monthly price fold keys every alias spelling of a base onto
+	// its canonical form, so the registry the API resolves against has
+	// to be installed here too — without it only XLM's three forms fold
+	// and a SAC-quoted month of USDC would price under the C… id nothing
+	// joins on. Fail-closed on a malformed wrapper, as the API does.
+	aliasRegistry, err := canonical.NewAliasRegistry(cfg.Supply.SACWrappers)
+	if err != nil {
+		return fmt.Errorf("alias registry: %w", err)
+	}
+	canonical.InstallAliasRegistry(aliasRegistry)
+
 	store, err := timescale.Open(ctx, cfg.Storage.PostgresDSN)
 	if err != nil {
 		return err
 	}
 	holders, err := store.DeFiPositionHolders(ctx)
+	if err != nil {
+		_ = store.Close()
+		return err
+	}
+	logf("defi position snapshot: %d rows from the served tier in %s", len(holders), time.Since(start).Round(time.Second))
+	prices, err := store.MonthlyUSDVWAPs(ctx, cohortPricesFrom, time.Now().UTC())
 	_ = store.Close()
 	if err != nil {
 		return err
 	}
-	logf("defi position snapshot: %d rows from the served tier in %s", len(holders), time.Since(start).Round(time.Second))
+	logf("monthly usd prices: %d (asset, month) rows from the served tier in %s", len(prices), time.Since(start).Round(time.Second))
 
-	if err := clickhouse.RunCohortRollup(ctx, *chAddr, holders, logf); err != nil {
+	if err := clickhouse.RunCohortRollup(ctx, *chAddr, holders, prices, logf); err != nil {
 		return err
 	}
 	logf("cycle complete in %s", time.Since(start).Round(time.Second))

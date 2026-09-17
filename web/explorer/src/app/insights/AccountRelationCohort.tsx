@@ -1,9 +1,11 @@
 'use client';
 
 import Link from 'next/link';
+import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 
 import { Panel } from '@/components/reveal';
+import { SortPill } from '@/components/SortPill';
 import { LineChart, type LinePoint } from '@/components/charts/LineChart';
 import {
   Callout,
@@ -51,9 +53,16 @@ function usd(s: string | undefined): string {
   return Number.isFinite(n) ? usdFmt.format(n) : s;
 }
 
+/** Which USD price a month's flows are valued at: today's live price (the
+ * same rate across every month) or that month's own volume-weighted price
+ * on the index's markets. */
+type UsdBasis = 'today' | 'then';
+
+type UsdSide = 'inflow_usd' | 'outflow_usd' | 'inflow_usd_then' | 'outflow_usd_then';
+
 /** Sums a month's per-asset USD figures over the assets that carry one.
  * Assets without a price contribute nothing and are not zero. */
-function monthUSD(p: CohortPoint, side: 'inflow_usd' | 'outflow_usd'): number | null {
+function monthUSD(p: CohortPoint, side: UsdSide): number | null {
   let sum = 0;
   let any = false;
   for (const a of p.by_asset) {
@@ -69,6 +78,22 @@ function monthUSD(p: CohortPoint, side: 'inflow_usd' | 'outflow_usd'): number | 
 
 function monthTime(p: CohortPoint): number {
   return Math.floor(Date.parse(p.period_start) / 1000);
+}
+
+/** The moved-in / moved-out lines for one basis: a month contributes a
+ * point only where at least one of its assets is priced on that basis. */
+function usdLines(points: CohortPoint[], basis: UsdBasis): { in: LinePoint[]; out: LinePoint[] } {
+  const inSide: UsdSide = basis === 'then' ? 'inflow_usd_then' : 'inflow_usd';
+  const outSide: UsdSide = basis === 'then' ? 'outflow_usd_then' : 'outflow_usd';
+  const inLine: LinePoint[] = [];
+  const outLine: LinePoint[] = [];
+  for (const p of points) {
+    const i = monthUSD(p, inSide);
+    const o = monthUSD(p, outSide);
+    if (i !== null) inLine.push({ time: monthTime(p), value: i });
+    if (o !== null) outLine.push({ time: monthTime(p), value: o });
+  }
+  return { in: inLine, out: outLine };
 }
 
 /**
@@ -95,6 +120,10 @@ export function AccountRelationCohort({
       return env.data;
     },
   });
+  // Which price the value-moved chart is drawn at. A hook, so it sits
+  // above the early returns; the effective basis is resolved below
+  // against what the response actually carries.
+  const [basisChoice, setBasisChoice] = useState<UsdBasis>('today');
 
   const title = `What the ${vocabulary.counterparties} went on to hold and do`;
   const source = asExample(path);
@@ -145,15 +174,17 @@ export function AccountRelationCohort({
     time: monthTime(p),
     value: p.active_accounts,
   }));
-  const inLine: LinePoint[] = [];
-  const outLine: LinePoint[] = [];
-  for (const p of data.flows.points) {
-    const i = monthUSD(p, 'inflow_usd');
-    const o = monthUSD(p, 'outflow_usd');
-    if (i !== null) inLine.push({ time: monthTime(p), value: i });
-    if (o !== null) outLine.push({ time: monthTime(p), value: o });
-  }
-  const anyUSD = inLine.length > 0 || outLine.length > 0;
+  const today = usdLines(data.flows.points, 'today');
+  const then = usdLines(data.flows.points, 'then');
+  const hasToday = today.in.length > 0 || today.out.length > 0;
+  const hasThen = then.in.length > 0 || then.out.length > 0;
+  // The chosen basis where the response carries it; the other where it
+  // does not; nothing where neither is priced.
+  const basis: UsdBasis | null =
+    basisChoice === 'then'
+      ? hasThen ? 'then' : hasToday ? 'today' : null
+      : hasToday ? 'today' : hasThen ? 'then' : null;
+  const usdLine = basis === 'then' ? then : today;
   const labelled = data.contracts.filter((c) => c.protocol);
   const unlabelled = data.contracts.length - labelled.length;
 
@@ -240,28 +271,51 @@ export function AccountRelationCohort({
               ariaLabel={`Members of the ${vocabulary.actor}'s cohort active each month`}
               legend={{ valueLabel: 'Active accounts', formatValue: (n) => numFmt.format(n) }}
             />
-            {anyUSD ? (
-              <LineChart
-                data={inLine}
-                series={[
-                  { label: 'Moved in', data: inLine, tone: 'up' },
-                  { label: 'Moved out', data: outLine, tone: 'down' },
-                ]}
-                height={220}
-                ariaLabel="USD value moved into and out of the cohort each month, at today's prices"
-                legend={{ valueLabel: 'USD, at today’s prices', formatValue: (n) => usd(String(n)) }}
-              />
+            {basis !== null ? (
+              <>
+                {hasToday && hasThen && (
+                  <div className="flex items-center gap-2 text-xs">
+                    <span className="text-ink-muted">Value in</span>
+                    <SortPill active={basis === 'today'} onClick={() => setBasisChoice('today')}>
+                      USD today
+                    </SortPill>
+                    <SortPill active={basis === 'then'} onClick={() => setBasisChoice('then')}>
+                      USD then
+                    </SortPill>
+                  </div>
+                )}
+                <LineChart
+                  data={usdLine.in}
+                  series={[
+                    { label: 'Moved in', data: usdLine.in, tone: 'up' },
+                    { label: 'Moved out', data: usdLine.out, tone: 'down' },
+                  ]}
+                  height={220}
+                  ariaLabel={
+                    basis === 'then'
+                      ? "USD value moved into and out of the cohort each month, at each month's own prices"
+                      : "USD value moved into and out of the cohort each month, at today's prices"
+                  }
+                  legend={{
+                    valueLabel: basis === 'then' ? 'USD, at that month’s prices' : 'USD, at today’s prices',
+                    formatValue: (n) => usd(String(n)),
+                  }}
+                />
+              </>
             ) : (
               <Callout tone="info" title="No priced asset moved">
-                The cohort&rsquo;s movements are in assets nothing prices live, so
-                there is no USD line to draw; the activity line above is exact.
+                The cohort&rsquo;s movements are in assets nothing prices — live or
+                on the index&rsquo;s own markets that month — so there is no USD line
+                to draw; the activity line above is exact.
               </Callout>
             )}
             <p className="text-ink-faint text-[11px]">
               Received minus sent per asset per calendar month, from the movements
-              archive. The USD line values each month&rsquo;s quantity at
+              archive. &ldquo;USD today&rdquo; values each month&rsquo;s quantity at
               today&rsquo;s price — one unit across months, not what the month was
-              worth then. Broken out for{' '}
+              worth then; &ldquo;USD then&rdquo; values it at that month&rsquo;s
+              volume-weighted USD price on this index&rsquo;s own markets, and a
+              month no such market priced draws no point. Broken out for{' '}
               {data.flows.assets.length} asset{data.flows.assets.length === 1 ? '' : 's'}
               ; the activity line counts every asset. A month with no movement
               emits no point.

@@ -295,3 +295,112 @@ func deref(s *string) string {
 	}
 	return *s
 }
+
+// A month's flows are valued a second time at THAT month's own price:
+// exact big.Rat, rounded once at the end, absent (never zero) where the
+// reader joined no month price or the price is not a positive number,
+// never applied to an unscaled contract token, and summed on the month
+// point over the priced assets only — exactly, so two half-cents make
+// one cent, not the two a sum of rounded strings would give.
+func TestAccountCohortView_ValuesFlowsAtTheMonthsOwnPrice(t *testing.T) {
+	h := &Handler{
+		PricingEnabled: true,
+		LookupUSDPrice: func(_ context.Context, a canonical.Asset) (string, bool) {
+			switch a.String() {
+			case "native":
+				return "0.10", true
+			case cohortTestUSDC:
+				return "1", true
+			}
+			return "", false
+		},
+	}
+	const (
+		aqua = "AQUA-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
+		ybx  = "YBX-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
+		eurc = "EURC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
+	)
+	str := func(s string) *string { return &s }
+	at := time.Date(2026, 9, 17, 0, 0, 0, 0, time.UTC)
+	jul := time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC)
+	aug := time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC)
+	sep := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
+	snap := clickhouse.AccountCohort{
+		Root: "GROOT", Relation: "created", Covered: true,
+		Cycle: clickhouse.AccountCohortCycle{ComputedAt: at, TipLedger: 1},
+		Flows: []clickhouse.AccountCohortFlow{
+			{Month: jul, Asset: clickhouse.CohortAllAssets, Inflow: big.NewInt(0), Outflow: big.NewInt(0), Movements: 5, ActiveAccounts: 2},
+			// 100 USDC in, 25 out, at 0.998 that month → 99.80 / 24.95
+			{Month: jul, Asset: cohortTestUSDC, Inflow: big.NewInt(1_000_000_000), Outflow: big.NewInt(250_000_000), Movements: 3, ActiveAccounts: 1, PriceUSDThen: str("0.998")},
+			// 3 XLM in at 0.3333333333 → 0.9999999999 → 1.00 (rounded once)
+			{Month: jul, Asset: "native", Inflow: big.NewInt(30_000_000), Outflow: big.NewInt(0), Movements: 1, ActiveAccounts: 1, PriceUSDThen: str("0.3333333333")},
+			// a contract token is never priced, even with a month price
+			{Month: jul, Asset: "CCTOKEN", Inflow: big.NewInt(5_000), Outflow: big.NewInt(0), Movements: 1, ActiveAccounts: 1, PriceUSDThen: str("2")},
+
+			{Month: aug, Asset: clickhouse.CohortAllAssets, Inflow: big.NewInt(0), Outflow: big.NewInt(0), Movements: 4, ActiveAccounts: 3},
+			// two half-cents: 10 units × 0.0005 = 0.005 each
+			{Month: aug, Asset: aqua, Inflow: big.NewInt(100_000_000), Outflow: big.NewInt(0), Movements: 1, ActiveAccounts: 1, PriceUSDThen: str("0.0005")},
+			{Month: aug, Asset: ybx, Inflow: big.NewInt(100_000_000), Outflow: big.NewInt(0), Movements: 1, ActiveAccounts: 1, PriceUSDThen: str("0.0005")},
+			// a zero price is a miss, never a zero dollar
+			{Month: aug, Asset: eurc, Inflow: big.NewInt(70_000_000), Outflow: big.NewInt(0), Movements: 1, ActiveAccounts: 1, PriceUSDThen: str("0")},
+			// no month price joined
+			{Month: aug, Asset: cohortTestUSDC, Inflow: big.NewInt(10_000_000), Outflow: big.NewInt(0), Movements: 1, ActiveAccounts: 1},
+
+			{Month: sep, Asset: clickhouse.CohortAllAssets, Inflow: big.NewInt(0), Outflow: big.NewInt(0), Movements: 1, ActiveAccounts: 1},
+			{Month: sep, Asset: eurc, Inflow: big.NewInt(10_000_000), Outflow: big.NewInt(0), Movements: 1, ActiveAccounts: 1},
+		},
+	}
+	v := h.accountCohortView(context.Background(), snap)
+	if len(v.Flows.Points) != 3 {
+		t.Fatalf("points = %d, want 3", len(v.Flows.Points))
+	}
+	byAsset := func(p AccountCohortFlowPointV, asset string) AccountCohortAssetFlowV {
+		for _, af := range p.ByAsset {
+			if af.Asset == asset {
+				return af
+			}
+		}
+		t.Fatalf("%s: no %s row", p.Period, asset)
+		return AccountCohortAssetFlowV{}
+	}
+
+	julP := v.Flows.Points[0]
+	usdc := byAsset(julP, cohortTestUSDC)
+	if deref(usdc.InflowUSDThen) != "99.80" || deref(usdc.OutflowUSDThen) != "24.95" || deref(usdc.PriceUSDThen) != "0.998" {
+		t.Errorf("USDC July then = in %s out %s price %s, want 99.80 / 24.95 / 0.998", deref(usdc.InflowUSDThen), deref(usdc.OutflowUSDThen), deref(usdc.PriceUSDThen))
+	}
+	if deref(usdc.InflowUSD) != "100.00" || deref(usdc.OutflowUSD) != "25.00" {
+		t.Errorf("USDC July today-priced figures changed: in %s out %s", deref(usdc.InflowUSD), deref(usdc.OutflowUSD))
+	}
+	xlm := byAsset(julP, "native")
+	if deref(xlm.InflowUSDThen) != "1.00" || deref(xlm.OutflowUSDThen) != "0.00" {
+		t.Errorf("XLM July then = in %s out %s, want 1.00 / 0.00", deref(xlm.InflowUSDThen), deref(xlm.OutflowUSDThen))
+	}
+	if tok := byAsset(julP, "CCTOKEN"); tok.InflowUSDThen != nil || tok.PriceUSDThen != nil {
+		t.Errorf("contract token must never be then-priced: %+v", tok)
+	}
+	if deref(julP.InflowUSDThen) != "100.80" || deref(julP.OutflowUSDThen) != "24.95" {
+		t.Errorf("July point then = in %s out %s, want 100.80 / 24.95 (99.80 + 0.9999999999, rounded once)", deref(julP.InflowUSDThen), deref(julP.OutflowUSDThen))
+	}
+
+	augP := v.Flows.Points[1]
+	for _, a := range []string{aqua, ybx} {
+		if af := byAsset(augP, a); deref(af.InflowUSDThen) != "0.01" {
+			t.Errorf("%s August then = %s, want 0.01", a, deref(af.InflowUSDThen))
+		}
+	}
+	if af := byAsset(augP, eurc); af.InflowUSDThen != nil || af.PriceUSDThen != nil {
+		t.Errorf("a zero month price must be a miss, got %+v", af)
+	}
+	if af := byAsset(augP, cohortTestUSDC); af.InflowUSDThen != nil || af.PriceUSDThen != nil {
+		t.Errorf("no month price must leave the then figures absent, got %+v", af)
+	}
+	if deref(augP.InflowUSDThen) != "0.01" || deref(augP.OutflowUSDThen) != "0.00" {
+		t.Errorf("August point then = in %s out %s, want 0.01 / 0.00 (the exact sum 0.005 + 0.005 rounded once, not 0.01 + 0.01)", deref(augP.InflowUSDThen), deref(augP.OutflowUSDThen))
+	}
+
+	sepP := v.Flows.Points[2]
+	if sepP.InflowUSDThen != nil || sepP.OutflowUSDThen != nil {
+		t.Errorf("a month with no then-priced asset must omit the point sums, got in %s out %s", deref(sepP.InflowUSDThen), deref(sepP.OutflowUSDThen))
+	}
+}

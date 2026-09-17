@@ -1196,6 +1196,28 @@ ORDER BY (user, protocol, venue, asset, position_kind);
 CREATE TABLE IF NOT EXISTS stellar.defi_position_holders_staging
 AS stellar.defi_position_holders;
 
+-- One USD price per (canonical asset, calendar month): the served tier's
+-- monthly VWAP over its own USD-quoted markets (prices_1mo, every alias
+-- spelling of the base folded together — timescale.Store.MonthlyUSDVWAPs),
+-- copied from Postgres each cohort cycle. The flows read LEFT JOINs it on
+-- (asset, month) to value a month's movement at THAT month's price
+-- beside the live-price figure; a month with no USD-quoted market has no
+-- row and is served unpriced, never at zero. `vwap_usd` is the exact
+-- decimal string; `volume_usd` the month's USD volume behind it. XLM's
+-- own row is here under 'native'.
+CREATE TABLE IF NOT EXISTS stellar.asset_month_usd_prices
+(
+    asset      String,
+    month      Date,
+    vwap_usd   String,
+    volume_usd Float64
+)
+ENGINE = MergeTree
+ORDER BY (asset, month);
+
+CREATE TABLE IF NOT EXISTS stellar.asset_month_usd_prices_staging
+AS stellar.asset_month_usd_prices;
+
 -- Open DeFi positions held by the cohort, per protocol / venue / asset.
 -- `amount` is a Float64 sum of the folds' decimal amounts — a magnitude
 -- for ranking and display, not a settlement figure.

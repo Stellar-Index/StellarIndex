@@ -21,10 +21,11 @@ func TestCohortRollupRebuildsAndSwapsEveryServedTable(t *testing.T) {
 				truncated = true
 			}
 		}
-		// defi_position_holders_staging is truncated by loadDeFiPositionHolders,
-		// before the statements run, because the snapshot is batch-inserted
+		// The cohortLoadedTables' staging twins are truncated by their
+		// loaders (loadDeFiPositionHolders, loadAssetMonthUSDPrices) before
+		// the statements run, because those snapshots are batch-inserted
 		// from Go rather than filled by SQL.
-		if !truncated && table != "defi_position_holders" {
+		if !truncated && !cohortLoadedTables[table] {
 			t.Errorf("%s is never truncated before the cycle fills it", staging)
 		}
 		if !strings.Contains(last, staging+" AND stellar."+table) {

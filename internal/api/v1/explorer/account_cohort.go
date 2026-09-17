@@ -85,12 +85,17 @@ type AccountCohortFlowsV struct {
 	Points []AccountCohortFlowPointV `json:"points"`
 }
 
-// AccountCohortFlowPointV is one month.
+// AccountCohortFlowPointV is one month. InflowUSDThen / OutflowUSDThen
+// sum the by_asset rows' then-priced figures exactly and round once —
+// the month's value moved at that month's prices — and are absent when
+// no asset of the month has a then-price (never zero).
 type AccountCohortFlowPointV struct {
 	Period         string                    `json:"period"`
 	PeriodStart    string                    `json:"period_start"`
 	Movements      uint64                    `json:"movements"`
 	ActiveAccounts uint64                    `json:"active_accounts"`
+	InflowUSDThen  *string                   `json:"inflow_usd_then,omitempty"`
+	OutflowUSDThen *string                   `json:"outflow_usd_then,omitempty"`
 	ByAsset        []AccountCohortAssetFlowV `json:"by_asset"`
 }
 
@@ -98,14 +103,20 @@ type AccountCohortFlowPointV struct {
 // decimal strings in whole units when Scaled (classic assets, 7 places)
 // and the contract's own smallest unit otherwise. The USD figures are AT
 // TODAY'S PRICE — the month's quantity valued now, not what it was worth
-// then — and absent where nothing prices the asset.
+// then — and absent where nothing prices the asset. The *Then figures
+// value the same quantity at PriceUSDThen — that month's volume-weighted
+// USD price on this index's own markets — and are absent where no
+// USD-quoted market priced the asset that month.
 type AccountCohortAssetFlowV struct {
-	Asset      string  `json:"asset"`
-	Inflow     string  `json:"inflow"`
-	Outflow    string  `json:"outflow"`
-	Scaled     bool    `json:"scaled"`
-	InflowUSD  *string `json:"inflow_usd,omitempty"`
-	OutflowUSD *string `json:"outflow_usd,omitempty"`
+	Asset          string  `json:"asset"`
+	Inflow         string  `json:"inflow"`
+	Outflow        string  `json:"outflow"`
+	Scaled         bool    `json:"scaled"`
+	InflowUSD      *string `json:"inflow_usd,omitempty"`
+	OutflowUSD     *string `json:"outflow_usd,omitempty"`
+	InflowUSDThen  *string `json:"inflow_usd_then,omitempty"`
+	OutflowUSDThen *string `json:"outflow_usd_then,omitempty"`
+	PriceUSDThen   *string `json:"price_usd_then,omitempty"`
 }
 
 // AccountCohortContractV is one C… contract the cohort moved value
@@ -149,7 +160,9 @@ const accountCohortNote = "Every figure is the cohort's own ledger footprint as 
 	"share is a classic liquidity-pool position and is never priced. flows are derived from the " +
 	"movements archive — received minus sent per asset per calendar month (UTC) — so a month " +
 	"with no movement emits no point, and the USD figures value each month's quantity at " +
-	"today's price, not that month's. active_accounts is a uniqCombined estimate, movements is " +
+	"today's price, not that month's; the *_usd_then figures value it at price_usd_then — then = " +
+	"that month's volume-weighted USD price on this index's own markets — and are absent where " +
+	"no USD-quoted market priced the asset that month. active_accounts is a uniqCombined estimate, movements is " +
 	"exact. contracts are the C… counterparties of cohort movements: the value-moving subset " +
 	"of interaction — a call that moved no balance is not counted. positions are the served " +
 	"tier's per-protocol folds joined to the cohort; amount is the fold's own unit summed " +
@@ -345,13 +358,23 @@ func cohortFlowsView(flows []clickhouse.AccountCohortFlow, price cohortPriceFn) 
 	out := AccountCohortFlowsV{Granularity: "1M", Assets: []string{}, Points: []AccountCohortFlowPointV{}}
 	shown := map[string]struct{}{}
 	var cur *AccountCohortFlowPointV
+	var then *cohortThenSum
+	flush := func() {
+		if cur == nil || then == nil || !then.any {
+			return
+		}
+		in, o := formatUSD(then.in), formatUSD(then.out)
+		cur.InflowUSDThen, cur.OutflowUSDThen = &in, &o
+	}
 	for _, f := range flows {
 		period := f.Month.UTC().Format("2006-01")
 		if cur == nil || cur.Period != period {
+			flush()
 			out.Points = append(out.Points, AccountCohortFlowPointV{
 				Period: period, PeriodStart: f.Month.UTC().Format(time.RFC3339), ByAsset: []AccountCohortAssetFlowV{},
 			})
 			cur = &out.Points[len(out.Points)-1]
+			then = &cohortThenSum{in: new(big.Rat), out: new(big.Rat)}
 		}
 		if f.Asset == clickhouse.CohortAllAssets {
 			cur.Movements, cur.ActiveAccounts = f.Movements, f.ActiveAccounts
@@ -361,15 +384,31 @@ func cohortFlowsView(flows []clickhouse.AccountCohortFlow, price cohortPriceFn) 
 			shown[f.Asset] = struct{}{}
 			out.Assets = append(out.Assets, f.Asset)
 		}
-		cur.ByAsset = append(cur.ByAsset, cohortAssetFlowView(f, price))
+		af, thenIn, thenOut := cohortAssetFlowView(f, price)
+		if thenIn != nil {
+			then.in.Add(then.in, thenIn)
+			then.out.Add(then.out, thenOut)
+			then.any = true
+		}
+		cur.ByAsset = append(cur.ByAsset, af)
 	}
+	flush()
 	return out
+}
+
+// cohortThenSum accumulates one month's then-priced flows exactly; the
+// point renders the sum rounded once, never a sum of rounded strings.
+type cohortThenSum struct {
+	in, out *big.Rat
+	any     bool
 }
 
 // cohortAssetFlowView renders one asset's month: whole units for classic
 // keys, the contract's own unit otherwise, USD at today's price where
-// the asset is priced.
-func cohortAssetFlowView(f clickhouse.AccountCohortFlow, price cohortPriceFn) AccountCohortAssetFlowV {
+// the asset is priced, and USD at the month's own price where the reader
+// joined one. The exact then-priced amounts are returned beside the view
+// (nil when unpriced) so the month point can sum them before rounding.
+func cohortAssetFlowView(f clickhouse.AccountCohortFlow, price cohortPriceFn) (AccountCohortAssetFlowV, *big.Rat, *big.Rat) {
 	scaled := cohortAssetKind(f.Asset) != "contract"
 	af := AccountCohortAssetFlowV{Asset: f.Asset, Scaled: scaled}
 	if scaled {
@@ -381,7 +420,28 @@ func cohortAssetFlowView(f clickhouse.AccountCohortFlow, price cohortPriceFn) Ac
 		in, o := formatUSD(usdOfStroops(f.Inflow, p.Rat)), formatUSD(usdOfStroops(f.Outflow, p.Rat))
 		af.InflowUSD, af.OutflowUSD = &in, &o
 	}
-	return af
+	pThen, ok := cohortPriceThen(f.PriceUSDThen)
+	if !ok || !scaled {
+		return af, nil, nil
+	}
+	thenIn, thenOut := usdOfStroops(f.Inflow, pThen), usdOfStroops(f.Outflow, pThen)
+	in, o, ps := formatUSD(thenIn), formatUSD(thenOut), *f.PriceUSDThen
+	af.InflowUSDThen, af.OutflowUSDThen, af.PriceUSDThen = &in, &o, &ps
+	return af, thenIn, thenOut
+}
+
+// cohortPriceThen parses the reader's month price into an exact rate.
+// A price that does not parse or is not positive is a miss, never a
+// zero — the same rule cohortPricer applies to the live rate.
+func cohortPriceThen(raw *string) (*big.Rat, bool) {
+	if raw == nil {
+		return nil, false
+	}
+	r, ok := new(big.Rat).SetString(strings.TrimSpace(*raw))
+	if !ok || r.Sign() <= 0 {
+		return nil, false
+	}
+	return r, true
 }
 
 // cohortContractsView labels each contract where the roster knows it,

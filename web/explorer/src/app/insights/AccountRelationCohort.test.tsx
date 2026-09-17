@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 import { AccountRelationCohort } from './AccountRelationCohort';
@@ -9,8 +9,16 @@ vi.mock('@/api/client', async (importOriginal) => {
   const mod = await importOriginal<typeof import('@/api/client')>();
   return { ...mod, apiGet };
 });
+type MockSeries = { label: string; data: { time: number; value: number | null }[] };
 vi.mock('@/components/charts/LineChart', () => ({
-  LineChart: ({ ariaLabel }: { ariaLabel?: string }) => <div data-testid="line-chart">{ariaLabel}</div>,
+  LineChart: ({ ariaLabel, series }: { ariaLabel?: string; series?: MockSeries[] }) => (
+    <div
+      data-testid="line-chart"
+      data-series={series ? JSON.stringify(series.map((s) => [s.label, s.data.map((p) => p.value)])) : undefined}
+    >
+      {ariaLabel}
+    </div>
+  ),
 }));
 
 const ACCOUNT = 'GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN';
@@ -114,5 +122,71 @@ describe('AccountRelationCohort', () => {
     renderCohort();
     expect(await screen.findByText('No priced asset moved')).toBeInTheDocument();
     expect(screen.getAllByTestId('line-chart')).toHaveLength(1);
+    expect(screen.queryByText('USD then')).not.toBeInTheDocument();
+  });
+
+  it('offers no USD-then toggle when no month carries a then price', async () => {
+    apiGet.mockResolvedValueOnce({ data: cohort() });
+    renderCohort();
+    await screen.findByText('$525');
+    expect(screen.queryByText('USD then')).not.toBeInTheDocument();
+    expect(screen.queryByText('USD today')).not.toBeInTheDocument();
+    expect(screen.getAllByTestId('line-chart')[1]).toHaveTextContent("at today's prices");
+  });
+
+  it('switches the value-moved chart to each month’s own prices, summing only the then-priced assets', async () => {
+    const c = cohort();
+    (c.flows.points[0] as { by_asset: unknown }).by_asset = [
+      // priced both ways
+      { asset: USDC, inflow: '100', outflow: '25', scaled: true, inflow_usd: '100.00', outflow_usd: '25.00', inflow_usd_then: '99.80', outflow_usd_then: '24.95', price_usd_then: '0.998' },
+      // priced today only: contributes to "today", not to "then" — and not as zero
+      { asset: 'native', inflow: '3', outflow: '0', scaled: true, inflow_usd: '0.30', outflow_usd: '0.00' },
+    ];
+    apiGet.mockResolvedValueOnce({ data: c });
+    renderCohort();
+    await screen.findByText('$525');
+
+    const chart = () => screen.getAllByTestId('line-chart')[1]!;
+    const series = () => JSON.parse(chart().getAttribute('data-series') ?? '[]') as [string, number[]][];
+
+    const todayPill = screen.getByText('USD today');
+    const thenPill = screen.getByText('USD then');
+    expect(todayPill).toHaveAttribute('aria-pressed', 'true');
+    expect(thenPill).toHaveAttribute('aria-pressed', 'false');
+    expect(chart()).toHaveTextContent("at today's prices");
+    expect(series()).toEqual([
+      ['Moved in', [100.3]],
+      ['Moved out', [25]],
+    ]);
+
+    fireEvent.click(thenPill);
+    expect(thenPill).toHaveAttribute('aria-pressed', 'true');
+    expect(todayPill).toHaveAttribute('aria-pressed', 'false');
+    expect(chart()).toHaveTextContent("at each month's own prices");
+    expect(series()).toEqual([
+      ['Moved in', [99.8]],
+      ['Moved out', [24.95]],
+    ]);
+
+    fireEvent.click(todayPill);
+    expect(chart()).toHaveTextContent("at today's prices");
+  });
+
+  it('draws the then line alone, with no toggle, when nothing moved has a live price', async () => {
+    const c = cohort();
+    (c.flows.points[0] as { by_asset: unknown }).by_asset = [
+      { asset: USDC, inflow: '100', outflow: '25', scaled: true, inflow_usd_then: '99.80', outflow_usd_then: '24.95', price_usd_then: '0.998' },
+    ];
+    apiGet.mockResolvedValueOnce({ data: c });
+    renderCohort();
+    await screen.findByText('$525');
+    expect(screen.queryByText('USD then')).not.toBeInTheDocument();
+    expect(screen.queryByText('No priced asset moved')).not.toBeInTheDocument();
+    const chart = screen.getAllByTestId('line-chart')[1]!;
+    expect(chart).toHaveTextContent("at each month's own prices");
+    expect(JSON.parse(chart.getAttribute('data-series') ?? '[]')).toEqual([
+      ['Moved in', [99.8]],
+      ['Moved out', [24.95]],
+    ]);
   });
 });
