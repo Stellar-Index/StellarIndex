@@ -31,6 +31,9 @@ against.
   hours before the reader's 48-hour recognition bound empties the arm
   on the wire. Runbook `curated-rwa-sync-stale`; promtool fixture
   proven red against the never-ran case.
+- **sdk:** `RWAAssetsView` carries `curated_assets` and `curated`, and
+  `RWAAsset` carries `curator`, so the Go client does not silently drop
+  the curated arm (the spec-parity test is what caught it).
 
   A row is the curator's word: no signature, no proof of control, no
   market. The table keys on `(curator, address)` and the reader enforces

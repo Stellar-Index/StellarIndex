@@ -1591,6 +1591,56 @@ type RWAAssetsView struct {
 	// so a consumer can tell a recognised entity the index cannot see
 	// from one that does not exist.
 	UnreachedEntities []RWAUnreachedEntity `json:"unreached_entities"`
+	// CuratedAssets is a named third party's list of tokenized real-world
+	// assets, on that party's word and at that party's own price. It is
+	// served APART from Assets and is never merged into Summary or the
+	// group totals: Basis on each row is "third_party_curated", and a row
+	// also present in the verified set is flagged on its Curator. Empty
+	// whenever Curated is nil or its Status is not "served".
+	CuratedAssets []RWAAsset `json:"curated_assets,omitempty"`
+	// Curated describes the curated arm — which curator, whether it was
+	// served, and the three figures a reader compares: the verified
+	// total, the value the curator adds beyond it, and their sum. Nil on
+	// a deployment with no curator wired.
+	Curated *RWACuratedSummary `json:"curated,omitempty"`
+}
+
+// RWACurator names the third party whose word placed a curated row on
+// the list, and whether the same token is also in the verified set.
+type RWACurator struct {
+	Curator      string `json:"curator"`
+	Company      string `json:"company,omitempty"`
+	Subclass     string `json:"subclass,omitempty"`
+	AlsoVerified bool   `json:"also_verified"`
+}
+
+// RWACuratedCensus counts the curator's cached list as this index holds
+// it: entries recognised, entries carrying a price, entries whose price
+// is past the freshness bound, and when the curator last stamped it.
+type RWACuratedCensus struct {
+	Entries    int        `json:"entries"`
+	Priced     int        `json:"priced"`
+	Stale      int        `json:"stale"`
+	ObservedAt *time.Time `json:"observed_at,omitempty"`
+}
+
+// RWACuratedSummary is the curated arm's headline. Status is "served",
+// "unavailable" (a curator is wired but its cache is empty or past its
+// recognition bound), or "unwired". The three value figures are decimal
+// strings in USD; AdditionalValueUSD counts only rows NOT in the
+// verified set, so CombinedValueUSD = VerifiedValueUSD + AdditionalValueUSD
+// without double counting a token both sides recognise.
+type RWACuratedSummary struct {
+	Curator            string           `json:"curator"`
+	Status             string           `json:"status"`
+	Assets             int              `json:"assets"`
+	AlsoVerified       int              `json:"also_verified"`
+	AssetsValued       int              `json:"assets_valued"`
+	AdditionalValueUSD *string          `json:"additional_value_usd,omitempty"`
+	CombinedValueUSD   *string          `json:"combined_value_usd,omitempty"`
+	VerifiedValueUSD   *string          `json:"verified_value_usd,omitempty"`
+	Census             RWACuratedCensus `json:"census"`
+	Basis              string           `json:"basis"`
 }
 
 // RWAUnreachedEntity is one recognised issuing entity the index holds
@@ -1869,6 +1919,9 @@ type RWAAsset struct {
 	Volume24hUSD     *string `json:"volume_24h_usd,omitempty"`
 	FirstSeenLedger  uint32  `json:"first_seen_ledger,omitempty"`
 	ObservationCount int64   `json:"observation_count"`
+	// Curator is set only on rows of CuratedAssets: whose word placed the
+	// row there, and whether the verified set also carries it.
+	Curator *RWACurator `json:"curator,omitempty"`
 }
 
 // RWAGroupTotal is one row of the per-declared-class breakdown.
