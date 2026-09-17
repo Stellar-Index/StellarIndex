@@ -95,11 +95,6 @@ const opCreateAccount = "OperationTypeCreateAccount"
 // package can import every layer.
 const P23BoundaryLedger uint32 = 58_762_517
 
-// p23Boundary is P23BoundaryLedger as SQL text. Both creation arms clamp
-// against this one value rather than repeating the literal, so the two
-// halves of the ledger axis cannot drift apart or overlap.
-var p23Boundary = strconv.FormatUint(uint64(P23BoundaryLedger), 10)
-
 // creatorsBoardSettings is the settings clause for the board's join over
 // the working table. The memory shape is the house full-history scan
 // class; query_plan_join_swap_table = 0 additionally PINS which side of
@@ -194,10 +189,20 @@ const creatorEdgesSettings = boundedScanSettings + ", max_execution_time = 1800"
 // reads the CAP-67 `transfer` movement that carries the same funding
 // leg, joined to the OperationTypeCreateAccount row that says the
 // transfer was a creation. The two clamp on opposite sides of
-// P23BoundaryLedger, so their union is every ledger and their
-// intersection is empty: no creation is missed and none is counted
-// twice. Reading only the classic arm was #493 — a league table ranking
-// over a population that ended a year before the tip.
+// `boundary`, so their union is every ledger and their intersection is
+// empty: no creation is missed and none is counted twice. Reading only
+// the classic arm was #493 — a league table ranking over a population
+// that ended a year before the tip.
+//
+// WHY THE BOUNDARY IS A PARAMETER. It is the network's P23 boundary —
+// P23BoundaryLedger on pubnet, the chain's start on a reset testnet or
+// futurenet, where every ledger is post-P23 and the classic
+// representation never existed. Baked in as the pubnet constant, the
+// classic arm owned every test-net ledger (all of them sit below
+// 58,762,517) and looked for create_account movements nothing there ever
+// writes, so `created` cohorts were empty on both test nets however full
+// their archives (2026-09-17). Callers pass the config's
+// movements_floor_ledger, the same knob the movements feed floors at.
 //
 // The post-P23 pairing is exact rather than approximate, and was
 // measured that way on r1 2026-09-07 over ledgers 63,000,000-63,010,000:
@@ -262,12 +267,17 @@ const creatorEdgesSettings = boundedScanSettings + ", max_execution_time = 1800"
 // ledger_seq leading its ORDER BY, so all rows sharing an ORDER BY key
 // share a partition and no duplicate group can straddle a window
 // boundary.
-var creatorsRollupStatements = []rollupStep{
-	{sql: `TRUNCATE TABLE stellar.account_creators_ops`},
-	// The classic arm, walked. Reads one lake partition below the
-	// boundary, writes that partition's deduplicated creations, and
-	// reads no other table.
-	{walk: true, windowBinds: 1, sql: `INSERT INTO stellar.account_creators_ops
+func creatorsRollupStatements(boundaryLedger uint32) []rollupStep {
+	// Both creation arms clamp against this one value rather than
+	// repeating a literal, so the two halves of the ledger axis cannot
+	// drift apart or overlap.
+	boundary := strconv.FormatUint(uint64(boundaryLedger), 10)
+	return []rollupStep{
+		{sql: `TRUNCATE TABLE stellar.account_creators_ops`},
+		// The classic arm, walked. Reads one lake partition below the
+		// boundary, writes that partition's deduplicated creations, and
+		// reads no other table.
+		{walk: true, windowBinds: 1, sql: `INSERT INTO stellar.account_creators_ops
 	     (creator, created, amount, ledger, closed_at)
 	 SELECT address AS creator,
 	        argMax(counterparty, ingested_at) AS created,
@@ -276,15 +286,15 @@ var creatorsRollupStatements = []rollupStep{
 	        toDateTime(argMax(ledger_close_time, ingested_at), 'UTC') AS closed_at
 	 FROM stellar.account_movements
 	 WHERE ledger BETWEEN ? AND ?
-	   AND ledger < ` + p23Boundary + `
+	   AND ledger < ` + boundary + `
 	   AND movement_kind = 'create_account' AND direction = 'sent'
 	 GROUP BY address, ledger, tx_hash, op_index, leg_index, direction
 	 ` + rollupWalkSettings},
-	// The post-P23 arm, walked. Same window, the far side of the
-	// boundary, and the same working table. Both sources carry their own
-	// window predicate — a join condition prunes neither table's
-	// partitions — which is why this template binds the window twice.
-	{walk: true, windowBinds: 2, sql: `INSERT INTO stellar.account_creators_ops
+		// The post-P23 arm, walked. Same window, the far side of the
+		// boundary, and the same working table. Both sources carry their own
+		// window predicate — a join condition prunes neither table's
+		// partitions — which is why this template binds the window twice.
+		{walk: true, windowBinds: 2, sql: `INSERT INTO stellar.account_creators_ops
 	     (creator, created, amount, ledger, closed_at)
 	 SELECT m.address AS creator,
 	        argMax(m.counterparty, m.ingested_at) AS created,
@@ -296,48 +306,48 @@ var creatorsRollupStatements = []rollupStep{
 	     SELECT ledger_seq, tx_hash, op_index
 	     FROM stellar.operations
 	     WHERE ledger_seq BETWEEN ? AND ?
-	       AND ledger_seq >= ` + p23Boundary + `
+	       AND ledger_seq >= ` + boundary + `
 	       AND op_type = '` + opCreateAccount + `'
 	     GROUP BY ledger_seq, tx_hash, op_index
 	 ) AS o ON m.ledger = o.ledger_seq AND m.tx_hash = o.tx_hash AND m.op_index = o.op_index
 	 WHERE m.ledger BETWEEN ? AND ?
-	   AND m.ledger >= ` + p23Boundary + `
+	   AND m.ledger >= ` + boundary + `
 	   AND m.movement_kind = 'transfer' AND m.direction = 'sent'
 	 GROUP BY m.address, m.ledger, m.tx_hash, m.op_index, m.leg_index, m.direction
 	 ` + creatorsP23ArmSettings},
-	// ASSUMPTION, not an enforced invariant: exactly ONE `sent` transfer leg
-	// per create_account op. `leg_index` is in the GROUP BY above, so if a
-	// future protocol ever emits a second `sent` leg for one creation, this
-	// arm emits TWO rows for it and that creator's accounts_created SILENTLY
-	// DOUBLES — no error, no gap, just a wrong number on a served board.
-	//
-	// It holds today and was re-verified read-only on r1 2026-09-08 over
-	// ledgers 63,000,000-63,099,999: ZERO (ledger, tx_hash, op_index) keys
-	// carry more than one leg. The detector, if this needs re-checking or a
-	// probe:
-	//
-	//   SELECT count() FROM (
-	//     SELECT m.ledger, m.tx_hash, m.op_index, uniqExact(m.leg_index) AS legs
-	//     FROM stellar.account_movements AS m
-	//     INNER JOIN (SELECT ledger_seq, tx_hash, op_index FROM stellar.operations
-	//                 WHERE ledger_seq BETWEEN ? AND ? AND ledger_seq >= 58762517
-	//                   AND op_type = 'OperationTypeCreateAccount'
-	//                 GROUP BY ledger_seq, tx_hash, op_index) AS o
-	//       ON m.ledger = o.ledger_seq AND m.tx_hash = o.tx_hash
-	//      AND m.op_index = o.op_index
-	//     WHERE m.ledger BETWEEN ? AND ? AND m.ledger >= 58762517
-	//       AND m.movement_kind = 'transfer' AND m.direction = 'sent'
-	//     GROUP BY m.ledger, m.tx_hash, m.op_index HAVING legs > 1)
-	//
-	// Dropping `leg_index` from the GROUP BY would make the arm robust by
-	// construction and is a no-op on today's data — but it changes a query
-	// verified at whole-partition scale, on money, and the multi-leg case has
-	// no integration fixture to prove the collapse picks the right
-	// counterparty. Left as an assumption ON PURPOSE, written down here rather
-	// than only in a private ledger, so whoever edits this GROUP BY sees it.
-	{sql: `TRUNCATE TABLE stellar.account_creators_rollup_staging`},
-	{sql: `TRUNCATE TABLE stellar.account_creators_stats_staging`},
-	{sql: `INSERT INTO stellar.account_creators_rollup_staging
+		// ASSUMPTION, not an enforced invariant: exactly ONE `sent` transfer leg
+		// per create_account op. `leg_index` is in the GROUP BY above, so if a
+		// future protocol ever emits a second `sent` leg for one creation, this
+		// arm emits TWO rows for it and that creator's accounts_created SILENTLY
+		// DOUBLES — no error, no gap, just a wrong number on a served board.
+		//
+		// It holds today and was re-verified read-only on r1 2026-09-08 over
+		// ledgers 63,000,000-63,099,999: ZERO (ledger, tx_hash, op_index) keys
+		// carry more than one leg. The detector, if this needs re-checking or a
+		// probe:
+		//
+		//   SELECT count() FROM (
+		//     SELECT m.ledger, m.tx_hash, m.op_index, uniqExact(m.leg_index) AS legs
+		//     FROM stellar.account_movements AS m
+		//     INNER JOIN (SELECT ledger_seq, tx_hash, op_index FROM stellar.operations
+		//                 WHERE ledger_seq BETWEEN ? AND ? AND ledger_seq >= 58762517
+		//                   AND op_type = 'OperationTypeCreateAccount'
+		//                 GROUP BY ledger_seq, tx_hash, op_index) AS o
+		//       ON m.ledger = o.ledger_seq AND m.tx_hash = o.tx_hash
+		//      AND m.op_index = o.op_index
+		//     WHERE m.ledger BETWEEN ? AND ? AND m.ledger >= 58762517
+		//       AND m.movement_kind = 'transfer' AND m.direction = 'sent'
+		//     GROUP BY m.ledger, m.tx_hash, m.op_index HAVING legs > 1)
+		//
+		// Dropping `leg_index` from the GROUP BY would make the arm robust by
+		// construction and is a no-op on today's data — but it changes a query
+		// verified at whole-partition scale, on money, and the multi-leg case has
+		// no integration fixture to prove the collapse picks the right
+		// counterparty. Left as an assumption ON PURPOSE, written down here rather
+		// than only in a private ledger, so whoever edits this GROUP BY sees it.
+		{sql: `TRUNCATE TABLE stellar.account_creators_rollup_staging`},
+		{sql: `TRUNCATE TABLE stellar.account_creators_stats_staging`},
+		{sql: `INSERT INTO stellar.account_creators_rollup_staging
 	     (rank, creator, accounts_created, funded_stroops, live_accounts, live_stroops,
 	      first_ledger, last_ledger, first_created_at, last_created_at)
 	 SELECT row_number() OVER (ORDER BY accounts_created DESC, creator) AS rank,
@@ -362,7 +372,7 @@ var creatorsRollupStatements = []rollupStep{
 	     GROUP BY creator
 	 )
 	 ` + creatorsBoardSettings},
-	{sql: `INSERT INTO stellar.account_creators_stats_staging (metric, value)
+		{sql: `INSERT INTO stellar.account_creators_stats_staging (metric, value)
 	 SELECT metric, value FROM (
 	     SELECT 'creators_total' AS metric, toInt64(count()) AS value
 	     FROM stellar.account_creators_rollup_staging
@@ -386,15 +396,15 @@ var creatorsRollupStatements = []rollupStep{
 	     FROM stellar.account_creators_rollup_staging
 	 )
 	 SETTINGS max_threads = 2, max_execution_time = 600`},
-	// ── The graph arm (#351) ───────────────────────────────────────
-	// The board says WHO created the most. These two say WHOM — one row
-	// per distinct (creator, created) pair, held in both sort orders so
-	// each direction of the question is a primary-key range read. Same
-	// working table, so the edges and the board cannot describe
-	// different data.
-	{sql: `TRUNCATE TABLE stellar.account_creator_edges_staging`},
-	{sql: `TRUNCATE TABLE stellar.account_creator_edges_by_created_staging`},
-	{sql: `INSERT INTO stellar.account_creator_edges_staging
+		// ── The graph arm (#351) ───────────────────────────────────────
+		// The board says WHO created the most. These two say WHOM — one row
+		// per distinct (creator, created) pair, held in both sort orders so
+		// each direction of the question is a primary-key range read. Same
+		// working table, so the edges and the board cannot describe
+		// different data.
+		{sql: `TRUNCATE TABLE stellar.account_creator_edges_staging`},
+		{sql: `TRUNCATE TABLE stellar.account_creator_edges_by_created_staging`},
+		{sql: `INSERT INTO stellar.account_creator_edges_staging
 	     (creator, created, creations, funded_stroops, first_ledger, last_ledger, first_at, last_at)
 	 SELECT creator, created,
 	        toUInt64(count()) AS creations,
@@ -406,29 +416,33 @@ var creatorsRollupStatements = []rollupStep{
 	 FROM stellar.account_creators_ops
 	 GROUP BY creator, created
 	 ` + creatorEdgesSettings},
-	// The reverse ordering is filled FROM the staging arm just written,
-	// not by re-aggregating the archive: the second direction costs a
-	// re-sort of 21 M already-collapsed rows rather than a second pass
-	// over 24.8 M creation events.
-	{sql: `INSERT INTO stellar.account_creator_edges_by_created_staging
+		// The reverse ordering is filled FROM the staging arm just written,
+		// not by re-aggregating the archive: the second direction costs a
+		// re-sort of 21 M already-collapsed rows rather than a second pass
+		// over 24.8 M creation events.
+		{sql: `INSERT INTO stellar.account_creator_edges_by_created_staging
 	     (created, creator, creations, funded_stroops, first_ledger, last_ledger, first_at, last_at)
 	 SELECT created, creator, creations, funded_stroops, first_ledger, last_ledger, first_at, last_at
 	 FROM stellar.account_creator_edges_staging
 	 ` + boundedScanSettings + `, max_execution_time = 1800`},
-	// Swap every live table in one metadata transaction: a board swapped
-	// new beside last cycle's span would be the exact overstatement this
-	// surface exists to avoid, and a graph swapped beside a board built
-	// from a different cycle's working table would be the same defect one
-	// level down. The working table is not served and is never swapped.
-	{sql: `EXCHANGE TABLES stellar.account_creators_rollup_staging AND stellar.account_creators_rollup,
+		// Swap every live table in one metadata transaction: a board swapped
+		// new beside last cycle's span would be the exact overstatement this
+		// surface exists to avoid, and a graph swapped beside a board built
+		// from a different cycle's working table would be the same defect one
+		// level down. The working table is not served and is never swapped.
+		{sql: `EXCHANGE TABLES stellar.account_creators_rollup_staging AND stellar.account_creators_rollup,
 	                 stellar.account_creators_stats_staging AND stellar.account_creators_stats,
 	                 stellar.account_creator_edges_staging AND stellar.account_creator_edges,
 	                 stellar.account_creator_edges_by_created_staging AND stellar.account_creator_edges_by_created`},
+	}
 }
 
 // RunCreatorsRollup executes one full recompute + atomic exchange.
-func RunCreatorsRollup(ctx context.Context, addr string, logf func(format string, args ...any)) error {
-	return runRollupCycle(ctx, addr, "creators rollup", creatorsRollupStatements, logf)
+// boundary is the network's P23 boundary ledger, which splits the ledger
+// axis between the two creation arms (see creatorsRollupStatements):
+// P23BoundaryLedger on pubnet, the chain's start on a test net.
+func RunCreatorsRollup(ctx context.Context, addr string, boundary uint32, logf func(format string, args ...any)) error {
+	return runRollupCycle(ctx, addr, "creators rollup", creatorsRollupStatements(boundary), logf)
 }
 
 // AccountCreators reads the rollup snapshot: the top `limit` rows of the

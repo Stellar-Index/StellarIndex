@@ -27,7 +27,7 @@ import (
 // them fails here rather than on r1 at 3 a.m.
 func TestRollupStatementsKeepTheSpillValve(t *testing.T) {
 	lists := map[string][]string{}
-	for _, s := range creatorsRollupStatements {
+	for _, s := range creatorsRollupStatements(P23BoundaryLedger) {
 		lists["creators"] = append(lists["creators"], s.sql)
 	}
 	for _, s := range sponsorsRollupStatements {

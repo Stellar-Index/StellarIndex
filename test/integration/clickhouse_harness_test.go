@@ -21,11 +21,16 @@ import (
 )
 
 // clickhouseImage pins the ClickHouse server image for the raw-lake (ADR-0034)
-// integration suite. A stable LTS line — the schema uses only long-GA features
-// (ReplacingMergeTree FINAL, AggregatingMergeTree / uniqExact, Int128,
-// bloom_filter skip-indexes, materialized views). Keep it a real tag (not
-// `latest`) so a CI run is reproducible.
-const clickhouseImage = "clickhouse/clickhouse-server:24.8"
+// integration suite. Keep it a real tag (not `latest`) so a CI run is
+// reproducible, and keep it on the line PRODUCTION runs: the rollup cycles
+// carry per-statement settings the server must know by name
+// (query_plan_join_swap_table, account_creators_rollup.go, 2026-09-07), and
+// a server that predates a setting refuses the statement outright — so a
+// pin behind production cannot execute the SQL the suite exists to prove.
+// 24.8 (pinned 2026-07-05) did exactly that to the creators cycle until
+// 2026-09-17. r1 runs 26.5.1, testnet 26.7.5 (read 2026-09-17); 26.5 is
+// r1's line.
+const clickhouseImage = "clickhouse/clickhouse-server:26.5"
 
 // The shared ClickHouse container. Unlike the per-test Postgres containers
 // (storage_test.go), ClickHouse startup + schema apply is ~15-30s, so the whole

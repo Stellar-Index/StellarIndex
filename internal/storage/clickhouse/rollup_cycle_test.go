@@ -35,7 +35,7 @@ var appliedEffectSources = []string{"stellar.account_movements"}
 // remember them.
 func rollupCycles() map[string][]rollupStep {
 	return map[string][]rollupStep{
-		"creators": creatorsRollupStatements,
+		"creators": creatorsRollupStatements(P23BoundaryLedger),
 		"sponsors": sponsorsRollupStatements,
 	}
 }

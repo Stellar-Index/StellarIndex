@@ -34,7 +34,7 @@ these were network-parameterized (commit `6b3859d7`, audit 2026-08-26):
 | --- | --- |
 | Passphrase | `cfg.Stellar.Passphrase()`; ansible `stellar_passphrase` feeds core.cfg + galexie |
 | SAC contract addresses | `canonical.InstallNetworkPassphrase` at API start-up |
-| Movements feed floor | `soroban_genesis_ledger` / `movements_floor_ledger` = **1** on test nets (else the feed floors above the whole chain) |
+| Movements feed floor | `soroban_genesis_ledger` = **1** and `movements_floor_ledger` = **2** on test nets (else the feed floors above the whole chain; 2 not 1 because no lake holds genesis, and the cap67 daemon's first run must start at a ledger the lake has — it now clamps up to `min(ledger_seq)` itself, the default is the belt to that brace) |
 | cap67 follow daemon | `-floor-ledger` = `stellar_movements_floor_ledger` |
 | History archive | `stellar_history_archive_url` = core-testnet / core-futurenet; a pubnet (core-live) URL on a test net is **rejected** by config validation |
 | Cross-anchor archive fill | refuses to write pubnet ledgers into a test-net archive |

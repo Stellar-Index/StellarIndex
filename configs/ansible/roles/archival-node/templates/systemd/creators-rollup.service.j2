@@ -19,10 +19,17 @@ EnvironmentFile=-/etc/default/creators-rollup
 EnvironmentFile=-/etc/default/stellarindex
 
 Environment=CH_ADDR=127.0.0.1:9300
+# The config supplies stellar.movements_floor_ledger — the network's P23
+# boundary the two creation arms split at (pubnet's on r1, the chain's
+# start on a test net). Without it the cycle assumes pubnet's, and a test
+# net's classic arm owns every ledger while looking for create_account
+# movements that net never writes: an empty `created` cohort (2026-09-17).
+Environment=CONFIG_PATH=/etc/stellarindex.toml
 Environment=EXTRA_FLAGS=
 
 ExecStart=/usr/local/bin/stellarindex-ops ch-creators-rollup \
   -ch-addr ${CH_ADDR} \
+  -config ${CONFIG_PATH} \
   ${EXTRA_FLAGS}
 
 # De-privileged, same shape as the sibling oneshots (CS-118/CS-119).

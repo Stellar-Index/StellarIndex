@@ -305,14 +305,19 @@ Subcommands:
                           holder count into staging and atomically exchange
                           live (asset_holders_rollup). Run from the 30-min
                           timer; backs sub-second /v1/assets/{id}/holders.
-  ch-creators-rollup -ch-addr ADDR
+  ch-creators-rollup -ch-addr ADDR [-config PATH]
                           Recompute the account-creator league table
                           (funder -> accounts created, plus the created
                           set's surviving accounts and current XLM) into
                           staging and atomically exchange live
-                          (account_creators_rollup). Aggregated from the
-                          create_account arm of account_movements; also
-                          writes the ledger span it covered. Backs
+                          (account_creators_rollup). Aggregated from
+                          account_movements on both sides of the P23
+                          boundary: create_account movements below it,
+                          CAP-67 transfers paired with CreateAccount
+                          operations above. -config supplies the
+                          network's boundary (stellar.movements_floor_
+                          ledger; default pubnet's). Also writes the
+                          ledger span it covered. Backs
                           /v1/accounts/creators. Issue #351.
   ch-sponsors-rollup -ch-addr ADDR
                           Recompute the sponsor league table (sponsorship

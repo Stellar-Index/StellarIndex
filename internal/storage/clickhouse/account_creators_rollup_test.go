@@ -46,7 +46,7 @@ func TestCreatorsRollupStatsDeriveFromTheBoard(t *testing.T) {
 // exists to avoid, and AccountCreators would serve it as authoritative.
 func TestCreatorsRollupSwapIsAtomic(t *testing.T) {
 	var exchanges []string
-	for _, step := range creatorsRollupStatements {
+	for _, step := range creatorsRollupStatements(P23BoundaryLedger) {
 		if strings.Contains(step.sql, "EXCHANGE TABLES") {
 			exchanges = append(exchanges, step.sql)
 		}
@@ -62,7 +62,7 @@ func TestCreatorsRollupSwapIsAtomic(t *testing.T) {
 			t.Errorf("the single EXCHANGE is missing the pair %q", pair)
 		}
 	}
-	if exchanges[0] != creatorsRollupStatements[len(creatorsRollupStatements)-1].sql {
+	if exchanges[0] != creatorsRollupStatements(P23BoundaryLedger)[len(creatorsRollupStatements(P23BoundaryLedger))-1].sql {
 		t.Error("the EXCHANGE must be the last statement, after every staging arm is filled")
 	}
 	// The working table is not served and must never be swapped.
@@ -139,7 +139,7 @@ func TestCreatorsRollupSpansTheP23Boundary(t *testing.T) {
 
 	rec := &recordingExecer{}
 	if err := runRollupSteps(context.Background(), rec, tip, "creators",
-		creatorsRollupStatements, func(string, ...any) {}); err != nil {
+		creatorsRollupStatements(P23BoundaryLedger), func(string, ...any) {}); err != nil {
 		t.Fatalf("runRollupSteps: %v", err)
 	}
 
@@ -322,7 +322,7 @@ func TestCreatorsRollupPostP23FundingComesFromTheMovement(t *testing.T) {
 // on r1 2026-09-07, against 2.4-107 s for the arm that owns it.
 func TestCreatorsRollupScansMovementsOnce(t *testing.T) {
 	var touching []int
-	for i, step := range creatorsRollupStatements {
+	for i, step := range creatorsRollupStatements(P23BoundaryLedger) {
 		if !strings.Contains(step.sql, "stellar.account_movements") {
 			continue
 		}
@@ -370,7 +370,7 @@ func TestCreatorsRollupScansMovementsOnce(t *testing.T) {
 // different populations, so an unpinned estimate silently moves the
 // cycle's peak from one to the other as the chain grows.
 func TestCreatorsRollupJoinsOutsideTheWalk(t *testing.T) {
-	for i, step := range creatorsRollupStatements {
+	for i, step := range creatorsRollupStatements(P23BoundaryLedger) {
 		if !step.walk {
 			continue
 		}
@@ -423,12 +423,91 @@ func TestClampLedger(t *testing.T) {
 	}
 }
 
+// TestCreatorsRollupArmsSplitAtTheGivenBoundary pins the constructor:
+// both creation arms clamp at the boundary the CALLER passes, and at
+// nothing else. The boundary is the network's P23 boundary —
+// P23BoundaryLedger on pubnet, the chain's start on a reset test net —
+// and with it at 1 the classic arm owns no ledger while the post-P23 arm
+// owns every one, which is what makes `created` cohorts exist on testnet
+// and futurenet at all. Red on the pre-fix code, where the boundary was
+// the pubnet constant baked into the SQL: with every test-net ledger
+// below 58,762,517 the classic arm owned all of them and looked for
+// create_account movements a post-P23-only chain never writes.
+func TestCreatorsRollupArmsSplitAtTheGivenBoundary(t *testing.T) {
+	for _, boundary := range []uint32{1, 2, P23BoundaryLedger} {
+		classic, p23 := creatorsArmsAt(t, boundary)
+
+		classicClamps := ledgerClamps(t, classic)
+		if len(classicClamps) != 1 || !classicClamps[0].below || classicClamps[0].at != boundary {
+			t.Errorf("boundary %d: classic arm clamps %+v, want exactly one `< %d`", boundary, classicClamps, boundary)
+		}
+		p23Clamps := ledgerClamps(t, p23)
+		if len(p23Clamps) != 2 {
+			t.Errorf("boundary %d: post-P23 arm carries %d clamps, want 2 (one per source table)", boundary, len(p23Clamps))
+		}
+		for _, c := range p23Clamps {
+			if c.below || c.at != boundary {
+				t.Errorf("boundary %d: post-P23 arm clamp %+v, want `>= %d`", boundary, c, boundary)
+			}
+		}
+	}
+
+	// A test-net ledger (every one sits below the pubnet boundary): owned
+	// by the post-P23 arm at the chain-start boundary, by the classic arm
+	// at pubnet's — the latter is the empty-cohort defect.
+	const testNetLedger = 4_728_426
+	classic, p23 := creatorsArmsAt(t, 1)
+	if clampsAdmit(t, classic, testNetLedger) {
+		t.Errorf("boundary 1: the classic arm admits ledger %d; a post-P23-only chain has no create_account movements to find", testNetLedger)
+	}
+	if !clampsAdmit(t, p23, testNetLedger) {
+		t.Errorf("boundary 1: the post-P23 arm does not admit ledger %d; the creation there would be counted by no arm", testNetLedger)
+	}
+	classic, p23 = creatorsArmsAt(t, P23BoundaryLedger)
+	if !clampsAdmit(t, classic, testNetLedger) || clampsAdmit(t, p23, testNetLedger) {
+		t.Errorf("pubnet boundary: ledger %d must be owned by the classic arm alone", testNetLedger)
+	}
+}
+
+// creatorsArmsAt returns the classic and post-P23 creation arms of the
+// cycle built for the given boundary.
+func creatorsArmsAt(t *testing.T, boundary uint32) (classic, p23 string) {
+	t.Helper()
+	for _, step := range creatorsRollupStatements(boundary) {
+		switch {
+		case strings.Contains(step.sql, "movement_kind = 'create_account'"):
+			classic = step.sql
+		case strings.Contains(step.sql, "op_type = '"+opCreateAccount+"'"):
+			p23 = step.sql
+		}
+	}
+	if classic == "" || p23 == "" {
+		t.Fatalf("boundary %d: cycle is missing a creation arm (classic=%t, p23=%t)", boundary, classic != "", p23 != "")
+	}
+	return classic, p23
+}
+
+// clampsAdmit reports whether every boundary predicate in a statement
+// admits the ledger, whatever value the clamps sit at.
+func clampsAdmit(t *testing.T, sql string, ledger uint32) bool {
+	t.Helper()
+	for _, c := range ledgerClamps(t, sql) {
+		if c.below && ledger >= c.at {
+			return false
+		}
+		if !c.below && ledger < c.at {
+			return false
+		}
+	}
+	return true
+}
+
 // creatorsRollupStatementsInto returns the INSERTs that fill the named
 // table, failing unless there are exactly want of them.
 func creatorsRollupStatementsInto(t *testing.T, table string, want int) []string {
 	t.Helper()
 	var found []string
-	for _, step := range creatorsRollupStatements {
+	for _, step := range creatorsRollupStatements(P23BoundaryLedger) {
 		if strings.HasPrefix(step.sql, "INSERT INTO stellar."+table) {
 			found = append(found, step.sql)
 		}
@@ -452,7 +531,7 @@ func creatorsRollupStatement(t *testing.T, table string) string {
 func creatorsArm(t *testing.T, marker string) string {
 	t.Helper()
 	var found []string
-	for _, step := range creatorsRollupStatements {
+	for _, step := range creatorsRollupStatements(P23BoundaryLedger) {
 		if strings.Contains(step.sql, marker) {
 			found = append(found, step.sql)
 		}

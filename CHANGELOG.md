@@ -220,6 +220,29 @@ against.
   `balance × price` as rationals rounded once to two places. Through
   `float64`, one unit at `0.015` rendered `0.01` and a `1.10` price came
   back as `1.1`.
+- **ops:** the cap67 movements follow daemon's first run starts at the
+  lake's first ledger, not below it. Floored at genesis (`-floor-ledger
+  1`, the test-net setting) it resumed from ledger 1, which no lake holds
+  (every net's lake begins at 2), and the contiguity gate read that as a
+  boundary hole forever: both test nets' `account_movements` archives
+  sat empty for months while the daemon re-ran a full-lake scan every
+  second in silence. The first run now clamps up to `min(ledger_seq)`,
+  a long idle run is named in the journal (`idle: start=… contiguous
+  tip=… min_present=…`, every 30 idle ticks) and the tick backs off
+  (doubling past 30 idle ticks, capped at 30 s, back to the base the
+  moment a tick derives). The ansible default for the non-pubnet floor
+  is 2 as well, so the config no longer asks for a ledger that does not
+  exist.
+- **clickhouse:** the creators rollup splits its two creation arms at the
+  NETWORK's P23 boundary instead of pubnet's constant.
+  `ch-creators-rollup` takes `-config PATH` (the unit passes
+  `/etc/stellarindex.toml`) and reads `stellar.movements_floor_ledger`;
+  without it the pubnet boundary
+  applies. On a reset testnet/futurenet every ledger sits below
+  58,762,517, so the classic arm owned all of them and looked for
+  `create_account` movements a post-P23-only chain never writes —
+  `account_creator_edges` stayed empty and every `created` cohort with
+  it, however full the archive.
 - **ops:** `curated-rwa-sync` asks Dune for the `medium` execution tier.
   It asked for `small`, which Dune does not name; every run with a key
   configured was refused before the SQL ran (`HTTP 400: This performance

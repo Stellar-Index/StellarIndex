@@ -130,6 +130,29 @@ func ContiguousWatermark(ctx context.Context, addr string, from uint32) (uint32,
 	return watermark(from, uint32(chMax), uint32(firstGap), uint32(minPresent)), nil
 }
 
+// LakeMinLedger returns the lowest ledger_seq present in stellar.ledgers
+// (0 when the lake is empty). It is the lower edge ContiguousWatermark
+// cannot see past: a derive that resumes from BELOW it asks for a ledger
+// no lake will ever hold, and the watermark reports that as a boundary
+// hole forever. Every net's lake begins at ledger 2 (genesis ledger 1 is
+// never exported), so a first run floored at genesis must clamp up to
+// this value or it never derives anything (the test nets' empty
+// account_movements archive, 2026-09-17).
+func LakeMinLedger(ctx context.Context, addr string) (uint32, error) {
+	conn, err := openRead(ctx, addr)
+	if err != nil {
+		return 0, err
+	}
+	defer func() { _ = conn.Close() }()
+	// min() over an empty table yields the UInt32 default 0, which reads
+	// as "no ledger present" — the same convention as lakeTipLedger.
+	var lo uint64
+	if err := conn.QueryRow(ctx, `SELECT toUInt64(min(ledger_seq)) FROM stellar.ledgers`).Scan(&lo); err != nil {
+		return 0, fmt.Errorf("clickhouse: lake min ledger: %w", err)
+	}
+	return uint32(lo), nil // ledger sequences fit uint32
+}
+
 // substrateWindow is the per-query ledger span for the substrate audit.
 // Both substrate checks need a full sort of the range they inspect (the
 // window functions), and a whole-lake span (63M+ ledgers at 2026-06-12,

@@ -53,7 +53,7 @@ func chCap67Movements(args []string) error {
 	window := fs.Uint("window", 50_000, "ledgers per derive window")
 	follow := fs.Bool("follow", false, "run continuously as a daemon: after each catch-up, sleep -follow-interval and derive again, following the lake tip. The movement feed's real-time mechanism (a user watches their transactions land). Always resumes from the watermark to the CONTIGUOUS tip — ignores -from/-to.")
 	followInterval := fs.Duration("follow-interval", 1*time.Second, "sleep between catch-ups in -follow mode. Kept ≥~0.5s: each tick re-scans the derive window, and sub-second ticks add ClickHouse read + small-write pressure for a latency gain the ~5s ledger cadence + upstream ingest already dominate.")
-	floorLedger := fs.Uint("floor-ledger", uint(timescale.SEP41MovementsFloorLedger), "first-run watermark floor — the P23/CAP-67 boundary this derive starts from BEFORE any watermark exists. Defaults to the pubnet P23 boundary; set to 1 (genesis) on testnet/futurenet, where the whole chain is post-P23 (otherwise the derive floors ABOVE every ledger the net has and produces nothing).")
+	floorLedger := fs.Uint("floor-ledger", uint(timescale.SEP41MovementsFloorLedger), "first-run watermark floor — the P23/CAP-67 boundary this derive starts from BEFORE any watermark exists. Defaults to the pubnet P23 boundary; set to the chain's start on testnet/futurenet, where the whole chain is post-P23 (otherwise the derive floors ABOVE every ledger the net has and produces nothing). A first run clamps the floor UP to the lake's first ledger (no lake holds genesis=1), so 1 and 2 behave alike.")
 	gate := opsutil.RegisterWriteGate(fs)
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -88,22 +88,38 @@ func chCap67Movements(args []string) error {
 	return nil
 }
 
+// cap67CatchUp is what one catch-up did: the range it resolved and the
+// movement rows it derived. Idle (nothing to do) is a property of the
+// RANGE, not of the row count — a window whose ledgers carry no transfer
+// events derives 0 rows yet still advances the watermark, which is work.
+// The follow loop keys its idle accounting off this distinction; a bare
+// row count would read an event-free stretch as a stall.
+type cap67CatchUp struct {
+	start, last uint32
+	rows        int64
+}
+
+// idle reports that the resolved range was empty: the watermark already
+// sits at (or above) the contiguous tip, or `start` is a ledger the lake
+// does not hold.
+func (c cap67CatchUp) idle() bool { return c.last < c.start }
+
 // runCap67CatchUp resolves the derive range [from|watermark, to|contiguous-tip]
 // and streams every window into account_movements, advancing the watermark
-// after each window. Returns the total movement rows derived; a no-op
-// (0 rows, nil) when already at/past the contiguous tip. Gated on the
-// contiguous watermark via Cap67Range, so it never steps past a lake hole.
-func runCap67CatchUp(ctx context.Context, chAddr string, from, to, window uint32, dryRun bool, floorLedger uint32) (int64, error) {
+// after each window. Returns what the run did (see cap67CatchUp); an idle
+// result when already at/past the contiguous tip. Gated on the contiguous
+// watermark via Cap67Range, so it never steps past a lake hole.
+func runCap67CatchUp(ctx context.Context, chAddr string, from, to, window uint32, dryRun bool, floorLedger uint32) (cap67CatchUp, error) {
 	start, last, err := Cap67Range(ctx, chAddr, from, to, floorLedger)
 	if err != nil {
-		return 0, err
+		return cap67CatchUp{}, err
 	}
-	if last < start {
-		return 0, nil // already at/past the contiguous tip — nothing to do
+	res := cap67CatchUp{start: start, last: last}
+	if res.idle() {
+		return res, nil // already at/past the contiguous tip — nothing to do
 	}
 
 	runStart := time.Now()
-	var totalRows int64
 	for lo := start; ; {
 		hi := last
 		if rem := last - lo; rem >= window {
@@ -111,21 +127,60 @@ func runCap67CatchUp(ctx context.Context, chAddr string, from, to, window uint32
 		}
 		n, err := deriveCap67MovementsWindow(ctx, chAddr, lo, hi, dryRun)
 		if err != nil {
-			return totalRows, fmt.Errorf("window [%d,%d]: %w — resume with -from %d (or no -from: the watermark holds)", lo, hi, err, lo)
+			return res, fmt.Errorf("window [%d,%d]: %w — resume with -from %d (or no -from: the watermark holds)", lo, hi, err, lo)
 		}
-		totalRows += n
+		res.rows += n
 		if !dryRun {
 			if err := clickhouse.SetCap67MovementsWatermark(ctx, chAddr, hi); err != nil {
-				return totalRows, fmt.Errorf("advance watermark to %d: %w", hi, err)
+				return res, fmt.Errorf("advance watermark to %d: %w", hi, err)
 			}
 		}
 		fmt.Fprintf(os.Stderr, "ch-cap67-movements: window [%d,%d] done — %d movement rows (total %d, elapsed %s)\n",
-			lo, hi, n, totalRows, time.Since(runStart).Round(time.Second))
+			lo, hi, n, res.rows, time.Since(runStart).Round(time.Second))
 		if hi >= last {
-			return totalRows, nil
+			return res, nil
 		}
 		lo = hi + 1
 	}
+}
+
+// Idle-tick policy for -follow mode. An idle tick is one whose catch-up
+// resolved an empty range: the watermark is at the contiguous tip, or the
+// resume point is a ledger the lake does not (yet) hold. A healthy feed
+// idles a few ticks per ledger (5 s cadence against a 1 s tick) and never
+// many in a row, so a long idle run is either upstream ingest stalled, a
+// hole ch-live-catchup has yet to heal, or a resume point the lake will
+// never reach — the silent-forever shape the test nets sat in for months
+// (start=1 against a lake that begins at 2, 2026-09-17). Two responses:
+// say so in the journal at a bounded rate, and stop paying the
+// ContiguousWatermark window-function scan every second for nothing.
+const (
+	// cap67IdleLogEvery is the consecutive-idle-tick period of the
+	// "idle: start=… contiguous tip=… min_present=…" journal line.
+	cap67IdleLogEvery = 30
+	// cap67IdleBackoffAfter is how many consecutive idle ticks run at the
+	// base interval before the tick starts stretching. 30 at the default
+	// 1 s tick is six ledger cadences — a healthy feed never idles that
+	// long — so pubnet's real-time latency is untouched.
+	cap67IdleBackoffAfter = 30
+	// cap67IdleMaxInterval caps the stretched tick. A stall that heals
+	// (the catch-up timer fills the hole) is noticed within this bound.
+	cap67IdleMaxInterval = 30 * time.Second
+)
+
+// followTick is the sleep before the next catch-up after `idle`
+// consecutive ticks found nothing to derive: the base interval through
+// cap67IdleBackoffAfter idle ticks, then doubling per further idle tick
+// up to cap67IdleMaxInterval. Never shorter than the base — an operator
+// who asked for a slow tick keeps it — and back to the base the moment a
+// tick does work.
+func followTick(base time.Duration, idle int) time.Duration {
+	ceiling := max(cap67IdleMaxInterval, base)
+	d := base
+	for i := cap67IdleBackoffAfter; i < idle && d < ceiling; i++ {
+		d *= 2
+	}
+	return min(d, ceiling)
 }
 
 // runCap67Follow is the persistent-daemon loop that makes the movement feed
@@ -136,50 +191,101 @@ func runCap67CatchUp(ctx context.Context, chAddr string, from, to, window uint32
 // restart it resumes from the persisted watermark.
 func runCap67Follow(ctx context.Context, chAddr string, window uint32, dryRun bool, interval time.Duration, floorLedger uint32) error {
 	fmt.Fprintf(os.Stderr, "ch-cap67-movements: FOLLOW mode — catch-up every %s, gated on the contiguous watermark, on %s\n", interval, chAddr)
-	return followLoop(ctx, interval, func(ctx context.Context) error {
-		n, err := runCap67CatchUp(ctx, chAddr, 0, 0, window, dryRun, floorLedger)
-		if err == nil && n > 0 {
-			fmt.Fprintf(os.Stderr, "ch-cap67-movements: follow tick derived %d movement rows\n", n)
+	return followLoop(ctx, interval, func(ctx context.Context, idle int) (bool, error) {
+		res, err := runCap67CatchUp(ctx, chAddr, 0, 0, window, dryRun, floorLedger)
+		if err != nil {
+			return false, err
 		}
-		return err
+		if !res.idle() {
+			if res.rows > 0 {
+				fmt.Fprintf(os.Stderr, "ch-cap67-movements: follow tick derived %d movement rows\n", res.rows)
+			}
+			return true, nil
+		}
+		// This tick is the (idle+1)th consecutive idle one. Every
+		// cap67IdleLogEvery of them, name the stall's shape: the resume
+		// point, the contiguous tip it is waiting on (start-1 when the
+		// resume point itself is missing) and the lowest ledger the lake
+		// holds — the one figure that separates "the lake begins above
+		// the resume point, so this never resolves" from "a hole or a
+		// lagging ingest, so it will".
+		if n := idle + 1; n%cap67IdleLogEvery == 0 {
+			minPresent, merr := clickhouse.LakeMinLedger(ctx, chAddr)
+			if merr != nil {
+				return false, merr
+			}
+			fmt.Fprintf(os.Stderr, "ch-cap67-movements: idle for %d ticks — idle: start=%d contiguous tip=%d min_present=%d (next tick in %s)\n",
+				n, res.start, res.last, minPresent, followTick(interval, n))
+		}
+		return false, nil
 	})
 }
 
-// followLoop runs catchUp immediately and then once every `interval` until ctx
-// is cancelled. A catchUp error is logged and RETRIED on the next tick — the
-// derive advances its watermark only after a clean window, so a failed tick
-// skips NO ledger — while a ctx-cancel (mid-derive or between ticks) ends the
-// loop cleanly (SIGTERM ⟹ graceful shutdown; on restart the daemon resumes
-// from the persisted watermark). Extracted from runCap67Follow so the loop's
-// shutdown + error-resilience contract is unit-testable without a live
-// ClickHouse.
-func followLoop(ctx context.Context, interval time.Duration, catchUp func(context.Context) error) error {
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
+// followLoop runs catchUp immediately and then again after each sleep until
+// ctx is cancelled. catchUp receives the number of consecutive idle ticks so
+// far and reports whether THIS tick did work; the sleep before the next tick
+// is followTick of that count — the base `interval` while the feed is live,
+// stretching only through a long idle run. A catchUp error is logged and
+// RETRIED on the next tick — the derive advances its watermark only after a
+// clean window, so a failed tick skips NO ledger — and leaves the idle count
+// as it was (an error is neither work nor idleness). A ctx-cancel (mid-derive
+// or between ticks) ends the loop cleanly (SIGTERM ⟹ graceful shutdown; on
+// restart the daemon resumes from the persisted watermark). Extracted from
+// runCap67Follow so the loop's shutdown + error-resilience + idle-accounting
+// contract is unit-testable without a live ClickHouse.
+func followLoop(ctx context.Context, interval time.Duration, catchUp func(ctx context.Context, idle int) (worked bool, err error)) error {
+	idle := 0
 	for {
-		if err := catchUp(ctx); err != nil {
+		worked, err := catchUp(ctx, idle)
+		switch {
+		case err != nil:
 			if ctx.Err() != nil {
 				return nil // shutdown mid-derive — clean exit
 			}
 			fmt.Fprintf(os.Stderr, "ch-cap67-movements: catch-up error (watermark holds, retrying next tick): %v\n", err)
+		case worked:
+			idle = 0
+		default:
+			idle++
 		}
+		wait := time.NewTimer(followTick(interval, idle))
 		select {
 		case <-ctx.Done():
+			wait.Stop()
 			fmt.Fprintln(os.Stderr, "ch-cap67-movements: follow mode stopping (context cancelled)")
 			return nil
-		case <-ticker.C:
+		case <-wait.C:
 		}
 	}
 }
 
+// resolveStart is the first ledger a watermark-driven run derives. A
+// resumed run (wm > 0) continues at wm+1. A first run starts at the floor
+// — the P23 boundary on pubnet, genesis on a test net — clamped UP to the
+// lake's lowest present ledger: ContiguousWatermark treats a `from` the
+// lake does not hold as a boundary hole and answers from-1, so a floor
+// below the lake's first ledger (genesis=1 against a lake that begins at
+// 2, which is every net's lake) would idle the daemon forever without
+// deriving a row — the test nets' empty account_movements archive
+// (2026-09-17). A floor above the lake's start (pubnet's) is kept as is;
+// an empty lake (lakeMin == 0) leaves the floor alone and the run idles
+// until the lake reaches it.
+func resolveStart(wm, floor, lakeMin uint32) uint32 {
+	if wm > 0 {
+		return wm + 1
+	}
+	return max(floor, lakeMin)
+}
+
 // Cap67Range resolves the derive range: from=0 resumes from the
 // watermark (floorLedger on first run — the P23 boundary on pubnet, or
-// genesis=1 on a test net); to=0 targets the lake tip.
+// genesis=1 on a test net — clamped up to the lake's first ledger, see
+// resolveStart); to=0 targets the lake tip.
 func Cap67Range(ctx context.Context, chAddr string, from, to, floorLedger uint32) (uint32, uint32, error) {
 	if floorLedger == 0 {
-		// Defensive: the first-run seed below computes floorLedger-1, which
-		// would underflow to ~4.29e9 at floorLedger==0. Genesis is ledger 1.
-		// The CLI already rejects -floor-ledger 0; this guards other callers.
+		// Defensive: a first run starts AT the floor, and genesis is ledger
+		// 1 — a floor of 0 is not a ledger. The CLI already rejects
+		// -floor-ledger 0; this guards other callers.
 		floorLedger = 1
 	}
 	start := from
@@ -188,10 +294,16 @@ func Cap67Range(ctx context.Context, chAddr string, from, to, floorLedger uint32
 		if err != nil {
 			return 0, 0, fmt.Errorf("read watermark: %w", err)
 		}
+		var lakeMin uint32
 		if wm == 0 {
-			wm = floorLedger - 1
+			// First run only: the one time the floor, rather than the
+			// watermark, picks the resume point.
+			lakeMin, err = clickhouse.LakeMinLedger(ctx, chAddr)
+			if err != nil {
+				return 0, 0, fmt.Errorf("read lake min ledger: %w", err)
+			}
 		}
-		start = wm + 1
+		start = resolveStart(wm, floorLedger, lakeMin)
 	}
 	last := to
 	if last == 0 {

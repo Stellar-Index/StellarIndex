@@ -704,12 +704,24 @@ stellar_archivist_version: ""
 
 # Protocol-transition era boundaries (internal/config/config.go StellarConfig).
 # Pubnet uses the real ledger numbers; a reset testnet/futurenet is entirely
-# post-Soroban AND post-P23 from ledger 1, so BOTH are genesis (1) there —
-# otherwise the SEP-41 supply observer and the CAP-67 movements feed floor
-# ABOVE every ledger the net has and produce nothing. These also drive the
-# ch-cap67-movements -floor-ledger flag (14-stellarindex-services.yml).
+# post-Soroban AND post-P23 from ledger 1, so both sit at the chain's start
+# there — otherwise the SEP-41 supply observer and the CAP-67 movements feed
+# floor ABOVE every ledger the net has and produce nothing. These also drive
+# the ch-cap67-movements -floor-ledger flag (14-stellarindex-services.yml).
+#
+# The movements floor is 2, not 1, off pubnet: no lake holds ledger 1 (the
+# genesis ledger is never exported — min(ledger_seq) is 2 on r1, testnet
+# and futurenet alike), and the cap67 follow daemon's first run starts AT
+# the floor, gated on ContiguousWatermark, which reads a resume point the
+# lake does not hold as a boundary hole and answers "nothing to derive"
+# forever. Floored at 1, both test nets' account_movements archives sat
+# empty for months (2026-09-17). The daemon now also clamps its first run
+# up to the lake's first ledger; this default is the belt to that brace.
+# The same value flows into stellarindex.toml movements_floor_ledger (the
+# API's PG/CH split, where 2 is harmless: no ledger sits below it) and,
+# via -config, into the creators rollup's arm boundary.
 stellar_soroban_genesis_ledger: "{{ 50457424 if stellar_network == 'pubnet' else 1 }}"
-stellar_movements_floor_ledger: "{{ 58762517 if stellar_network == 'pubnet' else 1 }}"
+stellar_movements_floor_ledger: "{{ 58762517 if stellar_network == 'pubnet' else 2 }}"
 
 # verify-archive Tier B (checkpoint anchor, ADR-0017) compares each
 # 64-ledger checkpoint's header hash against a LOCAL rs-stellar-archivist

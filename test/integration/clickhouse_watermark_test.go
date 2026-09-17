@@ -161,3 +161,82 @@ func TestCap67Range_StallsAtHole(t *testing.T) {
 			"permanently drop the hole ledger's movements)", last, from+5, from+6, from+10)
 	}
 }
+
+// TestCap67Range_FirstRunClampsToTheLakesFirstLedger is the test nets'
+// empty-archive proof (2026-09-17): a FIRST run (no watermark row) floored
+// at genesis against a lake that begins at ledger 2 — every net's lake,
+// ledger 1 is never exported — must derive from 2, not idle forever.
+//
+// The pre-fix path set start = floorLedger = 1 and asked ContiguousWatermark
+// for the tip from 1; with min_present = 2 > from that is a boundary hole,
+// so it answered 0, the caller's `last < start` guard read "nothing to do",
+// and the daemon re-ran that full-lake window-function scan every second
+// for months without writing a row or a journal line. This is a
+// real-ClickHouse test because the clamp's input IS what the lake reports
+// as its first ledger: seed [2, 6], skip 1, and read the range back through
+// the real watermark + min queries.
+//
+// Proven red: with resolveStart's lakeMin clamp removed, start = 1 and
+// last = 0.
+func TestCap67Range_FirstRunClampsToTheLakesFirstLedger(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+	addr := clickhouseAddr(t)
+
+	// Precondition: a first run. Nothing in this suite writes the cap67
+	// watermark, so from=0 takes the floor path rather than resuming.
+	wm, err := chstore.Cap67MovementsWatermark(ctx, addr)
+	if err != nil {
+		t.Fatalf("Cap67MovementsWatermark: %v", err)
+	}
+	if wm != 0 {
+		t.Fatalf("precondition: cap67 watermark = %d, want 0 (a first run); another test now writes it", wm)
+	}
+
+	sink, err := chstore.Open(ctx, addr, 1000)
+	if err != nil {
+		t.Fatalf("open sink: %v", err)
+	}
+	t.Cleanup(func() { _ = sink.Close(ctx) })
+
+	// The lake's own shape: ledgers 2..6 present, genesis (1) absent. The
+	// low range is deliberate — the clamp is against the GLOBAL
+	// min(ledger_seq), so these must be the lowest ledgers the suite seeds
+	// (every other ClickHouse test seeds >= 1,000).
+	for seq := uint32(2); seq <= 6; seq++ {
+		ext := chstore.LedgerExtract{Ledger: chstore.LedgerRow{
+			LedgerSeq: seq, CloseTime: time.Date(2027, 9, 1, 0, 0, 0, 0, time.UTC),
+			LedgerHash: "aa02", PrevHash: "bb02", ProtocolVersion: 23, BucketListHash: "cc02",
+			TotalCoins: 1, FeePool: 1, BaseFee: 100, BaseReserve: 5_000_000,
+		}}
+		if err := sink.Add(ctx, ext); err != nil {
+			t.Fatalf("sink add ledger %d: %v", seq, err)
+		}
+	}
+	if err := sink.Flush(ctx); err != nil {
+		t.Fatalf("flush lake seed: %v", err)
+	}
+
+	lakeMin, err := chstore.LakeMinLedger(ctx, addr)
+	if err != nil {
+		t.Fatalf("LakeMinLedger: %v", err)
+	}
+	if lakeMin != 2 {
+		t.Fatalf("LakeMinLedger = %d, want 2 (the seeded lake begins at 2; a lower value means another test seeded below it)", lakeMin)
+	}
+
+	// from=0 (resume from the watermark — none, so the floor), to=0 (the
+	// contiguous tip), floor=1 (genesis: the test nets' -floor-ledger).
+	start, last, err := chops.Cap67Range(ctx, addr, 0, 0, 1)
+	if err != nil {
+		t.Fatalf("Cap67Range: %v", err)
+	}
+	if start != 2 {
+		t.Fatalf("Cap67Range start = %d, want 2 — a first run floored at genesis must clamp up to the "+
+			"lake's first ledger; at 1 the contiguity gate reads a boundary hole and the daemon never derives", start)
+	}
+	if last < 6 {
+		t.Fatalf("Cap67Range last = %d, want >= 6 — the seeded run [2,6] is contiguous, so the first run "+
+			"must resolve a non-empty range (pre-fix: last = 0, `last < start`, idle forever)", last)
+	}
+}
