@@ -635,12 +635,28 @@ func rwaApplyReference(
 		if rwa.OffChainReferenceCode(a.Code) {
 			notFound = RWAPremiumNotInstrumentScoped
 		}
+		// The listing row for this exact asset, resolved by the SAME
+		// rule /v1/assets uses ([listingEntryIn]): the `CODE-GISSUER`
+		// id first, then the Stellar Asset Contract address derived
+		// from it. The directory publishes each asset under ONE of
+		// those forms with no pattern (measured 2026-09-15: EURC, AQUA
+		// and SHX by classic id; USDC, PYUSD and USDT0 by SAC only), so
+		// a classic-only key refused a SAC-listed member as unbound
+		// while the snapshot in hand named its address (issue #514).
+		//
+		// Never the code: this network carries twenty-six assets coded
+		// BENJI and one of them is Franklin Templeton's. A code-keyed
+		// lookup here would be the attacker-authored-pricing class in a
+		// new coordinate, which is the same reason [rwa.InstrumentFeed]
+		// is keyed on the pair above. Both address forms are functions
+		// of the exact (code, issuer), so neither widens the key.
+		listing, _, _ := listingEntryIn(classicListings, a.AssetID)
 		// Neither an oracle nor the listing directory prices this pair,
 		// but its prospectus may: a CNAV share class bound in
 		// rwa.ConstantNAV is valued at the NAV its fund rules fix, under
 		// its own provenance. A listing price, when one exists, still
 		// wins — it is an observation, this is a rule.
-		if entry := classicListings[a.AssetID]; entry.PriceUSD == "" {
+		if listing.PriceUSD == "" {
 			if cnav, ok := rwa.ConstantNAV(a.Code, a.Issuer); ok {
 				rwaApplyConstantNAVReference(a, cnav, now)
 				return
@@ -657,14 +673,7 @@ func rwaApplyReference(
 		// classic rows, every one of them priced, against 17 contract
 		// rows — so two-thirds of it was being read by nothing while
 		// this arm reported rows as unpriced beside it.
-		//
-		// The key is the asset's own `CODE-GISSUER`, never the code:
-		// this network carries twenty-six assets coded BENJI and one of
-		// them is Franklin Templeton's. A code-keyed lookup here would
-		// be the attacker-authored-pricing class in a new coordinate,
-		// which is the same reason [rwa.InstrumentFeed] is keyed on the
-		// pair above.
-		rwaApplyListingReference(a, classicListings[a.AssetID], notFound, now)
+		rwaApplyListingReference(a, listing, notFound, now)
 		return
 	}
 

@@ -7695,16 +7695,24 @@ export interface components {
              */
             basis: "sep1_anchor_declaration" | "sep1_isin_declaration" | "oracle_rwa_feed" | "curated_contract_instrument" | "contract_oracle_rwa_feed" | "third_party_curated";
             /**
-             * @description Which independent party's naming satisfied the contract
-             *     arm's second requirement. Present on CONTRACT-issued rows
-             *     only; absent on classic rows, where the classic third
-             *     requirement has exactly one source and naming it would say
-             *     nothing.
+             * @description Which independent party's naming satisfied the recognition
+             *     requirement — the contract arm's second, the classic arm's
+             *     third. Present on every row. On classic rows it is
+             *     `curated_account_directory` when the curated directory lists
+             *     this issuer account itself, or
+             *     `curated_account_directory_via_domain_sibling` when the
+             *     directory lists another (unflagged) account that the same
+             *     issuer-bound SEP-1 binds on the same home domain: the
+             *     recognised entity named this account from its own domain,
+             *     but the directory never looked at it. The sibling route
+             *     assumes one entity per domain; a scam flag on the account
+             *     itself still refuses it.
              *
-             *     On the wire because the two routes are not the same strength
-             *     of evidence — see `definition.contract_recognition_sources`.
-             *     A row reading `curated_account_directory` was vouched for by
-             *     an address-level identity directory that carries scam flags
+             *     On the wire because neither arm's two routes are the same
+             *     strength of evidence — see
+             *     `definition.contract_recognition_sources`. A row reading
+             *     `curated_account_directory` was vouched for by an
+             *     address-level identity directory that carries scam flags
              *     and admits on its own. A row reading
              *     `independent_listing_corroborating_curated_binding` required
              *     TWO sources that do not read each other. A consumer that
@@ -17114,8 +17122,8 @@ export interface operations {
                      *           "requirements": [
                      *             "classic asset identified by (code, issuer)",
                      *             "issuer-bound SEP-1 [[CURRENCIES]] entry served from the on-chain home_domain",
-                     *             "issuer independently recognised in the curated account directory and not scam-flagged",
-                     *             "real-world instrument by SEP-1 anchor_asset_type or by an ADR-0028 oracle feed"
+                     *             "issuer independently recognised in the curated account directory and not scam-flagged, or unflagged and bound by the same issuer-bound SEP-1 on the same domain as an account the directory recognises",
+                     *             "real-world instrument by SEP-1 anchor_asset_type, by an ADR-0028 oracle feed, or by a well-formed ISIN in SEP-1 anchor_asset"
                      *           ],
                      *           "contract_requirements": [
                      *             "contract-issued token identified by its contract address",

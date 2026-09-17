@@ -100,6 +100,33 @@ against.
   (W8-20). Pinned by an executing test over every folded route,
   including 2w's Monday alignment against `prices_1w`, and by a test
   that holds the spec's enum to the table.
+- **rwa:** the classic arm's scan pre-filter now reads the declared
+  `anchor_asset` beside the code and the anchor type, so an entry that
+  declares type `other` beside a well-formed ISIN reaches the
+  definition. It read the type and the code only, which dropped
+  Franklin's gBENJI, grBENJI and sgBENJI as `no_real_world_instrument_basis`
+  before the ISIN arm, the domain-sibling recognition arm or the
+  constant-NAV reference ever ran — both v0.89.2 arms shipped green and
+  had zero live effect (29 assets, 18 issuers; expected 32 and 21). The
+  pre-filter guard test now spans every asset-side input requirement 4
+  reads, and a test drives the production filter through the production
+  build.
+- **rwa:** the classic arm resolves its listing-directory row by the
+  same rule `/v1/assets` uses — the `CODE-GISSUER` id first, then the
+  Stellar Asset Contract address derived from it — instead of the
+  classic id alone. The directory publishes each asset under one form
+  with no pattern, so a SAC-listed classic member was refused as
+  `reference_not_bound` while the snapshot in hand named its address,
+  and a SAC-listed CNAV share class took the prospectus rule over the
+  live observation. One resolver now serves both surfaces (#514).
+- **rwa:** `recognition` is documented as present on every served row
+  — on classic rows `curated_account_directory` or
+  `curated_account_directory_via_domain_sibling` — in the Go doc, the
+  OpenAPI spec and the derived reference, Postman and explorer types;
+  the served `definition.requirements` name the sibling and ISIN
+  routes; and the one-entity-per-domain assumption the sibling route
+  rests on is stated where the route is defined and in the methodology
+  (#520).
 - **ops:** `curated-rwa-sync` asks Dune for the `medium` execution tier.
   It asked for `small`, which Dune does not name; every run with a key
   configured was refused before the SQL ran (`HTTP 400: This performance

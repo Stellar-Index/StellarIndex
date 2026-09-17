@@ -141,6 +141,36 @@ fails **closed**: if the directory cannot be read, no set is published.
 Every other read on this surface degrades open, because every other read
 only omits detail.
 
+#### The sibling route, and the assumption it rests on
+
+An issuer account the directory has **not** listed is also recognised
+when the directory lists another account — with a recognition tag and
+no scam flag — that the **same** issuer-bound SEP-1 binds on the same
+home domain. The row says so: `recognition` reads
+`curated_account_directory_via_domain_sibling` instead of
+`curated_account_directory`. The reasoning is that the recognised entity
+named this account itself, from a domain it controls; the stated
+weakness is that the directory never looked at this account. A scam flag
+on the account itself still refuses it, and the route supplies no
+instrument claim — R4 still has to admit the asset on its own
+declaration. The case it exists for is Franklin Templeton's Luxembourg
+and Singapore share classes (gBENJI, grBENJI, sgBENJI), ISIN-declared in
+franklintempleton.com's SEP-1 beside the directory-listed BENJI issuer.
+
+The route **assumes one entity per domain**: that every account with
+home domain X that X's `stellar.toml` binds belongs to the entity that
+owns X. That holds for a fund manager publishing its own share classes.
+It does not hold for a hosting domain — an anchor or toml-hosting
+service whose file lists assets from several tenants who each set
+`home_domain` to it. There, one directory-recognised tenant would
+recognise every other tenant the host publishes, and the host rather
+than the directory would decide who passes R3; the R4 gates are the
+tenant's own declarations in that same file, so nothing independent
+would stand in the way. No such domain has a recognised tenant in the
+directory today, which is why the assumption is stated rather than
+enforced. The day the set grows through a shared domain, this is the
+paragraph that says why.
+
 ### R4 — Real-world instrument
 
 The asset is a real-world instrument rather than one of the issuer's

@@ -443,14 +443,30 @@ func (l assetListing) entryFor(assetID string) (timescale.ListingEntry, string, 
 	if !l.available {
 		return timescale.ListingEntry{}, "", false
 	}
+	return listingEntryIn(l.byAddress, assetID)
+}
+
+// listingEntryIn is the address-resolution rule itself, over any
+// by-address map of directory rows: classic id first, SAC second, the
+// form that matched reported alongside.
+//
+// It is the ONE place the rule lives. /v1/assets reaches it through
+// [assetListing.entryFor]; the /v1/rwa/assets classic arm reaches it
+// directly over the same snapshot's map. Two resolvers over one
+// directory is how a SAC-listed classic member came to be priced on one
+// surface and refused as unbound on the other (issue #514).
+//
+// A nil map answers every lookup with "not listed", which is the
+// fail-closed reading an unavailable snapshot needs.
+func listingEntryIn(byAddress map[string]timescale.ListingEntry, assetID string) (timescale.ListingEntry, string, bool) {
 	classic, sac := listingAddressesFor(assetID)
 	if classic != "" {
-		if e, ok := l.byAddress[classic]; ok {
+		if e, ok := byAddress[classic]; ok {
 			return e, ListingAddressFormClassic, true
 		}
 	}
 	if sac != "" {
-		if e, ok := l.byAddress[sac]; ok {
+		if e, ok := byAddress[sac]; ok {
 			return e, ListingAddressFormSAC, true
 		}
 	}

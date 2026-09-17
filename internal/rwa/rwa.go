@@ -346,18 +346,22 @@ type Verdict struct {
 	// order. Empty when admitted.
 	Reject string
 	// Recognition names WHICH independent party's naming satisfied the
-	// recognition requirement. Empty on the classic arm, where there is
-	// exactly one such party and naming it would say nothing, and on
-	// every refusal.
+	// recognition requirement. Set on every admission, empty on every
+	// refusal. On the classic arm it is [RecognitionDirectory] when the
+	// directory lists this account itself and
+	// [RecognitionDomainSibling] when it lists another account the
+	// same issuer-bound SEP-1 binds on the same domain.
 	//
-	// It exists because the contract arm now has TWO ways to satisfy
-	// C2 ([RecognitionCuratedDirectory] and
-	// [RecognitionListingCorroborated]), and they do not carry the same
-	// weight: one is an address-level identity attestation that admits
-	// on its own, the other is a pair of sources that corroborate each
-	// other and admit neither alone. A row that could not say which one
-	// let it in would publish two different strengths of evidence under
-	// one indistinguishable membership.
+	// It exists because each arm has TWO ways to satisfy its
+	// recognition requirement — the contract arm's
+	// [RecognitionCuratedDirectory] and
+	// [RecognitionListingCorroborated], the classic arm's direct and
+	// sibling routes — and the pair never carries the same weight: one
+	// is an address-level attestation that admits on its own, the other
+	// is an inference from sources that never looked at this address.
+	// A row that could not say which one let it in would publish two
+	// different strengths of evidence under one indistinguishable
+	// membership.
 	Recognition string
 }
 
@@ -423,6 +427,21 @@ const (
 	// grBENJI, sgBENJI) are the case this exists for — ISIN-declared in
 	// franklintempleton.com's SEP-1 beside the directory-listed BENJI
 	// issuer, 82M tokens between them, unlisted by the directory.
+	//
+	// The arm ASSUMES one entity per domain: that every account whose
+	// on-chain home_domain is X, and which X's stellar.toml binds, is an
+	// account of the entity that owns X. That holds for a fund manager
+	// publishing its own share classes. It does not hold for a hosting
+	// domain — an anchor or toml-hosting service whose stellar.toml
+	// lists assets from several tenants who each set home_domain to it.
+	// There, one directory-recognised tenant would recognise every
+	// other tenant the host publishes, and the host, not the directory,
+	// would decide who passes R3; the remaining gates (class, oracle
+	// code, ISIN) are the tenant's own declarations in that same toml,
+	// so nothing independent stands in the way. No such domain has a
+	// recognised tenant in the directory today, which is why the
+	// assumption is stated here rather than enforced; the day the set
+	// grows through a shared domain, this comment is what says why.
 	RecognitionDomainSibling = "curated_account_directory_via_domain_sibling"
 )
 
@@ -445,14 +464,25 @@ func isOracleRWACode(code string) bool {
 }
 
 // CouldQualify reports whether an asset with this code and declared
-// anchor type could satisfy requirement 4 at all, independent of the
-// issuer. It exists so a caller scanning every issuer-bound SEP-1
-// attestation can drop the overwhelming majority — the NFT, crypto and
-// undeclared entries — without materialising them, and it is
-// deliberately the ONLY predicate that answers a membership question
-// from asset-side inputs alone. It is a pre-filter, never a decision:
-// [Qualify] still has to run, and requirements 2 and 3 still have to
-// hold.
-func CouldQualify(code, declaredAnchorType string) bool {
-	return AnchorClass(declaredAnchorType) != "" || isOracleRWACode(code)
+// anchor type and anchor asset could satisfy requirement 4 at all,
+// independent of the issuer. It exists so a caller scanning every
+// issuer-bound SEP-1 attestation can drop the overwhelming majority —
+// the NFT, crypto and undeclared entries — without materialising them,
+// and it is deliberately the ONLY predicate that answers a membership
+// question from asset-side inputs alone. It is a pre-filter, never a
+// decision: [Qualify] still has to run, and requirements 2 and 3 still
+// have to hold.
+//
+// It reads EVERY asset-side input [Qualify]'s requirement-4 arms read —
+// the class, the code and the anchor asset — and must keep doing so as
+// arms are added: a pre-filter narrower than the rule it precedes is a
+// silent membership change, which is how the ISIN arm went unreached
+// for two days after it shipped (the three Franklin share classes
+// declare type `other` beside their ISINs, and the filter read only
+// the type). [TestCouldQualify_MatchesQualifyOnTheAssetSideInputs]
+// pins the match over all three inputs.
+func CouldQualify(code, declaredAnchorType, declaredAnchorAsset string) bool {
+	return AnchorClass(declaredAnchorType) != "" ||
+		isOracleRWACode(code) ||
+		IsISIN(declaredAnchorAsset)
 }

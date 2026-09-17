@@ -818,20 +818,25 @@ type RWAAsset struct {
 	IssuerDirectoryTags []string `json:"issuer_directory_tags,omitempty"`
 	// Basis names which requirement-4 arm admitted this asset.
 	Basis string `json:"basis"`
-	// Recognition names WHICH independent party's naming satisfied C2,
-	// on contract-issued rows. Absent on classic rows, where R3 has
-	// exactly one source and naming it would say nothing.
+	// Recognition names WHICH independent party's naming satisfied the
+	// recognition requirement — C2 on a contract-issued row, R3 on a
+	// classic row. Present on every served row. On classic rows it is
+	// `curated_account_directory` when the directory lists this issuer
+	// account itself, or `curated_account_directory_via_domain_sibling`
+	// when it lists another account that the same issuer-bound SEP-1
+	// binds on the same domain (the directory never looked at this
+	// account; the recognised entity named it from its own domain).
 	//
-	// It is on the wire because the contract arm's two routes to
-	// recognition are NOT the same strength of evidence. A row reading
+	// It is on the wire because neither arm's two routes to
+	// recognition are the same strength of evidence. A row reading
 	// `curated_account_directory` was vouched for by an address-level
 	// identity directory that carries scam flags and admits on its own.
 	// A row reading `independent_listing_corroborating_curated_binding`
 	// required TWO sources that do not read each other — a listing
 	// platform naming the address, and an in-repo curated binding
 	// naming the same address — because neither is sufficient alone.
-	// A consumer that wants only the first can filter on this field
-	// rather than having to reconstruct the rule.
+	// A consumer that wants only directory-attested rows can filter on
+	// this field rather than having to reconstruct the rule.
 	Recognition string `json:"recognition,omitempty"`
 	// DecimalsUnresolved is true when Decimals is the hardcoded default
 	// rather than a reading from the token's own on-chain metadata.
@@ -1051,8 +1056,14 @@ type rwaMembership struct {
 // possibly satisfy requirement 4, so the scan never materialises the
 // tens of thousands of bound entries that declare an NFT, a crypto
 // token or nothing at all.
+//
+// Every asset-side input a requirement-4 arm reads goes through: the
+// anchor asset as well as the code and the type. Passing fewer is how
+// the ISIN arm was unreachable for the Franklin share classes (type
+// `other`, ISIN in anchor_asset) — the entries were counted as
+// EntriesFiltered before [Server.admitClassicCandidates] ever saw them.
 func rwaCandidateFilter(c timescale.Sep1BoundCurrency) bool {
-	return rwa.CouldQualify(c.Code, c.AnchorAssetType)
+	return rwa.CouldQualify(c.Code, c.AnchorAssetType, c.AnchorAsset)
 }
 
 // buildRWAMembership runs BOTH arms and returns the combined set.
@@ -1606,10 +1617,12 @@ func (s *Server) handleRWAAssets(w http.ResponseWriter, r *http.Request) {
 	// address was not named.
 	listingRefs := rwaListingReferencesOf(m.contracts)
 	// The classic arm's own listing rows, from the SAME cached read
-	// /v1/assets uses. A classic member is keyed by its `CODE-GISSUER`
-	// asset id, which is what the directory publishes for that form —
-	// the contract map above cannot answer for it, because the read
-	// behind it returns C-strkeys only.
+	// /v1/assets uses, resolved by the SAME rule ([listingEntryIn]):
+	// the `CODE-GISSUER` id first, then the Stellar Asset Contract
+	// address derived from it, because the directory publishes each
+	// asset under ONE of those forms with no pattern. The contract map
+	// above cannot answer for a classic member, because the read behind
+	// it returns C-strkeys the membership named, not the derived ones.
 	//
 	// A snapshot that is not available yields a nil map, and a nil map
 	// answers every lookup with a zero entry — which is the "no listing
@@ -1642,8 +1655,9 @@ func rwaDefinition() RWADefinition {
 		Requirements: []string{
 			"classic asset identified by (code, issuer)",
 			"issuer-bound SEP-1 [[CURRENCIES]] entry served from the on-chain home_domain",
-			"issuer independently recognised in the curated account directory and not scam-flagged",
-			"real-world instrument by SEP-1 anchor_asset_type or by an ADR-0028 oracle feed",
+			"issuer independently recognised in the curated account directory and not scam-flagged, " +
+				"or unflagged and bound by the same issuer-bound SEP-1 on the same domain as an account the directory recognises",
+			"real-world instrument by SEP-1 anchor_asset_type, by an ADR-0028 oracle feed, or by a well-formed ISIN in SEP-1 anchor_asset",
 		},
 		ContractRequirements: []string{
 			"contract-issued token identified by its contract address",

@@ -158,18 +158,58 @@ func TestQualify_OracleBasisNeverAdmitsOnCodeAlone(t *testing.T) {
 // pre-filter must never drop an entry [Qualify] would have admitted.
 // A pre-filter that is narrower than the rule it precedes is a silent
 // membership change with no test to catch it.
+//
+// The matrix spans EVERY asset-side input a requirement-4 arm reads:
+// code (oracle arm), anchor type (class arm) and anchor asset (ISIN
+// arm). The third dimension was missing when the ISIN arm shipped, so
+// the guard passed while the pre-filter dropped the three Franklin
+// share classes the arm exists for.
 func TestCouldQualify_MatchesQualifyOnTheAssetSideInputs(t *testing.T) {
 	codes := []string{"USTRY", "BENJI", "XAU", "XAUm", "MEME", "USDC", ""}
 	types := []string{"bond", "stock", "commodity", "realestate", "fiat", "crypto", "nft", "other", ""}
+	anchors := []string{
+		"LU2900381208", // gBENJI, valid ISIN
+		"SGXZ71843866", // sgBENJI, valid ISIN
+		"US0378331005", // Apple, valid ISIN
+		"LU2900381209", // wrong check digit
+		"FOBXX",        // a ticker, not an ISIN
+		"",
+	}
 	for _, code := range codes {
 		for _, typ := range types {
-			admitted := Qualify(Candidate{
-				Code: code, Issuer: "G1", BoundSep1: true,
-				DeclaredAnchorType: typ, DirectoryTags: []string{"issuer"},
-			}).InSet
-			if admitted && !CouldQualify(code, typ) {
-				t.Errorf("CouldQualify(%q, %q) = false but Qualify admits it", code, typ)
+			for _, anchor := range anchors {
+				admitted := Qualify(Candidate{
+					Code: code, Issuer: "G1", BoundSep1: true,
+					DeclaredAnchorType:  typ,
+					DeclaredAnchorAsset: anchor,
+					DirectoryTags:       []string{"issuer"},
+				}).InSet
+				if admitted && !CouldQualify(code, typ, anchor) {
+					t.Errorf("CouldQualify(%q, %q, %q) = false but Qualify admits it", code, typ, anchor)
+				}
 			}
 		}
+	}
+}
+
+// TestCouldQualify_KeepsAnISINDeclaredEntryWithNoClass pins the exact
+// shape that was dropped: a code no oracle prices, type `other`, and a
+// well-formed ISIN in anchor_asset. The matrix above covers it too;
+// this names it so a future narrowing fails on a line that says why.
+func TestCouldQualify_KeepsAnISINDeclaredEntryWithNoClass(t *testing.T) {
+	for _, c := range []struct{ code, isin string }{
+		{"gBENJI", "LU2900381208"},
+		{"grBENJI", "LU3258450587"},
+		{"sgBENJI", "SGXZ71843866"},
+	} {
+		if !CouldQualify(c.code, "other", c.isin) {
+			t.Errorf("CouldQualify(%q, other, %s) = false: the ISIN arm is unreachable through the pre-filter", c.code, c.isin)
+		}
+	}
+	if CouldQualify("gBENJI", "other", "LU2900381209") {
+		t.Error("a malformed ISIN (bad check digit) must not pass the pre-filter on the ISIN arm")
+	}
+	if CouldQualify("MEME", "other", "") {
+		t.Error("type other with no anchor asset and no oracle code must still be filtered")
 	}
 }

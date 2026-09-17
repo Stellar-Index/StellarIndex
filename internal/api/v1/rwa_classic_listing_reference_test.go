@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/rwa"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
@@ -87,6 +88,73 @@ func TestImpersonatorDoesNotInheritAListingPrice(t *testing.T) {
 	}
 	if a.Premium.Status != RWAPremiumNotBound {
 		t.Errorf("premium status = %q, want %q", a.Premium.Status, RWAPremiumNotBound)
+	}
+}
+
+// The directory publishes each asset under ONE address form with no
+// pattern — some by `CODE-GISSUER`, some by the Stellar Asset Contract
+// address alone (issue #514). /v1/assets already tries both; this arm
+// keyed on the classic id only, so a SAC-listed classic member was
+// refused as `reference_not_bound` while the snapshot in hand named
+// its address. Both surfaces now resolve through [listingEntryIn].
+func TestClassicRowTakesItsListingPriceUnderTheSACForm(t *testing.T) {
+	const id = "WTGX-GDMBNMFJ3TRFLASJ6UGETFME3PJPNKPU24C7KFDBEBPQFG2CI6UC3JG6"
+	classic, sac := listingAddressesFor(id)
+	if classic != id || sac == "" {
+		t.Fatalf("listingAddressesFor(%s) = (%q, %q), want the classic id and a derived SAC", id, classic, sac)
+	}
+	now := time.Now().UTC()
+	listings := map[string]timescale.ListingEntry{
+		sac: {
+			Address:   sac,
+			ListingID: "wisdomtree-treasury-money-market-digital-fund",
+			Symbol:    "wtgxx",
+			PriceUSD:  "1.0",
+			PricedAt:  now.Add(-time.Hour),
+			Source:    "coingecko",
+		},
+	}
+
+	a := RWAAsset{
+		AssetID:           id,
+		Code:              "WTGX",
+		Issuer:            "GDMBNMFJ3TRFLASJ6UGETFME3PJPNKPU24C7KFDBEBPQFG2CI6UC3JG6",
+		CirculatingSupply: supplyOf("22987932026782"),
+		Decimals:          7,
+	}
+	rwaApplyReference(&a, rwaReferenceSnapshotFrom(nil), nil, listings, now)
+
+	if a.Reference == nil {
+		t.Fatalf("SAC-listed classic member got no reference; premium status = %q", a.Premium.Status)
+	}
+	if a.Reference.Provenance != RWAReferenceListingPrice || a.Reference.Feed != "wisdomtree-treasury-money-market-digital-fund" {
+		t.Errorf("reference = %+v, want the listing row published under the SAC", a.Reference)
+	}
+	if a.ReferenceValuation.ValueUSD == nil || *a.ReferenceValuation.ValueUSD != "2298793.20" {
+		t.Errorf("reference valuation = %v, want 2298793.20", a.ReferenceValuation.ValueUSD)
+	}
+
+	// Same rule on the CNAV pre-check: a listing price is an observation
+	// and the prospectus NAV is a rule, so a SAC-listed CNAV share class
+	// takes the listing. Before the fix the classic-only key missed the
+	// SAC row and the prospectus figure was published over a live price.
+	const gBENJI = "gBENJI-GD5J73EKK5IYL5XS3FBTHHX7CZIYRP7QXDL57XFWGC2WVYWT326OBXRP"
+	if _, ok := rwa.ConstantNAV("gBENJI", "GD5J73EKK5IYL5XS3FBTHHX7CZIYRP7QXDL57XFWGC2WVYWT326OBXRP"); !ok {
+		t.Fatal("fixture drift: gBENJI is no longer a CNAV-bound pair; pick another")
+	}
+	_, gSAC := listingAddressesFor(gBENJI)
+	cnav := RWAAsset{
+		AssetID:           gBENJI,
+		Code:              "gBENJI",
+		Issuer:            "GD5J73EKK5IYL5XS3FBTHHX7CZIYRP7QXDL57XFWGC2WVYWT326OBXRP",
+		CirculatingSupply: supplyOf("10000000000"),
+		Decimals:          7,
+	}
+	rwaApplyReference(&cnav, rwaReferenceSnapshotFrom(nil), nil, map[string]timescale.ListingEntry{
+		gSAC: {Address: gSAC, ListingID: "franklin-onchain-us-government-money-fund", PriceUSD: "1.0", PricedAt: now, Source: "coingecko"},
+	}, now)
+	if cnav.Reference == nil || cnav.Reference.Provenance != RWAReferenceListingPrice {
+		t.Errorf("CNAV pair with a SAC-listed price: reference = %+v, want the listing observation over the prospectus rule", cnav.Reference)
 	}
 }
 
