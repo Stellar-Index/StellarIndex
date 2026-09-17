@@ -263,6 +263,59 @@ than 1 stroop.
     **A caller reading `WithinTolerance` MUST read `SubsetBoundChecked`
     alongside it.**
 
+  **Amendment (2026-08-05 decision, commit `6f38b63ee` / v0.26.0;
+  recorded 2026-09-18).** Leg 1 above is now **diagnostic-only**. Its
+  bound — `sac.TotalSupply ≤ classic.TotalSupply` — compares the
+  event-derived *cumulative* net mint (Algorithm 3) with the *current*
+  classic outstanding stock (Algorithm 2), and that comparison only holds
+  for a one-way wrap where nothing ever leaves contract space. Two live
+  assets falsified it, measured on production to the stroop: BLND retires
+  supply classically after SAC minting (a classic payment back to the
+  issuer burns supply with no SAC burn event, so cumulative net mint
+  125.6M legitimately exceeds classic outstanding 113.0M forever), and
+  PHO minted its entire 200M supply through the SAC once and distributed
+  it classic-side while classic outstanding is issuer-excluded (77.9M).
+  Both paged for a week as "divergence" with every unit accounted for
+  (CHANGELOG v0.26.0, "Changed: The partial-wrap supply cross-check's
+  over-mint leg is diagnostic-only"). What `CrossCheckSubsetBound` does
+  as of that commit:
+
+  - **Still computed, no longer paging:** `OverMintStroops`
+    (`max(0, sac_total − classic_total)`) is filled in on every
+    `CrossCheckResult` so a caller can read the cumulative-vs-outstanding
+    gap, but it does **not** feed `DivergenceStroops`. In production it
+    surfaces only as `over_mint_stroops` on the aggregator's
+    `cross-check: divergence over tolerance` WARN line
+    (`internal/supply/crosscheck_refresher.go`) — and that line fires
+    only on a leg-2 breach, so a leg-1 excess occurring alone is
+    computed and then silent. The `supply cross-check` ops CLI prints
+    the divergence figure only, not this leg.
+  - **The only input to the divergence figure is leg 2:**
+    `DivergenceStroops = escrow_excess = max(0, classic.SACWrappedStroops
+    − sac.TotalSupply)`, so the
+    `stellarindex_supply_cross_check_divergence_stroops` gauge and its
+    alert fire on an escrow-exceeds-minted breach alone. The "max of both
+    legs" formula in the 2026-07-26 amendment above no longer describes
+    the code.
+  - **Consequently the blind-spot list above widens.** An over-reported
+    SAC total (a double-counted mint, a missed burn) raises `sac_total`,
+    which makes leg 2 *easier* to satisfy — so that direction is no
+    longer paged, and per the previous bullet is not logged either
+    unless leg 2 breaches at the same time. What still pages is the
+    direction leg 2 owns: a mint the indexer never captured or a burn it
+    double-counted, both of which push `SACWrapped` above `sac_total`.
+  - **The CS-087 gate is now load-bearing for the whole check.** With
+    leg 1 out of the figure, a result whose `SACWrappedStroops` is nil
+    has `DivergenceStroops = 0` and `WithinTolerance = true` while
+    verifying nothing; `SubsetBoundChecked = false` is the only signal
+    that the check was vacuous. The rule above — read
+    `SubsetBoundChecked` alongside `WithinTolerance` — is therefore not
+    advisory but the difference between a green check and no check.
+
+  The `WrapClassFull` equality compare (`CrossCheck`, for operator-
+  attested fully-wrapped pairs) is unchanged by this. The decision above
+  and the 2026-07-26 amendment are preserved as the historical record.
+
 - **Negative — the locked-set YAML is operationally fiddly.** Every
   asset-of-interest needs a curated entry to get a meaningful
   circulating-supply. Without curation, we default to issuer-only
