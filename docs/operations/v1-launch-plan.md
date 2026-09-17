@@ -191,8 +191,10 @@ column, is the option that needs no one to choose in the dark.
 ### Tier 2 — real work that does NOT gate the announcement
 
 Named explicitly, because all of them are carried below as if they did:
-**W3.4** (contract-tx index), **W5.4** (13 supply-rollup resets — verify with
-`supply verify-rollup` first; there is no live drift signal), **W5.6**
+**W3.4** (contract-tx index), ~~**W5.4** (13 supply-rollup resets)~~ **VERIFIED
+CLEAN 2026-09-17** — `supply verify-rollup` on r1: "OK: 45 checkpoint(s) reconcile
+with the authoritative re-sum (0 drift, tolerance 0)"; no reset is needed and
+the item is closed on that evidence, **W5.6**
 (`contract_events_daily` v2 — the branch is not even on origin), **W5.7 /
 W5.8** (CEX dust delete, galexie trim, `soroban_events` decommission #39 —
 destructive, should be last), **W8-9b**, **W8-10a**, **W8-12**, **#340**
