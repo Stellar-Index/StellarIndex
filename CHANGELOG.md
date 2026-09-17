@@ -15,6 +15,35 @@ against.
 
 ## [Unreleased]
 
+### Added
+
+- **explorer:** `GET /v1/accounts/{g}/graph/cohort?relation=created|sponsored`
+  — what the accounts an address created or sponsored went on to hold
+  and do, from the cohort's own ledger footprint: current holdings per
+  asset valued at the live rate (a pool share is a holding and is never
+  priced), monthly inflow/outflow per asset with the month's movement
+  count and distinct active members, the C… contracts the cohort moved
+  value through (labelled where the protocol roster claims them),
+  members active in the last 30/90/365 days, and open DeFi positions
+  from the served tier's six per-protocol folds. `covered: false` for a
+  root the rollup does not carry, dated by `cycle` either way. The read
+  the sponsor and creator boards invite: what value did that cohort
+  bring to the network.
+- **ops:** `stellarindex-ops ch-cohort-rollup` — the daily cycle behind
+  it (`cohort-rollup.timer`): membership from the boards' edge tables
+  (every sponsor; creators with ≥ 10 accounts), one walk over the
+  movements archive into a parts table with mergeable distinct-member
+  states, folds into monthly flows and contract counterparties, a join
+  of `ledger_entries_current` for holdings and of `account_activity`
+  for recency, and a snapshot of every DeFi position holder read from
+  Postgres and joined in ClickHouse. Sixteen `account_cohort_*` /
+  `defi_position_holders*` tables in `tier1_schema.sql`, mirrored with a
+  runbook in `deploy/clickhouse/account_cohort_rollup.sql`.
+- **web:** the sponsor and creator detail pages gain the cohort panels —
+  what the set holds (with a USD total over what is priced), value moved
+  by month, the protocols the set moved value through, recency, and
+  DeFi positions.
+
 ## [v0.88.1] — 2026-09-17
 
 Release mechanics only — no code change from v0.88.0. The v0.88.0

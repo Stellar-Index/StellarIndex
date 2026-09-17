@@ -317,6 +317,12 @@ type ExplorerReader interface {
 	// counted rather than smeared. ok=false on the same condition
 	// AccountGraph refuses — either arm unbuilt.
 	AccountGraphHistory(ctx context.Context, account string) (clickhouse.AccountGraphHistory, bool, error)
+	// AccountCohort is what the accounts this address created or
+	// sponsored went on to hold and do — the cohort rollup's snapshot
+	// for one root and one relation. ok=false means no cycle has
+	// completed on this deployment; a completed cycle that does not
+	// cover the root returns ok=true with Covered=false.
+	AccountCohort(ctx context.Context, account, relation string) (clickhouse.AccountCohort, bool, error)
 	// ContractActivitySummaryFor is the per-contract liveness card
 	// (first/last seen + daily active-ledger series; ok=false when the
 	// active-ledgers index isn't usable — callers omit the card).
@@ -391,6 +397,11 @@ type Handler struct {
 	// `directory` field and GET /v1/directory. Nil omits the field
 	// and 503s the batch endpoint (directory.go).
 	Directory DirectoryReader
+
+	// ContractProtocol names the protocol a C… contract belongs to, for
+	// labelling the contracts a cohort moved value through. Nil leaves
+	// every contract unlabelled; a miss leaves that one unlabelled.
+	ContractProtocol func(ctx context.Context, contractID string) (string, bool)
 
 	LookupUSDPrice  func(ctx context.Context, asset canonical.Asset) (string, bool)
 	IsKnownSAC      func(contractID string) bool

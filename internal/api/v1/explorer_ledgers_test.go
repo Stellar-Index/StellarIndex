@@ -39,6 +39,9 @@ type stubExplorerReader struct {
 	creatorsLimit   int
 	creatorsAccount string
 	accountSponsors clickhouse.AccountSponsors
+	cohort          clickhouse.AccountCohort
+	cohortOK        bool
+	cohortRelation  string
 	sponsorsLimit   int
 	sponsorsAccount string
 	// accountGraph backs GET /v1/accounts/{g}/graph. graphCreatedEdges /
@@ -350,6 +353,21 @@ func (s *stubExplorerReader) AccountGraph(_ context.Context, _, relation string,
 // AccountGraphHistory mirrors the real reader's contract: a graph whose
 // creation arm has no covered span has not completed a cycle, and a
 // series over it would claim "this account has never created anything".
+// AccountCohort serves the stub's cohort when a cycle "completed"
+// (cohortOK) and records the relation asked for.
+func (s *stubExplorerReader) AccountCohort(_ context.Context, _ string, relation string) (clickhouse.AccountCohort, bool, error) {
+	if s.err != nil {
+		return clickhouse.AccountCohort{}, false, s.err
+	}
+	s.cohortRelation = relation
+	if !s.cohortOK {
+		return clickhouse.AccountCohort{}, false, nil
+	}
+	out := s.cohort
+	out.Relation = relation
+	return out, true, nil
+}
+
 func (s *stubExplorerReader) AccountGraphHistory(_ context.Context, _ string) (clickhouse.AccountGraphHistory, bool, error) {
 	if s.err != nil {
 		return clickhouse.AccountGraphHistory{}, false, s.err

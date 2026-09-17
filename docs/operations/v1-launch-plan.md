@@ -201,6 +201,27 @@ the CoinGecko Pro purchase, enabling hashdb, and IP rotation. **HA / R2+R3
 is superseded by D2** (single box with tested restore for v1); the
 2026-08-28 "second public host into the launch gate" line is stale.
 
+**Sponsor / creator cohort pages — SHIPPED 2026-09-17 (post-1.0 item, done
+early because it was asked for by name).** `/insights/sponsors/{g}` and
+`/insights/creators/{g}` now read `GET /v1/accounts/{g}/graph/cohort?relation=`
+— what the accounts that address created or sponsored went on to hold and
+do: current holdings per asset valued at the live rate (pool shares served
+as holdings, never priced), monthly inflow/outflow per asset with the
+month's movement count and distinct active members, the C… contracts the
+cohort moved value through (labelled from the protocol roster), members
+active in the last 30/90/365 days, and DeFi positions from the six
+per-protocol folds. Behind it: `stellarindex-ops ch-cohort-rollup` +
+`cohort-rollup.timer` (daily), 16 `account_cohort_*` / `defi_position_holders*`
+tables (DDL applied on r1 by hand 2026-09-17 — idempotent, in
+`tier1_schema.sql` and mirrored with a runbook in
+`deploy/clickhouse/account_cohort_rollup.sql`). Coverage floor: every
+sponsor, creators with ≥ 10 accounts; below it the API says `covered: false`.
+**Remaining, operator-free:** the first cycle runs once the ops binary that
+carries the command is deployed (v0.89.0) — start `cohort-rollup.service`
+by hand and read the step log; the movements walk is the long step and its
+first wall-clock is the number to put here. Until then the panel reads
+"warming".
+
 ### Live findings — r1, 2026-09-04 evening (alert board read directly)
 
 Six alerts are active on r1 and none of them is `oracle_stale`, which row

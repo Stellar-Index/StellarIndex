@@ -40430,6 +40430,245 @@
                       }
                     }
                   ]
+                },
+                {
+                  "name": "cohort",
+                  "description": "",
+                  "item": [
+                    {
+                      "name": "What the accounts this address created or sponsored went on to hold and do.",
+                      "request": {
+                        "name": "What the accounts this address created or sponsored went on to hold and do.",
+                        "description": {
+                          "content": "The value side of `/accounts/{g_strkey}/graph`. The graph says how\nmany accounts this address stood behind; this says what that\ncohort holds now, what it moved month by month, which contracts it\nmoved value through, how recently it was active, and what DeFi\npositions it holds — every figure from the COHORT's own ledger\nfootprint, never the root's. It is the read for \"what did this\nsponsor bring to the network\".\n\nONE RELATION PER CALL. `relation=created` is the accounts this\naddress funded into existence; `relation=sponsored` the accounts\nwhose reserves it sponsored. An account can be in both cohorts of\nthe same root and in the cohorts of several roots; the two\nrelations are never summed.\n\nA SNAPSHOT, DATED. Everything comes from the cohort rollup's last\ncycle — `cycle.computed_at` and `cycle.tip_ledger` say when —\nrebuilt daily and swapped atomically, so a response is never a\nhalf-built cohort. Membership is the same edge tables the graph\nserves.\n\nWHAT IS COVERED. Every sponsor, and every creator with at least\nten accounts to its name. Below that a cohort is a handful of\naccounts and the per-account pages are the better read; the\nresponse says `covered: false` rather than serving an empty\ncohort that would read as \"holds nothing\". `cycle` is still set\nso a reader can tell \"not covered\" from \"not yet computed\".\n\nHOLDINGS AND VALUATION are current balances per asset in whole\nunits, most widely held first, valued at the live USD rate where\none exists. A classic liquidity-pool share (`pool:<hex>`) is\nserved as a holding of kind `pool_share` — it is a DeFi position\non the classic side — and is never priced here, because a share\nis not an asset. Nothing unpriced is ever valued at zero.\n\nFLOWS are derived from the movements archive: received and sent\nper asset per calendar month (UTC), the cohort's most-moved\nassets broken out, with an all-assets headline per month\n(`movements`, `active_accounts`) that counts every asset. A month\nwith no movement emits no point. `active_accounts` is a\nuniqCombined estimate; `movements` is exact. The USD figures on a\nmonth value that month's QUANTITY at TODAY'S price — a\ncomparison across months in one unit, not what the month was\nworth then.\n\nCONTRACTS are the C… counterparties of cohort movements — the\nvalue-moving subset of \"interacted with\". A call that moved no\nbalance leaves no movement and is not counted. `protocol` is set\nwhere the protocol roster claims the contract.\n\nPOSITIONS are the served tier's per-protocol folds (the six behind\n`/accounts/{g_strkey}/positions`) joined to the cohort: how many\nmembers hold a position in each venue and the fold's amount summed\nacross them, in the fold's own unit — a magnitude, not a\nsettlement figure.\n\nBOUNDED BY CONSTRUCTION: every read is a primary-key range over\nthis root's own rollup rows, with per-section caps\n(`holdings_truncated` says when one applied).\n",
+                          "type": "text/plain"
+                        },
+                        "url": {
+                          "path": [
+                            "accounts",
+                            ":g_strkey",
+                            "graph",
+                            "cohort"
+                          ],
+                          "host": [
+                            "{{baseUrl}}"
+                          ],
+                          "query": [
+                            {
+                              "disabled": false,
+                              "description": {
+                                "content": "(Required) Which cohort — the accounts this address created, or the accounts it sponsored. (This can only be one of created,sponsored)",
+                                "type": "text/plain"
+                              },
+                              "key": "relation",
+                              "value": "created"
+                            }
+                          ],
+                          "variable": [
+                            {
+                              "type": "any",
+                              "value": "<string>",
+                              "key": "g_strkey",
+                              "disabled": false,
+                              "description": {
+                                "content": "(Required) G-strkey account id.",
+                                "type": "text/plain"
+                              }
+                            }
+                          ]
+                        },
+                        "header": [
+                          {
+                            "key": "Accept",
+                            "value": "application/json"
+                          }
+                        ],
+                        "method": "GET",
+                        "body": {},
+                        "auth": null
+                      },
+                      "response": [
+                        {
+                          "name": "The cohort's holdings, monthly flows, contracts, activity and positions.",
+                          "originalRequest": {
+                            "url": {
+                              "path": [
+                                "accounts",
+                                ":g_strkey",
+                                "graph",
+                                "cohort"
+                              ],
+                              "host": [
+                                "{{baseUrl}}"
+                              ],
+                              "query": [
+                                {
+                                  "disabled": false,
+                                  "description": {
+                                    "content": "(Required) Which cohort — the accounts this address created, or the accounts it sponsored. (This can only be one of created,sponsored)",
+                                    "type": "text/plain"
+                                  },
+                                  "key": "relation",
+                                  "value": "created"
+                                }
+                              ],
+                              "variable": [
+                                {
+                                  "disabled": false,
+                                  "description": {
+                                    "content": "(Required) G-strkey account id.",
+                                    "type": "text/plain"
+                                  },
+                                  "type": "any",
+                                  "value": "<string>",
+                                  "key": "g_strkey"
+                                }
+                              ]
+                            },
+                            "header": [
+                              {
+                                "key": "Accept",
+                                "value": "application/json"
+                              }
+                            ],
+                            "method": "GET",
+                            "body": {}
+                          },
+                          "status": "OK",
+                          "code": 200,
+                          "header": [
+                            {
+                              "key": "Content-Type",
+                              "value": "application/json"
+                            }
+                          ],
+                          "body": "{\n  \"data\": {\n    \"account\": \"<string>\",\n    \"relation\": \"sponsored\",\n    \"covered\": \"<boolean>\",\n    \"holdings\": [\n      {\n        \"asset\": \"<string>\",\n        \"kind\": \"native\",\n        \"holders\": \"<long>\",\n        \"balance\": \"<string>\",\n        \"price_usd\": \"<string>\",\n        \"value_usd\": \"<string>\"\n      },\n      {\n        \"asset\": \"<string>\",\n        \"kind\": \"pool_share\",\n        \"holders\": \"<long>\",\n        \"balance\": \"<string>\",\n        \"price_usd\": \"<string>\",\n        \"value_usd\": \"<string>\"\n      }\n    ],\n    \"holdings_truncated\": \"<boolean>\",\n    \"valuation\": {\n      \"priced_holdings\": \"<integer>\",\n      \"unpriced_holdings\": \"<integer>\",\n      \"basis\": \"live_vwap_current\",\n      \"total_usd\": \"<string>\"\n    },\n    \"flows\": {\n      \"granularity\": \"1M\",\n      \"assets\": [\n        \"<string>\",\n        \"<string>\"\n      ],\n      \"points\": [\n        {\n          \"period\": \"<string>\",\n          \"period_start\": \"<dateTime>\",\n          \"movements\": \"<long>\",\n          \"active_accounts\": \"<long>\",\n          \"by_asset\": [\n            {\n              \"asset\": \"<string>\",\n              \"inflow\": \"<string>\",\n              \"outflow\": \"<string>\",\n              \"scaled\": \"<boolean>\",\n              \"inflow_usd\": \"<string>\",\n              \"outflow_usd\": \"<string>\"\n            },\n            {\n              \"asset\": \"<string>\",\n              \"inflow\": \"<string>\",\n              \"outflow\": \"<string>\",\n              \"scaled\": \"<boolean>\",\n              \"inflow_usd\": \"<string>\",\n              \"outflow_usd\": \"<string>\"\n            }\n          ]\n        },\n        {\n          \"period\": \"<string>\",\n          \"period_start\": \"<dateTime>\",\n          \"movements\": \"<long>\",\n          \"active_accounts\": \"<long>\",\n          \"by_asset\": [\n            {\n              \"asset\": \"<string>\",\n              \"inflow\": \"<string>\",\n              \"outflow\": \"<string>\",\n              \"scaled\": \"<boolean>\",\n              \"inflow_usd\": \"<string>\",\n              \"outflow_usd\": \"<string>\"\n            },\n            {\n              \"asset\": \"<string>\",\n              \"inflow\": \"<string>\",\n              \"outflow\": \"<string>\",\n              \"scaled\": \"<boolean>\",\n              \"inflow_usd\": \"<string>\",\n              \"outflow_usd\": \"<string>\"\n            }\n          ]\n        }\n      ]\n    },\n    \"contracts\": [\n      {\n        \"contract_id\": \"<string>\",\n        \"movements\": \"<long>\",\n        \"active_accounts\": \"<long>\",\n        \"first_at\": \"<dateTime>\",\n        \"last_at\": \"<dateTime>\",\n        \"protocol\": \"<string>\"\n      },\n      {\n        \"contract_id\": \"<string>\",\n        \"movements\": \"<long>\",\n        \"active_accounts\": \"<long>\",\n        \"first_at\": \"<dateTime>\",\n        \"last_at\": \"<dateTime>\",\n        \"protocol\": \"<string>\"\n      }\n    ],\n    \"positions\": [\n      {\n        \"protocol\": \"<string>\",\n        \"position_kind\": \"<string>\",\n        \"venue\": \"<string>\",\n        \"holders\": \"<long>\",\n        \"amount\": \"<string>\",\n        \"asset\": \"<string>\",\n        \"asset_label\": \"<string>\"\n      },\n      {\n        \"protocol\": \"<string>\",\n        \"position_kind\": \"<string>\",\n        \"venue\": \"<string>\",\n        \"holders\": \"<long>\",\n        \"amount\": \"<string>\",\n        \"asset\": \"<string>\",\n        \"asset_label\": \"<string>\"\n      }\n    ],\n    \"note\": \"<string>\",\n    \"cohort\": {\n      \"accounts\": \"<long>\",\n      \"live_accounts\": \"<long>\",\n      \"active_30d\": \"<long>\",\n      \"active_90d\": \"<long>\",\n      \"active_365d\": \"<long>\"\n    },\n    \"cycle\": {\n      \"computed_at\": \"<dateTime>\",\n      \"tip_ledger\": \"<long>\"\n    }\n  }\n}",
+                          "cookie": [],
+                          "_postman_previewlanguage": "json"
+                        },
+                        {
+                          "name": "Client-supplied parameters didn't validate.",
+                          "originalRequest": {
+                            "url": {
+                              "path": [
+                                "accounts",
+                                ":g_strkey",
+                                "graph",
+                                "cohort"
+                              ],
+                              "host": [
+                                "{{baseUrl}}"
+                              ],
+                              "query": [
+                                {
+                                  "disabled": false,
+                                  "description": {
+                                    "content": "(Required) Which cohort — the accounts this address created, or the accounts it sponsored. (This can only be one of created,sponsored)",
+                                    "type": "text/plain"
+                                  },
+                                  "key": "relation",
+                                  "value": "created"
+                                }
+                              ],
+                              "variable": [
+                                {
+                                  "disabled": false,
+                                  "description": {
+                                    "content": "(Required) G-strkey account id.",
+                                    "type": "text/plain"
+                                  },
+                                  "type": "any",
+                                  "value": "<string>",
+                                  "key": "g_strkey"
+                                }
+                              ]
+                            },
+                            "header": [
+                              {
+                                "key": "Accept",
+                                "value": "application/problem+json"
+                              }
+                            ],
+                            "method": "GET",
+                            "body": {}
+                          },
+                          "status": "Bad Request",
+                          "code": 400,
+                          "header": [
+                            {
+                              "key": "Content-Type",
+                              "value": "application/problem+json"
+                            }
+                          ],
+                          "body": "{\n  \"type\": \"<uri>\",\n  \"title\": \"<string>\",\n  \"status\": \"<integer>\",\n  \"detail\": \"<string>\",\n  \"instance\": \"<string>\",\n  \"request_id\": \"<string>\",\n  \"coverage_from\": \"<dateTime>\",\n  \"outside_coverage\": \"<boolean>\"\n}",
+                          "cookie": [],
+                          "_postman_previewlanguage": "json"
+                        },
+                        {
+                          "name": "Server is degraded (dependency outage, startup, shutdown).",
+                          "originalRequest": {
+                            "url": {
+                              "path": [
+                                "accounts",
+                                ":g_strkey",
+                                "graph",
+                                "cohort"
+                              ],
+                              "host": [
+                                "{{baseUrl}}"
+                              ],
+                              "query": [
+                                {
+                                  "disabled": false,
+                                  "description": {
+                                    "content": "(Required) Which cohort — the accounts this address created, or the accounts it sponsored. (This can only be one of created,sponsored)",
+                                    "type": "text/plain"
+                                  },
+                                  "key": "relation",
+                                  "value": "created"
+                                }
+                              ],
+                              "variable": [
+                                {
+                                  "disabled": false,
+                                  "description": {
+                                    "content": "(Required) G-strkey account id.",
+                                    "type": "text/plain"
+                                  },
+                                  "type": "any",
+                                  "value": "<string>",
+                                  "key": "g_strkey"
+                                }
+                              ]
+                            },
+                            "header": [
+                              {
+                                "key": "Accept",
+                                "value": "application/problem+json"
+                              }
+                            ],
+                            "method": "GET",
+                            "body": {}
+                          },
+                          "status": "Service Unavailable",
+                          "code": 503,
+                          "header": [
+                            {
+                              "key": "Content-Type",
+                              "value": "application/problem+json"
+                            }
+                          ],
+                          "body": "{\n  \"type\": \"<uri>\",\n  \"title\": \"<string>\",\n  \"status\": \"<integer>\",\n  \"detail\": \"<string>\",\n  \"instance\": \"<string>\",\n  \"request_id\": \"<string>\",\n  \"coverage_from\": \"<dateTime>\",\n  \"outside_coverage\": \"<boolean>\"\n}",
+                          "cookie": [],
+                          "_postman_previewlanguage": "json"
+                        }
+                      ],
+                      "event": [],
+                      "protocolProfileBehavior": {
+                        "disableBodyPruning": true
+                      }
+                    }
+                  ]
                 }
               ]
             },
@@ -40715,7 +40954,7 @@
                   "value": "application/json"
                 }
               ],
-              "body": "{\n  \"data\": {\n    \"entries\": {\n      \"key_0\": {\n        \"name\": \"<string>\",\n        \"tags\": [\n          \"<string>\",\n          \"<string>\"\n        ],\n        \"source\": \"<string>\",\n        \"domain\": \"<string>\"\n      }\n    }\n  }\n}",
+              "body": "{\n  \"data\": {\n    \"entries\": {\n      \"key_0\": {\n        \"name\": \"<string>\",\n        \"tags\": [\n          \"<string>\",\n          \"<string>\"\n        ],\n        \"source\": \"<string>\",\n        \"domain\": \"<string>\"\n      },\n      \"key_1\": {\n        \"name\": \"<string>\",\n        \"tags\": [\n          \"<string>\",\n          \"<string>\"\n        ],\n        \"source\": \"<string>\",\n        \"domain\": \"<string>\"\n      }\n    }\n  }\n}",
               "cookie": [],
               "_postman_previewlanguage": "json"
             },
@@ -40898,7 +41137,7 @@
                   "value": "application/json"
                 }
               ],
-              "body": "{\n  \"data\": {\n    \"query\": \"<string>\",\n    \"kind\": \"unknown\",\n    \"canonical\": \"<string>\",\n    \"href\": \"<string>\",\n    \"supported\": \"<boolean>\",\n    \"note\": \"<string>\"\n  }\n}",
+              "body": "{\n  \"data\": {\n    \"query\": \"<string>\",\n    \"kind\": \"asset\",\n    \"canonical\": \"<string>\",\n    \"href\": \"<string>\",\n    \"supported\": \"<boolean>\",\n    \"note\": \"<string>\"\n  }\n}",
               "cookie": [],
               "_postman_previewlanguage": "json"
             },

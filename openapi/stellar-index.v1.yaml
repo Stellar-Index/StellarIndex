@@ -11856,6 +11856,123 @@ paths:
         "400": { $ref: "#/components/responses/BadRequest" }
         "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
+  /accounts/{g_strkey}/graph/cohort:
+    get:
+      operationId: getAccountGraphCohort
+      x-stability: experimental
+      tags: [explorer]
+      summary: What the accounts this address created or sponsored went on to hold and do.
+      description: |
+        The value side of `/accounts/{g_strkey}/graph`. The graph says how
+        many accounts this address stood behind; this says what that
+        cohort holds now, what it moved month by month, which contracts it
+        moved value through, how recently it was active, and what DeFi
+        positions it holds — every figure from the COHORT's own ledger
+        footprint, never the root's. It is the read for "what did this
+        sponsor bring to the network".
+
+        ONE RELATION PER CALL. `relation=created` is the accounts this
+        address funded into existence; `relation=sponsored` the accounts
+        whose reserves it sponsored. An account can be in both cohorts of
+        the same root and in the cohorts of several roots; the two
+        relations are never summed.
+
+        A SNAPSHOT, DATED. Everything comes from the cohort rollup's last
+        cycle — `cycle.computed_at` and `cycle.tip_ledger` say when —
+        rebuilt daily and swapped atomically, so a response is never a
+        half-built cohort. Membership is the same edge tables the graph
+        serves.
+
+        WHAT IS COVERED. Every sponsor, and every creator with at least
+        ten accounts to its name. Below that a cohort is a handful of
+        accounts and the per-account pages are the better read; the
+        response says `covered: false` rather than serving an empty
+        cohort that would read as "holds nothing". `cycle` is still set
+        so a reader can tell "not covered" from "not yet computed".
+
+        HOLDINGS AND VALUATION are current balances per asset in whole
+        units, most widely held first, valued at the live USD rate where
+        one exists. A classic liquidity-pool share (`pool:<hex>`) is
+        served as a holding of kind `pool_share` — it is a DeFi position
+        on the classic side — and is never priced here, because a share
+        is not an asset. Nothing unpriced is ever valued at zero.
+
+        FLOWS are derived from the movements archive: received and sent
+        per asset per calendar month (UTC), the cohort's most-moved
+        assets broken out, with an all-assets headline per month
+        (`movements`, `active_accounts`) that counts every asset. A month
+        with no movement emits no point. `active_accounts` is a
+        uniqCombined estimate; `movements` is exact. The USD figures on a
+        month value that month's QUANTITY at TODAY'S price — a
+        comparison across months in one unit, not what the month was
+        worth then.
+
+        CONTRACTS are the C… counterparties of cohort movements — the
+        value-moving subset of "interacted with". A call that moved no
+        balance leaves no movement and is not counted. `protocol` is set
+        where the protocol roster claims the contract.
+
+        POSITIONS are the served tier's per-protocol folds (the six behind
+        `/accounts/{g_strkey}/positions`) joined to the cohort: how many
+        members hold a position in each venue and the fold's amount summed
+        across them, in the fold's own unit — a magnitude, not a
+        settlement figure.
+
+        BOUNDED BY CONSTRUCTION: every read is a primary-key range over
+        this root's own rollup rows, with per-section caps
+        (`holdings_truncated` says when one applied).
+      parameters:
+        - { name: g_strkey, in: path, required: true, description: G-strkey account id., schema: { type: string } }
+        - name: relation
+          in: query
+          required: true
+          description: Which cohort — the accounts this address created, or the accounts it sponsored.
+          schema: { type: string, enum: [created, sponsored] }
+      responses:
+        "200":
+          description: The cohort's holdings, monthly flows, contracts, activity and positions.
+          content:
+            application/json:
+              example:
+                data:
+                  account: GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN
+                  relation: created
+                  covered: true
+                  cohort: { accounts: 1200, live_accounts: 900, active_30d: 40, active_90d: 90, active_365d: 300 }
+                  holdings:
+                  - { asset: native, kind: native, holders: 900, balance: '1250', price_usd: '0.10', value_usd: '125.00' }
+                  - { asset: USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN, kind: classic, holders: 300, balance: '400', price_usd: '1', value_usd: '400.00' }
+                  - { asset: 'pool:0a1b…', kind: pool_share, holders: 5, balance: '7' }
+                  holdings_truncated: false
+                  valuation: { total_usd: '525.00', priced_holdings: 2, unpriced_holdings: 1, basis: live_vwap_current }
+                  flows:
+                    granularity: 1M
+                    assets: [USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN, native]
+                    points:
+                    - period: '2026-07'
+                      period_start: '2026-07-01T00:00:00Z'
+                      movements: 50
+                      active_accounts: 21
+                      by_asset:
+                      - { asset: USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN, inflow: '100', outflow: '25', scaled: true, inflow_usd: '100.00', outflow_usd: '25.00' }
+                      - { asset: native, inflow: '3', outflow: '0', scaled: true, inflow_usd: '0.30', outflow_usd: '0.00' }
+                  contracts:
+                  - { contract_id: CCVYPX4NRLMPGB6ZRJ6QOP4GYXPQPCU5EIQYYW3DK2UUOOGAJWIK7BN2, protocol: blend, movements: 40, active_accounts: 9, first_at: '2026-06-17T06:00:00Z', last_at: '2026-09-17T06:00:00Z' }
+                  positions:
+                  - { protocol: blend, position_kind: lending_supply, venue: CCVYPX4NRLMPGB6ZRJ6QOP4GYXPQPCU5EIQYYW3DK2UUOOGAJWIK7BN2, asset: CAS3J7GYLQ5V2XWFB7NAZ2TWUCEGTNGEVA5GHGNJO6I5NQ2QO2GVYM3N, asset_label: USDC, holders: 4, amount: '1234.5' }
+                  cycle: { computed_at: '2026-09-17T06:00:00Z', tip_ledger: 64400000 }
+                  note: Every figure is the cohort's own ledger footprint as of cycle.computed_at, never the root's. …
+                as_of: '2026-09-17T09:00:00Z'
+                stale: false
+                divergence_warning: false
+                divergence_checked: false
+              schema:
+                type: object
+                properties:
+                  data: { $ref: "#/components/schemas/AccountCohort" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
+
   /accounts/{g_strkey}/activity:
     get:
       operationId: getAccountActivity
@@ -13122,6 +13239,145 @@ components:
             absent month is a gap rather than a zero, and how to read
             `lower_bound`.
       required: [account, granularity, series, note]
+    AccountCohort:
+      type: object
+      description: |
+        What the accounts one address created or sponsored went on to
+        hold and do, as of the cohort rollup's last cycle. Always carries
+        `note`. `covered: false` means the rollup does not carry this
+        root — the other sections are then empty and `cohort` absent.
+      properties:
+        account: { type: string }
+        relation: { type: string, enum: [created, sponsored] }
+        covered: { type: boolean }
+        cohort: { $ref: "#/components/schemas/AccountCohortSize" }
+        holdings:
+          type: array
+          items: { $ref: "#/components/schemas/AccountCohortHolding" }
+        holdings_truncated:
+          type: boolean
+          description: True when the holdings read cap applied — the list is the most widely held assets, not all of them.
+        valuation: { $ref: "#/components/schemas/AccountCohortValuation" }
+        flows: { $ref: "#/components/schemas/AccountCohortFlows" }
+        contracts:
+          type: array
+          items: { $ref: "#/components/schemas/AccountCohortContract" }
+        positions:
+          type: array
+          items: { $ref: "#/components/schemas/AccountCohortPosition" }
+        cycle: { $ref: "#/components/schemas/AccountCohortCycle" }
+        note:
+          type: string
+          description: Always present — the reading rules for every section.
+      required: [account, relation, covered, holdings, holdings_truncated, valuation, flows, contracts, positions, note]
+    AccountCohortSize:
+      type: object
+      description: How many accounts the cohort is, how many are alive, and how many were seen recently.
+      properties:
+        accounts: { type: integer, format: int64 }
+        live_accounts: { type: integer, format: int64, description: Members with a live account entry at the cycle. }
+        active_30d: { type: integer, format: int64 }
+        active_90d: { type: integer, format: int64 }
+        active_365d: { type: integer, format: int64 }
+      required: [accounts, live_accounts, active_30d, active_90d, active_365d]
+    AccountCohortHolding:
+      type: object
+      description: The cohort's current position in one asset.
+      properties:
+        asset:
+          type: string
+          description: Canonical asset id — `native`, `CODE-ISSUER`, `pool:<hex>` for a classic liquidity-pool share, or a C… token contract.
+        kind:
+          type: string
+          enum: [native, classic, pool_share, contract]
+        holders: { type: integer, format: int64, description: Members holding it. }
+        balance:
+          type: string
+          description: Decimal string in whole units (seven places for classic assets and pool shares; the contract's own smallest unit for a C… token).
+        price_usd: { type: string, description: The live USD rate used, when one exists. }
+        value_usd: { type: string, description: balance × price_usd, absent when unpriced. Never zero for an unpriced asset. }
+      required: [asset, kind, holders, balance]
+    AccountCohortValuation:
+      type: object
+      description: The priced holdings summed at the live rate.
+      properties:
+        total_usd: { type: string, description: Absent when nothing priced. }
+        priced_holdings: { type: integer }
+        unpriced_holdings: { type: integer }
+        basis: { type: string, enum: [live_vwap_current] }
+      required: [priced_holdings, unpriced_holdings, basis]
+    AccountCohortFlows:
+      type: object
+      description: |
+        Value moved into and out of the cohort by calendar month (UTC),
+        derived from the movements archive. A quiet month emits no point.
+      properties:
+        granularity: { type: string, enum: ["1M"] }
+        assets:
+          type: array
+          items: { type: string }
+          description: The assets broken out per month — the cohort's most moved. A month's headline counts every asset, not only these.
+        points:
+          type: array
+          items: { $ref: "#/components/schemas/AccountCohortFlowPoint" }
+      required: [granularity, assets, points]
+    AccountCohortFlowPoint:
+      type: object
+      properties:
+        period: { type: string, description: "`YYYY-MM`." }
+        period_start: { type: string, format: date-time }
+        movements: { type: integer, format: int64, description: Movement legs that month across EVERY asset (exact). }
+        active_accounts: { type: integer, format: int64, description: Distinct members that moved something that month (uniqCombined estimate). }
+        by_asset:
+          type: array
+          items: { $ref: "#/components/schemas/AccountCohortAssetFlow" }
+      required: [period, period_start, movements, active_accounts, by_asset]
+    AccountCohortAssetFlow:
+      type: object
+      description: |
+        One asset's month. `inflow`/`outflow` are whole units when
+        `scaled` (classic assets, seven places) and the contract's own
+        smallest unit otherwise. The USD figures value the month's
+        quantity at TODAY'S price and are absent where nothing prices
+        the asset.
+      properties:
+        asset: { type: string }
+        inflow: { type: string }
+        outflow: { type: string }
+        scaled: { type: boolean }
+        inflow_usd: { type: string }
+        outflow_usd: { type: string }
+      required: [asset, inflow, outflow, scaled]
+    AccountCohortContract:
+      type: object
+      description: One C… contract the cohort moved value through.
+      properties:
+        contract_id: { type: string }
+        protocol: { type: string, description: Set where the protocol roster claims the contract. }
+        movements: { type: integer, format: int64 }
+        active_accounts: { type: integer, format: int64, description: Distinct members that moved value through it (uniqCombined estimate). }
+        first_at: { type: string, format: date-time }
+        last_at: { type: string, format: date-time }
+      required: [contract_id, movements, active_accounts, first_at, last_at]
+    AccountCohortPosition:
+      type: object
+      description: The cohort's aggregate in one DeFi venue, from the served tier's per-protocol folds.
+      properties:
+        protocol: { type: string }
+        position_kind: { type: string }
+        venue: { type: string, description: The venue contract (a pool, a vault, a stake contract). }
+        asset: { type: string, description: The position's asset, when denominated in one (absent for venue shares). }
+        asset_label: { type: string, description: A display label for `asset` where the lake can name it. }
+        holders: { type: integer, format: int64 }
+        amount: { type: string, description: The fold's own unit summed across holders — a magnitude, not a settlement figure. }
+      required: [protocol, position_kind, venue, holders, amount]
+    AccountCohortCycle:
+      type: object
+      description: When the cohort rollup last ran, and the lake tip it read to.
+      properties:
+        computed_at: { type: string, format: date-time }
+        tip_ledger: { type: integer, format: int64 }
+      required: [computed_at, tip_ledger]
     DashboardKey:
       type: object
       description: |

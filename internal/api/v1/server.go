@@ -336,8 +336,12 @@ type Server struct {
 	// marketHistory backs the market leg of that series — the observed
 	// daily dollar VWAP the oracle's NAV is measured against. See
 	// [RWAMarketHistoryReader].
-	marketHistory           RWAMarketHistoryReader
-	soroswapPairs           SoroswapPairsReader
+	marketHistory RWAMarketHistoryReader
+	soroswapPairs SoroswapPairsReader
+
+	// contractIndex caches contract → protocol for the cohort view's
+	// contract labels; see contract_protocol_index.go.
+	contractIndex           contractProtocolIndex
 	networkStats            NetworkStatsReader
 	aggregators             AggregatorsReader
 	marketSources           MarketSourceReader
@@ -2120,6 +2124,7 @@ func (s *Server) mountRoutes() { //nolint:funlen // route registration is intent
 	// independently by the detail view's chart, and keeps the snapshot's
 	// payload from growing a series nobody asked for.
 	s.mux.HandleFunc("GET /v1/accounts/{g_strkey}/graph/history", s.explorerHandler.AccountGraphHistory)
+	s.mux.HandleFunc("GET /v1/accounts/{g_strkey}/graph/cohort", s.explorerHandler.AccountGraphCohort)
 
 	s.mux.HandleFunc("GET /v1/incidents", s.handleIncidents)
 	s.mux.HandleFunc("GET /v1/incidents.atom", s.handleIncidentsAtom)

@@ -77,6 +77,10 @@ func (r *capReader) AccountGraphHistory(context.Context, string) (clickhouse.Acc
 	return clickhouse.AccountGraphHistory{}, false, nil
 }
 
+func (r *capReader) AccountCohort(context.Context, string, string) (clickhouse.AccountCohort, bool, error) {
+	return clickhouse.AccountCohort{}, false, nil
+}
+
 func (r *capReader) ContractActivitySummaryFor(context.Context, string, int) (clickhouse.ContractActivitySummary, bool, error) {
 	return clickhouse.ContractActivitySummary{}, false, nil
 }
