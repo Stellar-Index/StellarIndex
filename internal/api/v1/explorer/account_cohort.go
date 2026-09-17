@@ -211,10 +211,22 @@ func (h *Handler) accountCohortView(ctx context.Context, c clickhouse.AccountCoh
 		Active30d: c.Activity.Active30d, Active90d: c.Activity.Active90d, Active365d: c.Activity.Active365d,
 	}
 	price := h.cohortPricer(ctx)
+	out.Holdings, out.Valuation = cohortHoldingsView(c.Holdings, price)
+	out.HoldingsTruncated = len(c.Holdings) >= clickhouse.CohortHoldingsLimit
+	out.Flows = cohortFlowsView(c.Flows, price)
+	out.Contracts = h.cohortContractsView(ctx, c.Contracts)
+	out.Positions = h.cohortPositionsView(ctx, c.Positions)
+	return out
+}
 
-	// Holdings + valuation.
+// cohortHoldingsView renders holdings in whole units, classified, and
+// valued only where the live price exists; the valuation sums exactly
+// what it priced.
+func cohortHoldingsView(holdings []clickhouse.AccountCohortHolding, price func(string) (float64, bool)) ([]AccountCohortHoldingV, AccountCohortValuationV) {
+	out := make([]AccountCohortHoldingV, 0, len(holdings))
+	val := AccountCohortValuationV{Basis: accountCohortValuationBasis}
 	total := new(big.Float)
-	for _, hd := range c.Holdings {
+	for _, hd := range holdings {
 		v := AccountCohortHoldingV{Asset: hd.Asset, Kind: cohortAssetKind(hd.Asset), Holders: hd.Holders, Balance: stroops7(hd.Balance)}
 		if p, ok := price(hd.Asset); ok {
 			ps := strconv.FormatFloat(p, 'f', -1, 64)
@@ -223,29 +235,32 @@ func (h *Handler) accountCohortView(ctx context.Context, c clickhouse.AccountCoh
 			s := formatUSD(usd)
 			v.ValueUSD = &s
 			total.Add(total, usd)
-			out.Valuation.PricedHoldings++
+			val.PricedHoldings++
 		} else {
-			out.Valuation.UnpricedHoldings++
+			val.UnpricedHoldings++
 		}
-		out.Holdings = append(out.Holdings, v)
+		out = append(out, v)
 	}
-	out.HoldingsTruncated = len(c.Holdings) >= clickhouse.CohortHoldingsLimit
-	if out.Valuation.PricedHoldings > 0 {
+	if val.PricedHoldings > 0 {
 		s := formatUSD(total)
-		out.Valuation.TotalUSD = &s
+		val.TotalUSD = &s
 	}
+	return out, val
+}
 
-	// Flows: the reader returns rows ascending by (month, asset) with
-	// the all-assets row keyed CohortAllAssets.
+// cohortFlowsView groups the reader's rows — ascending by (month, asset),
+// the all-assets row keyed CohortAllAssets — into one point per month.
+func cohortFlowsView(flows []clickhouse.AccountCohortFlow, price func(string) (float64, bool)) AccountCohortFlowsV {
+	out := AccountCohortFlowsV{Granularity: "1M", Assets: []string{}, Points: []AccountCohortFlowPointV{}}
 	shown := map[string]struct{}{}
 	var cur *AccountCohortFlowPointV
-	for _, f := range c.Flows {
+	for _, f := range flows {
 		period := f.Month.UTC().Format("2006-01")
 		if cur == nil || cur.Period != period {
-			out.Flows.Points = append(out.Flows.Points, AccountCohortFlowPointV{
+			out.Points = append(out.Points, AccountCohortFlowPointV{
 				Period: period, PeriodStart: f.Month.UTC().Format(time.RFC3339), ByAsset: []AccountCohortAssetFlowV{},
 			})
-			cur = &out.Flows.Points[len(out.Flows.Points)-1]
+			cur = &out.Points[len(out.Points)-1]
 		}
 		if f.Asset == clickhouse.CohortAllAssets {
 			cur.Movements, cur.ActiveAccounts = f.Movements, f.ActiveAccounts
@@ -253,24 +268,35 @@ func (h *Handler) accountCohortView(ctx context.Context, c clickhouse.AccountCoh
 		}
 		if _, seen := shown[f.Asset]; !seen {
 			shown[f.Asset] = struct{}{}
-			out.Flows.Assets = append(out.Flows.Assets, f.Asset)
+			out.Assets = append(out.Assets, f.Asset)
 		}
-		scaled := cohortAssetKind(f.Asset) != "contract"
-		af := AccountCohortAssetFlowV{Asset: f.Asset, Scaled: scaled}
-		if scaled {
-			af.Inflow, af.Outflow = stroops7(f.Inflow), stroops7(f.Outflow)
-		} else {
-			af.Inflow, af.Outflow = f.Inflow.String(), f.Outflow.String()
-		}
-		if p, ok := price(f.Asset); ok && scaled {
-			in, o := formatUSD(usdOfStroops(f.Inflow, p)), formatUSD(usdOfStroops(f.Outflow, p))
-			af.InflowUSD, af.OutflowUSD = &in, &o
-		}
-		cur.ByAsset = append(cur.ByAsset, af)
+		cur.ByAsset = append(cur.ByAsset, cohortAssetFlowView(f, price))
 	}
+	return out
+}
 
-	// Contracts, labelled where the roster knows them.
-	for _, ct := range c.Contracts {
+// cohortAssetFlowView renders one asset's month: whole units for classic
+// keys, the contract's own unit otherwise, USD at today's price where
+// the asset is priced.
+func cohortAssetFlowView(f clickhouse.AccountCohortFlow, price func(string) (float64, bool)) AccountCohortAssetFlowV {
+	scaled := cohortAssetKind(f.Asset) != "contract"
+	af := AccountCohortAssetFlowV{Asset: f.Asset, Scaled: scaled}
+	if scaled {
+		af.Inflow, af.Outflow = stroops7(f.Inflow), stroops7(f.Outflow)
+	} else {
+		af.Inflow, af.Outflow = f.Inflow.String(), f.Outflow.String()
+	}
+	if p, ok := price(f.Asset); ok && scaled {
+		in, o := formatUSD(usdOfStroops(f.Inflow, p)), formatUSD(usdOfStroops(f.Outflow, p))
+		af.InflowUSD, af.OutflowUSD = &in, &o
+	}
+	return af
+}
+
+// cohortContractsView labels each contract where the roster knows it.
+func (h *Handler) cohortContractsView(ctx context.Context, contracts []clickhouse.AccountCohortContract) []AccountCohortContractV {
+	out := make([]AccountCohortContractV, 0, len(contracts))
+	for _, ct := range contracts {
 		v := AccountCohortContractV{
 			ContractID: ct.ContractID, Movements: ct.Movements, ActiveAccounts: ct.ActiveAccounts,
 			FirstAt: ct.FirstAt.UTC().Format(time.RFC3339), LastAt: ct.LastAt.UTC().Format(time.RFC3339),
@@ -280,13 +306,17 @@ func (h *Handler) accountCohortView(ctx context.Context, c clickhouse.AccountCoh
 				v.Protocol = name
 			}
 		}
-		out.Contracts = append(out.Contracts, v)
+		out = append(out, v)
 	}
+	return out
+}
 
-	// Positions, with the asset resolved to a display label where it is
-	// a token contract the lake can name.
+// cohortPositionsView resolves a position's asset to a display label
+// where it is a token contract the lake can name.
+func (h *Handler) cohortPositionsView(ctx context.Context, positions []clickhouse.AccountCohortPosition) []AccountCohortPositionV {
+	out := make([]AccountCohortPositionV, 0, len(positions))
 	var resolve positionAssetResolver
-	for _, p := range c.Positions {
+	for _, p := range positions {
 		v := AccountCohortPositionV{
 			Protocol: p.Protocol, PositionKind: p.PositionKind, Venue: p.Venue, Asset: p.Asset,
 			Holders: p.Holders, Amount: strconv.FormatFloat(p.Amount, 'f', -1, 64),
@@ -297,7 +327,7 @@ func (h *Handler) accountCohortView(ctx context.Context, c clickhouse.AccountCoh
 			}
 			v.AssetLabel = assetDisplayLabel(resolve(p.Asset))
 		}
-		out.Positions = append(out.Positions, v)
+		out = append(out, v)
 	}
 	return out
 }
