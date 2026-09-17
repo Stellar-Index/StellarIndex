@@ -14,53 +14,52 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-const (
-	tCuratedC1 = "CBUBVYRKTQLMDRUBPP6SH4GO33KZCEEYBIWB5AWNGKODP4A6KPKM2VJ4"
-	tCuratedC2 = "CBOOCGZSVRSZFRE4U2NWR2B4RXYVJWRCBTGOUD2JPI2TDJPWMTJX7FZP"
-)
-
-// stubDune serves the three endpoints a run touches. It records the SQL
-// and the key header, finishes the execution on the second status poll,
-// and pages the rows two per page so the offset loop is exercised.
-func stubDune(t *testing.T, rows []map[string]any, state string) (*httptest.Server, *atomic.Int32, *string, *string) {
+// stubDuneResults serves GET /api/v1/query/{id}/results for the two
+// public queries a run reads. Rows are paged TWO per page regardless of
+// the requested limit so the offset loop is exercised; the metadata
+// declares the whole result's row count on every page, as the platform
+// does. It records the key header and refuses anything that is not a
+// GET, so a run that regressed to executing SQL fails here.
+func stubDuneResults(t *testing.T, byQuery map[int64][]map[string]any, state string) (*httptest.Server, *atomic.Int32, *string) {
 	t.Helper()
-	var polls atomic.Int32
-	var gotSQL, gotKey string
+	var gets atomic.Int32
+	var gotKey string
 	mux := http.NewServeMux()
-	mux.HandleFunc("POST /api/v1/sql/execute", func(w http.ResponseWriter, r *http.Request) {
-		var body map[string]any
-		_ = json.NewDecoder(r.Body).Decode(&body)
-		gotSQL, _ = body["sql"].(string)
-		gotKey = r.Header.Get("X-Dune-API-Key")
-		_ = json.NewEncoder(w).Encode(map[string]any{"execution_id": "01EXEC", "state": "QUERY_STATE_PENDING"})
-	})
-	mux.HandleFunc("GET /api/v1/execution/01EXEC/status", func(w http.ResponseWriter, _ *http.Request) {
-		n := polls.Add(1)
-		if n < 2 {
-			_ = json.NewEncoder(w).Encode(map[string]any{"execution_id": "01EXEC", "is_execution_finished": false, "state": "QUERY_STATE_EXECUTING"})
+	mux.HandleFunc("/api/v1/", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			t.Errorf("%s %s: a run must only READ public results, never execute", r.Method, r.URL.Path)
+			http.Error(w, "not a read", http.StatusMethodNotAllowed)
 			return
 		}
-		resp := map[string]any{"execution_id": "01EXEC", "is_execution_finished": true, "state": state, "execution_cost_credits": 0.25}
-		if state != "QUERY_STATE_COMPLETED" {
-			resp["error"] = map[string]any{"type": "FAILED_TYPE_EXECUTION_FAILED", "message": "Column 'x' cannot be resolved"}
+		gets.Add(1)
+		gotKey = r.Header.Get("X-Dune-API-Key")
+		var id int64
+		if _, err := fmtSscanfPath(r.URL.Path, &id); err != nil {
+			http.NotFound(w, r)
+			return
 		}
-		_ = json.NewEncoder(w).Encode(resp)
-	})
-	mux.HandleFunc("GET /api/v1/execution/01EXEC/results", func(w http.ResponseWriter, r *http.Request) {
+		rows, ok := byQuery[id]
+		if !ok {
+			http.NotFound(w, r)
+			return
+		}
 		offset := 0
-		if v := r.URL.Query().Get("offset"); v != "" {
-			_, _ = json.Number(v).Int64()
-			if n, err := json.Number(v).Int64(); err == nil {
-				offset = int(n)
-			}
+		if n, err := json.Number(r.URL.Query().Get("offset")).Int64(); err == nil {
+			offset = int(n)
 		}
 		end := min(offset+2, len(rows))
-		page := rows[offset:end]
 		resp := map[string]any{
-			"is_execution_finished": true, "state": "QUERY_STATE_COMPLETED",
-			"result": map[string]any{"rows": page},
+			"execution_id": "01PUBLIC", "query_id": id, "state": state,
+			"is_execution_finished": true,
+			"execution_ended_at":    "2026-09-17T04:58:12.345Z",
+			"result": map[string]any{
+				"rows":     rows[offset:end],
+				"metadata": map[string]any{"total_row_count": len(rows), "datapoint_count": 3 * len(rows)},
+			},
 		}
 		if end < len(rows) {
 			resp["next_offset"] = end
@@ -69,88 +68,168 @@ func stubDune(t *testing.T, rows []map[string]any, state string) (*httptest.Serv
 	})
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
-	return srv, &polls, &gotSQL, &gotKey
+	return srv, &gets, &gotKey
 }
 
-func TestCuratedRWAFetch_ReadsBothUploadsAndPagesTheResult(t *testing.T) {
-	rows := []map[string]any{
-		{"address": tCuratedC1, "asset_code": "TPT30", "company": "Realiz", "asset_subclass": "Corporate Credit", "close_usd": "1.1174", "priced_day": "2026-09-15"},
-		{"address": tCuratedC2, "asset_code": "eurSAFO", "company": "Spiko", "asset_subclass": "Active Strategies", "close_usd": "1.17", "priced_day": "2026-09-15 00:00:00.000 UTC"},
-		{"address": "not-an-address", "company": "Bogus", "close_usd": "9", "priced_day": "2026-09-15"},
-		{"address": "GBHNGLLIE3KWGKCHIKMHJ5HVZHYIK7WTBE4QF5PLAKL4CJGSEU7HZIW5", "company": "bare G-address is not a form the table admits"},
-		{"address": "BENJI-GBHNGLLIE3KWGKCHIKMHJ5HVZHYIK7WTBE4QF5PLAKL4CJGSEU7HZIW5", "company": "Franklin Templeton", "close_usd": "1.0", "priced_day": ""},
+// fmtSscanfPath pulls the query id out of /api/v1/query/{id}/results.
+func fmtSscanfPath(path string, id *int64) (int, error) {
+	parts := strings.Split(strings.Trim(path, "/"), "/")
+	if len(parts) != 5 || parts[2] != "query" || parts[4] != "results" {
+		return 0, http.ErrNotSupported
 	}
-	srv, polls, gotSQL, gotKey := stubDune(t, rows, "QUERY_STATE_COMPLETED")
-	c := newCuratedRWAClient(srv.URL, "k-test")
-	c.poll = time.Millisecond
+	n, err := json.Number(parts[3]).Int64()
+	*id = n
+	return 1, err
+}
 
-	entries, counts, err := c.fetch(context.Background())
+func TestCuratedRWAFetch_ReadsBothPublicResultsAndPages(t *testing.T) {
+	byQuery := map[int64][]map[string]any{
+		curatedRWAQueryMonthlyTotal: {
+			// Out of order, as a query may print them; a decimal literal
+			// that a float64 would re-render; a timestamp-shaped month.
+			{"month_end": "2025-08-31", "total_rwa_market_cap_usd": json.Number("4004795860.00")},
+			{"month_end": "2024-09-30 00:00:00.000 UTC", "total_rwa_market_cap_usd": json.Number("436023166.55")},
+			{"month_end": "2025-07-31", "total_rwa_market_cap_usd": json.Number("3900000000.123456789")},
+			// Malformed: a renamed column is not guessed at.
+			{"month_end": "2025-06-30", "market_cap_usd": 1},
+			// Malformed: no month.
+			{"month_end": nil, "total_rwa_market_cap_usd": 5},
+		},
+		curatedRWAQueryMonthlyBySubclass: {
+			{"month_end": "2025-08-31", "asset_subclass": "US Treasuries", "market_cap_usd": 3100000000.0},
+			{"month_end": "2025-08-31", "asset_subclass": "Private Credit", "market_cap_usd": 904795860},
+			{"month_end": "2025-07-31", "asset_subclass": "US Treasuries", "market_cap_usd": json.Number("3000000000.10")},
+			// Malformed: an empty subclass would collide with the total.
+			{"month_end": "2025-07-31", "asset_subclass": "", "market_cap_usd": 1},
+			// Malformed: a non-decimal value.
+			{"month_end": "2025-07-31", "asset_subclass": "Private Credit", "market_cap_usd": "n/a"},
+		},
+	}
+	srv, gets, gotKey := stubDuneResults(t, byQuery, "QUERY_STATE_COMPLETED")
+	c := newCuratedRWAClient(srv.URL, "k-test")
+
+	rows, counts, err := c.fetch(context.Background())
 	if err != nil {
 		t.Fatalf("fetch: %v", err)
 	}
 	if *gotKey != "k-test" {
 		t.Errorf("API key header = %q, want the key from the environment", *gotKey)
 	}
-	for _, want := range []string{"dune.stellar.dataset_recognized_assets", "dune.stellar.dataset_asset_prices", "asset_class = 'RWA'", "CAST(p.close_usd AS VARCHAR)"} {
-		if !strings.Contains(*gotSQL, want) {
-			t.Errorf("executed SQL does not contain %q", want)
+	// Five rows at two per page is three GETs per query.
+	if gets.Load() != 6 {
+		t.Errorf("GETs = %d, want 6 (three pages per query)", gets.Load())
+	}
+	if counts.Rows != 10 || counts.Kept != 6 || counts.Malformed != 4 {
+		t.Errorf("counts = %+v, want rows=10 kept=6 malformed=4", counts)
+	}
+	if counts.Months != 3 || counts.LatestMonthEnd != "2025-08-31" || counts.LatestTotalUSD != "4004795860.00" {
+		t.Errorf("headline = %d months, latest %s = %s; want 3 months, 2025-08-31 = 4004795860.00", counts.Months, counts.LatestMonthEnd, counts.LatestTotalUSD)
+	}
+	// Datapoints as the platform reported them per result: 3×5 + 3×5.
+	if counts.Datapoints != 30 {
+		t.Errorf("datapoints = %d, want 30 (what the platform metered, not an execution cost)", counts.Datapoints)
+	}
+	if want := time.Date(2026, 9, 17, 4, 58, 12, 345000000, time.UTC); !counts.ExecutedAt.Equal(want) {
+		t.Errorf("executed_at = %v, want %v from execution_ended_at", counts.ExecutedAt, want)
+	}
+	if len(rows) != 6 {
+		t.Fatalf("rows = %d, want 6", len(rows))
+	}
+	// The total series comes first, oldest month first, every value the
+	// literal the curator printed.
+	total := rows[:3]
+	for i, want := range []struct{ month, value string }{
+		{"2024-09-30", "436023166.55"}, {"2025-07-31", "3900000000.123456789"}, {"2025-08-31", "4004795860.00"},
+	} {
+		r := total[i]
+		if r.Series != timescale.CuratedRWASeriesMonthlyTotal || r.MonthEnd.Format("2006-01-02") != want.month ||
+			r.ValueUSD != want.value || r.SourceQuery != curatedRWAQueryMonthlyTotal || r.Subclass != "" {
+			t.Errorf("total[%d] = %+v, want %s = %s from query %d", i, r, want.month, want.value, curatedRWAQueryMonthlyTotal)
 		}
 	}
-	if polls.Load() < 2 {
-		t.Errorf("status polled %d times, want the loop to wait for is_execution_finished", polls.Load())
+	split := rows[3:]
+	if split[0].MonthEnd.Format("2006-01-02") != "2025-07-31" || split[0].Subclass != "US Treasuries" || split[0].ValueUSD != "3000000000.10" {
+		t.Errorf("split[0] = %+v", split[0])
 	}
-	if counts.Rows != 5 || counts.Kept != 3 || counts.Malformed != 2 {
-		t.Errorf("counts = %+v, want rows=5 kept=3 malformed=2", counts)
-	}
-	if counts.Priced != 2 || counts.Unpriced != 1 {
-		t.Errorf("counts = %+v, want priced=2 unpriced=1 (a price with no day is dropped, not dated)", counts)
-	}
-	if counts.Credits != 0.25 || counts.ExecutionID != "01EXEC" {
-		t.Errorf("credits/execution = %v/%q, want 0.25/01EXEC from the status endpoint", counts.Credits, counts.ExecutionID)
-	}
-	if len(entries) != 3 {
-		t.Fatalf("entries = %d, want 3", len(entries))
-	}
-	// The decimal literal is carried as printed; the day is midnight UTC
-	// whichever layout the curator used.
-	if entries[0].PriceUSD != "1.1174" || !entries[0].PricedAt.Equal(time.Date(2026, 9, 15, 0, 0, 0, 0, time.UTC)) {
-		t.Errorf("entry 0 = %+v", entries[0])
-	}
-	if entries[1].PriceUSD != "1.17" || !entries[1].PricedAt.Equal(time.Date(2026, 9, 15, 0, 0, 0, 0, time.UTC)) {
-		t.Errorf("entry 1 = %+v", entries[1])
-	}
-	if entries[2].PriceUSD != "" || !entries[2].PricedAt.IsZero() {
-		t.Errorf("entry 2 = %+v, want unpriced", entries[2])
+	for _, r := range split {
+		if r.Series != timescale.CuratedRWASeriesMonthlyBySubclass || r.SourceQuery != curatedRWAQueryMonthlyBySubclass || !r.ExecutedAt.Equal(counts.ExecutedAt) {
+			t.Errorf("split row = %+v, want the split series from query %d stamped with its execution", r, curatedRWAQueryMonthlyBySubclass)
+		}
 	}
 }
 
-func TestCuratedRWAFetch_FailedExecutionIsAnError(t *testing.T) {
-	srv, _, _, _ := stubDune(t, nil, "QUERY_STATE_FAILED")
-	c := newCuratedRWAClient(srv.URL, "k")
-	c.poll = time.Millisecond
-	_, counts, err := c.fetch(context.Background())
-	if err == nil {
-		t.Fatal("a failed execution returned no error")
+func TestCuratedRWAFetch_RefusesAnIncompleteOrShortResult(t *testing.T) {
+	good := []map[string]any{{"month_end": "2025-08-31", "total_rwa_market_cap_usd": 1}}
+	splitGood := []map[string]any{{"month_end": "2025-08-31", "asset_subclass": "X", "market_cap_usd": 1}}
+
+	// The latest execution is not completed: nothing is read from it.
+	srv, _, _ := stubDuneResults(t, map[int64][]map[string]any{
+		curatedRWAQueryMonthlyTotal: good, curatedRWAQueryMonthlyBySubclass: splitGood,
+	}, "QUERY_STATE_FAILED")
+	if _, _, err := newCuratedRWAClient(srv.URL, "k").fetch(context.Background()); err == nil || !strings.Contains(err.Error(), "QUERY_STATE_FAILED") {
+		t.Errorf("failed execution: err = %v, want a refusal naming the state", err)
 	}
-	if !strings.Contains(err.Error(), "cannot be resolved") {
-		t.Errorf("error does not carry the curator's message: %v", err)
+
+	// The total parses to nothing: the run fails before it reads the
+	// split, and never writes an empty series.
+	srv2, gets, _ := stubDuneResults(t, map[int64][]map[string]any{
+		curatedRWAQueryMonthlyTotal:      {{"month_end": "not a month", "total_rwa_market_cap_usd": 1}},
+		curatedRWAQueryMonthlyBySubclass: splitGood,
+	}, "QUERY_STATE_COMPLETED")
+	if _, _, err := newCuratedRWAClient(srv2.URL, "k").fetch(context.Background()); err == nil || !strings.Contains(err.Error(), "no usable row") {
+		t.Errorf("all-malformed total: err = %v", err)
 	}
-	if counts.ExecutionID != "01EXEC" {
-		t.Errorf("execution id not recorded on failure: %+v", counts)
+	if gets.Load() != 1 {
+		t.Errorf("GETs = %d after an unusable total, want 1 (the split is not read)", gets.Load())
+	}
+
+	// A result that declares more rows than it prints and offers no next
+	// page is short, not partial.
+	short := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"state": "QUERY_STATE_COMPLETED", "execution_ended_at": "2026-09-17T04:58:12Z",
+			"result": map[string]any{"rows": good, "metadata": map[string]any{"total_row_count": 3, "datapoint_count": 2}},
+		})
+	}))
+	t.Cleanup(short.Close)
+	if _, _, err := newCuratedRWAClient(short.URL, "k").fetch(context.Background()); err == nil || !strings.Contains(err.Error(), "printed 1 of the 3 rows") {
+		t.Errorf("short result: err = %v", err)
+	}
+
+	// A result past the bound is not the expected query.
+	huge := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"state": "QUERY_STATE_COMPLETED", "execution_ended_at": "2026-09-17T04:58:12Z",
+			"result": map[string]any{"rows": good, "metadata": map[string]any{"total_row_count": curatedRWAMaxRows + 1}},
+		})
+	}))
+	t.Cleanup(huge.Close)
+	if _, _, err := newCuratedRWAClient(huge.URL, "k").fetch(context.Background()); err == nil || !strings.Contains(err.Error(), "over the") {
+		t.Errorf("oversized result: err = %v", err)
 	}
 }
 
-func TestCuratedRWAPrice_Layouts(t *testing.T) {
-	want := time.Date(2026, 9, 15, 0, 0, 0, 0, time.UTC)
-	for _, day := range []string{"2026-09-15", "2026-09-15 00:00:00.000 UTC", "2026-09-15 13:45:00", "2026-09-15T13:45:00Z"} {
-		p, d, ok := curatedRWAPrice("1.00", day)
-		if !ok || p != "1.00" || !d.Equal(want) {
-			t.Errorf("day %q -> (%q, %v, %v), want (1.00, %v, true)", day, p, d, ok, want)
+func TestCuratedRWAMonthEndAndDecimal(t *testing.T) {
+	want := time.Date(2025, 8, 31, 0, 0, 0, 0, time.UTC)
+	for _, s := range []string{"2025-08-31", "2025-08-31 00:00:00.000 UTC", "2025-08-31 13:45:00", "2025-08-31T13:45:00Z"} {
+		if got, ok := curatedRWAMonthEnd(s); !ok || !got.Equal(want) {
+			t.Errorf("month %q -> (%v, %v), want (%v, true)", s, got, ok, want)
 		}
 	}
-	for _, tc := range [][2]string{{"", "2026-09-15"}, {"1.00", ""}, {"abc", "2026-09-15"}, {"1.00", "yesterday"}} {
-		if _, _, ok := curatedRWAPrice(tc[0], tc[1]); ok {
-			t.Errorf("(%q, %q) accepted", tc[0], tc[1])
+	for _, s := range []string{"", "yesterday", "2025-13-01"} {
+		if _, ok := curatedRWAMonthEnd(s); ok {
+			t.Errorf("month %q accepted", s)
+		}
+	}
+	for _, s := range []string{"4004795860.00", "0", "436023166.55", "-1.5"} {
+		if got, ok := curatedRWADecimal(json.Number(s)); !ok || got != s {
+			t.Errorf("decimal %q -> (%q, %v), want itself", s, got, ok)
+		}
+	}
+	// An exponent form is a float rendering, not a printed figure.
+	for _, s := range []string{"", "4.0e9", "abc", "1,000"} {
+		if _, ok := curatedRWADecimal(json.Number(s)); ok {
+			t.Errorf("decimal %q accepted", s)
 		}
 	}
 }
@@ -180,22 +259,27 @@ func TestCuratedRWASync_RefusesWithoutKeyOrConfig(t *testing.T) {
 func TestCuratedRWATextfile_ShapeAndAtomicity(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "curated_rwa_sync.prom")
-	c := curatedRWACounts{Kept: 42, Priced: 30, Credits: 0.25}
+	c := curatedRWACounts{Kept: 224, Datapoints: 448, ExecutedAt: time.Unix(1789000000, 0)}
 	if err := writeCuratedRWATextfile(path, c, true, false); err != nil {
 		t.Fatalf("write: %v", err)
 	}
 	b, _ := os.ReadFile(path)
 	s := string(b)
 	for _, want := range []string{
-		`stellarindex_curated_rwa_sync_rows{curator="dune:stellar"} 42`,
-		`stellarindex_curated_rwa_sync_priced{curator="dune:stellar"} 30`,
-		`stellarindex_curated_rwa_sync_execution_cost_credits{curator="dune:stellar"} 0.25`,
+		`stellarindex_curated_rwa_sync_rows{curator="dune:stellar"} 224`,
+		`stellarindex_curated_rwa_sync_datapoints_read{curator="dune:stellar"} 448`,
+		`stellarindex_curated_rwa_sync_executed_at_unix{curator="dune:stellar"} 1789000000`,
 		`stellarindex_curated_rwa_sync_written{curator="dune:stellar"} 0`,
 		`# TYPE stellarindex_curated_rwa_sync_last_run_unix gauge`,
 	} {
 		if !strings.Contains(s, want) {
 			t.Errorf("textfile lacks %q:\n%s", want, s)
 		}
+	}
+	// The old gauge claimed an execution cost; a read has none, and the
+	// name must not survive to be graphed as one.
+	if strings.Contains(s, "execution_cost_credits") {
+		t.Errorf("textfile still exposes execution_cost_credits:\n%s", s)
 	}
 	if leftovers, _ := filepath.Glob(filepath.Join(dir, "*.tmp.*")); len(leftovers) != 0 {
 		t.Errorf("temp files left behind: %v", leftovers)
@@ -217,6 +301,7 @@ func TestCuratedRWATextfileStampsARefusedRun(t *testing.T) {
 	for _, want := range []string{
 		`stellarindex_curated_rwa_sync_refused{curator="dune:stellar"} 1`,
 		`stellarindex_curated_rwa_sync_written{curator="dune:stellar"} 0`,
+		`stellarindex_curated_rwa_sync_executed_at_unix{curator="dune:stellar"} 0`,
 		`stellarindex_curated_rwa_sync_last_run_unix{curator="dune:stellar"} `,
 	} {
 		if !strings.Contains(got, want) {

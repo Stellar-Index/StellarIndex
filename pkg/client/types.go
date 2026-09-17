@@ -1624,23 +1624,60 @@ type RWACuratedCensus struct {
 	ObservedAt *time.Time `json:"observed_at,omitempty"`
 }
 
-// RWACuratedSummary is the curated arm's headline. Status is "served",
-// "unavailable" (a curator is wired but its cache is empty or past its
-// recognition bound), or "unwired". The three value figures are decimal
-// strings in USD; AdditionalValueUSD counts only rows NOT in the
-// verified set, so CombinedValueUSD = VerifiedValueUSD + AdditionalValueUSD
-// without double counting a token both sides recognise.
+// RWACuratedPublishedSplit is one line of the curator's own subclass
+// split for the published month, in the curator's vocabulary.
+type RWACuratedPublishedSplit struct {
+	Subclass string `json:"subclass"`
+	ValueUSD string `json:"value_usd"`
+}
+
+// RWACuratedPublishedPoint is one month of the curator's published
+// total series; MonthEnd is the month's last day, YYYY-MM-DD.
+type RWACuratedPublishedPoint struct {
+	MonthEnd string `json:"month_end"`
+	ValueUSD string `json:"value_usd"`
+}
+
+// RWACuratedPublished is what the curator publishes about its own list:
+// the latest monthly RWA market-cap total its public queries computed
+// (TotalUSD, for the month ending AsOf, last run at ExecutedAt), that
+// month's split by the curator's subclass labels, the full monthly
+// series, and the queries it was read from. GapVsVerifiedUSD is
+// TotalUSD minus the verified reference total, signed, and is nil when
+// the verified set publishes no reference total. The curator's
+// arithmetic over inputs this index cannot read; nothing in it is
+// verified here.
+type RWACuratedPublished struct {
+	TotalUSD         string                     `json:"total_usd"`
+	AsOf             string                     `json:"as_of"`
+	ExecutedAt       time.Time                  `json:"executed_at"`
+	BySubclass       []RWACuratedPublishedSplit `json:"by_subclass"`
+	Series           []RWACuratedPublishedPoint `json:"series"`
+	Source           string                     `json:"source"`
+	GapVsVerifiedUSD *string                    `json:"gap_vs_verified_usd,omitempty"`
+}
+
+// RWACuratedSummary is the curated arm's headline. Status is "served"
+// (the curator's per-asset rows are in CuratedAssets),
+// "published_totals" (no per-asset row is readable — the curator's list
+// is private — and Published carries what it publishes), "unavailable"
+// (a curator is wired but nothing of its is inside its recognition
+// bound), or "unwired". The three value figures are decimal strings in
+// USD; AdditionalValueUSD counts only rows NOT in the verified set, so
+// CombinedValueUSD = VerifiedValueUSD + AdditionalValueUSD without
+// double counting a token both sides recognise.
 type RWACuratedSummary struct {
-	Curator            string           `json:"curator"`
-	Status             string           `json:"status"`
-	Assets             int              `json:"assets"`
-	AlsoVerified       int              `json:"also_verified"`
-	AssetsValued       int              `json:"assets_valued"`
-	AdditionalValueUSD *string          `json:"additional_value_usd,omitempty"`
-	CombinedValueUSD   *string          `json:"combined_value_usd,omitempty"`
-	VerifiedValueUSD   *string          `json:"verified_value_usd,omitempty"`
-	Census             RWACuratedCensus `json:"census"`
-	Basis              string           `json:"basis"`
+	Curator            string               `json:"curator"`
+	Status             string               `json:"status"`
+	Assets             int                  `json:"assets"`
+	AlsoVerified       int                  `json:"also_verified"`
+	AssetsValued       int                  `json:"assets_valued"`
+	AdditionalValueUSD *string              `json:"additional_value_usd,omitempty"`
+	CombinedValueUSD   *string              `json:"combined_value_usd,omitempty"`
+	VerifiedValueUSD   *string              `json:"verified_value_usd,omitempty"`
+	Census             RWACuratedCensus     `json:"census"`
+	Published          *RWACuratedPublished `json:"published,omitempty"`
+	Basis              string               `json:"basis"`
 }
 
 // RWAUnreachedEntity is one recognised issuing entity the index holds

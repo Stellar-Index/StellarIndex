@@ -1636,6 +1636,24 @@ describe('sumStablecoins', () => {
           combined_value_usd: '560024956.69',
           verified_value_usd: '1324956.69',
           census: { entries: 1, priced: 1, stale: 0 },
+          // A published block beside per-asset rows: reachable by API
+          // contract, and the state where the comparison grid sits
+          // under the published panel.
+          published: {
+            total_usd: '4004795860.00',
+            as_of: '2025-08-31',
+            executed_at: '2026-09-17T04:58:12Z',
+            by_subclass: [
+              { subclass: 'US Treasuries', value_usd: '3100000000.00' },
+              { subclass: 'Private Credit', value_usd: '904795860.00' },
+            ],
+            series: [
+              { month_end: '2025-07-31', value_usd: '3900000000.10' },
+              { month_end: '2025-08-31', value_usd: '4004795860.00' },
+            ],
+            source: 'dune query 6961845 / 6961847',
+            gap_vs_verified_usd: '4003470903.31',
+          },
           basis:
             'Rows a named third-party curator lists as tokenized real-world assets on Stellar. Nothing here is verified by this index.',
         },
@@ -1648,6 +1666,16 @@ describe('sumStablecoins', () => {
     expect(
       screen.getByText('Counted by the curator, not verified here'),
     ).toBeInTheDocument();
+    // The published panel is drawn above the comparison grid, and the
+    // grid keeps its three columns and gains its top margin: the two
+    // classes must stay separate tokens, not fuse into one Tailwind
+    // recognises as neither.
+    expect(screen.getByText('Published by the curator')).toBeInTheDocument();
+    expect(
+      screen
+        .getByText('Counted by the curator, not verified here')
+        .closest('.grid')?.className,
+    ).toBe('grid gap-4 sm:grid-cols-3 mt-4');
     expect(screen.getAllByText('$558,700,000.00').length).toBeGreaterThan(0);
     expect(screen.getByText('$560,024,956.69')).toBeInTheDocument();
     expect(screen.getByText('No — curator only')).toBeInTheDocument();
@@ -1657,6 +1685,91 @@ describe('sumStablecoins', () => {
     expect(screen.getAllByText('$1,324,956.69').length).toBeGreaterThan(0);
     expect(
       screen.queryByText('$560,024,956.69', {
+        selector: '.text-3xl, .text-4xl',
+      }),
+    ).not.toBeInTheDocument();
+  });
+
+  it('keeps the three-column comparison grid when served rows arrive without a published block', async () => {
+    apiGetData.mockResolvedValue(
+      view({
+        curated: {
+          curator: 'dune:stellar',
+          status: 'served',
+          assets: 0,
+          also_verified: 0,
+          assets_valued: 0,
+          verified_value_usd: '1324956.69',
+          census: { entries: 0, priced: 0, stale: 0 },
+          basis:
+            'Rows a named third-party curator lists as tokenized real-world assets on Stellar. Nothing here is verified by this index.',
+        },
+      }),
+    );
+    renderView();
+    const grid = (
+      await screen.findByText('Counted by the curator, not verified here')
+    ).closest('.grid');
+    expect(grid?.classList.contains('sm:grid-cols-3')).toBe(true);
+    expect(grid?.classList.contains('mt-4')).toBe(false);
+  });
+
+  it('renders the curator’s published total, its month and the signed gap when no per-asset row is readable', async () => {
+    apiGetData.mockResolvedValue(
+      view({
+        curated: {
+          curator: 'dune:stellar',
+          status: 'published_totals',
+          assets: 0,
+          also_verified: 0,
+          assets_valued: 0,
+          verified_value_usd: '345599978.73',
+          census: { entries: 0, priced: 0, stale: 0 },
+          published: {
+            total_usd: '4004795860.00',
+            as_of: '2025-08-31',
+            executed_at: '2026-09-17T04:58:12Z',
+            by_subclass: [
+              { subclass: 'US Treasuries', value_usd: '3100000000.00' },
+              { subclass: 'Private Credit', value_usd: '904795860.00' },
+            ],
+            series: [
+              { month_end: '2025-07-31', value_usd: '3900000000.10' },
+              { month_end: '2025-08-31', value_usd: '4004795860.00' },
+            ],
+            source: 'dune query 6961845 / 6961847',
+            gap_vs_verified_usd: '3659195881.27',
+          },
+          basis:
+            'What a named third-party curator counts. The curator’s per-asset list is PRIVATE; only the totals it PUBLISHES are read.',
+        },
+      }),
+    );
+    renderView();
+    expect(
+      await screen.findByText(/As a third-party curator counts it/),
+    ).toBeInTheDocument();
+    expect(screen.getByText('Published by the curator')).toBeInTheDocument();
+    expect(screen.getByText('$4,004,795,860.00')).toBeInTheDocument();
+    expect(screen.getByText(/for August 2025, computed/)).toBeInTheDocument();
+    // The gap is signed, and it is published − verified, never the
+    // other way round.
+    expect(screen.getByText('+$3,659,195,881.27')).toBeInTheDocument();
+    expect(screen.getByText('US Treasuries')).toBeInTheDocument();
+    expect(screen.getByText('$904,795,860.00')).toBeInTheDocument();
+    expect(
+      screen.getByText(/2 months published · dune query 6961845 \/ 6961847/),
+    ).toBeInTheDocument();
+    // No per-asset row is readable, so the per-row comparison cells and
+    // the rows table are not drawn: an empty "counted by the curator"
+    // cell would read as "the curator counts nothing".
+    expect(
+      screen.queryByText('Counted by the curator, not verified here'),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByText('No — curator only')).not.toBeInTheDocument();
+    // The published figure is never promoted to the page headline.
+    expect(
+      screen.queryByText('$4,004,795,860.00', {
         selector: '.text-3xl, .text-4xl',
       }),
     ).not.toBeInTheDocument();

@@ -11,10 +11,10 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"math/big"
 	"net/http"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"time"
 
@@ -23,87 +23,77 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// curated-rwa-sync — cache a third party's list of tokenized real-world
-// assets on Stellar, and that party's own price per token, into
-// rwa_curated_directory (migration 0161) for the RWA surface's CURATED
-// arm.
+// curated-rwa-sync — cache the totals a third party PUBLISHES about
+// tokenized real-world assets on Stellar into curated_rwa_published_series
+// (migration 0162) for the RWA surface's CURATED arm.
 //
-// # What it reads, and why that is the whole point
+// # What it reads, and why only that
 //
-// The first curator is the Stellar team's public Dune uploads. The
-// "RWAs on Stellar" dashboard (dune.com/stellar/rwas) values
-// `stellar.token_balances` against `dune.stellar.dataset_asset_prices`
-// and takes membership from `dune.stellar.dataset_recognized_assets`;
-// `dune.<team>.dataset_<name>` is Dune's CSV-upload namespace by its own
-// documentation. So the dashboard's figure IS those two tables, and the
-// only way to show a reader line by line why this index and that
-// dashboard differ is to read the same two tables and publish what they
-// admit under their own name.
+// The first curator is the Stellar team's "RWAs on Stellar" dashboard
+// (dune.com/stellar/rwas). That dashboard values `stellar.token_balances`
+// against two CSV uploads, `dune.stellar.dataset_recognized_assets`
+// (membership, company, subclass) and `dune.stellar.dataset_asset_prices`
+// (a close_usd per contract). Both are PRIVATE to the uploading team: a
+// SQL execution over either from any outside account is refused with
+// "Uploaded table (...) does not exist or it is private". So the
+// per-asset list this arm was first built to read cannot be read, by
+// anyone, with any key.
 //
-// Nothing read here attests to anything. A row is the curator's word:
-// no signature, no proof of control, no market. The surface serves it
-// under `basis: third_party_curated` with its own total, beside the
-// verified set and never inside it.
+// What the curator does let anyone read is the latest RESULT of the
+// dashboard's public queries, via GET /api/v1/query/{id}/results: the
+// monthly RWA market-cap total and that total split by the curator's own
+// subclass labels. This run reads exactly those two results, as
+// published, and stores them under the curator's name. It executes
+// nothing: a read of a public query's latest result bills by datapoints
+// (fractions of a credit) and never by execution.
 //
-// # Cost
-//
-// Every run is one Dune SQL execution on the "medium" tier (Dune names
-// only "medium" and "large"; a run that asked for "small" was refused
-// with HTTP 400 "performance tier is not available"). Credits are
-// consumed per execution; the run records `execution_cost_credits` from
-// the status endpoint in the textfile it emits, so the cost of this
-// arm is a metric and not a surprise on an invoice.
+// Nothing read here attests to anything. A row is the curator's
+// arithmetic over the curator's private inputs: no signature, no
+// per-asset breakdown, no market. The surface serves it as
+// `curated.published` beside the verified set and never inside it, with
+// the signed gap between the two.
 
 const (
 	curatedRWACuratorDune  = "dune:stellar"
 	curatedRWADuneBaseURL  = "https://api.dune.com"
 	curatedRWAFetchTimeout = 90 * time.Second
-	curatedRWAPollEvery    = 2 * time.Second
 	curatedRWAPageSize     = 1000
-	// curatedRWADuneTier is the execution performance tier. Dune accepts
-	// "medium" (10 credits, the default) and "large"; anything else is
-	// refused with HTTP 400 before the SQL runs.
-	curatedRWADuneTier = "medium"
-	// curatedRWAMaxRows bounds one sync. The dashboard's asset list is
-	// under a hundred rows; a result set past this is not that list.
+	// curatedRWAMaxRows bounds one query's result. The monthly total is
+	// under twenty rows and the split a few hundred; a result past this
+	// is not one of those queries.
 	curatedRWAMaxRows = 5000
 )
 
-// curatedRWADuneSQL is the one statement a run executes. Both tables are
-// the curator's uploads; the join takes the LATEST day per address from
-// the price table. Every numeric is cast to VARCHAR on Dune's side so the
-// literal the curator printed reaches this index as a string and is
-// never re-rendered through a float (ADR-0003).
-const curatedRWADuneSQL = `
-SELECT ra.contract_id AS address,
-       COALESCE(ra.asset_code, '')    AS asset_code,
-       COALESCE(ra.asset_issuer, '')  AS asset_issuer,
-       COALESCE(ra.company, '')       AS company,
-       COALESCE(ra.asset_subclass, '') AS asset_subclass,
-       CAST(p.close_usd AS VARCHAR)   AS close_usd,
-       CAST(p.day AS VARCHAR)         AS priced_day
-FROM dune.stellar.dataset_recognized_assets ra
-LEFT JOIN (
-  SELECT asset_contract_id, close_usd, day,
-         ROW_NUMBER() OVER (PARTITION BY asset_contract_id ORDER BY day DESC) AS rn
-  FROM dune.stellar.dataset_asset_prices
-) p ON p.asset_contract_id = ra.contract_id AND p.rn = 1
-WHERE ra.asset_class = 'RWA'`
-
-var (
-	curatedRWAContractRe = regexp.MustCompile(`^C[A-Z2-7]{55}$`)
-	curatedRWAClassicRe  = regexp.MustCompile(`^[A-Za-z0-9]{1,12}-G[A-Z2-7]{55}$`)
+// The dashboard's PUBLIC queries, by id and title as the curator names
+// them. A read of either needs any Dune API key and no execution.
+const (
+	// curatedRWAQueryMonthlyTotal — "RWAs on Stellar: RWA Mcap by Month":
+	// rows {month_end, total_rwa_market_cap_usd}, one per month. Its
+	// latest row is the dashboard's headline figure.
+	curatedRWAQueryMonthlyTotal int64 = 6961845
+	// curatedRWAQueryMonthlyBySubclass — "RWAs on Stellar: Mcap by Month
+	// by Asset Subclass": rows {month_end, asset_subclass,
+	// market_cap_usd}, one per month and subclass.
+	curatedRWAQueryMonthlyBySubclass int64 = 6961847
 )
 
 // curatedRWACounts is one run's accounting, printed and emitted.
 type curatedRWACounts struct {
-	Rows        int
-	Kept        int
-	Malformed   int
-	Priced      int
-	Unpriced    int
-	Credits     float64
-	ExecutionID string
+	// Rows is every row the two results carried; Kept is what parsed;
+	// Malformed is the difference.
+	Rows      int
+	Kept      int
+	Malformed int
+	// Datapoints is what the curator's platform reported metering for
+	// the results read — the run's whole cost, in the platform's unit.
+	Datapoints int
+	// Months counts points on the total series; LatestMonthEnd and
+	// LatestTotalUSD are its last point, the curator's headline.
+	Months         int
+	LatestMonthEnd string
+	LatestTotalUSD string
+	// ExecutedAt is when the curator's total query last ran.
+	ExecutedAt time.Time
 }
 
 func curatedRWASync(args []string) error {
@@ -150,12 +140,13 @@ func curatedRWASync(args []string) error {
 	client := newCuratedRWAClient(*baseURL, key)
 	fmt.Printf("Curator %s via %s.\n", curatedRWACuratorDune, client.baseURL)
 
-	entries, counts, err := client.fetch(ctx)
+	rows, counts, err := client.fetch(ctx)
 	if err != nil {
 		return err
 	}
-	fmt.Printf("Read %d rows; kept %d (%d priced, %d unpriced); %d skipped-malformed. Execution %s cost %.2f credits.\n",
-		counts.Rows, counts.Kept, counts.Priced, counts.Unpriced, counts.Malformed, counts.ExecutionID, counts.Credits)
+	fmt.Printf("Read %d rows; kept %d (%d months on the total series, latest %s = %s USD, executed %s); %d skipped-malformed; %d datapoints metered.\n",
+		counts.Rows, counts.Kept, counts.Months, counts.LatestMonthEnd, counts.LatestTotalUSD,
+		counts.ExecutedAt.UTC().Format(time.RFC3339), counts.Malformed, counts.Datapoints)
 
 	if *textfile != "" {
 		if err := writeCuratedRWATextfile(*textfile, counts, dryRun, false); err != nil {
@@ -173,12 +164,11 @@ func curatedRWASync(args []string) error {
 	}
 	defer func() { _ = store.Close() }()
 
-	source := "dune.stellar.dataset_recognized_assets + dune.stellar.dataset_asset_prices via /api/v1/sql/execute; execution " + counts.ExecutionID
-	upserted, pruned, err := store.ReplaceCuratedRWADirectory(ctx, curatedRWACuratorDune, entries, source)
+	inserted, err := store.ReplaceCuratedRWAPublished(ctx, curatedRWACuratorDune, rows)
 	if err != nil {
 		return err
 	}
-	fmt.Printf("Synced: %d upserted, %d pruned (curator=%s).\n", upserted, pruned, curatedRWACuratorDune)
+	fmt.Printf("Synced: %d rows replaced across %d series (curator=%s).\n", inserted, 2, curatedRWACuratorDune)
 	return nil
 }
 
@@ -188,8 +178,6 @@ type curatedRWAClient struct {
 	baseURL string
 	key     string
 	http    *http.Client
-	// poll is the status-poll interval; tests shorten it.
-	poll time.Duration
 }
 
 func newCuratedRWAClient(baseURL, key string) *curatedRWAClient {
@@ -197,30 +185,22 @@ func newCuratedRWAClient(baseURL, key string) *curatedRWAClient {
 		baseURL: strings.TrimRight(baseURL, "/"),
 		key:     key,
 		http:    &http.Client{Timeout: curatedRWAFetchTimeout},
-		poll:    curatedRWAPollEvery,
 	}
 }
 
-func (c *curatedRWAClient) do(ctx context.Context, method, path string, body any) ([]byte, error) {
-	var rdr io.Reader
-	if body != nil {
-		b, err := json.Marshal(body)
-		if err != nil {
-			return nil, fmt.Errorf("curated-rwa-sync: encode: %w", err)
-		}
-		rdr = bytes.NewReader(b)
-	}
-	req, err := http.NewRequestWithContext(ctx, method, c.baseURL+path, rdr) //nolint:gosec // G704: base URL defaults to a constant and an operator override is validated https-only; path is one of this file's fixed API routes
+// get performs one read. Every route this file touches is a GET of a
+// public query's latest result; nothing here can execute a query.
+func (c *curatedRWAClient) get(ctx context.Context, path string) ([]byte, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+path, nil) //nolint:gosec // G704: base URL defaults to a constant and an operator override is validated https-only; path is one of this file's fixed API routes
 	if err != nil {
 		return nil, fmt.Errorf("curated-rwa-sync: build request: %w", err)
 	}
 	req.Header.Set("Accept", "application/json")
-	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Dune-API-Key", c.key)
-	req.Header.Set("User-Agent", "stellarindex-curated-rwa-sync/1")
+	req.Header.Set("User-Agent", "stellarindex-curated-rwa-sync/2")
 	resp, err := c.http.Do(req) //nolint:gosec // G704: see the request construction above
 	if err != nil {
-		return nil, fmt.Errorf("curated-rwa-sync: %s %s: %w", method, path, err)
+		return nil, fmt.Errorf("curated-rwa-sync: GET %s: %w", path, err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 	b, err := io.ReadAll(io.LimitReader(resp.Body, 32<<20))
@@ -228,112 +208,115 @@ func (c *curatedRWAClient) do(ctx context.Context, method, path string, body any
 		return nil, fmt.Errorf("curated-rwa-sync: read %s: %w", path, err)
 	}
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("curated-rwa-sync: %s %s: HTTP %d: %s",
-			method, path, resp.StatusCode, strings.TrimSpace(string(b[:min(len(b), 512)])))
+		return nil, fmt.Errorf("curated-rwa-sync: GET %s: HTTP %d: %s",
+			path, resp.StatusCode, strings.TrimSpace(string(b[:min(len(b), 512)])))
 	}
 	return b, nil
 }
 
-type duneExecuteResp struct {
-	ExecutionID string `json:"execution_id"`
-	State       string `json:"state"`
-}
-
-type duneStatusResp struct {
-	ExecutionID          string  `json:"execution_id"`
-	IsExecutionFinished  bool    `json:"is_execution_finished"`
-	State                string  `json:"state"`
-	ExecutionCostCredits float64 `json:"execution_cost_credits"`
-	Error                *struct {
-		Type    string `json:"type"`
-		Message string `json:"message"`
-	} `json:"error"`
-}
-
-type duneResultsResp struct {
-	IsExecutionFinished bool   `json:"is_execution_finished"`
-	State               string `json:"state"`
-	NextOffset          *int   `json:"next_offset"`
-	Result              struct {
-		Rows []map[string]json.RawMessage `json:"rows"`
+// duneQueryResultsPage is one page of GET /api/v1/query/{id}/results.
+// The envelope carries more members than these (submission times,
+// execution ids); they are ignored. Rows are kept raw here and decoded
+// STRICTLY per query below.
+type duneQueryResultsPage struct {
+	State            string    `json:"state"`
+	ExecutionEndedAt time.Time `json:"execution_ended_at"`
+	NextOffset       *int      `json:"next_offset"`
+	Result           struct {
+		Rows     []json.RawMessage `json:"rows"`
+		Metadata struct {
+			TotalRowCount  int `json:"total_row_count"`
+			DatapointCount int `json:"datapoint_count"`
+		} `json:"metadata"`
 	} `json:"result"`
 }
 
-// fetch runs the one statement and pages its result set.
-func (c *curatedRWAClient) fetch(ctx context.Context) ([]timescale.CuratedRWAEntry, curatedRWACounts, error) {
+// duneQueryResult is one query's whole latest result, paged to the row
+// count the curator declared.
+type duneQueryResult struct {
+	Rows       []json.RawMessage
+	ExecutedAt time.Time
+	Datapoints int
+}
+
+// fetch reads both public results and turns them into the rows one
+// sync writes. Either result failing to read, or parsing to nothing,
+// fails the run: a half-read pair would be written as a whole.
+func (c *curatedRWAClient) fetch(ctx context.Context) ([]timescale.CuratedRWAPublishedRow, curatedRWACounts, error) {
 	var counts curatedRWACounts
-	b, err := c.do(ctx, http.MethodPost, "/api/v1/sql/execute",
-		map[string]any{"sql": curatedRWADuneSQL, "performance": curatedRWADuneTier})
-	if err != nil {
-		return nil, counts, err
-	}
-	var ex duneExecuteResp
-	if err := json.Unmarshal(b, &ex); err != nil || ex.ExecutionID == "" {
-		return nil, counts, fmt.Errorf("curated-rwa-sync: execute: no execution_id in %q", strings.TrimSpace(string(b[:min(len(b), 200)])))
-	}
-	counts.ExecutionID = ex.ExecutionID
 
-	status, err := c.waitFinished(ctx, ex.ExecutionID)
+	total, err := c.readQueryResult(ctx, curatedRWAQueryMonthlyTotal)
 	if err != nil {
 		return nil, counts, err
 	}
-	counts.Credits = status.ExecutionCostCredits
+	counts.Datapoints += total.Datapoints
+	counts.ExecutedAt = total.ExecutedAt
+	totalRows := parseCuratedRWAMonthlyTotal(total, &counts)
+	if len(totalRows) == 0 {
+		return nil, counts, fmt.Errorf("curated-rwa-sync: query %d printed no usable row (%d read, %d malformed)",
+			curatedRWAQueryMonthlyTotal, len(total.Rows), counts.Malformed)
+	}
 
-	rows, err := c.pageRows(ctx, ex.ExecutionID)
+	split, err := c.readQueryResult(ctx, curatedRWAQueryMonthlyBySubclass)
 	if err != nil {
 		return nil, counts, err
 	}
-	entries := parseCuratedRWARows(rows, &counts)
-	return entries, counts, nil
+	counts.Datapoints += split.Datapoints
+	splitRows := parseCuratedRWAMonthlyBySubclass(split, &counts)
+	if len(splitRows) == 0 {
+		return nil, counts, fmt.Errorf("curated-rwa-sync: query %d printed no usable row (%d read, %d malformed)",
+			curatedRWAQueryMonthlyBySubclass, len(split.Rows), counts.Malformed)
+	}
+
+	counts.Months = len(totalRows)
+	last := totalRows[len(totalRows)-1]
+	counts.LatestMonthEnd = last.MonthEnd.Format("2006-01-02")
+	counts.LatestTotalUSD = last.ValueUSD
+	return append(totalRows, splitRows...), counts, nil
 }
 
-func (c *curatedRWAClient) waitFinished(ctx context.Context, id string) (duneStatusResp, error) {
-	for {
-		b, err := c.do(ctx, http.MethodGet, "/api/v1/execution/"+id+"/status", nil)
-		if err != nil {
-			return duneStatusResp{}, err
-		}
-		var st duneStatusResp
-		if err := json.Unmarshal(b, &st); err != nil {
-			return duneStatusResp{}, fmt.Errorf("curated-rwa-sync: status: %w", err)
-		}
-		if st.IsExecutionFinished {
-			if st.State != "QUERY_STATE_COMPLETED" {
-				msg := st.State
-				if st.Error != nil {
-					msg += ": " + st.Error.Message
-				}
-				return st, fmt.Errorf("curated-rwa-sync: execution %s did not complete: %s", id, msg)
-			}
-			return st, nil
-		}
-		select {
-		case <-ctx.Done():
-			return st, fmt.Errorf("curated-rwa-sync: execution %s still %s: %w", id, st.State, ctx.Err())
-		case <-time.After(c.poll):
-		}
-	}
-}
-
-func (c *curatedRWAClient) pageRows(ctx context.Context, id string) ([]map[string]json.RawMessage, error) {
-	var out []map[string]json.RawMessage
+// readQueryResult pages one query's latest result until the row count
+// the curator declared is in hand. A result that ends early, exceeds the
+// bound, or is not a completed execution is an error, never a partial
+// series.
+func (c *curatedRWAClient) readQueryResult(ctx context.Context, queryID int64) (duneQueryResult, error) {
+	var out duneQueryResult
+	declared := -1
 	offset := 0
 	for {
-		b, err := c.do(ctx, http.MethodGet,
-			fmt.Sprintf("/api/v1/execution/%s/results?limit=%d&offset=%d", id, curatedRWAPageSize, offset), nil)
+		b, err := c.get(ctx, fmt.Sprintf("/api/v1/query/%d/results?limit=%d&offset=%d", queryID, curatedRWAPageSize, offset))
 		if err != nil {
-			return nil, err
+			return out, err
 		}
-		var page duneResultsResp
+		var page duneQueryResultsPage
 		if err := json.Unmarshal(b, &page); err != nil {
-			return nil, fmt.Errorf("curated-rwa-sync: results: %w", err)
+			return out, fmt.Errorf("curated-rwa-sync: query %d results: %w", queryID, err)
 		}
-		out = append(out, page.Result.Rows...)
-		if len(out) > curatedRWAMaxRows {
-			return nil, fmt.Errorf("curated-rwa-sync: result set exceeds %d rows — this is not the curator's asset list", curatedRWAMaxRows)
+		if page.State != "" && page.State != "QUERY_STATE_COMPLETED" {
+			return out, fmt.Errorf("curated-rwa-sync: query %d latest execution is %s, not completed", queryID, page.State)
+		}
+		if declared < 0 {
+			declared = page.Result.Metadata.TotalRowCount
+			if declared > curatedRWAMaxRows {
+				return out, fmt.Errorf("curated-rwa-sync: query %d declares %d rows, over the %d bound — this is not the expected result",
+					queryID, declared, curatedRWAMaxRows)
+			}
+			out.ExecutedAt = page.ExecutionEndedAt.UTC()
+			out.Datapoints = page.Result.Metadata.DatapointCount
+		}
+		out.Rows = append(out.Rows, page.Result.Rows...)
+		if len(out.Rows) > curatedRWAMaxRows {
+			return out, fmt.Errorf("curated-rwa-sync: query %d result exceeds %d rows", queryID, curatedRWAMaxRows)
+		}
+		if len(out.Rows) >= declared {
+			if out.ExecutedAt.IsZero() {
+				return out, fmt.Errorf("curated-rwa-sync: query %d result carries no execution_ended_at", queryID)
+			}
+			return out, nil
 		}
 		if page.NextOffset == nil || *page.NextOffset <= offset || len(page.Result.Rows) == 0 {
-			return out, nil
+			return out, fmt.Errorf("curated-rwa-sync: query %d printed %d of the %d rows it declared and offered no next page",
+				queryID, len(out.Rows), declared)
 		}
 		offset = *page.NextOffset
 	}
@@ -341,69 +324,117 @@ func (c *curatedRWAClient) pageRows(ctx context.Context, id string) ([]map[strin
 
 // ─── parse ──────────────────────────────────────────────────────────
 
-func rawString(m map[string]json.RawMessage, k string) string {
-	raw, ok := m[k]
-	if !ok || len(raw) == 0 || string(raw) == "null" {
-		return ""
-	}
-	var s string
-	if err := json.Unmarshal(raw, &s); err == nil {
-		return strings.TrimSpace(s)
-	}
-	// A number that escaped the CAST still arrives as its literal digits.
-	return strings.TrimSpace(strings.Trim(string(raw), `"`))
+// The row shapes, decoded STRICTLY: an unknown or renamed column is a
+// malformed row, counted and skipped, never guessed at. Values arrive as
+// json.Number so the literal the curator printed is what is stored
+// (ADR-0003) and never a float re-rendering.
+
+type duneMonthlyTotalRow struct {
+	MonthEnd             string      `json:"month_end"`
+	TotalRWAMarketCapUSD json.Number `json:"total_rwa_market_cap_usd"`
 }
 
-// parseCuratedRWARows turns the result set into entries. A malformed
-// address is skipped and counted, never repaired. A price with no
-// parseable day is dropped and the row kept unpriced — a price with no
-// verifiable age is exactly the value the price bound exists to refuse.
-func parseCuratedRWARows(rows []map[string]json.RawMessage, counts *curatedRWACounts) []timescale.CuratedRWAEntry {
-	out := make([]timescale.CuratedRWAEntry, 0, len(rows))
-	for _, r := range rows {
+type duneMonthlyBySubclassRow struct {
+	MonthEnd      string      `json:"month_end"`
+	AssetSubclass string      `json:"asset_subclass"`
+	MarketCapUSD  json.Number `json:"market_cap_usd"`
+}
+
+func decodeStrict(raw json.RawMessage, into any) error {
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.DisallowUnknownFields()
+	dec.UseNumber()
+	return dec.Decode(into)
+}
+
+func parseCuratedRWAMonthlyTotal(res duneQueryResult, counts *curatedRWACounts) []timescale.CuratedRWAPublishedRow {
+	out := make([]timescale.CuratedRWAPublishedRow, 0, len(res.Rows))
+	for _, raw := range res.Rows {
 		counts.Rows++
-		addr := rawString(r, "address")
-		if !curatedRWAContractRe.MatchString(addr) && !curatedRWAClassicRe.MatchString(addr) {
+		var r duneMonthlyTotalRow
+		if err := decodeStrict(raw, &r); err != nil {
 			counts.Malformed++
 			continue
 		}
-		e := timescale.CuratedRWAEntry{
-			Address:       addr,
-			AssetCode:     rawString(r, "asset_code"),
-			AssetIssuer:   rawString(r, "asset_issuer"),
-			Company:       rawString(r, "company"),
-			AssetSubclass: rawString(r, "asset_subclass"),
+		month, ok := curatedRWAMonthEnd(r.MonthEnd)
+		value, okV := curatedRWADecimal(r.TotalRWAMarketCapUSD)
+		if !ok || !okV {
+			counts.Malformed++
+			continue
 		}
-		if price, day, ok := curatedRWAPrice(rawString(r, "close_usd"), rawString(r, "priced_day")); ok {
-			e.PriceUSD, e.PricedAt = price, day
-			counts.Priced++
-		} else {
-			counts.Unpriced++
-		}
-		out = append(out, e)
+		out = append(out, timescale.CuratedRWAPublishedRow{
+			Series: timescale.CuratedRWASeriesMonthlyTotal, MonthEnd: month, ValueUSD: value,
+			SourceQuery: curatedRWAQueryMonthlyTotal, ExecutedAt: res.ExecutedAt,
+		})
 		counts.Kept++
 	}
+	sortPublishedRowsByMonth(out)
 	return out
 }
 
-// curatedRWAPrice accepts a decimal literal and a day the curator stamped
-// it with. The day may arrive as a date or a timestamp; either way the
-// stamp becomes midnight UTC of that day, which is the resolution the
-// curator publishes at.
-func curatedRWAPrice(price, day string) (string, time.Time, bool) {
-	if price == "" || day == "" {
-		return "", time.Time{}, false
+func parseCuratedRWAMonthlyBySubclass(res duneQueryResult, counts *curatedRWACounts) []timescale.CuratedRWAPublishedRow {
+	out := make([]timescale.CuratedRWAPublishedRow, 0, len(res.Rows))
+	for _, raw := range res.Rows {
+		counts.Rows++
+		var r duneMonthlyBySubclassRow
+		if err := decodeStrict(raw, &r); err != nil {
+			counts.Malformed++
+			continue
+		}
+		month, ok := curatedRWAMonthEnd(r.MonthEnd)
+		value, okV := curatedRWADecimal(r.MarketCapUSD)
+		subclass := strings.TrimSpace(r.AssetSubclass)
+		if !ok || !okV || subclass == "" {
+			counts.Malformed++
+			continue
+		}
+		out = append(out, timescale.CuratedRWAPublishedRow{
+			Series: timescale.CuratedRWASeriesMonthlyBySubclass, MonthEnd: month, Subclass: subclass, ValueUSD: value,
+			SourceQuery: curatedRWAQueryMonthlyBySubclass, ExecutedAt: res.ExecutedAt,
+		})
+		counts.Kept++
 	}
-	if _, err := json.Number(price).Float64(); err != nil {
-		return "", time.Time{}, false
+	sortPublishedRowsByMonth(out)
+	return out
+}
+
+// curatedRWAMonthEnd accepts the month bucket as the curator prints it —
+// a date, or a timestamp at midnight — and pins it to that day at
+// midnight UTC.
+func curatedRWAMonthEnd(s string) (time.Time, bool) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return time.Time{}, false
 	}
 	for _, layout := range []string{"2006-01-02", "2006-01-02 15:04:05.000 UTC", "2006-01-02 15:04:05", time.RFC3339, "2006-01-02T15:04:05Z07:00"} {
-		if t, err := time.Parse(layout, day); err == nil {
+		if t, err := time.Parse(layout, s); err == nil {
 			t = t.UTC()
-			return price, time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, time.UTC), true
+			return time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, time.UTC), true
 		}
 	}
-	return "", time.Time{}, false
+	return time.Time{}, false
+}
+
+// curatedRWADecimal accepts a finite decimal literal and returns it as
+// printed. Exponent forms are refused: the store carries the literal,
+// and "4.0e9" is not a figure a reader can compare by eye.
+func curatedRWADecimal(n json.Number) (string, bool) {
+	s := strings.TrimSpace(n.String())
+	if s == "" || strings.ContainsAny(s, "eE") {
+		return "", false
+	}
+	if _, ok := new(big.Rat).SetString(s); !ok {
+		return "", false
+	}
+	return s, true
+}
+
+func sortPublishedRowsByMonth(rows []timescale.CuratedRWAPublishedRow) {
+	for i := 1; i < len(rows); i++ {
+		for j := i; j > 0 && rows[j].MonthEnd.Before(rows[j-1].MonthEnd); j-- {
+			rows[j], rows[j-1] = rows[j-1], rows[j]
+		}
+	}
 }
 
 // ─── textfile ───────────────────────────────────────────────────────
@@ -415,9 +446,13 @@ func writeCuratedRWATextfile(path string, c curatedRWACounts, dryRun, refused bo
 	var b strings.Builder
 	lbl := fmt.Sprintf(`{curator=%q}`, curatedRWACuratorDune)
 	fmt.Fprintf(&b, "# HELP stellarindex_curated_rwa_sync_last_run_unix Unix time the most recent curated-RWA sync finished, pass or fail.\n# TYPE stellarindex_curated_rwa_sync_last_run_unix gauge\nstellarindex_curated_rwa_sync_last_run_unix%s %d\n", lbl, time.Now().Unix())
-	fmt.Fprintf(&b, "# HELP stellarindex_curated_rwa_sync_rows Rows the curator served in the most recent sync.\n# TYPE stellarindex_curated_rwa_sync_rows gauge\nstellarindex_curated_rwa_sync_rows%s %d\n", lbl, c.Kept)
-	fmt.Fprintf(&b, "# HELP stellarindex_curated_rwa_sync_priced Rows carrying a usable price in the most recent sync.\n# TYPE stellarindex_curated_rwa_sync_priced gauge\nstellarindex_curated_rwa_sync_priced%s %d\n", lbl, c.Priced)
-	fmt.Fprintf(&b, "# HELP stellarindex_curated_rwa_sync_execution_cost_credits Credits the curator's platform charged for the most recent sync's execution.\n# TYPE stellarindex_curated_rwa_sync_execution_cost_credits gauge\nstellarindex_curated_rwa_sync_execution_cost_credits%s %g\n", lbl, c.Credits)
+	fmt.Fprintf(&b, "# HELP stellarindex_curated_rwa_sync_rows Rows of the curator's published series kept by the most recent sync (monthly totals plus the per-subclass split).\n# TYPE stellarindex_curated_rwa_sync_rows gauge\nstellarindex_curated_rwa_sync_rows%s %d\n", lbl, c.Kept)
+	fmt.Fprintf(&b, "# HELP stellarindex_curated_rwa_sync_datapoints_read Datapoints the curator's platform reported metering for the results the most recent sync read. Reads of a public query's latest result bill by datapoint (a fraction of a credit) and never execute the query; there is no execution cost to report.\n# TYPE stellarindex_curated_rwa_sync_datapoints_read gauge\nstellarindex_curated_rwa_sync_datapoints_read%s %d\n", lbl, c.Datapoints)
+	var executed int64
+	if !c.ExecutedAt.IsZero() {
+		executed = c.ExecutedAt.Unix()
+	}
+	fmt.Fprintf(&b, "# HELP stellarindex_curated_rwa_sync_executed_at_unix Unix time the curator's public total query last ran, as read by the most recent sync (0 when nothing was read). The published figure is as fresh as this, not as fresh as the sync.\n# TYPE stellarindex_curated_rwa_sync_executed_at_unix gauge\nstellarindex_curated_rwa_sync_executed_at_unix%s %d\n", lbl, executed)
 	written := 1
 	if dryRun {
 		written = 0

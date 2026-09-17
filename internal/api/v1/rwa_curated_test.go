@@ -6,6 +6,8 @@ package v1_test
 import (
 	"context"
 	"errors"
+	"math/big"
+	"strings"
 	"testing"
 	"time"
 
@@ -27,8 +29,10 @@ const (
 )
 
 type stubCuratedReader struct {
-	rows map[string]timescale.CuratedRWAEntry
-	err  error
+	rows      map[string]timescale.CuratedRWAEntry
+	err       error
+	published *timescale.CuratedRWAPublished
+	pubErr    error
 }
 
 func (s *stubCuratedReader) CuratedRWADirectoryByAddress(_ context.Context, _ string) (
@@ -38,6 +42,37 @@ func (s *stubCuratedReader) CuratedRWADirectoryByAddress(_ context.Context, _ st
 		return nil, timescale.CuratedRWACensus{}, s.err
 	}
 	return s.rows, timescale.CuratedRWACensus{Entries: len(s.rows), Priced: len(s.rows)}, nil
+}
+
+func (s *stubCuratedReader) LatestCuratedPublished(_ context.Context, _ string) (*timescale.CuratedRWAPublished, error) {
+	if s.pubErr != nil {
+		return nil, s.pubErr
+	}
+	return s.published, nil
+}
+
+// publishedFixture is what the curator's two public queries printed on
+// 2026-09-17: a headline of $4,004,795,860 for August 2025, its split,
+// and a three-month series.
+func publishedFixture() *timescale.CuratedRWAPublished {
+	month := func(y int, m time.Month, d int) time.Time { return time.Date(y, m, d, 0, 0, 0, 0, time.UTC) }
+	return &timescale.CuratedRWAPublished{
+		MonthEnd:         month(2025, 8, 31),
+		TotalUSD:         "4004795860",
+		SourceQuery:      6961845,
+		SplitSourceQuery: 6961847,
+		ExecutedAt:       time.Date(2026, 9, 17, 4, 58, 12, 0, time.UTC),
+		ObservedAt:       time.Date(2026, 9, 17, 5, 0, 0, 0, time.UTC),
+		BySubclass: []timescale.CuratedRWAPublishedSplit{
+			{Subclass: "US Treasuries", ValueUSD: "3100000000"},
+			{Subclass: "Private Credit", ValueUSD: "904795860.00"},
+		},
+		Series: []timescale.CuratedRWAPublishedPoint{
+			{MonthEnd: month(2025, 6, 30), ValueUSD: "3800000000.5"},
+			{MonthEnd: month(2025, 7, 31), ValueUSD: "3900000000.10"},
+			{MonthEnd: month(2025, 8, 31), ValueUSD: "4004795860"},
+		},
+	}
 }
 
 func curatedEntry(addr, company, subclass, price string) timescale.CuratedRWAEntry {
@@ -162,6 +197,88 @@ func TestRWACurated_UnavailableAndUnwiredSaySo(t *testing.T) {
 	if unwired.Curated == nil || unwired.Curated.Status != "unwired" {
 		t.Errorf("no reader: %+v, want status unwired", unwired.Curated)
 	}
+}
+
+// The curator's per-asset list is private, so in production the arm's
+// rows are empty and what answers is the curator's PUBLISHED total.
+// That state is its own status, carries the published block whole, and
+// the gap to the verified figure is one signed number.
+func TestRWACurated_PublishedTotalsWhenNoRowIsReadable(t *testing.T) {
+	v := getRWA(t, rwaCuratedServer(t, &stubCuratedReader{published: publishedFixture()}))
+	if v.Curated == nil || v.Curated.Status != "published_totals" {
+		t.Fatalf("curated = %+v, want status published_totals", v.Curated)
+	}
+	if len(v.CuratedAssets) != 0 || v.Curated.Assets != 0 {
+		t.Errorf("published totals served rows: %d / %d", len(v.CuratedAssets), v.Curated.Assets)
+	}
+	p := v.Curated.Published
+	if p == nil {
+		t.Fatal("published block missing")
+	}
+	if p.TotalUSD != "4004795860.00" || p.AsOf != "2025-08-31" {
+		t.Errorf("headline = %s as of %s, want 4004795860.00 as of 2025-08-31", p.TotalUSD, p.AsOf)
+	}
+	if got := time.Time(p.ExecutedAt); !got.Equal(time.Date(2026, 9, 17, 4, 58, 12, 0, time.UTC)) {
+		t.Errorf("executed_at = %v, want the curator's execution time", got)
+	}
+	if p.Source != "dune query 6961845 / 6961847" {
+		t.Errorf("source = %q", p.Source)
+	}
+	if len(p.BySubclass) != 2 || p.BySubclass[0].Subclass != "US Treasuries" || p.BySubclass[0].ValueUSD != "3100000000.00" ||
+		p.BySubclass[1].ValueUSD != "904795860.00" {
+		t.Errorf("by_subclass = %+v", p.BySubclass)
+	}
+	if len(p.Series) != 3 || p.Series[0].MonthEnd != "2025-06-30" || p.Series[0].ValueUSD != "3800000000.50" ||
+		p.Series[2].MonthEnd != "2025-08-31" || p.Series[2].ValueUSD != "4004795860.00" {
+		t.Errorf("series = %+v, want three points oldest first at 2dp", p.Series)
+	}
+	// The gap is published − verified, signed: the verified reference
+	// total here is the EUTBL listing row alone.
+	verified := ratFromStr(t, derefStr(v.Summary.ReferenceValuation.ValueUSD))
+	wantGap := new(big.Rat).Sub(ratFromStr(t, "4004795860"), verified).FloatString(2)
+	if derefStr(p.GapVsVerifiedUSD) != wantGap {
+		t.Errorf("gap_vs_verified_usd = %s, want %s (published %s − verified %s)",
+			derefStr(p.GapVsVerifiedUSD), wantGap, p.TotalUSD, verified.FloatString(2))
+	}
+	if strings.HasPrefix(derefStr(p.GapVsVerifiedUSD), "-") || verified.Sign() <= 0 {
+		t.Errorf("gap %s should be positive here (the curator counts far more than the %s this index verifies)",
+			derefStr(p.GapVsVerifiedUSD), verified.FloatString(2))
+	}
+	if derefStr(v.Curated.VerifiedValueUSD) != derefStr(v.Summary.ReferenceValuation.ValueUSD) {
+		t.Errorf("verified_value_usd repeats the wrong figure")
+	}
+	if !strings.Contains(v.Curated.Basis, "PRIVATE") || !strings.Contains(v.Curated.Basis, "PUBLISHES") {
+		t.Errorf("basis prose must say the list is private and only published totals are read: %q", v.Curated.Basis)
+	}
+
+	// A wired reader whose published read fails, with no rows either,
+	// is unavailable — never a served figure from a failed read.
+	failing := getRWA(t, rwaCuratedServer(t, &stubCuratedReader{pubErr: errors.New("boom")}))
+	if failing.Curated == nil || failing.Curated.Status != "unavailable" || failing.Curated.Published != nil {
+		t.Errorf("failed published read: %+v, want unavailable and no block", failing.Curated)
+	}
+
+	// Rows AND a published block: status stays served, the block rides
+	// along, and the verified headline is untouched by either.
+	both := getRWA(t, rwaCuratedServer(t, &stubCuratedReader{
+		rows:      map[string]timescale.CuratedRWAEntry{curatedOnlyVuMe: curatedEntry(curatedOnlyVuMe, "Realiz", "Corporate Credit", "1.1174")},
+		published: publishedFixture(),
+	}))
+	if both.Curated == nil || both.Curated.Status != "served" || both.Curated.Published == nil || both.Curated.Assets != 1 {
+		t.Errorf("rows + published: %+v", both.Curated)
+	}
+	if derefStr(both.Summary.ReferenceValuation.ValueUSD) != derefStr(v.Summary.ReferenceValuation.ValueUSD) {
+		t.Error("the published block changed the verified summary")
+	}
+}
+
+func ratFromStr(t *testing.T, s string) *big.Rat {
+	t.Helper()
+	r, ok := new(big.Rat).SetString(s)
+	if !ok {
+		t.Fatalf("not a decimal: %q", s)
+	}
+	return r
 }
 
 func derefStr(p *string) string {

@@ -38,15 +38,16 @@ tests:
                 No curated-rwa-sync run has stamped `last_run_unix` in over 30
                 hours, or none ever has. Either curated-rwa-sync.timer is not
                 scheduled, the unit is refusing to start (DUNE_API_KEY unset
-                in /etc/default/curated-rwa-sync), the Dune execution is
+                in /etc/default/curated-rwa-sync), the Dune read is
                 failing, or the textfile directory is not writable by the
                 unit. At 48 hours the reader's recognition bound empties the
                 arm and /v1/rwa/assets reports `curated.status:
                 unavailable`. Check `systemctl list-timers
                 curated-rwa-sync.timer`, `journalctl -u curated-rwa-sync`,
-                and the credit cost gauge — a run that executed but was
-                refused still costs nothing, and a run that never executed
-                leaves the gauge frozen.
+                and the `datapoints_read` gauge — a run reads the curator's
+                public query results and never executes a query, so a run
+                that was refused reads zero datapoints, and a run that never
+                happened leaves the gauge frozen.
 
   # ── never ran, but Prometheus has watched 30h+ of scrapes: fires ──
   - interval: 1m
@@ -69,15 +70,16 @@ tests:
                 No curated-rwa-sync run has stamped `last_run_unix` in over 30
                 hours, or none ever has. Either curated-rwa-sync.timer is not
                 scheduled, the unit is refusing to start (DUNE_API_KEY unset
-                in /etc/default/curated-rwa-sync), the Dune execution is
+                in /etc/default/curated-rwa-sync), the Dune read is
                 failing, or the textfile directory is not writable by the
                 unit. At 48 hours the reader's recognition bound empties the
                 arm and /v1/rwa/assets reports `curated.status:
                 unavailable`. Check `systemctl list-timers
                 curated-rwa-sync.timer`, `journalctl -u curated-rwa-sync`,
-                and the credit cost gauge — a run that executed but was
-                refused still costs nothing, and a run that never executed
-                leaves the gauge frozen.
+                and the `datapoints_read` gauge — a run reads the curator's
+                public query results and never executes a query, so a run
+                that was refused reads zero datapoints, and a run that never
+                happened leaves the gauge frozen.
 
   # ── a fresh Prometheus: one hour of scrapes, no series yet — silent ──
   - interval: 1m

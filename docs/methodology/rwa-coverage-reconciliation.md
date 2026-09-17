@@ -240,21 +240,35 @@ uploads by the Stellar team — `dune.<team>.dataset_<name>` is Dune's
 upload namespace by its own documentation — and the private-credit line
 above is those 24 contracts at an uploaded `close_usd` of exactly `1.00`.
 
-Since 2026-09-17 this index reads the same two tables
-(`stellarindex-ops curated-rwa-sync`, migration 0161) and serves what
-they admit under a **third arm**, apart from the two verified ones:
+Those two tables cannot be read from outside the curator's team.
+Verified 2026-09-17 with a live key: a SQL execution over either is
+refused with "Uploaded table (dune.stellar.dataset_recognized_assets)
+does not exist or it is private", on any outside account. So the
+per-asset comparison this arm was built for (migration 0161, an
+address-keyed cache of the curator's list and prices) cannot be filled
+by anyone, and stays empty.
 
-- `curated_assets[]` — one row per address the curator lists, with
-  `basis: third_party_curated`, `recognition: third_party_curator`, a
-  `curator` block carrying the curator's company and subclass labels
-  verbatim, and a reference valuation at the curator's uploaded price
-  (`provenance: curator_uploaded_price`) times the supply this index
-  reads from the lake. No premium is published against it.
-- `curated` — the arm's own total: `verified_value_usd` (the figure
-  above), `additional_value_usd` (curated-only rows), and
-  `combined_value_usd` (their sum — the number a reader gets by counting
-  the way the curator counts). A row the verified set already carries is
-  marked `also_verified` and is not counted twice.
+What the curator does let anyone read is the latest result of its
+dashboard's **public** queries — 6961845 "RWA Mcap by Month" and 6961847
+"Mcap by Month by Asset Subclass". Since 2026-09-17 this index reads
+exactly those (`stellarindex-ops curated-rwa-sync`, migration 0162) and
+serves them under a **third arm**, apart from the two verified ones:
+
+- `curated.published` — the curator's headline: its latest monthly RWA
+  market-cap total (`total_usd`, for the month ending `as_of`, last
+  computed at `executed_at`), that month's split by the curator's own
+  subclass labels, the full monthly series, and `gap_vs_verified_usd` —
+  the published total minus this index's verified reference total,
+  signed. The curator's arithmetic over inputs this index cannot see:
+  no per-asset breakdown reaches it, so no row in it can be checked.
+- `curated.status: published_totals` says exactly that state: the
+  totals answered and no per-asset row is readable.
+- `curated_assets[]` and the three-figure comparison
+  (`additional_value_usd`, `combined_value_usd`) remain the shape a
+  readable per-asset list would be served in — `basis:
+  third_party_curated`, the curator's labels verbatim, its price times
+  the lake's supply — and are empty until a curator whose list is
+  public exists.
 
 **What it does not do.** A curated row never reaches `assets`, `summary`,
 `by_class` or `by_issuer`. The test that pins this
@@ -262,9 +276,10 @@ they admit under a **third arm**, apart from the two verified ones:
 and was proven red by merging them. The arm exists so that "why does
 your number differ from that dashboard's" is answered by a row on the
 page rather than by this document — not because this index vouches for
-any figure in it. The VuMe Bond 2030 line is the worked example: on this
-arm it is $558,700,000 at the curator's `1.1174`; on the verified arms
-it is refused, and the row says both.
+any figure in it. The gap is the worked example: the curator publishes
+$4,004,795,860 for the month ending 2025-08-31; this index's verified
+reference total sits beside it, and `gap_vs_verified_usd` is the
+difference — a number on the page, signed, not a paragraph here.
 
 ## The bar, restated
 

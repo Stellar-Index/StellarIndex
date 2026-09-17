@@ -14,6 +14,7 @@ import {
   formatDecimalAmount,
   formatOraclePrice,
   formatRelative,
+  formatRelativeLong,
 } from '@/lib/format';
 import { hasDirectoryScamFlag } from '@/lib/directory-tags';
 import { truncateMiddle } from '@/components/ui/Mono';
@@ -422,6 +423,7 @@ function CuratedPanel({
   const verified = usd(curated.verified_value_usd);
   const additional = usd(curated.additional_value_usd);
   const combined = usd(curated.combined_value_usd);
+  const published = curated.published;
   const { lead, rest } = splitBasis(curated.basis);
   return (
     <Panel
@@ -436,43 +438,50 @@ function CuratedPanel({
         </p>
       ) : (
         <>
-          <div className="grid gap-4 sm:grid-cols-3">
-            <StatCell>
-              <div className="text-ink-muted text-[11px] font-medium tracking-wider uppercase">
-                Verified by this index
-              </div>
-              <div className="tnum text-ink mt-1 text-2xl font-semibold tracking-tight">
-                {verified ?? '—'}
-              </div>
-              <div className="text-ink-muted mt-0.5 text-xs">
-                the value-of-backing figure above
-              </div>
-            </StatCell>
-            <StatCell>
-              <div className="text-ink-muted text-[11px] font-medium tracking-wider uppercase">
-                Counted by the curator, not verified here
-              </div>
-              <div className="tnum text-ink mt-1 text-2xl font-semibold tracking-tight">
-                {additional ?? '—'}
-              </div>
-              <div className="text-ink-muted mt-0.5 text-xs">
-                {curated.assets - curated.also_verified} row
-                {curated.assets - curated.also_verified === 1 ? '' : 's'} the
-                verified set does not carry, at the curator&rsquo;s own price
-              </div>
-            </StatCell>
-            <StatCell>
-              <div className="text-ink-muted text-[11px] font-medium tracking-wider uppercase">
-                Combined, the way the curator counts
-              </div>
-              <div className="tnum text-ink mt-1 text-2xl font-semibold tracking-tight">
-                {combined ?? '—'}
-              </div>
-              <div className="text-ink-muted mt-0.5 text-xs">
-                published for comparison, not vouched for
-              </div>
-            </StatCell>
-          </div>
+          {published && (
+            <PublishedTotals published={published} verified={verified} />
+          )}
+          {curated.status === 'served' && (
+            <div
+              className={`grid gap-4 sm:grid-cols-3 ${published ? 'mt-4' : ''}`}
+            >
+              <StatCell>
+                <div className="text-ink-muted text-[11px] font-medium tracking-wider uppercase">
+                  Verified by this index
+                </div>
+                <div className="tnum text-ink mt-1 text-2xl font-semibold tracking-tight">
+                  {verified ?? '—'}
+                </div>
+                <div className="text-ink-muted mt-0.5 text-xs">
+                  the value-of-backing figure above
+                </div>
+              </StatCell>
+              <StatCell>
+                <div className="text-ink-muted text-[11px] font-medium tracking-wider uppercase">
+                  Counted by the curator, not verified here
+                </div>
+                <div className="tnum text-ink mt-1 text-2xl font-semibold tracking-tight">
+                  {additional ?? '—'}
+                </div>
+                <div className="text-ink-muted mt-0.5 text-xs">
+                  {curated.assets - curated.also_verified} row
+                  {curated.assets - curated.also_verified === 1 ? '' : 's'} the
+                  verified set does not carry, at the curator&rsquo;s own price
+                </div>
+              </StatCell>
+              <StatCell>
+                <div className="text-ink-muted text-[11px] font-medium tracking-wider uppercase">
+                  Combined, the way the curator counts
+                </div>
+                <div className="tnum text-ink mt-1 text-2xl font-semibold tracking-tight">
+                  {combined ?? '—'}
+                </div>
+                <div className="text-ink-muted mt-0.5 text-xs">
+                  published for comparison, not vouched for
+                </div>
+              </StatCell>
+            </div>
+          )}
           {lead && (
             <p className="text-ink-muted mt-3 text-xs leading-relaxed">
               {lead}
@@ -481,7 +490,7 @@ function CuratedPanel({
           {rest && (
             <BasisDisclosure label="What this arm is, in full" text={rest} />
           )}
-          {rows.length > 0 && (
+          {curated.status === 'served' && rows.length > 0 && (
             <div className="-mx-4 mt-4">
               <Table>
                 <THead>
@@ -534,6 +543,117 @@ function CuratedPanel({
       )}
     </Panel>
   );
+}
+
+/**
+ * What the curator PUBLISHES — its headline monthly total, the month it
+ * is for, when the curator last computed it, and the signed gap to the
+ * verified figure — followed by the curator's own subclass split. The
+ * curator's per-asset list is private, so this is the comparison in
+ * production: one published number against one verified number.
+ */
+function PublishedTotals({
+  published,
+  verified,
+}: {
+  published: Schemas['RWACuratedPublished'];
+  verified: string | null;
+}) {
+  const total = usd(published.total_usd);
+  const gap = signedUsd(published.gap_vs_verified_usd);
+  return (
+    <>
+      <div className="grid gap-4 sm:grid-cols-3">
+        <StatCell>
+          <div className="text-ink-muted text-[11px] font-medium tracking-wider uppercase">
+            Published by the curator
+          </div>
+          <div className="tnum text-ink mt-1 text-2xl font-semibold tracking-tight">
+            {total ?? '—'}
+          </div>
+          <div className="text-ink-muted mt-0.5 text-xs">
+            for {monthLabel(published.as_of)}, computed{' '}
+            {formatRelativeLong(published.executed_at)}
+          </div>
+        </StatCell>
+        <StatCell>
+          <div className="text-ink-muted text-[11px] font-medium tracking-wider uppercase">
+            Verified by this index
+          </div>
+          <div className="tnum text-ink mt-1 text-2xl font-semibold tracking-tight">
+            {verified ?? '—'}
+          </div>
+          <div className="text-ink-muted mt-0.5 text-xs">
+            the value-of-backing figure above
+          </div>
+        </StatCell>
+        <StatCell>
+          <div className="text-ink-muted text-[11px] font-medium tracking-wider uppercase">
+            Gap, published minus verified
+          </div>
+          <div className="tnum text-ink mt-1 text-2xl font-semibold tracking-tight">
+            {gap ?? '—'}
+          </div>
+          <div className="text-ink-muted mt-0.5 text-xs">
+            what the curator counts that this index cannot verify
+          </div>
+        </StatCell>
+      </div>
+      {published.by_subclass.length > 0 && (
+        <div className="-mx-4 mt-4">
+          <Table>
+            <THead>
+              <TR>
+                <Th>Curator&rsquo;s class</Th>
+                <Th align="right">
+                  Published for {monthLabel(published.as_of)}
+                </Th>
+              </TR>
+            </THead>
+            <TBody>
+              {published.by_subclass.map((s) => (
+                <TR key={s.subclass}>
+                  <Td>{s.subclass}</Td>
+                  <Td align="right" className="tnum">
+                    {usd(s.value_usd) ?? '—'}
+                  </Td>
+                </TR>
+              ))}
+            </TBody>
+          </Table>
+        </div>
+      )}
+      <p className="text-ink-faint mt-2 text-[11px]">
+        {published.series.length} month
+        {published.series.length === 1 ? '' : 's'} published ·{' '}
+        {published.source}
+      </p>
+    </>
+  );
+}
+
+/**
+ * A signed money figure. The served gap is a decimal string that may
+ * carry a leading minus; the sign is rendered explicitly either way so a
+ * reader never has to infer direction from a bare number.
+ */
+function signedUsd(value: string | null | undefined): string | null {
+  if (value == null) return null;
+  const negative = value.startsWith('-');
+  const f = usd(negative ? value.slice(1) : value);
+  if (f == null) return null;
+  return negative ? `−${f}` : `+${f}`;
+}
+
+/** "2025-08-31" → "August 2025", in UTC so the day never rolls over. */
+function monthLabel(asOf: string): string {
+  const d = new Date(`${asOf}T00:00:00Z`);
+  if (Number.isNaN(d.getTime())) return asOf;
+  return d.toLocaleDateString('en-US', {
+    month: 'long',
+    year: 'numeric',
+    timeZone: 'UTC',
+  });
 }
 
 function CoveragePanel({ funnel }: { funnel?: Schemas['RWAFunnel'] }) {

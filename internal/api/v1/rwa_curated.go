@@ -7,6 +7,7 @@ import (
 	"context"
 	"math/big"
 	"net/http"
+	"strconv"
 	"sync"
 	"time"
 
@@ -32,9 +33,19 @@ const RWAReferenceCuratorPrice = "curator_uploaded_price"
 // RWACuratedDirectoryReader is the seam the curated arm reads through.
 // *timescale.Store satisfies it. Optional: a deployment without it
 // serves no curated arm and says so.
+//
+// Two reads, one seam. The per-asset directory is what the arm was
+// built on; the first curator's per-asset list and prices turned out to
+// be PRIVATE uploads (see internal/ops/ingest/curated_rwa_sync.go), so
+// in practice it is the curator's PUBLISHED totals that answer, and the
+// directory stays empty until a curator whose list is readable exists.
 type RWACuratedDirectoryReader interface {
 	CuratedRWADirectoryByAddress(ctx context.Context, curator string) (
 		map[string]timescale.CuratedRWAEntry, timescale.CuratedRWACensus, error)
+	// LatestCuratedPublished returns what the curator last published —
+	// its latest monthly total, that month's split and the full series
+	// — or (nil, nil) when nothing is inside the recognition bound.
+	LatestCuratedPublished(ctx context.Context, curator string) (*timescale.CuratedRWAPublished, error)
 }
 
 // rwaCuratedSnapshotTTL bounds how often the cache is re-read on the hot
@@ -43,8 +54,12 @@ type RWACuratedDirectoryReader interface {
 const rwaCuratedSnapshotTTL = 10 * time.Minute
 
 type rwaCurated struct {
-	byAddress  map[string]timescale.CuratedRWAEntry
-	census     timescale.CuratedRWACensus
+	byAddress map[string]timescale.CuratedRWAEntry
+	census    timescale.CuratedRWACensus
+	// published is what the curator last published, when the read
+	// answered and something is inside its bound; nil otherwise.
+	published *timescale.CuratedRWAPublished
+	// available says the per-asset directory answered with rows.
 	available  bool
 	wired      bool
 	observedAt time.Time
@@ -74,16 +89,26 @@ func (s *Server) readRWACurated(ctx context.Context) rwaCurated {
 	if s.rwaCurated == nil {
 		return rwaCurated{}
 	}
+	// The two reads fail independently: a curator whose published totals
+	// answer while its per-asset list is (as today) unreadable is the
+	// normal state, not a failure of either.
+	published, err := s.rwaCurated.LatestCuratedPublished(ctx, rwaCuratorDune)
+	if err != nil {
+		s.logger.Warn("rwa curated published read failed", "err", err)
+		published = nil
+	}
 	rows, census, err := s.rwaCurated.CuratedRWADirectoryByAddress(ctx, rwaCuratorDune)
 	if err != nil {
 		s.logger.Warn("rwa curated directory read failed", "err", err)
-		return rwaCurated{wired: true, observedAt: time.Now()}
+		return rwaCurated{published: published, wired: true, observedAt: time.Now()}
 	}
 	if len(rows) == 0 {
-		s.logger.Warn("rwa curated directory: no fresh rows", "stale", census.Stale)
-		return rwaCurated{wired: true, census: census, observedAt: time.Now()}
+		if published == nil {
+			s.logger.Warn("rwa curated directory: no fresh rows and nothing published", "stale", census.Stale)
+		}
+		return rwaCurated{published: published, wired: true, census: census, observedAt: time.Now()}
 	}
-	return rwaCurated{byAddress: rows, census: census, available: true, wired: true, observedAt: time.Now()}
+	return rwaCurated{byAddress: rows, census: census, published: published, available: true, wired: true, observedAt: time.Now()}
 }
 
 // ─── wire shapes ────────────────────────────────────────────────────
@@ -111,12 +136,56 @@ type RWACuratedCensus struct {
 	ObservedAt *WireTime `json:"observed_at,omitempty"`
 }
 
+// RWACuratedPublishedSplit is one line of the curator's own subclass
+// split for the published month, labelled in the curator's vocabulary.
+type RWACuratedPublishedSplit struct {
+	Subclass string `json:"subclass"`
+	ValueUSD string `json:"value_usd"`
+}
+
+// RWACuratedPublishedPoint is one month of the curator's published
+// total series.
+type RWACuratedPublishedPoint struct {
+	// MonthEnd is the last day of the month, YYYY-MM-DD.
+	MonthEnd string `json:"month_end"`
+	ValueUSD string `json:"value_usd"`
+}
+
+// RWACuratedPublished is what the curator PUBLISHES: the headline
+// monthly RWA market-cap total its public dashboard queries last
+// computed, that month's split by the curator's own subclass labels,
+// and the full monthly series. The curator's arithmetic over the
+// curator's private inputs — no per-asset breakdown reaches this index
+// — served verbatim so the gap to the verified total is one number.
+type RWACuratedPublished struct {
+	// TotalUSD is the latest month's total, 2dp.
+	TotalUSD string `json:"total_usd"`
+	// AsOf is the month the total is for: its last day, YYYY-MM-DD.
+	AsOf string `json:"as_of"`
+	// ExecutedAt is when the curator's query last ran — the figure's
+	// own freshness, distinct from when this index read it.
+	ExecutedAt WireTime                   `json:"executed_at"`
+	BySubclass []RWACuratedPublishedSplit `json:"by_subclass"`
+	Series     []RWACuratedPublishedPoint `json:"series"`
+	// Source names the curator's public queries the figures were read
+	// from, e.g. "dune query 6961845 / 6961847".
+	Source string `json:"source"`
+	// GapVsVerifiedUSD is TotalUSD minus this index's verified reference
+	// total, signed, 2dp: what the curator counts that this index does
+	// not verify (or, negative, the reverse). Absent when the verified
+	// set publishes no reference total to compare against.
+	GapVsVerifiedUSD *string `json:"gap_vs_verified_usd,omitempty"`
+}
+
 // RWACuratedSummary is the curated arm's own total. It sits BESIDE the
 // verified summary and is never folded into it.
 type RWACuratedSummary struct {
 	Curator string `json:"curator"`
-	// Status is "served", "unavailable" (the reader failed or the cache
-	// is entirely stale) or "unwired" (no reader configured).
+	// Status is "served" (the curator's per-asset rows are below),
+	// "published_totals" (no per-asset row is readable, and the
+	// curator's published totals are in Published), "unavailable"
+	// (neither answered inside its bound) or "unwired" (no reader
+	// configured).
 	Status string `json:"status"`
 	// Assets counts curated rows served; AlsoVerified counts the subset
 	// the verified set already carries.
@@ -137,15 +206,26 @@ type RWACuratedSummary struct {
 	// the three figures read together.
 	VerifiedValueUSD *string          `json:"verified_value_usd,omitempty"`
 	Census           RWACuratedCensus `json:"census"`
-	Basis            string           `json:"basis"`
+	// Published is what the curator publishes about its own list —
+	// the latest monthly total, its subclass split and the series —
+	// read from the curator's public queries because the list itself
+	// is private. Nil when nothing published is inside its bound.
+	Published *RWACuratedPublished `json:"published,omitempty"`
+	Basis     string               `json:"basis"`
 }
 
-const rwaCuratedBasisProse = "Rows a named third-party curator lists as tokenized real-world assets on Stellar, valued at that curator's own " +
-	"published price per token times the supply this index reads from the lake. Nothing here is verified by this index: no " +
-	"issuer declaration, no directory attestation, no oracle, no market. The curator's company and subclass labels are served " +
-	"verbatim and never mapped onto this index's vocabulary. `additional_value_usd` sums only rows the verified set does not " +
-	"carry; `combined_value_usd` adds that to the verified reference total and is the figure a reader gets by counting the way " +
-	"the curator counts. It is published so the comparison is one number on one page — not because this index vouches for it."
+const rwaCuratedBasisProse = "What a named third-party curator counts as tokenized real-world assets on Stellar, beside what this index " +
+	"verifies. The curator's per-asset list and its per-asset prices are PRIVATE uploads on the curator's platform, refused to " +
+	"every outside account, so this index cannot read them and admits no row on them; only the totals the curator PUBLISHES " +
+	"from them are read. `published` carries the curator's latest monthly RWA market-cap total, that month's split by the " +
+	"curator's own subclass labels and the full monthly series, exactly as the curator's public dashboard queries last " +
+	"computed them, and `gap_vs_verified_usd` is that total minus this index's verified reference total, signed. Nothing here " +
+	"is verified by this index: no issuer declaration, no directory attestation, no oracle, no market, and no per-asset " +
+	"breakdown reaches it. Should a curator's per-asset list become readable, its rows are served in `curated_assets` at that " +
+	"curator's own price times the supply this index reads from the lake, with the curator's labels verbatim and never mapped " +
+	"onto this index's vocabulary; `additional_value_usd` then sums only rows the verified set does not carry and " +
+	"`combined_value_usd` adds that to the verified reference total. All of it is published so the comparison is one number " +
+	"on one page — not because this index vouches for any of it."
 
 // ─── membership ─────────────────────────────────────────────────────
 
@@ -279,9 +359,15 @@ func rwaCuratedSummarise(snap rwaCurated, rows []RWAAsset, verifiedRef *string) 
 		t := WireTime(snap.observedAt)
 		out.Census.ObservedAt = &t
 	}
+	if snap.wired {
+		out.Published = rwaCuratedPublishedBlock(snap.published, verifiedRef)
+	}
 	switch {
 	case !snap.wired:
 		out.Status = "unwired"
+		return out
+	case !snap.available && out.Published != nil:
+		out.Status = "published_totals"
 		return out
 	case !snap.available:
 		out.Status = "unavailable"
@@ -316,6 +402,47 @@ func rwaCuratedSummarise(snap rwaCurated, rows []RWAAsset, verifiedRef *string) 
 				out.CombinedValueUSD = &c
 			}
 		}
+	}
+	return out
+}
+
+// rwaCuratedPublishedBlock renders what the curator last published, with
+// the signed gap to the verified reference total. Every figure is the
+// stored decimal re-rendered at 2dp through big.Rat, never a float; the
+// series and the split are served in the order the reader returned them
+// (oldest month first; largest subclass first).
+func rwaCuratedPublishedBlock(p *timescale.CuratedRWAPublished, verifiedRef *string) *RWACuratedPublished {
+	if p == nil {
+		return nil
+	}
+	total := ratFromOptionalString(&p.TotalUSD)
+	if total == nil {
+		return nil
+	}
+	out := &RWACuratedPublished{
+		TotalUSD:   total.FloatString(2),
+		AsOf:       p.MonthEnd.UTC().Format("2006-01-02"),
+		ExecutedAt: WireTime(p.ExecutedAt),
+		BySubclass: make([]RWACuratedPublishedSplit, 0, len(p.BySubclass)),
+		Series:     make([]RWACuratedPublishedPoint, 0, len(p.Series)),
+		Source:     "dune query " + strconv.FormatInt(p.SourceQuery, 10),
+	}
+	if p.SplitSourceQuery != 0 && p.SplitSourceQuery != p.SourceQuery {
+		out.Source += " / " + strconv.FormatInt(p.SplitSourceQuery, 10)
+	}
+	for _, sp := range p.BySubclass {
+		if v := ratFromOptionalString(&sp.ValueUSD); v != nil {
+			out.BySubclass = append(out.BySubclass, RWACuratedPublishedSplit{Subclass: sp.Subclass, ValueUSD: v.FloatString(2)})
+		}
+	}
+	for _, pt := range p.Series {
+		if v := ratFromOptionalString(&pt.ValueUSD); v != nil {
+			out.Series = append(out.Series, RWACuratedPublishedPoint{MonthEnd: pt.MonthEnd.UTC().Format("2006-01-02"), ValueUSD: v.FloatString(2)})
+		}
+	}
+	if vr := ratFromOptionalString(verifiedRef); vr != nil {
+		gap := new(big.Rat).Sub(total, vr).FloatString(2)
+		out.GapVsVerifiedUSD = &gap
 	}
 	return out
 }

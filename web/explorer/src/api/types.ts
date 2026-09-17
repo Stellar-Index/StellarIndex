@@ -8218,22 +8218,31 @@ export interface components {
         };
         /**
          * @description The curated arm's own total, published BESIDE the verified
-         *     summary and never folded into it. Three figures read together:
-         *     what this index verifies, what the curator additionally counts,
-         *     and their sum — the number a reader gets by counting the way the
+         *     summary and never folded into it. What a named third-party
+         *     curator counts, beside what this index verifies, and the gap
+         *     between them — the number a reader gets by counting the way the
          *     curator counts. Published so the comparison is one number on one
          *     page, not because this index vouches for it.
+         *
+         *     The first curator's per-asset list and prices are PRIVATE
+         *     uploads on the curator's platform, refused to every outside
+         *     account, so no per-asset row is readable from it; what this
+         *     index reads is the totals the curator PUBLISHES from them, in
+         *     `published`.
          */
         RWACuratedSummary: {
             curator: string;
             /**
-             * @description `served` — the curator's cache answered and the rows are
-             *     below; `unavailable` — the reader failed or the cache is
-             *     entirely stale, so nothing is asserted either way; `unwired`
-             *     — no curated reader is configured on this deployment.
+             * @description `served` — the curator's per-asset cache answered and the
+             *     rows are in `curated_assets`; `published_totals` — no
+             *     per-asset row is readable (the curator's list is private)
+             *     and `published` carries what the curator publishes;
+             *     `unavailable` — neither answered inside its bound, so
+             *     nothing is asserted either way; `unwired` — no curated
+             *     reader is configured on this deployment.
              * @enum {string}
              */
-            status: "served" | "unavailable" | "unwired";
+            status: "served" | "published_totals" | "unavailable" | "unwired";
             assets: number;
             /** @description How many curated rows the verified set already carries. */
             also_verified: number;
@@ -8245,7 +8254,63 @@ export interface components {
             /** @description Repeats `summary.reference_valuation.value_usd` so the three figures read together. */
             verified_value_usd?: string;
             census: components["schemas"]["RWACuratedCensus"];
+            published?: components["schemas"]["RWACuratedPublished"];
             basis: string;
+        };
+        /**
+         * @description What the curator PUBLISHES about its own list: the latest
+         *     monthly RWA market-cap total its public dashboard queries
+         *     computed, that month's split by the curator's own subclass
+         *     labels, and the full monthly series. Read from the curator's
+         *     public query results because the per-asset list and prices
+         *     behind them are private. The curator's arithmetic over inputs
+         *     this index cannot read: no per-asset breakdown, no price, no
+         *     market, nothing verified here. Absent when nothing published is
+         *     inside its recognition bound.
+         */
+        RWACuratedPublished: {
+            /** @description The latest month's total, a decimal string at 2dp. */
+            total_usd: string;
+            /**
+             * Format: date
+             * @description The month the total is for — its last day, `YYYY-MM-DD`.
+             */
+            as_of: string;
+            /**
+             * Format: date-time
+             * @description When the curator's query last ran (RFC 3339). The figure is
+             *     as fresh as this, not as fresh as this index's read of it.
+             */
+            executed_at: string;
+            /** @description The latest month's total split by the curator's own subclass labels, largest first. Empty when the curator publishes no split for that month. */
+            by_subclass: components["schemas"]["RWACuratedPublishedSplit"][];
+            /** @description The whole monthly total series, oldest month first; its last point is `as_of` / `total_usd`. */
+            series: components["schemas"]["RWACuratedPublishedPoint"][];
+            /** @description The curator's public queries the figures were read from, e.g. `dune query 6961845 / 6961847`. */
+            source: string;
+            /**
+             * @description `total_usd` minus `summary.reference_valuation.value_usd`,
+             *     signed, at 2dp: what the curator counts that this index does
+             *     not verify (negative when this index verifies more). Absent
+             *     when the verified set publishes no reference total.
+             */
+            gap_vs_verified_usd?: string;
+        };
+        /** @description One line of the curator's subclass split, in the curator's vocabulary. */
+        RWACuratedPublishedSplit: {
+            subclass: string;
+            /** @description A decimal string at 2dp. */
+            value_usd: string;
+        };
+        /** @description One month of the curator's published total series. */
+        RWACuratedPublishedPoint: {
+            /**
+             * Format: date
+             * @description The month's last day, `YYYY-MM-DD`.
+             */
+            month_end: string;
+            /** @description A decimal string at 2dp. */
+            value_usd: string;
         };
         /** @description One row of the per-issuer breakdown, keyed on the G-address rather than on a company name, on both valuation bases. */
         RWAIssuerTotal: {
