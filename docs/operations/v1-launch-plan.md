@@ -1588,6 +1588,24 @@ were all found to be done or half-done once checked).
     (session `statement_timeout` on the ops pool, or a per-CALL
     `context.WithTimeout` sized off the view's `MinWindow`) and make it loud
     when it fires.
+    **Fixed 2026-09-17.** Neither of the two options as written: a
+    session bound on the ops pool was the rejected prior fix, and a
+    Go-side `context.WithTimeout` does not stop the refresh — the pgx
+    driver's default context watcher closes the socket and the backend
+    keeps materialising with the view's refresh lock held, so the next
+    chunk loses to that zombie with `55P03`. `Store.RefreshContinuousAggregate`
+    now sets a SQL `statement_timeout` on the one pinned connection that
+    runs the CALL (the procedure refuses a transaction block, so not
+    `SET LOCAL`), sized from the WINDOW rather than `MinWindow` —
+    `CAGGRefreshTimeout`: 5 min per hour of window, floor 10 min, ceiling
+    4 h (`internal/storage/timescale/cagg_refresh_timeout.go`) — and
+    restores the previous value before the connection goes back, discarding
+    it if the restore fails. The bound firing returns
+    `*CAGGRefreshTimeoutError` (view, window, bound); `refreshCAGGsForChunk`
+    logs it with those fields, the chunk fails, the run continues. The
+    integration test `TestRefreshContinuousAggregate_PerCallBound` proves the
+    1 ms case on a real TimescaleDB, and recorded a fact the docs do not:
+    the procedure re-throws the cancellation as `XX000`, not `57014`.
 20. **The served-set single declaration stops at the timescale package.**
     `AllHistoryGranularities` now drives `Validate`, `HistoryGranularityList`
     and the 400 bodies in `chart.go` / `history.go`, but two hand-kept copies

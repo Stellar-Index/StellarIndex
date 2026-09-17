@@ -165,6 +165,19 @@ against.
   the bulk backfill's fallback size — failed with "extended protocol
   limited to 65535 parameters" and dropped to one INSERT per row, which
   is why a 40k-ledger SDEX re-derive chunk took five hours.
+- **ops:** every `refresh_continuous_aggregate` CALL the backfill makes
+  now runs under a per-CALL `statement_timeout` derived from the window
+  it refreshes (5 min per hour of window, floor 10 min, ceiling 4 h),
+  set on the one pooled connection that runs it and handed back with
+  the connection's previous value. The ops pool is deliberately
+  unbounded and the CALL ran on a context with no deadline, so one
+  wedged refresh held every `-parallel` worker behind the refresh lock
+  until SIGINT; a Go-side deadline alone would not have helped, since
+  the driver closes the socket and leaves the backend materialising with
+  the view's refresh lock held. When the bound fires the backend cancels
+  the statement, the chunk fails with a typed error the log carries with
+  the view, the window and the bound, the run continues, and the
+  connection is returned usable (W8-19).
 
 ## [v0.89.3] — 2026-09-17
 

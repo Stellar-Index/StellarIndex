@@ -548,3 +548,35 @@ func TestRefreshCAGGsForChunk_SerialisesAcrossParallelWorkers(t *testing.T) {
 			"collision this process created", maxSeen)
 	}
 }
+
+// TestRefreshCAGGsForChunk_TimeoutIsFatalAndNamed is the W8-19 caller
+// half: a per-CALL bound firing on one view surfaces as a chunk
+// failure that names that view (the cursor must not advance), every
+// other view is still attempted, and the typed error is reachable on
+// the chain so the log line can carry the window and the bound.
+func TestRefreshCAGGsForChunk_TimeoutIsFatalAndNamed(t *testing.T) {
+	if len(timescale.CAGGsLiveForever) == 0 {
+		t.Fatal("timescale.CAGGsLiveForever is empty — test needs at least one CAGG spec")
+	}
+	timedOut := timescale.CAGGsLiveForever[0].Name
+	tsFrom, tsTo := time.Now().Add(-time.Hour), time.Now()
+	fake := &fakeCAGGRefresher{
+		tsFrom: tsFrom,
+		tsTo:   tsTo,
+		failViews: map[string]error{timedOut: &timescale.CAGGRefreshTimeoutError{
+			View: timedOut, From: tsFrom, To: tsTo, Timeout: 10 * time.Minute,
+			Err: fmt.Errorf("canceling statement due to statement timeout (SQLSTATE 57014)"),
+		}},
+	}
+	err := refreshCAGGsForChunk(context.Background(), discardLogger(), fake, chunkRange{from: 100, to: 200})
+	if err == nil {
+		t.Fatal("a timed-out CAGG refresh must fail the chunk, got nil")
+	}
+	if !strings.Contains(err.Error(), timedOut) {
+		t.Errorf("error should name the timed-out view %q, got: %v", timedOut, err)
+	}
+	if len(fake.refreshedViews) != len(timescale.CAGGsLiveForever) {
+		t.Errorf("every other view must still be attempted after a timeout, got %d/%d: %v",
+			len(fake.refreshedViews), len(timescale.CAGGsLiveForever), fake.refreshedViews)
+	}
+}

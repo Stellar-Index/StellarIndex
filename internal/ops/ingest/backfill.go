@@ -739,8 +739,24 @@ func refreshCAGGsForChunk(ctx context.Context, logger *slog.Logger, store caggRe
 		// padded buckets quickly with nothing to materialize.
 		padFrom, padTo := timescale.PadRefreshWindow(tsFrom, tsTo, spec.MinWindow)
 		if err := store.RefreshContinuousAggregate(ctx, spec.Name, padFrom, padTo); err != nil {
-			logger.Error("CAGG refresh failed",
-				"view", spec.Name, "err", err)
+			// W8-19: the per-CALL bound fired. Loud and specific — the
+			// view, the window and the bound — because this is the
+			// case that used to hold every `-parallel` worker behind
+			// caggRefreshMu until SIGINT. It is still fatal to the chunk
+			// (DAT-09 / REL-08): the cursor does not advance, `-resume`
+			// re-walks it, and the run continues on the next chunk.
+			var tErr *timescale.CAGGRefreshTimeoutError
+			if errors.As(err, &tErr) {
+				logger.Error("CAGG refresh timed out — bound fired; chunk fails, run continues",
+					"view", tErr.View,
+					"ts_from", tErr.From.UTC().Format(time.RFC3339),
+					"ts_to", tErr.To.UTC().Format(time.RFC3339),
+					"timeout", tErr.Timeout.String(),
+					"err", err)
+			} else {
+				logger.Error("CAGG refresh failed",
+					"view", spec.Name, "err", err)
+			}
 			failed = append(failed, spec.Name)
 			continue
 		}

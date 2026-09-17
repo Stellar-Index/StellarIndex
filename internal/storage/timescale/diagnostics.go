@@ -262,9 +262,29 @@ func PadRefreshWindow(from, to time.Time, minWindow time.Duration) (time.Time, t
 // Idempotent: refreshing an already-materialised range is a no-op.
 // Fail-loud on unknown view name (defends against typo-driven
 // SQL injection through the view-name string format).
+//
+// Every CALL is bounded (W8-19): a statement_timeout derived from the
+// window's length by [CAGGRefreshTimeout] is applied on the pinned
+// connection that runs it, so a wedged refresh fails THIS call with a
+// [*CAGGRefreshTimeoutError] instead of holding the ops backfill pool
+// — and its `-parallel` siblings behind ingest.caggRefreshMu — until
+// SIGINT. See cagg_refresh_timeout.go for the sizing and the
+// connection hygiene. A caller with a reason to bound differently
+// uses [Store.RefreshContinuousAggregateWithTimeout].
 func (s *Store) RefreshContinuousAggregate(ctx context.Context, viewName string, from, to time.Time) error {
+	return s.RefreshContinuousAggregateWithTimeout(ctx, viewName, from, to, CAGGRefreshTimeout(to.Sub(from)))
+}
+
+// RefreshContinuousAggregateWithTimeout is [Store.RefreshContinuousAggregate]
+// under an explicit per-CALL statement_timeout. timeout must be positive:
+// an unbounded refresh is the defect this bound exists to remove, so
+// there is deliberately no "0 disables it" arm.
+func (s *Store) RefreshContinuousAggregateWithTimeout(ctx context.Context, viewName string, from, to time.Time, timeout time.Duration) error {
 	if !allowedCAGGViews[viewName] {
 		return fmt.Errorf("timescale: RefreshContinuousAggregate: unknown view %q", viewName)
+	}
+	if timeout <= 0 {
+		return fmt.Errorf("timescale: RefreshContinuousAggregate(%s): non-positive timeout %s", viewName, timeout)
 	}
 	// CALL refresh_continuous_aggregate(view, $1::timestamptz, $2::timestamptz).
 	// The first arg is REGCLASS in Timescale's signature, which pgx
@@ -295,11 +315,18 @@ func (s *Store) RefreshContinuousAggregate(ctx context.Context, viewName string,
 	// (ingest.caggRefreshMu) so its own workers never contend here.
 	// A caller that skips that and loses a race to a long refresh
 	// exhausts these five attempts and gets a hard error.
+	//
+	// The timeout is per ATTEMPT, not per call: a 55P03 loser did not
+	// start materialising, so its attempt cost nothing against the
+	// bound, and the retry that wins gets the full budget.
 	const maxAttempts = 5
 	for attempt := 0; attempt < maxAttempts; attempt++ {
-		_, err := s.db.ExecContext(ctx, q, from, to)
+		err := s.refreshCAGGBounded(ctx, q, from, to, timeout)
 		if err == nil {
 			return nil
+		}
+		if isStatementTimeoutErr(err) || errors.Is(err, context.DeadlineExceeded) {
+			return &CAGGRefreshTimeoutError{View: viewName, From: from, To: to, Timeout: timeout, Err: err}
 		}
 		if !isConcurrentRefreshErr(err) || attempt == maxAttempts-1 {
 			return fmt.Errorf("timescale: RefreshContinuousAggregate(%s): %w", viewName, err)

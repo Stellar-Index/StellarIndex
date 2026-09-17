@@ -64,7 +64,11 @@ The fix landed 2026-05-13 (`feat(ops): auto-refresh CAGGs in
 backfill`): the backfill tool now calls
 `refresh_continuous_aggregate` over each chunk's actual ts range
 immediately after the insert loop, **before** the next retention
-cycle. Aggregates persist.
+cycle. Aggregates persist. Since 2026-09-17 (W8-19) each of those CALLs
+runs under its own `statement_timeout` — 5 min per hour of refreshed
+window, floor 10 min, ceiling 4 h — so a wedged refresh fails its chunk
+(logged with the view, the window and the bound; `-resume` re-walks it)
+instead of holding every `-parallel` worker until SIGINT.
 
 > **Update (migration 0031, 2026-05-14):** the 90-day retention
 > policy on raw `trades` described above was REMOVED. Raw trades are
