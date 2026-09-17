@@ -17,6 +17,25 @@ against.
 
 ### Fixed
 
+- **ci:** the weekly ansible-drift verdict's comment-only classifier
+  picks the comment token per file type (#519). It stripped from the
+  first `#`, `--` or `//` whatever the file, so every URL host
+  (`https://…`) and every long flag (`--config-file …`) was discarded
+  from both sides of a hunk before the compare, and a changed S3
+  endpoint in `pgbackrest.conf`, a changed retention flag in
+  `/etc/default/prometheus` or a re-pointed `ExecStart` in a systemd
+  unit was reported under a ✅ as "comments only" — the exact hand edit
+  on r1 the control exists to catch, across 69 of the role's templates.
+  The classifier now uses ONE token chosen from the hunk's host path
+  (`--` for `.sql`; `#` for shell, YAML, TOML, systemd units, `.conf`
+  and the extensionless `/etc/default`, `logrotate.d`, `Caddyfile` and
+  `sshd_config` files the role renders; `//` for Go/TS/JS), treats a
+  type with no known convention (ClickHouse `.xml`) as substantive
+  outright, and only honours a token that begins a word, so `https://`
+  and a `#fragment` inside a URL never read as comments. The fixture
+  suite gains the three drift rows above, a URL-fragment row, an
+  unknown-type row, and the `.sql`/`.yml` comment-only rows; the five
+  drift rows exit 0 against the shipped classifier.
 - **ops:** `curated-rwa-sync` asks Dune for the `medium` execution tier.
   It asked for `small`, which Dune does not name; every run with a key
   configured was refused before the SQL ran (`HTTP 400: This performance

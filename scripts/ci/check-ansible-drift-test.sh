@@ -238,6 +238,69 @@ run "$(
 )" "$BASELINE_3"
 expect 'a line that disappears behind a comment change is drift' 1 'Template postgresql.conf'
 
+# ── the comment token is chosen per file (#519) ──
+# The first classifier stripped from the first `#`, `--` or `//` whatever
+# the file, so a changed URL host (everything after `//`) or a changed
+# long flag (everything after `--`) compared equal on both sides and the
+# task was reported under a ✅ as "comments only". Each of the next three
+# is a real change to a live value on r1 and must be drift; each was
+# classified comment-only by the shipped classifier.
+run "$(
+  printf 'TASK [archival-node : Template pgbackrest.conf] ***********\n'
+  printf -- '--- before: /etc/pgbackrest/pgbackrest.conf\n+++ after: /tmp/pgbackrest.conf.j2\n@@ -1,1 +1,1 @@\n-repo2-s3-endpoint=https://s3.eu-central-1.amazonaws.com\n+repo2-s3-endpoint=https://attacker.example\n\n'
+  printf 'changed: [r1]\n\n'
+  recap 1
+)" "$BASELINE_3"
+expect 'a URL host change in a .conf is drift, not a // comment' 1 'Template pgbackrest.conf'
+run "$(
+  printf 'TASK [archival-node : Template galexie.service] ***********\n'
+  printf -- '--- before: /etc/systemd/system/galexie.service\n+++ after: /tmp/galexie.service.j2\n@@ -1,1 +1,1 @@\n-ExecStart=/usr/local/bin/galexie append --config-file /etc/galexie.toml\n+ExecStart=/usr/local/bin/galexie append --config-file /etc/galexie-testnet.toml\n\n'
+  printf 'changed: [r1]\n\n'
+  recap 1
+)" "$BASELINE_3"
+expect 'a --flag change in a systemd unit is drift, not a -- comment' 1 'Template galexie.service'
+run "$(
+  printf 'TASK [archival-node : Template /etc/default/prometheus] ***********\n'
+  printf -- '--- before: /etc/default/prometheus\n+++ after: /tmp/prometheus.j2\n@@ -1,1 +1,1 @@\n-ARGS="--web.listen-address=127.0.0.1:9090 --storage.tsdb.retention.time=30d"\n+ARGS="--web.listen-address=127.0.0.1:9090 --storage.tsdb.retention.time=7d"\n\n'
+  printf 'changed: [r1]\n\n'
+  recap 1
+)" "$BASELINE_3"
+expect 'a --flag change in an extensionless /etc/default file is drift' 1 'Template /etc/default/prometheus'
+# A `#` after non-whitespace is part of the token, not a comment: a
+# changed URL fragment in a shell-commented file is still a change.
+run "$(
+  printf 'TASK [archival-node : Template stellarindex-ops] ***********\n'
+  printf -- '--- before: /etc/default/stellarindex-ops\n+++ after: /tmp/stellarindex-ops.j2\n@@ -1,1 +1,1 @@\n-DASHBOARD_URL=https://grafana.example/d/abc#panel-1\n+DASHBOARD_URL=https://grafana.example/d/abc#panel-2\n\n'
+  printf 'changed: [r1]\n\n'
+  recap 1
+)" "$BASELINE_3"
+expect 'a # inside a URL is not a comment marker' 1 'Template stellarindex-ops'
+# A file type with no known line-comment convention is substantive
+# outright, the same conservative default as config-apply-gate.sh.
+run "$(
+  printf 'TASK [archival-node : ClickHouse users.d override] ***********\n'
+  printf -- '--- before: /etc/clickhouse-server/users.d/api-serving.xml\n+++ after: /tmp/api-serving.xml.j2\n@@ -1,1 +1,1 @@\n-<max_memory_usage>8000000000</max_memory_usage> # 8 GiB\n+<max_memory_usage>8000000000</max_memory_usage> # 8 GiB, raised 2026-09\n\n'
+  printf 'changed: [r1]\n\n'
+  recap 1
+)" "$BASELINE_3"
+expect 'a file type with no known comment convention is drift' 1 'ClickHouse users.d override'
+# The tokens that ARE comments in their own file type still classify:
+# `--` in SQL and `#` in YAML.
+run "$(
+  printf 'TASK [archival-node : Ship the lake DDL] ***********\n'
+  printf -- '--- before: /usr/local/share/x.sql\n+++ after: /tmp/x.sql\n@@ -1,2 +1,2 @@\n--- header\n+-- header, rewritten\n CREATE TABLE IF NOT EXISTS t (a UInt8) ENGINE = MergeTree ORDER BY a; -- one\n\n'
+  printf 'changed: [r1]\n\n'
+  recap 1
+)" "$BASELINE_3"
+expect 'a -- comment change in a .sql is comment-only' 0 'comment text only'
+run "$(
+  printf 'TASK [archival-node : Template prometheus.yml] ***********\n'
+  printf -- '--- before: /etc/prometheus/prometheus.yml\n+++ after: /tmp/prometheus.yml.j2\n@@ -1,2 +1,2 @@\n-# scrape every 15s\n-scrape_interval: 15s # default\n+# scrape every 15 s — matches the alert windows\n+scrape_interval: 15s\n\n'
+  printf 'changed: [r1]\n\n'
+  recap 1
+)" "$BASELINE_3"
+expect 'a # comment change in a .yml is comment-only' 0 'comment text only'
+
 # pre_tasks have no `<role> : ` prefix; entries are the bare name either way.
 run "$(
   printf 'TASK [Confirm Ubuntu 22.04 or 24.04 LTS] ********************\nchanged: [r1]\n\n'

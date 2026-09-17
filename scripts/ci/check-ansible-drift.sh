@@ -281,11 +281,26 @@ detail_for() {
 # when every non-allowed changed task it could follow is comment-only.
 #
 # "Comment-only" is decided on EFFECTIVE lines: every removed and added
-# line is stripped of a trailing comment (`#`, `--`, `//`) and trailing
-# whitespace, blank and comment-only lines are dropped, and the task is
-# comment-only iff the removed effective lines and the added effective
-# lines are the same multiset. A value that changes, a line that appears
-# or disappears, stays drift whatever else is in the hunk.
+# line is stripped of a trailing comment and trailing whitespace, blank
+# and comment-only lines are dropped, and the task is comment-only iff
+# the removed effective lines and the added effective lines are the same
+# multiset. A value that changes, a line that appears or disappears,
+# stays drift whatever else is in the hunk.
+#
+# What counts as a comment is decided PER FILE, from the host path on the
+# hunk's `--- before: <path>` line (#519). The first version stripped
+# from the first `#`, `--` OR `//` whatever the file, so every URL host
+# (`https://…`) and every long flag (`--config-file …`) on both sides of
+# a hunk was discarded before the compare, and a changed S3 endpoint in
+# pgbackrest.conf or a changed retention flag in /etc/default/prometheus
+# was reported under a ✅ as "comments only". The table below names ONE
+# line-comment token per file type — the same rows as `comment_marker`
+# in scripts/ci/config-apply-gate.sh, plus the extensionless host paths
+# this role renders — and a type with no known convention (ClickHouse
+# `.xml`, apt.conf.d, a binary) is substantive outright. A marker only
+# counts when it BEGINS a token (start of line or after whitespace), so
+# the `//` of `https://` and a `#fragment` inside a URL are never
+# comments.
 comment_only_file="$(mktemp)"
 handler_file="$(mktemp)"
 trap 'rm -f "$allowed_file" "$changed_file" "$detail_file" "$comment_only_file" "$handler_file"' EXIT
@@ -294,19 +309,38 @@ awk '
     sub(/^[^[]*\[/, "", n); sub(/\][[:space:]]*\**[[:space:]]*$/, "", n)
     sub(/^[A-Za-z0-9_.\/-]+ : /, "", n); return n
   }
-  function effective(body) {
-    sub(/[[:space:]]*(#|--|\/\/).*$/, "", body)
+  # marker_for(path) — the line-comment token for the file at that host
+  # path, or "" when none is known. Keep in step with comment_marker in
+  # scripts/ci/config-apply-gate.sh; the path rows are for files the
+  # role renders without an extension.
+  function marker_for(path) {
+    if (path ~ /\.sql$/) return "--"
+    if (path ~ /\.(j2|ya?ml|sh|env|service|timer|socket|mount|target|conf|cfg|ini|toml|py|rules)$/) return "#"
+    if (path ~ /^\/etc\/(default|logrotate\.d|cron\.d|sudoers\.d)\//) return "#"
+    if (path ~ /\/(Caddyfile|sshd_config)$/) return "#"
+    if (path ~ /\.(go|ts|js)$/) return "//"
+    return ""
+  }
+  function effective(body, mk) {
+    if (mk != "") sub("(^|[[:space:]])" mk ".*$", "", body)
     sub(/^[[:space:]]+/, "", body); sub(/[[:space:]]+$/, "", body)
     return body
   }
-  /^TASK \[/            { task = strip($0); handler[task] = 0; next }
-  /^RUNNING HANDLER \[/ { task = strip($0); handler[task] = 1; next }
-  /^PLAY RECAP/         { task = ""; next }
-  /^--- before: /       { if (task != "") hunks[task]++; next }
+  /^TASK \[/            { task = strip($0); handler[task] = 0; marker = ""; next }
+  /^RUNNING HANDLER \[/ { task = strip($0); handler[task] = 1; marker = ""; next }
+  /^PLAY RECAP/         { task = ""; marker = ""; next }
+  /^--- before: / {
+    if (task != "") {
+      hunks[task]++
+      marker = marker_for(substr($0, 13))
+      if (marker == "") substantive[task] = 1
+    }
+    next
+  }
   /^(\+\+\+ after: |@@ )/ { next }
   /^[-+]/ {
     if (task == "") next
-    body = effective(substr($0, 2))
+    body = effective(substr($0, 2), marker)
     if (body == "") next
     if (substr($0, 1, 1) == "-") minus[task, body]++; else plus[task, body]++
     keys[task, body] = 1
