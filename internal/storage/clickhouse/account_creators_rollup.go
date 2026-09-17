@@ -272,8 +272,16 @@ func creatorsRollupStatements(boundaryLedger uint32) []rollupStep {
 	// repeating a literal, so the two halves of the ledger axis cannot
 	// drift apart or overlap.
 	boundary := strconv.FormatUint(uint64(boundaryLedger), 10)
+	steps := []rollupStep{{sql: `TRUNCATE TABLE stellar.account_creators_ops`}}
+	steps = append(steps, creatorsCreationArmSteps(boundary)...)
+	steps = append(steps, creatorsBoardSteps()...)
+	return append(steps, creatorsGraphSteps()...)
+}
+
+// creatorsCreationArmSteps walks the archive into the working table:
+// the classic arm below the boundary and the post-P23 arm above it.
+func creatorsCreationArmSteps(boundary string) []rollupStep {
 	return []rollupStep{
-		{sql: `TRUNCATE TABLE stellar.account_creators_ops`},
 		// The classic arm, walked. Reads one lake partition below the
 		// boundary, writes that partition's deduplicated creations, and
 		// reads no other table.
@@ -345,6 +353,13 @@ func creatorsRollupStatements(boundaryLedger uint32) []rollupStep {
 		// no integration fixture to prove the collapse picks the right
 		// counterparty. Left as an assumption ON PURPOSE, written down here rather
 		// than only in a private ledger, so whoever edits this GROUP BY sees it.
+	}
+}
+
+// creatorsBoardSteps folds the working table into the served board and
+// its stats, into the staging tables the final swap exchanges.
+func creatorsBoardSteps() []rollupStep {
+	return []rollupStep{
 		{sql: `TRUNCATE TABLE stellar.account_creators_rollup_staging`},
 		{sql: `TRUNCATE TABLE stellar.account_creators_stats_staging`},
 		{sql: `INSERT INTO stellar.account_creators_rollup_staging
@@ -396,6 +411,13 @@ func creatorsRollupStatements(boundaryLedger uint32) []rollupStep {
 	     FROM stellar.account_creators_rollup_staging
 	 )
 	 SETTINGS max_threads = 2, max_execution_time = 600`},
+	}
+}
+
+// creatorsGraphSteps folds the same working table into the two edge
+// orderings and ends with the one swap that serves every table at once.
+func creatorsGraphSteps() []rollupStep {
+	return []rollupStep{
 		// ── The graph arm (#351) ───────────────────────────────────────
 		// The board says WHO created the most. These two say WHOM — one row
 		// per distinct (creator, created) pair, held in both sort orders so

@@ -240,7 +240,10 @@ func followLoop(ctx context.Context, interval time.Duration, catchUp func(ctx co
 		switch {
 		case err != nil:
 			if ctx.Err() != nil {
-				return nil // shutdown mid-derive — clean exit
+				// A ctx-cancel mid-derive IS the clean shutdown path: the
+				// caller reads nil as "loop ended by request" and the
+				// watermark already holds the last clean window.
+				return nil //nolint:nilerr // shutdown by request, not a failure
 			}
 			fmt.Fprintf(os.Stderr, "ch-cap67-movements: catch-up error (watermark holds, retrying next tick): %v\n", err)
 		case worked:

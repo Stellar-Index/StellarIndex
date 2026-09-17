@@ -284,16 +284,9 @@ func (c *curatedRWAClient) readQueryResult(ctx context.Context, queryID int64) (
 	declared := -1
 	offset := 0
 	for {
-		b, err := c.get(ctx, fmt.Sprintf("/api/v1/query/%d/results?limit=%d&offset=%d", queryID, curatedRWAPageSize, offset))
+		page, err := c.readQueryPage(ctx, queryID, offset)
 		if err != nil {
 			return out, err
-		}
-		var page duneQueryResultsPage
-		if err := json.Unmarshal(b, &page); err != nil {
-			return out, fmt.Errorf("curated-rwa-sync: query %d results: %w", queryID, err)
-		}
-		if page.State != "" && page.State != "QUERY_STATE_COMPLETED" {
-			return out, fmt.Errorf("curated-rwa-sync: query %d latest execution is %s, not completed", queryID, page.State)
 		}
 		if declared < 0 {
 			declared = page.Result.Metadata.TotalRowCount
@@ -320,6 +313,24 @@ func (c *curatedRWAClient) readQueryResult(ctx context.Context, queryID int64) (
 		}
 		offset = *page.NextOffset
 	}
+}
+
+// readQueryPage fetches and decodes one page of a query's latest result,
+// refusing a page whose execution is anything but completed: the curator's
+// own failed run is not a result this index will read.
+func (c *curatedRWAClient) readQueryPage(ctx context.Context, queryID int64, offset int) (duneQueryResultsPage, error) {
+	var page duneQueryResultsPage
+	b, err := c.get(ctx, fmt.Sprintf("/api/v1/query/%d/results?limit=%d&offset=%d", queryID, curatedRWAPageSize, offset))
+	if err != nil {
+		return page, err
+	}
+	if err := json.Unmarshal(b, &page); err != nil {
+		return page, fmt.Errorf("curated-rwa-sync: query %d results: %w", queryID, err)
+	}
+	if page.State != "" && page.State != "QUERY_STATE_COMPLETED" {
+		return page, fmt.Errorf("curated-rwa-sync: query %d latest execution is %s, not completed", queryID, page.State)
+	}
+	return page, nil
 }
 
 // ─── parse ──────────────────────────────────────────────────────────

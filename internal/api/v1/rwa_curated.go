@@ -375,17 +375,37 @@ func rwaCuratedSummarise(snap rwaCurated, rows []RWAAsset, verifiedRef *string) 
 	}
 	out.Status = "served"
 	out.Assets = len(rows)
+	additional, anyAdditional := rwaCuratedTally(rows, out)
+	if anyAdditional {
+		s := additional.FloatString(2)
+		out.AdditionalValueUSD = &s
+		if vr := ratFromOptionalString(verifiedRef); vr != nil {
+			c := new(big.Rat).Add(vr, additional).FloatString(2)
+			out.CombinedValueUSD = &c
+		}
+	}
+	return out
+}
+
+// rwaCuratedTally counts the served rows into the summary — how many the
+// verified set also carries, how many carry a value — and sums the value
+// of the rows the verified set does NOT carry, which is the only part
+// that adds to the verified total. The bool says whether any such row
+// carried a value at all, so an all-verified set serves no "additional"
+// figure rather than a zero.
+func rwaCuratedTally(rows []RWAAsset, out *RWACuratedSummary) (*big.Rat, bool) {
 	additional := new(big.Rat)
 	anyAdditional := false
 	for _, r := range rows {
-		if r.Curator != nil && r.Curator.AlsoVerified {
+		alsoVerified := r.Curator != nil && r.Curator.AlsoVerified
+		if alsoVerified {
 			out.AlsoVerified++
 		}
 		if r.ReferenceValuation.ValueUSD == nil {
 			continue
 		}
 		out.AssetsValued++
-		if r.Curator != nil && r.Curator.AlsoVerified {
+		if alsoVerified {
 			continue
 		}
 		if v := ratFromOptionalString(r.ReferenceValuation.ValueUSD); v != nil {
@@ -393,17 +413,7 @@ func rwaCuratedSummarise(snap rwaCurated, rows []RWAAsset, verifiedRef *string) 
 			anyAdditional = true
 		}
 	}
-	if anyAdditional {
-		s := additional.FloatString(2)
-		out.AdditionalValueUSD = &s
-		if verifiedRef != nil {
-			if vr := ratFromOptionalString(verifiedRef); vr != nil {
-				c := new(big.Rat).Add(vr, additional).FloatString(2)
-				out.CombinedValueUSD = &c
-			}
-		}
-	}
-	return out
+	return additional, anyAdditional
 }
 
 // rwaCuratedPublishedBlock renders what the curator last published, with
