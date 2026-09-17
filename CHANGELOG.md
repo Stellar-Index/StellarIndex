@@ -15,6 +15,8 @@ against.
 
 ## [Unreleased]
 
+## [v0.87.0] — 2026-09-17
+
 ### Added
 
 - **rwa:** a classic member now takes a price from the independent
