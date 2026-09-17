@@ -47,7 +47,9 @@ import (
 //
 // # Cost
 //
-// Every run is one Dune SQL execution on the "small" tier. Credits are
+// Every run is one Dune SQL execution on the "medium" tier (Dune names
+// only "medium" and "large"; a run that asked for "small" was refused
+// with HTTP 400 "performance tier is not available"). Credits are
 // consumed per execution; the run records `execution_cost_credits` from
 // the status endpoint in the textfile it emits, so the cost of this
 // arm is a metric and not a surprise on an invoice.
@@ -58,6 +60,10 @@ const (
 	curatedRWAFetchTimeout = 90 * time.Second
 	curatedRWAPollEvery    = 2 * time.Second
 	curatedRWAPageSize     = 1000
+	// curatedRWADuneTier is the execution performance tier. Dune accepts
+	// "medium" (10 credits, the default) and "large"; anything else is
+	// refused with HTTP 400 before the SQL runs.
+	curatedRWADuneTier = "medium"
 	// curatedRWAMaxRows bounds one sync. The dashboard's asset list is
 	// under a hundred rows; a result set past this is not that list.
 	curatedRWAMaxRows = 5000
@@ -257,7 +263,7 @@ type duneResultsResp struct {
 func (c *curatedRWAClient) fetch(ctx context.Context) ([]timescale.CuratedRWAEntry, curatedRWACounts, error) {
 	var counts curatedRWACounts
 	b, err := c.do(ctx, http.MethodPost, "/api/v1/sql/execute",
-		map[string]any{"sql": curatedRWADuneSQL, "performance": "small"})
+		map[string]any{"sql": curatedRWADuneSQL, "performance": curatedRWADuneTier})
 	if err != nil {
 		return nil, counts, err
 	}

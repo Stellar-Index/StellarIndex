@@ -17,6 +17,12 @@ against.
 
 ### Fixed
 
+- **ops:** `curated-rwa-sync` asks Dune for the `medium` execution tier.
+  It asked for `small`, which Dune does not name; every run with a key
+  configured was refused before the SQL ran (`HTTP 400: This performance
+  tier is not available with your subscription`), so the curated arm
+  never loaded a row. Verified against the live API: `medium`, `large`
+  and the default all execute on the current plan.
 - **timescale:** `BatchInsertTrades` sends its rows in parameter-safe
   sub-batches (5,000 rows × 13 binds, under Postgres' 65,535-parameter
   ceiling) and tallies the outcome once across them. A 100,000-row batch —
