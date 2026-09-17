@@ -28,6 +28,16 @@ against.
   sgBENJI — 82.2M tokens, ISIN-declared beside the listed BENJI issuer),
   which were refused for recognition while being named by the recognised
   entity itself.
+- **rwa:** a share class whose fund rules fix its NAV — a CNAV money
+  market fund — takes that NAV as its reference price when neither an
+  oracle binding nor a listing price exists, served as
+  `reference.provenance: prospectus_constant_nav` with the ISIN, the
+  regime and the issuer's NAV page it was read from. Bound on the exact
+  (code, issuer) in `rwa.ConstantNAV`: Franklin's Luxembourg gBENJI and
+  grBENJI (EU MMFR public-debt CNAV, NAV $1.00, page read 2026-09-16);
+  the accumulating Singapore class stays unpriced by design. This is the
+  first reference price on this surface that is independent of both the
+  oracle set and any curator.
 
 ## [v0.89.1] — 2026-09-17
 

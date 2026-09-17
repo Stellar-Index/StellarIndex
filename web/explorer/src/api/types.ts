@@ -8026,7 +8026,7 @@ export interface components {
              *     the listing.
              * @enum {string}
              */
-            provenance: "oracle_instrument_nav" | "listing_platform_price" | "curator_uploaded_price";
+            provenance: "oracle_instrument_nav" | "listing_platform_price" | "curator_uploaded_price" | "prospectus_constant_nav";
             /**
              * @description True when the reference is older than 72h — the longest
              *     ordinary gap between two strikes of a real-world instrument's

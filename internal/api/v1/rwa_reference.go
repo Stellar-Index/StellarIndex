@@ -205,6 +205,15 @@ const (
 	// never named has no listing price to serve, which is the same fact
 	// that refuses it at C2 when nothing else names it either.
 	RWAReferenceListingPrice = "listing_platform_price"
+	// RWAReferenceProspectusCNAV — the issuer's published NAV for a
+	// share class whose fund rules fix it (a CNAV money market fund),
+	// bound on the exact (code, issuer) in rwa.ConstantNAV. Weaker than
+	// the oracle arm — nobody independent measured it — and stronger
+	// than nothing in the one way that matters: the value is prescribed
+	// by an authorised prospectus and published daily by the issuer.
+	// Taken only when neither an oracle binding nor a listing price
+	// exists for the row.
+	RWAReferenceProspectusCNAV = "prospectus_constant_nav"
 )
 
 // RWAReferenceValuation is the token's circulating supply valued at the
@@ -622,6 +631,17 @@ func rwaApplyReference(
 		if rwa.OffChainReferenceCode(a.Code) {
 			notFound = RWAPremiumNotInstrumentScoped
 		}
+		// Neither an oracle nor the listing directory prices this pair,
+		// but its prospectus may: a CNAV share class bound in
+		// rwa.ConstantNAV is valued at the NAV its fund rules fix, under
+		// its own provenance. A listing price, when one exists, still
+		// wins — it is an observation, this is a rule.
+		if entry := classicListings[a.AssetID]; entry.PriceUSD == "" {
+			if cnav, ok := rwa.ConstantNAV(a.Code, a.Issuer); ok {
+				rwaApplyConstantNAVReference(a, cnav, now)
+				return
+			}
+		}
 		// Nothing binds this pair to an ORACLE. That is a statement
 		// about one source, and the independent listing directory is
 		// another — the same directory, the same bound, the same
@@ -842,6 +862,30 @@ func rwaListingReferencesOf(members []rwaContractMember) map[string]timescale.Li
 // be wired into one field and forgotten in the other, and the funnel,
 // which reads only `reference_valuation.status`, reports exactly what
 // `premium.status` says.
+// rwaApplyConstantNAVReference prices a share class at the NAV its
+// prospectus fixes (rwa.ConstantNAV). The reference is dated now rather
+// than at the binding's verification date: the value is a standing rule
+// of the fund, not an observation that ages, and the verification date
+// travels in Source for the reader who wants it.
+func rwaApplyConstantNAVReference(a *RWAAsset, b rwa.ConstantNAVBinding, now time.Time) {
+	price := ratFromOptionalString(&b.NAVUSD)
+	if price == nil || price.Sign() <= 0 {
+		rwaRefuseReference(a, RWAPremiumReferenceNotPositive)
+		return
+	}
+	a.Reference = &RWAReference{
+		PriceUSD:   b.NAVUSD,
+		Source:     b.Regime + "; issuer NAV page " + b.Source + " (read " + b.VerifiedOn + ")",
+		Feed:       b.ISIN,
+		Quote:      "fiat:USD",
+		AsOf:       WireTime(now),
+		Stale:      false,
+		Provenance: RWAReferenceProspectusCNAV,
+	}
+	a.ReferenceValuation = rwaReferenceValuationOf(a, rwaReference{priceUSD: price})
+	a.Premium = RWAPremium{Status: RWAPremiumReferenceNotOracle}
+}
+
 func rwaRefuseReference(a *RWAAsset, status string) {
 	a.Premium = RWAPremium{Status: status}
 	a.ReferenceValuation = RWAReferenceValuation{Status: status}

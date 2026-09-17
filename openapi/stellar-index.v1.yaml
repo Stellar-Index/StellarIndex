@@ -15537,7 +15537,7 @@ components:
             separately visible.
         provenance:
           type: string
-          enum: [oracle_instrument_nav, listing_platform_price, curator_uploaded_price]
+          enum: [oracle_instrument_nav, listing_platform_price, curator_uploaded_price, prospectus_constant_nav]
           description: |
             WHAT KIND of figure this is. Two are published and they are
             not the same claim, so this is mandatory on every served
