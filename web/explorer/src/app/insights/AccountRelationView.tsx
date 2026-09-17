@@ -13,6 +13,7 @@ import type { components } from '@/api/types';
 import { AccountPositions } from '../accounts/AccountPositions';
 import { formatTimestamp, stroopsToXlm } from '../explorer-shared';
 import { AccountRelationEdges } from './AccountRelationEdges';
+import { AccountRelationCohort } from './AccountRelationCohort';
 import { AccountRelationHistory } from './AccountRelationHistory';
 import { AccountRelationStanding } from './AccountRelationStanding';
 import {
@@ -326,6 +327,7 @@ export function AccountRelationView({
           <AccountRelationStanding account={account} relation={relation} />
 
           <AccountRelationHistory account={account} relation={relation} />
+          <AccountRelationCohort account={account} relation={relation} />
 
           <AccountRelationEdges
             account={account}
