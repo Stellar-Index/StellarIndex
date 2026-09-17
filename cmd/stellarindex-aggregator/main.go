@@ -71,6 +71,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -987,10 +988,29 @@ func run(cfgPath string, dryRun bool) error {
 	// runbook turn "an operator eventually notices USDC-quoted assets
 	// showing priceless on /assets" into a page. Always on (no config
 	// gate): a coverage regression must not depend on an opt-in flag.
-	pricelessTripwire := pricelesscoverage.New(store, pricelesscoverage.Options{
+	pricelessOpts := pricelesscoverage.Options{
 		Interval: pricelesscoverage.DefaultInterval,
 		Logger:   logger.With("component", "priceless-coverage"),
-	})
+		IsPriced: store.AssetIsPriced,
+	}
+	// A Soroban-venue trade is keyed by the token contract; a SAC's price
+	// is served under its classic asset. Resolve the one to the other from
+	// the lake so a wrapped classic asset is not ticketed as priceless.
+	if addr := cfg.Storage.ClickHouseAddr; addr != "" {
+		if sacReader, err := clickhouse.NewExplorerReader(rootCtx, addr); err != nil {
+			logger.Warn("priceless-coverage: ClickHouse SAC resolver unavailable — SAC candidates are read as given", "addr", addr, "err", err)
+		} else {
+			defer func() { _ = sacReader.Close() }()
+			pricelessOpts.ResolveSAC = func(ctx context.Context, contractID string) (string, bool) {
+				name, ok, err := sacReader.SACClassicAssetName(ctx, contractID)
+				if err != nil || !ok {
+					return "", false
+				}
+				return canonicalSACName(name)
+			}
+		}
+	}
+	pricelessTripwire := pricelesscoverage.New(store, pricelessOpts)
 	refresherWG.Add(1)
 	go func() {
 		defer worker.Recover(logger, "priceless-coverage")
@@ -2435,4 +2455,21 @@ func (mevObserver) Run(outcome string, dur time.Duration, _ int, inserted int) {
 	if inserted > 0 {
 		obs.MEVEventsInsertedTotal.Add(float64(inserted))
 	}
+}
+
+// canonicalSACName turns a Stellar Asset Contract's own name ("CODE:ISSUER",
+// or "native") into the canonical asset id the served tier keys prices by.
+func canonicalSACName(name string) (string, bool) {
+	if name == "native" {
+		return canonical.NativeAsset().String(), true
+	}
+	code, issuer, ok := strings.Cut(name, ":")
+	if !ok {
+		return "", false
+	}
+	asset, err := canonical.NewClassicAsset(code, issuer)
+	if err != nil {
+		return "", false
+	}
+	return asset.String(), true
 }

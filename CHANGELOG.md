@@ -15,6 +15,18 @@ against.
 
 ## [Unreleased]
 
+### Fixed
+
+- **aggregator:** the priceless-popular coverage tripwire resolves a
+  Stellar Asset Contract candidate to its classic asset before calling it
+  priceless. A Soroban-venue trade is keyed by the token contract while
+  the same asset's price is served under its classic id, so yBTC —
+  $43.8k on aquarius under its SAC, priced at $75,582 as `yBTC-GBUV…` —
+  ticketed as a "market-popular asset with no price" on 2026-09-17. The
+  probe asks the sweep's own priced set (same CTEs, same floors) about
+  the classic id; a resolver miss or probe error leaves the candidate as
+  read, and the gap log now names the classic asset it checked.
+
 ### Changed
 
 - **ci:** the weekly ansible-drift verdict reports a task whose live

@@ -207,3 +207,60 @@ func TestSweepTimeout_DefaultApplied(t *testing.T) {
 		t.Errorf("deadline %v, want ~= DefaultSweepTimeout %v", r.within, DefaultSweepTimeout)
 	}
 }
+
+const ybtcSAC = "CB2XMFB6BDIHFOSFB5IXHDOYV3SI3IXMNIZLPDZHC7ENDCXSBEBZAO2Y"
+
+// r1, 2026-09-17: yBTC's SAC traded $43.8k on aquarius under its contract
+// id while yBTC was priced under its classic id, and the tripwire ticketed
+// a "priceless popular asset" that had a price. A SAC candidate whose
+// classic asset is priced is not a gap; one whose classic asset is also
+// priceless still is.
+func TestSweep_SACCandidatePricedUnderItsClassicAssetIsNotAGap(t *testing.T) {
+	sigs := []timescale.AssetCoverageSignals{
+		{AssetID: ybtcSAC, Volume7dUSD: 43_823, Trades7d: 11, Volume24hUSD: 5_000, TopAccountPairVolShare: 0},
+	}
+	const classic = "yBTC-GBUVRNH4RW4VLHP4C5MOF46RRIRZLAVHYGX45MVSTKA2F6TMR7E7L6NW"
+	resolve := func(_ context.Context, id string) (string, bool) {
+		if id == ybtcSAC {
+			return classic, true
+		}
+		return "", false
+	}
+	pricedClassic := map[string]bool{classic: true}
+	isPriced := func(_ context.Context, id string) (bool, error) { return pricedClassic[id], nil }
+
+	obs.AssetsPopularPriceless.Set(-1)
+	w := New(&fakeReader{sigs: sigs}, Options{ResolveSAC: resolve, IsPriced: isPriced})
+	w.Sweep(context.Background())
+	if got := testutil.ToFloat64(obs.AssetsPopularPriceless); got != 0 {
+		t.Errorf("gauge = %v, want 0: the SAC is priced under its classic asset", got)
+	}
+
+	pricedClassic[classic] = false
+	w.Sweep(context.Background())
+	if got := testutil.ToFloat64(obs.AssetsPopularPriceless); got != 1 {
+		t.Errorf("gauge = %v, want 1: neither spelling is priced", got)
+	}
+
+	obs.AssetsPopularPriceless.Set(-1)
+	New(&fakeReader{sigs: sigs}, Options{}).Sweep(context.Background())
+	if got := testutil.ToFloat64(obs.AssetsPopularPriceless); got != 1 {
+		t.Errorf("gauge = %v, want 1 without a resolver: the candidate is read as given", got)
+	}
+}
+
+// A probe error must not silently clear a gap.
+func TestSweep_AliasProbeErrorStaysAGap(t *testing.T) {
+	sigs := []timescale.AssetCoverageSignals{
+		{AssetID: ybtcSAC, Volume7dUSD: 43_823, Trades7d: 11, Volume24hUSD: 5_000},
+	}
+	w := New(&fakeReader{sigs: sigs}, Options{
+		ResolveSAC: func(context.Context, string) (string, bool) { return "yBTC-G", true },
+		IsPriced:   func(context.Context, string) (bool, error) { return true, context.DeadlineExceeded },
+	})
+	obs.AssetsPopularPriceless.Set(-1)
+	w.Sweep(context.Background())
+	if got := testutil.ToFloat64(obs.AssetsPopularPriceless); got != 1 {
+		t.Errorf("gauge = %v, want 1: a failed probe is not a price", got)
+	}
+}

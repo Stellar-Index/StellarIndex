@@ -78,6 +78,18 @@ type CandidateReader interface {
 
 // Options configures the [Worker].
 type Options struct {
+	// ResolveSAC maps a Stellar Asset Contract id to its classic asset's
+	// canonical id ("CODE-ISSUER" / native). A Soroban-venue trade is
+	// recorded under the contract id while the same asset's price is
+	// served under its classic id, so without this a SAC-wrapped classic
+	// asset that trades on an AMM reads as a priceless popular asset
+	// (yBTC on aquarius, 2026-09-17). Nil disables the aliasing; a miss
+	// leaves the candidate as read.
+	ResolveSAC func(ctx context.Context, contractID string) (string, bool)
+	// IsPriced asks the sweep's own priced set about one asset id — the
+	// resolved classic id. Nil disables the aliasing.
+	IsPriced func(ctx context.Context, assetID string) (bool, error)
+
 	// Interval is the sweep cadence. <= 0 falls back to DefaultInterval.
 	Interval time.Duration
 	// SweepTimeout bounds one sweep's candidate read. <= 0 falls back to
@@ -93,6 +105,8 @@ type Options struct {
 // priceless-popular coverage gauge + sweep-health metrics.
 type Worker struct {
 	reader       CandidateReader
+	resolveSAC   func(ctx context.Context, contractID string) (string, bool)
+	isPriced     func(ctx context.Context, assetID string) (bool, error)
 	interval     time.Duration
 	sweepTimeout time.Duration
 	logger       *slog.Logger
@@ -107,6 +121,8 @@ func New(reader CandidateReader, opts Options) *Worker {
 	}
 	w := &Worker{
 		reader:       reader,
+		resolveSAC:   opts.ResolveSAC,
+		isPriced:     opts.IsPriced,
 		interval:     opts.Interval,
 		sweepTimeout: opts.SweepTimeout,
 		logger:       opts.Logger,
@@ -167,14 +183,23 @@ func (w *Worker) Sweep(ctx context.Context) {
 	}
 	count := 0
 	for _, sig := range sigs {
-		if popularPriceless(sig) {
-			count++
-			w.logger.Warn("priceless-popular coverage gap: market-popular asset has no price",
-				"asset_id", sig.AssetID,
-				"volume_7d_usd", sig.Volume7dUSD,
-				"trades_7d", sig.Trades7d,
-				"top_account_pair_share", sig.TopAccountPairVolShare)
+		if !popularPriceless(sig) {
+			continue
 		}
+		classic, priced := w.pricedViaClassicAlias(sweepCtx, sig.AssetID)
+		if priced {
+			w.logger.Info("priceless-popular coverage: SAC candidate is priced under its classic asset",
+				"asset_id", sig.AssetID, "classic_asset", classic,
+				"volume_7d_usd", sig.Volume7dUSD, "trades_7d", sig.Trades7d)
+			continue
+		}
+		count++
+		w.logger.Warn("priceless-popular coverage gap: market-popular asset has no price",
+			"asset_id", sig.AssetID,
+			"classic_asset", classic,
+			"volume_7d_usd", sig.Volume7dUSD,
+			"trades_7d", sig.Trades7d,
+			"top_account_pair_share", sig.TopAccountPairVolShare)
 	}
 	obs.AssetsPopularPriceless.Set(float64(count))
 	obs.PricelessCoverageCheckRunsTotal.WithLabelValues("ok").Inc()
@@ -185,6 +210,33 @@ func (w *Worker) Sweep(ctx context.Context) {
 // the asset is priceless, NOT deliberately withheld, NOT a wash farm, and
 // popular by MARKET-CHARACTER volume. Every threshold lives here (never in
 // the SQL), so the classification is unit-testable without a database.
+// pricedViaClassicAlias resolves a C… candidate to its classic asset and
+// asks whether THAT is priced. Returns the classic id (empty when the
+// candidate is not a resolvable SAC) and the verdict. A resolver or probe
+// error is logged and treated as "not priced": the tripwire fails loud,
+// never quiet.
+func (w *Worker) pricedViaClassicAlias(ctx context.Context, assetID string) (string, bool) {
+	if w.resolveSAC == nil || w.isPriced == nil || !looksLikeContractID(assetID) {
+		return "", false
+	}
+	classic, ok := w.resolveSAC(ctx, assetID)
+	if !ok || classic == "" || classic == assetID {
+		return "", false
+	}
+	priced, err := w.isPriced(ctx, classic)
+	if err != nil {
+		w.logger.Warn("priceless-popular coverage: priced probe for the classic alias failed; treating as priceless",
+			"asset_id", assetID, "classic_asset", classic, "err", err)
+		return classic, false
+	}
+	return classic, priced
+}
+
+// looksLikeContractID is the C-strkey shape: 56 chars, leading C.
+func looksLikeContractID(id string) bool {
+	return len(id) == 56 && id[0] == 'C'
+}
+
 func popularPriceless(s timescale.AssetCoverageSignals) bool {
 	if s.HasPriceUSD {
 		return false // priced — not a coverage gap

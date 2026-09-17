@@ -109,7 +109,60 @@ top_pair AS (
 -- BASE against another proxy — XLM/USD is keyed base_asset='native',
 -- so the XLM SAC (and fiat:USD, and USDC's two forms) could never enter
 -- priced_direct and one_hop could therefore never route THROUGH them.
-priced_direct AS (
+` + pricelessPricedCTEs + `SELECT
+    v.asset_id,
+    (p.asset_id IS NOT NULL)                                    AS has_price,
+    v.vol_7d,
+    v.trades_7d,
+    COALESCE(v24.vol_24h, 0)                                    AS vol_24h,
+    CASE WHEN v.vol_7d > 0
+         THEN COALESCE(tp.top_pair_vol, 0) / v.vol_7d
+         ELSE 0 END                                             AS top_pair_share
+  FROM vol7d v
+  LEFT JOIN vol24h   v24 ON v24.asset_id = v.asset_id
+  LEFT JOIN top_pair tp  ON tp.asset_id  = v.asset_id
+  LEFT JOIN priced   p   ON p.asset_id   = v.asset_id
+ WHERE p.asset_id IS NULL
+`
+
+// PopularPricelessCandidates returns the coverage-signal set for every
+// priceless trades base_asset with priced 7d volume — the input the
+// priceless-popular tripwire classifies. Priced assets are excluded in
+// SQL (they are not coverage gaps); everything else the classifier judges.
+func (s *Store) PopularPricelessCandidates(ctx context.Context) ([]AssetCoverageSignals, error) {
+	rows, err := s.db.QueryContext(ctx, popularPricelessCandidatesSQL)
+	if err != nil {
+		return nil, fmt.Errorf("timescale: PopularPricelessCandidates: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var out []AssetCoverageSignals
+	for rows.Next() {
+		var sig AssetCoverageSignals
+		if err := rows.Scan(
+			&sig.AssetID,
+			&sig.HasPriceUSD,
+			&sig.Volume7dUSD,
+			&sig.Trades7d,
+			&sig.Volume24hUSD,
+			&sig.TopAccountPairVolShare,
+		); err != nil {
+			return nil, fmt.Errorf("timescale: PopularPricelessCandidates scan: %w", err)
+		}
+		out = append(out, sig)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("timescale: PopularPricelessCandidates rows: %w", err)
+	}
+	return out, nil
+}
+
+// pricelessPricedCTEs is the "what counts as priced" half of the tripwire's
+// query — priced_direct, one_hop and priced — as one text so that a
+// single-asset probe asks EXACTLY the same question the sweep asks. Both
+// queries splice it after their own leading CTEs; it ends with the
+// `priced` CTE closed, no trailing comma.
+const pricelessPricedCTEs = `priced_direct AS (
   SELECT DISTINCT base_asset AS asset_id
     FROM prices_1m
    WHERE bucket >= now() - INTERVAL '24 hours'
@@ -174,50 +227,22 @@ priced AS (
      AND buckets >= 20      -- pricingguard DefaultSubstanceMinBuckets
      AND span_s >= 21600    -- pricingguard DefaultSubstanceMinSpan (6h)
 )
-SELECT
-    v.asset_id,
-    (p.asset_id IS NOT NULL)                                    AS has_price,
-    v.vol_7d,
-    v.trades_7d,
-    COALESCE(v24.vol_24h, 0)                                    AS vol_24h,
-    CASE WHEN v.vol_7d > 0
-         THEN COALESCE(tp.top_pair_vol, 0) / v.vol_7d
-         ELSE 0 END                                             AS top_pair_share
-  FROM vol7d v
-  LEFT JOIN vol24h   v24 ON v24.asset_id = v.asset_id
-  LEFT JOIN top_pair tp  ON tp.asset_id  = v.asset_id
-  LEFT JOIN priced   p   ON p.asset_id   = v.asset_id
- WHERE p.asset_id IS NULL
 `
 
-// PopularPricelessCandidates returns the coverage-signal set for every
-// priceless trades base_asset with priced 7d volume — the input the
-// priceless-popular tripwire classifies. Priced assets are excluded in
-// SQL (they are not coverage gaps); everything else the classifier judges.
-func (s *Store) PopularPricelessCandidates(ctx context.Context) ([]AssetCoverageSignals, error) {
-	rows, err := s.db.QueryContext(ctx, popularPricelessCandidatesSQL)
-	if err != nil {
-		return nil, fmt.Errorf("timescale: PopularPricelessCandidates: %w", err)
-	}
-	defer func() { _ = rows.Close() }()
+// assetIsPricedSQL asks the sweep's own priced set about one asset id.
+const assetIsPricedSQL = `
+WITH ` + pricelessPricedCTEs + `
+SELECT EXISTS (SELECT 1 FROM priced WHERE asset_id = $1)
+`
 
-	var out []AssetCoverageSignals
-	for rows.Next() {
-		var sig AssetCoverageSignals
-		if err := rows.Scan(
-			&sig.AssetID,
-			&sig.HasPriceUSD,
-			&sig.Volume7dUSD,
-			&sig.Trades7d,
-			&sig.Volume24hUSD,
-			&sig.TopAccountPairVolShare,
-		); err != nil {
-			return nil, fmt.Errorf("timescale: PopularPricelessCandidates scan: %w", err)
-		}
-		out = append(out, sig)
+// AssetIsPriced reports whether assetID is in the set the priceless-popular
+// tripwire treats as priced — the same CTEs, the same substance floors —
+// so the sweep can ask about an ALIAS of a candidate (a SAC contract id
+// resolved to its classic asset) without a second definition of "priced".
+func (s *Store) AssetIsPriced(ctx context.Context, assetID string) (bool, error) {
+	var priced bool
+	if err := s.db.QueryRowContext(ctx, assetIsPricedSQL, assetID).Scan(&priced); err != nil {
+		return false, fmt.Errorf("timescale: AssetIsPriced: %w", err)
 	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("timescale: PopularPricelessCandidates rows: %w", err)
-	}
-	return out, nil
+	return priced, nil
 }

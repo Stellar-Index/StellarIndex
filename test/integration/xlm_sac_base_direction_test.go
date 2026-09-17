@@ -254,6 +254,27 @@ func TestXLMSacAsBase_PriceableThroughEveryPath(t *testing.T) {
 		}
 	})
 
+	t.Run("AssetIsPriced", func(t *testing.T) {
+		// The single-asset probe must answer exactly as the sweep does:
+		// the assets the sweep no longer reports are priced, an id nothing
+		// ever traded is not.
+		for _, id := range []string{cbijID, caup7ID} {
+			priced, err := store.AssetIsPriced(ctx, id)
+			if err != nil {
+				t.Fatalf("AssetIsPriced(%s): %v", id, err)
+			}
+			if !priced {
+				t.Errorf("AssetIsPriced(%s) = false; the sweep prices it through the XLM SAC", id)
+			}
+		}
+		priced, err := store.AssetIsPriced(ctx, "NEVER-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN")
+		if err != nil {
+			t.Fatalf("AssetIsPriced(never): %v", err)
+		}
+		if priced {
+			t.Error("AssetIsPriced(never) = true for an asset with no market")
+		}
+	})
 	t.Run("ListAssets", func(t *testing.T) {
 		rows, err := store.ListAssets(ctx, 50, "", "")
 		if err != nil {
