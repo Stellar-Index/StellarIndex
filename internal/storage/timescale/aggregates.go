@@ -2046,8 +2046,8 @@ func ohlcReBucketedQuery(table, outInterval string) string {
 
 // OHLCSeriesReBucketed is [Store.OHLCSeries] but re-buckets the
 // source CAGG's rows into a coarser `outInterval` via Postgres
-// `time_bucket`. Supports the requested intervals that don't have
-// a native CAGG (5m, 30m, 4h) while still reading from a CAGG
+// `time_bucket`. Serves the intervals that don't have a native CAGG
+// (the folded rows of [OHLCRoutes]) while still reading from a CAGG
 // rather than the trades hypertable. Folds N source buckets into
 // one output bucket per the standard OHLC roll-up:
 //
@@ -2060,14 +2060,15 @@ func ohlcReBucketedQuery(table, outInterval string) string {
 //   - trade_count  = Σ trade_count
 //
 // `outInterval` MUST be an integer multiple of the source CAGG's
-// native bucket size — caller responsibility (e.g. granularity=1m
-// + outInterval='5 minutes'). Postgres time_bucket snaps to its
-// configured origin, which for our CAGGs is the Unix epoch (UTC).
-// 5m buckets land at 12:00/12:05/12:10..., 4h at 00:00/04:00/...
+// native bucket size; that it holds for every declared pairing is
+// what TestOHLCRoutesFoldIsAMultipleOfItsSource pins. Timescale's
+// time_bucket snaps to its default origin, Monday 2000-01-03 00:00
+// UTC: 5m buckets land at 12:00/12:05/12:10..., 4h at 00:00/04:00/...,
+// and 2w on the same Mondays prices_1w's own buckets start on.
 //
-// `outInterval` composes directly into the SQL after a literal
-// allow-list check — never user-passed verbatim. Same ADR-0015
-// closed-bucket guard as [Store.OHLCSeries].
+// `outInterval` composes directly into the SQL after the
+// [OHLCRoutes] allow-list check — never user-passed verbatim. Same
+// ADR-0015 closed-bucket guard as [Store.OHLCSeries].
 func (s *Store) OHLCSeriesReBucketed(
 	ctx context.Context,
 	p canonical.Pair,
@@ -2083,13 +2084,14 @@ func (s *Store) OHLCSeriesReBucketed(
 		return nil, fmt.Errorf("timescale: OHLCSeriesReBucketed: to %v <= from %v", to, from)
 	}
 	// Allow-list — outInterval composes directly into the SQL, so
-	// it MUST NOT come from untrusted input. The handler maps
-	// fixed-enum interval strings to these Postgres literals.
-	switch outInterval {
-	case "5 minutes", "15 minutes", "30 minutes", "1 hour", "4 hours",
-		"1 day", "1 week":
-	default:
-		return nil, fmt.Errorf("timescale: OHLCSeriesReBucketed: outInterval %q not in allow-list", outInterval)
+	// it MUST NOT come from untrusted input. The accepted pairings
+	// are the folded rows of [OHLCRoutes]: the same table the API
+	// routes from, so no interval can be routed here that this check
+	// refuses. (A hand-kept copy of this list never learnt 2h, 12h,
+	// 3d and 2w, and every request at those widths 500d until it was
+	// replaced by the table — launch plan W8-17.)
+	if !ohlcFoldDeclared(sourceGranularity, outInterval) {
+		return nil, fmt.Errorf("timescale: OHLCSeriesReBucketed: fold %s→%q is not declared in OHLCRoutes", sourceGranularity, outInterval)
 	}
 	table := "prices_" + string(sourceGranularity)
 	// Combine BOTH stored directions of the market before re-bucketing:

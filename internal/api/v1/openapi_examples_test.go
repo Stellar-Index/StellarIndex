@@ -153,7 +153,8 @@ type openAPIParameter struct {
 }
 
 type schema struct {
-	Example any `yaml:"example"`
+	Example any      `yaml:"example"`
+	Enum    []string `yaml:"enum"`
 }
 
 // example returns the parameter's example value, preferring the

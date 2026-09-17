@@ -88,6 +88,18 @@ against.
   (gBENJI, LU2900381208) binding also cited the AB class's page as its
   evidence; both bindings now cite their own share-class page as the
   issuer's product sitemap enumerates them.
+- **api:** `/v1/ohlc?interval=2h|12h|3d|2w` answers 200 again. The four
+  widths were routed to the store's re-bucketing read with fold
+  literals (`2 hours`, `12 hours`, `3 days`, `2 weeks`) that its
+  hand-kept allow-list never learnt, so every request at them failed
+  with `outInterval not in allow-list` and a 500 on the public API from
+  the day #213 shipped them (launch plan W8-17). The interval ladder is
+  now one table, `timescale.OHLCRoutes`: the API's validation and 400
+  body, the serving reader's choice of view and the fold allow-list all
+  derive from it, so a routed interval cannot be one the store refuses
+  (W8-20). Pinned by an executing test over every folded route,
+  including 2w's Monday alignment against `prices_1w`, and by a test
+  that holds the spec's enum to the table.
 - **ops:** `curated-rwa-sync` asks Dune for the `medium` execution tier.
   It asked for `small`, which Dune does not name; every run with a key
   configured was refused before the SQL ran (`HTTP 400: This performance

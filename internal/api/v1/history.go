@@ -89,12 +89,12 @@ type HistoryReader interface {
 	// OHLCSeries returns chronologically-ordered OHLC bars from the
 	// CAGG matching the requested interval, in [from, to). Bucket is
 	// the START of each window; window end = bucket + interval.
-	// `interval` is one of: "1m", "5m", "15m", "30m", "1h", "4h",
-	// "1d", "1w". Unknown intervals return [ErrUnknownGranularity].
-	// `limit` clamps the row count (0 = unbounded). Empty slice +
-	// nil error when no closed buckets exist in the window. The
-	// storage-side impl re-buckets a finer-grain CAGG when the
-	// interval doesn't have a native CAGG (5m / 30m / 4h).
+	// `interval` is one of [timescale.OHLCRoutes]; unknown intervals
+	// return [ErrUnknownGranularity]. `limit` clamps the row count
+	// (0 = unbounded). Empty slice + nil error when no closed buckets
+	// exist in the window. The storage-side impl re-buckets a
+	// finer-grain CAGG when the interval doesn't have a native one
+	// (the table's folded rows).
 	//
 	// Used by /v1/ohlc's multi-bar mode (F-0071, CG/CMC parity).
 	OHLCSeries(ctx context.Context, pair canonical.Pair, interval string, from, to time.Time, limit int) ([]OHLCSeriesBar, error)

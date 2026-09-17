@@ -10,6 +10,7 @@ import (
 
 	"github.com/Stellar-Index/StellarIndex/internal/aggregate"
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
 // OHLCSeriesBar is one bar in the multi-bar /v1/ohlc?interval=...
@@ -64,8 +65,13 @@ const (
 	ohlcSeriesMaxLimit     = 1000
 )
 
-// ohlcInterval is the validated interval enum for the multi-bar
-// /v1/ohlc mode. Stable wire values matching the CAGG ladder.
+// ohlcInterval is a validated interval for the multi-bar /v1/ohlc
+// mode. The accepted set is [timescale.OHLCRoutes] — the same table
+// the serving reader routes from and the store's fold allow-list
+// checks against — so [parseOHLCInterval] ranges over it rather than
+// re-listing it. The constants below exist for the places that need
+// a named width ([ohlcInterval.duration], the fiat point gate);
+// TestOHLCIntervals_EveryRouteHasADuration keeps them in step.
 type ohlcInterval string
 
 const (
@@ -124,44 +130,19 @@ func (i ohlcInterval) duration() time.Duration {
 	return 0
 }
 
-// parseOHLCInterval validates the `interval` query param.
-// Returns ok=true with the parsed enum when valid; ok=false (after
-// writing a problem+json) when invalid. Empty raw → ok=false +
-// zero-value: caller distinguishes "no interval supplied" from
-// "interval was supplied but invalid" via raw != "".
+// parseOHLCInterval validates the `interval` query param against
+// [timescale.OHLCRoutes]. Returns ok=true with the parsed enum when
+// valid; ok=false (after writing a problem+json) when invalid. Empty
+// raw → ok=false + zero-value: caller distinguishes "no interval
+// supplied" from "interval was supplied but invalid" via raw != "".
 func parseOHLCInterval(w http.ResponseWriter, r *http.Request, raw string) (ohlcInterval, bool) {
-	switch raw {
-	case "1m":
-		return ohlcInterval1m, true
-	case "5m":
-		return ohlcInterval5m, true
-	case "15m":
-		return ohlcInterval15m, true
-	case "30m":
-		return ohlcInterval30m, true
-	case "1h":
-		return ohlcInterval1h, true
-	case "2h":
-		return ohlcInterval2h, true
-	case "4h":
-		return ohlcInterval4h, true
-	case "12h":
-		return ohlcInterval12h, true
-	case "1d":
-		return ohlcInterval1d, true
-	case "3d":
-		return ohlcInterval3d, true
-	case "1w":
-		return ohlcInterval1w, true
-	case "2w":
-		return ohlcInterval2w, true
-	case "1mo":
-		return ohlcInterval1mo, true
+	if _, ok := timescale.OHLCRouteFor(raw); ok {
+		return ohlcInterval(raw), true
 	}
 	writeProblem(w, r,
 		"https://api.stellarindex.io/errors/invalid-interval",
 		"Invalid interval", http.StatusBadRequest,
-		"interval must be one of: 1m, 5m, 15m, 30m, 1h, 2h, 4h, 12h, 1d, 3d, 1w, 2w, 1mo (got "+strconv.Quote(raw)+")")
+		"interval must be one of: "+timescale.OHLCIntervalList()+" (got "+strconv.Quote(raw)+")")
 	return "", false
 }
 
