@@ -652,9 +652,15 @@ change-driven oracle), #485 (whether those 15 alerts should reach anyone).
 
 **NEW workstreams (added 2026-08-28):**
 
-- **Oracle capture-totality** — record unmapped oracle symbols under a `raw:`
-  namespace instead of dropping them. Oracles are reference-only, NOT VWAP
-  inputs; this is about not losing evidence, not about pricing from them.
+- ~~**Oracle capture-totality**~~ **DONE — verified at HEAD 2026-09-17.** All
+  three decoders record an unmapped symbol verbatim as `raw:<symbol>` at its
+  own vector slot instead of dropping it (`internal/sources/reflector/decode.go`
+  `!entry.Asset.IsMapped()`, `band/decode.go` PR-2, `redstone/decode.go`
+  `resolveFeedEntry` → `rawFeedEntry`), the canonical model carries
+  `AssetOracleRaw = "raw"`, and every raw row still increments
+  `stellarindex_source_unknown_symbols_total` so the mapping gap pages. Only
+  RedStone's unrepresentable feed_id (empty / > 64 bytes / non-printable) is a
+  hole, counted on its own metric by design.
 - **Composite ≥2 routes per thin target** (the D1 fix — makes corroboration
   real rather than config-dead).
 - **ToS / Privacy pages** — absent. **Launch-blocking.** [D — wording is the maintainer's]
