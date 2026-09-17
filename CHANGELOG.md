@@ -15,6 +15,14 @@ against.
 
 ## [Unreleased]
 
+## [v0.88.1] — 2026-09-17
+
+Release mechanics only — no code change from v0.88.0. The v0.88.0
+GitHub Release page was created by hand before the release workflow
+ran, and that workflow refuses to overwrite an existing release, so
+v0.88.0 never received its binaries. v0.88.1 is the same tree,
+published the way the workflow publishes it.
+
 ## [v0.88.0] — 2026-09-17
 
 ### Added
