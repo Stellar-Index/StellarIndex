@@ -1,22 +1,34 @@
-# systemd unit: third-party curated RWA directory sync.
+# systemd unit: third-party curated RWA sync.
 #
-# Rendered by Ansible. Caches a named third party's curated list of
-# tokenized real-world assets on Stellar — first curator: the Stellar
-# team's public Dune uploads — into rwa_curated_directory (migration
-# 0161) for the RWA surface's curated arm. One Dune SQL execution per
-# run on the "medium" tier (the only tier below "large" that Dune names;
-# "small" is refused with HTTP 400 before the SQL runs), then a status
-# poll every 2s until it finishes, then the result paged 1,000 rows at a
-# time, at most 5,000 rows. The credit cost Dune reports for the
-# execution is emitted as a gauge, so the price of this arm is a metric.
+# Rendered by Ansible. Caches the totals a named third party PUBLISHES
+# about tokenized real-world assets on Stellar — first curator: the
+# Stellar team's public "RWAs on Stellar" Dune dashboard — into
+# curated_rwa_published_series (migration 0162) for the RWA surface's
+# curated arm. A run READS the latest result of two of that dashboard's
+# public queries by GET (/api/v1/query/{id}/results — ids 6961845, the
+# monthly RWA market-cap total, and 6961847, that total split by the
+# curator's asset-subclass labels), paged 1,000 rows at a time to the
+# row count the result declares, at most 5,000 rows per query. It never
+# executes SQL: a read of a public query's latest result is billed by
+# datapoint (a fraction of a credit), and what the platform metered for
+# the two reads is emitted as the gauge
+# stellarindex_curated_rwa_sync_datapoints_read, so the price of this
+# arm is a metric. The run also stamps
+# stellarindex_curated_rwa_sync_executed_at_unix — when the curator's
+# own total query last ran — because the published figure is as fresh
+# as that, not as fresh as the sync.
 #
-# WHAT IT CACHES, and what that is worth: the curator's word. A row is a
-# name, an address and a figure that a third party chose to publish; no
-# signature, no proof of control, no market. The surface serves it under
-# `basis: third_party_curated` with its own total, beside the verified
-# set and never inside it, and the reader refuses any row whose
-# synced_at is older than 48 hours — a sync that stops leaves an
-# absence, not a stale price.
+# WHAT IT CACHES, and what that is worth: the curator's word. A row is
+# a month, a figure and (for the split) a subclass label that a third
+# party chose to publish — its arithmetic over per-asset tables that
+# are private to it and readable by no outside key; no signature, no
+# per-asset breakdown, no market. The surface serves it under
+# `curated.published`, beside the verified set and never inside it,
+# with the signed gap between the two, and the reader refuses any row
+# whose observed_at is older than 48 hours — a sync that stops leaves
+# an absence, not a stale figure. (rwa_curated_directory, migration
+# 0161, is the per-asset cache the arm was first built on; it stays
+# empty for this curator.)
 #
 # THE API KEY. Read from DUNE_API_KEY in /etc/default/curated-rwa-sync
 # (root:root, mode 0600). Only systemd reads that file, as PID 1 before
@@ -44,13 +56,13 @@ EnvironmentFile=-/etc/default/stellarindex
 
 # Defaults. Operators override via /etc/default/curated-rwa-sync.
 #
-# RUN_TIMEOUT sizing: the run is bounded not by transfer size (the
-# result is under a hundred rows) but by Dune's engine — the execution
-# queues behind other tenants and the poll loop waits for it, with each
-# HTTP call individually capped at 90s in the code. 6m is above the
+# RUN_TIMEOUT sizing: the run is a handful of GETs against a third
+# party's API — two public results of a few hundred rows between them,
+# each page an HTTP call individually capped at 90s in the code — and
+# nothing on this side waits for a query to run. 6m is above the
 # binary's own 5m default so the wall clock is visible here, and it is
-# finite because a hung execution against a third party is a hang, not
-# a slow success. A run that hits it exits non-zero WITHOUT stamping
+# finite because a hung read against a third party is a hang, not a
+# slow success. A run that hits it exits non-zero WITHOUT stamping
 # the textfile, so repeated timeouts surface as
 # stellarindex_curated_rwa_sync_stale. TimeoutStartSec below sits above
 # it so the binary's own deadline, not systemd's SIGTERM, ends the run.
@@ -72,8 +84,9 @@ User=stellarindex
 Group=stellarindex
 
 ProtectSystem=strict
-# The run writes its credit cost and row counts to the textfile collector;
-# ProtectSystem=strict makes /var read-only without this grant.
+# The run writes its datapoint cost, row counts and the curator's
+# executed-at stamp to the textfile collector; ProtectSystem=strict
+# makes /var read-only without this grant.
 ReadWritePaths=/var/lib/node_exporter/textfile_collector
 PrivateTmp=true
 NoNewPrivileges=true
@@ -84,10 +97,11 @@ ProtectControlGroups=true
 TimeoutStartSec=8min
 
 # Memory ceiling — the input is a third-party JSON body. The code caps
-# each response read at 32 MB and pages the result 1,000 rows at a time
-# with a 5,000-row ceiling on the whole sync (the curator's list is under
-# a hundred rows; anything past the ceiling is not that list), but that
-# is the code's own guard; this is the host-level backstop so a surprise
+# each response read at 32 MB and pages each result 1,000 rows at a time
+# with a 5,000-row ceiling per query (the total series is under twenty
+# rows and the split a few hundred; anything past the ceiling is not
+# one of those results), but that is the code's own guard; this is the
+# host-level backstop so a surprise
 # can never compete with galexie's captive core, Postgres and ClickHouse
 # on this single box — the 2026-07-05 wedge class. MemorySwapMax=0 kills
 # rather than swaps.

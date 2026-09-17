@@ -15,6 +15,24 @@ against.
 
 ## [Unreleased]
 
+### Changed
+
+- **docs:** `docs/methodology/rwa-definition.md` R4 names all three of
+  its bases — it said "one of two" while the code had carried
+  `sep1_isin_declaration` since 2026-09-15 — and describes the ISIN arm
+  as the code applies it (form-checked `anchor_asset`, admits without a
+  class, runs last, sits below R2 and R3). It also states the pre-filter
+  contract `rwa.CouldQualify` is under (every asset-side input of every
+  R4 arm, never a decision, pinned by a test) and points the
+  sibling-recognition assumption at the R3 section that carries it. The
+  `curated-rwa-sync.service.j2` header now describes the sync as it is
+  — two public Dune query results read by GET, no SQL execution,
+  billed by datapoint (`stellarindex_curated_rwa_sync_datapoints_read`),
+  stamping `executed_at_unix`, writing `curated_rwa_published_series` —
+  in place of the execute-and-poll design it replaced; directives are
+  untouched. The alerts catalog and the `curated-rwa-sync-stale`
+  runbook were checked for the same leftovers and carried none.
+
 ## [v0.90.0] — 2026-09-18
 
 ### Added

@@ -1,6 +1,6 @@
 ---
 title: What counts as a tokenized real-world asset
-last_verified: 2026-09-15
+last_verified: 2026-09-18
 status: current
 ---
 
@@ -174,8 +174,11 @@ paragraph that says why.
 ### R4 — Real-world instrument
 
 The asset is a real-world instrument rather than one of the issuer's
-other tokens, by one of two bases. The basis is served on every row so a
-consumer can filter to the strength of evidence it needs.
+other tokens, by one of three bases. The basis is served on every row so
+a consumer can filter to the strength of evidence it needs. The arms are
+tried in the order below and the first to admit decides: a declared
+class yields the most informative row, so it wins over an oracle feed,
+which wins over an ISIN.
 
 **`sep1_anchor_declaration`** — the R2 entry declares an
 `anchor_asset_type` in the closed vocabulary `stock`, `bond`,
@@ -206,6 +209,71 @@ bound the issuer to a recognised, unflagged account. It is never
 load-bearing on its own. A row admitted this way carries **no**
 `anchor_class`: an oracle feed names an instrument, not its class, and
 inventing one would publish a classification nothing declared.
+
+**`sep1_isin_declaration`** — the R2 entry's `anchor_asset` is a
+well-formed ISIN: twelve characters, a two-letter prefix, an
+alphanumeric body and a final check digit that is a Luhn sum over the
+rest. Form is all that is validated and form is all that is claimed. A
+typo fails the check; an invention fails it nine times in ten.
+
+Why an ISIN counts as evidence at all: `anchor_asset_type` is a string
+the issuer picks from a vocabulary it is free to ignore, whereas an ISIN
+is assigned by a national numbering agency to a registered security and
+is externally resolvable. As evidence that a real-world instrument
+stands behind a token it is at least as strong as a self-chosen class
+string. What it is **not** is evidence that *this* issuer is entitled
+to that ISIN. Nothing here checks that and nothing needs to: R2 has
+already required the declaration to come from the issuer's own on-chain
+domain and to name its own account, and R3 has required an independent
+party to recognise that account and not flag it. An impersonator
+reaches this arm only after defeating both, and a test holds that the
+arm cannot be lifted above them.
+
+Like the oracle arm it admits **without** a class, for the same reason:
+an ISIN names an instrument, not a category. The arm runs last because
+it is the weakest of the three in what it *tells* us — an instrument
+and no class — while being the strongest in identity; it carries only
+the issuer's own declaration, checked for form. The case it exists for
+is Franklin Templeton's Luxembourg and Singapore share classes (gBENJI,
+grBENJI, sgBENJI), which declare `anchor_asset_type: other` beside
+ISINs LU2900381208, LU3258450587 and SGXZ71843866 — refused as
+`no_real_world_instrument_basis` while naming registered securities
+until this arm existed. Prose anchors such as `FOBXX`, `AU` or
+`US Treasury Notes` stay refused. Measured against the live SEP-1 corpus
+when it shipped, the arm admitted exactly those three assets.
+
+R4 does not care *how* R3 was satisfied. The
+[sibling route](#the-sibling-route-and-the-assumption-it-rests-on)
+supplies recognition and nothing else — no instrument claim comes with
+it — so a sibling-recognised issuer still has to pass one of these
+three arms on its own declaration, and the one-entity-per-domain
+assumption that route rests on is stated there, not here. That is also
+why every R4 arm is a *self-declared* value: the gates are safe to read
+only because R2 and R3 already stand in front of them.
+
+#### The pre-filter contract
+
+The classic arm's scan does not put every bound `[[CURRENCIES]]` entry
+through R1–R4. Tens of thousands of bound entries declare an NFT, a
+crypto token or nothing at all, and materialising them would be the
+scan's whole cost. So a pre-filter, `rwa.CouldQualify`, drops the
+entries that could not satisfy R4 under any issuer before the full
+evaluation runs; the funnel counts what it dropped, and
+`candidate_assets_evaluated` is what got through.
+
+That pre-filter is under a contract. It reads **every** asset-side
+input an R4 arm reads — the declared class, the code and the declared
+anchor asset — and answers true when *any* arm would, independent of
+the issuer. It is a pre-filter and never a decision: R2 and R3 still
+have to hold and the full evaluation still runs on everything it
+passes. A pre-filter narrower than the rule it precedes is a silent
+membership change, and that is not hypothetical: the ISIN arm went
+unreached for two days after it shipped, because the three Franklin
+share classes declare type `other` beside their ISINs and the filter
+read only the type — the entries were counted as filtered before the
+arm ever saw them. A test pins the pre-filter to the arms over all
+three inputs, so adding an arm without widening the filter fails the
+suite rather than the set.
 
 ## The contract arm
 
