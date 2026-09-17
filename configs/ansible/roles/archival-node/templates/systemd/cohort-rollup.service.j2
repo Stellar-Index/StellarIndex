@@ -1,0 +1,49 @@
+# {{ ansible_managed }}
+# Rendered by Ansible. Companion to cohort-rollup.timer.
+#
+# One cycle of the account-cohort rollup: what the accounts each sponsor
+# and each creator stood behind went on to hold and do. Reads the served
+# tier (Postgres) for the DeFi position snapshot and ClickHouse for
+# everything else, rebuilds into staging and exchanges live. Backs
+# /v1/accounts/{g}/graph/cohort — the sponsor and creator detail pages.
+#
+# Ordered after the creators and sponsors rollups by cadence, not by
+# dependency: membership is their edge tables, which are live from the
+# previous cycle whatever the order, so a cycle never blocks on them.
+[Unit]
+Description=Stellar Index — account-cohort rollup recompute
+Documentation=https://github.com/Stellar-Index/StellarIndex/blob/main/deploy/clickhouse/account_cohort_rollup.sql
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+EnvironmentFile=-/etc/default/cohort-rollup
+EnvironmentFile=-/etc/default/stellarindex
+Environment=CH_ADDR=127.0.0.1:9300
+Environment=CONFIG_PATH=/etc/stellarindex.toml
+Environment=EXTRA_FLAGS=
+ExecStart=/usr/local/bin/stellarindex-ops ch-cohort-rollup \
+  -ch-addr ${CH_ADDR} \
+  -config ${CONFIG_PATH} \
+  ${EXTRA_FLAGS}
+User=stellarindex
+Group=stellarindex
+ProtectSystem=strict
+PrivateTmp=true
+NoNewPrivileges=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+# The movements walk is the long step: the whole archive, one 1M-ledger
+# window at a time, joined to the membership. Budgeted well past the
+# board rollups' ~15 min; the per-statement max_execution_time inside
+# bounds any single window.
+TimeoutStartSec=240min
+MemoryMax=4G
+MemorySwapMax=0
+CPUWeight=25
+IOWeight=25
+
+[Install]
+WantedBy=multi-user.target

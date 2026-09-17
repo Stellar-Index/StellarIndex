@@ -805,6 +805,8 @@
     - creators-rollup.timer
     - sponsors-rollup.service
     - sponsors-rollup.timer
+    - cohort-rollup.service
+    - cohort-rollup.timer
     - census-rollup.service
     - census-rollup.timer
     - compute-completeness.service
@@ -855,6 +857,7 @@
     - holders-rollup.timer
     - creators-rollup.timer
     - sponsors-rollup.timer
+    - cohort-rollup.timer
     - census-rollup.timer
     - compute-completeness.timer
     - data-freshness.timer

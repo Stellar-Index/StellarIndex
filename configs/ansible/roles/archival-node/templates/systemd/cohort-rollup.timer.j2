@@ -1,0 +1,21 @@
+# {{ ansible_managed }}
+# Rendered by Ansible. Companion to cohort-rollup.service.
+#
+# Daily, like the board rollups it reads from, offset so the three do
+# not contend: the creators and sponsors timers fire on their own
+# OnUnitInactiveSec=24h cadence; this one waits 90 min after boot and
+# then also runs 24h after its last completion. Persistent so a missed
+# window (host down) runs on the next boot rather than being skipped.
+[Unit]
+Description=account-cohort rollup, daily
+Documentation=https://github.com/Stellar-Index/StellarIndex/blob/main/deploy/clickhouse/account_cohort_rollup.sql
+
+[Timer]
+OnBootSec=90min
+OnUnitInactiveSec=24h
+RandomizedDelaySec=1800
+Persistent=true
+Unit=cohort-rollup.service
+
+[Install]
+WantedBy=timers.target

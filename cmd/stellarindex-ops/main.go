@@ -179,6 +179,7 @@ var subcommands = map[string]func(args []string) error{
 	"ch-holders-rollup":            chops.Run,
 	"ch-creators-rollup":           chops.Run,
 	"ch-sponsors-rollup":           chops.Run,
+	"ch-cohort-rollup":             chops.Run,
 	"ch-participant-backfill":      chops.Run,
 	"ch-recognition":               chops.Run,
 	"verify-recognition":           chops.Run,
@@ -326,6 +327,20 @@ Subcommands:
                           reads no operation bodies. History only, never a
                           live sponsored set. Backs /v1/accounts/sponsors.
                           Issues #351, #494.
+  ch-cohort-rollup -ch-addr ADDR -config PATH
+                          Recompute what the accounts each sponsor and
+                          each creator (>= 10 accounts) went on to hold
+                          and do: current holdings per asset, monthly
+                          inflow/outflow per asset, the contracts the
+                          cohort moved value through, members active in
+                          the last 30/90/365 days, and open DeFi
+                          positions — into staging and atomically
+                          exchanged live (account_cohort_*). Membership
+                          is the edge tables the creators and sponsors
+                          rollups write, so run it after them. The DeFi
+                          snapshot is read from Postgres (-config), which
+                          is why this one carries a config path. Backs
+                          /v1/accounts/{g}/graph/cohort.
   ch-contract-ledgers-backfill -ch-addr ADDR [-from N] [-to N] [-window N]
                           One-time historical fill of
                           stellar.contract_active_ledgers (the per-contract
