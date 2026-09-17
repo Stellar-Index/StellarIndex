@@ -17,6 +17,16 @@ against.
 
 ### Changed
 
+- **ci/docker:** the six `docker/stellarindex-*.Dockerfile`s pin both
+  base images by immutable digest — `golang:1.27-alpine@sha256:cf6fca66…`
+  and `gcr.io/distroless/static-debian12:nonroot@sha256:afa5c872…`,
+  the multi-platform index digests resolved on 2026-09-18 with
+  `docker buildx imagetools inspect`. The tag stays in the reference
+  for readability but the digest is what the build pulls, so a
+  re-tagged or tampered upstream tag can no longer change what ships
+  without a diff here. Closes the `TODO(supply-chain, DEP-low)` left
+  by #14, which could not resolve digests offline. Dependabot's docker
+  ecosystem (already watching `/docker`) keeps the digests current.
 - **explorer:** `GET /v1/accounts/{g}/graph/cohort` prices only the 50
   largest holdings by balance (plus the flow assets) and says so:
   `valuation.price_cap` and `valuation.unpriced_over_cap` count what the

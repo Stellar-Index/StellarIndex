@@ -40,7 +40,19 @@ issue or PR restoring the `containers:` job in
 
 ## Image shape
 
-- **Builder stage** uses `golang:1.26-alpine` and runs the same
+- **Base images are pinned by digest** — every `FROM` in the six
+  `stellarindex-*.Dockerfile`s reads `image:tag@sha256:…`. The tag
+  is kept for readability; the digest is what the build pulls, so a
+  re-tagged upstream image (or a compromised registry tag) cannot
+  change what ships without a diff in this directory. Each pin is the
+  multi-platform *index* digest (linux/amd64 + linux/arm64), resolved
+  with `docker buildx imagetools inspect <image:tag>`; the comment
+  above each `FROM` records the resolution date. Dependabot's docker
+  ecosystem (`.github/dependabot.yml`, `directory: /docker`) opens
+  the PR when the tag moves to a new digest. When refreshing by hand,
+  update all six Dockerfiles in the same commit and keep the two
+  digests identical across them.
+- **Builder stage** uses `golang:<major.minor>-alpine` and runs the same
   `go build -trimpath -buildvcs=true -ldflags=...` invocation the
   release workflow does so the locally-built image and the
   CI-released one are byte-equivalent at the binary level. The

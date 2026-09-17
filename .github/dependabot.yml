@@ -42,7 +42,11 @@ updates:
         patterns: ["*"]
         update-types: ["minor", "patch"]
 
-  # Docker base images.
+  # Docker base images. The six docker/stellarindex-*.Dockerfile FROM
+  # lines are pinned `image:tag@sha256:…` (2026-09-18); with a digest
+  # present Dependabot rewrites the digest when the tag moves and still
+  # proposes tag bumps, so the pins do not go stale by themselves.
+  # Non-recursive: only files directly under /docker are watched.
   - package-ecosystem: docker
     directory: /docker
     schedule:
