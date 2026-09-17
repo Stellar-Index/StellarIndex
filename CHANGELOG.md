@@ -15,6 +15,8 @@ against.
 
 ## [Unreleased]
 
+## [v0.89.1] — 2026-09-17
+
 ### Fixed
 
 - **aggregator:** the priceless-popular coverage tripwire resolves a
