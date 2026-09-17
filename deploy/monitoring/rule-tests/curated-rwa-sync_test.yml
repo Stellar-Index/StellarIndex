@@ -1,13 +1,13 @@
 ---
-# promtool unit tests for stellarindex_curated_rwa_sync_stale.
+# promtool unit tests for the curated-rwa-sync alerts.
 #
 #   promtool test rules deploy/monitoring/rule-tests/curated-rwa-sync_test.yml
 #
-# PROVEN-RED: delete the `or absent_over_time(...[30h])` arm from
-# curated-rwa-sync.yml and re-run — the never-ran case (series absent)
-# reports 0 firing alerts (FAIL), because with the series absent nothing
-# selects it. A sync that was never scheduled is exactly the state the
-# rule has to be loudest about.
+# PROVEN-RED (absent arm): delete the `or (absent_over_time …)` arm and
+# re-run — "a sync that never ran" reports 0 firing alerts.
+# PROVEN-RED (scrape-history gate): delete the `and on() (…)` guard and
+# re-run — "a fresh Prometheus does not fire on a series it has not had
+# time to miss" reports 1 firing alert at 1h.
 
 rule_files:
   - ../rules/curated-rwa-sync.yml
@@ -16,11 +16,13 @@ evaluation_interval: 1m
 
 tests:
   # ── ran once, then stopped: series goes absent past the window ──
-  - interval: 1h
+  - interval: 1m
     name: a sync that stopped running fires the ticket off the absent arm
     input_series:
       - series: 'stellarindex_curated_rwa_sync_last_run_unix{curator="dune:stellar"}'
-        values: '0 _x40'
+        values: '0 _x2000'
+      - series: 'up{job="node_exporter",instance="localhost:9100"}'
+        values: '1x2000'
     alert_rule_test:
       - eval_time: 32h
         alertname: stellarindex_curated_rwa_sync_stale
@@ -46,13 +48,86 @@ tests:
                 refused still costs nothing, and a run that never executed
                 leaves the gauge frozen.
 
+  # ── never ran, but Prometheus has watched 30h+ of scrapes: fires ──
+  - interval: 1m
+    name: a sync that never ran fires once the absence has been observed for 30h
+    input_series:
+      - series: 'up{job="node_exporter",instance="localhost:9100"}'
+        values: '1x2000'
+    alert_rule_test:
+      - eval_time: 32h
+        alertname: stellarindex_curated_rwa_sync_stale
+        exp_alerts:
+          - exp_labels:
+              severity: ticket
+              team: stellarindex
+              component: api
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/curated-rwa-sync-stale.md
+              summary: "the curated RWA sync has not recorded a run in ≥ 30h (cadence daily) — the curated arm will read unavailable at 48h"
+              description: |
+                No curated-rwa-sync run has stamped `last_run_unix` in over 30
+                hours, or none ever has. Either curated-rwa-sync.timer is not
+                scheduled, the unit is refusing to start (DUNE_API_KEY unset
+                in /etc/default/curated-rwa-sync), the Dune execution is
+                failing, or the textfile directory is not writable by the
+                unit. At 48 hours the reader's recognition bound empties the
+                arm and /v1/rwa/assets reports `curated.status:
+                unavailable`. Check `systemctl list-timers
+                curated-rwa-sync.timer`, `journalctl -u curated-rwa-sync`,
+                and the credit cost gauge — a run that executed but was
+                refused still costs nothing, and a run that never executed
+                leaves the gauge frozen.
+
+  # ── a fresh Prometheus: one hour of scrapes, no series yet — silent ──
+  - interval: 1m
+    name: a fresh Prometheus does not fire on a series it has not had time to miss
+    input_series:
+      - series: 'up{job="node_exporter",instance="localhost:9100"}'
+        values: '1x70'
+    alert_rule_test:
+      - eval_time: 1h
+        alertname: stellarindex_curated_rwa_sync_stale
+        exp_alerts: []
+
   # ── healthy: stamps daily, never fires ──
   - interval: 1h
     name: a daily sync never fires
     input_series:
       - series: 'stellarindex_curated_rwa_sync_last_run_unix{curator="dune:stellar"}'
         values: '0x24 86400x24 172800x24'
+      - series: 'up{job="node_exporter",instance="localhost:9100"}'
+        values: '1x72'
     alert_rule_test:
       - eval_time: 60h
         alertname: stellarindex_curated_rwa_sync_stale
         exp_alerts: []
+
+  # ── refused: the run stamps, says no key, and the ticket follows after 2h ──
+  - interval: 1m
+    name: a run refusing for want of a key tickets after two hours
+    input_series:
+      - series: 'stellarindex_curated_rwa_sync_refused{curator="dune:stellar"}'
+        values: '1x200'
+    alert_rule_test:
+      - eval_time: 1h
+        alertname: stellarindex_curated_rwa_sync_refused
+        exp_alerts: []
+      - eval_time: 3h
+        alertname: stellarindex_curated_rwa_sync_refused
+        exp_alerts:
+          - exp_labels:
+              severity: ticket
+              team: stellarindex
+              component: api
+              curator: dune:stellar
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/curated-rwa-sync-stale.md
+              summary: "the curated RWA sync is refusing to run — DUNE_API_KEY is not set on this host"
+              description: |
+                The most recent curated-rwa-sync run exited without reading
+                the curator because DUNE_API_KEY is empty in
+                /etc/default/curated-rwa-sync. The curated arm of
+                /v1/rwa/assets reports `unwired`/`unavailable` until a key is
+                set. Set it (mode 0600) and start curated-rwa-sync.service;
+                the gauge clears on the next stamped run.

@@ -11,7 +11,7 @@ severity: P3
 
 | Field | Value |
 | ----- | ----- |
-| Alert | `stellarindex_curated_rwa_sync_stale` (P3, `severity: ticket`), routed by `configs/alertmanager/alertmanager.r1.yml` |
+| Alerts | `stellarindex_curated_rwa_sync_stale` (P3, `severity: ticket`) — the timer stopped stamping; `stellarindex_curated_rwa_sync_refused` (P3, `severity: ticket`) — it ran and refused because no API key is set. Both routed by `configs/alertmanager/alertmanager.r1.yml` |
 | Severity | P3 — a comparison panel degrades; the verified RWA surface beside it is untouched |
 | Scope | r1 / pubnet — the curated arm is only meaningful where the curator's list exists (Dune's Stellar datasets are pubnet). The unit is installed on every network but a test net with no key stays `unwired` by design and this alert does not fire there, because the metric is stamped on a dry run too. |
 | Detected by | `deploy/monitoring/rules/curated-rwa-sync.yml` + `configs/prometheus/rules.r1/curated-rwa-sync.yml` (byte-identical; group `stellarindex.curated_rwa_sync`) |
@@ -57,15 +57,21 @@ curl -s https://api.stellarindex.io/v1/rwa/assets | jq '.curated | {status, asse
 
 ## Triage tree
 
-1. **`grep -c` in step 4 prints `0`** — the env file still carries the
-   placeholder the role installs (`DUNE_API_KEY=`). The unit exits
-   before executing anything and stamps nothing, so `last_run_unix` is
-   absent and the rule's `absent_over_time` arm fires. This is the
+1. **`grep -c` in step 4 prints `0`, and the firing alert is `_refused`**
+   — the env file still carries the placeholder the role installs
+   (`DUNE_API_KEY=`). The run exits clean without reading the curator,
+   stamps `last_run_unix` (so `_stale` measures the timer, not the key)
+   and sets `stellarindex_curated_rwa_sync_refused` to 1. This is the
    expected state of a fresh install until an operator sets the key.
    Set it (`DUNE_API_KEY=…` in `/etc/default/curated-rwa-sync`, mode
    0600), then `systemctl start curated-rwa-sync.service` and re-read
-   the textfile. The reader recognises the arm within its 10-minute
-   cache TTL.
+   the textfile — the gauge clears on that run. The reader recognises
+   the arm within its 10-minute cache TTL.
+
+   If `_stale` fires on a host that never stamped, the timer has not
+   fired at all in 30 hours of scrapes: the `absent_over_time` arm is
+   gated on Prometheus having actually watched that long, so a fresh
+   rule load or a Prometheus restart does not fire it. Go to step 2.
 
 2. **Timer not listed, or `NEXT` is `n/a`** — the timer was not enabled
    (a deploy that skipped task 14, or a host bootstrapped before the
@@ -132,3 +138,4 @@ if that net is not expected to carry a key.
 ## Changelog
 
 - 2026-09-17 — created with the alert (curated arm, v0.88.0).
+- 2026-09-17 — `_refused` added; a keyless run stamps instead of failing, and the `_stale` absent arm is gated on 30 h of observed scrapes (it fired 10 min after the v0.88.1 deploy).

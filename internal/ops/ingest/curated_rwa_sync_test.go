@@ -156,9 +156,17 @@ func TestCuratedRWAPrice_Layouts(t *testing.T) {
 }
 
 func TestCuratedRWASync_RefusesWithoutKeyOrConfig(t *testing.T) {
+	// No key is a REFUSAL, not a failure: the run stamps its textfile so
+	// the timer's cadence stays measurable, says so on the gauge, and
+	// exits clean rather than leaving the unit red every day until an
+	// operator sets the key.
 	t.Setenv("DUNE_API_KEY", "")
-	if err := curatedRWASync([]string{"-config", "/nonexistent.toml"}); err == nil || !strings.Contains(err.Error(), "DUNE_API_KEY") {
-		t.Errorf("no key: err = %v, want a refusal naming DUNE_API_KEY", err)
+	prom := filepath.Join(t.TempDir(), "curated.prom")
+	if err := curatedRWASync([]string{"-config", "/nonexistent.toml", "-textfile", prom}); err != nil {
+		t.Errorf("no key: err = %v, want a clean refusal", err)
+	}
+	if raw, err := os.ReadFile(prom); err != nil || !strings.Contains(string(raw), `stellarindex_curated_rwa_sync_refused{curator="dune:stellar"} 1`) {
+		t.Errorf("no key: textfile = %q, %v; want the refused gauge stamped", raw, err)
 	}
 	t.Setenv("DUNE_API_KEY", "k")
 	if err := curatedRWASync(nil); err == nil || !strings.Contains(err.Error(), "-config") {
@@ -173,7 +181,7 @@ func TestCuratedRWATextfile_ShapeAndAtomicity(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "curated_rwa_sync.prom")
 	c := curatedRWACounts{Kept: 42, Priced: 30, Credits: 0.25}
-	if err := writeCuratedRWATextfile(path, "dune:stellar", c, true); err != nil {
+	if err := writeCuratedRWATextfile(path, "dune:stellar", c, true, false); err != nil {
 		t.Fatalf("write: %v", err)
 	}
 	b, _ := os.ReadFile(path)
@@ -191,5 +199,28 @@ func TestCuratedRWATextfile_ShapeAndAtomicity(t *testing.T) {
 	}
 	if leftovers, _ := filepath.Glob(filepath.Join(dir, "*.tmp.*")); len(leftovers) != 0 {
 		t.Errorf("temp files left behind: %v", leftovers)
+	}
+}
+
+// A run with no API key stamps the textfile like any other — the
+// staleness alert measures the timer, not the key — and says it refused.
+func TestCuratedRWATextfileStampsARefusedRun(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "curated.prom")
+	if err := writeCuratedRWATextfile(path, "dune:stellar", curatedRWACounts{}, true, true); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := string(raw)
+	for _, want := range []string{
+		`stellarindex_curated_rwa_sync_refused{curator="dune:stellar"} 1`,
+		`stellarindex_curated_rwa_sync_written{curator="dune:stellar"} 0`,
+		`stellarindex_curated_rwa_sync_last_run_unix{curator="dune:stellar"} `,
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("textfile lacks %q:\n%s", want, got)
+		}
 	}
 }

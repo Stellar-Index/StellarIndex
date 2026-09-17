@@ -43,6 +43,12 @@ against.
   what the set holds (with a USD total over what is priced), value moved
   by month, the protocols the set moved value through, recency, and
   DeFi positions.
+- **ops:** a curated-rwa-sync run with no `DUNE_API_KEY` now stamps its
+  textfile and a `stellarindex_curated_rwa_sync_refused` gauge instead of
+  failing the unit, and a `..._refused` ticket (2 h) names the missing
+  key. The `..._stale` alert's never-ran arm is gated on 30 h of
+  observed scrapes: it fired ten minutes after the v0.88.1 deploy on a
+  series that had not existed long enough to be missing.
 
 ## [v0.88.1] — 2026-09-17
 

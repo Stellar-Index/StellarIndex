@@ -24,10 +24,19 @@ groups:
     rules:
 
       - alert: stellarindex_curated_rwa_sync_stale
+        # The absent arm is gated on Prometheus having actually WATCHED
+        # 30h of scrapes: absent_over_time is true from the first
+        # evaluation on a fresh rule load, and a series that has not
+        # existed for 10 minutes is not one that has been missing for
+        # 30 hours. ~1,700 node_exporter samples at 60s is 28h+ of
+        # observed absence.
         expr: |
           (time() - stellarindex_curated_rwa_sync_last_run_unix) > (30 * 3600)
           or
-          absent_over_time(stellarindex_curated_rwa_sync_last_run_unix[30h])
+          (
+            absent_over_time(stellarindex_curated_rwa_sync_last_run_unix[30h])
+            and on() (count_over_time(up{job="node_exporter"}[30h]) > 1700)
+          )
         for: 10m
         labels:
           severity: ticket
@@ -49,3 +58,25 @@ groups:
             and the credit cost gauge — a run that executed but was
             refused still costs nothing, and a run that never executed
             leaves the gauge frozen.
+
+      # A run that REFUSED to read the curator — no API key configured —
+      # still stamps the textfile (so the alert above measures the timer)
+      # and says so here. A fresh install carries an empty placeholder in
+      # /etc/default/curated-rwa-sync until the operator sets the key.
+      - alert: stellarindex_curated_rwa_sync_refused
+        expr: stellarindex_curated_rwa_sync_refused == 1
+        for: 2h
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: api
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/curated-rwa-sync-stale.md
+          summary: "the curated RWA sync is refusing to run — DUNE_API_KEY is not set on this host"
+          description: |
+            The most recent curated-rwa-sync run exited without reading
+            the curator because DUNE_API_KEY is empty in
+            /etc/default/curated-rwa-sync. The curated arm of
+            /v1/rwa/assets reports `unwired`/`unavailable` until a key is
+            set. Set it (mode 0600) and start curated-rwa-sync.service;
+            the gauge clears on the next stamped run.

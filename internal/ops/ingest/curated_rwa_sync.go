@@ -118,7 +118,18 @@ func curatedRWASync(args []string) error {
 	}
 	key := strings.TrimSpace(os.Getenv("DUNE_API_KEY"))
 	if key == "" {
-		return errors.New("DUNE_API_KEY is not set; this run cannot read the curator and will not pretend it did")
+		// Refused, not failed: the run still stamps its textfile so the
+		// staleness alert measures the TIMER's cadence, and a separate
+		// `refused` gauge says why nothing was read. A fresh install's
+		// empty placeholder would otherwise read as a sync that never
+		// ran, which is a different problem with a different fix.
+		fmt.Fprintln(os.Stderr, "curated-rwa-sync: REFUSED — DUNE_API_KEY is not set; this run cannot read the curator and will not pretend it did")
+		if *textfile != "" {
+			if err := writeCuratedRWATextfile(*textfile, curatedRWACuratorDune, curatedRWACounts{}, true, true); err != nil {
+				fmt.Fprintf(os.Stderr, "curated-rwa-sync: WARN textfile: %v\n", err)
+			}
+		}
+		return nil
 	}
 	gate.Banner()
 	dryRun := gate.DryRun()
@@ -141,7 +152,7 @@ func curatedRWASync(args []string) error {
 		counts.Rows, counts.Kept, counts.Priced, counts.Unpriced, counts.Malformed, counts.ExecutionID, counts.Credits)
 
 	if *textfile != "" {
-		if err := writeCuratedRWATextfile(*textfile, curatedRWACuratorDune, counts, dryRun); err != nil {
+		if err := writeCuratedRWATextfile(*textfile, curatedRWACuratorDune, counts, dryRun, false); err != nil {
 			fmt.Fprintf(os.Stderr, "curated-rwa-sync: WARN textfile: %v\n", err)
 		}
 	}
@@ -394,7 +405,7 @@ func curatedRWAPrice(price, day string) (string, time.Time, bool) {
 // writeCuratedRWATextfile records the run for node_exporter. Written
 // whole to a sibling temp file and renamed, so the collector never reads
 // a half-written exposition; every family shares the file's fate.
-func writeCuratedRWATextfile(path, curator string, c curatedRWACounts, dryRun bool) error {
+func writeCuratedRWATextfile(path, curator string, c curatedRWACounts, dryRun, refused bool) error {
 	var b strings.Builder
 	lbl := fmt.Sprintf(`{curator=%q}`, curator)
 	fmt.Fprintf(&b, "# HELP stellarindex_curated_rwa_sync_last_run_unix Unix time the most recent curated-RWA sync finished, pass or fail.\n# TYPE stellarindex_curated_rwa_sync_last_run_unix gauge\nstellarindex_curated_rwa_sync_last_run_unix%s %d\n", lbl, time.Now().Unix())
@@ -406,6 +417,11 @@ func writeCuratedRWATextfile(path, curator string, c curatedRWACounts, dryRun bo
 		written = 0
 	}
 	fmt.Fprintf(&b, "# HELP stellarindex_curated_rwa_sync_written Whether the most recent sync wrote the cache (0 on a dry run).\n# TYPE stellarindex_curated_rwa_sync_written gauge\nstellarindex_curated_rwa_sync_written%s %d\n", lbl, written)
+	refusedV := 0
+	if refused {
+		refusedV = 1
+	}
+	fmt.Fprintf(&b, "# HELP stellarindex_curated_rwa_sync_refused Whether the most recent run refused to read the curator (1: no API key configured).\n# TYPE stellarindex_curated_rwa_sync_refused gauge\nstellarindex_curated_rwa_sync_refused%s %d\n", lbl, refusedV)
 
 	tmp, err := os.CreateTemp(filepath.Dir(path), filepath.Base(path)+".tmp.*")
 	if err != nil {
