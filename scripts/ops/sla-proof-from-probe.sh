@@ -85,8 +85,11 @@
 # and they mirror render-sla-proof.sh's:
 #   0  PASS     report written; every per-endpoint bound held across a
 #               window with no gaps.
-#   1  FAIL     report written; at least one bound did not hold, or the
-#               window has gaps that stop it proving anything. Still
+#   1  FAIL     report written; at least one bound did not hold, a
+#               headline cell could not be evaluated (no finite value for
+#               that endpoint in that family — an unmeasured cell is not
+#               a pass), or the window has gaps that stop it proving
+#               anything. Still
 #               evidence — a failing proof is a real measurement and must
 #               be retained — but the run is red.
 #   2  REFUSED  nothing written: the inputs cannot support a labelled
@@ -202,6 +205,7 @@ set +e
 python3 - <<'PY'
 import hashlib
 import json
+import math
 import os
 import re
 import sys
@@ -587,9 +591,20 @@ window_clean = bool(coverage >= min_coverage and not gaps)
 
 
 # ── Verdicts ────────────────────────────────────────────────────────────
+# The family-level refusal above catches a headline series that is absent
+# for EVERY endpoint. It cannot catch one that is absent for ONE endpoint
+# — a probe relabel, an endpoint that exports latency but not
+# availability, a zero denominator — and the verdict is computed per
+# cell, so that cell has to carry the refusal itself. A cell the series
+# cannot fill is not a measurement, and an unmeasured cell is not a pass:
+# it reads NOT PROVEN, and the window cannot read PROVEN while it stands.
+def evaluable(value):
+    return value is not None and math.isfinite(value)
+
+
 def bound_verdict(value, target, lower_is_better=True):
-    if value is None:
-        return "n/a"
+    if not evaluable(value):
+        return "NOT PROVEN"
     held = value <= target if lower_is_better else value >= target
     return "PROVEN" if held else "NOT PROVEN"
 
@@ -609,15 +624,22 @@ for ep in set(avail_num) & set(avail_den):
     if avail_den[ep] > 0:
         avail_window[ep] = avail_num[ep] / avail_den[ep]
 
-endpoints = sorted(set(p95_max) | set(p99_max) | set(avail_min))
+# Every endpoint any headline family names, INCLUDING the sample count:
+# an endpoint the probe issued requests to but reported no latency or
+# availability for must appear in the table with its cells empty, not
+# vanish from it.
+endpoints = sorted(set(p95_max) | set(p99_max) | set(avail_min) | set(samples_avg))
 not_proven = []
+unevaluated = []
 for ep in endpoints:
-    if bound_verdict(p95_max.get(ep), P95_TARGET_MS) == "NOT PROVEN":
-        not_proven.append("%s p95" % ep)
-    if bound_verdict(p99_max.get(ep), P99_TARGET_MS) == "NOT PROVEN":
-        not_proven.append("%s p99" % ep)
-    if bound_verdict(avail_window.get(ep), AVAILABILITY_TARGET_PCT, False) == "NOT PROVEN":
-        not_proven.append("%s availability" % ep)
+    for family, value, target, lower_is_better in (
+            ("p95", p95_max.get(ep), P95_TARGET_MS, True),
+            ("p99", p99_max.get(ep), P99_TARGET_MS, True),
+            ("availability", avail_window.get(ep), AVAILABILITY_TARGET_PCT, False)):
+        if not evaluable(value):
+            unevaluated.append("%s %s" % (ep, family))
+        if bound_verdict(value, target, lower_is_better) == "NOT PROVEN":
+            not_proven.append("%s %s" % (ep, family))
 
 overall = "PROVEN" if (not not_proven and window_clean) else "NOT PROVEN"
 
@@ -632,15 +654,15 @@ if extract_out:
 
 # ── Render ──────────────────────────────────────────────────────────────
 def ms(value):
-    return "n/a" if value is None else "%.1f ms" % value
+    return "n/a" if not evaluable(value) else "%.1f ms" % value
 
 
 def pct(value, places=3):
-    return "n/a" if value is None else ("%." + str(places) + "f %%") % value
+    return "n/a" if not evaluable(value) else ("%." + str(places) + "f %%") % value
 
 
 def secs(value):
-    return "n/a" if value is None else "%.1f s" % value
+    return "n/a" if not evaluable(value) else "%.1f s" % value
 
 
 first_ts = float(ex["first_sample"])
@@ -832,6 +854,13 @@ w("beside it because a window ratio hides a short total outage, and the")
 w("`window below target` column further down says how much of the week that")
 w("was.")
 w("")
+if unevaluated:
+    w("**%d headline cell(s) could not be evaluated** — %s. The series carry"
+      % (len(unevaluated), ", ".join("`%s`" % c for c in unevaluated)))
+    w("no finite value for that endpoint in that family, so the cell reads")
+    w("n/a beside NOT PROVEN: an unmeasured cell is not a pass, and the")
+    w("verdict is NOT PROVEN for the window while any such cell stands.")
+    w("")
 total_n = sum(samples_avg.values()) * (passing_runs or 0)
 w("Sample size: **%s per endpoint per run** on average (min %s, max %s over"
   % ("%.0f" % (sum(samples_avg.values()) / len(samples_avg)),
@@ -919,6 +948,9 @@ w("  exceeded the target. Where it reads NOT PROVEN the pooled percentile")
 w("  may still have been inside the target — the bound simply cannot settle")
 w("  it, and the per-run breach that produced it is named in the")
 w("  `window over target` column above.")
+if unevaluated:
+    w("- Where NOT PROVEN sits beside an `n/a` there was no breach to name:")
+    w("  the series carry nothing for that cell, and nothing is not a pass.")
 if loopback:
     w("- It excludes the **edge**. DNS, TLS terminate, the reverse proxy and")
     w("  any CDN are outside the measured path entirely. ADR-0009 defines its")
@@ -984,6 +1016,10 @@ print("sla-proof-from-probe: %s — wrote %s (sha256 %s)"
       % (overall, out_path, digest[:16]))
 if not_proven:
     print("sla-proof-from-probe: NOT PROVEN — %s" % ", ".join(not_proven))
+if unevaluated:
+    print("sla-proof-from-probe: unevaluable headline cell(s) — %s (no finite "
+          "value in the series; an unmeasured cell is not a pass)"
+          % ", ".join(unevaluated))
 if not window_clean:
     print("sla-proof-from-probe: window not clean — coverage %.4f, %d gap(s)"
           % (coverage, len(gaps)))

@@ -211,6 +211,56 @@ for family in ("p95_max", "p99_max", "avail_min", "samples_avg"):
     doc["series"][family] = []
     write("no_" + family, doc)
 
+# One CELL unevaluable while every family is present (#513). The family
+# refusal above cannot see these; the verdict is computed per cell, and
+# before the fix a cell the series could not fill rendered "n/a" and
+# counted as a pass. Each fixture is `clean` with exactly one headline
+# cell broken, one family at a time and one failure shape at a time —
+# a missing row, a non-numeric value, a NaN, an infinity from a zero
+# denominator — so any single shape regressing is named by its case.
+
+
+def drop_endpoint(doc, key, endpoint):
+    doc["series"][key] = [r for r in doc["series"].get(key, [])
+                          if r.get("metric", {}).get("endpoint") != endpoint]
+
+
+def set_cell(doc, key, endpoint, text):
+    for r in doc["series"].get(key, []):
+        if r.get("metric", {}).get("endpoint") == endpoint:
+            r["value"][1] = text
+
+
+cell = copy.deepcopy(clean)
+drop_endpoint(cell, "p95_max", "assets")
+write("cell_p95_missing", cell)
+
+cell = copy.deepcopy(clean)
+set_cell(cell, "p99_max", "healthz", "not-a-number")
+write("cell_p99_nonnumeric", cell)
+
+cell = copy.deepcopy(clean)
+set_cell(cell, "p99_max", "healthz", "NaN")
+write("cell_p99_nan", cell)
+
+cell = copy.deepcopy(clean)
+drop_endpoint(cell, "avail_weighted_den", "price")
+write("cell_avail_missing", cell)
+
+cell = copy.deepcopy(clean)
+set_cell(cell, "avail_weighted_num", "price", "+Inf")
+write("cell_avail_inf", cell)
+
+# An endpoint the probe issued requests to (it has a samples/run row)
+# but that no latency or availability family names at all. Before the
+# fix it vanished from the table entirely rather than standing in it
+# with three empty cells.
+cell = copy.deepcopy(clean)
+for key in ("p95_max", "p99_max", "avail_min",
+            "avail_weighted_num", "avail_weighted_den"):
+    drop_endpoint(cell, key, "markets")
+write("cell_endpoint_unmeasured", cell)
+
 # `zero_samples` — the probe ran and issued nothing.
 zero = copy.deepcopy(clean)
 each(zero, "samples_avg", lambda v, m: 0.0)
@@ -320,6 +370,64 @@ assert_contains 'a single build renders the singular provenance sentence' \
   "$CLEAN" 'It is evidence about the build named in Provenance'
 assert_absent 'a single build does NOT render the moving-target caveat' \
   "$CLEAN" 'not a measurement of one build'
+# The fully numeric case: a PROVEN report has every headline cell filled.
+# This is what makes the cell cases below non-vacuous — a PASS that
+# already carried an n/a would prove nothing about the arithmetic.
+assert_absent 'the PASS report has no n/a in any headline cell' "$CLEAN" 'n/a |'
+assert_absent 'the PASS report has no NOT PROVEN cell' "$CLEAN" '| NOT PROVEN |'
+assert_absent 'the PASS report has no unevaluated-cell paragraph' "$CLEAN" \
+  'could not be evaluated'
+if [ "$(grep -c '| PROVEN |' "$CLEAN")" -eq 10 ]; then
+  echo "ok: the PASS report carries a verdict on all 10 endpoints"
+  pass=$((pass + 1))
+else
+  echo "FAIL: the PASS report does not carry 10 PROVEN endpoint rows" >&2
+  fail=$((fail + 1))
+fi
+
+# ── One unevaluable cell is not a pass (#513) ───────────────────────────
+# Every family is present, so none of the family refusals above fires;
+# exactly one headline cell cannot be evaluated. The refusal is per
+# family but the verdict is per cell, and before the fix that cell read
+# "n/a" and contributed nothing to the conjunction — the week read PROVEN
+# with part of one endpoint's SLA unmeasured. Each shape must render
+# (a real measurement is retained), read NOT PROVEN, and name the cell.
+for shape in cell_p95_missing cell_p99_nonnumeric cell_p99_nan \
+             cell_avail_missing cell_avail_inf cell_endpoint_unmeasured; do
+  render "$TMP/${shape}.json" "$TMP/out-${shape}"
+  expect "${shape}: one unevaluable headline cell → rc 1, NOT PROVEN" 1 \
+    'NOT PROVEN — wrote'
+  expect "${shape}: the log names the unevaluable cell" 1 \
+    'unevaluable headline cell(s)'
+  CELLRPT="$TMP/out-${shape}/$(ls "$TMP/out-${shape}")"
+  assert_contains "${shape}: the report refuses the PASS" "$CELLRPT" \
+    '**Verdict: NOT PROVEN.**'
+  assert_contains "${shape}: the report says why in the document" "$CELLRPT" \
+    'could not be evaluated'
+done
+
+MISSING95="$TMP/out-cell_p95_missing/$(ls "$TMP/out-cell_p95_missing")"
+assert_contains 'the n/a cell carries NOT PROVEN beside it, not a blank verdict' \
+  "$MISSING95" "| \`assets\` | 814 | n/a | NOT PROVEN | 120.0 ms | PROVEN |"
+assert_contains 'the unevaluated cell is named as endpoint + family' \
+  "$MISSING95" "\`assets p95\`"
+if [ "$(grep -c '| 42.0 ms | PROVEN | 120.0 ms | PROVEN | 100.000 % | PROVEN |' "$MISSING95")" -eq 9 ]; then
+  echo "ok: the other nine endpoints keep their PROVEN cells"
+  pass=$((pass + 1))
+else
+  echo "FAIL: an unevaluable cell on one endpoint changed the others' cells" >&2
+  fail=$((fail + 1))
+fi
+
+INFAVAIL="$TMP/out-cell_avail_inf/$(ls "$TMP/out-cell_avail_inf")"
+assert_absent 'an infinite availability is not printed as a number' \
+  "$INFAVAIL" 'inf %'
+assert_contains 'an infinite availability reads n/a and NOT PROVEN' \
+  "$INFAVAIL" '| n/a | NOT PROVEN | 100.000 % |'
+
+UNMEASURED="$TMP/out-cell_endpoint_unmeasured/$(ls "$TMP/out-cell_endpoint_unmeasured")"
+assert_contains 'an endpoint with samples but no bound stays in the table' \
+  "$UNMEASURED" "| \`markets\` | 814 | n/a | NOT PROVEN | n/a | NOT PROVEN | n/a | NOT PROVEN | n/a |"
 
 # ── A window with holes is not a clean window ───────────────────────────
 # `gapped` carries byte-identical numbers to `clean`. Only the hole

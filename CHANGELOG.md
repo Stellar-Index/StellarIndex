@@ -36,6 +36,19 @@ against.
   suite gains the three drift rows above, a URL-fragment row, an
   unknown-type row, and the `.sql`/`.yml` comment-only rows; the five
   drift rows exit 0 against the shipped classifier.
+- **ops:** `sla-proof-from-probe.sh` treats a headline cell it cannot
+  evaluate — no row for that endpoint in that family, a non-numeric
+  value, a NaN or an infinity — as NOT PROVEN, and the window cannot
+  read PROVEN while any such cell stands. The refusal was per family
+  (a series absent for every endpoint) but the verdict is per cell, so
+  one endpoint missing from `p95_max` or lacking an availability
+  denominator rendered `n/a` and counted as a pass: the week read PROVEN
+  with part of one endpoint's SLA unmeasured, in the exact document the
+  refusal exists to prevent. The report now names each unevaluable cell
+  and an endpoint with a sample count but no bound stays in the table
+  instead of vanishing from it. Not reachable on the real capture
+  (every endpoint is in every family), but the first relabel or
+  latency-only endpoint would have made it so silently (#513).
 - **ops:** `curated-rwa-sync` asks Dune for the `medium` execution tier.
   It asked for `small`, which Dune does not name; every run with a key
   configured was refused before the SQL ran (`HTTP 400: This performance

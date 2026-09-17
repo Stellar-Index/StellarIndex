@@ -273,6 +273,16 @@ the probe stopped and node_exporter's textfile collector kept re-serving
 its last output, which leaves a perfectly continuous series and is
 invisible unless asked for directly.
 
+A single **unevaluable headline cell** is not a refusal either, and it
+is not a pass. The family refusal above fires only when a series is
+absent for every endpoint; one endpoint missing from one family — a
+probe relabel, an endpoint that exports latency but not availability, a
+zero denominator, a value that is not a finite number — leaves that
+cell with no value. It renders `n/a` beside `NOT PROVEN`, the report
+names the cell, the verdict is `NOT PROVEN` (exit 1) while any such
+cell stands, and an endpoint that has a sample count but no bound at
+all stays in the table with empty cells rather than vanishing from it.
+
 ## Where the numbers come from, and what is not in them
 
 Two capture steps in the pre-#378 version of this procedure told the
