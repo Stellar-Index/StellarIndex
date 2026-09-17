@@ -387,6 +387,13 @@ condition is being suppressed.
 - **`docs/audit/audit-2026-07-23/tail-triage-2026-07-26.md` holds ~50 OPEN
   rows with no home in this plan.** Several spot-checked rows are already
   fixed. Reconcile it once and close it, or carry its live rows here.
+  *Correction 2026-09-17:* that file is a gitignored, local-only working doc
+  (`.gitignore` "LOCAL-ONLY: audit/remediation findings"; its own header says
+  "do not commit"). Its own tally — derived against `23a75582` on 2026-07-26
+  and not re-derived since — is 61 OPEN-REAL findings (50 distinct after
+  duplicates) plus 15 OPEN-ACCEPTED-RISK candidates. A docs commit cannot
+  reconcile it — the pass has to run in the local checkout, and only its
+  CARRIED rows can land here, as plan rows or GitHub issues.
 - **This document is 4,086 lines and roughly 70% of it is superseded
   history**, with at least four places where two non-superseded boxes
   disagree. Before v1 it is worth cutting to the ~200 outstanding lines and
