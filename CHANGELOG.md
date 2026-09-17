@@ -15,6 +15,8 @@ against.
 
 ## [Unreleased]
 
+## [v0.89.2] — 2026-09-17
+
 ### Added
 
 - **rwa:** an issuer account the curated directory never listed is now
