@@ -201,6 +201,28 @@ the CoinGecko Pro purchase, enabling hashdb, and IP rotation. **HA / R2+R3
 is superseded by D2** (single box with tested restore for v1); the
 2026-08-28 "second public host into the launch gate" line is stale.
 
+**RWA — reaching the third party's $4.087B on prices of our own (2026-09-17
+evening, in progress).** The maintainer's standing ask: the served RWA figure
+should meet or exceed the SDF-published Dune dashboard's, sourcing prices
+ourselves where possible, with Dune's own tables (the curated arm, v0.88.1)
+as the trusted backstop. Where each unpriced line stands after today:
+
+| line | tokens / value | status |
+|---|---:|---|
+| Franklin gBENJI + grBENJI (Lux CNAV MMF, ISINs LU2900381208 / LU3258450587) | 57.3M tokens ≈ $57M | **PRICED 2026-09-17** — admitted through the domain-sibling arm (`recognition: curated_account_directory_via_domain_sibling`, the SEP-1 at franklintempleton.com binds them beside the listed BENJI issuer) and valued at the prospectus constant NAV $1.00 (`reference.provenance: prospectus_constant_nav`; the issuer's page showed NAV $1.00 / MTM $0.9999 on 2026-09-16). The page's figures load from `POST franklintempleton.lu/api/pds/price-and-performance?op=Pricing` — a public GraphQL endpoint (query extracted from the bundle) that answers `Overview: null` to every country/language pair tried; the browser's own request body was not captured. A live daily check is the follow-up. |
+| Franklin sgBENJI (Singapore VNAV, SGXZ71843866) | 25.0M tokens ≈ $25M | admitted (sibling arm), **unpriced by design** — an accumulating VNAV class (factsheet NAV $1.02 on 2026-02-28) needs a live NAV, not a constant. Source: franklintempleton.com.sg, same PDS family. |
+| WisdomTree, 12 assets | 7.0M tokens ≈ $40M (rwa.xyz) | the issuer publishes a machine-readable daily NAV **and** the Stellar issuer per fund at `dataspanapi.wisdomtree.com/funddetails/{nav,blockchain_addresses}/?ticker=WTGXX` (`{"dt":"2026-09-16","nav":1.0,"sharesOutstanding":1230403338.34}`; Stellar address matches our WTGX issuer exactly) — read from a browser. Cloudflare returns 403 to every non-browser client, from here and from r1, so the sync cannot read it without impersonating a browser, which this project will not do. **Needs Ash:** ask WisdomTree for API access, or accept SDF's prices for these twelve via the curated arm. WTGXX is a stable-NAV MMF (1.00 daily); the other eleven float. |
+| Tradable, 24 private-credit contracts | 548.1M tokens | supply served; the platform publishes deal sizes and fill %, **no per-token value** (tradable.xyz, doc.tradable.xyz). Only par (1.00) exists, which is what the third party uses. A `stated_par` basis, served apart, is a maintainer policy call; the curated arm carries them at par once the key is set. |
+| Realiz VuMe Bond 2030 (TPT30, ISIN CH1509100140) | 500M tokens | refused on the contract's own facts (see the corrected line below); rwa.xyz and Dune both carry it at NAV $1.00 from the issuer. Curated arm only. |
+| RedSwan (real estate) / long tail | ≈ $72M / ≈ $241M | scam-flagged class / no primary-source bindings — unchanged. |
+
+Arithmetic: verified $2,535.8M (2026-09-16) + $57M today = **≈ $2.59B on prices
+of our own**; + WisdomTree $40M + sgBENJI $25M once their NAVs can be fetched =
+≈ $2.66B. The remaining ≈ $1.4B to the third party's figure is par-valued
+private credit and one refused bond — reachable only through the curated arm
+(SDF's own prices) or a par policy, never through a measurement. That is the
+honest ceiling of "independent", and it is written here so it is not re-derived.
+
 **Sponsor / creator cohort pages — SHIPPED 2026-09-17 (post-1.0 item, done
 early because it was asked for by name).** `/insights/sponsors/{g}` and
 `/insights/creators/{g}` now read `GET /v1/accounts/{g}/graph/cohort?relation=`
@@ -221,11 +243,14 @@ sponsor, creators with ≥ 10 accounts; below it the API says `covered: false`.
 tip is 657M rows; the board rollups' argMax GROUP BY de-duplication
 exceeded the 8 GiB budget on it at 2 AND 6 threads, so the walk reads the
 archive with `FINAL` at 6 threads — 151 s / 2.7 GiB for that window,
-~36 min projected for the 10.4B-row archive. **Remaining, operator-free:**
-the first cycle runs once the ops binary that carries the command is
-deployed (v0.89.0) — `systemctl start cohort-rollup.service`, read the
-step log, and put the real wall-clock here. Until then the panel reads
-"warming".
+~36 min projected for the 10.4B-row archive. **First cycle, r1, 2026-09-17
+15:38–16:26 UTC: 48m03s** — the movements walk 46 min over 65 windows
+(FINAL at 6 threads), every fold under two minutes. Served: 1,486 sponsors +
+26,804 creators; 4.34M holdings rows, 23.5M monthly-flow rows, 260k contract
+counterparties, 315k DeFi position rows over 186k position holders. The top
+sponsor's cohort is 785,652 accounts (5,163 live, 4,148 active in 30 d), 65
+months of flows, 14 contracts, and the endpoint answers keyed. Daily via
+`cohort-rollup.timer`; the test nets cycle in seconds (empty cohorts).
 
 ### Live findings — r1, 2026-09-04 evening (alert board read directly)
 
