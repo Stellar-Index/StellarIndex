@@ -5049,10 +5049,14 @@ export interface paths {
          *
          *     HOLDINGS AND VALUATION are current balances per asset in whole
          *     units, most widely held first, valued at the live USD rate where
-         *     one exists. A classic liquidity-pool share (`pool:<hex>`) is
+         *     one exists. Pricing is bounded: only the `valuation.price_cap`
+         *     largest holdings by balance (plus the flow assets) are looked
+         *     up, and `valuation.unpriced_over_cap` counts what the cap left
+         *     unpriced. A classic liquidity-pool share (`pool:<hex>`) is
          *     served as a holding of kind `pool_share` — it is a DeFi position
          *     on the classic side — and is never priced here, because a share
-         *     is not an asset. Nothing unpriced is ever valued at zero.
+         *     is not an asset. Nothing unpriced is ever valued at zero. Every
+         *     USD figure is exact decimal arithmetic — never a float.
          *
          *     FLOWS are derived from the movements archive: received and sent
          *     per asset per calendar month (UTC), the cohort's most-moved
@@ -6003,12 +6007,22 @@ export interface components {
             /** @description balance × price_usd */
             value_usd?: string;
         };
-        /** @description The priced holdings summed at the live rate. */
+        /**
+         * @description The priced holdings summed at the live rate. Pricing is bounded:
+         *     only the `price_cap` largest holdings by balance (plus the flow
+         *     assets) are looked up, so a cohort holding hundreds of assets
+         *     does not spend the request budget on price reads.
+         */
         AccountCohortValuation: {
-            /** @description Absent when nothing priced. */
+            /** @description Absent when nothing priced. Exact decimal — never computed through a float. */
             total_usd?: string;
             priced_holdings: number;
+            /** @description Holdings without a `value_usd` — no live price, or outside `price_cap`. */
             unpriced_holdings: number;
+            /** @description How many holdings, largest by balance, this endpoint prices per request. */
+            price_cap: number;
+            /** @description The subset of `unpriced_holdings` never looked up because it fell outside `price_cap`. */
+            unpriced_over_cap: number;
             /** @enum {string} */
             basis: "live_vwap_current";
         };
@@ -22550,6 +22564,8 @@ export interface operations {
                      *           "total_usd": "525.00",
                      *           "priced_holdings": 2,
                      *           "unpriced_holdings": 1,
+                     *           "price_cap": 50,
+                     *           "unpriced_over_cap": 0,
                      *           "basis": "live_vwap_current"
                      *         },
                      *         "flows": {

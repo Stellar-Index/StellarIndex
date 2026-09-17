@@ -4,6 +4,7 @@ import (
 	"context"
 	"math/big"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -60,10 +61,17 @@ type AccountCohortHoldingV struct {
 }
 
 // AccountCohortValuationV totals the priced holdings at the live price.
+// Pricing is bounded: only the PriceCap largest holdings by balance (and
+// the flow assets) are looked up, so a cohort holding hundreds of assets
+// does not spend the whole request budget on price reads.
+// UnpricedOverCap is the subset of UnpricedHoldings that was never looked
+// up because it fell outside that cap; the rest had no live price.
 type AccountCohortValuationV struct {
 	TotalUSD         *string `json:"total_usd,omitempty"`
 	PricedHoldings   int     `json:"priced_holdings"`
 	UnpricedHoldings int     `json:"unpriced_holdings"`
+	PriceCap         int     `json:"price_cap"`
+	UnpricedOverCap  int     `json:"unpriced_over_cap"`
 	Basis            string  `json:"basis"`
 }
 
@@ -135,7 +143,9 @@ type AccountCohortCycleV struct {
 }
 
 const accountCohortNote = "Every figure is the cohort's own ledger footprint as of cycle.computed_at, " +
-	"never the root's. holdings and valuation are current balances at the live price; a pool " +
+	"never the root's. holdings and valuation are current balances at the live price; only the " +
+	"valuation.price_cap largest holdings by balance are priced (valuation.unpriced_over_cap says " +
+	"how many were left unpriced for that reason); a pool " +
 	"share is a classic liquidity-pool position and is never priced. flows are derived from the " +
 	"movements archive — received minus sent per asset per calendar month (UTC) — so a month " +
 	"with no movement emits no point, and the USD figures value each month's quantity at " +
@@ -147,6 +157,20 @@ const accountCohortNote = "Every figure is the cohort's own ledger footprint as 
 	"the floor, or no edges in this relation), not that the cohort holds nothing."
 
 const accountCohortValuationBasis = "live_vwap_current"
+
+// cohortPricedHoldingsCap bounds how many holdings one request prices.
+// Every price is a live read (LookupUSDPrice → the closed-VWAP path plus
+// its substance gate and stablecoin-proxy fan-out, 40–350 ms each on
+// production), and a large cohort carries up to
+// clickhouse.CohortHoldingsLimit (400) holdings: pricing them all serially
+// spent the whole explorerReadTimeout on prices alone, so the contracts
+// table was labelled on a dead context and every such request pinned at
+// the budget. The cap keeps the price reads to the holdings that carry
+// the value — the largest by balance — and the response says how many
+// were left unpriced by it (AccountCohortValuationV.UnpricedOverCap).
+// Flow assets (at most clickhouse's cohortFlowAssets, 12) are priced on
+// top of the cap.
+const cohortPricedHoldingsCap = 50
 
 // AccountGraphCohort serves GET /v1/accounts/{g_strkey}/graph/cohort?relation=…
 func (h *Handler) AccountGraphCohort(w http.ResponseWriter, r *http.Request) {
@@ -215,34 +239,96 @@ func (h *Handler) accountCohortView(ctx context.Context, c clickhouse.AccountCoh
 		Accounts: c.CohortAccounts, LiveAccounts: c.LiveAccounts,
 		Active30d: c.Activity.Active30d, Active90d: c.Activity.Active90d, Active365d: c.Activity.Active365d,
 	}
-	price := h.cohortPricer(ctx)
-	out.Holdings, out.Valuation = cohortHoldingsView(c.Holdings, price)
-	out.HoldingsTruncated = len(c.Holdings) >= clickhouse.CohortHoldingsLimit
-	out.Flows = cohortFlowsView(c.Flows, price)
+	// Labels first, prices last: the labels are cheap cached lookups and
+	// the lake's token-name reads; the prices are the expensive live
+	// reads. Pricing ahead of labelling let a large cohort spend the whole
+	// request budget on prices and then label its contracts on a dead
+	// context.
 	out.Contracts = h.cohortContractsView(ctx, c.Contracts)
 	out.Positions = h.cohortPositionsView(ctx, c.Positions)
+	eligible := cohortPriceable(c.Holdings, c.Flows)
+	price := h.cohortPricer(ctx, eligible)
+	out.Holdings, out.Valuation = cohortHoldingsView(c.Holdings, price, eligible)
+	out.HoldingsTruncated = len(c.Holdings) >= clickhouse.CohortHoldingsLimit
+	out.Flows = cohortFlowsView(c.Flows, price)
 	return out
+}
+
+// cohortPrice is one asset's live USD rate: Text exactly as the price
+// reader served it (what price_usd carries, byte-identical to every
+// other surface's price for the asset), Rat the same number for exact
+// arithmetic (ADR-0003 — a served dollar never passes through a float).
+type cohortPrice struct {
+	Text string
+	Rat  *big.Rat
+}
+
+// cohortPriceFn prices a canonical asset id, or reports that it cannot.
+type cohortPriceFn func(asset string) (cohortPrice, bool)
+
+// cohortPriceable is the set of assets one request may look up: the
+// cohortPricedHoldingsCap largest priceable holdings by balance, plus
+// every priceable flow asset (bounded by the reader's flow-asset cap).
+// Pool shares and C… ids are never priceable.
+func cohortPriceable(holdings []clickhouse.AccountCohortHolding, flows []clickhouse.AccountCohortFlow) map[string]struct{} {
+	ranked := make([]clickhouse.AccountCohortHolding, 0, len(holdings))
+	for _, hd := range holdings {
+		if cohortPriceableKind(hd.Asset) {
+			ranked = append(ranked, hd)
+		}
+	}
+	sort.SliceStable(ranked, func(i, j int) bool {
+		bi, bj := ranked[i].Balance, ranked[j].Balance
+		if bi == nil {
+			bi = new(big.Int)
+		}
+		if bj == nil {
+			bj = new(big.Int)
+		}
+		return bi.Cmp(bj) > 0
+	})
+	if len(ranked) > cohortPricedHoldingsCap {
+		ranked = ranked[:cohortPricedHoldingsCap]
+	}
+	out := make(map[string]struct{}, len(ranked)+len(flows))
+	for _, hd := range ranked {
+		out[hd.Asset] = struct{}{}
+	}
+	for _, f := range flows {
+		if cohortPriceableKind(f.Asset) {
+			out[f.Asset] = struct{}{}
+		}
+	}
+	return out
+}
+
+func cohortPriceableKind(asset string) bool {
+	kind := cohortAssetKind(asset)
+	return kind == "native" || kind == "classic"
 }
 
 // cohortHoldingsView renders holdings in whole units, classified, and
 // valued only where the live price exists; the valuation sums exactly
-// what it priced.
-func cohortHoldingsView(holdings []clickhouse.AccountCohortHolding, price func(string) (float64, bool)) ([]AccountCohortHoldingV, AccountCohortValuationV) {
+// what it priced and counts the holdings the price cap kept unpriced.
+func cohortHoldingsView(holdings []clickhouse.AccountCohortHolding, price cohortPriceFn, eligible map[string]struct{}) ([]AccountCohortHoldingV, AccountCohortValuationV) {
 	out := make([]AccountCohortHoldingV, 0, len(holdings))
-	val := AccountCohortValuationV{Basis: accountCohortValuationBasis}
-	total := new(big.Float)
+	val := AccountCohortValuationV{Basis: accountCohortValuationBasis, PriceCap: cohortPricedHoldingsCap}
+	total := new(big.Rat)
 	for _, hd := range holdings {
 		v := AccountCohortHoldingV{Asset: hd.Asset, Kind: cohortAssetKind(hd.Asset), Holders: hd.Holders, Balance: stroops7(hd.Balance)}
 		if p, ok := price(hd.Asset); ok {
-			ps := strconv.FormatFloat(p, 'f', -1, 64)
+			ps := p.Text
 			v.PriceUSD = &ps
-			usd := usdOfStroops(hd.Balance, p)
+			usd := usdOfStroops(hd.Balance, p.Rat)
 			s := formatUSD(usd)
 			v.ValueUSD = &s
 			total.Add(total, usd)
 			val.PricedHoldings++
 		} else {
 			val.UnpricedHoldings++
+			if _, in := eligible[hd.Asset]; !in && cohortPriceableKind(hd.Asset) {
+				val.UnpricedOverCap++
+			}
 		}
 		out = append(out, v)
 	}
@@ -255,7 +341,7 @@ func cohortHoldingsView(holdings []clickhouse.AccountCohortHolding, price func(s
 
 // cohortFlowsView groups the reader's rows — ascending by (month, asset),
 // the all-assets row keyed CohortAllAssets — into one point per month.
-func cohortFlowsView(flows []clickhouse.AccountCohortFlow, price func(string) (float64, bool)) AccountCohortFlowsV {
+func cohortFlowsView(flows []clickhouse.AccountCohortFlow, price cohortPriceFn) AccountCohortFlowsV {
 	out := AccountCohortFlowsV{Granularity: "1M", Assets: []string{}, Points: []AccountCohortFlowPointV{}}
 	shown := map[string]struct{}{}
 	var cur *AccountCohortFlowPointV
@@ -283,7 +369,7 @@ func cohortFlowsView(flows []clickhouse.AccountCohortFlow, price func(string) (f
 // cohortAssetFlowView renders one asset's month: whole units for classic
 // keys, the contract's own unit otherwise, USD at today's price where
 // the asset is priced.
-func cohortAssetFlowView(f clickhouse.AccountCohortFlow, price func(string) (float64, bool)) AccountCohortAssetFlowV {
+func cohortAssetFlowView(f clickhouse.AccountCohortFlow, price cohortPriceFn) AccountCohortAssetFlowV {
 	scaled := cohortAssetKind(f.Asset) != "contract"
 	af := AccountCohortAssetFlowV{Asset: f.Asset, Scaled: scaled}
 	if scaled {
@@ -292,7 +378,7 @@ func cohortAssetFlowView(f clickhouse.AccountCohortFlow, price func(string) (flo
 		af.Inflow, af.Outflow = f.Inflow.String(), f.Outflow.String()
 	}
 	if p, ok := price(f.Asset); ok && scaled {
-		in, o := formatUSD(usdOfStroops(f.Inflow, p)), formatUSD(usdOfStroops(f.Outflow, p))
+		in, o := formatUSD(usdOfStroops(f.Inflow, p.Rat)), formatUSD(usdOfStroops(f.Outflow, p.Rat))
 		af.InflowUSD, af.OutflowUSD = &in, &o
 	}
 	return af
@@ -344,40 +430,43 @@ func (h *Handler) cohortPositionsView(ctx context.Context, positions []clickhous
 }
 
 // cohortPricer prices a canonical asset id at the live USD rate, once per
-// asset per request. Pool shares and C… ids are never priced here.
-func (h *Handler) cohortPricer(ctx context.Context) func(asset string) (float64, bool) {
-	cache := map[string]float64{}
+// asset per request, and only for the assets in eligible (see
+// cohortPriceable) — everything else is unpriced without a read. The
+// price string is parsed once into an exact big.Rat; a price that does
+// not parse or is not positive is a miss, never a zero.
+func (h *Handler) cohortPricer(ctx context.Context, eligible map[string]struct{}) cohortPriceFn {
+	cache := map[string]cohortPrice{}
 	miss := map[string]struct{}{}
-	return func(asset string) (float64, bool) {
+	return func(asset string) (cohortPrice, bool) {
 		if !h.PricingEnabled || h.LookupUSDPrice == nil {
-			return 0, false
+			return cohortPrice{}, false
 		}
 		if p, ok := cache[asset]; ok {
 			return p, true
 		}
 		if _, ok := miss[asset]; ok {
-			return 0, false
+			return cohortPrice{}, false
 		}
-		kind := cohortAssetKind(asset)
-		if kind != "native" && kind != "classic" {
+		if _, ok := eligible[asset]; !ok {
 			miss[asset] = struct{}{}
-			return 0, false
+			return cohortPrice{}, false
 		}
 		parsed, err := canonical.ParseAsset(asset)
 		if err != nil {
 			miss[asset] = struct{}{}
-			return 0, false
+			return cohortPrice{}, false
 		}
 		raw, ok := h.LookupUSDPrice(ctx, parsed)
 		if !ok {
 			miss[asset] = struct{}{}
-			return 0, false
+			return cohortPrice{}, false
 		}
-		p, err := strconv.ParseFloat(raw, 64)
-		if err != nil || p <= 0 {
+		r, ok := new(big.Rat).SetString(strings.TrimSpace(raw))
+		if !ok || r.Sign() <= 0 {
 			miss[asset] = struct{}{}
-			return 0, false
+			return cohortPrice{}, false
 		}
+		p := cohortPrice{Text: raw, Rat: r}
 		cache[asset] = p
 		return p, true
 	}
@@ -419,15 +508,24 @@ func stroops7(v *big.Int) string {
 	return s
 }
 
-func usdOfStroops(v *big.Int, price float64) *big.Float {
-	if v == nil {
-		return new(big.Float)
+// usdOfStroops values a stroop count at an exact USD rate:
+// stroops / 10^7 × price, as a big.Rat (ADR-0003 — exact arithmetic for
+// every served dollar; the same path listingValueUSD and the market-cap
+// figures take). A nil count or price is zero dollars.
+func usdOfStroops(v *big.Int, price *big.Rat) *big.Rat {
+	if v == nil || price == nil {
+		return new(big.Rat)
 	}
-	f := new(big.Float).SetInt(v)
-	f.Quo(f, big.NewFloat(1e7))
-	return f.Mul(f, big.NewFloat(price))
+	out := new(big.Rat).SetFrac(v, big.NewInt(10_000_000))
+	return out.Mul(out, price)
 }
 
-func formatUSD(f *big.Float) string {
-	return f.Text('f', 2)
+// formatUSD renders an exact dollar amount to two places, rounded
+// half away from zero (big.Rat.FloatString's rule — the same rendering
+// every other served value_usd uses).
+func formatUSD(r *big.Rat) string {
+	if r == nil {
+		return "0.00"
+	}
+	return r.FloatString(2)
 }

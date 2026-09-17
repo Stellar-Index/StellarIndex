@@ -1568,6 +1568,12 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 	// request nothing but its logos; this is what stops it being cold in
 	// the first place. Its 10-minute TTL gives this cadence two cycles of
 	// slack, exactly like PrewarmClassicSupply above.
+	// PrewarmContractProtocolIndex joins them (2026-09-17): the cohort
+	// view's contract → protocol map is seventeen registry reads that
+	// used to run inline on whichever request found it expired — and a
+	// request that had already spent its budget cached a statics-only
+	// map for everyone. Its 10-minute TTL gives this cadence the same two
+	// cycles of slack; an incomplete build retries within 30 s.
 	bgWG.Add(1)
 	go func() {
 		defer bgWG.Done()
@@ -1576,6 +1582,7 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 		apiSrv.PrewarmClassicSupply(rootCtx)
 		apiSrv.PrewarmAccountsWealth(rootCtx)
 		apiSrv.PrewarmContractsDirectory(rootCtx)
+		apiSrv.PrewarmContractProtocolIndex(rootCtx)
 		apiSrv.PrewarmOpTypeStats(rootCtx)
 		apiSrv.PrewarmNetworkThroughput(rootCtx)
 		apiSrv.PrewarmNativeLiquidityPools(rootCtx)
@@ -1590,6 +1597,7 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 				apiSrv.PrewarmClassicSupply(rootCtx)
 				apiSrv.PrewarmAccountsWealth(rootCtx)
 				apiSrv.PrewarmContractsDirectory(rootCtx)
+				apiSrv.PrewarmContractProtocolIndex(rootCtx)
 				apiSrv.PrewarmOpTypeStats(rootCtx)
 				apiSrv.PrewarmNetworkThroughput(rootCtx)
 				apiSrv.PrewarmNativeLiquidityPools(rootCtx)

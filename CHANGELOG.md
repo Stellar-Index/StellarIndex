@@ -15,6 +15,15 @@ against.
 
 ## [Unreleased]
 
+### Changed
+
+- **explorer:** `GET /v1/accounts/{g}/graph/cohort` prices only the 50
+  largest holdings by balance (plus the flow assets) and says so:
+  `valuation.price_cap` and `valuation.unpriced_over_cap` count what the
+  cap left unpriced. A large cohort carries up to 400 holdings and every
+  price is a live read of 40–350 ms, so pricing them all serially spent
+  the whole 8 s request budget on prices alone.
+
 ### Fixed
 
 - **ci:** the weekly ansible-drift verdict's comment-only classifier
@@ -127,6 +136,23 @@ against.
   routes; and the one-entity-per-domain assumption the sibling route
   rests on is stated where the route is defined and in the methodology
   (#520).
+- **explorer:** the cohort view labels its contracts BEFORE it prices
+  holdings, and the contract → protocol index is built on its own 5 s
+  deadline, detached from the request that triggered it. A cohort of 400
+  holdings burned the request budget on price reads, labelled its
+  contracts on a dead context, and — because the index cached whatever a
+  cancelled build returned for ten minutes — served a statics-only map to
+  every other root until the TTL lapsed: eight registered Aquarius pools
+  read `protocol: null` on every request. An incomplete build now serves
+  its partial map but retries within 30 s, logs one line with the entry
+  count and the failed sources, and the API's 5-minute prewarm loop
+  builds it so no request meets it cold.
+- **explorer:** every served dollar on the cohort view is exact
+  (ADR-0003, #516): `price_usd` is the price string the reader served,
+  and `value_usd`, `total_usd`, `inflow_usd` and `outflow_usd` are
+  `balance × price` as rationals rounded once to two places. Through
+  `float64`, one unit at `0.015` rendered `0.01` and a `1.10` price came
+  back as `1.1`.
 - **ops:** `curated-rwa-sync` asks Dune for the `medium` execution tier.
   It asked for `small`, which Dune does not name; every run with a key
   configured was refused before the SQL ran (`HTTP 400: This performance
