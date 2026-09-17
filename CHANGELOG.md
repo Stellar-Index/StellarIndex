@@ -15,6 +15,8 @@ against.
 
 ## [Unreleased]
 
+## [v0.90.0] — 2026-09-18
+
 ### Added
 
 - **ops:** `stellarindex_sink_undrained_rows_total{sink,kind}` counts the
@@ -57,6 +59,38 @@ against.
   `Asset` schema instead of a hand-written copy, and the account
   board-standing panel derives the creator / sponsor bodies from the
   generated `operations` types and reads the rows without `as` casts.
+
+- **ops:** `curated-rwa-sync` reads the totals the curator PUBLISHES
+  instead of the per-asset tables it cannot read. The two CSV uploads
+  behind the "RWAs on Stellar" dashboard are private to the uploading
+  team — Dune refuses a SQL execution over them to every outside account
+  ("Uploaded table … does not exist or it is private") — so the arm's
+  execute-and-page design could never load a row. The run now GETs the
+  latest result of the dashboard's public queries (6961845 "RWA Mcap by
+  Month", 6961847 "Mcap by Month by Asset Subclass"), pages to the
+  declared row count with strict per-row decoding, and replaces the
+  curator's rows per series in one transaction into the new
+  `curated_rwa_published_series` (migration 0162). A read bills by
+  datapoint and never executes a query, so the textfile's
+  `execution_cost_credits` gauge — which would have graphed a cost that
+  cannot occur — is replaced by `datapoints_read`, and
+  `executed_at_unix` records when the curator's query last ran; the
+  `priced` gauge, which counted per-asset prices the run cannot see, is
+  gone. Alert rules, their promtool fixture and the runbook follow.
+- **api:** `/v1/rwa/assets` `curated` carries a `published` block — the
+  curator's latest monthly total (`total_usd`, `as_of`, `executed_at`),
+  its split by the curator's subclass labels, the full monthly series,
+  the public queries it came from, and `gap_vs_verified_usd` (published
+  minus this index's verified reference total, signed). Status
+  `published_totals` names the state where the totals answered and no
+  per-asset row is readable, and the `basis` prose now says the
+  curator's list and prices are private and only its published totals
+  are read. Existing fields keep their meaning; the Go SDK, the spec and
+  the derived artifacts follow.
+- **explorer:** the RWA page's curated panel shows the curator's
+  published total, the month it is for, when the curator last computed
+  it, the signed gap to the verified figure and the subclass split, in
+  place of an empty comparison.
 
 ### Fixed
 
@@ -249,41 +283,6 @@ against.
   tier is not available with your subscription`), so the curated arm
   never loaded a row. Verified against the live API: `medium`, `large`
   and the default all execute on the current plan.
-### Changed
-
-- **ops:** `curated-rwa-sync` reads the totals the curator PUBLISHES
-  instead of the per-asset tables it cannot read. The two CSV uploads
-  behind the "RWAs on Stellar" dashboard are private to the uploading
-  team — Dune refuses a SQL execution over them to every outside account
-  ("Uploaded table … does not exist or it is private") — so the arm's
-  execute-and-page design could never load a row. The run now GETs the
-  latest result of the dashboard's public queries (6961845 "RWA Mcap by
-  Month", 6961847 "Mcap by Month by Asset Subclass"), pages to the
-  declared row count with strict per-row decoding, and replaces the
-  curator's rows per series in one transaction into the new
-  `curated_rwa_published_series` (migration 0162). A read bills by
-  datapoint and never executes a query, so the textfile's
-  `execution_cost_credits` gauge — which would have graphed a cost that
-  cannot occur — is replaced by `datapoints_read`, and
-  `executed_at_unix` records when the curator's query last ran; the
-  `priced` gauge, which counted per-asset prices the run cannot see, is
-  gone. Alert rules, their promtool fixture and the runbook follow.
-- **api:** `/v1/rwa/assets` `curated` carries a `published` block — the
-  curator's latest monthly total (`total_usd`, `as_of`, `executed_at`),
-  its split by the curator's subclass labels, the full monthly series,
-  the public queries it came from, and `gap_vs_verified_usd` (published
-  minus this index's verified reference total, signed). Status
-  `published_totals` names the state where the totals answered and no
-  per-asset row is readable, and the `basis` prose now says the
-  curator's list and prices are private and only its published totals
-  are read. Existing fields keep their meaning; the Go SDK, the spec and
-  the derived artifacts follow.
-- **explorer:** the RWA page's curated panel shows the curator's
-  published total, the month it is for, when the curator last computed
-  it, the signed gap to the verified figure and the subclass split, in
-  place of an empty comparison.
-
-### Fixed
 
 - **timescale:** `BatchInsertTrades` sends its rows in parameter-safe
   sub-batches (5,000 rows × 13 binds, under Postgres' 65,535-parameter
