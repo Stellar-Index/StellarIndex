@@ -269,6 +269,63 @@ detail_for() {
   awk -F'\t' -v t="$1" '$1 == t { print $2; exit }' "$detail_file"
 }
 
+# ── comment-only diffs and the handlers they trigger ──────────────────
+# A template whose live copy differs from the repo ONLY in comment text
+# (a hand-written incident note on r1, a comment block rewritten in the
+# repo, a trailing `# why` on a value that did not change) reports
+# `changed` and notifies its restart handler exactly like a real
+# configuration change. It is not one: the effective configuration is
+# identical, and applying it would buy a production restart for a
+# comment. Such a task is classified comment-only below and reported,
+# not counted as drift; a changed handler is classified consequential
+# when every non-allowed changed task it could follow is comment-only.
+#
+# "Comment-only" is decided on EFFECTIVE lines: every removed and added
+# line is stripped of a trailing comment (`#`, `--`, `//`) and trailing
+# whitespace, blank and comment-only lines are dropped, and the task is
+# comment-only iff the removed effective lines and the added effective
+# lines are the same multiset. A value that changes, a line that appears
+# or disappears, stays drift whatever else is in the hunk.
+comment_only_file="$(mktemp)"
+handler_file="$(mktemp)"
+trap 'rm -f "$allowed_file" "$changed_file" "$detail_file" "$comment_only_file" "$handler_file"' EXIT
+awk '
+  function strip(n) {
+    sub(/^[^[]*\[/, "", n); sub(/\][[:space:]]*\**[[:space:]]*$/, "", n)
+    sub(/^[A-Za-z0-9_.\/-]+ : /, "", n); return n
+  }
+  function effective(body) {
+    sub(/[[:space:]]*(#|--|\/\/).*$/, "", body)
+    sub(/^[[:space:]]+/, "", body); sub(/[[:space:]]+$/, "", body)
+    return body
+  }
+  /^TASK \[/            { task = strip($0); handler[task] = 0; next }
+  /^RUNNING HANDLER \[/ { task = strip($0); handler[task] = 1; next }
+  /^PLAY RECAP/         { task = ""; next }
+  /^--- before: /       { if (task != "") hunks[task]++; next }
+  /^(\+\+\+ after: |@@ )/ { next }
+  /^[-+]/ {
+    if (task == "") next
+    body = effective(substr($0, 2))
+    if (body == "") next
+    if (substr($0, 1, 1) == "-") minus[task, body]++; else plus[task, body]++
+    keys[task, body] = 1
+    next
+  }
+  /^changed: \[/ { if (task != "") { changed[task] = 1 } next }
+  END {
+    for (k in keys) {
+      split(k, kv, SUBSEP)
+      if (minus[k] != plus[k]) substantive[kv[1]] = 1
+    }
+    for (t in changed) {
+      if (handler[t]) print t > HANDLERS
+      else if (hunks[t] > 0 && !substantive[t]) print t > COMMENT_ONLY
+    }
+  }
+' HANDLERS="$handler_file" COMMENT_ONLY="$comment_only_file" "$DRIFT_OUT"
+comment_only_count="$(grep -c . "$comment_only_file" || true)"
+
 echo "ansible-drift: PLAY RECAP reports changed=$recap_changed; parsed $parsed_count changed task block(s); $allowed_count enumerated allowance(s)."
 
 # 1b — an ABORTED preview. A task that errors under `--check` is fatal,
@@ -366,7 +423,28 @@ echo "changed tasks:"
 sed 's/^/  - /' "$changed_file"
 
 # 4 — the verdict.
-unexpected="$(sort -u "$changed_file" | grep -vxF -f "$allowed_file" || true)"
+unexpected="$(sort -u "$changed_file" | grep -vxF -f "$allowed_file" | grep -vxF -f "$comment_only_file" || true)"
+consequential=""
+if [ -n "$unexpected" ] && [ "$comment_only_count" -gt 0 ]; then
+  # Every remaining unexpected task a handler? Then they are the
+  # restarts a comment-only template change notified — consequential,
+  # not drift. One real task among them and every handler stays drift,
+  # because a handler cannot say which change it follows.
+  only_handlers="$(printf '%s\n' "$unexpected" | grep -vxF -f "$handler_file" || true)"
+  if [ -z "$only_handlers" ]; then
+    consequential="$unexpected"
+    unexpected=""
+  fi
+fi
+if [ "$comment_only_count" -gt 0 ]; then
+  echo "::notice::ansible-drift: $comment_only_count task(s) differ from the repo in comment text only — the effective configuration matches; reported, not counted as drift:"
+  sed 's/^/  ≈ /' "$comment_only_file"
+  if [ -n "$consequential" ]; then
+    echo "  handler(s) that would run only because of those comment-only changes (consequential, not drift):"
+    printf '%s\n' "$consequential" | sed 's/^/  ↳ /'
+  fi
+  echo "  Applying the playbook clears the diff; on r1 that runs the handlers above, so do it in a maintenance window."
+fi
 if [ -n "$unexpected" ]; then
   {
     echo "::error::ansible drift detected — changed task(s) with no entry in $BASELINE:"
@@ -420,7 +498,8 @@ fi
 # 5 — more changed tasks than there are entries to explain them. With a
 # single host this cannot trigger once 3 passed, but it is the backstop
 # if the parser ever de-duplicates something the recap counts twice.
-if [ "$recap_changed" -gt "$allowed_count" ]; then
+consequential_count="$(printf '%s\n' "$consequential" | grep -c . || true)"
+if [ "$recap_changed" -gt $((allowed_count + comment_only_count + consequential_count)) ]; then
   echo "::error::ansible drift detected — changed=$recap_changed exceeds the $allowed_count enumerated allowance(s) in $BASELINE." >&2
   summary "## ansible-drift ❌ more changed tasks than allowances"
   summary ""
@@ -436,8 +515,12 @@ if [ -n "$stale" ]; then
   printf '%s\n' "$stale" | sed 's/^/  · /'
 fi
 
-echo "ansible-drift ✅ every changed task is enumerated in $BASELINE."
-summary "## ansible-drift ✅ every changed task is enumerated"
+if [ "$comment_only_count" -gt 0 ]; then
+  echo "ansible-drift ✅ every changed task is enumerated in $BASELINE, differs in comments only, or is a handler those comment-only changes notified."
+else
+  echo "ansible-drift ✅ every changed task is enumerated in $BASELINE."
+fi
+summary "## ansible-drift ✅ every changed task is enumerated or comment-only"
 summary ""
 summary "\`changed=$recap_changed\`, and every one of them is a named, reasoned entry in"
 summary "\`$BASELINE\` — no unexplained drift on r1."
@@ -446,7 +529,10 @@ summary "| task reporting changed | declared in | would touch |"
 summary "| --- | --- | --- |"
 while IFS= read -r t; do
   [ -z "$t" ] && continue
-  summary "| \`$t\` | \`$(where_defined "$t")\` | $(detail_for "$t") |"
+  tag=""
+  grep -qxF -- "$t" "$comment_only_file" && tag=" — **comments only**"
+  grep -qxF -- "$t" <<<"$consequential" && tag=" — handler of a comment-only change"
+  summary "| \`$t\`$tag | \`$(where_defined "$t")\` | $(detail_for "$t") |"
 done < <(sort -u "$changed_file")
 if [ -n "$stale" ]; then
   summary ""

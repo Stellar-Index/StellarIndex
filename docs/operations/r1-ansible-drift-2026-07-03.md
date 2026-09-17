@@ -113,3 +113,32 @@ keep applying). Until then: every hand fix on r1 gets codified in the
 same PR (this audit is the enforcement backstop), and
 `config-assertions.sh` alerts on regressions of the load-bearing
 subset.
+
+## 2026-09-17 — comment-only drift is reported, not counted
+
+The scheduled check had been red since 2026-07-15 (#496, #502). Replaying
+the 2026-09-16 dry-run showed what it was red *about*: `postgresql.conf`
+and the shipped Tier-1 DDL intent copy differed from the repo **only in
+comment text** (an incident note hand-written on r1 on 2026-09-16 beside
+`max_wal_size = 2GB`, a rewritten comment block in the template, the
+intent header's version stamp), plus the `Restart postgres` handler
+those two notified. Applying that would have bought a production
+Postgres restart for a comment.
+
+`scripts/ci/check-ansible-drift.sh` now classifies a changed task as
+**comment-only** when its `--diff` hunks' removed and added lines are the
+same multiset after stripping trailing comments (`#`, `--`, `//`) and
+blanks — a value that changes, or a line that appears or disappears,
+stays drift whatever else is in the hunk — and a changed handler as
+**consequential** when every other non-allowed changed task is
+comment-only. Both are printed (`≈` / `↳`) and rowed in the job summary,
+and neither fails the run. A task that reports changed with **no diff**
+(`diff: false`, e.g. `Install pgBackRest core config`, which carries
+repo credentials) stays drift: the check cannot tell, so it does not
+guess.
+
+What remains red after this, on the 2026-09-16 evidence: the pgBackRest
+config (no diff by design) and the restart handler it keeps in the
+drift set. Clearing those is an apply — `workflow_dispatch` with
+`apply=true` — in a window where a Postgres restart is acceptable, or a
+by-hand look at `/etc/pgbackrest/pgbackrest.conf` against the template.

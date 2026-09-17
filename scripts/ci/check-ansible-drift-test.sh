@@ -191,6 +191,53 @@ run "$(
 )" "$BASELINE_3"
 expect 'a changed handler is not exempt from the allowance' 1 'Restart stellarindex-smoke timer'
 
+# ── comment-only diffs (r1, 2026-09-16: postgresql.conf differed from the
+# template in an incident note and a rewritten comment block; the effective
+# config was identical, and the restart handler followed) ──
+comment_only_pg="$(
+  printf 'TASK [archival-node : Template postgresql.conf] ***********\n'
+  printf -- '--- before: /etc/postgresql/15/main/postgresql.conf\n+++ after: /tmp/postgresql.conf.j2\n@@ -48,4 +48,6 @@\n synchronous_commit = on\n-# WAL sizing matches the live config.\n-max_wal_size = 2GB   # 2026-09-16: REVERTED from 16GB.\n+# WAL sizing. The 2GB this replaced was never chosen against this\n+# workload.\n+max_wal_size = 2GB\n\n'
+  printf 'changed: [r1]\n\n'
+)"
+run "$(
+  printf '%s\n' "$comment_only_pg"
+  printf 'RUNNING HANDLER [archival-node : Restart postgres] ****\nchanged: [r1]\n\n'
+  recap 2
+)" "$BASELINE_3"
+expect 'a comment-only template diff plus its restart handler is reported, not drift' 0 'comment text only'
+expect 'the handler is named as consequential' 0 'Restart postgres'
+run "$(
+  printf '%s\n' "$comment_only_pg"
+  printf 'TASK [archival-node : Template stellarindex.toml] ***********\n'
+  printf -- '--- before: /etc/stellarindex.toml\n+++ after: /tmp/stellarindex.toml.j2\n@@ -1,2 +1,2 @@\n-mode = "a"\n+mode = "b"\n\n'
+  printf 'changed: [r1]\n\n'
+  printf 'RUNNING HANDLER [archival-node : Restart postgres] ****\nchanged: [r1]\n\n'
+  recap 3
+)" "$BASELINE_3"
+expect 'a real diff beside a comment-only one is still drift' 1 'Template stellarindex.toml'
+expect 'and the handler stays drift when a real change could have notified it' 1 'Restart postgres'
+run "$(
+  printf 'TASK [archival-node : Template postgresql.conf] ***********\n'
+  printf -- '--- before: /etc/postgresql/15/main/postgresql.conf\n+++ after: /tmp/postgresql.conf.j2\n@@ -1,1 +1,1 @@\n-max_wal_size = 2GB   # reverted\n+max_wal_size = 16GB\n\n'
+  printf 'changed: [r1]\n\n'
+  recap 1
+)" "$BASELINE_3"
+expect 'an inline comment does not make a value change comment-only' 1 'Template postgresql.conf'
+run "$(
+  printf 'TASK [archival-node : Ship the lake DDL] ***********\n'
+  printf -- '--- before: /usr/local/share/x.sql\n+++ after: /tmp/x.sql\n@@ -1,1 +1,2 @@\n -- header\n+CREATE TABLE IF NOT EXISTS t (a UInt8) ENGINE = MergeTree ORDER BY a;\n\n'
+  printf 'changed: [r1]\n\n'
+  recap 1
+)" "$BASELINE_3"
+expect 'a DDL line beside SQL comments is drift' 1 'Ship the lake DDL'
+run "$(
+  printf 'TASK [archival-node : Template postgresql.conf] ***********\n'
+  printf -- '--- before: /etc/postgresql/15/main/postgresql.conf\n+++ after: /tmp/postgresql.conf.j2\n@@ -1,2 +1,1 @@\n-# note\n-min_wal_size = 2GB\n+# a longer note\n\n'
+  printf 'changed: [r1]\n\n'
+  recap 1
+)" "$BASELINE_3"
+expect 'a line that disappears behind a comment change is drift' 1 'Template postgresql.conf'
+
 # pre_tasks have no `<role> : ` prefix; entries are the bare name either way.
 run "$(
   printf 'TASK [Confirm Ubuntu 22.04 or 24.04 LTS] ********************\nchanged: [r1]\n\n'
@@ -249,7 +296,7 @@ SUMMARY_OUT="$TMP/summary.md"
 : > "$SUMMARY_OUT"
 printf '%s\n' "$(
   printf 'TASK [archival-node : Install the Caddyfile] ***************\n'
-  printf -- '--- before: /etc/caddy/Caddyfile\n+++ after: /tmp/tmpXYZ/Caddyfile.j2\n@@ -1 +1 @@\n-# a\n+# b\n\n'
+  printf -- '--- before: /etc/caddy/Caddyfile\n+++ after: /tmp/tmpXYZ/Caddyfile.j2\n@@ -1 +1 @@\n-encode gzip\n+encode zstd gzip\n\n'
   printf 'changed: [r1]\n\n'
   recap 1
 )" > "$TMP/drift.out"

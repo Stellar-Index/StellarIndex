@@ -15,6 +15,16 @@ against.
 
 ## [Unreleased]
 
+### Changed
+
+- **ci:** the weekly ansible-drift verdict reports a task whose live
+  file differs from the repo in comment text only — same effective lines
+  after stripping trailing comments — as *comment-only*, and a handler
+  that only those changes notified as *consequential*, without failing
+  the run. r1's `postgresql.conf` had been failing the check for weeks
+  over an incident note beside an unchanged `max_wal_size`. A changed
+  task with no diff (`diff: false`) stays drift: the check does not guess.
+
 ## [v0.89.0] — 2026-09-17
 
 ### Added
