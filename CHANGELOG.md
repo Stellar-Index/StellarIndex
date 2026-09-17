@@ -15,6 +15,8 @@ against.
 
 ## [Unreleased]
 
+## [v0.89.0] — 2026-09-17
+
 ### Added
 
 - **explorer:** `GET /v1/accounts/{g}/graph/cohort?relation=created|sponsored`
