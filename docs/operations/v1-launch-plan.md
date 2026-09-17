@@ -211,7 +211,7 @@ as the trusted backstop. Where each unpriced line stands after today:
 
 | line | tokens / value | status |
 |---|---:|---|
-| Franklin gBENJI + grBENJI (Lux CNAV MMF, ISINs LU2900381208 / LU3258450587) | 57.3M tokens ≈ $57M | **PRICED 2026-09-17** — admitted through the domain-sibling arm (`recognition: curated_account_directory_via_domain_sibling`, the SEP-1 at franklintempleton.com binds them beside the listed BENJI issuer) and valued at the prospectus constant NAV $1.00 (`reference.provenance: prospectus_constant_nav`; the issuer's page showed NAV $1.00 / MTM $0.9999 on 2026-09-16). The page's figures load from `POST franklintempleton.lu/api/pds/price-and-performance?op=Pricing` — a public GraphQL endpoint (query extracted from the bundle) that answers `Overview: null` to every country/language pair tried; the browser's own request body was not captured. A live daily check is the follow-up. |
+| Franklin gBENJI + grBENJI (Lux CNAV MMF, ISINs LU2900381208 / LU3258450587) | 57.3M tokens ≈ $57M | ~~**PRICED 2026-09-17**~~ **NOT LIVE until the release after v0.89.3 — see the 2026-09-18 correction box below.** Original row: — admitted through the domain-sibling arm (`recognition: curated_account_directory_via_domain_sibling`, the SEP-1 at franklintempleton.com binds them beside the listed BENJI issuer) and valued at the prospectus constant NAV $1.00 (`reference.provenance: prospectus_constant_nav`; the issuer's page showed NAV $1.00 / MTM $0.9999 on 2026-09-16). The page's figures load from `POST franklintempleton.lu/api/pds/price-and-performance?op=Pricing` — a public GraphQL endpoint (query extracted from the bundle) that answers `Overview: null` to every country/language pair tried; the browser's own request body was not captured. A live daily check is the follow-up. |
 | Franklin sgBENJI (Singapore VNAV, SGXZ71843866) | 25.0M tokens ≈ $25M | admitted (sibling arm), **unpriced by design** — an accumulating VNAV class (factsheet NAV $1.02 on 2026-02-28) needs a live NAV, not a constant. Source: franklintempleton.com.sg, same PDS family. |
 | WisdomTree, 12 assets | 7.0M tokens ≈ $40M (rwa.xyz) | the issuer publishes a machine-readable daily NAV **and** the Stellar issuer per fund at `dataspanapi.wisdomtree.com/funddetails/{nav,blockchain_addresses}/?ticker=WTGXX` (`{"dt":"2026-09-16","nav":1.0,"sharesOutstanding":1230403338.34}`; Stellar address matches our WTGX issuer exactly) — read from a browser. Cloudflare returns 403 to every non-browser client, from here and from r1, so the sync cannot read it without impersonating a browser, which this project will not do. **Needs Ash:** ask WisdomTree for API access, or accept SDF's prices for these twelve via the curated arm. WTGXX is a stable-NAV MMF (1.00 daily); the other eleven float. |
 | Tradable, 24 private-credit contracts | 548.1M tokens | supply served; the platform publishes deal sizes and fill %, **no per-token value** (tradable.xyz, doc.tradable.xyz). Only par (1.00) exists, which is what the third party uses. A `stated_par` basis, served apart, is a maintainer policy call; the curated arm carries them at par once the key is set. |
@@ -224,6 +224,97 @@ of our own**; + WisdomTree $40M + sgBENJI $25M once their NAVs can be fetched =
 private credit and one refused bond — reachable only through the curated arm
 (SDF's own prices) or a par policy, never through a measurement. That is the
 honest ceiling of "independent", and it is written here so it is not re-derived.
+
+> **CORRECTION + STATE, 2026-09-18 00:30 UTC — the two v0.89.2 arms had
+> zero live effect, the Dune arm could never load, and both are fixed in
+> the release after v0.89.3.** Read this box before the table above it.
+>
+> **1. The Franklin row above said PRICED; it was not.** Live after
+> v0.89.3: 29 assets / 18 issuers / **$2,529,914,368.49**, no
+> `prospectus_constant_nav`, no `…_via_domain_sibling` row. Root cause
+> (confirmed by an independent skeptic): `rwaCandidateFilter` →
+> `rwa.CouldQualify(code, type)` ran INSIDE the storage scan and never
+> received `anchor_asset`, so every `anchor_asset_type="other"` + ISIN
+> declaration was dropped as `EntriesFiltered` before the ISIN arm, the
+> sibling arm or the CNAV reference ran. Both arms' unit tests passed
+> because they called `admitClassicCandidates` directly. Fixed in
+> `fix(rwa): admit ISIN-declared classic entries past the scan pre-filter`
+> (a production-path test now enters through `buildRWAClassicMembership`).
+> Expected live delta on deploy: assets 29→32, issuers 18→21,
+> `refused[no_real_world_instrument_basis]` 102,303→102,300, ≈ +$57M.
+> Also landed beside it: #514 (SAC-listed classic members take their
+> listing price), #520 (`recognition` documented on classic rows), #521
+> (CNAV bindings carry a 90-day `ReviewBy`; the IB class cites its own page).
+>
+> **2. The Dune curated arm (v0.88.1) can never load a row as designed.**
+> The maintainer's key (`~/.si-secrets/DUNE`) is installed on r1
+> (`/etc/default/curated-rwa-sync`, 0600). The first keyed run was refused
+> for asking Dune for a `small` tier (fixed: `medium`). The second finding
+> is structural: the dashboard's two CSV uploads
+> (`dune.stellar.dataset_recognized_assets`, `dataset_asset_prices`) are
+> PRIVATE to the uploading team — `sql/execute` over them fails "does not
+> exist or it is private" from any outside account, on any plan. What a
+> free key CAN read is the latest result of the dashboard's public queries
+> (`GET /api/v1/query/{id}/results`, billed by datapoint): 6961845 monthly
+> RWA total (headline **$4,004,795,860**, month_end 2026-09-30 row, refreshed
+> daily), 6961847 monthly split by asset subclass, 6962311 total supply;
+> 6962001 (stablecoins) is private; no public query exposes per-asset rows.
+> The arm is being re-pointed at those results (`curated.published{total_usd,
+> as_of, by_subclass, series, gap_vs_verified_usd}`, migration 0162) — in
+> verification at the time of writing. Consequence for this section: the
+> per-asset comparison with the third party is not obtainable from Dune;
+> the number we are measured against is.
+>
+> **3. Cohort pages: the endpoint pinned at 8 s and labelled nothing.**
+> `GET …/graph/cohort` priced up to 400 holdings through serial
+> `LookupUSDPrice` reads inside the one 8 s budget, labelled contracts on a
+> dead context, and the contract→protocol index cached a cancelled build
+> for 10 min. Fixed (label before pricing, top-50 price cap with
+> `valuation.unpriced_over_cap`, index built detached with prewarm, exact
+> big.Rat dollars per #516).
+>
+> **4. Test nets had an EMPTY movements archive.** `cap67-movements` with
+> `-floor-ledger 1` waited forever for ledger 1 (lake min is 2). Unblocked
+> 2026-09-17 20:50 UTC by seeding the watermark at 1 on both test nets
+> (testnet derived 1.8M rows in its first minute; futurenet reached its tip
+> 423,121). The code fix (clamp first-run start to the lake's min ledger;
+> creators rollup boundary from config) is in flight. Interior holes
+> (testnet first at 4,542,820; futurenet 423,122) will stall the daemon
+> again: ch-live-catchup is OFF on test nets by design (no LIVE_ERA_FROM),
+> so each hole needs one `ch-backfill`.
+>
+> **5. Other rows closed today (verified by an independent verifier each):**
+> `/v1/ohlc` 500 at 2h/12h/3d/2w (W8-17/W8-20 — one interval ladder now
+> drives validation, routing and the fold allow-list); W8-19 (every
+> `refresh_continuous_aggregate` CALL bounded by a window-derived
+> `statement_timeout`); #519 drift classifier per file type; #513 SLA-proof
+> n/a cells; #518/#512 ops-config truth (curated-sync unit header, one key
+> mechanism, `min_wal_size` back to 512MB — NOT applied to r1, an effective
+> diff with the restart handler behind it); #515 drift guards; restore-drill
+> evidence banner; the July tail-triage working doc re-verified locally
+> (79 rows: 57 FIXED, 13 → row 1.2, 7 carried below, 2 dropped).
+>
+> **6. Carried out of the tail-triage pass (owner: agent unless noted):**
+> C1-041 residual — `sep41_total_only` missing from the `supply_basis` spec
+> enum since v0.21.0; C6-081 — six Dockerfiles `FROM` by tag, not digest;
+> C2-038/C4-086 — the PG pipeline sink's undrained-on-exit is log-only
+> (counter + alert, like #368's CH half); C6-056 — ADR-0011 lacks the
+> amendment for the diagnostic-only over-mint leg; C2-049 — the chainlink
+> source takes feed decimals from config and never reads `decimals()` (r1
+> runs the EUR/USD feed enabled — LIVE, fix in flight); C4-069 —
+> `sdf_reserve_accounts` has no list-level diff against SDF's published
+> list (2% value cross-check only); C1-050 — aggregator and API resolve
+> token decimals independently, market-cap/FDV computed regardless; C1-022
+> — no depeg band on the fiat:USD stablecoin-proxy path, blocked on a
+> USD-quoted stablecoin source (none exists — **the maintainer** picks one).
+>
+> **7. Local-toolchain notes that cost an hour:** `verify.sh` compares the
+> lockfile mtime to `node_modules/.modules.yaml` and `make bootstrap-worktree`
+> does not refresh it (run `pnpm --dir web/{explorer,status} install
+> --frozen-lockfile`); local gitleaks 8.30 flags three fixtures the pinned
+> 8.21 does not (allowlisted with `Baseline-Growth` trailers); the agent
+> runner's worktrees under `.claude/worktrees/` are 43 nested checkouts /
+> 14 GB — excluded from the scan by config, not yet pruned.
 
 **SDEX trade history (#349, chunk 1) — RESUMED 2026-09-17 16:52 UTC.** The
 reverse-chronological `ch-rebuild -sources sdex -sdex -write` re-derive that
