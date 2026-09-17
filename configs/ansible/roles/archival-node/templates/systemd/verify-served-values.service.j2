@@ -4,7 +4,10 @@
 # reconciles a curated set of values we SERVE against INDEPENDENT ground
 # truth — the SDF lumen API for XLM supply, Stellar Expert for classic-asset
 # supply — and writes the verdict to the node_exporter textfile collector as
-# stellarindex_served_value_{ok,rel_err,skipped,last_run_unix}.
+# stellarindex_served_value_{ok,rel_err,skipped,last_run_unix}. It also diffs
+# this node's supply.sdf_reserve_accounts against the reserve list SDF
+# publishes (C4-069: a single account is inside the value check's 2%
+# tolerance) and writes stellarindex_sdf_reserve_list_drift{kind}.
 #
 # WHY THIS EXISTS — it is the only check on the NUMBER, not the pipe.
 # Every other signal on this host answers "is the pipeline healthy". None of
@@ -51,9 +54,16 @@ EnvironmentFile=-/etc/default/stellarindex
 Environment=API_BASE=http://127.0.0.1:3000
 Environment=TEXTFILE=/var/lib/node_exporter/textfile_collector/served_values.prom
 Environment=RUN_TIMEOUT=90s
+#
+# CONFIG is this node's own stellarindex.toml — the reserve-list check reads
+# supply.sdf_reserve_accounts from it. Rendered root:root 0644 by
+# 14-stellarindex-services.yml, so readable under ProtectSystem=strict as
+# the stellarindex user. An empty value skips that one check.
+Environment=CONFIG=/etc/stellarindex.toml
 
 ExecStart=/usr/local/bin/stellarindex-ops verify-served-values \
   -api ${API_BASE} \
+  -config ${CONFIG} \
   -textfile ${TEXTFILE} \
   -timeout ${RUN_TIMEOUT}
 

@@ -27,7 +27,7 @@ enforced 2026-04-23 onward).
   | Severity | Rules | AlertManager route | Delivery |
   | --- | --- | --- | --- |
   | `page` | 57 | `receiver: chat-page` | Discord **#stellarindex-pages**, `repeat_interval` 12 h. There is **no** PagerDuty leg — `pagerduty_configs` is unset, so nothing wakes anyone up. |
-  | `ticket` | 163 | `receiver: chat-default` | Discord **#stellarindex-alerts**, `repeat_interval` 24 h. |
+  | `ticket` | 164 | `receiver: chat-default` | Discord **#stellarindex-alerts**, `repeat_interval` 24 h. |
   | `informational` | 11 | `receiver: chat-informational` | Discord **#stellarindex-informational**, a dedicated low-traffic channel kept separate from `alerts` so a routine notice cannot bury a ticket. `send_resolved: false`. If `DISCORD_WEBHOOK_URL_INFORMATIONAL` is unset the renderer strips the block and the receiver degrades to the old `silent` stub — delivered to nobody, which is a no-op rather than a config error. |
 
   **`informational` is not "a low-priority ticket".** There is no
@@ -90,6 +90,7 @@ enforced 2026-04-23 onward).
 | `stellarindex_served_value_check_stale` | `time() - stellarindex_served_value_last_run_unix` (or `absent_over_time(...[2d])`) | > 48 h for ≥ 1 h, or the series has never existed | ticket | [served-value-drift](runbooks/served-value-drift.md) |
 | `stellarindex_served_value_unit_failed` | `node_systemd_unit_state{name="verify-served-values.service",state="failed"} == 1 and the same 25 h earlier` | two consecutive daily runs failed (fires ~26 h after the first) | ticket | [served-value-drift](runbooks/served-value-drift.md) |
 | `stellarindex_served_value_persistently_skipped` | `stellarindex_served_value_skipped == 1` | sustained 26 h (two daily runs) | ticket | [served-value-drift](runbooks/served-value-drift.md) |
+| `stellarindex_sdf_reserve_list_drift` | `stellarindex_sdf_reserve_list_drift > 0` per `kind` (`missing` = SDF publishes it, we do not exclude it; `extra` = we exclude it, SDF no longer publishes it) | sustained 26 h (two daily runs). The gauge is absent — not zero — when the published source (stellar/dashboard `common/lumens.js`) was unreadable; that is `_persistently_skipped{check="sdf_reserve_list"}` | ticket | [served-value-drift](runbooks/served-value-drift.md) |
 | `stellarindex_cex_usd_volume_coverage_low` | per-source `increase(stellarindex_trade_inserts_total{usd_volume_populated="yes"}[1h])` / total, external venues | < 99.9% sustained 30 min | ticket | [usd-volume-coverage-plan](usd-volume-coverage-plan.md) |
 | `stellarindex_onchain_usd_volume_coverage_low` | same ratio over `[6h]`, aggregated across on-chain venues | < 99.5% sustained 1 h | ticket | [usd-volume-coverage-plan](usd-volume-coverage-plan.md) |
 | `stellarindex_ingestion_ch_live_sink_drops` | `increase(stellarindex_ch_live_sink_ledgers_total{outcome="dropped"}[10m])` | > 0 sustained 10 min | ticket | [ch-live-sink-drops](runbooks/ch-live-sink-drops.md) |

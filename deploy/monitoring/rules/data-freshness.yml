@@ -243,7 +243,8 @@ groups:
           description: |
             verify-served-values has SKIPPED {{ $labels.check }} on every
             run for 2 days — its independent truth source (SDF lumen API /
-            Stellar Expert) is unreachable. This is availability, not drift,
+            Stellar Expert / the stellar/dashboard source behind
+            sdf_reserve_list) is unreachable. This is availability, not drift,
             so served_value_drift (ok==0) stays quiet AND check_stale stays
             quiet (the run still completes). Without this alert a PERSISTENT
             truth-source break (URL/schema change) would leave that value
@@ -251,6 +252,46 @@ groups:
             skipped check opens (it emits no served_value_ok). Check the
             source is reachable / its response shape; the check resumes
             automatically once truth returns.
+
+      # C4-069: the LIST-level companion to served_value_drift for
+      # xlm_circulating_supply. That check's 2% tolerance (~700M XLM) is
+      # deliberate — it rides out methodology residuals such as the fee
+      # pool — but it cannot see SDF adding or retiring ONE reserve
+      # account: the smaller program wallets hold well under 2% of
+      # circulating, so a stale supply.sdf_reserve_accounts would mis-state
+      # circulating supply indefinitely behind a green value check.
+      # verify-served-values diffs the configured set against the accounts
+      # stellar/dashboard's common/lumens.js subtracts for its
+      # circulatingSupply (the dashboard API itself exposes program sums,
+      # never the accounts) and emits one gauge per kind. The gauge is
+      # ABSENT when the published source could not be read or parsed —
+      # that case is served_value_persistently_skipped{check="sdf_reserve_list"},
+      # not this alert — so `> 0` here is always a VERIFIED diff. Same 26h
+      # ride-out as its siblings: two daily runs.
+      - alert: stellarindex_sdf_reserve_list_drift
+        expr: stellarindex_sdf_reserve_list_drift > 0
+        for: 26h
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: data-truth
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/served-value-drift.md
+          summary: "supply.sdf_reserve_accounts differs from the reserve list SDF publishes ({{ $value }} {{ $labels.kind }})"
+          description: |
+            verify-served-values found {{ $value }} account(s) of kind
+            "{{ $labels.kind }}" between supply.sdf_reserve_accounts and the
+            reserve list SDF publishes (stellar/dashboard common/lumens.js)
+            on two consecutive daily runs. missing = SDF now excludes an
+            account we still count as circulating (we over-state); extra =
+            SDF no longer excludes one we still subtract (we under-state).
+            The xlm_circulating_supply value check may well stay green — a
+            single account sits inside its 2% tolerance — which is why this
+            check exists. The account ids are in the run's journal:
+            `journalctl -u verify-served-values -n 20`. Fix is config, not
+            code: update stellarindex_sdf_reserve_accounts (and the paired
+            reserve_balances_stroops) in the archival-node role defaults,
+            re-render the config and restart the supply writer.
 
       # Dedicated failed-unit ticket, in place of the catch-all
       # stellarindex_systemd_unit_failed in infra.yml — verify-served-values
@@ -293,7 +334,8 @@ groups:
           description: |
             The served-value truth harness exited non-zero on its last two
             runs. Three conditions exit non-zero and they want different
-            responses: a DRIFTED check (served_value_drift names which one),
+            responses: a DRIFTED check (served_value_drift names which one;
+            sdf_reserve_list_drift is the reserve-list check's own ticket),
             an all-skipped run where every independent truth source was dark
             (served_value_persistently_skipped names it), and a crash before
             the textfile is written. Only the third is unique to this ticket

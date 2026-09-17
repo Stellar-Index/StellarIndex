@@ -31,6 +31,9 @@ import (
 //     (https://developers.stellar.org/docs — dashboard.stellar.org/api/v3/lumens),
 //     the canonical source CS-010's fix is measured against.
 //   - USDC-on-Stellar total supply vs Stellar Expert's asset API.
+//   - The configured SDF reserve-account LIST vs the list SDF publishes
+//     (sdf_reserve_list.go) — the 2% value tolerance above cannot see
+//     a single added or retired reserve account (C4-069).
 //
 // Deliberately NOT here: price cross-checks (the divergence worker
 // compares served prices against CoinGecko/Chainlink continuously —
@@ -46,13 +49,17 @@ import (
 //
 //	stellarindex-ops verify-served-values \
 //	    -api http://127.0.0.1:3000 \
+//	    -config /etc/stellarindex.toml \
 //	    -textfile /var/lib/node_exporter/textfile_collector/served_values.prom
 //
 // Empty -textfile prints the gauges to stdout (operator spot-run).
-// Exit code = number of failed checks (cron/Healthchecks-friendly).
+// Empty -config skips the reserve-list check (a spot-run off-host has
+// no node config to diff). Exit code = number of failed checks
+// (cron/Healthchecks-friendly).
 func verifyServedValues(args []string) error {
 	fs := flag.NewFlagSet("verify-served-values", flag.ContinueOnError)
 	apiBase := fs.String("api", "http://127.0.0.1:3000", "Base URL of our API (loopback on r1)")
+	cfgPath := fs.String("config", "/etc/stellarindex.toml", "stellarindex.toml whose supply.sdf_reserve_accounts is diffed against the reserve list SDF publishes; empty skips that check")
 	textfile := fs.String("textfile", "", "node_exporter textfile collector output path; empty = stdout")
 	timeout := fs.Duration("timeout", 60*time.Second, "Overall run deadline")
 	if err := fs.Parse(args); err != nil {
@@ -63,15 +70,34 @@ func verifyServedValues(args []string) error {
 
 	client := &http.Client{Timeout: 20 * time.Second}
 	results := runServedValueChecks(ctx, client, *apiBase)
+	var list *reserveListResult
+	if *cfgPath != "" {
+		lr := reconcileReserveList(ctx, client, *cfgPath, sdfReserveListURL)
+		list = &lr
+	}
 
-	body := renderServedValueProm(results, time.Now().UTC())
+	body := renderServedValueProm(results, list, time.Now().UTC())
 	if *textfile == "" {
 		fmt.Print(body)
 	} else if err := writeAtomic(*textfile, body); err != nil {
 		return fmt.Errorf("write textfile: %w", err)
 	}
 
-	failed, skipped := 0, 0
+	total, failed, skipped := len(results), 0, 0
+	if list != nil {
+		total++
+		status := "OK"
+		switch {
+		case list.skipped:
+			status = "SKIP"
+			skipped++
+		case !list.ok():
+			status = "FAIL"
+			failed++
+		}
+		fmt.Fprintf(os.Stderr, "verify-served-values: %-28s %-4s configured=%d published=%d missing=%v extra=%v (%s)\n",
+			sdfReserveListCheck, status, len(list.configured), len(list.published), list.drift.missing, list.drift.extra, list.note)
+	}
 	for _, r := range results {
 		status := "OK"
 		switch {
@@ -87,7 +113,7 @@ func verifyServedValues(args []string) error {
 		fmt.Fprintf(os.Stderr, "verify-served-values: %-28s %-4s served=%s truth=%s rel_err=%.4f tol=%.4f (%s)\n",
 			r.name, status, r.served, r.truth, r.relErr, r.tolerance, r.note)
 	}
-	return servedValuesExitError(len(results), failed, skipped)
+	return servedValuesExitError(total, failed, skipped)
 }
 
 // servedValuesExitError decides the run's exit status from its tally. Any
@@ -205,8 +231,10 @@ func reconcileOneCheck(ctx context.Context, c *http.Client, apiBase string, chk 
 }
 
 // renderServedValueProm renders the textfile body. One gauge family
-// per concern so alerts stay one-liner PromQL.
-func renderServedValueProm(results []servedValueResult, now time.Time) string {
+// per concern so alerts stay one-liner PromQL. list is nil when the
+// reserve-list check did not run (no -config); a nil list emits
+// nothing for it rather than a verdict.
+func renderServedValueProm(results []servedValueResult, list *reserveListResult, now time.Time) string {
 	b := &jsonSafeBuilder{}
 	b.line("# HELP stellarindex_served_value_rel_err Relative error of a served value vs its independent ground truth.")
 	b.line("# TYPE stellarindex_served_value_rel_err gauge")
@@ -216,6 +244,8 @@ func renderServedValueProm(results []servedValueResult, now time.Time) string {
 	b.line("# TYPE stellarindex_served_value_skipped gauge")
 	b.line("# HELP stellarindex_served_value_last_run_unix When verify-served-values last completed.")
 	b.line("# TYPE stellarindex_served_value_last_run_unix gauge")
+	b.line("# HELP stellarindex_sdf_reserve_list_drift Accounts by which supply.sdf_reserve_accounts differs from the reserve list SDF publishes (stellar/dashboard common/lumens.js): kind=missing are published but not configured, kind=extra are configured but no longer published. NOT emitted when the published list was unreachable (see served_value_skipped{check=sdf_reserve_list}) or the config was unreadable.")
+	b.line("# TYPE stellarindex_sdf_reserve_list_drift gauge")
 	for _, r := range results {
 		if !math.IsNaN(r.relErr) {
 			b.line(fmt.Sprintf(`stellarindex_served_value_rel_err{check=%q} %g`, r.name, r.relErr))
@@ -237,6 +267,25 @@ func renderServedValueProm(results []servedValueResult, now time.Time) string {
 			ok = 1
 		}
 		b.line(fmt.Sprintf(`stellarindex_served_value_ok{check=%q} %d`, r.name, ok))
+	}
+	if list != nil {
+		// The list check shares served_value_skipped so the
+		// persistently_skipped alert covers a dark published list,
+		// but carries its verdict in its own family: a list drift is
+		// a CONFIG-vs-publication finding with an account-level
+		// remedy, not a served number outside a tolerance, so it
+		// gets its own alert rather than riding served_value_ok.
+		skipped := 0
+		if list.skipped {
+			skipped = 1
+		}
+		b.line(fmt.Sprintf(`stellarindex_served_value_skipped{check=%q} %d`, sdfReserveListCheck, skipped))
+		// Same absence-is-honest rule as served_value_ok: no drift
+		// gauge unless both sides were read and actually diffed.
+		if list.verified() {
+			b.line(fmt.Sprintf(`stellarindex_sdf_reserve_list_drift{kind=%q} %d`, "missing", len(list.drift.missing)))
+			b.line(fmt.Sprintf(`stellarindex_sdf_reserve_list_drift{kind=%q} %d`, "extra", len(list.drift.extra)))
+		}
 	}
 	b.line(fmt.Sprintf("stellarindex_served_value_last_run_unix %d", now.Unix()))
 	return b.String()

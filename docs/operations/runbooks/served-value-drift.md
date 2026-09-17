@@ -1,6 +1,6 @@
 ---
 title: Runbook — served value diverges from independent ground truth
-last_verified: 2026-07-02
+last_verified: 2026-09-18
 status: ratified
 severity: P3 (ticket)
 ---
@@ -11,7 +11,7 @@ severity: P3 (ticket)
 
 | Field | Value |
 | ----- | ----- |
-| Alert | `stellarindex_served_value_drift` / `stellarindex_served_value_check_stale` / `stellarindex_served_value_persistently_skipped` / `stellarindex_served_value_unit_failed` |
+| Alert | `stellarindex_served_value_drift` / `stellarindex_served_value_check_stale` / `stellarindex_served_value_persistently_skipped` / `stellarindex_served_value_unit_failed` / `stellarindex_sdf_reserve_list_drift` |
 | Severity | ticket |
 | Detected by | `stellarindex_served_value_ok == 0` for 26h (two daily runs) |
 | Typical MTTR | investigation-bound (data derivation, not availability) |
@@ -22,8 +22,10 @@ severity: P3 (ticket)
 `stellarindex-ops verify-served-values` reconciles a curated set of
 values we serve against INDEPENDENT sources — the SDF lumen API for
 XLM supply, Stellar Expert for classic-asset supply — and emits
-`stellarindex_served_value_{ok,rel_err,last_run_unix}` textfile
-gauges. It runs from `verify-served-values.timer` (daily, 06:20 UTC,
+`stellarindex_served_value_{ok,rel_err,skipped,last_run_unix}`
+textfile gauges, plus `stellarindex_sdf_reserve_list_drift{kind}`
+for the reserve-LIST check described below. It runs from
+`verify-served-values.timer` (daily, 06:20 UTC,
 after the supply chain has refreshed for the day); the units are
 ansible-managed and installed only where the ground truth is pubnet.
 This alert means a served value sat outside its tolerance for two
@@ -87,6 +89,72 @@ document the differing basis honestly on the wire (`supply_basis`).
 Never widen a tolerance to silence the alert without a written
 methodology justification in the check's `note`.
 
+## `stellarindex_sdf_reserve_list_drift` — the reserve LIST check (C4-069)
+
+The value check tolerates 2% on `xlm_circulating_supply` (~700M
+XLM) on purpose — it rides out methodology residuals such as the
+fee pool — but that makes it blind to SDF adding or retiring ONE
+reserve account: the program hot wallets each hold well under 2% of
+circulating, so a stale `supply.sdf_reserve_accounts` would mis-state
+circulating supply indefinitely behind a green value check. The same
+harness therefore also diffs the configured account SET against the
+list SDF publishes, on the same daily timer, reading the node's own
+`/etc/stellarindex.toml` (`-config`).
+
+**Where SDF publishes the list.** Not the dashboard API:
+`/api/lumens`, `/api/v2/lumens`, `/api/v3/lumens` and
+`/api/v3/lumens/all` (probed 2026-09-18) expose program-level sums
+only, never an account id. The list is the `accounts` table plus the
+`networkUpgradeReserveAccount` constant in the dashboard's own
+source, <https://raw.githubusercontent.com/stellar/dashboard/master/common/lumens.js>
+— exactly what its `noncirculatingSupply()` subtracts (the fee pool
+aside) to produce the `circulatingSupply` the value check reads, and
+the source r1's 16 accounts were transcribed from on 2026-07-02. The
+burn address (`voidAccount`) is subtracted from TOTAL supply, not
+circulating, and is not part of the set. SDF retires a row by
+commenting it out, not deleting it, and the parser skips comments —
+that is what surfaces a retirement as `extra`.
+
+**Gauges.** `stellarindex_sdf_reserve_list_drift{kind="missing"}`:
+SDF publishes it, we do not exclude it — we OVER-state circulating.
+`{kind="extra"}`: we exclude it, SDF no longer publishes it — we
+UNDER-state. Both are emitted only when both sides were read and
+diffed. A dark or reshaped source emits
+`stellarindex_served_value_skipped{check="sdf_reserve_list"}=1` and
+NO drift gauge (absence is honest, as for `served_value_ok`), which
+`_persistently_skipped` tickets after two runs. An unreadable config
+file is OUR side and fails the run instead (`_unit_failed` after two
+runs).
+
+```sh
+# The verdict, with account ids (the journal keeps the last runs):
+journalctl -u verify-served-values -n 20 | grep sdf_reserve_list
+
+# Re-run by hand on r1 against the node's own config:
+sudo -u stellarindex stellarindex-ops verify-served-values -api http://127.0.0.1:3000 -config /etc/stellarindex.toml
+
+# The two sides, side by side (published = table rows not commented
+# out, plus the upgrade reserve; configured = the one-line TOML array):
+SRC=https://raw.githubusercontent.com/stellar/dashboard/master/common/lumens.js
+{ curl -s "$SRC" | sed -n '/const accounts = {/,/^};/p' | grep -v '^ *//' ;
+  curl -s "$SRC" | grep -A1 'networkUpgradeReserveAccount =' ; } \
+  | grep -o 'G[A-Z2-7]\{55\}' | sort -u > /tmp/published
+grep '^sdf_reserve_accounts' /etc/stellarindex.toml | grep -o 'G[A-Z2-7]\{55\}' | sort -u > /tmp/configured
+comm -3 /tmp/published /tmp/configured   # col 1 = missing, col 2 = extra
+```
+
+**Mitigate.** Fix is config, not code. First confirm the change
+upstream (the stellar/dashboard commit that edited `accounts`) — a
+genuine edit is a methodology change worth a CHANGELOG line. Then
+update BOTH lists in
+`configs/ansible/roles/archival-node/defaults/main.yml`
+(`stellarindex_sdf_reserve_accounts` and the paired
+`stellarindex_reserve_balances_stroops`: the supply writer refuses
+to start with an account missing from the balance map), re-render
+`/etc/stellarindex.toml` and restart the supply writer. The next
+daily run clears the gauge. Never silence this by widening the
+value check's tolerance — the value check is not what fired.
+
 ## How to escalate
 
 Standing drift on a flagship value (XLM/USDC) that resists a day of
@@ -95,6 +163,13 @@ investigation → raise with the maintainer; it may need an upstream
 
 ## Post-mortem notes from prior firings
 
+- 2026-09-18 (C4-069, pre-alert): the list check landed. Its parser
+  is pinned to the real `common/lumens.js` in
+  `internal/ops/chops/testdata/`, where the published set equals
+  r1's deployed 16 exactly (15 live table rows plus the upgrade
+  reserve; the commented-out 2021 escrow and the burn address
+  excluded). A parser that swept every G-strkey in the file would
+  have reported r1 drifted by two on day one.
 - 2026-07-02 (first run, pre-alert): caught the harness's own unit
   bug (served F2 supply is base-unit strings), the standing CS-010
   config gap (47% on XLM circulating), and the new USDC finding

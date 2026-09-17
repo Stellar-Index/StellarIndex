@@ -1,7 +1,9 @@
 ---
 # promtool unit tests for the served-value harness's meta-alerts —
 # stellarindex_served_value_check_stale (the OBS-2 arm) and
-# stellarindex_served_value_unit_failed. Rules live in data-freshness.yml.
+# stellarindex_served_value_unit_failed — and for the reserve-LIST check's
+# own ticket, stellarindex_sdf_reserve_list_drift (C4-069). Rules live in
+# data-freshness.yml.
 #
 #   promtool test rules deploy/monitoring/rule-tests/served-values_test.yml
 #
@@ -36,6 +38,12 @@
 # is activating, which resolves the alert and restarts the pending clock, so
 # the obvious form is unreliable — at a 15s scrape it fires when no sample lands in the activating gap and stays silent when one does, and it cannot fire at all when the gap is long (the all-skipped or timeout modes). That is why the ride-out is written as
 # `offset 25h` + `for: 1h`, and why the dip at t=24h is in the fixture.
+#
+# PROVEN-RED (sdf_reserve_list_drift): delete the alert from
+# data-freshness.yml and re-run — the "missing account tickets at 26h" case
+# reports `got:[]`. The value check it complements cannot stand in for it:
+# a single reserve account is inside xlm_circulating_supply's 2% tolerance,
+# so served_value_drift stays silent on exactly the state this alert names.
 
 rule_files:
   - ../rules/data-freshness.yml
@@ -163,7 +171,8 @@ tests:
               description: |
                 The served-value truth harness exited non-zero on its last two
                 runs. Three conditions exit non-zero and they want different
-                responses: a DRIFTED check (served_value_drift names which one),
+                responses: a DRIFTED check (served_value_drift names which one;
+                sdf_reserve_list_drift is the reserve-list check's own ticket),
                 an all-skipped run where every independent truth source was dark
                 (served_value_persistently_skipped names it), and a crash before
                 the textfile is written. Only the third is unique to this ticket
@@ -187,3 +196,112 @@ tests:
       - eval_time: 48h
         alertname: stellarindex_served_value_unit_failed
         exp_alerts: []
+
+  # ── reserve-list drift: a VERIFIED diff tickets at 26h ───────────
+  # verify-served-values emits both kinds whenever it actually diffed the
+  # configured set against the published one; the kind that differs is
+  # > 0. Two daily runs, the same ride-out as the value checks.
+  - interval: 1h
+    name: an account SDF publishes and we do not exclude tickets at 26h, by kind
+    input_series:
+      - series: 'stellarindex_sdf_reserve_list_drift{kind="missing"}'
+        values: '1x60'
+      - series: 'stellarindex_sdf_reserve_list_drift{kind="extra"}'
+        values: '0x60'
+    alert_rule_test:
+      - eval_time: 25h
+        alertname: stellarindex_sdf_reserve_list_drift
+        exp_alerts: []
+      - eval_time: 26h
+        alertname: stellarindex_sdf_reserve_list_drift
+        exp_alerts:
+          - exp_labels:
+              severity: ticket
+              team: stellarindex
+              component: data-truth
+              kind: missing
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/served-value-drift.md
+              summary: "supply.sdf_reserve_accounts differs from the reserve list SDF publishes (1 missing)"
+              description: |
+                verify-served-values found 1 account(s) of kind
+                "missing" between supply.sdf_reserve_accounts and the
+                reserve list SDF publishes (stellar/dashboard common/lumens.js)
+                on two consecutive daily runs. missing = SDF now excludes an
+                account we still count as circulating (we over-state); extra =
+                SDF no longer excludes one we still subtract (we under-state).
+                The xlm_circulating_supply value check may well stay green — a
+                single account sits inside its 2% tolerance — which is why this
+                check exists. The account ids are in the run's journal:
+                `journalctl -u verify-served-values -n 20`. Fix is config, not
+                code: update stellarindex_sdf_reserve_accounts (and the paired
+                reserve_balances_stroops) in the archival-node role defaults,
+                re-render the config and restart the supply writer.
+
+  # ── in step: explicit zeros for both kinds never ticket ──────────
+  - interval: 1h
+    name: a configured list in step with the published one never tickets
+    input_series:
+      - series: 'stellarindex_sdf_reserve_list_drift{kind="missing"}'
+        values: '0x60'
+      - series: 'stellarindex_sdf_reserve_list_drift{kind="extra"}'
+        values: '0x60'
+    alert_rule_test:
+      - eval_time: 30h
+        alertname: stellarindex_sdf_reserve_list_drift
+        exp_alerts: []
+
+  # ── one drifted run followed by a clean one rides out ────────────
+  # An operator who updates the list the same day resolves it before the
+  # second run; the 26h `for:` must not ticket on the first.
+  - interval: 1h
+    name: one drifted run corrected before the next never tickets
+    input_series:
+      - series: 'stellarindex_sdf_reserve_list_drift{kind="extra"}'
+        values: '1x23 0x40'
+    alert_rule_test:
+      - eval_time: 26h
+        alertname: stellarindex_sdf_reserve_list_drift
+        exp_alerts: []
+      - eval_time: 48h
+        alertname: stellarindex_sdf_reserve_list_drift
+        exp_alerts: []
+
+  # ── published source dark: no drift verdict, the SKIP ticket instead ──
+  # The harness emits NO drift gauge when it could not read or parse the
+  # published list (absence is honest, as for served_value_ok), and
+  # served_value_skipped{check="sdf_reserve_list"}=1 instead. So the drift
+  # alert has no series to fire on, and persistently_skipped carries the
+  # signal — with the source named in its description.
+  - interval: 1h
+    name: a dark published source is a skip ticket, never a drift ticket
+    input_series:
+      - series: 'stellarindex_served_value_skipped{check="sdf_reserve_list"}'
+        values: '1x60'
+    alert_rule_test:
+      - eval_time: 30h
+        alertname: stellarindex_sdf_reserve_list_drift
+        exp_alerts: []
+      - eval_time: 26h
+        alertname: stellarindex_served_value_persistently_skipped
+        exp_alerts:
+          - exp_labels:
+              severity: ticket
+              team: stellarindex
+              component: data-truth
+              check: sdf_reserve_list
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/served-value-drift.md
+              summary: "Served-value check sdf_reserve_list unverifiable for 2 days (truth source dark)"
+              description: |
+                verify-served-values has SKIPPED sdf_reserve_list on every
+                run for 2 days — its independent truth source (SDF lumen API /
+                Stellar Expert / the stellar/dashboard source behind
+                sdf_reserve_list) is unreachable. This is availability, not drift,
+                so served_value_drift (ok==0) stays quiet AND check_stale stays
+                quiet (the run still completes). Without this alert a PERSISTENT
+                truth-source break (URL/schema change) would leave that value
+                UNVERIFIED behind a green gate forever — the F5 fail-open a
+                skipped check opens (it emits no served_value_ok). Check the
+                source is reachable / its response shape; the check resumes
+                automatically once truth returns.

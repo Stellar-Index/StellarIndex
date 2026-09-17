@@ -54,6 +54,23 @@ against.
   compile-time `*timescale.Store` assertion the other optional seams
   have, so a reader that stops satisfying either is a build failure
   rather than a silent opt-out.
+### Added
+
+- **ops:** `verify-served-values` now diffs `supply.sdf_reserve_accounts`
+  against the reserve list SDF publishes — the `accounts` table plus the
+  network-upgrade reserve in stellar/dashboard's `common/lumens.js`, the
+  source of `dashboard.stellar.org`'s `circulatingSupply` (its API exposes
+  program sums only, never the accounts) — on the same daily timer as the
+  2% value cross-check, and emits
+  `stellarindex_sdf_reserve_list_drift{kind="missing"|"extra"}`.
+  `stellarindex_sdf_reserve_list_drift` (ticket, 26 h) alerts on any
+  verified difference in both rule trees; a dark or reshaped source is a
+  skip (`served_value_skipped{check="sdf_reserve_list"}`), never a verdict.
+  Closes tail-triage C4-069: one account SDF adds or retires moves
+  circulating supply by well under the value check's 2% tolerance, so a
+  stale list was undetectable. New `-config` flag (default
+  `/etc/stellarindex.toml`; empty skips the check), passed by the systemd
+  unit. Runbook section in `served-value-drift.md`; catalogue row.
 
 ## [v0.90.0] — 2026-09-18
 

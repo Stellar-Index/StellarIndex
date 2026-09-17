@@ -93,7 +93,7 @@ func TestRunServedValueChecks_TolerancesAndOutages(t *testing.T) {
 func TestReconcileSkippedNeverAssertsOK(t *testing.T) {
 	body := renderServedValueProm([]servedValueResult{
 		{name: "dark", relErr: math.NaN(), skipped: true},
-	}, time.Unix(1_751_000_000, 0))
+	}, nil, time.Unix(1_751_000_000, 0))
 	if !strings.Contains(body, `stellarindex_served_value_skipped{check="dark"} 1`) {
 		t.Errorf("skipped check must emit served_value_skipped=1:\n%s", body)
 	}
@@ -119,7 +119,7 @@ func TestRenderServedValueProm(t *testing.T) {
 	body := renderServedValueProm([]servedValueResult{
 		{name: "a", relErr: 0.001, ok: true},
 		{name: "b", relErr: math.NaN(), ok: true},
-	}, time.Unix(1_751_000_000, 0))
+	}, nil, time.Unix(1_751_000_000, 0))
 	for _, want := range []string{
 		`stellarindex_served_value_rel_err{check="a"} 0.001`,
 		`stellarindex_served_value_ok{check="a"} 1`,

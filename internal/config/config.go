@@ -1446,7 +1446,11 @@ type SupplyConfig struct {
 	// SDFReserveAccounts is the G-strkey list whose XLM balances
 	// are subtracted from the frozen total to yield circulating.
 	// Per ADR-0011 these are operator-curated; the algorithm itself
-	// is policy-agnostic.
+	// is policy-agnostic. Curated is not static: verify-served-values
+	// diffs this list daily against the one SDF publishes
+	// (stellar/dashboard common/lumens.js) and tickets on any
+	// missing/extra account — the 2% value cross-check alone cannot
+	// see a single account change (C4-069; internal/ops/chops).
 	SDFReserveAccounts []string `toml:"sdf_reserve_accounts" doc:"G-strkey list of SDF-controlled reserve accounts whose XLM balances are excluded from circulating supply per ADR-0011 Algorithm 1." default:"[]"`
 
 	// ReserveBalancesStroops maps account G-strkey → balance in

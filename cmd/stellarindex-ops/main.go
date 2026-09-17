@@ -1220,13 +1220,15 @@ Subcommands:
                           recognition gap (an event the system would silently
                           drop). -include-firehose also audits the CAP-67
                           classic-token topics. Read-only.
-  verify-served-values -api URL [-textfile PATH] [-timeout DUR]
+  verify-served-values -api URL [-config PATH] [-textfile PATH] [-timeout DUR]
                           Data-correctness harness: fetch a curated set of
                           values we SERVE and reconcile each against an
                           INDEPENDENT ground truth (e.g. XLM supply vs the
                           SDF lumen API), emitting node_exporter textfile
                           gauges so a drifting served value alerts within a
-                          day. Read-only.
+                          day. Also diffs -config's supply.sdf_reserve_accounts
+                          (default /etc/stellarindex.toml; empty skips it)
+                          against the reserve list SDF publishes. Read-only.
   sdex-claim-audit -config PATH -from N -to N [-bucket NAME] [-examples N] [-dump-ops]
                           Walk a ledger range and run every classic-DEX claim
                           atom through the real SDEX decode path, tallying
