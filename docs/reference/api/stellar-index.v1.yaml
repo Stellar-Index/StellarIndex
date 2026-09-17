@@ -15268,7 +15268,7 @@ components:
             the valuation is withheld — a supply is not a price claim.
         supply_basis:
           type: string
-          enum: [xlm_sdf_reserve_exclusion, xlm_total_only, issuer_exclusion, admin_exclusion, override, sep1_declared_max, sep41_lake_flows, classic_lake_flows, classic_trustline_sum, contract_storage_balances]
+          enum: [xlm_sdf_reserve_exclusion, xlm_total_only, issuer_exclusion, admin_exclusion, sep41_total_only, override, sep1_declared_max, sep41_lake_flows, classic_lake_flows, classic_trustline_sum, contract_storage_balances]
           description: |
             Which reading produced `circulating_supply`, in the same
             ADR-0011 vocabulary `Asset.supply_basis` uses. Absent when no
@@ -17001,7 +17001,7 @@ components:
         listing_valuation:  { $ref: "#/components/schemas/AssetListingValuation" }
         supply_basis:
           type: [string, "null"]
-          enum: [xlm_sdf_reserve_exclusion, xlm_total_only, issuer_exclusion, admin_exclusion, override, sep1_declared_max, sep41_lake_flows, classic_lake_flows, classic_trustline_sum, contract_storage_balances, no_metadata]
+          enum: [xlm_sdf_reserve_exclusion, xlm_total_only, issuer_exclusion, admin_exclusion, sep41_total_only, override, sep1_declared_max, sep41_lake_flows, classic_lake_flows, classic_trustline_sum, contract_storage_balances, no_metadata]
           description: |
             Which ADR-0011 policy produced the supply numbers, and on
             LISTING rows additionally which ARM answered — three can,
@@ -17028,8 +17028,12 @@ components:
 
             Surfaced so consumers can decide how much to trust the
             absolute value: `issuer_exclusion`/`admin_exclusion` are
-            algorithm defaults; `override` indicates an operator
-            curated the locked-set or max_supply;
+            algorithm defaults; `sep41_total_only` is the SEP-41
+            default with NOTHING excluded — circulating == total
+            because no admin balance was netted out, kept distinct
+            from `admin_exclusion` so the wire never claims an
+            exclusion that did not happen; `override` indicates an
+            operator curated the locked-set or max_supply;
             `sep1_declared_max` means max_supply (and fdv_usd) come
             from the issuer's own stellar.toml `[[CURRENCIES]]`
             max_number/fixed_number declaration — self-declared by

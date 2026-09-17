@@ -37,6 +37,16 @@ against.
 
 ### Fixed
 
+- **api:** the `supply_basis` enums on `Asset` and `RWAAsset` in
+  `openapi/stellar-index.v1.yaml` carry `sep41_total_only`, the value
+  `/v1/assets/{asset_id}` has served since v0.21.0 for a SEP-41 token
+  whose admin balance came back zero — the DEFAULT reading for an
+  unconfigured token, not an edge case. The constant was added to the Go
+  vocabulary without touching the spec, so the generated docs mirror,
+  Postman collection and explorer `types.ts` all published a closed
+  union the API did not honour. A spec test now pins both enums to the
+  `internal/supply` const block in declaration order, the way the
+  `/v1/ohlc` interval enum is pinned to its route table.
 - **ci:** the weekly ansible-drift verdict's comment-only classifier
   picks the comment token per file type (#519). It stripped from the
   first `#`, `--` or `//` whatever the file, so every URL host

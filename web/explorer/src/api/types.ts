@@ -7771,7 +7771,7 @@ export interface components {
              *     totals or a total against a floor.
              * @enum {string}
              */
-            supply_basis?: "xlm_sdf_reserve_exclusion" | "xlm_total_only" | "issuer_exclusion" | "admin_exclusion" | "override" | "sep1_declared_max" | "sep41_lake_flows" | "classic_lake_flows" | "classic_trustline_sum" | "contract_storage_balances";
+            supply_basis?: "xlm_sdf_reserve_exclusion" | "xlm_total_only" | "issuer_exclusion" | "admin_exclusion" | "sep41_total_only" | "override" | "sep1_declared_max" | "sep41_lake_flows" | "classic_lake_flows" | "classic_trustline_sum" | "contract_storage_balances";
             /**
              * @description True when `circulating_supply` is a provable FLOOR rather than
              *     a complete reading — the per-row sibling of the `lower_bound`
@@ -9229,8 +9229,12 @@ export interface components {
              *
              *     Surfaced so consumers can decide how much to trust the
              *     absolute value: `issuer_exclusion`/`admin_exclusion` are
-             *     algorithm defaults; `override` indicates an operator
-             *     curated the locked-set or max_supply;
+             *     algorithm defaults; `sep41_total_only` is the SEP-41
+             *     default with NOTHING excluded — circulating == total
+             *     because no admin balance was netted out, kept distinct
+             *     from `admin_exclusion` so the wire never claims an
+             *     exclusion that did not happen; `override` indicates an
+             *     operator curated the locked-set or max_supply;
              *     `sep1_declared_max` means max_supply (and fdv_usd) come
              *     from the issuer's own stellar.toml `[[CURRENCIES]]`
              *     max_number/fixed_number declaration — self-declared by
@@ -9241,7 +9245,7 @@ export interface components {
              *     supply snapshot is available.
              * @enum {string|null}
              */
-            supply_basis?: "xlm_sdf_reserve_exclusion" | "xlm_total_only" | "issuer_exclusion" | "admin_exclusion" | "override" | "sep1_declared_max" | "sep41_lake_flows" | "classic_lake_flows" | "classic_trustline_sum" | "contract_storage_balances" | "no_metadata" | null;
+            supply_basis?: "xlm_sdf_reserve_exclusion" | "xlm_total_only" | "issuer_exclusion" | "admin_exclusion" | "sep41_total_only" | "override" | "sep1_declared_max" | "sep41_lake_flows" | "classic_lake_flows" | "classic_trustline_sum" | "contract_storage_balances" | "no_metadata" | null;
             /**
              * @description Trailing-24h USD-denominated trade volume across every
              *     pair this asset participates in (as base OR quote).
