@@ -59,8 +59,17 @@ func TestCohortRollupWalksMovementsOnceIntoParts(t *testing.T) {
 	if !strings.Contains(step.sql, "uniqCombinedState(m.address)") {
 		t.Error("the parts row must carry a MERGEABLE distinct-member state; a month spans windows")
 	}
-	if !strings.Contains(step.sql, "argMax(amount, ingested_at)") {
-		t.Error("the archive is a ReplacingMergeTree: rows must be de-duplicated with argMax on ingested_at")
+	// The archive is a ReplacingMergeTree, so the window must de-duplicate
+	// — with FINAL, per partition. The boards' argMax GROUP BY exceeds the
+	// 8 GiB budget on a dense window (measured; see cohortScanSettings).
+	if !strings.Contains(step.sql, "FROM stellar.account_movements FINAL") {
+		t.Error("the movements window must read the archive with FINAL")
+	}
+	if strings.Contains(step.sql, "argMax(") {
+		t.Error("the movements window must not de-duplicate with an argMax GROUP BY; it does not fit the memory budget")
+	}
+	if !strings.Contains(step.sql, "do_not_merge_across_partitions_select_final = 1") {
+		t.Error("FINAL must be told not to merge across partitions — a window is one partition")
 	}
 }
 

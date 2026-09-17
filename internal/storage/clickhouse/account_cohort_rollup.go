@@ -29,17 +29,27 @@ const (
 	CohortRelationSponsored = "sponsored"
 )
 
-// cohortWalkSettings bounds each window of the movements walk. The join
-// side is the whole cohort membership (~25M rows on pubnet), so the hash
-// join is told to spill to disk rather than be sized in memory.
-const cohortWalkSettings = boundedScanSettings +
-	", max_execution_time = 1800, join_algorithm = 'grace_hash', grace_hash_join_initial_buckets = 16"
+// cohortScanSettings is the board rollups' memory and spill budget with
+// more threads: this cycle reads the whole movements archive once a day,
+// and at the boards' two threads a dense window near tip does not finish
+// inside its budget. Measured on r1, 2026-09-17, one 1M-ledger window of
+// 657M rows: the boards' argMax de-duplication exceeded 8 GiB at both 2
+// and 6 threads; FINAL at 6 threads finished in 151 s at 2.7 GiB. So the
+// walk de-duplicates with FINAL (per partition, which is per window) and
+// runs at six threads, and every join spills rather than sizing the
+// ~25M-row membership in memory.
+const cohortScanSettings = "SETTINGS max_threads = 6, max_memory_usage = 8589934592, " +
+	"max_bytes_before_external_group_by = 4294967296, max_bytes_before_external_sort = 4294967296, " +
+	"join_algorithm = 'grace_hash', grace_hash_join_initial_buckets = 16, " +
+	"do_not_merge_across_partitions_select_final = 1"
+
+// cohortWalkSettings bounds each window of the movements walk.
+const cohortWalkSettings = cohortScanSettings + ", max_execution_time = 1800"
 
 // cohortJoinSettings is for the one-shot joins against
-// ledger_entries_current and account_activity: the same spill policy
-// with a longer budget, since they are not windowed.
-const cohortJoinSettings = boundedScanSettings +
-	", max_execution_time = 3600, join_algorithm = 'grace_hash', grace_hash_join_initial_buckets = 16"
+// ledger_entries_current and account_activity: the same budget with more
+// time, since they are not windowed.
+const cohortJoinSettings = cohortScanSettings + ", max_execution_time = 3600"
 
 // cohortFoldSettings bounds the folds over the cycle's own working
 // tables.
@@ -133,12 +143,14 @@ var cohortRollupStatements = []rollupStep{
 	 GROUP BY c.rel, c.root
 	 ` + cohortJoinSettings},
 
-	// The movements walk. Each window de-duplicates the archive's rows
-	// the way the board rollups do (ReplacingMergeTree, argMax on
-	// ingested_at), joins them to the membership, and writes one partial
-	// row per (cohort, month, asset, C… counterparty) with a mergeable
-	// distinct-member state — a month spans windows, so the fold below
-	// is what produces a month's figure.
+	// The movements walk. Each window reads the archive with FINAL — the
+	// ReplacingMergeTree's own de-duplication, per partition, which a
+	// 1M-ledger window is exactly one of — joins the rows to the
+	// membership, and writes one partial row per (cohort, month, asset,
+	// C… counterparty) with a mergeable distinct-member state. A month
+	// spans windows, so the fold below is what produces a month's figure.
+	// (The boards' argMax de-duplication is not used here: see
+	// cohortScanSettings for the measurement that rules it out.)
 	{walk: true, windowBinds: 1, sql: `INSERT INTO stellar.account_cohort_parts_staging
 	     (rel, root, month, asset, contract, inflow, outflow, movements, actives, first_at, last_at)
 	 SELECT c.rel, c.root,
@@ -152,14 +164,10 @@ var cohortRollupStatements = []rollupStep{
 	        min(m.closed_at) AS first_at,
 	        max(m.closed_at) AS last_at
 	 FROM (
-	     SELECT address, ledger, tx_hash, op_index, leg_index, direction,
-	            argMax(asset, ingested_at) AS asset,
-	            argMax(amount, ingested_at) AS amount,
-	            argMax(counterparty, ingested_at) AS counterparty,
-	            toDateTime(argMax(ledger_close_time, ingested_at), 'UTC') AS closed_at
-	     FROM stellar.account_movements
+	     SELECT address, asset, amount, counterparty, direction,
+	            toDateTime(ledger_close_time, 'UTC') AS closed_at
+	     FROM stellar.account_movements FINAL
 	     WHERE ledger BETWEEN ? AND ?
-	     GROUP BY address, ledger, tx_hash, op_index, leg_index, direction
 	 ) AS m
 	 INNER JOIN stellar.account_cohort_members AS c ON m.address = c.member
 	 GROUP BY c.rel, c.root, month, m.asset, contract
