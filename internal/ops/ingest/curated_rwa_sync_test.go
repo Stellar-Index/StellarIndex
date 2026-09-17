@@ -181,7 +181,7 @@ func TestCuratedRWATextfile_ShapeAndAtomicity(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "curated_rwa_sync.prom")
 	c := curatedRWACounts{Kept: 42, Priced: 30, Credits: 0.25}
-	if err := writeCuratedRWATextfile(path, "dune:stellar", c, true, false); err != nil {
+	if err := writeCuratedRWATextfile(path, c, true, false); err != nil {
 		t.Fatalf("write: %v", err)
 	}
 	b, _ := os.ReadFile(path)
@@ -206,7 +206,7 @@ func TestCuratedRWATextfile_ShapeAndAtomicity(t *testing.T) {
 // staleness alert measures the timer, not the key — and says it refused.
 func TestCuratedRWATextfileStampsARefusedRun(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "curated.prom")
-	if err := writeCuratedRWATextfile(path, "dune:stellar", curatedRWACounts{}, true, true); err != nil {
+	if err := writeCuratedRWATextfile(path, curatedRWACounts{}, true, true); err != nil {
 		t.Fatal(err)
 	}
 	raw, err := os.ReadFile(path)
