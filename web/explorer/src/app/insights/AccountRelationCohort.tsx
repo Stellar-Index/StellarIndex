@@ -289,7 +289,14 @@ export function AccountRelationCohort({
               <TBody>
                 {data.contracts.map((c) => (
                   <TR key={c.contract_id}>
-                    <Td>{c.protocol ?? <span className="text-ink-faint">unlabelled</span>}</Td>
+                    <Td>
+                      {c.protocol ??
+                        (c.label ? (
+                          <span className="text-ink-muted">{c.label}</span>
+                        ) : (
+                          <span className="text-ink-faint">unlabelled</span>
+                        ))}
+                    </Td>
                     <Td>
                       <Link href={`/contracts/${c.contract_id}`} className="font-mono text-xs underline-offset-2 hover:underline" title={c.contract_id}>
                         {truncateMiddle(c.contract_id, 14)}
@@ -308,7 +315,8 @@ export function AccountRelationCohort({
         <p className="text-ink-faint text-[11px]">
           The C… counterparties of the cohort&rsquo;s movements — the value-moving
           subset of interaction; a call that moved no balance is not counted.
-          {unlabelled > 0 && ` ${numFmt.format(unlabelled)} contract${unlabelled === 1 ? '' : 's'} no protocol on the roster claims.`}
+          {unlabelled > 0 &&
+            ` ${numFmt.format(unlabelled)} contract${unlabelled === 1 ? '' : 's'} no protocol on the roster claims; a token contract the lake can name is shown as \u201ctoken \u2026\u201d.`}
         </p>
       </Panel>
 

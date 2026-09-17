@@ -15,6 +15,13 @@ against.
 
 ## [Unreleased]
 
+### Added
+
+- **explorer:** the cohort's contracts table names a token contract the
+  protocol roster does not claim — a Stellar Asset Contract by its
+  classic asset's code, a SEP-41 token by its symbol — as `label`
+  (`token USDC`) instead of leaving every such row unlabelled.
+
 ## [v0.89.2] — 2026-09-17
 
 ### Added

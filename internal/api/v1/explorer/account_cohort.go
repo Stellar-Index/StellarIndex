@@ -101,10 +101,15 @@ type AccountCohortAssetFlowV struct {
 }
 
 // AccountCohortContractV is one C… contract the cohort moved value
-// through; Protocol is set when the roster knows it.
+// through. Protocol is set when the protocol roster claims the contract;
+// Label when it does not but the lake can name it — a Stellar Asset
+// Contract (the classic asset's code) or a SEP-41 token (its symbol) —
+// so a cohort that moved value through a token contract reads as
+// "token USDC" rather than an unlabelled address.
 type AccountCohortContractV struct {
 	ContractID     string `json:"contract_id"`
 	Protocol       string `json:"protocol,omitempty"`
+	Label          string `json:"label,omitempty"`
 	Movements      uint64 `json:"movements"`
 	ActiveAccounts uint64 `json:"active_accounts"`
 	FirstAt        string `json:"first_at"`
@@ -293,7 +298,8 @@ func cohortAssetFlowView(f clickhouse.AccountCohortFlow, price func(string) (flo
 	return af
 }
 
-// cohortContractsView labels each contract where the roster knows it.
+// cohortContractsView labels each contract where the roster knows it,
+// and names a token contract the lake can name where it does not.
 func (h *Handler) cohortContractsView(ctx context.Context, contracts []clickhouse.AccountCohortContract) []AccountCohortContractV {
 	out := make([]AccountCohortContractV, 0, len(contracts))
 	for _, ct := range contracts {
@@ -304,6 +310,11 @@ func (h *Handler) cohortContractsView(ctx context.Context, contracts []clickhous
 		if h.ContractProtocol != nil {
 			if name, ok := h.ContractProtocol(ctx, ct.ContractID); ok {
 				v.Protocol = name
+			}
+		}
+		if v.Protocol == "" && h.Reader != nil {
+			if resolved := h.resolveSEP41MovementAsset(ctx, ct.ContractID); resolved != ct.ContractID {
+				v.Label = "token " + assetDisplayLabel(resolved)
 			}
 		}
 		out = append(out, v)

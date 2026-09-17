@@ -6060,6 +6060,8 @@ export interface components {
             contract_id: string;
             /** @description Set where the protocol roster claims the contract. */
             protocol?: string;
+            /** @description Set where the roster does not claim the contract but the lake can name it — a Stellar Asset Contract (`token USDC`) or a SEP-41 token (`token AQUA`). */
+            label?: string;
             /** Format: int64 */
             movements: number;
             /**

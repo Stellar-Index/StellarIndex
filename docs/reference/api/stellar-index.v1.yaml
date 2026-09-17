@@ -13354,6 +13354,7 @@ components:
       properties:
         contract_id: { type: string }
         protocol: { type: string, description: Set where the protocol roster claims the contract. }
+        label: { type: string, description: "Set where the roster does not claim the contract but the lake can name it — a Stellar Asset Contract (`token USDC`) or a SEP-41 token (`token AQUA`)." }
         movements: { type: integer, format: int64 }
         active_accounts: { type: integer, format: int64, description: Distinct members that moved value through it (uniqCombined estimate). }
         first_at: { type: string, format: date-time }

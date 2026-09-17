@@ -113,3 +113,36 @@ func TestStroops7(t *testing.T) {
 		t.Errorf("stroops7(nil) = %q", got)
 	}
 }
+
+type namingReader struct{ capReader }
+
+func (*namingReader) SACClassicAssetName(_ context.Context, id string) (string, bool, error) {
+	if id == "CSACUSDC" {
+		return "USDC:GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN", true, nil
+	}
+	return "", false, nil
+}
+
+// A contract no protocol claims is labelled by the lake when it is a
+// token contract, and left unlabelled when it is not.
+func TestAccountCohortView_LabelsTokenContractsTheRosterDoesNotClaim(t *testing.T) {
+	h := &Handler{
+		Reader:           &namingReader{capReader{probe: &deadlineProbe{}}},
+		ContractProtocol: func(context.Context, string) (string, bool) { return "", false },
+	}
+	at := time.Date(2026, 9, 17, 0, 0, 0, 0, time.UTC)
+	snap := clickhouse.AccountCohort{
+		Root: "GROOT", Relation: "created", Covered: true, Cycle: clickhouse.AccountCohortCycle{ComputedAt: at, TipLedger: 1},
+		Contracts: []clickhouse.AccountCohortContract{
+			{ContractID: "CSACUSDC", Movements: 3, ActiveAccounts: 2, FirstAt: at, LastAt: at},
+			{ContractID: "CUNKNOWN", Movements: 1, ActiveAccounts: 1, FirstAt: at, LastAt: at},
+		},
+	}
+	v := h.accountCohortView(context.Background(), snap)
+	if v.Contracts[0].Label != "token USDC" || v.Contracts[0].Protocol != "" {
+		t.Errorf("SAC contract = %+v, want label \"token USDC\" and no protocol", v.Contracts[0])
+	}
+	if v.Contracts[1].Label != "" || v.Contracts[1].Protocol != "" {
+		t.Errorf("unknown contract = %+v, want neither label nor protocol", v.Contracts[1])
+	}
+}
